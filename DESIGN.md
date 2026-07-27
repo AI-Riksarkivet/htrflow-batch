@@ -1016,39 +1016,65 @@ pulled in ~40 s. All models on `cuda:0` (Blackwell sm_120): **2 pages in 19 s
 verify 2/2. Image-iteration workflow from here: `docker build` + `docker push`
 (only changed layers) — no sudo.
 
-**D16 wrapper smoke — 2026-07-27 — BLOCKED.** First cluster GPU run of the
-real `htrflow-batch:v1` image (Task 9's build) against mocked IIIF (4
-`htr_demo` fixture pages served from a new anonymous-read `htr-fixtures`
-RustFS bucket, no live lbiiif dependency — see `k8s/README.md`). Job
-`htr-vol-301` (`k8s/job-real-wrapper.yaml` + `k8s/pipeline-demo-v1.yaml`)
-was admitted by Kueue immediately, downloaded the manifest and all 4 pages
-successfully (`4 pages in manifest`, `resume: 0 done, 4 to process`), then
-crashed before any HTR ran — never reached the GPU/streaming stage, so no
-`manifest.json` was published and no pages/sec, `wall_seconds`, or
-`gpu_stall_seconds` numbers exist from this attempt. **Root cause (wrapper
-bug, not fixtures/YAML):** `htrflow_batch/driver.py::load_pipeline` calls
-`Pipeline.from_config(pipeline_path)` with the *raw path string* instead of
-the parsed YAML dict that `htrflow.pipeline.pipeline.Pipeline.from_config`
-requires (its signature is `from_config(config: dict[str, str])`). Every
-attempt (Job retried 3× under `backoffLimit: 2`, identical each time) failed
-in the same place with `TypeError: string indices must be integers`
-(indexing a string with `"steps"`), surfaced correctly by the wrapper's own
-exit-code/termination-log contract: exit 1 (`EXIT_TRANSIENT`),
-`{"stage": "stream", "permanent": false, "error": "string indices must be
-integers"}`. Not caught by unit tests because `driver.py` keeps all htrflow
-imports function-local (by design, so the wrapper imports cleanly without
-torch) — no test exercises `load_pipeline` against the real
-`htrflow.pipeline.pipeline.Pipeline`. Fix needed in `driver.load_pipeline`:
-read + `yaml.safe_load` the file at `pipeline_path` before calling
-`Pipeline.from_config`. Per this task's scope, wrapper source was **not**
-patched here — fixtures (`k8s/fixtures/`), the pipeline ConfigMap, and the
-Job manifest were verified correct (pages served 200 anonymously, manifest
-walked fine) and are ready to rerun once the driver bug is fixed.
+**D16 wrapper smoke — 2026-07-27 — BLOCKED (round 1, image `v1`).** First
+cluster GPU run of the real `htrflow-batch:v1` image (Task 9's build)
+against mocked IIIF (4 `htr_demo` fixture pages served from a new
+anonymous-read `htr-fixtures` RustFS bucket, no live lbiiif dependency —
+see `k8s/README.md`). Job `htr-vol-301`
+(`k8s/job-real-wrapper.yaml` + `k8s/pipeline-demo-v1.yaml`) was admitted by
+Kueue immediately, downloaded the manifest and all 4 pages successfully
+(`4 pages in manifest`, `resume: 0 done, 4 to process`), then crashed
+before any HTR ran. **Root cause:** `htrflow_batch/driver.py::load_pipeline`
+called `Pipeline.from_config(pipeline_path)` with the raw path string
+instead of the parsed YAML dict `Pipeline.from_config` requires —
+`TypeError: string indices must be integers`, exit 1 (`EXIT_TRANSIENT`).
+Wrapper source not patched in this task; reported upstream instead.
 
-**Not yet tested:** IIIF-manifest walking against the real wrapper end to
-end (blocked above — the manifest fetch/page-list step itself is proven
-working, but nothing past it), the D16 library-driver wrapper's HTR/publish
-path (tests used the stock CLI).
+**D16 wrapper smoke — 2026-07-27 — BLOCKED again (round 2, image `v2`).**
+Round-1 bug fixed upstream (commit `7e7b30c`, version-tolerant
+`Pipeline.from_config` with a dict fallback) and reshipped as
+`htrflow-batch:v2`. Re-ran the identical Job (image tag bumped to `v2`,
+`k8s/job-real-wrapper.yaml`): pipeline now loads, and this time the run
+gets much further — manifest + 4 pages fetched, YOLO region/line
+segmentation and TrOCR text recognition all ran successfully **on GPU**
+(`Model 'YOLO'/'TrOCR' on device 'cuda'`, sub-second per page) — but every
+page then fails on the **Export** step (both `alto` and `page` formats)
+with `TypeError: 'NoneType' object is not iterable` inside the ALTO Jinja2
+template's `{%- for step in processing_steps %}`. Verify gate correctly
+catches it: `verify failed: missing=['0001','0002','0003','0004']
+failed=['0001','0002','0003','0004']`, exit 1, termination message
+`{"stage": "verify", "permanent": false, "error": "verify failed: ..."}`.
+Reproduced identically across all 3 `backoffLimit` attempts — deterministic,
+not a fluke. **Root cause (wrapper bug, not fixtures/YAML/pipeline):**
+`htrflow.pipeline.steps.Export.run()` does
+`metadata = self.parent_pipeline.metadata() if self.parent_pipeline else None`,
+and `PipelineStep.parent_pipeline` defaults to the **class attribute**
+`None`; it is only ever wired to the real `Pipeline` instance inside
+`Pipeline.__init__`'s `for step in self.steps: step.parent_pipeline = self`
+loop. `driver.py::load_pipeline` builds the two `Export(...)` steps
+*after* construction and appends them straight onto `pipeline.steps` with
+`.append()`, bypassing that wiring — so both appended `Export` instances
+keep `parent_pipeline = None`, `metadata` comes back `None` instead of a
+list, and `save_collection(..., processing_steps=None)` blows up the
+moment the ALTO/PAGE templates try to iterate it. Confirmed via a
+`sleep`-only debug pod reading `/app/src/htrflow/pipeline/steps.py` (class
+attribute default) and `driver.py` (append-only, no `parent_pipeline`
+assignment) directly from the `v2` image. **Fix needed** in
+`driver.load_pipeline`: after appending each `Export` step, set
+`step.parent_pipeline = pipeline` explicitly (or reconstruct via
+`Pipeline(list(pipeline.steps) + [export_alto, export_page])` so
+`__init__`'s wiring loop runs over the full step list). Per this task's
+scope, wrapper source was **not** patched — reported BLOCKED again. GPU
+correctness itself is now proven (segmentation + TrOCR ran fine on
+Blackwell against real fixture pages), so this is purely an
+Export/serialization wiring bug, not a model or GPU issue. Still no
+`manifest.json` was published, so no pages/sec, `wall_seconds`, or
+`gpu_stall_seconds` numbers exist yet from either round.
+
+**Not yet tested:** the wrapper's publish/verify-success path and resume
+behavior end to end (blocked above — segmentation/recognition on GPU is
+now proven, but Export/manifest publication is not), the D16
+library-driver wrapper's full happy path (tests used the stock CLI).
 
 **Host gotchas fixed en route** (persisted; also in memory notes):
 `fs.inotify.max_user_instances=128` was exhausted by root's services → kubelet

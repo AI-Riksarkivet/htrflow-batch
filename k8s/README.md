@@ -11,7 +11,7 @@ Manifests used for the 2026-07-27 smoke test on bare k3s on dmlpai01
 | `job-example.yaml` | One 4-page "volume" Job (suspend: true + queue label). Pages = Riksarkivet htr_demo images from HF |
 | `fixtures/make_mock_manifest.py` | Generates a minimal IIIF P3 manifest (placeholder canvas dims) over 4 htr_demo fixture images uploaded to the `htr-fixtures` bucket, so the real wrapper can be smoke-tested with no live lbiiif dependency |
 | `pipeline-demo-v1.yaml` | Immutable ConfigMap (D17) holding the `demo-v1` htrflow pipeline (yolo regions → yolo lines → TrOCR), no `Export` steps — the wrapper appends those |
-| `job-real-wrapper.yaml` | Task 10 smoke Job for the real `htrflow-batch:v1` image against the mocked IIIF manifest above (see DESIGN.md §13, "D16 wrapper smoke" — currently BLOCKED on a wrapper bug) |
+| `job-real-wrapper.yaml` | Task 10 smoke Job for the real `htrflow-batch:v2` image against the mocked IIIF manifest above (see DESIGN.md §13, "D16 wrapper smoke" — currently BLOCKED again on a second wrapper bug, `Export` steps missing `parent_pipeline` wiring) |
 
 ## Bucket setup for the viewer (D19) — anonymous read + CORS
 

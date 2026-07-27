@@ -20,7 +20,7 @@ spec:
       runtimeClassName: nvidia
       containers:
         - name: wrapper
-          image: 127.0.0.1:30500/htrflow-batch:v1
+          image: 127.0.0.1:30500/htrflow-batch:v2
           env:
             - name: VOLUME_REF
               value: mock-vol
