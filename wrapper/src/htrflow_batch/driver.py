@@ -9,7 +9,13 @@ def load_pipeline(pipeline_path: str, out_dir: Path):
     from htrflow.pipeline.pipeline import Pipeline
     from htrflow.pipeline.steps import Export
 
-    pipeline = Pipeline.from_config(pipeline_path)
+    try:
+        pipeline = Pipeline.from_config(str(pipeline_path))
+    except (TypeError, KeyError):
+        # older htrflow builds: from_config takes a parsed config dict, not a path
+        import yaml
+        with open(pipeline_path) as f:
+            pipeline = Pipeline.from_config(yaml.safe_load(f))
     for step in pipeline.steps:
         if isinstance(step, Export):
             raise ValueError(
