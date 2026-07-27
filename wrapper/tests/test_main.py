@@ -5,6 +5,7 @@ import httpx
 import pytest
 from htrflow_batch import main as main_mod
 from htrflow_batch.main import EXIT_OK, EXIT_PERMANENT, EXIT_TRANSIENT, main
+from htrflow_batch.store import ResultStore
 
 
 @pytest.fixture
@@ -130,3 +131,28 @@ def test_max_pages_caps(env, cfg, s3):
         Bucket=cfg.s3_bucket,
         Key="demo-v1/SE-RA-1234/manifest.json")["Body"].read())
     assert body["pages"] == 2
+
+
+def test_downloader_crash_does_not_hang(env, cfg, s3, monkeypatch):
+    """If run_downloader raises before enqueuing its sentinel, consume() must
+    still terminate (via the except-path sentinel in main.dl()) instead of
+    blocking forever on out_queue.get()."""
+    def boom(*a, **k):
+        raise OSError("dest_dir mkdir failed")
+
+    monkeypatch.setattr(main_mod, "run_downloader", boom)
+    rc = main(env, process_page_factory=fake_factory)
+    assert rc == EXIT_TRANSIENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "verify"
+
+
+def test_resume_failure_is_attributed_to_resume_stage(env, cfg, s3, monkeypatch):
+    def boom(self):
+        raise RuntimeError("s3 listing failed")
+
+    monkeypatch.setattr(ResultStore, "done_pages", boom)
+    rc = main(env, process_page_factory=fake_factory)
+    assert rc == EXIT_TRANSIENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "resume"

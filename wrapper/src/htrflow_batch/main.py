@@ -78,9 +78,8 @@ def main(env: Optional[Mapping[str, str]] = None,
             pages = pages[: cfg.max_pages]
         log.info("[%s] %d pages in manifest", cfg.volume_ref, len(pages))
 
-        # factory AFTER downloader start would be ideal (overlap, §5.6) but
-        # correctness first: start downloads, then load models concurrently.
         # -- stage 2: resume -------------------------------------------------
+        stage = "resume"
         done = store.done_pages() if cfg.resume else set()
         todo = [p for p in pages if p.name not in done]
         log.info("[%s] resume: %d done, %d to process",
@@ -93,14 +92,27 @@ def main(env: Optional[Mapping[str, str]] = None,
         bytes_box = {}
 
         def dl():
-            bytes_box["n"] = run_downloader(
-                todo, input_dir, out_q, slots, client,
-                concurrency=cfg.download_concurrency)
+            # If run_downloader raises before it can enqueue its own
+            # completion sentinel (e.g. dest_dir mkdir fails), consume()
+            # would otherwise block forever on out_queue.get(). Catch here
+            # and always push the sentinel so the stream loop is guaranteed
+            # to terminate; the resulting missing pages fail the verify gate
+            # below, which is the correct (transient, retryable) outcome.
+            try:
+                bytes_box["n"] = run_downloader(
+                    todo, input_dir, out_q, slots, client,
+                    concurrency=cfg.download_concurrency)
+            except Exception as e:
+                log.error("downloader thread failed: %r", e)
+                bytes_box["error"] = repr(e)
+                out_q.put(None)
 
         dl_thread = threading.Thread(target=dl, daemon=True, name="downloader")
         dl_thread.start()
 
-        # model load overlaps first downloads (DESIGN.md §5.6)
+        # Build/load the process fn only after the downloader thread is
+        # started, so model load overlaps the first downloads (DESIGN.md §5.6)
+        # instead of happening serially before any bytes move.
         factory = process_page_factory or _default_factory
         process = factory(cfg)
 
@@ -173,6 +185,9 @@ def main(env: Optional[Mapping[str, str]] = None,
         })
         log.info("[%s] COMPLETE %d pages (%d processed) in %.1fs, viewer: %s",
                  cfg.volume_ref, len(pages), len(ok_pages), wall, viewer_url)
+        # Only clean up on success; on any failure path below, the workdir
+        # (downloaded images, local ALTO/PAGE outputs) is intentionally left
+        # in place for postmortem inspection.
         shutil.rmtree(workdir, ignore_errors=True)
         return EXIT_OK
 
