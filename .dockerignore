@@ -1,0 +1,6 @@
+wrapper/.venv
+**/__pycache__
+.git
+.superpowers
+k8s
+*.md
