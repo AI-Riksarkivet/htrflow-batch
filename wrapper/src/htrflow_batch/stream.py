@@ -43,14 +43,18 @@ def consume(out_queue: "queue.Queue", slots: threading.Semaphore,
         try:
             if item.path is None:
                 stats.results[name] = PageOutcome("failed", error=item.error)
-                continue
-            t0 = time.monotonic()
-            files = process(item.path)
-            upload(name, files)
-            if not keep_images:
-                item.path.unlink(missing_ok=True)
-            stats.results[name] = PageOutcome("ok", seconds=time.monotonic() - t0)
+            else:
+                t0 = time.monotonic()
+                files = process(item.path)
+                upload(name, files)
+                stats.results[name] = PageOutcome("ok", seconds=time.monotonic() - t0)
         except Exception as e:  # drain-what-you-can; verify gate decides later
             stats.results[name] = PageOutcome("failed", error=repr(e))
         finally:
+            # Clean up image (outcome already recorded, so deletion failure doesn't affect it)
+            if item.path is not None and not keep_images:
+                try:
+                    item.path.unlink(missing_ok=True)
+                except Exception:
+                    pass  # Ignore deletion errors; outcome is already recorded
             slots.release()

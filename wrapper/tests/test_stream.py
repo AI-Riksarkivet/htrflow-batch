@@ -49,6 +49,7 @@ def test_process_failure_recorded_and_loop_continues(tmp_path):
     assert stats.results["0001"].status == "failed"
     assert "boom" in stats.results["0001"].error
     assert stats.results["0002"].status == "ok"
+    assert slots._value == 2                       # 2 releases for 2 pages
 
 
 def test_fetch_failure_recorded(tmp_path):
@@ -57,6 +58,7 @@ def test_fetch_failure_recorded(tmp_path):
     stats = consume(q, slots, lambda p: {}, lambda n, f: None)
     assert stats.results["0001"].status == "failed"
     assert "500" in stats.results["0001"].error
+    assert slots._value == 1                       # released
 
 
 def test_stall_accounting(tmp_path):
@@ -69,3 +71,18 @@ def test_stall_accounting(tmp_path):
     threading.Thread(target=feed, daemon=True).start()
     stats = consume(q, slots, lambda p: {}, lambda n, f: None)
     assert stats.stall_seconds >= 0.25
+
+
+def test_keep_images_preserves_file(tmp_path):
+    q, slots = queue.Queue(), threading.Semaphore(0)
+    q.put(_fr(tmp_path, 1)); q.put(None)
+
+    def process(path: Path):
+        out = tmp_path / "alto" / f"{path.stem}.xml"
+        out.parent.mkdir(exist_ok=True)
+        out.write_text("<alto/>")
+        return {"alto": out}
+
+    stats = consume(q, slots, process, lambda n, f: None, keep_images=True)
+    assert stats.results["0001"].status == "ok"
+    assert (tmp_path / "0001.jpg").exists()   # image preserved
