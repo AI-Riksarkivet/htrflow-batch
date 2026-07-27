@@ -6,8 +6,15 @@ from pathlib import Path
 
 
 def parse_alto_dims(path: Path) -> tuple[int, int]:
-    for _, elem in ET.iterparse(str(path)):
+    root = ET.parse(str(path)).getroot()
+    candidates = []
+    for elem in root.iter():
         w, h = elem.get("WIDTH"), elem.get("HEIGHT")
         if w is not None and h is not None:
-            return int(float(w)), int(float(h))
+            tag = elem.tag.rsplit("}", 1)[-1]
+            if tag == "Page":
+                return int(float(w)), int(float(h))
+            candidates.append((int(float(w)), int(float(h))))
+    if candidates:
+        return candidates[0]
     raise ValueError(f"no WIDTH/HEIGHT element in {path}")

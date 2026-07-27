@@ -11,7 +11,7 @@ def load_pipeline(pipeline_path: str, out_dir: Path):
 
     pipeline = Pipeline.from_config(pipeline_path)
     for step in pipeline.steps:
-        if step.__class__.__name__ == "Export":
+        if isinstance(step, Export):
             raise ValueError(
                 "pipeline YAML must not contain Export steps; "
                 "the wrapper appends them (DESIGN.md §5.7)")
