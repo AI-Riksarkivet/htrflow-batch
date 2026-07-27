@@ -1,0 +1,57 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: htr-vol-301
+  namespace: htr-batch
+  labels:
+    app: htrflow-batch
+    batch.htrflow/volume: mock-vol
+    kueue.x-k8s.io/queue-name: htr-batch
+spec:
+  suspend: true
+  backoffLimit: 2
+  activeDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 7200
+  template:
+    metadata:
+      labels: { app: htrflow-batch }
+    spec:
+      restartPolicy: Never
+      runtimeClassName: nvidia
+      containers:
+        - name: wrapper
+          image: 127.0.0.1:30500/htrflow-batch:v1
+          env:
+            - name: VOLUME_REF
+              value: mock-vol
+            - name: IIIF_MANIFEST_URL
+              value: "http://10.16.51.53:30900/htr-fixtures/mock-vol/manifest.json"
+            - name: PIPELINE_PATH
+              value: /config/pipeline.yaml
+            - name: PIPELINE_ID
+              value: demo-v1
+            - name: PUBLIC_RESULTS_BASE
+              value: "http://10.16.51.53:30900/htr-results"
+            - name: HF_HOME
+              value: /data/hf
+            - name: WORKDIR_PATH
+              value: /work
+          envFrom:
+            - secretRef: { name: htr-batch-s3 }
+          volumeMounts:
+            - name: pipeline
+              mountPath: /config
+            - name: data
+              mountPath: /data
+            - name: work
+              mountPath: /work
+          resources:
+            requests: { cpu: "4", memory: 8Gi, nvidia.com/gpu: "1" }
+            limits: { cpu: "4", memory: 16Gi, nvidia.com/gpu: "1" }
+      volumes:
+        - name: pipeline
+          configMap: { name: htr-pipeline-demo-v1 }
+        - name: data
+          persistentVolumeClaim: { claimName: htr-test-data }
+        - name: work
+          emptyDir: { medium: Memory, sizeLimit: 2Gi }

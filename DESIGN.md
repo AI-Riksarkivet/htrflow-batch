@@ -1016,8 +1016,39 @@ pulled in ~40 s. All models on `cuda:0` (Blackwell sm_120): **2 pages in 19 s
 verify 2/2. Image-iteration workflow from here: `docker build` + `docker push`
 (only changed layers) — no sudo.
 
-**Not yet tested:** IIIF-manifest walking (tests used direct image URLs), the
-D16 library-driver wrapper (tests used the stock CLI).
+**D16 wrapper smoke — 2026-07-27 — BLOCKED.** First cluster GPU run of the
+real `htrflow-batch:v1` image (Task 9's build) against mocked IIIF (4
+`htr_demo` fixture pages served from a new anonymous-read `htr-fixtures`
+RustFS bucket, no live lbiiif dependency — see `k8s/README.md`). Job
+`htr-vol-301` (`k8s/job-real-wrapper.yaml` + `k8s/pipeline-demo-v1.yaml`)
+was admitted by Kueue immediately, downloaded the manifest and all 4 pages
+successfully (`4 pages in manifest`, `resume: 0 done, 4 to process`), then
+crashed before any HTR ran — never reached the GPU/streaming stage, so no
+`manifest.json` was published and no pages/sec, `wall_seconds`, or
+`gpu_stall_seconds` numbers exist from this attempt. **Root cause (wrapper
+bug, not fixtures/YAML):** `htrflow_batch/driver.py::load_pipeline` calls
+`Pipeline.from_config(pipeline_path)` with the *raw path string* instead of
+the parsed YAML dict that `htrflow.pipeline.pipeline.Pipeline.from_config`
+requires (its signature is `from_config(config: dict[str, str])`). Every
+attempt (Job retried 3× under `backoffLimit: 2`, identical each time) failed
+in the same place with `TypeError: string indices must be integers`
+(indexing a string with `"steps"`), surfaced correctly by the wrapper's own
+exit-code/termination-log contract: exit 1 (`EXIT_TRANSIENT`),
+`{"stage": "stream", "permanent": false, "error": "string indices must be
+integers"}`. Not caught by unit tests because `driver.py` keeps all htrflow
+imports function-local (by design, so the wrapper imports cleanly without
+torch) — no test exercises `load_pipeline` against the real
+`htrflow.pipeline.pipeline.Pipeline`. Fix needed in `driver.load_pipeline`:
+read + `yaml.safe_load` the file at `pipeline_path` before calling
+`Pipeline.from_config`. Per this task's scope, wrapper source was **not**
+patched here — fixtures (`k8s/fixtures/`), the pipeline ConfigMap, and the
+Job manifest were verified correct (pages served 200 anonymously, manifest
+walked fine) and are ready to rerun once the driver bug is fixed.
+
+**Not yet tested:** IIIF-manifest walking against the real wrapper end to
+end (blocked above — the manifest fetch/page-list step itself is proven
+working, but nothing past it), the D16 library-driver wrapper's HTR/publish
+path (tests used the stock CLI).
 
 **Host gotchas fixed en route** (persisted; also in memory notes):
 `fs.inotify.max_user_instances=128` was exhausted by root's services → kubelet
