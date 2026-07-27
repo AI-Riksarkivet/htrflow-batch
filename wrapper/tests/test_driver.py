@@ -174,3 +174,63 @@ def test_load_pipeline_rejects_export_steps(tmp_path, monkeypatch):
     # Should raise ValueError because the pipeline already has Export steps
     with pytest.raises(ValueError, match="must not contain Export steps"):
         load_pipeline(str(pipeline_yaml), out_dir)
+
+
+def _inject_old_api_fake_htrflow(monkeypatch):
+    """Old-API fake: from_config(path_str) raises TypeError, forcing the
+    dict-fallback branch (which is what actually opens/parses the YAML)."""
+    mock_export_class = type("Export", (), {})
+
+    class MockPipeline:
+        def __init__(self, steps=None):
+            self.steps = steps if steps is not None else []
+
+        @staticmethod
+        def from_config(config):
+            if isinstance(config, str):
+                raise TypeError("string indices must be integers")
+            return MockPipeline(steps=[])
+
+    fake_htrflow = ModuleType("htrflow")
+    fake_pipeline_mod = ModuleType("htrflow.pipeline")
+    fake_pipeline_pipeline = ModuleType("htrflow.pipeline.pipeline")
+    fake_steps = ModuleType("htrflow.pipeline.steps")
+
+    fake_pipeline_pipeline.Pipeline = MockPipeline
+    fake_steps.Export = mock_export_class
+
+    monkeypatch.setitem(sys.modules, "htrflow", fake_htrflow)
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline", fake_pipeline_mod)
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline)
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline.steps", fake_steps)
+
+
+def test_load_pipeline_malformed_yaml_is_permanent(tmp_path, monkeypatch):
+    """Malformed pipeline YAML must surface as ValueError (main.py's
+    permanent/exit-13 bucket), not yaml.YAMLError (which main.py's bare
+    `except Exception` would misclassify as transient/exit-1)."""
+    _inject_old_api_fake_htrflow(monkeypatch)
+
+    out_dir = tmp_path / "output"
+    out_dir.mkdir()
+    pipeline_yaml = tmp_path / "pipeline.yaml"
+    pipeline_yaml.write_text("steps: [unclosed")
+
+    from htrflow_batch.driver import load_pipeline
+
+    with pytest.raises(ValueError, match="bad pipeline config"):
+        load_pipeline(str(pipeline_yaml), out_dir)
+
+
+def test_load_pipeline_missing_file_is_permanent(tmp_path, monkeypatch):
+    """A nonexistent pipeline path must also surface as ValueError, not
+    FileNotFoundError."""
+    _inject_old_api_fake_htrflow(monkeypatch)
+
+    out_dir = tmp_path / "output"
+    out_dir.mkdir()
+
+    from htrflow_batch.driver import load_pipeline
+
+    with pytest.raises(ValueError, match="bad pipeline config"):
+        load_pipeline(str(tmp_path / "does-not-exist.yaml"), out_dir)

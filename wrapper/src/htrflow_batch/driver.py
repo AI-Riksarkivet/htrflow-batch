@@ -4,18 +4,25 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
+
 
 def load_pipeline(pipeline_path: str, out_dir: Path):
     from htrflow.pipeline.pipeline import Pipeline
     from htrflow.pipeline.steps import Export
 
     try:
-        pipeline = Pipeline.from_config(str(pipeline_path))
-    except (TypeError, KeyError):
-        # older htrflow builds: from_config takes a parsed config dict, not a path
-        import yaml
-        with open(pipeline_path) as f:
-            pipeline = Pipeline.from_config(yaml.safe_load(f))
+        try:
+            pipeline = Pipeline.from_config(str(pipeline_path))
+        except (TypeError, KeyError):
+            # older htrflow builds: from_config takes a parsed config dict, not a path
+            with open(pipeline_path) as f:
+                pipeline = Pipeline.from_config(yaml.safe_load(f))
+    except (yaml.YAMLError, OSError) as e:
+        # Malformed YAML or a missing/unreadable pipeline file is a config
+        # mistake, not a flaky runtime condition — surface it as ValueError
+        # so main.py classifies it PERMANENT (exit 13), not TRANSIENT (exit 1).
+        raise ValueError(f"bad pipeline config: {e}") from e
     for step in pipeline.steps:
         if isinstance(step, Export):
             raise ValueError(

@@ -199,10 +199,14 @@ Wrapper contract — env vars:
 | `PIPELINE_PATH` | pipeline YAML, mounted from the immutable per-version ConfigMap (§5.7) | required |
 | `PIPELINE_ID` | short id namespacing the output keys (§5.4) | required |
 | `S3_ENDPOINT` / `S3_BUCKET` / `S3_PREFIX` | result destination (creds from Secret) | required |
-| `MAX_IMAGE_WIDTH` | IIIF size cap (`/full/!{w},/`) — **enforced**, and part of the fetched URL, so cached/stored artifacts can never disagree with config | 2500 |
+| `MAX_IMAGE_WIDTH` | IIIF size cap (`/full/{w},/`) — **enforced**, and part of the fetched URL, so cached/stored artifacts can never disagree with config (note: `!w,h` 501s on lbiiif) | 2500 |
 | `RESUME` | skip pages whose outputs already exist | true |
 | `LOOKAHEAD_PAGES` | max pages downloaded ahead of the consumer (bounds tmpfs) | 64 |
-| `WORKDIR` | `memory` (tmpfs) or `disk` escape hatch | memory |
+| `MAX_PAGES` | cap on pages processed, `0` = all (test knob) | 0 |
+| `WORKDIR_PATH` | filesystem path for downloads + local pipeline outputs | /work |
+| `DOWNLOAD_CONCURRENCY` | concurrent image downloads | 12 |
+| `PUBLIC_RESULTS_BASE` | browser-reachable base URL for `iiif.json`/viewer links (≠ the in-cluster S3 endpoint) | required |
+| `TERMINATION_LOG_PATH` | where the exit reason (stage, permanent/transient, error) is written | /dev/termination-log |
 
 Stages around the streaming loop:
 

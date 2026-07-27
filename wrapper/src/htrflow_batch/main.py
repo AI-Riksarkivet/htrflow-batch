@@ -39,8 +39,14 @@ def _http_client() -> httpx.Client:
 
 def _terminate(env: Mapping[str, str], reason: dict) -> None:
     path = env.get("TERMINATION_LOG_PATH", "/dev/termination-log")
+    error = reason.get("error")
+    if isinstance(error, str) and len(error) > 3500:
+        # Truncate the *field* before serializing, never the serialized JSON
+        # itself -- slicing json.dumps(reason)[:N] can cut mid-string and
+        # write invalid JSON to the termination log.
+        reason = {**reason, "error": error[:3500] + "...(truncated)"}
     try:
-        Path(path).write_text(json.dumps(reason)[:4096])
+        Path(path).write_text(json.dumps(reason))
     except OSError:
         log.warning("could not write termination log to %s", path)
 
@@ -154,6 +160,13 @@ def main(env: Optional[Mapping[str, str]] = None,
                     dims[p.name] = parse_alto_dims_bytes(data)
                 except Exception:
                     pass
+        if len(dims) < len(pages):
+            log.warning("viewer manifest covers %d/%d pages",
+                        len(dims), len(pages))
+        if not dims:
+            log.warning("[%s] no ALTO dims resolved for any page; "
+                        "iiif.json not published, viewer_url will 404",
+                        cfg.volume_ref)
         if dims:
             store.put_json("iiif.json", build_viewer_manifest(
                 cfg, source_manifest, pages, dims))

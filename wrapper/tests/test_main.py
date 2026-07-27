@@ -156,3 +156,69 @@ def test_resume_failure_is_attributed_to_resume_stage(env, cfg, s3, monkeypatch)
     assert rc == EXIT_TRANSIENT
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
     assert term["stage"] == "resume"
+
+
+def test_terminate_with_long_error_writes_valid_json(tmp_path):
+    """A verify-stage failure with a huge missing/failed page list produces
+    an `error` string well past the old 4096-byte cutoff. Slicing the
+    *serialized* JSON (`json.dumps(reason)[:4096]`) can cut mid-string and
+    write invalid JSON to the termination log; the fix truncates the field
+    before serializing instead."""
+    log_path = tmp_path / "term.log"
+    huge_missing = [f"{i:04d}" for i in range(1000)]
+    long_error = f"verify failed: missing={huge_missing} failed=[]"
+    assert len(json.dumps({"error": long_error})) > 4096  # actually exercises the bug
+
+    main_mod._terminate(
+        {"TERMINATION_LOG_PATH": str(log_path)},
+        {"stage": "verify", "permanent": False, "error": long_error},
+    )
+
+    term = json.loads(log_path.read_text())  # must not raise
+    assert term["stage"] == "verify"
+    assert term["error"].startswith("verify failed: missing=")
+
+
+def test_publish_warns_when_viewer_manifest_incomplete(env, cfg, s3, caplog):
+    """When some pages' ALTO dims can't be parsed, iiif.json still publishes
+    for the pages it can, but the wrapper must log that the viewer manifest
+    is incomplete rather than silently dropping canvases."""
+    def factory(c):
+        def process(path: Path):
+            out = Path(c.workdir) / "outputs" / "alto" / f"{path.stem}.xml"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            if path.stem == "0002":
+                out.write_text("<alto><Layout><Page/></Layout></alto>")  # no WIDTH/HEIGHT
+            else:
+                out.write_text('<alto><Layout><Page WIDTH="2500" HEIGHT="3538"/>'
+                               "</Layout></alto>")
+            return {"alto": out}
+        return process
+
+    with caplog.at_level("WARNING"):
+        rc = main(env, process_page_factory=factory)
+    assert rc == EXIT_OK
+    assert "viewer manifest covers 2/3 pages" in caplog.text
+    keys = _keys(s3, cfg)
+    assert "demo-v1/SE-RA-1234/iiif.json" in keys  # still published for the 2 good pages
+
+
+def test_publish_warns_when_no_dims_resolved(env, cfg, s3, caplog):
+    """When no page's ALTO dims can be parsed, iiif.json is skipped entirely
+    while manifest.json still advertises a viewer_url; the wrapper must warn
+    that the viewer URL will 404 instead of failing silently."""
+    def factory(c):
+        def process(path: Path):
+            out = Path(c.workdir) / "outputs" / "alto" / f"{path.stem}.xml"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text("<alto><Layout><Page/></Layout></alto>")  # no WIDTH/HEIGHT
+            return {"alto": out}
+        return process
+
+    with caplog.at_level("WARNING"):
+        rc = main(env, process_page_factory=factory)
+    assert rc == EXIT_OK
+    assert "viewer_url will 404" in caplog.text
+    keys = _keys(s3, cfg)
+    assert "demo-v1/SE-RA-1234/iiif.json" not in keys
+    assert "demo-v1/SE-RA-1234/manifest.json" in keys
