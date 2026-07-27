@@ -1,6 +1,7 @@
 import queue
 import threading
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 from htrflow_batch.fetch import FetchResult, run_downloader
@@ -60,3 +61,43 @@ def test_lookahead_blocks(tmp_path):
     slots.release(); slots.release()
     t.join(timeout=5)
     assert not t.is_alive()
+
+
+def test_non_httpx_exception_caught(tmp_path):
+    """Non-httpx exceptions (e.g. OSError from write_bytes) are caught and reported."""
+    def handler(req):
+        return httpx.Response(200, content=b"data")
+
+    q, slots = queue.Queue(), threading.Semaphore(64)
+
+    # Monkeypatch Path.write_bytes to raise OSError for page 2
+    original_write_bytes = Path.write_bytes
+    def patched_write_bytes(self, data):
+        if self.name == "0002.jpg":
+            raise OSError("Disk full")
+        return original_write_bytes(self, data)
+
+    with patch.object(Path, 'write_bytes', patched_write_bytes):
+        run_downloader(_pages(3), tmp_path, q, slots, _client(handler), retries=1)
+
+    # Collect all results (3 pages + sentinel)
+    results = [q.get() for _ in range(3)]
+    assert q.get() is None
+
+    # Verify we got exactly 3 FetchResults
+    assert len(results) == 3
+    assert all(isinstance(r, FetchResult) for r in results)
+
+    # Pages 1 and 3 should succeed
+    assert results[0].page.name == "0001"
+    assert results[0].path is not None
+    assert results[0].error is None
+
+    assert results[2].page.name == "0003"
+    assert results[2].path is not None
+    assert results[2].error is None
+
+    # Page 2 should have error
+    assert results[1].page.name == "0002"
+    assert results[1].path is None
+    assert "OSError" in results[1].error

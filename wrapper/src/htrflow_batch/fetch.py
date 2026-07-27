@@ -1,7 +1,9 @@
 """Bounded-lookahead downloader (DESIGN.md §5.1 downloader pool).
 
-Runs in a plain thread; uses a bounded pool of worker threads via httpx sync
-client for simplicity and determinism. `slots` (Semaphore(lookahead_pages))
+Runs in a plain thread with a separate relay thread. Main thread acquires
+bounded slots and submits downloads to a pool of worker threads via httpx sync
+client. Relay thread enqueues results in submission order while main thread may
+block acquiring slots, preventing deadlock. `slots` (Semaphore(lookahead_pages))
 bounds pages-in-flight-or-unconsumed so tmpfs never holds more than the window.
 """
 from __future__ import annotations
@@ -37,9 +39,11 @@ def _fetch_one(page: PageRef, dest_dir: Path, client: httpx.Client,
                 path.write_bytes(resp.content)
                 return FetchResult(page, path, None, len(resp.content))
             last = f"HTTP {resp.status_code}"
-        except httpx.HTTPError as e:
-            last = str(e)
-        time.sleep(backoff * (2 ** attempt))
+        except Exception as e:
+            last = repr(e)
+        # Skip sleep after final attempt
+        if attempt < retries - 1:
+            time.sleep(backoff * (2 ** attempt))
     return FetchResult(page, None, last)
 
 
@@ -60,12 +64,18 @@ def run_downloader(pages: list[PageRef], dest_dir: Path, out_queue: queue.Queue,
     def enqueue_results_in_order():
         while True:
             try:
-                fut = futures_queue.get(timeout=0.1)
+                page_and_fut = futures_queue.get(timeout=0.1)
             except queue.Empty:
                 if done_event.is_set():
                     break
                 continue
-            result = fut.result()  # Block until this future completes
+            page, fut = page_and_fut
+            try:
+                result = fut.result()  # Block until this future completes
+            except Exception as e:
+                # Belt-and-braces: if fut.result() raises unexpectedly (should not
+                # happen since _fetch_one catches all exceptions), create error result
+                result = FetchResult(page, None, repr(e))
             total_holder[0] += result.size
             out_queue.put(result)
 
@@ -76,7 +86,7 @@ def run_downloader(pages: list[PageRef], dest_dir: Path, out_queue: queue.Queue,
         for page in pages:
             slots.acquire()          # bounded lookahead: consumer releases
             fut = pool.submit(_fetch_one, page, dest_dir, client, retries, backoff)
-            futures_queue.put(fut)
+            futures_queue.put((page, fut))
 
         done_event.set()
 
