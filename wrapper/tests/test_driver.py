@@ -11,28 +11,28 @@ import pytest
 
 
 def test_load_pipeline_path_api(tmp_path, monkeypatch):
-    """Test load_pipeline with newer htrflow API: from_config(path_str)."""
+    """Test load_pipeline with newer htrflow API: from_config(path_str).
+
+    Verifies pipeline is reconstructed with combined steps (originals + exports)."""
     # Setup fake htrflow modules
     mock_export_class = type("Export", (), {})
-    mock_export_instances = []
 
     def mock_export_init(self, dest, fmt):
         self.dest = dest
         self.fmt = fmt
-        mock_export_instances.append(self)
 
     mock_export_class.__init__ = mock_export_init
 
     called_with = []
 
     class MockPipeline:
-        def __init__(self):
-            self.steps = []
+        def __init__(self, steps=None):
+            self.steps = steps if steps is not None else []
 
         @staticmethod
         def from_config(config):
             called_with.append(config)
-            return MockPipeline()
+            return MockPipeline(steps=[])
 
     # Inject fake modules
     fake_htrflow = ModuleType("htrflow")
@@ -61,13 +61,14 @@ def test_load_pipeline_path_api(tmp_path, monkeypatch):
 
     # Verify: from_config was called with the path string
     assert called_with == [str(pipeline_yaml)]
-    # Verify: two Export steps were appended
-    assert len(mock_export_instances) == 2
-    assert mock_export_instances[0].fmt == "alto"
-    assert mock_export_instances[1].fmt == "page"
+    # Verify: returned pipeline has 2 steps (the original empty list + 2 Exports)
+    assert len(pipeline.steps) == 2
+    # Verify: Export steps are in the pipeline with correct format names
+    assert pipeline.steps[0].fmt == "alto"
+    assert pipeline.steps[1].fmt == "page"
     # Verify: Export destinations are under out_dir
-    assert str(out_dir / "alto") in mock_export_instances[0].dest
-    assert str(out_dir / "page") in mock_export_instances[1].dest
+    assert str(out_dir / "alto") in pipeline.steps[0].dest
+    assert str(out_dir / "page") in pipeline.steps[1].dest
 
 
 def test_load_pipeline_dict_fallback(tmp_path, monkeypatch):
@@ -75,20 +76,18 @@ def test_load_pipeline_dict_fallback(tmp_path, monkeypatch):
 
     Simulates fallback when path-based API raises TypeError."""
     mock_export_class = type("Export", (), {})
-    mock_export_instances = []
 
     def mock_export_init(self, dest, fmt):
         self.dest = dest
         self.fmt = fmt
-        mock_export_instances.append(self)
 
     mock_export_class.__init__ = mock_export_init
 
     called_with = []
 
     class MockPipeline:
-        def __init__(self):
-            self.steps = []
+        def __init__(self, steps=None):
+            self.steps = steps if steps is not None else []
 
         @staticmethod
         def from_config(config):
@@ -96,7 +95,7 @@ def test_load_pipeline_dict_fallback(tmp_path, monkeypatch):
             # Older API: raise TypeError when given a string
             if isinstance(config, str):
                 raise TypeError("string indices must be integers")
-            return MockPipeline()
+            return MockPipeline(steps=[])
 
     # Inject fake modules
     fake_htrflow = ModuleType("htrflow")
@@ -128,8 +127,13 @@ def test_load_pipeline_dict_fallback(tmp_path, monkeypatch):
     assert called_with[0] == str(pipeline_yaml)  # First call (path)
     assert isinstance(called_with[1], dict)  # Second call (dict)
     assert "steps" in called_with[1]  # Dict has "steps" key
-    # Verify: two Export steps were appended
-    assert len(mock_export_instances) == 2
+    # Verify: returned pipeline has 2 steps (original empty list + 2 Exports)
+    assert len(pipeline.steps) == 2
+    assert pipeline.steps[0].fmt == "alto"
+    assert pipeline.steps[1].fmt == "page"
+    # Verify: Export destinations are correct
+    assert str(out_dir / "alto") in pipeline.steps[0].dest
+    assert str(out_dir / "page") in pipeline.steps[1].dest
 
 
 def test_load_pipeline_rejects_export_steps(tmp_path, monkeypatch):
@@ -137,16 +141,13 @@ def test_load_pipeline_rejects_export_steps(tmp_path, monkeypatch):
     mock_export_class = type("Export", (), {})
 
     class MockPipeline:
-        def __init__(self, has_export=False):
-            self.has_export = has_export
-            if has_export:
-                self.steps = [mock_export_class()]
-            else:
-                self.steps = []
+        def __init__(self, steps=None):
+            self.steps = steps if steps is not None else []
 
         @staticmethod
         def from_config(config):
-            return MockPipeline(has_export=True)
+            # Pipeline with an existing Export step
+            return MockPipeline(steps=[mock_export_class()])
 
     # Inject fake modules
     fake_htrflow = ModuleType("htrflow")

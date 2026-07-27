@@ -21,8 +21,12 @@ def load_pipeline(pipeline_path: str, out_dir: Path):
             raise ValueError(
                 "pipeline YAML must not contain Export steps; "
                 "the wrapper appends them (DESIGN.md §5.7)")
-    pipeline.steps.append(Export(str(out_dir / "alto"), "alto"))
-    pipeline.steps.append(Export(str(out_dir / "page"), "page"))
+    exports = [Export(str(out_dir / "alto"), "alto"),
+               Export(str(out_dir / "page"), "page")]
+    # rebuild so Pipeline.__init__ wires the new steps the same way as the
+    # originals (older htrflow sets parent_pipeline there; append leaves the
+    # Export orphaned and its metadata None)
+    pipeline = Pipeline(list(pipeline.steps) + exports)
     return pipeline
 
 
