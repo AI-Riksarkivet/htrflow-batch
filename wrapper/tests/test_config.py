@@ -38,3 +38,8 @@ def test_missing_required_raises():
     env = dict(REQUIRED); del env["VOLUME_REF"]
     with pytest.raises(ConfigError, match="VOLUME_REF"):
         Config.from_env(env)
+
+def test_s3_endpoint_optional():
+    env = dict(REQUIRED); del env["S3_ENDPOINT"]
+    cfg = Config.from_env(env)
+    assert cfg.s3_endpoint == ""
