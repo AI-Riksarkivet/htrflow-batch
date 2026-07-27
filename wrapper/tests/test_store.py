@@ -41,3 +41,10 @@ def test_put_text(cfg, s3):
     obj = s3.get_object(Bucket=cfg.s3_bucket,
                         Key="demo-v1/SE-RA-1234/pipeline.yaml")
     assert obj["ContentType"] == "text/yaml"
+
+
+def test_get_bytes(cfg, s3):
+    store = ResultStore(cfg)
+    s3.put_object(Bucket=cfg.s3_bucket,
+                  Key="demo-v1/SE-RA-1234/alto/0001.xml", Body=b"<alto/>")
+    assert store.get_bytes("alto/0001.xml") == b"<alto/>"

@@ -54,3 +54,7 @@ class ResultStore:
             Bucket=self.bucket, Key=self._key(rel_key),
             Body=text.encode(), ContentType=content_type,
         )
+
+    def get_bytes(self, rel_key: str) -> bytes:
+        obj = self.client.get_object(Bucket=self.bucket, Key=self._key(rel_key))
+        return obj["Body"].read()

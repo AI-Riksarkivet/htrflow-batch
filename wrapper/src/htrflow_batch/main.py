@@ -20,7 +20,7 @@ from .fetch import run_downloader
 from .iiif import ManifestError, fetch_manifest, pages_from_manifest
 from .store import ResultStore
 from .stream import PageOutcome, consume
-from .viewer import build_viewer_manifest, parse_alto_dims
+from .viewer import build_viewer_manifest, parse_alto_dims, parse_alto_dims_bytes
 
 log = logging.getLogger("htrflow_batch")
 
@@ -132,6 +132,15 @@ def main(env: Optional[Mapping[str, str]] = None,
                 try:
                     dims[p.name] = parse_alto_dims(alto[0])
                 except ValueError:
+                    pass
+            elif p.name in uploaded:
+                # resumed/skipped page: no local ALTO from this run, but a
+                # prior run already published one — fetch it to fill dims so
+                # the viewer manifest stays complete across resumes.
+                try:
+                    data = store.get_bytes(f"alto/{p.name}.xml")
+                    dims[p.name] = parse_alto_dims_bytes(data)
+                except Exception:
                     pass
         if dims:
             store.put_json("iiif.json", build_viewer_manifest(

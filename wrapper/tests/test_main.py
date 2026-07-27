@@ -65,8 +65,10 @@ def test_happy_path(env, cfg, s3):
 
 
 def test_resume_skips_done(env, cfg, s3):
-    s3.put_object(Bucket=cfg.s3_bucket,
-                  Key="demo-v1/SE-RA-1234/alto/0001.xml", Body=b"<alto/>")
+    s3.put_object(
+        Bucket=cfg.s3_bucket,
+        Key="demo-v1/SE-RA-1234/alto/0001.xml",
+        Body=b'<alto><Layout><Page WIDTH="2500" HEIGHT="3538"/></Layout></alto>')
     calls = []
 
     def factory(c):
@@ -83,6 +85,12 @@ def test_resume_skips_done(env, cfg, s3):
         Bucket=cfg.s3_bucket,
         Key="demo-v1/SE-RA-1234/manifest.json")["Body"].read())
     assert body["results"]["0001"]["status"] == "skipped"
+
+    iiif = json.loads(s3.get_object(
+        Bucket=cfg.s3_bucket,
+        Key="demo-v1/SE-RA-1234/iiif.json")["Body"].read())
+    canvas_names = {c["id"].rsplit("/", 1)[-1] for c in iiif["items"]}
+    assert canvas_names == {"0001", "0002", "0003"}   # skipped page not omitted
 
 
 def test_bad_manifest_is_permanent(env, cfg, s3, monkeypatch):
