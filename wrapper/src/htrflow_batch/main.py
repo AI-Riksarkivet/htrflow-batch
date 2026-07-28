@@ -1,4 +1,4 @@
-"""Stage wiring: setup -> resume -> stream -> verify -> publish (DESIGN.md §5.1)."""
+"""Stage wiring: setup -> resume -> stream -> verify -> publish (docs: wrapper)."""
 
 from __future__ import annotations
 
@@ -127,8 +127,8 @@ def main(
         dl_thread.start()
 
         # Build/load the process fn only after the downloader thread is
-        # started, so model load overlaps the first downloads (DESIGN.md §5.6)
-        # instead of happening serially before any bytes move.
+        # started, so model load overlaps the first downloads (docs: wrapper,
+        # "Model handling") instead of happening serially before any bytes move.
         factory = process_page_factory or _default_factory
         process = factory(cfg)
 

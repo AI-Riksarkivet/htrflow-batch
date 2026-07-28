@@ -1,4 +1,4 @@
-"""Env contract for the wrapper (DESIGN.md §5.1)."""
+"""Env contract for the wrapper (docs: wrapper)."""
 
 from __future__ import annotations
 

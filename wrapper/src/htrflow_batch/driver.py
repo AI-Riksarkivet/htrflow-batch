@@ -1,5 +1,5 @@
 """htrflow integration. ALL htrflow imports live inside functions so the
-wrapper package imports cleanly on hosts without torch (DESIGN.md constraint)."""
+wrapper package imports cleanly on hosts without torch (docs: wrapper)."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def load_pipeline(pipeline_path: str, out_dir: Path):
         if isinstance(step, Export):
             raise ValueError(
                 "pipeline YAML must not contain Export steps; "
-                "the wrapper appends them (DESIGN.md §5.7)"
+                "the wrapper appends them (docs: wrapper)"
             )
     exports = [
         Export(str(out_dir / "alto"), "alto"),

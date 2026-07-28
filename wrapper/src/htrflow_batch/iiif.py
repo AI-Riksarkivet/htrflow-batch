@@ -1,4 +1,4 @@
-"""IIIF Presentation 3 manifest -> ordered page list (DESIGN.md §5.1 stage 1)."""
+"""IIIF Presentation 3 manifest -> ordered page list (docs: wrapper)."""
 
 from __future__ import annotations
 

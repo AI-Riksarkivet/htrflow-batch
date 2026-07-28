@@ -25,7 +25,8 @@ that reference the old content if it somehow did apply.
 
 ## PoC replay (bare k3s, in-cluster devStack)
 
-This reproduces the 2026-07-27 smoke test (see `../../DESIGN.md` §13) using
+This reproduces the 2026-07-27 smoke test (see the
+[development test log](../../docs/development/test-log.md)) using
 the chart's optional `devStack.*` components (RustFS S3, an in-cluster
 registry, the NVIDIA device plugin) instead of the standalone raw manifests
 they replace.

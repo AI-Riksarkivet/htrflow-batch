@@ -1,4 +1,4 @@
-"""S3 result store: deterministic keys, explicit content types (DESIGN.md §5.4)."""
+"""S3 result store: deterministic keys, explicit content types (docs: wrapper)."""
 
 from __future__ import annotations
 

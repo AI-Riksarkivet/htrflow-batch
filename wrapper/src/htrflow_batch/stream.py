@@ -1,4 +1,4 @@
-"""Consumer side of the streaming loop (DESIGN.md §5.1 stage 3)."""
+"""Consumer side of the streaming loop (docs: wrapper)."""
 
 from __future__ import annotations
 

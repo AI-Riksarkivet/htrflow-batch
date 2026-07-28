@@ -1,4 +1,4 @@
-"""Bounded-lookahead downloader (DESIGN.md §5.1 downloader pool).
+"""Bounded-lookahead downloader (docs: wrapper).
 
 Runs in a plain thread with a separate relay thread. Main thread acquires
 bounded slots and submits downloads to a pool of worker threads via httpx sync

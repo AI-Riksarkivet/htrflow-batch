@@ -1,4 +1,4 @@
-"""Viewer-facing outputs: ALTO dims + IIIF P3 manifest (DESIGN.md D19)."""
+"""Viewer-facing outputs: ALTO dims + IIIF P3 manifest (docs: wrapper)."""
 
 from __future__ import annotations
 

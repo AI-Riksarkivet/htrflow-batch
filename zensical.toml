@@ -25,6 +25,19 @@ nav = [
     {"Memory Budget" = "how-it-works/memory-budget.md"},
     {"Failure Handling" = "how-it-works/failure-handling.md"},
   ]},
+  { "Roadmap" = [
+    {"Phase 2: Cache Layer" = "roadmap/phase-2-cache.md"},
+    {"Evolution" = "roadmap/evolution.md"},
+    {"Open Items" = "roadmap/open-items.md"},
+  ]},
+  { "Development" = [
+    {"Setup" = "development/index.md"},
+    {"Testing" = "development/testing.md"},
+    {"CI" = "development/ci.md"},
+    {"Security" = "development/security.md"},
+    {"Deployment" = "development/deployment.md"},
+    {"Test Log" = "development/test-log.md"},
+  ]},
 ]
 
 [project.theme]
