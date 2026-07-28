@@ -1,12 +1,18 @@
+{{- if .Values.exampleJob.enabled }}
+# Task 10 smoke Job for the real htrflow-batch image against a mocked IIIF
+# manifest — a one-off PoC replay aid, not a production submission path
+# (per-volume Jobs are submitted at runtime by the orchestrator, not by this
+# chart).
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: htr-vol-301
-  namespace: htr-batch
+  namespace: {{ .Release.Namespace }}
   labels:
+    {{- include "htrflow-batch.labels" . | nindent 4 }}
     app: htrflow-batch
     batch.htrflow/volume: mock-vol
-    kueue.x-k8s.io/queue-name: htr-batch
+    kueue.x-k8s.io/queue-name: {{ .Values.queue.name }}
 spec:
   suspend: true
   backoffLimit: 2
@@ -20,24 +26,24 @@ spec:
       runtimeClassName: nvidia
       containers:
         - name: wrapper
-          image: 127.0.0.1:30500/htrflow-batch:v3
+          image: {{ .Values.exampleJob.image | required "exampleJob.image is required when exampleJob.enabled" }}
           env:
             - name: VOLUME_REF
               value: mock-vol
             - name: IIIF_MANIFEST_URL
-              value: "http://10.16.51.53:30900/htr-fixtures/mock-vol/manifest.json"
+              value: {{ .Values.exampleJob.manifestUrl | quote }}
             - name: PIPELINE_PATH
               value: /config/pipeline.yaml
             - name: PIPELINE_ID
-              value: demo-v1
+              value: {{ .Values.exampleJob.pipelineId }}
             - name: PUBLIC_RESULTS_BASE
-              value: "http://10.16.51.53:30900/htr-results"
+              value: {{ .Values.publicResultsBase | quote }}
             - name: HF_HOME
               value: /data/hf
             - name: WORKDIR_PATH
               value: /work
           envFrom:
-            - secretRef: { name: htr-batch-s3 }
+            - secretRef: { name: {{ .Values.s3.existingSecret }} }
           volumeMounts:
             - name: pipeline
               mountPath: /config
@@ -50,8 +56,9 @@ spec:
             limits: { cpu: "4", memory: 16Gi, nvidia.com/gpu: "1" }
       volumes:
         - name: pipeline
-          configMap: { name: htr-pipeline-demo-v1 }
+          configMap: { name: htr-pipeline-{{ .Values.exampleJob.pipelineId }} }
         - name: data
           persistentVolumeClaim: { claimName: htr-test-data }
         - name: work
           emptyDir: { medium: Memory, sizeLimit: 2Gi }
+{{- end }}
