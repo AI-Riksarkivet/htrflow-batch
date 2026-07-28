@@ -1,0 +1,35 @@
+diff --git a/src/uv.html b/src/uv.html
+index e19584d..942da9a 100644
+--- a/src/uv.html
++++ b/src/uv.html
+@@ -34,18 +34,18 @@
+         uv = UV.init("uv", data);
+ 
+ 
+-        const configUrl = urlAdapter.get('config');
+-        if (configUrl) {
+-          uv.on("configure", function({ config, cb }) {
+-            cb(
+-              // new Promise(function (resolve) {
+-              //   fetch(configUrl).then(function (response) {
+-              //     resolve(response.json());
+-              //   });
+-              // })
+-            );
+-          })
+-        }
++        // uv-iiif-config.json carries options (e.g. textRightPanelEnabled) that
++        // are not compiled into UV.js and must be supplied via the configure event
++        const configUrl = urlAdapter.get('config') || 'uv-iiif-config.json';
++        uv.on("configure", function({ config, cb }) {
++          cb(
++            new Promise(function (resolve) {
++              fetch(configUrl).then(function (response) {
++                resolve(response.json());
++              });
++            })
++          );
++        })
+ 
+         var $UV = document.getElementById("uv");
+ 
