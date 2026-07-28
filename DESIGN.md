@@ -1028,10 +1028,10 @@ Blackwell** — its torch supports ≤ sm_90, the RTX PRO 6000 is sm_120
 (a) on dev-kuberay the stock image is ada-only, matching the gpu-ada flavor
 assumption; (b) Blackwell support = the derived image's job — first real
 content of the D2 `htrflow-batch` image is a torch/torchvision swap to cu128
-wheels (`docker/htrflow-batch.dockerfile`).
+wheels (`.docker/htrflow-batch.dockerfile`).
 
 **GPU end-to-end (same day): PASSED.** Derived image
-(`docker/htrflow-batch.dockerfile` = stock + uv-installed torch 2.11 cu128)
+(`.docker/htrflow-batch.dockerfile` = stock + uv-installed torch 2.11 cu128)
 served from an **in-cluster registry** (`k8s/registry.yaml`, NodePort 30500;
 push via port-forward to 127.0.0.1:30500 — no docker daemon changes; pulls via
 `/etc/rancher/k3s/registries.yaml` mirror mapping, one-time sudo). 7 GB image

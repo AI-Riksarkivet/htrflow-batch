@@ -6,7 +6,7 @@
 
 **Architecture:** Small Python package (`wrapper/src/htrflow_batch/`) with one module per responsibility: env contract (`config`), IIIF manifest parsing (`iiif`), S3 I/O (`store`), async downloader (`fetch`), producer/consumer orchestration (`stream`), htrflow integration (`driver`), viewer manifest (`viewer`), wiring + exit codes (`main`). htrflow itself is only imported inside `driver.py`, so every other module is unit-testable on the host without torch.
 
-**Tech Stack:** Python ≥3.10 (image ships 3.10), httpx (async downloads), boto3 (S3), pytest + moto\[s3\] + httpx.MockTransport for tests. Image: existing `docker/htrflow-batch.dockerfile` base (stock htrflow + torch cu128), in-cluster registry `127.0.0.1:30500`.
+**Tech Stack:** Python ≥3.10 (image ships 3.10), httpx (async downloads), boto3 (S3), pytest + moto\[s3\] + httpx.MockTransport for tests. Image: existing `.docker/htrflow-batch.dockerfile` base (stock htrflow + torch cu128), in-cluster registry `127.0.0.1:30500`.
 
 ## Global Constraints
 
@@ -46,7 +46,7 @@
 │       ├── test_stream.py
 │       ├── test_viewer.py
 │       └── test_main.py
-├── docker/htrflow-batch.dockerfile   # Modify: add wrapper install + entrypoint
+├── .docker/htrflow-batch.dockerfile   # Modify: add wrapper install + entrypoint
 └── k8s/
     ├── pipeline-demo-v1.yaml         # Create: immutable per-version ConfigMap (D17)
     └── job-real-wrapper.yaml         # Create: GPU smoke Job using the wrapper
@@ -1460,7 +1460,7 @@ Expected: all tests pass. If `test_bad_manifest_is_permanent` sees stage `"setup
 ### Task 9: Image build, registry push, in-image checks
 
 **Files:**
-- Modify: `docker/htrflow-batch.dockerfile`
+- Modify: `.docker/htrflow-batch.dockerfile`
 
 **Interfaces:**
 - Consumes: `wrapper/` package (Tasks 1–8).
@@ -1488,7 +1488,7 @@ ENTRYPOINT ["python", "-m", "htrflow_batch"]
 
 Build context must include `wrapper/`, so build from the project root:
 
-Run: `cd ~/htrflow-batch && docker build -t htrflow-batch:v1 -f docker/htrflow-batch.dockerfile .`
+Run: `cd ~/htrflow-batch && docker build -t htrflow-batch:v1 -f .docker/htrflow-batch.dockerfile .`
 Expected: builds; cu128 layer comes from cache.
 
 - [ ] **Step 2: In-image checks (§9 test 0 — library-API pin canary)**
