@@ -16,7 +16,9 @@ data:
       index index.html;
       absolute_redirect off;  # keep Location relative so the NodePort survives
       location = / {
-        return 302 /uv.html#?manifest=http://10.16.51.53:30900/htr-results/demo-v1/mock-vol/iiif.json;
+        # localhost so the demo works over `ssh -L` (published iiif.json rewritten to match);
+        # on-LAN browsers would need the node IP instead — PoC access path is ssh-only
+        return 302 /uv.html#?manifest=http://localhost:30900/htr-results/demo-v1/mock-vol/iiif.json;
       }
     }
 ---
