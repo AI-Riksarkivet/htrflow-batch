@@ -1,0 +1,15 @@
+{
+  "name": "htrflow-batch",
+  "engineVersion": "v0.20.3",
+  "sdk": {
+    "source": "go"
+  },
+  "dependencies": [
+    {
+      "name": "docker-compose",
+      "source": "github.com/shykes/daggerverse/docker-compose@docker-compose/v0.1.1",
+      "pin": "c448f929b53be0f09eafe884cc77612a6d6fc7f9"
+    }
+  ],
+  "source": ".dagger"
+}
