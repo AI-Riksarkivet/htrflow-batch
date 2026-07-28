@@ -11,8 +11,8 @@ var (
 	ruffCheckCmd       = []string{"uvx", "ruff", "check", "."}
 )
 
-// Checks runs code-quality checks on the wrapper (ruff format + lint).
-// Helm chart linting is added in a later task once charts/ exists.
+// Checks runs code-quality checks on the wrapper (ruff format + lint) and
+// lints the Helm chart.
 func (m *HtrflowBatch) Checks(
 	ctx context.Context,
 	// +defaultPath="/"
@@ -33,5 +33,16 @@ func (m *HtrflowBatch) Checks(
 	if err != nil {
 		return "", fmt.Errorf("checks failed: %w", err)
 	}
+
+	// Helm chart lint (alpine/helm has no TLS needs — no caBundle wiring)
+	_, err = dag.Container().
+		From("alpine/helm:latest").
+		WithDirectory("/chart", source.Directory("charts/htrflow-batch")).
+		WithExec([]string{"helm", "lint", "/chart"}).
+		Sync(ctx)
+	if err != nil {
+		return "", fmt.Errorf("helm lint failed: %w", err)
+	}
+
 	return "All checks passed", nil
 }

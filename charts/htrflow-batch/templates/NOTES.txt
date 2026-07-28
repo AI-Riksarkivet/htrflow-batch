@@ -1,0 +1,8 @@
+htrflow-batch platform installed.
+- LocalQueue: {{ .Values.queue.name }} (namespace {{ .Release.Namespace }})
+- Kueue CRDs are a prerequisite, not installed by this chart.
+- Pipeline ConfigMaps are immutable: never reuse a pipeline id with different content — bump the id (D17).
+- Submit per-volume Jobs with suspend: true and label kueue.x-k8s.io/queue-name: {{ .Values.queue.name }}.
+{{- if .Values.viewer.enabled }}
+- Viewer: NodePort {{ .Values.viewer.nodePort }}
+{{- end }}

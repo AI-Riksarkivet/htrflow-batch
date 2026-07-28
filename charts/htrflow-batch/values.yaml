@@ -1,0 +1,48 @@
+# Default values: production-shaped. The k3s PoC replay overrides are shown in
+# docs getting-started (devStack.* true, image from the in-cluster registry).
+image:
+  repository: docker.io/riksarkivet/htrflow-batch
+  tag: latest
+
+s3:
+  endpoint: ""            # in-cluster S3 endpoint URL; empty = provider default chain
+  bucket: htr-results
+  existingSecret: htr-batch-s3   # keys: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+
+publicResultsBase: ""      # browser-reachable URL base for published results (REQUIRED for viewer manifests)
+
+queue:
+  name: htr-batch
+  flavor: default-flavor
+  # ClusterQueue quota: how many concurrent GPU jobs. PoC modelled GPUs as CPU
+  # quota (no real gpu resource on the flavor) — keep both knobs:
+  gpuQuota: 2
+  resource: cpu            # "cpu" on the PoC; "nvidia.com/gpu" on a real cluster
+
+pipelines:
+  # id -> htrflow pipeline YAML (string). Rendered as immutable ConfigMap
+  # htr-pipeline-<id>. NEVER change content under an existing id (D17).
+  {}
+
+viewer:
+  enabled: true
+  image: docker.io/riksarkivet/htrflow-batch-viewer:latest
+  nodePort: 30800
+  defaultManifest: ""      # if set, / redirects to uv.html#?manifest=<this>
+
+devStack:                  # PoC-only in-cluster dependencies, all off by default
+  rustfs:
+    enabled: false
+    nodePortS3: 30900
+    nodePortConsole: 30901
+  registry:
+    enabled: false
+    nodePort: 30500
+  nvidiaDevicePlugin:
+    enabled: false
+
+exampleJob:
+  enabled: false           # mock-vol smoke Job wired to the devStack endpoints
+  image: ""                # e.g. 127.0.0.1:30500/htrflow-batch:v3 on the PoC
+  manifestUrl: ""
+  pipelineId: demo-v1

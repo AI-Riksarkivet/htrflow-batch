@@ -1,0 +1,13 @@
+{{- range $id, $yaml := .Values.pipelines }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: htr-pipeline-{{ $id }}
+  namespace: {{ $.Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" $ | nindent 4 }}
+immutable: true
+data:
+  pipeline.yaml: |
+{{ $yaml | indent 4 }}
+{{- end }}

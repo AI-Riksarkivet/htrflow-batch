@@ -1,0 +1,29 @@
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: {{ .Values.queue.flavor }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: {{ .Values.queue.name }}-cq
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  namespaceSelector: {}
+  resourceGroups:
+    - coveredResources: [{{ .Values.queue.resource | quote }}]
+      flavors:
+        - name: {{ .Values.queue.flavor }}
+          resources:
+            - name: {{ .Values.queue.resource | quote }}
+              nominalQuota: {{ .Values.queue.gpuQuota }}
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: {{ .Values.queue.name }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  clusterQueue: {{ .Values.queue.name }}-cq

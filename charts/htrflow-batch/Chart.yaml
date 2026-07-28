@@ -1,0 +1,6 @@
+apiVersion: v2
+name: htrflow-batch
+description: Kueue-gated batch HTR platform around the htrflow image (queues, pipeline configs, results viewer). Per-volume Jobs are submitted at runtime, not by this chart.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
