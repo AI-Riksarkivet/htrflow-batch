@@ -1,0 +1,41 @@
+# UV4 viewer (D19) — static nginx site on NodePort 30800.
+# Open a volume with:
+#   http://10.16.51.53:30800/uv.html#?manifest=<PUBLIC_RESULTS_BASE>/<pipeline>/<volume>/iiif.json
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: uv4-viewer
+  namespace: htr-batch
+  labels: { app: uv4-viewer }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: uv4-viewer }
+  template:
+    metadata:
+      labels: { app: uv4-viewer }
+    spec:
+      containers:
+        - name: nginx
+          image: 127.0.0.1:30500/uv4:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: uv4-viewer
+  namespace: htr-batch
+  labels: { app: uv4-viewer }
+spec:
+  type: NodePort
+  selector: { app: uv4-viewer }
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      nodePort: 30800
