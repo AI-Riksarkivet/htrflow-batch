@@ -1,5 +1,5 @@
 .PHONY: install format lint check test ci build build-viewer scan publish \
-        compose-up compose-test compose-down helm-lint docs-serve docs-build poc-push clean
+        compose-up compose-test compose-smoke compose-down helm-lint docs-serve docs-build poc-push clean
 
 # On RA hosts dagger containers need the corp CA; harmless elsewhere if the file exists.
 CA_BUNDLE ?= /etc/ssl/certs/ca-certificates.crt
