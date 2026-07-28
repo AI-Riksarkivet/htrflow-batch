@@ -1,4 +1,5 @@
 """IIIF Presentation 3 manifest -> ordered page list (DESIGN.md §5.1 stage 1)."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -12,10 +13,10 @@ class ManifestError(Exception):
 
 @dataclass(frozen=True)
 class PageRef:
-    index: int          # 1-based position in manifest order
-    name: str           # zero-padded, e.g. "0001" — S3 key + filename stem
-    image_url: str      # width-capped IIIF image request
-    canvas: dict        # raw source canvas (for viewer.build_viewer_manifest)
+    index: int  # 1-based position in manifest order
+    name: str  # zero-padded, e.g. "0001" — S3 key + filename stem
+    image_url: str  # width-capped IIIF image request
+    canvas: dict  # raw source canvas (for viewer.build_viewer_manifest)
 
 
 def fetch_manifest(url: str, client: httpx.Client) -> dict:

@@ -1,4 +1,5 @@
 """S3 result store: deterministic keys, explicit content types (DESIGN.md §5.4)."""
+
 from __future__ import annotations
 
 import json
@@ -22,8 +23,7 @@ class ResultStore:
     def done_pages(self) -> set[str]:
         names: set[str] = set()
         paginator = self.client.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=self.bucket,
-                                       Prefix=self._key("alto/")):
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=self._key("alto/")):
             for obj in page.get("Contents", []):
                 stem = obj["Key"].rsplit("/", 1)[-1]
                 if stem.endswith(".xml"):
@@ -44,15 +44,18 @@ class ResultStore:
 
     def put_json(self, rel_key: str, obj: dict) -> None:
         self.client.put_object(
-            Bucket=self.bucket, Key=self._key(rel_key),
+            Bucket=self.bucket,
+            Key=self._key(rel_key),
             Body=json.dumps(obj, ensure_ascii=False).encode(),
             ContentType="application/json",
         )
 
     def put_text(self, rel_key: str, text: str, content_type: str) -> None:
         self.client.put_object(
-            Bucket=self.bucket, Key=self._key(rel_key),
-            Body=text.encode(), ContentType=content_type,
+            Bucket=self.bucket,
+            Key=self._key(rel_key),
+            Body=text.encode(),
+            ContentType=content_type,
         )
 
     def get_bytes(self, rel_key: str) -> bytes:

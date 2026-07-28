@@ -6,7 +6,7 @@ requires-python = ">=3.10"
 dependencies = ["httpx>=0.27", "boto3>=1.34", "pyyaml"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "moto[s3]>=5"]
+dev = ["pytest>=8", "moto[s3]>=5", "ruff>=0.8"]
 
 [build-system]
 requires = ["hatchling"]
@@ -17,3 +17,10 @@ packages = ["src/htrflow_batch"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]

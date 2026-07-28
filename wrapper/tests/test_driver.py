@@ -1,10 +1,10 @@
 """Tests for driver.py without requiring htrflow installed (import-guarded).
 
 Uses monkeypatch.setitem(sys.modules, ...) to fake htrflow modules."""
+
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from types import ModuleType
 
 import pytest
@@ -45,7 +45,9 @@ def test_load_pipeline_path_api(tmp_path, monkeypatch):
 
     monkeypatch.setitem(sys.modules, "htrflow", fake_htrflow)
     monkeypatch.setitem(sys.modules, "htrflow.pipeline", fake_pipeline_mod)
-    monkeypatch.setitem(sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline)
+    monkeypatch.setitem(
+        sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline
+    )
     monkeypatch.setitem(sys.modules, "htrflow.pipeline.steps", fake_steps)
 
     # Create a dummy pipeline YAML
@@ -108,7 +110,9 @@ def test_load_pipeline_dict_fallback(tmp_path, monkeypatch):
 
     monkeypatch.setitem(sys.modules, "htrflow", fake_htrflow)
     monkeypatch.setitem(sys.modules, "htrflow.pipeline", fake_pipeline_mod)
-    monkeypatch.setitem(sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline)
+    monkeypatch.setitem(
+        sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline
+    )
     monkeypatch.setitem(sys.modules, "htrflow.pipeline.steps", fake_steps)
 
     # Create a real YAML file with a steps key
@@ -160,7 +164,9 @@ def test_load_pipeline_rejects_export_steps(tmp_path, monkeypatch):
 
     monkeypatch.setitem(sys.modules, "htrflow", fake_htrflow)
     monkeypatch.setitem(sys.modules, "htrflow.pipeline", fake_pipeline_mod)
-    monkeypatch.setitem(sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline)
+    monkeypatch.setitem(
+        sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline
+    )
     monkeypatch.setitem(sys.modules, "htrflow.pipeline.steps", fake_steps)
 
     out_dir = tmp_path / "output"
@@ -201,7 +207,9 @@ def _inject_old_api_fake_htrflow(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "htrflow", fake_htrflow)
     monkeypatch.setitem(sys.modules, "htrflow.pipeline", fake_pipeline_mod)
-    monkeypatch.setitem(sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline)
+    monkeypatch.setitem(
+        sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline
+    )
     monkeypatch.setitem(sys.modules, "htrflow.pipeline.steps", fake_steps)
 
 
@@ -236,8 +244,7 @@ def test_load_pipeline_missing_file_is_permanent(tmp_path, monkeypatch):
         load_pipeline(str(tmp_path / "does-not-exist.yaml"), out_dir)
 
 
-def test_load_pipeline_model_download_oserror_stays_transient(
-        tmp_path, monkeypatch):
+def test_load_pipeline_model_download_oserror_stays_transient(tmp_path, monkeypatch):
     """from_config instantiates models (HF downloads); a network OSError
     there is retryable and must NOT be wrapped into ValueError (which
     main.py classifies permanent/exit-13). Final-review parked finding."""
@@ -249,8 +256,7 @@ def test_load_pipeline_model_download_oserror_stays_transient(
 
         @staticmethod
         def from_config(config):
-            raise OSError(
-                "We couldn't connect to 'https://huggingface.co'")
+            raise OSError("We couldn't connect to 'https://huggingface.co'")
 
     fake_htrflow = ModuleType("htrflow")
     fake_pipeline_mod = ModuleType("htrflow.pipeline")
@@ -261,13 +267,14 @@ def test_load_pipeline_model_download_oserror_stays_transient(
     monkeypatch.setitem(sys.modules, "htrflow", fake_htrflow)
     monkeypatch.setitem(sys.modules, "htrflow.pipeline", fake_pipeline_mod)
     monkeypatch.setitem(
-        sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline)
+        sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline
+    )
     monkeypatch.setitem(sys.modules, "htrflow.pipeline.steps", fake_steps)
 
     out_dir = tmp_path / "output"
     out_dir.mkdir()
     pipeline_yaml = tmp_path / "pipeline.yaml"
-    pipeline_yaml.write_text("steps: []")   # valid YAML: config is fine
+    pipeline_yaml.write_text("steps: []")  # valid YAML: config is fine
 
     from htrflow_batch.driver import load_pipeline
 

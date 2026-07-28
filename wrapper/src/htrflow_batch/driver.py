@@ -1,5 +1,6 @@
 """htrflow integration. ALL htrflow imports live inside functions so the
 wrapper package imports cleanly on hosts without torch (DESIGN.md constraint)."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -31,9 +32,12 @@ def load_pipeline(pipeline_path: str, out_dir: Path):
         if isinstance(step, Export):
             raise ValueError(
                 "pipeline YAML must not contain Export steps; "
-                "the wrapper appends them (DESIGN.md §5.7)")
-    exports = [Export(str(out_dir / "alto"), "alto"),
-               Export(str(out_dir / "page"), "page")]
+                "the wrapper appends them (DESIGN.md §5.7)"
+            )
+    exports = [
+        Export(str(out_dir / "alto"), "alto"),
+        Export(str(out_dir / "page"), "page"),
+    ]
     # rebuild so Pipeline.__init__ wires the new steps the same way as the
     # originals (older htrflow sets parent_pipeline there; append leaves the
     # Export orphaned and its metadata None)
@@ -49,8 +53,11 @@ def process_page(pipeline, image_path: Path, out_dir: Path) -> dict[str, Path]:
     stem = image_path.stem
     files: dict[str, Path] = {}
     for fmt in ("alto", "page"):
-        matches = sorted((out_dir / fmt).glob(f"**/{stem}*.xml")) \
-            if (out_dir / fmt).exists() else []
+        matches = (
+            sorted((out_dir / fmt).glob(f"**/{stem}*.xml"))
+            if (out_dir / fmt).exists()
+            else []
+        )
         if matches:
             files[fmt] = matches[0]
     if not files:
@@ -61,6 +68,7 @@ def process_page(pipeline, image_path: Path, out_dir: Path) -> dict[str, Path]:
 def htrflow_version() -> str:
     try:
         from importlib.metadata import version
+
         return version("htrflow")
     except Exception:
         return "unknown"

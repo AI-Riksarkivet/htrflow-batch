@@ -1,5 +1,5 @@
-import pytest
 import boto3
+import pytest
 from moto import mock_aws
 
 from htrflow_batch.config import Config
@@ -10,19 +10,24 @@ def _canvas(i: int, service_id: str) -> dict:
         "id": f"{service_id}/canvas",
         "type": "Canvas",
         "label": {"none": [f"page {i}"]},
-        "width": 3507, "height": 4962,
-        "items": [{
-            "type": "AnnotationPage",
-            "items": [{
-                "type": "Annotation",
-                "motivation": "painting",
-                "body": {
-                    "id": f"{service_id}/full/max/0/default.jpg",
-                    "type": "Image",
-                    "service": [{"id": service_id, "type": "ImageService3"}],
-                },
-            }],
-        }],
+        "width": 3507,
+        "height": 4962,
+        "items": [
+            {
+                "type": "AnnotationPage",
+                "items": [
+                    {
+                        "type": "Annotation",
+                        "motivation": "painting",
+                        "body": {
+                            "id": f"{service_id}/full/max/0/default.jpg",
+                            "type": "Image",
+                            "service": [{"id": service_id, "type": "ImageService3"}],
+                        },
+                    }
+                ],
+            }
+        ],
     }
 
 

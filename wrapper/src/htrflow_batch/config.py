@@ -1,4 +1,5 @@
 """Env contract for the wrapper (DESIGN.md §5.1)."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

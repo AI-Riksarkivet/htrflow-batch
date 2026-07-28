@@ -6,6 +6,7 @@ client. Relay thread enqueues results in submission order while main thread may
 block acquiring slots, preventing deadlock. `slots` (Semaphore(lookahead_pages))
 bounds pages-in-flight-or-unconsumed so tmpfs never holds more than the window.
 """
+
 from __future__ import annotations
 
 import queue
@@ -28,8 +29,9 @@ class FetchResult:
     size: int = 0
 
 
-def _fetch_one(page: PageRef, dest_dir: Path, client: httpx.Client,
-               retries: int, backoff: float) -> FetchResult:
+def _fetch_one(
+    page: PageRef, dest_dir: Path, client: httpx.Client, retries: int, backoff: float
+) -> FetchResult:
     last = "unknown error"
     for attempt in range(retries):
         try:
@@ -43,14 +45,20 @@ def _fetch_one(page: PageRef, dest_dir: Path, client: httpx.Client,
             last = repr(e)
         # Skip sleep after final attempt
         if attempt < retries - 1:
-            time.sleep(backoff * (2 ** attempt))
+            time.sleep(backoff * (2**attempt))
     return FetchResult(page, None, last)
 
 
-def run_downloader(pages: list[PageRef], dest_dir: Path, out_queue: queue.Queue,
-                   slots: threading.Semaphore, client: httpx.Client,
-                   concurrency: int = 12, retries: int = 3,
-                   backoff: float = 0.5) -> int:
+def run_downloader(
+    pages: list[PageRef],
+    dest_dir: Path,
+    out_queue: queue.Queue,
+    slots: threading.Semaphore,
+    client: httpx.Client,
+    concurrency: int = 12,
+    retries: int = 3,
+    backoff: float = 0.5,
+) -> int:
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -84,7 +92,7 @@ def run_downloader(pages: list[PageRef], dest_dir: Path, out_queue: queue.Queue,
 
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
         for page in pages:
-            slots.acquire()          # bounded lookahead: consumer releases
+            slots.acquire()  # bounded lookahead: consumer releases
             fut = pool.submit(_fetch_one, page, dest_dir, client, retries, backoff)
             futures_queue.put((page, fut))
 

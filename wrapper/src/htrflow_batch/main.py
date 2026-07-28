@@ -1,4 +1,5 @@
 """Stage wiring: setup -> resume -> stream -> verify -> publish (DESIGN.md §5.1)."""
+
 from __future__ import annotations
 
 import hashlib
@@ -63,10 +64,13 @@ def _default_factory(cfg: Config):
     return process
 
 
-def main(env: Optional[Mapping[str, str]] = None,
-         process_page_factory: Optional[Callable] = None) -> int:
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s %(levelname)s %(message)s")
+def main(
+    env: Optional[Mapping[str, str]] = None,
+    process_page_factory: Optional[Callable] = None,
+) -> int:
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+    )
     env = dict(env if env is not None else os.environ)
     t_start = time.monotonic()
     stage = "setup"
@@ -88,8 +92,9 @@ def main(env: Optional[Mapping[str, str]] = None,
         stage = "resume"
         done = store.done_pages() if cfg.resume else set()
         todo = [p for p in pages if p.name not in done]
-        log.info("[%s] resume: %d done, %d to process",
-                 cfg.volume_ref, len(done), len(todo))
+        log.info(
+            "[%s] resume: %d done, %d to process", cfg.volume_ref, len(done), len(todo)
+        )
 
         # -- stage 3: streaming loop ------------------------------------------
         stage = "stream"
@@ -106,8 +111,13 @@ def main(env: Optional[Mapping[str, str]] = None,
             # below, which is the correct (transient, retryable) outcome.
             try:
                 bytes_box["n"] = run_downloader(
-                    todo, input_dir, out_q, slots, client,
-                    concurrency=cfg.download_concurrency)
+                    todo,
+                    input_dir,
+                    out_q,
+                    slots,
+                    client,
+                    concurrency=cfg.download_concurrency,
+                )
             except Exception as e:
                 log.error("downloader thread failed: %r", e)
                 bytes_box["error"] = repr(e)
@@ -133,19 +143,20 @@ def main(env: Optional[Mapping[str, str]] = None,
         uploaded = store.uploaded_pages()
         expected = {p.name for p in pages}
         missing = sorted(expected - uploaded)
-        failed = sorted(n for n, r in stats.results.items()
-                        if r.status == "failed")
+        failed = sorted(n for n, r in stats.results.items() if r.status == "failed")
         if missing or failed:
-            raise RuntimeError(
-                f"verify failed: missing={missing} failed={failed}")
+            raise RuntimeError(f"verify failed: missing={missing} failed={failed}")
 
         # -- stage 5: publish (iiif.json, pipeline.yaml, manifest.json LAST) --
         stage = "publish"
         dims = {}
         out_dir = Path(cfg.workdir) / "outputs"
         for p in pages:
-            alto = sorted((out_dir / "alto").glob(f"**/{p.name}*.xml")) \
-                if (out_dir / "alto").exists() else []
+            alto = (
+                sorted((out_dir / "alto").glob(f"**/{p.name}*.xml"))
+                if (out_dir / "alto").exists()
+                else []
+            )
             if alto:
                 try:
                     dims[p.name] = parse_alto_dims(alto[0])
@@ -161,43 +172,60 @@ def main(env: Optional[Mapping[str, str]] = None,
                 except Exception:
                     pass
         if len(dims) < len(pages):
-            log.warning("viewer manifest covers %d/%d pages",
-                        len(dims), len(pages))
+            log.warning("viewer manifest covers %d/%d pages", len(dims), len(pages))
         if not dims:
-            log.warning("[%s] no ALTO dims resolved for any page; "
-                        "iiif.json not published, viewer_url will 404",
-                        cfg.volume_ref)
+            log.warning(
+                "[%s] no ALTO dims resolved for any page; "
+                "iiif.json not published, viewer_url will 404",
+                cfg.volume_ref,
+            )
         if dims:
-            store.put_json("iiif.json", build_viewer_manifest(
-                cfg, source_manifest, pages, dims))
+            store.put_json(
+                "iiif.json", build_viewer_manifest(cfg, source_manifest, pages, dims)
+            )
         pipeline_text = Path(cfg.pipeline_path).read_text()
         store.put_text("pipeline.yaml", pipeline_text, "text/yaml")
 
         wall = time.monotonic() - t_start
         ok_pages = [n for n, r in stats.results.items() if r.status == "ok"]
-        viewer_url = (f"{cfg.public_results_base.rstrip('/')}/"
-                      f"{cfg.volume_prefix}/iiif.json")
-        store.put_json("manifest.json", {
-            "volume": cfg.volume_ref,
-            "pipeline_id": cfg.pipeline_id,
-            "pipeline_sha256": hashlib.sha256(pipeline_text.encode()).hexdigest(),
-            "pipeline_yaml": pipeline_text,
-            "htrflow_version": _htrflow_version(),
-            "image_digest": env.get("IMAGE_DIGEST", "unknown"),
-            "pages": len(pages),
-            "results": {n: {"status": r.status, "seconds": round(r.seconds, 2),
-                            **({"error": r.error} if r.error else {})}
-                        for n, r in sorted(stats.results.items())},
-            "source_manifest": cfg.manifest_url,
-            "max_image_width": cfg.max_image_width,
-            "bytes_fetched": bytes_box.get("n", 0),
-            "wall_seconds": round(wall, 1),
-            "gpu_stall_seconds": round(stats.stall_seconds, 1),
-            "pages_per_second": round(len(ok_pages) / wall, 3) if wall else 0,
-            "viewer_url": viewer_url,
-        })
-        log.info("[%s] COMPLETE %d pages (%d processed) in %.1fs, viewer: %s",
-                 cfg.volume_ref, len(pages), len(ok_pages), wall, viewer_url)
+        viewer_url = (
+            f"{cfg.public_results_base.rstrip('/')}/{cfg.volume_prefix}/iiif.json"
+        )
+        store.put_json(
+            "manifest.json",
+            {
+                "volume": cfg.volume_ref,
+                "pipeline_id": cfg.pipeline_id,
+                "pipeline_sha256": hashlib.sha256(pipeline_text.encode()).hexdigest(),
+                "pipeline_yaml": pipeline_text,
+                "htrflow_version": _htrflow_version(),
+                "image_digest": env.get("IMAGE_DIGEST", "unknown"),
+                "pages": len(pages),
+                "results": {
+                    n: {
+                        "status": r.status,
+                        "seconds": round(r.seconds, 2),
+                        **({"error": r.error} if r.error else {}),
+                    }
+                    for n, r in sorted(stats.results.items())
+                },
+                "source_manifest": cfg.manifest_url,
+                "max_image_width": cfg.max_image_width,
+                "bytes_fetched": bytes_box.get("n", 0),
+                "wall_seconds": round(wall, 1),
+                "gpu_stall_seconds": round(stats.stall_seconds, 1),
+                "pages_per_second": round(len(ok_pages) / wall, 3) if wall else 0,
+                "viewer_url": viewer_url,
+            },
+        )
+        log.info(
+            "[%s] COMPLETE %d pages (%d processed) in %.1fs, viewer: %s",
+            cfg.volume_ref,
+            len(pages),
+            len(ok_pages),
+            wall,
+            viewer_url,
+        )
         # Only clean up on success; on any failure path below, the workdir
         # (downloaded images, local ALTO/PAGE outputs) is intentionally left
         # in place for postmortem inspection.
@@ -209,8 +237,7 @@ def main(env: Optional[Mapping[str, str]] = None,
         _terminate(env, {"stage": stage, "permanent": True, "error": str(e)})
         return EXIT_PERMANENT
     except Exception as e:
-        log.error("transient failure in %s: %s\n%s", stage, e,
-                  traceback.format_exc())
+        log.error("transient failure in %s: %s\n%s", stage, e, traceback.format_exc())
         _terminate(env, {"stage": stage, "permanent": False, "error": str(e)})
         return EXIT_TRANSIENT
 
@@ -218,6 +245,7 @@ def main(env: Optional[Mapping[str, str]] = None,
 def _htrflow_version() -> str:
     try:
         from .driver import htrflow_version
+
         return htrflow_version()
     except Exception:
         return "unknown"

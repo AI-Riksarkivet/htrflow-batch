@@ -1,9 +1,7 @@
-from pathlib import Path
-
 import pytest
-from htrflow_batch.config import Config
+
 from htrflow_batch.iiif import pages_from_manifest
-from htrflow_batch.viewer import parse_alto_dims, build_viewer_manifest
+from htrflow_batch.viewer import build_viewer_manifest, parse_alto_dims
 
 ALTO = """<?xml version="1.0" encoding="UTF-8"?>
 <alto xmlns="http://www.loc.gov/standards/alto/ns-v4#">
@@ -46,14 +44,13 @@ def test_build_viewer_manifest(sample_manifest, cfg):
     assert m["type"] == "Manifest"
     assert m["id"] == "http://public/htr-results/demo-v1/SE-RA-1234/iiif.json"
     assert m["label"] == sample_manifest["label"]
-    assert len(m["items"]) == 2                      # only processed pages
+    assert len(m["items"]) == 2  # only processed pages
     c1 = m["items"][0]
-    assert (c1["width"], c1["height"]) == (2500, 3538)   # capped dims (D19)
+    assert (c1["width"], c1["height"]) == (2500, 3538)  # capped dims (D19)
     body = c1["items"][0]["items"][0]["body"]
     assert body["service"][0]["id"].endswith("page-00001")
     sa = c1["seeAlso"][0]
-    assert sa["id"] == \
-        "http://public/htr-results/demo-v1/SE-RA-1234/alto/0001.xml"
+    assert sa["id"] == "http://public/htr-results/demo-v1/SE-RA-1234/alto/0001.xml"
     assert "alto" in sa["profile"]
 
 
@@ -61,23 +58,22 @@ def test_viewer_manifest_declares_search_service(sample_manifest, cfg):
     """UV4 (RA fork) gates the ALTO text panel on getSearchService() —
     without a search service entry the transcription panel never shows."""
     pages = pages_from_manifest(sample_manifest, width=2500)
-    m = build_viewer_manifest(cfg, sample_manifest, pages,
-                              {"0001": (2500, 3538)})
+    m = build_viewer_manifest(cfg, sample_manifest, pages, {"0001": (2500, 3538)})
     svc = m["service"][0]
     assert svc["profile"] == "http://iiif.io/api/search/1/search"
-    assert svc["@id"] == \
-        "http://public/htr-results/demo-v1/SE-RA-1234/search"
+    assert svc["@id"] == "http://public/htr-results/demo-v1/SE-RA-1234/search"
 
 
 def test_canvas_thumbnail_from_image_service(sample_manifest, cfg):
     """With a IIIF image service, thumbnails use a sized request (width
     syntax — lbiiif 501s on !w,h)."""
     pages = pages_from_manifest(sample_manifest, width=2500)
-    m = build_viewer_manifest(cfg, sample_manifest, pages,
-                              {"0001": (2500, 3538)})
+    m = build_viewer_manifest(cfg, sample_manifest, pages, {"0001": (2500, 3538)})
     thumb = m["items"][0]["thumbnail"][0]
-    assert thumb["id"] == \
-        "https://iiif.example/mock-vol/page-00001/full/200,/0/default.jpg"
+    assert (
+        thumb["id"]
+        == "https://iiif.example/mock-vol/page-00001/full/200,/0/default.jpg"
+    )
     assert thumb["type"] == "Image"
 
 
@@ -88,9 +84,9 @@ def test_canvas_thumbnail_falls_back_to_static_image(sample_manifest, cfg):
         body = canvas["items"][0]["items"][0]["body"]
         del body["service"]
     pages = pages_from_manifest(sample_manifest, width=2500)
-    m = build_viewer_manifest(cfg, sample_manifest, pages,
-                              {"0001": (2500, 3538)})
+    m = build_viewer_manifest(cfg, sample_manifest, pages, {"0001": (2500, 3538)})
     thumb = m["items"][0]["thumbnail"][0]
-    assert thumb["id"] == \
-        "https://iiif.example/mock-vol/page-00001/full/max/0/default.jpg"
+    assert (
+        thumb["id"] == "https://iiif.example/mock-vol/page-00001/full/max/0/default.jpg"
+    )
     assert (thumb["width"], thumb["height"]) == (2500, 3538)

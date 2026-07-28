@@ -1,6 +1,11 @@
 import httpx
 import pytest
-from htrflow_batch.iiif import ManifestError, PageRef, fetch_manifest, pages_from_manifest
+
+from htrflow_batch.iiif import (
+    ManifestError,
+    fetch_manifest,
+    pages_from_manifest,
+)
 
 
 def test_pages_from_manifest(sample_manifest):
@@ -27,7 +32,8 @@ def test_empty_manifest_raises():
 
 def test_fetch_manifest_ok(sample_manifest):
     transport = httpx.MockTransport(
-        lambda req: httpx.Response(200, json=sample_manifest))
+        lambda req: httpx.Response(200, json=sample_manifest)
+    )
     client = httpx.Client(transport=transport)
     m = fetch_manifest("https://x/manifest", client)
     assert m["type"] == "Manifest"
