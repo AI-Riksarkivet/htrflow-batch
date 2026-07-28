@@ -69,6 +69,8 @@ credentials — only `s3:GetObject` is anonymous.
 
 ## Replay
 
+**Prerequisite for `exampleJob.enabled=true`:** a PVC named `htr-test-data` must exist in the release namespace (holds the HF model cache; 20Gi is plenty). On the dmlpai01 PoC it already exists.
+
 ```bash
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 helm upgrade --install htr charts/htrflow-batch -n htr-batch --create-namespace \

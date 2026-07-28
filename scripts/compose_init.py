@@ -2,8 +2,9 @@
 mock IIIF manifest, and open anonymous read + CORS on htr-results.
 
 Env: S3_ENDPOINT (default http://rustfs:9000), MOCK_BASE (default
-http://localhost:9000/htr-fixtures/mock-vol — localhost because the *browser*
-resolves the published URLs), AWS creds via standard vars."""
+http://rustfs:9000/htr-fixtures/mock-vol — the container-internal form used
+by compose; see .docker/docker-compose.yml comment for browser-fidelity
+trade-off), AWS creds via standard vars."""
 import json
 import os
 import subprocess
@@ -13,9 +14,9 @@ import boto3
 import httpx
 
 ENDPOINT = os.environ.get("S3_ENDPOINT", "http://rustfs:9000")
-MOCK_BASE = os.environ.get("MOCK_BASE", "http://localhost:9000/htr-fixtures/mock-vol")
+MOCK_BASE = os.environ.get("MOCK_BASE", "http://rustfs:9000/htr-fixtures/mock-vol")
 HF = "https://huggingface.co/spaces/Riksarkivet/htr_demo/resolve/main/.gradio_cache/examples"
-# Known-good htr_demo example filenames (k8s/job-example.yaml PAGE_URLS).
+# Known-good htr_demo example filenames (from the retired PoC job manifests).
 PAGES = ["A0062408_00006.jpg", "A0070302_00201.jpg", "A0073477_00025.jpg", "R0003364_00005.jpg"]
 
 s3 = boto3.client("s3", endpoint_url=ENDPOINT)
