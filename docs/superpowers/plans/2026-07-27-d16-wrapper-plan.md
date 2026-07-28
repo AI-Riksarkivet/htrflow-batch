@@ -1533,7 +1533,7 @@ resulting `iiif.json`. The mock manifest has **no image service** (plain
 the width-cap/service path is covered by unit tests (Task 2).
 
 **Files:**
-- Create: `k8s/pipeline-demo-v1.yaml` (immutable pipeline ConfigMap, D17), `k8s/job-real-wrapper.yaml`, `k8s/fixtures/make_mock_manifest.py`
+- Create: `k8s/pipeline-demo-v1.yaml` (immutable pipeline ConfigMap, D17), `k8s/job-real-wrapper.yaml`, `scripts/make_mock_manifest.py`
 - Modify: `~/htrflow-batch/DESIGN.md` §13 (append results), `k8s/README.md` (one line per new file)
 
 **Interfaces:**
@@ -1542,7 +1542,7 @@ the width-cap/service path is covered by unit tests (Task 2).
 - [ ] **Step 0: Build the IIIF fixture set in RustFS**
 
 Download 4 htr_demo images, generate the mock manifest, create the bucket
-(+ anonymous read), upload. `k8s/fixtures/make_mock_manifest.py`:
+(+ anonymous read), upload. `scripts/make_mock_manifest.py`:
 
 ```python
 """Generate a minimal IIIF P3 manifest over the htr_demo fixture images.
@@ -1591,7 +1591,7 @@ curl -sL -o 0001.jpg $HF/A0062408_00006.jpg
 curl -sL -o 0002.jpg $HF/A0070302_00201.jpg
 curl -sL -o 0003.jpg $HF/A0073477_00025.jpg
 curl -sL -o 0004.jpg $HF/R0003364_00005.jpg
-python3 ~/htrflow-batch/k8s/fixtures/make_mock_manifest.py 4 > manifest.json
+python3 ~/htrflow-batch/scripts/make_mock_manifest.py 4 > manifest.json
 
 # create bucket + anonymous read + upload (docker->NodePort; no daemon changes)
 docker run --rm -v $FIX:/x -e AWS_ACCESS_KEY_ID=rustfsadmin \

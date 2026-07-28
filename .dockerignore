@@ -4,3 +4,7 @@ wrapper/.venv
 .superpowers
 k8s
 *.md
+site/
+.dagger/
+docs/
+charts/

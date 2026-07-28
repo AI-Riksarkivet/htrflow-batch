@@ -9,7 +9,7 @@ Manifests used for the 2026-07-27 smoke test on bare k3s on dmlpai01
 | `rustfs.yaml` | Namespace, RustFS S3 (Deployment/PVC/Service), `htr-batch-s3` Secret. Service is NodePort: S3 `:30900`, console `:30901` (`/rustfs/console/`, rustfsadmin/rustfsadmin) |
 | `mini-wrapper.yaml` | ConfigMap with the miniature wrapper (`batch_run.py`): real page downloads → simulated HTR → streaming per-page ALTO upload → resume check → D8 verify gate → `manifest.json` last |
 | `job-example.yaml` | One 4-page "volume" Job (suspend: true + queue label). Pages = Riksarkivet htr_demo images from HF |
-| `fixtures/make_mock_manifest.py` | Generates a minimal IIIF P3 manifest (placeholder canvas dims) over 4 htr_demo fixture images uploaded to the `htr-fixtures` bucket, so the real wrapper can be smoke-tested with no live lbiiif dependency |
+| `../scripts/make_mock_manifest.py` | Generates a minimal IIIF P3 manifest (placeholder canvas dims) over 4 htr_demo fixture images uploaded to the `htr-fixtures` bucket, so the real wrapper can be smoke-tested with no live lbiiif dependency |
 | `pipeline-demo-v1.yaml` | Immutable ConfigMap (D17) holding the `demo-v1` htrflow pipeline (yolo regions → yolo lines → TrOCR), no `Export` steps — the wrapper appends those |
 | `job-real-wrapper.yaml` | Task 10 smoke Job for the real `htrflow-batch:v3` image against the mocked IIIF manifest above — PASSED (see DESIGN.md §13, "D16 wrapper smoke"; took 3 image rounds to fix two `driver.py` pipeline-construction bugs) |
 

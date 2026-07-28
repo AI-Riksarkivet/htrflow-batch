@@ -1,11 +1,13 @@
 """Generate a minimal IIIF P3 manifest over the htr_demo fixture images.
 
 Canvas width/height are placeholders (the wrapper never reads them; real
-dims come from the ALTO at publish time per D19)."""
+dims come from the ALTO at publish time per D19).
+Set MOCK_BASE to point at a different S3 endpoint (compose uses http://localhost:9000/htr-fixtures/mock-vol)."""
 import json
 import sys
+import os
 
-BASE = "http://10.16.51.53:30900/htr-fixtures/mock-vol"
+BASE = os.environ.get("MOCK_BASE", "http://10.16.51.53:30900/htr-fixtures/mock-vol")
 N = int(sys.argv[1]) if len(sys.argv) > 1 else 4
 
 manifest = {
