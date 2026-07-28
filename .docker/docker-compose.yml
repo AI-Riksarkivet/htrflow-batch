@@ -1,0 +1,111 @@
+# Full local smoke stack (no k8s): S3 + fixtures + one wrapper run + viewer.
+# Wrapper env contract mirrors the k8s Job (see docs how-it-works/wrapper);
+# source of truth is wrapper/src/htrflow_batch/config.py.
+#
+# Image provenance for local runs (until images are published to a real
+# registry):
+#   wrapper: build fresh with `docker compose build wrapper` (or
+#     `docker build -f .docker/htrflow-batch.dockerfile -t
+#     riksarkivet/htrflow-batch:latest .` from repo root) so it picks up
+#     current wrapper/ source (thumbnails + search-service in iiif.json).
+#   viewer: pull the known-good image out of the in-cluster registry and
+#     retag it locally:
+#       docker pull 127.0.0.1:30500/uv4:v3 && \
+#       docker tag 127.0.0.1:30500/uv4:v3 riksarkivet/htrflow-batch-viewer:latest
+#     Reproducible alternative: `dagger call build-viewer export --path
+#     /tmp/viewer.tar && docker load -i /tmp/viewer.tar` (then tag as above).
+#
+# NOTE: explicit `name:` below avoids colliding with unrelated projects on
+# this host that also run `docker compose` from a directory named `.docker`
+# (compose's default project name is derived from the directory basename,
+# which is shared across repos and can wipe out unrelated containers on
+# `docker compose down`). Host ports 19000/19001 (rather than the RustFS
+# default 9000/9001) avoid a collision with an unrelated MinIO already
+# bound to 9000-9001 on this host.
+name: htrflow-batch-smoke
+services:
+  rustfs:
+    image: rustfs/rustfs:latest
+    command: ["/data"]
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+    environment:
+      RUSTFS_ACCESS_KEY: rustfsadmin
+      RUSTFS_SECRET_KEY: rustfsadmin
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+    volumes:
+      - rustfs-data:/data
+    healthcheck:
+      # RustFS returns 403 (AccessDenied) for an unauthenticated GET / rather
+      # than 200 — `curl -f` would treat that as failure, so just check that
+      # the server answers at all.
+      test: ["CMD", "curl", "-s", "-o", "/dev/null", "http://localhost:9000/"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  fixtures-init:
+    image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    volumes:
+      - ../scripts:/scripts:ro
+    environment:
+      S3_ENDPOINT: http://rustfs:9000
+      # NOT localhost: this URL is baked verbatim into the mock manifest's
+      # canvas image body.id, which the wrapper container fetches directly
+      # (wrapper/src/htrflow_batch/iiif.py:_image_url) — a host-only
+      # "localhost:19000" is unreachable from inside the wrapper container
+      # (its own loopback, not the host's). The same body.id is copied
+      # verbatim into the published iiif.json, so a real browser session
+      # opening the viewer will not render the source page image (a known
+      # local-smoke-stack limitation); the ALTO/search overlay the viewer
+      # actually depends on is served from PUBLIC_RESULTS_BASE below, which
+      # *is* browser-resolvable, so the manifest-shape checks in step 3 and
+      # the viewer smoke test both still hold.
+      MOCK_BASE: http://rustfs:9000/htr-fixtures/mock-vol
+      AWS_ACCESS_KEY_ID: rustfsadmin
+      AWS_SECRET_ACCESS_KEY: rustfsadmin
+    command: ["uv", "run", "--with", "boto3", "--with", "httpx",
+              "python", "/scripts/compose_init.py"]
+
+  wrapper:
+    image: riksarkivet/htrflow-batch:latest
+    build:
+      context: ..
+      dockerfile: .docker/htrflow-batch.dockerfile
+    depends_on:
+      fixtures-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./pipeline-demo-v1.yaml:/config/pipeline.yaml:ro
+    environment:
+      VOLUME_REF: mock-vol
+      IIIF_MANIFEST_URL: http://rustfs:9000/htr-fixtures/mock-vol/manifest.json
+      PIPELINE_PATH: /config/pipeline.yaml
+      PIPELINE_ID: demo-v1
+      S3_ENDPOINT: http://rustfs:9000
+      S3_BUCKET: htr-results
+      AWS_ACCESS_KEY_ID: rustfsadmin
+      AWS_SECRET_ACCESS_KEY: rustfsadmin
+      PUBLIC_RESULTS_BASE: http://localhost:19000/htr-results
+      MAX_PAGES: "1"          # CPU is ~41x slower than GPU; full volume ≈ 13 min
+      WORKDIR_PATH: /work
+    tmpfs:
+      - /work
+    # No GPU: htrflow falls back to CPU automatically.
+    # No entrypoint/command override: image ENTRYPOINT is
+    # ["python", "-m", "htrflow_batch"] (see .docker/htrflow-batch.dockerfile).
+
+  viewer:
+    image: riksarkivet/htrflow-batch-viewer:latest
+    ports:
+      - "8080:80"
+    depends_on:
+      rustfs:
+        condition: service_healthy
+
+volumes:
+  rustfs-data:
