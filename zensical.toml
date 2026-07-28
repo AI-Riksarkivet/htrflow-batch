@@ -18,6 +18,13 @@ nav = [
     {"Run a Volume" = "getting-started/run-a-volume.md"},
     {"Viewing Results" = "getting-started/viewing.md"},
   ]},
+  { "How it Works" = [
+    {"Architecture" = "how-it-works/architecture.md"},
+    {"Decision Log" = "how-it-works/decision-log.md"},
+    {"The Wrapper" = "how-it-works/wrapper.md"},
+    {"Memory Budget" = "how-it-works/memory-budget.md"},
+    {"Failure Handling" = "how-it-works/failure-handling.md"},
+  ]},
 ]
 
 [project.theme]
