@@ -1,0 +1,78 @@
+[project]
+site_name = "htrflow-batch"
+site_description = "Kueue-gated batch HTR around the htrflow image — streaming per-page results to S3 with IIIF viewer output."
+site_author = "carpelan"
+site_url = "https://carpelan.github.io/test/"
+copyright = """
+Copyright &copy; 2026 carpelan
+"""
+repo_url = "https://github.com/carpelan/test"
+repo_name = "carpelan/test"
+edit_uri = "edit/main/docs/"
+
+nav = [
+  { "htrflow-batch" = ["index.md"] },
+  { "Getting Started" = [
+    {"Prerequisites" = "getting-started/index.md"},
+    {"Deploy" = "getting-started/deploy.md"},
+    {"Run a Volume" = "getting-started/run-a-volume.md"},
+    {"Viewing Results" = "getting-started/viewing.md"},
+  ]},
+]
+
+[project.theme]
+language = "en"
+
+features = [
+    "announce.dismiss",
+    "content.action.edit",
+    "content.action.view",
+    "content.code.annotate",
+    "content.code.copy",
+    "content.code.select",
+    "content.footnote.tooltips",
+    "content.tabs.link",
+    "content.tooltips",
+    "navigation.footer",
+    "navigation.instant",
+    "navigation.instant.prefetch",
+    "navigation.path",
+    "navigation.tabs",
+    "navigation.tabs.sticky",
+    "navigation.top",
+    "navigation.tracking",
+    "search.highlight",
+]
+
+[[project.theme.palette]]
+scheme = "default"
+primary = "indigo"
+accent = "blue"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+scheme = "slate"
+primary = "indigo"
+accent = "blue"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[project.theme.icon]
+repo = "fontawesome/brands/github"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/carpelan/test"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/docker"
+link = "https://hub.docker.com/r/riksarkivet/htrflow-batch"
+
+[project.markdown_extensions.pymdownx.snippets]
+base_path = ["."]
+
+[project.markdown_extensions.pymdownx.superfences]
+custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
