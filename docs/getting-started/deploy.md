@@ -76,9 +76,10 @@ The results bucket needs anonymous read plus CORS so the browser can fetch
 the manifest and ALTO directly, and the UV4 viewer's own image needs to
 come from somewhere pullable. These replay commands (formerly in the
 retired `k8s/README.md`) now live in the
-[chart README](https://github.com/carpelan/test/blob/main/charts/htrflow-batch/README.md#bucket-setup-for-the-viewer-d19--anonymous-read-and-cors) —
-run them inside an `amazon/aws-cli` pod against the RustFS endpoint before
-opening the viewer for the first time.
+[chart README](https://github.com/carpelan/test/blob/main/charts/htrflow-batch/README.md)
+(see "Bucket setup for the viewer") — run them inside an `amazon/aws-cli`
+pod against the RustFS endpoint before opening the viewer for the first
+time.
 
 ## Local compose smoke stack
 

@@ -26,15 +26,21 @@ no cohorts in Phase 1.
 | `IIIF_MANIFEST_URL` | manifest to process (resolved by CLI at submit time) | required |
 | `PIPELINE_PATH` | pipeline YAML, mounted from the immutable per-version ConfigMap | required |
 | `PIPELINE_ID` | short id namespacing the output keys | required |
-| `S3_ENDPOINT` / `S3_BUCKET` / `S3_PREFIX` | result destination (creds from Secret) | required |
+| `S3_BUCKET` | result destination bucket (creds from Secret) | required |
+| `PUBLIC_RESULTS_BASE` | browser-reachable base URL for `iiif.json`/viewer links (≠ the in-cluster S3 endpoint) | required |
+| `S3_ENDPOINT` | S3 endpoint URL (empty = provider default chain) | "" |
+| `S3_PREFIX` | key prefix under the bucket | "" |
 | `MAX_IMAGE_WIDTH` | IIIF size cap (`/full/{w},/`) — **enforced**, and part of the fetched URL, so cached/stored artifacts can never disagree with config (note: `!w,h` 501s on lbiiif) | 2500 |
 | `RESUME` | skip pages whose outputs already exist | true |
 | `LOOKAHEAD_PAGES` | max pages downloaded ahead of the consumer (bounds tmpfs) | 64 |
 | `MAX_PAGES` | cap on pages processed, `0` = all (test knob) | 0 |
 | `WORKDIR_PATH` | filesystem path for downloads + local pipeline outputs | /work |
 | `DOWNLOAD_CONCURRENCY` | concurrent image downloads | 12 |
-| `PUBLIC_RESULTS_BASE` | browser-reachable base URL for `iiif.json`/viewer links (≠ the in-cluster S3 endpoint) | required |
 | `TERMINATION_LOG_PATH` | where the exit reason (stage, permanent/transient, error) is written | /dev/termination-log |
+
+Required: `VOLUME_REF`, `IIIF_MANIFEST_URL`, `PIPELINE_PATH`, `PIPELINE_ID`,
+`S3_BUCKET`, `PUBLIC_RESULTS_BASE` — everything else is optional with the
+default shown above (per `wrapper/src/htrflow_batch/config.py`).
 
 See [The Wrapper](../how-it-works/wrapper.md) for the full streaming design
 behind these knobs.
@@ -45,7 +51,7 @@ behind these knobs.
 |---|---|---|
 | 0 | success (verified) | Complete |
 | 13 | permanent (bad manifest URL, bad pipeline YAML, volume exceeds budget) | `FailJob` — no retry |
-| other | transient (network, CUDA hiccup, verification gap) | retry within `backoffLimit` |
+| 1 | transient (network, CUDA hiccup, verification gap) | retry within `backoffLimit` |
 
 Failures write a structured reason to `/dev/termination-log`
 (`{"stage": "fetch", "page": 412, "error": ...}`) so `htrq status` shows
