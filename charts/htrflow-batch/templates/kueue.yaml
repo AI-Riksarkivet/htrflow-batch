@@ -12,12 +12,14 @@ metadata:
 spec:
   namespaceSelector: {}
   resourceGroups:
-    - coveredResources: [{{ .Values.queue.resource | quote }}]
+    - coveredResources: [{{ range $i, $r := .Values.queue.resources }}{{ if $i }}, {{ end }}{{ $r.name | quote }}{{ end }}]
       flavors:
         - name: {{ .Values.queue.flavor }}
           resources:
-            - name: {{ .Values.queue.resource | quote }}
-              nominalQuota: {{ .Values.queue.gpuQuota }}
+            {{- range .Values.queue.resources }}
+            - name: {{ .name | quote }}
+              nominalQuota: {{ .quota }}
+            {{- end }}
 ---
 apiVersion: kueue.x-k8s.io/v1beta2
 kind: LocalQueue

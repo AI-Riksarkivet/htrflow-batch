@@ -14,10 +14,14 @@ publicResultsBase: ""      # browser-reachable URL base for published results (R
 queue:
   name: htr-batch
   flavor: default-flavor
-  # ClusterQueue quota: how many concurrent GPU jobs. PoC modelled GPUs as CPU
-  # quota (no real gpu resource on the flavor) — keep both knobs:
-  gpuQuota: 2
-  resource: cpu            # "cpu" on the PoC; "nvidia.com/gpu" on a real cluster
+  # Covered resources and quotas for the ClusterQueue. EVERY resource a Job
+  # requests must be covered or Kueue marks it inadmissible. PoC gates GPUs
+  # via cpu quota (see decision D2); real clusters add nvidia.com/gpu here.
+  resources:
+    - name: cpu
+      quota: 2
+    - name: memory
+      quota: 4Gi
 
 pipelines:
   # id -> htrflow pipeline YAML (string). Rendered as immutable ConfigMap
