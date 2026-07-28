@@ -23,7 +23,7 @@ justify it (§11).
 | D16 | Wrapper drives htrflow **as a library** — streaming producer–consumer: pages process as they download, ALTOs upload as they're written. Stock-CLI modes kept as fallbacks (§5.1) | settled |
 | D17 | Pipelines are **immutable ConfigMaps, one per pipeline version** (`htr-pipeline-<id>`); a changed pipeline is a new id, enforced by the API server (§5.7) | settled |
 | D18 | **No CRD, no controller, no API service in the PoC** — `htrq` CLI only. Frontend/API (§12.1) and campaign-CRD (§12.2) are designed evolution steps, not v1 | settled |
-| D19 | Viewer = **Riksarkivet universalviewer4 fork** (already renders ALTO via canvas `seeAlso`); wrapper emits a per-volume IIIF P3 manifest `iiif.json` at publish; canvas dims = width-capped processing dims; results store serves CORS + correct content-types (§5.4, §12.1) | designed (separate session's recon), build pending |
+| D19 | Viewer = **Riksarkivet universalviewer4 fork** (already renders ALTO via canvas `seeAlso`); wrapper emits a per-volume IIIF P3 manifest `iiif.json` at publish; canvas dims = width-capped processing dims; results store serves CORS + correct content-types (§5.4, §12.1) | **validated on k3s PoC** (2026-07-28, §14) — fork gotchas in §5.4 |
 | D9–D15 | Improvement items (resume, naming, provenance, …) | open — see §10 |
 
 ---
@@ -341,6 +341,24 @@ S3 (HCP) behind a one-function seam — `publish(volume, files)`:
 - **Store requirements for the viewer:** anonymous read on the results
   prefix + CORS (GET from the viewer origin) — the browser fetches manifest
   and ALTO directly.
+- **UV4-fork gotchas (found deploying the viewer, 2026-07-28, §13):**
+  - The ALTO text panel is gated on `manifest.getSearchService()` — a
+    manifest without a IIIF search service never shows transcriptions.
+    The wrapper therefore emits a **stub SearchService1 entry** (endpoint
+    not implemented; only its presence matters). Replace with a real
+    content-search service if one ever exists.
+  - Canvases need an explicit `thumbnail` property when the image body has
+    no IIIF image service (UV renders empty thumbs otherwise). The wrapper
+    emits `{service}/full/200,/0/default.jpg` when a service exists
+    (width syntax — lbiiif 501s on `!w,h`), else the full static image.
+  - The fork's shipped `uv.html` never fetches `uv-iiif-config.json` (the
+    fetch is commented out) and `textRightPanelEnabled` is **not** compiled
+    into `UV.js` — the panel can't turn on without patching the page.
+  - The fork feeds raw ALTO pixel coords to OpenSeadragon as **viewport**
+    coords → line overlays land ~10⁵ px off-canvas for plain images; fix is
+    `viewport.imageToViewportRectangle(...)`. Both fixes captured in
+    `docker/uv4-uv-html.patch` (built as image `uv4:v3`; PR-worthy
+    upstream).
 - The results bucket is the **only stateful dependency** in the system —
   and it should be the durable HCP, not the volatile `/tmp`-backed dev MinIO
   (viewer links must not die on reboot).
@@ -463,7 +481,9 @@ holds at most the lookahead window (uploader rolling-deletes processed images).
   bandwidth and slow the fetch path for nothing HTR can use.
 - A 1000-page volume can no longer OOMKill a pod — the old preflight
   size-guard reduces to sanity checks (non-empty manifest → else exit 13).
-- `WORKDIR=disk` escape hatch retained but should never be needed now.
+- Disk escape hatch: the wrapper only sees `WORKDIR_PATH`; swapping the
+  tmpfs `emptyDir` for a disk-backed one is a Job-manifest change, no
+  wrapper flag involved. Should never be needed now.
 
 ---
 
@@ -1080,3 +1100,43 @@ behavior under >1 concurrent Job on GPU (single-Job smoke only), the
 silently never registered the node (`/etc/sysctl.d/99-k3s-inotify.conf` now
 sets 1024/1048576); `dmlpai01` resolves IPv6-only → `node-ip: 10.16.51.53`
 pinned in `/etc/rancher/k3s/config.yaml`.
+
+## 14. PoC test log — 2026-07-28: viewer deployment + cluster incident
+
+**DiskPressure incident (overnight):** the shared 7.4 TB root filesystem
+sat at 96 % (350 G free — plenty in absolute terms, largely Docker: 543 G
+images + 399 G build cache from many users). kubelet's *default* eviction
+threshold is percentage-based (`nodefs.available<10%` = 740 G on this
+disk), so it tainted the node `disk-pressure:NoSchedule`, evicted
+RustFS/Kueue/registry, and replacements sat Pending ~10 h. Fix (persisted
+in `/etc/rancher/k3s/config.yaml`):
+`kubelet-arg: [eviction-hard=nodefs.available<25Gi,imagefs.available<25Gi]`
+— absolute thresholds; a big-disk shared box can never satisfy 10 %-free.
+Data survived (host-path PVCs); evicted-pod husks needed manual delete
+before their Deployments respawned them.
+
+**UV4 viewer deployed (D19 closed for the PoC):** Riksarkivet
+`universalviewer4` fork built (node 20; `NODE_EXTRA_CA_CERTS=
+/etc/ssl/certs/ca-certificates.crt` required — RA firewall TLS
+interception breaks npm's bundled CA list with a misleading npm-internal
+crash), served as nginx image `uv4:v3` (NodePort 30800,
+`k8s/uv4-viewer.yaml`). `/` 302-redirects (relative — nginx
+`absolute_redirect off`, else the NodePort is dropped) to
+`uv.html#?manifest=…/mock-vol/iiif.json`. Access is via
+`ssh -L 30800/-L 30900` (laptop can't route to the node IP), so the demo
+`iiif.json` + redirect use `http://localhost:{30900,30800}` URLs — a
+PoC-only artifact; production needs a browser-reachable
+`PUBLIC_RESULTS_BASE` behind an ingress (D6/D14). End state verified in a
+real browser: page images, thumbnails, ALTO text panel, and clickable
+per-line outlines on the image, all live. Fork bugs found + patched en
+route are listed under D19 in §5.4 (`docker/uv4-uv-html.patch`).
+
+**Wrapper hardening (post-merge, TDD):** `viewer.py` now emits the
+search-service stub + per-canvas `thumbnail` itself (previously
+hand-patched into the published `iiif.json`); `driver.py` validates the
+pipeline YAML up front so only file/parse errors map to exit 13 while an
+`OSError` out of `from_config`'s HF model downloads stays transient
+(exit 1) — closes the final-review parked finding; `podFailurePolicy`
+`FailJob`-on-13 (§5.3) is now safe to wire. 47 wrapper tests green.
+NOTE: the `htrflow-batch:v3` **image predates these wrapper changes** —
+rebuild/push before the next cluster run.

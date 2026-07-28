@@ -55,3 +55,42 @@ def test_build_viewer_manifest(sample_manifest, cfg):
     assert sa["id"] == \
         "http://public/htr-results/demo-v1/SE-RA-1234/alto/0001.xml"
     assert "alto" in sa["profile"]
+
+
+def test_viewer_manifest_declares_search_service(sample_manifest, cfg):
+    """UV4 (RA fork) gates the ALTO text panel on getSearchService() —
+    without a search service entry the transcription panel never shows."""
+    pages = pages_from_manifest(sample_manifest, width=2500)
+    m = build_viewer_manifest(cfg, sample_manifest, pages,
+                              {"0001": (2500, 3538)})
+    svc = m["service"][0]
+    assert svc["profile"] == "http://iiif.io/api/search/1/search"
+    assert svc["@id"] == \
+        "http://public/htr-results/demo-v1/SE-RA-1234/search"
+
+
+def test_canvas_thumbnail_from_image_service(sample_manifest, cfg):
+    """With a IIIF image service, thumbnails use a sized request (width
+    syntax — lbiiif 501s on !w,h)."""
+    pages = pages_from_manifest(sample_manifest, width=2500)
+    m = build_viewer_manifest(cfg, sample_manifest, pages,
+                              {"0001": (2500, 3538)})
+    thumb = m["items"][0]["thumbnail"][0]
+    assert thumb["id"] == \
+        "https://iiif.example/mock-vol/page-00001/full/200,/0/default.jpg"
+    assert thumb["type"] == "Image"
+
+
+def test_canvas_thumbnail_falls_back_to_static_image(sample_manifest, cfg):
+    """Without an image service (mocked IIIF), the full image doubles as
+    thumbnail — UV renders nothing at all if the property is absent."""
+    for canvas in sample_manifest["items"]:
+        body = canvas["items"][0]["items"][0]["body"]
+        del body["service"]
+    pages = pages_from_manifest(sample_manifest, width=2500)
+    m = build_viewer_manifest(cfg, sample_manifest, pages,
+                              {"0001": (2500, 3538)})
+    thumb = m["items"][0]["thumbnail"][0]
+    assert thumb["id"] == \
+        "https://iiif.example/mock-vol/page-00001/full/max/0/default.jpg"
+    assert (thumb["width"], thumb["height"]) == (2500, 3538)

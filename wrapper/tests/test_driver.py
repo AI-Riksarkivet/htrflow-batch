@@ -234,3 +234,42 @@ def test_load_pipeline_missing_file_is_permanent(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="bad pipeline config"):
         load_pipeline(str(tmp_path / "does-not-exist.yaml"), out_dir)
+
+
+def test_load_pipeline_model_download_oserror_stays_transient(
+        tmp_path, monkeypatch):
+    """from_config instantiates models (HF downloads); a network OSError
+    there is retryable and must NOT be wrapped into ValueError (which
+    main.py classifies permanent/exit-13). Final-review parked finding."""
+    mock_export_class = type("Export", (), {})
+
+    class MockPipeline:
+        def __init__(self, steps=None):
+            self.steps = steps if steps is not None else []
+
+        @staticmethod
+        def from_config(config):
+            raise OSError(
+                "We couldn't connect to 'https://huggingface.co'")
+
+    fake_htrflow = ModuleType("htrflow")
+    fake_pipeline_mod = ModuleType("htrflow.pipeline")
+    fake_pipeline_pipeline = ModuleType("htrflow.pipeline.pipeline")
+    fake_steps = ModuleType("htrflow.pipeline.steps")
+    fake_pipeline_pipeline.Pipeline = MockPipeline
+    fake_steps.Export = mock_export_class
+    monkeypatch.setitem(sys.modules, "htrflow", fake_htrflow)
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline", fake_pipeline_mod)
+    monkeypatch.setitem(
+        sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline)
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline.steps", fake_steps)
+
+    out_dir = tmp_path / "output"
+    out_dir.mkdir()
+    pipeline_yaml = tmp_path / "pipeline.yaml"
+    pipeline_yaml.write_text("steps: []")   # valid YAML: config is fine
+
+    from htrflow_batch.driver import load_pipeline
+
+    with pytest.raises(OSError, match="huggingface"):
+        load_pipeline(str(pipeline_yaml), out_dir)
