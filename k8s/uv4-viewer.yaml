@@ -1,6 +1,25 @@
 # UV4 viewer (D19) — static nginx site on NodePort 30800.
 # Open a volume with:
 #   http://10.16.51.53:30800/uv.html#?manifest=<PUBLIC_RESULTS_BASE>/<pipeline>/<volume>/iiif.json
+# Convenience: / redirects to the demo mock-vol (terminal-clicked long URLs lose
+# the #fragment, showing an empty viewer — the short URL avoids that).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: uv4-viewer-nginx
+  namespace: htr-batch
+data:
+  default.conf: |
+    server {
+      listen 80;
+      root /usr/share/nginx/html;
+      index index.html;
+      absolute_redirect off;  # keep Location relative so the NodePort survives
+      location = / {
+        return 302 /uv.html#?manifest=http://10.16.51.53:30900/htr-results/demo-v1/mock-vol/iiif.json;
+      }
+    }
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,9 +40,15 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 80
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d
           resources:
             requests: { cpu: 50m, memory: 64Mi }
             limits: { cpu: 500m, memory: 256Mi }
+      volumes:
+        - name: nginx-conf
+          configMap: { name: uv4-viewer-nginx }
 ---
 apiVersion: v1
 kind: Service
