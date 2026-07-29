@@ -266,18 +266,25 @@ def main(
 
     except (ConfigError, ManifestError, SetupError, ValueError) as e:
         log.error("permanent failure in %s: %s", stage, e)
-        _publish_failure(cfg, store, stats, t_start, stage, e)
         _terminate(env, {"stage": stage, "permanent": True, "error": str(e)})
+        _publish_failure(cfg, store, stats, t_start, stage, e)
         return EXIT_PERMANENT
     except Exception as e:
         log.error("transient failure in %s: %s\n%s", stage, e, traceback.format_exc())
-        _publish_failure(cfg, store, stats, t_start, stage, e)
         _terminate(env, {"stage": stage, "permanent": False, "error": str(e)})
+        _publish_failure(cfg, store, stats, t_start, stage, e)
         return EXIT_TRANSIENT
 
 
 def _publish_failure(cfg, store, stats, t_start: float, stage: str, e: BaseException):
-    """Skip setup-stage failures, where there is no store/stats to report on."""
+    """Skip setup-stage failures, where there is no store/stats to report on.
+
+    Runs *after* _terminate() on purpose: the termination log is a local
+    write_text that is effectively instant, while this S3 upload can hang for
+    minutes on default boto timeouts — especially when S3 is itself the reason
+    the run failed. Ordering it last means a stuck bucket cannot cost us the
+    kubernetes termination message.
+    """
     if cfg is not None and store is not None and stats is not None:
         publish_failure_metrics(
             store, cfg, stats, time.monotonic() - t_start, stage, str(e)

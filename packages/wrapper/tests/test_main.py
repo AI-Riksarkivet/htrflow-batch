@@ -6,7 +6,13 @@ import httpx
 import pytest
 
 from htrflow_batch import main as main_mod
-from htrflow_batch.main import EXIT_OK, EXIT_PERMANENT, EXIT_TRANSIENT, main
+from htrflow_batch.main import (
+    EXIT_OK,
+    EXIT_PERMANENT,
+    EXIT_TRANSIENT,
+    main,
+    publish_failure_metrics,
+)
 from htrflow_batch.store import ResultStore
 
 
@@ -144,6 +150,8 @@ def test_page_failure_is_transient_and_blocks_completion(env, cfg, s3):
     keys = _keys(s3, cfg)
     assert "demo-v1/SE-RA-1234/manifest.json" not in keys  # no false complete
     assert "demo-v1/SE-RA-1234/alto/0001.xml" in keys  # partials kept
+    # the run's timing/stall evidence outlives the pod
+    assert "demo-v1/SE-RA-1234/metrics-failed-latest.json" in keys
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
     assert term["stage"] == "verify" and "0002" in str(term)
 
@@ -184,6 +192,8 @@ def test_resume_failure_is_attributed_to_resume_stage(env, cfg, s3, monkeypatch)
     assert rc == EXIT_TRANSIENT
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
     assert term["stage"] == "resume"
+    # nothing ran yet, so there is no evidence to publish
+    assert "demo-v1/SE-RA-1234/metrics-failed-latest.json" not in _keys(s3, cfg)
 
 
 def test_terminate_with_long_error_writes_valid_json(tmp_path):
@@ -264,8 +274,6 @@ def test_publish_warns_when_no_dims_resolved(env, cfg, s3, caplog):
 def test_publish_failure_metrics_records_run_evidence():
     """A failed run must leave its timing/stall evidence in the bucket
     (spec §4.8) — today it dies with the pod."""
-    from htrflow_batch.main import publish_failure_metrics
-
     calls = []
     store = SimpleNamespace(put_json=lambda key, obj: calls.append((key, obj)))
     cfg = SimpleNamespace(volume_ref="vol-x", pipeline_id="demo-v1")
@@ -277,6 +285,7 @@ def test_publish_failure_metrics_records_run_evidence():
         },
     )
     publish_failure_metrics(store, cfg, stats, 100.0, "verify", "verify failed: x")
+    assert len(calls) == 1
     (key, obj) = calls[0]
     assert key == "metrics-failed-latest.json"
     assert obj["stage"] == "verify"
@@ -284,13 +293,13 @@ def test_publish_failure_metrics_records_run_evidence():
     assert obj["results"]["0002"]["error"] == "HTTP 400"
 
 
-def test_publish_failure_metrics_never_raises():
-    from htrflow_batch.main import publish_failure_metrics
-
+def test_publish_failure_metrics_never_raises(caplog):
     def boom(key, obj):
         raise OSError("bucket gone")
 
     store = SimpleNamespace(put_json=boom)
     cfg = SimpleNamespace(volume_ref="v", pipeline_id="p")
     stats = SimpleNamespace(stall_seconds=0.0, results={})
-    publish_failure_metrics(store, cfg, stats, 1.0, "stream", "x")  # must not raise
+    with caplog.at_level("WARNING"):
+        publish_failure_metrics(store, cfg, stats, 1.0, "stream", "x")  # must not raise
+    assert "could not publish failure metrics" in caplog.text
