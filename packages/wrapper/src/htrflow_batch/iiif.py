@@ -1,4 +1,4 @@
-"""IIIF Presentation 3 manifest -> ordered page list (docs: wrapper)."""
+"""IIIF Presentation 2/3 manifest -> ordered page list (docs: wrapper)."""
 
 from __future__ import annotations
 
@@ -32,27 +32,81 @@ def fetch_manifest(url: str, client: httpx.Client) -> dict:
         raise ManifestError(f"manifest is not JSON: {url}") from e
 
 
+def _service_id(service: object) -> str | None:
+    """P2 allows a bare dict, P3 a list; both use `id` or `@id`."""
+    if isinstance(service, list):
+        service = service[0] if service else None
+    if isinstance(service, dict):
+        sid = service.get("id") or service.get("@id")
+        return sid if isinstance(sid, str) else None
+    return None
+
+
+def _sized(sid: str, canvas: dict, width: int) -> str:
+    # NOTE: lbiiif rejects "!w,h" (501); "w," is the supported form.
+    # Level1 servers also reject upscaling (400), so a canvas narrower
+    # than the cap must ask for max instead.
+    cw = canvas.get("width")
+    size = "max" if cw and cw <= width else f"{width},"
+    return f"{sid.rstrip('/')}/full/{size}/0/default.jpg"
+
+
 def _image_url(canvas: dict, width: int) -> str | None:
-    for ap in canvas.get("items", []):
+    for ap in canvas.get("items", []):  # P3
         for anno in ap.get("items", []):
             body = anno.get("body") or {}
-            services = body.get("service") or []
-            if services:
-                sid = services[0].get("id") or services[0].get("@id")
-                if sid:
-                    # NOTE: lbiiif rejects "!w,h" (501); "w," is the supported
-                    # form. Level1 servers also reject upscaling (400), so a
-                    # canvas narrower than the cap must ask for max instead.
-                    cw = canvas.get("width")
-                    size = "max" if cw and cw <= width else f"{width},"
-                    return f"{sid.rstrip('/')}/full/{size}/0/default.jpg"
+            sid = _service_id(body.get("service"))
+            if sid:
+                return _sized(sid, canvas, width)
             if body.get("id"):
                 return body["id"]
+    for img in canvas.get("images", []):  # P2
+        res = img.get("resource") or {}
+        sid = _service_id(res.get("service"))
+        if sid:
+            return _sized(sid, canvas, width)
+        rid = res.get("@id") or res.get("id")
+        if rid:
+            return rid
     return None
+
+
+def painting_body(canvas: dict) -> dict:
+    """P3-style annotation body for a P3 or P2 canvas. P2 services are
+    emitted with v2-style keys (@id/@type/profile) — UV silently shows no
+    image otherwise (docs: wrapper)."""
+    for ap in canvas.get("items", []):
+        for anno in ap.get("items", []):
+            if anno.get("body"):
+                return anno["body"]
+    for img in canvas.get("images", []):
+        res = img.get("resource") or {}
+        rid = res.get("@id") or res.get("id")
+        if not rid:
+            continue
+        body: dict = {
+            "id": rid,
+            "type": "Image",
+            "format": res.get("format", "image/jpeg"),
+        }
+        sid = _service_id(res.get("service"))
+        if sid:
+            body["service"] = [
+                {
+                    "@id": sid,
+                    "@type": "ImageService2",
+                    "profile": "http://iiif.io/api/image/2/level2.json",
+                }
+            ]
+        return body
+    return {}
 
 
 def pages_from_manifest(manifest: dict, width: int) -> list[PageRef]:
     canvases = manifest.get("items") or []
+    if not canvases:  # P2: sequences[0].canvases
+        seqs = manifest.get("sequences") or []
+        canvases = (seqs[0].get("canvases") or []) if seqs else []
     pages: list[PageRef] = []
     for i, canvas in enumerate(canvases, start=1):
         url = _image_url(canvas, width)

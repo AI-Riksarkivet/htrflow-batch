@@ -1,3 +1,5 @@
+import copy
+
 import httpx
 import pytest
 
@@ -77,3 +79,75 @@ def test_wide_canvas_still_width_capped():
     m = {"items": [_canvas_with_service(3494, 2472)]}
     pages = pages_from_manifest(m, width=2500)
     assert pages[0].image_url == "https://img/iiif/page-1/full/2500,/0/default.jpg"
+
+
+P2_MANIFEST = {
+    "@context": "http://iiif.io/api/presentation/2/context.json",
+    "@type": "sc:Manifest",
+    "label": "P2 vol",
+    "sequences": [
+        {
+            "canvases": [
+                {
+                    "@id": "http://ex/canvas/1",
+                    "label": "f. 1r",
+                    "width": 3000,
+                    "height": 4000,
+                    "images": [
+                        {
+                            "resource": {
+                                "@id": "http://ex/img/full/full/0/default.jpg",
+                                "format": "image/jpeg",
+                                "service": {
+                                    "@id": "http://ex/img",
+                                    "profile": "http://iiif.io/api/image/2/level1.json",
+                                },
+                            }
+                        }
+                    ],
+                }
+            ]
+        }
+    ],
+}
+
+
+def test_p2_manifest_yields_pages():
+    pages = pages_from_manifest(P2_MANIFEST, width=2500)
+    assert len(pages) == 1
+    assert pages[0].name == "0001"
+    assert pages[0].image_url == "http://ex/img/full/2500,/0/default.jpg"
+
+
+def test_p2_narrow_canvas_requests_max():
+    m = copy.deepcopy(P2_MANIFEST)
+    m["sequences"][0]["canvases"][0]["width"] = 1200
+    pages = pages_from_manifest(m, width=2500)
+    assert pages[0].image_url == "http://ex/img/full/max/0/default.jpg"
+
+
+def test_p2_resource_without_service_uses_direct_url():
+    m = copy.deepcopy(P2_MANIFEST)
+    del m["sequences"][0]["canvases"][0]["images"][0]["resource"]["service"]
+    pages = pages_from_manifest(m, width=2500)
+    assert pages[0].image_url == "http://ex/img/full/full/0/default.jpg"
+
+
+def test_painting_body_p2_emits_v2_style_service():
+    from htrflow_batch.iiif import painting_body
+
+    body = painting_body(P2_MANIFEST["sequences"][0]["canvases"][0])
+    assert body["id"] == "http://ex/img/full/full/0/default.jpg"
+    assert body["type"] == "Image"
+    svc = body["service"][0]
+    assert svc["@id"] == "http://ex/img"
+    assert svc["@type"] == "ImageService2"
+    assert "profile" in svc
+
+
+def test_painting_body_p3_passthrough():
+    from htrflow_batch.iiif import painting_body
+
+    canvas = _canvas_with_service(3000, 4000)
+    body = painting_body(canvas)
+    assert body["service"][0]["id"] == "https://img/iiif/page-1"

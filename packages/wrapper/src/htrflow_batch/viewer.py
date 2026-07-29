@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from .config import Config
-from .iiif import PageRef
+from .iiif import PageRef, painting_body
 
 
 def parse_alto_dims_bytes(data: bytes) -> tuple[int, int]:
@@ -58,6 +58,15 @@ def _thumbnail(body: dict, w: int, h: int) -> "list[dict] | None":
     return None
 
 
+def _label(value: object, fallback: str) -> dict:
+    """P2 labels are plain strings; P3 consumers (UV) need a language map."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value:
+        return {"none": [value]}
+    return {"none": [fallback]}
+
+
 def build_viewer_manifest(
     cfg: Config,
     source_manifest: dict,
@@ -72,18 +81,14 @@ def build_viewer_manifest(
             continue
         w, h = dims[page.name]
         src = page.canvas
-        body = {}
-        for ap in src.get("items", []):
-            for anno in ap.get("items", []):
-                if anno.get("body"):
-                    body = anno["body"]
+        body = painting_body(src)
         canvas_id = f"{vol}/canvas/{page.name}"
         thumbnail = _thumbnail(body, w, h)
         canvases.append(
             {
                 "id": canvas_id,
                 "type": "Canvas",
-                "label": src.get("label", {"none": [page.name]}),
+                "label": _label(src.get("label"), page.name),
                 "width": w,
                 "height": h,  # capped processing dims (D19 alignment)
                 **({"thumbnail": thumbnail} if thumbnail else {}),
@@ -117,7 +122,7 @@ def build_viewer_manifest(
         "@context": "http://iiif.io/api/presentation/3/context.json",
         "id": f"{vol}/iiif.json",
         "type": "Manifest",
-        "label": source_manifest.get("label", {"none": [cfg.volume_ref]}),
+        "label": _label(source_manifest.get("label"), cfg.volume_ref),
         # UV4 (RA fork) shows the ALTO text panel only when
         # getSearchService() finds a search service; endpoint is a stub.
         "service": [

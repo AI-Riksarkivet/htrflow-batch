@@ -90,3 +90,18 @@ def test_canvas_thumbnail_falls_back_to_static_image(sample_manifest, cfg):
         thumb["id"] == "https://iiif.example/mock-vol/page-00001/full/max/0/default.jpg"
     )
     assert (thumb["width"], thumb["height"]) == (2500, 3538)
+
+
+def test_viewer_manifest_normalizes_p2_string_label(cfg):
+    """P2 canvas labels are plain strings; the published P3 manifest must
+    carry dict labels or UV renders '[object Object]'-style breakage."""
+    from htrflow_batch.iiif import pages_from_manifest
+    from tests.test_iiif import P2_MANIFEST
+
+    pages = pages_from_manifest(P2_MANIFEST, width=2500)
+    m = build_viewer_manifest(cfg, P2_MANIFEST, pages, {"0001": (2500, 3333)})
+    c = m["items"][0]
+    assert c["label"] == {"none": ["f. 1r"]}
+    assert m["label"] == {"none": ["P2 vol"]}
+    body = c["items"][0]["items"][0]["body"]
+    assert body["service"][0]["@type"] == "ImageService2"
