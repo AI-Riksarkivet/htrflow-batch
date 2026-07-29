@@ -1,5 +1,6 @@
 .PHONY: install format lint check test typecheck ci build build-viewer scan publish \
-        compose-up compose-test compose-smoke compose-down helm-lint docs-serve docs-build poc-push clean
+        compose-up compose-test compose-smoke compose-down helm-lint docs-serve docs-build poc-push clean \
+        frontend-install frontend-test frontend-check frontend-build frontend-dev
 
 # On RA hosts dagger containers need the corp CA; harmless elsewhere if the file exists.
 CA_BUNDLE ?= /etc/ssl/certs/ca-certificates.crt
@@ -81,6 +82,23 @@ poc-push:
 	docker push 127.0.0.1:30500/htrflow-batch:dev
 	docker build -f .docker/htrflow-reconciler.dockerfile -t 127.0.0.1:30500/htrflow-reconciler:dev .
 	docker push 127.0.0.1:30500/htrflow-reconciler:dev
+
+# Campaign browser (bun/SvelteKit). The CA bundle is what gets bun through the
+# RA proxy; TLS verification stays on.
+frontend-install:
+	cd frontend && NODE_EXTRA_CA_CERTS=$(CA_BUNDLE) bun install
+
+frontend-test:
+	cd frontend && bun run test
+
+frontend-check:
+	cd frontend && bun run check
+
+frontend-build:
+	cd frontend && NODE_EXTRA_CA_CERTS=$(CA_BUNDLE) bun run build
+
+frontend-dev:
+	cd frontend && bun run dev
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +

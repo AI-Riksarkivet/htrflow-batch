@@ -1,0 +1,51 @@
+{
+  "generated_at": "2026-07-29T09:15:00+00:00",
+  "tick_seconds": 300,
+  "warnings": [
+    "demo-v1: recipe changed after results were published; grandfathered — published volumes keep the old steps"
+  ],
+  "campaigns": [
+    {
+      "name": "demo",
+      "pipeline": "demo-v1",
+      "error": null,
+      "totals": { "done": 1, "total": 3 },
+      "volumes": [
+        {
+          "id": "R0001203",
+          "status": "done",
+          "attempts": 0,
+          "pages_done": 638,
+          "pages_total": null,
+          "error": null,
+          "viewer_manifest": "http://localhost:30900/htr-results/demo-v1/R0001203/iiif.json",
+          "source_manifest": "https://lbiiif.riksarkivet.se/arkis!R0001203/manifest",
+          "thumbnail": "https://lbiiif.riksarkivet.se/arkis!R0001203/A0068318_00001/full/200,/0/default.jpg"
+        },
+        {
+          "id": "R0001204",
+          "status": "running",
+          "attempts": 1,
+          "pages_done": 42,
+          "pages_total": null,
+          "error": null,
+          "viewer_manifest": null,
+          "source_manifest": "https://lbiiif.riksarkivet.se/arkis!R0001204/manifest",
+          "thumbnail": "https://lbiiif.riksarkivet.se/arkis!R0001204/A0068319_00001/full/200,/0/default.jpg"
+        },
+        {
+          "id": "R0001205",
+          "status": "needs-attention",
+          "attempts": 3,
+          "pages_done": null,
+          "pages_total": null,
+          "error": null,
+          "viewer_manifest": null,
+          "source_manifest": "https://lbiiif.riksarkivet.se/arkis!R0001205/manifest",
+          "thumbnail": null
+        }
+      ],
+      "orphans": ["R0009999"]
+    }
+  ]
+}

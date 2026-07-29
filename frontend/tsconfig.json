@@ -1,0 +1,12 @@
+{
+  "extends": "./.svelte-kit/tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    // Third-party .d.ts only. vite's Plugin interface does not satisfy rollup's
+    // under exactOptionalPropertyTypes, which is their incompatibility, not
+    // ours. Our own sources stay under the full strict trio above.
+    "skipLibCheck": true
+  }
+}
