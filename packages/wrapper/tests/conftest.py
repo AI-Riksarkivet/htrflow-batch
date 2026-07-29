@@ -1,3 +1,5 @@
+import copy
+
 import boto3
 import pytest
 from moto import mock_aws
@@ -40,6 +42,43 @@ def sample_manifest() -> dict:
         "label": {"sv": ["Testvolym"]},
         "items": [_canvas(i, f"{base}/page-{i:05d}") for i in range(1, 4)],
     }
+
+
+P2_MANIFEST = {
+    "@context": "http://iiif.io/api/presentation/2/context.json",
+    "@type": "sc:Manifest",
+    "label": "P2 vol",
+    "sequences": [
+        {
+            "canvases": [
+                {
+                    "@id": "http://ex/canvas/1",
+                    "label": "f. 1r",
+                    "width": 3000,
+                    "height": 4000,
+                    "images": [
+                        {
+                            "resource": {
+                                "@id": "http://ex/img/full/full/0/default.jpg",
+                                "format": "image/jpeg",
+                                "service": {
+                                    "@id": "http://ex/img",
+                                    "profile": "http://iiif.io/api/image/2/level1.json",
+                                },
+                            }
+                        }
+                    ],
+                }
+            ]
+        }
+    ],
+}
+
+
+@pytest.fixture
+def p2_manifest() -> dict:
+    """IIIF Presentation 2 manifest (Bodleian-shaped); safe to mutate."""
+    return copy.deepcopy(P2_MANIFEST)
 
 
 REQUIRED_ENV = {

@@ -14,7 +14,6 @@ packages = ["src/htrflow_batch"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]  # lets tests import shared fixtures via `tests.<module>`
 
 [tool.ruff]
 line-length = 88

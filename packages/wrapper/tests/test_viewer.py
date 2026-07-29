@@ -92,16 +92,54 @@ def test_canvas_thumbnail_falls_back_to_static_image(sample_manifest, cfg):
     assert (thumb["width"], thumb["height"]) == (2500, 3538)
 
 
-def test_viewer_manifest_normalizes_p2_string_label(cfg):
+def _p2_viewer_manifest(cfg, p2_manifest) -> dict:
+    pages = pages_from_manifest(p2_manifest, width=2500)
+    return build_viewer_manifest(cfg, p2_manifest, pages, {"0001": (2500, 3333)})
+
+
+def test_viewer_manifest_normalizes_p2_string_label(cfg, p2_manifest):
     """P2 canvas labels are plain strings; the published P3 manifest must
     carry dict labels or UV renders '[object Object]'-style breakage."""
-    from htrflow_batch.iiif import pages_from_manifest
-    from tests.test_iiif import P2_MANIFEST
-
-    pages = pages_from_manifest(P2_MANIFEST, width=2500)
-    m = build_viewer_manifest(cfg, P2_MANIFEST, pages, {"0001": (2500, 3333)})
+    m = _p2_viewer_manifest(cfg, p2_manifest)
     c = m["items"][0]
     assert c["label"] == {"none": ["f. 1r"]}
     assert m["label"] == {"none": ["P2 vol"]}
     body = c["items"][0]["items"][0]["body"]
     assert body["service"][0]["@type"] == "ImageService2"
+
+
+def test_viewer_manifest_normalizes_p2_object_label(cfg, p2_manifest):
+    """P2 object labels ({"@value", "@language"}) are not P3 language maps —
+    passing them through unchanged corrupts the published manifest."""
+    canvas = p2_manifest["sequences"][0]["canvases"][0]
+    canvas["label"] = {"@value": "f. 1r", "@language": "sv"}
+    p2_manifest["label"] = {"@value": "P2 vol"}  # no @language -> "none"
+    m = _p2_viewer_manifest(cfg, p2_manifest)
+    assert m["items"][0]["label"] == {"sv": ["f. 1r"]}
+    assert m["label"] == {"none": ["P2 vol"]}
+
+
+def test_viewer_manifest_normalizes_p2_array_of_strings_label(cfg, p2_manifest):
+    canvas = p2_manifest["sequences"][0]["canvases"][0]
+    canvas["label"] = ["f. 1r", "first leaf"]
+    m = _p2_viewer_manifest(cfg, p2_manifest)
+    assert m["items"][0]["label"] == {"none": ["f. 1r", "first leaf"]}
+
+
+def test_viewer_manifest_normalizes_p2_array_of_objects_label(cfg, p2_manifest):
+    canvas = p2_manifest["sequences"][0]["canvases"][0]
+    canvas["label"] = [
+        {"@value": "f. 1r", "@language": "en"},
+        {"@value": "blad 1", "@language": "sv"},
+        {"@value": "fol. 1", "@language": "sv"},
+    ]
+    m = _p2_viewer_manifest(cfg, p2_manifest)
+    assert m["items"][0]["label"] == {"en": ["f. 1r"], "sv": ["blad 1", "fol. 1"]}
+
+
+def test_viewer_manifest_label_falls_back_when_empty(cfg, p2_manifest):
+    p2_manifest["sequences"][0]["canvases"][0]["label"] = []
+    del p2_manifest["label"]
+    m = _p2_viewer_manifest(cfg, p2_manifest)
+    assert m["items"][0]["label"] == {"none": ["0001"]}
+    assert m["label"] == {"none": ["SE-RA-1234"]}

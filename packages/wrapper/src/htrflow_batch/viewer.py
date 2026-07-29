@@ -58,13 +58,37 @@ def _thumbnail(body: dict, w: int, h: int) -> "list[dict] | None":
     return None
 
 
-def _label(value: object, fallback: str) -> dict:
-    """P2 labels are plain strings; P3 consumers (UV) need a language map."""
+def _language_map(value: object) -> dict:
+    """Normalize any legal P2/P3 label to a P3 language map.
+
+    P2 allows a plain string, an object (`{"@value", "@language"}`) or an
+    array of either; only the P3 form (`{lang: [str, ...]}`) may pass through
+    untouched — emitting a P2 object as if it were a language map corrupts
+    the published manifest."""
+    if isinstance(value, str):
+        return {"none": [value]} if value else {}
     if isinstance(value, dict):
-        return value
-    if isinstance(value, str) and value:
-        return {"none": [value]}
-    return {"none": [fallback]}
+        entries: dict[str, object] = {str(k): v for k, v in value.items()}
+        if "@value" in entries:
+            text = entries["@value"]
+            if not isinstance(text, str) or not text:
+                return {}
+            lang = entries.get("@language")
+            return {lang if isinstance(lang, str) and lang else "none": [text]}
+        return {k: v for k, v in entries.items() if v}
+    if isinstance(value, list):
+        merged: dict[str, list[str]] = {}
+        for item in value:
+            for lang, texts in _language_map(item).items():
+                merged.setdefault(lang, []).extend(texts)
+        return merged
+    return {}
+
+
+def _label(value: object, fallback: str) -> dict:
+    """P2 labels are strings/objects/arrays; P3 consumers (UV) need a
+    language map."""
+    return _language_map(value) or {"none": [fallback]}
 
 
 def build_viewer_manifest(
