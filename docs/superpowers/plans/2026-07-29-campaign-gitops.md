@@ -6,14 +6,31 @@
 
 **Architecture:** Desired state lives in a separate `htr-campaigns` repo (campaign + pipeline YAML). A stateless reconciler (new `reconciler/` Python package, CronJob every 5 min) derives per-volume status from S3 (`manifest.json` = done) and k8s Jobs, submits missing work round-robin up to a window, and writes `status/status.json` to the bucket. A Svelte SPA (built with Bun, static output, served by the `uv4-viewer` nginx at `/`) renders it; every volume links into UV. Spec: `docs/superpowers/specs/2026-07-29-campaign-gitops-design.md`.
 
-**Tech Stack:** Python 3.10+ (uv, pytest, ruff — mirror `wrapper/`), kubernetes + boto3 + httpx + pyyaml, Svelte 4 + Vite + Bun (build-time only), Helm chart additions, dagger Go module extensions.
+**Tech Stack:** Reconciler: Python 3.13+ (uv, pytest+moto, ruff, ty, **Pydantic models — not dataclasses**), kubernetes + boto3 + httpx + pyyaml. Frontend: **Svelte 5 + SvelteKit 2** (adapter-static), strict TypeScript, Zod, Vitest, Bun (build-time only). Helm chart additions, dagger Go module extensions. The wrapper stays py310 (torch constraint) with its existing dataclass style — do not restyle it.
+
+## Org conventions (AI-Riksarkivet/ra-skills)
+
+The org's canonical skills repo governs style. Before starting, clone it read-only:
+
+```bash
+git clone --depth 1 "https://x-access-token:$(gh auth token)@github.com/AI-Riksarkivet/ra-skills" "$SCRATCH/ra-skills"
+```
+
+(`$SCRATCH` = the session scratchpad dir.) Per-task required reading is listed in the task; the load-bearing rules, so nobody skips them:
+
+- **writing-python** (Tasks 3–10): Pydantic `BaseModel` for every structured value object — never `@dataclass`; type hints on every public signature; `uv` only; `ruff` only; **`ty` for type checking** (`uvx ty check` — no mypy/pyright); stdlib first; Google-style docstrings; comment only non-obvious *why*.
+- **testing-python** (Tasks 3–10): `--import-mode=importlib` (already set); no `asyncio_mode`, no `integration` marker; **moto** for S3 fixtures; respx for httpx if ever needed.
+- **writing-typescript** (Task 13): strict mode + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`; `unknown` never `any`; **Zod parse at boundaries** (status.json is untrusted input); no `enum`s (literal unions); bun for everything Node-level; Vitest for tests.
+- **dockerfile** (Tasks 11, 14): Python images install via uv with cache mounts and `UV_LINK_MODE=copy`; static frontends served by **`nginxinc/nginx-unprivileged`** (listens on 8080, runs non-root) — read `references/python-uv.md` and `references/static-nginx.md`.
+- **dagger** (Tasks 11, 14): read `references/go-patterns.md` before touching `.dagger/*.go`.
+- **zensical-authoring** (Task 14): admonitions/tabs/mermaid syntax for the docs pages.
 
 ## Global Constraints
 
 - NEVER `git push` — the user pushes. NEVER mention Claude/AI or add Co-Authored-By in commit messages.
 - Never `docker push` anywhere except the in-cluster PoC registry `127.0.0.1:30500`. Never `dagger call publish*` against a real registry.
 - The live k3s cluster stays untouched by this plan: chart changes are verified with `helm lint` / `helm template` ONLY — no `helm install/upgrade`, no `kubectl apply` of reconciler resources.
-- Python: run tests as `cd <pkg> && uv run --no-sync pytest -q` after a one-time `uv sync --extra dev` in that package. Format/lint: `uv run --no-sync ruff format src tests && uv run --no-sync ruff check src tests` (same config style as `wrapper/pyproject.toml`: line-length 88, target py310, select E,F,I,W).
+- Python: run tests as `cd <pkg> && uv run --no-sync pytest -q` after a one-time `uv sync --extra dev` in that package. Format/lint: `uv run --no-sync ruff format src tests && uv run --no-sync ruff check src tests` (line-length 88, select E,F,I,W; ruff target py310 in `wrapper/`, py313 in `reconciler/`). Reconciler tasks additionally run `uvx ty check src`.
 - Bun/npm on RA hosts need `NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt` (firewall TLS interception; file exists on dmlpai01). Never disable TLS verification.
 - The RA firewall blocks most external hosts (alvin, kb.se, wikimedia…); tests must not fetch the network except huggingface.co/lbiiif/tile.loc.gov — and unit tests must not fetch at all.
 - Deterministic job names: `job_name(pipeline_id, volume_id)` from Task 5 is the single source of truth — never inline `f"htr-{p}-{v}"` elsewhere.
@@ -30,10 +47,11 @@ reconciler/                    # new uv package, mirrors wrapper/ layout
     synthetic.py guards.py    jobspec.py
     s3.py        k8s.py       gitrepo.py  main.py
   tests/
-frontend/                      # new Svelte SPA (Bun build-time only)
-  package.json  vite.config.js  index.html
-  src/App.svelte  src/lib/derive.js  src/lib/derive.test.js  src/main.js
-  public/status.sample.json
+frontend/                      # new SvelteKit SPA (Svelte 5 runes, TS, Bun build-time only)
+  package.json  svelte.config.js  vite.config.ts  tsconfig.json
+  src/app.html  src/app.d.ts  src/routes/+layout.ts  src/routes/+page.svelte
+  src/lib/status.ts  src/lib/derive.ts  src/lib/derive.test.ts
+  static/status.sample.json
 .docker/htrflow-reconciler.dockerfile
 charts/htrflow-batch/templates/reconciler.yaml   # CronJob + RBAC
 ~/htr-campaigns/               # separate repo scaffold (Task 12)
@@ -378,9 +396,9 @@ git add wrapper && git commit -m "Wrapper: publish metrics-failed-latest.json so
 
 **Interfaces:**
 - Produces (used by every later task):
-  - `models.Volume(id: str, manifest_url: str | None = None, images: tuple[str, ...] = ())` (frozen dataclass)
-  - `models.Campaign(name: str, pipeline_id: str, volumes: list[Volume], error: str | None = None)`
-  - `models.PipelineSpec(id: str, image: str, steps_yaml: str, steps_sha256: str)` (frozen)
+  - `models.Volume(id: str, manifest_url: str | None = None, images: tuple[str, ...] = ())` (frozen Pydantic `BaseModel`)
+  - `models.Campaign(name: str, pipeline_id: str, volumes: list[Volume], error: str | None = None)` (mutable `BaseModel`)
+  - `models.PipelineSpec(id: str, image: str, steps_yaml: str, steps_sha256: str)` (frozen `BaseModel`)
   - `parse.parse_campaign(name: str, text: str) -> Campaign` — never raises; file-level problems land in `Campaign.error` with empty volumes
   - `parse.parse_pipeline(pipeline_id: str, text: str) -> PipelineSpec` — raises `parse.PipelineError` on missing/tag-only image or missing steps
   - `parse.RA_MANIFEST_TEMPLATE = "https://lbiiif.riksarkivet.se/arkis!{ref}/manifest"`
@@ -392,8 +410,10 @@ git add wrapper && git commit -m "Wrapper: publish metrics-failed-latest.json so
 name = "htrflow-reconciler"
 version = "0.1.0"
 description = "GitOps reconciler for htrflow-batch campaigns (docs: how-it-works/campaigns)"
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 dependencies = [
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
     "pyyaml>=6",
     "boto3>=1.34",
     "httpx>=0.27",
@@ -401,7 +421,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.4"]
+dev = ["pytest>=8", "ruff>=0.4", "moto[s3]>=5"]
 
 [build-system]
 requires = ["hatchling"]
@@ -416,11 +436,13 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
 ```
+
+(House rule from ra-skills `writing-python`: Pydantic models, not dataclasses, everywhere in this package; `ty` type-checks in every task's verify step: `uvx ty check src`.)
 
 Create empty `reconciler/src/htrflow_reconciler/__init__.py`, then `cd ~/htrflow-batch/reconciler && uv sync --extra dev`.
 
@@ -509,33 +531,32 @@ def test_parse_pipeline_requires_steps():
 Run: `cd ~/htrflow-batch/reconciler && uv run --no-sync pytest -q`
 Expected: ImportError (modules don't exist).
 
-- [ ] **Step 4: Implement** — `models.py`:
+- [ ] **Step 4: Implement** — `models.py` (Pydantic, per ra-skills `writing-python`):
 
 ```python
 """Domain types for the campaign reconciler (docs: how-it-works/campaigns)."""
 
-from __future__ import annotations
-
-from dataclasses import dataclass, field
+from pydantic import BaseModel, ConfigDict, Field
 
 
-@dataclass(frozen=True)
-class Volume:
+class Volume(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     id: str
     manifest_url: str | None = None
     images: tuple[str, ...] = ()
 
 
-@dataclass
-class Campaign:
+class Campaign(BaseModel):
     name: str
     pipeline_id: str
-    volumes: list[Volume] = field(default_factory=list)
+    volumes: list[Volume] = Field(default_factory=list)
     error: str | None = None
 
 
-@dataclass(frozen=True)
-class PipelineSpec:
+class PipelineSpec(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     id: str
     image: str
     steps_yaml: str
@@ -643,7 +664,7 @@ git add reconciler && git commit -m "Reconciler: package scaffold, campaign and 
 **Interfaces:**
 - Consumes: `models.Volume`.
 - Produces:
-  - `status.JobState(active: bool, failed: bool, exit_code: int | None)` (frozen dataclass)
+  - `status.JobState(active: bool, failed: bool, exit_code: int | None)` (frozen Pydantic `BaseModel` — keyword-only construction)
   - `status.job_name(pipeline_id: str, volume_id: str) -> str` — deterministic, ≤63 chars, k8s-safe (lowercase; long names truncated with an 8-char sha256 suffix)
   - `status.derive(volume: Volume, pipeline_id: str, done: set[str], jobs: dict[str, JobState], attempts: dict[str, int], attempt_cap: int) -> str` returning one of `"done" | "running" | "queued" | "retry" | "needs-attention" | "pending"` (spec §6; `done` holds volume ids with a published manifest.json; `jobs` is keyed by job name)
 
@@ -669,26 +690,31 @@ def test_done_wins_over_everything():
     assert derive(V, "p", {"R1"}, jobs, {}, 3) == "done"
 
 
+def _js(active=False, failed=False, exit_code=None):
+    return JobState(active=active, failed=failed, exit_code=exit_code)
+
+
 def test_running_and_queued():
     n = job_name("p", "R1")
-    assert derive(V, "p", set(), {n: JobState(True, False, None)}, {}, 3) == "running"
-    assert derive(V, "p", set(), {n: JobState(False, False, None)}, {}, 3) == "queued"
+    assert derive(V, "p", set(), {n: _js(active=True)}, {}, 3) == "running"
+    assert derive(V, "p", set(), {n: _js()}, {}, 3) == "queued"
 
 
 def test_failed_transient_below_cap_is_retry():
     n = job_name("p", "R1")
-    jobs = {n: JobState(False, True, 1)}
+    jobs = {n: _js(failed=True, exit_code=1)}
     assert derive(V, "p", set(), jobs, {"R1": 1}, 3) == "retry"
 
 
 def test_failed_permanent_is_needs_attention():
     n = job_name("p", "R1")
-    assert derive(V, "p", set(), {n: JobState(False, True, 13)}, {}, 3) == "needs-attention"
+    jobs = {n: _js(failed=True, exit_code=13)}
+    assert derive(V, "p", set(), jobs, {}, 3) == "needs-attention"
 
 
 def test_failed_at_cap_is_needs_attention():
     n = job_name("p", "R1")
-    jobs = {n: JobState(False, True, 1)}
+    jobs = {n: _js(failed=True, exit_code=1)}
     assert derive(V, "p", set(), jobs, {"R1": 3}, 3) == "needs-attention"
 
 
@@ -711,16 +737,18 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass
+
+from pydantic import BaseModel, ConfigDict
 
 from .models import Volume
 
 
-@dataclass(frozen=True)
-class JobState:
+class JobState(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     active: bool
     failed: bool
-    exit_code: "int | None"
+    exit_code: int | None = None
 
 
 def job_name(pipeline_id: str, volume_id: str) -> str:
@@ -1096,7 +1124,7 @@ git add reconciler && git commit -m "Reconciler: pipeline drift guards with gran
 **Interfaces:**
 - Consumes: `models.Volume`, `models.PipelineSpec`, `status.job_name`.
 - Produces:
-  - `jobspec.ReconcilerConfig` (dataclass): `namespace="htr-batch"`, `queue="htr-batch"`, `s3_secret="htr-batch-s3"`, `public_results_base`, `data_pvc="htr-test-data"`, `window=20`, `attempt_cap=3`, `active_deadline_seconds=21600`
+  - `jobspec.ReconcilerConfig` (frozen Pydantic `BaseModel`): `namespace="htr-batch"`, `queue="htr-batch"`, `s3_secret="htr-batch-s3"`, `public_results_base`, `data_pvc="htr-test-data"`, `window=20`, `attempt_cap=3`, `active_deadline_seconds=21600`
   - `jobspec.build_job(pipeline: PipelineSpec, volume: Volume, manifest_url: str, cfg: ReconcilerConfig) -> dict` — a `batch/v1` Job dict, same shape as the hand-run jobs: Kueue queue label, `suspend: True`, `runtimeClassName: nvidia`, GPU 1 / CPU 4 / 8–16Gi, pipeline ConfigMap mount at `/config`, PVC at `/data` (`HF_HOME=/data/hf`), memory-backed `/work`, `envFrom` the S3 secret, and env `VOLUME_REF, IIIF_MANIFEST_URL, PIPELINE_PATH=/config/pipeline.yaml, PIPELINE_ID, PUBLIC_RESULTS_BASE, IMAGE_DIGEST=<pipeline.image>, WORKDIR_PATH=/work`. `ttlSecondsAfterFinished=86400`, `backoffLimit=0` (retries are the reconciler's job now — k8s-level backoff would double-count attempts).
 
 - [ ] **Step 1: Write the failing tests** — `reconciler/tests/test_jobspec.py`:
@@ -1158,16 +1186,15 @@ Expected: ImportError.
 """Job dicts for campaign volumes — same shape as the proven hand-run jobs
 (R0001203, loc-mal2459400), image + IMAGE_DIGEST from the pipeline pin."""
 
-from __future__ import annotations
-
-from dataclasses import dataclass
+from pydantic import BaseModel, ConfigDict
 
 from .models import PipelineSpec, Volume
 from .status import job_name
 
 
-@dataclass(frozen=True)
-class ReconcilerConfig:
+class ReconcilerConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     public_results_base: str
     namespace: str = "htr-batch"
     queue: str = "htr-batch"
@@ -1280,7 +1307,7 @@ git add reconciler && git commit -m "Reconciler: Job spec builder with pipeline-
 
 **Files:**
 - Create: `reconciler/src/htrflow_reconciler/s3.py`, `k8s.py`, `gitrepo.py`
-- Test: `reconciler/tests/test_s3_keys.py`
+- Test: `reconciler/tests/test_s3_keys.py`, `reconciler/tests/test_bucket.py` (moto — the ra-skills `testing-python` S3 convention)
 
 **Interfaces:**
 - Produces (thin I/O shells; the tick in Task 10 injects fakes for them, so only pure key-helpers get unit tests here):
@@ -1303,6 +1330,42 @@ def test_key_layout_matches_wrapper_contract():
     assert s3.status_key() == "status/status.json"
     assert s3.attempts_key() == "status/attempts.json"
     assert s3.validation_key() == "status/validation.json"
+```
+
+and `reconciler/tests/test_bucket.py` (real boto3 against moto — verifies the
+pagination and done-detection logic no fake can):
+
+```python
+import boto3
+import pytest
+from moto import mock_aws
+
+from htrflow_reconciler.s3 import Bucket, manifest_key
+
+
+@pytest.fixture
+def bucket():
+    with mock_aws():
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket="htr-results")
+        yield Bucket(client, "htr-results")
+
+
+def test_done_volumes_requires_manifest(bucket):
+    bucket.write_json(manifest_key("demo-v1", "R1"), {"pages": 1})
+    bucket.put_text("demo-v1/R2/alto/0001.xml", "<alto/>")  # partial, no manifest
+    assert bucket.done_volumes("demo-v1") == {"R1"}
+
+
+def test_read_json_missing_returns_none(bucket):
+    assert bucket.read_json("nope.json") is None
+
+
+def test_count_pages(bucket):
+    for i in range(3):
+        bucket.put_text(f"demo-v1/R1/alto/{i:04d}.xml", "<alto/>")
+    assert bucket.count_pages("demo-v1", "R1") == 3
+    assert bucket.count_pages("demo-v1", "R2") == 0
 ```
 
 - [ ] **Step 2: Run to verify failure, then implement** — `s3.py`:
@@ -1691,7 +1754,7 @@ def test_tick_respects_window(tmp_path):
 
 def test_tick_retries_failed_transient(tmp_path):
     n = job_name("demo-v1", "R0000002")
-    cluster = FakeCluster(jobs={n: JobState(False, True, 1)})
+    cluster = FakeCluster(jobs={n: JobState(active=False, failed=True, exit_code=1)})
     bucket = FakeBucket()
     doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
     # captured logs, deleted the failed job, bumped attempts
@@ -1704,7 +1767,7 @@ def test_tick_retries_failed_transient(tmp_path):
 
 def test_tick_permanent_failure_needs_attention_not_deleted(tmp_path):
     n = job_name("demo-v1", "R0000002")
-    cluster = FakeCluster(jobs={n: JobState(False, True, 13)})
+    cluster = FakeCluster(jobs={n: JobState(active=False, failed=True, exit_code=13)})
     doc = tick(_repo(tmp_path), FakeBucket(), cluster, CFG, NOW)
     byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
     assert byid["R0000002"]["status"] == "needs-attention"
@@ -2007,18 +2070,19 @@ their `st` is no longer `"pending"`. `entry["orphans"]` defaults to `[]` in
 the entry dict initializer for campaigns that error out early — add
 `"orphans": []` to the initial `entry = {...}` literal.)
 
-`__main__.py`:
+`__main__.py` (env via `pydantic-settings`, the ra-skills configuration
+convention — validate at boot, fail fast):
 
 ```python
 """CronJob entrypoint: one tick with real adapters, config from env."""
 
-import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 import boto3
 import httpx
+from pydantic_settings import BaseSettings
 
 from .gitrepo import checkout
 from .jobspec import ReconcilerConfig
@@ -2027,7 +2091,17 @@ from .main import tick
 from .s3 import Bucket
 
 
-def _fetch_json(url: str):
+class Settings(BaseSettings):
+    campaigns_repo_url: str
+    public_results_base: str
+    s3_endpoint: str = ""
+    s3_bucket: str = "htr-results"
+    campaigns_dir: Path = Path(tempfile.gettempdir()) / "campaigns"
+    reconciler_window: int = 20
+    reconciler_attempt_cap: int = 3
+
+
+def _fetch_json(url: str) -> dict | None:
     try:
         r = httpx.get(url, timeout=30, follow_redirects=True)
         return r.json() if r.status_code == 200 else None
@@ -2036,17 +2110,15 @@ def _fetch_json(url: str):
 
 
 def run() -> None:
+    settings = Settings()  # reads CAMPAIGNS_REPO_URL etc.; raises if missing
     cfg = ReconcilerConfig(
-        public_results_base=os.environ["PUBLIC_RESULTS_BASE"],
-        window=int(os.environ.get("RECONCILER_WINDOW", "20")),
-        attempt_cap=int(os.environ.get("RECONCILER_ATTEMPT_CAP", "3")),
+        public_results_base=settings.public_results_base,
+        window=settings.reconciler_window,
+        attempt_cap=settings.reconciler_attempt_cap,
     )
-    repo = checkout(
-        os.environ["CAMPAIGNS_REPO_URL"],
-        Path(os.environ.get("CAMPAIGNS_DIR", tempfile.gettempdir() + "/campaigns")),
-    )
-    client = boto3.client("s3", endpoint_url=os.environ.get("S3_ENDPOINT") or None)
-    bucket = Bucket(client, os.environ.get("S3_BUCKET", "htr-results"))
+    repo = checkout(settings.campaigns_repo_url, settings.campaigns_dir)
+    client = boto3.client("s3", endpoint_url=settings.s3_endpoint or None)
+    bucket = Bucket(client, settings.s3_bucket)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     tick(repo, bucket, Cluster(), cfg, now, fetch_json=_fetch_json)
 
@@ -2084,14 +2156,22 @@ git add reconciler && git commit -m "Reconciler: tick orchestration, retry captu
 
 ```dockerfile
 # Reconciler: slim, CPU-only, no torch. Build context = repo root.
+# uv-based install per ra-skills dockerfile/references/python-uv.md
+# (standalone package, not a workspace — single sync suffices).
 # RA firewall CA is baked in so in-cluster git clone of the campaigns repo
 # works through TLS interception (spec §7.1).
-FROM python:3.12-slim
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY reconciler /src/reconciler
-RUN pip install --no-cache-dir /src/reconciler
-ENV GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt \
+ENV UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PYTHON_DOWNLOADS=never
+WORKDIR /app
+COPY reconciler /app
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-editable
+ENV PATH="/app/.venv/bin:$PATH" \
+    GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ENTRYPOINT ["python", "-m", "htrflow_reconciler"]
 ```
@@ -2205,9 +2285,12 @@ Expected: lint clean; output shows ServiceAccount, Role, RoleBinding, CronJob, `
 test:
 	cd wrapper && uv run --no-sync pytest -q
 	cd reconciler && uv run --no-sync pytest -q
+
+typecheck:
+	cd reconciler && uvx ty check src
 ```
 
-(match the existing target's exact current form — extend, don't replace semantics). Run `make test` to confirm both suites pass; run `cd .dagger && go build ./...` to confirm the module compiles.
+(match the existing target's exact current form — extend, don't replace semantics; add `typecheck` to the `ci` aggregate target — the ra-skills `writing-python` rule is that `ty` gates CI for new Python code. The wrapper is exempt: pre-existing py310 code, restyling out of scope.) Run `make test typecheck` to confirm; run `cd .dagger && go build ./...` to confirm the module compiles. Read `ra-skills/skills/dagger/references/go-patterns.md` before editing the Go files.
 
 - [ ] **Step 5: Commit**
 
@@ -2326,17 +2409,19 @@ Report to the user that they need to create the GitHub repo and push (never push
 
 ---
 
-### Task 13: Campaign browser frontend (Svelte + Bun)
+### Task 13: Campaign browser frontend (SvelteKit 2 + Svelte 5 + TypeScript)
+
+Required reading first (from the ra-skills clone): `skills/writing-typescript/SKILL.md` (house style) and `skills/dockerfile/references/static-nginx.md` (build layout this feeds into). Stack per org convention: Svelte 5 (runes) + SvelteKit 2 + adapter-static, strict TS, Zod at the boundary, Vitest, bun.
 
 **Files (all under `~/htrflow-batch/frontend/`):**
-- Create: `package.json`, `vite.config.js`, `index.html`, `src/main.js`, `src/App.svelte`, `src/lib/derive.js`, `src/lib/derive.test.js`, `public/status.sample.json`, `.gitignore` (`node_modules/`, `dist/`)
-- Modify: `Makefile` (add `frontend-install`, `frontend-test`, `frontend-build`, `frontend-dev`)
+- Create: `package.json`, `svelte.config.js`, `vite.config.ts`, `tsconfig.json`, `src/app.html`, `src/app.d.ts`, `src/routes/+layout.ts`, `src/routes/+page.svelte`, `src/lib/status.ts`, `src/lib/derive.ts`, `src/lib/derive.test.ts`, `static/status.sample.json`, `.gitignore` (`node_modules/`, `dist/`, `.svelte-kit/`)
+- Modify: `Makefile` (add `frontend-install`, `frontend-test`, `frontend-check`, `frontend-build`, `frontend-dev`)
 
 **Interfaces:**
-- Consumes: the status.json schema from Task 10 (copied into `public/status.sample.json`).
-- Produces: `bun run build` → `frontend/dist/` static files with **relative** asset paths (`base: "./"`), fetching `../htr-results/status/status.json`... — NO: the SPA fetches the status URL from a same-origin config: `window.STATUS_URL` if set, else `http://localhost:30900/htr-results/status/status.json` (the PoC default; the bucket serves CORS-open public reads). `derive.js` exports `viewerHref(volume)` and `progress(campaign)` used by App.svelte and unit-tested with `bun test`.
+- Consumes: the status.json schema from Task 10 (Zod-modeled in `src/lib/status.ts`; sample copied into `static/status.sample.json`).
+- Produces: `bun run build` → `frontend/dist/` static files (adapter-static configured to emit `dist/`, relative asset paths are SvelteKit's default). The SPA fetches `window.STATUS_URL` if set, else `http://localhost:30900/htr-results/status/status.json` (PoC default; the bucket serves CORS-open public reads). `derive.ts` exports `viewerHref(volume)`, `progress(campaign)`, `isStale(generatedAt, tickSeconds, now?)`.
 
-- [ ] **Step 1: Scaffold without network surprises** — `frontend/package.json`:
+- [ ] **Step 1: Scaffold** — `frontend/package.json`:
 
 ```json
 {
@@ -2344,99 +2429,69 @@ Report to the user that they need to create the GitHub repo and push (never push
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite dev",
     "build": "vite build",
-    "test": "bun test src"
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^3.23.0"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^3.1.0",
-    "svelte": "^4.2.0",
-    "vite": "^5.2.0"
+    "@sveltejs/adapter-static": "^3.0.0",
+    "@sveltejs/kit": "^2.5.0",
+    "@sveltejs/vite-plugin-svelte": "^4.0.0",
+    "svelte": "^5.0.0",
+    "svelte-check": "^4.0.0",
+    "typescript": "^5.5.0",
+    "vite": "^5.4.0",
+    "vitest": "^2.0.0"
   }
 }
 ```
 
-`vite.config.js`:
+`svelte.config.js`:
 
 ```javascript
-import { svelte } from "@sveltejs/vite-plugin-svelte";
-import { defineConfig } from "vite";
+import adapter from "@sveltejs/adapter-static";
+import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
+
+/** @type {import('@sveltejs/kit').Config} */
+export default {
+  preprocess: vitePreprocess(),
+  kit: {
+    adapter: adapter({ pages: "dist", assets: "dist" }),
+  },
+};
+```
+
+`vite.config.ts`:
+
+```typescript
+import { sveltekit } from "@sveltejs/kit/vite";
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  base: "./",
-  plugins: [svelte()],
+  plugins: [sveltekit()],
   server: { host: true }, // reachable over the LAN/tunnel, rask lesson
+  test: { include: ["src/**/*.test.ts"] },
 });
 ```
 
-Install (CA bundle for the RA firewall): `cd ~/htrflow-batch/frontend && NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt bun install`
-Expected: lockfile `bun.lockb` created. Commit the lockfile.
+`tsconfig.json` (strict trio per writing-typescript — non-negotiable):
 
-- [ ] **Step 2: Failing unit tests** — `src/lib/derive.test.js`:
-
-```javascript
-import { expect, test } from "bun:test";
-import { isStale, progress, viewerHref } from "./derive.js";
-
-const done = {
-  id: "R1",
-  status: "done",
-  viewer_manifest: "http://pub/htr-results/demo-v1/R1/iiif.json",
-  source_manifest: "https://lbiiif.riksarkivet.se/arkis!R1/manifest",
-};
-const pending = { ...done, status: "pending", viewer_manifest: null };
-
-test("done volumes open the published manifest", () => {
-  expect(viewerHref(done)).toBe(
-    "uv.html#?manifest=http://pub/htr-results/demo-v1/R1/iiif.json"
-  );
-});
-
-test("pending volumes open the source manifest", () => {
-  expect(viewerHref(pending)).toBe(
-    "uv.html#?manifest=https://lbiiif.riksarkivet.se/arkis!R1/manifest"
-  );
-});
-
-test("progress percentage", () => {
-  expect(progress({ totals: { done: 2, total: 8 } })).toBe(25);
-  expect(progress({ totals: { done: 0, total: 0 } })).toBe(0);
-});
-
-test("stale when older than 3 ticks", () => {
-  const now = new Date("2026-07-29T09:20:00Z");
-  expect(isStale("2026-07-29T09:00:00Z", 300, now)).toBe(true);
-  expect(isStale("2026-07-29T09:11:00Z", 300, now)).toBe(false);
-});
-```
-
-Run: `cd ~/htrflow-batch/frontend && bun test src` — expected FAIL (module missing).
-
-- [ ] **Step 3: Implement** — `src/lib/derive.js`:
-
-```javascript
-// Pure view-derivation over status.json (schema: reconciler main.py).
-
-export function viewerHref(volume) {
-  const manifest =
-    volume.status === "done" && volume.viewer_manifest
-      ? volume.viewer_manifest
-      : volume.source_manifest;
-  return `uv.html#?manifest=${manifest}`;
-}
-
-export function progress(campaign) {
-  const { done, total } = campaign.totals;
-  return total === 0 ? 0 : Math.round((100 * done) / total);
-}
-
-export function isStale(generatedAt, tickSeconds, now = new Date()) {
-  const age = (now - new Date(generatedAt)) / 1000;
-  return age > 3 * tickSeconds;
+```json
+{
+  "extends": "./.svelte-kit/tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true
+  }
 }
 ```
 
-`index.html`:
+`src/app.html`:
 
 ```html
 <!doctype html>
@@ -2445,52 +2500,198 @@ export function isStale(generatedAt, tickSeconds, now = new Date()) {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>HTR Campaigns</title>
+    %sveltekit.head%
   </head>
   <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.js"></script>
+    <div>%sveltekit.body%</div>
   </body>
 </html>
 ```
 
-`src/main.js`:
+`src/app.d.ts`:
 
-```javascript
-import App from "./App.svelte";
+```typescript
+declare global {
+  interface Window {
+    STATUS_URL?: string;
+  }
+}
 
-new App({ target: document.getElementById("app") });
+export {};
 ```
 
-`src/App.svelte` (single-file app: campaign list + volume grid, STALE banner; status chips colored by state; every volume is an `<a>` into UV):
+`src/routes/+layout.ts` (static SPA: prerender the shell, no SSR — data is fetched in the browser):
+
+```typescript
+export const prerender = true;
+export const ssr = false;
+```
+
+Install (CA bundle for the RA firewall): `cd ~/htrflow-batch/frontend && NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt bun install`
+Expected: lockfile created. Commit the lockfile.
+
+- [ ] **Step 2: Failing unit tests** — `src/lib/derive.test.ts`:
+
+```typescript
+import { describe, expect, test } from "vitest";
+import { isStale, progress, viewerHref } from "./derive.js";
+import type { VolumeEntry } from "./status.js";
+
+const done: VolumeEntry = {
+  id: "R1",
+  status: "done",
+  attempts: 0,
+  pages_done: 638,
+  pages_total: 638,
+  error: null,
+  viewer_manifest: "http://pub/htr-results/demo-v1/R1/iiif.json",
+  source_manifest: "https://lbiiif.riksarkivet.se/arkis!R1/manifest",
+  thumbnail: null,
+};
+const pending: VolumeEntry = { ...done, status: "pending", viewer_manifest: null };
+
+describe("derive", () => {
+  test("done volumes open the published manifest", () => {
+    expect(viewerHref(done)).toBe(
+      "uv.html#?manifest=http://pub/htr-results/demo-v1/R1/iiif.json",
+    );
+  });
+
+  test("pending volumes open the source manifest", () => {
+    expect(viewerHref(pending)).toBe(
+      "uv.html#?manifest=https://lbiiif.riksarkivet.se/arkis!R1/manifest",
+    );
+  });
+
+  test("progress percentage", () => {
+    expect(progress({ done: 2, total: 8 })).toBe(25);
+    expect(progress({ done: 0, total: 0 })).toBe(0);
+  });
+
+  test("stale when older than 3 ticks", () => {
+    const now = new Date("2026-07-29T09:20:00Z");
+    expect(isStale("2026-07-29T09:00:00Z", 300, now)).toBe(true);
+    expect(isStale("2026-07-29T09:11:00Z", 300, now)).toBe(false);
+  });
+});
+```
+
+Run: `cd ~/htrflow-batch/frontend && bun run test` — expected FAIL (modules missing).
+
+- [ ] **Step 3: Implement** — `src/lib/status.ts` (Zod at the boundary — parse, don't validate; literal unions, no enums):
+
+```typescript
+import { z } from "zod";
+
+export const volumeStatusSchema = z.enum([
+  "done",
+  "running",
+  "queued",
+  "retry",
+  "needs-attention",
+  "pending",
+  "unreachable",
+  "unsupported",
+]);
+
+export const volumeEntrySchema = z.object({
+  id: z.string(),
+  status: volumeStatusSchema,
+  attempts: z.number(),
+  pages_done: z.number().nullable(),
+  pages_total: z.number().nullable(),
+  error: z.string().nullable(),
+  viewer_manifest: z.string().nullable(),
+  source_manifest: z.string(),
+  thumbnail: z.string().nullable(),
+});
+
+export const campaignEntrySchema = z.object({
+  name: z.string(),
+  pipeline: z.string().nullable(),
+  error: z.string().nullable(),
+  totals: z.object({ done: z.number(), total: z.number() }),
+  volumes: z.array(volumeEntrySchema),
+  orphans: z.array(z.string()).default([]),
+});
+
+export const statusDocSchema = z.object({
+  generated_at: z.string(),
+  tick_seconds: z.number(),
+  warnings: z.array(z.string()),
+  campaigns: z.array(campaignEntrySchema),
+});
+
+export type VolumeEntry = z.infer<typeof volumeEntrySchema>;
+export type CampaignEntry = z.infer<typeof campaignEntrySchema>;
+export type StatusDoc = z.infer<typeof statusDocSchema>;
+```
+
+`src/lib/derive.ts`:
+
+```typescript
+// Pure view-derivation over status.json (schema: reconciler main.py).
+import type { VolumeEntry } from "./status.js";
+
+export function viewerHref(volume: VolumeEntry): string {
+  const manifest =
+    volume.status === "done" && volume.viewer_manifest !== null
+      ? volume.viewer_manifest
+      : volume.source_manifest;
+  return `uv.html#?manifest=${manifest}`;
+}
+
+export function progress(totals: { done: number; total: number }): number {
+  return totals.total === 0 ? 0 : Math.round((100 * totals.done) / totals.total);
+}
+
+export function isStale(
+  generatedAt: string,
+  tickSeconds: number,
+  now: Date = new Date(),
+): boolean {
+  const ageSeconds = (now.getTime() - new Date(generatedAt).getTime()) / 1000;
+  return ageSeconds > 3 * tickSeconds;
+}
+```
+
+`src/routes/+page.svelte` (Svelte 5 runes; campaign list + volume grid, STALE banner; status chips colored by state; every volume is an `<a>` into UV):
 
 ```svelte
-<script>
-  import { isStale, progress, viewerHref } from "./lib/derive.js";
+<script lang="ts">
+  import { isStale, progress, viewerHref } from "$lib/derive.js";
+  import { statusDocSchema, type StatusDoc } from "$lib/status.js";
 
   const STATUS_URL =
     window.STATUS_URL ?? "http://localhost:30900/htr-results/status/status.json";
-  let doc = null;
-  let error = null;
-  let open = null; // campaign name expanded
 
-  async function load() {
+  let doc = $state<StatusDoc | null>(null);
+  let error = $state<string | null>(null);
+  let open = $state<string | null>(null); // campaign name expanded
+
+  async function load(): Promise<void> {
     try {
       const res = await fetch(STATUS_URL, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      doc = await res.json();
+      doc = statusDocSchema.parse(await res.json());
+      error = null;
     } catch (e) {
       error = String(e);
     }
   }
-  load();
-  setInterval(load, 60_000);
+
+  $effect(() => {
+    void load();
+    const timer = setInterval(() => void load(), 60_000);
+    return () => clearInterval(timer);
+  });
 </script>
 
 <main>
   <h1>HTR Campaigns</h1>
-  {#if error}
+  {#if error !== null}
     <p class="error">Cannot load status: {error}</p>
-  {:else if !doc}
+  {:else if doc === null}
     <p>Loading…</p>
   {:else}
     {#if isStale(doc.generated_at, doc.tick_seconds)}
@@ -2501,26 +2702,29 @@ new App({ target: document.getElementById("app") });
     {#each doc.warnings as w}<p class="warn">{w}</p>{/each}
     {#each doc.campaigns as c}
       <section>
-        <h2 on:click={() => (open = open === c.name ? null : c.name)}>
+        <button class="camp" onclick={() => (open = open === c.name ? null : c.name)}>
           {c.name}
-          {#if c.error}<span class="chip needs-attention">broken</span>
+          {#if c.error !== null}<span class="chip needs-attention">broken</span>
           {:else}
             <span class="chip">{c.pipeline}</span>
-            <progress max="100" value={progress(c)}></progress>
+            <progress max="100" value={progress(c.totals)}></progress>
             {c.totals.done}/{c.totals.total}
           {/if}
-        </h2>
-        {#if c.error}<p class="error">{c.error}</p>{/if}
-        {#if open === c.name && !c.error}
+        </button>
+        {#if c.error !== null}<p class="error">{c.error}</p>{/if}
+        {#if c.orphans.length > 0}
+          <p class="warn">orphaned results (in bucket, not in git): {c.orphans.join(", ")}</p>
+        {/if}
+        {#if open === c.name && c.error === null}
           <div class="grid">
             {#each c.volumes as v}
               <a class="card" href={viewerHref(v)} target="_blank" rel="noopener">
-                {#if v.thumbnail}
+                {#if v.thumbnail !== null}
                   <img src={v.thumbnail} alt="" loading="lazy" />
                 {/if}
                 <span class="chip {v.status}">{v.status}</span>
                 <strong>{v.id}</strong>
-                {#if v.pages_done != null}<small>{v.pages_done} pages</small>{/if}
+                {#if v.pages_done !== null}<small>{v.pages_done} pages</small>{/if}
                 {#if v.attempts > 0}<small>attempts: {v.attempts}</small>{/if}
               </a>
             {/each}
@@ -2537,7 +2741,9 @@ new App({ target: document.getElementById("app") });
   .warn { background: #fef3c7; padding: 0.25rem 0.75rem; border-radius: 4px; }
   .error { color: #b91c1c; }
   .meta { color: #6b7280; font-size: 0.85rem; }
-  h2 { cursor: pointer; display: flex; align-items: center; gap: 0.75rem; }
+  .camp { cursor: pointer; display: flex; align-items: center; gap: 0.75rem;
+          font-size: 1.25rem; font-weight: 600; background: none; border: none;
+          padding: 0.5rem 0; width: 100%; text-align: left; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 0.75rem; }
   .card { display: flex; flex-direction: column; gap: 0.25rem; border: 1px solid #d1d5db;
           border-radius: 6px; padding: 0.75rem; text-decoration: none; color: inherit; }
@@ -2551,12 +2757,12 @@ new App({ target: document.getElementById("app") });
 </style>
 ```
 
-`public/status.sample.json` — one campaign, three volumes (statuses `done`/`running`/`needs-attention`) matching the Task 10 schema exactly, including `generated_at`, `tick_seconds: 300`, one grandfather warning. For dev: `bun run dev` serves it at `/status.sample.json`; set `window.STATUS_URL = "/status.sample.json"` via the browser console, or temporarily in `index.html` — document this in a comment at the top of the sample file? JSON has no comments — document it in `frontend/README.md` (3 lines) instead.
+`static/status.sample.json` — one campaign, three volumes (statuses `done`/`running`/`needs-attention`) matching the Task 10 schema exactly (all fields, including `thumbnail` and `orphans`), `generated_at`, `tick_seconds: 300`, one grandfather warning. For dev: `bun run dev` serves it at `/status.sample.json`; set `window.STATUS_URL = "/status.sample.json"` via the browser console — document this in `frontend/README.md` (3 lines).
 
-- [ ] **Step 4: Tests + build green**
+- [ ] **Step 4: Tests + typecheck + build green**
 
-Run: `cd ~/htrflow-batch/frontend && bun test src && NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt bun run build && ls dist/index.html`
-Expected: 4 tests pass, `dist/` produced.
+Run: `cd ~/htrflow-batch/frontend && bun run test && bun run check && NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt bun run build && ls dist/index.html`
+Expected: 4 Vitest tests pass, `svelte-check` clean, `dist/` produced.
 
 - [ ] **Step 5: Makefile targets + commit** — append to `Makefile` (match existing style):
 
@@ -2565,7 +2771,10 @@ frontend-install:
 	cd frontend && NODE_EXTRA_CA_CERTS=$(CA_BUNDLE) bun install
 
 frontend-test:
-	cd frontend && bun test src
+	cd frontend && bun run test
+
+frontend-check:
+	cd frontend && bun run check
 
 frontend-build:
 	cd frontend && NODE_EXTRA_CA_CERTS=$(CA_BUNDLE) bun run build
@@ -2575,7 +2784,7 @@ frontend-dev:
 ```
 
 ```bash
-git add frontend Makefile && git commit -m "Campaign browser: Svelte SPA with status-derived views and STALE banner"
+git add frontend Makefile && git commit -m "Campaign browser: SvelteKit SPA with Zod-parsed status views and STALE banner"
 ```
 
 ---
@@ -2591,16 +2800,20 @@ git add frontend Makefile && git commit -m "Campaign browser: Svelte SPA with st
 - Consumes: `frontend/dist/` (Task 13), existing UV dist build flow.
 - Produces: viewer image that serves the SPA at `/` and UV at `/uv.html`; chart `viewer.defaultManifest` deprecated (redirect only rendered when set — default now serves the SPA).
 
-- [ ] **Step 1: Dockerfile** — `.docker/uv4-viewer.dockerfile` gains a second COPY; context stays the universalviewer4 repo root, and the SPA is staged into it by the builder (dagger or Makefile) as `campaign-app/`:
+Required reading first (from the ra-skills clone): `skills/dockerfile/references/static-nginx.md`, `skills/dagger/references/go-patterns.md`, `skills/zensical-authoring/SKILL.md`.
+
+- [ ] **Step 1: Dockerfile** — `.docker/uv4-viewer.dockerfile` gains a second COPY and moves to the org-standard unprivileged base (listens on **8080**, runs non-root — static-nginx reference); context stays the universalviewer4 repo root, and the SPA is staged into it by the builder (dagger or Makefile) as `campaign-app/`:
 
 ```dockerfile
-FROM nginx:alpine
+FROM nginxinc/nginx-unprivileged:alpine
 COPY dist /usr/share/nginx/html
 # Campaign browser SPA (staged as campaign-app/ by `make viewer-image` or
 # dagger BuildViewer) — overwrites UV's demo index.html; UV itself lives at
 # /uv.html and is untouched.
 COPY campaign-app /usr/share/nginx/html
 ```
+
+The base swap ripples into the chart: in `charts/htrflow-batch/templates/viewer.yaml` change the container port from 80 to **8080** (containerPort, the Service `targetPort`, and the nginx server config's `listen` directive if the ConfigMap sets one; the NodePort itself stays 30800). Grep the template for `80` carefully — `absolute_redirect off` and the rest of the nginx config stay.
 
 - [ ] **Step 2: Makefile assembly target** — append:
 
@@ -2633,8 +2846,9 @@ git commit -m "Viewer image serves the campaign browser at /; chart + docs for c
 
 ## Final verification (after all tasks)
 
-- [ ] `make test` — wrapper + reconciler suites green (expect ~60 wrapper + ~30 reconciler tests).
-- [ ] `cd frontend && bun test src` — green.
+- [ ] `make test` — wrapper + reconciler suites green (expect ~60 wrapper + ~35 reconciler tests).
+- [ ] `make typecheck` — `ty` clean on the reconciler.
+- [ ] `cd frontend && bun run test && bun run check` — Vitest + svelte-check green.
 - [ ] `make ci` (or the repo's aggregate dagger check) — green.
 - [ ] `helm lint charts/htrflow-batch` — clean; default `helm template` renders no reconciler objects.
 - [ ] `make docs-build` — zero warnings.
