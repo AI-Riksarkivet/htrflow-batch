@@ -35,6 +35,9 @@ def test_job_env_carries_provenance():
     assert env["IMAGE_DIGEST"] == "r/i@sha256:abc"
     assert env["IIIF_MANIFEST_URL"] == V.manifest_url
     assert env["PUBLIC_RESULTS_BASE"] == "http://localhost:30900/htr-results"
+    # Pinned empty so results land where s3.manifest_key looks for them,
+    # whatever the S3 secret's envFrom carries.
+    assert env["S3_PREFIX"] == ""
 
 
 def test_job_image_from_pipeline_pin():

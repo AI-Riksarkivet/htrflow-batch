@@ -18,6 +18,11 @@ def _exit_code(pod: Any) -> int | None:
     return None
 
 
+def _newest_first(pods: list[Any]) -> list[Any]:
+    """Pods newest-first, so the exit code and the logs describe the SAME pod."""
+    return sorted(pods, key=lambda p: p.metadata.creation_timestamp, reverse=True)
+
+
 class Cluster:
     def __init__(self, namespace: str = "htr-batch") -> None:
         try:
@@ -46,10 +51,12 @@ class Cluster:
             )
             exit_code = None
             if failed:
-                pods = self.core.list_namespaced_pod(
-                    self.ns,
-                    label_selector=f"batch.kubernetes.io/job-name={j.metadata.name}",
-                ).items
+                pods = _newest_first(
+                    self.core.list_namespaced_pod(
+                        self.ns,
+                        label_selector=f"batch.kubernetes.io/job-name={j.metadata.name}",
+                    ).items
+                )
                 codes = [_exit_code(p) for p in pods]
                 exit_code = next((c for c in codes if c is not None), None)
             out[j.metadata.name] = JobState(
@@ -103,7 +110,7 @@ class Cluster:
         ).items
         if not pods:
             return ""
-        pod = sorted(pods, key=lambda p: p.metadata.creation_timestamp)[-1]
+        pod = _newest_first(pods)[0]
         try:
             return self.core.read_namespaced_pod_log(
                 pod.metadata.name, self.ns, tail_lines=tail

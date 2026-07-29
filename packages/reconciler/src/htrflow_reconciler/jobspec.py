@@ -32,6 +32,10 @@ def build_job(
         {"name": "IIIF_MANIFEST_URL", "value": manifest_url},
         {"name": "PIPELINE_PATH", "value": "/config/pipeline.yaml"},
         {"name": "PIPELINE_ID", "value": pipeline.id},
+        # Explicit env beats envFrom: pinning it empty keeps results at
+        # <pipeline>/<volume>/… where done-detection looks, even if the S3
+        # secret carries an S3_PREFIX of its own.
+        {"name": "S3_PREFIX", "value": ""},
         {"name": "PUBLIC_RESULTS_BASE", "value": cfg.public_results_base},
         {"name": "IMAGE_DIGEST", "value": pipeline.image},
         {"name": "HF_HOME", "value": "/data/hf"},

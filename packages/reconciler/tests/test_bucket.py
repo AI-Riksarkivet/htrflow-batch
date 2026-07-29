@@ -19,6 +19,18 @@ def test_done_volumes_requires_manifest(bucket):
     assert bucket.done_volumes("demo-v1") == {"R1"}
 
 
+def test_done_volumes_probes_with_head_not_get(bucket):
+    """Manifests are large (pipeline YAML + every page); the tick must not
+    download one per volume just to learn it exists."""
+    bucket.write_json(manifest_key("demo-v1", "R1"), {"pages": 1})
+
+    def no_downloads(**kwargs):
+        raise AssertionError("done_volumes must probe with head_object")
+
+    bucket.c.get_object = no_downloads
+    assert bucket.done_volumes("demo-v1") == {"R1"}
+
+
 def test_read_json_missing_returns_none(bucket):
     assert bucket.read_json("nope.json") is None
 

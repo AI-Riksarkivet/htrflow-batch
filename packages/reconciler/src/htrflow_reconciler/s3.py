@@ -1,10 +1,19 @@
 """S3 adapter. Key helpers are pure; Bucket is a thin boto3 shell that the
-tick swaps for a fake in tests (docs: how-it-works/campaigns)."""
+tick swaps for a fake in tests (docs: how-it-works/campaigns).
+
+The key layout assumes the wrapper runs with an EMPTY ``S3_PREFIX``: results
+land at ``<pipeline>/<volume>/…``, which is why ``jobspec.build_job`` pins
+``S3_PREFIX=""`` explicitly rather than letting the S3 secret supply one.
+"""
 
 from __future__ import annotations
 
 import json
 from typing import Any
+
+from botocore.exceptions import ClientError
+
+_MISSING_CODES = {"404", "NoSuchKey", "NotFound"}
 
 
 def manifest_key(pipeline_id: str, volume_id: str) -> str:
@@ -58,11 +67,25 @@ class Bucket:
             Bucket=self.bucket, Key=key, Body=text.encode(), ContentType="text/plain"
         )
 
+    def exists(self, key: str) -> bool:
+        """HEAD probe — existence without downloading the body."""
+        try:
+            self.c.head_object(Bucket=self.bucket, Key=key)
+            return True
+        except ClientError as e:
+            code = str(e.response.get("Error", {}).get("Code", ""))
+            if code in _MISSING_CODES:
+                return False
+            raise
+
     def done_volumes(self, pipeline_id: str) -> set[str]:
         """Volume ids under ``<pipeline>/`` that carry a written manifest.
 
         A manifest is the wrapper's completion marker: a volume with ALTO pages
-        but no manifest is a partial run, not a done one.
+        but no manifest is a partial run, not a done one. The probe is a HEAD,
+        never a GET — a manifest embeds the pipeline YAML and every page result,
+        so downloading one per volume would blow the tick's deadline on a
+        campaign of a thousand volumes.
         """
         done: set[str] = set()
         paginator = self.c.get_paginator("list_objects_v2")
@@ -71,7 +94,7 @@ class Bucket:
         ):
             for cp in page.get("CommonPrefixes", []):
                 vid = cp["Prefix"].rstrip("/").split("/", 1)[1]
-                if self.read_json(manifest_key(pipeline_id, vid)) is not None:
+                if self.exists(manifest_key(pipeline_id, vid)):
                     done.add(vid)
         return done
 
