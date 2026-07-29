@@ -2394,7 +2394,7 @@ reconciler:                # GitOps campaign reconciler (spec: campaign-gitops)
 Run: `helm lint charts/htrflow-batch && helm template t charts/htrflow-batch --set reconciler.enabled=true --set reconciler.image=x --set reconciler.campaignsRepoUrl=https://example/r --set publicResultsBase=http://pub | grep -E 'kind:|concurrencyPolicy|serviceAccountName'`
 Expected: lint clean; output shows ServiceAccount, Role, RoleBinding, CronJob, `concurrencyPolicy: Forbid`. Also verify default render (`helm template t charts/htrflow-batch | grep -c reconciler` → 0).
 
-- [ ] **Step 4: Wire test/build tooling** — Read `.dagger/test.go` and `.dagger/build.go`; extend: in `test.go` add a `TestReconciler` function mirroring the wrapper's uv test container but with source `packages/reconciler/` (uv sync --extra dev, `uv run pytest -q`), and make the aggregate check (whatever `Checks`/`Test` currently calls — see `checks.go`) include it. In `Makefile`, extend the `test` target to run both suites:
+- [ ] **Step 4: Wire test/build tooling** — Read `.dagger/test.go` and `.dagger/build.go`; extend: in `test.go` add a `TestReconciler` function mirroring the wrapper's uv test container but running the reconciler suite (workspace layout: `uv sync --all-packages` at the root — dev tools come from the root dependency group, NOT a member extra — then `uv run --no-sync pytest packages/reconciler/tests -q`), and make the aggregate check (whatever `Checks`/`Test` currently calls — see `checks.go`) include it. In `Makefile`, extend the `test` target to run both suites:
 
 ```makefile
 test:
