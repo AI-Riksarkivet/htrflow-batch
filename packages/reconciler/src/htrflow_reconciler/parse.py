@@ -12,7 +12,15 @@ import yaml
 from .models import Campaign, PipelineSpec, Volume
 
 RA_MANIFEST_TEMPLATE = "https://lbiiif.riksarkivet.se/arkis!{ref}/manifest"
-_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+# Volume ids reach Job names and label values: alphanumeric at both ends, no
+# more than 63 chars. ``\Z`` (never ``$``) so a trailing newline cannot sneak
+# past — ``$`` matches just before one.
+_ID_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?\Z")
+
+# Pipeline ids additionally become ConfigMap names (``htr-pipeline-<id>``),
+# which are DNS-1123 labels: lowercase, no underscores.
+_PIPELINE_ID_RE = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?\Z")
 
 
 class PipelineError(ValueError):
@@ -61,6 +69,11 @@ def parse_campaign(name: str, text: str) -> Campaign:
 
 
 def parse_pipeline(pipeline_id: str, text: str) -> PipelineSpec:
+    if not _PIPELINE_ID_RE.match(pipeline_id):
+        raise PipelineError(
+            f"unsafe pipeline id: {pipeline_id!r} (must be a DNS-1123 label: "
+            "lowercase alphanumeric ends, [a-z0-9.-] interior, <=63 chars)"
+        )
     try:
         doc = yaml.safe_load(text)
     except yaml.YAMLError as e:

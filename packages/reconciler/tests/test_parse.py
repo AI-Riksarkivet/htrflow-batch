@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from htrflow_reconciler.parse import (
@@ -52,6 +54,29 @@ def test_parse_campaign_rejects_duplicate_ids():
     assert c.error is not None and "R1" in c.error
 
 
+def _one_volume(vid: str) -> str:
+    # json.dumps gives a YAML double-quoted scalar, so "\n" really is a newline.
+    return f"pipeline: p\nvolumes:\n  - id: {json.dumps(vid)}\n    manifest: http://x\n"
+
+
+@pytest.mark.parametrize(
+    "vid",
+    ["abc\n", ".hidden", "trailing-", "-leading", "a" * 64, "a/b", ""],
+)
+def test_parse_campaign_rejects_bad_volume_ids(vid):
+    c = parse_campaign("bad", _one_volume(vid))
+    assert c.error is not None and "volume id" in c.error
+
+
+@pytest.mark.parametrize(
+    "vid", ["R0001203", "dodsbok-1698", "loose-scans", "a", "a.b_c-d9", "a" * 63]
+)
+def test_parse_campaign_accepts_good_volume_ids(vid):
+    c = parse_campaign("ok", _one_volume(vid))
+    assert c.error is None
+    assert [v.id for v in c.volumes] == [vid]
+
+
 PIPELINE = """
 image: docker.io/riksarkivet/htrflow-batch@sha256:abc123
 steps:
@@ -75,3 +100,16 @@ def test_parse_pipeline_rejects_tag_image():
 def test_parse_pipeline_requires_steps():
     with pytest.raises(PipelineError, match="steps"):
         parse_pipeline("demo-v1", "image: r/i@sha256:a\n")
+
+
+@pytest.mark.parametrize(
+    "pid", ["Demo-v1", "demo_v1", "demo-v1\n", "-demo", "demo-", "d" * 64, ""]
+)
+def test_parse_pipeline_rejects_non_dns1123_id(pid):
+    # ConfigMap names are DNS-1123 labels, so uppercase/underscores are out.
+    with pytest.raises(PipelineError, match="unsafe pipeline id"):
+        parse_pipeline(pid, PIPELINE)
+
+
+def test_parse_pipeline_accepts_dns1123_id():
+    assert parse_pipeline("demo-v1", PIPELINE).id == "demo-v1"
