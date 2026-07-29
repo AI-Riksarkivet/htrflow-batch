@@ -117,7 +117,7 @@ def test_tick_retries_failed_transient(tmp_path):
     # captured logs, deleted the failed job, bumped attempts
     assert bucket.written["status/failures/demo-v1/R0000002.txt"] == "boom traceback"
     assert n in cluster.deleted
-    assert bucket.written["status/attempts.json"]["R0000002"] == 1
+    assert bucket.written["status/attempts.json"]["demo-v1/R0000002"] == 1
     byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
     assert byid["R0000002"]["status"] == "retry"
 
@@ -153,27 +153,49 @@ def test_tick_broken_campaign_contained(tmp_path):
     assert ok["error"] is None
 
 
-def test_tick_prevalidation_blocks_unreachable_and_caches(tmp_path):
+def test_tick_prevalidation_blocks_unreachable_without_caching(tmp_path):
     fetched = []
 
     def fetch_json(url):
         fetched.append(url)
         return None  # unreachable
 
+    repo = _repo(tmp_path)
     bucket, cluster = FakeBucket(), FakeCluster()
-    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW, fetch_json=fetch_json)
+    doc = tick(repo, bucket, cluster, CFG, NOW, fetch_json=fetch_json)
     byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
     assert byid["R0000001"]["status"] == "unreachable"
     # unreachable volumes burn no jobs; only the images: volume (no manifest
     # to validate) is submitted
     assert _created_volumes(cluster) == ["loose"]
-    # verdicts cached: both manifest URLs fetched exactly once, cache written
+    assert len(fetched) == 2
+    # unreachable is a verdict about the network, not the document: caching it
+    # would wedge the volume out of its campaign forever after one flaky fetch
+    assert bucket.written["status/validation.json"] == {}
+    # so the next tick re-probes, and a recovered source can still be submitted
+    fetched.clear()
+    doc = tick(repo, bucket, cluster, CFG, NOW, fetch_json=fetch_json)
+    assert len(fetched) == 2
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert byid["R0000001"]["status"] == "unreachable"
+
+
+def test_tick_prevalidation_caches_document_verdicts_forever(tmp_path):
+    fetched = []
+
+    def fetch_json(url):
+        fetched.append(url)
+        return {"type": "Collection", "items": [{"id": "http://m/1"}]}
+
+    repo = _repo(tmp_path)
+    bucket, cluster = FakeBucket(), FakeCluster()
+    tick(repo, bucket, cluster, CFG, NOW, fetch_json=fetch_json)
     assert len(fetched) == 2
     cache = bucket.written["status/validation.json"]
-    assert all(v["format"] == "unreachable" for v in cache.values())
+    assert all(v["format"] == "unsupported" for v in cache.values())
     # second tick fetches nothing (cache hit via written -> read_json)
     fetched.clear()
-    tick(_repo(tmp_path), bucket, cluster, CFG, NOW, fetch_json=fetch_json)
+    tick(repo, bucket, cluster, CFG, NOW, fetch_json=fetch_json)
     assert fetched == []
 
 
@@ -236,6 +258,105 @@ def test_tick_prevalidation_extracts_thumbnail(tmp_path):
         "running",
         "queued",
     )
+
+
+def test_tick_done_volume_keeps_cached_thumbnail(tmp_path):
+    """A finished volume still needs its picture: the thumbnail comes off the
+    validation cache, which is consulted even when the fetch is skipped."""
+    fetched = []
+
+    def fetch_json(url):
+        fetched.append(url)
+        return {
+            "items": [
+                {
+                    "items": [
+                        {
+                            "items": [
+                                {"body": {"service": [{"id": "http://img"}]}},
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+
+    repo = _repo(tmp_path)
+    bucket = FakeBucket()
+    tick(repo, bucket, FakeCluster(), CFG, NOW, fetch_json=fetch_json)
+    fetched.clear()
+    bucket._done.add("R0000001")
+    doc = tick(repo, bucket, FakeCluster(), CFG, NOW, fetch_json=fetch_json)
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert byid["R0000001"]["status"] == "done"
+    assert byid["R0000001"]["thumbnail"] == "http://img/full/200,/0/default.jpg"
+    assert fetched == []  # nothing re-fetched: every verdict was cached
+
+
+def test_tick_attempt_budgets_are_per_pipeline(tmp_path):
+    """Re-running a volume under a new pipeline id is the upgrade path, so its
+    retry budget must not be inherited from the pipeline it left behind."""
+    repo = _repo(tmp_path)
+    (repo / "pipelines" / "demo-v2.yaml").write_text(PIPELINE.replace("abc", "def"))
+    (repo / "campaigns" / "upgrade.yaml").write_text(
+        "pipeline: demo-v2\nvolumes:\n  - R0000002\n"
+    )
+    failed = JobState(active=False, failed=True, exit_code=1)
+    cluster = FakeCluster(
+        jobs={
+            job_name("demo-v1", "R0000002"): failed,
+            job_name("demo-v2", "R0000002"): failed,
+        }
+    )
+    bucket = FakeBucket(stored={"status/attempts.json": {"demo-v1/R0000002": 3}})
+    doc = tick(repo, bucket, cluster, CFG, NOW)
+    byname = {c["name"]: c for c in doc["campaigns"]}
+    old = {v["id"]: v for v in byname["trolldom"]["volumes"]}["R0000002"]
+    new = {v["id"]: v for v in byname["upgrade"]["volumes"]}["R0000002"]
+    # demo-v1 exhausted its cap of 3; demo-v2 starts fresh and retries
+    assert old["status"] == "needs-attention" and old["attempts"] == 3
+    assert new["status"] == "retry" and new["attempts"] == 1
+    assert bucket.written["status/attempts.json"] == {
+        "demo-v1/R0000002": 3,
+        "demo-v2/R0000002": 1,
+    }
+    assert job_name("demo-v1", "R0000002") not in cluster.deleted
+    assert job_name("demo-v2", "R0000002") in cluster.deleted
+
+
+def test_tick_drift_does_not_burn_retry_attempts(tmp_path):
+    """A blocked pipeline submits nothing, so it must not spend a volume's
+    retry budget for the duration of the block."""
+    n = job_name("demo-v1", "R0000002")
+    cluster = FakeCluster(jobs={n: JobState(active=False, failed=True, exit_code=1)})
+    cluster.configmaps["demo-v1"] = "steps: [OLD]\n"
+    bucket = FakeBucket()
+    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    assert cluster.created == [] and cluster.deleted == []
+    assert bucket.written["status/attempts.json"] == {}
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert byid["R0000002"]["status"] == "retry"
+
+
+def test_tick_unreadable_campaign_is_contained(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / "campaigns" / "binary.yaml").write_bytes(b"pipeline: \xff\xfe\n")
+    cluster = FakeCluster()
+    doc = tick(repo, FakeBucket(), cluster, CFG, NOW)
+    binary = [c for c in doc["campaigns"] if c["name"] == "binary"][0]
+    assert binary["error"] is not None
+    ok = [c for c in doc["campaigns"] if c["name"] == "trolldom"][0]
+    assert ok["error"] is None
+    assert len(cluster.created) == 3  # the healthy campaign still runs
+
+
+def test_tick_unreadable_pipeline_warns_and_contains(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / "pipelines" / "other-v1.yaml").write_bytes(b"image: \xff\n")
+    cluster = FakeCluster()
+    doc = tick(repo, FakeBucket(), cluster, CFG, NOW)
+    assert any("other-v1" in w for w in doc["warnings"])
+    assert len(cluster.created) == 3
 
 
 def test_tick_reports_orphans(tmp_path):

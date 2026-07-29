@@ -9,7 +9,7 @@ from typing import Any
 from . import s3 as keys
 from .guards import check_drift
 from .jobspec import ReconcilerConfig, build_job
-from .models import PipelineSpec, Volume
+from .models import Campaign, PipelineSpec, Volume
 from .parse import PipelineError, parse_campaign, parse_pipeline
 from .plan import plan_submissions
 from .status import derive, job_name
@@ -17,20 +17,44 @@ from .synthetic import build_manifest, classify_manifest
 
 TICK_SECONDS = 300
 
-#: Verdicts that mean "this source can never produce a job" (spec §4.4).
+#: Verdicts that keep a volume out of the submission lane (spec §4.4).
 _BLOCKING_VERDICTS = ("unreachable", "unsupported")
+
+#: Errors from reading a file off the checkout: a corrupt or non-UTF-8 file is
+#: one campaign's problem, never the whole tick's. Campaign YAML is decoded as
+#: UTF-8 explicitly so the verdict does not depend on the CronJob's locale.
+_READ_ERRORS = (OSError, UnicodeDecodeError)
+
+
+def _attempt_key(pipeline_id: str, volume_id: str) -> str:
+    """Retry budgets are per (pipeline, volume).
+
+    Re-running a volume under a NEW pipeline id is the upgrade path, and it must
+    start from a fresh budget — a volume that burned its attempts on demo-v1
+    would otherwise be born ``needs-attention`` on demo-v2.
+    """
+    return f"{pipeline_id}/{volume_id}"
 
 
 def _load_repo(campaigns_dir: Path):
-    campaigns = [
-        parse_campaign(p.stem, p.read_text())
-        for p in sorted((campaigns_dir / "campaigns").glob("*.yaml"))
-    ]
+    campaigns: list[Campaign] = []
+    for p in sorted((campaigns_dir / "campaigns").glob("*.yaml")):
+        try:
+            text = p.read_text(encoding="utf-8")
+        except _READ_ERRORS as e:
+            campaigns.append(Campaign(name=p.stem, pipeline_id="", error=str(e)))
+            continue
+        campaigns.append(parse_campaign(p.stem, text))
     pipelines: dict[str, PipelineSpec] = {}
     errors: list[str] = []
     for p in sorted((campaigns_dir / "pipelines").glob("*.yaml")):
         try:
-            pipelines[p.stem] = parse_pipeline(p.stem, p.read_text())
+            text = p.read_text(encoding="utf-8")
+        except _READ_ERRORS as e:
+            errors.append(f"pipeline {p.stem}: unreadable ({e})")
+            continue
+        try:
+            pipelines[p.stem] = parse_pipeline(p.stem, text)
         except PipelineError as e:
             errors.append(str(e))
     return campaigns, pipelines, errors
@@ -127,14 +151,20 @@ def _classify(doc: object) -> str:
 
 
 def _validate(url: str, cache: dict, fetch_json) -> dict:
-    """Once-ever verdict per manifest URL (spec §4.4): format + thumbnail."""
+    """Verdict per manifest URL (spec §4.4): format + thumbnail.
+
+    A verdict about the DOCUMENT is cached forever — a Collection or a P2-less
+    manifest will not become submittable by being asked again. ``unreachable``
+    is a verdict about the NETWORK and is deliberately never cached: a single
+    flaky fetch must not wedge a volume out of its campaign permanently, so it
+    is re-probed on the next tick.
+    """
     if url in cache:
         return cache[url]
     doc = fetch_json(url)
     if doc is None:
-        verdict = {"format": "unreachable", "thumbnail": None}
-    else:
-        verdict = {"format": _classify(doc), "thumbnail": _thumbnail(doc)}
+        return {"format": "unreachable", "thumbnail": None}
+    verdict = {"format": _classify(doc), "thumbnail": _thumbnail(doc)}
     cache[url] = verdict
     return verdict
 
@@ -218,23 +248,39 @@ def tick(
         if pid not in orphans_reported:
             entry["orphans"] = sorted(done - claimed[pid])
             orphans_reported.add(pid)
+        # ``derive`` reads attempts by volume id; the persisted counter is keyed
+        # by pipeline too, so hand derive a view of just this pipeline's budgets
+        # and keep the two in step as counters are bumped below.
+        prefix = f"{pid}/"
+        budgets = {
+            k[len(prefix) :]: n for k, n in attempts.items() if k.startswith(prefix)
+        }
         lane: list[tuple[Volume, str]] = []
         for v in camp.volumes:
-            st = derive(v, pid, done, jobs, attempts, cfg.attempt_cap)
+            st = derive(v, pid, done, jobs, budgets, cfg.attempt_cap)
             src = _source_manifest_url(v, pid, bucket, cfg)
-            thumb = None
+            akey = _attempt_key(pid, v.id)
+            # The thumbnail is read from the cache unconditionally — a done
+            # volume still needs its picture, and a cache hit costs nothing. Only
+            # the FETCH and the status override are gated.
+            cached = validation.get(v.manifest_url) if v.manifest_url else None
+            thumb = cached.get("thumbnail") if cached else None
             if v.manifest_url and fetch_json is not None and st != "done":
                 verdict = _validate(v.manifest_url, validation, fetch_json)
                 thumb = verdict["thumbnail"]
                 if verdict["format"] in _BLOCKING_VERDICTS:
                     st = verdict["format"]  # no job burned (spec §4.4)
-            if st == "retry":
+            # Cleanup and the attempt bump are gated on the pipeline too: a
+            # drift-blocked pipeline submits nothing, so it must not spend the
+            # volume's retry budget while the operator sorts the drift out.
+            if st == "retry" and pid not in blocked:
                 name = job_name(pid, v.id)
                 bucket.put_text(
                     keys.failure_log_key(pid, v.id), cluster.failed_job_logs(name)
                 )
                 cluster.delete_job(name)
-                attempts[v.id] = attempts.get(v.id, 0) + 1
+                attempts[akey] = attempts.get(akey, 0) + 1
+                budgets[v.id] = attempts[akey]
                 lane.append((v, src))
             elif st == "pending" and pid not in blocked:
                 lane.append((v, src))
@@ -244,7 +290,7 @@ def tick(
                 {
                     "id": v.id,
                     "status": st,
-                    "attempts": attempts.get(v.id, 0),
+                    "attempts": attempts.get(akey, 0),
                     "pages_done": bucket.count_pages(pid, v.id)
                     if st in ("done", "running")
                     else None,
