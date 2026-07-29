@@ -1,0 +1,232 @@
+# Campaign GitOps: git-driven batch submission + read-only status page
+
+**Date:** 2026-07-29
+**Status:** Draft — pending review
+**Depends on:** htrflow-batch wrapper (as of `cc0f109`), Helm chart `charts/htrflow-batch`, Kueue queue `htr-batch`, RustFS results bucket
+
+## 1. Problem
+
+Running one volume today means hand-writing a Job manifest and `kubectl apply`.
+For campaigns of hundreds to thousands of volumes we need:
+
+- a place to declare *what should be transcribed* (auditable, reviewable),
+- something that submits the missing work and retries transient failures,
+- a way to see status across all batches and open any volume in the viewer —
+  both untranscribed (source images) and transcribed (with text overlay).
+
+Explicitly rejected: a database as source of truth (S3 already proves "done";
+k8s already shows "running"), and any interactive submit UI (two write paths
+destroy auditability).
+
+## 2. Architecture
+
+Three pieces; only the reconciler is new code.
+
+```mermaid
+flowchart LR
+    G[htr-campaigns repo\ncampaigns/*.yaml + pipelines/*.yaml] -->|clone every 5 min| R
+    R[reconciler CronJob\nin htrflow-batch repo] -->|submit Jobs| K[Kueue / k8s]
+    K --> W[wrapper Jobs]
+    W -->|alto, page, iiif.json, manifest.json| S[(S3 bucket)]
+    R -->|HEAD manifest.json per volume| S
+    R -->|status.json + index.html| S
+    B[browser] -->|read-only| S
+    B -->|UV viewer| V[uv4-viewer]
+```
+
+- **Desired state** lives in git (`htr-campaigns` repo).
+- **Observed state** is derived: `manifest.json` in S3 = done (immutable,
+  published only after full verify); Job in cluster = queued/running/failed;
+  in git but neither = pending.
+- **The page never writes.** Adding work = a commit. The reconciler is the
+  only component with k8s credentials.
+
+## 3. The campaigns repo (`htr-campaigns`, separate from htrflow-batch)
+
+Separate repo because operations and code change at different rhythms, and PR
+review stays legible ("new campaign" vs "new feature").
+
+```
+campaigns/
+  trolldomskommissionen.yaml
+pipelines/
+  demo-v1.yaml          # htrflow steps YAML, verbatim
+```
+
+### Campaign file
+
+```yaml
+# campaigns/trolldomskommissionen.yaml
+pipeline: demo-v1        # one pipeline per campaign (see immutability, §5)
+volumes:
+  - R0001203                       # shorthand: Riksarkivet ref ->
+                                   #   https://lbiiif.riksarkivet.se/arkis!<ref>/manifest
+  - id: dodsbok-1698               # any IIIF Presentation 3 manifest on the web
+    manifest: https://iiif.example.org/xyz/manifest
+  - id: loose-scans                # bare image URLs -> reconciler generates a
+    images:                        #   synthetic P3 manifest in the bucket
+      - https://example.org/scan1.jpg
+      - https://example.org/scan2.jpg
+```
+
+Rules:
+
+- `id` (or the ref itself for shorthand) must be unique within the pipeline
+  and filesystem/S3-key safe: it becomes the S3 prefix
+  `<pipeline>/<id>/` and the viewer URL.
+- No per-volume pipeline overrides. A volume needing different treatment goes
+  in its own campaign file. Every override is reconciler complexity we defer
+  until proven necessary (YAGNI).
+- Re-running a campaign with a changed pipeline = a **new** pipeline id and a
+  new campaign file. Old results stay untouched and comparable side by side
+  (`demo-v1/R0001203` vs `demo-v2/R0001203` in the viewer).
+
+### Pipeline files and immutability (D17 carried over)
+
+Results are keyed by pipeline id, so `pipelines/<id>.yaml` is immutable once
+any result exists under that id. Guards (all three, layered):
+
+1. **CI check in htr-campaigns**: PR fails if an existing `pipelines/*.yaml`
+   is modified — new ids only. (Guards PRs, not direct pushes → repo must
+   have a protected default branch, §8.)
+2. **Reconciler drift check**: before submitting, compare the file's SHA-256
+   with the existing `htr-pipeline-<id>` ConfigMap. Mismatch = hard error,
+   nothing submitted for that pipeline, loud line on the status page.
+3. **S3 ground-truth check (v1, not deferred)**: also compare against
+   `pipeline_sha256` recorded in one already-published `manifest.json` under
+   that pipeline prefix. This is the check that actually protects results —
+   the ConfigMap check fails open if the ConfigMap was deleted (e.g. chart
+   reinstall). Costs one GET per pipeline per tick.
+
+## 4. The reconciler
+
+~200 lines of Python, lives in the **htrflow-batch** repo (new top-level
+`reconciler/` package, tested and shipped like the wrapper; same image or a
+thin variant). Runs as a k8s **CronJob every 5 minutes**.
+
+Per tick:
+
+1. Clone/pull the campaigns repo (shallow; HTTPS with the RA CA bundle baked
+   into the image — firewall TLS interception, §7.1).
+2. Parse campaign + pipeline files. A malformed file is skipped and reported
+   on the page as broken; other campaigns proceed.
+3. Ensure `htr-pipeline-<id>` ConfigMaps (immutability guards, §3).
+4. Pre-validate non-shorthand volumes once: fetch the manifest, require P3
+   (`items`). P2 or unreachable → status `unsupported` / `unreachable` on the
+   page, no job burned. Cache the verdict in the bucket so it's once, not
+   per tick.
+5. For `images:` volumes: generate the synthetic P3 manifest (reuse
+   `scripts/make_mock_manifest.py` logic) and upload to
+   `<pipeline>/<id>/source-manifest.json` if absent.
+6. Derive status per volume (see table §6).
+7. Submit pending volumes up to a bounded window (default: 20 not-yet-done
+   Jobs existing at once), **round-robin across campaigns** so a 4,000-volume
+   campaign cannot starve a 10-volume one.
+8. Retry policy: transient failures (exit 1) resubmitted up to 3 attempts —
+   resume makes this cheap; permanent failures (exit 13) and exhausted
+   retries marked `needs-attention`, never auto-resubmitted. Before a failed
+   Job is TTL-reaped, capture its last ~50 log lines into
+   `status/failures/<pipeline>/<id>.txt` (closes today's evidence-evaporation
+   gap: the R0001203 run's first-attempt metrics died with the pod).
+9. Write `status/status.json` + static `status/index.html` to the bucket.
+10. Update `status/attempts.json` (attempt counts). The only non-derivable
+    state; losing it merely causes a few redundant retries (capped).
+
+Concurrency safety: `concurrencyPolicy: Forbid` (no overlapping ticks) plus
+deterministic Job names `htr-<pipeline>-<volume-id>` so a duplicate create is
+a harmless AlreadyExists. Job spec is the same shape as today's (Kueue queue
+label, `suspend: true`, GPU request, `RESUME=true`, secret envFrom).
+
+RBAC: a ServiceAccount allowed to create/get/list Jobs and ConfigMaps in the
+`htr-batch` namespace, nothing cluster-scoped.
+
+Chart: new `reconciler:` values block (enabled flag, campaigns repo URL,
+schedule, window size, attempt cap) rendering the CronJob + RBAC. The chart's
+existing `pipelines:` map remains for chart-only standalone use; the GitOps
+path owns pipelines in the campaigns repo.
+
+## 5. Status page
+
+A static `index.html` + `status.json`, regenerated every tick, served by
+RustFS like any other object (`http://<host>:30900/htr-results/status/`).
+No backend, no auth, read-only by construction.
+
+Per volume: status, pages done/total, wall time, error summary, attempts, and
+a viewer link **in both states**:
+
+- done → UV on our published manifest (`.../iiif.json`) — with transcription;
+- pending/running/failed → UV on the *source* manifest — images only.
+
+One viewer serves both ("navigate untranscribed and transcribed").
+
+Per campaign: progress bar (done/total), broken-file and drift warnings.
+
+Freshness: page shows `generated at <UTC>`; client-side JS turns it into a
+visible **STALE** banner when older than 3× the tick interval — a dead
+reconciler must not look like "no news" (§7.1).
+
+## 6. Status derivation (the three-way join)
+
+| manifest.json in S3 | Job in cluster | in git | status |
+|---|---|---|---|
+| yes | — | yes | **done** (immutable; cached, never re-checked) |
+| no | Workload not admitted | yes | **queued** |
+| no | pod running | yes | **running** |
+| no | Job failed (pre-TTL) | yes | **failed** (exit 1 → retry; 13 → needs-attention) |
+| no | none | yes | **pending** (or retry-eligible per attempts.json) |
+| yes | — | no | **orphan** — listed, flagged, never deleted (removal from git stops future work; it never destroys results) |
+
+## 7. Known issues, accepted trade-offs
+
+1. **Silent reconciler death** — the liveness of everything rides on a
+   CronJob cloning GitHub through the RA firewall. Mitigated (CA bundle in
+   image, STALE banner, CronJob failure count surfaced on the page via last
+   successful tick timestamp) but *not alerted* — real alerting is out of
+   scope until there is somewhere to send it.
+2. **Campaigns repo write access ≈ code execution in the job pod.** Pipeline
+   YAML selects arbitrary HF model repos; model loading is a known
+   code-execution surface. The pod has GPU, egress, and S3 write (but a fixed
+   image, no cluster credentials, own namespace). Treat the repo like CI
+   config: protected main branch, required review. Model allowlisting is a
+   possible future hardening.
+3. **Results are a single unreplicated PVC on one node.** Git is durably
+   hosted; the bucket is not backed up. Losing that disk = recomputing every
+   campaign. Acceptable for PoC; must be restated before anyone treats the
+   bucket as an archive.
+4. **Wild-web volumes fail in ways we can't tune** — hotlink blocks, auth
+   walls, per-host flakiness for `images:` URLs. Pre-validation (§4.4)
+   converts the common cases into early, cheap, visible failures.
+5. **5-minute staleness** on the page — invisible at 30-min volume
+   timescales; revisit only if a long-running operator becomes justified.
+6. **A permanently-failed volume has no declarative "skip"** — the remedy is
+   deleting it from the campaign file (auditable via git history). Acceptable.
+
+## 8. Out of scope for v1
+
+- IIIF Presentation 2 parsing (format accommodates it; parser added when a
+  real P2 source appears — well-contained change in `iiif.py` + reconciler
+  pre-validation).
+- Catalog/NAD search UI ("browse all of Riksarkivet from the page") — the
+  end goal; layers on top of this design without changing it.
+- Any write path from the page; multi-cluster; alerting; model allowlists.
+
+## 9. Testing
+
+- Reconciler logic = pure functions over three inputs (parsed git tree, S3
+  listing, Job list) → unit tests with fakes, same style as the wrapper
+  suite; runs in existing `dagger call test` unchanged.
+- Status derivation table (§6) tested case by case, including the orphan and
+  drift rows.
+- One compose-stack smoke: seed a fake campaign dir + bucket, run one
+  reconciler tick, assert submitted Job set + generated page.
+- CI guard in htr-campaigns tested by fixture PRs (modified pipeline → fail).
+
+## 10. Alternatives considered
+
+- **Long-running operator** — second-level freshness, but a service to
+  babysit; wrong trade at 30-minute volume durations.
+- **GitHub Actions as reconciler** — cluster is unreachable from GH runners
+  (firewall), credentials would live outside, and it cannot see S3 state.
+- **Database as source of truth** — inverts the design: a lost DB would mean
+  a lost campaign, and DB-vs-reality drift becomes a bug class. Derived
+  state + git needs neither backup nor migration.
