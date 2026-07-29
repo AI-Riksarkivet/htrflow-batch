@@ -4,12 +4,16 @@ kind: ServiceAccount
 metadata:
   name: htr-reconciler
   namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "htrflow-batch.labels" . | nindent 4 }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: htr-reconciler
   namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "htrflow-batch.labels" . | nindent 4 }}
 rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
@@ -29,6 +33,8 @@ kind: RoleBinding
 metadata:
   name: htr-reconciler
   namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "htrflow-batch.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -53,6 +59,10 @@ spec:
   jobTemplate:
     spec:
       activeDeadlineSeconds: 240
+      # A hard-failing tick must not burn six pods before the next schedule:
+      # concurrencyPolicy Forbid already serialises ticks, and the next one
+      # picks up wherever this one stopped.
+      backoffLimit: 0
       template:
         spec:
           serviceAccountName: htr-reconciler
@@ -64,7 +74,16 @@ spec:
                 - name: CAMPAIGNS_REPO_URL
                   value: {{ .Values.reconciler.campaignsRepoUrl | required "reconciler.campaignsRepoUrl is required" | quote }}
                 - name: PUBLIC_RESULTS_BASE
-                  value: {{ .Values.reconciler.publicResultsBase | default .Values.publicResultsBase | quote }}
+                  value: {{ .Values.reconciler.publicResultsBase | default .Values.publicResultsBase | required "publicResultsBase (or reconciler.publicResultsBase) is required when reconciler.enabled" | quote }}
+                # The reconciler acts on its own namespace; the downward API
+                # keeps it correct whatever --namespace the release uses.
+                - name: RECONCILER_NAMESPACE
+                  valueFrom:
+                    fieldRef: { fieldPath: metadata.namespace }
+                - name: RECONCILER_QUEUE
+                  value: {{ .Values.queue.name | quote }}
+                - name: RECONCILER_S3_SECRET
+                  value: {{ .Values.s3.existingSecret | quote }}
                 - name: RECONCILER_WINDOW
                   value: {{ .Values.reconciler.window | quote }}
                 - name: RECONCILER_ATTEMPT_CAP

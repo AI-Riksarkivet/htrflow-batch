@@ -17,3 +17,16 @@ func (m *HtrflowBatch) Build(
 		Dockerfile: ".docker/htrflow-batch.dockerfile",
 	}), nil
 }
+
+// BuildReconciler creates the campaign reconciler image from
+// .docker/htrflow-reconciler.dockerfile. Light: CPU-only, no torch — it builds
+// the workspace member with uv rather than layering onto the htrflow base.
+func (m *HtrflowBatch) BuildReconciler(
+	ctx context.Context,
+	// +defaultPath="/"
+	source *dagger.Directory,
+) (*dagger.Container, error) {
+	return source.DockerBuild(dagger.DirectoryDockerBuildOpts{
+		Dockerfile: ".docker/htrflow-reconciler.dockerfile",
+	}), nil
+}

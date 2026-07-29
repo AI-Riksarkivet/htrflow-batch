@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     campaigns_dir: Path = Path(tempfile.gettempdir()) / "campaigns"
     reconciler_window: int = 20
     reconciler_attempt_cap: int = 3
+    # Cluster coupling. The defaults reproduce the PoC, but the chart supplies
+    # all three so a release can be renamed or re-namespaced without a rebuild
+    # (RECONCILER_NAMESPACE comes from the downward API).
+    reconciler_namespace: str = "htr-batch"
+    reconciler_queue: str = "htr-batch"
+    reconciler_s3_secret: str = "htr-batch-s3"
+    reconciler_data_pvc: str = "htr-test-data"
 
 
 def _fetch_json(url: str) -> dict | None:
@@ -37,6 +44,10 @@ def run() -> None:
     settings = Settings()  # reads CAMPAIGNS_REPO_URL etc.; raises if missing
     cfg = ReconcilerConfig(
         public_results_base=settings.public_results_base,
+        namespace=settings.reconciler_namespace,
+        queue=settings.reconciler_queue,
+        s3_secret=settings.reconciler_s3_secret,
+        data_pvc=settings.reconciler_data_pvc,
         window=settings.reconciler_window,
         attempt_cap=settings.reconciler_attempt_cap,
     )

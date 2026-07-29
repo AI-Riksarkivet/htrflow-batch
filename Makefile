@@ -24,10 +24,11 @@ test:
 	uv run --all-packages pytest -q
 
 # `uvx ty check` cannot resolve workspace imports on its own — point each
-# member at the shared workspace venv.
+# member at the shared workspace venv. CURDIR, not PWD: PWD is the shell's
+# inherited cwd and stays wrong under `make -C`.
 typecheck:
-	cd packages/wrapper && uvx ty check src --python $(PWD)/.venv
-	cd packages/reconciler && uvx ty check src --python $(PWD)/.venv
+	cd packages/wrapper && uvx ty check src --python $(CURDIR)/.venv
+	cd packages/reconciler && uvx ty check src --python $(CURDIR)/.venv
 
 ci: typecheck
 	dagger call checks $(DAGGER_CA)
@@ -72,10 +73,14 @@ docs-serve:
 docs-build:
 	uvx zensical build --clean
 
-# PoC: build + push the wrapper image into the in-cluster k3s registry
+# PoC: build + push the images into the in-cluster k3s registry. This target is
+# hardwired to 127.0.0.1:30500 on purpose — real registries go through
+# `make publish` (dagger), which tests before it pushes.
 poc-push:
 	docker build -f .docker/htrflow-batch.dockerfile -t 127.0.0.1:30500/htrflow-batch:dev .
 	docker push 127.0.0.1:30500/htrflow-batch:dev
+	docker build -f .docker/htrflow-reconciler.dockerfile -t 127.0.0.1:30500/htrflow-reconciler:dev .
+	docker push 127.0.0.1:30500/htrflow-reconciler:dev
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +

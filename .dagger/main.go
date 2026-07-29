@@ -14,9 +14,10 @@ type HtrflowBatch struct{}
 // Go constants (they require inline literals) — these document the canonical
 // registry/repos that publish.go's inlined literals must stay in sync with.
 const (
-	DefaultRegistry   = "docker.io"
-	DefaultImageRepo  = "riksarkivet/htrflow-batch"
-	DefaultViewerRepo = "riksarkivet/htrflow-batch-viewer"
+	DefaultRegistry       = "docker.io"
+	DefaultImageRepo      = "riksarkivet/htrflow-batch"
+	DefaultViewerRepo     = "riksarkivet/htrflow-batch-viewer"
+	DefaultReconcilerRepo = "riksarkivet/htrflow-reconciler"
 )
 
 // withUv adds uv/uvx binaries to a container (development/CI tasks only)

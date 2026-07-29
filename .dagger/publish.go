@@ -27,13 +27,13 @@ func (m *HtrflowBatch) resolveTag(ctx context.Context, source *dagger.Directory,
 }
 
 // PublishDocker tests, builds and publishes an image to a registry.
-// component: "wrapper" (default) or "viewer".
+// component: "wrapper" (default), "viewer" or "reconciler".
 func (m *HtrflowBatch) PublishDocker(
 	ctx context.Context,
 	// +default="wrapper"
 	component string,
 	// Image repository; empty selects the default for the component
-	// (riksarkivet/htrflow-batch or riksarkivet/htrflow-batch-viewer)
+	// (riksarkivet/htrflow-batch, -viewer or riksarkivet/htrflow-reconciler)
 	// +optional
 	imageRepository string,
 	// Image tag (empty: "v" + version from packages/wrapper/pyproject.toml)
@@ -75,8 +75,15 @@ func (m *HtrflowBatch) PublishDocker(
 		}
 		// Use pinned ref to mirror BuildViewer's default for reproducibility
 		container, err = m.BuildViewer(ctx, source, "f2e8f66d3bd5a69e8e392764204d13d9524f63b2", caBundle)
+	case "reconciler":
+		if imageRepository == "" {
+			imageRepository = "riksarkivet/htrflow-reconciler"
+		}
+		// Tagged off the wrapper version like the viewer is: the repo releases
+		// its images as one set, not per workspace member.
+		container, err = m.BuildReconciler(ctx, source)
 	default:
-		return "", fmt.Errorf("unknown component %q (wrapper|viewer)", component)
+		return "", fmt.Errorf("unknown component %q (wrapper|viewer|reconciler)", component)
 	}
 	if err != nil {
 		return "", fmt.Errorf("build failed during publish: %w", err)
