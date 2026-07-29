@@ -9,12 +9,12 @@ from htrflow_batch.stream import consume
 
 
 def _fr(tmp_path, i, fail=False):
-    page = PageRef(i, f"{i:04d}", f"https://img/{i}", {})
+    page = PageRef(index=i, name=f"{i:04d}", image_url=f"https://img/{i}", canvas={})
     if fail:
-        return FetchResult(page, None, "HTTP 500")
+        return FetchResult(page=page, path=None, error="HTTP 500")
     p = tmp_path / f"{i:04d}.jpg"
     p.write_bytes(b"jpg")
-    return FetchResult(page, p, None, 3)
+    return FetchResult(page=page, path=p, error=None, size=3)
 
 
 def test_ok_flow_uploads_and_deletes(tmp_path):

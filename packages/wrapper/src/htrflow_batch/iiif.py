@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import httpx
+from pydantic import BaseModel, ConfigDict
 
 
 class ManifestError(Exception):
     """Permanent: bad/empty/unreachable manifest -> exit 13."""
 
 
-@dataclass(frozen=True)
-class PageRef:
+class PageRef(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     index: int  # 1-based position in manifest order
     name: str  # zero-padded, e.g. "0001" — S3 key + filename stem
     image_url: str  # width-capped IIIF image request

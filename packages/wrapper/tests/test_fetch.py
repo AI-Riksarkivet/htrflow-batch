@@ -10,7 +10,10 @@ from htrflow_batch.iiif import PageRef
 
 
 def _pages(n):
-    return [PageRef(i, f"{i:04d}", f"https://img/{i}", {}) for i in range(1, n + 1)]
+    return [
+        PageRef(index=i, name=f"{i:04d}", image_url=f"https://img/{i}", canvas={})
+        for i in range(1, n + 1)
+    ]
 
 
 def _client(handler):
@@ -128,7 +131,14 @@ def test_upscale_400_falls_back_to_max(tmp_path):
             return httpx.Response(200, content=b"narrow-image")
         return httpx.Response(404)
 
-    pages = [PageRef(1, "0001", "https://img/iiif/full/2500,/0/default.jpg", {})]
+    pages = [
+        PageRef(
+            index=1,
+            name="0001",
+            image_url="https://img/iiif/full/2500,/0/default.jpg",
+            canvas={},
+        )
+    ]
     q, slots = queue.Queue(), threading.Semaphore(64)
     run_downloader(pages, tmp_path, q, slots, _client(handler), retries=3, backoff=0.0)
     r = q.get()

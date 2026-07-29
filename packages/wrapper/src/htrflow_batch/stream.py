@@ -5,23 +5,22 @@ from __future__ import annotations
 import queue
 import threading
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
+
+from pydantic import BaseModel, Field
 
 from .fetch import FetchResult
 
 
-@dataclass
-class PageOutcome:
+class PageOutcome(BaseModel):
     status: str  # "ok" | "failed" | "skipped"
     seconds: float = 0.0
     error: str | None = None
 
 
-@dataclass
-class StreamStats:
-    results: dict[str, PageOutcome] = field(default_factory=dict)
+class StreamStats(BaseModel):
+    results: dict[str, PageOutcome] = Field(default_factory=dict)
     stall_seconds: float = 0.0
 
 
@@ -47,14 +46,16 @@ def consume(
         name = item.page.name
         try:
             if item.path is None:
-                stats.results[name] = PageOutcome("failed", error=item.error)
+                stats.results[name] = PageOutcome(status="failed", error=item.error)
             else:
                 t0 = time.monotonic()
                 files = process(item.path)
                 upload(name, files)
-                stats.results[name] = PageOutcome("ok", seconds=time.monotonic() - t0)
+                stats.results[name] = PageOutcome(
+                    status="ok", seconds=time.monotonic() - t0
+                )
         except Exception as e:  # drain-what-you-can; verify gate decides later
-            stats.results[name] = PageOutcome("failed", error=repr(e))
+            stats.results[name] = PageOutcome(status="failed", error=repr(e))
         finally:
             # Clean up image (outcome recorded, so deletion failure doesn't affect it)
             if item.path is not None and not keep_images:

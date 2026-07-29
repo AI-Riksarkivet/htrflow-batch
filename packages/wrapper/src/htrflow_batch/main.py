@@ -136,7 +136,7 @@ def main(
         dl_thread.join()
         for p in pages:
             if p.name in done:
-                stats.results[p.name] = PageOutcome("skipped")
+                stats.results[p.name] = PageOutcome(status="skipped")
 
         # -- stage 4: verify (D8) ---------------------------------------------
         stage = "verify"

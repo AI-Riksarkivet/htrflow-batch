@@ -14,16 +14,15 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
+from pydantic import BaseModel
 
 from .iiif import PageRef
 
 
-@dataclass
-class FetchResult:
+class FetchResult(BaseModel):
     page: PageRef
     path: Path | None
     error: str | None
@@ -41,7 +40,9 @@ def _fetch_one(
             if resp.status_code == 200:
                 path = dest_dir / f"{page.name}.jpg"
                 path.write_bytes(resp.content)
-                return FetchResult(page, path, None, len(resp.content))
+                return FetchResult(
+                    page=page, path=path, error=None, size=len(resp.content)
+                )
             last = f"HTTP {resp.status_code}"
             if resp.status_code == 400:
                 # Level1 servers 400 sized requests wider than the original
@@ -55,7 +56,7 @@ def _fetch_one(
         # Skip sleep after final attempt
         if attempt < retries - 1:
             time.sleep(backoff * (2**attempt))
-    return FetchResult(page, None, last)
+    return FetchResult(page=page, path=None, error=last)
 
 
 def run_downloader(
@@ -92,7 +93,7 @@ def run_downloader(
             except Exception as e:
                 # Belt-and-braces: if fut.result() raises unexpectedly (should not
                 # happen since _fetch_one catches all exceptions), create error result
-                result = FetchResult(page, None, repr(e))
+                result = FetchResult(page=page, path=None, error=repr(e))
             total_holder[0] += result.size
             out_queue.put(result)
 

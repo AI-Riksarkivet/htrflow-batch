@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Mapping
+from typing import Any, Mapping
+
+from pydantic import BaseModel, ConfigDict
 
 
 class ConfigError(ValueError):
@@ -24,8 +25,9 @@ def _bool(v: str) -> bool:
     return v.strip().lower() in ("1", "true", "yes", "on")
 
 
-@dataclass(frozen=True)
-class Config:
+class Config(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     volume_ref: str
     manifest_url: str
     pipeline_path: str
@@ -43,7 +45,7 @@ class Config:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Config":
-        kwargs = {}
+        kwargs: dict[str, Any] = {}
         missing = [k for _, k in _REQUIRED if not env.get(k)]
         if missing:
             raise ConfigError(f"missing required env: {', '.join(missing)}")
