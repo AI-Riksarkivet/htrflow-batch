@@ -83,17 +83,50 @@ Rules:
 
 ### Pipeline files and immutability (D17 carried over)
 
+A pipeline id names the **full recipe**: the htrflow steps *and* the exact
+wrapper image that runs them. Without the image pin, two volumes under the
+same prefix could be produced by different htrflow builds — silently
+breaking the comparability that immutability exists to protect.
+
+```yaml
+# pipelines/demo-v1.yaml
+image: docker.io/riksarkivet/htrflow-batch@sha256:5d5c60...   # digest, REQUIRED
+steps:
+  - step: Segmentation
+    ...
+```
+
+- `image` must be digest-pinned (`@sha256:`); tags are mutable and are
+  rejected by the reconciler. (`docker inspect --format
+  '{{index .RepoDigests 0}}'` after a push yields the pin.)
+- The reconciler sets the Job's container image from this field and passes
+  it as `IMAGE_DIGEST` env, which the wrapper already stamps into every
+  published `manifest.json` — closing the provenance chain
+  (git recipe → Job → results). Today that field reads "unknown".
+- The ConfigMap contains only the `steps:` document (what htrflow parses);
+  the wrapper's recorded `pipeline_sha256` therefore covers the steps, and
+  `image_digest` covers the image — the drift checks below verify both.
+- Honest limit: this pins our code, not the world. Model weights are pulled
+  from Hugging Face at runtime; unless each step pins a model `revision`,
+  upstream model updates can still change output under the same pipeline id
+  (the shared HF cache PVC makes this stable in practice, not in principle).
+  Recommended for campaigns that must be reproducible: pin revisions in the
+  steps. GPU nondeterminism means bit-identical reruns are out of scope
+  regardless.
+
 Results are keyed by pipeline id, so `pipelines/<id>.yaml` is immutable once
 any result exists under that id. Guards (all three, layered):
 
 1. **CI check in htr-campaigns**: PR fails if an existing `pipelines/*.yaml`
    is modified — new ids only. (Guards PRs, not direct pushes → repo must
    have a protected default branch, §8.)
-2. **Reconciler drift check**: before submitting, compare the file's SHA-256
-   with the existing `htr-pipeline-<id>` ConfigMap. Mismatch = hard error,
-   nothing submitted for that pipeline, loud line on the status page.
-3. **S3 ground-truth check (v1, not deferred)**: also compare against
-   `pipeline_sha256` recorded in one already-published `manifest.json` under
+2. **Reconciler drift check**: before submitting, compare the steps
+   document's SHA-256 with the existing `htr-pipeline-<id>` ConfigMap.
+   Mismatch = hard error, nothing submitted for that pipeline, loud line on
+   the status page.
+3. **S3 ground-truth check (v1, not deferred)**: also compare the steps
+   SHA-256 **and the image digest** against `pipeline_sha256` /
+   `image_digest` recorded in one already-published `manifest.json` under
    that pipeline prefix. This is the check that actually protects results —
    the ConfigMap check fails open if the ConfigMap was deleted (e.g. chart
    reinstall). Costs one GET per pipeline per tick.
@@ -136,7 +169,10 @@ Per tick:
 Concurrency safety: `concurrencyPolicy: Forbid` (no overlapping ticks) plus
 deterministic Job names `htr-<pipeline>-<volume-id>` so a duplicate create is
 a harmless AlreadyExists. Job spec is the same shape as today's (Kueue queue
-label, `suspend: true`, GPU request, `RESUME=true`, secret envFrom).
+label, `suspend: true`, GPU request, `RESUME=true`, secret envFrom), with the
+container image and `IMAGE_DIGEST` env taken from the pipeline file's pin —
+the chart's default wrapper image applies only to chart-managed example Jobs,
+never to campaign Jobs.
 
 RBAC: a ServiceAccount allowed to create/get/list Jobs and ConfigMaps in the
 `htr-batch` namespace, nothing cluster-scoped.
