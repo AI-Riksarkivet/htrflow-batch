@@ -12,10 +12,49 @@ index b2622a8..1a960e8 100644
            @col: rgb(120, 251, 185);
            background-color: saturate(@col, 100%);
 diff --git a/src/content-handlers/iiif/modules/uv-textrightpanel-module/TextRightPanel.ts b/src/content-handlers/iiif/modules/uv-textrightpanel-module/TextRightPanel.ts
-index e9d30db..d6ed5bc 100644
+index e9d30db..20499fb 100644
 --- a/src/content-handlers/iiif/modules/uv-textrightpanel-module/TextRightPanel.ts
 +++ b/src/content-handlers/iiif/modules/uv-textrightpanel-module/TextRightPanel.ts
-@@ -416,10 +416,13 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+@@ -352,15 +352,34 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+       const altoDoc = new DOMParser().parseFromString(data, "application/xml");
+       const textLines = altoDoc.querySelectorAll("TextLine");
+ 
++      // ALTO coords are in the processed image's pixel space (its Page
++      // WIDTH/HEIGHT), which may be smaller than the displayed image when
++      // the HTR pipeline width-capped its input. Scale into displayed-image
++      // pixels before converting to viewport coords.
++      const altoPage = altoDoc.querySelector("Page");
++      const altoPageWidth = Number(altoPage && altoPage.getAttribute("WIDTH"));
++      const altoPageHeight = Number(altoPage && altoPage.getAttribute("HEIGHT"));
++      const resList: any = this.extension.resources;
++      const displayed: any =
++        resList && this.index >= 0 ? resList[this.index] : null;
++      const scaleX =
++        displayed && displayed.width && altoPageWidth
++          ? displayed.width / altoPageWidth
++          : 1;
++      const scaleY =
++        displayed && displayed.height && altoPageHeight
++          ? displayed.height / altoPageHeight
++          : 1;
++
+       const lines = Array.from(textLines).map((e, i) => {
+         const strings = e.querySelectorAll("String");
+         const t = Array.from(strings).map((e, i) => {
+           return e.getAttribute("CONTENT");
+         });
+-        let x = Number(e.getAttribute("HPOS"));
+-        const y = Number(e.getAttribute("VPOS"));
+-        const width = Number(e.getAttribute("WIDTH"));
+-        const height = Number(e.getAttribute("HEIGHT"));
++        let x = Number(e.getAttribute("HPOS")) * scaleX;
++        const y = Number(e.getAttribute("VPOS")) * scaleY;
++        const width = Number(e.getAttribute("WIDTH")) * scaleX;
++        const height = Number(e.getAttribute("HEIGHT")) * scaleY;
+         x =
+           x +
+           this.offsetX +
+@@ -416,10 +435,13 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
              this.setCurrentLineAnnotationRect(e.target);
            });
            // Add overlay to OpenSeadragon canvas
