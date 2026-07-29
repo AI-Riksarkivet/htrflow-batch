@@ -148,13 +148,17 @@ Per tick:
 2. Parse campaign + pipeline files. A malformed file is skipped and reported
    on the page as broken; other campaigns proceed.
 3. Ensure `htr-pipeline-<id>` ConfigMaps (immutability guards, §3).
-4. Pre-validate non-shorthand volumes once: fetch the manifest, require P3
-   (`items`). P2 or unreachable → status `unsupported` / `unreachable` on the
-   page, no job burned. Cache the verdict in the bucket so it's once, not
-   per tick.
+4. Pre-validate non-shorthand volumes once: fetch the manifest and classify
+   it. P2 and P3 are both submittable (the wrapper parses both, §8);
+   anything else — a Collection, junk, or an unreachable host → status
+   `unsupported` / `unreachable` on the page, no job burned. Verdicts about
+   the *document* are cached in the bucket so classification is once, not
+   per tick; `unreachable` is a verdict about the *network* and is
+   deliberately never cached, so one flaky fetch cannot wedge a volume out
+   of its campaign permanently.
 5. For `images:` volumes: generate the synthetic P3 manifest (reuse
    `scripts/make_mock_manifest.py` logic) and upload to
-   `<pipeline>/<id>/source-manifest.json` if absent.
+   `sources/<pipeline>/<id>/manifest.json` if absent.
 6. Derive status per volume (see table §6).
 7. Submit pending volumes up to a bounded window (default: 20 not-yet-done
    Jobs existing at once), **round-robin across campaigns** so a 4,000-volume
@@ -171,8 +175,10 @@ Per tick:
     state; losing it merely causes a few redundant retries (capped).
 
 Concurrency safety: `concurrencyPolicy: Forbid` (no overlapping ticks) plus
-deterministic Job names `htr-<pipeline>-<volume-id>` so a duplicate create is
-a harmless AlreadyExists. Job spec is the same shape as today's (Kueue queue
+deterministic Job names `htr-<pipeline>-<volume-id>-<8-hex-digest>` (the
+digest over the pair disambiguates ids that flatten to the same slug, and
+keeps the name DNS-1123-safe) so a duplicate create is a harmless
+AlreadyExists. Job spec is the same shape as today's (Kueue queue
 label, `suspend: true`, GPU request, `RESUME=true`, secret envFrom), with the
 container image and `IMAGE_DIGEST` env taken from the pipeline file's pin —
 the chart's default wrapper image applies only to chart-managed example Jobs,

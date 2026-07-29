@@ -14,6 +14,7 @@ real cluster.
 | D14 | Pod security + egress NetworkPolicy | proposed (see [Security](../development/security.md)), confirm |
 | D15 | `htrq submit --dry-run` | proposed, confirm |
 | — | `htrq` CLI itself (submit/status/logs/retry/report/pipeline deploy) | designed in [the wrapper doc](../how-it-works/wrapper.md#htrq-cli), no in-cluster components; not yet built as a standalone package |
+| — | GitOps campaigns + read-only status page | **built** — reconciler CronJob and campaign browser, see [Campaigns (GitOps)](../how-it-works/campaigns.md); enabling it on a cluster is a separate step |
 | — | Target cluster for the PoC | **unresolved** |
 | — | Quota N, memory numbers, width default | placeholders, tune on cluster |
 
@@ -24,6 +25,9 @@ concurrent volumes (see the [test log](../development/test-log.md)), but not
 yet at archive scale. The active next step is an **archive-scale campaign**:
 enough volumes, run for long enough, to produce a trustworthy aggregate
 `gpu_stall_seconds / wall_seconds` figure from `htrq report` — the number that
-actually gates [Phase 2](phase-2-cache.md). Everything else on this page
+actually gates [Phase 2](phase-2-cache.md). The machinery to drive such a
+campaign now exists — declare the volumes in the campaigns repo and let the
+reconciler submit them ([Running a Campaign](../getting-started/campaigns.md))
+— but it has not yet been enabled on a cluster. Everything else on this page
 (priority lanes, NetworkPolicy, dry-run, the CLI itself) is useful but not
 blocking that measurement.

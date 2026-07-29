@@ -39,5 +39,7 @@ an archive-scale campaign is the pending next step.
   deploy and run a volume.
 - [How it Works](how-it-works/architecture.md) — architecture, the
   streaming wrapper, and the decision log.
+- [Campaigns (GitOps)](how-it-works/campaigns.md) — declare volumes in git,
+  let the reconciler submit them, watch progress on the campaign browser.
 - [Roadmap](roadmap/evolution.md) — the evidence-gated Phase 2 cache
   layer and what's still open.

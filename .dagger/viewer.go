@@ -8,7 +8,10 @@ import (
 // BuildViewer builds the UV4 viewer image reproducibly: clone the Riksarkivet
 // universalviewer4 fork, apply .docker/uv4-uv-html.patch (enables the ALTO text
 // panel config fetch + fixes overlay coordinates), npm build on node:20, then
-// layer dist/ onto nginx:alpine. See docs D19 notes for why the patch exists.
+// layer dist/ onto nginx-unprivileged and the campaign browser SPA (bun build of
+// frontend/) on top of that. The SPA's index.html deliberately overwrites UV's
+// demo one: the campaign browser is the front door, UV stays at /uv.html. See
+// docs D19 notes for why the patch exists.
 func (m *HtrflowBatch) BuildViewer(
 	ctx context.Context,
 	// +defaultPath="/"
@@ -46,8 +49,22 @@ func (m *HtrflowBatch) BuildViewer(
 
 	dist := builder.Directory("/src/dist")
 
+	spa := dag.Container().
+		From("oven/bun:1").
+		WithDirectory("/app", source.Directory("frontend"), dagger.ContainerWithDirectoryOpts{
+			Exclude: []string{"node_modules", "dist"},
+		}).
+		WithWorkdir("/app")
+	spa = m.withCaBundle(spa, caBundle)
+	spa = spa.
+		WithExec([]string{"bun", "install", "--frozen-lockfile"}).
+		WithExec([]string{"bun", "run", "build"})
+
+	// nginx-unprivileged: UID 101, listens on 8080 (the chart's containerPort,
+	// Service targetPort and nginx `listen` all match).
 	viewer := dag.Container().
-		From("nginx:alpine").
-		WithDirectory("/usr/share/nginx/html", dist)
+		From("nginxinc/nginx-unprivileged:1.27-alpine").
+		WithDirectory("/usr/share/nginx/html", dist).
+		WithDirectory("/usr/share/nginx/html", spa.Directory("/app/dist"))
 	return viewer, nil
 }

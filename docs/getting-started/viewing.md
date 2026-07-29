@@ -18,11 +18,12 @@ For example, the PoC's mock volume:
 http://localhost:30800/uv.html#?manifest=http://localhost:30900/htr-results/demo-v1/mock-vol/iiif.json
 ```
 
-Requesting `/` on the viewer 302-redirects (a *relative* redirect — nginx
-runs with `absolute_redirect off`, otherwise a NodePort URL gets dropped
-from the Location header) to `uv.html#?manifest=...` using
-`viewer.defaultManifest` from the chart values, so you can bookmark just
-the viewer's root URL once a default manifest is configured.
+Requesting `/` serves the [campaign browser](campaigns.md#5-watch-it), which
+links into the viewer per volume. The deprecated `viewer.defaultManifest`
+chart value overrides that: when set, `/` 302-redirects (a *relative*
+redirect — nginx runs with `absolute_redirect off`, otherwise a NodePort URL
+gets dropped from the Location header) to `uv.html#?manifest=...` instead, so
+the viewer's root URL can be bookmarked as a single-volume front door.
 
 ## Reaching the viewer over ssh (PoC / bare-k3s)
 

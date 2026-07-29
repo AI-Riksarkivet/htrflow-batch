@@ -1,10 +1,15 @@
 .PHONY: install format lint check test typecheck ci build build-viewer scan publish \
         compose-up compose-test compose-smoke compose-down helm-lint docs-serve docs-build poc-push clean \
-        frontend-install frontend-test frontend-check frontend-build frontend-dev
+        frontend-install frontend-test frontend-check frontend-build frontend-dev viewer-image
 
 # On RA hosts dagger containers need the corp CA; harmless elsewhere if the file exists.
 CA_BUNDLE ?= /etc/ssl/certs/ca-certificates.crt
 DAGGER_CA := $(shell test -f $(CA_BUNDLE) && echo --ca-bundle $(CA_BUNDLE))
+
+# Local checkout of the Riksarkivet universalviewer4 fork, already built
+# (`npm install && npm run build` → dist/). It is the docker build context for
+# the viewer image; `viewer-image` stages the SPA into it.
+UV4_DIR ?= $(HOME)/universalviewer4
 
 # uv workspace: always --all-packages. A plain `uv sync` prunes the shared
 # venv back to the virtual root + dev group and drops the workspace members.
@@ -99,6 +104,12 @@ frontend-build:
 
 frontend-dev:
 	cd frontend && bun run dev
+
+# Stage the SPA into the UV repo (the docker build context) and build the nginx
+# image. Local tag only — publishing goes through `dagger call build-viewer`.
+viewer-image: frontend-build
+	rm -rf $(UV4_DIR)/campaign-app && cp -r frontend/dist $(UV4_DIR)/campaign-app
+	docker build -f .docker/uv4-viewer.dockerfile -t 127.0.0.1:30500/uv4:dev $(UV4_DIR)
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +

@@ -1,7 +1,9 @@
 {{- if .Values.viewer.enabled }}
-# UV4 viewer (D19) — static nginx site on NodePort {{ .Values.viewer.nodePort }}.
-# Open a volume with:
+# Viewer (D19) — static nginx site on NodePort {{ .Values.viewer.nodePort }} serving both
+# the campaign browser SPA at / and UV4 at /uv.html.
+# Open a volume directly with:
 #   http://<node>:{{ .Values.viewer.nodePort }}/uv.html#?manifest=<PUBLIC_RESULTS_BASE>/<pipeline>/<volume>/iiif.json
+# The image is nginx-unprivileged: UID 101, port 8080 (the NodePort is unchanged).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,11 +13,13 @@ metadata:
 data:
   default.conf: |
     server {
-      listen 80;
+      listen 8080;
       root /usr/share/nginx/html;
       index index.html;
       absolute_redirect off;  # keep Location relative so the NodePort survives
       {{- if .Values.viewer.defaultManifest }}
+      # DEPRECATED single-manifest front door. Unset (the default), / serves the
+      # campaign browser's index.html instead.
       location = / {
         return 302 /uv.html#?manifest={{ .Values.viewer.defaultManifest }};
       }
@@ -42,7 +46,7 @@ spec:
           image: {{ .Values.viewer.image }}
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 80
+            - containerPort: 8080
           volumeMounts:
             - name: nginx-conf
               mountPath: /etc/nginx/conf.d
@@ -66,6 +70,6 @@ spec:
   ports:
     - name: http
       port: 80
-      targetPort: 80
+      targetPort: 8080
       nodePort: {{ .Values.viewer.nodePort }}
 {{- end }}

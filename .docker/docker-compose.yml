@@ -101,8 +101,9 @@ services:
 
   viewer:
     image: riksarkivet/htrflow-batch-viewer:latest
+    # nginx-unprivileged serves on 8080 inside the container, not 80.
     ports:
-      - "8080:80"
+      - "8080:8080"
     depends_on:
       rustfs:
         condition: service_healthy

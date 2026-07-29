@@ -28,11 +28,11 @@ pipelines:
   # htr-pipeline-<id>. NEVER change content under an existing id (D17).
   {}
 
-viewer:
+viewer:                    # campaign browser at /, UV4 at /uv.html
   enabled: true
   image: docker.io/riksarkivet/htrflow-batch-viewer:latest
   nodePort: 30800
-  defaultManifest: ""      # if set, / redirects to uv.html#?manifest=<this>
+  defaultManifest: ""      # DEPRECATED: when set, / redirects to UV instead of the campaign browser
 
 devStack:                  # PoC-only in-cluster dependencies, all off by default
   rustfs:
