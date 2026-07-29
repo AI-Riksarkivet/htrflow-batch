@@ -9,7 +9,7 @@ custom scheduler, no database.
 ## Quickstart
 
 ```bash
-make install && make test   # wrapper dev env + unit tests
+make install && make test   # uv workspace sync (packages/*) + wrapper unit tests
 make compose-up             # local smoke stack: S3 + fixtures + wrapper + viewer, no cluster needed
 ```
 

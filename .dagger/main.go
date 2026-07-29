@@ -41,18 +41,25 @@ func (m *HtrflowBatch) withCaBundle(container *dagger.Container, caBundle *dagge
 		WithEnvVariable("NODE_EXTRA_CA_CERTS", "/etc/ssl/certs/corp-ca.crt")
 }
 
-// buildWithUv creates a dev container with uv and the wrapper's deps synced.
-// Unlike ape-mcp this is a single project (wrapper/), not a uv workspace.
+// WrapperPackage is the [project].name of the wrapper workspace member
+// (packages/wrapper) — used to scope uv --package selections.
+const WrapperPackage = "htrflow-batch-wrapper"
+
+// buildWithUv creates a dev container with uv and the workspace's deps synced.
+// The repo is a uv workspace (root pyproject.toml + uv.lock, members under
+// packages/), so the sync runs at the workspace root with --all-packages.
+// Note: every later `uv run` must pass --no-sync, or uv would re-resolve the
+// default (root + dev) environment and prune the workspace members back out.
 func (m *HtrflowBatch) buildWithUv(ctx context.Context, source *dagger.Directory, caBundle *dagger.File) (*dagger.Container, error) {
 	container := dag.Container().
 		From("python:3.13-slim").
 		WithDirectory("/app", source, dagger.ContainerWithDirectoryOpts{
-			Include: []string{"wrapper/"},
+			Include: []string{"pyproject.toml", "uv.lock", "packages/"},
 		}).
-		WithWorkdir("/app/wrapper")
+		WithWorkdir("/app")
 	container = m.withUv(container)
 	container = m.withCaBundle(container, caBundle)
-	container = container.WithExec([]string{"uv", "sync", "--no-cache", "--frozen", "--extra", "dev"})
+	container = container.WithExec([]string{"uv", "sync", "--no-cache", "--frozen", "--all-packages"})
 	return container, nil
 }
 
@@ -62,7 +69,7 @@ func (m *HtrflowBatch) getVersion(ctx context.Context, source *dagger.Directory,
 	if err != nil {
 		return "", err
 	}
-	version, err := container.WithExec([]string{"uv", "version", "--short"}).Stdout(ctx)
+	version, err := container.WithExec([]string{"uv", "version", "--short", "--package", WrapperPackage}).Stdout(ctx)
 	if err != nil {
 		return "", err
 	}

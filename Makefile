@@ -5,19 +5,21 @@
 CA_BUNDLE ?= /etc/ssl/certs/ca-certificates.crt
 DAGGER_CA := $(shell test -f $(CA_BUNDLE) && echo --ca-bundle $(CA_BUNDLE))
 
+# uv workspace: always --all-packages. A plain `uv sync` prunes the shared
+# venv back to the virtual root + dev group and drops the workspace members.
 install:
-	cd wrapper && uv sync --extra dev
+	uv sync --all-packages
 
 format:
-	cd wrapper && uvx ruff format .
+	uvx ruff format packages
 
 lint:
-	cd wrapper && uvx ruff check --fix .
+	uvx ruff check --fix packages
 
 check: format lint
 
 test:
-	cd wrapper && uv run --extra dev pytest -q
+	uv run --no-sync pytest packages/wrapper/tests -q
 
 ci:
 	dagger call checks $(DAGGER_CA)

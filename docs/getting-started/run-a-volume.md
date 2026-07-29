@@ -40,7 +40,7 @@ no cohorts in Phase 1.
 
 Required: `VOLUME_REF`, `IIIF_MANIFEST_URL`, `PIPELINE_PATH`, `PIPELINE_ID`,
 `S3_BUCKET`, `PUBLIC_RESULTS_BASE` — everything else is optional with the
-default shown above (per `wrapper/src/htrflow_batch/config.py`).
+default shown above (per `packages/wrapper/src/htrflow_batch/config.py`).
 
 See [The Wrapper](../how-it-works/wrapper.md) for the full streaming design
 behind these knobs.

@@ -32,7 +32,7 @@ produced the [test log](test-log.md).
 **Level 0–1 — wrapper unit tests:**
 
 ```bash
-make test                       # cd wrapper && uv run --extra dev pytest -q
+make test                       # uv run --no-sync pytest packages/wrapper/tests -q
 # or, reproducibly, the way CI runs it:
 dagger call test                # add --ca-bundle on TLS-intercepting networks
 ```

@@ -20,6 +20,6 @@ func (m *HtrflowBatch) Test(
 		return "", err
 	}
 	return container.
-		WithExec([]string{"uv", "run", "pytest", "--tb=short", "-q"}).
+		WithExec([]string{"uv", "run", "--no-sync", "pytest", "packages/wrapper/tests", "--tb=short", "-q"}).
 		Stdout(ctx)
 }

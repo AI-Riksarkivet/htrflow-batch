@@ -1,13 +1,13 @@
 # Full local smoke stack (no k8s): S3 + fixtures + one wrapper run + viewer.
 # Wrapper env contract mirrors the k8s Job (see docs how-it-works/wrapper);
-# source of truth is wrapper/src/htrflow_batch/config.py.
+# source of truth is packages/wrapper/src/htrflow_batch/config.py.
 #
 # Image provenance for local runs (until images are published to a real
 # registry):
 #   wrapper: build fresh with `docker compose build wrapper` (or
 #     `docker build -f .docker/htrflow-batch.dockerfile -t
 #     riksarkivet/htrflow-batch:latest .` from repo root) so it picks up
-#     current wrapper/ source (thumbnails + search-service in iiif.json).
+#     current packages/wrapper/ source (thumbnails + search-service in iiif.json).
 #   viewer: pull the known-good image out of the in-cluster registry and
 #     retag it locally:
 #       docker pull 127.0.0.1:30500/uv4:v3 && \
@@ -56,7 +56,7 @@ services:
       S3_ENDPOINT: http://rustfs:9000
       # NOT localhost: this URL is baked verbatim into the mock manifest's
       # canvas image body.id, which the wrapper container fetches directly
-      # (wrapper/src/htrflow_batch/iiif.py:_image_url) — a host-only
+      # (packages/wrapper/src/htrflow_batch/iiif.py:_image_url) — a host-only
       # "localhost:19000" is unreachable from inside the wrapper container
       # (its own loopback, not the host's). The same body.id is copied
       # verbatim into the published iiif.json, so a real browser session

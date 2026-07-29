@@ -37,7 +37,7 @@ dagger call publish-docker --component wrapper \
 `--component` is `wrapper` (default) or `viewer`. `publish-docker` runs the
 test suite first and aborts on failure — it will not push an image the tests
 don't pass. Tag resolution: an explicit `--tag` is validated against
-`wrapper/pyproject.toml`'s version unless `--skip-validation` is set; an
+`packages/wrapper/pyproject.toml`'s version unless `--skip-validation` is set; an
 empty tag defaults to `"v" + <that version>`.
 
 **Registry defaults:**

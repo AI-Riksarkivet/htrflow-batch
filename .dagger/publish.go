@@ -20,7 +20,7 @@ func (m *HtrflowBatch) resolveTag(ctx context.Context, source *dagger.Directory,
 	if !skipValidation {
 		norm := func(v string) string { return strings.TrimPrefix(strings.TrimSpace(v), "v") }
 		if norm(version) != norm(tag) {
-			return "", fmt.Errorf("version mismatch: wrapper/pyproject.toml has 'v%s' but tag is '%s'", version, tag)
+			return "", fmt.Errorf("version mismatch: packages/wrapper/pyproject.toml has 'v%s' but tag is '%s'", version, tag)
 		}
 	}
 	return tag, nil
@@ -36,7 +36,7 @@ func (m *HtrflowBatch) PublishDocker(
 	// (riksarkivet/htrflow-batch or riksarkivet/htrflow-batch-viewer)
 	// +optional
 	imageRepository string,
-	// Image tag (empty: "v" + version from wrapper/pyproject.toml)
+	// Image tag (empty: "v" + version from packages/wrapper/pyproject.toml)
 	// +optional
 	tag string,
 	// +default="docker.io"

@@ -1,4 +1,5 @@
-wrapper/.venv
+.venv
+packages/*/.venv
 **/__pycache__
 .git
 .superpowers

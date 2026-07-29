@@ -11,8 +11,8 @@ var (
 	ruffCheckCmd       = []string{"uvx", "ruff", "check", "."}
 )
 
-// Checks runs code-quality checks on the wrapper (ruff format + lint) and
-// lints the Helm chart.
+// Checks runs code-quality checks on the workspace packages (ruff format +
+// lint, from the workspace root) and lints the Helm chart.
 func (m *HtrflowBatch) Checks(
 	ctx context.Context,
 	// +defaultPath="/"

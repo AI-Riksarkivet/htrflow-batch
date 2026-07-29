@@ -3,12 +3,18 @@
 Clone the repo, then from the repo root:
 
 ```bash
-make install   # cd wrapper && uv sync --extra dev
-make test      # cd wrapper && uv run --extra dev pytest -q
+make install   # uv sync --all-packages
+make test      # uv run --no-sync pytest packages/wrapper/tests -q
 ```
 
-`uv` manages the wrapper's virtualenv and lockfile — there is no separate
-`pip install -e .` step. `make check` runs `ruff format` + `ruff check --fix`
+The repo is a **uv workspace**: the root `pyproject.toml` declares
+`members = ["packages/*"]`, the single root `uv.lock` pins every member, and
+the shared virtualenv lives at the repo root. Always sync with
+`--all-packages` — a plain `uv sync` prunes the venv back to the virtual root
+plus the dev dependency group and drops the members. `uv` manages the
+virtualenv and lockfile — there is no separate `pip install -e .` step.
+
+`make check` runs `ruff format` + `ruff check --fix`
 before you commit; `make ci` runs the same checks and tests through dagger,
 which is what CI actually runs, so a green `make ci` locally is a strong
 signal a PR will pass.

@@ -51,7 +51,7 @@ Fallback modes if the API proves awkward at a version bump:
 
 Required: `VOLUME_REF`, `IIIF_MANIFEST_URL`, `PIPELINE_PATH`, `PIPELINE_ID`,
 `S3_BUCKET`, `PUBLIC_RESULTS_BASE` — everything else is optional with the
-default shown above (per `wrapper/src/htrflow_batch/config.py`; this
+default shown above (per `packages/wrapper/src/htrflow_batch/config.py`; this
 corrects an earlier design-doc draft that also marked `S3_ENDPOINT` and
 `S3_PREFIX` required).
 
