@@ -255,16 +255,31 @@ explicitly if testing over the LAN, as with rask's dev server).
 4. **Wild-web volumes fail in ways we can't tune** — hotlink blocks, auth
    walls, per-host flakiness for `images:` URLs. Pre-validation (§4.4)
    converts the common cases into early, cheap, visible failures.
-5. **5-minute staleness** on the page — invisible at 30-min volume
+   Empirically verified 2026-07-29 (LoC Lincoln papers, pipeline
+   `english-v1`, volume `loc-mal2459400`): LoC's Presentation manifest is
+   bot-blocked (403) while its Image API is open — the synthetic-manifest
+   path handled it end to end. Two hard-won details for the reconciler's
+   generator: embedded version-2 image services MUST use v2-style keys
+   (`@id`/`@type: ImageService2` + `profile`), or UV silently shows no
+   image; and this LoC run is the designated plumbing test (English TrOCR
+   `microsoft/trocr-large-handwritten`, results under `english-v1/`).
+5. **RA firewall blocks most external IIIF hosts** from the cluster —
+   including every Swedish-content source (Alvin, manuscripta.se, KB,
+   Finna). Reachable: loc.gov/tile.loc.gov, iiif.bodleian.ox.ac.uk.
+   Testing on Swedish handwritten letters from non-RA sources requires an
+   IT allowlist request (alvin-portal.org, manuscripta.se first).
+6. **5-minute staleness** on the page — invisible at 30-min volume
    timescales; revisit only if a long-running operator becomes justified.
-6. **A permanently-failed volume has no declarative "skip"** — the remedy is
+7. **A permanently-failed volume has no declarative "skip"** — the remedy is
    deleting it from the campaign file (auditable via git history). Acceptable.
 
 ## 8. Out of scope for v1
 
-- IIIF Presentation 2 parsing (format accommodates it; parser added when a
-  real P2 source appears — well-contained change in `iiif.py` + reconciler
-  pre-validation).
+- ~~IIIF Presentation 2 parsing~~ — **pulled into v1** after first contact
+  with the real world: of the external IIIF sources reachable through the
+  RA firewall, the usable one (Bodleian) is P2, and LoC's P3-era manifests
+  are bot-blocked. Well-contained change in `iiif.py` + reconciler
+  pre-validation.
 - Catalog/NAD search UI ("browse all of Riksarkivet from the page") — the
   end goal; layers on top of this design without changing it.
 - Any write path from the page; multi-cluster; alerting; model allowlists.
