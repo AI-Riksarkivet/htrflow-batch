@@ -6,10 +6,16 @@ V = Volume(id="R1", manifest_url="http://m")
 
 def test_job_name_deterministic_and_k8s_safe():
     n = job_name("demo-v1", "R0001203")
-    assert n == "htr-demo-v1-r0001203"
+    assert n == "htr-demo-v1-r0001203-f7ceccba"
     long = job_name("demo-v1", "x" * 80)
     assert len(long) <= 63
     assert long == job_name("demo-v1", "x" * 80)  # stable
+    # The flattened prefix is identical for both pairs; the pair digest is not.
+    assert job_name("demo-v1", "R0001203") != job_name("demo", "v1-R0001203")
+    assert job_name("a-b", "c") != job_name("a", "b-c")
+    # Underscores and dots are sanitized to dashes, deterministically.
+    assert job_name("demo_v1", "vol.1").startswith("htr-demo-v1-vol-1-")
+    assert job_name("demo_v1", "vol.1") == job_name("demo_v1", "vol.1")
 
 
 def test_done_wins_over_everything():

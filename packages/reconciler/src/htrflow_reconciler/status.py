@@ -12,6 +12,14 @@ from .models import Volume
 
 
 class JobState(BaseModel):
+    """A snapshot of one k8s Job as the reconciler sees it.
+
+    ``failed`` means the Job reached a terminal ``Failed`` condition (its
+    ``backoffLimit`` is exhausted) — NOT merely that some pod failed while
+    another attempt is still retrying. A Job with a failed pod but remaining
+    retries is ``active``, not ``failed``.
+    """
+
     model_config = ConfigDict(frozen=True)
 
     active: bool
@@ -20,12 +28,18 @@ class JobState(BaseModel):
 
 
 def job_name(pipeline_id: str, volume_id: str) -> str:
+    """Deterministic, DNS-1123-safe Job name for a (pipeline, volume) pair.
+
+    The sanitized prefix alone is ambiguous — ``("a-b", "c")`` and
+    ``("a", "b-c")`` flatten to the same string — so the name ALWAYS carries an
+    8-char digest over the pair, hashed with a separator that cannot occur in
+    either field. The prefix is trimmed (and any trailing hyphen dropped) so the
+    result stays ≤63 chars and both starts and ends alphanumeric.
+    """
+    digest = hashlib.sha256(f"{pipeline_id}\x00{volume_id}".encode()).hexdigest()[:8]
     raw = f"htr-{pipeline_id}-{volume_id}".lower()
-    safe = re.sub(r"[^a-z0-9-]", "-", raw)
-    if len(safe) <= 63:
-        return safe
-    digest = hashlib.sha256(raw.encode()).hexdigest()[:8]
-    return f"{safe[:54]}-{digest}"
+    prefix = re.sub(r"[^a-z0-9-]", "-", raw)[:54].rstrip("-")
+    return f"{prefix}-{digest}"
 
 
 def derive(
