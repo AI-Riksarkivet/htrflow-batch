@@ -29,9 +29,9 @@ flowchart LR
     K --> W[wrapper Jobs]
     W -->|alto, page, iiif.json, manifest.json| S[(S3 bucket)]
     R -->|HEAD manifest.json per volume| S
-    R -->|status.json + index.html| S
-    B[browser] -->|read-only| S
-    B -->|UV viewer| V[uv4-viewer]
+    R -->|status.json| S
+    B[browser] -->|fetch status.json| S
+    B -->|campaign browser SPA + UV| V[uv4-viewer nginx]
 ```
 
 - **Desired state** lives in git (`htr-campaigns` repo).
@@ -128,7 +128,8 @@ Per tick:
    Job is TTL-reaped, capture its last ~50 log lines into
    `status/failures/<pipeline>/<id>.txt` (closes today's evidence-evaporation
    gap: the R0001203 run's first-attempt metrics died with the pod).
-9. Write `status/status.json` + static `status/index.html` to the bucket.
+9. Write `status/status.json` to the bucket (the campaign-browser SPA — §5 —
+   renders it; the reconciler generates no HTML).
 10. Update `status/attempts.json` (attempt counts). The only non-derivable
     state; losing it merely causes a few redundant retries (capped).
 
@@ -145,25 +146,47 @@ schedule, window size, attempt cap) rendering the CronJob + RBAC. The chart's
 existing `pipelines:` map remains for chart-only standalone use; the GitOps
 path owns pipelines in the campaigns repo.
 
-## 5. Status page
+## 5. Status page: the campaign browser
 
-A static `index.html` + `status.json`, regenerated every tick, served by
-RustFS like any other object (`http://<host>:30900/htr-results/status/`).
-No backend, no auth, read-only by construction.
+A **Svelte SPA, built with Bun** (same stack as rask, one frontend idiom
+across projects), compiled to static files and **served by the `uv4-viewer`
+nginx at `http://<host>:30800/`** — the viewer's front door, replacing
+today's hardcoded redirect to a single manifest. Bun/Svelte are build-time
+only: no server runtime, no auth, read-only by construction. The app fetches
+`status/status.json` from the bucket (public-read object; reconciler
+regenerates it every tick) and renders everything client-side.
 
-Per volume: status, pages done/total, wall time, error summary, attempts, and
-a viewer link **in both states**:
+Three levels of navigation:
 
-- done → UV on our published manifest (`.../iiif.json`) — with transcription;
-- pending/running/failed → UV on the *source* manifest — images only.
+1. **Campaign list** — every campaign from git, progress bar (done/total),
+   drift and broken-file warnings, `generated at` stamp.
+2. **Campaign view** — volumes as a grid: first-page thumbnail (straight
+   from the source IIIF service via `full/200,`, no extra storage), status
+   chip (pending / queued / running / done / needs-attention), pages
+   done/total, wall time, attempts, error summary for failures.
+3. **Volume click → opens UV** (`uv.html#?manifest=...`, same origin):
+   - done → the published manifest (`.../iiif.json`) — all images **plus**
+     text panel and line overlays;
+   - pending/queued/running/failed → the *source* manifest — all images,
+     browsable in UV's gallery view, no transcription yet.
 
-One viewer serves both ("navigate untranscribed and transcribed").
+   One viewer serves both states; a volume silently "upgrades" to
+   transcribed the next time it is opened after its run completes.
 
-Per campaign: progress bar (done/total), broken-file and drift warnings.
+Image browsing is deliberately delegated to UV — the page finds and ranks
+batches; UV looks at them.
 
-Freshness: page shows `generated at <UTC>`; client-side JS turns it into a
-visible **STALE** banner when older than 3× the tick interval — a dead
+Freshness: the app compares `status.json`'s `generated_at` to now and shows
+a visible **STALE** banner when older than 3× the tick interval — a dead
 reconciler must not look like "no news" (§7.1).
+
+Build/ship: `frontend/` directory in the htrflow-batch repo; a dagger
+function builds it (bun install/build, CA-bundle wiring like the existing
+node builds — RA firewall) and the viewer image copies `dist/` in next to
+`uv.html`. UI changes therefore mean rebuilding the `uv4` image —
+reproducible via `dagger call build-viewer`. Dev loop: `bun run dev`
+against a checked-in `status.sample.json` fixture (note: bind non-loopback
+explicitly if testing over the LAN, as with rask's dev server).
 
 ## 6. Status derivation (the three-way join)
 
@@ -218,7 +241,10 @@ reconciler must not look like "no news" (§7.1).
 - Status derivation table (§6) tested case by case, including the orphan and
   drift rows.
 - One compose-stack smoke: seed a fake campaign dir + bucket, run one
-  reconciler tick, assert submitted Job set + generated page.
+  reconciler tick, assert submitted Job set + generated `status.json`.
+- Frontend: unit tests for status→view derivation (bun test) against
+  `status.sample.json`; rendering verified in the compose smoke with the
+  built SPA served by the viewer container.
 - CI guard in htr-campaigns tested by fixture PRs (modified pipeline → fail).
 
 ## 10. Alternatives considered
