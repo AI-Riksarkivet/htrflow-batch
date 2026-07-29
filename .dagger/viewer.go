@@ -65,6 +65,7 @@ func (m *HtrflowBatch) BuildViewer(
 	viewer := dag.Container().
 		From("nginxinc/nginx-unprivileged:1.27-alpine").
 		WithDirectory("/usr/share/nginx/html", dist).
-		WithDirectory("/usr/share/nginx/html", spa.Directory("/app/dist"))
+		// status.sample.json is the dev fixture (static/), not part of the app.
+		WithDirectory("/usr/share/nginx/html", spa.Directory("/app/dist").WithoutFile("status.sample.json"))
 	return viewer, nil
 }

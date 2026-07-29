@@ -109,6 +109,7 @@ frontend-dev:
 # image. Local tag only — publishing goes through `dagger call build-viewer`.
 viewer-image: frontend-build
 	rm -rf $(UV4_DIR)/campaign-app && cp -r frontend/dist $(UV4_DIR)/campaign-app
+	rm -f $(UV4_DIR)/campaign-app/status.sample.json   # dev fixture, not shipped
 	docker build -f .docker/uv4-viewer.dockerfile -t 127.0.0.1:30500/uv4:dev $(UV4_DIR)
 
 clean:

@@ -8,10 +8,10 @@
 #     `docker build -f .docker/htrflow-batch.dockerfile -t
 #     riksarkivet/htrflow-batch:latest .` from repo root) so it picks up
 #     current packages/wrapper/ source (thumbnails + search-service in iiif.json).
-#   viewer: pull the known-good image out of the in-cluster registry and
-#     retag it locally:
-#       docker pull 127.0.0.1:30500/uv4:v3 && \
-#       docker tag 127.0.0.1:30500/uv4:v3 riksarkivet/htrflow-batch-viewer:latest
+#   viewer: build it from this branch — the published :latest and the PoC
+#     registry's uv4:v3 predate the campaign browser (old port-80 layout):
+#       make viewer-image && \
+#       docker tag 127.0.0.1:30500/uv4:dev riksarkivet/htrflow-batch-viewer:latest
 #     Reproducible alternative: `dagger call build-viewer export --path
 #     /tmp/viewer.tar && docker load -i /tmp/viewer.tar` (then tag as above).
 #
@@ -100,8 +100,16 @@ services:
     # ["python", "-m", "htrflow_batch"] (see .docker/htrflow-batch.dockerfile).
 
   viewer:
+    # REQUIRES a viewer image built from this branch: since the campaign
+    # browser landed, the image is nginx-unprivileged serving on 8080 (not 80)
+    # with the SPA at / and UV at /uv.html. The currently PUBLISHED
+    # riksarkivet/htrflow-batch-viewer:latest is still the old port-80 image
+    # and this service will NOT answer on 8080 with it. Build and tag first:
+    #   make viewer-image && \
+    #   docker tag 127.0.0.1:30500/uv4:dev riksarkivet/htrflow-batch-viewer:latest
+    # (or `dagger call build-viewer export --path /tmp/viewer.tar` +
+    # `docker load` + tag). Drop this note once :latest is republished.
     image: riksarkivet/htrflow-batch-viewer:latest
-    # nginx-unprivileged serves on 8080 inside the container, not 80.
     ports:
       - "8080:8080"
     depends_on:

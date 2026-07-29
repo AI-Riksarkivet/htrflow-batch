@@ -18,7 +18,10 @@ func (m *HtrflowBatch) ComposeUp(
 	return project.Service("viewer").Up()
 }
 
-// ComposeTest starts the compose stack and verifies the viewer serves uv.html
+// ComposeTest starts the compose stack and verifies the viewer serves uv.html.
+// The viewer container listens on 8080 (nginx-unprivileged), not 80, and the
+// compose service must resolve to an image built from this branch — the
+// published :latest still has the old port-80 root layout.
 func (m *HtrflowBatch) ComposeTest(
 	ctx context.Context,
 	// +defaultPath="/"
@@ -29,7 +32,7 @@ func (m *HtrflowBatch) ComposeTest(
 	output, err := dag.Container().
 		From("curlimages/curl:latest").
 		WithServiceBinding("viewer", service).
-		WithExec([]string{"curl", "-fsS", "-o", "/dev/null", "-w", "%{http_code}", "http://viewer:80/uv.html"}).
+		WithExec([]string{"curl", "-fsS", "-o", "/dev/null", "-w", "%{http_code}", "http://viewer:8080/uv.html"}).
 		Stdout(ctx)
 	if err != nil {
 		return "", fmt.Errorf("compose health check failed: %w", err)

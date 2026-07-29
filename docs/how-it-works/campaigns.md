@@ -114,7 +114,7 @@ any result exists under that id (D17, carried over from the chart's
 | # | Guard | Where | Fails how |
 |---|---|---|---|
 | 1 | PR check: existing `pipelines/*.yaml` must not be modified | `htr-campaigns` CI | PR red. Only runs on `pull_request`, so **`main` must be protected** |
-| 2 | Steps SHA-256 vs the live `htr-pipeline-<id>` ConfigMap | reconciler, per tick | nothing submitted for that pipeline, loud warning on the page |
+| 2 | Steps document compared verbatim with the live `htr-pipeline-<id>` ConfigMap | reconciler, per tick | nothing submitted for that pipeline, loud warning on the page |
 | 3 | Steps SHA-256 **and** image digest vs one already-published `manifest.json` under the pipeline prefix | reconciler, per tick | same |
 
 Guard 3 is the one that actually protects results: guard 2 fails open if the
@@ -184,16 +184,18 @@ The three-way join over git, S3 and the cluster:
 | no | Job failed, exit 1, budget left | yes | **retry** (resubmitted this tick) |
 | no | Job failed, exit 13 or budget exhausted | yes | **needs-attention** (never auto-resubmitted) |
 | no | none | yes | **pending** |
-| yes | — | no | **orphan** — listed and flagged, never deleted |
 
 Two more statuses come from pre-validation and never reach the cluster at all:
 **unsupported** (a document the wrapper cannot read) and **unreachable** (the
 manifest host did not answer).
 
-Removing a volume from git stops future work on it; it never destroys results.
-Orphans are a property of the pipeline prefix, not of one campaign — two
-campaigns sharing a pipeline share the result namespace — so they are reported
-once, on the first campaign using that pipeline.
+**Orphans are not a volume status** — a volume that is not in git has no row in
+any campaign. They surface instead as a campaign-level `orphans[]` array: the
+volume ids that have results under the pipeline prefix but are no longer
+declared. Removing a volume from git stops future work on it; it never
+destroys results. Because two campaigns on the same pipeline share the result
+namespace, orphans are a property of the prefix rather than of one campaign,
+and are reported once — on the first campaign using that pipeline.
 
 ## Bucket layout
 

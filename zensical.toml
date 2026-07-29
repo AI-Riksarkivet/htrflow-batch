@@ -91,6 +91,12 @@ link = "https://github.com/carpelan/test"
 icon = "fontawesome/brands/docker"
 link = "https://hub.docker.com/r/riksarkivet/htrflow-batch"
 
+# Declaring ANY markdown_extensions replaces zensical's default set wholesale,
+# so every extension the docs rely on has to be named here. `!!! note` blocks
+# need `admonition` (no `???` collapsibles are used, so pymdownx.details is not
+# required).
+[project.markdown_extensions.admonition]
+
 [project.markdown_extensions.pymdownx.snippets]
 base_path = ["."]
 

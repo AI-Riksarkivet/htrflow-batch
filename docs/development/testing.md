@@ -56,6 +56,19 @@ verified default local check. `dagger call compose-test` drives the same
 stack through dagger, but needs registry-pullable images, so treat
 `compose-smoke` as the everyday path (see [CI](ci.md) for the caveat).
 
+!!! warning "The viewer image must be built from this branch"
+
+    Since the campaign browser landed, the viewer is `nginx-unprivileged`
+    serving on **8080** with the SPA at `/` and UV at `/uv.html`. The
+    published `riksarkivet/htrflow-batch-viewer:latest` (and the PoC
+    registry's `uv4:v3`) are still the old port-80 images, so the viewer step
+    of the smoke will fail against them. Build and tag locally first:
+
+    ```bash
+    make viewer-image
+    docker tag 127.0.0.1:30500/uv4:dev riksarkivet/htrflow-batch-viewer:latest
+    ```
+
 **Level 3 — cluster acceptance:** no single make target — this is a real (or
 PoC) Kubernetes cluster with the [helm chart](../getting-started/deploy.md)
 installed, exercised via `kubectl`/`k9s`/`htrq` as described in

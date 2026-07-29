@@ -91,12 +91,27 @@ helm upgrade --install htr charts/htrflow-batch -n htr-batch \
 RBAC is namespace-scoped: Jobs, ConfigMaps, Pods and pod logs in the release
 namespace, nothing cluster-wide.
 
+!!! note "Changing `reconciler.schedule` desyncs the STALE banner"
+
+    The reconciler emits a hardcoded `tick_seconds: 300` into `status.json`,
+    and the page's STALE threshold is 3× that. The banner's math is therefore
+    only honest on the default `*/5 * * * *` schedule; a slower schedule will
+    flag STALE while everything is fine (and a faster one will hide a dead
+    reconciler for longer) until the schedule is wired through to
+    `tick_seconds`.
+
 Check the first tick:
 
 ```bash
 kubectl -n htr-batch get cronjob htr-reconciler
-kubectl -n htr-batch logs job/$(kubectl -n htr-batch get jobs -l job-name --sort-by=.metadata.creationTimestamp -o name | tail -1 | cut -d/ -f2)
+kubectl -n htr-batch logs --tail=50 \
+  "$(kubectl -n htr-batch get jobs --sort-by=.metadata.creationTimestamp -o name \
+     | grep htr-reconciler | tail -1)"
 ```
+
+The CronJob's Jobs are named `htr-reconciler-<timestamp>`; campaign Jobs share
+the namespace, hence the `grep`. (Jobs carry no `job-name` label — that one is
+on their pods.)
 
 ## 4. Add work — it is a commit
 
