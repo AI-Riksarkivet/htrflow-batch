@@ -2,8 +2,12 @@
 # Workspace two-step sync per ra-skills dockerfile/references/python-uv.md:
 # --frozen with only pyprojects bind-mounted (member sources absent), then
 # --locked after COPY. Bind-mount EVERY workspace member's pyproject.toml.
-# RA firewall CA is baked in so in-cluster git clone of the campaigns repo
-# works through TLS interception (spec §7.1).
+# TLS: only Debian's stock ca-certificates (public roots) is installed, which is
+# all the in-cluster git clone of the campaigns repo needs to reach github.com.
+# GIT_SSL_CAINFO/SSL_CERT_FILE point git and Python at that same bundle. No RA
+# corporate root is baked in: on an RA-intercepted egress path the operator must
+# mount the corp bundle over /etc/ssl/certs/ca-certificates.crt — a chart-level
+# `extraCaSecret` value to do that is future work (spec §7.1).
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*

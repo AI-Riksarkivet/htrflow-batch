@@ -32,14 +32,16 @@ produced the [test log](test-log.md).
 **Level 0–1 — wrapper unit tests:**
 
 ```bash
-make test                       # uv run --no-sync pytest packages/wrapper/tests -q
+make test                       # uv run --all-packages pytest -q
 # or, reproducibly, the way CI runs it:
 dagger call test                # add --ca-bundle on TLS-intercepting networks
 ```
 
-Both run the same pytest suite (47 tests as of this writing); `dagger call
-test` builds the wrapper in a container first, so it also proves the
-container image builds cleanly.
+Both run the same pytest suite (141 tests as of this writing — 62 wrapper +
+79 reconciler); `dagger call test` runs it inside a `python:3.13-slim` + uv
+container with `uv sync --all-packages`, which pins the dependency resolution
+but says nothing about the production images — those are built separately by
+`dagger call build` / `dagger call build-viewer`.
 
 **Level 2 — container smoke, via the local compose stack:**
 

@@ -16,7 +16,8 @@ dagger call build-viewer           # UV4 viewer image, pinned upstream ref + pat
 cache makes subsequent builds fast. `build-viewer` clones the Riksarkivet
 `universalviewer4` fork at a pinned commit, applies
 `.docker/uv4-uv-html.patch`, runs `npm build`, and layers the result onto
-`nginx:alpine`. See [CI](ci.md) for the full function table.
+`nginxinc/nginx-unprivileged:1.27-alpine` (with the bun-built campaign browser
+SPA on top). See [CI](ci.md) for the full function table.
 
 For fast local-only iteration against a bare-k3s PoC's in-cluster registry
 (no dagger, no push credentials):

@@ -5,9 +5,16 @@ image:
   tag: latest
 
 s3:
+  # endpoint is currently INFORMATIONAL: no template references it. The
+  # reconciler and the Jobs get the endpoint from existingSecret via envFrom —
+  # set S3_ENDPOINT there, not here.
   endpoint: ""            # in-cluster S3 endpoint URL; empty = provider default chain
-  bucket: htr-results
-  existingSecret: htr-batch-s3   # keys: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+  bucket: htr-results     # used by the devStack RustFS secret only
+
+  # keys: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_ENDPOINT, S3_BUCKET
+  # (reconciler + jobs read all four via envFrom; omit S3_ENDPOINT only for
+  # real AWS)
+  existingSecret: htr-batch-s3
 
 publicResultsBase: ""      # browser-reachable URL base for published results (REQUIRED for viewer manifests)
 

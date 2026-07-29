@@ -143,8 +143,8 @@ thin variant). Runs as a k8s **CronJob every 5 minutes**.
 
 Per tick:
 
-1. Clone/pull the campaigns repo (shallow; HTTPS with the RA CA bundle baked
-   into the image — firewall TLS interception, §7.1).
+1. Clone/pull the campaigns repo (shallow; HTTPS with the public CAs in the
+   image — corp bundle mount required on intercepted egress, §7.1).
 2. Parse campaign + pipeline files. A malformed file is skipped and reported
    on the page as broken; other campaigns proceed.
 3. Ensure `htr-pipeline-<id>` ConfigMaps (immutability guards, §3).
@@ -248,10 +248,11 @@ explicitly if testing over the LAN, as with rask's dev server).
 ## 7. Known issues, accepted trade-offs
 
 1. **Silent reconciler death** — the liveness of everything rides on a
-   CronJob cloning GitHub through the RA firewall. Mitigated (CA bundle in
-   image, STALE banner, CronJob failure count surfaced on the page via last
-   successful tick timestamp) but *not alerted* — real alerting is out of
-   scope until there is somewhere to send it.
+   CronJob cloning GitHub through the RA firewall. Mitigated (public CAs in
+   image; corp bundle mount required on intercepted egress — future
+   `extraCaSecret` value — STALE banner, CronJob failure count surfaced on the
+   page via last successful tick timestamp) but *not alerted* — real alerting
+   is out of scope until there is somewhere to send it.
 2. **Campaigns repo write access ≈ code execution in the job pod.** Pipeline
    YAML selects arbitrary HF model repos; model loading is a known
    code-execution surface. The pod has GPU, egress, and S3 write (but a fixed

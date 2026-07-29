@@ -41,7 +41,10 @@ for the full immutability rationale.
 
 This reproduces the 2026-07-27/28 smoke test using the chart's optional
 `devStack.*` components (RustFS S3, an in-cluster registry, the NVIDIA
-device plugin) instead of standalone raw manifests:
+device plugin) instead of standalone raw manifests. The `uv4:dev` viewer image
+is the one `make viewer-image` produces — nginx-unprivileged serving on port
+8080; the older `uv4:v1`–`v3` images listen on 80 and will not work with this
+chart:
 
 ```bash
 helm template htr charts/htrflow-batch -n htr-batch \
@@ -50,7 +53,7 @@ helm template htr charts/htrflow-batch -n htr-batch \
   --set exampleJob.image=127.0.0.1:30500/htrflow-batch:v3 \
   --set exampleJob.manifestUrl=http://10.16.51.53:30900/htr-fixtures/mock-vol/manifest.json \
   --set publicResultsBase=http://localhost:30900/htr-results \
-  --set viewer.image=127.0.0.1:30500/uv4:v3 \
+  --set viewer.image=127.0.0.1:30500/uv4:dev \
   --set viewer.defaultManifest=http://localhost:30900/htr-results/demo-v1/mock-vol/iiif.json \
   --set-file pipelines.demo-v1=.docker/pipeline-demo-v1.yaml
 ```

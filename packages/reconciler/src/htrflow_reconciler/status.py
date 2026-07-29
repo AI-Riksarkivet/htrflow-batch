@@ -18,12 +18,16 @@ class JobState(BaseModel):
     ``backoffLimit`` is exhausted) — NOT merely that some pod failed while
     another attempt is still retrying. A Job with a failed pod but remaining
     retries is ``active``, not ``failed``.
+
+    ``succeeded`` is the terminal ``Complete`` condition, the mirror of
+    ``failed``: neither state occupies a slot in the submission window.
     """
 
     model_config = ConfigDict(frozen=True)
 
     active: bool
     failed: bool
+    succeeded: bool = False
     exit_code: int | None = None
 
 
@@ -50,6 +54,12 @@ def derive(
     attempts: dict[str, int],
     attempt_cap: int,
 ) -> str:
+    """The spec §6 three-way join: done-set first, then the Job snapshot.
+
+    A job whose Complete condition has landed but whose ``manifest.json`` is not
+    yet visible in S3 reads as ``queued`` — the done-set is the authority, so
+    succeeded jobs show queued for the moment it takes the manifest to appear.
+    """
     if volume.id in done:
         return "done"
     job = jobs.get(job_name(pipeline_id, volume.id))

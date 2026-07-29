@@ -109,6 +109,40 @@ def test_tick_respects_window(tmp_path):
     assert len(cluster.created) == 1
 
 
+def test_tick_window_counts_only_jobs_still_in_flight(tmp_path):
+    """Terminal Jobs are not in flight.
+
+    A succeeded Job lingers for its 24h TTL exactly like a failed one; counting
+    either against the window leaks slots shut as a campaign completes. Only the
+    genuinely pending/running Job occupies a slot here, so a window of 2 leaves
+    room for exactly one new submission out of the two pending volumes.
+    """
+    repo = _repo(tmp_path)
+    (repo / "campaigns" / "trolldom.yaml").write_text(
+        "pipeline: demo-v1\nvolumes: [A, F, S, P1, P2]\n"
+    )
+    cluster = FakeCluster(
+        jobs={
+            job_name("demo-v1", "A"): JobState(active=True, failed=False),
+            # terminal, exit 13 => needs-attention: out of the lane, and out of
+            # the window count too
+            job_name("demo-v1", "F"): JobState(active=False, failed=True, exit_code=13),
+            job_name("demo-v1", "S"): JobState(
+                active=False, failed=False, succeeded=True
+            ),
+        }
+    )
+    cfg = ReconcilerConfig(public_results_base="http://pub/htr-results", window=2)
+    doc = tick(repo, FakeBucket(), cluster, cfg, NOW)
+    assert _created_volumes(cluster) == ["p1"]
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert byid["A"]["status"] == "running"
+    assert byid["F"]["status"] == "needs-attention"
+    # succeeded but no manifest yet: the done-set is the authority, so it reads
+    # queued for the moment it takes the manifest to land
+    assert byid["S"]["status"] == "queued"
+
+
 def test_tick_retries_failed_transient(tmp_path):
     n = job_name("demo-v1", "R0000002")
     cluster = FakeCluster(jobs={n: JobState(active=False, failed=True, exit_code=1)})

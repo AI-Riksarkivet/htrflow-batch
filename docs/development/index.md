@@ -4,7 +4,7 @@ Clone the repo, then from the repo root:
 
 ```bash
 make install   # uv sync --all-packages
-make test      # uv run --no-sync pytest packages/wrapper/tests -q
+make test      # uv run --all-packages pytest -q
 ```
 
 The repo is a **uv workspace**: the root `pyproject.toml` declares

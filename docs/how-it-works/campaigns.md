@@ -127,8 +127,9 @@ since there is nothing to compare against.
 
 ## What one tick does
 
-1. Shallow-clone the campaigns repo (HTTPS, with the RA CA bundle baked into
-   the image).
+1. Shallow-clone the campaigns repo (HTTPS; the image carries the stock public
+   CAs, which is enough for github.com — on RA-intercepted egress the corp
+   bundle has to be mounted in, see below).
 2. Parse campaigns and pipelines. A malformed file is contained: it is
    reported as broken on the page, and every other campaign proceeds.
 3. Check drift for each pipeline, then ensure its `htr-pipeline-<id>`
@@ -243,9 +244,11 @@ reproducibly) — see [Running a campaign](../getting-started/campaigns.md).
 ## Known issues and accepted trade-offs
 
 1. **Silent reconciler death.** Everything's liveness rides on a CronJob
-   cloning GitHub through the RA firewall. Mitigated (CA bundle in the image,
-   STALE banner) but *not alerted* — real alerting is out of scope until there
-   is somewhere to send it.
+   cloning GitHub through the RA firewall. Mitigated (public CAs in the image;
+   the corp bundle must be mounted on intercepted egress — a chart-level
+   `extraCaSecret` value is future work — plus the STALE banner) but *not
+   alerted* — real alerting is out of scope until there is somewhere to send
+   it.
 2. **Campaigns repo write access ≈ code execution in the job pod.** Pipeline
    YAML selects arbitrary Hugging Face model repos, and model loading is a
    known code-execution surface. The pod has a GPU, egress and S3 write, but a

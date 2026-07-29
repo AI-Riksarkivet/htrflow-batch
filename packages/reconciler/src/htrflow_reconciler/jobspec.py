@@ -48,7 +48,11 @@ def build_job(
             "name": name,
             "namespace": cfg.namespace,
             "labels": {
+                # ``app`` is what the operators' selectors and the hand-run Jobs
+                # share; ``managed-by`` is what tells the reconciler's own Jobs
+                # apart from those, so only these count against the window.
                 "app": "htrflow-batch",
+                "batch.htrflow/managed-by": "reconciler",
                 "batch.htrflow/volume": volume.id.lower(),
                 "batch.htrflow/pipeline": pipeline.id.lower(),
                 "kueue.x-k8s.io/queue-name": cfg.queue,

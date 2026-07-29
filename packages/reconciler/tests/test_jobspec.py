@@ -28,6 +28,15 @@ def test_job_identity_and_queue():
     assert job["spec"]["backoffLimit"] == 0
 
 
+def test_job_is_labelled_managed_by_reconciler():
+    """The reconciler's window selector keys off this label: hand-run Jobs carry
+    ``app=htrflow-batch`` too (the operators' selectors need it) and have no
+    TTL, so only the managed-by label keeps them out of the in-flight count."""
+    labels = build_job(P, V, V.manifest_url, CFG)["metadata"]["labels"]
+    assert labels["batch.htrflow/managed-by"] == "reconciler"
+    assert labels["app"] == "htrflow-batch"
+
+
 def test_job_env_carries_provenance():
     env = _env(build_job(P, V, V.manifest_url, CFG))
     assert env["VOLUME_REF"] == "R0001203"

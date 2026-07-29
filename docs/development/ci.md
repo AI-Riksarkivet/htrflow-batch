@@ -11,7 +11,7 @@ That means the exact same commands run locally and in CI.
 | `checks` | `ruff format --check` + `ruff check` on the wrapper, plus `helm lint` on the chart |
 | `test` | wrapper pytest suite in a built container (no GPU required) |
 | `build` | production wrapper image from `.docker/htrflow-batch.dockerfile` |
-| `build-viewer` | reproducible UV4 viewer image: clone the Riksarkivet `universalviewer4` fork at a pinned ref, apply `.docker/uv4-uv-html.patch`, `npm build`, layer onto `nginx:alpine` |
+| `build-viewer` | reproducible UV4 viewer image: clone the Riksarkivet `universalviewer4` fork at a pinned ref, apply `.docker/uv4-uv-html.patch`, `npm build`, layer onto `nginxinc/nginx-unprivileged:1.27-alpine` — and bun-build the campaign browser SPA from `frontend/` on top, so `/` is the SPA and `/uv.html` is UV |
 | `scan` | Trivy scan of the built wrapper image (table output, exits non-zero on findings — not wired into `ci.yml`, since the CUDA/ubuntu base will never be alpine-clean) |
 | `scan-json` | same scan, JSON output, never fails the call |
 | `publish-docker` | tests, builds, and pushes an image (`--component wrapper\|viewer`) to a registry; validates the tag against `packages/wrapper/pyproject.toml`'s version unless `--skip-validation` |

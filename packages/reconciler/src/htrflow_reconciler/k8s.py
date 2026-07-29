@@ -39,15 +39,23 @@ class Cluster:
         ``failed`` is read off the Job's TERMINAL ``Failed`` condition — the
         backoffLimit is exhausted — never off ``status.failed`` pod counts,
         which also tick up while a Job is still retrying (see JobState).
+        ``succeeded`` is its mirror, the terminal ``Complete`` condition.
+
+        The selector carries ``batch.htrflow/managed-by=reconciler`` as well as
+        the ``app`` label: hand-run Jobs share the ``app`` label (the operators'
+        selectors need it) and have no TTL, so without the extra term they would
+        occupy submission-window slots forever.
         """
         out: dict[str, JobState] = {}
         jobs = self.batch.list_namespaced_job(
-            self.ns, label_selector="app=htrflow-batch"
+            self.ns,
+            label_selector="app=htrflow-batch,batch.htrflow/managed-by=reconciler",
         )
         for j in jobs.items:
-            failed = any(
-                c.type == "Failed" and c.status == "True"
-                for c in (j.status.conditions or [])
+            conditions = j.status.conditions or []
+            failed = any(c.type == "Failed" and c.status == "True" for c in conditions)
+            succeeded = any(
+                c.type == "Complete" and c.status == "True" for c in conditions
             )
             exit_code = None
             if failed:
@@ -62,6 +70,7 @@ class Cluster:
             out[j.metadata.name] = JobState(
                 active=bool(j.status.active),
                 failed=failed,
+                succeeded=succeeded,
                 exit_code=exit_code,
             )
         return out

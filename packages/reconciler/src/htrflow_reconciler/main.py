@@ -227,7 +227,10 @@ def tick(
     orphans_reported: set[str] = set()
 
     pending: dict[str, list[tuple[Volume, str]]] = {}
-    in_flight = sum(1 for j in jobs.values() if not j.failed)
+    # Only genuinely pending/running Jobs occupy a window slot. Terminal Jobs —
+    # failed OR succeeded — are done with the cluster; counting the succeeded
+    # ones leaks the window shut as a campaign completes (their TTL is 24h).
+    in_flight = sum(1 for j in jobs.values() if not (j.failed or j.succeeded))
 
     for camp in campaigns:
         entry: dict[str, Any] = {
