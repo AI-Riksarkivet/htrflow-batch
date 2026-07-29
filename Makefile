@@ -1,4 +1,4 @@
-.PHONY: install format lint check test ci build build-viewer scan publish \
+.PHONY: install format lint check test typecheck ci build build-viewer scan publish \
         compose-up compose-test compose-smoke compose-down helm-lint docs-serve docs-build poc-push clean
 
 # On RA hosts dagger containers need the corp CA; harmless elsewhere if the file exists.
@@ -18,10 +18,18 @@ lint:
 
 check: format lint
 
+# Root invocation: the root pyproject's testpaths cover both packages, and
+# --all-packages re-syncs the shared venv if a plain `uv sync` pruned it.
 test:
-	uv run --no-sync pytest packages/wrapper/tests -q
+	uv run --all-packages pytest -q
 
-ci:
+# `uvx ty check` cannot resolve workspace imports on its own — point each
+# member at the shared workspace venv.
+typecheck:
+	cd packages/wrapper && uvx ty check src --python $(PWD)/.venv
+	cd packages/reconciler && uvx ty check src --python $(PWD)/.venv
+
+ci: typecheck
 	dagger call checks $(DAGGER_CA)
 	dagger call test $(DAGGER_CA)
 

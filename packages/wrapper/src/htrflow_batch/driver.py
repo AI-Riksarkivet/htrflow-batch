@@ -9,8 +9,10 @@ import yaml
 
 
 def load_pipeline(pipeline_path: str, out_dir: Path):
-    from htrflow.pipeline.pipeline import Pipeline
-    from htrflow.pipeline.steps import Export
+    # htrflow ships in the runtime base image, not in this workspace's lock,
+    # so it is unresolvable to the type checker by design.
+    from htrflow.pipeline.pipeline import Pipeline  # ty: ignore[unresolved-import]
+    from htrflow.pipeline.steps import Export  # ty: ignore[unresolved-import]
 
     # Validate the pipeline file up front: missing/unreadable/malformed YAML
     # is a config mistake — surface it as ValueError so main.py classifies it
@@ -46,7 +48,7 @@ def load_pipeline(pipeline_path: str, out_dir: Path):
 
 
 def process_page(pipeline, image_path: Path, out_dir: Path) -> dict[str, Path]:
-    from htrflow.pipeline.steps import auto_import
+    from htrflow.pipeline.steps import auto_import  # ty: ignore[unresolved-import]
 
     for document in auto_import([str(image_path)]):
         pipeline.run(document)

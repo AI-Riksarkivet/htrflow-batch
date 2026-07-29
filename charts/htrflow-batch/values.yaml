@@ -45,6 +45,15 @@ devStack:                  # PoC-only in-cluster dependencies, all off by defaul
   nvidiaDevicePlugin:
     enabled: false
 
+reconciler:                # GitOps campaign reconciler (spec: campaign-gitops)
+  enabled: false
+  image: ""                # e.g. 127.0.0.1:30500/htrflow-reconciler:dev on the PoC
+  campaignsRepoUrl: ""     # e.g. https://github.com/<org>/htr-campaigns
+  schedule: "*/5 * * * *"
+  window: 20               # max not-yet-done Jobs existing at once
+  attemptCap: 3
+  publicResultsBase: ""    # defaults to global publicResultsBase
+
 exampleJob:
   enabled: false           # mock-vol smoke Job wired to the devStack endpoints
   image: ""                # e.g. 127.0.0.1:30500/htrflow-batch:v3 on the PoC

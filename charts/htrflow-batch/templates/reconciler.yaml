@@ -1,0 +1,77 @@
+{{- if .Values.reconciler.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: htr-reconciler
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: htr-reconciler
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: htr-reconciler
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: htr-reconciler
+subjects:
+  - kind: ServiceAccount
+    name: htr-reconciler
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: htr-reconciler
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.reconciler.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 240
+      template:
+        spec:
+          serviceAccountName: htr-reconciler
+          restartPolicy: Never
+          containers:
+            - name: reconciler
+              image: {{ .Values.reconciler.image | required "reconciler.image is required when reconciler.enabled" }}
+              env:
+                - name: CAMPAIGNS_REPO_URL
+                  value: {{ .Values.reconciler.campaignsRepoUrl | required "reconciler.campaignsRepoUrl is required" | quote }}
+                - name: PUBLIC_RESULTS_BASE
+                  value: {{ .Values.reconciler.publicResultsBase | default .Values.publicResultsBase | quote }}
+                - name: RECONCILER_WINDOW
+                  value: {{ .Values.reconciler.window | quote }}
+                - name: RECONCILER_ATTEMPT_CAP
+                  value: {{ .Values.reconciler.attemptCap | quote }}
+              envFrom:
+                - secretRef: { name: {{ .Values.s3.existingSecret }} }
+              resources:
+                requests: { cpu: 100m, memory: 256Mi }
+                limits: { cpu: "1", memory: 512Mi }
+{{- end }}
