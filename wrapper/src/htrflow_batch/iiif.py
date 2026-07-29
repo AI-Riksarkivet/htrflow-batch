@@ -40,8 +40,12 @@ def _image_url(canvas: dict, width: int) -> str | None:
             if services:
                 sid = services[0].get("id") or services[0].get("@id")
                 if sid:
-                    # NOTE: lbiiif rejects "!w,h" (501); "w," is the supported form
-                    return f"{sid.rstrip('/')}/full/{width},/0/default.jpg"
+                    # NOTE: lbiiif rejects "!w,h" (501); "w," is the supported
+                    # form. Level1 servers also reject upscaling (400), so a
+                    # canvas narrower than the cap must ask for max instead.
+                    cw = canvas.get("width")
+                    size = "max" if cw and cw <= width else f"{width},"
+                    return f"{sid.rstrip('/')}/full/{size}/0/default.jpg"
             if body.get("id"):
                 return body["id"]
     return None

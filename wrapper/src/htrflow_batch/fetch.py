@@ -10,6 +10,7 @@ bounds pages-in-flight-or-unconsumed so tmpfs never holds more than the window.
 from __future__ import annotations
 
 import queue
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -33,14 +34,22 @@ def _fetch_one(
     page: PageRef, dest_dir: Path, client: httpx.Client, retries: int, backoff: float
 ) -> FetchResult:
     last = "unknown error"
+    url = page.image_url
     for attempt in range(retries):
         try:
-            resp = client.get(page.image_url, timeout=120, follow_redirects=True)
+            resp = client.get(url, timeout=120, follow_redirects=True)
             if resp.status_code == 200:
                 path = dest_dir / f"{page.name}.jpg"
                 path.write_bytes(resp.content)
                 return FetchResult(page, path, None, len(resp.content))
             last = f"HTTP {resp.status_code}"
+            if resp.status_code == 400:
+                # Level1 servers 400 sized requests wider than the original
+                # (no upscaling); retry unscaled instead of failing the page.
+                fallback = re.sub(r"/full/\d+,/", "/full/max/", url)
+                if fallback != url:
+                    url = fallback
+                    continue
         except Exception as e:
             last = repr(e)
         # Skip sleep after final attempt

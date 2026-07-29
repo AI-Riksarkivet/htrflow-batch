@@ -44,3 +44,36 @@ def test_fetch_manifest_404_raises():
     client = httpx.Client(transport=transport)
     with pytest.raises(ManifestError):
         fetch_manifest("https://x/manifest", client)
+
+
+def _canvas_with_service(width, height):
+    return {
+        "width": width,
+        "height": height,
+        "items": [
+            {
+                "items": [
+                    {
+                        "body": {
+                            "id": "https://img/full/max/0/default.jpg",
+                            "service": [{"id": "https://img/iiif/page-1"}],
+                        }
+                    }
+                ]
+            }
+        ],
+    }
+
+
+def test_narrow_canvas_requests_max_not_upscale():
+    """A canvas narrower than the width cap must request full/max — level1
+    IIIF servers (lbiiif) reject upscaling with 400."""
+    m = {"items": [_canvas_with_service(1281, 3743)]}
+    pages = pages_from_manifest(m, width=2500)
+    assert pages[0].image_url == "https://img/iiif/page-1/full/max/0/default.jpg"
+
+
+def test_wide_canvas_still_width_capped():
+    m = {"items": [_canvas_with_service(3494, 2472)]}
+    pages = pages_from_manifest(m, width=2500)
+    assert pages[0].image_url == "https://img/iiif/page-1/full/2500,/0/default.jpg"

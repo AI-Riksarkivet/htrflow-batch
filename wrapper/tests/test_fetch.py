@@ -114,3 +114,24 @@ def test_non_httpx_exception_caught(tmp_path):
     assert results[1].page.name == "0002"
     assert results[1].path is None
     assert "OSError" in results[1].error
+
+
+def test_upscale_400_falls_back_to_max(tmp_path):
+    """lbiiif (IIIF level1) returns 400 for sized requests wider than the
+    original image (no upscaling). On 400 the fetcher retries with full/max
+    instead of failing the page (R0001203 page 0002, 1281px wide)."""
+
+    def handler(req):
+        if "/full/2500,/" in req.url.path:
+            return httpx.Response(400)
+        if "/full/max/" in req.url.path:
+            return httpx.Response(200, content=b"narrow-image")
+        return httpx.Response(404)
+
+    pages = [PageRef(1, "0001", "https://img/iiif/full/2500,/0/default.jpg", {})]
+    q, slots = queue.Queue(), threading.Semaphore(64)
+    run_downloader(pages, tmp_path, q, slots, _client(handler), retries=3, backoff=0.0)
+    r = q.get()
+    assert q.get() is None
+    assert r.error is None
+    assert r.path is not None and r.path.read_bytes() == b"narrow-image"
