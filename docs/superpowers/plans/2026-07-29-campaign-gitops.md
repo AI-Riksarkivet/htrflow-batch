@@ -4,9 +4,9 @@
 
 **Goal:** Git-driven batch submission (campaigns repo → reconciler CronJob → Kueue Jobs) plus a read-only Svelte campaign browser served by the viewer nginx.
 
-**Architecture:** Desired state lives in a separate `htr-campaigns` repo (campaign + pipeline YAML). A stateless reconciler (new `reconciler/` Python package, CronJob every 5 min) derives per-volume status from S3 (`manifest.json` = done) and k8s Jobs, submits missing work round-robin up to a window, and writes `status/status.json` to the bucket. A Svelte SPA (built with Bun, static output, served by the `uv4-viewer` nginx at `/`) renders it; every volume links into UV. Spec: `docs/superpowers/specs/2026-07-29-campaign-gitops-design.md`.
+**Architecture:** Desired state lives in a separate `htr-campaigns` repo (campaign + pipeline YAML). A stateless reconciler (new `packages/reconciler/` Python package, CronJob every 5 min) derives per-volume status from S3 (`manifest.json` = done) and k8s Jobs, submits missing work round-robin up to a window, and writes `status/status.json` to the bucket. A Svelte SPA (built with Bun, static output, served by the `uv4-viewer` nginx at `/`) renders it; every volume links into UV. Spec: `docs/superpowers/specs/2026-07-29-campaign-gitops-design.md`.
 
-**Tech Stack:** Reconciler: Python 3.13+ (uv, pytest+moto, ruff, ty, **Pydantic models — not dataclasses**), kubernetes + boto3 + httpx + pyyaml. Frontend: **Svelte 5 + SvelteKit 2** (adapter-static), strict TypeScript, Zod, Vitest, Bun (build-time only). Helm chart additions, dagger Go module extensions. The wrapper stays py310 (torch constraint) with its existing dataclass style — do not restyle it.
+**Tech Stack:** Python as a **uv workspace** (ra-mcp pattern: root `pyproject.toml` + single root `uv.lock`, members `packages/wrapper/` and `packages/reconciler/`; workspace Python floor `>=3.10` — the wrapper image is pinned to py310 by torch/htrflow and a workspace lock's range is the *intersection* of members, so the reconciler also declares `>=3.10` while its runtime image runs 3.13). Both packages follow ra-skills house style: **Pydantic models — not dataclasses**, ruff, **ty**, pytest+moto. Frontend: **Svelte 5 + SvelteKit 2** (adapter-static), strict TypeScript, Zod, Vitest, Bun (build-time only). Helm chart additions, dagger Go module extensions.
 
 ## Org conventions (AI-Riksarkivet/ra-skills)
 
@@ -30,7 +30,7 @@ git clone --depth 1 "https://x-access-token:$(gh auth token)@github.com/AI-Riksa
 - NEVER `git push` — the user pushes. NEVER mention Claude/AI or add Co-Authored-By in commit messages.
 - Never `docker push` anywhere except the in-cluster PoC registry `127.0.0.1:30500`. Never `dagger call publish*` against a real registry.
 - The live k3s cluster stays untouched by this plan: chart changes are verified with `helm lint` / `helm template` ONLY — no `helm install/upgrade`, no `kubectl apply` of reconciler resources.
-- Python: run tests as `cd <pkg> && uv run --no-sync pytest -q` after a one-time `uv sync --extra dev` in that package. Format/lint: `uv run --no-sync ruff format src tests && uv run --no-sync ruff check src tests` (line-length 88, select E,F,I,W; ruff target py310 in `wrapper/`, py313 in `reconciler/`). Reconciler tasks additionally run `uvx ty check src`.
+- Python: this is a uv **workspace** after Task 0 — sync once with `uv sync --all-packages` from the repo root (NEVER plain `uv sync`: it prunes the shared venv to root+dev — known rask gotcha), then run tests as `cd <pkg> && uv run --no-sync pytest -q` (members keep their own `[tool.pytest.ini_options]` so cwd-local runs keep `--import-mode=importlib`). Format/lint: `uv run --no-sync ruff format src tests && uv run --no-sync ruff check src tests` (line-length 88, select E,F,I,W, target py310 in both members). Python tasks additionally run `uvx ty check src` in the package being changed.
 - Bun/npm on RA hosts need `NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt` (firewall TLS interception; file exists on dmlpai01). Never disable TLS verification.
 - The RA firewall blocks most external hosts (alvin, kb.se, wikimedia…); tests must not fetch the network except huggingface.co/lbiiif/tile.loc.gov — and unit tests must not fetch at all.
 - Deterministic job names: `job_name(pipeline_id, volume_id)` from Task 5 is the single source of truth — never inline `f"htr-{p}-{v}"` elsewhere.
@@ -39,9 +39,13 @@ git clone --depth 1 "https://x-access-token:$(gh auth token)@github.com/AI-Riksa
 **Repo layout after this plan** (htrflow-batch):
 
 ```
-reconciler/                    # new uv package, mirrors wrapper/ layout
-  pyproject.toml  uv.lock
-  src/htrflow_reconciler/
+pyproject.toml                 # NEW workspace root, members = ["packages/*"] (ra-mcp pattern)
+uv.lock                        # single root lockfile (wrapper's member lock deleted)
+packages/
+  wrapper/                     # MOVED from ./wrapper (git mv, Task 0) — history preserved
+  reconciler/                  # new uv workspace member, mirrors wrapper/ layout
+    pyproject.toml             # no member lockfile — the root lock covers it
+    src/htrflow_reconciler/
     __init__.py  __main__.py
     models.py    parse.py     status.py   plan.py
     synthetic.py guards.py    jobspec.py
@@ -59,18 +63,122 @@ charts/htrflow-batch/templates/reconciler.yaml   # CronJob + RBAC
 
 ---
 
+### Task 0: uv workspace conversion (ra-mcp pattern)
+
+Behavior-preserving restructure — the existing wrapper suite is the safety net; no new tests.
+
+**Files:**
+- Create: `pyproject.toml` (repo root), `packages/` (move: `git mv wrapper packages/wrapper`)
+- Delete: `packages/wrapper/uv.lock`
+- Generate: `uv.lock` (repo root)
+- Modify: `packages/wrapper/pyproject.toml` (drop its dev extra — dev tools move to the root dependency group; keep everything else including `[tool.pytest.ini_options]`), `Makefile` (install target + every `wrapper` path), `.dagger/main.go` (`buildWithUv` + source paths), `.docker/htrflow-batch.dockerfile`, `.github/workflows/*` and `docs/**` (grep for `wrapper/` paths — update all)
+
+**Interfaces:**
+- Produces: workspace root with `members = ["packages/*"]` (ra-mcp glob pattern) — Task 3's `packages/reconciler/` joins automatically, no member-list edit needed.
+
+- [ ] **Step 1: Reference check + move** — Read `~/ra-mcp/pyproject.toml` (the pattern source): `[tool.uv.workspace] members` globs, `[tool.uv.sources]` workspace pins, `[dependency-groups] dev` containing pytest/ruff/**ty**. Read `wrapper/pyproject.toml` and note its exact `[project].name` (referred to below as `<wrapper-pkg>`) and its dev extra contents. Then:
+
+```bash
+cd ~/htrflow-batch && mkdir packages && git mv wrapper packages/wrapper
+```
+
+- [ ] **Step 2: Write the root `pyproject.toml`:**
+
+```toml
+[project]
+name = "htrflow-batch-workspace"
+version = "0.0.0"
+requires-python = ">=3.10"
+
+[tool.uv]
+package = false          # virtual root: nothing to build, members do the work
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.4",
+    "ty",
+    "moto[s3]>=5",
+]
+```
+
+In `packages/wrapper/pyproject.toml`: delete the `[project.optional-dependencies]` dev extra (its members are now covered by the root group). Keep the wrapper's `[tool.pytest.ini_options]` — member-local pytest config is what keeps `cd packages/wrapper && pytest` collecting correctly (`--import-mode=importlib`).
+
+- [ ] **Step 3: Relock and sync**
+
+```bash
+cd ~/htrflow-batch && rm packages/wrapper/uv.lock && uv lock && uv sync --all-packages
+```
+
+Expected: single root `uv.lock`; venv contains wrapper deps + dev group. (NEVER plain `uv sync` — prunes the shared venv; rask gotcha.)
+
+- [ ] **Step 4: Verify tests still green from both call sites**
+
+```bash
+cd ~/htrflow-batch/packages/wrapper && uv run --no-sync pytest -q
+cd ~/htrflow-batch && uv run --no-sync pytest packages/wrapper/tests -q
+```
+
+Expected: identical pass counts.
+
+- [ ] **Step 5: Retool the build paths** — Read `.docker/htrflow-batch.dockerfile` and `.dagger/main.go` (`buildWithUv`); both currently sync inside `packages/wrapper/` against `packages/wrapper/uv.lock`. Convert them to the workspace pattern from ra-skills `dockerfile/references/python-uv.md`: bind-mount root `uv.lock` + root `pyproject.toml` + `packages/wrapper/pyproject.toml`, then `uv sync --frozen --no-install-workspace --package <wrapper-pkg>`, then `COPY packages/wrapper packages/wrapper` + `uv sync --locked --package <wrapper-pkg>`. Update the Makefile `install` target to `uv sync --all-packages`. Verify: `docker build -f .docker/htrflow-batch.dockerfile -t htrflow-batch:wstest .` succeeds (do not push), and `cd .dagger && go build ./...`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -A && git commit -m "Convert repo to uv workspace with root lockfile (ra-mcp layout)"
+```
+
+---
+
+### Task 0b: Wrapper restyle to house style (Pydantic + ty)
+
+Behavior-preserving; the 56-test suite is the safety net. Required reading: ra-skills `skills/writing-python/SKILL.md` (house rules table).
+
+**Files:**
+- Modify: `packages/wrapper/src/htrflow_batch/config.py`, `iiif.py`, `fetch.py`, `stream.py` (all `@dataclass` uses), plus every construction site the conversion breaks (Pydantic models are keyword-only): `packages/wrapper/src/htrflow_batch/*.py` and `packages/wrapper/tests/*.py`
+- Modify: `packages/wrapper/pyproject.toml` (add `pydantic>=2.7` to dependencies)
+
+**Interfaces:**
+- Produces: same class names, fields, and semantics — `Config` (frozen, keeps `ConfigError` and `from_env` exactly as-is), `PageRef` (frozen), `FetchResult`, and the stream stats classes — as Pydantic `BaseModel`s. No signature changes beyond keyword-only construction.
+
+- [ ] **Step 1: Inventory** — `grep -rn "@dataclass" packages/wrapper/src` and `grep -rn "PageRef(\|FetchResult(\|Config(" packages/wrapper/src packages/wrapper/tests` to list every definition and positional construction site (known ones: `fetch.py` `FetchResult(page, path, None, len(...))` / `FetchResult(page, None, last)`; `iiif.py` `PageRef(index=..., ...)` already kwargs; `packages/wrapper/tests/test_fetch.py` `_pages()` uses positional `PageRef(i, ..., ..., {})`). Read `stream.py` in full for its stats classes.
+
+- [ ] **Step 2: Convert** — each `@dataclass(frozen=True)` → `BaseModel` with `model_config = ConfigDict(frozen=True)`; plain `@dataclass` → plain `BaseModel`; `field(default_factory=...)` → `Field(default_factory=...)`. Update every positional construction to keyword arguments. Do NOT restructure logic, rename fields, or "improve" anything else — mechanical conversion only. Note: `Config.from_env` keeps building kwargs and calling `cls(**kwargs)` — unchanged; `ConfigError` stays a `ValueError` subclass raised *before* construction, so pydantic's own ValidationError never masks it for the missing-env case.
+
+- [ ] **Step 3: Suite + lint + types green**
+
+```bash
+cd ~/htrflow-batch/packages/wrapper && uv run --no-sync pytest -q \
+  && uv run --no-sync ruff format src tests && uv run --no-sync ruff check src tests \
+  && uvx ty check src
+```
+
+Expected: all tests pass unchanged; fix any `ty` findings by adding annotations (public signatures must be fully typed — house rule), not by changing behavior.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add packages/wrapper && git commit -m "Wrapper: Pydantic models and ty-clean typing per org house style"
+```
+
+---
+
 ### Task 1: IIIF Presentation 2 support in the wrapper
 
 **Files:**
-- Modify: `wrapper/src/htrflow_batch/iiif.py`
-- Modify: `wrapper/src/htrflow_batch/viewer.py` (use the new `painting_body` helper; normalize string labels)
-- Test: `wrapper/tests/test_iiif.py`, `wrapper/tests/test_viewer.py`
+- Modify: `packages/wrapper/src/htrflow_batch/iiif.py`
+- Modify: `packages/wrapper/src/htrflow_batch/viewer.py` (use the new `painting_body` helper; normalize string labels)
+- Test: `packages/wrapper/tests/test_iiif.py`, `packages/wrapper/tests/test_viewer.py`
 
 **Interfaces:**
 - Consumes: existing `PageRef`, `pages_from_manifest(manifest, width)`.
 - Produces: `pages_from_manifest` now accepts P2 manifests (`sequences[0].canvases`); new public helper `painting_body(canvas: dict) -> dict` in `iiif.py` returning a P3-style annotation body for P3 *and* P2 canvases (P2 services emitted with `@id`/`@type: ImageService2` + level2 profile — the UV rule from the spec §7.4); new helper `_service_id(service) -> str | None` accepting dict or list.
 
-- [ ] **Step 1: Write the failing tests** — append to `wrapper/tests/test_iiif.py`:
+- [ ] **Step 1: Write the failing tests** — append to `packages/wrapper/tests/test_iiif.py`:
 
 ```python
 import copy
@@ -147,7 +255,7 @@ def test_painting_body_p3_passthrough():
     assert body["service"][0]["id"] == "https://img/iiif/page-1"
 ```
 
-Append to `wrapper/tests/test_viewer.py`:
+Append to `packages/wrapper/tests/test_viewer.py`:
 
 ```python
 def test_viewer_manifest_normalizes_p2_string_label(cfg):
@@ -167,7 +275,7 @@ def test_viewer_manifest_normalizes_p2_string_label(cfg):
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cd ~/htrflow-batch/wrapper && uv run --no-sync pytest tests/test_iiif.py tests/test_viewer.py -q`
+Run: `cd ~/htrflow-batch/packages/wrapper && uv run --no-sync pytest tests/test_iiif.py tests/test_viewer.py -q`
 Expected: the 6 new tests FAIL (`painting_body` ImportError; P2 manifest raises `ManifestError("manifest has no canvases")`).
 
 - [ ] **Step 3: Implement** — in `iiif.py`, replace `_image_url` and `pages_from_manifest` and add helpers:
@@ -268,13 +376,13 @@ Use `"label": _label(src.get("label"), page.name)` for canvases and `"label": _l
 
 - [ ] **Step 4: Run the full wrapper suite**
 
-Run: `cd ~/htrflow-batch/wrapper && uv run --no-sync pytest -q && uv run --no-sync ruff format --check src tests && uv run --no-sync ruff check src tests`
+Run: `cd ~/htrflow-batch/packages/wrapper && uv run --no-sync pytest -q && uv run --no-sync ruff format --check src tests && uv run --no-sync ruff check src tests`
 Expected: all tests pass (50 existing + 6 new), lint clean.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add wrapper && git commit -m "Wrapper: IIIF Presentation 2 support (pages, painting body, label normalization)"
+git add packages/wrapper && git commit -m "Wrapper: IIIF Presentation 2 support (pages, painting body, label normalization)"
 ```
 
 ---
@@ -282,15 +390,15 @@ git add wrapper && git commit -m "Wrapper: IIIF Presentation 2 support (pages, p
 ### Task 2: Failure metrics survive a failed run
 
 **Files:**
-- Modify: `wrapper/src/htrflow_batch/main.py`
-- Test: `wrapper/tests/test_main.py`
+- Modify: `packages/wrapper/src/htrflow_batch/main.py`
+- Test: `packages/wrapper/tests/test_main.py`
 
 **Interfaces:**
 - Produces: `publish_failure_metrics(store, cfg, stats, wall, stage, error)` in `main.py` — best-effort upload of `metrics-failed-latest.json` under the volume prefix. Reconciler (Task 10) and humans read it; schema keys: `volume, pipeline_id, stage, error, wall_seconds, gpu_stall_seconds, results`.
 
-- [ ] **Step 1: Read the failure path** — Read `wrapper/src/htrflow_batch/main.py` in full. Locate the `except` block(s) after the stage machinery that classify errors into exit 13 (permanent) vs exit 1 (transient) — the verify-stage `RuntimeError` from `raise RuntimeError(f"verify failed: ...")` flows through the transient path. Note the local variable names for the store and stats objects in `main()` (store is created in the setup stage; stats is returned by the stream stage).
+- [ ] **Step 1: Read the failure path** — Read `packages/wrapper/src/htrflow_batch/main.py` in full. Locate the `except` block(s) after the stage machinery that classify errors into exit 13 (permanent) vs exit 1 (transient) — the verify-stage `RuntimeError` from `raise RuntimeError(f"verify failed: ...")` flows through the transient path. Note the local variable names for the store and stats objects in `main()` (store is created in the setup stage; stats is returned by the stream stage).
 
-- [ ] **Step 2: Write the failing test** — append to `wrapper/tests/test_main.py` (uses stubs, no htrflow needed):
+- [ ] **Step 2: Write the failing test** — append to `packages/wrapper/tests/test_main.py` (uses stubs, no htrflow needed):
 
 ```python
 from types import SimpleNamespace
@@ -333,7 +441,7 @@ def test_publish_failure_metrics_never_raises():
 
 - [ ] **Step 3: Run to verify failure**
 
-Run: `cd ~/htrflow-batch/wrapper && uv run --no-sync pytest tests/test_main.py -q`
+Run: `cd ~/htrflow-batch/packages/wrapper && uv run --no-sync pytest tests/test_main.py -q`
 Expected: 2 new tests FAIL with ImportError.
 
 - [ ] **Step 4: Implement** — add to `main.py` (module level, near the other helpers):
@@ -379,11 +487,11 @@ Wire it into the error-classification `except` block(s) found in Step 1, guarded
 
 - [ ] **Step 5: Run suite + lint, commit**
 
-Run: `cd ~/htrflow-batch/wrapper && uv run --no-sync pytest -q && uv run --no-sync ruff format --check src tests && uv run --no-sync ruff check src tests`
+Run: `cd ~/htrflow-batch/packages/wrapper && uv run --no-sync pytest -q && uv run --no-sync ruff format --check src tests && uv run --no-sync ruff check src tests`
 Expected: PASS.
 
 ```bash
-git add wrapper && git commit -m "Wrapper: publish metrics-failed-latest.json so failed runs keep their evidence"
+git add packages/wrapper && git commit -m "Wrapper: publish metrics-failed-latest.json so failed runs keep their evidence"
 ```
 
 ---
@@ -391,8 +499,9 @@ git add wrapper && git commit -m "Wrapper: publish metrics-failed-latest.json so
 ### Task 3: Reconciler package scaffold + campaign/pipeline parsing
 
 **Files:**
-- Create: `reconciler/pyproject.toml`, `reconciler/src/htrflow_reconciler/__init__.py`, `models.py`, `parse.py`
-- Test: `reconciler/tests/test_parse.py`
+- Create: `packages/reconciler/pyproject.toml`, `packages/reconciler/src/htrflow_reconciler/__init__.py`, `models.py`, `parse.py`
+- Modify: `uv.lock` (regenerated — `packages/reconciler` matches the root `packages/*` members glob automatically)
+- Test: `packages/reconciler/tests/test_parse.py`
 
 **Interfaces:**
 - Produces (used by every later task):
@@ -403,14 +512,14 @@ git add wrapper && git commit -m "Wrapper: publish metrics-failed-latest.json so
   - `parse.parse_pipeline(pipeline_id: str, text: str) -> PipelineSpec` — raises `parse.PipelineError` on missing/tag-only image or missing steps
   - `parse.RA_MANIFEST_TEMPLATE = "https://lbiiif.riksarkivet.se/arkis!{ref}/manifest"`
 
-- [ ] **Step 1: Scaffold the package** — `reconciler/pyproject.toml`:
+- [ ] **Step 1: Scaffold the workspace member** — `packages/reconciler/pyproject.toml` (no member lockfile, no dev extra — the root workspace from Task 0 owns both; `>=3.10` floor because the workspace lock range is the intersection of members, the runtime image runs 3.13):
 
 ```toml
 [project]
 name = "htrflow-reconciler"
 version = "0.1.0"
 description = "GitOps reconciler for htrflow-batch campaigns (docs: how-it-works/campaigns)"
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
@@ -419,9 +528,6 @@ dependencies = [
     "httpx>=0.27",
     "kubernetes>=29",
 ]
-
-[project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.4", "moto[s3]>=5"]
 
 [build-system]
 requires = ["hatchling"]
@@ -436,17 +542,17 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py313"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
 ```
 
-(House rule from ra-skills `writing-python`: Pydantic models, not dataclasses, everywhere in this package; `ty` type-checks in every task's verify step: `uvx ty check src`.)
+(House rule from ra-skills `writing-python`: Pydantic models, not dataclasses, everywhere in this package; `ty` type-checks in every task's verify step: `uvx ty check src`. Write 3.10-compatible syntax — ruff enforces via `target-version`.)
 
-Create empty `reconciler/src/htrflow_reconciler/__init__.py`, then `cd ~/htrflow-batch/reconciler && uv sync --extra dev`.
+Create empty `packages/reconciler/src/htrflow_reconciler/__init__.py` (the `packages/*` workspace glob picks the member up automatically), then `cd ~/htrflow-batch && uv lock && uv sync --all-packages`.
 
-- [ ] **Step 2: Write the failing tests** — `reconciler/tests/test_parse.py`:
+- [ ] **Step 2: Write the failing tests** — `packages/reconciler/tests/test_parse.py`:
 
 ```python
 import pytest
@@ -528,7 +634,7 @@ def test_parse_pipeline_requires_steps():
 
 - [ ] **Step 3: Run to verify failure**
 
-Run: `cd ~/htrflow-batch/reconciler && uv run --no-sync pytest -q`
+Run: `cd ~/htrflow-batch/packages/reconciler && uv run --no-sync pytest -q`
 Expected: ImportError (modules don't exist).
 
 - [ ] **Step 4: Implement** — `models.py` (Pydantic, per ra-skills `writing-python`):
@@ -646,11 +752,11 @@ def parse_pipeline(pipeline_id: str, text: str) -> PipelineSpec:
 
 - [ ] **Step 5: Run tests + lint, commit**
 
-Run: `cd ~/htrflow-batch/reconciler && uv run --no-sync pytest -q && uv run --no-sync ruff format src tests && uv run --no-sync ruff check src tests`
+Run: `cd ~/htrflow-batch/packages/reconciler && uv run --no-sync pytest -q && uv run --no-sync ruff format src tests && uv run --no-sync ruff check src tests`
 Expected: 7 passed.
 
 ```bash
-git add reconciler && git commit -m "Reconciler: package scaffold, campaign and pipeline parsing"
+git add packages/reconciler && git commit -m "Reconciler: package scaffold, campaign and pipeline parsing"
 ```
 
 ---
@@ -658,8 +764,8 @@ git add reconciler && git commit -m "Reconciler: package scaffold, campaign and 
 ### Task 4: Status derivation
 
 **Files:**
-- Create: `reconciler/src/htrflow_reconciler/status.py`
-- Test: `reconciler/tests/test_status.py`
+- Create: `packages/reconciler/src/htrflow_reconciler/status.py`
+- Test: `packages/reconciler/tests/test_status.py`
 
 **Interfaces:**
 - Consumes: `models.Volume`.
@@ -668,7 +774,7 @@ git add reconciler && git commit -m "Reconciler: package scaffold, campaign and 
   - `status.job_name(pipeline_id: str, volume_id: str) -> str` — deterministic, ≤63 chars, k8s-safe (lowercase; long names truncated with an 8-char sha256 suffix)
   - `status.derive(volume: Volume, pipeline_id: str, done: set[str], jobs: dict[str, JobState], attempts: dict[str, int], attempt_cap: int) -> str` returning one of `"done" | "running" | "queued" | "retry" | "needs-attention" | "pending"` (spec §6; `done` holds volume ids with a published manifest.json; `jobs` is keyed by job name)
 
-- [ ] **Step 1: Write the failing tests** — `reconciler/tests/test_status.py`:
+- [ ] **Step 1: Write the failing tests** — `packages/reconciler/tests/test_status.py`:
 
 ```python
 from htrflow_reconciler.models import Volume
@@ -724,7 +830,7 @@ def test_no_job_no_result_is_pending():
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cd ~/htrflow-batch/reconciler && uv run --no-sync pytest tests/test_status.py -q`
+Run: `cd ~/htrflow-batch/packages/reconciler && uv run --no-sync pytest tests/test_status.py -q`
 Expected: ImportError.
 
 - [ ] **Step 3: Implement** — `status.py`:
@@ -784,13 +890,13 @@ def derive(
 
 - [ ] **Step 4: Run tests, verify pass**
 
-Run: `cd ~/htrflow-batch/reconciler && uv run --no-sync pytest -q`
+Run: `cd ~/htrflow-batch/packages/reconciler && uv run --no-sync pytest -q`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add reconciler && git commit -m "Reconciler: status derivation and deterministic job names"
+git add packages/reconciler && git commit -m "Reconciler: status derivation and deterministic job names"
 ```
 
 ---
@@ -798,14 +904,14 @@ git add reconciler && git commit -m "Reconciler: status derivation and determini
 ### Task 5: Submission planner (round-robin window)
 
 **Files:**
-- Create: `reconciler/src/htrflow_reconciler/plan.py`
-- Test: `reconciler/tests/test_plan.py`
+- Create: `packages/reconciler/src/htrflow_reconciler/plan.py`
+- Test: `packages/reconciler/tests/test_plan.py`
 
 **Interfaces:**
 - Consumes: `models.Volume`.
 - Produces: `plan.plan_submissions(pending: dict[str, list[Volume]], in_flight: int, window: int) -> list[tuple[str, Volume]]` — `pending` maps campaign name → submittable volumes in file order (statuses `pending`/`retry` whose failed Job has already been deleted); result is interleaved round-robin across campaigns, capped at `max(0, window - in_flight)`.
 
-- [ ] **Step 1: Write the failing tests** — `reconciler/tests/test_plan.py`:
+- [ ] **Step 1: Write the failing tests** — `packages/reconciler/tests/test_plan.py`:
 
 ```python
 from htrflow_reconciler.models import Volume
@@ -837,7 +943,7 @@ def test_empty_campaigns_skipped():
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cd ~/htrflow-batch/reconciler && uv run --no-sync pytest tests/test_plan.py -q`
+Run: `cd ~/htrflow-batch/packages/reconciler && uv run --no-sync pytest tests/test_plan.py -q`
 Expected: ImportError.
 
 - [ ] **Step 3: Implement** — `plan.py`:
@@ -874,13 +980,13 @@ def plan_submissions(
 
 - [ ] **Step 4: Run tests, verify pass**
 
-Run: `cd ~/htrflow-batch/reconciler && uv run --no-sync pytest -q`
+Run: `cd ~/htrflow-batch/packages/reconciler && uv run --no-sync pytest -q`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add reconciler && git commit -m "Reconciler: round-robin submission planner with bounded window"
+git add packages/reconciler && git commit -m "Reconciler: round-robin submission planner with bounded window"
 ```
 
 ---
@@ -888,8 +994,8 @@ git add reconciler && git commit -m "Reconciler: round-robin submission planner 
 ### Task 6: Synthetic manifests + source pre-validation
 
 **Files:**
-- Create: `reconciler/src/htrflow_reconciler/synthetic.py`
-- Test: `reconciler/tests/test_synthetic.py`
+- Create: `packages/reconciler/src/htrflow_reconciler/synthetic.py`
+- Test: `packages/reconciler/tests/test_synthetic.py`
 
 **Interfaces:**
 - Consumes: `models.Volume`.
@@ -897,7 +1003,7 @@ git add reconciler && git commit -m "Reconciler: round-robin submission planner 
   - `synthetic.build_manifest(volume_id: str, image_urls: Sequence[str], manifest_id: str) -> dict` — minimal valid P3 manifest; one canvas per image, bodies are plain `{"id", "type": "Image", "format": "image/jpeg"}` (no service, no dims — dims come from ALTO later)
   - `synthetic.classify_manifest(doc: dict) -> str` returning `"p3" | "p2" | "unsupported"` — used by the tick to pre-validate `manifest:` volumes (spec §4.4)
 
-- [ ] **Step 1: Write the failing tests** — `reconciler/tests/test_synthetic.py`:
+- [ ] **Step 1: Write the failing tests** — `packages/reconciler/tests/test_synthetic.py`:
 
 ```python
 from htrflow_reconciler.synthetic import build_manifest, classify_manifest
@@ -926,7 +1032,7 @@ def test_classify_manifest():
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cd ~/htrflow-batch/reconciler && uv run --no-sync pytest tests/test_synthetic.py -q`
+Run: `cd ~/htrflow-batch/packages/reconciler && uv run --no-sync pytest tests/test_synthetic.py -q`
 Expected: ImportError.
 
 - [ ] **Step 3: Implement** — `synthetic.py`:
@@ -992,13 +1098,13 @@ def classify_manifest(doc: dict) -> str:
 
 - [ ] **Step 4: Run tests, verify pass**
 
-Run: `cd ~/htrflow-batch/reconciler && uv run --no-sync pytest -q`
+Run: `cd ~/htrflow-batch/packages/reconciler && uv run --no-sync pytest -q`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add reconciler && git commit -m "Reconciler: synthetic P3 manifests and manifest pre-validation"
+git add packages/reconciler && git commit -m "Reconciler: synthetic P3 manifests and manifest pre-validation"
 ```
 
 ---
@@ -1006,14 +1112,14 @@ git add reconciler && git commit -m "Reconciler: synthetic P3 manifests and mani
 ### Task 7: Pipeline immutability guards
 
 **Files:**
-- Create: `reconciler/src/htrflow_reconciler/guards.py`
-- Test: `reconciler/tests/test_guards.py`
+- Create: `packages/reconciler/src/htrflow_reconciler/guards.py`
+- Test: `packages/reconciler/tests/test_guards.py`
 
 **Interfaces:**
 - Consumes: `models.PipelineSpec`.
 - Produces: `guards.check_drift(pipeline: PipelineSpec, configmap_steps: str | None, published: dict | None) -> tuple[bool, str | None]` — `(ok, message)`. `configmap_steps` is the existing ConfigMap's `pipeline.yaml` content (None if absent); `published` is one already-published `manifest.json` dict under this pipeline prefix (None if none exist). Rules (spec §3): ConfigMap content mismatch → error; published `pipeline_sha256` mismatch → error; published `image_digest` present-and-different → error; `image_digest` `"unknown"` → OK with a grandfather **warning** message (ok=True, message set).
 
-- [ ] **Step 1: Write the failing tests** — `reconciler/tests/test_guards.py`:
+- [ ] **Step 1: Write the failing tests** — `packages/reconciler/tests/test_guards.py`:
 
 ```python
 from htrflow_reconciler.guards import check_drift
@@ -1063,7 +1169,7 @@ def test_everything_matching_ok():
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cd ~/htrflow-batch/reconciler && uv run --no-sync pytest tests/test_guards.py -q`
+Run: `cd ~/htrflow-batch/packages/reconciler && uv run --no-sync pytest tests/test_guards.py -q`
 Expected: ImportError.
 
 - [ ] **Step 3: Implement** — `guards.py`:
@@ -1104,13 +1210,13 @@ def check_drift(
 
 - [ ] **Step 4: Run tests, verify pass**
 
-Run: `cd ~/htrflow-batch/reconciler && uv run --no-sync pytest -q`
+Run: `cd ~/htrflow-batch/packages/reconciler && uv run --no-sync pytest -q`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add reconciler && git commit -m "Reconciler: pipeline drift guards with grandfathering for pre-pinning results"
+git add packages/reconciler && git commit -m "Reconciler: pipeline drift guards with grandfathering for pre-pinning results"
 ```
 
 ---
@@ -1118,8 +1224,8 @@ git add reconciler && git commit -m "Reconciler: pipeline drift guards with gran
 ### Task 8: Job spec builder
 
 **Files:**
-- Create: `reconciler/src/htrflow_reconciler/jobspec.py`
-- Test: `reconciler/tests/test_jobspec.py`
+- Create: `packages/reconciler/src/htrflow_reconciler/jobspec.py`
+- Test: `packages/reconciler/tests/test_jobspec.py`
 
 **Interfaces:**
 - Consumes: `models.Volume`, `models.PipelineSpec`, `status.job_name`.
@@ -1127,7 +1233,7 @@ git add reconciler && git commit -m "Reconciler: pipeline drift guards with gran
   - `jobspec.ReconcilerConfig` (frozen Pydantic `BaseModel`): `namespace="htr-batch"`, `queue="htr-batch"`, `s3_secret="htr-batch-s3"`, `public_results_base`, `data_pvc="htr-test-data"`, `window=20`, `attempt_cap=3`, `active_deadline_seconds=21600`
   - `jobspec.build_job(pipeline: PipelineSpec, volume: Volume, manifest_url: str, cfg: ReconcilerConfig) -> dict` — a `batch/v1` Job dict, same shape as the hand-run jobs: Kueue queue label, `suspend: True`, `runtimeClassName: nvidia`, GPU 1 / CPU 4 / 8–16Gi, pipeline ConfigMap mount at `/config`, PVC at `/data` (`HF_HOME=/data/hf`), memory-backed `/work`, `envFrom` the S3 secret, and env `VOLUME_REF, IIIF_MANIFEST_URL, PIPELINE_PATH=/config/pipeline.yaml, PIPELINE_ID, PUBLIC_RESULTS_BASE, IMAGE_DIGEST=<pipeline.image>, WORKDIR_PATH=/work`. `ttlSecondsAfterFinished=86400`, `backoffLimit=0` (retries are the reconciler's job now — k8s-level backoff would double-count attempts).
 
-- [ ] **Step 1: Write the failing tests** — `reconciler/tests/test_jobspec.py`:
+- [ ] **Step 1: Write the failing tests** — `packages/reconciler/tests/test_jobspec.py`:
 
 ```python
 from htrflow_reconciler.jobspec import ReconcilerConfig, build_job
@@ -1177,7 +1283,7 @@ def test_job_mounts_pipeline_configmap():
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cd ~/htrflow-batch/reconciler && uv run --no-sync pytest tests/test_jobspec.py -q`
+Run: `cd ~/htrflow-batch/packages/reconciler && uv run --no-sync pytest tests/test_jobspec.py -q`
 Expected: ImportError.
 
 - [ ] **Step 3: Implement** — `jobspec.py`:
@@ -1292,13 +1398,13 @@ def build_job(
 
 - [ ] **Step 4: Run tests, verify pass**
 
-Run: `cd ~/htrflow-batch/reconciler && uv run --no-sync pytest -q`
+Run: `cd ~/htrflow-batch/packages/reconciler && uv run --no-sync pytest -q`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add reconciler && git commit -m "Reconciler: Job spec builder with pipeline-pinned image and provenance env"
+git add packages/reconciler && git commit -m "Reconciler: Job spec builder with pipeline-pinned image and provenance env"
 ```
 
 ---
@@ -1306,8 +1412,8 @@ git add reconciler && git commit -m "Reconciler: Job spec builder with pipeline-
 ### Task 9: Adapters (S3, k8s, git)
 
 **Files:**
-- Create: `reconciler/src/htrflow_reconciler/s3.py`, `k8s.py`, `gitrepo.py`
-- Test: `reconciler/tests/test_s3_keys.py`, `reconciler/tests/test_bucket.py` (moto — the ra-skills `testing-python` S3 convention)
+- Create: `packages/reconciler/src/htrflow_reconciler/s3.py`, `k8s.py`, `gitrepo.py`
+- Test: `packages/reconciler/tests/test_s3_keys.py`, `packages/reconciler/tests/test_bucket.py` (moto — the ra-skills `testing-python` S3 convention)
 
 **Interfaces:**
 - Produces (thin I/O shells; the tick in Task 10 injects fakes for them, so only pure key-helpers get unit tests here):
@@ -1315,7 +1421,7 @@ git add reconciler && git commit -m "Reconciler: Job spec builder with pipeline-
   - `s3.manifest_key(pipeline_id, volume_id) -> str`, `s3.status_key() -> "status/status.json"`, `s3.attempts_key() -> "status/attempts.json"`, `s3.validation_key() -> "status/validation.json"`, `s3.failure_log_key(pipeline_id, volume_id) -> str`, `s3.synthetic_manifest_key(pipeline_id, volume_id) -> str`
   - `k8s.Cluster(namespace)` with: `jobs() -> dict[str, JobState]` (label selector `app=htrflow-batch`; `exit_code` from the failed pod's container status), `create_job(job: dict)` (AlreadyExists → no-op), `delete_job(name)` (propagation Foreground), `get_configmap_steps(pipeline_id) -> str | None`, `ensure_configmap(pipeline_id, steps_yaml)`, `failed_job_logs(name, tail=50) -> str`
   - `gitrepo.checkout(url: str, dest: Path) -> Path` — shallow clone or `git -C dest pull`, via subprocess
-- [ ] **Step 1: Write the failing key-helper tests** — `reconciler/tests/test_s3_keys.py`:
+- [ ] **Step 1: Write the failing key-helper tests** — `packages/reconciler/tests/test_s3_keys.py`:
 
 ```python
 from htrflow_reconciler import s3
@@ -1332,7 +1438,7 @@ def test_key_layout_matches_wrapper_contract():
     assert s3.validation_key() == "status/validation.json"
 ```
 
-and `reconciler/tests/test_bucket.py` (real boto3 against moto — verifies the
+and `packages/reconciler/tests/test_bucket.py` (real boto3 against moto — verifies the
 pagination and done-detection logic no fake can):
 
 ```python
@@ -1586,13 +1692,13 @@ def checkout(url: str, dest: Path) -> Path:
 
 - [ ] **Step 3: Run tests + lint**
 
-Run: `cd ~/htrflow-batch/reconciler && uv run --no-sync pytest -q && uv run --no-sync ruff format src tests && uv run --no-sync ruff check src tests`
+Run: `cd ~/htrflow-batch/packages/reconciler && uv run --no-sync pytest -q && uv run --no-sync ruff format src tests && uv run --no-sync ruff check src tests`
 Expected: PASS (key tests) — `kubernetes` import must resolve (it's a dependency).
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add reconciler && git commit -m "Reconciler: S3, k8s and git adapters"
+git add packages/reconciler && git commit -m "Reconciler: S3, k8s and git adapters"
 ```
 
 ---
@@ -1600,8 +1706,8 @@ git add reconciler && git commit -m "Reconciler: S3, k8s and git adapters"
 ### Task 10: The tick — wiring + status.json
 
 **Files:**
-- Create: `reconciler/src/htrflow_reconciler/main.py`, `reconciler/src/htrflow_reconciler/__main__.py`
-- Test: `reconciler/tests/test_tick.py`
+- Create: `packages/reconciler/src/htrflow_reconciler/main.py`, `packages/reconciler/src/htrflow_reconciler/__main__.py`
+- Test: `packages/reconciler/tests/test_tick.py`
 
 **Interfaces:**
 - Consumes: everything above.
@@ -1642,7 +1748,7 @@ git add reconciler && git commit -m "Reconciler: S3, k8s and git adapters"
 
   (`viewer_manifest` is null unless done; `source_manifest` is the volume's manifest URL — for `images:` volumes, the synthetic manifest's public URL; `pages_done`/`pages_total`/`thumbnail` may be null when unknown. `orphans` = volume ids with published results under this campaign's pipeline prefix that no longer appear in git — spec §6 last row: listed, flagged, never deleted; computed as `done_volumes(pid) - {v.id for v in campaign.volumes}` aggregated per pipeline and attached to the first campaign using that pipeline.)
 
-- [ ] **Step 1: Write the failing tick test** — `reconciler/tests/test_tick.py`:
+- [ ] **Step 1: Write the failing tick test** — `packages/reconciler/tests/test_tick.py`:
 
 ```python
 from pathlib import Path
@@ -1856,7 +1962,7 @@ def test_tick_reports_orphans(tmp_path):
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cd ~/htrflow-batch/reconciler && uv run --no-sync pytest tests/test_tick.py -q`
+Run: `cd ~/htrflow-batch/packages/reconciler && uv run --no-sync pytest tests/test_tick.py -q`
 Expected: ImportError.
 
 - [ ] **Step 3: Implement** — `main.py`:
@@ -2131,13 +2237,13 @@ Note the retry semantics the tests encode: a `retry` volume gets its logs captur
 
 - [ ] **Step 4: Run the full reconciler suite + lint**
 
-Run: `cd ~/htrflow-batch/reconciler && uv run --no-sync pytest -q && uv run --no-sync ruff format src tests && uv run --no-sync ruff check src tests`
+Run: `cd ~/htrflow-batch/packages/reconciler && uv run --no-sync pytest -q && uv run --no-sync ruff format src tests && uv run --no-sync ruff check src tests`
 Expected: all reconciler tests pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add reconciler && git commit -m "Reconciler: tick orchestration, retry capture, status.json emission"
+git add packages/reconciler && git commit -m "Reconciler: tick orchestration, retry capture, status.json emission"
 ```
 
 ---
@@ -2156,8 +2262,9 @@ git add reconciler && git commit -m "Reconciler: tick orchestration, retry captu
 
 ```dockerfile
 # Reconciler: slim, CPU-only, no torch. Build context = repo root.
-# uv-based install per ra-skills dockerfile/references/python-uv.md
-# (standalone package, not a workspace — single sync suffices).
+# Workspace two-step sync per ra-skills dockerfile/references/python-uv.md:
+# --frozen with only pyprojects bind-mounted (member sources absent), then
+# --locked after COPY. Bind-mount EVERY workspace member's pyproject.toml.
 # RA firewall CA is baked in so in-cluster git clone of the campaigns repo
 # works through TLS interception (spec §7.1).
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
@@ -2167,9 +2274,17 @@ ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
-COPY reconciler /app
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-editable
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=packages/wrapper/pyproject.toml,target=packages/wrapper/pyproject.toml \
+    --mount=type=bind,source=packages/reconciler/pyproject.toml,target=packages/reconciler/pyproject.toml \
+    uv sync --frozen --no-install-workspace --package htrflow-reconciler --no-editable
+COPY pyproject.toml uv.lock ./
+COPY packages/wrapper/pyproject.toml packages/wrapper/pyproject.toml
+COPY packages/reconciler packages/reconciler
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --package htrflow-reconciler --no-editable
 ENV PATH="/app/.venv/bin:$PATH" \
     GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
@@ -2279,18 +2394,19 @@ reconciler:                # GitOps campaign reconciler (spec: campaign-gitops)
 Run: `helm lint charts/htrflow-batch && helm template t charts/htrflow-batch --set reconciler.enabled=true --set reconciler.image=x --set reconciler.campaignsRepoUrl=https://example/r --set publicResultsBase=http://pub | grep -E 'kind:|concurrencyPolicy|serviceAccountName'`
 Expected: lint clean; output shows ServiceAccount, Role, RoleBinding, CronJob, `concurrencyPolicy: Forbid`. Also verify default render (`helm template t charts/htrflow-batch | grep -c reconciler` → 0).
 
-- [ ] **Step 4: Wire test/build tooling** — Read `.dagger/test.go` and `.dagger/build.go`; extend: in `test.go` add a `TestReconciler` function mirroring the wrapper's uv test container but with source `reconciler/` (uv sync --extra dev, `uv run pytest -q`), and make the aggregate check (whatever `Checks`/`Test` currently calls — see `checks.go`) include it. In `Makefile`, extend the `test` target to run both suites:
+- [ ] **Step 4: Wire test/build tooling** — Read `.dagger/test.go` and `.dagger/build.go`; extend: in `test.go` add a `TestReconciler` function mirroring the wrapper's uv test container but with source `packages/reconciler/` (uv sync --extra dev, `uv run pytest -q`), and make the aggregate check (whatever `Checks`/`Test` currently calls — see `checks.go`) include it. In `Makefile`, extend the `test` target to run both suites:
 
 ```makefile
 test:
-	cd wrapper && uv run --no-sync pytest -q
-	cd reconciler && uv run --no-sync pytest -q
+	cd packages/wrapper && uv run --no-sync pytest -q
+	cd packages/reconciler && uv run --no-sync pytest -q
 
 typecheck:
-	cd reconciler && uvx ty check src
+	cd packages/wrapper && uvx ty check src
+	cd packages/reconciler && uvx ty check src
 ```
 
-(match the existing target's exact current form — extend, don't replace semantics; add `typecheck` to the `ci` aggregate target — the ra-skills `writing-python` rule is that `ty` gates CI for new Python code. The wrapper is exempt: pre-existing py310 code, restyling out of scope.) Run `make test typecheck` to confirm; run `cd .dagger && go build ./...` to confirm the module compiles. Read `ra-skills/skills/dagger/references/go-patterns.md` before editing the Go files.
+(match the existing target's exact current form — extend, don't replace semantics; add `typecheck` to the `ci` aggregate target — the ra-skills `writing-python` rule is that `ty` gates CI, and the wrapper is ty-clean since Task 0b.) Run `make test typecheck` to confirm; run `cd .dagger && go build ./...` to confirm the module compiles. Read `ra-skills/skills/dagger/references/go-patterns.md` before editing the Go files.
 
 - [ ] **Step 5: Commit**
 

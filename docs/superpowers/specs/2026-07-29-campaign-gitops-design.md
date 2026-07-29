@@ -133,8 +133,12 @@ any result exists under that id. Guards (all three, layered):
 
 ## 4. The reconciler
 
-~200 lines of Python, lives in the **htrflow-batch** repo (new top-level
-`reconciler/` package, tested and shipped like the wrapper; same image or a
+~200 lines of Python, lives in the **htrflow-batch** repo as
+`packages/reconciler/` — the repo becomes a uv **workspace** (ra-mcp layout:
+root `pyproject.toml` with `members = ["packages/*"]`, single root `uv.lock`,
+wrapper moved to `packages/wrapper/`), and both packages follow the
+AI-Riksarkivet/ra-skills house style (Pydantic models, ruff, ty). The
+reconciler is tested and shipped like the wrapper (same image or a
 thin variant). Runs as a k8s **CronJob every 5 minutes**.
 
 Per tick:
