@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -258,3 +259,38 @@ def test_publish_warns_when_no_dims_resolved(env, cfg, s3, caplog):
     keys = _keys(s3, cfg)
     assert "demo-v1/SE-RA-1234/iiif.json" not in keys
     assert "demo-v1/SE-RA-1234/manifest.json" in keys
+
+
+def test_publish_failure_metrics_records_run_evidence():
+    """A failed run must leave its timing/stall evidence in the bucket
+    (spec §4.8) — today it dies with the pod."""
+    from htrflow_batch.main import publish_failure_metrics
+
+    calls = []
+    store = SimpleNamespace(put_json=lambda key, obj: calls.append((key, obj)))
+    cfg = SimpleNamespace(volume_ref="vol-x", pipeline_id="demo-v1")
+    stats = SimpleNamespace(
+        stall_seconds=12.34,
+        results={
+            "0001": SimpleNamespace(status="ok", seconds=3.2, error=None),
+            "0002": SimpleNamespace(status="failed", seconds=9.9, error="HTTP 400"),
+        },
+    )
+    publish_failure_metrics(store, cfg, stats, 100.0, "verify", "verify failed: x")
+    (key, obj) = calls[0]
+    assert key == "metrics-failed-latest.json"
+    assert obj["stage"] == "verify"
+    assert obj["gpu_stall_seconds"] == 12.3
+    assert obj["results"]["0002"]["error"] == "HTTP 400"
+
+
+def test_publish_failure_metrics_never_raises():
+    from htrflow_batch.main import publish_failure_metrics
+
+    def boom(key, obj):
+        raise OSError("bucket gone")
+
+    store = SimpleNamespace(put_json=boom)
+    cfg = SimpleNamespace(volume_ref="v", pipeline_id="p")
+    stats = SimpleNamespace(stall_seconds=0.0, results={})
+    publish_failure_metrics(store, cfg, stats, 1.0, "stream", "x")  # must not raise

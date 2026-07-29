@@ -20,7 +20,7 @@ from .config import Config, ConfigError
 from .fetch import run_downloader
 from .iiif import ManifestError, fetch_manifest, pages_from_manifest
 from .store import ResultStore
-from .stream import PageOutcome, consume
+from .stream import PageOutcome, StreamStats, consume
 from .viewer import build_viewer_manifest, parse_alto_dims, parse_alto_dims_bytes
 
 log = logging.getLogger("htrflow_batch")
@@ -64,6 +64,33 @@ def _default_factory(cfg: Config):
     return process
 
 
+def publish_failure_metrics(store, cfg, stats, wall: float, stage: str, error: str):
+    """Best-effort: preserve run evidence when a run fails (docs: wrapper).
+    Must never raise — it runs on the failure path."""
+    try:
+        store.put_json(
+            "metrics-failed-latest.json",
+            {
+                "volume": cfg.volume_ref,
+                "pipeline_id": cfg.pipeline_id,
+                "stage": stage,
+                "error": str(error)[:2000],
+                "wall_seconds": round(wall, 1),
+                "gpu_stall_seconds": round(stats.stall_seconds, 1),
+                "results": {
+                    n: {
+                        "status": r.status,
+                        "seconds": round(r.seconds, 2),
+                        **({"error": r.error} if r.error else {}),
+                    }
+                    for n, r in sorted(stats.results.items())
+                },
+            },
+        )
+    except Exception:
+        log.warning("could not publish failure metrics", exc_info=True)
+
+
 def main(
     env: Optional[Mapping[str, str]] = None,
     process_page_factory: Optional[Callable] = None,
@@ -74,6 +101,11 @@ def main(
     env = dict(env if env is not None else os.environ)
     t_start = time.monotonic()
     stage = "setup"
+    # Bound up-front so the failure paths below can tell "we never got that
+    # far" from "we have evidence worth publishing".
+    cfg: Optional[Config] = None
+    store: Optional[ResultStore] = None
+    stats: Optional[StreamStats] = None
     try:
         cfg = Config.from_env(env)
         store = ResultStore(cfg)
@@ -234,12 +266,22 @@ def main(
 
     except (ConfigError, ManifestError, SetupError, ValueError) as e:
         log.error("permanent failure in %s: %s", stage, e)
+        _publish_failure(cfg, store, stats, t_start, stage, e)
         _terminate(env, {"stage": stage, "permanent": True, "error": str(e)})
         return EXIT_PERMANENT
     except Exception as e:
         log.error("transient failure in %s: %s\n%s", stage, e, traceback.format_exc())
+        _publish_failure(cfg, store, stats, t_start, stage, e)
         _terminate(env, {"stage": stage, "permanent": False, "error": str(e)})
         return EXIT_TRANSIENT
+
+
+def _publish_failure(cfg, store, stats, t_start: float, stage: str, e: BaseException):
+    """Skip setup-stage failures, where there is no store/stats to report on."""
+    if cfg is not None and store is not None and stats is not None:
+        publish_failure_metrics(
+            store, cfg, stats, time.monotonic() - t_start, stage, str(e)
+        )
 
 
 def _htrflow_version() -> str:
