@@ -9,6 +9,10 @@ package = false          # virtual root: nothing to build, members do the work
 [tool.uv.workspace]
 members = ["packages/*"]
 
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+testpaths = ["packages/wrapper/tests", "packages/reconciler/tests"]
+
 [dependency-groups]
 dev = [
     "pytest>=8",
