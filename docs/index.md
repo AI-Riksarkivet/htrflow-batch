@@ -41,5 +41,7 @@ an archive-scale campaign is the pending next step.
   streaming wrapper, and the decision log.
 - [Campaigns (GitOps)](how-it-works/campaigns.md) — declare volumes in git,
   let the reconciler submit them, watch progress on the campaign browser.
+- [Reference](reference/index.md) — env contracts, YAML schemas, chart
+  values, and the S3/status.json layout.
 - [Roadmap](roadmap/evolution.md) — the evidence-gated Phase 2 cache
   layer and what's still open.

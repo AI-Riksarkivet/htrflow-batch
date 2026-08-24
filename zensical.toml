@@ -27,6 +27,15 @@ nav = [
     {"Memory Budget" = "how-it-works/memory-budget.md"},
     {"Failure Handling" = "how-it-works/failure-handling.md"},
   ]},
+  { "Reference" = [
+    {"Overview" = "reference/index.md"},
+    {"Campaign & Pipeline YAML" = "reference/campaign-yaml.md"},
+    {"Reconciler" = "reference/reconciler.md"},
+    {"Wrapper" = "reference/wrapper.md"},
+    {"Chart Values" = "reference/chart.md"},
+    {"S3 Layout & status.json" = "reference/s3-layout.md"},
+    {"Campaign Browser" = "reference/frontend.md"},
+  ]},
   { "Roadmap" = [
     {"Phase 2: Cache Layer" = "roadmap/phase-2-cache.md"},
     {"Evolution" = "roadmap/evolution.md"},
@@ -44,6 +53,8 @@ nav = [
 
 [project.theme]
 language = "en"
+favicon = "assets/favicon.ico"
+logo = "assets/ra.svg"
 
 features = [
     "announce.dismiss",
@@ -86,10 +97,6 @@ repo = "fontawesome/brands/github"
 [[project.extra.social]]
 icon = "fontawesome/brands/github"
 link = "https://github.com/carpelan/test"
-
-[[project.extra.social]]
-icon = "fontawesome/brands/docker"
-link = "https://hub.docker.com/r/riksarkivet/htrflow-batch"
 
 # Declaring ANY markdown_extensions replaces zensical's default set wholesale,
 # so every extension the docs rely on has to be named here. `!!! note` blocks
