@@ -24,6 +24,12 @@ data:
         return 302 /uv.html#?manifest={{ .Values.viewer.defaultManifest }};
       }
       {{- end }}
+      # SvelteKit's static adapter emits log.html for the /log route; without
+      # this, a direct visit or refresh of /log?... 404s (nginx only resolves
+      # index.html for /).
+      location = /log {
+        try_files /log.html =404;
+      }
     }
 ---
 apiVersion: apps/v1
