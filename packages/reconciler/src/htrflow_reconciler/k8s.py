@@ -34,23 +34,38 @@ class Cluster:
         self.core = client.CoreV1Api()
 
     def jobs(self) -> dict[str, JobState]:
-        """Snapshot of the reconciler's Jobs in this namespace.
-
-        ``failed`` is read off the Job's TERMINAL ``Failed`` condition — the
-        backoffLimit is exhausted — never off ``status.failed`` pod counts,
-        which also tick up while a Job is still retrying (see JobState).
-        ``succeeded`` is its mirror, the terminal ``Complete`` condition.
+        """Snapshot of the reconciler's volume Jobs in this namespace, by name.
 
         The selector carries ``batch.htrflow/managed-by=reconciler`` as well as
         the ``app`` label: hand-run Jobs share the ``app`` label (the operators'
         selectors need it) and have no TTL, so without the extra term they would
         occupy submission-window slots forever.
         """
-        out: dict[str, JobState] = {}
-        jobs = self.batch.list_namespaced_job(
-            self.ns,
-            label_selector="app=htrflow-batch,batch.htrflow/managed-by=reconciler",
+        return self._job_states(
+            "app=htrflow-batch,batch.htrflow/managed-by=reconciler",
+            key=lambda j: j.metadata.name,
         )
+
+    def warmups(self) -> dict[str, JobState]:
+        """Snapshot of warm-up Jobs, by pipeline id.
+
+        Selected on ``app`` alone: the chart renders the same Job for
+        ``values.pipelines`` under Helm's ownership, and either origin is
+        proof the cache is warm.
+        """
+        return self._job_states(
+            "app=htrflow-warmup",
+            key=lambda j: (j.metadata.labels or {}).get("batch.htrflow/pipeline", ""),
+        )
+
+    def _job_states(self, label_selector: str, key) -> dict[str, JobState]:
+        """``failed`` is read off the Job's TERMINAL ``Failed`` condition — the
+        backoffLimit is exhausted — never off ``status.failed`` pod counts,
+        which also tick up while a Job is still retrying (see JobState).
+        ``succeeded`` is its mirror, the terminal ``Complete`` condition.
+        """
+        out: dict[str, JobState] = {}
+        jobs = self.batch.list_namespaced_job(self.ns, label_selector=label_selector)
         for j in jobs.items:
             conditions = j.status.conditions or []
             failed = any(c.type == "Failed" and c.status == "True" for c in conditions)
@@ -67,7 +82,7 @@ class Cluster:
                 )
                 codes = [_exit_code(p) for p in pods]
                 exit_code = next((c for c in codes if c is not None), None)
-            out[j.metadata.name] = JobState(
+            out[key(j)] = JobState(
                 active=bool(j.status.active),
                 failed=failed,
                 succeeded=succeeded,
