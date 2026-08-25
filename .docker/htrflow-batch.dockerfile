@@ -20,4 +20,11 @@ RUN uv pip install --python /app/.venv/bin/python --no-cache \
 COPY packages/wrapper /opt/wrapper
 RUN uv pip install --python /app/.venv/bin/python --no-cache /opt/wrapper
 
+# Pod Security restricted (D14): run as an unprivileged user. The Job spec
+# pins runAsUser 1000 as well — both, so neither side can regress alone.
+# Writable paths (HOME, TMPDIR, YOLO_CONFIG_DIR) are set by the Job spec
+# into the tmpfs workdir; the root filesystem is mounted read-only.
+RUN useradd --uid 1000 --user-group --no-create-home --shell /usr/sbin/nologin htrflow
+USER 1000:1000
+
 ENTRYPOINT ["python", "-m", "htrflow_batch"]

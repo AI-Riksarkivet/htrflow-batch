@@ -2,7 +2,8 @@
 # Task 10 smoke Job for the real htrflow-batch image against a mocked IIIF
 # manifest — a one-off PoC replay aid, not a production submission path
 # (per-volume Jobs are submitted at runtime by the orchestrator, not by this
-# chart).
+# chart). Mirrors reconciler/jobspec.py:build_job — keep the two in step.
+# Warm the pipeline's models first: `make warmup PIPELINE=<id> IMAGE=<ref>`.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -24,9 +25,20 @@ spec:
     spec:
       restartPolicy: Never
       runtimeClassName: nvidia
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: wrapper
           image: {{ .Values.exampleJob.image | required "exampleJob.image is required when exampleJob.enabled" }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
           env:
             - name: VOLUME_REF
               value: mock-vol
@@ -40,17 +52,35 @@ spec:
               value: {{ .Values.publicResultsBase | quote }}
             - name: HF_HOME
               value: /data/hf
+            - name: HF_HUB_OFFLINE
+              value: "1"
             - name: WORKDIR_PATH
               value: /work
-          envFrom:
-            - secretRef: { name: {{ .Values.s3.existingSecret }} }
+            - name: HOME
+              value: /work/home
+            - name: TMPDIR
+              value: /work/tmp
+            - name: YOLO_CONFIG_DIR
+              value: /work/ultralytics
+            - name: AWS_SHARED_CREDENTIALS_FILE
+              value: /secrets/s3/credentials
+            - name: S3_ENDPOINT
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.s3.existingSecret }}, key: S3_ENDPOINT, optional: true }
+            - name: S3_BUCKET
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.s3.existingSecret }}, key: S3_BUCKET }
           volumeMounts:
             - name: pipeline
               mountPath: /config
             - name: data
               mountPath: /data
+              readOnly: true
             - name: work
               mountPath: /work
+            - name: s3
+              mountPath: /secrets/s3
+              readOnly: true
           resources:
             requests: { cpu: "4", memory: 8Gi, nvidia.com/gpu: "1" }
             limits: { cpu: "4", memory: 16Gi, nvidia.com/gpu: "1" }
@@ -61,4 +91,6 @@ spec:
           persistentVolumeClaim: { claimName: htr-test-data }
         - name: work
           emptyDir: { medium: Memory, sizeLimit: 2Gi }
+        - name: s3
+          secret: { secretName: {{ .Values.s3.existingSecret }}, defaultMode: 0440 }
 {{- end }}

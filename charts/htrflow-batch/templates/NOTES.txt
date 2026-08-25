@@ -3,6 +3,14 @@ htrflow-batch platform installed.
 - Kueue CRDs are a prerequisite, not installed by this chart.
 - Pipeline ConfigMaps are immutable: never reuse a pipeline id with different content — bump the id (D17).
 - Submit per-volume Jobs with suspend: true and label kueue.x-k8s.io/queue-name: {{ .Values.queue.name }}.
+- Jobs run offline on a read-only model cache: warm each pipeline once (`make warmup PIPELINE=<id> IMAGE=<ref>`);
+  pipelines from the campaigns repo are warmed by the reconciler.
+- Pod Security: the chart does not own the namespace — label it once (`make psa-labels`):
+  enforce=baseline, warn=restricted, audit=restricted. Job, warm-up and reconciler pods meet `restricted`.
+{{- if .Values.network.enabled }}
+- NetworkPolicies rendered for Job / warm-up / reconciler pods (values: network.*). The S3 Secret
+  needs a `credentials` key in AWS ini format (docs: getting-started/deploy).
+{{- end }}
 {{- if .Values.viewer.enabled }}
 - Viewer: NodePort {{ .Values.viewer.nodePort }}
 {{- end }}

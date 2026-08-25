@@ -7,8 +7,14 @@ metadata:
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
 type: Opaque
 stringData:
+  # Pods read `credentials` as a mounted file (AWS_SHARED_CREDENTIALS_FILE);
+  # the AWS_* keys stay for tooling that still uses envFrom (compose, scripts).
   AWS_ACCESS_KEY_ID: rustfsadmin
   AWS_SECRET_ACCESS_KEY: rustfsadmin
+  credentials: |
+    [default]
+    aws_access_key_id = rustfsadmin
+    aws_secret_access_key = rustfsadmin
   S3_ENDPOINT: http://rustfs.{{ .Release.Namespace }}.svc.cluster.local:9000
   S3_BUCKET: {{ .Values.s3.bucket }}
 ---
