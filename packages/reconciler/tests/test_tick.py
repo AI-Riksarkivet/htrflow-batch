@@ -175,6 +175,20 @@ def test_tick_permanent_failure_needs_attention_not_deleted(tmp_path):
     assert n not in cluster.deleted
 
 
+def test_needs_attention_uploads_log_and_links_it(tmp_path):
+    name = job_name("demo-v1", "R0000002")
+    jobs = {name: JobState(active=False, failed=True, exit_code=13)}
+    bucket, cluster = FakeBucket(), FakeCluster(jobs=jobs)
+    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert byid["R0000002"]["status"] == "needs-attention"
+    assert byid["R0000002"]["failure_log"] == (
+        "http://pub/htr-results/status/failures/demo-v1/R0000002.txt"
+    )
+    assert bucket.written["status/failures/demo-v1/R0000002.txt"] == "boom traceback"
+    assert byid["loose"]["failure_log"] is None
+
+
 def test_tick_drift_blocks_pipeline(tmp_path):
     cluster = FakeCluster()
     cluster.configmaps["demo-v1"] = "steps: [OLD]\n"
