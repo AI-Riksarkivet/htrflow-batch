@@ -136,8 +136,9 @@ class Cluster:
             return ""
         pod = _newest_first(pods)[0]
         try:
-            return self.core.read_namespaced_pod_log(
-                pod.metadata.name, self.ns, tail_lines=tail
+            resp = self.core.read_namespaced_pod_log(
+                pod.metadata.name, self.ns, tail_lines=tail, _preload_content=False
             )
+            return resp.data.decode("utf-8", errors="replace")
         except client.ApiException:
             return ""

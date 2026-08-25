@@ -389,7 +389,9 @@ def tick(
                 elif job is not None and job.succeeded:
                     # Jobs linger ttlSecondsAfterFinished (24h) after Complete —
                     # one upload per volume, guarded by the HEAD above.
-                    bucket.put_text(log_key, cluster.job_logs(job_name(pid, v.id)))
+                    bucket.put_text(
+                        log_key, cluster.job_logs(job_name(pid, v.id), tail=500)
+                    )
                     run_log = f"{cfg.public_results_base.rstrip('/')}/{log_key}"
             entry["volumes"].append(
                 {
