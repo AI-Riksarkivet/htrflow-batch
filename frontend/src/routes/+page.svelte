@@ -1,5 +1,11 @@
 <script lang="ts">
-  import { isStale, pagesLabel, progress, viewerHref } from "$lib/derive.js";
+  import {
+    isStale,
+    pagesLabel,
+    progress,
+    shortDate,
+    viewerHref,
+  } from "$lib/derive.js";
   import { statusDocSchema, type StatusDoc } from "$lib/status.js";
 
   const DEFAULT_STATUS_URL =
@@ -40,19 +46,24 @@
 </script>
 
 <main>
-  <h1>HTR Campaigns</h1>
-  {#if doc !== null && doc.campaigns_repo_url !== null}
-    <p class="repo">
-      campaigns repo:
-      {#if doc.campaigns_repo_url.startsWith("http")}
-        <a href={doc.campaigns_repo_url} target="_blank" rel="noopener">
-          {doc.campaigns_repo_url}
-        </a>
-      {:else}
-        <code>{doc.campaigns_repo_url}</code>
+  <header class="page">
+    <h1>HTR Campaigns</h1>
+    <div class="meta-block">
+      {#if doc !== null && doc.campaigns_repo_url !== null}
+        <p class="repo">
+          campaigns repo:
+          {#if doc.campaigns_repo_url.startsWith("http")}
+            <a href={doc.campaigns_repo_url} target="_blank" rel="noopener">
+              {doc.campaigns_repo_url}
+            </a>
+          {:else}
+            <code>{doc.campaigns_repo_url}</code>
+          {/if}
+        </p>
       {/if}
-    </p>
-  {/if}
+      {#if doc !== null}<p class="meta">generated {doc.generated_at}</p>{/if}
+    </div>
+  </header>
   {#if error !== null}
     <p class="error">Cannot load status: {error}</p>
   {:else if doc === null}
@@ -64,55 +75,94 @@
         (this is not "no news").
       </p>
     {/if}
-    <p class="meta">generated {doc.generated_at}</p>
     {#each doc.warnings as w}<p class="warn">{w}</p>{/each}
     {#each doc.campaigns as c}
-      <section>
+      <section class="campaign">
         <button class="camp" onclick={() => toggle(c.name)}>
-          {c.name}
-          {#if c.error !== null}<span class="chip needs-attention">broken</span>
+          <span class="disclosure">{collapsed.has(c.name) ? "▸" : "▾"}</span>
+          <span class="camp-name">{c.name}</span>
+          {#if c.error !== null}
+            <span class="chip needs-attention">broken</span>
           {:else}
-            <span class="chip">{c.pipeline}</span>
+            <span class="chip pipeline">{c.pipeline}</span>
             <progress max="100" value={progress(c.totals)}></progress>
-            {c.totals.done}/{c.totals.total} volumes
-            {#if pagesLabel(c.totals) !== null}
-              <span class="pages">· {pagesLabel(c.totals)}</span>
-            {/if}
+            <span class="counts">
+              {c.totals.done}/{c.totals.total} volumes
+              {#if pagesLabel(c.totals) !== null}
+                <span class="pages">· {pagesLabel(c.totals)}</span>
+              {/if}
+            </span>
           {/if}
         </button>
         {#if c.pipeline_steps !== null && c.pipeline_steps.length > 0}
           <p class="steps">{c.pipeline_steps.join(" → ")}</p>
         {/if}
-        {#if c.error !== null}<p class="error">{c.error}</p>{/if}
+        {#if c.error !== null}<p class="notice error-row">{c.error}</p>{/if}
         {#if c.orphans.length > 0}
-          <p class="warn">
+          <p class="notice warn-row">
             orphaned results (in bucket, not in git): {c.orphans.join(", ")}
           </p>
         {/if}
         {#if !collapsed.has(c.name) && c.error === null}
-          <div class="grid">
-            {#each c.volumes as v}
-              <a
-                class="card"
-                class:planned={v.status === "pending"}
-                href={viewerHref(v)}
-                target="_blank"
-                rel="noopener"
-              >
-                {#if v.thumbnail !== null}
-                  <img src={v.thumbnail} alt="" loading="lazy" />
-                {/if}
-                <span class="chip {v.status}">
-                  {v.status === "pending" ? "planned" : v.status}
-                </span>
-                <strong>{v.id}</strong>
-                {#if v.pages_total !== null || v.pages_done !== null}
-                  <small>{pagesLabel(v) ?? `${v.pages_done} pages`}</small>
-                {/if}
-                {#if v.attempts > 0}<small>attempts: {v.attempts}</small>{/if}
-              </a>
-            {/each}
-          </div>
+          <table class="volumes">
+            <thead>
+              <tr>
+                <th></th>
+                <th>volume</th>
+                <th>status</th>
+                <th class="num">pages</th>
+                <th class="num">attempts</th>
+                <th>updated</th>
+                <th>links</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each c.volumes as v}
+                <tr class:planned={v.status === "pending"}>
+                  <td class="thumb">
+                    {#if v.thumbnail !== null}
+                      <img src={v.thumbnail} alt="" loading="lazy" />
+                    {/if}
+                  </td>
+                  <td class="vid">{v.id}</td>
+                  <td>
+                    <span class="status {v.status}">
+                      <span class="dot"></span>
+                      {v.status === "pending" ? "planned" : v.status}
+                    </span>
+                  </td>
+                  <td class="num">
+                    {v.pages_total !== null || v.pages_done !== null
+                      ? `${v.pages_done ?? 0}/${v.pages_total ?? "?"}`
+                      : "—"}
+                  </td>
+                  <td class="num">{v.attempts > 0 ? v.attempts : "—"}</td>
+                  <td class="updated">{shortDate(v.updated) ?? "—"}</td>
+                  <td class="links">
+                    {#if v.status === "done"}
+                      <a href={viewerHref(v)} target="_blank" rel="noopener"
+                        >open</a
+                      >
+                    {/if}
+                    <a
+                      class="secondary"
+                      href={v.source_manifest}
+                      target="_blank"
+                      rel="noopener">source</a
+                    >
+                    {#if v.failure_log !== null}
+                      <a
+                        class="danger"
+                        href={v.failure_log}
+                        target="_blank"
+                        rel="noopener">log</a
+                      >
+                    {/if}
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
         {/if}
       </section>
     {/each}
@@ -121,102 +171,300 @@
 
 <style>
   main {
-    font-family: system-ui, sans-serif;
-    max-width: 60rem;
+    --radius: 0.625rem;
+    --background: oklch(0.985 0.004 80);
+    --foreground: oklch(0.16 0.006 270);
+    --card: oklch(0.993 0.002 80);
+    --primary: oklch(0.37 0.19 250);
+    --muted: oklch(0.955 0.006 260);
+    --muted-foreground: oklch(0.45 0.012 260);
+    --border: oklch(0.915 0.006 260);
+    --success: oklch(0.65 0.2 145);
+    --warning: oklch(0.75 0.18 75);
+    --destructive: oklch(0.577 0.245 27.325);
+  }
+  @media (prefers-color-scheme: dark) {
+    main {
+      --background: oklch(0.13 0.006 270);
+      --foreground: oklch(0.985 0 0);
+      --card: oklch(0.17 0.008 270);
+      --primary: oklch(0.68 0.16 250);
+      --muted: oklch(0.22 0.008 270);
+      --muted-foreground: oklch(0.65 0.01 260);
+      --border: oklch(0.28 0.008 270);
+    }
+  }
+
+  main {
+    font-family:
+      system-ui,
+      -apple-system,
+      "Segoe UI",
+      sans-serif;
+    max-width: 64rem;
     margin: 0 auto;
-    padding: 1rem;
+    padding: 1.5rem 1rem 3rem;
+    background: var(--background);
+    color: var(--foreground);
   }
-  .stale {
-    background: #b91c1c;
-    color: #fff;
-    padding: 0.5rem 1rem;
-    border-radius: 4px;
+
+  h1 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin: 0;
   }
-  .warn {
-    background: #fef3c7;
-    padding: 0.25rem 0.75rem;
-    border-radius: 4px;
+
+  .page {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
   }
-  .error {
-    color: #b91c1c;
+
+  .meta-block {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.125rem;
   }
+
+  .repo,
+  .steps,
   .meta {
-    color: #6b7280;
+    color: var(--muted-foreground);
+    font-size: 0.8rem;
+    margin: 0;
+  }
+
+  .repo a,
+  .repo code {
+    color: inherit;
+  }
+
+  .stale {
+    background: var(--destructive);
+    color: var(--background);
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius);
+    margin: 0 0 1rem;
+  }
+
+  .warn {
+    background: var(--muted);
+    color: var(--foreground);
+    border: 1px solid var(--warning);
+    padding: 0.4rem 0.75rem;
+    border-radius: var(--radius);
+    margin: 0 0 0.75rem;
     font-size: 0.85rem;
   }
+
+  .error {
+    color: var(--destructive);
+  }
+
+  .campaign {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem 1rem;
+    margin-bottom: 1rem;
+  }
+
   .camp {
     cursor: pointer;
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    font-size: 1.25rem;
+    font-size: 1rem;
     font-weight: 600;
     background: none;
     border: none;
     padding: 0.5rem 0;
     width: 100%;
     text-align: left;
+    color: var(--foreground);
+    font-family: inherit;
   }
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
-    gap: 0.75rem;
+
+  .disclosure {
+    color: var(--muted-foreground);
+    font-size: 0.75rem;
+    width: 1em;
   }
-  .card {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    border: 1px solid #d1d5db;
-    border-radius: 6px;
-    padding: 0.75rem;
-    text-decoration: none;
-    color: inherit;
+
+  .camp-name {
+    flex-shrink: 0;
   }
-  .card:hover {
-    border-color: #2563eb;
+
+  .camp progress {
+    accent-color: var(--primary);
+    width: 8rem;
   }
-  .chip {
-    font-size: 0.7rem;
-    padding: 0.1rem 0.5rem;
-    border-radius: 999px;
-    background: #e5e7eb;
-    width: fit-content;
-  }
-  .chip.done {
-    background: #bbf7d0;
-  }
-  .chip.running {
-    background: #bfdbfe;
-  }
-  .chip.queued,
-  .chip.retry {
-    background: #fef08a;
-  }
-  .chip.needs-attention,
-  .chip.unreachable,
-  .chip.unsupported {
-    background: #fecaca;
-  }
-  .card img {
-    width: 100%;
-    aspect-ratio: 3/4;
-    object-fit: cover;
-    border-radius: 4px;
-  }
-  .repo {
-    color: #6b7280;
+
+  .counts {
+    color: var(--muted-foreground);
     font-size: 0.85rem;
+    font-weight: 400;
+    white-space: nowrap;
   }
-  .steps {
-    color: #6b7280;
-    font-size: 0.8rem;
-    margin: 0 0 0.5rem;
-  }
+
   .pages {
     font-weight: 400;
-    color: #6b7280;
   }
-  .card.planned {
-    border-style: dashed;
+
+  .chip {
+    font-size: 0.7rem;
+    font-weight: 500;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    background: var(--muted);
+    color: var(--muted-foreground);
+    width: fit-content;
+  }
+
+  .chip.needs-attention {
+    background: var(--destructive);
+    color: var(--background);
+  }
+
+  .notice {
+    font-size: 0.85rem;
+    margin: 0.25rem 0 0;
+  }
+
+  .error-row {
+    color: var(--destructive);
+  }
+
+  .warn-row {
+    color: var(--warning);
+  }
+
+  table.volumes {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.75rem;
+    font-size: 13.5px;
+  }
+
+  table.volumes th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--muted-foreground);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    padding: 0.35rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  table.volumes th.num,
+  table.volumes td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  table.volumes td {
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+
+  table.volumes tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  tr.planned {
+    opacity: 0.65;
+  }
+
+  td.thumb {
+    width: 2.5rem;
+  }
+
+  td.thumb img {
+    width: 2.5rem;
+    height: 2.5rem;
+    object-fit: cover;
+    border-radius: 4px;
+    display: block;
+  }
+
+  td.vid {
+    font-weight: 500;
+  }
+
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    white-space: nowrap;
+  }
+
+  .status .dot {
+    width: 0.5em;
+    height: 0.5em;
+    border-radius: 50%;
+    background: var(--muted-foreground);
+    flex-shrink: 0;
+  }
+
+  .status.done .dot {
+    background: var(--success);
+  }
+
+  .status.running .dot {
+    background: var(--primary);
+  }
+
+  .status.queued .dot,
+  .status.retry .dot {
+    background: var(--warning);
+  }
+
+  .status.needs-attention .dot,
+  .status.unreachable .dot,
+  .status.unsupported .dot {
+    background: var(--destructive);
+  }
+
+  .status.pending .dot {
+    background: var(--muted-foreground);
+  }
+
+  td.updated {
+    color: var(--muted-foreground);
+    white-space: nowrap;
+  }
+
+  td.links {
+    white-space: nowrap;
+  }
+
+  td.links a {
+    color: var(--primary);
+    text-decoration: none;
+    margin-right: 0.75rem;
+  }
+
+  td.links a:last-child {
+    margin-right: 0;
+  }
+
+  td.links a:hover {
+    text-decoration: underline;
+  }
+
+  td.links a.secondary {
+    color: var(--muted-foreground);
+  }
+
+  td.links a.danger {
+    color: var(--destructive);
   }
 </style>
