@@ -39,6 +39,7 @@ describe("statusDocSchema", () => {
     expect(campaign).toBeDefined();
     if (campaign) {
       expect(campaign.pipeline_steps).toBeNull();
+      expect(campaign.pipeline_yaml).toBeNull();
       expect(campaign.totals.pages_total).toBeNull();
       const vol = campaign.volumes[0];
       expect(vol).toBeDefined();
@@ -58,6 +59,7 @@ describe("statusDocSchema", () => {
         {
           ...oldDoc.campaigns[0],
           pipeline_steps: ["Segmentation: yolo (weights)"],
+          pipeline_yaml: "steps:\n  - step: Segmentation\n",
           totals: { done: 0, total: 1, pages_done: 0, pages_total: 2 },
           volumes: [
             {
@@ -74,6 +76,7 @@ describe("statusDocSchema", () => {
     const campaign = doc.campaigns[0];
     expect(campaign).toBeDefined();
     if (campaign) {
+      expect(campaign.pipeline_yaml).toBe("steps:\n  - step: Segmentation\n");
       expect(campaign.totals.pages_total).toBe(2);
       const vol = campaign.volumes[0];
       expect(vol).toBeDefined();

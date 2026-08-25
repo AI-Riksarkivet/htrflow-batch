@@ -29,6 +29,19 @@
     collapsed = next;
   }
 
+  let yamlOpen = $state<Set<string>>(new Set()); // collapsed by default
+  function toggleYaml(name: string, event: Event): void {
+    event.stopPropagation();
+    const next = new Set(yamlOpen);
+    if (next.has(name)) next.delete(name);
+    else next.add(name);
+    yamlOpen = next;
+  }
+  function toggleYamlOnKey(name: string, event: KeyboardEvent): void {
+    if (event.key !== "Enter") return;
+    toggleYaml(name, event);
+  }
+
   // null = follow OS (`prefers-color-scheme`). Explicit choice persists to
   // localStorage; the page is prerendered, so localStorage is only touched in
   // the browser (never during the Node prerender pass).
@@ -118,9 +131,13 @@
           {:else}
             <span
               class="chip pipeline"
+              role="button"
+              tabindex="0"
               title={c.pipeline_steps !== null && c.pipeline_steps.length > 0
                 ? c.pipeline_steps.join(" → ")
-                : undefined}>{c.pipeline}</span
+                : undefined}
+              onclick={(e) => toggleYaml(c.name, e)}
+              onkeydown={(e) => toggleYamlOnKey(c.name, e)}>{c.pipeline}</span
             >
             <progress max="100" value={progress(c.totals)}></progress>
             <span class="counts">
@@ -132,6 +149,9 @@
           {/if}
         </button>
         {#if c.error !== null}<p class="notice error-row">{c.error}</p>{/if}
+        {#if yamlOpen.has(c.name) && c.pipeline_yaml}
+          <pre class="pipeline-yaml">{c.pipeline_yaml}</pre>
+        {/if}
         {#if c.orphans.length > 0}
           <p class="notice warn-row">
             orphaned results (in bucket, not in git): {c.orphans.join(", ")}
@@ -486,11 +506,23 @@
   .chip.pipeline {
     background: color-mix(in oklab, var(--primary) 15%, transparent);
     color: var(--primary);
+    cursor: pointer;
   }
 
   .notice {
     font-size: 0.85rem;
     margin: 0.25rem 0 0;
+  }
+
+  pre.pipeline-yaml {
+    margin: 0.5rem 0 0;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
   }
 
   .error-row {
