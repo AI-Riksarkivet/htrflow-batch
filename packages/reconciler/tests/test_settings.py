@@ -63,3 +63,13 @@ def test_missing_required_env_fails_fast(monkeypatch):
     monkeypatch.delenv("PUBLIC_RESULTS_BASE", raising=False)
     with pytest.raises(ValidationError):
         Settings()
+
+
+def test_repo_web_url_defaults_empty(env):
+    s = env()
+    assert s.campaigns_repo_web_url == ""
+
+
+def test_repo_web_url_env_populates_setting(env):
+    s = env(CAMPAIGNS_REPO_WEB_URL="https://github.com/example/campaigns")
+    assert s.campaigns_repo_web_url == "https://github.com/example/campaigns"

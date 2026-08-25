@@ -12,6 +12,7 @@ class ReconcilerConfig(BaseModel):
 
     public_results_base: str
     campaigns_repo_url: str = ""
+    campaigns_repo_web_url: str = ""
     namespace: str = "htr-batch"
     queue: str = "htr-batch"
     s3_secret: str = "htr-batch-s3"

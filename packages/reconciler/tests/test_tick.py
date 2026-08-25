@@ -472,6 +472,17 @@ def test_status_carries_repo_url_steps_and_page_totals(tmp_path):
     assert camp["totals"]["pages_done"] == 638
 
 
+def test_repo_web_url_overrides_clone_url(tmp_path):
+    cfg = ReconcilerConfig(
+        public_results_base="http://pub/htr-results",
+        campaigns_repo_url="git://internal/campaigns",
+        campaigns_repo_web_url="https://github.com/example/campaigns",
+    )
+    bucket, cluster = FakeBucket(), FakeCluster()
+    doc = tick(_repo(tmp_path), bucket, cluster, cfg, NOW)
+    assert doc["campaigns_repo_url"] == "https://github.com/example/campaigns"
+
+
 def test_page_totals_null_when_unknown(tmp_path):
     bucket, cluster = FakeBucket(), FakeCluster()
     doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)  # no fetch_json
