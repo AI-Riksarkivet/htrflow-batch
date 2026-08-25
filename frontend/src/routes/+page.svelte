@@ -255,15 +255,22 @@
     color-scheme: light;
   }
 
+  /* main is full-bleed so --background covers the whole viewport in dark
+     mode (a centered max-width main leaves white body gutters); content is
+     centered with padding instead of margin auto. */
+  :global(body) {
+    margin: 0;
+  }
+
   main {
     font-family:
       system-ui,
       -apple-system,
       "Segoe UI",
       sans-serif;
-    max-width: 64rem;
-    margin: 0 auto;
-    padding: 1.5rem 1rem 3rem;
+    min-height: 100vh;
+    box-sizing: border-box;
+    padding: 1.5rem max(1rem, calc(50vw - 32rem)) 3rem;
     background: var(--background);
     color: var(--foreground);
     line-height: 1.4;
