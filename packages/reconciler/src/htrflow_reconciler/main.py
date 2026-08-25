@@ -8,7 +8,7 @@ from typing import Any
 
 from . import s3 as keys
 from .guards import check_drift
-from .jobspec import ReconcilerConfig, build_job
+from .jobspec import ReconcilerConfig, build_job, build_warmup_job, warmup_job_name
 from .models import Campaign, PipelineSpec, Volume
 from .parse import PipelineError, parse_campaign, parse_pipeline, step_summaries
 from .plan import plan_submissions
@@ -234,6 +234,42 @@ def tick(
         else:
             cluster.ensure_configmap(pid, spec.steps_yaml)
 
+    # Warm-up gate: batch Jobs run offline on a read-only model cache, so a
+    # pipeline submits nothing until its warm-up Job — the one writer of that
+    # cache — has completed. A failed warm-up is logged, deleted and recreated
+    # next tick: HF Hub outages heal themselves, and the retry costs nothing.
+    # Lazy on purpose: only pipelines with volumes still to run are warmed —
+    # a finished pipeline has nothing to gate, and one pinned to an image
+    # that predates the warm-up entrypoint would otherwise fail every tick.
+    in_use = {
+        c.pipeline_id
+        for c in campaigns
+        if not c.error
+        and c.pipeline_id in pipelines
+        and any(v.id not in done_for(c.pipeline_id) for v in c.volumes)
+    }
+    warmups = cluster.warmups()
+    for pid, spec in pipelines.items():
+        if pid in blocked or pid not in in_use:
+            continue
+        state = warmups.get(pid.lower())
+        if state is not None and state.succeeded:
+            continue
+        blocked.add(pid)
+        name = warmup_job_name(pid)
+        if state is None:
+            cluster.create_job(build_warmup_job(spec, cfg))
+            warnings.append(f"pipeline {pid}: warming model cache ({name})")
+        elif state.failed:
+            bucket.put_text(keys.warmup_log_key(pid), cluster.job_logs(name))
+            cluster.delete_job(name)
+            warnings.append(
+                f"pipeline {pid}: model warm-up failed (exit {state.exit_code}); "
+                f"log at {keys.warmup_log_key(pid)}, retrying next tick"
+            )
+        else:
+            warnings.append(f"pipeline {pid}: warming model cache ({name})")
+
     doc: dict[str, Any] = {
         "generated_at": now_iso,
         "tick_seconds": TICK_SECONDS,
@@ -269,8 +305,12 @@ def tick(
                 else None
             ),
             "error": camp.error,
-            "totals": {"done": 0, "total": len(camp.volumes),
-                       "pages_done": None, "pages_total": None},
+            "totals": {
+                "done": 0,
+                "total": len(camp.volumes),
+                "pages_done": None,
+                "pages_total": None,
+            },
             "volumes": [],
             "orphans": [],
         }

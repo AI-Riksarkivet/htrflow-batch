@@ -29,4 +29,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 ENV PATH="/app/.venv/bin:$PATH" \
     GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+# Pod Security restricted (D14): unprivileged user; the chart mounts an
+# emptyDir at /tmp for the campaigns clone and sets HOME there.
+RUN useradd --uid 1000 --user-group --no-create-home --shell /usr/sbin/nologin reconciler
+USER 1000:1000
 ENTRYPOINT ["python", "-m", "htrflow_reconciler"]

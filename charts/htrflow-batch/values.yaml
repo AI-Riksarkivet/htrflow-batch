@@ -33,7 +33,39 @@ queue:
 pipelines:
   # id -> htrflow pipeline YAML (string). Rendered as immutable ConfigMap
   # htr-pipeline-<id>. NEVER change content under an existing id (D17).
+  # Jobs run offline against a read-only model cache, so a pipeline declared
+  # here must be warmed once before use: `make warmup PIPELINE=<id> IMAGE=<ref>`
+  # (pipelines from the campaigns repo are warmed by the reconciler itself).
   {}
+
+network:                   # NetworkPolicies (docs: development/security, D14)
+  # Needs a CNI that enforces NetworkPolicy — k3s's default flannel + embedded
+  # kube-router does. Rules match by CIDR and selector only (no FQDN), which
+  # is why batch Jobs get no HF Hub egress at all: only the warm-up Job does.
+  enabled: true
+  # What a batch Job may reach besides DNS and S3: the IIIF origin(s).
+  # Default: lbiiif.riksarkivet.se (a single stable address).
+  iiifCidrs: ["192.121.221.27/32"]
+  # S3 endpoint(s) for Jobs and the reconciler. With devStack.rustfs the
+  # in-cluster pod is selected automatically; a real endpoint goes here.
+  s3Cidrs: []
+  # Ranges that pods granted *public* egress (warm-up, reconciler) must NOT
+  # reach: pod and service CIDRs (k3s defaults) plus every node address.
+  # Node addresses and the kube-apiserver endpoint are auto-detected at
+  # install/upgrade time (Helm `lookup`); set them explicitly for
+  # `helm template` or a kubeconfig without list-nodes permission.
+  clusterCidrs: ["10.42.0.0/16", "10.43.0.0/16"]
+  nodeCidrs: []
+  apiServer:
+    cidr: ""               # e.g. 10.16.51.56/32 — kube-apiserver as reached AFTER service DNAT
+    port: 6443
+  reconciler:
+    # Where the campaigns repo lives (git over https/ssh/git://). Default:
+    # the public internet minus the cluster ranges above.
+    egressCidrs: ["0.0.0.0/0"]
+    # Raw NetworkPolicy egress rules appended verbatim — e.g. an in-cluster
+    # git daemon: [{to: [{podSelector: {matchLabels: {app: git-daemon}}}], ports: [{port: 9418}]}]
+    extraEgress: []
 
 viewer:                    # campaign browser at /, UV4 at /uv.html
   enabled: true
@@ -63,7 +95,7 @@ reconciler:                # GitOps campaign reconciler (spec: campaign-gitops)
   publicResultsBase: ""    # defaults to global publicResultsBase
 
 exampleJob:
-  enabled: false           # mock-vol smoke Job wired to the devStack endpoints
+  enabled: false           # mock-vol smoke Job wired to the devStack endpoints; warm its pipeline first (see pipelines)
   image: ""                # e.g. 127.0.0.1:30500/htrflow-batch:v3 on the PoC
   manifestUrl: ""
   pipelineId: demo-v1

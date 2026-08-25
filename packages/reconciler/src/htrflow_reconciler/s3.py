@@ -33,6 +33,10 @@ def run_log_key(pipeline_id: str, volume_id: str) -> str:
     return f"status/logs/{pipeline_id}/{volume_id}.txt"
 
 
+def warmup_log_key(pipeline_id: str) -> str:
+    return f"status/warmup/{pipeline_id}.log"
+
+
 def status_key() -> str:
     return "status/status.json"
 
@@ -104,8 +108,10 @@ class Bucket:
                     if code in _MISSING_CODES:
                         continue
                     raise
-                done[vid] = head["LastModified"].astimezone(timezone.utc).strftime(
-                    "%Y-%m-%dT%H:%M:%SZ"
+                done[vid] = (
+                    head["LastModified"]
+                    .astimezone(timezone.utc)
+                    .strftime("%Y-%m-%dT%H:%M:%SZ")
                 )
         return done
 

@@ -17,8 +17,18 @@ helm install htr charts/htrflow-batch -n htr-batch --create-namespace \
 
 Kueue CRDs must already be installed on the cluster — see
 [Prerequisites](index.md). The chart does not install the Kueue controller.
-`s3.existingSecret` (default `htr-batch-s3`) must already exist with
-`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` keys. Queue quota is a plain
+`s3.existingSecret` (default `htr-batch-s3`) must already exist with a
+`credentials` key in AWS ini format — pods read it as a mounted file, never
+as env ([Security](../development/security.md)) — plus `S3_BUCKET` and, for
+anything but real AWS, `S3_ENDPOINT`:
+
+```ini
+[default]
+aws_access_key_id = …
+aws_secret_access_key = …
+```
+
+Queue quota is a plain
 list of covered resources under `queue.resources` (defaults to `cpu`/
 `memory`; add `nvidia.com/gpu` for a real GPU-gated cluster):
 
@@ -36,6 +46,23 @@ Pipeline ConfigMaps are rendered immutable, one per id under
 bump the id instead. See the
 [chart README](https://github.com/carpelan/test/blob/main/charts/htrflow-batch/README.md)
 for the full immutability rationale.
+
+## Hardening steps the chart cannot do alone
+
+- **Namespace labels** (once): `make psa-labels` — Pod Security Admission
+  `enforce=baseline`, `warn=restricted`, `audit=restricted`.
+- **NetworkPolicy inputs** (`network.*` values): the IIIF origin CIDR(s)
+  (`network.iiifCidrs`), a real S3 endpoint (`network.s3Cidrs`) when not
+  using devStack RustFS, and the campaigns host for the reconciler
+  (`network.reconciler.egressCidrs` / `extraEgress`). Node addresses and the
+  apiserver endpoint are looked up at install time; set
+  `network.nodeCidrs` / `network.apiServer.cidr` when rendering with
+  `helm template`.
+- **Model cache**: Jobs run offline on a read-only cache. Pipelines from the
+  campaigns repo are warmed by the reconciler; chart-declared ones with
+  `make warmup PIPELINE=<id> IMAGE=<ref>`. A cache PVC that predates the
+  non-root pods needs a one-time `chown -R 1000:1000`
+  ([Security](../development/security.md#cache-pvc-migration)).
 
 ## PoC replay (bare k3s, in-cluster devStack)
 

@@ -1,0 +1,129 @@
+{{- if .Values.network.enabled }}
+{{- /*
+Egress allowlists per pod role (docs: development/security, D14). Ingress is
+denied outright for all three: nothing needs to reach a Job, a warm-up or
+the reconciler. Only pods matched by a policy are affected — the devStack
+services and the viewer are untouched.
+
+kube-router (k3s) evaluates egress AFTER service DNAT, so ClusterIP targets
+are matched by their backing pod (podSelector) or, for the apiserver, by the
+node address it resolves to — hence the `lookup` auto-detection below.
+*/}}
+{{- $nodes := list }}
+{{- range .Values.network.nodeCidrs }}{{ $nodes = append $nodes . }}{{ end }}
+{{- if not $nodes }}
+  {{- range (lookup "v1" "Node" "" "").items }}
+    {{- range .status.addresses }}
+      {{- if eq .type "InternalIP" }}{{ $nodes = append $nodes (printf "%s/32" .address) }}{{ end }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- $api := .Values.network.apiServer.cidr }}
+{{- if not $api }}
+  {{- with (lookup "v1" "Endpoints" "default" "kubernetes") }}
+    {{- with (index .subsets 0) }}{{ $api = printf "%s/32" (index .addresses 0).ip }}{{ end }}
+  {{- end }}
+{{- end }}
+{{- $internal := concat .Values.network.clusterCidrs $nodes }}
+{{- $dns := dict "to" (list (dict
+      "namespaceSelector" (dict "matchLabels" (dict "kubernetes.io/metadata.name" "kube-system"))
+      "podSelector" (dict "matchLabels" (dict "k8s-app" "kube-dns"))))
+    "ports" (list (dict "port" 53 "protocol" "UDP") (dict "port" 53 "protocol" "TCP")) }}
+{{- $s3 := list }}
+{{- if .Values.devStack.rustfs.enabled }}
+  {{- $s3 = append $s3 (dict "to" (list (dict "podSelector" (dict "matchLabels" (dict "app" "rustfs")))) "ports" (list (dict "port" 9000))) }}
+{{- end }}
+{{- if .Values.network.s3Cidrs }}
+  {{- $blocks := list }}
+  {{- range .Values.network.s3Cidrs }}{{ $blocks = append $blocks (dict "ipBlock" (dict "cidr" .)) }}{{ end }}
+  {{- $s3 = append $s3 (dict "to" $blocks) }}
+{{- end }}
+{{- $public := list }}
+{{- range .Values.network.reconciler.egressCidrs }}
+  {{- $public = append $public (dict "ipBlock" (dict "cidr" . "except" $internal)) }}
+{{- end }}
+---
+# Batch Jobs: DNS, S3 and the IIIF origin. No HF Hub, no apiserver, nothing
+# in-cluster — a compromised Job has nowhere to go.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: htr-batch-job
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app: htrflow-batch }
+  policyTypes: [Ingress, Egress]
+  egress:
+    - {{ toJson $dns }}
+    {{- range $s3 }}
+    - {{ toJson . }}
+    {{- end }}
+    {{- if .Values.network.iiifCidrs }}
+    - to:
+        {{- range .Values.network.iiifCidrs }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
+      ports:
+        - { port: 443 }
+        - { port: 80 }
+    {{- end }}
+---
+# Warm-up Jobs: the ONE pod allowed to reach HF Hub (a CDN, so: the public
+# internet minus the cluster). No S3, no apiserver.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: htr-warmup
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app: htrflow-warmup }
+  policyTypes: [Ingress, Egress]
+  egress:
+    - {{ toJson $dns }}
+    - to:
+        - ipBlock: { cidr: "0.0.0.0/0", except: {{ toJson $internal }} }
+      ports:
+        - { port: 443 }
+{{- if .Values.reconciler.enabled }}
+---
+# Reconciler: DNS, the apiserver (it creates Jobs), S3, and the campaigns
+# repo host.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: htr-reconciler
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app: htr-reconciler }
+  policyTypes: [Ingress, Egress]
+  egress:
+    - {{ toJson $dns }}
+    {{- if $api }}
+    - to:
+        - ipBlock: { cidr: {{ $api | quote }} }
+      ports:
+        - { port: {{ .Values.network.apiServer.port }} }
+    {{- else }}
+    {{- fail "network.apiServer.cidr is required when the kube-apiserver endpoint cannot be looked up (helm template / no RBAC)" }}
+    {{- end }}
+    {{- range $s3 }}
+    - {{ toJson . }}
+    {{- end }}
+    {{- if $public }}
+    - to: {{ toJson $public }}
+      ports:
+        - { port: 443 }
+        - { port: 22 }
+        - { port: 9418 }
+    {{- end }}
+    {{- range .Values.network.reconciler.extraEgress }}
+    - {{ toJson . }}
+    {{- end }}
+{{- end }}
+{{- end }}

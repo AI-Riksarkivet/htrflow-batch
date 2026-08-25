@@ -172,3 +172,22 @@ doc"), which is also where §14 itself was first appended to the design
 document. See [The Wrapper](../how-it-works/wrapper.md#job-template-one-volume-one-job)
 for where that fix is referenced going forward (the `podFailurePolicy`
 `FailJob`-on-13 wiring it unblocked).*
+
+## 2026-08-25 — D14 pod hardening, verified on the k3s PoC
+
+Branch `feat/pod-hardening`; images `htrflow-batch:hardened-v1`
+(arm64 GPU, `USER 1000`) and `htrflow-reconciler:dev6`; chart upgraded with
+`--reset-then-reuse-values` (plain `--reuse-values` silently drops new chart
+defaults — `network.enabled` came out nil and no policies rendered).
+
+| Check | Result |
+|---|---|
+| `make psa-labels` (`enforce=baseline`, `warn/audit=restricted`) | applied; the test-only `git-daemon` immediately drew a `restricted` warning — the labels bite |
+| Warm-up gate | new pipeline `local-v4` → `htr-warmup-local-v4` created by the reconciler, volume held `pending` with `warming model cache` in status warnings; warm-up **Complete in 11 s** (cache already held the weights; HF Hub revision check succeeded through the warm-up policy), uid 1000, RO rootfs, no SA token, exit 0, no PSA warning |
+| Lazy warm-up | the 12 finished pipelines (old images without the warm-up entrypoint) got **no** warm-up Jobs |
+| Hardened volume Job | `htr-local-v4-mock-vol-23947b3b` **Complete in 29 s**, 4/4 pages ok, `gpu_stall_seconds 0.0`, `image_digest` recorded; pod: `runAsUser 1000`, `RuntimeDefault`, `readOnlyRootFilesystem`, caps `drop ALL`, `automountServiceAccountToken false`, `runtimeClassName nvidia`, cache mounted `readOnly`, `HF_HUB_OFFLINE=1`; no PSA warning |
+| Secrets as files | both wrapper and reconciler read `AWS_SHARED_CREDENTIALS_FILE=/secrets/s3/credentials`; no `envFrom` anywhere; results and status published as before |
+| Cache PVC migration | one-off `chown -R 1000:1000` pod on `htr-test-data` (root-owned from earlier root pods) |
+| NetworkPolicy, batch Job role | probe pod labelled `app=htrflow-batch`, after policy sync: IIIF origin **reachable**, RustFS **reachable**; HF Hub, `kubernetes.default`, node `:6443`, in-cluster registry, Harbor, `1.1.1.1` **rejected** (`curl 7`). Unlabelled control pod: everything reachable |
+| Policy sync window | probe looping `curl 1.1.1.1` every second: open at t+0 s, blocked from t+1 s. First probe, run seconds after the policies were created, still had open egress for longer — recorded as a known limitation in [Security](security.md) |
+| Campaign parse containment | a typo (`manifest_url:` instead of `manifest:`) in the check campaign surfaced as the campaign's `error` and burned nothing |

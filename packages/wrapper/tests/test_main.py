@@ -303,3 +303,26 @@ def test_publish_failure_metrics_never_raises(caplog):
     with caplog.at_level("WARNING"):
         publish_failure_metrics(store, cfg, stats, 1.0, "stream", "x")  # must not raise
     assert "could not publish failure metrics" in caplog.text
+
+
+def test_setup_creates_the_writable_dirs_before_model_load(env, cfg, s3, tmp_path):
+    """Under readOnlyRootFilesystem HOME/TMPDIR/YOLO_CONFIG_DIR point into the
+    tmpfs workdir; they must exist before anything in htrflow's stack tries
+    to write a settings file or JIT cache there."""
+    work = tmp_path / "work"
+    env = {
+        **env,
+        "HOME": str(work / "home"),
+        "TMPDIR": str(work / "tmp"),
+        "YOLO_CONFIG_DIR": str(work / "ultralytics"),
+    }
+    seen = {}
+
+    def factory(cfg):
+        seen.update(
+            {k: Path(env[k]).is_dir() for k in ("HOME", "TMPDIR", "YOLO_CONFIG_DIR")}
+        )
+        return fake_factory(cfg)
+
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    assert seen == {"HOME": True, "TMPDIR": True, "YOLO_CONFIG_DIR": True}

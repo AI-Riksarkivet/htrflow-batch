@@ -1,5 +1,6 @@
 .PHONY: install format lint check test typecheck ci build build-viewer scan publish \
         compose-up compose-test compose-smoke compose-down helm-lint docs-serve docs-build poc-push clean \
+        warmup psa-labels \
         frontend-install frontend-test frontend-check frontend-build frontend-dev viewer-image
 
 # On RA hosts dagger containers need the corp CA; harmless elsewhere if the file exists.
@@ -87,6 +88,27 @@ poc-push:
 	docker push 127.0.0.1:30500/htrflow-batch:dev
 	docker build -f .docker/htrflow-reconciler.dockerfile -t 127.0.0.1:30500/htrflow-reconciler:dev .
 	docker push 127.0.0.1:30500/htrflow-reconciler:dev
+
+# Pod hardening (docs: development/security, D14).
+# Warm one pipeline's model cache — the read-only, offline cache batch Jobs
+# use. The reconciler does this itself for campaigns-repo pipelines; this is
+# the manual path for `values.pipelines` / the example Job.
+NAMESPACE ?= htr-batch
+DATA_PVC ?= htr-test-data
+warmup:
+	@test -n "$(PIPELINE)" -a -n "$(IMAGE)" || (echo "usage: make warmup PIPELINE=<id> IMAGE=<ref>"; exit 2)
+	uv run --package htrflow-reconciler python -m htrflow_reconciler.warmup \
+	  --pipeline $(PIPELINE) --image $(IMAGE) --namespace $(NAMESPACE) --data-pvc $(DATA_PVC) \
+	  | kubectl apply -f -
+
+# Helm cannot label a namespace it did not create; enforce=baseline (the
+# devStack services are not restricted-clean), warn/audit=restricted so the
+# hardened pods stay provably restricted.
+psa-labels:
+	kubectl label ns $(NAMESPACE) --overwrite \
+	  pod-security.kubernetes.io/enforce=baseline \
+	  pod-security.kubernetes.io/warn=restricted \
+	  pod-security.kubernetes.io/audit=restricted
 
 # Campaign browser (bun/SvelteKit). The CA bundle is what gets bun through the
 # RA proxy; TLS verification stays on.
