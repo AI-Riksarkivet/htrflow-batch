@@ -64,13 +64,40 @@ spec:
       # picks up wherever this one stopped.
       backoffLimit: 0
       template:
+        metadata:
+          labels: { app: htr-reconciler }   # NetworkPolicy selector (network.yaml)
         spec:
           serviceAccountName: htr-reconciler
+          # The one pod that legitimately holds an API credential: it creates
+          # Jobs. Everything else about it is Pod Security restricted (D14).
+          automountServiceAccountToken: true
           restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile: { type: RuntimeDefault }
           containers:
             - name: reconciler
               image: {{ .Values.reconciler.image | required "reconciler.image is required when reconciler.enabled" }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
               env:
+                # Read-only root: the campaigns clone (tempfile.gettempdir())
+                # and git's HOME both land on the /tmp emptyDir.
+                - name: HOME
+                  value: /tmp
+                - name: AWS_SHARED_CREDENTIALS_FILE
+                  value: /secrets/s3/credentials
+                - name: S3_ENDPOINT
+                  valueFrom:
+                    secretKeyRef: { name: {{ .Values.s3.existingSecret }}, key: S3_ENDPOINT, optional: true }
+                - name: S3_BUCKET
+                  valueFrom:
+                    secretKeyRef: { name: {{ .Values.s3.existingSecret }}, key: S3_BUCKET }
                 - name: CAMPAIGNS_REPO_URL
                   value: {{ .Values.reconciler.campaignsRepoUrl | required "reconciler.campaignsRepoUrl is required" | quote }}
                 {{- if .Values.reconciler.campaignsRepoWebUrl }}
@@ -92,9 +119,15 @@ spec:
                   value: {{ .Values.reconciler.window | quote }}
                 - name: RECONCILER_ATTEMPT_CAP
                   value: {{ .Values.reconciler.attemptCap | quote }}
-              envFrom:
-                - secretRef: { name: {{ .Values.s3.existingSecret }} }
+              volumeMounts:
+                - { name: s3, mountPath: /secrets/s3, readOnly: true }
+                - { name: tmp, mountPath: /tmp }
               resources:
                 requests: { cpu: 100m, memory: 256Mi }
                 limits: { cpu: "1", memory: 512Mi }
+          volumes:
+            - name: s3
+              secret: { secretName: {{ .Values.s3.existingSecret }}, defaultMode: 0440 }
+            - name: tmp
+              emptyDir: { sizeLimit: 1Gi }
 {{- end }}
