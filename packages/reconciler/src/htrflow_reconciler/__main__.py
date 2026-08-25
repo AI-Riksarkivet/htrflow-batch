@@ -17,6 +17,7 @@ from .s3 import Bucket
 
 class Settings(BaseSettings):
     campaigns_repo_url: str
+    campaigns_repo_web_url: str = ""
     public_results_base: str
     s3_endpoint: str = ""
     s3_bucket: str = "htr-results"
@@ -45,6 +46,7 @@ def run() -> None:
     cfg = ReconcilerConfig(
         public_results_base=settings.public_results_base,
         campaigns_repo_url=settings.campaigns_repo_url,
+        campaigns_repo_web_url=settings.campaigns_repo_web_url,
         namespace=settings.reconciler_namespace,
         queue=settings.reconciler_queue,
         s3_secret=settings.reconciler_s3_secret,

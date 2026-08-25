@@ -73,6 +73,10 @@ spec:
               env:
                 - name: CAMPAIGNS_REPO_URL
                   value: {{ .Values.reconciler.campaignsRepoUrl | required "reconciler.campaignsRepoUrl is required" | quote }}
+                {{- if .Values.reconciler.campaignsRepoWebUrl }}
+                - name: CAMPAIGNS_REPO_WEB_URL
+                  value: {{ .Values.reconciler.campaignsRepoWebUrl | quote }}
+                {{- end }}
                 - name: PUBLIC_RESULTS_BASE
                   value: {{ .Values.reconciler.publicResultsBase | default .Values.publicResultsBase | required "publicResultsBase (or reconciler.publicResultsBase) is required when reconciler.enabled" | quote }}
                 # The reconciler acts on its own namespace; the downward API

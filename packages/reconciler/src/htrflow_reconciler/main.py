@@ -228,7 +228,7 @@ def tick(
     doc: dict[str, Any] = {
         "generated_at": now_iso,
         "tick_seconds": TICK_SECONDS,
-        "campaigns_repo_url": cfg.campaigns_repo_url,
+        "campaigns_repo_url": cfg.campaigns_repo_web_url or cfg.campaigns_repo_url,
         "warnings": warnings,
         "campaigns": [],
     }

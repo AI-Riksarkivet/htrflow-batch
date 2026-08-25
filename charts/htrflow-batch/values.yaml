@@ -56,6 +56,7 @@ reconciler:                # GitOps campaign reconciler (spec: campaign-gitops)
   enabled: false
   image: ""                # e.g. 127.0.0.1:30500/htrflow-reconciler:dev on the PoC
   campaignsRepoUrl: ""     # e.g. https://github.com/<org>/htr-campaigns
+  campaignsRepoWebUrl: ""   # browsable URL shown on the status page; falls back to campaignsRepoUrl
   schedule: "*/5 * * * *"
   window: 20               # max not-yet-done Jobs existing at once
   attemptCap: 3
