@@ -1,6 +1,6 @@
 <script lang="ts">
   import { browser } from "$app/environment";
-  import { parseRunLog, type LogGroup } from "$lib/runlog.js";
+  import { parseRunLog, splitLogLine, type LogGroup } from "$lib/runlog.js";
 
   const THEME_KEY = "htr-theme";
 
@@ -103,6 +103,14 @@
 
   function shortDigest(digest: string): string {
     return digest.slice(-12);
+  }
+
+  // Tint for the per-line level chip. WARNING/ERROR/CRITICAL get the same
+  // treatment as the existing group-level tinting; INFO/DEBUG stay neutral.
+  function levelClass(level: string): string {
+    if (level === "WARNING") return "warning";
+    if (level === "ERROR" || level === "CRITICAL") return "destructive";
+    return "muted";
   }
 
   // null = follow OS (`prefers-color-scheme`). Explicit choice persists to
@@ -216,16 +224,37 @@
     {:else if parsed.groups.length === 0}
       <p class="muted">Log is empty.</p>
     {:else}
+      {#snippet logLine(line: string)}
+        {@const s = splitLogLine(line)}
+        {#if s.time === null}
+          <div class="log-line full">{s.msg}</div>
+        {:else}
+          <div class="log-line">
+            <span class="log-time" title={line.slice(0, 23)}>{s.time}</span>
+            <span class="log-level {levelClass(s.level ?? '')}">{s.level}</span>
+            <span class="log-msg">{s.msg}</span>
+          </div>
+        {/if}
+      {/snippet}
+
       {#each parsed.groups as g, i (i)}
         {#if g.kind === "http"}
           <details class="group http">
             <summary
               >{g.lines.length} HTTP request{g.lines.length === 1 ? "" : "s"}</summary
             >
-            <pre>{g.lines.join("\n")}</pre>
+            <div class="lines">
+              {#each g.lines as line}
+                {@render logLine(line)}
+              {/each}
+            </div>
           </details>
         {:else}
-          <pre class="group {g.kind}">{g.lines.join("\n")}</pre>
+          <div class="group {g.kind}">
+            {#each g.lines as line}
+              {@render logLine(line)}
+            {/each}
+          </div>
         {/if}
       {/each}
     {/if}
@@ -519,14 +548,50 @@
 
   .group,
   .group summary,
-  .group pre {
+  .log-msg,
+  .log-line.full {
     font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
     font-size: 12px;
     white-space: pre-wrap;
   }
 
-  pre.group {
-    margin: 0;
+  .log-line {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    gap: 0 0.75ch;
+    align-items: baseline;
+  }
+
+  .log-line.full {
+    grid-column: 1 / -1;
+  }
+
+  .log-time {
+    color: var(--muted-foreground);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .log-level {
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    font-weight: 500;
+    padding: 0 0.35ch;
+    border-radius: 3px;
+    width: fit-content;
+    background: var(--muted);
+    color: var(--muted-foreground);
+  }
+
+  .log-level.warning {
+    background: color-mix(in oklab, var(--warning) 18%, transparent);
+    color: var(--warning);
+  }
+
+  .log-level.destructive {
+    background: color-mix(in oklab, var(--destructive) 18%, transparent);
+    color: var(--destructive);
   }
 
   .group.info {
@@ -560,7 +625,7 @@
     white-space: normal;
   }
 
-  details.group.http pre {
+  details.group.http .lines {
     margin: 0.15rem 0 0;
   }
 </style>
