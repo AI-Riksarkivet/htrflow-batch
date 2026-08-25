@@ -66,7 +66,10 @@
 
 <main data-theme={theme}>
   <header class="page">
-    <h1>HTR Campaigns</h1>
+    <div class="title-row">
+      <img class="logo" src="/ra.svg" alt="Riksarkivet" />
+      <h1>HTR Campaigns</h1>
+    </div>
     <div class="header-right">
       <div class="meta-block">
         {#if doc !== null && doc.campaigns_repo_url !== null}
@@ -287,6 +290,17 @@
     font-size: 1.25rem;
     font-weight: 600;
     margin: 0;
+  }
+
+  .title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+
+  .logo {
+    height: 1.6rem;
+    width: auto;
   }
 
   .page {
