@@ -25,6 +25,7 @@ export const volumeEntrySchema = z.object({
   thumbnail: z.string().nullable(),
   updated: z.string().nullable().default(null),
   failure_log: z.string().nullable().default(null),
+  run_log: z.string().nullable().default(null),
 });
 
 export const campaignEntrySchema = z.object({

@@ -113,7 +113,7 @@ class Cluster:
             if e.status != 409:
                 raise
 
-    def failed_job_logs(self, name: str, tail: int = 50) -> str:
+    def job_logs(self, name: str, tail: int = 50) -> str:
         pods = self.core.list_namespaced_pod(
             self.ns, label_selector=f"batch.kubernetes.io/job-name={name}"
         ).items

@@ -29,6 +29,10 @@ def failure_log_key(pipeline_id: str, volume_id: str) -> str:
     return f"status/failures/{pipeline_id}/{volume_id}.txt"
 
 
+def run_log_key(pipeline_id: str, volume_id: str) -> str:
+    return f"status/logs/{pipeline_id}/{volume_id}.txt"
+
+
 def status_key() -> str:
     return "status/status.json"
 

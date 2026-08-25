@@ -13,6 +13,7 @@ const volume = {
   thumbnail: null,
   updated: null,
   failure_log: null,
+  run_log: null,
 };
 
 const oldDoc = {
@@ -44,6 +45,7 @@ describe("statusDocSchema", () => {
       if (vol) {
         expect(vol.updated).toBeNull();
         expect(vol.failure_log).toBeNull();
+        expect(vol.run_log).toBeNull();
       }
     }
   });
@@ -62,6 +64,7 @@ describe("statusDocSchema", () => {
               ...volume,
               updated: "2026-08-25T14:32:00Z",
               failure_log: "http://example/logs/v1.log",
+              run_log: "http://example/logs/v1-run.log",
             },
           ],
         },
@@ -77,6 +80,7 @@ describe("statusDocSchema", () => {
       if (vol) {
         expect(vol.updated).toBe("2026-08-25T14:32:00Z");
         expect(vol.failure_log).toBe("http://example/logs/v1.log");
+        expect(vol.run_log).toBe("http://example/logs/v1-run.log");
       }
     }
   });

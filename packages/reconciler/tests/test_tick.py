@@ -22,6 +22,7 @@ class FakeBucket:
         self._done = set(done)
         self.stored = stored or {}
         self.written = {}
+        self.put_text_calls = 0
 
     def done_volumes(self, pipeline_id):
         return {v: "2026-08-25T10:00:00Z" for v in self._done}
@@ -34,6 +35,10 @@ class FakeBucket:
 
     def put_text(self, key, text):
         self.written[key] = text
+        self.put_text_calls += 1
+
+    def exists(self, key):
+        return key in self.written
 
     def count_pages(self, pipeline_id, volume_id):
         return 638 if volume_id in self._done else 0
@@ -59,7 +64,7 @@ class FakeCluster:
     def ensure_configmap(self, pipeline_id, steps_yaml):
         self.configmaps[pipeline_id] = steps_yaml
 
-    def failed_job_logs(self, name, tail=50):
+    def job_logs(self, name, tail=50):
         return "boom traceback"
 
 
@@ -187,6 +192,38 @@ def test_needs_attention_uploads_log_and_links_it(tmp_path):
     )
     assert bucket.written["status/failures/demo-v1/R0000002.txt"] == "boom traceback"
     assert byid["loose"]["failure_log"] is None
+
+
+def test_done_volume_with_succeeded_job_uploads_run_log(tmp_path):
+    name = job_name("demo-v1", "R0000001")
+    jobs = {name: JobState(active=False, failed=False, succeeded=True)}
+    bucket, cluster = FakeBucket(done={"R0000001"}), FakeCluster(jobs=jobs)
+    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert bucket.written["status/logs/demo-v1/R0000001.txt"] == "boom traceback"
+    assert byid["R0000001"]["run_log"] == (
+        "http://pub/htr-results/status/logs/demo-v1/R0000001.txt"
+    )
+
+
+def test_done_volume_without_job_or_log_has_no_run_log(tmp_path):
+    bucket, cluster = FakeBucket(done={"R0000001"}), FakeCluster()
+    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert byid["R0000001"]["run_log"] is None
+    assert "status/logs/demo-v1/R0000001.txt" not in bucket.written
+
+
+def test_done_volume_with_existing_run_log_is_not_reuploaded(tmp_path):
+    bucket, cluster = FakeBucket(done={"R0000001"}), FakeCluster()
+    bucket.written["status/logs/demo-v1/R0000001.txt"] = "existing content"
+    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert byid["R0000001"]["run_log"] == (
+        "http://pub/htr-results/status/logs/demo-v1/R0000001.txt"
+    )
+    assert bucket.written["status/logs/demo-v1/R0000001.txt"] == "existing content"
+    assert bucket.put_text_calls == 0
 
 
 def test_tick_drift_blocks_pipeline(tmp_path):
