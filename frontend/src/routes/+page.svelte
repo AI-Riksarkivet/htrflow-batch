@@ -113,7 +113,12 @@
           {#if c.error !== null}
             <span class="chip needs-attention">broken</span>
           {:else}
-            <span class="chip pipeline">{c.pipeline}</span>
+            <span
+              class="chip pipeline"
+              title={c.pipeline_steps !== null && c.pipeline_steps.length > 0
+                ? c.pipeline_steps.join(" → ")
+                : undefined}>{c.pipeline}</span
+            >
             <progress max="100" value={progress(c.totals)}></progress>
             <span class="counts">
               {c.totals.done}/{c.totals.total} volumes
@@ -123,11 +128,6 @@
             </span>
           {/if}
         </button>
-        {#if c.pipeline_steps !== null && c.pipeline_steps.length > 0}
-          <p class="steps" title={c.pipeline_steps.join(" → ")}>
-            {c.pipeline_steps.join(" → ")}
-          </p>
-        {/if}
         {#if c.error !== null}<p class="notice error-row">{c.error}</p>{/if}
         {#if c.orphans.length > 0}
           <p class="notice warn-row">
@@ -326,15 +326,6 @@
     color: var(--muted-foreground);
     font-size: 0.8rem;
     margin: 0;
-  }
-
-  .steps {
-    color: var(--muted-foreground);
-    font-size: 11px;
-    margin: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .repo a {
