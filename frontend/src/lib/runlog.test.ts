@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { parseRunLog } from "./runlog.js";
+import { parseRunLog, splitLogLine } from "./runlog.js";
 
 describe("parseRunLog", () => {
   test("classifies and groups a log covering all five kinds", () => {
@@ -92,5 +92,34 @@ describe("parseRunLog", () => {
 
   test("empty text yields no groups", () => {
     expect(parseRunLog("")).toEqual({ groups: [] });
+  });
+});
+
+describe("splitLogLine", () => {
+  test("splits a matching INFO line into time, level, and message", () => {
+    const line = "2026-08-25 13:28:43,791 INFO Starting run for volume R1";
+    expect(splitLogLine(line)).toEqual({
+      time: "13:28:43.791",
+      level: "INFO",
+      msg: "Starting run for volume R1",
+    });
+  });
+
+  test("splits a matching WARNING line into time, level, and message", () => {
+    const line = "2026-08-25 13:28:44,002 WARNING low confidence on page 3";
+    expect(splitLogLine(line)).toEqual({
+      time: "13:28:44.002",
+      level: "WARNING",
+      msg: "low confidence on page 3",
+    });
+  });
+
+  test("a non-matching line (e.g. ultralytics print output) is left whole", () => {
+    const line = "Ultralytics YOLOv8.0.196 🚀 Python-3.11.4 torch-2.0.1 CPU";
+    expect(splitLogLine(line)).toEqual({ time: null, level: null, msg: line });
+  });
+
+  test("an empty string is left whole", () => {
+    expect(splitLogLine("")).toEqual({ time: null, level: null, msg: "" });
   });
 });

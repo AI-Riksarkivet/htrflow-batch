@@ -16,6 +16,33 @@ export interface ParsedLog {
 
 const MODEL_RE = /Initialized (YOLO|TrOCR)|Model '.*' on device|Running inference/;
 
+const LOG_LINE_RE =
+  /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}),(\d{3}) (INFO|WARNING|ERROR|DEBUG|CRITICAL) (.*)$/;
+
+export interface SplitLogLine {
+  time: string | null;
+  level: string | null;
+  msg: string;
+}
+
+/**
+ * Split one htrflow/wrapper log line (python `logging` format — date, time
+ * with comma-milliseconds, LEVEL, message) into columns for the viewer. Lines
+ * that don't match the shape (ultralytics prints, traceback continuations,
+ * bytes-repr artifacts, ...) render as-is with no time/level.
+ */
+export function splitLogLine(line: string): SplitLogLine {
+  const m = LOG_LINE_RE.exec(line);
+  if (m === null) return { time: null, level: null, msg: line };
+  // Groups are non-optional in LOG_LINE_RE, so a match guarantees all five
+  // captures are present — TS just can't see that through RegExpExecArray.
+  const time = m[2] as string;
+  const ms = m[3] as string;
+  const level = m[4] as string;
+  const msg = m[5] as string;
+  return { time: `${time}.${ms}`, level, msg };
+}
+
 /**
  * Old broken logs (fixed by the k8s.py `job_logs` decode bug) were uploaded
  * as the Python `str(bytes)` repr: `b'line one\nline two'` — a single line
