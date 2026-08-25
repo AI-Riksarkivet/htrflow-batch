@@ -635,3 +635,15 @@ def test_tick_drifted_pipeline_is_not_warmed(tmp_path):
     cluster.configmaps["demo-v1"] = "steps: [OLD]\n"
     tick(_repo(tmp_path), FakeBucket(), cluster, CFG, NOW)
     assert cluster.created == []
+
+
+def test_tick_finished_pipeline_is_never_warmed(tmp_path):
+    """Warm-up is lazy: a pipeline whose campaigns are all done has nothing to
+    submit, so warming it would only burn CPU — and, for pipelines pinned to
+    images that predate the warm-up entrypoint, fail and be recreated on
+    every tick forever."""
+    bucket = FakeBucket(done={"R0000001", "R0000002", "loose"})
+    cluster = FakeCluster(warmups={})
+    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    assert cluster.created == []
+    assert not any("warm" in w.lower() for w in doc["warnings"])
