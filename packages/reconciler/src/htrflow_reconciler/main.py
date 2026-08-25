@@ -304,6 +304,11 @@ def tick(
                 if camp.pipeline_id in pipelines
                 else None
             ),
+            "pipeline_yaml": (
+                pipelines[camp.pipeline_id].steps_yaml
+                if camp.pipeline_id in pipelines
+                else None
+            ),
             "error": camp.error,
             "totals": {
                 "done": 0,

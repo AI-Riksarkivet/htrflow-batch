@@ -503,6 +503,7 @@ def test_tick_unknown_pipeline_is_contained(tmp_path):
     ghost = [c for c in doc["campaigns"] if c["name"] == "ghost"][0]
     assert ghost["error"] is not None and "nope-v1" in ghost["error"]
     assert ghost["orphans"] == []
+    assert ghost["pipeline_yaml"] is None
 
 
 def _p3_manifest(n: int) -> dict:
@@ -548,6 +549,7 @@ def test_status_carries_repo_url_steps_and_page_totals(tmp_path):
     assert doc["campaigns_repo_url"] == "git://example/campaigns"
     camp = doc["campaigns"][0]
     assert camp["pipeline_steps"] == ["Segmentation"]
+    assert camp["pipeline_yaml"].startswith("steps:")
     byid = {v["id"]: v for v in camp["volumes"]}
     assert byid["loose"]["pages_total"] == 1  # len(images)
     assert byid["R0000002"]["pages_total"] == 4  # canvas count from fetch
