@@ -24,3 +24,15 @@ export function isStale(
   const ageSeconds = (now.getTime() - new Date(generatedAt).getTime()) / 1000;
   return ageSeconds > STALE_TICKS * tickSeconds;
 }
+
+/**
+ * Formats a pages label from pages_done and pages_total counts.
+ * Treats null pages_done as 0. Returns null if pages_total is unknown.
+ */
+export function pagesLabel(totals: {
+  pages_done: number | null;
+  pages_total: number | null;
+}): string | null {
+  if (totals.pages_total === null) return null;
+  return `${totals.pages_done ?? 0}/${totals.pages_total} pages`;
+}
