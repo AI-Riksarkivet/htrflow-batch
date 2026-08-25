@@ -420,3 +420,28 @@ def test_tick_unknown_pipeline_is_contained(tmp_path):
     ghost = [c for c in doc["campaigns"] if c["name"] == "ghost"][0]
     assert ghost["error"] is not None and "nope-v1" in ghost["error"]
     assert ghost["orphans"] == []
+
+
+def _p3_manifest(n: int) -> dict:
+    return {
+        "@context": "http://iiif.io/api/presentation/3/context.json",
+        "type": "Manifest",
+        "items": [
+            {"type": "Canvas", "items": [{"items": [{"body": {"id": f"http://x/{i}.jpg"}}]}]}
+            for i in range(n)
+        ],
+    }
+
+
+def test_validate_caches_page_count(tmp_path):
+    bucket, cluster = FakeBucket(), FakeCluster()
+    fetched = {}
+
+    def fetch(url):
+        fetched[url] = fetched.get(url, 0) + 1
+        return _p3_manifest(3)
+
+    tick(_repo(tmp_path), bucket, cluster, CFG, NOW, fetch_json=fetch)
+    validation = bucket.written["status/validation.json"]
+    ref = "https://lbiiif.riksarkivet.se/arkis!R0000002/manifest"
+    assert validation[ref]["page_count"] == 3

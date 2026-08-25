@@ -132,6 +132,19 @@ def _thumbnail(doc: object) -> str | None:
     return None
 
 
+def _page_count(doc: object) -> int | None:
+    """Canvas count for P3 (items) and P2 (sequences[0].canvases) manifests."""
+    if not isinstance(doc, dict):
+        return None
+    canvases = _as_list(doc.get("items"))
+    if not canvases:
+        seqs = _as_list(doc.get("sequences"))
+        first_seq = seqs[0] if seqs else None
+        if isinstance(first_seq, dict):
+            canvases = _as_list(first_seq.get("canvases"))
+    return len(canvases) or None
+
+
 def _classify(doc: object) -> str:
     """``classify_manifest`` hardened for the open web.
 
@@ -151,7 +164,7 @@ def _classify(doc: object) -> str:
 
 
 def _validate(url: str, cache: dict, fetch_json) -> dict:
-    """Verdict per manifest URL (spec §4.4): format + thumbnail.
+    """Verdict per manifest URL (spec §4.4): format + thumbnail + page_count.
 
     A verdict about the DOCUMENT is cached forever — a Collection or a P2-less
     manifest will not become submittable by being asked again. ``unreachable``
@@ -163,8 +176,12 @@ def _validate(url: str, cache: dict, fetch_json) -> dict:
         return cache[url]
     doc = fetch_json(url)
     if doc is None:
-        return {"format": "unreachable", "thumbnail": None}
-    verdict = {"format": _classify(doc), "thumbnail": _thumbnail(doc)}
+        return {"format": "unreachable", "thumbnail": None, "page_count": None}
+    verdict = {
+        "format": _classify(doc),
+        "thumbnail": _thumbnail(doc),
+        "page_count": _page_count(doc),
+    }
     cache[url] = verdict
     return verdict
 
