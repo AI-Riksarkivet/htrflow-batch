@@ -6,6 +6,7 @@ from htrflow_reconciler.parse import (
     PipelineError,
     parse_campaign,
     parse_pipeline,
+    step_summaries,
 )
 
 CAMPAIGN = """
@@ -113,9 +114,6 @@ def test_parse_pipeline_rejects_non_dns1123_id(pid):
 
 def test_parse_pipeline_accepts_dns1123_id():
     assert parse_pipeline("demo-v1", PIPELINE).id == "demo-v1"
-
-
-from htrflow_reconciler.parse import step_summaries
 
 
 def test_step_summaries_full_form():
