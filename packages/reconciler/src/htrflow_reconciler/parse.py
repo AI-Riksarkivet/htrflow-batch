@@ -92,3 +92,30 @@ def parse_pipeline(pipeline_id: str, text: str) -> PipelineSpec:
         steps_yaml=steps_yaml,
         steps_sha256=hashlib.sha256(steps_yaml.encode()).hexdigest(),
     )
+
+
+def step_summaries(steps_yaml: str) -> list[str]:
+    """One display line per pipeline step: ``Step: model (weights)``.
+
+    Display-only derivation for status.json — total over junk: anything
+    unparseable yields [] rather than failing the tick.
+    """
+    try:
+        doc = yaml.safe_load(steps_yaml)
+    except yaml.YAMLError:
+        return []
+    if not isinstance(doc, dict) or not isinstance(doc.get("steps"), list):
+        return []
+    out: list[str] = []
+    for step in doc["steps"]:
+        if not isinstance(step, dict) or not step.get("step"):
+            continue
+        label = str(step["step"])
+        settings = step.get("settings") or {}
+        if isinstance(settings, dict) and settings.get("model"):
+            label += f": {settings['model']}"
+            ms = settings.get("model_settings") or {}
+            if isinstance(ms, dict) and ms.get("model"):
+                label += f" ({ms['model']})"
+        out.append(label)
+    return out

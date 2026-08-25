@@ -113,3 +113,40 @@ def test_parse_pipeline_rejects_non_dns1123_id(pid):
 
 def test_parse_pipeline_accepts_dns1123_id():
     assert parse_pipeline("demo-v1", PIPELINE).id == "demo-v1"
+
+
+from htrflow_reconciler.parse import step_summaries
+
+
+def test_step_summaries_full_form():
+    yaml_text = """steps:
+  - step: Segmentation
+    settings:
+      model: yolo
+      model_settings:
+        model: Riksarkivet/yolov9-regions-1
+  - step: TextRecognition
+    settings:
+      model: TrOCR
+      model_settings:
+        model: Riksarkivet/trocr-base-handwritten-hist-swe-2
+"""
+    assert step_summaries(yaml_text) == [
+        "Segmentation: yolo (Riksarkivet/yolov9-regions-1)",
+        "TextRecognition: TrOCR (Riksarkivet/trocr-base-handwritten-hist-swe-2)",
+    ]
+
+
+def test_step_summaries_fallbacks():
+    yaml_text = """steps:
+  - step: Export
+  - step: Segmentation
+    settings:
+      model: yolo
+"""
+    assert step_summaries(yaml_text) == ["Export", "Segmentation: yolo"]
+
+
+def test_step_summaries_junk_is_empty():
+    assert step_summaries("steps: notalist") == []
+    assert step_summaries(": not yaml [") == []
