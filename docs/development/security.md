@@ -61,6 +61,20 @@ their backing pod and the apiserver by the node address it resolves to
 The viewer and the devStack services are matched by no policy and are
 unaffected.
 
+**Known limitation — policy sync window.** kube-router applies a new pod's
+policies asynchronously after the pod gets its IP: measured ~1 s on the k3s
+PoC node in steady state, tens of seconds right after the policies were first
+created. A pod can egress freely for that window. The batch wrapper does
+nothing network-facing in its first seconds except fetch the (allowed) IIIF
+manifest, so the practical exposure is a compromised image's first second;
+closing it needs a CNI with synchronous enforcement (Cilium, Calico) — not a
+chart change.
+
+Verified on the k3s PoC (2026-08-25, [test log](test-log.md)): a probe pod
+labelled `app=htrflow-batch` reaches only the IIIF origin and RustFS; HF Hub,
+the apiserver, the in-cluster registry, Harbor, the node and the public
+internet are rejected, while an unlabelled control pod reaches all of them.
+
 ## Cache PVC migration
 
 Pods used to run as root, so a cache PVC warmed before this change is
