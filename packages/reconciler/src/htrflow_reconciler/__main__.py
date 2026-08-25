@@ -44,6 +44,7 @@ def run() -> None:
     settings = Settings()  # reads CAMPAIGNS_REPO_URL etc.; raises if missing
     cfg = ReconcilerConfig(
         public_results_base=settings.public_results_base,
+        campaigns_repo_url=settings.campaigns_repo_url,
         namespace=settings.reconciler_namespace,
         queue=settings.reconciler_queue,
         s3_secret=settings.reconciler_s3_secret,
