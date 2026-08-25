@@ -15,7 +15,8 @@
 | D17 | Pipelines are **immutable ConfigMaps, one per pipeline version** (`htr-pipeline-<id>`); a changed pipeline is a new id, enforced by the API server ([Pipeline configs](wrapper.md#pipeline-configs-d17)) | settled |
 | D18 | **No CRD, no controller, no API service in the PoC** — `htrq` CLI only. Frontend/API ([Evolution](../roadmap/evolution.md)) and campaign-CRD ([Evolution](../roadmap/evolution.md)) are designed evolution steps, not v1 | settled |
 | D19 | Viewer = **Riksarkivet universalviewer4 fork** (already renders ALTO via canvas `seeAlso`); wrapper emits a per-volume IIIF P3 manifest `iiif.json` at publish; canvas dims = width-capped processing dims; results store serves CORS + correct content-types ([output contract](wrapper.md#output-store-and-completion-contract), [Evolution](../roadmap/evolution.md)) | **validated on k3s PoC** (2026-07-28, [test log](../development/test-log.md)) — fork gotchas in [The Wrapper](wrapper.md#output-store-and-completion-contract) |
-| D9–D15 | Improvement items (resume, naming, provenance, …) | open — see [Open Items](../roadmap/open-items.md) |
+| D14 | **Pod hardening**: every pod Pod-Security `restricted` (non-root, no caps, RO rootfs, seccomp, no SA token except the reconciler), secrets as files, egress-allowlist NetworkPolicies per role, and a **read-only, offline model cache** written only by a per-pipeline warm-up Job the reconciler gates on ([Security](../development/security.md), [Model handling](wrapper.md#model-handling)) | settled (2026-08-25) |
+| D9–D15 | Other improvement items (resume, naming, provenance, …) | open — see [Open Items](../roadmap/open-items.md) |
 
 This table is the index into everything else in this section: each settled
 decision links to the page that details it, and the two still-open rows

@@ -44,13 +44,28 @@ class FakeBucket:
         return 638 if volume_id in self._done else 0
 
 
+WARMED = JobState(active=False, failed=False, succeeded=True)
+
+
+class _AllWarmed(dict):
+    """Default warm-up snapshot: every pipeline's cache is already filled, so
+    the submission tests below exercise submission, not the warm-up gate."""
+
+    def get(self, key, default=None):
+        return WARMED
+
+
 class FakeCluster:
-    def __init__(self, jobs=None):
+    def __init__(self, jobs=None, warmups=None):
         self._jobs = jobs or {}
+        self._warmups = warmups
         self.created, self.deleted, self.configmaps = [], [], {}
 
     def jobs(self):
         return dict(self._jobs)
+
+    def warmups(self):
+        return dict(self._warmups) if self._warmups is not None else _AllWarmed()
 
     def create_job(self, job):
         self.created.append(job)
@@ -81,7 +96,11 @@ NOW = "2026-07-29T09:00:00Z"
 
 
 def _created_volumes(cluster) -> list[str]:
-    return [j["metadata"]["labels"]["batch.htrflow/volume"] for j in cluster.created]
+    return [
+        j["metadata"]["labels"]["batch.htrflow/volume"]
+        for j in cluster.created
+        if j["metadata"]["labels"]["app"] == "htrflow-batch"
+    ]
 
 
 def test_tick_submits_missing_and_writes_status(tmp_path):
@@ -92,7 +111,10 @@ def test_tick_submits_missing_and_writes_status(tmp_path):
     assert cluster.configmaps["demo-v1"].startswith("steps:")
     camp = doc["campaigns"][0]
     assert camp["totals"] == {
-        "done": 1, "total": 3, "pages_done": 638, "pages_total": 638 + 1
+        "done": 1,
+        "total": 3,
+        "pages_done": 638,
+        "pages_total": 638 + 1,
     }
     byid = {v["id"]: v for v in camp["volumes"]}
     assert byid["R0000001"]["status"] == "done"
@@ -488,7 +510,10 @@ def _p3_manifest(n: int) -> dict:
         "@context": "http://iiif.io/api/presentation/3/context.json",
         "type": "Manifest",
         "items": [
-            {"type": "Canvas", "items": [{"items": [{"body": {"id": f"http://x/{i}.jpg"}}]}]}
+            {
+                "type": "Canvas",
+                "items": [{"items": [{"body": {"id": f"http://x/{i}.jpg"}}]}],
+            }
             for i in range(n)
         ],
     }
@@ -524,9 +549,9 @@ def test_status_carries_repo_url_steps_and_page_totals(tmp_path):
     camp = doc["campaigns"][0]
     assert camp["pipeline_steps"] == ["Segmentation"]
     byid = {v["id"]: v for v in camp["volumes"]}
-    assert byid["loose"]["pages_total"] == 1          # len(images)
-    assert byid["R0000002"]["pages_total"] == 4       # canvas count from fetch
-    assert byid["R0000001"]["pages_total"] == 638     # done fallback = pages_done
+    assert byid["loose"]["pages_total"] == 1  # len(images)
+    assert byid["R0000002"]["pages_total"] == 4  # canvas count from fetch
+    assert byid["R0000001"]["pages_total"] == 638  # done fallback = pages_done
     assert camp["totals"]["pages_total"] == 638 + 4 + 1
     assert camp["totals"]["pages_done"] == 638
 
@@ -562,7 +587,8 @@ def test_synthetic_manifest_job_url_uses_internal_base(tmp_path):
     bucket, cluster = FakeBucket(), FakeCluster()
     doc = tick(_repo(tmp_path), bucket, cluster, cfg, NOW)
     loose_job = next(
-        j for j in cluster.created
+        j
+        for j in cluster.created
         if j["metadata"]["labels"]["batch.htrflow/volume"] == "loose"
     )
     env = {
@@ -584,7 +610,8 @@ def test_internal_base_falls_back_to_public(tmp_path):
     bucket, cluster = FakeBucket(), FakeCluster()
     tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
     loose_job = next(
-        j for j in cluster.created
+        j
+        for j in cluster.created
         if j["metadata"]["labels"]["batch.htrflow/volume"] == "loose"
     )
     env = {
@@ -592,3 +619,68 @@ def test_internal_base_falls_back_to_public(tmp_path):
         for e in loose_job["spec"]["template"]["spec"]["containers"][0]["env"]
     }
     assert env["IIIF_MANIFEST_URL"].startswith("http://pub/htr-results/sources/")
+
+
+def _warmups_created(cluster) -> list[str]:
+    return [
+        j["metadata"]["name"]
+        for j in cluster.created
+        if j["metadata"]["labels"]["app"] == "htrflow-warmup"
+    ]
+
+
+def test_tick_warms_a_new_pipeline_before_submitting_its_volumes(tmp_path):
+    """A pipeline whose cache is not yet warm gets its warm-up Job and nothing
+    else: batch Jobs run offline on a read-only cache, so submitting them
+    first would only burn attempts on ``model not found``."""
+    bucket, cluster = FakeBucket(), FakeCluster(warmups={})
+    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    assert _warmups_created(cluster) == ["htr-warmup-demo-v1"]
+    assert _created_volumes(cluster) == []
+    assert any("warm" in w.lower() and "demo-v1" in w for w in doc["warnings"])
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert byid["R0000002"]["status"] == "pending"
+
+
+def test_tick_waits_while_warmup_runs(tmp_path):
+    running = JobState(active=True, failed=False)
+    cluster = FakeCluster(warmups={"demo-v1": running})
+    tick(_repo(tmp_path), FakeBucket(), cluster, CFG, NOW)
+    assert cluster.created == []
+
+
+def test_tick_submits_once_warmup_succeeded(tmp_path):
+    cluster = FakeCluster(warmups={"demo-v1": WARMED})
+    doc = tick(_repo(tmp_path), FakeBucket(), cluster, CFG, NOW)
+    assert _warmups_created(cluster) == []
+    assert len(_created_volumes(cluster)) == 3
+    assert not any("warm" in w.lower() for w in doc["warnings"])
+
+
+def test_tick_failed_warmup_is_logged_deleted_and_retried_next_tick(tmp_path):
+    failed = JobState(active=False, failed=True, exit_code=1)
+    bucket, cluster = FakeBucket(), FakeCluster(warmups={"demo-v1": failed})
+    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    assert cluster.deleted == ["htr-warmup-demo-v1"]
+    assert cluster.created == []
+    assert bucket.written["status/warmup/demo-v1.log"] == "boom traceback"
+    assert any("warm" in w.lower() and "failed" in w.lower() for w in doc["warnings"])
+
+
+def test_tick_drifted_pipeline_is_not_warmed(tmp_path):
+    cluster = FakeCluster(warmups={})
+    cluster.configmaps["demo-v1"] = "steps: [OLD]\n"
+    tick(_repo(tmp_path), FakeBucket(), cluster, CFG, NOW)
+    assert cluster.created == []
+
+
+def test_tick_finished_pipeline_is_never_warmed(tmp_path):
+    """Warm-up is lazy: a pipeline whose campaigns are all done has nothing to
+    submit, so warming it would only burn CPU — and, for pipelines pinned to
+    images that predate the warm-up entrypoint, fail and be recreated on
+    every tick forever."""
+    bucket = FakeBucket(done={"R0000001", "R0000002", "loose"})
+    cluster = FakeCluster(warmups={})
+    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    assert cluster.created == []
+    assert not any("warm" in w.lower() for w in doc["warnings"])

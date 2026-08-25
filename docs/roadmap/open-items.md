@@ -11,7 +11,7 @@ real cluster.
 | D11 | Provenance manifest contents | designed in, confirm |
 | D12 | Structured failure via termination-log | designed in, confirm |
 | D13 | Priority lanes (`htr-interactive` > `htr-bulk`) | proposed, confirm |
-| D14 | Pod security + egress NetworkPolicy | proposed (see [Security](../development/security.md)), confirm |
+| D14 | Pod security + egress NetworkPolicy | **built** — restricted pod specs, NetworkPolicies, read-only offline model cache with reconciler-owned warm-up (see [Security](../development/security.md)); a sandboxed runtime is the open follow-up |
 | D15 | `htrq submit --dry-run` | proposed, confirm |
 | — | `htrq` CLI itself (submit/status/logs/retry/report/pipeline deploy) | designed in [the wrapper doc](../how-it-works/wrapper.md#htrq-cli), no in-cluster components; not yet built as a standalone package |
 | — | GitOps campaigns + read-only status page | **built** — reconciler CronJob and campaign browser, see [Campaigns (GitOps)](../how-it-works/campaigns.md); enabling it on a cluster is a separate step |
