@@ -188,6 +188,13 @@
                         target="_blank"
                         rel="noopener">log</a
                       >
+                    {:else if v.run_log !== null}
+                      <a
+                        class="secondary"
+                        href={v.run_log}
+                        target="_blank"
+                        rel="noopener">log</a
+                      >
                     {/if}
                   </td>
                 </tr>

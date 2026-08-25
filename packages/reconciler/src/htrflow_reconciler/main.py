@@ -312,7 +312,7 @@ def tick(
             if st == "retry" and pid not in blocked:
                 name = job_name(pid, v.id)
                 bucket.put_text(
-                    keys.failure_log_key(pid, v.id), cluster.failed_job_logs(name)
+                    keys.failure_log_key(pid, v.id), cluster.job_logs(name)
                 )
                 cluster.delete_job(name)
                 attempts[akey] = attempts.get(akey, 0) + 1
@@ -326,7 +326,7 @@ def tick(
                 # state with no uploaded evidence. Idempotent overwrite.
                 bucket.put_text(
                     keys.failure_log_key(pid, v.id),
-                    cluster.failed_job_logs(job_name(pid, v.id)),
+                    cluster.job_logs(job_name(pid, v.id)),
                 )
             if st == "done":
                 entry["totals"]["done"] += 1
@@ -340,6 +340,17 @@ def tick(
                 pages_total = cached_v.get("page_count") if cached_v else None
             if pages_total is None and st == "done":
                 pages_total = pages_done
+            run_log = None
+            if st == "done":
+                log_key = keys.run_log_key(pid, v.id)
+                job = jobs.get(job_name(pid, v.id))
+                if bucket.exists(log_key):
+                    run_log = f"{cfg.public_results_base.rstrip('/')}/{log_key}"
+                elif job is not None and job.succeeded:
+                    # Jobs linger ttlSecondsAfterFinished (24h) after Complete —
+                    # one upload per volume, guarded by the HEAD above.
+                    bucket.put_text(log_key, cluster.job_logs(job_name(pid, v.id)))
+                    run_log = f"{cfg.public_results_base.rstrip('/')}/{log_key}"
             entry["volumes"].append(
                 {
                     "id": v.id,
@@ -352,6 +363,7 @@ def tick(
                         if st in ("retry", "needs-attention")
                         else None
                     ),
+                    "run_log": run_log,
                     "pages_done": pages_done,
                     "pages_total": pages_total,
                     "error": None,

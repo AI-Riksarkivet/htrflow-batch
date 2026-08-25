@@ -14,6 +14,7 @@ const done: VolumeEntry = {
   thumbnail: null,
   updated: null,
   failure_log: null,
+  run_log: null,
 };
 const pending: VolumeEntry = { ...done, status: "pending", viewer_manifest: null };
 
