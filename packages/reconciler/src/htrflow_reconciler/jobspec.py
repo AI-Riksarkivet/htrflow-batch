@@ -11,6 +11,9 @@ class ReconcilerConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     public_results_base: str
+    # Job-facing base for synthetic manifests (in-cluster S3 endpoint); empty
+    # falls back to public_results_base (real AWS reaches everywhere).
+    internal_results_base: str = ""
     campaigns_repo_url: str = ""
     campaigns_repo_web_url: str = ""
     namespace: str = "htr-batch"

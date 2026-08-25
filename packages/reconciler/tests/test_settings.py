@@ -4,7 +4,7 @@ rename here silently breaks the deployment unless a test pins them."""
 import pytest
 from pydantic import ValidationError
 
-from htrflow_reconciler.__main__ import Settings
+from htrflow_reconciler.__main__ import Settings, _internal_results_base
 from htrflow_reconciler.jobspec import ReconcilerConfig
 
 REQUIRED = {
@@ -73,3 +73,13 @@ def test_repo_web_url_defaults_empty(env):
 def test_repo_web_url_env_populates_setting(env):
     s = env(CAMPAIGNS_REPO_WEB_URL="https://github.com/example/campaigns")
     assert s.campaigns_repo_web_url == "https://github.com/example/campaigns"
+
+
+def test_internal_results_base_from_s3_endpoint(env):
+    s = env(S3_ENDPOINT="http://rustfs.ns.svc:9000/", S3_BUCKET="htr-results")
+    assert _internal_results_base(s) == "http://rustfs.ns.svc:9000/htr-results"
+
+
+def test_internal_results_base_empty_without_endpoint(env):
+    s = env()
+    assert _internal_results_base(s) == ""
