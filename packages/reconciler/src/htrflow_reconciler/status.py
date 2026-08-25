@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Mapping
+from collections.abc import Set as AbstractSet
 
 from pydantic import BaseModel, ConfigDict
 
@@ -49,7 +51,7 @@ def job_name(pipeline_id: str, volume_id: str) -> str:
 def derive(
     volume: Volume,
     pipeline_id: str,
-    done: set[str],
+    done: Mapping[str, str] | AbstractSet[str],
     jobs: dict[str, JobState],
     attempts: dict[str, int],
     attempt_cap: int,

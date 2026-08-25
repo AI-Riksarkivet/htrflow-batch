@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import boto3
 import pytest
 from moto import mock_aws
@@ -16,7 +18,7 @@ def bucket():
 def test_done_volumes_requires_manifest(bucket):
     bucket.write_json(manifest_key("demo-v1", "R1"), {"pages": 1})
     bucket.put_text("demo-v1/R2/alto/0001.xml", "<alto/>")  # partial, no manifest
-    assert bucket.done_volumes("demo-v1") == {"R1"}
+    assert bucket.done_volumes("demo-v1").keys() == {"R1"}
 
 
 def test_done_volumes_probes_with_head_not_get(bucket):
@@ -28,7 +30,22 @@ def test_done_volumes_probes_with_head_not_get(bucket):
         raise AssertionError("done_volumes must probe with head_object")
 
     bucket.c.get_object = no_downloads
-    assert bucket.done_volumes("demo-v1") == {"R1"}
+    assert bucket.done_volumes("demo-v1").keys() == {"R1"}
+
+
+def test_done_volumes_returns_manifest_mtimes(bucket, monkeypatch):
+    bucket.write_json(manifest_key("demo-v1", "R0000001"), {"pages": 1})
+
+    real_head_object = bucket.c.head_object
+
+    def stub_head_object(**kwargs):
+        result = real_head_object(**kwargs)
+        result["LastModified"] = datetime(2026, 8, 25, 10, 0, 0, tzinfo=timezone.utc)
+        return result
+
+    monkeypatch.setattr(bucket.c, "head_object", stub_head_object)
+    done = bucket.done_volumes("demo-v1")
+    assert done == {"R0000001": "2026-08-25T10:00:00Z"}
 
 
 def test_read_json_missing_returns_none(bucket):

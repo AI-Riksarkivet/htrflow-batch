@@ -9,6 +9,7 @@ land at ``<pipeline>/<volume>/…``, which is why ``jobspec.build_job`` pins
 from __future__ import annotations
 
 import json
+from datetime import timezone
 from typing import Any
 
 from botocore.exceptions import ClientError
@@ -78,24 +79,30 @@ class Bucket:
                 return False
             raise
 
-    def done_volumes(self, pipeline_id: str) -> set[str]:
-        """Volume ids under ``<pipeline>/`` that carry a written manifest.
-
-        A manifest is the wrapper's completion marker: a volume with ALTO pages
-        but no manifest is a partial run, not a done one. The probe is a HEAD,
-        never a GET — a manifest embeds the pipeline YAML and every page result,
-        so downloading one per volume would blow the tick's deadline on a
-        campaign of a thousand volumes.
+    def done_volumes(self, pipeline_id: str) -> dict[str, str]:
+        """Volume id -> manifest.json LastModified (ISO-8601 UTC) under
+        ``<pipeline>/``. A manifest is the wrapper's completion marker; its
+        mtime is when the volume finished publishing. Still HEAD-only.
         """
-        done: set[str] = set()
+        done: dict[str, str] = {}
         paginator = self.c.get_paginator("list_objects_v2")
         for page in paginator.paginate(
             Bucket=self.bucket, Prefix=f"{pipeline_id}/", Delimiter="/"
         ):
             for cp in page.get("CommonPrefixes", []):
                 vid = cp["Prefix"].rstrip("/").split("/", 1)[1]
-                if self.exists(manifest_key(pipeline_id, vid)):
-                    done.add(vid)
+                try:
+                    head = self.c.head_object(
+                        Bucket=self.bucket, Key=manifest_key(pipeline_id, vid)
+                    )
+                except ClientError as e:
+                    code = str(e.response.get("Error", {}).get("Code", ""))
+                    if code in _MISSING_CODES:
+                        continue
+                    raise
+                done[vid] = head["LastModified"].astimezone(timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
         return done
 
     def count_pages(self, pipeline_id: str, volume_id: str) -> int:
