@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { isStale, progress, viewerHref } from "./derive.js";
+import { isStale, pagesLabel, progress, viewerHref } from "./derive.js";
 import type { VolumeEntry } from "./status.js";
 
 const done: VolumeEntry = {
@@ -37,5 +37,17 @@ describe("derive", () => {
     const now = new Date("2026-07-29T09:20:00Z");
     expect(isStale("2026-07-29T09:00:00Z", 300, now)).toBe(true);
     expect(isStale("2026-07-29T09:11:00Z", 300, now)).toBe(false);
+  });
+});
+
+describe("pagesLabel", () => {
+  test("renders d/t when total known", () => {
+    expect(pagesLabel({ pages_done: 1, pages_total: 2 })).toBe("1/2 pages");
+  });
+  test("treats null done as 0", () => {
+    expect(pagesLabel({ pages_done: null, pages_total: 2 })).toBe("0/2 pages");
+  });
+  test("hides when total unknown", () => {
+    expect(pagesLabel({ pages_done: 3, pages_total: null })).toBeNull();
   });
 });
