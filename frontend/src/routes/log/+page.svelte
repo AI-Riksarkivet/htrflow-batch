@@ -17,6 +17,7 @@
     image_digest: string;
     pages: number;
     results: Record<string, PageResult>;
+    pipeline_yaml?: string;
   }
 
   function isRunManifest(v: unknown): v is RunManifest {
@@ -29,7 +30,8 @@
       typeof m.image_digest === "string" &&
       typeof m.pages === "number" &&
       typeof m.results === "object" &&
-      m.results !== null
+      m.results !== null &&
+      (m.pipeline_yaml === undefined || typeof m.pipeline_yaml === "string")
     );
   }
 
@@ -196,6 +198,13 @@
           {/each}
         </tbody>
       </table>
+    {/if}
+
+    {#if manifest.pipeline_yaml}
+      <details class="pipeline-yaml">
+        <summary>pipeline</summary>
+        <pre>{manifest.pipeline_yaml}</pre>
+      </details>
     {/if}
   {/if}
 
@@ -479,6 +488,27 @@
   .chip.destructive {
     background: color-mix(in oklab, var(--destructive) 15%, transparent);
     color: var(--destructive);
+  }
+
+  details.pipeline-yaml {
+    margin-bottom: 1.25rem;
+  }
+
+  details.pipeline-yaml summary {
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--muted-foreground);
+  }
+
+  details.pipeline-yaml pre {
+    margin: 0.5rem 0 0;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
   }
 
   .log {

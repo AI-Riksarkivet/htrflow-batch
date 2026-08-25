@@ -32,6 +32,7 @@ export const campaignEntrySchema = z.object({
   name: z.string(),
   pipeline: z.string().nullable(),
   pipeline_steps: z.array(z.string()).nullable().default(null),
+  pipeline_yaml: z.string().nullable().default(null),
   error: z.string().nullable(),
   totals: z.object({
     done: z.number(),
