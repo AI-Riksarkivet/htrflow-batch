@@ -320,6 +320,14 @@ def tick(
                 lane.append((v, job_src))
             elif st == "pending" and pid not in blocked:
                 lane.append((v, job_src))
+            elif st == "needs-attention" and job_name(pid, v.id) in jobs:
+                # The retry path uploads logs before deleting the Job; an
+                # exit-13 (or capped) volume otherwise reaches its terminal
+                # state with no uploaded evidence. Idempotent overwrite.
+                bucket.put_text(
+                    keys.failure_log_key(pid, v.id),
+                    cluster.failed_job_logs(job_name(pid, v.id)),
+                )
             if st == "done":
                 entry["totals"]["done"] += 1
             pages_done = (
@@ -338,6 +346,12 @@ def tick(
                     "status": st,
                     "attempts": attempts.get(akey, 0),
                     "updated": done.get(v.id),
+                    "failure_log": (
+                        f"{cfg.public_results_base.rstrip('/')}/"
+                        f"{keys.failure_log_key(pid, v.id)}"
+                        if st in ("retry", "needs-attention")
+                        else None
+                    ),
                     "pages_done": pages_done,
                     "pages_total": pages_total,
                     "error": None,
