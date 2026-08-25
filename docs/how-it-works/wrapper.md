@@ -162,8 +162,10 @@ other tenants.
   submission collides at the API server: **the cluster enforces idempotent
   submission, not CLI bookkeeping** (D10).
 - Mounts: pipeline ConfigMap (immutable, per version — see
-  [Pipeline configs](#pipeline-configs-d17)), S3 Secret, `HF_TOKEN` Secret,
-  tmpfs workdir, model cache (see [Model handling](#model-handling)).
+  [Pipeline configs](#pipeline-configs-d17)), S3 Secret as a credentials
+  *file*, tmpfs workdir, read-only model cache (see
+  [Model handling](#model-handling)); Pod Security `restricted`
+  ([Security](../development/security.md)).
 
 ## Output store and completion contract
 
@@ -251,29 +253,38 @@ Two distinct per-Job costs — don't conflate them:
 
 | Cost | When paid | Size |
 |---|---|---|
-| **download** (HF Hub → `HF_HOME`) | per Job **only if uncached** (`HF_HOME` is an emptyDir, dies with the pod) | ~2–4 GB, minutes of WAN while holding the GPU |
+| **download** (HF Hub → `HF_HOME`) | **once per pipeline**, by the warm-up Job — never by a batch Job | ~2–4 GB, off the GPU's clock entirely |
 | **load** (`HF_HOME` → GPU) | per Job, always — `Pipeline.from_config()` instantiates step models eagerly (verified: `steps.py` builds models at construction; TrOCR `__init__` calls `from_pretrained`); every `pipeline.run(page)` reuses them | ~30–60 s, amortized to noise at volume granularity |
 
 The streaming driver overlaps the load with the first pages' downloads (start
 the downloader pool, *then* call `from_config()`), so startup GPU-idle is
 `max(model_load, first_page_download)`, not the sum.
 
-Cache options for the download cost:
+**Pre-warmed cache, read-only for Jobs (settled, D14).** Batch Jobs mount the
+cache PVC `readOnly` with `HF_HUB_OFFLINE=1`: they never download and never
+write, and the NetworkPolicy gives them no HF Hub egress at all. The one
+writer is the **warm-up Job** (`htrflow_batch.warmup`) — same image, same
+pipeline ConfigMap, CPU-only, outside the Kueue queue — which simply calls
+`Pipeline.from_config()`: instantiating the pipeline *is* the download, so
+exactly the files a Job will load land in the cache, with no second parser of
+the pipeline YAML. Who runs it:
 
-1. **v1 (accepted):** no cache — every Job re-downloads. Fine for the
-   acceptance tests; needs `HF_TOKEN` + HF egress in the NetworkPolicy.
-2. **First optimization after v1, before any real campaign — pre-warmed PVC:**
-   one-shot Job downloads the pipeline's models into a PVC; batch Jobs mount it
-   read-only with `HF_HOME` pointed at it. Break-even math: 200 volumes × ~3 min
-   GPU-held downloading ≈ 10 wasted GPU-hours per campaign vs a mount.
-   Warm-up belongs to pipeline deployment (a future `htrq pipeline deploy`
-   renders the ConfigMap *and* runs the warm-up Job).
-3. **Bake into image (alternative):** hermetic, zero runtime HF dependency,
-   image grows several GB. Reasonable if RWX/ROX PVCs are awkward.
+- **Campaigns-repo pipelines:** the reconciler, on first sight of a pipeline
+  (`htr-warmup-<id>`). It submits no volumes for that pipeline until the
+  warm-up's `Complete` condition lands; a failed warm-up is logged to
+  `status/warmup/<id>.log`, deleted and recreated next tick, so an HF Hub
+  outage heals itself. The Job is never TTL-reaped — its condition is the
+  gate — so after replacing the cache PVC, delete `htr-warmup-*` to re-warm.
+- **Chart-declared pipelines** (`values.pipelines`, the example Job):
+  `make warmup PIPELINE=<id> IMAGE=<ref>`, which renders the same Job spec
+  through `python -m htrflow_reconciler.warmup | kubectl apply`.
 
-(The container image itself — CUDA + torch, also multi-GB — is cached per node
-by kubelet; only the first Job on a node pays that pull. It's specifically the
-HF model cache that repeats per pod without a PVC.)
+Alternatives kept on record: no cache (v1 — every Job re-downloads while
+holding the GPU, needs `HF_TOKEN` + HF egress in every Job) and baking the
+weights into the image (hermetic, but multi-GB images per pipeline). The
+model-registry variant — weights as signed OCI artifacts pulled from an
+in-cluster registry into the cache — is the natural next step and keeps this
+mount-point contract unchanged.
 
 Wrapper only ever sees `HF_HOME`; the cache choice is a mount-point swap.
 

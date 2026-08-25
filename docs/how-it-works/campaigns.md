@@ -101,9 +101,15 @@ steps and `image_digest` covers the image — the drift guards check both.
 
     Model weights are pulled from Hugging Face at runtime. Unless each step
     pins a model `revision`, an upstream model update can still change output
-    under the same pipeline id (the shared HF cache PVC makes this stable in
-    practice, not in principle). GPU nondeterminism means bit-identical
-    reruns are out of scope regardless.
+    under the same pipeline id (the read-only cache, filled once per
+    pipeline by the warm-up Job, makes this stable in practice, not in
+    principle). GPU nondeterminism means bit-identical reruns are out of
+    scope regardless.
+
+A pipeline's first appearance also creates its **warm-up Job**
+(`htr-warmup-<id>`): the reconciler submits no volumes for that pipeline
+until the Job completes, and reports `warming model cache` in the status
+warnings meanwhile ([Model handling](wrapper.md#model-handling)).
 
 ## Immutability and the drift guards
 
@@ -251,9 +257,12 @@ reproducibly) — see [Running a campaign](../getting-started/campaigns.md).
    it.
 2. **Campaigns repo write access ≈ code execution in the job pod.** Pipeline
    YAML selects arbitrary Hugging Face model repos, and model loading is a
-   known code-execution surface. The pod has a GPU, egress and S3 write, but a
-   fixed image, no cluster credentials, and its own namespace. Treat the repo
-   like CI config: protected `main`, required review.
+   known code-execution surface. The pod has a GPU and S3 write, but runs
+   non-root on a read-only root filesystem with no capabilities, no cluster
+   credentials, a read-only model cache, and egress to DNS, S3 and the IIIF
+   origin only ([Security](../development/security.md)). Model *download*
+   happens in the warm-up pod, which has internet egress but no S3 and no
+   GPU. Treat the repo like CI config: protected `main`, required review.
 3. **Results are a single unreplicated PVC on one node.** Git is durably
    hosted; the bucket is not backed up. Losing that disk means recomputing
    every campaign. Acceptable for the PoC, and must be restated before anyone
