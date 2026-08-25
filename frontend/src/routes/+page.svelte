@@ -194,9 +194,14 @@
                     {:else if v.run_log !== null}
                       <a
                         class="secondary"
-                        href={v.run_log}
-                        target="_blank"
-                        rel="noopener">log</a
+                        href={"log?log=" +
+                          encodeURIComponent(v.run_log) +
+                          (v.viewer_manifest !== null
+                            ? "&manifest=" +
+                              encodeURIComponent(
+                                v.viewer_manifest.replace(/iiif\.json$/, "manifest.json"),
+                              )
+                            : "")}>log</a
                       >
                     {/if}
                   </td>
