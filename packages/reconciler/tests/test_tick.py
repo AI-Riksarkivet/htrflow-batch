@@ -86,7 +86,9 @@ def test_tick_submits_missing_and_writes_status(tmp_path):
     assert len(cluster.created) == 2
     assert cluster.configmaps["demo-v1"].startswith("steps:")
     camp = doc["campaigns"][0]
-    assert camp["totals"] == {"done": 1, "total": 3}
+    assert camp["totals"] == {
+        "done": 1, "total": 3, "pages_done": 638, "pages_total": 638 + 1
+    }
     byid = {v["id"]: v for v in camp["volumes"]}
     assert byid["R0000001"]["status"] == "done"
     assert byid["R0000001"]["viewer_manifest"] == (
@@ -445,3 +447,37 @@ def test_validate_caches_page_count(tmp_path):
     validation = bucket.written["status/validation.json"]
     ref = "https://lbiiif.riksarkivet.se/arkis!R0000002/manifest"
     assert validation[ref]["page_count"] == 3
+
+
+def test_status_carries_repo_url_steps_and_page_totals(tmp_path):
+    cfg = ReconcilerConfig(
+        public_results_base="http://pub/htr-results",
+        window=20,
+        campaigns_repo_url="git://example/campaigns",
+    )
+    bucket, cluster = FakeBucket(done={"R0000001"}), FakeCluster()
+
+    def fetch(url):
+        return _p3_manifest(4)
+
+    doc = tick(_repo(tmp_path), bucket, cluster, cfg, NOW, fetch_json=fetch)
+    assert doc["campaigns_repo_url"] == "git://example/campaigns"
+    camp = doc["campaigns"][0]
+    assert camp["pipeline_steps"] == ["Segmentation"]
+    byid = {v["id"]: v for v in camp["volumes"]}
+    assert byid["loose"]["pages_total"] == 1          # len(images)
+    assert byid["R0000002"]["pages_total"] == 4       # canvas count from fetch
+    assert byid["R0000001"]["pages_total"] == 638     # done fallback = pages_done
+    assert camp["totals"]["pages_total"] == 638 + 4 + 1
+    assert camp["totals"]["pages_done"] == 638
+
+
+def test_page_totals_null_when_unknown(tmp_path):
+    bucket, cluster = FakeBucket(), FakeCluster()
+    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)  # no fetch_json
+    camp = doc["campaigns"][0]
+    byid = {v["id"]: v for v in camp["volumes"]}
+    assert byid["R0000002"]["pages_total"] is None
+    assert byid["loose"]["pages_total"] == 1
+    assert camp["totals"]["pages_total"] == 1
+    assert camp["totals"]["pages_done"] is None

@@ -10,7 +10,7 @@ from . import s3 as keys
 from .guards import check_drift
 from .jobspec import ReconcilerConfig, build_job
 from .models import Campaign, PipelineSpec, Volume
-from .parse import PipelineError, parse_campaign, parse_pipeline
+from .parse import PipelineError, parse_campaign, parse_pipeline, step_summaries
 from .plan import plan_submissions
 from .status import derive, job_name
 from .synthetic import build_manifest, classify_manifest
@@ -228,6 +228,7 @@ def tick(
     doc: dict[str, Any] = {
         "generated_at": now_iso,
         "tick_seconds": TICK_SECONDS,
+        "campaigns_repo_url": cfg.campaigns_repo_url,
         "warnings": warnings,
         "campaigns": [],
     }
@@ -253,8 +254,14 @@ def tick(
         entry: dict[str, Any] = {
             "name": camp.name,
             "pipeline": camp.pipeline_id or None,
+            "pipeline_steps": (
+                step_summaries(pipelines[camp.pipeline_id].steps_yaml)
+                if camp.pipeline_id in pipelines
+                else None
+            ),
             "error": camp.error,
-            "totals": {"done": 0, "total": len(camp.volumes)},
+            "totals": {"done": 0, "total": len(camp.volumes),
+                       "pages_done": None, "pages_total": None},
             "volumes": [],
             "orphans": [],
         }
@@ -306,15 +313,23 @@ def tick(
                 lane.append((v, src))
             if st == "done":
                 entry["totals"]["done"] += 1
+            pages_done = (
+                bucket.count_pages(pid, v.id) if st in ("done", "running") else None
+            )
+            if v.images:
+                pages_total: int | None = len(v.images)
+            else:
+                cached_v = validation.get(v.manifest_url) if v.manifest_url else None
+                pages_total = cached_v.get("page_count") if cached_v else None
+            if pages_total is None and st == "done":
+                pages_total = pages_done
             entry["volumes"].append(
                 {
                     "id": v.id,
                     "status": st,
                     "attempts": attempts.get(akey, 0),
-                    "pages_done": bucket.count_pages(pid, v.id)
-                    if st in ("done", "running")
-                    else None,
-                    "pages_total": None,
+                    "pages_done": pages_done,
+                    "pages_total": pages_total,
                     "error": None,
                     "viewer_manifest": (
                         f"{cfg.public_results_base.rstrip('/')}/{pid}/{v.id}/iiif.json"
@@ -325,6 +340,14 @@ def tick(
                     "thumbnail": thumb,
                 }
             )
+        known_totals = [
+            v["pages_total"] for v in entry["volumes"] if v["pages_total"] is not None
+        ]
+        known_done = [
+            v["pages_done"] for v in entry["volumes"] if v["pages_done"] is not None
+        ]
+        entry["totals"]["pages_total"] = sum(known_totals) if known_totals else None
+        entry["totals"]["pages_done"] = sum(known_done) if known_done else None
         if pid not in blocked and lane:
             pending[camp.name] = lane
 
