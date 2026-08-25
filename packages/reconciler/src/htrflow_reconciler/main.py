@@ -62,14 +62,23 @@ def _load_repo(campaigns_dir: Path):
 
 def _source_manifest_url(
     volume: Volume, pipeline_id: str, bucket, cfg: ReconcilerConfig
-) -> str:
+) -> tuple[str, str]:
+    """(browser URL, job URL) for the volume's source manifest.
+
+    The synthetic manifest is written once under its PUBLIC id (browsers
+    open it from the status page), but the Job fetches it via the
+    in-cluster S3 endpoint — public_results_base may be browser-only
+    (e.g. localhost through an SSH forward), and localhost inside a pod is
+    the pod itself.
+    """
     if volume.manifest_url:
-        return volume.manifest_url
+        return volume.manifest_url, volume.manifest_url
     key = keys.synthetic_manifest_key(pipeline_id, volume.id)
-    url = f"{cfg.public_results_base.rstrip('/')}/{key}"
+    public = f"{cfg.public_results_base.rstrip('/')}/{key}"
     if bucket.read_json(key) is None:
-        bucket.write_json(key, build_manifest(volume.id, list(volume.images), url))
-    return url
+        bucket.write_json(key, build_manifest(volume.id, list(volume.images), public))
+    base = cfg.internal_results_base or cfg.public_results_base
+    return public, f"{base.rstrip('/')}/{key}"
 
 
 def _as_list(value: object) -> list:
@@ -285,7 +294,7 @@ def tick(
         lane: list[tuple[Volume, str]] = []
         for v in camp.volumes:
             st = derive(v, pid, done, jobs, budgets, cfg.attempt_cap)
-            src = _source_manifest_url(v, pid, bucket, cfg)
+            public_src, job_src = _source_manifest_url(v, pid, bucket, cfg)
             akey = _attempt_key(pid, v.id)
             # The thumbnail is read from the cache unconditionally — a done
             # volume still needs its picture, and a cache hit costs nothing. Only
@@ -308,9 +317,9 @@ def tick(
                 cluster.delete_job(name)
                 attempts[akey] = attempts.get(akey, 0) + 1
                 budgets[v.id] = attempts[akey]
-                lane.append((v, src))
+                lane.append((v, job_src))
             elif st == "pending" and pid not in blocked:
-                lane.append((v, src))
+                lane.append((v, job_src))
             if st == "done":
                 entry["totals"]["done"] += 1
             pages_done = (
@@ -336,7 +345,7 @@ def tick(
                         if st == "done"
                         else None
                     ),
-                    "source_manifest": src,
+                    "source_manifest": public_src,
                     "thumbnail": thumb,
                 }
             )

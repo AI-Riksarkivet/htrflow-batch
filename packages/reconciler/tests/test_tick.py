@@ -492,3 +492,44 @@ def test_page_totals_null_when_unknown(tmp_path):
     assert byid["loose"]["pages_total"] == 1
     assert camp["totals"]["pages_total"] == 1
     assert camp["totals"]["pages_done"] is None
+
+
+def test_synthetic_manifest_job_url_uses_internal_base(tmp_path):
+    cfg = ReconcilerConfig(
+        public_results_base="http://localhost:30900/htr-results",
+        internal_results_base="http://rustfs.ns.svc:9000/htr-results",
+        window=20,
+    )
+    bucket, cluster = FakeBucket(), FakeCluster()
+    doc = tick(_repo(tmp_path), bucket, cluster, cfg, NOW)
+    loose_job = next(
+        j for j in cluster.created
+        if j["metadata"]["labels"]["batch.htrflow/volume"] == "loose"
+    )
+    env = {
+        e["name"]: e.get("value")
+        for e in loose_job["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env["IIIF_MANIFEST_URL"] == (
+        "http://rustfs.ns.svc:9000/htr-results/sources/demo-v1/loose/manifest.json"
+    )
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert byid["loose"]["source_manifest"] == (
+        "http://localhost:30900/htr-results/sources/demo-v1/loose/manifest.json"
+    )
+    written = bucket.written["sources/demo-v1/loose/manifest.json"]
+    assert written["id"].startswith("http://localhost:30900/")
+
+
+def test_internal_base_falls_back_to_public(tmp_path):
+    bucket, cluster = FakeBucket(), FakeCluster()
+    tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    loose_job = next(
+        j for j in cluster.created
+        if j["metadata"]["labels"]["batch.htrflow/volume"] == "loose"
+    )
+    env = {
+        e["name"]: e.get("value")
+        for e in loose_job["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env["IIIF_MANIFEST_URL"].startswith("http://pub/htr-results/sources/")

@@ -33,6 +33,14 @@ class Settings(BaseSettings):
     reconciler_data_pvc: str = "htr-test-data"
 
 
+def _internal_results_base(settings: Settings) -> str:
+    """Jobs fetch synthetic manifests via the in-cluster S3 endpoint; with
+    no explicit endpoint (real AWS) the public base works everywhere."""
+    if not settings.s3_endpoint:
+        return ""
+    return f"{settings.s3_endpoint.rstrip('/')}/{settings.s3_bucket}"
+
+
 def _fetch_json(url: str) -> dict | None:
     try:
         r = httpx.get(url, timeout=30, follow_redirects=True)
@@ -45,6 +53,7 @@ def run() -> None:
     settings = Settings()  # reads CAMPAIGNS_REPO_URL etc.; raises if missing
     cfg = ReconcilerConfig(
         public_results_base=settings.public_results_base,
+        internal_results_base=_internal_results_base(settings),
         campaigns_repo_url=settings.campaigns_repo_url,
         campaigns_repo_web_url=settings.campaigns_repo_web_url,
         namespace=settings.reconciler_namespace,
