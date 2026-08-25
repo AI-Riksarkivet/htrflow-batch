@@ -24,7 +24,7 @@ class FakeBucket:
         self.written = {}
 
     def done_volumes(self, pipeline_id):
-        return set(self._done)
+        return {v: "2026-08-25T10:00:00Z" for v in self._done}
 
     def read_json(self, key):
         return self.stored.get(key) or self.written.get(key)
@@ -102,6 +102,14 @@ def test_tick_submits_missing_and_writes_status(tmp_path):
     )
     assert doc["generated_at"] == NOW
     assert bucket.written["status/status.json"] == doc
+
+
+def test_done_volume_carries_updated(tmp_path):
+    bucket, cluster = FakeBucket(done={"R0000001"}), FakeCluster()
+    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert byid["R0000001"]["updated"] == "2026-08-25T10:00:00Z"
+    assert byid["R0000002"]["updated"] is None
 
 
 def test_tick_respects_window(tmp_path):

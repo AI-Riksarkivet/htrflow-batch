@@ -211,9 +211,9 @@ def tick(
 
     # done_volumes is a paginated LIST + a HEAD per volume: probe each pipeline
     # once per tick, not once per campaign that uses it.
-    done_cache: dict[str, set[str]] = {}
+    done_cache: dict[str, dict[str, str]] = {}
 
-    def done_for(pipeline_id: str) -> set[str]:
+    def done_for(pipeline_id: str) -> dict[str, str]:
         if pipeline_id not in done_cache:
             done_cache[pipeline_id] = bucket.done_volumes(pipeline_id)
         return done_cache[pipeline_id]
@@ -282,7 +282,7 @@ def tick(
         pid = camp.pipeline_id
         done = done_for(pid)
         if pid not in orphans_reported:
-            entry["orphans"] = sorted(done - claimed[pid])
+            entry["orphans"] = sorted(done.keys() - claimed[pid])
             orphans_reported.add(pid)
         # ``derive`` reads attempts by volume id; the persisted counter is keyed
         # by pipeline too, so hand derive a view of just this pipeline's budgets
@@ -337,6 +337,7 @@ def tick(
                     "id": v.id,
                     "status": st,
                     "attempts": attempts.get(akey, 0),
+                    "updated": done.get(v.id),
                     "pages_done": pages_done,
                     "pages_total": pages_total,
                     "error": None,
