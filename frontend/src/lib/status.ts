@@ -23,6 +23,8 @@ export const volumeEntrySchema = z.object({
   viewer_manifest: z.string().nullable(),
   source_manifest: z.string(),
   thumbnail: z.string().nullable(),
+  updated: z.string().nullable().default(null),
+  failure_log: z.string().nullable().default(null),
 });
 
 export const campaignEntrySchema = z.object({

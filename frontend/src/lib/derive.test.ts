@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { isStale, pagesLabel, progress, viewerHref } from "./derive.js";
+import { isStale, pagesLabel, progress, shortDate, viewerHref } from "./derive.js";
 import type { VolumeEntry } from "./status.js";
 
 const done: VolumeEntry = {
@@ -12,6 +12,8 @@ const done: VolumeEntry = {
   viewer_manifest: "http://pub/htr-results/demo-v1/R1/iiif.json",
   source_manifest: "https://lbiiif.riksarkivet.se/arkis!R1/manifest",
   thumbnail: null,
+  updated: null,
+  failure_log: null,
 };
 const pending: VolumeEntry = { ...done, status: "pending", viewer_manifest: null };
 
@@ -49,5 +51,15 @@ describe("pagesLabel", () => {
   });
   test("hides when total unknown", () => {
     expect(pagesLabel({ pages_done: 3, pages_total: null })).toBeNull();
+  });
+});
+
+describe("shortDate", () => {
+  test("formats an ISO timestamp", () => {
+    expect(shortDate("2026-08-25T14:32:00Z", "UTC")).toBe("25 Aug, 14:32");
+  });
+  test("null and junk stay null", () => {
+    expect(shortDate(null)).toBeNull();
+    expect(shortDate("not-a-date")).toBeNull();
   });
 });

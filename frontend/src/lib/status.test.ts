@@ -11,6 +11,8 @@ const volume = {
   viewer_manifest: null,
   source_manifest: "http://s/m.json",
   thumbnail: null,
+  updated: null,
+  failure_log: null,
 };
 
 const oldDoc = {
@@ -37,6 +39,12 @@ describe("statusDocSchema", () => {
     if (campaign) {
       expect(campaign.pipeline_steps).toBeNull();
       expect(campaign.totals.pages_total).toBeNull();
+      const vol = campaign.volumes[0];
+      expect(vol).toBeDefined();
+      if (vol) {
+        expect(vol.updated).toBeNull();
+        expect(vol.failure_log).toBeNull();
+      }
     }
   });
 
@@ -49,6 +57,13 @@ describe("statusDocSchema", () => {
           ...oldDoc.campaigns[0],
           pipeline_steps: ["Segmentation: yolo (weights)"],
           totals: { done: 0, total: 1, pages_done: 0, pages_total: 2 },
+          volumes: [
+            {
+              ...volume,
+              updated: "2026-08-25T14:32:00Z",
+              failure_log: "http://example/logs/v1.log",
+            },
+          ],
         },
       ],
     });
@@ -57,6 +72,12 @@ describe("statusDocSchema", () => {
     expect(campaign).toBeDefined();
     if (campaign) {
       expect(campaign.totals.pages_total).toBe(2);
+      const vol = campaign.volumes[0];
+      expect(vol).toBeDefined();
+      if (vol) {
+        expect(vol.updated).toBe("2026-08-25T14:32:00Z");
+        expect(vol.failure_log).toBe("http://example/logs/v1.log");
+      }
     }
   });
 });
