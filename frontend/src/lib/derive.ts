@@ -36,3 +36,20 @@ export function pagesLabel(totals: {
   if (totals.pages_total === null) return null;
   return `${totals.pages_done ?? 0}/${totals.pages_total} pages`;
 }
+
+/** "25 Aug, 14:32" — viewer-local unless a timeZone is forced (tests use UTC). */
+export function shortDate(
+  iso: string | null,
+  timeZone?: string,
+): string | null {
+  if (iso === null) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString("en-GB", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone,
+  });
+}
