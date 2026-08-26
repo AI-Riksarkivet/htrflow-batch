@@ -1,17 +1,27 @@
 // The status.json boundary: parse, don't validate. Shape mirrors the
 // reconciler's emitted document (packages/reconciler/.../main.py).
-import { z } from "zod";
+//
+// Fail soft: one bad field must not blank the page. The envelope is parsed
+// strictly (without it there is nothing to show); each campaign and each
+// volume is parsed on its own, and a bad entry degrades to an error row
+// while the rest of the document renders as usual.
+import { z, type ZodIssue } from "zod";
 
-export const volumeStatusSchema = z.enum([
-  "done",
-  "running",
-  "queued",
-  "retry",
-  "needs-attention",
-  "pending",
-  "unreachable",
-  "unsupported",
-]);
+export const volumeStatusSchema = z
+  .enum([
+    "done",
+    "running",
+    "queued",
+    "retry",
+    "needs-attention",
+    "pending",
+    "unreachable",
+    "unsupported",
+    // A status this build does not know (a newer reconciler) renders as a
+    // neutral chip instead of failing the whole document.
+    "unknown",
+  ])
+  .catch("unknown");
 
 export const volumeEntrySchema = z.object({
   id: z.string(),
@@ -31,18 +41,20 @@ export const volumeEntrySchema = z.object({
   run_log: z.string().nullable().default(null),
 });
 
+const totalsSchema = z.object({
+  done: z.number(),
+  total: z.number(),
+  pages_done: z.number().nullable().default(null),
+  pages_total: z.number().nullable().default(null),
+});
+
 export const campaignEntrySchema = z.object({
   name: z.string(),
   pipeline: z.string().nullable(),
   pipeline_steps: z.array(z.string()).nullable().default(null),
   pipeline_yaml: z.string().nullable().default(null),
   error: z.string().nullable(),
-  totals: z.object({
-    done: z.number(),
-    total: z.number(),
-    pages_done: z.number().nullable().default(null),
-    pages_total: z.number().nullable().default(null),
-  }),
+  totals: totalsSchema,
   volumes: z.array(volumeEntrySchema),
   orphans: z.array(z.string()).default([]),
 });
@@ -59,3 +71,94 @@ export type VolumeStatus = z.infer<typeof volumeStatusSchema>;
 export type VolumeEntry = z.infer<typeof volumeEntrySchema>;
 export type CampaignEntry = z.infer<typeof campaignEntrySchema>;
 export type StatusDoc = z.infer<typeof statusDocSchema>;
+
+/** "volumes[2].attempts: expected number, received string" — no ZodError dumps. */
+export function formatIssues(issues: readonly ZodIssue[]): string {
+  return issues
+    .map((issue) => {
+      const path = issue.path
+        .map((p, i) => (typeof p === "number" ? `[${p}]` : i === 0 ? p : `.${p}`))
+        .join("");
+      const message = issue.message.charAt(0).toLowerCase() + issue.message.slice(1);
+      return path === "" ? message : `${path}: ${message}`;
+    })
+    .join("; ");
+}
+
+export interface ParsedStatus {
+  /** null only when the envelope itself is unusable. */
+  doc: StatusDoc | null;
+  /** One line per degraded entry (or per envelope issue when doc is null). */
+  problems: string[];
+}
+
+const INVALID = "invalid status entry";
+
+function nameOf(raw: unknown, key: string, fallback: string): string {
+  if (raw !== null && typeof raw === "object") {
+    const v = (raw as Record<string, unknown>)[key];
+    if (typeof v === "string" && v !== "") return v;
+  }
+  return fallback;
+}
+
+function degradedVolume(raw: unknown, index: number, why: string): VolumeEntry {
+  return {
+    id: nameOf(raw, "id", `volume #${index + 1}`),
+    status: "unknown",
+    attempts: 0,
+    pages_done: null,
+    pages_total: null,
+    error: `${INVALID}: ${why}`,
+    viewer_manifest: null,
+    run_manifest: null,
+    source_manifest: "",
+    thumbnail: null,
+    updated: null,
+    failure_log: null,
+    run_log: null,
+  };
+}
+
+function degradedCampaign(raw: unknown, index: number, why: string): CampaignEntry {
+  return {
+    name: nameOf(raw, "name", `campaign #${index + 1}`),
+    pipeline: null,
+    pipeline_steps: null,
+    pipeline_yaml: null,
+    error: `${INVALID}: ${why}`,
+    totals: { done: 0, total: 0, pages_done: null, pages_total: null },
+    volumes: [],
+    orphans: [],
+  };
+}
+
+const envelopeSchema = statusDocSchema.extend({ campaigns: z.array(z.unknown()) });
+const campaignShellSchema = campaignEntrySchema.extend({ volumes: z.array(z.unknown()) });
+
+export function parseStatusDoc(raw: unknown): ParsedStatus {
+  const envelope = envelopeSchema.safeParse(raw);
+  if (!envelope.success) {
+    return { doc: null, problems: [formatIssues(envelope.error.issues)] };
+  }
+  const problems: string[] = [];
+  const campaigns = envelope.data.campaigns.map((rawCampaign, ci) => {
+    const shell = campaignShellSchema.safeParse(rawCampaign);
+    if (!shell.success) {
+      const why = formatIssues(shell.error.issues);
+      const degraded = degradedCampaign(rawCampaign, ci, why);
+      problems.push(`${degraded.name}: ${why}`);
+      return degraded;
+    }
+    const volumes = shell.data.volumes.map((rawVolume, vi) => {
+      const parsed = volumeEntrySchema.safeParse(rawVolume);
+      if (parsed.success) return parsed.data;
+      const why = formatIssues(parsed.error.issues);
+      const degraded = degradedVolume(rawVolume, vi, why);
+      problems.push(`${shell.data.name}/${degraded.id}: ${why}`);
+      return degraded;
+    });
+    return { ...shell.data, volumes };
+  });
+  return { doc: { ...envelope.data, campaigns }, problems };
+}
