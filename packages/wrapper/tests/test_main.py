@@ -326,3 +326,35 @@ def test_setup_creates_the_writable_dirs_before_model_load(env, cfg, s3, tmp_pat
 
     assert main(env, process_page_factory=factory) == EXIT_OK
     assert seen == {"HOME": True, "TMPDIR": True, "YOLO_CONFIG_DIR": True}
+
+
+def test_run_log_is_shipped_to_the_status_tree(env, cfg, s3):
+    rc = main(env, process_page_factory=fake_factory)
+    assert rc == EXIT_OK
+    body = (
+        s3.get_object(Bucket=cfg.s3_bucket, Key="status/logs/demo-v1/SE-RA-1234.txt")[
+            "Body"
+        ]
+        .read()
+        .decode()
+    )
+    assert "3 pages in manifest" in body  # wrapper logging
+    assert "COMPLETE 3 pages" in body  # the final upload includes the last line
+    assert "status/logs/demo-v1/SE-RA-1234.txt" not in [
+        k for k in _keys(s3, cfg) if k.startswith("demo-v1/")
+    ]
+
+
+def test_run_log_shipping_can_be_disabled(env, cfg, s3):
+    rc = main(dict(env, LOG_SHIP_SECONDS="0"), process_page_factory=fake_factory)
+    assert rc == EXIT_OK
+    # interval 0 = no periodic thread, but the final upload still happens
+    assert "status/logs/demo-v1/SE-RA-1234.txt" in _keys(s3, cfg)
+
+
+def test_streams_are_restored_after_main(env, cfg, s3):
+    import sys
+
+    before = (sys.stdout, sys.stderr)
+    main(env, process_page_factory=fake_factory)
+    assert (sys.stdout, sys.stderr) == before

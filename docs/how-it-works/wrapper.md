@@ -216,6 +216,13 @@ S3 (HCP) behind a one-function seam — `publish(volume, files)`:
     `viewport.imageToViewportRectangle(...)`. Both fixes captured in
     `.docker/uv4-uv-html.patch` (built as image `uv4:v3`; PR-worthy
     upstream).
+- **Live run log:** the wrapper tees its own stdout/stderr and re-uploads
+  the buffer to `status/logs/<pipeline-id>/<volume-ref>.txt` every
+  `LOG_SHIP_SECONDS` (15) plus once on exit. That is how the frontend follows
+  a running volume without anything ever reading the kube API from a browser:
+  the reconciler links the key as soon as it exists, and the run viewer polls
+  it while the volume is in flight. See the
+  [live run log spec](../superpowers/specs/2026-08-26-live-run-log-design.md).
 - The results bucket is the **only stateful dependency** in the system —
   and it should be the durable HCP, not the volatile `/tmp`-backed dev MinIO
   (viewer links must not die on reboot).

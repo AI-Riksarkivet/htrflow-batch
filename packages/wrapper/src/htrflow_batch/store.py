@@ -58,6 +58,20 @@ class ResultStore:
             ContentType=content_type,
         )
 
+    def run_log_key(self) -> str:
+        """Bucket-root key the reconciler/frontend read the run log from
+        (``status/logs/<pipeline>/<volume>.txt``) — deliberately not under
+        ``volume_prefix``: the status tree is the reconciler's namespace."""
+        return f"status/logs/{self.cfg.pipeline_id}/{self.cfg.volume_ref}.txt"
+
+    def put_run_log(self, text: str) -> None:
+        self.client.put_object(
+            Bucket=self.bucket,
+            Key=self.run_log_key(),
+            Body=text.encode("utf-8", errors="replace"),
+            ContentType="text/plain; charset=utf-8",
+        )
+
     def get_bytes(self, rel_key: str) -> bytes:
         obj = self.client.get_object(Bucket=self.bucket, Key=self._key(rel_key))
         return obj["Body"].read()
