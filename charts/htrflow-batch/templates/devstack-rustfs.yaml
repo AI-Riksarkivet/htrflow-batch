@@ -1,20 +1,29 @@
 {{- if .Values.devStack.rustfs.enabled }}
+{{- $creds := include "htrflow-batch.rustfsCreds" . | fromJson }}
+# PoC-only in-cluster S3. Credentials come from devStack.rustfs.{accessKey,
+# secretKey} or are generated once and re-read from this Secret on upgrade
+# (audit S2); never enable this next to real data.
 apiVersion: v1
 kind: Secret
 metadata:
   name: {{ .Values.s3.existingSecret }}
   namespace: {{ .Release.Namespace }}
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+  annotations:
+    # Survives `helm uninstall`: the bucket data on the PVC is useless
+    # without the credentials that created it.
+    helm.sh/resource-policy: keep
 type: Opaque
 stringData:
   # Pods read `credentials` as a mounted file (AWS_SHARED_CREDENTIALS_FILE);
-  # the AWS_* keys stay for tooling that still uses envFrom (compose, scripts).
-  AWS_ACCESS_KEY_ID: rustfsadmin
-  AWS_SECRET_ACCESS_KEY: rustfsadmin
+  # the AWS_* keys stay for tooling (compose, the init Job) and for the
+  # RustFS server itself (env valueFrom below).
+  AWS_ACCESS_KEY_ID: {{ $creds.access | quote }}
+  AWS_SECRET_ACCESS_KEY: {{ $creds.secret | quote }}
   credentials: |
     [default]
-    aws_access_key_id = rustfsadmin
-    aws_secret_access_key = rustfsadmin
+    aws_access_key_id = {{ $creds.access }}
+    aws_secret_access_key = {{ $creds.secret }}
   S3_ENDPOINT: http://rustfs.{{ .Release.Namespace }}.svc.cluster.local:9000
   S3_BUCKET: {{ .Values.s3.bucket }}
 ---
@@ -24,12 +33,16 @@ metadata:
   name: rustfs-data
   namespace: {{ .Release.Namespace }}
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
 spec:
   accessModes: ["ReadWriteOnce"]
-  storageClassName: local-path
+  {{- with .Values.devStack.rustfs.storage.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
   resources:
     requests:
-      storage: 5Gi
+      storage: {{ .Values.devStack.rustfs.storage.size }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -45,22 +58,41 @@ spec:
     metadata:
       labels: { app: rustfs }
     spec:
+      automountServiceAccountToken: false
+      # The image already runs as uid 10001 (user `rustfs`); pinned here so
+      # a future image cannot silently regress to root. /data (PVC) and
+      # /logs, /tmp (emptyDirs) are the only writable paths.
+      securityContext:
+        {{- include "htrflow-batch.restrictedPod" 10001 | nindent 8 }}
       containers:
         - name: rustfs
-          image: rustfs/rustfs:latest
+          image: rustfs/rustfs@sha256:41fe89380f4120a337790c02af192c3fe7bb55c3edc2e6e9357b487b47c6ab21
           args: ["/data"]
+          securityContext:
+            {{- include "htrflow-batch.restrictedContainer" . | nindent 12 }}
           env:
             - name: RUSTFS_ACCESS_KEY
-              value: rustfsadmin
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.s3.existingSecret }}, key: AWS_ACCESS_KEY_ID }
             - name: RUSTFS_SECRET_KEY
-              value: rustfsadmin
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.s3.existingSecret }}, key: AWS_SECRET_ACCESS_KEY }
             - name: RUSTFS_ADDRESS
               value: 0.0.0.0:9000
+            - name: RUSTFS_CONSOLE_ENABLE
+              value: {{ .Values.devStack.rustfs.console.enabled | ternary "true" "false" | quote }}
           ports:
             - containerPort: 9000
+            {{- if .Values.devStack.rustfs.console.enabled }}
+            - containerPort: 9001
+            {{- end }}
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: logs
+              mountPath: /logs
+            - name: tmp
+              mountPath: /tmp
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits: { memory: 1Gi }
@@ -68,6 +100,10 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: rustfs-data
+        - name: logs
+          emptyDir: { sizeLimit: 256Mi }
+        - name: tmp
+          emptyDir: { sizeLimit: 256Mi }
 ---
 apiVersion: v1
 kind: Service
@@ -83,8 +119,113 @@ spec:
       port: 9000
       targetPort: 9000
       nodePort: {{ .Values.devStack.rustfs.nodePortS3 }}
+    {{- if .Values.devStack.rustfs.console.enabled }}
     - name: console
       port: 9001
       targetPort: 9001
-      nodePort: {{ .Values.devStack.rustfs.nodePortConsole }}
+      nodePort: {{ .Values.devStack.rustfs.console.nodePort }}
+    {{- end }}
+{{- if .Values.devStack.rustfs.init.enabled }}
+---
+# Bucket setup (replaces the hand-run aws-cli pod of the PoC): idempotent,
+# re-run on every install/upgrade so a policy change in values lands.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rustfs-init
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+data:
+  # Generated from values via the bucketPolicy helper (see _helpers.tpl for
+  # why it is an Allow with NotResource); scripts/compose_init.py mirrors it.
+  results-policy.json: {{ include "htrflow-batch.bucketPolicy" . | quote }}
+  cors.json: {{ dict "CORSRules" (list (dict
+      "AllowedOrigins" .Values.devStack.rustfs.init.corsOrigins
+      "AllowedMethods" (list "GET" "HEAD")
+      "AllowedHeaders" (list "*")
+      "MaxAgeSeconds" 3600)) | toJson | quote }}
+  init.sh: |
+    #!/bin/sh
+    set -eu
+    ep="$S3_ENDPOINT"
+    for i in $(seq 1 60); do
+      aws --endpoint-url "$ep" s3api list-buckets >/dev/null 2>&1 && break
+      echo "waiting for rustfs ($i)"; sleep 2
+    done
+    ensure_bucket() {
+      aws --endpoint-url "$ep" s3api head-bucket --bucket "$1" >/dev/null 2>&1 \
+        || aws --endpoint-url "$ep" s3api create-bucket --bucket "$1" >/dev/null
+    }
+    ensure_bucket "$S3_BUCKET"
+    aws --endpoint-url "$ep" s3api put-bucket-policy --bucket "$S3_BUCKET" --policy file:///init/results-policy.json
+    aws --endpoint-url "$ep" s3api put-bucket-cors --bucket "$S3_BUCKET" --cors-configuration file:///init/cors.json
+    {{- if .Values.devStack.gitDaemon.enabled }}
+    # Campaigns repo bucket: credentials only (the git daemon seeds from it
+    # with the same root credential; never anonymous — audit S9).
+    ensure_bucket {{ .Values.devStack.gitDaemon.bucket | quote }}
+    aws --endpoint-url "$ep" s3api delete-bucket-policy --bucket {{ .Values.devStack.gitDaemon.bucket | quote }} >/dev/null 2>&1 || true
+    {{- end }}
+    echo "rustfs init complete"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rustfs-init
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels: { app: rustfs-init }   # NetworkPolicy selector (network.yaml)
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "htrflow-batch.restrictedPod" 1000 | nindent 8 }}
+      containers:
+        - name: aws
+          image: {{ .Values.devStack.rustfs.init.image }}
+          imagePullPolicy: {{ include "htrflow-batch.pullPolicy" .Values.devStack.rustfs.init.image }}
+          command: ["/bin/sh", "/init/init.sh"]
+          securityContext:
+            {{- include "htrflow-batch.restrictedContainer" . | nindent 12 }}
+          env:
+            - name: HOME
+              value: /tmp
+            - name: AWS_DEFAULT_REGION
+              value: us-east-1
+            - name: AWS_SHARED_CREDENTIALS_FILE
+              value: /secrets/s3/credentials
+            - name: S3_ENDPOINT
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.s3.existingSecret }}, key: S3_ENDPOINT }
+            - name: S3_BUCKET
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.s3.existingSecret }}, key: S3_BUCKET }
+          volumeMounts:
+            - { name: init, mountPath: /init, readOnly: true }
+            - { name: s3, mountPath: /secrets/s3, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 256Mi }
+      volumes:
+        - name: init
+          configMap: { name: rustfs-init }
+        - name: s3
+          secret: { secretName: {{ .Values.s3.existingSecret }}, defaultMode: 0440 }
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+{{- end }}
 {{- end }}

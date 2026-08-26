@@ -1,0 +1,75 @@
+# Every optional feature on, for `helm lint -f` / `helm template -f` /
+# kubeconform in CI. No cluster is needed: the apiserver CIDR and node CIDRs
+# are given explicitly so no Helm `lookup` is required.
+publicResultsBase: http://localhost:30900/htr-results
+
+modelCache:
+  create: true
+  storageClass: local-path
+
+pipelines:
+  demo-v1: |
+    steps:
+      - step: Segmentation
+        settings:
+          model: yolo
+          model_settings:
+            model: Riksarkivet/yolov9-regions-1
+
+job:
+  manifestMaxBytes: 8388608
+  fetchMaxBytes: 33554432
+  nodeSelector: { kubernetes.io/arch: arm64 }
+  tolerations:
+    - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }
+
+security:
+  allowedImageRepos: ["127.0.0.1:30500/", "ghcr.io/riksarkivet/"]
+  requireModelRevision: true
+  psaEnforce: restricted
+  verifyImages:
+    enabled: true
+    issuer: https://token.actions.githubusercontent.com
+    subject: https://github.com/Riksarkivet/htrflow-batch/.github/workflows/publish.yml@refs/tags/*
+
+network:
+  nodeCidrs: ["10.16.51.56/32"]
+  apiServer:
+    cidr: 10.16.51.56/32
+  s3Cidrs: ["10.0.0.5/32"]
+  reconciler:
+    extraEgress:
+      - to: [{ podSelector: { matchLabels: { app: my-git } } }]
+        ports: [{ port: 9418 }]
+
+viewer:
+  image: 127.0.0.1:30500/uv4@sha256:11a3a359c47bfadf0d6a11e5031024b21befa20595e812e3d786b8ff27d29e25
+  defaultManifest: http://localhost:30900/htr-results/demo-v1/mock-vol/iiif.json
+
+devStack:
+  rustfs:
+    enabled: true
+    accessKey: ci-access-key
+    secretKey: ci-secret-key-0123456789
+    console:
+      enabled: true
+    publicLogs: false
+  registry:
+    enabled: true
+  nvidiaDevicePlugin:
+    enabled: true
+  gitDaemon:
+    enabled: true
+
+reconciler:
+  enabled: true
+  image: 127.0.0.1:30500/htrflow-reconciler@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  campaignsRepoUrl: git://git-daemon.htr-batch.svc.cluster.local/campaigns-local
+  campaignsRepoWebUrl: https://github.com/carpelan/htr-test/tree/local-k3s
+  schedule: "*/3 * * * *"
+  tickSeconds: 180
+
+exampleJob:
+  enabled: true
+  image: 127.0.0.1:30500/htrflow-batch@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  manifestUrl: http://rustfs.htr-batch.svc.cluster.local:9000/htr-fixtures/mock-vol/manifest.json

@@ -2,17 +2,27 @@
 # In-cluster image registry for iterating on the htrflow-batch image.
 # Push from host:  kubectl -n registry port-forward svc/registry {{ .Values.devStack.registry.nodePort }}:5000 &
 #                  docker push 127.0.0.1:{{ .Values.devStack.registry.nodePort }}/<image>
-# Pull from k3s:   /etc/rancher/k3s/registries.yaml maps 127.0.0.1:{{ .Values.devStack.registry.nodePort }} ->
-#                  http://<node-ip>:{{ .Values.devStack.registry.nodePort }} (NodePort), pods use 127.0.0.1:{{ .Values.devStack.registry.nodePort }}/<image>
+# Pull from k3s:   containerd falls back to plain HTTP for 127.0.0.1:{{ .Values.devStack.registry.nodePort }}
+#                  (no registries.yaml needed); pods use 127.0.0.1:{{ .Values.devStack.registry.nodePort }}/<image>
+#
+# Unauthenticated by design (audit S3): anyone who can reach the NodePort can
+# push. That is why the chart refuses tag-pinned control-plane images unless
+# devStack.allowTagImages is set — a digest cannot be overwritten. Beyond the
+# PoC, use Harbor (already on the cluster) or put this behind auth.
 #
 # NOTE: this registry deliberately lives in its own `registry` namespace, not
 # {{ .Release.Namespace }} — it's a PoC-only iteration aid shared across whatever
 # is being pushed, not part of the htrflow-batch release proper. The name is
 # hardcoded rather than templated for that reason.
+{{- $uid := int .Values.devStack.registry.runAsUser }}
 apiVersion: v1
 kind: Namespace
 metadata:
   name: registry
+  annotations:
+    # Uninstalling the release must not delete a namespace other things may
+    # have been pushed to (audit O11).
+    helm.sh/resource-policy: keep
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -20,12 +30,16 @@ metadata:
   name: registry-data
   namespace: registry
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
 spec:
   accessModes: ["ReadWriteOnce"]
-  storageClassName: local-path
+  {{- with .Values.devStack.registry.storage.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
   resources:
     requests:
-      storage: 60Gi
+      storage: {{ .Values.devStack.registry.storage.size }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -41,9 +55,21 @@ spec:
     metadata:
       labels: { app: registry }
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        {{- if ne $uid 0 }}
+        {{- include "htrflow-batch.restrictedPod" $uid | nindent 8 }}
+        {{- else }}
+        seccompProfile: { type: RuntimeDefault }
+        {{- end }}
       containers:
         - name: registry
-          image: registry:3
+          image: {{ .Values.devStack.registry.image }}
+          imagePullPolicy: {{ include "htrflow-batch.pullPolicy" .Values.devStack.registry.image }}
+          # registry:3 writes only under /var/lib/registry (verified read-only
+          # rootfs, uid 1000, no capabilities, 2026-08-26).
+          securityContext:
+            {{- include "htrflow-batch.restrictedContainer" . | nindent 12 }}
           env:
             - name: REGISTRY_STORAGE_DELETE_ENABLED
               value: "true"
