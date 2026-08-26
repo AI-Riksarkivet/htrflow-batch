@@ -1,0 +1,88 @@
+{{- if .Values.devStack.gitDaemon.enabled }}
+{{- $seed := .Values.devStack.gitDaemon.seedUrl | default (printf "http://rustfs.%s.svc.cluster.local:9000/%s/%s.git" .Release.Namespace .Values.devStack.gitDaemon.bucket .Values.devStack.gitDaemon.repo) }}
+# In-cluster git daemon for a campaigns repo that must not leave the cluster
+# (image pins are registry-local). Mirrors the hand-applied PoC deployment
+# (audit O14/S8): an init container clones the bare repo from the bucket
+# (dumb HTTP — pushed there with `git update-server-info` + `aws s3 sync`),
+# the daemon serves it over git:// so the reconciler can `--depth 1`.
+# Re-seed after a push: `kubectl -n {{ .Release.Namespace }} rollout restart deploy/git-daemon`.
+#
+# What is NOT restricted here, and why: alpine/git does not ship git-daemon,
+# so the container installs it at start — that needs root and a writable
+# root filesystem, and the daemon must run as the same uid that owns the
+# clone (git's safe.directory check). Capabilities are still dropped and
+# privilege escalation is off (verified with docker 2026-08-26). The proper
+# fix is a purpose-built image with git-daemon baked in running as uid 1000.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: git-daemon
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+    app: git-daemon
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: git-daemon }
+  template:
+    metadata:
+      labels: { app: git-daemon }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
+      initContainers:
+        - name: seed
+          image: {{ .Values.devStack.gitDaemon.image }}
+          imagePullPolicy: {{ include "htrflow-batch.pullPolicy" .Values.devStack.gitDaemon.image }}
+          args: ["clone", "--bare", {{ $seed | quote }}, "/repos/{{ .Values.devStack.gitDaemon.repo }}"]
+          env:
+            - { name: HOME, value: /tmp }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: repos, mountPath: /repos }
+            - { name: tmp, mountPath: /tmp }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+      containers:
+        - name: git-daemon
+          image: {{ .Values.devStack.gitDaemon.image }}
+          imagePullPolicy: {{ include "htrflow-batch.pullPolicy" .Values.devStack.gitDaemon.image }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - apk add --no-cache git-daemon && exec git daemon --export-all --base-path=/repos --reuseaddr --verbose
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          ports:
+            - containerPort: 9418
+          volumeMounts:
+            - { name: repos, mountPath: /repos }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+      volumes:
+        - name: repos
+          emptyDir: { sizeLimit: 256Mi }
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: git-daemon
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+    app: git-daemon
+spec:
+  type: ClusterIP
+  selector: { app: git-daemon }
+  ports:
+    - name: git
+      port: 9418
+      targetPort: 9418
+{{- end }}

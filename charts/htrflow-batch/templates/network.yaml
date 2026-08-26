@@ -1,9 +1,9 @@
 {{- if .Values.network.enabled }}
 {{- /*
-Egress allowlists per pod role (docs: development/security, D14). Ingress is
-denied outright for all three: nothing needs to reach a Job, a warm-up or
-the reconciler. Only pods matched by a policy are affected — the devStack
-services and the viewer are untouched.
+Egress allowlists per pod role (docs: development/security, D14) plus a
+namespace-wide default deny with explicit ingress allows for the pods that
+serve something (viewer, RustFS, git daemon). Nothing may reach a Job, a
+warm-up or the reconciler.
 
 kube-router (k3s) evaluates egress AFTER service DNAT, so ClusterIP targets
 are matched by their backing pod (podSelector) or, for the apiserver, by the
@@ -42,6 +42,35 @@ node address it resolves to — hence the `lookup` auto-detection below.
 {{- range .Values.network.reconciler.egressCidrs }}
   {{- $public = append $public (dict "ipBlock" (dict "cidr" . "except" $internal)) }}
 {{- end }}
+{{- $anyPublic := list (dict "ipBlock" (dict "cidr" "0.0.0.0/0" "except" $internal)) }}
+{{- $labels := include "htrflow-batch.labels" . }}
+{{- if .Values.network.defaultDeny }}
+---
+# Namespace default deny (audit S8): every pod starts with no ingress and no
+# egress; the policies below add back exactly what each role needs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: htr-default-deny
+  namespace: {{ .Release.Namespace }}
+  labels: {{- $labels | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Every pod may resolve names.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: htr-allow-dns
+  namespace: {{ .Release.Namespace }}
+  labels: {{- $labels | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - {{ toJson $dns }}
+{{- end }}
 ---
 # Batch Jobs: DNS, S3 and the IIIF origin. No HF Hub, no apiserver, nothing
 # in-cluster — a compromised Job has nowhere to go.
@@ -50,7 +79,7 @@ kind: NetworkPolicy
 metadata:
   name: htr-batch-job
   namespace: {{ .Release.Namespace }}
-  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+  labels: {{- $labels | nindent 4 }}
 spec:
   podSelector:
     matchLabels: { app: htrflow-batch }
@@ -77,15 +106,14 @@ kind: NetworkPolicy
 metadata:
   name: htr-warmup
   namespace: {{ .Release.Namespace }}
-  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+  labels: {{- $labels | nindent 4 }}
 spec:
   podSelector:
     matchLabels: { app: htrflow-warmup }
   policyTypes: [Ingress, Egress]
   egress:
     - {{ toJson $dns }}
-    - to:
-        - ipBlock: { cidr: "0.0.0.0/0", except: {{ toJson $internal }} }
+    - to: {{ toJson $anyPublic }}
       ports:
         - { port: 443 }
 {{- if .Values.reconciler.enabled }}
@@ -97,7 +125,7 @@ kind: NetworkPolicy
 metadata:
   name: htr-reconciler
   namespace: {{ .Release.Namespace }}
-  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+  labels: {{- $labels | nindent 4 }}
 spec:
   podSelector:
     matchLabels: { app: htr-reconciler }
@@ -122,8 +150,111 @@ spec:
         - { port: 22 }
         - { port: 9418 }
     {{- end }}
+    {{- if .Values.devStack.gitDaemon.enabled }}
+    - to:
+        - podSelector: { matchLabels: { app: git-daemon } }
+      ports:
+        - { port: 9418 }
+    {{- end }}
     {{- range .Values.network.reconciler.extraEgress }}
     - {{ toJson . }}
     {{- end }}
+{{- end }}
+{{- if .Values.viewer.enabled }}
+---
+# Viewer: browsers in (NodePort traffic arrives SNAT'd from the node); the
+# static site needs no egress at all.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: htr-viewer
+  namespace: {{ .Release.Namespace }}
+  labels: {{- $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app: uv4-viewer }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        {{- range .Values.network.viewer.ingressCidrs }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
+      ports:
+        - { port: 8080 }
+{{- end }}
+{{- if .Values.devStack.rustfs.enabled }}
+---
+# RustFS: S3 API from anywhere (Jobs, reconciler, init Job, browsers via the
+# NodePort); the console port only when it is enabled. No egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: htr-rustfs
+  namespace: {{ .Release.Namespace }}
+  labels: {{- $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app: rustfs }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - ipBlock: { cidr: "0.0.0.0/0" }
+      ports:
+        - { port: 9000 }
+        {{- if .Values.devStack.rustfs.console.enabled }}
+        - { port: 9001 }
+        {{- end }}
+{{- if .Values.devStack.rustfs.init.enabled }}
+---
+# Bucket init hook Job: only RustFS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: htr-rustfs-init
+  namespace: {{ .Release.Namespace }}
+  labels: {{- $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app: rustfs-init }
+  policyTypes: [Ingress, Egress]
+  egress:
+    - {{ toJson $dns }}
+    - to:
+        - podSelector: { matchLabels: { app: rustfs } }
+      ports:
+        - { port: 9000 }
+{{- end }}
+{{- end }}
+{{- if .Values.devStack.gitDaemon.enabled }}
+---
+# git daemon: reconciler in on 9418; out to RustFS (seed clone) and, because
+# alpine/git installs git-daemon at start, the Alpine CDN (public 443/80).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: htr-git-daemon
+  namespace: {{ .Release.Namespace }}
+  labels: {{- $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app: git-daemon }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: htr-reconciler } }
+      ports:
+        - { port: 9418 }
+  egress:
+    - {{ toJson $dns }}
+    {{- if .Values.devStack.rustfs.enabled }}
+    - to:
+        - podSelector: { matchLabels: { app: rustfs } }
+      ports:
+        - { port: 9000 }
+    {{- end }}
+    - to: {{ toJson $anyPublic }}
+      ports:
+        - { port: 443 }
+        - { port: 80 }
 {{- end }}
 {{- end }}
