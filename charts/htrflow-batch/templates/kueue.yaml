@@ -10,7 +10,12 @@ metadata:
   name: {{ .Values.queue.name }}-cq
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
 spec:
-  namespaceSelector: {}
+  # Only LocalQueues in the release namespace may borrow this quota (audit
+  # S9); a ClusterQueue is cluster-scoped, an empty selector admits any
+  # namespace that points a LocalQueue at it.
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: {{ .Release.Namespace }}
   resourceGroups:
     - coveredResources: [{{ range $i, $r := .Values.queue.resources }}{{ if $i }}, {{ end }}{{ $r.name | quote }}{{ end }}]
       flavors:
