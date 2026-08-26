@@ -4,3 +4,8 @@ __pycache__/
 .venv/
 site/
 .cache/
+
+# local environment (copy from .env.example)
+.env
+# agent worktrees
+.claude/worktrees/
