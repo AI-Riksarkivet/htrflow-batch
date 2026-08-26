@@ -21,8 +21,9 @@ TICK_SECONDS = 300
 
 #: Verdicts that keep a volume out of the submission lane (spec §4.4).
 _BLOCKING_VERDICTS = ("unreachable", "unsupported")
-#: Statuses whose pod may have shipped a run log (pending/pre-flight never ran).
-_LOGGED_STATUSES = frozenset({"done", "running", "queued", "retry", "needs-attention"})
+#: Statuses that get a run_log/run_manifest link: the pod shipped (or ships)
+#: its log. Failed volumes surface the same evidence as failure_log instead.
+_LOGGED_STATUSES = frozenset({"done", "running", "queued"})
 
 #: Errors from reading a file off the checkout: a corrupt or non-UTF-8 file is
 #: one campaign's problem, never the whole tick's. Campaign YAML is decoded as
@@ -110,6 +111,23 @@ def _source_manifest_url(
         bucket.write_json(key, build_manifest(volume.id, list(volume.images), public))
     base = cfg.internal_results_base or cfg.public_results_base
     return public, f"{base.rstrip('/')}/{key}"
+
+
+def _preserve_failure_log(
+    bucket, cluster, pid: str, vid: str, *, retire_run_log: bool
+) -> None:
+    """Failure evidence to status/failures/: the wrapper's shipped run log when
+    there is one (complete), else the kube-API tail. On the retry path the
+    run-log key is retired too, so the next attempt is never linked to the
+    previous attempt's log as if it were live."""
+    run_key = keys.run_log_key(pid, vid)
+    shipped = bucket.read_text(run_key)
+    bucket.put_text(
+        keys.failure_log_key(pid, vid),
+        shipped if shipped is not None else cluster.job_logs(job_name(pid, vid)),
+    )
+    if retire_run_log and shipped is not None:
+        bucket.delete(run_key)
 
 
 def _as_list(value: object) -> list:
@@ -393,7 +411,7 @@ def tick(
             # volume's retry budget while the operator sorts the drift out.
             if st == "retry" and pid not in blocked:
                 name = job_name(pid, v.id)
-                bucket.put_text(keys.failure_log_key(pid, v.id), cluster.job_logs(name))
+                _preserve_failure_log(bucket, cluster, pid, v.id, retire_run_log=True)
                 cluster.delete_job(name)
                 attempts[akey] = attempts.get(akey, 0) + 1
                 budgets[v.id] = attempts[akey]
@@ -403,11 +421,10 @@ def tick(
             elif st == "needs-attention" and job_name(pid, v.id) in jobs:
                 # The retry path uploads logs before deleting the Job; an
                 # exit-13 (or capped) volume otherwise reaches its terminal
-                # state with no uploaded evidence. Idempotent overwrite.
-                bucket.put_text(
-                    keys.failure_log_key(pid, v.id),
-                    cluster.job_logs(job_name(pid, v.id)),
-                )
+                # state with no uploaded evidence. Idempotent overwrite; the
+                # run-log key stays so later ticks keep copying the complete
+                # log rather than falling back to the kube tail.
+                _preserve_failure_log(bucket, cluster, pid, v.id, retire_run_log=False)
             if st == "done":
                 entry["totals"]["done"] += 1
             pages_done = (
@@ -456,6 +473,13 @@ def tick(
                     "viewer_manifest": (
                         f"{cfg.public_results_base.rstrip('/')}/{pid}/{v.id}/iiif.json"
                         if st == "done"
+                        else None
+                    ),
+                    # The run's manifest.json (summary card in the run viewer);
+                    # 404s until the wrapper publishes, which the viewer tolerates.
+                    "run_manifest": (
+                        f"{cfg.public_results_base.rstrip('/')}/{pid}/{v.id}/manifest.json"
+                        if st in _LOGGED_STATUSES
                         else None
                     ),
                     "source_manifest": public_src,

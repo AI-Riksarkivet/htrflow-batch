@@ -64,6 +64,10 @@ Rewritten every tick; the campaign browser Zod-parses it
           "pages_done": 24,
           "pages_total": null,
           "error": null,
+          "updated": "2026-08-25T13:29:10Z",
+          "failure_log": null,
+          "run_log": "…/status/logs/demo-v1/R0001203.txt",
+          "run_manifest": "…/demo-v1/R0001203/manifest.json",
           "viewer_manifest": "…/demo-v1/R0001203/iiif.json",
           "source_manifest": "https://lbiiif.riksarkivet.se/arkis!R0001203/manifest",
           "thumbnail": "…/full/200,/0/default.jpg"
@@ -80,8 +84,21 @@ Notes:
   pending | unreachable | unsupported` — see the
   [state table](reconciler.md#volume-states).
 - `viewer_manifest` is non-null only when done; the browser links it into UV.
+- `run_log` (`status/logs/<pipeline>/<volume>.txt`) is the wrapper's own
+  stdout/stderr, shipped every 15 s while the volume runs and complete after
+  it — set for `done`/`running`/`queued` whenever the object exists, so the
+  frontend can follow a run live. `run_manifest` is the run's `manifest.json`
+  for the same statuses (404 until published). `failure_log`
+  (`status/failures/…`) carries the failed attempt's evidence for
+  `retry`/`needs-attention`: the shipped log when there is one, else a
+  kube-API tail. On retry the run-log key is retired so the next attempt is
+  never shown the previous one's log.
+- `updated` is the `manifest.json` LastModified of a done volume, else null.
 - `pages_done` is counted (ALTO objects) only for `done`/`running` volumes;
-  `pages_total` is currently always `null`.
+  `pages_total` is the manifest's canvas count (cached by pre-validation) or
+  the length of `images:` for synthetic volumes.
+- Every URL in status.json is browser-facing: anything hosted on the
+  in-cluster S3 endpoint is rewritten to the public endpoint (any bucket).
 - `orphans` lists volume ids that have results under the pipeline prefix but
   appear in no campaign — reported once per pipeline, on the first campaign
   using it.

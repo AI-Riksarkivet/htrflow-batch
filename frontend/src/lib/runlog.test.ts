@@ -146,7 +146,13 @@ describe("isTerminalLog", () => {
 
   test("only the tail counts", () => {
     const early = "2026-08-26 07:00:00,000 INFO [v] COMPLETE 2 pages (2 processed) in 1.0s, viewer: x\n";
-    const filler = Array.from({ length: 200 }, (_, i) => `line ${i}`).join("\n");
+    const filler = Array.from({ length: 600 }, (_, i) => `line ${i}`).join("\n");
     expect(isTerminalLog(early + filler)).toBe(false);
+  });
+
+  test("a failure marker followed by a long traceback is still terminal", () => {
+    const marker = "2026-08-26 07:00:00,000 ERROR transient failure in stream: CUDA error\n";
+    const traceback = Array.from({ length: 150 }, (_, i) => `  File "x.py", line ${i}, in f`).join("\n");
+    expect(isTerminalLog(marker + traceback)).toBe(true);
   });
 });

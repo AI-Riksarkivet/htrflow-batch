@@ -73,12 +73,17 @@
       return;
     }
     try {
-      const res = await fetch(logUrl, { cache: "no-store" });
+      // no-cache (not no-store): the browser revalidates with the object's
+      // ETag and gets a 304 when nothing changed, instead of re-pulling a
+      // multi-MB log every poll.
+      const res = await fetch(logUrl, { cache: "no-cache" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const text = await res.text();
-      logText = text;
       logError = null;
-      updatedAt = new Date().toLocaleTimeString();
+      if (text !== logText) {
+        logText = text;
+        updatedAt = new Date().toLocaleTimeString();
+      }
       if (live && isTerminalLog(text)) live = false;
     } catch (e) {
       // A live volume's log may not exist yet (first upload pending) — keep
@@ -95,7 +100,7 @@
   async function loadManifest(): Promise<void> {
     if (manifestUrl === null) return;
     try {
-      const res = await fetch(manifestUrl, { cache: "no-store" });
+      const res = await fetch(manifestUrl, { cache: "no-cache" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: unknown = await res.json();
       if (isRunManifest(data)) manifest = data;

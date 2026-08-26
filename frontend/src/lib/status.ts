@@ -21,6 +21,9 @@ export const volumeEntrySchema = z.object({
   pages_total: z.number().nullable(),
   error: z.string().nullable(),
   viewer_manifest: z.string().nullable(),
+  // manifest.json of the run (live or finished) — for the run viewer's
+  // summary card; null for volumes whose pod never started.
+  run_manifest: z.string().nullable().default(null),
   source_manifest: z.string(),
   thumbnail: z.string().nullable(),
   updated: z.string().nullable().default(null),

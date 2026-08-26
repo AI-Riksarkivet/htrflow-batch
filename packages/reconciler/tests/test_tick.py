@@ -40,6 +40,14 @@ class FakeBucket:
     def exists(self, key):
         return key in self.written
 
+    def read_text(self, key):
+        v = self.written.get(key)
+        return v if isinstance(v, str) else None
+
+    def delete(self, key):
+        self.written.pop(key, None)
+        self.deleted = getattr(self, "deleted", []) + [key]
+
     def count_pages(self, pipeline_id, volume_id):
         return 638 if volume_id in self._done else 0
 
@@ -801,3 +809,58 @@ def test_pending_volume_never_probes_for_a_run_log(tmp_path):
     bucket = CountingBucket()
     tick(_repo(tmp_path), bucket, FakeCluster(), CFG, NOW)
     assert not [k for k in bucket.exists_calls if k.startswith("status/logs/")]
+
+
+def _failed_job(vid="R0000001", **kw):
+    return {job_name("demo-v1", vid): JobState(active=False, failed=True, **kw)}
+
+
+def test_retry_preserves_shipped_log_as_failure_evidence_and_retires_it(tmp_path):
+    bucket = FakeBucket()
+    bucket.written["status/logs/demo-v1/R0000001.txt"] = "full shipped log\nERROR boom"
+    doc = tick(_repo(tmp_path), bucket, FakeCluster(jobs=_failed_job()), CFG, NOW)
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert byid["R0000001"]["status"] == "retry"
+    assert bucket.written["status/failures/demo-v1/R0000001.txt"] == (
+        "full shipped log\nERROR boom"
+    )
+    assert "status/logs/demo-v1/R0000001.txt" not in bucket.written
+    assert byid["R0000001"]["run_log"] is None
+
+
+def test_retry_without_shipped_log_falls_back_to_kube_tail(tmp_path):
+    bucket = FakeBucket()
+    doc = tick(_repo(tmp_path), bucket, FakeCluster(jobs=_failed_job()), CFG, NOW)
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert byid["R0000001"]["status"] == "retry"
+    assert bucket.written["status/failures/demo-v1/R0000001.txt"] == "boom traceback"
+    assert not getattr(bucket, "deleted", [])
+
+
+def test_needs_attention_copies_shipped_log_but_keeps_it(tmp_path):
+    bucket = FakeBucket()
+    bucket.written["status/logs/demo-v1/R0000001.txt"] = "shipped, exit 13"
+    jobs = _failed_job(exit_code=13)
+    doc = tick(_repo(tmp_path), bucket, FakeCluster(jobs=jobs), CFG, NOW)
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert byid["R0000001"]["status"] == "needs-attention"
+    assert bucket.written["status/failures/demo-v1/R0000001.txt"] == "shipped, exit 13"
+    assert bucket.written["status/logs/demo-v1/R0000001.txt"] == "shipped, exit 13"
+    assert byid["R0000001"]["run_log"] is None  # failure_log carries it
+
+
+def test_run_manifest_for_in_flight_and_done_only(tmp_path):
+    name = job_name("demo-v1", "R0000001")
+    jobs = {name: JobState(active=True, failed=False)}
+    bucket = FakeBucket(done={"R0000002"})
+    doc = tick(_repo(tmp_path), bucket, FakeCluster(jobs=jobs), CFG, NOW)
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert byid["R0000001"]["run_manifest"] == (
+        "http://pub/htr-results/demo-v1/R0000001/manifest.json"
+    )
+    assert byid["R0000002"]["run_manifest"] == (
+        "http://pub/htr-results/demo-v1/R0000002/manifest.json"
+    )
+    assert byid["loose"]["status"] in ("pending", "queued", "running")
+    if byid["loose"]["status"] == "pending":
+        assert byid["loose"]["run_manifest"] is None

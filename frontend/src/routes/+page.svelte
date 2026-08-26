@@ -233,13 +233,10 @@
                         <a
                           href={"log?log=" +
                             encodeURIComponent(v.run_log) +
-                            (v.viewer_manifest !== null
-                              ? "&manifest=" +
-                                encodeURIComponent(
-                                  v.viewer_manifest.replace(/iiif\.json$/, "manifest.json"),
-                                )
+                            (v.run_manifest !== null
+                              ? "&manifest=" + encodeURIComponent(v.run_manifest)
                               : "") +
-                          (v.status !== "done" ? "&live=1" : "")}>log</a
+                            (v.status !== "done" ? "&live=1" : "")}>log</a
                         >
                       {/if}
                     </span>

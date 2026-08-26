@@ -81,7 +81,7 @@ def test_periodic_thread_ships_and_finish_does_final_upload():
 
 
 def test_buffer_is_capped_keeping_head_and_tail():
-    capture = LogCapture(cap_bytes=200, head_bytes=50)
+    capture = LogCapture(cap_bytes=200, head_bytes=50, tail_bytes=100)
     for i in range(60):
         capture._append(f"line {i:03d} xxxxxxxxxxxxxxxxxxxx\n")  # 30 chars each
     text = capture.text()
@@ -146,3 +146,80 @@ def test_attach_logging_reuses_a_handler_already_on_the_tee():
     finally:
         capture.finish()
     assert root.handlers == before
+
+
+def test_truncation_has_hysteresis():
+    """Trim well below the cap so the join is not paid on every write after it."""
+    capture = LogCapture(cap_bytes=1000, head_bytes=100, tail_bytes=300)
+    calls = {"n": 0}
+    orig = capture._truncate_locked
+
+    def counting():
+        calls["n"] += 1
+        orig()
+
+    capture._truncate_locked = counting  # type: ignore[method-assign]
+    for i in range(200):
+        capture._append(f"line {i:04d} xxxxxxxxxxxxxxxxxxx\n")  # 30 chars
+    # 6000 chars written, ~600 kept per truncation -> a handful of trims, not ~170
+    assert calls["n"] <= 12
+    assert capture._size <= 1000
+
+
+def test_start_shipping_ships_immediately():
+    uploads: list[str] = []
+    capture = LogCapture()
+    capture._append("first line\n")
+    capture.start_shipping(uploads.append, interval=60)
+    try:
+        assert uploads == ["first line\n"]
+    finally:
+        capture.finish()
+
+
+def test_uploads_are_serialised_and_finish_waits_for_the_slow_one():
+    import threading
+
+    order: list[str] = []
+    release = threading.Event()
+
+    def slow(text: str) -> None:
+        order.append("start:" + text.strip())
+        release.wait(2)
+        order.append("end:" + text.strip())
+
+    capture = LogCapture()
+    capture.start_shipping(slow, interval=0)
+    capture._append("a\n")
+    t = threading.Thread(target=capture.ship)
+    t.start()
+    while not order:
+        pass
+    capture._append("b\n")
+    fin = threading.Thread(target=capture.finish)
+    fin.start()
+    release.set()
+    t.join(3)
+    fin.join(3)
+    assert order == ["start:a", "end:a", "start:a\nb", "end:a\nb"]
+
+
+def test_warning_resets_after_a_successful_upload(caplog):
+    fail = {"on": True}
+
+    def flaky(text: str) -> None:
+        if fail["on"]:
+            raise RuntimeError("s3 down")
+
+    capture = LogCapture()
+    capture.start_shipping(flaky, interval=0)
+    with caplog.at_level(logging.WARNING, logger="htrflow_batch.logship"):
+        capture._append("1\n")
+        capture.ship()
+        fail["on"] = False
+        capture._append("2\n")
+        assert capture.ship() is True
+        fail["on"] = True
+        capture._append("3\n")
+        capture.ship()
+    assert caplog.text.count("could not ship run log") == 2

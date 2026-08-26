@@ -35,7 +35,14 @@ to point elsewhere; the default is the PoC RustFS NodePort
 - **Viewer link** — a `done` volume links to its published `viewer_manifest`
   (results + ALTO overlays); any other state links to its `source_manifest`
   (the raw scans), both as `uv.html#?manifest=<url>`.
-- **Progress** — `round(100 * done / total)`, `0` for an empty campaign.
+- **Campaign health** (the card's left accent) — worst volume wins: red if
+  any volume is `needs-attention`/`unreachable`/`unsupported`, blue if any is
+  `running`/`queued`/`retry`, green if every volume is `done`, grey otherwise.
+- **Run log** — `log` links `run_log` into `/log?log=…&manifest=<run_manifest>`;
+  for a volume that is not `done` it adds `live=1`, and the viewer re-fetches
+  every 15 s (ETag-revalidated), follows the tail while the reader is at the
+  bottom, and stops once the wrapper's terminal line appears. `failure_log`
+  wins the slot for failed volumes.
 - **Stale banner** — shown when `generated_at` is older than
   `3 × tick_seconds` (15 min at the default tick): the reconciler is presumed
   dead, the numbers are historical.
