@@ -112,6 +112,8 @@ const TERMINAL_RE = /\] COMPLETE \d+ pages|(permanent|transient) failure in \w+:
  * can be large.
  */
 export function isTerminalLog(text: string): boolean {
-  const tail = text.split("\n").slice(-50).join("\n");
+  // The failure line is followed by the traceback(s) — chained torch/htrflow
+  // plus a boto one run to hundreds of lines — so the window is generous.
+  const tail = text.split("\n").slice(-500).join("\n");
   return TERMINAL_RE.test(tail);
 }

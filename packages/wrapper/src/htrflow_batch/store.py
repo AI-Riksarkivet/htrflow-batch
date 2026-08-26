@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import boto3
+from botocore.config import Config as BotoConfig
 
 from .config import Config
 
@@ -16,6 +17,16 @@ class ResultStore:
         self.bucket = cfg.s3_bucket
         self.prefix = cfg.volume_prefix
         self.client = boto3.client("s3", endpoint_url=cfg.s3_endpoint or None)
+        # Run-log uploads are best-effort and periodic: a dead S3 must not
+        # pin a shipping thread (or the final upload at exit) for the default
+        # minutes of connect/read timeouts times legacy retries.
+        self._log_client = boto3.client(
+            "s3",
+            endpoint_url=cfg.s3_endpoint or None,
+            config=BotoConfig(
+                connect_timeout=5, read_timeout=30, retries={"max_attempts": 2}
+            ),
+        )
 
     def _key(self, rel: str) -> str:
         return f"{self.prefix}/{rel}"
@@ -65,7 +76,7 @@ class ResultStore:
         return f"status/logs/{self.cfg.pipeline_id}/{self.cfg.volume_ref}.txt"
 
     def put_run_log(self, text: str) -> None:
-        self.client.put_object(
+        self._log_client.put_object(
             Bucket=self.bucket,
             Key=self.run_log_key(),
             Body=text.encode("utf-8", errors="replace"),

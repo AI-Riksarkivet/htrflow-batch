@@ -11,6 +11,7 @@ const volume = {
   viewer_manifest: null,
   source_manifest: "http://s/m.json",
   thumbnail: null,
+  run_manifest: null,
   updated: null,
   failure_log: null,
   run_log: null,

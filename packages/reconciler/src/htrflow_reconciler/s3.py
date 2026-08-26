@@ -71,6 +71,16 @@ class Bucket:
             ContentType="application/json",
         )
 
+    def read_text(self, key: str) -> str | None:
+        try:
+            body = self.c.get_object(Bucket=self.bucket, Key=key)["Body"].read()
+        except self.c.exceptions.NoSuchKey:
+            return None
+        return body.decode("utf-8", errors="replace")
+
+    def delete(self, key: str) -> None:
+        self.c.delete_object(Bucket=self.bucket, Key=key)
+
     def put_text(self, key: str, text: str) -> None:
         self.c.put_object(
             Bucket=self.bucket, Key=key, Body=text.encode(), ContentType="text/plain"

@@ -20,8 +20,12 @@ from typing import Callable, Optional, TextIO
 
 log = logging.getLogger("htrflow_batch.logship")
 
+# Sizes are in characters (the buffer holds str); ASCII logs make it bytes.
+# Truncation trims to HEAD + TAIL (3 MiB) and re-triggers only at CAP, so the
+# expensive join is amortised over ~1 MiB of new output, not paid per write.
 CAP_BYTES = 4 * 1024 * 1024
 HEAD_BYTES = 1 * 1024 * 1024
+TAIL_BYTES = 2 * 1024 * 1024
 TRUNCATION_MARKER = (
     "\n... [log truncated: middle dropped by htrflow_batch.logship] ...\n"
 )
@@ -57,14 +61,23 @@ class _Tee(io.TextIOBase):
 
 
 class LogCapture:
-    def __init__(self, cap_bytes: int = CAP_BYTES, head_bytes: int = HEAD_BYTES):
+    def __init__(
+        self,
+        cap_bytes: int = CAP_BYTES,
+        head_bytes: int = HEAD_BYTES,
+        tail_bytes: int = TAIL_BYTES,
+    ):
         self._lock = threading.Lock()
+        # Serialises uploads: finish() must not race a slow periodic PUT and
+        # let the older body land last on the same key.
+        self._upload_lock = threading.Lock()
         self._chunks: list[str] = []
         self._size = 0
         self._version = 0  # bumped on every append
         self._shipped_version = 0
         self._cap = cap_bytes
         self._head = head_bytes
+        self._tail = tail_bytes
         self._upload: Optional[Callable[[str], None]] = None
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
@@ -136,8 +149,7 @@ class LogCapture:
         cut = head.rfind("\n")
         if cut > 0:
             head = head[: cut + 1]
-        tail_budget = self._cap - len(head) - len(TRUNCATION_MARKER)
-        tail = text[-tail_budget:] if tail_budget > 0 else ""
+        tail = text[-self._tail :] if self._tail > 0 else ""
         nl = tail.find("\n")
         if nl >= 0:
             tail = tail[nl + 1 :]
@@ -156,6 +168,9 @@ class LogCapture:
         self._upload = upload
         if interval <= 0:
             return
+        # Claim the key right away: a retried volume must replace the previous
+        # attempt's log before the reader's first poll, not 15 s later.
+        self.ship()
         self._thread = threading.Thread(
             target=self._run, args=(interval,), daemon=True, name="logship"
         )
@@ -170,20 +185,22 @@ class LogCapture:
         Returns True on upload. Never raises."""
         if self._upload is None:
             return False
-        with self._lock:
-            version = self._version
-            if version == self._shipped_version:
+        with self._upload_lock:
+            with self._lock:
+                version = self._version
+                if version == self._shipped_version:
+                    return False
+                text = "".join(self._chunks)
+            try:
+                self._upload(text)
+            except Exception:
+                if not self._warned:
+                    self._warned = True
+                    log.warning("could not ship run log; will retry", exc_info=True)
                 return False
-            text = "".join(self._chunks)
-        try:
-            self._upload(text)
-        except Exception:
-            if not self._warned:
-                self._warned = True
-                log.warning("could not ship run log; will retry", exc_info=True)
-            return False
-        self._shipped_version = version
-        return True
+            self._shipped_version = version
+            self._warned = False  # a later outage warns again
+            return True
 
     def finish(self) -> None:
         """Stop the thread, do the final upload, restore the streams."""

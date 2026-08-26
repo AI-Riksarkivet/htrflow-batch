@@ -18,6 +18,7 @@ const done: VolumeEntry = {
   viewer_manifest: "http://pub/htr-results/demo-v1/R1/iiif.json",
   source_manifest: "https://lbiiif.riksarkivet.se/arkis!R1/manifest",
   thumbnail: null,
+  run_manifest: null,
   updated: null,
   failure_log: null,
   run_log: null,

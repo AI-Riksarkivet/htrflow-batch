@@ -74,6 +74,14 @@ namespace, not `volume_prefix`) is the run's own stdout/stderr, uploaded every
 `LOG_SHIP_SECONDS` while the volume runs and once more on exit, so the final
 object is the complete log rather than a tail. `kubectl logs` is unchanged
 (the tee writes through). Shipping never fails a run: upload errors are
-logged once and retried next interval. The buffer is capped at 4 MiB (head +
-tail kept, middle dropped with a marker). A retry overwrites the key with the
-new attempt; the failed attempt's tail lives in `status/failures/…`.
+logged once and retried next interval. The buffer is capped at 4 M characters
+(1 M head + 2 M tail kept, middle dropped with a marker). A retry overwrites
+the key with the new attempt; the reconciler first copies the shipped log of
+the failed attempt to `status/failures/…` (complete, not a kube tail).
+
+Honest limits: only Python-level writes are teed — anything writing to fd 1/2
+directly (CUDA/C++ warnings, subprocesses) shows in `kubectl logs` only; a
+SIGTERM (Job deletion, preemption) exits without the final upload, so the
+object then lags by up to one interval. On a **versioned** bucket each upload
+is a new version (~240/h per running volume) — add a lifecycle rule or turn
+shipping off with `LOG_SHIP_SECONDS=0`.
