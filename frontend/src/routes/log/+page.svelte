@@ -1,5 +1,7 @@
 <script lang="ts">
   import { browser } from "$app/environment";
+  import RunSummaryCard from "$lib/components/RunSummaryCard.svelte";
+  import { runManifestSchema, type RunManifest } from "$lib/run.js";
   import {
     isTerminalLog,
     parseRunLog,
@@ -11,37 +13,6 @@
   // Matches the wrapper's LOG_SHIP_SECONDS default: polling faster than the
   // pod uploads buys nothing.
   const LIVE_MS = 15_000;
-
-  interface PageResult {
-    status: string;
-    seconds: number;
-    error?: string;
-  }
-
-  interface RunManifest {
-    volume: string;
-    pipeline_id: string;
-    htrflow_version: string;
-    image_digest: string;
-    pages: number;
-    results: Record<string, PageResult>;
-    pipeline_yaml?: string;
-  }
-
-  function isRunManifest(v: unknown): v is RunManifest {
-    if (v === null || typeof v !== "object") return false;
-    const m = v as Record<string, unknown>;
-    return (
-      typeof m.volume === "string" &&
-      typeof m.pipeline_id === "string" &&
-      typeof m.htrflow_version === "string" &&
-      typeof m.image_digest === "string" &&
-      typeof m.pages === "number" &&
-      typeof m.results === "object" &&
-      m.results !== null &&
-      (m.pipeline_yaml === undefined || typeof m.pipeline_yaml === "string")
-    );
-  }
 
   // The route is opened as /log?log=<url>&manifest=<url> on a prerendered,
   // client-only SPA (see +layout.ts) — there is no SvelteKit load function
@@ -102,8 +73,8 @@
     try {
       const res = await fetch(manifestUrl, { cache: "no-cache" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: unknown = await res.json();
-      if (isRunManifest(data)) manifest = data;
+      const parsed = runManifestSchema.safeParse(await res.json());
+      if (parsed.success) manifest = parsed.data;
     } catch {
       // Missing/failed manifest fetch → skip the summary card gracefully;
       // the raw log still renders on its own.
@@ -135,24 +106,6 @@
   const parsed = $derived<{ groups: LogGroup[] } | null>(
     logText !== null ? parseRunLog(logText) : null,
   );
-
-  const sortedPages = $derived(
-    manifest !== null
-      ? Object.entries(manifest.results).sort(([a], [b]) => a.localeCompare(b))
-      : [],
-  );
-
-  const totalSeconds = $derived(
-    manifest !== null
-      ? Object.values(manifest.results)
-          .reduce((acc, r) => acc + r.seconds, 0)
-          .toFixed(1)
-      : null,
-  );
-
-  function shortDigest(digest: string): string {
-    return digest.slice(-12);
-  }
 
   // Tint for the per-line level chip. WARNING/ERROR/CRITICAL get the same
   // treatment as the existing group-level tinting; INFO/DEBUG stay neutral.
@@ -216,57 +169,7 @@
   </header>
 
   {#if manifest !== null}
-    <section class="summary">
-      <div class="field">
-        <span class="label">volume</span>
-        <span class="value">{manifest.volume}</span>
-      </div>
-      <div class="field">
-        <span class="label">pipeline</span>
-        <span class="value">{manifest.pipeline_id}</span>
-      </div>
-      <div class="field">
-        <span class="label">htrflow</span>
-        <span class="value">{manifest.htrflow_version}</span>
-      </div>
-      <div class="field">
-        <span class="label">pages</span>
-        <span class="value num">{manifest.pages}</span>
-      </div>
-      <div class="field">
-        <span class="label">total time</span>
-        <span class="value num">{totalSeconds}s</span>
-      </div>
-      <div class="field">
-        <span class="label">image</span>
-        <span class="value mono">{shortDigest(manifest.image_digest)}</span>
-      </div>
-    </section>
-
-    {#if sortedPages.length > 0}
-      <table class="pages">
-        <thead>
-          <tr>
-            <th>page</th>
-            <th>status</th>
-            <th class="num">seconds</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each sortedPages as [id, r] (id)}
-            <tr>
-              <td class="pid">{id}</td>
-              <td>
-                <span class="chip {r.status === 'ok' ? 'success' : 'destructive'}">
-                  {r.status}
-                </span>
-              </td>
-              <td class="num">{r.seconds.toFixed(1)}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    {/if}
+    <RunSummaryCard {manifest} />
 
     {#if manifest.pipeline_yaml}
       <details class="pipeline-yaml">
@@ -521,98 +424,6 @@
 
   .muted {
     color: var(--muted-foreground);
-  }
-
-  .summary {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1.5rem;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--primary);
-    border-radius: var(--radius);
-    padding: 0.75rem 1rem;
-    margin-bottom: 1rem;
-  }
-
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.1rem;
-  }
-
-  .label {
-    font-size: 10.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
-    color: var(--muted-foreground);
-  }
-
-  .value {
-    font-size: 0.9rem;
-  }
-
-  .value.mono {
-    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-  }
-
-  table.pages {
-    width: 100%;
-    max-width: 32rem;
-    border-collapse: collapse;
-    margin-bottom: 1.25rem;
-    font-size: 12.5px;
-    line-height: 1.35;
-  }
-
-  table.pages th {
-    text-align: left;
-    font-weight: 500;
-    color: var(--muted-foreground);
-    font-size: 10.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
-    padding: 0.2rem 0.5rem;
-    border-bottom: 1px solid var(--border);
-  }
-
-  table.pages th.num,
-  table.pages td.num {
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-  }
-
-  table.pages td {
-    padding: 0.2rem 0.5rem;
-    border-bottom: 1px solid var(--border);
-  }
-
-  table.pages tbody tr:last-child td {
-    border-bottom: none;
-  }
-
-  td.pid {
-    font-weight: 500;
-  }
-
-  .chip {
-    font-size: 0.7rem;
-    font-weight: 500;
-    padding: 0.1rem 0.5rem;
-    border-radius: 999px;
-    background: var(--muted);
-    color: var(--muted-foreground);
-    width: fit-content;
-  }
-
-  .chip.success {
-    background: color-mix(in oklab, var(--success) 15%, transparent);
-    color: var(--success);
-  }
-
-  .chip.destructive {
-    background: color-mix(in oklab, var(--destructive) 15%, transparent);
-    color: var(--destructive);
   }
 
   details.pipeline-yaml {
