@@ -91,7 +91,7 @@ class LogCapture:
             for original, tee in zip(capture._originals, (sys.stdout, sys.stderr)):
                 if handler.stream is original:
                     capture._rebound.append((handler, original))
-                    handler.setStream(tee)  # type: ignore[arg-type]
+                    handler.setStream(tee)  # ty: ignore[invalid-argument-type]
         return capture
 
     def attach_logging(
