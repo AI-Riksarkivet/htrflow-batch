@@ -17,6 +17,8 @@ pipelines:
             model: Riksarkivet/yolov9-regions-1
 
 job:
+  manifestMaxBytes: 8388608
+  fetchMaxBytes: 33554432
   nodeSelector: { kubernetes.io/arch: arm64 }
   tolerations:
     - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }

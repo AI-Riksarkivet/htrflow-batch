@@ -154,8 +154,9 @@ Added:
   (`coordination.k8s.io/leases`), env `RECONCILER_TICK_SECONDS`,
   `RECONCILER_MAX_VALIDATIONS_PER_TICK`, `RECONCILER_FETCH_MAX_BYTES`,
   `RECONCILER_LEASE_NAME`, `RECONCILER_JOB_{MIN_DEADLINE_SECONDS,SECONDS_PER_PAGE,RUNTIME_CLASS,NODE_SELECTOR,TOLERATIONS}`,
+  `RECONCILER_JOB_{MANIFEST_MAX_BYTES,FETCH_MAX_BYTES}`,
   `RECONCILER_ALLOWED_IMAGE_REPOS`, `RECONCILER_REQUIRE_MODEL_REVISION`.
-- `job.{runtimeClassName,nodeSelector,tolerations,minDeadlineSeconds,secondsPerPage}`;
+- `job.{runtimeClassName,nodeSelector,tolerations,minDeadlineSeconds,secondsPerPage,manifestMaxBytes,fetchMaxBytes}`;
   the example Job mirrors them plus `backoffLimit: 0` + `podFailurePolicy`.
 - `security.{allowedImageRepos,requireModelRevision,psaEnforce,verifyImages.*}`;
   optional Kyverno `ClusterPolicy` (cosign keyless) when `verifyImages.enabled`.

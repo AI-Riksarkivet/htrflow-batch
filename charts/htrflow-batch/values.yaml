@@ -65,6 +65,10 @@ job:
   tolerations: []            # e.g. [{key: nvidia.com/gpu, operator: Exists, effect: NoSchedule}]
   minDeadlineSeconds: 21600
   secondsPerPage: 30
+  # Byte caps the wrapper applies to fetches driven by campaign data
+  # (audit S5; passed to Jobs as MANIFEST_MAX_BYTES / FETCH_MAX_BYTES).
+  manifestMaxBytes: 16777216   # IIIF manifest (16 MiB)
+  fetchMaxBytes: 67108864      # a single page image (64 MiB)
 
 security:
   # Image repositories a campaigns-repo pipeline may pin (prefix match before

@@ -147,6 +147,10 @@ spec:
                   value: {{ .Values.job.minDeadlineSeconds | int64 | quote }}
                 - name: RECONCILER_JOB_SECONDS_PER_PAGE
                   value: {{ .Values.job.secondsPerPage | int64 | quote }}
+                - name: RECONCILER_JOB_MANIFEST_MAX_BYTES
+                  value: {{ .Values.job.manifestMaxBytes | int64 | quote }}
+                - name: RECONCILER_JOB_FETCH_MAX_BYTES
+                  value: {{ .Values.job.fetchMaxBytes | int64 | quote }}
                 - name: RECONCILER_JOB_RUNTIME_CLASS
                   value: {{ .Values.job.runtimeClassName | quote }}
                 - name: RECONCILER_JOB_NODE_SELECTOR

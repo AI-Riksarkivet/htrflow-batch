@@ -80,13 +80,15 @@
     "job": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["runtimeClassName", "nodeSelector", "tolerations", "minDeadlineSeconds", "secondsPerPage"],
+      "required": ["runtimeClassName", "nodeSelector", "tolerations", "minDeadlineSeconds", "secondsPerPage", "manifestMaxBytes", "fetchMaxBytes"],
       "properties": {
         "runtimeClassName": { "type": "string" },
         "nodeSelector": { "$ref": "#/definitions/stringMap" },
         "tolerations": { "type": "array", "items": { "type": "object" } },
         "minDeadlineSeconds": { "$ref": "#/definitions/positiveInt" },
-        "secondsPerPage": { "$ref": "#/definitions/positiveInt" }
+        "secondsPerPage": { "$ref": "#/definitions/positiveInt" },
+        "manifestMaxBytes": { "$ref": "#/definitions/positiveInt" },
+        "fetchMaxBytes": { "$ref": "#/definitions/positiveInt" }
       }
     },
     "security": {

@@ -2,7 +2,7 @@
 
 Branch: this worktree's branch off `652a5eb` (`feat/campaign-browser-visibility`).
 Scope touched: `charts/**`, `scripts/**`, `Makefile`, `.docker/docker-compose.yml`,
-`.env.example` (new, requested). Nothing else was edited; everything another
+`.env.example` (new, requested), this file (moved here from the worktree root on request). Nothing else was edited; everything another
 package must do is listed here.
 
 Verification run on every commit: `helm lint` (defaults + `ci/full-values.yaml`),
@@ -57,6 +57,8 @@ Exactly the contract table in the plan; A1 must read these (pydantic
 | `RECONCILER_JOB_RUNTIME_CLASS` | `job.runtimeClassName` | `nvidia` (`""` = none) |
 | `RECONCILER_JOB_NODE_SELECTOR` | `job.nodeSelector` as JSON | `{}` |
 | `RECONCILER_JOB_TOLERATIONS` | `job.tolerations` as JSON | `[]` |
+| `RECONCILER_JOB_MANIFEST_MAX_BYTES` | `job.manifestMaxBytes` | `16777216` (→ Job env `MANIFEST_MAX_BYTES`) |
+| `RECONCILER_JOB_FETCH_MAX_BYTES` | `job.fetchMaxBytes` | `67108864` (→ Job env `FETCH_MAX_BYTES`) |
 | `RECONCILER_MAX_VALIDATIONS_PER_TICK` | `reconciler.maxValidationsPerTick` | `50` |
 | `RECONCILER_FETCH_MAX_BYTES` | `reconciler.fetchMaxBytes` | `16777216` |
 | `RECONCILER_LEASE_NAME` | fixed | `htr-reconciler` (Role grants get/update on that name, create unscoped) |
@@ -69,8 +71,10 @@ Unchanged: `RECONCILER_NAMESPACE` (downward API), `RECONCILER_QUEUE`,
 CronJob: `startingDeadlineSeconds: 120`, `activeDeadlineSeconds: 600`
 (`reconciler.tickDeadlineSeconds`). Job contract mirrored in
 `templates/job-example.yaml`: `backoffLimit: 0`, `podFailurePolicy`
-(Ignore on `DisruptionTarget`, FailJob on wrapper exit 13), `runtimeClassName`
-/ `nodeSelector` / `tolerations` from `job.*`, PVC from `modelCache.name`.
+(exactly two rules: Ignore on `DisruptionTarget`, FailJob on wrapper exit 13 —
+exit 143/SIGTERM matches neither and stays transient), `MANIFEST_MAX_BYTES` /
+`FETCH_MAX_BYTES` env from `job.*`, `runtimeClassName` / `nodeSelector` /
+`tolerations` from `job.*`, PVC from `modelCache.name`.
 Default `queue.resources` = cpu 4 / memory 8Gi / nvidia.com/gpu 1 (one Job).
 
 ## 3. For A1 (reconciler)
@@ -134,9 +138,11 @@ Docs that now describe the old chart and need updating:
 - `docs/reference/reconciler.md`: env table gains the section-2 rows;
   `RECONCILER_S3_SECRET` description says "via envFrom" — it is a mounted
   file (D-H1, already flagged).
-- `docs/development/deployment.md`: `poc-push` is arm64-aware and prints
-  digests; `.env`/`.env.example`; `build-reconciler`/`scan-reconciler`;
-  `psa-labels` reads `security.psaEnforce`.
+- `docs/development/deployment.md`: `poc-push` is arm64-aware, stamps
+  `HTRFLOW_BASE_REVISION` from the `HTRFLOW_DIR` checkout (`.env`, default
+  `~/htrflow`) into the arm64 wrapper image and prints digests;
+  `.env`/`.env.example`; `build-reconciler`/`scan-reconciler`; `psa-labels`
+  reads `security.psaEnforce`.
 - Chart README already carries the 0.2.0 changelog, the replay commands with
   the new flags, the adoption commands and the bucket-policy split.
 
