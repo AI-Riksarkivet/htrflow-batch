@@ -11,6 +11,7 @@ import shutil
 import threading
 import time
 import traceback
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Callable, Mapping, Optional
 
@@ -225,7 +226,7 @@ def _main(
             if alto:
                 try:
                     dims[p.name] = parse_alto_dims(alto[0])
-                except ValueError:
+                except (ValueError, ET.ParseError):
                     pass
             elif p.name in uploaded:
                 # resumed/skipped page: no local ALTO from this run, but a
@@ -234,8 +235,10 @@ def _main(
                 try:
                     data = store.get_bytes(f"alto/{p.name}.xml")
                     dims[p.name] = parse_alto_dims_bytes(data)
-                except Exception:
+                except (ValueError, ET.ParseError):
                     pass
+                except Exception:
+                    log.warning("could not read stored ALTO for %s", p.name)
         if len(dims) < len(pages):
             log.warning("viewer manifest covers %d/%d pages", len(dims), len(pages))
         if not dims:

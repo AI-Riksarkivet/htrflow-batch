@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import boto3
@@ -63,11 +64,23 @@ class ResultStore:
         missing = [fmt for fmt in PAGE_FORMATS if fmt not in files]
         if missing:
             raise ValueError(f"page {name}: missing {', '.join(missing)} output")
+        # W3: parse before the first PUT. An unparseable file that reached S3
+        # would fail publish once and then count as done on the retry.
+        bodies: dict[str, bytes] = {}
+        for fmt in PAGE_FORMATS:
+            data = files[fmt].read_bytes()
+            try:
+                ET.fromstring(data)
+            except ET.ParseError as e:
+                raise ValueError(
+                    f"page {name}: {fmt} XML is not well-formed: {e}"
+                ) from e
+            bodies[fmt] = data
         for fmt in PAGE_FORMATS:
             self.client.put_object(
                 Bucket=self.bucket,
                 Key=self._key(f"{fmt}/{name}.xml"),
-                Body=files[fmt].read_bytes(),
+                Body=bodies[fmt],
                 ContentType="application/xml",
             )
 
