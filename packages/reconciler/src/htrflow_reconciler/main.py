@@ -40,6 +40,19 @@ _LOGGED_STATUSES = frozenset({"done", "running", "queued"})
 #: Concurrent manifest fetches per validation batch.
 _FETCH_WORKERS = 8
 
+
+class SourceRejected(Exception):
+    """A fetch that mirrors the wrapper's PERMANENT failure set (A2 contract):
+    4xx, non-JSON, non-object JSON, non-http(s), over the byte cap. The
+    verdict is cached forever — asking again cannot make it a manifest —
+    unlike a transient failure (5xx, 429, network), which the fetch reports
+    as ``None`` and which is re-probed after the back-off."""
+
+    def __init__(self, format: str) -> None:
+        super().__init__(format)
+        self.format = format
+
+
 #: Errors from reading a file off the checkout: a corrupt or non-UTF-8 file is
 #: one campaign's problem, never the whole tick's. Campaign YAML is decoded as
 #: UTF-8 explicitly so the verdict does not depend on the CronJob's locale.
@@ -253,6 +266,13 @@ def _verdict(doc: object) -> dict:
     """Verdict per fetched manifest (spec §4.4): format + thumbnail + pages."""
     if doc is None:
         return {"format": "unreachable", "thumbnail": None, "page_count": None}
+    if isinstance(doc, SourceRejected):
+        return {
+            "format": doc.format,
+            "thumbnail": None,
+            "page_count": None,
+            "permanent": True,
+        }
     return {
         "format": _classify(doc),
         "thumbnail": _thumbnail(doc),
@@ -281,7 +301,8 @@ def _valid_verdict(cache: dict, url: str, now_iso: str) -> dict | None:
     v = cache.get(url)
     if not isinstance(v, dict):
         return None
-    if v.get("format") == "unreachable" and v.get("unreachable_until", "") <= now_iso:
+    transient = v.get("format") == "unreachable" and not v.get("permanent")
+    if transient and v.get("unreachable_until", "") <= now_iso:
         return None
     return v
 
@@ -402,7 +423,7 @@ class _Pass:
             docs = list(pool.map(self._fetch, batch))
         for url, doc in zip(batch, docs):
             verdict = _verdict(doc)
-            if verdict["format"] == "unreachable":
+            if verdict["format"] == "unreachable" and not verdict.get("permanent"):
                 verdict["unreachable_until"] = until
             self.validation[url] = verdict
         self.validations = len(batch)
@@ -411,7 +432,9 @@ class _Pass:
     def _fetch(self, url: str) -> object:
         try:
             return self.fetch_json(url)
-        except Exception as e:  # noqa: BLE001 — a bad fetch is "unreachable"
+        except SourceRejected as e:
+            return e
+        except Exception as e:  # noqa: BLE001 — anything else is transient
             log.warning("fetch %s: %s", url, _describe(e))
             return None
 
@@ -681,8 +704,13 @@ class _Pass:
             row["run_log"] = _public(self.cfg, log_key)
 
     def _made_progress(self, pid: str, vid: str, record: Attempt) -> bool:
+        """A deadline kill (Job reason) or a SIGTERM (wrapper exit 143 after
+        its termination log) that advanced pages_done since submission is
+        progress: the resumed run skips those pages and is not charged."""
         job = self.jobs.get(job_name(pid, vid))
-        if job is None or job.reason != "DeadlineExceeded":
+        if job is None:
+            return False
+        if job.reason != "DeadlineExceeded" and job.exit_code != 143:
             return False
         if record.pages_at_submit is None:
             return False

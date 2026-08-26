@@ -15,7 +15,7 @@ from pydantic_settings import BaseSettings
 from .gitrepo import DEFAULT_TIMEOUT, checkout
 from .jobspec import ReconcilerConfig
 from .k8s import Cluster
-from .main import tick
+from .main import SourceRejected, tick
 from .s3 import Bucket
 
 
@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     reconciler_job_tolerations: list[dict] = []
     reconciler_max_validations_per_tick: int = 50
     reconciler_fetch_max_bytes: int = 16 * 1024 * 1024
+    reconciler_job_manifest_max_bytes: int = 16 * 1024 * 1024
+    reconciler_job_fetch_max_bytes: int = 64 * 1024 * 1024
     # One tick's wall-clock budget (the CronJob's activeDeadlineSeconds); the
     # git timeout is clamped to it so a hung clone cannot outlive the pod that
     # would have reported it (audit O7).
@@ -74,34 +76,54 @@ def _internal_results_base(settings: Settings) -> str:
 FETCH_TIMEOUT_SECONDS = 10.0
 
 
+#: HTTP statuses the wrapper treats as permanent (A2 contract): the source
+#: itself says no. Everything else non-200 (5xx, 429) is transient.
+_PERMANENT_STATUSES = frozenset({400, 401, 403, 404, 410})
+
+
 def fetch_json(
     url: str, *, max_bytes: int, client: httpx.Client | None = None
 ) -> dict | None:
     """GET a manifest with the S5 guards: http(s) only, ``max_redirects=3``,
-    body capped at ``max_bytes`` (by header, then while streaming). Anything
-    else — network error, non-200, junk — is ``None``: unreachable, retried
-    after the back-off, never an exception out of the tick."""
+    body capped at ``max_bytes`` (by header, then while streaming).
+
+    Mirrors the wrapper's classification exactly so pre-validation never
+    parks a volume the wrapper would have run, nor runs one it would reject:
+    ``SourceRejected("unreachable")`` for 4xx, ``SourceRejected("unsupported")``
+    for non-http(s), non-JSON, non-object JSON and over-cap bodies — all
+    cached forever — and ``None`` for anything transient (5xx, 429, network),
+    re-probed after the back-off.
+    """
     if urlsplit(url).scheme not in ("http", "https"):
-        return None
+        raise SourceRejected("unsupported")
     try:
         with client or httpx.Client(
             timeout=FETCH_TIMEOUT_SECONDS, follow_redirects=True, max_redirects=3
         ) as c:
             with c.stream("GET", url) as r:
+                if r.status_code in _PERMANENT_STATUSES:
+                    raise SourceRejected("unreachable")
                 if r.status_code != 200:
                     return None
                 declared = r.headers.get("content-length")
                 if declared and int(declared) > max_bytes:
-                    return None
+                    raise SourceRejected("unsupported")
                 buf = bytearray()
                 for chunk in r.iter_bytes():
                     buf += chunk
                     if len(buf) > max_bytes:
-                        return None
-        doc = json.loads(bytes(buf))
-        return doc if isinstance(doc, dict) else None
-    except Exception:  # noqa: BLE001 — any failure is "unreachable"
+                        raise SourceRejected("unsupported")
+    except SourceRejected:
+        raise
+    except Exception:  # noqa: BLE001 — network, TLS, redirect loop: transient
         return None
+    try:
+        doc = json.loads(bytes(buf))
+    except ValueError:
+        raise SourceRejected("unsupported") from None
+    if not isinstance(doc, dict):
+        raise SourceRejected("unsupported")
+    return doc
 
 
 def build_config(settings: Settings) -> ReconcilerConfig:
@@ -132,6 +154,8 @@ def build_config(settings: Settings) -> ReconcilerConfig:
         job_node_selector=settings.reconciler_job_node_selector,
         job_tolerations=settings.reconciler_job_tolerations,
         max_validations_per_tick=settings.reconciler_max_validations_per_tick,
+        job_manifest_max_bytes=settings.reconciler_job_manifest_max_bytes,
+        job_fetch_max_bytes=settings.reconciler_job_fetch_max_bytes,
     )
 
 
