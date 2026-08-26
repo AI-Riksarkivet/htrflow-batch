@@ -112,7 +112,7 @@
 
   .cell.failed {
     --c: var(--destructive);
-    background: var(--destructive-soft, color-mix(in oklab, var(--destructive) 25%, transparent));
+    background: var(--destructive-soft);
     border-color: var(--destructive);
   }
 

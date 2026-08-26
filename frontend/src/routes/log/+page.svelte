@@ -1,8 +1,9 @@
 <script lang="ts">
   import { browser } from "$app/environment";
   import RunSummaryCard from "$lib/components/RunSummaryCard.svelte";
-  import { isHttpUrl } from "$lib/derive.js";
-  import { runManifestSchema, type RunManifest } from "$lib/run.js";
+  import ThemeToggle from "$lib/components/ThemeToggle.svelte";
+  import { isHttpUrl, shortDate } from "$lib/derive.js";
+  import { isTerminalManifest, runManifestSchema, type RunManifest } from "$lib/run.js";
   import {
     isTerminalLog,
     parseRunLog,
@@ -10,10 +11,13 @@
     type LogGroup,
   } from "$lib/runlog.js";
 
-  const THEME_KEY = "htr-theme";
   // Matches the wrapper's LOG_SHIP_SECONDS default: polling faster than the
   // pod uploads buys nothing.
   const LIVE_MS = 15_000;
+  // A live log that never appears (wrong URL, bucket down) stops spinning
+  // after this many consecutive failed polls (5 min at LIVE_MS) and shows
+  // the error instead.
+  const LIVE_MAX_FAILURES = 20;
 
   // The route is opened as /log?log=<url>&manifest=<url> on a prerendered,
   // client-only SPA (see +layout.ts) — there is no SvelteKit load function
@@ -36,17 +40,25 @@
   const manifestUrl = httpParam("manifest");
   // live=1: the campaign table links a volume that is still in flight. The
   // wrapper re-uploads the log while it runs, so we re-fetch on its cadence
-  // and stop once the wrapper's terminal line shows up.
+  // and stop once the wrapper's terminal line shows up (or the finished
+  // manifest lands, or the log keeps failing).
   const startedLive = queryParam("live") === "1";
 
   let logText = $state<string | null>(null);
   let logError = $state<string | null>(null);
   let manifest = $state<RunManifest | null>(null);
   let live = $state(startedLive);
+  /** ISO timestamp of the last content change (shown via shortDate). */
   let updatedAt = $state<string | null>(null);
+  let failures = $state(0);
   // Follow the tail only while the reader is already at the bottom; a reader
   // who scrolled up to look at something must not be yanked back down.
   let stickToBottom = $state(true);
+
+  // One request per resource in flight: a slow poll is abandoned when the
+  // next starts (or the page goes away), so responses never land out of order.
+  let logInflight: AbortController | null = null;
+  let manifestInflight: AbortController | null = null;
 
   async function loadLog(): Promise<void> {
     if (logUrl === null) {
@@ -54,23 +66,35 @@
         rawLogUrl === null ? "no log URL given" : "log URL must be an absolute http(s) URL";
       return;
     }
+    logInflight?.abort();
+    const controller = new AbortController();
+    logInflight = controller;
     try {
       // no-cache (not no-store): the browser revalidates with the object's
       // ETag and gets a 304 when nothing changed, instead of re-pulling a
       // multi-MB log every poll.
-      const res = await fetch(logUrl, { cache: "no-cache" });
+      const res = await fetch(logUrl, { cache: "no-cache", signal: controller.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const text = await res.text();
       logError = null;
+      failures = 0;
       if (text !== logText) {
         logText = text;
-        updatedAt = new Date().toLocaleTimeString();
+        updatedAt = new Date().toISOString();
       }
       if (live && isTerminalLog(text)) live = false;
     } catch (e) {
+      if (controller.signal.aborted) return;
+      const message = e instanceof Error ? e.message : String(e);
       // A live volume's log may not exist yet (first upload pending) — keep
-      // polling rather than freezing on the first 404.
-      if (!live) logError = String(e);
+      // polling rather than freezing on the first 404, but not forever.
+      failures += 1;
+      if (!live) {
+        logError = message;
+      } else if (failures >= LIVE_MAX_FAILURES) {
+        live = false;
+        logError = `gave up after ${failures} failed polls (${message})`;
+      }
     }
   }
 
@@ -81,11 +105,18 @@
 
   async function loadManifest(): Promise<void> {
     if (manifestUrl === null) return;
+    manifestInflight?.abort();
+    const controller = new AbortController();
+    manifestInflight = controller;
     try {
-      const res = await fetch(manifestUrl, { cache: "no-cache" });
+      const res = await fetch(manifestUrl, { cache: "no-cache", signal: controller.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const parsed = runManifestSchema.safeParse(await res.json());
-      if (parsed.success) manifest = parsed.data;
+      if (parsed.success) {
+        manifest = parsed.data;
+        // The wrapper writes manifest.json once, at the end of the run.
+        if (live && isTerminalManifest(parsed.data)) live = false;
+      }
     } catch {
       // Missing/failed manifest fetch → skip the summary card gracefully;
       // the raw log still renders on its own.
@@ -95,6 +126,10 @@
   $effect(() => {
     void loadLog();
     void loadManifest();
+    return () => {
+      logInflight?.abort();
+      manifestInflight?.abort();
+    };
   });
 
   $effect(() => {
@@ -125,28 +160,11 @@
     if (level === "ERROR" || level === "CRITICAL") return "destructive";
     return "muted";
   }
-
-  // null = follow OS (`prefers-color-scheme`). Explicit choice persists to
-  // localStorage; the page is prerendered, so localStorage is only touched in
-  // the browser (never during the Node prerender pass).
-  let theme = $state<"light" | "dark" | null>(
-    browser ? (localStorage.getItem(THEME_KEY) as "light" | "dark" | null) : null,
-  );
-
-  function toggleTheme(): void {
-    const effective =
-      theme ??
-      (browser && window.matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light");
-    theme = effective === "dark" ? "light" : "dark";
-    if (browser) localStorage.setItem(THEME_KEY, theme);
-  }
 </script>
 
 <svelte:window onscroll={onScroll} />
 
-<main data-theme={theme}>
+<main>
   <header class="page">
     <div class="title-block">
       <a class="back" href="/">← campaigns</a>
@@ -156,26 +174,28 @@
       </div>
     </div>
     <div class="header-right">
-      {#if live}
-        <span class="live-badge"
-          ><span class="pulse"></span>live{updatedAt !== null
-            ? ` · updated ${updatedAt}`
-            : " · waiting for first upload"}</span
-        >
-      {:else if startedLive && updatedAt !== null}
-        <span class="live-badge finished">finished · {updatedAt}</span>
+      {#if startedLive}
+        <!-- role=status: a polite live region, so the switch to "finished"
+             and each update are announced without stealing focus. -->
+        <span class="live-badge" class:finished={!live} role="status">
+          {#if live}
+            <span class="pulse" aria-hidden="true"></span>live
+            {#if updatedAt !== null}
+              · updated <time datetime={updatedAt} title={updatedAt}>{shortDate(updatedAt)}</time>
+            {:else}
+              · waiting for first upload
+            {/if}
+          {:else if updatedAt !== null}
+            finished · <time datetime={updatedAt} title={updatedAt}>{shortDate(updatedAt)}</time>
+          {:else}
+            stopped
+          {/if}
+        </span>
       {/if}
       {#if logUrl !== null}
         <a class="raw" href={logUrl} target="_blank" rel="noopener">raw</a>
       {/if}
-      <button
-        class="theme-toggle"
-        onclick={toggleTheme}
-        title="Toggle light/dark theme"
-        aria-label="Toggle light/dark theme"
-      >
-        ◐
-      </button>
+      <ThemeToggle />
     </div>
   </header>
 
@@ -190,9 +210,9 @@
     {/if}
   {/if}
 
-  <section class="log">
+  <section class="log" aria-label="run log">
     {#if logError !== null}
-      <p class="error">Cannot load log: {logError}</p>
+      <p class="error" role="alert">Cannot load log: {logError}</p>
     {:else if parsed === null}
       <p>Loading…</p>
     {:else if parsed.groups.length === 0}
@@ -236,82 +256,11 @@
 </main>
 
 <style>
-  main {
-    --radius: 0.625rem;
-    --background: oklch(0.985 0.004 80);
-    --foreground: oklch(0.16 0.006 270);
-    --card: oklch(0.993 0.002 80);
-    --primary: oklch(0.37 0.19 250);
-    --muted: oklch(0.955 0.006 260);
-    --muted-foreground: oklch(0.45 0.012 260);
-    --border: oklch(0.915 0.006 260);
-    --success: oklch(0.65 0.2 145);
-    --warning: oklch(0.75 0.18 75);
-    --destructive: oklch(0.577 0.245 27.325);
-    color-scheme: light;
-  }
-
-  /* Default: follow the OS when no explicit choice has been made. */
-  @media (prefers-color-scheme: dark) {
-    main {
-      --background: oklch(0.13 0.006 270);
-      --foreground: oklch(0.985 0 0);
-      --card: oklch(0.17 0.008 270);
-      --primary: oklch(0.68 0.16 250);
-      --muted: oklch(0.22 0.008 270);
-      --muted-foreground: oklch(0.65 0.01 260);
-      --border: oklch(0.28 0.008 270);
-      color-scheme: dark;
-    }
-  }
-
-  /* Explicit choice (data-theme, from the toggle + localStorage) always
-     wins over the OS default in both directions — attribute selectors
-     out-specificity the plain `main` selector regardless of media state. */
-  main[data-theme="dark"] {
-    --background: oklch(0.13 0.006 270);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.17 0.008 270);
-    --primary: oklch(0.68 0.16 250);
-    --muted: oklch(0.22 0.008 270);
-    --muted-foreground: oklch(0.65 0.01 260);
-    --border: oklch(0.28 0.008 270);
-    color-scheme: dark;
-  }
-
-  main[data-theme="light"] {
-    --background: oklch(0.985 0.004 80);
-    --foreground: oklch(0.16 0.006 270);
-    --card: oklch(0.993 0.002 80);
-    --primary: oklch(0.37 0.19 250);
-    --muted: oklch(0.955 0.006 260);
-    --muted-foreground: oklch(0.45 0.012 260);
-    --border: oklch(0.915 0.006 260);
-    color-scheme: light;
-  }
-
-  :global(body) {
-    margin: 0;
-  }
-
-  main {
-    font-family:
-      system-ui,
-      -apple-system,
-      "Segoe UI",
-      sans-serif;
-    min-height: 100vh;
-    box-sizing: border-box;
-    padding: 1.5rem max(1rem, calc(50vw - 32rem)) 3rem;
-    background: var(--background);
-    color: var(--foreground);
-    line-height: 1.4;
-  }
-
   h1 {
     font-size: 1.25rem;
     font-weight: 600;
     margin: 0;
+    overflow-wrap: anywhere;
   }
 
   .page {
@@ -330,14 +279,6 @@
     flex-direction: column;
     gap: 0.35rem;
     min-width: 0;
-  }
-
-  h1 {
-    overflow-wrap: anywhere;
-  }
-
-  .header-right {
-    flex-wrap: wrap;
   }
 
   .back {
@@ -365,6 +306,7 @@
 
   .header-right {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.75rem;
   }
@@ -373,6 +315,11 @@
     color: var(--muted-foreground);
     font-size: 0.85rem;
     text-decoration: none;
+  }
+
+  .raw:hover {
+    color: var(--primary);
+    text-decoration: underline;
   }
 
   .live-badge {
@@ -384,13 +331,13 @@
     padding: 0.15rem 0.6rem;
     border-radius: 999px;
     color: var(--primary);
-    background: color-mix(in oklab, var(--primary) 15%, transparent);
+    background: var(--primary-soft);
     white-space: nowrap;
   }
 
   .live-badge.finished {
     color: var(--success);
-    background: color-mix(in oklab, var(--success) 15%, transparent);
+    background: var(--success-soft);
   }
 
   .pulse {
@@ -411,31 +358,12 @@
     }
   }
 
-  .raw:hover {
-    color: var(--primary);
-    text-decoration: underline;
-  }
-
-  .theme-toggle {
-    flex-shrink: 0;
-    cursor: pointer;
-    background: var(--muted);
-    color: var(--foreground);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    width: 1.8rem;
-    height: 1.8rem;
-    line-height: 1;
-    font-size: 1rem;
-    padding: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .theme-toggle:hover {
-    border-color: var(--primary);
-    color: var(--primary);
+  /* app.css shortens every animation for reduced motion; this one is a
+     pure attention pulse, so it goes entirely. */
+  @media (prefers-reduced-motion: reduce) {
+    .pulse {
+      animation: none;
+    }
   }
 
   .error {
@@ -471,6 +399,7 @@
     display: flex;
     flex-direction: column;
     gap: 0.15rem;
+    min-width: 0;
   }
 
   .group,
@@ -482,10 +411,6 @@
     white-space: pre-wrap;
     /* Unbroken URLs and paths wrap instead of widening the page. */
     overflow-wrap: anywhere;
-  }
-
-  .log {
-    min-width: 0;
   }
 
   .log-line {
@@ -520,12 +445,12 @@
   }
 
   .log-level.warning {
-    background: color-mix(in oklab, var(--warning) 18%, transparent);
+    background: var(--warning-soft);
     color: var(--warning);
   }
 
   .log-level.destructive {
-    background: color-mix(in oklab, var(--destructive) 18%, transparent);
+    background: var(--destructive-soft);
     color: var(--destructive);
   }
 
@@ -539,14 +464,14 @@
 
   .group.warning {
     color: var(--warning);
-    background: color-mix(in oklab, var(--warning) 10%, transparent);
+    background: var(--warning-soft);
     border-radius: 4px;
     padding: 0.1rem 0.35rem;
   }
 
   .group.error {
     color: var(--destructive);
-    background: color-mix(in oklab, var(--destructive) 8%, transparent);
+    background: var(--destructive-soft);
     border-radius: 4px;
     padding: 0.1rem 0.35rem;
   }

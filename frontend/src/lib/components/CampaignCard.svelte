@@ -80,6 +80,7 @@
   {#if !collapsed && c.error === null}
     <div class="table-scroll" id={tableId}>
     <table class="volumes">
+      <caption class="sr-only">Volumes in campaign {c.name}</caption>
       <colgroup>
         <col class="c-thumb" />
         <col class="c-vid" />
@@ -141,7 +142,13 @@
                 : "—"}
             </td>
             <td class="num c-attempts">{v.attempts > 0 ? v.attempts : "—"}</td>
-            <td class="updated c-updated">{shortDate(v.updated) ?? "—"}</td>
+            <td class="updated c-updated">
+              {#if v.updated !== null && shortDate(v.updated) !== null}
+                <time datetime={v.updated} title={v.updated}>{shortDate(v.updated)}</time>
+              {:else}
+                —
+              {/if}
+            </td>
             <td class="links">
               <!-- Three fixed slots (open · source · log) so a missing
                    link leaves a gap instead of shifting its neighbours;
@@ -282,11 +289,11 @@
 
   .chip.needs-attention {
     background: var(--destructive);
-    color: var(--background);
+    color: var(--on-strong);
   }
 
   .chip.pipeline {
-    background: color-mix(in oklab, var(--primary) 15%, transparent);
+    background: var(--primary-soft);
     color: var(--primary);
     cursor: pointer;
     border: none;
@@ -483,31 +490,31 @@
 
   .status.done {
     color: var(--success);
-    background: color-mix(in oklab, var(--success) 15%, transparent);
+    background: var(--success-soft);
   }
 
   .status.running {
     color: var(--primary);
-    background: color-mix(in oklab, var(--primary) 15%, transparent);
+    background: var(--primary-soft);
   }
 
   .status.queued,
   .status.retry {
     color: var(--warning);
-    background: color-mix(in oklab, var(--warning) 15%, transparent);
+    background: var(--warning-soft);
   }
 
   .status.needs-attention,
   .status.unreachable,
   .status.unsupported {
     color: var(--destructive);
-    background: color-mix(in oklab, var(--destructive) 15%, transparent);
+    background: var(--destructive-soft);
   }
 
   .status.pending,
   .status.unknown {
     color: var(--muted-foreground);
-    background: color-mix(in oklab, var(--muted-foreground) 15%, transparent);
+    background: var(--muted);
   }
 
   td.updated {
