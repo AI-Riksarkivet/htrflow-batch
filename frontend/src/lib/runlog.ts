@@ -100,3 +100,18 @@ export function parseRunLog(text: string): ParsedLog {
   }
   return { groups };
 }
+
+// The wrapper's last lines on each exit path (main.py): success logs
+// "[<volume>] COMPLETE <n> pages ...", failures log "<kind> failure in <stage>:".
+const TERMINAL_RE = /\] COMPLETE \d+ pages|(permanent|transient) failure in \w+:/;
+
+/**
+ * True once a shipped run log carries the wrapper's terminal line, i.e. the
+ * volume's process has exited and the object will not change again. Only the
+ * tail is inspected: the marker is always among the last lines, and live logs
+ * can be large.
+ */
+export function isTerminalLog(text: string): boolean {
+  const tail = text.split("\n").slice(-50).join("\n");
+  return TERMINAL_RE.test(tail);
+}
