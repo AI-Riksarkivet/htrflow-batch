@@ -57,3 +57,30 @@ def test_count_pages(bucket):
         bucket.put_text(f"demo-v1/R1/alto/{i:04d}.xml", "<alto/>")
     assert bucket.count_pages("demo-v1", "R1") == 3
     assert bucket.count_pages("demo-v1", "R2") == 0
+
+
+def test_bucket_counts_round_trips(bucket):
+    """The tick summary reports S3 calls per tick (audit O5)."""
+    bucket.write_json("a.json", {})
+    bucket.read_json("a.json")
+    bucket.exists("a.json")
+    assert bucket.calls == 3
+
+
+def test_done_volumes_heads_run_in_a_thread_pool(bucket, monkeypatch):
+    """X1: the per-volume HEADs are the only O(volumes) call left; they run
+    concurrently, and a head-per-prefix still yields exactly one call each."""
+    import threading
+
+    for i in range(6):
+        bucket.write_json(manifest_key("demo-v1", f"R{i}"), {"pages": 1})
+    real_head = bucket.c.head_object
+    threads = set()
+
+    def head(**kw):
+        threads.add(threading.get_ident())
+        return real_head(**kw)
+
+    monkeypatch.setattr(bucket.c, "head_object", head)
+    assert len(bucket.done_volumes("demo-v1")) == 6
+    assert threading.get_ident() not in threads

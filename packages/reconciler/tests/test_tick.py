@@ -23,32 +23,41 @@ class FakeBucket:
         self.stored = stored or {}
         self.written = {}
         self.put_text_calls = 0
+        self.calls = 0  # every S3 round trip, like the real Bucket
 
     def done_volumes(self, pipeline_id):
+        self.calls += 1 + len(self._done)
         return {v: "2026-08-25T10:00:00Z" for v in self._done}
 
     def read_json(self, key):
+        self.calls += 1
         return self.stored.get(key) or self.written.get(key)
 
     def write_json(self, key, obj):
+        self.calls += 1
         self.written[key] = obj
 
     def put_text(self, key, text):
+        self.calls += 1
         self.written[key] = text
         self.put_text_calls += 1
 
     def exists(self, key):
+        self.calls += 1
         return key in self.written
 
     def read_text(self, key):
+        self.calls += 1
         v = self.written.get(key)
         return v if isinstance(v, str) else None
 
     def delete(self, key):
+        self.calls += 1
         self.written.pop(key, None)
         self.deleted = getattr(self, "deleted", []) + [key]
 
     def count_pages(self, pipeline_id, volume_id):
+        self.calls += 1
         return 638 if volume_id in self._done else 0
 
 
@@ -287,7 +296,10 @@ def test_tick_broken_campaign_contained(tmp_path):
     assert ok["error"] is None
 
 
-def test_tick_prevalidation_blocks_unreachable_without_caching(tmp_path):
+def test_tick_prevalidation_blocks_unreachable_and_backs_off(tmp_path):
+    """``unreachable`` is a verdict about the NETWORK: it is cached for a few
+    ticks (a dead host must not cost every tick a timeout, X1/S5) but never
+    forever — a recovered source is re-probed and can still be submitted."""
     fetched = []
 
     def fetch_json(url):
@@ -297,21 +309,180 @@ def test_tick_prevalidation_blocks_unreachable_without_caching(tmp_path):
     repo = _repo(tmp_path)
     bucket, cluster = FakeBucket(), FakeCluster()
     doc = tick(repo, bucket, cluster, CFG, NOW, fetch_json=fetch_json)
-    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    byid = _rows(doc)
     assert byid["R0000001"]["status"] == "unreachable"
     # unreachable volumes burn no jobs; only the images: volume (no manifest
     # to validate) is submitted
     assert _created_volumes(cluster) == ["loose"]
     assert len(fetched) == 2
-    # unreachable is a verdict about the network, not the document: caching it
-    # would wedge the volume out of its campaign forever after one flaky fetch
-    assert bucket.written["status/validation.json"] == {}
-    # so the next tick re-probes, and a recovered source can still be submitted
+    cached = bucket.written["status/validation.json"]
+    ref = "https://lbiiif.riksarkivet.se/arkis!R0000001/manifest"
+    assert cached[ref]["format"] == "unreachable"
+    # NOW + unreachable_ticks * tick_seconds (3 * 300 s)
+    assert cached[ref]["unreachable_until"] == "2026-07-29T09:15:00Z"
+    # within the back-off window: no fetch, still blocked
     fetched.clear()
     doc = tick(repo, bucket, cluster, CFG, NOW, fetch_json=fetch_json)
+    assert fetched == []
+    assert _rows(doc)["R0000001"]["status"] == "unreachable"
+    # after it: re-probed
+    later = "2026-07-29T09:15:00Z"
+    doc = tick(repo, bucket, cluster, CFG, later, fetch_json=fetch_json)
     assert len(fetched) == 2
-    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
-    assert byid["R0000001"]["status"] == "unreachable"
+
+
+def test_tick_prevalidation_is_bounded_per_tick(tmp_path):
+    """X1: validation is O(new volumes), not O(volumes), and happens in a
+    bounded batch per tick; volumes not yet validated wait (pending, not
+    submitted) rather than being submitted blind."""
+    repo = _repo(tmp_path)
+    (repo / "campaigns" / "trolldom.yaml").write_text(
+        "pipeline: demo-v1\nvolumes: [V1, V2, V3, V4, V5]\n"
+    )
+    fetched = []
+
+    def fetch_json(url):
+        fetched.append(url)
+        return _p3_manifest(2)
+
+    cfg = ReconcilerConfig(
+        public_results_base="http://pub/htr-results", max_validations_per_tick=2
+    )
+    bucket, cluster = FakeBucket(), FakeCluster()
+    doc = tick(repo, bucket, cluster, cfg, NOW, fetch_json=fetch_json)
+    assert len(fetched) == 2
+    assert sorted(_created_volumes(cluster)) == ["v1", "v2"]
+    assert _rows(doc)["V3"]["status"] == "pending"
+    assert len(bucket.written["status/validation.json"]) == 2
+    doc = tick(repo, bucket, FakeCluster(), cfg, NOW, fetch_json=fetch_json)
+    assert len(fetched) == 4
+
+
+def test_validation_json_is_persisted_before_any_submission(tmp_path):
+    """A deadline-killed tick must not lose the fetches it already paid for."""
+    events = []
+
+    class LoggingBucket(FakeBucket):
+        def write_json(self, key, obj):
+            events.append(("write", key))
+            super().write_json(key, obj)
+
+    class LoggingCluster(FakeCluster):
+        def create_job(self, job):
+            events.append(("create", job["metadata"]["name"]))
+            super().create_job(job)
+
+    def fetch_json(url):
+        return _p3_manifest(1)
+
+    bucket, cluster = LoggingBucket(), LoggingCluster()
+    tick(_repo(tmp_path), bucket, cluster, CFG, NOW, fetch_json=fetch_json)
+    first_write = events.index(("write", "status/validation.json"))
+    first_create = next(i for i, e in enumerate(events) if e[0] == "create")
+    assert first_write < first_create
+
+
+class CountingBucket(FakeBucket):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.count_calls, self.exists_calls, self.read_calls = [], [], []
+
+    def count_pages(self, pipeline_id, volume_id):
+        self.count_calls.append(volume_id)
+        return super().count_pages(pipeline_id, volume_id)
+
+    def exists(self, key):
+        self.exists_calls.append(key)
+        return super().exists(key)
+
+    def read_json(self, key):
+        self.read_calls.append(key)
+        return super().read_json(key)
+
+
+def test_done_volumes_are_not_reprobed_once_cached(tmp_path):
+    """X1: a done volume is immutable under its manifest mtime; its page count
+    and run-log presence are cached in status/volumes.json keyed by that
+    mtime, so the steady state costs no LIST/HEAD per done volume."""
+    repo = _repo(tmp_path)
+    bucket = CountingBucket(done={"R0000001"})
+    doc = tick(repo, bucket, FakeCluster(), CFG, NOW)
+    assert bucket.count_calls == ["R0000001"]
+    assert _rows(doc)["R0000001"]["pages_done"] == 638
+    cache = bucket.written["status/volumes.json"]
+    assert cache["demo-v1/R0000001"]["pages"] == 638
+    assert cache["demo-v1/R0000001"]["updated"] == "2026-08-25T10:00:00Z"
+    bucket.count_calls.clear()
+    bucket.exists_calls.clear()
+    doc = tick(repo, bucket, FakeCluster(), CFG, NOW)
+    assert bucket.count_calls == []
+    assert not [k for k in bucket.exists_calls if k.startswith("status/logs/")]
+    assert _rows(doc)["R0000001"]["pages_done"] == 638
+    assert _rows(doc)["R0000001"]["run_log"] is None
+
+
+def test_done_volume_cache_invalidates_on_a_new_manifest_mtime(tmp_path):
+    class MovingBucket(CountingBucket):
+        mtime = "2026-08-25T10:00:00Z"
+
+        def done_volumes(self, pipeline_id):
+            return {v: self.mtime for v in self._done}
+
+    repo = _repo(tmp_path)
+    bucket = MovingBucket(done={"R0000001"})
+    tick(repo, bucket, FakeCluster(), CFG, NOW)
+    bucket.mtime = "2026-08-26T10:00:00Z"  # re-published (operator re-run)
+    bucket.count_calls.clear()
+    tick(repo, bucket, FakeCluster(), CFG, NOW)
+    assert bucket.count_calls == ["R0000001"]
+
+
+def test_done_volume_run_log_link_is_cached(tmp_path):
+    repo = _repo(tmp_path)
+    bucket = CountingBucket(done={"R0000001"})
+    bucket.written["status/logs/demo-v1/R0000001.txt"] = "shipped"
+    tick(repo, bucket, FakeCluster(), CFG, NOW)
+    bucket.exists_calls.clear()
+    doc = tick(repo, bucket, FakeCluster(), CFG, NOW)
+    assert bucket.exists_calls == []
+    run_log = _rows(doc)["R0000001"]["run_log"]
+    assert run_log.endswith("status/logs/demo-v1/R0000001.txt")
+
+
+def test_synthetic_manifest_is_written_once_without_a_get_per_tick(tmp_path):
+    repo = _repo(tmp_path)
+    bucket = CountingBucket()
+    tick(repo, bucket, FakeCluster(), CFG, NOW)
+    key = "sources/demo-v1/loose/manifest.json"
+    assert key in bucket.written
+    bucket.read_calls.clear()
+    written_before = dict(bucket.written)
+    tick(repo, bucket, FakeCluster(), CFG, NOW)
+    assert key not in bucket.read_calls
+    assert bucket.written[key] == written_before[key]
+
+
+def test_tick_summary_in_status_and_one_log_line(tmp_path, caplog):
+    """O5: a green tick says what it did."""
+    jobs = _failed_job("R0000002", exit_code=1)
+    bucket = FakeBucket(done={"R0000001"})
+    with caplog.at_level("INFO"):
+        doc = tick(_repo(tmp_path), bucket, FakeCluster(jobs=jobs), CFG, NOW)
+    summary = doc["tick_summary"]
+    assert set(summary) == {
+        "seconds",
+        "s3_calls",
+        "validations",
+        "submitted",
+        "retried",
+    }
+    assert summary["submitted"] == 1  # loose; R0000002 re-enters next tick
+    assert summary["retried"] == 1
+    assert summary["validations"] == 0
+    assert summary["s3_calls"] == bucket.calls
+    assert doc["tick_seconds"] == CFG.tick_seconds == 300
+    lines = [r.message for r in caplog.records if r.message.startswith("tick:")]
+    assert len(lines) == 1 and "submitted=1" in lines[0] and "retried=1" in lines[0]
 
 
 def test_tick_prevalidation_caches_document_verdicts_forever(tmp_path):

@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import logging
 import posixpath
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -26,6 +29,9 @@ _BLOCKING_VERDICTS = ("unreachable", "unsupported")
 #: Statuses that get a run_log/run_manifest link: the pod shipped (or ships)
 #: its log. Failed volumes surface the same evidence as failure_log instead.
 _LOGGED_STATUSES = frozenset({"done", "running", "queued"})
+
+#: Concurrent manifest fetches per validation batch.
+_FETCH_WORKERS = 8
 
 #: Errors from reading a file off the checkout: a corrupt or non-UTF-8 file is
 #: one campaign's problem, never the whole tick's. Campaign YAML is decoded as
@@ -95,7 +101,7 @@ def _browser_url(url: str | None, cfg: ReconcilerConfig) -> str | None:
 
 
 def _source_manifest_url(
-    volume: Volume, pipeline_id: str, bucket, cfg: ReconcilerConfig
+    volume: Volume, pipeline_id: str, bucket, cfg: ReconcilerConfig, cached: dict
 ) -> tuple[str, str]:
     """(browser URL, job URL) for the volume's source manifest.
 
@@ -103,7 +109,9 @@ def _source_manifest_url(
     open it from the status page), but the Job fetches it via the
     in-cluster S3 endpoint — public_results_base may be browser-only
     (e.g. localhost through an SSH forward), and localhost inside a pod is
-    the pod itself.
+    the pod itself. ``cached`` is the volume's entry in status/volumes.json:
+    the key written last time is recorded there, so a steady-state tick
+    costs no GET per images: volume (audit X1).
     """
     if volume.manifest_url:
         # _browser_url is total for a non-None input; `or` keeps the return
@@ -112,8 +120,9 @@ def _source_manifest_url(
         return public, volume.manifest_url
     key = keys.synthetic_manifest_key(pipeline_id, volume.id)
     public = f"{cfg.public_results_base.rstrip('/')}/{key}"
-    if bucket.read_json(key) is None:
+    if cached.get("synthetic") != key:
         bucket.write_json(key, build_manifest(volume.id, list(volume.images), public))
+        cached["synthetic"] = key
     base = cfg.internal_results_base or cfg.public_results_base
     return public, f"{base.rstrip('/')}/{key}"
 
@@ -226,27 +235,41 @@ def _classify(doc: object) -> str:
         return "unsupported"
 
 
-def _validate(url: str, cache: dict, fetch_json) -> dict:
-    """Verdict per manifest URL (spec §4.4): format + thumbnail + page_count.
-
-    A verdict about the DOCUMENT is cached forever — a Collection or a P2-less
-    manifest will not become submittable by being asked again. ``unreachable``
-    is a verdict about the NETWORK and is deliberately never cached: a single
-    flaky fetch must not wedge a volume out of its campaign permanently, so it
-    is re-probed on the next tick.
-    """
-    if url in cache:
-        return cache[url]
-    doc = fetch_json(url)
+def _verdict(doc: object) -> dict:
+    """Verdict per fetched manifest (spec §4.4): format + thumbnail + pages."""
     if doc is None:
         return {"format": "unreachable", "thumbnail": None, "page_count": None}
-    verdict = {
+    return {
         "format": _classify(doc),
         "thumbnail": _thumbnail(doc),
         "page_count": _page_count(doc),
     }
-    cache[url] = verdict
-    return verdict
+
+
+def _parse_iso(ts: str) -> datetime:
+    return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+
+
+def _iso(ts: datetime) -> str:
+    return ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _valid_verdict(cache: dict, url: str, now_iso: str) -> dict | None:
+    """The cached verdict for ``url`` if it still stands.
+
+    A verdict about the DOCUMENT is cached forever — a Collection or a P2-less
+    manifest will not become submittable by being asked again. ``unreachable``
+    is a verdict about the NETWORK: it is cached for a few ticks
+    (``unreachable_until``) so a dead host costs a timeout once, not every
+    tick, but never forever — a flaky fetch must not wedge a volume out of
+    its campaign permanently.
+    """
+    v = cache.get(url)
+    if not isinstance(v, dict):
+        return None
+    if v.get("format") == "unreachable" and v.get("unreachable_until", "") <= now_iso:
+        return None
+    return v
 
 
 def _describe(e: BaseException) -> str:
@@ -272,6 +295,7 @@ class _Pass:
         fetch_json,
     ) -> None:
         self.bucket = bucket
+        self._calls_before = getattr(bucket, "calls", 0)
         self.cluster = cluster
         self.cfg = cfg
         self.now_iso = now_iso
@@ -280,9 +304,11 @@ class _Pass:
         self.jobs: dict[str, JobState] = cluster.jobs()
         self.attempts = load_attempts(bucket.read_json(keys.attempts_key()))
         self.validation: dict = bucket.read_json(keys.validation_key()) or {}
+        self.volumes: dict = bucket.read_json(keys.volumes_key()) or {}
         self.blocked: set[str] = set()
         self.submitted = 0
         self.retried = 0
+        self.validations = 0
         # done_volumes is a paginated LIST + a HEAD per volume: probe each
         # pipeline once per tick, not once per campaign that uses it.
         self._done_cache: dict[str, dict[str, str]] = {}
@@ -294,6 +320,56 @@ class _Pass:
 
     def save_attempts(self) -> None:
         self.bucket.write_json(keys.attempts_key(), dump_attempts(self.attempts))
+
+    def volume_cache(self, pid: str, vid: str) -> dict:
+        return self.volumes.setdefault(f"{pid}/{vid}", {})
+
+    # -- pre-validation --------------------------------------------------------
+
+    def validate(self) -> None:
+        """Fetch a bounded batch of not-yet-validated manifests concurrently
+        and persist the verdicts at once (audit X1): validation is O(new
+        volumes), never O(volumes), and a deadline-killed tick keeps what it
+        already paid for. Volumes past the bound wait for a later tick."""
+        if self.fetch_json is None:
+            return
+        todo: list[str] = []
+        seen: set[str] = set()
+        for camp in self.campaigns:
+            if camp.error or camp.pipeline_id not in self.pipelines:
+                continue
+            done = self.done_for(camp.pipeline_id)
+            for v in camp.volumes:
+                url = v.manifest_url
+                if not url or url in seen or v.id in done:
+                    continue
+                if _valid_verdict(self.validation, url, self.now_iso) is not None:
+                    continue
+                seen.add(url)
+                todo.append(url)
+        batch = todo[: self.cfg.max_validations_per_tick]
+        if not batch:
+            return
+        until = _iso(
+            _parse_iso(self.now_iso)
+            + timedelta(seconds=self.cfg.unreachable_ticks * self.cfg.tick_seconds)
+        )
+        with ThreadPoolExecutor(max_workers=_FETCH_WORKERS) as pool:
+            docs = list(pool.map(self._fetch, batch))
+        for url, doc in zip(batch, docs):
+            verdict = _verdict(doc)
+            if verdict["format"] == "unreachable":
+                verdict["unreachable_until"] = until
+            self.validation[url] = verdict
+        self.validations = len(batch)
+        self.bucket.write_json(keys.validation_key(), self.validation)
+
+    def _fetch(self, url: str) -> object:
+        try:
+            return self.fetch_json(url)
+        except Exception as e:  # noqa: BLE001 — a bad fetch is "unreachable"
+            log.warning("fetch %s: %s", url, _describe(e))
+            return None
 
     # -- pipelines -----------------------------------------------------------
 
@@ -420,18 +496,22 @@ class _Pass:
             "thumbnail": None,
         }
         submit: str | None = None
+        vcache = self.volume_cache(pid, v.id)
         try:
-            public_src, job_src = _source_manifest_url(v, pid, bucket, cfg)
+            public_src, job_src = _source_manifest_url(v, pid, bucket, cfg, vcache)
             row["source_manifest"] = public_src
             # The thumbnail is read from the cache unconditionally — a done
             # volume still needs its picture, and a cache hit costs nothing.
-            # Only the FETCH and the status override are gated.
+            # Only the status override is gated; the fetch happened in
+            # ``validate`` (or has not happened yet: then the volume waits).
             cached = self.validation.get(v.manifest_url) if v.manifest_url else None
             thumb = cached.get("thumbnail") if cached else None
+            validated = True
             if v.manifest_url and self.fetch_json is not None and st != "done":
-                verdict = _validate(v.manifest_url, self.validation, self.fetch_json)
-                thumb = verdict["thumbnail"]
-                if verdict["format"] in _BLOCKING_VERDICTS:
+                verdict = _valid_verdict(self.validation, v.manifest_url, self.now_iso)
+                if verdict is None:
+                    validated = False  # past this tick's validation bound
+                elif verdict["format"] in _BLOCKING_VERDICTS:
                     st = row["status"] = verdict["format"]  # no job burned
             if not v.manifest_url:
                 # Synthetic manifests carry no IIIF service, so the picture is
@@ -457,7 +537,7 @@ class _Pass:
                 self.retried += 1
                 _preserve_failure_log(bucket, cluster, pid, v.id, retire_run_log=True)
                 cluster.delete_job(job_name(pid, v.id))
-            elif st == "pending" and pid not in self.blocked:
+            elif st == "pending" and pid not in self.blocked and validated:
                 submit = job_src
             elif st == "needs-attention":
                 job = self.jobs.get(job_name(pid, v.id))
@@ -488,7 +568,9 @@ class _Pass:
                 # The run's manifest.json (summary card in the run viewer);
                 # 404s until the wrapper publishes, which the viewer tolerates.
                 row["run_manifest"] = _public(cfg, f"{pid}/{v.id}/manifest.json")
-            if st in ("done", "running"):
+            if st == "done":
+                self._done_probe(pid, v.id, done[v.id], vcache, row)
+            elif st == "running":
                 row["pages_done"] = bucket.count_pages(pid, v.id)
             if row["pages_total"] is None:
                 cached_v = (
@@ -497,12 +579,38 @@ class _Pass:
                 row["pages_total"] = cached_v.get("page_count") if cached_v else None
             if row["pages_total"] is None and st == "done":
                 row["pages_total"] = row["pages_done"]
-            row["run_log"] = self._run_log(pid, v.id, st)
+            if st != "done":
+                row["run_log"] = self._run_log(pid, v.id, st)
         except Exception as e:  # noqa: BLE001 — one volume, never the tick
             row["error"] = _describe(e)
             log.warning("volume %s/%s: %s", pid, v.id, row["error"])
             submit = None
         return row, submit
+
+    def _done_probe(
+        self, pid: str, vid: str, updated: str, vcache: dict, row: dict
+    ) -> None:
+        """Page count and run-log link of a done volume, off status/volumes.json
+        when the manifest mtime is unchanged (audit X1): a finished volume is
+        immutable under its mtime, so the steady state costs no S3 call.
+        A negative run-log probe is cached only once the Job is gone — while
+        it lingers (24h TTL) the kube-tail upload may still happen."""
+        if vcache.get("updated") != updated:
+            vcache.clear()
+            vcache["updated"] = updated
+        if "pages" not in vcache:
+            vcache["pages"] = self.bucket.count_pages(pid, vid)
+        row["pages_done"] = vcache["pages"]
+        log_key = keys.run_log_key(pid, vid)
+        if "run_log" not in vcache:
+            link = self._run_log(pid, vid, "done")
+            if link is not None:
+                vcache["run_log"] = True
+            elif job_name(pid, vid) not in self.jobs:
+                vcache["run_log"] = False
+            row["run_log"] = link
+        elif vcache["run_log"]:
+            row["run_log"] = _public(self.cfg, log_key)
 
     def _run_log(self, pid: str, vid: str, st: str) -> str | None:
         """The wrapper ships its own log to this key while it runs, so any
@@ -561,14 +669,17 @@ class _Pass:
     # -- the pass ------------------------------------------------------------
 
     def run(self) -> dict:
+        started = time.monotonic()
         cfg = self.cfg
         self.check_pipelines()
         self.warm_pipelines()
+        self.validate()
         doc: dict[str, Any] = {
             "generated_at": self.now_iso,
             "tick_seconds": cfg.tick_seconds,
             "campaigns_repo_url": cfg.campaigns_repo_web_url or cfg.campaigns_repo_url,
             "warnings": self.warnings,
+            "tick_summary": {},
             "campaigns": [],
         }
         # Orphans are a property of the PIPELINE prefix, not of one campaign:
@@ -604,9 +715,29 @@ class _Pass:
             if pid not in self.blocked and lane:
                 pending[camp.name] = lane
         self.submit(pending)
-        self.bucket.write_json(keys.validation_key(), self.validation)
         self.save_attempts()
+        self.bucket.write_json(keys.volumes_key(), self.volumes)
+        # status.json is the last write, and the three writes below it are
+        # counted in: the number the operator sees is the tick's whole cost.
+        summary = {
+            "seconds": round(time.monotonic() - started, 3),
+            "s3_calls": getattr(self.bucket, "calls", 0) - self._calls_before + 1,
+            "validations": self.validations,
+            "submitted": self.submitted,
+            "retried": self.retried,
+        }
+        doc["tick_summary"] = summary
         self.bucket.write_json(keys.status_key(), doc)
+        log.info(
+            "tick: seconds=%s s3_calls=%d validations=%d submitted=%d retried=%d "
+            "warnings=%d",
+            summary["seconds"],
+            summary["s3_calls"],
+            summary["validations"],
+            summary["submitted"],
+            summary["retried"],
+            len(self.warnings),
+        )
         return doc
 
     def submit(self, pending: dict[str, list[tuple[Volume, str]]]) -> None:
