@@ -21,6 +21,8 @@ TICK_SECONDS = 300
 
 #: Verdicts that keep a volume out of the submission lane (spec §4.4).
 _BLOCKING_VERDICTS = ("unreachable", "unsupported")
+#: Statuses whose pod may have shipped a run log (pending/pre-flight never ran).
+_LOGGED_STATUSES = frozenset({"done", "running", "queued", "retry", "needs-attention"})
 
 #: Errors from reading a file off the checkout: a corrupt or non-UTF-8 file is
 #: one campaign's problem, never the whole tick's. Campaign YAML is decoded as
@@ -418,13 +420,17 @@ def tick(
                 pages_total = cached_v.get("page_count") if cached_v else None
             if pages_total is None and st == "done":
                 pages_total = pages_done
+            # The wrapper ships its own log to this key while it runs, so any
+            # status a pod could have produced gets the link (live for
+            # running volumes). The kube-API upload below is the fallback for
+            # images that predate the shipper — done + succeeded Job, no key.
             run_log = None
-            if st == "done":
-                log_key = keys.run_log_key(pid, v.id)
+            log_key = keys.run_log_key(pid, v.id)
+            if st in _LOGGED_STATUSES and bucket.exists(log_key):
+                run_log = f"{cfg.public_results_base.rstrip('/')}/{log_key}"
+            elif st == "done":
                 job = jobs.get(job_name(pid, v.id))
-                if bucket.exists(log_key):
-                    run_log = f"{cfg.public_results_base.rstrip('/')}/{log_key}"
-                elif job is not None and job.succeeded:
+                if job is not None and job.succeeded:
                     # Jobs linger ttlSecondsAfterFinished (24h) after Complete —
                     # one upload per volume, guarded by the HEAD above.
                     bucket.put_text(

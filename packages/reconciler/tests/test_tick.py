@@ -762,3 +762,42 @@ def test_browser_url_is_identity_without_internal_base():
     assert _browser_url("https://lbiiif.riksarkivet.se/x/manifest", cfg) == (
         "https://lbiiif.riksarkivet.se/x/manifest"
     )
+
+
+def test_running_volume_with_shipped_log_gets_live_run_log(tmp_path):
+    """The wrapper ships status/logs/<pid>/<vid>.txt while it runs; the link
+    must not wait for done."""
+    name = job_name("demo-v1", "R0000001")
+    jobs = {name: JobState(active=True, failed=False)}
+    bucket, cluster = FakeBucket(), FakeCluster(jobs=jobs)
+    bucket.written["status/logs/demo-v1/R0000001.txt"] = "streaming..."
+    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert byid["R0000001"]["status"] == "running"
+    assert byid["R0000001"]["run_log"] == (
+        "http://pub/htr-results/status/logs/demo-v1/R0000001.txt"
+    )
+    assert bucket.put_text_calls == 0
+
+
+def test_running_volume_without_shipped_log_has_no_run_log(tmp_path):
+    name = job_name("demo-v1", "R0000001")
+    jobs = {name: JobState(active=True, failed=False)}
+    doc = tick(_repo(tmp_path), FakeBucket(), FakeCluster(jobs=jobs), CFG, NOW)
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert byid["R0000001"]["run_log"] is None
+
+
+def test_pending_volume_never_probes_for_a_run_log(tmp_path):
+    class CountingBucket(FakeBucket):
+        def __init__(self):
+            super().__init__()
+            self.exists_calls = []
+
+        def exists(self, key):
+            self.exists_calls.append(key)
+            return super().exists(key)
+
+    bucket = CountingBucket()
+    tick(_repo(tmp_path), bucket, FakeCluster(), CFG, NOW)
+    assert not [k for k in bucket.exists_calls if k.startswith("status/logs/")]
