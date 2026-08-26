@@ -351,6 +351,17 @@ class _Pass:
             self._done_cache[pipeline_id] = self.bucket.done_volumes(pipeline_id)
         return self._done_cache[pipeline_id]
 
+    def _healthy(self, camp: Campaign) -> dict[str, str] | None:
+        """The campaign's done-set, or None when it cannot take part in this
+        tick (parse error, unknown pipeline, S3 refusing the LIST — the last
+        is reported on the campaign entry later, by ``run``)."""
+        if camp.error or camp.pipeline_id not in self.pipelines:
+            return None
+        try:
+            return self.done_for(camp.pipeline_id)
+        except Exception:  # noqa: BLE001 — surfaced per campaign in run()
+            return None
+
     def save_attempts(self) -> None:
         self.bucket.write_json(keys.attempts_key(), dump_attempts(self.attempts))
 
@@ -369,9 +380,9 @@ class _Pass:
         todo: list[str] = []
         seen: set[str] = set()
         for camp in self.campaigns:
-            if camp.error or camp.pipeline_id not in self.pipelines:
+            done = self._healthy(camp)
+            if done is None:
                 continue
-            done = self.done_for(camp.pipeline_id)
             for v in camp.volumes:
                 url = v.manifest_url
                 if not url or url in seen or v.id in done:
@@ -435,19 +446,17 @@ class _Pass:
     def warm_pipelines(self) -> None:
         """Warm-up gate: batch Jobs run offline on a read-only model cache, so
         a pipeline submits nothing until its warm-up Job — the one writer of
-        that cache — has completed. A failed warm-up is logged, deleted and
-        recreated next tick: HF Hub outages heal themselves, and the retry
-        costs nothing. Lazy on purpose: only pipelines with volumes still to
-        run are warmed — a finished pipeline has nothing to gate, and one
-        pinned to an image that predates the warm-up entrypoint would
-        otherwise fail every tick."""
-        in_use = {
-            c.pipeline_id
-            for c in self.campaigns
-            if not c.error
-            and c.pipeline_id in self.pipelines
-            and any(v.id not in self.done_for(c.pipeline_id) for v in c.volumes)
-        }
+        that cache — has completed. A transiently failed warm-up is logged,
+        deleted and recreated next tick within the attempts budget (see
+        ``_warm``): HF Hub outages heal themselves. Lazy on purpose: only
+        pipelines with volumes still to run are warmed — a finished pipeline
+        has nothing to gate, and one pinned to an image that predates the
+        warm-up entrypoint would otherwise fail every tick."""
+        in_use: set[str] = set()
+        for c in self.campaigns:
+            done = self._healthy(c)
+            if done is not None and any(v.id not in done for v in c.volumes):
+                in_use.add(c.pipeline_id)
         warmups = self.cluster.warmups()
         for pid, spec in self.pipelines.items():
             if pid in self.blocked or pid not in in_use:
@@ -568,7 +577,7 @@ class _Pass:
             # Only the status override is gated; the fetch happened in
             # ``validate`` (or has not happened yet: then the volume waits).
             cached = self.validation.get(v.manifest_url) if v.manifest_url else None
-            thumb = cached.get("thumbnail") if cached else None
+            thumb = cached.get("thumbnail") if isinstance(cached, dict) else None
             validated = True
             if v.manifest_url and self.fetch_json is not None and st != "done":
                 verdict = _valid_verdict(self.validation, v.manifest_url, self.now_iso)
@@ -634,11 +643,8 @@ class _Pass:
                 self._done_probe(pid, v.id, done[v.id], vcache, row)
             elif st == "running":
                 row["pages_done"] = bucket.count_pages(pid, v.id)
-            if row["pages_total"] is None:
-                cached_v = (
-                    self.validation.get(v.manifest_url) if v.manifest_url else None
-                )
-                row["pages_total"] = cached_v.get("page_count") if cached_v else None
+            if row["pages_total"] is None and isinstance(cached, dict):
+                row["pages_total"] = cached.get("page_count")
             if row["pages_total"] is None and st == "done":
                 row["pages_total"] = row["pages_done"]
             if st != "done":
