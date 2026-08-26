@@ -1,5 +1,105 @@
-/* Global styles shared by every route. Theme tokens move here in the
-   theme step; today only the utilities live here. */
+/* Global styles shared by every route: the theme tokens and utilities.
+   Components style themselves against these tokens only.
+
+   Semantic colours come in a text/strong value and a `-soft` surface, per
+   theme, chosen so text on its own soft surface (chips, badges), on the
+   card and on the page all clear WCAG AA 4.5:1 — measured, not eyeballed
+   (see the contrast check in the audit remediation notes). */
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(0.985 0.004 80);
+  --foreground: oklch(0.16 0.006 270);
+  --card: oklch(0.993 0.002 80);
+  --muted: oklch(0.955 0.006 260);
+  --muted-foreground: oklch(0.45 0.012 260);
+  --border: oklch(0.915 0.006 260);
+  --primary: oklch(0.4 0.16 255);
+  --primary-soft: oklch(0.93 0.04 255);
+  --success: oklch(0.44 0.14 148);
+  --success-soft: oklch(0.94 0.06 148);
+  --warning: oklch(0.47 0.12 70);
+  --warning-soft: oklch(0.95 0.06 85);
+  --destructive: oklch(0.5 0.19 27);
+  --destructive-soft: oklch(0.95 0.04 27);
+  /* Text on a solid --destructive surface (stale banner, "broken" chip). */
+  --on-strong: oklch(0.985 0.004 80);
+  color-scheme: light;
+}
+
+/* Default: follow the OS when no explicit choice has been made. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --background: oklch(0.13 0.006 270);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.17 0.008 270);
+    --muted: oklch(0.22 0.008 270);
+    --muted-foreground: oklch(0.7 0.01 260);
+    --border: oklch(0.28 0.008 270);
+    --primary: oklch(0.78 0.12 250);
+    --primary-soft: oklch(0.27 0.05 250);
+    --success: oklch(0.8 0.15 148);
+    --success-soft: oklch(0.27 0.05 148);
+    --warning: oklch(0.83 0.14 85);
+    --warning-soft: oklch(0.28 0.05 85);
+    --destructive: oklch(0.75 0.16 25);
+    --destructive-soft: oklch(0.29 0.07 27);
+    --on-strong: oklch(0.13 0.006 270);
+    color-scheme: dark;
+  }
+}
+
+/* Explicit choice (data-theme on <html>, from the toggle + localStorage)
+   wins over the OS default in both directions. */
+:root[data-theme="dark"] {
+  --background: oklch(0.13 0.006 270);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.17 0.008 270);
+  --muted: oklch(0.22 0.008 270);
+  --muted-foreground: oklch(0.7 0.01 260);
+  --border: oklch(0.28 0.008 270);
+  --primary: oklch(0.78 0.12 250);
+  --primary-soft: oklch(0.27 0.05 250);
+  --success: oklch(0.8 0.15 148);
+  --success-soft: oklch(0.27 0.05 148);
+  --warning: oklch(0.83 0.14 85);
+  --warning-soft: oklch(0.28 0.05 85);
+  --destructive: oklch(0.75 0.16 25);
+  --destructive-soft: oklch(0.29 0.07 27);
+  --on-strong: oklch(0.13 0.006 270);
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  line-height: 1.4;
+}
+
+/* Page shell: full-bleed background, content centred with padding rather
+   than margin auto so dark mode has no white gutters. */
+main {
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 1.5rem max(1rem, calc(50vw - 32rem)) 3rem;
+}
+
+/* Motion is decoration here; honour the OS setting. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
 
 /* Visually hidden, still read by assistive tech (captions, labels). */
 .sr-only {

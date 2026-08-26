@@ -142,12 +142,12 @@
   }
 
   .chip.ok {
-    background: var(--success-soft, color-mix(in oklab, var(--success) 15%, transparent));
+    background: var(--success-soft);
     color: var(--success);
   }
 
   .chip.failed {
-    background: var(--destructive-soft, color-mix(in oklab, var(--destructive) 15%, transparent));
+    background: var(--destructive-soft);
     color: var(--destructive);
   }
 </style>
