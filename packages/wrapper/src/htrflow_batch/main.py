@@ -183,6 +183,7 @@ def _main(
                     slots,
                     client,
                     concurrency=cfg.download_concurrency,
+                    max_bytes=cfg.fetch_max_bytes,
                 )
             except Exception as e:
                 log.error("downloader thread failed: %r", e)
