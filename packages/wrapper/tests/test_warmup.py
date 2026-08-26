@@ -52,3 +52,21 @@ def test_warmup_download_failure_is_transient(tmp_path):
         raise OSError("connection reset")
 
     assert main(_env(tmp_path), load=boom) == EXIT_TRANSIENT
+
+
+def test_warmup_bad_config_is_permanent(tmp_path):
+    """W12: a typo'd step/model or malformed YAML looped forever as a
+    transient warm-up; nothing about it changes on retry."""
+    import yaml
+
+    for exc in (
+        ValueError("1 validation error for PipelineConfig"),
+        yaml.YAMLError("while parsing"),
+        KeyError("segmentatoin"),  # unknown step: htrflow STEPS[...]
+        NotImplementedError("Model Yolo9 is not supported"),
+    ):
+
+        def boom(_, exc=exc):
+            raise exc
+
+        assert main(_env(tmp_path), load=boom) == EXIT_PERMANENT, exc

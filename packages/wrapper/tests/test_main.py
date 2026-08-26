@@ -1,4 +1,6 @@
 import json
+import os
+import signal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,6 +11,7 @@ from htrflow_batch import main as main_mod
 from htrflow_batch.main import (
     EXIT_OK,
     EXIT_PERMANENT,
+    EXIT_SIGTERM,
     EXIT_TRANSIENT,
     main,
     publish_failure_metrics,
@@ -23,7 +26,7 @@ def env(tmp_path, cfg, sample_manifest, monkeypatch):
     def handler(req):
         if req.url.path.endswith("manifest.json"):
             return httpx.Response(200, json=sample_manifest)
-        return httpx.Response(200, content=b"JPEGDATA")
+        return httpx.Response(200, content=b"\xff\xd8\xff\xe0JPEGDATA")
 
     monkeypatch.setattr(
         main_mod,
@@ -45,18 +48,36 @@ def env(tmp_path, cfg, sample_manifest, monkeypatch):
     }
 
 
+ALTO_OK = '<alto><Layout><Page WIDTH="2500" HEIGHT="3538"/></Layout></alto>'
+PAGE_OK = '<PcGts><Page imageWidth="2500" imageHeight="3538"/></PcGts>'
+
+
+def _write_outputs(cfg, stem: str, alto: str = ALTO_OK, page: str = PAGE_OK):
+    files = {}
+    for fmt, text in (("alto", alto), ("page", page)):
+        out = Path(cfg.workdir) / "outputs" / fmt / f"{stem}.xml"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text)
+        files[fmt] = out
+    return files
+
+
 def fake_factory(cfg):
-    """Writes a plausible ALTO per page."""
+    """Writes a plausible ALTO + PAGE per page."""
 
     def process(path: Path):
-        out = Path(cfg.workdir) / "outputs" / "alto" / f"{path.stem}.xml"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(
-            '<alto><Layout><Page WIDTH="2500" HEIGHT="3538"/></Layout></alto>'
-        )
-        return {"alto": out}
+        return _write_outputs(cfg, path.stem)
 
     return process
+
+
+def _put_done(s3, cfg, name: str, formats=("alto", "page")):
+    for fmt in formats:
+        s3.put_object(
+            Bucket=cfg.s3_bucket,
+            Key=f"demo-v1/SE-RA-1234/{fmt}/{name}.xml",
+            Body=(ALTO_OK if fmt == "alto" else PAGE_OK).encode(),
+        )
 
 
 def _keys(s3, cfg):
@@ -81,14 +102,19 @@ def test_happy_path(env, cfg, s3):
     assert body["results"]["0001"]["status"] == "ok"
     assert "gpu_stall_seconds" in body and "wall_seconds" in body
     assert body["viewer_url"].endswith("iiif.json")
+    # W7: canvas -> source mapping, so a later run can tell a changed page
+    assert body["page_sources"] == {
+        f"{i:04d}": f"https://iiif.example/mock-vol/page-{i:05d}/full/2500,/0/default.jpg"
+        for i in (1, 2, 3)
+    }
+    assert body["canvas_ids"] == {
+        f"{i:04d}": f"https://iiif.example/mock-vol/page-{i:05d}/canvas"
+        for i in (1, 2, 3)
+    }
 
 
 def test_resume_skips_done(env, cfg, s3):
-    s3.put_object(
-        Bucket=cfg.s3_bucket,
-        Key="demo-v1/SE-RA-1234/alto/0001.xml",
-        Body=b'<alto><Layout><Page WIDTH="2500" HEIGHT="3538"/></Layout></alto>',
-    )
+    _put_done(s3, cfg, "0001")
     calls = []
 
     def factory(c):
@@ -119,6 +145,158 @@ def test_resume_skips_done(env, cfg, s3):
     assert canvas_names == {"0001", "0002", "0003"}  # skipped page not omitted
 
 
+def test_resume_reprocesses_pages_whose_source_changed(env, cfg, s3):
+    """W7: resume was by position only; an edited images: list or a
+    re-ordered manifest kept stale outputs. The previous manifest.json's
+    page_sources are compared with the current image URLs."""
+    for name in ("0001", "0002", "0003"):
+        _put_done(s3, cfg, name)
+    src = "https://iiif.example/mock-vol/page-{:05d}/full/2500,/0/default.jpg"
+    s3.put_object(
+        Bucket=cfg.s3_bucket,
+        Key="demo-v1/SE-RA-1234/manifest.json",
+        Body=json.dumps(
+            {
+                "pages": 3,
+                "page_sources": {
+                    "0001": src.format(1),
+                    "0002": "https://iiif.example/OLD/page-00002/full/2500,/0/default.jpg",
+                    "0003": src.format(3),
+                },
+            }
+        ).encode(),
+    )
+    calls = []
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            calls.append(path.stem)
+            return inner(path)
+
+        return process
+
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    assert calls == ["0002"]
+    body = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert body["results"]["0001"]["status"] == "skipped"
+    assert body["results"]["0002"]["status"] == "ok"
+    assert body["page_sources"]["0002"] == src.format(2)
+
+
+def test_resume_without_previous_manifest_keeps_done_pages(env, cfg, s3):
+    """No manifest.json (the previous attempt never completed) = nothing to
+    compare against; done pages stay done."""
+    _put_done(s3, cfg, "0001")
+    calls = []
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            calls.append(path.stem)
+            return inner(path)
+
+        return process
+
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    assert calls == ["0002", "0003"]
+
+
+def test_resume_reprocesses_page_with_alto_but_no_page_xml(env, cfg, s3):
+    """W2: a previous run that died between the two uploads must not count
+    the page as done."""
+    _put_done(s3, cfg, "0001", formats=("alto",))
+    calls = []
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            calls.append(path.stem)
+            return inner(path)
+
+        return process
+
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    assert calls == ["0001", "0002", "0003"]
+    assert "demo-v1/SE-RA-1234/page/0001.xml" in _keys(s3, cfg)
+
+
+def test_verify_requires_page_xml_too(env, cfg, s3, monkeypatch):
+    real = ResultStore.upload_page
+
+    def drop_page_for_0002(self, name, files):
+        if name != "0002":
+            return real(self, name, files)
+        # simulate a PAGE PUT that never landed, bypassing upload_page's check
+        self.client.put_object(
+            Bucket=self.bucket,
+            Key=self._key(f"alto/{name}.xml"),
+            Body=files["alto"].read_bytes(),
+        )
+
+    monkeypatch.setattr(ResultStore, "upload_page", drop_page_for_0002)
+    rc = main(env, process_page_factory=fake_factory)
+    assert rc == EXIT_TRANSIENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "verify" and "missing=['0002']" in term["error"]
+    assert "demo-v1/SE-RA-1234/manifest.json" not in _keys(s3, cfg)
+
+
+def test_malformed_alto_fails_the_page_at_upload(env, cfg, s3):
+    """W3: the page fails in the stream (never uploaded) so the verify gate
+    reports it; a later retry reprocesses it instead of accepting the junk."""
+
+    def factory(c):
+        def process(path):
+            if path.stem == "0002":
+                return _write_outputs(c, path.stem, alto="<alto><Layout></alto>")
+            return _write_outputs(c, path.stem)
+
+        return process
+
+    rc = main(env, process_page_factory=factory)
+    assert rc == EXIT_TRANSIENT
+    keys = _keys(s3, cfg)
+    assert "demo-v1/SE-RA-1234/alto/0002.xml" not in keys
+    assert "demo-v1/SE-RA-1234/page/0002.xml" not in keys
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "verify" and "0002" in term["error"]
+    evidence = json.loads(
+        s3.get_object(
+            Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/metrics-failed-latest.json"
+        )["Body"].read()
+    )
+    assert "not well-formed" in evidence["results"]["0002"]["error"]
+
+
+def test_publish_tolerates_unparseable_previously_uploaded_alto(env, cfg, s3):
+    """A resumed page whose stored ALTO cannot be parsed must not fail
+    publish: iiif.json simply omits that canvas (with a warning)."""
+    s3.put_object(
+        Bucket=cfg.s3_bucket,
+        Key="demo-v1/SE-RA-1234/alto/0001.xml",
+        Body=b"<alto><Layout></alto>",
+    )
+    s3.put_object(
+        Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/page/0001.xml", Body=b"<PcGts/>"
+    )
+    rc = main(env, process_page_factory=fake_factory)
+    assert rc == EXIT_OK
+    iiif = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/iiif.json")[
+            "Body"
+        ].read()
+    )
+    assert {c["id"].rsplit("/", 1)[-1] for c in iiif["items"]} == {"0002", "0003"}
+
+
 def test_bad_manifest_is_permanent(env, cfg, s3, monkeypatch):
     def handler(req):
         return httpx.Response(404)
@@ -132,6 +310,28 @@ def test_bad_manifest_is_permanent(env, cfg, s3, monkeypatch):
     assert rc == EXIT_PERMANENT
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
     assert term["stage"] == "setup"
+
+
+def test_manifest_5xx_is_transient(env, cfg, s3, monkeypatch):
+    """W1: a 503 from the IIIF server is a retry, not needs-attention."""
+    monkeypatch.setattr(
+        main_mod,
+        "_http_client",
+        lambda: httpx.Client(
+            transport=httpx.MockTransport(lambda req: httpx.Response(503))
+        ),
+    )
+    rc = main(env, process_page_factory=fake_factory)
+    assert rc == EXIT_TRANSIENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "setup" and term["permanent"] is False
+
+
+def test_manifest_over_cap_is_permanent(env, cfg, s3):
+    rc = main(dict(env, MANIFEST_MAX_BYTES="10"), process_page_factory=fake_factory)
+    assert rc == EXIT_PERMANENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert "too large" in term["error"]
 
 
 def test_page_failure_is_transient_and_blocks_completion(env, cfg, s3):
@@ -224,17 +424,11 @@ def test_publish_warns_when_viewer_manifest_incomplete(env, cfg, s3, caplog):
 
     def factory(c):
         def process(path: Path):
-            out = Path(c.workdir) / "outputs" / "alto" / f"{path.stem}.xml"
-            out.parent.mkdir(parents=True, exist_ok=True)
-            if path.stem == "0002":
-                out.write_text(
-                    "<alto><Layout><Page/></Layout></alto>"
-                )  # no WIDTH/HEIGHT
-            else:
-                out.write_text(
-                    '<alto><Layout><Page WIDTH="2500" HEIGHT="3538"/></Layout></alto>'
+            if path.stem == "0002":  # no WIDTH/HEIGHT
+                return _write_outputs(
+                    c, path.stem, alto="<alto><Layout><Page/></Layout></alto>"
                 )
-            return {"alto": out}
+            return _write_outputs(c, path.stem)
 
         return process
 
@@ -255,10 +449,10 @@ def test_publish_warns_when_no_dims_resolved(env, cfg, s3, caplog):
 
     def factory(c):
         def process(path: Path):
-            out = Path(c.workdir) / "outputs" / "alto" / f"{path.stem}.xml"
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text("<alto><Layout><Page/></Layout></alto>")  # no WIDTH/HEIGHT
-            return {"alto": out}
+            # no WIDTH/HEIGHT
+            return _write_outputs(
+                c, path.stem, alto="<alto><Layout><Page/></Layout></alto>"
+            )
 
         return process
 
@@ -358,3 +552,198 @@ def test_streams_are_restored_after_main(env, cfg, s3):
     before = (sys.stdout, sys.stderr)
     main(env, process_page_factory=fake_factory)
     assert (sys.stdout, sys.stderr) == before
+
+
+def test_sigterm_writes_termination_log_ships_final_log_and_exits_143(
+    env, cfg, s3, monkeypatch
+):
+    """O2/X5: the Job deadline (or a drain) SIGTERMs the pod. The wrapper
+    must leave a termination message naming the stage, ship the final run
+    log, and exit 143 promptly — instead of dying with no evidence."""
+    exits = []
+    monkeypatch.setattr(main_mod, "_hard_exit", lambda code: exits.append(code))
+    before = signal.getsignal(signal.SIGTERM)
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            if path.stem == "0002":
+                os.kill(os.getpid(), signal.SIGTERM)
+            return inner(path)
+
+        return process
+
+    rc = main(env, process_page_factory=factory)
+    assert rc == EXIT_SIGTERM == 143
+    assert exits == [143]
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term == {"stage": "stream", "permanent": False, "error": "SIGTERM"}
+    body = (
+        s3.get_object(Bucket=cfg.s3_bucket, Key="status/logs/demo-v1/SE-RA-1234.txt")[
+            "Body"
+        ]
+        .read()
+        .decode()
+    )
+    assert "SIGTERM" in body  # final ship carried the shutdown line
+    assert "demo-v1/SE-RA-1234/manifest.json" not in _keys(s3, cfg)
+    assert signal.getsignal(signal.SIGTERM) is before  # handler restored
+
+
+def test_sigterm_is_not_swallowed_by_the_per_page_handler(env, cfg, s3, monkeypatch):
+    """stream.consume records any Exception as a failed page and carries on;
+    the SIGTERM unwind must pass straight through it."""
+    monkeypatch.setattr(main_mod, "_hard_exit", lambda code: None)
+    seen = []
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            seen.append(path.stem)
+            if path.stem == "0001":
+                os.kill(os.getpid(), signal.SIGTERM)
+            return inner(path)
+
+        return process
+
+    assert main(env, process_page_factory=factory) == EXIT_SIGTERM
+    assert seen == ["0001"]  # no further page was processed
+
+
+def test_store_outage_aborts_in_stream_stage(
+    env, cfg, s3, monkeypatch, sample_manifest
+):
+    def handler(req):
+        if req.url.path.endswith("manifest.json"):
+            # 9 canvases (page names come from position, ids may repeat)
+            m = dict(sample_manifest, items=sample_manifest["items"] * 3)
+            return httpx.Response(200, json=m)
+        return httpx.Response(200, content=b"\xff\xd8\xff\xe0JPEGDATA")
+
+    monkeypatch.setattr(
+        main_mod,
+        "_http_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    def dead(self, name, files):
+        raise ConnectionError("s3 endpoint unreachable")
+
+    monkeypatch.setattr(ResultStore, "upload_page", dead)
+    processed = []
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            processed.append(path.stem)
+            return inner(path)
+
+        return process
+
+    rc = main(env, process_page_factory=factory)
+    assert rc == EXIT_TRANSIENT
+    assert len(processed) == 5  # not all 9
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "stream" and "5 consecutive" in term["error"]
+
+
+def test_model_load_failure_is_attributed_to_load_stage(env, cfg, s3):
+    """W9: a failing model load was reported as stage 'stream'."""
+
+    def factory(c):
+        raise OSError("could not reach huggingface.co")
+
+    assert main(env, process_page_factory=factory) == EXIT_TRANSIENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "load" and term["permanent"] is False
+
+
+def test_bad_pipeline_config_is_permanent_in_load_stage(env, cfg, s3):
+    def factory(c):
+        raise ValueError("bad pipeline config: unknown step")
+
+    assert main(env, process_page_factory=factory) == EXIT_PERMANENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "load" and term["permanent"] is True
+
+
+def test_failure_path_stops_the_downloader(env, cfg, s3, monkeypatch):
+    """W10: after an early failure the queued downloads must not keep the
+    interpreter alive (ThreadPoolExecutor workers are joined at exit)."""
+    seen = {}
+    real = main_mod.run_downloader
+
+    def spy(*a, **k):
+        seen["stop"] = k.get("stop")
+        return real(*a, **k)
+
+    monkeypatch.setattr(main_mod, "run_downloader", spy)
+
+    def factory(c):
+        raise OSError("model load failed")
+
+    assert main(env, process_page_factory=factory) == EXIT_TRANSIENT
+    assert seen["stop"] is not None and seen["stop"].is_set()
+
+
+def test_terminate_redacts_urls_in_the_error(tmp_path):
+    """S6: the termination message and run log are world-readable."""
+    log_path = tmp_path / "term.log"
+    main_mod._terminate(
+        {"TERMINATION_LOG_PATH": str(log_path)},
+        {
+            "stage": "stream",
+            "permanent": False,
+            "error": "fetch https://user:pw@iiif.example/x/full/max/0/default.jpg"
+            "?token=SECRET failed",
+        },
+    )
+    term = json.loads(log_path.read_text())
+    assert "SECRET" not in term["error"] and "user:pw" not in term["error"]
+    assert "https://iiif.example/x/full/max/0/default.jpg" in term["error"]
+
+
+def test_manifest_json_page_sources_and_errors_are_redacted(
+    env, cfg, s3, monkeypatch, sample_manifest
+):
+    def handler(req):
+        if req.url.path.endswith("manifest.json"):
+            m = json.loads(json.dumps(sample_manifest))
+            body = m["items"][0]["items"][0]["items"][0]["body"]
+            body["service"][0]["id"] = "https://iiif.example/private/p1?token=SECRET"
+            return httpx.Response(200, json=m)
+        return httpx.Response(200, content=b"\xff\xd8\xff\xe0JPEGDATA")
+
+    monkeypatch.setattr(
+        main_mod,
+        "_http_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert main(env, process_page_factory=fake_factory) == EXIT_OK
+    body = s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+        "Body"
+    ].read()
+    assert b"SECRET" not in body
+    assert json.loads(body)["page_sources"]["0001"].startswith(
+        "https://iiif.example/private/p1"
+    )
+
+
+def test_publish_failure_metrics_redacts_urls():
+    calls = []
+    store = SimpleNamespace(put_json=lambda key, obj: calls.append(obj))
+    cfg = SimpleNamespace(volume_ref="v", pipeline_id="p")
+    stats = SimpleNamespace(
+        stall_seconds=0.0,
+        results={
+            "0001": SimpleNamespace(
+                status="failed", seconds=0.0, error="HTTP 500 https://h/x?token=S"
+            )
+        },
+    )
+    publish_failure_metrics(store, cfg, stats, 1.0, "verify", "bad https://u:p@h/y?t=S")
+    assert "token=S" not in calls[0]["results"]["0001"]["error"]
+    assert "u:p@" not in calls[0]["error"] and "t=S" not in calls[0]["error"]

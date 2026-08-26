@@ -223,3 +223,23 @@ def test_warning_resets_after_a_successful_upload(caplog):
         capture._append("3\n")
         capture.ship()
     assert caplog.text.count("could not ship run log") == 2
+
+
+def test_attached_logging_redacts_urls():
+    """S6: the shipped run log is world-readable; URLs in log records lose
+    userinfo and query strings."""
+    import logging
+
+    from htrflow_batch.logship import LogCapture
+
+    capture = LogCapture.install()
+    try:
+        capture.attach_logging()
+        logging.getLogger("x").error(
+            "fetch failed: %s", "https://u:p@h/img.jpg?token=SECRET"
+        )
+    finally:
+        capture.finish()
+    text = capture.text()
+    assert "https://h/img.jpg" in text
+    assert "SECRET" not in text and "u:p@" not in text

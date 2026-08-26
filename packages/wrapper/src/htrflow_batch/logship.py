@@ -18,6 +18,8 @@ import sys
 import threading
 from typing import Callable, Optional, TextIO
 
+from .iiif import redact_urls
+
 log = logging.getLogger("htrflow_batch.logship")
 
 # Sizes are in characters (the buffer holds str); ASCII logs make it bytes.
@@ -29,6 +31,14 @@ TAIL_BYTES = 2 * 1024 * 1024
 TRUNCATION_MARKER = (
     "\n... [log truncated: middle dropped by htrflow_batch.logship] ...\n"
 )
+
+
+class RedactingFormatter(logging.Formatter):
+    """S6: the shipped run log is world-readable; strip userinfo and query
+    strings from every URL in a formatted record (message and traceback)."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_urls(super().format(record))
 
 
 class _Tee(io.TextIOBase):
@@ -127,7 +137,7 @@ class LogCapture:
             if isinstance(handler, logging.StreamHandler) and handler.stream is tee:
                 return
         handler = logging.StreamHandler(tee)
-        handler.setFormatter(logging.Formatter(fmt))
+        handler.setFormatter(RedactingFormatter(fmt))
         root.addHandler(handler)
         self._added_handler = handler
 

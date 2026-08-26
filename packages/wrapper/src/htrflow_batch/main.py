@@ -8,9 +8,12 @@ import logging
 import os
 import queue
 import shutil
+import signal
+import sys
 import threading
 import time
 import traceback
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Callable, Mapping, Optional
 
@@ -18,7 +21,13 @@ import httpx
 
 from .config import Config, ConfigError
 from .fetch import run_downloader
-from .iiif import ManifestError, fetch_manifest, pages_from_manifest
+from .iiif import (
+    ManifestError,
+    fetch_manifest,
+    pages_from_manifest,
+    redact_url,
+    redact_urls,
+)
 from .logship import LogCapture
 from .store import ResultStore
 from .stream import PageOutcome, StreamStats, consume
@@ -29,19 +38,58 @@ log = logging.getLogger("htrflow_batch")
 EXIT_OK = 0
 EXIT_PERMANENT = 13
 EXIT_TRANSIENT = 1
+EXIT_SIGTERM = 143  # 128 + SIGTERM, what an unhandled kill would report
 
 
 class SetupError(Exception):
     """Permanent config/setup failure -> EXIT_PERMANENT."""
 
 
+class Terminated(BaseException):
+    """Raised in the main thread by the SIGTERM handler. BaseException on
+    purpose: stream.consume records any Exception as a failed page and
+    carries on, and this must unwind straight through it (and through any
+    lock the interrupted frame holds) to main()."""
+
+
+class RunState:
+    """What the signal handler needs to see: the stage the run is in."""
+
+    stage: str = "setup"
+
+
+def _set_signal(signum: int, handler):
+    """signal.signal only works in the main thread; elsewhere (embedded,
+    tests in a worker) run without a handler rather than fail."""
+    try:
+        return signal.signal(signum, handler)
+    except ValueError:
+        return None
+
+
+def _hard_exit(code: int) -> None:
+    """Exit NOW. sys.exit would wait for the downloader's ThreadPoolExecutor
+    workers (joined at interpreter shutdown) — a download stuck in its 120 s
+    timeout would run the pod into the SIGKILL instead of a clean 143."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:
+            pass
+    os._exit(code)
+
+
 def _http_client() -> httpx.Client:
-    return httpx.Client()
+    # S5: campaign data drives these fetches; bound redirect chains too.
+    return httpx.Client(max_redirects=5)
 
 
 def _terminate(env: Mapping[str, str], reason: dict) -> None:
     path = env.get("TERMINATION_LOG_PATH", "/dev/termination-log")
     error = reason.get("error")
+    if isinstance(error, str):
+        reason = {**reason, "error": redact_urls(error)}  # S6: world-readable
+        error = reason["error"]
     if isinstance(error, str) and len(error) > 3500:
         # Truncate the *field* before serializing, never the serialized JSON
         # itself -- slicing json.dumps(reason)[:N] can cut mid-string and
@@ -78,6 +126,19 @@ def _default_factory(cfg: Config):
     return process
 
 
+def _results_json(stats: StreamStats) -> dict:
+    """Per-page outcomes for manifest.json / metrics-failed-latest.json;
+    error strings lose URL secrets (S6)."""
+    return {
+        n: {
+            "status": r.status,
+            "seconds": round(r.seconds, 2),
+            **({"error": redact_urls(r.error)} if r.error else {}),
+        }
+        for n, r in sorted(stats.results.items())
+    }
+
+
 def publish_failure_metrics(store, cfg, stats, wall: float, stage: str, error: str):
     """Best-effort: preserve run evidence when a run fails (docs: wrapper).
     Must never raise — it runs on the failure path."""
@@ -88,17 +149,10 @@ def publish_failure_metrics(store, cfg, stats, wall: float, stage: str, error: s
                 "volume": cfg.volume_ref,
                 "pipeline_id": cfg.pipeline_id,
                 "stage": stage,
-                "error": str(error)[:2000],
+                "error": redact_urls(str(error))[:2000],
                 "wall_seconds": round(wall, 1),
                 "gpu_stall_seconds": round(stats.stall_seconds, 1),
-                "results": {
-                    n: {
-                        "status": r.status,
-                        "seconds": round(r.seconds, 2),
-                        **({"error": r.error} if r.error else {}),
-                    }
-                    for n, r in sorted(stats.results.items())
-                },
+                "results": _results_json(stats),
             },
         )
     except Exception:
@@ -113,27 +167,47 @@ def main(
     # log carries htrflow's logging output and its bare prints alike
     # (docs: wrapper, "Live run log"). finish() always restores the streams
     # and does the final upload, on every exit path.
+    env = dict(env if env is not None else os.environ)
+    state = RunState()
     capture = LogCapture.install()
+
+    def on_sigterm(signum, frame):
+        raise Terminated()
+
+    previous = _set_signal(signal.SIGTERM, on_sigterm)
     try:
-        return _main(env, process_page_factory, capture)
+        return _main(env, process_page_factory, capture, state)
+    except Terminated:
+        # O2: the Job deadline or a node drain. Leave the same evidence a
+        # failure would (termination message + complete run log), then exit
+        # 143 so the reconciler classifies it as a retry, not exit 13.
+        log.error("SIGTERM in stage %s: shutting down", state.stage)
+        _terminate(env, {"stage": state.stage, "permanent": False, "error": "SIGTERM"})
+        capture.finish()
+        _hard_exit(EXIT_SIGTERM)
+        return EXIT_SIGTERM  # reached only when _hard_exit is stubbed (tests)
     finally:
+        if previous is not None:
+            _set_signal(signal.SIGTERM, previous)
         capture.finish()
 
 
 def _main(
-    env: Optional[Mapping[str, str]],
+    env: Mapping[str, str],
     process_page_factory: Optional[Callable],
     capture: LogCapture,
+    state: RunState,
 ) -> int:
     capture.attach_logging()  # not basicConfig: see LogCapture.attach_logging
-    env = dict(env if env is not None else os.environ)
     t_start = time.monotonic()
-    stage = "setup"
     # Bound up-front so the failure paths below can tell "we never got that
     # far" from "we have evidence worth publishing".
     cfg: Optional[Config] = None
     store: Optional[ResultStore] = None
     stats: Optional[StreamStats] = None
+    # W10: set on every failure path so queued downloads stop short instead
+    # of holding the interpreter (executor workers are joined at exit).
+    stop = threading.Event()
     try:
         cfg = Config.from_env(env)
         prepare_writable_dirs(env)
@@ -144,22 +218,32 @@ def _main(
         client = _http_client()
 
         # -- stage 1: setup -------------------------------------------------
-        source_manifest = fetch_manifest(cfg.manifest_url, client)
+        source_manifest = fetch_manifest(
+            cfg.manifest_url, client, max_bytes=cfg.manifest_max_bytes
+        )
         pages = pages_from_manifest(source_manifest, cfg.max_image_width)
         if cfg.max_pages:
             pages = pages[: cfg.max_pages]
         log.info("[%s] %d pages in manifest", cfg.volume_ref, len(pages))
 
         # -- stage 2: resume -------------------------------------------------
-        stage = "resume"
+        state.stage = "resume"
         done = store.done_pages() if cfg.resume else set()
+        changed = _changed_sources(store, pages, done) if done else set()
+        if changed:
+            log.info(
+                "[%s] resume: %d done pages have a new source image, reprocessing",
+                cfg.volume_ref,
+                len(changed),
+            )
+            done -= changed
         todo = [p for p in pages if p.name not in done]
         log.info(
             "[%s] resume: %d done, %d to process", cfg.volume_ref, len(done), len(todo)
         )
 
         # -- stage 3: streaming loop ------------------------------------------
-        stage = "stream"
+        state.stage = "stream"
         out_q: queue.Queue = queue.Queue()
         slots = threading.Semaphore(cfg.lookahead_pages)
         bytes_box = {}
@@ -179,6 +263,8 @@ def _main(
                     slots,
                     client,
                     concurrency=cfg.download_concurrency,
+                    max_bytes=cfg.fetch_max_bytes,
+                    stop=stop,
                 )
             except Exception as e:
                 log.error("downloader thread failed: %r", e)
@@ -191,9 +277,11 @@ def _main(
         # Build/load the process fn only after the downloader thread is
         # started, so model load overlaps the first downloads (docs: wrapper,
         # "Model handling") instead of happening serially before any bytes move.
+        state.stage = "load"  # W9: a model-load failure is not a stream failure
         factory = process_page_factory or _default_factory
         process = factory(cfg)
 
+        state.stage = "stream"
         stats = consume(out_q, slots, process, store.upload_page)
         dl_thread.join()
         for p in pages:
@@ -201,7 +289,7 @@ def _main(
                 stats.results[p.name] = PageOutcome(status="skipped")
 
         # -- stage 4: verify (D8) ---------------------------------------------
-        stage = "verify"
+        state.stage = "verify"
         uploaded = store.uploaded_pages()
         expected = {p.name for p in pages}
         missing = sorted(expected - uploaded)
@@ -210,7 +298,7 @@ def _main(
             raise RuntimeError(f"verify failed: missing={missing} failed={failed}")
 
         # -- stage 5: publish (iiif.json, pipeline.yaml, manifest.json LAST) --
-        stage = "publish"
+        state.stage = "publish"
         dims = {}
         out_dir = Path(cfg.workdir) / "outputs"
         for p in pages:
@@ -222,7 +310,7 @@ def _main(
             if alto:
                 try:
                     dims[p.name] = parse_alto_dims(alto[0])
-                except ValueError:
+                except (ValueError, ET.ParseError):
                     pass
             elif p.name in uploaded:
                 # resumed/skipped page: no local ALTO from this run, but a
@@ -231,8 +319,10 @@ def _main(
                 try:
                     data = store.get_bytes(f"alto/{p.name}.xml")
                     dims[p.name] = parse_alto_dims_bytes(data)
-                except Exception:
+                except (ValueError, ET.ParseError):
                     pass
+                except Exception:
+                    log.warning("could not read stored ALTO for %s", p.name)
         if len(dims) < len(pages):
             log.warning("viewer manifest covers %d/%d pages", len(dims), len(pages))
         if not dims:
@@ -263,15 +353,14 @@ def _main(
                 "htrflow_version": _htrflow_version(),
                 "image_digest": env.get("IMAGE_DIGEST", "unknown"),
                 "pages": len(pages),
-                "results": {
-                    n: {
-                        "status": r.status,
-                        "seconds": round(r.seconds, 2),
-                        **({"error": r.error} if r.error else {}),
-                    }
-                    for n, r in sorted(stats.results.items())
-                },
+                "results": _results_json(stats),
                 "source_manifest": cfg.manifest_url,
+                # W7: which source image each page came from, so a resume
+                # after an edited images: list / re-ordered manifest can tell
+                # a stale page from a done one (_changed_sources). Redacted
+                # (S6): the bucket is public and tokens rotate anyway.
+                "page_sources": {p.name: redact_url(p.image_url) for p in pages},
+                "canvas_ids": {p.name: _canvas_id(p.canvas) for p in pages},
                 "max_image_width": cfg.max_image_width,
                 "bytes_fetched": bytes_box.get("n", 0),
                 "wall_seconds": round(wall, 1),
@@ -295,15 +384,39 @@ def _main(
         return EXIT_OK
 
     except (ConfigError, ManifestError, SetupError, ValueError) as e:
+        stop.set()
+        stage = state.stage
         log.error("permanent failure in %s: %s", stage, e)
         _terminate(env, {"stage": stage, "permanent": True, "error": str(e)})
         _publish_failure(cfg, store, stats, t_start, stage, e)
         return EXIT_PERMANENT
     except Exception as e:
+        stop.set()
+        stage = state.stage
         log.error("transient failure in %s: %s\n%s", stage, e, traceback.format_exc())
         _terminate(env, {"stage": stage, "permanent": False, "error": str(e)})
         _publish_failure(cfg, store, stats, t_start, stage, e)
         return EXIT_TRANSIENT
+
+
+def _canvas_id(canvas: dict) -> str | None:
+    cid = canvas.get("id") or canvas.get("@id")
+    return cid if isinstance(cid, str) else None
+
+
+def _changed_sources(store: ResultStore, pages, done: set[str]) -> set[str]:
+    """Done pages whose image URL differs from the one the previous completed
+    run recorded in manifest.json (W7). No previous manifest, or one without
+    page_sources (older wrapper), means nothing to compare: keep them done."""
+    previous = store.get_json_or_none("manifest.json")
+    sources = (previous or {}).get("page_sources")
+    if not isinstance(sources, dict):
+        return set()
+    return {
+        p.name
+        for p in pages
+        if p.name in done and p.name in sources and sources[p.name] != p.image_url
+    }
 
 
 def _publish_failure(cfg, store, stats, t_start: float, stage: str, e: BaseException):

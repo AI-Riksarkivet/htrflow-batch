@@ -40,7 +40,7 @@ def _thumbnail(body: dict, w: int, h: int) -> "list[dict] | None":
         if svc_id:
             return [
                 {
-                    "id": f"{svc_id}/full/200,/0/default.jpg",
+                    "id": f"{svc_id.rstrip('/')}/full/200,/0/default.jpg",
                     "type": "Image",
                     "format": "image/jpeg",
                 }
