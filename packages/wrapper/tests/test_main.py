@@ -23,7 +23,7 @@ def env(tmp_path, cfg, sample_manifest, monkeypatch):
     def handler(req):
         if req.url.path.endswith("manifest.json"):
             return httpx.Response(200, json=sample_manifest)
-        return httpx.Response(200, content=b"JPEGDATA")
+        return httpx.Response(200, content=b"\xff\xd8\xff\xe0JPEGDATA")
 
     monkeypatch.setattr(
         main_mod,
