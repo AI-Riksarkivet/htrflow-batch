@@ -8,14 +8,10 @@
   let collapsed = $state(false); // expanded by default
   let yamlOpen = $state(false); // collapsed by default
 
-  function toggleYaml(event: Event): void {
-    event.stopPropagation();
-    yamlOpen = !yamlOpen;
-  }
-  function toggleYamlOnKey(event: KeyboardEvent): void {
-    if (event.key !== "Enter") return;
-    toggleYaml(event);
-  }
+  // Stable ids for aria-controls; campaign names are unique in a document.
+  const slug = $derived(c.name.replace(/[^a-zA-Z0-9_-]/g, "-"));
+  const tableId = $derived(`volumes-${slug}`);
+  const yamlId = $derived(`pipeline-${slug}`);
 
   function statusLabel(status: string): string {
     return status === "pending" ? "planned" : status;
@@ -34,22 +30,36 @@
   class="campaign"
   data-health={c.error !== null ? "failed" : campaignHealth(c.volumes)}
 >
-  <button class="camp" onclick={() => (collapsed = !collapsed)}>
-    <span class="disclosure">{collapsed ? "▸" : "▾"}</span>
-    <span class="camp-name">{c.name}</span>
+  <!-- Two sibling buttons, not a button inside a button: Enter on the
+       pipeline chip opens the YAML and leaves the table alone. -->
+  <div class="camp">
+    <button
+      type="button"
+      class="camp-toggle"
+      aria-expanded={!collapsed}
+      aria-controls={c.error === null ? tableId : undefined}
+      onclick={() => (collapsed = !collapsed)}
+    >
+      <span class="disclosure" aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
+      <span class="camp-name">{c.name}</span>
+    </button>
     {#if c.error !== null}
       <span class="chip needs-attention">broken</span>
     {:else}
-      <span
-        class="chip pipeline"
-        role="button"
-        tabindex="0"
-        title={c.pipeline_steps !== null && c.pipeline_steps.length > 0
-          ? c.pipeline_steps.join(" → ")
-          : undefined}
-        onclick={toggleYaml}
-        onkeydown={toggleYamlOnKey}>{c.pipeline}</span
-      >
+      {#if c.pipeline_yaml !== null}
+        <button
+          type="button"
+          class="chip pipeline"
+          aria-expanded={yamlOpen}
+          aria-controls={yamlId}
+          title={c.pipeline_steps !== null && c.pipeline_steps.length > 0
+            ? c.pipeline_steps.join(" → ")
+            : "show pipeline YAML"}
+          onclick={() => (yamlOpen = !yamlOpen)}>{c.pipeline}</button
+        >
+      {:else}
+        <span class="chip pipeline static">{c.pipeline}</span>
+      {/if}
       <span class="counts">
         {c.totals.done}/{c.totals.total} volumes
         {#if pagesLabel(c.totals) !== null}
@@ -57,10 +67,10 @@
         {/if}
       </span>
     {/if}
-  </button>
+  </div>
   {#if c.error !== null}<p class="notice error-row">{c.error}</p>{/if}
-  {#if yamlOpen && c.pipeline_yaml}
-    <pre class="pipeline-yaml">{c.pipeline_yaml}</pre>
+  {#if yamlOpen && c.pipeline_yaml !== null}
+    <pre class="pipeline-yaml" id={yamlId}>{c.pipeline_yaml}</pre>
   {/if}
   {#if c.orphans.length > 0}
     <p class="notice warn-row">
@@ -68,7 +78,7 @@
     </p>
   {/if}
   {#if !collapsed && c.error === null}
-    <div class="table-scroll">
+    <div class="table-scroll" id={tableId}>
     <table class="volumes">
       <colgroup>
         <col class="c-thumb" />
@@ -204,20 +214,34 @@
   }
 
   .camp {
-    cursor: pointer;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.35rem 0.75rem;
+    padding: 0.3rem 0;
+  }
+
+  .camp-toggle {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
     font-size: 1rem;
     font-weight: 600;
     background: none;
     border: none;
-    padding: 0.3rem 0;
-    width: 100%;
+    padding: 0;
     text-align: left;
     color: var(--foreground);
     font-family: inherit;
+    min-width: 0;
+  }
+
+  .camp-toggle:focus-visible,
+  .chip.pipeline:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 3px;
   }
 
   .disclosure {
@@ -265,6 +289,13 @@
     background: color-mix(in oklab, var(--primary) 15%, transparent);
     color: var(--primary);
     cursor: pointer;
+    border: none;
+    font-family: inherit;
+    line-height: 1.4;
+  }
+
+  .chip.pipeline.static {
+    cursor: default;
   }
 
   .notice {
