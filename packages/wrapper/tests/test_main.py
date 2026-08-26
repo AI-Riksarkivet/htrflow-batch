@@ -538,3 +538,41 @@ def test_sigterm_is_not_swallowed_by_the_per_page_handler(env, cfg, s3, monkeypa
 
     assert main(env, process_page_factory=factory) == EXIT_SIGTERM
     assert seen == ["0001"]  # no further page was processed
+
+
+def test_store_outage_aborts_in_stream_stage(
+    env, cfg, s3, monkeypatch, sample_manifest
+):
+    def handler(req):
+        if req.url.path.endswith("manifest.json"):
+            # 9 canvases (page names come from position, ids may repeat)
+            m = dict(sample_manifest, items=sample_manifest["items"] * 3)
+            return httpx.Response(200, json=m)
+        return httpx.Response(200, content=b"\xff\xd8\xff\xe0JPEGDATA")
+
+    monkeypatch.setattr(
+        main_mod,
+        "_http_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    def dead(self, name, files):
+        raise ConnectionError("s3 endpoint unreachable")
+
+    monkeypatch.setattr(ResultStore, "upload_page", dead)
+    processed = []
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            processed.append(path.stem)
+            return inner(path)
+
+        return process
+
+    rc = main(env, process_page_factory=factory)
+    assert rc == EXIT_TRANSIENT
+    assert len(processed) == 5  # not all 9
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "stream" and "5 consecutive" in term["error"]
