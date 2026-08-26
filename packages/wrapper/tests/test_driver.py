@@ -326,3 +326,39 @@ def test_process_page_raises_when_a_format_is_missing(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeError, match="page"):
         process_page(_NoopPipeline(), image, out_dir)
+
+
+@pytest.mark.parametrize(
+    "exc", [KeyError("segmentatoin"), NotImplementedError("Model X is not supported")]
+)
+def test_load_pipeline_unknown_step_or_model_is_permanent(tmp_path, monkeypatch, exc):
+    """htrflow raises KeyError for an unknown step name (STEPS[...]) and
+    NotImplementedError for an unknown model class; both are config
+    mistakes and must become ValueError (exit 13), not a transient retry."""
+    mock_export_class = type("Export", (), {})
+
+    class MockPipeline:
+        def __init__(self, steps=None):
+            self.steps = steps or []
+
+        @staticmethod
+        def from_config(config):
+            raise exc
+
+    fake_pipeline_pipeline = ModuleType("htrflow.pipeline.pipeline")
+    fake_steps = ModuleType("htrflow.pipeline.steps")
+    fake_pipeline_pipeline.Pipeline = MockPipeline
+    fake_steps.Export = mock_export_class
+    monkeypatch.setitem(sys.modules, "htrflow", ModuleType("htrflow"))
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline", ModuleType("htrflow.pipeline"))
+    monkeypatch.setitem(
+        sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline
+    )
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline.steps", fake_steps)
+    pipeline_yaml = tmp_path / "pipeline.yaml"
+    pipeline_yaml.write_text("steps: []")
+
+    from htrflow_batch.driver import load_pipeline
+
+    with pytest.raises(ValueError, match="bad pipeline config"):
+        load_pipeline(str(pipeline_yaml), tmp_path / "out")

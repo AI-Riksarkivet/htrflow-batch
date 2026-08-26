@@ -204,3 +204,36 @@ def test_painting_body_p3_passthrough():
     canvas = _canvas_with_service(3000, 4000)
     body = painting_body(canvas)
     assert body["service"][0]["id"] == "https://img/iiif/page-1"
+
+
+@pytest.mark.parametrize(
+    "width,expected",
+    [
+        ("3000", "2500,"),  # numeric string, wide -> capped
+        ("1200", "max"),  # numeric string, narrow -> max
+        ("abc", "2500,"),  # junk -> cap (a 400 falls back to max in fetch)
+        (None, "2500,"),
+        ([3000], "2500,"),
+    ],
+)
+def test_non_int_canvas_width_does_not_crash(width, expected):
+    """W11: a non-int width raised TypeError and was retried to the cap."""
+    m = {"items": [_canvas_with_service(width, 4000)]}
+    pages = pages_from_manifest(m, width=2500)
+    assert (
+        pages[0].image_url == f"https://img/iiif/page-1/full/{expected}/0/default.jpg"
+    )
+
+
+def test_redact_url():
+    from htrflow_batch.iiif import redact_url, redact_urls
+
+    assert (
+        redact_url("https://u:p@h:8443/a/b.json?token=S#f") == "https://h:8443/a/b.json"
+    )
+    assert redact_url("http://h/x") == "http://h/x"
+    assert redact_url("not a url") == "not a url"
+    assert (
+        redact_urls("bad https://u:p@h/a?x=1 and http://h2/b?y=2 end")
+        == "bad https://h/a and http://h2/b end"
+    )

@@ -115,11 +115,14 @@ def _fetch_one(
     retries: int,
     backoff: float,
     max_bytes: int = FETCH_MAX_BYTES,
+    stop: threading.Event | None = None,
 ) -> FetchResult:
     last = "unknown error"
     url = page.image_url
     path = dest_dir / f"{page.name}.jpg"
     for attempt in range(retries):
+        if stop is not None and stop.is_set():
+            return FetchResult(page=page, path=None, error="stopped: run aborted")
         try:
             with client.stream("GET", url, timeout=120, follow_redirects=True) as resp:
                 if resp.status_code == 200:
@@ -155,7 +158,13 @@ def run_downloader(
     retries: int = 3,
     backoff: float = 0.5,
     max_bytes: int = FETCH_MAX_BYTES,
+    stop: threading.Event | None = None,
 ) -> int:
+    """Download ``pages`` into ``dest_dir``, results on ``out_queue`` in
+    order, ``None`` last. ``stop`` (W10): once set, pending pages complete
+    immediately as failed and the pool is shut down with its queued futures
+    cancelled, so a run that already failed can exit without waiting for
+    every queued download to time out."""
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -187,15 +196,23 @@ def run_downloader(
     enqueue_thread = threading.Thread(target=enqueue_results_in_order, daemon=True)
     enqueue_thread.start()
 
-    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+    pool = ThreadPoolExecutor(max_workers=concurrency)
+    try:
         for page in pages:
+            if stop is not None and stop.is_set():
+                break
             slots.acquire()  # bounded lookahead: consumer releases
+            if stop is not None and stop.is_set():
+                slots.release()
+                break
             fut = pool.submit(
-                _fetch_one, page, dest_dir, client, retries, backoff, max_bytes
+                _fetch_one, page, dest_dir, client, retries, backoff, max_bytes, stop
             )
             futures_queue.put((page, fut))
-
+    finally:
         done_event.set()
+        stopped = stop is not None and stop.is_set()
+        pool.shutdown(wait=not stopped, cancel_futures=stopped)
 
     # Wait for enqueue thread to finish
     enqueue_thread.join()

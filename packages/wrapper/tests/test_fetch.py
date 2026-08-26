@@ -258,3 +258,41 @@ def test_partial_file_unlinked_on_write_failure(tmp_path):
         r = _one(tmp_path, handler, retries=1)
     assert r.path is None and "No space left" in r.error
     assert not (tmp_path / "0001.jpg").exists()
+
+
+def test_stop_event_short_circuits_pending_downloads(tmp_path):
+    """W10: once the run has failed, queued pages must not each spend their
+    retries/timeouts before the process can exit."""
+    import time
+
+    stop = threading.Event()
+    started = []
+
+    def handler(req):
+        started.append(req.url.path)
+        time.sleep(0.05)
+        return httpx.Response(200, content=JPEG)
+
+    q, slots = queue.Queue(), threading.Semaphore(64)
+    t0 = time.monotonic()
+    t = threading.Thread(
+        target=run_downloader,
+        args=(_pages(40), tmp_path, q, slots, _client(handler)),
+        kwargs={"concurrency": 1, "stop": stop},
+        daemon=True,
+    )
+    t.start()
+    first = q.get(timeout=5)
+    assert first.path is not None
+    stop.set()
+    t.join(timeout=5)
+    assert not t.is_alive()
+    assert time.monotonic() - t0 < 1.5  # not 40 x 50 ms
+    results = []
+    while True:
+        r = q.get(timeout=1)
+        if r is None:
+            break
+        results.append(r)
+    assert all(r.path is None and "stopped" in r.error for r in results[2:])
+    assert len(started) < 10

@@ -143,3 +143,11 @@ def test_viewer_manifest_label_falls_back_when_empty(cfg, p2_manifest):
     m = _p2_viewer_manifest(cfg, p2_manifest)
     assert m["items"][0]["label"] == {"none": ["0001"]}
     assert m["label"] == {"none": ["SE-RA-1234"]}
+
+
+def test_thumbnail_strips_trailing_slash_from_service_id():
+    """W13: a service id with a trailing slash produced '//full/200,/...'."""
+    from htrflow_batch.viewer import _thumbnail
+
+    thumb = _thumbnail({"service": [{"id": "https://img/iiif/p1/"}]}, 10, 10)
+    assert thumb[0]["id"] == "https://img/iiif/p1/full/200,/0/default.jpg"
