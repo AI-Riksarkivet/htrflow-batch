@@ -10,6 +10,11 @@ from botocore.config import Config as BotoConfig
 
 from .config import Config
 
+#: Per-page outputs, in upload order. ALTO is what the viewer manifest and
+#: every reader key on, so it lands LAST: a crash between the two PUTs can
+#: leave a PAGE without its ALTO (harmless, reprocessed), never the reverse.
+PAGE_FORMATS = ("page", "alto")
+
 
 class ResultStore:
     def __init__(self, cfg: Config):
@@ -31,25 +36,38 @@ class ResultStore:
     def _key(self, rel: str) -> str:
         return f"{self.prefix}/{rel}"
 
-    def done_pages(self) -> set[str]:
+    def _list_stems(self, fmt: str) -> set[str]:
         names: set[str] = set()
         paginator = self.client.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=self.bucket, Prefix=self._key("alto/")):
+        prefix = self._key(f"{fmt}/")
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
             for obj in page.get("Contents", []):
                 stem = obj["Key"].rsplit("/", 1)[-1]
                 if stem.endswith(".xml"):
                     names.add(stem[:-4])
         return names
 
+    def done_pages(self) -> set[str]:
+        """Pages with EVERY format present (W2): a page whose PAGE XML never
+        landed is not done, whatever its ALTO says."""
+        done: set[str] | None = None
+        for fmt in PAGE_FORMATS:
+            stems = self._list_stems(fmt)
+            done = stems if done is None else done & stems
+        return done or set()
+
     # fresh listing after the run — the D8 verify gate reads this
     uploaded_pages = done_pages
 
     def upload_page(self, name: str, files: dict[str, Path]) -> None:
-        for fmt, path in files.items():
+        missing = [fmt for fmt in PAGE_FORMATS if fmt not in files]
+        if missing:
+            raise ValueError(f"page {name}: missing {', '.join(missing)} output")
+        for fmt in PAGE_FORMATS:
             self.client.put_object(
                 Bucket=self.bucket,
                 Key=self._key(f"{fmt}/{name}.xml"),
-                Body=path.read_bytes(),
+                Body=files[fmt].read_bytes(),
                 ContentType="application/xml",
             )
 

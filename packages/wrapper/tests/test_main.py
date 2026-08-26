@@ -45,18 +45,36 @@ def env(tmp_path, cfg, sample_manifest, monkeypatch):
     }
 
 
+ALTO_OK = '<alto><Layout><Page WIDTH="2500" HEIGHT="3538"/></Layout></alto>'
+PAGE_OK = '<PcGts><Page imageWidth="2500" imageHeight="3538"/></PcGts>'
+
+
+def _write_outputs(cfg, stem: str, alto: str = ALTO_OK, page: str = PAGE_OK):
+    files = {}
+    for fmt, text in (("alto", alto), ("page", page)):
+        out = Path(cfg.workdir) / "outputs" / fmt / f"{stem}.xml"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text)
+        files[fmt] = out
+    return files
+
+
 def fake_factory(cfg):
-    """Writes a plausible ALTO per page."""
+    """Writes a plausible ALTO + PAGE per page."""
 
     def process(path: Path):
-        out = Path(cfg.workdir) / "outputs" / "alto" / f"{path.stem}.xml"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(
-            '<alto><Layout><Page WIDTH="2500" HEIGHT="3538"/></Layout></alto>'
-        )
-        return {"alto": out}
+        return _write_outputs(cfg, path.stem)
 
     return process
+
+
+def _put_done(s3, cfg, name: str, formats=("alto", "page")):
+    for fmt in formats:
+        s3.put_object(
+            Bucket=cfg.s3_bucket,
+            Key=f"demo-v1/SE-RA-1234/{fmt}/{name}.xml",
+            Body=(ALTO_OK if fmt == "alto" else PAGE_OK).encode(),
+        )
 
 
 def _keys(s3, cfg):
@@ -84,11 +102,7 @@ def test_happy_path(env, cfg, s3):
 
 
 def test_resume_skips_done(env, cfg, s3):
-    s3.put_object(
-        Bucket=cfg.s3_bucket,
-        Key="demo-v1/SE-RA-1234/alto/0001.xml",
-        Body=b'<alto><Layout><Page WIDTH="2500" HEIGHT="3538"/></Layout></alto>',
-    )
+    _put_done(s3, cfg, "0001")
     calls = []
 
     def factory(c):
@@ -117,6 +131,47 @@ def test_resume_skips_done(env, cfg, s3):
     )
     canvas_names = {c["id"].rsplit("/", 1)[-1] for c in iiif["items"]}
     assert canvas_names == {"0001", "0002", "0003"}  # skipped page not omitted
+
+
+def test_resume_reprocesses_page_with_alto_but_no_page_xml(env, cfg, s3):
+    """W2: a previous run that died between the two uploads must not count
+    the page as done."""
+    _put_done(s3, cfg, "0001", formats=("alto",))
+    calls = []
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            calls.append(path.stem)
+            return inner(path)
+
+        return process
+
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    assert calls == ["0001", "0002", "0003"]
+    assert "demo-v1/SE-RA-1234/page/0001.xml" in _keys(s3, cfg)
+
+
+def test_verify_requires_page_xml_too(env, cfg, s3, monkeypatch):
+    real = ResultStore.upload_page
+
+    def drop_page_for_0002(self, name, files):
+        if name != "0002":
+            return real(self, name, files)
+        # simulate a PAGE PUT that never landed, bypassing upload_page's check
+        self.client.put_object(
+            Bucket=self.bucket,
+            Key=self._key(f"alto/{name}.xml"),
+            Body=files["alto"].read_bytes(),
+        )
+
+    monkeypatch.setattr(ResultStore, "upload_page", drop_page_for_0002)
+    rc = main(env, process_page_factory=fake_factory)
+    assert rc == EXIT_TRANSIENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "verify" and "missing=['0002']" in term["error"]
+    assert "demo-v1/SE-RA-1234/manifest.json" not in _keys(s3, cfg)
 
 
 def test_bad_manifest_is_permanent(env, cfg, s3, monkeypatch):
@@ -246,17 +301,11 @@ def test_publish_warns_when_viewer_manifest_incomplete(env, cfg, s3, caplog):
 
     def factory(c):
         def process(path: Path):
-            out = Path(c.workdir) / "outputs" / "alto" / f"{path.stem}.xml"
-            out.parent.mkdir(parents=True, exist_ok=True)
-            if path.stem == "0002":
-                out.write_text(
-                    "<alto><Layout><Page/></Layout></alto>"
-                )  # no WIDTH/HEIGHT
-            else:
-                out.write_text(
-                    '<alto><Layout><Page WIDTH="2500" HEIGHT="3538"/></Layout></alto>'
+            if path.stem == "0002":  # no WIDTH/HEIGHT
+                return _write_outputs(
+                    c, path.stem, alto="<alto><Layout><Page/></Layout></alto>"
                 )
-            return {"alto": out}
+            return _write_outputs(c, path.stem)
 
         return process
 
@@ -277,10 +326,10 @@ def test_publish_warns_when_no_dims_resolved(env, cfg, s3, caplog):
 
     def factory(c):
         def process(path: Path):
-            out = Path(c.workdir) / "outputs" / "alto" / f"{path.stem}.xml"
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text("<alto><Layout><Page/></Layout></alto>")  # no WIDTH/HEIGHT
-            return {"alto": out}
+            # no WIDTH/HEIGHT
+            return _write_outputs(
+                c, path.stem, alto="<alto><Layout><Page/></Layout></alto>"
+            )
 
         return process
 

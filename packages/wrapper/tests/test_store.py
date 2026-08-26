@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from htrflow_batch.store import ResultStore
 
 
@@ -46,3 +48,46 @@ def test_get_bytes(cfg, s3):
         Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/alto/0001.xml", Body=b"<alto/>"
     )
     assert store.get_bytes("alto/0001.xml") == b"<alto/>"
+
+
+def test_upload_page_puts_page_before_alto(cfg, s3, tmp_path, monkeypatch):
+    """W2: ALTO is what done_pages()/the viewer key on, so it must land last —
+    a crash between the two uploads then leaves no ALTO without its PAGE."""
+    store = ResultStore(cfg)
+    order = []
+    real = store.client.put_object
+
+    def spy(**kw):
+        order.append(kw["Key"].split("/")[-2])
+        return real(**kw)
+
+    monkeypatch.setattr(store.client, "put_object", spy)
+    alto = _mk(tmp_path, "alto/0001.xml", "<alto/>")
+    page = _mk(tmp_path, "page/0001.xml", "<PcGts/>")
+    store.upload_page("0001", {"alto": alto, "page": page})
+    assert order == ["page", "alto"]
+
+
+def test_done_pages_requires_both_formats(cfg, s3):
+    store = ResultStore(cfg)
+    s3.put_object(
+        Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/alto/0001.xml", Body=b"<a/>"
+    )
+    s3.put_object(
+        Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/page/0002.xml", Body=b"<p/>"
+    )
+    s3.put_object(
+        Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/alto/0003.xml", Body=b"<a/>"
+    )
+    s3.put_object(
+        Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/page/0003.xml", Body=b"<p/>"
+    )
+    assert store.done_pages() == {"0003"}
+
+
+def test_upload_page_refuses_missing_format(cfg, s3, tmp_path):
+    store = ResultStore(cfg)
+    alto = _mk(tmp_path, "alto/0001.xml", "<alto/>")
+    with pytest.raises(ValueError, match="page"):
+        store.upload_page("0001", {"alto": alto})
+    assert store.done_pages() == set()
