@@ -211,6 +211,14 @@ def _main(
         # -- stage 2: resume -------------------------------------------------
         state.stage = "resume"
         done = store.done_pages() if cfg.resume else set()
+        changed = _changed_sources(store, pages, done) if done else set()
+        if changed:
+            log.info(
+                "[%s] resume: %d done pages have a new source image, reprocessing",
+                cfg.volume_ref,
+                len(changed),
+            )
+            done -= changed
         todo = [p for p in pages if p.name not in done]
         log.info(
             "[%s] resume: %d done, %d to process", cfg.volume_ref, len(done), len(todo)
@@ -333,6 +341,11 @@ def _main(
                     for n, r in sorted(stats.results.items())
                 },
                 "source_manifest": cfg.manifest_url,
+                # W7: which source image each page came from, so a resume
+                # after an edited images: list / re-ordered manifest can tell
+                # a stale page from a done one (_changed_sources).
+                "page_sources": {p.name: p.image_url for p in pages},
+                "canvas_ids": {p.name: _canvas_id(p.canvas) for p in pages},
                 "max_image_width": cfg.max_image_width,
                 "bytes_fetched": bytes_box.get("n", 0),
                 "wall_seconds": round(wall, 1),
@@ -367,6 +380,26 @@ def _main(
         _terminate(env, {"stage": stage, "permanent": False, "error": str(e)})
         _publish_failure(cfg, store, stats, t_start, stage, e)
         return EXIT_TRANSIENT
+
+
+def _canvas_id(canvas: dict) -> str | None:
+    cid = canvas.get("id") or canvas.get("@id")
+    return cid if isinstance(cid, str) else None
+
+
+def _changed_sources(store: ResultStore, pages, done: set[str]) -> set[str]:
+    """Done pages whose image URL differs from the one the previous completed
+    run recorded in manifest.json (W7). No previous manifest, or one without
+    page_sources (older wrapper), means nothing to compare: keep them done."""
+    previous = store.get_json_or_none("manifest.json")
+    sources = (previous or {}).get("page_sources")
+    if not isinstance(sources, dict):
+        return set()
+    return {
+        p.name
+        for p in pages
+        if p.name in done and p.name in sources and sources[p.name] != p.image_url
+    }
 
 
 def _publish_failure(cfg, store, stats, t_start: float, stage: str, e: BaseException):

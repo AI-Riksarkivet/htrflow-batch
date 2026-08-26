@@ -121,3 +121,12 @@ def test_main_client_has_bounded_timeouts_and_retries(cfg, s3):
     assert c.read_timeout == 60
     # botocore normalises max_attempts=3 (retries) to 4 total attempts
     assert c.retries == {"mode": "standard", "total_max_attempts": 4}
+
+
+def test_get_json_or_none(cfg, s3):
+    store = ResultStore(cfg)
+    assert store.get_json_or_none("manifest.json") is None
+    store.put_json("manifest.json", {"pages": 1})
+    assert store.get_json_or_none("manifest.json") == {"pages": 1}
+    store.put_text("manifest.json", "not json", "application/json")
+    assert store.get_json_or_none("manifest.json") is None
