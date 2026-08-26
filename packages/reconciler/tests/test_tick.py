@@ -686,3 +686,79 @@ def test_tick_finished_pipeline_is_never_warmed(tmp_path):
     doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
     assert cluster.created == []
     assert not any("warm" in w.lower() for w in doc["warnings"])
+
+
+def test_synthetic_volume_thumbnail_is_first_image(tmp_path):
+    """A volume declared with images: has no IIIF service, so its thumbnail is
+    the first image itself — the same fallback _thumbnail applies to
+    service-less external manifests."""
+    doc = tick(_repo(tmp_path), FakeBucket(), FakeCluster(), CFG, NOW)
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert byid["loose"]["thumbnail"] == "http://x/1.jpg"
+
+
+def test_in_cluster_manifest_urls_are_rewritten_for_the_browser(tmp_path):
+    """status.json is browser-facing: a manifest hosted on the in-cluster S3
+    endpoint (any bucket) is shown under the public endpoint, while the Job
+    still fetches the in-cluster URL."""
+    repo = _repo(tmp_path)
+    (repo / "campaigns" / "trolldom.yaml").write_text(
+        "pipeline: demo-v1\nvolumes:\n"
+        "  - id: fixture\n"
+        "    manifest: http://rustfs.ns.svc:9000/htr-fixtures/mock/manifest.json\n"
+    )
+    cfg = ReconcilerConfig(
+        public_results_base="http://localhost:30900/htr-results",
+        internal_results_base="http://rustfs.ns.svc:9000/htr-results",
+        window=20,
+    )
+
+    def fetch_json(url):
+        assert url.startswith("http://rustfs.ns.svc:9000/")
+        return {
+            "items": [
+                {
+                    "items": [
+                        {
+                            "items": [
+                                {
+                                    "body": {
+                                        "id": "http://rustfs.ns.svc:9000/htr-fixtures/mock/0001.jpg"
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+
+    cluster = FakeCluster()
+    doc = tick(repo, FakeBucket(), cluster, cfg, NOW, fetch_json=fetch_json)
+    vol = doc["campaigns"][0]["volumes"][0]
+    assert vol["source_manifest"] == (
+        "http://localhost:30900/htr-fixtures/mock/manifest.json"
+    )
+    assert vol["thumbnail"] == "http://localhost:30900/htr-fixtures/mock/0001.jpg"
+    env = {
+        e["name"]: e.get("value")
+        for e in cluster.created[0]["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env["IIIF_MANIFEST_URL"] == (
+        "http://rustfs.ns.svc:9000/htr-fixtures/mock/manifest.json"
+    )
+
+
+def test_browser_url_is_identity_without_internal_base():
+    from htrflow_reconciler.main import _browser_url
+
+    url = "http://rustfs.ns.svc:9000/htr-fixtures/mock/manifest.json"
+    assert _browser_url(url, CFG) == url
+    assert _browser_url(None, CFG) is None
+    cfg = ReconcilerConfig(
+        public_results_base="http://localhost:30900/htr-results",
+        internal_results_base="http://rustfs.ns.svc:9000/htr-results",
+    )
+    assert _browser_url("https://lbiiif.riksarkivet.se/x/manifest", cfg) == (
+        "https://lbiiif.riksarkivet.se/x/manifest"
+    )
