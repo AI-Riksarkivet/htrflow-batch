@@ -596,10 +596,13 @@ class _Pass:
                 # volume re-enters the lane next tick, once the Job is gone —
                 # creating the same name in the same tick as a Foreground
                 # delete only yields a 409 and a wasted window slot (R2).
-                record = record.model_copy(update={"n": record.n + 1})
-                self.attempts[akey] = budgets[v.id] = record
-                row["attempts"] = record.n
-                self.save_attempts()
+                # A deadline hit that advanced pages_done is progress, not a
+                # failure: the resumed run skips those pages (audit O2).
+                if not self._made_progress(pid, v.id, record):
+                    record = record.model_copy(update={"n": record.n + 1})
+                    self.attempts[akey] = budgets[v.id] = record
+                    row["attempts"] = record.n
+                    self.save_attempts()
                 self.retried += 1
                 _preserve_failure_log(bucket, cluster, pid, v.id, retire_run_log=True)
                 cluster.delete_job(job_name(pid, v.id))
@@ -678,6 +681,14 @@ class _Pass:
         elif vcache["run_log"]:
             row["run_log"] = _public(self.cfg, log_key)
 
+    def _made_progress(self, pid: str, vid: str, record: Attempt) -> bool:
+        job = self.jobs.get(job_name(pid, vid))
+        if job is None or job.reason != "DeadlineExceeded":
+            return False
+        if record.pages_at_submit is None:
+            return False
+        return self.bucket.count_pages(pid, vid) > record.pages_at_submit
+
     def _run_log(self, pid: str, vid: str, st: str) -> str | None:
         """The wrapper ships its own log to this key while it runs, so any
         status a pod could have produced gets the link (live for running
@@ -701,7 +712,7 @@ class _Pass:
 
     def campaign(
         self, camp: Campaign, entry: dict[str, Any], claimed: dict[str, set[str]]
-    ) -> list[tuple[Volume, str]]:
+    ) -> list[tuple[Volume, str, int | None]]:
         """Fill ``entry`` for one campaign; returns its submission lane."""
         pid = camp.pipeline_id
         done = self.done_for(pid)
@@ -714,14 +725,14 @@ class _Pass:
             for k, rec in self.attempts.items()
             if k.startswith(prefix)
         }
-        lane: list[tuple[Volume, str]] = []
+        lane: list[tuple[Volume, str, int | None]] = []
         for v in camp.volumes:
             row, submit = self.volume_row(pid, v, done, budgets)
             entry["volumes"].append(row)
             if row["status"] == "done":
                 entry["totals"]["done"] += 1
             if submit is not None:
-                lane.append((v, submit))
+                lane.append((v, submit, row["pages_total"]))
         known_totals = [
             v["pages_total"] for v in entry["volumes"] if v["pages_total"] is not None
         ]
@@ -759,7 +770,7 @@ class _Pass:
             # A campaign that failed to parse still names its volumes (R14).
             claimed.setdefault(camp.pipeline_id, set()).update(camp.declared_ids)
         orphans_reported: set[str] = set()
-        pending: dict[str, list[tuple[Volume, str]]] = {}
+        pending: dict[str, list[tuple[Volume, str, int | None]]] = {}
         for camp in self.campaigns:
             entry = self.campaign_entry(camp)
             doc["campaigns"].append(entry)
@@ -805,7 +816,7 @@ class _Pass:
         )
         return doc
 
-    def submit(self, pending: dict[str, list[tuple[Volume, str]]]) -> None:
+    def submit(self, pending: dict[str, list[tuple[Volume, str, int | None]]]):
         # Only genuinely pending/running Jobs occupy a window slot (plus
         # Terminating ones, whose pod may still hold the GPU). Terminal Jobs
         # are done with the cluster; counting the succeeded ones leaks the
@@ -816,20 +827,30 @@ class _Pass:
         # Ties fall back to file order (the name).
         per_campaign = Counter(j.campaign for j in self.jobs.values() if j.in_flight)
         order = sorted(pending, key=lambda n: (per_campaign[label_value(n)], n))
-        lanes = {name: [v for v, _ in pending[name]] for name in order}
-        srcs = {(n, v.id): s for n, lane in pending.items() for v, s in lane}
+        lanes = {name: [v for v, _, _ in pending[name]] for name in order}
+        meta = {(n, v.id): (s, p) for n, lane in pending.items() for v, s, p in lane}
         for camp_name, volume in plan_submissions(lanes, in_flight, self.cfg.window):
             camp = next(c for c in self.campaigns if c.name == camp_name)
-            spec = self.pipelines[camp.pipeline_id]
+            pid = camp.pipeline_id
+            src, pages = meta[(camp_name, volume.id)]
             job = build_job(
-                spec,
+                self.pipelines[pid],
                 volume,
-                srcs[(camp_name, volume.id)],
+                src,
                 self.cfg,
                 campaign=camp_name,
+                page_count=pages,
             )
             try:
                 self.cluster.create_job(job)
+                # pages_done at submission: what a deadline-hit run is later
+                # measured against (audit O2). Persisted with the tick's
+                # final attempts write.
+                akey = _attempt_key(pid, volume.id)
+                record = self.attempts.get(akey, Attempt())
+                self.attempts[akey] = record.model_copy(
+                    update={"pages_at_submit": self.bucket.count_pages(pid, volume.id)}
+                )
             except Exception as e:  # noqa: BLE001 — one submission
                 self.warnings.append(
                     f"campaign {camp_name}: submit {volume.id}: {_describe(e)}"
