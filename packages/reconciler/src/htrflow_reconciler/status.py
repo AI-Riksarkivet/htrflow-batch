@@ -10,6 +10,7 @@ from collections.abc import Set as AbstractSet
 
 from pydantic import BaseModel, ConfigDict
 
+from .attempts import Attempt
 from .models import Volume
 
 
@@ -31,6 +32,36 @@ class JobState(BaseModel):
     failed: bool
     succeeded: bool = False
     exit_code: int | None = None
+    #: Reason of the terminal ``Failed`` condition (``PodFailurePolicy``,
+    #: ``DeadlineExceeded``, ``BackoffLimitExceeded``). The pod may already be
+    #: gone when the reconciler looks, so this is the verdict's fallback.
+    reason: str | None = None
+    #: ``metadata.deletionTimestamp``: a Foreground delete in progress. The
+    #: Job stays listed (and Failed) until its pod is gone.
+    deletion_timestamp: str | None = None
+    #: ``batch.htrflow/campaign`` label: what the fairness order counts (R5).
+    campaign: str | None = None
+
+    @property
+    def deleting(self) -> bool:
+        return self.deletion_timestamp is not None
+
+    @property
+    def in_flight(self) -> bool:
+        """Occupies a submission-window slot: pending/running, or Terminating
+        (its pod may still hold the GPU). Terminal Jobs do not."""
+        return self.deleting or not (self.failed or self.succeeded)
+
+
+#: Failed-condition reasons that mean the wrapper itself said "permanent":
+#: the ``podFailurePolicy`` FailJob rule fires on exit 13 only.
+_PERMANENT_REASONS = frozenset({"PodFailurePolicy"})
+
+
+def is_permanent(job: JobState) -> bool:
+    if job.exit_code is not None:
+        return job.exit_code == 13
+    return job.reason in _PERMANENT_REASONS
 
 
 def job_name(pipeline_id: str, volume_id: str) -> str:
@@ -52,23 +83,33 @@ def derive(
     volume: Volume,
     pipeline_id: str,
     done: Mapping[str, str] | AbstractSet[str],
-    jobs: dict[str, JobState],
-    attempts: dict[str, int],
+    jobs: Mapping[str, JobState],
+    attempts: Mapping[str, Attempt],
     attempt_cap: int,
 ) -> str:
-    """The spec §6 three-way join: done-set first, then the Job snapshot.
+    """The spec §6 three-way join: done-set first, then the persisted
+    terminal verdict, then the Job snapshot.
 
     A job whose Complete condition has landed but whose ``manifest.json`` is not
     yet visible in S3 reads as ``queued`` — the done-set is the authority, so
     succeeded jobs show queued for the moment it takes the manifest to appear.
+
+    A terminal record (R1) is sticky whether or not the Job still exists:
+    Jobs are TTL-reaped after 24h, and without the record a capped or exit-13
+    volume would read ``pending`` and burn a GPU run every day forever.
     """
     if volume.id in done:
         return "done"
+    record = attempts.get(volume.id, Attempt())
+    if record.terminal:
+        return "needs-attention"
     job = jobs.get(job_name(pipeline_id, volume.id))
     if job is None:
         return "pending"
+    if job.deleting:
+        return "deleting"
     if job.failed:
-        if job.exit_code == 13 or attempts.get(volume.id, 0) >= attempt_cap:
+        if is_permanent(job) or record.n >= attempt_cap:
             return "needs-attention"
         return "retry"
     if job.active:
