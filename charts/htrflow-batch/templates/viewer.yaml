@@ -1,4 +1,5 @@
 {{- if .Values.viewer.enabled }}
+{{- include "htrflow-batch.requireDigest" (list . .Values.viewer.image "viewer.image") }}
 # Viewer (D19) — static nginx site on NodePort {{ .Values.viewer.nodePort }} serving both
 # the campaign browser SPA at / and UV4 at /uv.html.
 # Open a volume directly with:
@@ -17,6 +18,15 @@ data:
       root /usr/share/nginx/html;
       index index.html;
       absolute_redirect off;  # keep Location relative so the NodePort survives
+      {{- if .Values.viewer.securityHeaders.enabled }}
+      # Security headers (audit S4). Inherited by every location below (none
+      # of them sets add_header of its own). Script/style/connect sources are
+      # governed by the SvelteKit build's own CSP meta (kit.csp); the header
+      # only forbids framing, which a meta tag cannot express.
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+      add_header Content-Security-Policy "frame-ancestors 'none'" always;
+      {{- end }}
       {{- if .Values.viewer.defaultManifest }}
       # DEPRECATED single-manifest front door. Unset (the default), / serves the
       # campaign browser's index.html instead.
@@ -46,22 +56,43 @@ spec:
   template:
     metadata:
       labels: { app: uv4-viewer }
+      annotations:
+        # Roll the pod when the nginx config changes (a ConfigMap edit alone
+        # would leave the running nginx on the old headers).
+        checksum/nginx-conf: {{ .Values.viewer | toJson | sha256sum }}
     spec:
+      # Static files only: no API access, Pod Security restricted (audit S8).
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "htrflow-batch.restrictedPod" 101 | nindent 8 }}
       containers:
         - name: nginx
           image: {{ .Values.viewer.image }}
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: {{ include "htrflow-batch.pullPolicy" .Values.viewer.image }}
+          securityContext:
+            {{- include "htrflow-batch.restrictedContainer" . | nindent 12 }}
           ports:
             - containerPort: 8080
           volumeMounts:
             - name: nginx-conf
               mountPath: /etc/nginx/conf.d
+              readOnly: true
+            # nginx-unprivileged keeps its pid and every *_temp_path under
+            # /tmp; /var/cache/nginx is the stock image's cache dir.
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /var/cache/nginx
           resources:
             requests: { cpu: 50m, memory: 64Mi }
             limits: { cpu: 500m, memory: 256Mi }
       volumes:
         - name: nginx-conf
           configMap: { name: uv4-viewer-nginx }
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+        - name: cache
+          emptyDir: { sizeLimit: 64Mi }
 ---
 apiVersion: v1
 kind: Service
