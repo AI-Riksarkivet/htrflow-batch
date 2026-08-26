@@ -1,0 +1,44 @@
+{{- if .Values.security.verifyImages.enabled }}
+{{- $refs := .Values.security.verifyImages.imageReferences }}
+{{- if not $refs }}
+  {{- range .Values.security.allowedImageRepos }}{{ $refs = append $refs (printf "%s*" .) }}{{ end }}
+{{- end }}
+{{- if not $refs }}{{ $refs = list "*" }}{{ end }}
+# Supply-chain gate (audit X4/S7): Kyverno refuses any Pod in the release
+# namespace whose image is not cosign keyless-signed by the given identity.
+# Requires Kyverno ≥ 1.10 with the Pod webhook enabled; cluster-scoped
+# object, so a second release in another namespace needs its own name —
+# hence the namespace suffix.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: htrflow-batch-verify-images-{{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  validationFailureAction: Enforce
+  background: false
+  webhookTimeoutSeconds: 30
+  failurePolicy: Fail
+  rules:
+    - name: verify-cosign-keyless
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [{{ .Release.Namespace | quote }}]
+      verifyImages:
+        - imageReferences: {{ toJson $refs }}
+          # Digest pinning is the chart's job (requireDigest); do not let the
+          # webhook rewrite pod specs on the way in.
+          mutateDigest: false
+          verifyDigest: true
+          required: true
+          attestors:
+            - count: 1
+              entries:
+                - keyless:
+                    issuer: {{ .Values.security.verifyImages.issuer | quote }}
+                    subject: {{ .Values.security.verifyImages.subject | quote }}
+                    rekor:
+                      url: {{ .Values.security.verifyImages.rekorUrl | quote }}
+{{- end }}
