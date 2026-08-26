@@ -648,3 +648,102 @@ def test_store_outage_aborts_in_stream_stage(
     assert len(processed) == 5  # not all 9
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
     assert term["stage"] == "stream" and "5 consecutive" in term["error"]
+
+
+def test_model_load_failure_is_attributed_to_load_stage(env, cfg, s3):
+    """W9: a failing model load was reported as stage 'stream'."""
+
+    def factory(c):
+        raise OSError("could not reach huggingface.co")
+
+    assert main(env, process_page_factory=factory) == EXIT_TRANSIENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "load" and term["permanent"] is False
+
+
+def test_bad_pipeline_config_is_permanent_in_load_stage(env, cfg, s3):
+    def factory(c):
+        raise ValueError("bad pipeline config: unknown step")
+
+    assert main(env, process_page_factory=factory) == EXIT_PERMANENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "load" and term["permanent"] is True
+
+
+def test_failure_path_stops_the_downloader(env, cfg, s3, monkeypatch):
+    """W10: after an early failure the queued downloads must not keep the
+    interpreter alive (ThreadPoolExecutor workers are joined at exit)."""
+    seen = {}
+    real = main_mod.run_downloader
+
+    def spy(*a, **k):
+        seen["stop"] = k.get("stop")
+        return real(*a, **k)
+
+    monkeypatch.setattr(main_mod, "run_downloader", spy)
+
+    def factory(c):
+        raise OSError("model load failed")
+
+    assert main(env, process_page_factory=factory) == EXIT_TRANSIENT
+    assert seen["stop"] is not None and seen["stop"].is_set()
+
+
+def test_terminate_redacts_urls_in_the_error(tmp_path):
+    """S6: the termination message and run log are world-readable."""
+    log_path = tmp_path / "term.log"
+    main_mod._terminate(
+        {"TERMINATION_LOG_PATH": str(log_path)},
+        {
+            "stage": "stream",
+            "permanent": False,
+            "error": "fetch https://user:pw@iiif.example/x/full/max/0/default.jpg"
+            "?token=SECRET failed",
+        },
+    )
+    term = json.loads(log_path.read_text())
+    assert "SECRET" not in term["error"] and "user:pw" not in term["error"]
+    assert "https://iiif.example/x/full/max/0/default.jpg" in term["error"]
+
+
+def test_manifest_json_page_sources_and_errors_are_redacted(
+    env, cfg, s3, monkeypatch, sample_manifest
+):
+    def handler(req):
+        if req.url.path.endswith("manifest.json"):
+            m = json.loads(json.dumps(sample_manifest))
+            body = m["items"][0]["items"][0]["items"][0]["body"]
+            body["service"][0]["id"] = "https://iiif.example/private/p1?token=SECRET"
+            return httpx.Response(200, json=m)
+        return httpx.Response(200, content=b"\xff\xd8\xff\xe0JPEGDATA")
+
+    monkeypatch.setattr(
+        main_mod,
+        "_http_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert main(env, process_page_factory=fake_factory) == EXIT_OK
+    body = s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+        "Body"
+    ].read()
+    assert b"SECRET" not in body
+    assert json.loads(body)["page_sources"]["0001"].startswith(
+        "https://iiif.example/private/p1"
+    )
+
+
+def test_publish_failure_metrics_redacts_urls():
+    calls = []
+    store = SimpleNamespace(put_json=lambda key, obj: calls.append(obj))
+    cfg = SimpleNamespace(volume_ref="v", pipeline_id="p")
+    stats = SimpleNamespace(
+        stall_seconds=0.0,
+        results={
+            "0001": SimpleNamespace(
+                status="failed", seconds=0.0, error="HTTP 500 https://h/x?token=S"
+            )
+        },
+    )
+    publish_failure_metrics(store, cfg, stats, 1.0, "verify", "bad https://u:p@h/y?t=S")
+    assert "token=S" not in calls[0]["results"]["0001"]["error"]
+    assert "u:p@" not in calls[0]["error"] and "t=S" not in calls[0]["error"]

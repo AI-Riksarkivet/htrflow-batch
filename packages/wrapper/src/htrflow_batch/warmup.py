@@ -17,9 +17,20 @@ import traceback
 from pathlib import Path
 from typing import Callable, Mapping, Optional
 
+import yaml
+
 from .main import EXIT_OK, EXIT_PERMANENT, EXIT_TRANSIENT, prepare_writable_dirs
 
 log = logging.getLogger("htrflow_batch.warmup")
+
+#: Errors Pipeline.from_config raises for a pipeline that is wrong, not
+#: unlucky (docs: wrapper, "Warm-up").
+PERMANENT_ERRORS: tuple[type[BaseException], ...] = (
+    ValueError,  # incl. pydantic ValidationError; driver's "bad pipeline config"
+    yaml.YAMLError,
+    KeyError,  # unknown step name: htrflow STEPS[step.lower()]
+    NotImplementedError,  # unknown model class: htrflow get_model_by_name
+)
 
 __all__ = ["EXIT_OK", "EXIT_PERMANENT", "EXIT_TRANSIENT", "main"]
 
@@ -52,6 +63,13 @@ def main(
         Path(env["HF_HOME"]).mkdir(parents=True, exist_ok=True)
     try:
         load(pipeline_path)
+    except PERMANENT_ERRORS as e:
+        # W12: malformed YAML, a config that fails pydantic validation, an
+        # unknown step (htrflow: KeyError from STEPS[...]) or model class
+        # (NotImplementedError). Retrying cannot help; exit 13 so the
+        # reconciler stops recreating the warm-up every tick.
+        log.error("warm-up failed (bad pipeline config): %r", e)
+        return EXIT_PERMANENT
     except Exception as e:
         # Network, disk-full, HF Hub 5xx: retryable — the Job's backoffLimit
         # and the reconciler's delete-and-recreate handle it.

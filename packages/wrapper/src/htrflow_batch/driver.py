@@ -30,10 +30,16 @@ def load_pipeline(pipeline_path: str, out_dir: Path):
         raise ValueError(f"bad pipeline config: {e}") from e
 
     try:
-        pipeline = Pipeline.from_config(str(pipeline_path))
-    except (TypeError, KeyError):
-        # older htrflow builds: from_config takes a parsed config dict, not a path
-        pipeline = Pipeline.from_config(config)
+        try:
+            pipeline = Pipeline.from_config(str(pipeline_path))
+        except TypeError:
+            # older htrflow builds: from_config takes a parsed config dict
+            pipeline = Pipeline.from_config(config)
+    except (KeyError, NotImplementedError) as e:
+        # htrflow: KeyError from STEPS[name] for an unknown step, and
+        # NotImplementedError from get_model_by_name for an unknown model
+        # class. Config mistakes -> PERMANENT, like malformed YAML above.
+        raise ValueError(f"bad pipeline config: unknown step or model: {e}") from e
     for step in pipeline.steps:
         if isinstance(step, Export):
             raise ValueError(

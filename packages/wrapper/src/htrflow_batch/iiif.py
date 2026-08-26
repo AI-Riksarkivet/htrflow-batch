@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import httpx
 from pydantic import BaseModel, ConfigDict
@@ -48,6 +49,15 @@ def redact_url(url: str) -> str:
     if u.port is not None:
         host = f"{host}:{u.port}"
     return f"{u.scheme}://{host}{u.path}"
+
+
+_URL_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s\"'<>)\]]+")
+
+
+def redact_urls(text: str) -> str:
+    """Apply redact_url to every URL inside free text (log lines, error
+    messages, tracebacks)."""
+    return _URL_RE.sub(lambda m: redact_url(m.group(0)), text)
 
 
 def check_http_url(url: str, what: str) -> None:
@@ -120,9 +130,24 @@ def _sized(sid: str, canvas: dict, width: int) -> str:
     # NOTE: lbiiif rejects "!w,h" (501); "w," is the supported form.
     # Level1 servers also reject upscaling (400), so a canvas narrower
     # than the cap must ask for max instead.
-    cw = canvas.get("width")
+    cw = _int_or_none(canvas.get("width"))
     size = "max" if cw and cw <= width else f"{width},"
     return f"{sid.rstrip('/')}/full/{size}/0/default.jpg"
+
+
+def _int_or_none(value: object) -> int | None:
+    """W11: manifests in the wild carry widths as strings (or junk); a
+    TypeError here used to fail the whole volume, retried to the cap."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(float(value.strip()))
+        except ValueError:
+            return None
+    return None
 
 
 def _image_url(canvas: dict, width: int) -> str | None:

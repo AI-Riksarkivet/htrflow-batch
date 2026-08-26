@@ -21,7 +21,13 @@ import httpx
 
 from .config import Config, ConfigError
 from .fetch import run_downloader
-from .iiif import ManifestError, fetch_manifest, pages_from_manifest
+from .iiif import (
+    ManifestError,
+    fetch_manifest,
+    pages_from_manifest,
+    redact_url,
+    redact_urls,
+)
 from .logship import LogCapture
 from .store import ResultStore
 from .stream import PageOutcome, StreamStats, consume
@@ -81,6 +87,9 @@ def _http_client() -> httpx.Client:
 def _terminate(env: Mapping[str, str], reason: dict) -> None:
     path = env.get("TERMINATION_LOG_PATH", "/dev/termination-log")
     error = reason.get("error")
+    if isinstance(error, str):
+        reason = {**reason, "error": redact_urls(error)}  # S6: world-readable
+        error = reason["error"]
     if isinstance(error, str) and len(error) > 3500:
         # Truncate the *field* before serializing, never the serialized JSON
         # itself -- slicing json.dumps(reason)[:N] can cut mid-string and
@@ -117,6 +126,19 @@ def _default_factory(cfg: Config):
     return process
 
 
+def _results_json(stats: StreamStats) -> dict:
+    """Per-page outcomes for manifest.json / metrics-failed-latest.json;
+    error strings lose URL secrets (S6)."""
+    return {
+        n: {
+            "status": r.status,
+            "seconds": round(r.seconds, 2),
+            **({"error": redact_urls(r.error)} if r.error else {}),
+        }
+        for n, r in sorted(stats.results.items())
+    }
+
+
 def publish_failure_metrics(store, cfg, stats, wall: float, stage: str, error: str):
     """Best-effort: preserve run evidence when a run fails (docs: wrapper).
     Must never raise — it runs on the failure path."""
@@ -127,17 +149,10 @@ def publish_failure_metrics(store, cfg, stats, wall: float, stage: str, error: s
                 "volume": cfg.volume_ref,
                 "pipeline_id": cfg.pipeline_id,
                 "stage": stage,
-                "error": str(error)[:2000],
+                "error": redact_urls(str(error))[:2000],
                 "wall_seconds": round(wall, 1),
                 "gpu_stall_seconds": round(stats.stall_seconds, 1),
-                "results": {
-                    n: {
-                        "status": r.status,
-                        "seconds": round(r.seconds, 2),
-                        **({"error": r.error} if r.error else {}),
-                    }
-                    for n, r in sorted(stats.results.items())
-                },
+                "results": _results_json(stats),
             },
         )
     except Exception:
@@ -190,6 +205,9 @@ def _main(
     cfg: Optional[Config] = None
     store: Optional[ResultStore] = None
     stats: Optional[StreamStats] = None
+    # W10: set on every failure path so queued downloads stop short instead
+    # of holding the interpreter (executor workers are joined at exit).
+    stop = threading.Event()
     try:
         cfg = Config.from_env(env)
         prepare_writable_dirs(env)
@@ -246,6 +264,7 @@ def _main(
                     client,
                     concurrency=cfg.download_concurrency,
                     max_bytes=cfg.fetch_max_bytes,
+                    stop=stop,
                 )
             except Exception as e:
                 log.error("downloader thread failed: %r", e)
@@ -258,9 +277,11 @@ def _main(
         # Build/load the process fn only after the downloader thread is
         # started, so model load overlaps the first downloads (docs: wrapper,
         # "Model handling") instead of happening serially before any bytes move.
+        state.stage = "load"  # W9: a model-load failure is not a stream failure
         factory = process_page_factory or _default_factory
         process = factory(cfg)
 
+        state.stage = "stream"
         stats = consume(out_q, slots, process, store.upload_page)
         dl_thread.join()
         for p in pages:
@@ -332,19 +353,13 @@ def _main(
                 "htrflow_version": _htrflow_version(),
                 "image_digest": env.get("IMAGE_DIGEST", "unknown"),
                 "pages": len(pages),
-                "results": {
-                    n: {
-                        "status": r.status,
-                        "seconds": round(r.seconds, 2),
-                        **({"error": r.error} if r.error else {}),
-                    }
-                    for n, r in sorted(stats.results.items())
-                },
+                "results": _results_json(stats),
                 "source_manifest": cfg.manifest_url,
                 # W7: which source image each page came from, so a resume
                 # after an edited images: list / re-ordered manifest can tell
-                # a stale page from a done one (_changed_sources).
-                "page_sources": {p.name: p.image_url for p in pages},
+                # a stale page from a done one (_changed_sources). Redacted
+                # (S6): the bucket is public and tokens rotate anyway.
+                "page_sources": {p.name: redact_url(p.image_url) for p in pages},
                 "canvas_ids": {p.name: _canvas_id(p.canvas) for p in pages},
                 "max_image_width": cfg.max_image_width,
                 "bytes_fetched": bytes_box.get("n", 0),
@@ -369,12 +384,14 @@ def _main(
         return EXIT_OK
 
     except (ConfigError, ManifestError, SetupError, ValueError) as e:
+        stop.set()
         stage = state.stage
         log.error("permanent failure in %s: %s", stage, e)
         _terminate(env, {"stage": stage, "permanent": True, "error": str(e)})
         _publish_failure(cfg, store, stats, t_start, stage, e)
         return EXIT_PERMANENT
     except Exception as e:
+        stop.set()
         stage = state.stage
         log.error("transient failure in %s: %s\n%s", stage, e, traceback.format_exc())
         _terminate(env, {"stage": stage, "permanent": False, "error": str(e)})
