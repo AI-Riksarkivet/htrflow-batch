@@ -137,6 +137,21 @@ spec:
                 # tick, the Job placement/deadline knobs, the trust boundary.
                 - name: RECONCILER_TICK_SECONDS
                   value: {{ .Values.reconciler.tickSeconds | int64 | quote }}
+                - name: RECONCILER_TICK_DEADLINE_SECONDS
+                  value: {{ .Values.reconciler.tickDeadlineSeconds | int64 | quote }}
+                - name: RECONCILER_GIT_TIMEOUT
+                  value: {{ .Values.reconciler.gitTimeoutSeconds | int64 | quote }}
+                {{- with .Values.reconciler.gitTokenSecret }}
+                {{- if .name }}
+                # Read-only token for an https:// campaigns URL (dulwich sends it
+                # as x-access-token); never put it in campaignsRepoUrl.
+                - name: GIT_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .name | quote }}
+                      key: {{ .key | default "token" | quote }}
+                {{- end }}
+                {{- end }}
                 - name: RECONCILER_MAX_VALIDATIONS_PER_TICK
                   value: {{ .Values.reconciler.maxValidationsPerTick | int64 | quote }}
                 - name: RECONCILER_FETCH_MAX_BYTES
