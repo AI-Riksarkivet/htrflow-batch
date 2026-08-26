@@ -12,7 +12,7 @@ import boto3
 import httpx
 from pydantic_settings import BaseSettings
 
-from .gitrepo import checkout
+from .gitrepo import DEFAULT_TIMEOUT, checkout
 from .jobspec import ReconcilerConfig
 from .k8s import Cluster
 from .main import tick
@@ -36,6 +36,18 @@ class Settings(BaseSettings):
     reconciler_s3_secret: str = "htr-batch-s3"
     reconciler_data_pvc: str = "htr-test-data"
     reconciler_fetch_max_bytes: int = 16 * 1024 * 1024
+    # One tick's wall-clock budget (the CronJob's activeDeadlineSeconds); the
+    # git timeout is clamped to it so a hung clone cannot outlive the pod that
+    # would have reported it (audit O7).
+    reconciler_tick_deadline_seconds: int = 600
+    reconciler_git_timeout: int = DEFAULT_TIMEOUT
+
+
+def _git_timeout(settings: Settings) -> int:
+    return max(
+        1,
+        min(settings.reconciler_git_timeout, settings.reconciler_tick_deadline_seconds),
+    )
 
 
 def _internal_results_base(settings: Settings) -> str:
@@ -95,7 +107,11 @@ def run() -> None:
         window=settings.reconciler_window,
         attempt_cap=settings.reconciler_attempt_cap,
     )
-    repo = checkout(settings.campaigns_repo_url, settings.campaigns_dir)
+    repo = checkout(
+        settings.campaigns_repo_url,
+        settings.campaigns_dir,
+        timeout=_git_timeout(settings),
+    )
     client = boto3.client("s3", endpoint_url=settings.s3_endpoint or None)
     bucket = Bucket(client, settings.s3_bucket)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

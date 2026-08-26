@@ -4,7 +4,11 @@ rename here silently breaks the deployment unless a test pins them."""
 import pytest
 from pydantic import ValidationError
 
-from htrflow_reconciler.__main__ import Settings, _internal_results_base
+from htrflow_reconciler.__main__ import (
+    Settings,
+    _git_timeout,
+    _internal_results_base,
+)
 from htrflow_reconciler.jobspec import ReconcilerConfig
 
 REQUIRED = {
@@ -83,3 +87,13 @@ def test_internal_results_base_from_s3_endpoint(env):
 def test_internal_results_base_empty_without_endpoint(env):
     s = env()
     assert _internal_results_base(s) == ""
+
+
+def test_git_timeout_never_exceeds_the_tick_deadline(env):
+    """O7: a clone that outlives the CronJob's activeDeadlineSeconds is killed
+    without a log line; clamping keeps the failure reportable."""
+    assert _git_timeout(env()) == 300
+    assert _git_timeout(env(RECONCILER_TICK_DEADLINE_SECONDS="120")) == 120
+    assert _git_timeout(env(RECONCILER_GIT_TIMEOUT="60")) == 60
+    s = env(RECONCILER_GIT_TIMEOUT="900", RECONCILER_TICK_DEADLINE_SECONDS="600")
+    assert _git_timeout(s) == 600
