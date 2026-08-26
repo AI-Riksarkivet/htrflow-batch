@@ -63,6 +63,11 @@ class ReconcilerConfig(BaseModel):
     #: coordination.k8s.io Lease taken per tick (audit O8): a manual
     #: ``kubectl create job --from=cronjob`` bypasses concurrencyPolicy.
     lease_name: str = "htr-reconciler"
+    #: Pre-validation is O(new volumes) per tick, never O(volumes) (audit X1).
+    max_validations_per_tick: int = 50
+    #: An unreachable manifest is not re-probed for this many ticks: a dead
+    #: host must not cost every tick a timeout (audit X1/S5).
+    unreachable_ticks: int = 3
 
 
 def warmup_job_name(pipeline_id: str) -> str:

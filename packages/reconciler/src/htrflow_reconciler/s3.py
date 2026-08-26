@@ -9,6 +9,7 @@ land at ``<pipeline>/<volume>/…``, which is why ``jobspec.build_job`` pins
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timezone
 from typing import Any
 
@@ -49,14 +50,29 @@ def validation_key() -> str:
     return "status/validation.json"
 
 
+def volumes_key() -> str:
+    """Per-volume probe cache (page count, run-log presence, synthetic
+    manifest key) keyed by the manifest.json mtime — what makes the steady
+    state O(1) S3 calls per done volume (audit X1)."""
+    return "status/volumes.json"
+
+
+#: HEADs per done_volumes probe run concurrently; boto3 clients are
+#: thread-safe, and the RustFS/S3 endpoint handles this fan-out easily.
+_HEAD_WORKERS = 16
+
+
 class Bucket:
-    """Thin wrapper over a boto3 S3 client bound to one bucket."""
+    """Thin wrapper over a boto3 S3 client bound to one bucket. ``calls``
+    counts round trips for the tick summary (audit O5)."""
 
     def __init__(self, client: Any, bucket: str) -> None:
         self.c = client
         self.bucket = bucket
+        self.calls = 0
 
     def read_json(self, key: str) -> dict | None:
+        self.calls += 1
         try:
             body = self.c.get_object(Bucket=self.bucket, Key=key)["Body"].read()
             return json.loads(body)
@@ -64,6 +80,7 @@ class Bucket:
             return None
 
     def write_json(self, key: str, obj: dict) -> None:
+        self.calls += 1
         self.c.put_object(
             Bucket=self.bucket,
             Key=key,
@@ -72,6 +89,7 @@ class Bucket:
         )
 
     def read_text(self, key: str) -> str | None:
+        self.calls += 1
         try:
             body = self.c.get_object(Bucket=self.bucket, Key=key)["Body"].read()
         except self.c.exceptions.NoSuchKey:
@@ -79,15 +97,18 @@ class Bucket:
         return body.decode("utf-8", errors="replace")
 
     def delete(self, key: str) -> None:
+        self.calls += 1
         self.c.delete_object(Bucket=self.bucket, Key=key)
 
     def put_text(self, key: str, text: str) -> None:
+        self.calls += 1
         self.c.put_object(
             Bucket=self.bucket, Key=key, Body=text.encode(), ContentType="text/plain"
         )
 
     def exists(self, key: str) -> bool:
         """HEAD probe — existence without downloading the body."""
+        self.calls += 1
         try:
             self.c.head_object(Bucket=self.bucket, Key=key)
             return True
@@ -102,33 +123,38 @@ class Bucket:
         ``<pipeline>/``. A manifest is the wrapper's completion marker; its
         mtime is when the volume finished publishing. Still HEAD-only.
         """
-        done: dict[str, str] = {}
+        vids: list[str] = []
         paginator = self.c.get_paginator("list_objects_v2")
         for page in paginator.paginate(
             Bucket=self.bucket, Prefix=f"{pipeline_id}/", Delimiter="/"
         ):
+            self.calls += 1
             for cp in page.get("CommonPrefixes", []):
-                vid = cp["Prefix"].rstrip("/").split("/", 1)[1]
-                try:
-                    head = self.c.head_object(
-                        Bucket=self.bucket, Key=manifest_key(pipeline_id, vid)
-                    )
-                except ClientError as e:
-                    code = str(e.response.get("Error", {}).get("Code", ""))
-                    if code in _MISSING_CODES:
-                        continue
-                    raise
-                done[vid] = (
-                    head["LastModified"]
-                    .astimezone(timezone.utc)
-                    .strftime("%Y-%m-%dT%H:%M:%SZ")
-                )
-        return done
+                vids.append(cp["Prefix"].rstrip("/").split("/", 1)[1])
+        self.calls += len(vids)
+        with ThreadPoolExecutor(max_workers=_HEAD_WORKERS) as pool:
+            mtimes = pool.map(lambda v: self._manifest_mtime(pipeline_id, v), vids)
+        return {vid: mtime for vid, mtime in zip(vids, mtimes) if mtime is not None}
+
+    def _manifest_mtime(self, pipeline_id: str, vid: str) -> str | None:
+        try:
+            head = self.c.head_object(
+                Bucket=self.bucket, Key=manifest_key(pipeline_id, vid)
+            )
+        except ClientError as e:
+            code = str(e.response.get("Error", {}).get("Code", ""))
+            if code in _MISSING_CODES:
+                return None
+            raise
+        return (
+            head["LastModified"].astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        )
 
     def count_pages(self, pipeline_id: str, volume_id: str) -> int:
         n = 0
         paginator = self.c.get_paginator("list_objects_v2")
         prefix = f"{pipeline_id}/{volume_id}/alto/"
         for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+            self.calls += 1
             n += len(page.get("Contents", []))
         return n
