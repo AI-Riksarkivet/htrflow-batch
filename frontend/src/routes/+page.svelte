@@ -1,13 +1,8 @@
 <script lang="ts">
   import { browser } from "$app/environment";
-  import {
-    campaignHealth,
-    isStale,
-    pagesLabel,
-    shortDate,
-    viewerHref,
-  } from "$lib/derive.js";
-  import { statusDocSchema, type StatusDoc } from "$lib/status.js";
+  import CampaignCard from "$lib/components/CampaignCard.svelte";
+  import { isStale, shortDate } from "$lib/derive.js";
+  import { parseStatusDoc, type StatusDoc } from "$lib/status.js";
 
   const DEFAULT_STATUS_URL =
     "http://localhost:30900/htr-results/status/status.json";
@@ -19,28 +14,11 @@
   // browser console without a rebuild (see README).
   const statusUrl = (): string => window.STATUS_URL ?? DEFAULT_STATUS_URL;
 
+  // The last good document stays on screen through a failed poll; `error`
+  // is a banner on top of it, never a replacement for it.
   let doc = $state<StatusDoc | null>(null);
+  let problems = $state<string[]>([]);
   let error = $state<string | null>(null);
-  let collapsed = $state<Set<string>>(new Set()); // expanded by default
-  function toggle(name: string): void {
-    const next = new Set(collapsed);
-    if (next.has(name)) next.delete(name);
-    else next.add(name);
-    collapsed = next;
-  }
-
-  let yamlOpen = $state<Set<string>>(new Set()); // collapsed by default
-  function toggleYaml(name: string, event: Event): void {
-    event.stopPropagation();
-    const next = new Set(yamlOpen);
-    if (next.has(name)) next.delete(name);
-    else next.add(name);
-    yamlOpen = next;
-  }
-  function toggleYamlOnKey(name: string, event: KeyboardEvent): void {
-    if (event.key !== "Enter") return;
-    toggleYaml(name, event);
-  }
 
   // null = follow OS (`prefers-color-scheme`). Explicit choice persists to
   // localStorage; the page is prerendered, so localStorage is only touched in
@@ -63,10 +41,15 @@
     try {
       const res = await fetch(statusUrl(), { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      doc = statusDocSchema.parse(await res.json());
+      const parsed = parseStatusDoc(await res.json());
+      if (parsed.doc === null) {
+        throw new Error(`not a status document (${parsed.problems.join("; ")})`);
+      }
+      doc = parsed.doc;
+      problems = parsed.problems;
       error = null;
     } catch (e) {
-      error = String(e);
+      error = e instanceof Error ? e.message : String(e);
     }
   }
 
@@ -97,7 +80,13 @@
             {/if}
           </p>
         {/if}
-        {#if doc !== null}<p class="meta">generated {doc.generated_at}</p>{/if}
+        {#if doc !== null}
+          <p class="meta">
+            generated <time datetime={doc.generated_at} title={doc.generated_at}
+              >{shortDate(doc.generated_at) ?? doc.generated_at}</time
+            >
+          </p>
+        {/if}
       </div>
       <button
         class="theme-toggle"
@@ -110,143 +99,27 @@
     </div>
   </header>
   {#if error !== null}
-    <p class="error">Cannot load status: {error}</p>
-  {:else if doc === null}
-    <p>Loading…</p>
+    <p class="banner error" role="alert">
+      Cannot load status: {error}
+      {#if doc !== null}
+        — showing the last good document (generated {shortDate(doc.generated_at) ??
+          doc.generated_at}).
+      {/if}
+    </p>
+  {/if}
+  {#if doc === null}
+    {#if error === null}<p>Loading…</p>{/if}
   {:else}
     {#if isStale(doc.generated_at, doc.tick_seconds)}
-      <p class="stale">
-        STALE — last reconcile {doc.generated_at}. The reconciler may be dead
-        (this is not "no news").
+      <p class="banner stale">
+        STALE — last reconcile {shortDate(doc.generated_at) ?? doc.generated_at}.
+        The reconciler may be dead (this is not "no news").
       </p>
     {/if}
     {#each doc.warnings as w}<p class="warn">{w}</p>{/each}
-    {#each doc.campaigns as c}
-      <section class="campaign" data-health={c.error !== null ? "failed" : campaignHealth(c.volumes)}>
-        <button class="camp" onclick={() => toggle(c.name)}>
-          <span class="disclosure">{collapsed.has(c.name) ? "▸" : "▾"}</span>
-          <span class="camp-name">{c.name}</span>
-          {#if c.error !== null}
-            <span class="chip needs-attention">broken</span>
-          {:else}
-            <span
-              class="chip pipeline"
-              role="button"
-              tabindex="0"
-              title={c.pipeline_steps !== null && c.pipeline_steps.length > 0
-                ? c.pipeline_steps.join(" → ")
-                : undefined}
-              onclick={(e) => toggleYaml(c.name, e)}
-              onkeydown={(e) => toggleYamlOnKey(c.name, e)}>{c.pipeline}</span
-            >
-            <span class="counts">
-              {c.totals.done}/{c.totals.total} volumes
-              {#if pagesLabel(c.totals) !== null}
-                <span class="pages">· {pagesLabel(c.totals)}</span>
-              {/if}
-            </span>
-          {/if}
-        </button>
-        {#if c.error !== null}<p class="notice error-row">{c.error}</p>{/if}
-        {#if yamlOpen.has(c.name) && c.pipeline_yaml}
-          <pre class="pipeline-yaml">{c.pipeline_yaml}</pre>
-        {/if}
-        {#if c.orphans.length > 0}
-          <p class="notice warn-row">
-            orphaned results (in bucket, not in git): {c.orphans.join(", ")}
-          </p>
-        {/if}
-        {#if !collapsed.has(c.name) && c.error === null}
-          <table class="volumes">
-            <colgroup>
-              <col class="c-thumb" />
-              <col class="c-vid" />
-              <col class="c-status" />
-              <col class="c-num" />
-              <col class="c-num" />
-              <col class="c-updated" />
-              <col class="c-links" />
-            </colgroup>
-            <thead>
-              <tr>
-                <th></th>
-                <th>volume</th>
-                <th>status</th>
-                <th class="num">pages</th>
-                <th class="num">attempts</th>
-                <th>updated</th>
-                <th>links</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each c.volumes as v}
-                <tr class:planned={v.status === "pending"}>
-                  <td class="thumb">
-                    {#if v.thumbnail !== null}
-                      <img
-                        src={v.thumbnail}
-                        alt=""
-                        loading="lazy"
-                        onerror={(e) => e.currentTarget.remove()}
-                      />
-                    {/if}
-                  </td>
-                  <td class="vid" title={v.id}>{v.id}</td>
-                  <td>
-                    <span class="status {v.status}">
-                      <span class="dot"></span>
-                      {v.status === "pending" ? "planned" : v.status}
-                    </span>
-                  </td>
-                  <td class="num">
-                    {v.pages_total !== null || v.pages_done !== null
-                      ? `${v.pages_done ?? 0}/${v.pages_total ?? "?"}`
-                      : "—"}
-                  </td>
-                  <td class="num">{v.attempts > 0 ? v.attempts : "—"}</td>
-                  <td class="updated">{shortDate(v.updated) ?? "—"}</td>
-                  <td class="links">
-                    <!-- Three fixed slots (open · source · log) so a missing
-                         link leaves a gap instead of shifting its neighbours;
-                         the eye can scan a column of "source" straight down. -->
-                    <span class="slot">
-                      {#if v.status === "done"}
-                        <a href={viewerHref(v)} target="_blank" rel="noopener"
-                          >open</a
-                        >
-                      {/if}
-                    </span>
-                    <span class="slot">
-                      <a href={v.source_manifest} target="_blank" rel="noopener"
-                        >source</a
-                      >
-                    </span>
-                    <span class="slot">
-                      {#if v.failure_log !== null}
-                        <a
-                          class="danger"
-                          href={v.failure_log}
-                          target="_blank"
-                          rel="noopener">log</a
-                        >
-                      {:else if v.run_log !== null}
-                        <a
-                          href={"log?log=" +
-                            encodeURIComponent(v.run_log) +
-                            (v.run_manifest !== null
-                              ? "&manifest=" + encodeURIComponent(v.run_manifest)
-                              : "") +
-                            (v.status !== "done" ? "&live=1" : "")}>log</a
-                        >
-                      {/if}
-                    </span>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        {/if}
-      </section>
+    {#each problems as p}<p class="warn">status.json: {p}</p>{/each}
+    {#each doc.campaigns as c (c.name)}
+      <CampaignCard campaign={c} />
     {/each}
   {/if}
 </main>
@@ -410,12 +283,21 @@
     color: inherit;
   }
 
-  .stale {
-    background: var(--destructive);
-    color: var(--background);
+  .banner {
     padding: 0.5rem 1rem;
     border-radius: var(--radius);
     margin: 0 0 1rem;
+  }
+
+  .stale {
+    background: var(--destructive);
+    color: var(--background);
+  }
+
+  .error {
+    color: var(--destructive);
+    border: 1px solid var(--destructive);
+    background: color-mix(in oklab, var(--destructive) 8%, transparent);
   }
 
   .warn {
@@ -426,275 +308,5 @@
     border-radius: var(--radius);
     margin: 0 0 0.75rem;
     font-size: 0.85rem;
-  }
-
-  .error {
-    color: var(--destructive);
-  }
-
-  /* The left accent is the campaign's health at a glance (worst volume
-     wins): green = everything published, blue = work in flight, red = a
-     volume needs a human, grey = nothing running and nothing done. */
-  .campaign {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--muted-foreground);
-    border-radius: var(--radius);
-    padding: 0.6rem 0.75rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .campaign[data-health="done"] {
-    border-left-color: var(--success);
-  }
-
-  .campaign[data-health="active"] {
-    border-left-color: var(--primary);
-  }
-
-  .campaign[data-health="failed"] {
-    border-left-color: var(--destructive);
-  }
-
-  .camp {
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    font-size: 1rem;
-    font-weight: 600;
-    background: none;
-    border: none;
-    padding: 0.3rem 0;
-    width: 100%;
-    text-align: left;
-    color: var(--foreground);
-    font-family: inherit;
-  }
-
-  .disclosure {
-    color: var(--muted-foreground);
-    font-size: 0.75rem;
-    width: 1em;
-  }
-
-  .camp-name {
-    flex-shrink: 0;
-  }
-
-  /* Counts sit flush right so they line up across campaigns regardless of
-     how long each name + pipeline chip is. */
-  .counts {
-    margin-left: auto;
-    color: var(--muted-foreground);
-    font-size: 0.85rem;
-    font-weight: 400;
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .pages {
-    font-weight: 400;
-  }
-
-  .chip {
-    font-size: 0.7rem;
-    font-weight: 500;
-    padding: 0.1rem 0.5rem;
-    border-radius: 999px;
-    background: var(--muted);
-    color: var(--muted-foreground);
-    width: fit-content;
-  }
-
-  .chip.needs-attention {
-    background: var(--destructive);
-    color: var(--background);
-  }
-
-  .chip.pipeline {
-    background: color-mix(in oklab, var(--primary) 15%, transparent);
-    color: var(--primary);
-    cursor: pointer;
-  }
-
-  .notice {
-    font-size: 0.85rem;
-    margin: 0.25rem 0 0;
-  }
-
-  pre.pipeline-yaml {
-    margin: 0.5rem 0 0;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 0.75rem 1rem;
-    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-    font-size: 12px;
-    white-space: pre-wrap;
-  }
-
-  .error-row {
-    color: var(--destructive);
-  }
-
-  .warn-row {
-    color: var(--warning);
-  }
-
-  /* Fixed layout + explicit column widths: every campaign's table shares
-     the same grid, so status/pages/links line up when scanning down the
-     page instead of each table auto-sizing to its own content. Only the
-     volume column flexes. */
-  table.volumes {
-    width: 100%;
-    table-layout: fixed;
-    border-collapse: collapse;
-    margin-top: 0.5rem;
-    font-size: 12.5px;
-    line-height: 1.35;
-  }
-
-  col.c-thumb {
-    width: 2.4rem;
-  }
-
-  col.c-status {
-    width: 8rem;
-  }
-
-  col.c-num {
-    width: 5rem;
-  }
-
-  col.c-updated {
-    width: 8rem;
-  }
-
-  col.c-links {
-    width: 11rem;
-  }
-
-  table.volumes th {
-    text-align: left;
-    font-weight: 500;
-    color: var(--muted-foreground);
-    font-size: 10.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
-    padding: 0.2rem 0.5rem;
-    border-bottom: 1px solid var(--border);
-  }
-
-  table.volumes th.num,
-  table.volumes td.num {
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-  }
-
-  table.volumes td {
-    padding: 0.2rem 0.5rem;
-    border-bottom: 1px solid var(--border);
-    vertical-align: middle;
-  }
-
-  table.volumes tbody tr:last-child td {
-    border-bottom: none;
-  }
-
-  tr.planned {
-    opacity: 0.65;
-  }
-
-  td.thumb {
-    padding-right: 0;
-  }
-
-  td.thumb img {
-    width: 1.6rem;
-    height: 1.6rem;
-    object-fit: cover;
-    border-radius: 3px;
-    display: block;
-  }
-
-  td.vid {
-    font-weight: 500;
-    color: var(--foreground);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .status {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    white-space: nowrap;
-    padding: 0.1rem 0.5rem;
-    border-radius: 999px;
-  }
-
-  .status .dot {
-    width: 0.5em;
-    height: 0.5em;
-    border-radius: 50%;
-    background: currentColor;
-    flex-shrink: 0;
-  }
-
-  .status.done {
-    color: var(--success);
-    background: color-mix(in oklab, var(--success) 15%, transparent);
-  }
-
-  .status.running {
-    color: var(--primary);
-    background: color-mix(in oklab, var(--primary) 15%, transparent);
-  }
-
-  .status.queued,
-  .status.retry {
-    color: var(--warning);
-    background: color-mix(in oklab, var(--warning) 15%, transparent);
-  }
-
-  .status.needs-attention,
-  .status.unreachable,
-  .status.unsupported {
-    color: var(--destructive);
-    background: color-mix(in oklab, var(--destructive) 15%, transparent);
-  }
-
-  .status.pending {
-    color: var(--muted-foreground);
-    background: color-mix(in oklab, var(--muted-foreground) 15%, transparent);
-  }
-
-  td.updated {
-    color: var(--muted-foreground);
-    white-space: nowrap;
-  }
-
-  td.links {
-    white-space: nowrap;
-  }
-
-  td.links .slot {
-    display: inline-block;
-    width: 3.3rem;
-  }
-
-  td.links a {
-    color: var(--primary);
-    text-decoration: none;
-  }
-
-  td.links a:hover {
-    text-decoration: underline;
-  }
-
-  td.links a.danger {
-    color: var(--destructive);
   }
 </style>
