@@ -280,3 +280,49 @@ def test_load_pipeline_model_download_oserror_stays_transient(tmp_path, monkeypa
 
     with pytest.raises(OSError, match="huggingface"):
         load_pipeline(str(pipeline_yaml), out_dir)
+
+
+def _inject_process_fakes(monkeypatch):
+    fake_htrflow = ModuleType("htrflow")
+    fake_pipeline_mod = ModuleType("htrflow.pipeline")
+    fake_steps = ModuleType("htrflow.pipeline.steps")
+    fake_steps.auto_import = lambda paths: [object()]
+    monkeypatch.setitem(sys.modules, "htrflow", fake_htrflow)
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline", fake_pipeline_mod)
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline.steps", fake_steps)
+
+
+class _NoopPipeline:
+    def run(self, document):
+        pass
+
+
+def test_process_page_returns_both_formats(tmp_path, monkeypatch):
+    _inject_process_fakes(monkeypatch)
+    out_dir = tmp_path / "outputs"
+    for fmt in ("alto", "page"):
+        (out_dir / fmt).mkdir(parents=True)
+        (out_dir / fmt / "0001.xml").write_text("<x/>")
+    image = tmp_path / "0001.jpg"
+    image.write_bytes(b"jpg")
+
+    from htrflow_batch.driver import process_page
+
+    files = process_page(_NoopPipeline(), image, out_dir)
+    assert set(files) == {"alto", "page"}
+
+
+def test_process_page_raises_when_a_format_is_missing(tmp_path, monkeypatch):
+    """W2: a page with ALTO but no PAGE XML must fail here, not be uploaded
+    half-complete and later verified as done."""
+    _inject_process_fakes(monkeypatch)
+    out_dir = tmp_path / "outputs"
+    (out_dir / "alto").mkdir(parents=True)
+    (out_dir / "alto" / "0001.xml").write_text("<x/>")
+    image = tmp_path / "0001.jpg"
+    image.write_bytes(b"jpg")
+
+    from htrflow_batch.driver import process_page
+
+    with pytest.raises(RuntimeError, match="page"):
+        process_page(_NoopPipeline(), image, out_dir)

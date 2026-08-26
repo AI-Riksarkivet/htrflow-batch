@@ -7,6 +7,10 @@ from pathlib import Path
 
 import yaml
 
+#: Every format the wrapper appends an Export step for; process_page requires
+#: all of them and store.upload_page uploads them page-first.
+EXPECTED_FORMATS = ("alto", "page")
+
 
 def load_pipeline(pipeline_path: str, out_dir: Path):
     # htrflow ships in the runtime base image, not in this workspace's lock,
@@ -36,10 +40,7 @@ def load_pipeline(pipeline_path: str, out_dir: Path):
                 "pipeline YAML must not contain Export steps; "
                 "the wrapper appends them (docs: wrapper)"
             )
-    exports = [
-        Export(str(out_dir / "alto"), "alto"),
-        Export(str(out_dir / "page"), "page"),
-    ]
+    exports = [Export(str(out_dir / fmt), fmt) for fmt in EXPECTED_FORMATS]
     # rebuild so Pipeline.__init__ wires the new steps the same way as the
     # originals (older htrflow sets parent_pipeline there; append leaves the
     # Export orphaned and its metadata None)
@@ -54,7 +55,8 @@ def process_page(pipeline, image_path: Path, out_dir: Path) -> dict[str, Path]:
         pipeline.run(document)
     stem = image_path.stem
     files: dict[str, Path] = {}
-    for fmt in ("alto", "page"):
+    missing: list[str] = []
+    for fmt in EXPECTED_FORMATS:
         matches = (
             sorted((out_dir / fmt).glob(f"**/{stem}*.xml"))
             if (out_dir / fmt).exists()
@@ -62,8 +64,12 @@ def process_page(pipeline, image_path: Path, out_dir: Path) -> dict[str, Path]:
         )
         if matches:
             files[fmt] = matches[0]
-    if not files:
-        raise RuntimeError(f"no outputs written for page {stem}")
+        else:
+            missing.append(fmt)
+    if missing:
+        # W2: a half-written page must fail here, not be uploaded with one
+        # format and later counted as done.
+        raise RuntimeError(f"page {stem}: no {', '.join(missing)} output written")
     return files
 
 
