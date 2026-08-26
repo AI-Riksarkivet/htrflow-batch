@@ -130,23 +130,23 @@ spec:
                 - name: RECONCILER_DATA_PVC
                   value: {{ .Values.modelCache.name | quote }}
                 - name: RECONCILER_WINDOW
-                  value: {{ .Values.reconciler.window | quote }}
+                  value: {{ .Values.reconciler.window | int64 | quote }}
                 - name: RECONCILER_ATTEMPT_CAP
-                  value: {{ .Values.reconciler.attemptCap | quote }}
+                  value: {{ .Values.reconciler.attemptCap | int64 | quote }}
                 # Contract (plan 2026-08-26): tick cadence, bounded work per
                 # tick, the Job placement/deadline knobs, the trust boundary.
                 - name: RECONCILER_TICK_SECONDS
-                  value: {{ .Values.reconciler.tickSeconds | quote }}
+                  value: {{ .Values.reconciler.tickSeconds | int64 | quote }}
                 - name: RECONCILER_MAX_VALIDATIONS_PER_TICK
-                  value: {{ .Values.reconciler.maxValidationsPerTick | quote }}
+                  value: {{ .Values.reconciler.maxValidationsPerTick | int64 | quote }}
                 - name: RECONCILER_FETCH_MAX_BYTES
-                  value: {{ .Values.reconciler.fetchMaxBytes | quote }}
+                  value: {{ .Values.reconciler.fetchMaxBytes | int64 | quote }}
                 - name: RECONCILER_LEASE_NAME
                   value: htr-reconciler
                 - name: RECONCILER_JOB_MIN_DEADLINE_SECONDS
-                  value: {{ .Values.job.minDeadlineSeconds | quote }}
+                  value: {{ .Values.job.minDeadlineSeconds | int64 | quote }}
                 - name: RECONCILER_JOB_SECONDS_PER_PAGE
-                  value: {{ .Values.job.secondsPerPage | quote }}
+                  value: {{ .Values.job.secondsPerPage | int64 | quote }}
                 - name: RECONCILER_JOB_RUNTIME_CLASS
                   value: {{ .Values.job.runtimeClassName | quote }}
                 - name: RECONCILER_JOB_NODE_SELECTOR
