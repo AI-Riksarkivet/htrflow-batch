@@ -148,3 +148,128 @@ def test_step_summaries_fallbacks():
 def test_step_summaries_junk_is_empty():
     assert step_summaries("steps: notalist") == []
     assert step_summaries(": not yaml [") == []
+
+
+def test_parse_pipeline_hash_is_canonical_json_of_the_steps():
+    """R10: the hash covers the parsed steps in canonical JSON, so a PyYAML
+    upgrade that re-flows the dump cannot read as drift. The yaml-dump sha
+    is kept for results published before this change."""
+    import hashlib
+
+    a = parse_pipeline("demo-v1", PIPELINE)
+    b = parse_pipeline(
+        "demo-v1",
+        PIPELINE.replace("  - step: Segmentation", "  - {step: Segmentation}"),
+    )
+    assert a.steps_sha256 == b.steps_sha256
+    canonical = json.dumps(
+        {"steps": [{"step": "Segmentation"}]}, sort_keys=True, separators=(",", ":")
+    )
+    assert a.steps_sha256 == hashlib.sha256(canonical.encode()).hexdigest()
+    assert a.legacy_sha256 == hashlib.sha256(a.steps_yaml.encode()).hexdigest()
+
+
+def test_broken_campaign_still_declares_its_volume_ids():
+    """R14: orphan detection needs the ids a malformed campaign meant to claim."""
+    c = parse_campaign(
+        "bad",
+        "pipeline: demo-v1\nvolumes:\n  - R1\n  - id: 'a/b'\n    manifest: http://x\n",
+    )
+    assert c.error is not None
+    assert c.pipeline_id == "demo-v1"
+    assert c.declared_ids == ("R1", "a/b")
+
+
+# -- S1: the campaigns repo is a code-execution boundary -----------------------
+
+ALLOWED = ("ghcr.io/riksarkivet/", "docker.io/riksarkivet/htrflow-batch")
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "ghcr.io/riksarkivet/htrflow-batch@sha256:abc",
+        "ghcr.io/riksarkivet/anything/deeper@sha256:abc",
+        "docker.io/riksarkivet/htrflow-batch@sha256:abc",
+    ],
+)
+def test_parse_pipeline_accepts_images_under_allowed_repos(image):
+    p = parse_pipeline("p", f"image: {image}\nsteps: []\n", allowed_repos=ALLOWED)
+    assert p.image == image
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "docker.io/evil/htrflow-batch@sha256:abc",
+        "ghcr.io/riksarkivet-evil/x@sha256:abc",  # prefix on a path boundary
+        "docker.io/riksarkivet/htrflow-batch-evil@sha256:abc",
+        "riksarkivet/htrflow-batch@sha256:abc",  # implicit registry is not listed
+    ],
+)
+def test_parse_pipeline_rejects_images_outside_allowed_repos(image):
+    with pytest.raises(PipelineError, match="allow"):
+        parse_pipeline("p", f"image: {image}\nsteps: []\n", allowed_repos=ALLOWED)
+
+
+def test_parse_pipeline_empty_allow_list_accepts_any_digest_pinned_image():
+    p = parse_pipeline("p", "image: anyone/anything@sha256:abc\nsteps: []\n")
+    assert p.image.startswith("anyone/")
+
+
+STEPS_WITH_MODELS = """image: r/i@sha256:abc
+steps:
+  - step: Segmentation
+    settings:
+      model: yolo
+      model_settings:
+        model: Riksarkivet/yolov9-regions-1
+        {rev1}
+  - step: TextRecognition
+    settings:
+      model: TrOCR
+      model_settings:
+        model: Riksarkivet/trocr-base-handwritten-hist-swe-2
+        {rev2}
+  - step: Export
+"""
+
+
+def test_parse_pipeline_requires_a_40_hex_revision_per_model_when_enabled():
+    good = STEPS_WITH_MODELS.format(
+        rev1="revision: " + "a" * 40, rev2="revision: " + "b" * 40
+    )
+    parse_pipeline("p", good, require_revision=True)
+    missing = STEPS_WITH_MODELS.format(rev1="revision: " + "a" * 40, rev2="")
+    with pytest.raises(PipelineError, match="revision"):
+        parse_pipeline("p", missing, require_revision=True)
+    short = STEPS_WITH_MODELS.format(
+        rev1="revision: main", rev2="revision: " + "b" * 40
+    )
+    with pytest.raises(PipelineError, match="revision"):
+        parse_pipeline("p", short, require_revision=True)
+    # off by default: unpinned models pass
+    parse_pipeline("p", missing)
+
+
+# -- S4/S5: only http(s) sources reach the fetches and the browser ------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["javascript:alert(1)", "file:///etc/passwd", "ftp://x/m", "//x/m", "x/m", ""],
+)
+def test_parse_campaign_rejects_non_http_manifest(url):
+    c = parse_campaign(
+        "bad", f"pipeline: p\nvolumes:\n  - id: v\n    manifest: {json.dumps(url)}\n"
+    )
+    assert c.error is not None
+
+
+def test_parse_campaign_rejects_non_http_images():
+    text = (
+        "pipeline: p\nvolumes:\n  - id: v\n"
+        "    images: [https://x/1.jpg, 'javascript:alert(1)']\n"
+    )
+    c = parse_campaign("bad", text)
+    assert c.error is not None and "javascript" in c.error

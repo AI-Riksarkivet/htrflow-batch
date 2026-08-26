@@ -9,10 +9,22 @@ one writer, and the only pod allowed to reach HF Hub (NetworkPolicy in the
 chart keys off the ``app`` label).
 """
 
+import re
+
 from pydantic import BaseModel, ConfigDict
 
 from .models import PipelineSpec, Volume
 from .status import job_name
+
+_LABEL_JUNK = re.compile(r"[^A-Za-z0-9_.-]")
+
+
+def label_value(text: str) -> str:
+    """A Kubernetes label value from free text (campaign file stems): the
+    allowed alphabet, alphanumeric at both ends, at most 63 chars."""
+    value = _LABEL_JUNK.sub("-", text)[:63]
+    return value.strip("-_.")
+
 
 #: uid/gid the images run as (``USER 1000`` in both dockerfiles). Repeated
 #: here so a pod spec cannot silently regress to root if an image forgets it.
@@ -53,7 +65,38 @@ class ReconcilerConfig(BaseModel):
     data_pvc: str = "htr-test-data"
     window: int = 20
     attempt_cap: int = 3
-    active_deadline_seconds: int = 21600
+    #: Job ``activeDeadlineSeconds = max(min, pages x per_page)`` (audit O2):
+    #: ~13 s/page measured on the GB10, so a flat 6 h cannot finish a long
+    #: volume; the minimum applies when the page count is unknown.
+    job_min_deadline_seconds: int = 21600
+    job_seconds_per_page: int = 30
+    #: The wrapper's own fetch caps (A2 contract), passed through as env.
+    job_manifest_max_bytes: int = 16 * 1024 * 1024
+    job_fetch_max_bytes: int = 64 * 1024 * 1024
+    #: GPU placement (audit O15): empty runtime class omits the field.
+    job_runtime_class: str = "nvidia"
+    job_node_selector: dict[str, str] = {}
+    job_tolerations: list[dict] = []
+    #: STALE threshold advertised in status.json; must match the CronJob
+    #: schedule (RECONCILER_TICK_SECONDS, audit R12).
+    tick_seconds: int = 300
+    #: Upper bound on one tick, mirrored by the CronJob's activeDeadlineSeconds
+    #: (audit O7); also the Lease duration.
+    tick_deadline_seconds: int = 600
+    #: coordination.k8s.io Lease taken per tick (audit O8): a manual
+    #: ``kubectl create job --from=cronjob`` bypasses concurrencyPolicy.
+    lease_name: str = "htr-reconciler"
+    #: Image repositories a pipeline may pin (prefix match on a path boundary,
+    #: before ``@sha256:``). Empty admits any digest-pinned image, with a
+    #: warning in status.json (audit S1).
+    allowed_image_repos: tuple[str, ...] = ()
+    #: Every ``model_settings.model`` must carry a 40-hex ``revision``.
+    require_model_revision: bool = False
+    #: Pre-validation is O(new volumes) per tick, never O(volumes) (audit X1).
+    max_validations_per_tick: int = 50
+    #: An unreachable manifest is not re-probed for this many ticks: a dead
+    #: host must not cost every tick a timeout (audit X1/S5).
+    unreachable_ticks: int = 3
 
 
 def warmup_job_name(pipeline_id: str) -> str:
@@ -99,6 +142,8 @@ def _pod_template(
     container: dict,
     volumes: list[dict],
     runtime_class: str | None,
+    node_selector: dict[str, str] | None = None,
+    tolerations: list[dict] | None = None,
 ) -> dict:
     spec = {
         "restartPolicy": "Never",
@@ -109,7 +154,37 @@ def _pod_template(
     }
     if runtime_class:
         spec["runtimeClassName"] = runtime_class
+    if node_selector:
+        spec["nodeSelector"] = dict(node_selector)
+    if tolerations:
+        spec["tolerations"] = [dict(t) for t in tolerations]
     return {"metadata": {"labels": labels}, "spec": spec}
+
+
+def _pod_failure_policy(container_name: str) -> dict:
+    """The contract the docs describe (audit O2/O3): a disruption (drain,
+    preemption) does not fail the Job — with ``backoffLimit: 0`` the pod is
+    simply replaced — and exit 13 fails it at once, so the Failed condition
+    carries reason ``PodFailurePolicy`` even after the pod is reaped (R6)."""
+    return {
+        "rules": [
+            {"action": "Ignore", "onPodConditions": [{"type": "DisruptionTarget"}]},
+            {
+                "action": "FailJob",
+                "onExitCodes": {
+                    "containerName": container_name,
+                    "operator": "In",
+                    "values": [13],
+                },
+            },
+        ]
+    }
+
+
+def deadline_seconds(cfg: ReconcilerConfig, page_count: int | None) -> int:
+    if not page_count:
+        return cfg.job_min_deadline_seconds
+    return max(cfg.job_min_deadline_seconds, page_count * cfg.job_seconds_per_page)
 
 
 def build_job(
@@ -117,6 +192,9 @@ def build_job(
     volume: Volume,
     manifest_url: str,
     cfg: ReconcilerConfig,
+    *,
+    campaign: str = "",
+    page_count: int | None = None,
 ) -> dict:
     name = job_name(pipeline.id, volume.id)
     env = [
@@ -132,6 +210,9 @@ def build_job(
         {"name": "IMAGE_DIGEST", "value": pipeline.image},
         # The cache is warmed by the warm-up Job; a batch Job never downloads.
         {"name": "HF_HUB_OFFLINE", "value": "1"},
+        # Byte caps on the wrapper's manifest and image fetches (S5).
+        {"name": "MANIFEST_MAX_BYTES", "value": str(cfg.job_manifest_max_bytes)},
+        {"name": "FETCH_MAX_BYTES", "value": str(cfg.job_fetch_max_bytes)},
         *_workdir_env(),
         *_s3_env(cfg.s3_secret),
     ]
@@ -170,19 +251,24 @@ def build_job(
                 "batch.htrflow/managed-by": "reconciler",
                 "batch.htrflow/volume": volume.id.lower(),
                 "batch.htrflow/pipeline": pipeline.id.lower(),
+                # What the fairness order counts per campaign (audit R5).
+                "batch.htrflow/campaign": label_value(campaign),
                 "kueue.x-k8s.io/queue-name": cfg.queue,
             },
         },
         "spec": {
             "suspend": True,
             "backoffLimit": 0,
-            "activeDeadlineSeconds": cfg.active_deadline_seconds,
+            "podFailurePolicy": _pod_failure_policy("wrapper"),
+            "activeDeadlineSeconds": deadline_seconds(cfg, page_count),
             "ttlSecondsAfterFinished": 86400,
             "template": _pod_template(
                 labels={"app": "htrflow-batch"},
                 container=container,
                 volumes=volumes,
-                runtime_class="nvidia",
+                runtime_class=cfg.job_runtime_class,
+                node_selector=cfg.job_node_selector,
+                tolerations=cfg.job_tolerations,
             ),
         },
     }
@@ -239,6 +325,7 @@ def build_warmup_job(pipeline: PipelineSpec, cfg: ReconcilerConfig) -> dict:
         },
         "spec": {
             "backoffLimit": 2,
+            "podFailurePolicy": _pod_failure_policy("warmup"),
             "activeDeadlineSeconds": 3600,
             "template": _pod_template(
                 labels={"app": "htrflow-warmup"},

@@ -183,3 +183,91 @@ def test_warmup_job_pod_meets_pod_security_restricted():
     assert _pod(job)["automountServiceAccountToken"] is False
     assert _pod(job)["securityContext"]["runAsNonRoot"] is True
     assert _container(job)["securityContext"]["readOnlyRootFilesystem"] is True
+
+
+# -- O2: the Job contract the docs describe -----------------------------------
+
+POD_FAILURE_POLICY = {
+    "rules": [
+        {"action": "Ignore", "onPodConditions": [{"type": "DisruptionTarget"}]},
+        {
+            "action": "FailJob",
+            "onExitCodes": {
+                "containerName": "wrapper",
+                "operator": "In",
+                "values": [13],
+            },
+        },
+    ]
+}
+
+
+def test_job_pod_failure_policy_ignores_disruptions_and_fails_on_13():
+    """A drain/preemption does not consume an attempt (Ignore on
+    DisruptionTarget); exit 13 fails the Job at once, so the Failed condition
+    carries reason PodFailurePolicy even after the pod is gone (R6)."""
+    job = build_job(P, V, V.manifest_url, CFG)
+    assert job["spec"]["backoffLimit"] == 0
+    assert job["spec"]["podFailurePolicy"] == POD_FAILURE_POLICY
+
+
+def test_warmup_job_pod_failure_policy_targets_its_own_container():
+    from htrflow_reconciler.jobspec import build_warmup_job
+
+    rules = build_warmup_job(P, CFG)["spec"]["podFailurePolicy"]["rules"]
+    assert rules[1]["onExitCodes"]["containerName"] == "warmup"
+
+
+def test_job_deadline_scales_with_page_count():
+    """Measured ~13 s/page on the GB10: a flat 6 h deadline cannot finish a
+    1 650-page volume. max(min, pages x per_page), min when unknown."""
+    cfg = ReconcilerConfig(
+        public_results_base="http://x",
+        job_min_deadline_seconds=21600,
+        job_seconds_per_page=30,
+    )
+    assert (
+        build_job(P, V, V.manifest_url, cfg)["spec"]["activeDeadlineSeconds"] == 21600
+    )
+    small = build_job(P, V, V.manifest_url, cfg, page_count=100)
+    assert small["spec"]["activeDeadlineSeconds"] == 21600
+    big = build_job(P, V, V.manifest_url, cfg, page_count=1000)
+    assert big["spec"]["activeDeadlineSeconds"] == 30000
+
+
+def test_job_placement_comes_from_config():
+    cfg = ReconcilerConfig(
+        public_results_base="http://x",
+        job_runtime_class="nvidia-cdi",
+        job_node_selector={"gpu": "gb10"},
+        job_tolerations=[{"key": "gpu", "operator": "Exists", "effect": "NoSchedule"}],
+    )
+    pod = _pod(build_job(P, V, V.manifest_url, cfg))
+    assert pod["runtimeClassName"] == "nvidia-cdi"
+    assert pod["nodeSelector"] == {"gpu": "gb10"}
+    assert pod["tolerations"] == [
+        {"key": "gpu", "operator": "Exists", "effect": "NoSchedule"}
+    ]
+    default = _pod(build_job(P, V, V.manifest_url, CFG))
+    assert default["runtimeClassName"] == "nvidia"
+    assert "nodeSelector" not in default and "tolerations" not in default
+
+
+def test_empty_runtime_class_omits_the_field():
+    cfg = ReconcilerConfig(public_results_base="http://x", job_runtime_class="")
+    assert "runtimeClassName" not in _pod(build_job(P, V, V.manifest_url, cfg))
+
+
+def test_job_passes_the_wrapper_byte_caps():
+    """A2 contract: the wrapper caps its own fetches; the caps travel as env."""
+    env = _env(build_job(P, V, V.manifest_url, CFG))
+    assert env["MANIFEST_MAX_BYTES"] == "16777216"
+    assert env["FETCH_MAX_BYTES"] == "67108864"
+    cfg = ReconcilerConfig(
+        public_results_base="http://x",
+        job_manifest_max_bytes=1024,
+        job_fetch_max_bytes=2048,
+    )
+    env = _env(build_job(P, V, V.manifest_url, cfg))
+    assert env["MANIFEST_MAX_BYTES"] == "1024"
+    assert env["FETCH_MAX_BYTES"] == "2048"
