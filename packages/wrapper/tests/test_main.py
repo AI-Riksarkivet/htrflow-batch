@@ -174,6 +174,54 @@ def test_verify_requires_page_xml_too(env, cfg, s3, monkeypatch):
     assert "demo-v1/SE-RA-1234/manifest.json" not in _keys(s3, cfg)
 
 
+def test_malformed_alto_fails_the_page_at_upload(env, cfg, s3):
+    """W3: the page fails in the stream (never uploaded) so the verify gate
+    reports it; a later retry reprocesses it instead of accepting the junk."""
+
+    def factory(c):
+        def process(path):
+            if path.stem == "0002":
+                return _write_outputs(c, path.stem, alto="<alto><Layout></alto>")
+            return _write_outputs(c, path.stem)
+
+        return process
+
+    rc = main(env, process_page_factory=factory)
+    assert rc == EXIT_TRANSIENT
+    keys = _keys(s3, cfg)
+    assert "demo-v1/SE-RA-1234/alto/0002.xml" not in keys
+    assert "demo-v1/SE-RA-1234/page/0002.xml" not in keys
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "verify" and "0002" in term["error"]
+    evidence = json.loads(
+        s3.get_object(
+            Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/metrics-failed-latest.json"
+        )["Body"].read()
+    )
+    assert "not well-formed" in evidence["results"]["0002"]["error"]
+
+
+def test_publish_tolerates_unparseable_previously_uploaded_alto(env, cfg, s3):
+    """A resumed page whose stored ALTO cannot be parsed must not fail
+    publish: iiif.json simply omits that canvas (with a warning)."""
+    s3.put_object(
+        Bucket=cfg.s3_bucket,
+        Key="demo-v1/SE-RA-1234/alto/0001.xml",
+        Body=b"<alto><Layout></alto>",
+    )
+    s3.put_object(
+        Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/page/0001.xml", Body=b"<PcGts/>"
+    )
+    rc = main(env, process_page_factory=fake_factory)
+    assert rc == EXIT_OK
+    iiif = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/iiif.json")[
+            "Body"
+        ].read()
+    )
+    assert {c["id"].rsplit("/", 1)[-1] for c in iiif["items"]} == {"0002", "0003"}
+
+
 def test_bad_manifest_is_permanent(env, cfg, s3, monkeypatch):
     def handler(req):
         return httpx.Response(404)

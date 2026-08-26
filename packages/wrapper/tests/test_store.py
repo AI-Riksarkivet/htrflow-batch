@@ -91,3 +91,22 @@ def test_upload_page_refuses_missing_format(cfg, s3, tmp_path):
     with pytest.raises(ValueError, match="page"):
         store.upload_page("0001", {"alto": alto})
     assert store.done_pages() == set()
+
+
+def test_upload_page_rejects_malformed_xml_before_any_put(cfg, s3, tmp_path):
+    """W3: an unparseable ALTO used to be uploaded, fail publish, and then be
+    accepted as 'done' on the retry. Parse both files first; PUT nothing."""
+    store = ResultStore(cfg)
+    alto = _mk(tmp_path, "alto/0001.xml", "<alto><Layout></alto>")
+    page = _mk(tmp_path, "page/0001.xml", "<PcGts/>")
+    with pytest.raises(ValueError, match="not well-formed"):
+        store.upload_page("0001", {"alto": alto, "page": page})
+    assert s3.list_objects_v2(Bucket=cfg.s3_bucket).get("Contents", []) == []
+
+
+def test_upload_page_rejects_malformed_page_xml(cfg, s3, tmp_path):
+    store = ResultStore(cfg)
+    alto = _mk(tmp_path, "alto/0001.xml", "<alto/>")
+    page = _mk(tmp_path, "page/0001.xml", "<PcGts><Page></PcGts>")
+    with pytest.raises(ValueError, match="page XML is not well-formed"):
+        store.upload_page("0001", {"alto": alto, "page": page})
