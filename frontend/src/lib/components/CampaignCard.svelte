@@ -20,6 +20,14 @@
   function statusLabel(status: string): string {
     return status === "pending" ? "planned" : status;
   }
+
+  // A broken thumbnail becomes the same neutral square as a missing one.
+  function placeholder(): HTMLSpanElement {
+    const el = document.createElement("span");
+    el.className = "thumb-placeholder";
+    el.setAttribute("aria-hidden", "true");
+    return el;
+  }
 </script>
 
 <section
@@ -85,13 +93,23 @@
         {#each c.volumes as v (v.id)}
           <tr class:planned={v.status === "pending"}>
             <td class="thumb">
+              <!-- Decorative: the row is identified by its id. Low fetch
+                   priority so eight thumbnails never race status.json or
+                   the viewer; the reconciler sends sized IIIF URLs and null
+                   for service-less manifests, which get a neutral square. -->
               {#if v.thumbnail !== null}
                 <img
                   src={v.thumbnail}
                   alt=""
                   loading="lazy"
-                  onerror={(e) => e.currentTarget.remove()}
+                  fetchpriority="low"
+                  decoding="async"
+                  width="26"
+                  height="26"
+                  onerror={(e) => e.currentTarget.replaceWith(placeholder())}
                 />
+              {:else}
+                <span class="thumb-placeholder" aria-hidden="true"></span>
               {/if}
             </td>
             <td class="vid">
@@ -337,12 +355,19 @@
     padding-right: 0;
   }
 
-  td.thumb img {
+  td.thumb img,
+  td.thumb :global(.thumb-placeholder) {
     width: 1.6rem;
     height: 1.6rem;
     object-fit: cover;
     border-radius: 3px;
     display: block;
+  }
+
+  td.thumb :global(.thumb-placeholder) {
+    background: var(--muted);
+    border: 1px solid var(--border);
+    box-sizing: border-box;
   }
 
   td.vid {

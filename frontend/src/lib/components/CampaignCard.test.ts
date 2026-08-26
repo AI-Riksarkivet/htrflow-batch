@@ -83,6 +83,20 @@ describe("CampaignCard", () => {
     expect(screen.queryByText("invalid url")).toBeNull();
   });
 
+  test("thumbnails load low-priority and async; a null thumbnail gets a placeholder", () => {
+    const campaign = campaignFrom([
+      { ...volume, thumbnail: "https://iiif/x/full/200,/0/default.jpg" },
+      { ...volume, id: "R2", thumbnail: null },
+    ]);
+    const { container } = render(CampaignCard, { campaign });
+    const img = container.querySelector("img");
+    expect(img).toHaveAttribute("fetchpriority", "low");
+    expect(img).toHaveAttribute("decoding", "async");
+    expect(img).toHaveAttribute("loading", "lazy");
+    expect(container.querySelectorAll("img")).toHaveLength(1);
+    expect(container.querySelectorAll(".thumb-placeholder")).toHaveLength(1);
+  });
+
   test("an unrecognised status renders the neutral unknown chip", () => {
     const campaign = campaignFrom([{ ...volume, status: "paused" }]);
     render(CampaignCard, { campaign });
