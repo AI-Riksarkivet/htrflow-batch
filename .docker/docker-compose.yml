@@ -15,6 +15,11 @@
 #     Reproducible alternative: `dagger call build-viewer export --path
 #     /tmp/viewer.tar && docker load -i /tmp/viewer.tar` (then tag as above).
 #
+# Constants (${HTR_*}) come from the repo-root `.env` (defaults in
+# `.env.example`): the Makefile exports them, and every reference below
+# carries the same default so `docker compose` run by hand from this
+# directory works without either file.
+#
 # NOTE: explicit `name:` below avoids colliding with unrelated projects on
 # this host that also run `docker compose` from a directory named `.docker`
 # (compose's default project name is derived from the directory basename,
@@ -31,8 +36,8 @@ services:
       - "19000:9000"
       - "19001:9001"
     environment:
-      RUSTFS_ACCESS_KEY: rustfsadmin
-      RUSTFS_SECRET_KEY: rustfsadmin
+      RUSTFS_ACCESS_KEY: ${HTR_DEV_S3_ACCESS_KEY:-rustfsadmin}
+      RUSTFS_SECRET_KEY: ${HTR_DEV_S3_SECRET_KEY:-rustfsadmin}
       RUSTFS_ADDRESS: 0.0.0.0:9000
     volumes:
       - rustfs-data:/data
@@ -66,8 +71,12 @@ services:
       # *is* browser-resolvable, so the manifest-shape checks in step 3 and
       # the viewer smoke test both still hold.
       MOCK_BASE: http://rustfs:9000/htr-fixtures/mock-vol
-      AWS_ACCESS_KEY_ID: rustfsadmin
-      AWS_SECRET_ACCESS_KEY: rustfsadmin
+      S3_BUCKET: ${HTR_BUCKET:-htr-results}
+      # Anonymous read on status/logs/* — same trade-off as the chart's
+      # devStack.rustfs.publicLogs (see charts/htrflow-batch/values.yaml).
+      PUBLIC_LOGS: "true"
+      AWS_ACCESS_KEY_ID: ${HTR_DEV_S3_ACCESS_KEY:-rustfsadmin}
+      AWS_SECRET_ACCESS_KEY: ${HTR_DEV_S3_SECRET_KEY:-rustfsadmin}
     command: ["uv", "run", "--with", "boto3", "--with", "httpx",
               "python", "/scripts/compose_init.py"]
 
@@ -87,10 +96,10 @@ services:
       PIPELINE_PATH: /config/pipeline.yaml
       PIPELINE_ID: demo-v1
       S3_ENDPOINT: http://rustfs:9000
-      S3_BUCKET: htr-results
-      AWS_ACCESS_KEY_ID: rustfsadmin
-      AWS_SECRET_ACCESS_KEY: rustfsadmin
-      PUBLIC_RESULTS_BASE: http://localhost:19000/htr-results
+      S3_BUCKET: ${HTR_BUCKET:-htr-results}
+      AWS_ACCESS_KEY_ID: ${HTR_DEV_S3_ACCESS_KEY:-rustfsadmin}
+      AWS_SECRET_ACCESS_KEY: ${HTR_DEV_S3_SECRET_KEY:-rustfsadmin}
+      PUBLIC_RESULTS_BASE: http://localhost:19000/${HTR_BUCKET:-htr-results}
       MAX_PAGES: "1"          # CPU is ~41x slower than GPU; full volume ≈ 13 min
       WORKDIR_PATH: /work
     tmpfs:
