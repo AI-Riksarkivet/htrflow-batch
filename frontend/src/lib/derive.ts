@@ -12,8 +12,32 @@ export function viewerHref(volume: VolumeEntry): string {
   return `uv.html#?manifest=${manifest}`;
 }
 
-export function progress(totals: { done: number; total: number }): number {
-  return totals.total === 0 ? 0 : Math.round((100 * totals.done) / totals.total);
+export type CampaignHealth = "failed" | "active" | "done" | "idle";
+
+/**
+ * One-glance verdict for a campaign, worst volume wins: anything that needs a
+ * human beats anything still moving, which beats "all published"; a campaign
+ * with nothing done and nothing moving is idle (planned/empty).
+ */
+const FAILED_STATUSES: ReadonlySet<VolumeEntry["status"]> = new Set([
+  "needs-attention",
+  "unreachable",
+  "unsupported",
+]);
+const ACTIVE_STATUSES: ReadonlySet<VolumeEntry["status"]> = new Set([
+  "running",
+  "queued",
+  "retry",
+]);
+
+export function campaignHealth(
+  volumes: readonly { status: VolumeEntry["status"] }[],
+): CampaignHealth {
+  const statuses = volumes.map((v) => v.status);
+  if (statuses.some((s) => FAILED_STATUSES.has(s))) return "failed";
+  if (statuses.some((s) => ACTIVE_STATUSES.has(s))) return "active";
+  if (statuses.length > 0 && statuses.every((s) => s === "done")) return "done";
+  return "idle";
 }
 
 export function isStale(

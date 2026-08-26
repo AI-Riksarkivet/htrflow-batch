@@ -1,9 +1,9 @@
 <script lang="ts">
   import { browser } from "$app/environment";
   import {
+    campaignHealth,
     isStale,
     pagesLabel,
-    progress,
     shortDate,
     viewerHref,
   } from "$lib/derive.js";
@@ -122,7 +122,7 @@
     {/if}
     {#each doc.warnings as w}<p class="warn">{w}</p>{/each}
     {#each doc.campaigns as c}
-      <section class="campaign">
+      <section class="campaign" data-health={c.error !== null ? "failed" : campaignHealth(c.volumes)}>
         <button class="camp" onclick={() => toggle(c.name)}>
           <span class="disclosure">{collapsed.has(c.name) ? "▸" : "▾"}</span>
           <span class="camp-name">{c.name}</span>
@@ -139,7 +139,6 @@
               onclick={(e) => toggleYaml(c.name, e)}
               onkeydown={(e) => toggleYamlOnKey(c.name, e)}>{c.pipeline}</span
             >
-            <progress max="100" value={progress(c.totals)}></progress>
             <span class="counts">
               {c.totals.done}/{c.totals.total} volumes
               {#if pagesLabel(c.totals) !== null}
@@ -159,6 +158,15 @@
         {/if}
         {#if !collapsed.has(c.name) && c.error === null}
           <table class="volumes">
+            <colgroup>
+              <col class="c-thumb" />
+              <col class="c-vid" />
+              <col class="c-status" />
+              <col class="c-num" />
+              <col class="c-num" />
+              <col class="c-updated" />
+              <col class="c-links" />
+            </colgroup>
             <thead>
               <tr>
                 <th></th>
@@ -175,10 +183,15 @@
                 <tr class:planned={v.status === "pending"}>
                   <td class="thumb">
                     {#if v.thumbnail !== null}
-                      <img src={v.thumbnail} alt="" loading="lazy" />
+                      <img
+                        src={v.thumbnail}
+                        alt=""
+                        loading="lazy"
+                        onerror={(e) => e.currentTarget.remove()}
+                      />
                     {/if}
                   </td>
-                  <td class="vid">{v.id}</td>
+                  <td class="vid" title={v.id}>{v.id}</td>
                   <td>
                     <span class="status {v.status}">
                       <span class="dot"></span>
@@ -193,37 +206,42 @@
                   <td class="num">{v.attempts > 0 ? v.attempts : "—"}</td>
                   <td class="updated">{shortDate(v.updated) ?? "—"}</td>
                   <td class="links">
-                    {#if v.status === "done"}
-                      <a href={viewerHref(v)} target="_blank" rel="noopener"
-                        >open</a
+                    <!-- Three fixed slots (open · source · log) so a missing
+                         link leaves a gap instead of shifting its neighbours;
+                         the eye can scan a column of "source" straight down. -->
+                    <span class="slot">
+                      {#if v.status === "done"}
+                        <a href={viewerHref(v)} target="_blank" rel="noopener"
+                          >open</a
+                        >
+                      {/if}
+                    </span>
+                    <span class="slot">
+                      <a href={v.source_manifest} target="_blank" rel="noopener"
+                        >source</a
                       >
-                    {/if}
-                    <a
-                      class="secondary"
-                      href={v.source_manifest}
-                      target="_blank"
-                      rel="noopener">source</a
-                    >
-                    {#if v.failure_log !== null}
-                      <a
-                        class="danger"
-                        href={v.failure_log}
-                        target="_blank"
-                        rel="noopener">log</a
-                      >
-                    {:else if v.run_log !== null}
-                      <a
-                        class="secondary"
-                        href={"log?log=" +
-                          encodeURIComponent(v.run_log) +
-                          (v.viewer_manifest !== null
-                            ? "&manifest=" +
-                              encodeURIComponent(
-                                v.viewer_manifest.replace(/iiif\.json$/, "manifest.json"),
-                              )
-                            : "")}>log</a
-                      >
-                    {/if}
+                    </span>
+                    <span class="slot">
+                      {#if v.failure_log !== null}
+                        <a
+                          class="danger"
+                          href={v.failure_log}
+                          target="_blank"
+                          rel="noopener">log</a
+                        >
+                      {:else if v.run_log !== null}
+                        <a
+                          href={"log?log=" +
+                            encodeURIComponent(v.run_log) +
+                            (v.viewer_manifest !== null
+                              ? "&manifest=" +
+                                encodeURIComponent(
+                                  v.viewer_manifest.replace(/iiif\.json$/, "manifest.json"),
+                                )
+                              : "")}>log</a
+                        >
+                      {/if}
+                    </span>
                   </td>
                 </tr>
               {/each}
@@ -416,13 +434,28 @@
     color: var(--destructive);
   }
 
+  /* The left accent is the campaign's health at a glance (worst volume
+     wins): green = everything published, blue = work in flight, red = a
+     volume needs a human, grey = nothing running and nothing done. */
   .campaign {
     background: var(--card);
     border: 1px solid var(--border);
-    border-left: 3px solid var(--primary);
+    border-left: 3px solid var(--muted-foreground);
     border-radius: var(--radius);
     padding: 0.6rem 0.75rem;
     margin-bottom: 0.5rem;
+  }
+
+  .campaign[data-health="done"] {
+    border-left-color: var(--success);
+  }
+
+  .campaign[data-health="active"] {
+    border-left-color: var(--primary);
+  }
+
+  .campaign[data-health="failed"] {
+    border-left-color: var(--destructive);
   }
 
   .camp {
@@ -451,37 +484,15 @@
     flex-shrink: 0;
   }
 
-  .camp progress {
-    appearance: none;
-    -webkit-appearance: none;
-    accent-color: var(--primary);
-    width: 8rem;
-    height: 0.5rem;
-    border: none;
-    border-radius: 999px;
-    background: var(--muted);
-  }
-
-  .camp progress::-webkit-progress-bar {
-    background: var(--muted);
-    border-radius: 999px;
-  }
-
-  .camp progress::-webkit-progress-value {
-    background: var(--primary);
-    border-radius: 999px;
-  }
-
-  .camp progress::-moz-progress-bar {
-    background: var(--primary);
-    border-radius: 999px;
-  }
-
+  /* Counts sit flush right so they line up across campaigns regardless of
+     how long each name + pipeline chip is. */
   .counts {
+    margin-left: auto;
     color: var(--muted-foreground);
     font-size: 0.85rem;
     font-weight: 400;
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
   }
 
   .pages {
@@ -533,12 +544,37 @@
     color: var(--warning);
   }
 
+  /* Fixed layout + explicit column widths: every campaign's table shares
+     the same grid, so status/pages/links line up when scanning down the
+     page instead of each table auto-sizing to its own content. Only the
+     volume column flexes. */
   table.volumes {
     width: 100%;
+    table-layout: fixed;
     border-collapse: collapse;
     margin-top: 0.5rem;
     font-size: 12.5px;
     line-height: 1.35;
+  }
+
+  col.c-thumb {
+    width: 2.4rem;
+  }
+
+  col.c-status {
+    width: 8rem;
+  }
+
+  col.c-num {
+    width: 5rem;
+  }
+
+  col.c-updated {
+    width: 8rem;
+  }
+
+  col.c-links {
+    width: 11rem;
   }
 
   table.volumes th {
@@ -573,7 +609,7 @@
   }
 
   td.thumb {
-    width: 1.6rem;
+    padding-right: 0;
   }
 
   td.thumb img {
@@ -587,6 +623,9 @@
   td.vid {
     font-weight: 500;
     color: var(--foreground);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .status {
@@ -643,22 +682,18 @@
     white-space: nowrap;
   }
 
+  td.links .slot {
+    display: inline-block;
+    width: 3.3rem;
+  }
+
   td.links a {
     color: var(--primary);
     text-decoration: none;
-    margin-right: 0.75rem;
-  }
-
-  td.links a:last-child {
-    margin-right: 0;
   }
 
   td.links a:hover {
     text-decoration: underline;
-  }
-
-  td.links a.secondary {
-    color: var(--muted-foreground);
   }
 
   td.links a.danger {
