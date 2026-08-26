@@ -43,6 +43,9 @@ class Config(BaseModel):
     workdir: str = "/work"
     download_concurrency: int = 12
     log_ship_seconds: float = 15.0  # 0 disables live shipping of the run log
+    # S5 byte caps on fetches driven by campaign data (docs: wrapper)
+    manifest_max_bytes: int = 16 * 1024 * 1024
+    fetch_max_bytes: int = 64 * 1024 * 1024
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Config":
@@ -61,6 +64,12 @@ class Config(BaseModel):
         kwargs["workdir"] = env.get("WORKDIR_PATH", "/work")
         kwargs["download_concurrency"] = int(env.get("DOWNLOAD_CONCURRENCY", "12"))
         kwargs["log_ship_seconds"] = float(env.get("LOG_SHIP_SECONDS", "15"))
+        kwargs["manifest_max_bytes"] = int(
+            env.get("MANIFEST_MAX_BYTES", str(16 * 1024 * 1024))
+        )
+        kwargs["fetch_max_bytes"] = int(
+            env.get("FETCH_MAX_BYTES", str(64 * 1024 * 1024))
+        )
         return cls(**kwargs)
 
     @property

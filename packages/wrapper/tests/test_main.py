@@ -134,6 +134,28 @@ def test_bad_manifest_is_permanent(env, cfg, s3, monkeypatch):
     assert term["stage"] == "setup"
 
 
+def test_manifest_5xx_is_transient(env, cfg, s3, monkeypatch):
+    """W1: a 503 from the IIIF server is a retry, not needs-attention."""
+    monkeypatch.setattr(
+        main_mod,
+        "_http_client",
+        lambda: httpx.Client(
+            transport=httpx.MockTransport(lambda req: httpx.Response(503))
+        ),
+    )
+    rc = main(env, process_page_factory=fake_factory)
+    assert rc == EXIT_TRANSIENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "setup" and term["permanent"] is False
+
+
+def test_manifest_over_cap_is_permanent(env, cfg, s3):
+    rc = main(dict(env, MANIFEST_MAX_BYTES="10"), process_page_factory=fake_factory)
+    assert rc == EXIT_PERMANENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert "too large" in term["error"]
+
+
 def test_page_failure_is_transient_and_blocks_completion(env, cfg, s3):
     def factory(c):
         inner = fake_factory(c)

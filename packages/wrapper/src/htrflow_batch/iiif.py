@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 from pydantic import BaseModel, ConfigDict
 
+#: Default cap on manifest bytes (env ``MANIFEST_MAX_BYTES``; docs: wrapper).
+MANIFEST_MAX_BYTES = 16 * 1024 * 1024
+
+#: Status codes that mean "this URL will not work tomorrow either".
+#: Everything else non-200 (5xx, 429, odd 4xx) is retried by the reconciler.
+PERMANENT_STATUSES = frozenset({400, 401, 403, 404, 410})
+
 
 class ManifestError(Exception):
-    """Permanent: bad/empty/unreachable manifest -> exit 13."""
+    """Permanent: bad/empty/oversized manifest -> exit 13."""
+
+
+class TransientManifestError(Exception):
+    """Retryable: network error, 5xx, 429 on the manifest fetch -> exit 1.
+    Deliberately NOT a ManifestError subclass: main.py's permanent branch
+    catches ManifestError by type."""
 
 
 class PageRef(BaseModel):
@@ -19,17 +34,76 @@ class PageRef(BaseModel):
     canvas: dict  # raw source canvas (for viewer.build_viewer_manifest)
 
 
-def fetch_manifest(url: str, client: httpx.Client) -> dict:
+def redact_url(url: str) -> str:
+    """URL as it may appear in logs/errors: no userinfo, no query (S6).
+    Tokenised private IIIF URLs would otherwise land in the world-readable
+    run log and termination message."""
     try:
-        resp = client.get(url, timeout=60, follow_redirects=True)
+        u = httpx.URL(url)
+    except Exception:
+        return url.split("?", 1)[0].split("#", 1)[0]
+    if not u.scheme:
+        return url.split("?", 1)[0].split("#", 1)[0]
+    host = u.host
+    if u.port is not None:
+        host = f"{host}:{u.port}"
+    return f"{u.scheme}://{host}{u.path}"
+
+
+def check_http_url(url: str, what: str) -> None:
+    """S5: only http(s) URLs may be fetched; campaign data is untrusted."""
+    scheme = url.split(":", 1)[0].lower() if ":" in url else ""
+    if scheme not in ("http", "https"):
+        raise ManifestError(f"{what} must be an http(s) URL: {redact_url(url)}")
+
+
+def fetch_manifest(
+    url: str, client: httpx.Client, max_bytes: int = MANIFEST_MAX_BYTES
+) -> dict:
+    """GET a IIIF manifest as a JSON object, bounded by ``max_bytes``.
+
+    Permanent (ManifestError): non-http(s) URL, 400/401/403/404/410, body
+    over the cap, non-JSON or non-object JSON. Transient
+    (TransientManifestError): connection/timeout errors, 5xx, 429 and any
+    other non-200 status.
+    """
+    check_http_url(url, "manifest URL")
+    shown = redact_url(url)
+    try:
+        with client.stream("GET", url, timeout=60, follow_redirects=True) as resp:
+            if resp.status_code in PERMANENT_STATUSES:
+                raise ManifestError(
+                    f"manifest fetch failed: {shown}: HTTP {resp.status_code}"
+                )
+            if resp.status_code != 200:
+                raise TransientManifestError(
+                    f"manifest fetch failed: {shown}: HTTP {resp.status_code}"
+                )
+            declared = resp.headers.get("Content-Length")
+            if declared and declared.isdigit() and int(declared) > max_bytes:
+                raise ManifestError(
+                    f"manifest too large: {shown}: {declared} bytes > {max_bytes}"
+                )
+            chunks: list[bytes] = []
+            size = 0
+            for chunk in resp.iter_bytes():
+                size += len(chunk)
+                if size > max_bytes:
+                    raise ManifestError(
+                        f"manifest too large: {shown}: > {max_bytes} bytes"
+                    )
+                chunks.append(chunk)
     except httpx.HTTPError as e:
-        raise ManifestError(f"manifest fetch failed: {url}: {e}") from e
-    if resp.status_code != 200:
-        raise ManifestError(f"manifest fetch failed: {url}: HTTP {resp.status_code}")
+        raise TransientManifestError(
+            f"manifest fetch failed: {shown}: {type(e).__name__}: {e}"
+        ) from e
     try:
-        return resp.json()
+        data = json.loads(b"".join(chunks))
     except ValueError as e:
-        raise ManifestError(f"manifest is not JSON: {url}") from e
+        raise ManifestError(f"manifest is not JSON: {shown}") from e
+    if not isinstance(data, dict):
+        raise ManifestError(f"manifest is not a JSON object: {shown}")
+    return data
 
 
 def _service_id(service: object) -> str | None:
