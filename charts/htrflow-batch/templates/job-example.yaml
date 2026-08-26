@@ -16,29 +16,44 @@ metadata:
     kueue.x-k8s.io/queue-name: {{ .Values.queue.name }}
 spec:
   suspend: true
-  backoffLimit: 2
-  activeDeadlineSeconds: 1800
+  # backoffLimit 0 + podFailurePolicy (contract, plan 2026-08-26): a node
+  # drain/preemption is not a failure and does not consume the one attempt;
+  # the wrapper's exit 13 (permanent) fails the Job outright.
+  backoffLimit: 0
+  podFailurePolicy:
+    rules:
+      - action: Ignore
+        onPodConditions:
+          - type: DisruptionTarget
+      - action: FailJob
+        onExitCodes:
+          containerName: wrapper
+          operator: In
+          values: [13]
+  activeDeadlineSeconds: {{ .Values.job.minDeadlineSeconds }}
   ttlSecondsAfterFinished: 7200
   template:
     metadata:
       labels: { app: htrflow-batch }
     spec:
       restartPolicy: Never
-      runtimeClassName: nvidia
+      {{- with .Values.job.runtimeClassName }}
+      runtimeClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.job.nodeSelector }}
+      nodeSelector: {{ toJson . }}
+      {{- end }}
+      {{- with .Values.job.tolerations }}
+      tolerations: {{ toJson . }}
+      {{- end }}
       automountServiceAccountToken: false
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
-        seccompProfile: { type: RuntimeDefault }
+        {{- include "htrflow-batch.restrictedPod" 1000 | nindent 8 }}
       containers:
         - name: wrapper
           image: {{ .Values.exampleJob.image | required "exampleJob.image is required when exampleJob.enabled" }}
           securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities: { drop: ["ALL"] }
+            {{- include "htrflow-batch.restrictedContainer" . | nindent 12 }}
           env:
             - name: VOLUME_REF
               value: mock-vol
@@ -88,7 +103,7 @@ spec:
         - name: pipeline
           configMap: { name: htr-pipeline-{{ .Values.exampleJob.pipelineId }} }
         - name: data
-          persistentVolumeClaim: { claimName: htr-test-data }
+          persistentVolumeClaim: { claimName: {{ .Values.modelCache.name }} }
         - name: work
           emptyDir: { medium: Memory, sizeLimit: 2Gi }
         - name: s3
