@@ -117,14 +117,20 @@
               <!-- Three fixed slots (open · source · log) so a missing
                    link leaves a gap instead of shifting its neighbours;
                    the eye can scan a column of "source" straight down. -->
+              {#if v.invalid !== true}
+              {@const open = viewerHref(v)}
               <span class="slot">
-                {#if v.status === "done"}
-                  <a href={viewerHref(v)} target="_blank" rel="noopener">open</a>
+                {#if v.status === "done" && open !== null}
+                  <a href={open} target="_blank" rel="noopener">open</a>
                 {/if}
               </span>
               <span class="slot">
-                {#if v.source_manifest !== ""}
+                {#if v.source_manifest !== null}
                   <a href={v.source_manifest} target="_blank" rel="noopener">source</a>
+                {:else}
+                  <span class="invalid-url" title="source_manifest is not an http(s) URL"
+                    >invalid url</span
+                  >
                 {/if}
               </span>
               <span class="slot">
@@ -143,6 +149,7 @@
                   >
                 {/if}
               </span>
+              {/if}
             </td>
           </tr>
         {/each}
@@ -433,5 +440,10 @@
 
   td.links a.danger {
     color: var(--destructive);
+  }
+
+  .invalid-url {
+    color: var(--destructive);
+    font-size: 11px;
   }
 </style>

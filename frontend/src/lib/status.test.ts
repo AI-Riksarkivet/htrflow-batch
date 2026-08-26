@@ -162,6 +162,34 @@ describe("parseStatusDoc", () => {
     expect(doc?.campaigns[0]?.volumes[0]?.id).toBe("volume #1");
   });
 
+  it("refuses non-http(s) URLs: null field plus a warning line", () => {
+    const { doc, problems } = parseStatusDoc({
+      ...oldDoc,
+      campaigns: [
+        {
+          ...oldDoc.campaigns[0],
+          volumes: [
+            {
+              ...volume,
+              source_manifest: "javascript:alert(1)",
+              thumbnail: "data:image/png;base64,AAAA",
+              run_log: "http://ok/log.txt",
+            },
+          ],
+        },
+      ],
+    });
+    const v = doc?.campaigns[0]?.volumes[0];
+    expect(v?.source_manifest).toBeNull();
+    expect(v?.thumbnail).toBeNull();
+    expect(v?.run_log).toBe("http://ok/log.txt");
+    expect(v?.invalid).toBeUndefined();
+    expect(problems).toEqual([
+      "c/v1: source_manifest is not an http(s) URL, ignored",
+      "c/v1: thumbnail is not an http(s) URL, ignored",
+    ]);
+  });
+
   it("returns no doc when the envelope is unusable", () => {
     const { doc, problems } = parseStatusDoc({ campaigns: "nope" });
     expect(doc).toBeNull();
