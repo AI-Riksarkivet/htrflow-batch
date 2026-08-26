@@ -1,8 +1,16 @@
 <script lang="ts">
   import { browser } from "$app/environment";
-  import { parseRunLog, splitLogLine, type LogGroup } from "$lib/runlog.js";
+  import {
+    isTerminalLog,
+    parseRunLog,
+    splitLogLine,
+    type LogGroup,
+  } from "$lib/runlog.js";
 
   const THEME_KEY = "htr-theme";
+  // Matches the wrapper's LOG_SHIP_SECONDS default: polling faster than the
+  // pod uploads buys nothing.
+  const LIVE_MS = 15_000;
 
   interface PageResult {
     status: string;
@@ -45,10 +53,19 @@
 
   const logUrl = queryParam("log");
   const manifestUrl = queryParam("manifest");
+  // live=1: the campaign table links a volume that is still in flight. The
+  // wrapper re-uploads the log while it runs, so we re-fetch on its cadence
+  // and stop once the wrapper's terminal line shows up.
+  const startedLive = queryParam("live") === "1";
 
   let logText = $state<string | null>(null);
   let logError = $state<string | null>(null);
   let manifest = $state<RunManifest | null>(null);
+  let live = $state(startedLive);
+  let updatedAt = $state<string | null>(null);
+  // Follow the tail only while the reader is already at the bottom; a reader
+  // who scrolled up to look at something must not be yanked back down.
+  let stickToBottom = $state(true);
 
   async function loadLog(): Promise<void> {
     if (logUrl === null) {
@@ -58,11 +75,21 @@
     try {
       const res = await fetch(logUrl, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      logText = await res.text();
+      const text = await res.text();
+      logText = text;
       logError = null;
+      updatedAt = new Date().toLocaleTimeString();
+      if (live && isTerminalLog(text)) live = false;
     } catch (e) {
-      logError = String(e);
+      // A live volume's log may not exist yet (first upload pending) — keep
+      // polling rather than freezing on the first 404.
+      if (!live) logError = String(e);
     }
+  }
+
+  function onScroll(): void {
+    stickToBottom =
+      window.innerHeight + window.scrollY >= document.body.scrollHeight - 40;
   }
 
   async function loadManifest(): Promise<void> {
@@ -81,6 +108,23 @@
   $effect(() => {
     void loadLog();
     void loadManifest();
+  });
+
+  $effect(() => {
+    if (!live) return;
+    const timer = setInterval(() => {
+      void loadLog();
+      if (manifest === null) void loadManifest();
+    }, LIVE_MS);
+    return () => clearInterval(timer);
+  });
+
+  $effect(() => {
+    // Re-runs on every log update; scrolls only while following.
+    void logText;
+    if (live && stickToBottom && browser) {
+      requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+    }
   });
 
   const parsed = $derived<{ groups: LogGroup[] } | null>(
@@ -131,6 +175,8 @@
   }
 </script>
 
+<svelte:window onscroll={onScroll} />
+
 <main data-theme={theme}>
   <header class="page">
     <div class="title-block">
@@ -141,6 +187,15 @@
       </div>
     </div>
     <div class="header-right">
+      {#if live}
+        <span class="live-badge"
+          ><span class="pulse"></span>live{updatedAt !== null
+            ? ` · updated ${updatedAt}`
+            : " · waiting for first upload"}</span
+        >
+      {:else if startedLive && updatedAt !== null}
+        <span class="live-badge finished">finished · {updatedAt}</span>
+      {/if}
       {#if logUrl !== null}
         <a class="raw" href={logUrl} target="_blank" rel="noopener">raw</a>
       {/if}
@@ -390,6 +445,42 @@
     color: var(--muted-foreground);
     font-size: 0.85rem;
     text-decoration: none;
+  }
+
+  .live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    color: var(--primary);
+    background: color-mix(in oklab, var(--primary) 15%, transparent);
+    white-space: nowrap;
+  }
+
+  .live-badge.finished {
+    color: var(--success);
+    background: color-mix(in oklab, var(--success) 15%, transparent);
+  }
+
+  .pulse {
+    width: 0.5em;
+    height: 0.5em;
+    border-radius: 50%;
+    background: currentColor;
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.25;
+    }
   }
 
   .raw:hover {

@@ -238,7 +238,8 @@
                                 encodeURIComponent(
                                   v.viewer_manifest.replace(/iiif\.json$/, "manifest.json"),
                                 )
-                              : "")}>log</a
+                              : "") +
+                          (v.status !== "done" ? "&live=1" : "")}>log</a
                         >
                       {/if}
                     </span>

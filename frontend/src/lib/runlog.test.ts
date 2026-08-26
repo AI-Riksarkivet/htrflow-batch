@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { parseRunLog, splitLogLine } from "./runlog.js";
+import { isTerminalLog, parseRunLog, splitLogLine } from "./runlog.js";
 
 describe("parseRunLog", () => {
   test("classifies and groups a log covering all five kinds", () => {
@@ -121,5 +121,32 @@ describe("splitLogLine", () => {
 
   test("an empty string is left whole", () => {
     expect(splitLogLine("")).toEqual({ time: null, level: null, msg: "" });
+  });
+});
+
+describe("isTerminalLog", () => {
+  test("success line ends the run", () => {
+    expect(
+      isTerminalLog(
+        "2026-08-26 07:15:33,903 INFO Wrote AltoXML file to /work/outputs/alto/0022.xml\n" +
+          "2026-08-26 08:50:01,000 INFO [R0001696] COMPLETE 480 pages (480 processed) in 5700.0s, viewer: http://x\n",
+      ),
+    ).toBe(true);
+  });
+
+  test("failure lines end the run", () => {
+    expect(isTerminalLog("... \n2026-08-26 07:15:33,903 ERROR transient failure in stream: boom\n")).toBe(true);
+    expect(isTerminalLog("2026-08-26 07:15:33,903 ERROR permanent failure in setup: bad manifest\n")).toBe(true);
+  });
+
+  test("an in-flight log is not terminal", () => {
+    expect(isTerminalLog("2026-08-26 07:15:33,903 INFO Wrote AltoXML file to /work/outputs/alto/0022.xml\n0022: Done!\n")).toBe(false);
+    expect(isTerminalLog("")).toBe(false);
+  });
+
+  test("only the tail counts", () => {
+    const early = "2026-08-26 07:00:00,000 INFO [v] COMPLETE 2 pages (2 processed) in 1.0s, viewer: x\n";
+    const filler = Array.from({ length: 200 }, (_, i) => `line ${i}`).join("\n");
+    expect(isTerminalLog(early + filler)).toBe(false);
   });
 });
