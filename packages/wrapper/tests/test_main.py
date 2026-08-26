@@ -1,4 +1,6 @@
 import json
+import os
+import signal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,6 +11,7 @@ from htrflow_batch import main as main_mod
 from htrflow_batch.main import (
     EXIT_OK,
     EXIT_PERMANENT,
+    EXIT_SIGTERM,
     EXIT_TRANSIENT,
     main,
     publish_failure_metrics,
@@ -477,3 +480,61 @@ def test_streams_are_restored_after_main(env, cfg, s3):
     before = (sys.stdout, sys.stderr)
     main(env, process_page_factory=fake_factory)
     assert (sys.stdout, sys.stderr) == before
+
+
+def test_sigterm_writes_termination_log_ships_final_log_and_exits_143(
+    env, cfg, s3, monkeypatch
+):
+    """O2/X5: the Job deadline (or a drain) SIGTERMs the pod. The wrapper
+    must leave a termination message naming the stage, ship the final run
+    log, and exit 143 promptly — instead of dying with no evidence."""
+    exits = []
+    monkeypatch.setattr(main_mod, "_hard_exit", lambda code: exits.append(code))
+    before = signal.getsignal(signal.SIGTERM)
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            if path.stem == "0002":
+                os.kill(os.getpid(), signal.SIGTERM)
+            return inner(path)
+
+        return process
+
+    rc = main(env, process_page_factory=factory)
+    assert rc == EXIT_SIGTERM == 143
+    assert exits == [143]
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term == {"stage": "stream", "permanent": False, "error": "SIGTERM"}
+    body = (
+        s3.get_object(Bucket=cfg.s3_bucket, Key="status/logs/demo-v1/SE-RA-1234.txt")[
+            "Body"
+        ]
+        .read()
+        .decode()
+    )
+    assert "SIGTERM" in body  # final ship carried the shutdown line
+    assert "demo-v1/SE-RA-1234/manifest.json" not in _keys(s3, cfg)
+    assert signal.getsignal(signal.SIGTERM) is before  # handler restored
+
+
+def test_sigterm_is_not_swallowed_by_the_per_page_handler(env, cfg, s3, monkeypatch):
+    """stream.consume records any Exception as a failed page and carries on;
+    the SIGTERM unwind must pass straight through it."""
+    monkeypatch.setattr(main_mod, "_hard_exit", lambda code: None)
+    seen = []
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            seen.append(path.stem)
+            if path.stem == "0001":
+                os.kill(os.getpid(), signal.SIGTERM)
+            return inner(path)
+
+        return process
+
+    assert main(env, process_page_factory=factory) == EXIT_SIGTERM
+    assert seen == ["0001"]  # no further page was processed
