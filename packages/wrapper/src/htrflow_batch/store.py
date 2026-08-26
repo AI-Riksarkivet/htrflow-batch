@@ -22,7 +22,18 @@ class ResultStore:
         self.cfg = cfg
         self.bucket = cfg.s3_bucket
         self.prefix = cfg.volume_prefix
-        self.client = boto3.client("s3", endpoint_url=cfg.s3_endpoint or None)
+        # W6: default boto timeouts (60 s connect/read, legacy retries) let an
+        # S3 outage pin every PUT for minutes and the run for hours. Bounded
+        # here; stream.consume aborts after N consecutive upload failures.
+        self.client = boto3.client(
+            "s3",
+            endpoint_url=cfg.s3_endpoint or None,
+            config=BotoConfig(
+                connect_timeout=10,
+                read_timeout=60,
+                retries={"max_attempts": 3, "mode": "standard"},
+            ),
+        )
         # Run-log uploads are best-effort and periodic: a dead S3 must not
         # pin a shipping thread (or the final upload at exit) for the default
         # minutes of connect/read timeouts times legacy retries.

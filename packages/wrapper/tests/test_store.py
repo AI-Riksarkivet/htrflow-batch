@@ -110,3 +110,14 @@ def test_upload_page_rejects_malformed_page_xml(cfg, s3, tmp_path):
     page = _mk(tmp_path, "page/0001.xml", "<PcGts><Page></PcGts>")
     with pytest.raises(ValueError, match="page XML is not well-formed"):
         store.upload_page("0001", {"alto": alto, "page": page})
+
+
+def test_main_client_has_bounded_timeouts_and_retries(cfg, s3):
+    """W6: default boto timeouts (60 s connect, legacy retries) turned an S3
+    outage into a 6 h zombie; the result client must give up in minutes."""
+    store = ResultStore(cfg)
+    c = store.client.meta.config
+    assert c.connect_timeout == 10
+    assert c.read_timeout == 60
+    # botocore normalises max_attempts=3 (retries) to 4 total attempts
+    assert c.retries == {"mode": "standard", "total_max_attempts": 4}
