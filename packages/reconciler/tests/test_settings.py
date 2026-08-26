@@ -8,6 +8,7 @@ from htrflow_reconciler.__main__ import (
     Settings,
     _git_timeout,
     _internal_results_base,
+    build_config,
 )
 from htrflow_reconciler.jobspec import ReconcilerConfig
 
@@ -97,3 +98,67 @@ def test_git_timeout_never_exceeds_the_tick_deadline(env):
     assert _git_timeout(env(RECONCILER_GIT_TIMEOUT="60")) == 60
     s = env(RECONCILER_GIT_TIMEOUT="900", RECONCILER_TICK_DEADLINE_SECONDS="600")
     assert _git_timeout(s) == 600
+
+
+def test_new_env_defaults_match_the_remediation_plan(env):
+    """The chart renders these names; the defaults are the contract."""
+    cfg = build_config(env())
+    assert cfg.tick_seconds == 300
+    assert cfg.tick_deadline_seconds == 600
+    assert cfg.lease_name == "htr-reconciler"
+    assert cfg.allowed_image_repos == ()
+    assert cfg.require_model_revision is False
+    assert cfg.job_min_deadline_seconds == 21600
+    assert cfg.job_seconds_per_page == 30
+    assert cfg.job_runtime_class == "nvidia"
+    assert cfg.job_node_selector == {}
+    assert cfg.job_tolerations == []
+    assert cfg.max_validations_per_tick == 50
+    assert env().reconciler_fetch_max_bytes == 16777216
+
+
+def test_new_env_is_read(env):
+    s = env(
+        RECONCILER_TICK_SECONDS="120",
+        RECONCILER_TICK_DEADLINE_SECONDS="900",
+        RECONCILER_LEASE_NAME="htr-rec-prod",
+        RECONCILER_ALLOWED_IMAGE_REPOS=(
+            "ghcr.io/riksarkivet/, docker.io/riksarkivet/htrflow-batch"
+        ),
+        RECONCILER_REQUIRE_MODEL_REVISION="true",
+        RECONCILER_JOB_MIN_DEADLINE_SECONDS="3600",
+        RECONCILER_JOB_SECONDS_PER_PAGE="45",
+        RECONCILER_JOB_RUNTIME_CLASS="",
+        RECONCILER_JOB_NODE_SELECTOR='{"gpu": "gb10"}',
+        RECONCILER_JOB_TOLERATIONS='[{"key": "gpu", "operator": "Exists"}]',
+        RECONCILER_MAX_VALIDATIONS_PER_TICK="5",
+        RECONCILER_FETCH_MAX_BYTES="1024",
+    )
+    cfg = build_config(s)
+    assert cfg.tick_seconds == 120
+    assert cfg.tick_deadline_seconds == 900
+    assert cfg.lease_name == "htr-rec-prod"
+    assert cfg.allowed_image_repos == (
+        "ghcr.io/riksarkivet/",
+        "docker.io/riksarkivet/htrflow-batch",
+    )
+    assert cfg.require_model_revision is True
+    assert cfg.job_min_deadline_seconds == 3600
+    assert cfg.job_seconds_per_page == 45
+    assert cfg.job_runtime_class == ""
+    assert cfg.job_node_selector == {"gpu": "gb10"}
+    assert cfg.job_tolerations == [{"key": "gpu", "operator": "Exists"}]
+    assert cfg.max_validations_per_tick == 5
+    assert s.reconciler_fetch_max_bytes == 1024
+
+
+def test_build_config_carries_the_existing_settings(env):
+    s = env(
+        S3_ENDPOINT="http://rustfs.ns.svc:9000",
+        RECONCILER_NAMESPACE="ns1",
+        RECONCILER_WINDOW="7",
+    )
+    cfg = build_config(s)
+    assert cfg.internal_results_base == "http://rustfs.ns.svc:9000/htr-results"
+    assert cfg.namespace == "ns1" and cfg.window == 7
+    assert cfg.campaigns_repo_url == REQUIRED["CAMPAIGNS_REPO_URL"]

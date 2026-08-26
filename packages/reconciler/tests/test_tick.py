@@ -874,13 +874,23 @@ def test_tick_finished_pipeline_is_never_warmed(tmp_path):
     assert not any("warm" in w.lower() for w in doc["warnings"])
 
 
-def test_synthetic_volume_thumbnail_is_first_image(tmp_path):
-    """A volume declared with images: has no IIIF service, so its thumbnail is
-    the first image itself — the same fallback _thumbnail applies to
-    service-less external manifests."""
-    doc = tick(_repo(tmp_path), FakeBucket(), FakeCluster(), CFG, NOW)
-    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
-    assert byid["loose"]["thumbnail"] == "http://x/1.jpg"
+def test_service_less_volumes_have_no_thumbnail(tmp_path):
+    """F2: a thumbnail is a SIZED request or nothing. A volume declared with
+    images: has no IIIF service, and a service-less external manifest offers
+    only full-size scans — 6.7 MB to paint eight 26 px pictures. The
+    frontend shows a placeholder for null."""
+
+    def fetch_json(url):
+        return {
+            "items": [{"items": [{"items": [{"body": {"id": "http://big/1.jpg"}}]}]}]
+        }
+
+    doc = tick(
+        _repo(tmp_path), FakeBucket(), FakeCluster(), CFG, NOW, fetch_json=fetch_json
+    )
+    byid = _rows(doc)
+    assert byid["loose"]["thumbnail"] is None
+    assert byid["R0000001"]["thumbnail"] is None
 
 
 def test_in_cluster_manifest_urls_are_rewritten_for_the_browser(tmp_path):
@@ -909,7 +919,12 @@ def test_in_cluster_manifest_urls_are_rewritten_for_the_browser(tmp_path):
                             "items": [
                                 {
                                     "body": {
-                                        "id": "http://rustfs.ns.svc:9000/htr-fixtures/mock/0001.jpg"
+                                        "id": "http://rustfs.ns.svc:9000/htr-fixtures/mock/0001.jpg",
+                                        "service": [
+                                            {
+                                                "id": "http://rustfs.ns.svc:9000/iiif/mock-0001"
+                                            }
+                                        ],
                                     }
                                 }
                             ]
@@ -925,7 +940,9 @@ def test_in_cluster_manifest_urls_are_rewritten_for_the_browser(tmp_path):
     assert vol["source_manifest"] == (
         "http://localhost:30900/htr-fixtures/mock/manifest.json"
     )
-    assert vol["thumbnail"] == "http://localhost:30900/htr-fixtures/mock/0001.jpg"
+    assert vol["thumbnail"] == (
+        "http://localhost:30900/iiif/mock-0001/full/200,/0/default.jpg"
+    )
     env = {
         e["name"]: e.get("value")
         for e in cluster.created[0]["spec"]["template"]["spec"]["containers"][0]["env"]
@@ -1430,3 +1447,31 @@ def test_deadline_failure_without_progress_is_charged(tmp_path):
     bucket = FakeBucket(stored=stored)
     tick(_repo(tmp_path), bucket, FakeCluster(jobs=jobs), CFG, NOW)
     assert bucket.written["status/attempts.json"]["demo-v1/R0000001"]["n"] == 2
+
+
+def test_p2_thumbnail_is_sized_or_null():
+    from htrflow_reconciler.main import _thumbnail
+
+    with_service = {
+        "sequences": [
+            {
+                "canvases": [
+                    {
+                        "images": [
+                            {
+                                "resource": {
+                                    "@id": "http://img/full/full/0/default.jpg",
+                                    "service": {"@id": "http://img"},
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+    assert _thumbnail(with_service) == "http://img/full/200,/0/default.jpg"
+    without = {
+        "sequences": [{"canvases": [{"images": [{"resource": {"@id": "http://x"}}]}]}]
+    }
+    assert _thumbnail(without) is None

@@ -190,8 +190,10 @@ def _sized(service_id: str) -> str:
 
 
 def _thumbnail(doc: object) -> str | None:
-    """First-page thumbnail: sized request when a service exists, else the
-    direct image URL (spec §5). Handles P3 and P2 canvases.
+    """First-page thumbnail: a SIZED request when the canvas carries an IIIF
+    image service, else ``None`` (audit F2). The direct image is never used:
+    it is the full-size scan, megabytes to paint a 26 px picture. Handles P3
+    and P2 canvases; the frontend shows a placeholder for ``None``.
 
     Total over junk: a manifest we could fetch but not understand yields no
     thumbnail rather than crashing the whole tick.
@@ -205,17 +207,12 @@ def _thumbnail(doc: object) -> str | None:
                     sid = svc.get("id") or svc.get("@id")
                     if sid:
                         return _sized(str(sid))
-                if body.get("id"):
-                    return str(body["id"])
         for img in _as_list(canvas.get("images")):
             res = img.get("resource") or {}
             for svc in _services(res):
                 sid = svc.get("@id") or svc.get("id")
                 if sid:
                     return _sized(str(sid))
-            direct = res.get("@id") or res.get("id")
-            if direct:
-                return str(direct)
     except (AttributeError, TypeError, IndexError, KeyError):
         return None
     return None
@@ -579,11 +576,7 @@ class _Pass:
                     validated = False  # past this tick's validation bound
                 elif verdict["format"] in _BLOCKING_VERDICTS:
                     st = row["status"] = verdict["format"]  # no job burned
-            if not v.manifest_url:
-                # Synthetic manifests carry no IIIF service, so the picture is
-                # the first image itself — the same fallback _thumbnail
-                # applies to service-less external manifests.
-                thumb = v.images[0] if v.images else None
+            # Synthetic manifests carry no IIIF service: no thumbnail (F2).
             row["thumbnail"] = _browser_url(thumb, cfg)
             if st in ("retry", "needs-attention"):
                 row["failure_log"] = _public(cfg, keys.failure_log_key(pid, v.id))
