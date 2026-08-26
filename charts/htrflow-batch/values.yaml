@@ -1,34 +1,52 @@
 # Default values: production-shaped. The k3s PoC replay overrides are shown in
-# docs getting-started (devStack.* true, image from the in-cluster registry).
-image:
-  repository: docker.io/riksarkivet/htrflow-batch
-  tag: latest
+# docs getting-started (devStack.* true, images from the in-cluster registry).
+#
+# Every key below is declared in values.schema.json; unknown keys and wrong
+# types are rejected at install/upgrade time. When upgrading always pass
+# `--reset-then-reuse-values` (or a full values file): plain `--reuse-values`
+# keeps the OLD chart's defaults and once rendered every NetworkPolicy away.
 
 s3:
-  # endpoint is currently INFORMATIONAL: no template references it. The
-  # reconciler and the Jobs get the endpoint from existingSecret via envFrom —
-  # set S3_ENDPOINT there, not here.
-  endpoint: ""            # in-cluster S3 endpoint URL; empty = provider default chain
-  bucket: htr-results     # used by the devStack RustFS secret only
-
-  # keys: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_ENDPOINT, S3_BUCKET
-  # (reconciler + jobs read all four via envFrom; omit S3_ENDPOINT only for
-  # real AWS)
+  bucket: htr-results     # results bucket; also created/policied by the devStack RustFS init Job
+  # Secret in the release namespace. Keys the pods read:
+  #   credentials  — AWS ini file ([default] aws_access_key_id/aws_secret_access_key),
+  #                  mounted at /secrets/s3/credentials (never env)
+  #   S3_BUCKET    — bucket name
+  #   S3_ENDPOINT  — optional; omit for real AWS (provider default chain)
+  # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are kept for tooling (compose,
+  # the devStack init Job), not for the platform pods.
   existingSecret: htr-batch-s3
 
 publicResultsBase: ""      # browser-reachable URL base for published results (REQUIRED for viewer manifests)
+
+# Model cache shared by warm-up Jobs (writer) and batch Jobs (read-only).
+# Single-node PoC note (O16): ReadWriteOnce pins every Job to the node that
+# holds the volume — fine on one GPU node, a scheduling constraint on more.
+# Use an RWX class (or a per-node cache strategy) before scaling out. The cache
+# is never evicted: a pipeline's models stay until the PVC is dropped.
+modelCache:
+  create: true             # false = a PVC named `name` already exists (hand-made or another release)
+  name: htr-test-data
+  size: 30Gi
+  storageClass: ""         # "" = the cluster default; the k3s PoC uses local-path
+  accessModes: [ReadWriteOnce]
 
 queue:
   name: htr-batch
   flavor: default-flavor
   # Covered resources and quotas for the ClusterQueue. EVERY resource a Job
-  # requests must be covered or Kueue marks it inadmissible. PoC gates GPUs
-  # via cpu quota (see decision D2); real clusters add nvidia.com/gpu here.
+  # requests must be covered or Kueue marks it inadmissible. The defaults admit
+  # exactly one Job as the reconciler builds it (cpu 4 / 8Gi / 1 GPU,
+  # jobspec.py) — raise them to run Jobs in parallel. When the queue shows
+  # Jobs `queued` while the GPU is idle, check the Kueue controller first
+  # (O17): a dead Kueue looks exactly like a busy GPU.
   resources:
     - name: cpu
-      quota: 2
+      quota: 4
     - name: memory
-      quota: 4Gi
+      quota: 8Gi
+    - name: nvidia.com/gpu
+      quota: 1
 
 pipelines:
   # id -> htrflow pipeline YAML (string). Rendered as immutable ConfigMap
@@ -38,11 +56,50 @@ pipelines:
   # (pipelines from the campaigns repo are warmed by the reconciler itself).
   {}
 
+# Per-volume Job placement and deadline (reconciler jobspec; the example Job
+# mirrors them). The deadline is max(minDeadlineSeconds, pages × secondsPerPage):
+# measured GPU throughput on the PoC is ~13 s/page, 30 s leaves headroom.
+job:
+  runtimeClassName: nvidia   # "" = none (CPU-only clusters)
+  nodeSelector: {}           # e.g. {nvidia.com/gpu.present: "true"}
+  tolerations: []            # e.g. [{key: nvidia.com/gpu, operator: Exists, effect: NoSchedule}]
+  minDeadlineSeconds: 21600
+  secondsPerPage: 30
+
+security:
+  # Image repositories a campaigns-repo pipeline may pin (prefix match before
+  # `@sha256:`). Empty = any registry — the reconciler logs a warning. A
+  # campaigns repo with write access is a code-execution boundary (audit X4):
+  # set this in production.
+  allowedImageRepos: []      # e.g. ["ghcr.io/riksarkivet/", "127.0.0.1:30500/"]
+  # Require a 40-hex `revision:` on every `model_settings.model` (HF Hub
+  # weights are pickles; an unpinned repo is mutable).
+  requireModelRevision: false
+  # Pod Security Admission level `make psa-labels` enforces on the namespace
+  # (warn/audit are always `restricted`). The platform pods are restricted-
+  # clean; `baseline` is only needed while devStack.gitDaemon runs as root.
+  psaEnforce: baseline       # baseline | restricted
+  # Optional Kyverno ClusterPolicy (Kyverno must be installed) that refuses
+  # any Pod in the release namespace whose image is not cosign keyless-signed
+  # by the given identity. imageReferences defaults to allowedImageRepos
+  # (or "*" when that is empty).
+  verifyImages:
+    enabled: false
+    issuer: ""               # e.g. https://token.actions.githubusercontent.com
+    subject: ""              # e.g. https://github.com/Riksarkivet/htrflow-batch/.github/workflows/publish.yml@refs/tags/*
+    imageReferences: []
+    rekorUrl: https://rekor.sigstore.dev
+
 network:                   # NetworkPolicies (docs: development/security, D14)
   # Needs a CNI that enforces NetworkPolicy — k3s's default flannel + embedded
   # kube-router does. Rules match by CIDR and selector only (no FQDN), which
   # is why batch Jobs get no HF Hub egress at all: only the warm-up Job does.
   enabled: true
+  # Namespace-wide default deny (ingress + egress) with explicit allows for
+  # every pod the chart renders: viewer ingress, RustFS ingress, kube-dns
+  # egress for all. Anything hand-applied in the namespace loses network
+  # access unless it gets its own policy.
+  defaultDeny: true
   # What a batch Job may reach besides DNS and S3: the IIIF origin(s).
   # Default: lbiiif.riksarkivet.se (a single stable address).
   iiifCidrs: ["192.121.221.27/32"]
@@ -60,38 +117,124 @@ network:                   # NetworkPolicies (docs: development/security, D14)
     cidr: ""               # e.g. 10.16.51.56/32 — kube-apiserver as reached AFTER service DNAT
     port: 6443
   reconciler:
-    # Where the campaigns repo lives (git over https/ssh/git://). Default:
-    # the public internet minus the cluster ranges above.
-    egressCidrs: ["0.0.0.0/0"]
+    # Where the campaigns repo lives (git over https/ssh/git://), minus the
+    # cluster ranges above. Default: GitHub's published `git` ranges
+    # (https://api.github.com/meta, key "git", 2026-08-26 — the four
+    # aggregate blocks; GitHub also lists per-region /32s that github.com
+    # does not normally resolve to). Replace for any other host; an empty
+    # list grants no public egress at all (in-cluster git daemon only).
+    egressCidrs:
+      - "140.82.112.0/20"
+      - "143.55.64.0/20"
+      - "185.199.108.0/22"
+      - "192.30.252.0/22"
     # Raw NetworkPolicy egress rules appended verbatim — e.g. an in-cluster
     # git daemon: [{to: [{podSelector: {matchLabels: {app: git-daemon}}}], ports: [{port: 9418}]}]
+    # (devStack.gitDaemon adds its own rule; this is for a daemon you run yourself).
     extraEgress: []
+  viewer:
+    # Who may reach the viewer's port (NodePort traffic arrives SNAT'd from
+    # the node, so the node range must be included — 0.0.0.0/0 keeps the
+    # PoC's "any browser that can reach the node" behaviour).
+    ingressCidrs: ["0.0.0.0/0"]
 
 viewer:                    # campaign browser at /, UV4 at /uv.html
   enabled: true
-  image: docker.io/riksarkivet/htrflow-batch-viewer:latest
+  # Digest-pinned (…@sha256:…) unless devStack.allowTagImages is true. The
+  # all-zero digest is a placeholder that renders but cannot pull: set the
+  # digest of the image you built (`make viewer-image` prints it) — the
+  # published :latest still predates the 8080/campaign-browser layout.
+  image: docker.io/riksarkivet/htrflow-batch-viewer@sha256:0000000000000000000000000000000000000000000000000000000000000000
   nodePort: 30800
   defaultManifest: ""      # DEPRECATED: when set, / redirects to UV instead of the campaign browser
+  securityHeaders:
+    enabled: true          # X-Content-Type-Options, Referrer-Policy, CSP frame-ancestors 'none'
 
 devStack:                  # PoC-only in-cluster dependencies, all off by default
+  # Tag references (`:dev`) for reconciler.image / viewer.image. Off = the
+  # chart refuses anything that is not `@sha256:`-pinned: anyone who can push
+  # to the registry could otherwise replace a control-plane image in place.
+  # Tag images are always pulled (imagePullPolicy Always) so a re-pushed tag
+  # actually lands on the next rollout.
+  allowTagImages: false
   rustfs:
     enabled: false
+    # Root credentials of the in-cluster RustFS and of the generated S3
+    # Secret. Empty = generated once (random, 32 chars) and re-read from the
+    # existing Secret on every upgrade (Helm `lookup`); `helm template` has
+    # no cluster to look up and renders fresh random values each time.
+    accessKey: ""
+    secretKey: ""
     nodePortS3: 30900
-    nodePortConsole: 30901
+    console:
+      enabled: false       # RustFS admin console (port 9001) — off: RUSTFS_CONSOLE_ENABLE=false, no NodePort
+      nodePort: 30901
+    # Sizing (O18): results ≈ 1–3 MB per page (ALTO + PAGE + JPEG + log);
+    # 5Gi ≈ 2–4k pages. Nothing is ever deleted by the platform — grow the
+    # PVC (local-path cannot resize; recreate) or prune old pipelines by hand.
+    storage:
+      size: 5Gi
+      storageClass: local-path
+    # Bucket setup Job (Helm post-install/upgrade hook): creates s3.bucket
+    # (and gitDaemon.bucket), sets the anonymous-read policy and CORS.
+    init:
+      enabled: true
+      image: docker.io/amazon/aws-cli@sha256:f0dcd994da5c36ab09becf4259bba4c45ed4ecfd03d51c701912f4d8425b2d49
+      corsOrigins: ["*"]   # tighten to the viewer origin beyond the PoC
+    # Anonymous GET on status/logs/* (per-volume run logs). The campaign
+    # browser links them, so the PoC keeps them public; they can carry a
+    # tokenised private IIIF URL on failure (audit X14) — set false and serve
+    # the log viewer through an authenticated proxy to close that.
+    # attempts.json, validation.json, failures/* and warmup/* always need
+    # credentials; <pipeline>/<volume>/*, sources/* and status/status.json
+    # are always anonymous-readable (the viewer fetches them directly).
+    publicLogs: true
   registry:
     enabled: false
     nodePort: 30500
+    image: docker.io/library/registry@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33
+    # The registry runs as this uid with a read-only root filesystem. A data
+    # PVC written by an older root-running registry must be chown'ed once
+    # (`chown -R 1000:1000 /var/lib/registry` from a throwaway pod; local-path
+    # ignores fsGroup). 0 = keep running as root.
+    runAsUser: 1000
+    # Sizing (O18): 60Gi ≈ 5 GPU wrapper images (~10 GB each). The registry
+    # has no GC of its own: delete tags over the API, then run
+    # `registry garbage-collect /etc/distribution/config.yml` in the pod.
+    storage:
+      size: 60Gi
+      storageClass: local-path
   nvidiaDevicePlugin:
+    # Renders RuntimeClass `nvidia` + the kube-system device-plugin DaemonSet.
+    # A cluster that already carries hand-applied copies must adopt them
+    # first (see the chart README, "Adopting hand-applied resources").
     enabled: false
+    image: nvcr.io/nvidia/k8s-device-plugin@sha256:25cc340fe6fd53c101e16fc452f503e7a92c219c64a80ed5381784b522dbbf77
+  # In-cluster `git://` daemon serving a bare campaigns repo seeded from the
+  # RustFS bucket (`<bucket>/<repo>.git`, pushed with `aws s3 sync` after
+  # `git update-server-info`; git:// is what gives the reconciler `--depth 1`).
+  # PoC-only: alpine/git ships no git-daemon, so the pod installs it at start
+  # (root, writable rootfs, egress to the Alpine CDN) — the one pod in the
+  # namespace that is not restricted-clean (hence security.psaEnforce=baseline).
+  gitDaemon:
+    enabled: false
+    image: docker.io/alpine/git@sha256:6f8eae2205a85c51106a9650e574a37fb1d5e4f645e5f6ea57cb57b9462cd4cf
+    bucket: git-repos
+    repo: campaigns-local
+    seedUrl: ""            # default http://rustfs.<ns>.svc.cluster.local:9000/<bucket>/<repo>.git
 
 reconciler:                # GitOps campaign reconciler (spec: campaign-gitops)
   enabled: false
-  image: ""                # e.g. 127.0.0.1:30500/htrflow-reconciler:dev on the PoC
+  image: ""                # digest-pinned, e.g. 127.0.0.1:30500/htrflow-reconciler@sha256:… (tags need devStack.allowTagImages)
   campaignsRepoUrl: ""     # e.g. https://github.com/<org>/htr-campaigns
-  campaignsRepoWebUrl: ""   # browsable URL shown on the status page; falls back to campaignsRepoUrl
+  campaignsRepoWebUrl: ""  # browsable URL shown on the status page; falls back to campaignsRepoUrl
   schedule: "*/5 * * * *"
+  tickSeconds: 300         # MUST equal the schedule interval: STALE threshold on the status page
+  tickDeadlineSeconds: 600 # Job activeDeadlineSeconds; keep ≥ the git clone timeout (300 s)
   window: 20               # max not-yet-done Jobs existing at once
   attemptCap: 3
+  maxValidationsPerTick: 50
+  fetchMaxBytes: 16777216  # source-manifest byte cap (16 MiB)
   publicResultsBase: ""    # defaults to global publicResultsBase
 
 exampleJob:

@@ -1,0 +1,2 @@
+{{- /* Cross-value checks that must fire even when the template they concern is disabled. Renders nothing. */ -}}
+{{- include "htrflow-batch.validate" . -}}
