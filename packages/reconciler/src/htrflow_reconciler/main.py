@@ -3,8 +3,10 @@ adapters injected, no I/O of its own beyond them."""
 
 from __future__ import annotations
 
+import posixpath
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from . import s3 as keys
 from .guards import check_drift
@@ -60,6 +62,33 @@ def _load_repo(campaigns_dir: Path):
     return campaigns, pipelines, errors
 
 
+def _endpoint(base: str) -> str:
+    """``<endpoint>/<bucket>`` -> ``<endpoint>/`` (trailing slash kept so the
+    prefix test cannot match a longer hostname)."""
+    u = urlsplit(base.rstrip("/"))
+    return (
+        urlunsplit((u.scheme, u.netloc, posixpath.dirname(u.path), "", "")).rstrip("/")
+        + "/"
+    )
+
+
+def _browser_url(url: str | None, cfg: ReconcilerConfig) -> str | None:
+    """Map a URL on the in-cluster S3 endpoint to its browser-facing twin.
+
+    status.json is read by browsers, which may not resolve the in-cluster
+    endpoint at all (localhost through an SSH forward, a NodePort). The two
+    endpoints are the parents of the two results bases (``<endpoint>/<bucket>``),
+    so the mapping covers every bucket on that endpoint — fixtures included —
+    not just results. Anything hosted elsewhere passes through untouched.
+    """
+    if url is None or not cfg.internal_results_base:
+        return url
+    internal = _endpoint(cfg.internal_results_base)
+    if not url.startswith(internal):
+        return url
+    return _endpoint(cfg.public_results_base) + url[len(internal) :]
+
+
 def _source_manifest_url(
     volume: Volume, pipeline_id: str, bucket, cfg: ReconcilerConfig
 ) -> tuple[str, str]:
@@ -72,7 +101,7 @@ def _source_manifest_url(
     the pod itself.
     """
     if volume.manifest_url:
-        return volume.manifest_url, volume.manifest_url
+        return _browser_url(volume.manifest_url, cfg), volume.manifest_url
     key = keys.synthetic_manifest_key(pipeline_id, volume.id)
     public = f"{cfg.public_results_base.rstrip('/')}/{key}"
     if bucket.read_json(key) is None:
@@ -351,14 +380,18 @@ def tick(
                 thumb = verdict["thumbnail"]
                 if verdict["format"] in _BLOCKING_VERDICTS:
                     st = verdict["format"]  # no job burned (spec §4.4)
+            if not v.manifest_url:
+                # Synthetic manifests carry no IIIF service, so the picture is
+                # the first image itself — the same fallback _thumbnail applies
+                # to service-less external manifests.
+                thumb = v.images[0] if v.images else None
+            thumb = _browser_url(thumb, cfg)
             # Cleanup and the attempt bump are gated on the pipeline too: a
             # drift-blocked pipeline submits nothing, so it must not spend the
             # volume's retry budget while the operator sorts the drift out.
             if st == "retry" and pid not in blocked:
                 name = job_name(pid, v.id)
-                bucket.put_text(
-                    keys.failure_log_key(pid, v.id), cluster.job_logs(name)
-                )
+                bucket.put_text(keys.failure_log_key(pid, v.id), cluster.job_logs(name))
                 cluster.delete_job(name)
                 attempts[akey] = attempts.get(akey, 0) + 1
                 budgets[v.id] = attempts[akey]
