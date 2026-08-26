@@ -104,7 +104,10 @@ def _source_manifest_url(
     the pod itself.
     """
     if volume.manifest_url:
-        return _browser_url(volume.manifest_url, cfg), volume.manifest_url
+        # _browser_url is total for a non-None input; `or` keeps the return
+        # type honest for the type checker.
+        public = _browser_url(volume.manifest_url, cfg) or volume.manifest_url
+        return public, volume.manifest_url
     key = keys.synthetic_manifest_key(pipeline_id, volume.id)
     public = f"{cfg.public_results_base.rstrip('/')}/{key}"
     if bucket.read_json(key) is None:
