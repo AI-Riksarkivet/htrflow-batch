@@ -91,3 +91,10 @@ def test_deleting_job_is_deleting_whatever_else_it_says():
         )
     }
     assert derive(V, "p", set(), jobs, {}, 3) == "deleting"
+
+
+def test_jobstate_carries_the_campaign_label():
+    assert (
+        JobState(active=True, failed=False, campaign="trolldom").campaign == "trolldom"
+    )
+    assert JobState(active=True, failed=False).campaign is None

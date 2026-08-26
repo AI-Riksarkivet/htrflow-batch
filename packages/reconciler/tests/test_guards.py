@@ -1,11 +1,13 @@
 from htrflow_reconciler.guards import check_drift
 from htrflow_reconciler.models import PipelineSpec
+from htrflow_reconciler.parse import canonical_sha256
 
 P = PipelineSpec(
     id="demo-v1",
     image="r/i@sha256:abc",
     steps_yaml="steps: []\n",
-    steps_sha256="s" * 64,
+    steps_sha256=canonical_sha256({"steps": []}),
+    legacy_sha256="l" * 64,
 )
 
 
@@ -43,3 +45,28 @@ def test_unknown_image_digest_grandfathered_with_warning():
 def test_everything_matching_ok():
     ok, msg = check_drift(P, P.steps_yaml, _published(P.steps_sha256, P.image))
     assert ok and msg is None
+
+
+def test_published_legacy_yaml_sha_still_matches():
+    """R10: results published before the canonical hash carry the sha of the
+    PyYAML dump; they must not read as drift after the upgrade."""
+    ok, msg = check_drift(P, P.steps_yaml, _published(P.legacy_sha256, P.image))
+    assert ok and msg is None
+
+
+def test_published_without_provenance_is_skipped_with_a_warning():
+    """R11: a legacy manifest with no pipeline_sha256 must not block the
+    pipeline forever; it simply cannot testify."""
+    ok, msg = check_drift(P, P.steps_yaml, {"pages": 3})
+    assert ok and msg is not None and "provenance" in msg
+
+
+def test_configmap_compared_by_content_not_serialisation():
+    """A ConfigMap written by another PyYAML version (key order, quoting) is
+    the same recipe."""
+    ok, msg = check_drift(P, "steps:\n  []\n", None)
+    assert ok and msg is None
+    ok, msg = check_drift(P, "steps: [x]\n", None)
+    assert not ok
+    ok, msg = check_drift(P, ": not yaml [", None)
+    assert not ok

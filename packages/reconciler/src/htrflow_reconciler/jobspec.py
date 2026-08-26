@@ -9,10 +9,22 @@ one writer, and the only pod allowed to reach HF Hub (NetworkPolicy in the
 chart keys off the ``app`` label).
 """
 
+import re
+
 from pydantic import BaseModel, ConfigDict
 
 from .models import PipelineSpec, Volume
 from .status import job_name
+
+_LABEL_JUNK = re.compile(r"[^A-Za-z0-9_.-]")
+
+
+def label_value(text: str) -> str:
+    """A Kubernetes label value from free text (campaign file stems): the
+    allowed alphabet, alphanumeric at both ends, at most 63 chars."""
+    value = _LABEL_JUNK.sub("-", text)[:63]
+    return value.strip("-_.")
+
 
 #: uid/gid the images run as (``USER 1000`` in both dockerfiles). Repeated
 #: here so a pod spec cannot silently regress to root if an image forgets it.
@@ -131,6 +143,8 @@ def build_job(
     volume: Volume,
     manifest_url: str,
     cfg: ReconcilerConfig,
+    *,
+    campaign: str = "",
 ) -> dict:
     name = job_name(pipeline.id, volume.id)
     env = [
@@ -184,6 +198,8 @@ def build_job(
                 "batch.htrflow/managed-by": "reconciler",
                 "batch.htrflow/volume": volume.id.lower(),
                 "batch.htrflow/pipeline": pipeline.id.lower(),
+                # What the fairness order counts per campaign (audit R5).
+                "batch.htrflow/campaign": label_value(campaign),
                 "kueue.x-k8s.io/queue-name": cfg.queue,
             },
         },

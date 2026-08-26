@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from htrflow_reconciler import s3 as keys
 from htrflow_reconciler.jobspec import ReconcilerConfig
 from htrflow_reconciler.main import tick
 from htrflow_reconciler.status import JobState, job_name
@@ -149,10 +150,9 @@ def test_tick_submits_missing_and_writes_status(tmp_path):
     )
     assert byid["R0000002"]["viewer_manifest"] is None
     # synthetic manifest uploaded for the images: volume, and used as source
-    assert "sources/demo-v1/loose/manifest.json" in bucket.written
-    assert byid["loose"]["source_manifest"].endswith(
-        "sources/demo-v1/loose/manifest.json"
-    )
+    key = keys.synthetic_manifest_key("demo-v1", "loose", ["http://x/1.jpg"])
+    assert key in bucket.written
+    assert byid["loose"]["source_manifest"].endswith(key)
     assert doc["generated_at"] == NOW
     assert bucket.written["status/status.json"] == doc
 
@@ -453,7 +453,7 @@ def test_synthetic_manifest_is_written_once_without_a_get_per_tick(tmp_path):
     repo = _repo(tmp_path)
     bucket = CountingBucket()
     tick(repo, bucket, FakeCluster(), CFG, NOW)
-    key = "sources/demo-v1/loose/manifest.json"
+    key = keys.synthetic_manifest_key("demo-v1", "loose", ["http://x/1.jpg"])
     assert key in bucket.written
     bucket.read_calls.clear()
     written_before = dict(bucket.written)
@@ -785,14 +785,13 @@ def test_synthetic_manifest_job_url_uses_internal_base(tmp_path):
         e["name"]: e.get("value")
         for e in loose_job["spec"]["template"]["spec"]["containers"][0]["env"]
     }
-    assert env["IIIF_MANIFEST_URL"] == (
-        "http://rustfs.ns.svc:9000/htr-results/sources/demo-v1/loose/manifest.json"
-    )
+    key = keys.synthetic_manifest_key("demo-v1", "loose", ["http://x/1.jpg"])
+    assert env["IIIF_MANIFEST_URL"] == f"http://rustfs.ns.svc:9000/htr-results/{key}"
     byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
-    assert byid["loose"]["source_manifest"] == (
-        "http://localhost:30900/htr-results/sources/demo-v1/loose/manifest.json"
+    assert (
+        byid["loose"]["source_manifest"] == f"http://localhost:30900/htr-results/{key}"
     )
-    written = bucket.written["sources/demo-v1/loose/manifest.json"]
+    written = bucket.written[key]
     assert written["id"].startswith("http://localhost:30900/")
 
 
@@ -1220,3 +1219,135 @@ def test_healthy_rows_carry_terminal_null(tmp_path):
     bucket = FakeBucket(done={"R0000001"})
     doc = tick(_repo(tmp_path), bucket, FakeCluster(), CFG, NOW)
     assert all(v["terminal"] is None for v in doc["campaigns"][0]["volumes"])
+
+
+# -- R5 fairness ---------------------------------------------------------------
+
+
+def test_lanes_are_ordered_by_per_campaign_in_flight_count(tmp_path):
+    """R5: round-robin used to restart from the alphabetically first campaign
+    every tick, so a big campaign with work in flight kept winning the free
+    slot. Campaigns with fewer Jobs in flight go first."""
+    repo = _repo(tmp_path)
+    (repo / "campaigns" / "aaa-big.yaml").write_text(
+        "pipeline: demo-v1\nvolumes: [B1, B2, B3]\n"
+    )
+    (repo / "campaigns" / "zzz-small.yaml").write_text(
+        "pipeline: demo-v1\nvolumes: [S1]\n"
+    )
+    (repo / "campaigns" / "trolldom.yaml").unlink()
+    running = JobState(active=True, failed=False, campaign="aaa-big")
+    jobs = {job_name("demo-v1", "B1"): running, job_name("demo-v1", "B2"): running}
+    cfg = ReconcilerConfig(public_results_base="http://pub/htr-results", window=3)
+    cluster = FakeCluster(jobs=jobs)
+    tick(repo, FakeBucket(), cluster, cfg, NOW)
+    assert _created_volumes(cluster) == ["s1"]
+
+
+def test_submitted_jobs_carry_the_campaign_label(tmp_path):
+    cluster = FakeCluster()
+    tick(_repo(tmp_path), FakeBucket(), cluster, CFG, NOW)
+    labels = cluster.created[0]["metadata"]["labels"]
+    assert labels["batch.htrflow/campaign"] == "trolldom"
+
+
+# -- R7 warm-up budget ---------------------------------------------------------
+
+
+def test_warmup_exit_13_is_terminal_and_never_recreated(tmp_path):
+    """R7: a warm-up that says 'permanent' (bad model id, bad YAML) used to be
+    deleted and recreated every tick forever."""
+    failed = JobState(active=False, failed=True, exit_code=13)
+    bucket, cluster = FakeBucket(), FakeCluster(warmups={"demo-v1": failed})
+    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    assert cluster.deleted == [] and cluster.created == []
+    assert bucket.written["status/attempts.json"]["warmup/demo-v1"] == {
+        "n": 1,
+        "terminal": "exit-13",
+    }
+    assert bucket.written["status/warmup/demo-v1.log"] == "boom traceback"
+    assert any("attention" in w.lower() and "demo-v1" in w for w in doc["warnings"])
+    # Job reaped later: still nothing is created
+    cluster = FakeCluster(warmups={})
+    tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    assert cluster.created == []
+
+
+def test_warmup_retries_are_capped(tmp_path):
+    failed = JobState(active=False, failed=True, exit_code=1)
+    stored = {"status/attempts.json": {"warmup/demo-v1": {"n": 2, "terminal": None}}}
+    bucket, cluster = (
+        FakeBucket(stored=stored),
+        FakeCluster(warmups={"demo-v1": failed}),
+    )
+    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    assert bucket.written["status/attempts.json"]["warmup/demo-v1"] == {
+        "n": 3,
+        "terminal": "capped",
+    }
+    assert cluster.deleted == []
+    assert any("attention" in w.lower() for w in doc["warnings"])
+
+
+def test_warmup_transient_failure_is_counted_and_retried(tmp_path):
+    failed = JobState(active=False, failed=True, exit_code=1)
+    bucket, cluster = FakeBucket(), FakeCluster(warmups={"demo-v1": failed})
+    tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    assert cluster.deleted == ["htr-warmup-demo-v1"]
+    assert bucket.written["status/attempts.json"]["warmup/demo-v1"]["n"] == 1
+
+
+# -- R8 corrupt owned JSON -----------------------------------------------------
+
+
+def test_corrupt_owned_json_is_a_warning_not_a_poison_pill(tmp_path):
+    class CorruptBucket(FakeBucket):
+        def read_json(self, key):
+            if key == "status/attempts.json":
+                raise ValueError("Expecting value: line 1 column 1")
+            if key == "status/validation.json":
+                return ["not", "a", "mapping"]
+            return super().read_json(key)
+
+    bucket, cluster = CorruptBucket(), FakeCluster()
+    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    assert len(cluster.created) == 3
+    assert any("attempts.json" in w for w in doc["warnings"])
+    assert any("validation.json" in w for w in doc["warnings"])
+    assert bucket.written["status/attempts.json"] == {}
+
+
+# -- R9 images: edits take effect ---------------------------------------------
+
+
+def test_synthetic_manifest_key_follows_the_image_list(tmp_path):
+    repo = _repo(tmp_path)
+    bucket = FakeBucket()
+    doc = tick(repo, bucket, FakeCluster(), CFG, NOW)
+    first = _rows(doc)["loose"]["source_manifest"]
+    (repo / "campaigns" / "trolldom.yaml").write_text(
+        CAMPAIGN.replace("[http://x/1.jpg]", "[http://x/1.jpg, http://x/2.jpg]")
+    )
+    doc = tick(repo, bucket, FakeCluster(), CFG, NOW)
+    second = _rows(doc)["loose"]["source_manifest"]
+    assert first != second
+    key = second.split("http://pub/htr-results/", 1)[1]
+    assert len(bucket.written[key]["items"]) == 2
+    assert _rows(doc)["loose"]["pages_total"] == 2
+
+
+# -- R14 orphans ---------------------------------------------------------------
+
+
+def test_orphans_exclude_ids_declared_by_a_broken_sibling(tmp_path):
+    """R14: a campaign that fails to parse still DECLARES its volumes; those
+    results are not orphans just because a sibling entry is malformed."""
+    repo = _repo(tmp_path)
+    (repo / "campaigns" / "zzz-broken.yaml").write_text(
+        "pipeline: demo-v1\nvolumes:\n  - R0000009\n  - id: 'a/b'\n    manifest: http://x\n"
+    )
+    bucket = FakeBucket(done={"R0000009", "ghost-vol"})
+    doc = tick(repo, bucket, FakeCluster(), CFG, NOW)
+    byname = {c["name"]: c for c in doc["campaigns"]}
+    assert byname["zzz-broken"]["error"] is not None
+    assert byname["trolldom"]["orphans"] == ["ghost-vol"]

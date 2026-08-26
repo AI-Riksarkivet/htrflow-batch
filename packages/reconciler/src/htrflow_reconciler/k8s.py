@@ -154,6 +154,7 @@ class Cluster:
                 succeeded=succeeded,
                 exit_code=exit_code,
                 reason=failed_cond.reason if failed_cond is not None else None,
+                campaign=(j.metadata.labels or {}).get("batch.htrflow/campaign"),
                 deletion_timestamp=(
                     j.metadata.deletion_timestamp.isoformat()
                     if j.metadata.deletion_timestamp
