@@ -8,6 +8,8 @@ import logging
 import os
 import queue
 import shutil
+import signal
+import sys
 import threading
 import time
 import traceback
@@ -30,10 +32,45 @@ log = logging.getLogger("htrflow_batch")
 EXIT_OK = 0
 EXIT_PERMANENT = 13
 EXIT_TRANSIENT = 1
+EXIT_SIGTERM = 143  # 128 + SIGTERM, what an unhandled kill would report
 
 
 class SetupError(Exception):
     """Permanent config/setup failure -> EXIT_PERMANENT."""
+
+
+class Terminated(BaseException):
+    """Raised in the main thread by the SIGTERM handler. BaseException on
+    purpose: stream.consume records any Exception as a failed page and
+    carries on, and this must unwind straight through it (and through any
+    lock the interrupted frame holds) to main()."""
+
+
+class RunState:
+    """What the signal handler needs to see: the stage the run is in."""
+
+    stage: str = "setup"
+
+
+def _set_signal(signum: int, handler):
+    """signal.signal only works in the main thread; elsewhere (embedded,
+    tests in a worker) run without a handler rather than fail."""
+    try:
+        return signal.signal(signum, handler)
+    except ValueError:
+        return None
+
+
+def _hard_exit(code: int) -> None:
+    """Exit NOW. sys.exit would wait for the downloader's ThreadPoolExecutor
+    workers (joined at interpreter shutdown) — a download stuck in its 120 s
+    timeout would run the pod into the SIGKILL instead of a clean 143."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:
+            pass
+    os._exit(code)
 
 
 def _http_client() -> httpx.Client:
@@ -115,22 +152,39 @@ def main(
     # log carries htrflow's logging output and its bare prints alike
     # (docs: wrapper, "Live run log"). finish() always restores the streams
     # and does the final upload, on every exit path.
+    env = dict(env if env is not None else os.environ)
+    state = RunState()
     capture = LogCapture.install()
+
+    def on_sigterm(signum, frame):
+        raise Terminated()
+
+    previous = _set_signal(signal.SIGTERM, on_sigterm)
     try:
-        return _main(env, process_page_factory, capture)
+        return _main(env, process_page_factory, capture, state)
+    except Terminated:
+        # O2: the Job deadline or a node drain. Leave the same evidence a
+        # failure would (termination message + complete run log), then exit
+        # 143 so the reconciler classifies it as a retry, not exit 13.
+        log.error("SIGTERM in stage %s: shutting down", state.stage)
+        _terminate(env, {"stage": state.stage, "permanent": False, "error": "SIGTERM"})
+        capture.finish()
+        _hard_exit(EXIT_SIGTERM)
+        return EXIT_SIGTERM  # reached only when _hard_exit is stubbed (tests)
     finally:
+        if previous is not None:
+            _set_signal(signal.SIGTERM, previous)
         capture.finish()
 
 
 def _main(
-    env: Optional[Mapping[str, str]],
+    env: Mapping[str, str],
     process_page_factory: Optional[Callable],
     capture: LogCapture,
+    state: RunState,
 ) -> int:
     capture.attach_logging()  # not basicConfig: see LogCapture.attach_logging
-    env = dict(env if env is not None else os.environ)
     t_start = time.monotonic()
-    stage = "setup"
     # Bound up-front so the failure paths below can tell "we never got that
     # far" from "we have evidence worth publishing".
     cfg: Optional[Config] = None
@@ -155,7 +209,7 @@ def _main(
         log.info("[%s] %d pages in manifest", cfg.volume_ref, len(pages))
 
         # -- stage 2: resume -------------------------------------------------
-        stage = "resume"
+        state.stage = "resume"
         done = store.done_pages() if cfg.resume else set()
         todo = [p for p in pages if p.name not in done]
         log.info(
@@ -163,7 +217,7 @@ def _main(
         )
 
         # -- stage 3: streaming loop ------------------------------------------
-        stage = "stream"
+        state.stage = "stream"
         out_q: queue.Queue = queue.Queue()
         slots = threading.Semaphore(cfg.lookahead_pages)
         bytes_box = {}
@@ -206,7 +260,7 @@ def _main(
                 stats.results[p.name] = PageOutcome(status="skipped")
 
         # -- stage 4: verify (D8) ---------------------------------------------
-        stage = "verify"
+        state.stage = "verify"
         uploaded = store.uploaded_pages()
         expected = {p.name for p in pages}
         missing = sorted(expected - uploaded)
@@ -215,7 +269,7 @@ def _main(
             raise RuntimeError(f"verify failed: missing={missing} failed={failed}")
 
         # -- stage 5: publish (iiif.json, pipeline.yaml, manifest.json LAST) --
-        stage = "publish"
+        state.stage = "publish"
         dims = {}
         out_dir = Path(cfg.workdir) / "outputs"
         for p in pages:
@@ -302,11 +356,13 @@ def _main(
         return EXIT_OK
 
     except (ConfigError, ManifestError, SetupError, ValueError) as e:
+        stage = state.stage
         log.error("permanent failure in %s: %s", stage, e)
         _terminate(env, {"stage": stage, "permanent": True, "error": str(e)})
         _publish_failure(cfg, store, stats, t_start, stage, e)
         return EXIT_PERMANENT
     except Exception as e:
+        stage = state.stage
         log.error("transient failure in %s: %s\n%s", stage, e, traceback.format_exc())
         _terminate(env, {"stage": stage, "permanent": False, "error": str(e)})
         _publish_failure(cfg, store, stats, t_start, stage, e)
