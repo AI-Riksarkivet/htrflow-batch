@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { isStale, pagesLabel, progress, shortDate, viewerHref } from "./derive.js";
+import {
+  campaignHealth,
+  isStale,
+  pagesLabel,
+  shortDate,
+  viewerHref,
+} from "./derive.js";
 import type { VolumeEntry } from "./status.js";
 
 const done: VolumeEntry = {
@@ -16,7 +22,11 @@ const done: VolumeEntry = {
   failure_log: null,
   run_log: null,
 };
-const pending: VolumeEntry = { ...done, status: "pending", viewer_manifest: null };
+const pending: VolumeEntry = {
+  ...done,
+  status: "pending",
+  viewer_manifest: null,
+};
 
 describe("derive", () => {
   test("done volumes open the published manifest", () => {
@@ -31,9 +41,17 @@ describe("derive", () => {
     );
   });
 
-  test("progress percentage", () => {
-    expect(progress({ done: 2, total: 8 })).toBe(25);
-    expect(progress({ done: 0, total: 0 })).toBe(0);
+  test("campaign health: worst volume wins", () => {
+    const st = (...s: VolumeEntry["status"][]) =>
+      s.map((status) => ({ status }));
+    expect(campaignHealth(st("done", "done"))).toBe("done");
+    expect(campaignHealth(st("done", "running"))).toBe("active");
+    expect(campaignHealth(st("done", "queued", "retry"))).toBe("active");
+    expect(campaignHealth(st("running", "needs-attention"))).toBe("failed");
+    expect(campaignHealth(st("done", "unreachable"))).toBe("failed");
+    expect(campaignHealth(st("pending", "pending"))).toBe("idle");
+    expect(campaignHealth(st("done", "pending"))).toBe("idle");
+    expect(campaignHealth([])).toBe("idle");
   });
 
   test("stale when older than 3 ticks", () => {
