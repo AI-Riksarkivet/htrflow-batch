@@ -162,3 +162,13 @@ def test_build_config_carries_the_existing_settings(env):
     assert cfg.internal_results_base == "http://rustfs.ns.svc:9000/htr-results"
     assert cfg.namespace == "ns1" and cfg.window == 7
     assert cfg.campaigns_repo_url == REQUIRED["CAMPAIGNS_REPO_URL"]
+
+
+def test_wrapper_byte_cap_env_is_wired(env):
+    cfg = build_config(env())
+    assert cfg.job_manifest_max_bytes == 16777216
+    assert cfg.job_fetch_max_bytes == 67108864
+    cfg = build_config(
+        env(RECONCILER_JOB_MANIFEST_MAX_BYTES="1", RECONCILER_JOB_FETCH_MAX_BYTES="2")
+    )
+    assert (cfg.job_manifest_max_bytes, cfg.job_fetch_max_bytes) == (1, 2)

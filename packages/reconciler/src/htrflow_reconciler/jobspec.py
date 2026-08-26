@@ -70,6 +70,9 @@ class ReconcilerConfig(BaseModel):
     #: volume; the minimum applies when the page count is unknown.
     job_min_deadline_seconds: int = 21600
     job_seconds_per_page: int = 30
+    #: The wrapper's own fetch caps (A2 contract), passed through as env.
+    job_manifest_max_bytes: int = 16 * 1024 * 1024
+    job_fetch_max_bytes: int = 64 * 1024 * 1024
     #: GPU placement (audit O15): empty runtime class omits the field.
     job_runtime_class: str = "nvidia"
     job_node_selector: dict[str, str] = {}
@@ -207,6 +210,9 @@ def build_job(
         {"name": "IMAGE_DIGEST", "value": pipeline.image},
         # The cache is warmed by the warm-up Job; a batch Job never downloads.
         {"name": "HF_HUB_OFFLINE", "value": "1"},
+        # Byte caps on the wrapper's manifest and image fetches (S5).
+        {"name": "MANIFEST_MAX_BYTES", "value": str(cfg.job_manifest_max_bytes)},
+        {"name": "FETCH_MAX_BYTES", "value": str(cfg.job_fetch_max_bytes)},
         *_workdir_env(),
         *_s3_env(cfg.s3_secret),
     ]

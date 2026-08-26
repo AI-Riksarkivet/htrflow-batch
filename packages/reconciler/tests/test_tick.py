@@ -2,7 +2,7 @@ from pathlib import Path
 
 from htrflow_reconciler import s3 as keys
 from htrflow_reconciler.jobspec import ReconcilerConfig
-from htrflow_reconciler.main import tick
+from htrflow_reconciler.main import SourceRejected, tick
 from htrflow_reconciler.status import JobState, job_name
 
 PIPELINE = """image: r/i@sha256:abc
@@ -1475,3 +1475,73 @@ def test_p2_thumbnail_is_sized_or_null():
         "sequences": [{"canvases": [{"images": [{"resource": {"@id": "http://x"}}]}]}]
     }
     assert _thumbnail(without) is None
+
+
+# -- wrapper contract (A2): SIGTERM, permanent vs transient sources -----------
+
+
+def test_sigterm_143_with_progress_is_not_charged(tmp_path):
+    """The wrapper exits 143 on SIGTERM (deadline kill, drain) after writing
+    its termination log; like DeadlineExceeded it is resumed for free when
+    pages_done advanced."""
+
+    class ProgressBucket(FakeBucket):
+        def count_pages(self, pipeline_id, volume_id):
+            return 400 if volume_id == "R0000001" else 0
+
+    jobs = {
+        job_name("demo-v1", "R0000001"): JobState(
+            active=False, failed=True, exit_code=143, reason="BackoffLimitExceeded"
+        )
+    }
+    stored = {
+        "status/attempts.json": {
+            "demo-v1/R0000001": {"n": 1, "terminal": None, "pages_at_submit": 100}
+        }
+    }
+    bucket = ProgressBucket(stored=stored)
+    doc = tick(_repo(tmp_path), bucket, FakeCluster(jobs=jobs), CFG, NOW)
+    assert _rows(doc)["R0000001"]["status"] == "retry"
+    assert bucket.written["status/attempts.json"]["demo-v1/R0000001"]["n"] == 1
+
+
+def test_sigterm_143_without_progress_is_charged(tmp_path):
+    jobs = {
+        job_name("demo-v1", "R0000001"): JobState(
+            active=False, failed=True, exit_code=143
+        )
+    }
+    stored = {
+        "status/attempts.json": {
+            "demo-v1/R0000001": {"n": 1, "terminal": None, "pages_at_submit": 0}
+        }
+    }
+    bucket = FakeBucket(stored=stored)
+    tick(_repo(tmp_path), bucket, FakeCluster(jobs=jobs), CFG, NOW)
+    assert bucket.written["status/attempts.json"]["demo-v1/R0000001"]["n"] == 2
+
+
+def test_permanent_source_rejections_are_cached_forever(tmp_path):
+    """Pre-validation mirrors the wrapper's permanent set: a 404 or a non-JSON
+    body will not become a manifest by being asked again, so — unlike a 503
+    — it is never re-probed."""
+    fetched = []
+
+    def fetch_json(url):
+        fetched.append(url)
+        if url.endswith("R0000001/manifest"):
+            raise SourceRejected("unreachable")  # 404
+        raise SourceRejected("unsupported")  # HTML body
+
+    repo = _repo(tmp_path)
+    bucket = FakeBucket()
+    doc = tick(repo, bucket, FakeCluster(), CFG, NOW, fetch_json=fetch_json)
+    rows = _rows(doc)
+    assert rows["R0000001"]["status"] == "unreachable"
+    assert rows["R0000002"]["status"] == "unsupported"
+    cached = bucket.written["status/validation.json"]
+    assert all("unreachable_until" not in v for v in cached.values())
+    fetched.clear()
+    much_later = "2027-01-01T00:00:00Z"
+    tick(repo, bucket, FakeCluster(), CFG, much_later, fetch_json=fetch_json)
+    assert fetched == []

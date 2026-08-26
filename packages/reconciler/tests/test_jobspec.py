@@ -256,3 +256,18 @@ def test_job_placement_comes_from_config():
 def test_empty_runtime_class_omits_the_field():
     cfg = ReconcilerConfig(public_results_base="http://x", job_runtime_class="")
     assert "runtimeClassName" not in _pod(build_job(P, V, V.manifest_url, cfg))
+
+
+def test_job_passes_the_wrapper_byte_caps():
+    """A2 contract: the wrapper caps its own fetches; the caps travel as env."""
+    env = _env(build_job(P, V, V.manifest_url, CFG))
+    assert env["MANIFEST_MAX_BYTES"] == "16777216"
+    assert env["FETCH_MAX_BYTES"] == "67108864"
+    cfg = ReconcilerConfig(
+        public_results_base="http://x",
+        job_manifest_max_bytes=1024,
+        job_fetch_max_bytes=2048,
+    )
+    env = _env(build_job(P, V, V.manifest_url, cfg))
+    assert env["MANIFEST_MAX_BYTES"] == "1024"
+    assert env["FETCH_MAX_BYTES"] == "2048"
