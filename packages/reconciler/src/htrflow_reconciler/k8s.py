@@ -3,11 +3,26 @@ the CronJob; kubeconfig fallback for local dev."""
 
 from __future__ import annotations
 
+import socket
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from kubernetes import client, config
 
 from .status import JobState
+
+
+def lease_is_free(spec: Any, holder: str, now: datetime) -> bool:
+    """A Lease is free when nobody holds it, we hold it, or the holder's
+    ``renewTime + leaseDurationSeconds`` has passed (a tick that died without
+    releasing must not wedge the CronJob forever)."""
+    if spec is None or not spec.holder_identity or spec.holder_identity == holder:
+        return True
+    renewed = spec.renew_time or spec.acquire_time
+    if renewed is None:
+        return True
+    ttl = timedelta(seconds=spec.lease_duration_seconds or 0)
+    return renewed + ttl <= now
 
 
 def _exit_code(pod: Any) -> int | None:
@@ -32,6 +47,53 @@ class Cluster:
         self.ns = namespace
         self.batch = client.BatchV1Api()
         self.core = client.CoreV1Api()
+        self.coord = client.CoordinationV1Api()
+        self.holder = socket.gethostname()
+
+    def acquire_lease(self, name: str, duration_seconds: int) -> bool:
+        """Take the per-tick Lease (audit O8). Needs RBAC on
+        ``coordination.k8s.io/leases`` (get, create, update)."""
+        now = datetime.now(timezone.utc)
+        spec = client.V1LeaseSpec(
+            holder_identity=self.holder,
+            lease_duration_seconds=duration_seconds,
+            acquire_time=now,
+            renew_time=now,
+        )
+        try:
+            lease = self.coord.read_namespaced_lease(name, self.ns)
+        except client.ApiException as e:
+            if e.status != 404:
+                raise
+            body = client.V1Lease(metadata=client.V1ObjectMeta(name=name), spec=spec)
+            try:
+                self.coord.create_namespaced_lease(self.ns, body)
+            except client.ApiException as e2:
+                if e2.status == 409:  # lost the race
+                    return False
+                raise
+            return True
+        if not lease_is_free(lease.spec, self.holder, now):
+            return False
+        lease.spec = spec
+        try:
+            self.coord.replace_namespaced_lease(name, self.ns, lease)
+        except client.ApiException as e:
+            if e.status == 409:  # resourceVersion moved: someone else took it
+                return False
+            raise
+        return True
+
+    def release_lease(self, name: str) -> None:
+        try:
+            lease = self.coord.read_namespaced_lease(name, self.ns)
+            if lease.spec is None or lease.spec.holder_identity != self.holder:
+                return
+            lease.spec.holder_identity = None
+            lease.spec.renew_time = None
+            self.coord.replace_namespaced_lease(name, self.ns, lease)
+        except client.ApiException:
+            return  # best effort: the duration expires it anyway
 
     def jobs(self) -> dict[str, JobState]:
         """Snapshot of the reconciler's volume Jobs in this namespace, by name.
@@ -92,6 +154,11 @@ class Cluster:
                 succeeded=succeeded,
                 exit_code=exit_code,
                 reason=failed_cond.reason if failed_cond is not None else None,
+                deletion_timestamp=(
+                    j.metadata.deletion_timestamp.isoformat()
+                    if j.metadata.deletion_timestamp
+                    else None
+                ),
             )
         return out
 

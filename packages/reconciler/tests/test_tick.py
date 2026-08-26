@@ -64,10 +64,19 @@ class _AllWarmed(dict):
 
 
 class FakeCluster:
-    def __init__(self, jobs=None, warmups=None):
+    def __init__(self, jobs=None, warmups=None, lease_free=True):
         self._jobs = jobs or {}
         self._warmups = warmups
+        self._lease_free = lease_free
         self.created, self.deleted, self.configmaps = [], [], {}
+        self.leases = []
+
+    def acquire_lease(self, name, duration_seconds):
+        self.leases.append(("acquire", name))
+        return self._lease_free
+
+    def release_lease(self, name):
+        self.leases.append(("release", name))
 
     def jobs(self):
         return dict(self._jobs)
@@ -918,6 +927,122 @@ def test_v1_attempt_ints_are_migrated_on_read(tmp_path):
         "n": 2,
         "terminal": None,
     }
+
+
+def test_retry_bump_is_persisted_before_the_job_is_deleted(tmp_path):
+    """R3: the bump must survive an abort between bump and delete — the tick
+    deadline, an S3 hiccup, a kube error — otherwise the attempt is free and
+    the cap is never reached."""
+
+    class ExplodingCluster(FakeCluster):
+        def delete_job(self, name):
+            raise RuntimeError("kube-apiserver 503")
+
+    bucket = FakeBucket()
+    cluster = ExplodingCluster(jobs=_failed_job(exit_code=1))
+    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    assert bucket.written["status/attempts.json"]["demo-v1/R0000001"]["n"] == 1
+    row = _rows(doc)["R0000001"]
+    assert row["status"] == "retry"
+    assert row["error"] is not None and "503" in row["error"]
+    # one volume's failure never takes the tick down: the others still run
+    assert sorted(_created_volumes(cluster)) == ["loose", "r0000002"]
+    assert bucket.written["status/status.json"] == doc
+
+
+def test_deleting_job_is_neither_bumped_nor_resubmitted(tmp_path):
+    """R2: a Foreground delete can outlive the tick (pod stuck Terminating);
+    the Job is still listed Failed, so without this it is charged again on
+    every tick until the cap with no re-run in between."""
+    jobs = {
+        job_name("demo-v1", "R0000001"): JobState(
+            active=False,
+            failed=True,
+            exit_code=1,
+            deletion_timestamp="2026-07-29T08:59:00Z",
+        )
+    }
+    stored = {"status/attempts.json": {"demo-v1/R0000001": 1}}
+    bucket, cluster = FakeBucket(stored=stored), FakeCluster(jobs=jobs)
+    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    row = _rows(doc)["R0000001"]
+    assert row["status"] == "deleting"
+    assert row["attempts"] == 1
+    assert bucket.written["status/attempts.json"]["demo-v1/R0000001"]["n"] == 1
+    assert cluster.deleted == []
+    assert "r0000001" not in _created_volumes(cluster)
+
+
+def test_deleting_job_still_occupies_a_window_slot(tmp_path):
+    """Its pod may still hold the GPU while Terminating."""
+    jobs = {
+        job_name("demo-v1", "R0000001"): JobState(
+            active=False, failed=True, deletion_timestamp="2026-07-29T08:59:00Z"
+        )
+    }
+    cfg = ReconcilerConfig(public_results_base="http://pub/htr-results", window=1)
+    cluster = FakeCluster(jobs=jobs)
+    tick(_repo(tmp_path), FakeBucket(), cluster, cfg, NOW)
+    assert cluster.created == []
+
+
+def test_per_volume_error_is_contained(tmp_path):
+    class FlakyBucket(FakeBucket):
+        def count_pages(self, pipeline_id, volume_id):
+            if volume_id == "R0000001":
+                raise RuntimeError("S3 500")
+            return super().count_pages(pipeline_id, volume_id)
+
+    jobs = {job_name("demo-v1", "R0000001"): JobState(active=True, failed=False)}
+    bucket = FlakyBucket()
+    doc = tick(_repo(tmp_path), bucket, FakeCluster(jobs=jobs), CFG, NOW)
+    rows = _rows(doc)
+    assert rows["R0000001"]["status"] == "running"
+    assert "S3 500" in rows["R0000001"]["error"]
+    assert rows["R0000002"]["error"] is None
+    assert bucket.written["status/status.json"] == doc
+
+
+def test_duplicate_submission_is_contained(tmp_path):
+    """The real adapter swallows 409; a fake that raises on a duplicate name
+    proves the tick contains a create failure per submission."""
+
+    class StrictCluster(FakeCluster):
+        def create_job(self, job):
+            if any(
+                j["metadata"]["name"] == job["metadata"]["name"] for j in self.created
+            ):
+                raise RuntimeError("409 AlreadyExists")
+            super().create_job(job)
+
+    repo = _repo(tmp_path)
+    (repo / "campaigns" / "twin.yaml").write_text(
+        "pipeline: demo-v1\nvolumes: [R0000002]\n"
+    )
+    cluster = StrictCluster()
+    doc = tick(repo, FakeBucket(), cluster, CFG, NOW)
+    assert _created_volumes(cluster).count("r0000002") == 1
+    assert any("409" in w for w in doc["warnings"])
+
+
+def test_tick_is_skipped_while_the_lease_is_held(tmp_path, caplog):
+    """O8: a manual ``kubectl create job --from`` bypasses concurrencyPolicy;
+    two ticks in flight would double-submit and double-charge attempts."""
+    bucket, cluster = FakeBucket(), FakeCluster(lease_free=False)
+    with caplog.at_level("WARNING"):
+        doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    assert doc["skipped"] == "lease held"
+    assert cluster.created == [] and bucket.written == {}
+    assert any("lease" in r.message.lower() for r in caplog.records)
+
+
+def test_tick_takes_and_releases_the_named_lease(tmp_path):
+    cfg = ReconcilerConfig(
+        public_results_base="http://pub/htr-results", lease_name="htr-rec-prod"
+    )
+    cluster = FakeCluster()
+    tick(_repo(tmp_path), FakeBucket(), cluster, cfg, NOW)
+    assert cluster.leases == [("acquire", "htr-rec-prod"), ("release", "htr-rec-prod")]
 
 
 def test_healthy_rows_carry_terminal_null(tmp_path):

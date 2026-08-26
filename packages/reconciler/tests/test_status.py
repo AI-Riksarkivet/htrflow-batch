@@ -76,3 +76,18 @@ def test_exit_code_none_falls_back_to_job_failed_reason():
     assert derive(V, "p", set(), transient, {}, 3) == "retry"
     unknown = {n: JobState(active=False, failed=True)}
     assert derive(V, "p", set(), unknown, {}, 3) == "retry"
+
+
+def test_deleting_job_is_deleting_whatever_else_it_says():
+    """R2: a Job under Foreground deletion is still listed Failed until its
+    pod is gone; it must not be charged or resubmitted meanwhile."""
+    n = job_name("p", "R1")
+    jobs = {
+        n: JobState(
+            active=False,
+            failed=True,
+            exit_code=1,
+            deletion_timestamp="2026-08-26T10:00:00Z",
+        )
+    }
+    assert derive(V, "p", set(), jobs, {}, 3) == "deleting"
