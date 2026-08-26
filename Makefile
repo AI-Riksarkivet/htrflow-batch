@@ -11,7 +11,7 @@
 -include .env.example
 -include .env
 export HTR_RELEASE HTR_NAMESPACE HTR_REGISTRY HTR_REGISTRY_NODEPORT HTR_S3_ENDPOINT HTR_S3_NODEPORT \
-       HTR_BUCKET HTR_VIEWER_NODEPORT HTR_DATA_PVC HTR_DEV_S3_ACCESS_KEY HTR_DEV_S3_SECRET_KEY
+       HTR_BUCKET HTR_VIEWER_NODEPORT HTR_DATA_PVC HTR_DEV_S3_ACCESS_KEY HTR_DEV_S3_SECRET_KEY HTRFLOW_DIR
 
 # On RA hosts dagger containers need the corp CA; harmless elsewhere if the file exists.
 CA_BUNDLE ?= /etc/ssl/certs/ca-certificates.crt
@@ -120,9 +120,21 @@ WRAPPER_DOCKERFILE ?= .docker/htrflow-batch.dockerfile
 endif
 WRAPPER_IMAGE := $(HTR_REGISTRY)/htrflow-batch:$(IMAGE_TAG)
 RECONCILER_IMAGE := $(HTR_REGISTRY)/htrflow-reconciler:$(IMAGE_TAG)
+# Provenance label (audit W8): the arm64 recipe builds FROM a locally built
+# htrflow base, so the base's `git describe` from the HTRFLOW_DIR checkout
+# (.env) is stamped as se.riksarkivet.htrflow.base.revision. The amd64
+# recipe pulls the tagged upstream image and keeps the dockerfile default.
+# Lazily expanded: git only runs when a wrapper build actually happens.
+HTRFLOW_DIR ?= $(HOME)/htrflow
+ifeq ($(WRAPPER_DOCKERFILE),.docker/htrflow-batch-gpu-arm64.dockerfile)
+HTRFLOW_BASE_REVISION = $(shell git -C $(HTRFLOW_DIR) describe --tags --always --dirty 2>/dev/null || echo unknown)
+WRAPPER_BUILD_ARGS = --build-arg HTRFLOW_BASE_REVISION=$(HTRFLOW_BASE_REVISION)
+else
+WRAPPER_BUILD_ARGS =
+endif
 
 build-wrapper:
-	docker build -f $(WRAPPER_DOCKERFILE) -t $(WRAPPER_IMAGE) .
+	docker build -f $(WRAPPER_DOCKERFILE) $(WRAPPER_BUILD_ARGS) -t $(WRAPPER_IMAGE) .
 
 build-reconciler:
 	docker build -f .docker/htrflow-reconciler.dockerfile -t $(RECONCILER_IMAGE) .
@@ -136,7 +148,7 @@ poc-push: build-wrapper build-reconciler
 # Explicit native-arm64 wrapper build regardless of the host architecture
 # (buildx with an arm64 builder, or the GB10 node itself).
 poc-push-arm64:
-	$(MAKE) poc-push WRAPPER_DOCKERFILE=.docker/htrflow-batch-gpu-arm64.dockerfile
+	$(MAKE) poc-push WRAPPER_DOCKERFILE=.docker/htrflow-batch-gpu-arm64.dockerfile HTRFLOW_DIR=$(HTRFLOW_DIR)
 
 # Vulnerability scan of the reconciler image (the wrapper goes through
 # `make scan` / dagger). Trivy pinned; HIGH/CRITICAL with a fix fail the target.

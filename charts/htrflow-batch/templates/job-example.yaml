@@ -18,7 +18,9 @@ spec:
   suspend: true
   # backoffLimit 0 + podFailurePolicy (contract, plan 2026-08-26): a node
   # drain/preemption is not a failure and does not consume the one attempt;
-  # the wrapper's exit 13 (permanent) fails the Job outright.
+  # the wrapper's exit 13 (permanent) fails the Job outright. Exit 143
+  # (SIGTERM on deadline/eviction) matches neither rule and stays a plain
+  # transient failure — keep exactly these two rules.
   backoffLimit: 0
   podFailurePolicy:
     rules:
@@ -69,6 +71,10 @@ spec:
               value: /data/hf
             - name: HF_HUB_OFFLINE
               value: "1"
+            - name: MANIFEST_MAX_BYTES
+              value: {{ .Values.job.manifestMaxBytes | int64 | quote }}
+            - name: FETCH_MAX_BYTES
+              value: {{ .Values.job.fetchMaxBytes | int64 | quote }}
             - name: WORKDIR_PATH
               value: /work
             - name: HOME
