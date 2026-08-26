@@ -68,7 +68,11 @@ class Cluster:
         jobs = self.batch.list_namespaced_job(self.ns, label_selector=label_selector)
         for j in jobs.items:
             conditions = j.status.conditions or []
-            failed = any(c.type == "Failed" and c.status == "True" for c in conditions)
+            failed_cond = next(
+                (c for c in conditions if c.type == "Failed" and c.status == "True"),
+                None,
+            )
+            failed = failed_cond is not None
             succeeded = any(
                 c.type == "Complete" and c.status == "True" for c in conditions
             )
@@ -87,6 +91,7 @@ class Cluster:
                 failed=failed,
                 succeeded=succeeded,
                 exit_code=exit_code,
+                reason=failed_cond.reason if failed_cond is not None else None,
             )
         return out
 

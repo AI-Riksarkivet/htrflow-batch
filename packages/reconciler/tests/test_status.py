@@ -1,3 +1,4 @@
+from htrflow_reconciler.attempts import Attempt
 from htrflow_reconciler.models import Volume
 from htrflow_reconciler.status import JobState, derive, job_name
 
@@ -36,7 +37,7 @@ def test_running_and_queued():
 def test_failed_transient_below_cap_is_retry():
     n = job_name("p", "R1")
     jobs = {n: _js(failed=True, exit_code=1)}
-    assert derive(V, "p", set(), jobs, {"R1": 1}, 3) == "retry"
+    assert derive(V, "p", set(), jobs, {"R1": Attempt(n=1)}, 3) == "retry"
 
 
 def test_failed_permanent_is_needs_attention():
@@ -48,8 +49,30 @@ def test_failed_permanent_is_needs_attention():
 def test_failed_at_cap_is_needs_attention():
     n = job_name("p", "R1")
     jobs = {n: _js(failed=True, exit_code=1)}
-    assert derive(V, "p", set(), jobs, {"R1": 3}, 3) == "needs-attention"
+    assert derive(V, "p", set(), jobs, {"R1": Attempt(n=3)}, 3) == "needs-attention"
 
 
 def test_no_job_no_result_is_pending():
     assert derive(V, "p", set(), {}, {}, 3) == "pending"
+
+
+def test_terminal_record_is_sticky_without_a_job():
+    """R1: the Job is TTL-reaped after 24h; the verdict must outlive it."""
+    att = {"R1": Attempt(n=0, terminal="exit-13")}
+    assert derive(V, "p", set(), {}, att, 3) == "needs-attention"
+    n = job_name("p", "R1")
+    assert derive(V, "p", set(), {n: _js(active=True)}, att, 3) == "needs-attention"
+    # done still wins: a re-run under the same id that finished is finished
+    assert derive(V, "p", {"R1"}, {}, att, 3) == "done"
+
+
+def test_exit_code_none_falls_back_to_job_failed_reason():
+    """R6: the pod may be gone; the Job's Failed condition reason survives.
+    ``PodFailurePolicy`` is what the FailJob-on-13 rule produces."""
+    n = job_name("p", "R1")
+    permanent = {n: JobState(active=False, failed=True, reason="PodFailurePolicy")}
+    assert derive(V, "p", set(), permanent, {}, 3) == "needs-attention"
+    transient = {n: JobState(active=False, failed=True, reason="BackoffLimitExceeded")}
+    assert derive(V, "p", set(), transient, {}, 3) == "retry"
+    unknown = {n: JobState(active=False, failed=True)}
+    assert derive(V, "p", set(), unknown, {}, 3) == "retry"

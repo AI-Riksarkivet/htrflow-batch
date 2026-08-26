@@ -9,12 +9,13 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from . import s3 as keys
+from .attempts import Attempt, dump_attempts, load_attempts
 from .guards import check_drift
 from .jobspec import ReconcilerConfig, build_job, build_warmup_job, warmup_job_name
 from .models import Campaign, PipelineSpec, Volume
 from .parse import PipelineError, parse_campaign, parse_pipeline, step_summaries
 from .plan import plan_submissions
-from .status import derive, job_name
+from .status import derive, is_permanent, job_name
 from .synthetic import build_manifest, classify_manifest
 
 TICK_SECONDS = 300
@@ -257,7 +258,7 @@ def tick(
 ) -> dict:
     campaigns, pipelines, warnings = _load_repo(Path(campaigns_dir))
     jobs = cluster.jobs()
-    attempts: dict = bucket.read_json(keys.attempts_key()) or {}
+    attempts = load_attempts(bucket.read_json(keys.attempts_key()))
     validation: dict = bucket.read_json(keys.validation_key()) or {}
     blocked: set[str] = set()
 
@@ -386,13 +387,14 @@ def tick(
         # and keep the two in step as counters are bumped below.
         prefix = f"{pid}/"
         budgets = {
-            k[len(prefix) :]: n for k, n in attempts.items() if k.startswith(prefix)
+            k[len(prefix) :]: rec for k, rec in attempts.items() if k.startswith(prefix)
         }
         lane: list[tuple[Volume, str]] = []
         for v in camp.volumes:
             st = derive(v, pid, done, jobs, budgets, cfg.attempt_cap)
             public_src, job_src = _source_manifest_url(v, pid, bucket, cfg)
             akey = _attempt_key(pid, v.id)
+            record = attempts.get(akey, Attempt())
             # The thumbnail is read from the cache unconditionally — a done
             # volume still needs its picture, and a cache hit costs nothing. Only
             # the FETCH and the status override are gated.
@@ -416,18 +418,33 @@ def tick(
                 name = job_name(pid, v.id)
                 _preserve_failure_log(bucket, cluster, pid, v.id, retire_run_log=True)
                 cluster.delete_job(name)
-                attempts[akey] = attempts.get(akey, 0) + 1
-                budgets[v.id] = attempts[akey]
+                record = record.model_copy(update={"n": record.n + 1})
+                attempts[akey] = budgets[v.id] = record
                 lane.append((v, job_src))
             elif st == "pending" and pid not in blocked:
                 lane.append((v, job_src))
-            elif st == "needs-attention" and job_name(pid, v.id) in jobs:
-                # The retry path uploads logs before deleting the Job; an
-                # exit-13 (or capped) volume otherwise reaches its terminal
-                # state with no uploaded evidence. Idempotent overwrite; the
-                # run-log key stays so later ticks keep copying the complete
-                # log rather than falling back to the kube tail.
-                _preserve_failure_log(bucket, cluster, pid, v.id, retire_run_log=False)
+            elif st == "needs-attention":
+                job = jobs.get(job_name(pid, v.id))
+                if job is not None:
+                    # The retry path uploads logs before deleting the Job; an
+                    # exit-13 (or capped) volume otherwise reaches its terminal
+                    # state with no uploaded evidence. Idempotent overwrite;
+                    # the run-log key stays so later ticks keep copying the
+                    # complete log rather than falling back to the kube tail.
+                    _preserve_failure_log(
+                        bucket, cluster, pid, v.id, retire_run_log=False
+                    )
+                if record.terminal is None:
+                    # First sighting of the verdict: persist it NOW (R1). The
+                    # Job that carries the evidence is TTL-reaped within 24h;
+                    # without the record the volume would read pending again
+                    # and burn a GPU run every day forever.
+                    verdict = (
+                        "exit-13" if job is not None and is_permanent(job) else "capped"
+                    )
+                    record = record.model_copy(update={"terminal": verdict})
+                    attempts[akey] = budgets[v.id] = record
+                    bucket.write_json(keys.attempts_key(), dump_attempts(attempts))
             if st == "done":
                 entry["totals"]["done"] += 1
             pages_done = (
@@ -461,7 +478,8 @@ def tick(
                 {
                     "id": v.id,
                     "status": st,
-                    "attempts": attempts.get(akey, 0),
+                    "attempts": record.n,
+                    "terminal": record.terminal,
                     "updated": done.get(v.id),
                     "failure_log": (
                         f"{cfg.public_results_base.rstrip('/')}/"
@@ -508,6 +526,6 @@ def tick(
         cluster.create_job(build_job(spec, volume, srcs[(camp_name, volume.id)], cfg))
 
     bucket.write_json(keys.validation_key(), validation)
-    bucket.write_json(keys.attempts_key(), attempts)
+    bucket.write_json(keys.attempts_key(), dump_attempts(attempts))
     bucket.write_json(keys.status_key(), doc)
     return doc
