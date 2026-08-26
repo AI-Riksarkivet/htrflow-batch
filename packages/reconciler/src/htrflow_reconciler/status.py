@@ -36,6 +36,19 @@ class JobState(BaseModel):
     #: ``DeadlineExceeded``, ``BackoffLimitExceeded``). The pod may already be
     #: gone when the reconciler looks, so this is the verdict's fallback.
     reason: str | None = None
+    #: ``metadata.deletionTimestamp``: a Foreground delete in progress. The
+    #: Job stays listed (and Failed) until its pod is gone.
+    deletion_timestamp: str | None = None
+
+    @property
+    def deleting(self) -> bool:
+        return self.deletion_timestamp is not None
+
+    @property
+    def in_flight(self) -> bool:
+        """Occupies a submission-window slot: pending/running, or Terminating
+        (its pod may still hold the GPU). Terminal Jobs do not."""
+        return self.deleting or not (self.failed or self.succeeded)
 
 
 #: Failed-condition reasons that mean the wrapper itself said "permanent":
@@ -91,6 +104,8 @@ def derive(
     job = jobs.get(job_name(pipeline_id, volume.id))
     if job is None:
         return "pending"
+    if job.deleting:
+        return "deleting"
     if job.failed:
         if is_permanent(job) or record.n >= attempt_cap:
             return "needs-attention"

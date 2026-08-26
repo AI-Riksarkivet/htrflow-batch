@@ -3,6 +3,7 @@ adapters injected, no I/O of its own beyond them."""
 
 from __future__ import annotations
 
+import logging
 import posixpath
 from pathlib import Path
 from typing import Any
@@ -15,10 +16,10 @@ from .jobspec import ReconcilerConfig, build_job, build_warmup_job, warmup_job_n
 from .models import Campaign, PipelineSpec, Volume
 from .parse import PipelineError, parse_campaign, parse_pipeline, step_summaries
 from .plan import plan_submissions
-from .status import derive, is_permanent, job_name
+from .status import JobState, derive, is_permanent, job_name
 from .synthetic import build_manifest, classify_manifest
 
-TICK_SECONDS = 300
+log = logging.getLogger(__name__)
 
 #: Verdicts that keep a volume out of the submission lane (spec §4.4).
 _BLOCKING_VERDICTS = ("unreachable", "unsupported")
@@ -248,120 +249,133 @@ def _validate(url: str, cache: dict, fetch_json) -> dict:
     return verdict
 
 
-def tick(
-    campaigns_dir: Path,
-    bucket,
-    cluster,
-    cfg: ReconcilerConfig,
-    now_iso: str,
-    fetch_json=None,
-) -> dict:
-    campaigns, pipelines, warnings = _load_repo(Path(campaigns_dir))
-    jobs = cluster.jobs()
-    attempts = load_attempts(bucket.read_json(keys.attempts_key()))
-    validation: dict = bucket.read_json(keys.validation_key()) or {}
-    blocked: set[str] = set()
+def _describe(e: BaseException) -> str:
+    return f"{type(e).__name__}: {e}"
 
-    # done_volumes is a paginated LIST + a HEAD per volume: probe each pipeline
-    # once per tick, not once per campaign that uses it.
-    done_cache: dict[str, dict[str, str]] = {}
 
-    def done_for(pipeline_id: str) -> dict[str, str]:
-        if pipeline_id not in done_cache:
-            done_cache[pipeline_id] = bucket.done_volumes(pipeline_id)
-        return done_cache[pipeline_id]
+def _public(cfg: ReconcilerConfig, key: str) -> str:
+    return f"{cfg.public_results_base.rstrip('/')}/{key}"
 
-    for pid, spec in pipelines.items():
+
+class _Pass:
+    """State of one tick. Every S3/kube effect is contained per volume (a bad
+    response marks that row ``error`` and the tick goes on) and the retry
+    budget is persisted the moment it changes (audit R3)."""
+
+    def __init__(
+        self,
+        campaigns_dir: Path,
+        bucket,
+        cluster,
+        cfg: ReconcilerConfig,
+        now_iso: str,
+        fetch_json,
+    ) -> None:
+        self.bucket = bucket
+        self.cluster = cluster
+        self.cfg = cfg
+        self.now_iso = now_iso
+        self.fetch_json = fetch_json
+        self.campaigns, self.pipelines, self.warnings = _load_repo(Path(campaigns_dir))
+        self.jobs: dict[str, JobState] = cluster.jobs()
+        self.attempts = load_attempts(bucket.read_json(keys.attempts_key()))
+        self.validation: dict = bucket.read_json(keys.validation_key()) or {}
+        self.blocked: set[str] = set()
+        self.submitted = 0
+        self.retried = 0
+        # done_volumes is a paginated LIST + a HEAD per volume: probe each
+        # pipeline once per tick, not once per campaign that uses it.
+        self._done_cache: dict[str, dict[str, str]] = {}
+
+    def done_for(self, pipeline_id: str) -> dict[str, str]:
+        if pipeline_id not in self._done_cache:
+            self._done_cache[pipeline_id] = self.bucket.done_volumes(pipeline_id)
+        return self._done_cache[pipeline_id]
+
+    def save_attempts(self) -> None:
+        self.bucket.write_json(keys.attempts_key(), dump_attempts(self.attempts))
+
+    # -- pipelines -----------------------------------------------------------
+
+    def check_pipelines(self) -> None:
+        for pid, spec in self.pipelines.items():
+            try:
+                self._check_pipeline(pid, spec)
+            except Exception as e:  # noqa: BLE001 — one pipeline, not the tick
+                self.warnings.append(f"pipeline {pid}: {_describe(e)}")
+                self.blocked.add(pid)
+
+    def _check_pipeline(self, pid: str, spec: PipelineSpec) -> None:
         published = None
-        done_probe = done_for(pid)
+        done_probe = self.done_for(pid)
         if done_probe:
-            published = bucket.read_json(keys.manifest_key(pid, sorted(done_probe)[0]))
+            published = self.bucket.read_json(
+                keys.manifest_key(pid, sorted(done_probe)[0])
+            )
         # Drift is checked BEFORE the ConfigMap is applied: applying first would
         # overwrite the very evidence the check reads, silently laundering a
         # recipe change into a pipeline id that already has published results.
-        ok, msg = check_drift(spec, cluster.get_configmap_steps(pid), published)
+        ok, msg = check_drift(spec, self.cluster.get_configmap_steps(pid), published)
         if msg:
-            warnings.append(msg)
+            self.warnings.append(msg)
         if not ok:
-            blocked.add(pid)
+            self.blocked.add(pid)
         else:
-            cluster.ensure_configmap(pid, spec.steps_yaml)
+            self.cluster.ensure_configmap(pid, spec.steps_yaml)
 
-    # Warm-up gate: batch Jobs run offline on a read-only model cache, so a
-    # pipeline submits nothing until its warm-up Job — the one writer of that
-    # cache — has completed. A failed warm-up is logged, deleted and recreated
-    # next tick: HF Hub outages heal themselves, and the retry costs nothing.
-    # Lazy on purpose: only pipelines with volumes still to run are warmed —
-    # a finished pipeline has nothing to gate, and one pinned to an image
-    # that predates the warm-up entrypoint would otherwise fail every tick.
-    in_use = {
-        c.pipeline_id
-        for c in campaigns
-        if not c.error
-        and c.pipeline_id in pipelines
-        and any(v.id not in done_for(c.pipeline_id) for v in c.volumes)
-    }
-    warmups = cluster.warmups()
-    for pid, spec in pipelines.items():
-        if pid in blocked or pid not in in_use:
-            continue
-        state = warmups.get(pid.lower())
-        if state is not None and state.succeeded:
-            continue
-        blocked.add(pid)
-        name = warmup_job_name(pid)
+    def warm_pipelines(self) -> None:
+        """Warm-up gate: batch Jobs run offline on a read-only model cache, so
+        a pipeline submits nothing until its warm-up Job — the one writer of
+        that cache — has completed. A failed warm-up is logged, deleted and
+        recreated next tick: HF Hub outages heal themselves, and the retry
+        costs nothing. Lazy on purpose: only pipelines with volumes still to
+        run are warmed — a finished pipeline has nothing to gate, and one
+        pinned to an image that predates the warm-up entrypoint would
+        otherwise fail every tick."""
+        in_use = {
+            c.pipeline_id
+            for c in self.campaigns
+            if not c.error
+            and c.pipeline_id in self.pipelines
+            and any(v.id not in self.done_for(c.pipeline_id) for v in c.volumes)
+        }
+        warmups = self.cluster.warmups()
+        for pid, spec in self.pipelines.items():
+            if pid in self.blocked or pid not in in_use:
+                continue
+            state = warmups.get(pid.lower())
+            if state is not None and state.succeeded:
+                continue
+            self.blocked.add(pid)
+            name = warmup_job_name(pid)
+            try:
+                self._warm(pid, spec, state, name)
+            except Exception as e:  # noqa: BLE001
+                self.warnings.append(f"pipeline {pid}: warm-up: {_describe(e)}")
+
+    def _warm(self, pid: str, spec: PipelineSpec, state: JobState | None, name: str):
         if state is None:
-            cluster.create_job(build_warmup_job(spec, cfg))
-            warnings.append(f"pipeline {pid}: warming model cache ({name})")
+            self.cluster.create_job(build_warmup_job(spec, self.cfg))
+            self.warnings.append(f"pipeline {pid}: warming model cache ({name})")
         elif state.failed:
-            bucket.put_text(keys.warmup_log_key(pid), cluster.job_logs(name))
-            cluster.delete_job(name)
-            warnings.append(
+            self.bucket.put_text(keys.warmup_log_key(pid), self.cluster.job_logs(name))
+            self.cluster.delete_job(name)
+            self.warnings.append(
                 f"pipeline {pid}: model warm-up failed (exit {state.exit_code}); "
                 f"log at {keys.warmup_log_key(pid)}, retrying next tick"
             )
         else:
-            warnings.append(f"pipeline {pid}: warming model cache ({name})")
+            self.warnings.append(f"pipeline {pid}: warming model cache ({name})")
 
-    doc: dict[str, Any] = {
-        "generated_at": now_iso,
-        "tick_seconds": TICK_SECONDS,
-        "campaigns_repo_url": cfg.campaigns_repo_web_url or cfg.campaigns_repo_url,
-        "warnings": warnings,
-        "campaigns": [],
-    }
+    # -- campaigns -----------------------------------------------------------
 
-    # Orphans are a property of the PIPELINE prefix, not of one campaign: two
-    # campaigns on the same pipeline share the result namespace, so a volume
-    # claimed by either is not an orphan. Reported once, on the first campaign
-    # using that pipeline.
-    claimed: dict[str, set[str]] = {}
-    for camp in campaigns:
-        if camp.error or camp.pipeline_id not in pipelines:
-            continue
-        claimed.setdefault(camp.pipeline_id, set()).update(v.id for v in camp.volumes)
-    orphans_reported: set[str] = set()
-
-    pending: dict[str, list[tuple[Volume, str]]] = {}
-    # Only genuinely pending/running Jobs occupy a window slot. Terminal Jobs —
-    # failed OR succeeded — are done with the cluster; counting the succeeded
-    # ones leaks the window shut as a campaign completes (their TTL is 24h).
-    in_flight = sum(1 for j in jobs.values() if not (j.failed or j.succeeded))
-
-    for camp in campaigns:
-        entry: dict[str, Any] = {
+    def campaign_entry(self, camp: Campaign) -> dict[str, Any]:
+        spec = self.pipelines.get(camp.pipeline_id)
+        return {
             "name": camp.name,
             "pipeline": camp.pipeline_id or None,
-            "pipeline_steps": (
-                step_summaries(pipelines[camp.pipeline_id].steps_yaml)
-                if camp.pipeline_id in pipelines
-                else None
-            ),
-            "pipeline_yaml": (
-                pipelines[camp.pipeline_id].steps_yaml
-                if camp.pipeline_id in pipelines
-                else None
-            ),
+            "pipeline_steps": step_summaries(spec.steps_yaml) if spec else None,
+            "pipeline_yaml": spec.steps_yaml if spec else None,
             "error": camp.error,
             "totals": {
                 "done": 0,
@@ -372,59 +386,93 @@ def tick(
             "volumes": [],
             "orphans": [],
         }
-        doc["campaigns"].append(entry)
-        if camp.error or camp.pipeline_id not in pipelines:
-            if not camp.error:
-                entry["error"] = f"unknown pipeline: {camp.pipeline_id}"
-            continue
-        pid = camp.pipeline_id
-        done = done_for(pid)
-        if pid not in orphans_reported:
-            entry["orphans"] = sorted(done.keys() - claimed[pid])
-            orphans_reported.add(pid)
-        # ``derive`` reads attempts by volume id; the persisted counter is keyed
-        # by pipeline too, so hand derive a view of just this pipeline's budgets
-        # and keep the two in step as counters are bumped below.
-        prefix = f"{pid}/"
-        budgets = {
-            k[len(prefix) :]: rec for k, rec in attempts.items() if k.startswith(prefix)
+
+    def volume_row(
+        self,
+        pid: str,
+        v: Volume,
+        done: dict[str, str],
+        budgets: dict[str, Attempt],
+    ) -> tuple[dict[str, Any], str | None]:
+        """(status row, job manifest URL if the volume should be submitted).
+
+        The row is built incrementally so a failing effect leaves the fields
+        already known in place and only marks the row ``error``.
+        """
+        cfg, bucket, cluster = self.cfg, self.bucket, self.cluster
+        st = derive(v, pid, done, self.jobs, budgets, cfg.attempt_cap)
+        akey = _attempt_key(pid, v.id)
+        record = self.attempts.get(akey, Attempt())
+        row: dict[str, Any] = {
+            "id": v.id,
+            "status": st,
+            "attempts": record.n,
+            "terminal": record.terminal,
+            "updated": done.get(v.id),
+            "failure_log": None,
+            "run_log": None,
+            "pages_done": None,
+            "pages_total": len(v.images) if v.images else None,
+            "error": None,
+            "viewer_manifest": None,
+            "run_manifest": None,
+            "source_manifest": None,
+            "thumbnail": None,
         }
-        lane: list[tuple[Volume, str]] = []
-        for v in camp.volumes:
-            st = derive(v, pid, done, jobs, budgets, cfg.attempt_cap)
+        submit: str | None = None
+        try:
             public_src, job_src = _source_manifest_url(v, pid, bucket, cfg)
-            akey = _attempt_key(pid, v.id)
-            record = attempts.get(akey, Attempt())
+            row["source_manifest"] = public_src
             # The thumbnail is read from the cache unconditionally — a done
-            # volume still needs its picture, and a cache hit costs nothing. Only
-            # the FETCH and the status override are gated.
-            cached = validation.get(v.manifest_url) if v.manifest_url else None
+            # volume still needs its picture, and a cache hit costs nothing.
+            # Only the FETCH and the status override are gated.
+            cached = self.validation.get(v.manifest_url) if v.manifest_url else None
             thumb = cached.get("thumbnail") if cached else None
-            if v.manifest_url and fetch_json is not None and st != "done":
-                verdict = _validate(v.manifest_url, validation, fetch_json)
+            if v.manifest_url and self.fetch_json is not None and st != "done":
+                verdict = _validate(v.manifest_url, self.validation, self.fetch_json)
                 thumb = verdict["thumbnail"]
                 if verdict["format"] in _BLOCKING_VERDICTS:
-                    st = verdict["format"]  # no job burned (spec §4.4)
+                    st = row["status"] = verdict["format"]  # no job burned
             if not v.manifest_url:
                 # Synthetic manifests carry no IIIF service, so the picture is
-                # the first image itself — the same fallback _thumbnail applies
-                # to service-less external manifests.
+                # the first image itself — the same fallback _thumbnail
+                # applies to service-less external manifests.
                 thumb = v.images[0] if v.images else None
-            thumb = _browser_url(thumb, cfg)
+            row["thumbnail"] = _browser_url(thumb, cfg)
+            if st in ("retry", "needs-attention"):
+                row["failure_log"] = _public(cfg, keys.failure_log_key(pid, v.id))
             # Cleanup and the attempt bump are gated on the pipeline too: a
             # drift-blocked pipeline submits nothing, so it must not spend the
             # volume's retry budget while the operator sorts the drift out.
-            if st == "retry" and pid not in blocked:
-                name = job_name(pid, v.id)
-                _preserve_failure_log(bucket, cluster, pid, v.id, retire_run_log=True)
-                cluster.delete_job(name)
+            if st == "retry" and pid not in self.blocked:
+                # Bump and PERSIST before the destructive delete (R3): an
+                # abort in between must not make the attempt free. The
+                # volume re-enters the lane next tick, once the Job is gone —
+                # creating the same name in the same tick as a Foreground
+                # delete only yields a 409 and a wasted window slot (R2).
                 record = record.model_copy(update={"n": record.n + 1})
-                attempts[akey] = budgets[v.id] = record
-                lane.append((v, job_src))
-            elif st == "pending" and pid not in blocked:
-                lane.append((v, job_src))
+                self.attempts[akey] = budgets[v.id] = record
+                row["attempts"] = record.n
+                self.save_attempts()
+                self.retried += 1
+                _preserve_failure_log(bucket, cluster, pid, v.id, retire_run_log=True)
+                cluster.delete_job(job_name(pid, v.id))
+            elif st == "pending" and pid not in self.blocked:
+                submit = job_src
             elif st == "needs-attention":
-                job = jobs.get(job_name(pid, v.id))
+                job = self.jobs.get(job_name(pid, v.id))
+                if record.terminal is None:
+                    # First sighting of the verdict: persist it NOW (R1). The
+                    # Job carrying the evidence is TTL-reaped within 24h;
+                    # without the record the volume would read pending again
+                    # and burn a GPU run every day forever.
+                    verdict = (
+                        "exit-13" if job is not None and is_permanent(job) else "capped"
+                    )
+                    record = record.model_copy(update={"terminal": verdict})
+                    self.attempts[akey] = budgets[v.id] = record
+                    row["terminal"] = verdict
+                    self.save_attempts()
                 if job is not None:
                     # The retry path uploads logs before deleting the Job; an
                     # exit-13 (or capped) volume otherwise reaches its terminal
@@ -434,79 +482,72 @@ def tick(
                     _preserve_failure_log(
                         bucket, cluster, pid, v.id, retire_run_log=False
                     )
-                if record.terminal is None:
-                    # First sighting of the verdict: persist it NOW (R1). The
-                    # Job that carries the evidence is TTL-reaped within 24h;
-                    # without the record the volume would read pending again
-                    # and burn a GPU run every day forever.
-                    verdict = (
-                        "exit-13" if job is not None and is_permanent(job) else "capped"
-                    )
-                    record = record.model_copy(update={"terminal": verdict})
-                    attempts[akey] = budgets[v.id] = record
-                    bucket.write_json(keys.attempts_key(), dump_attempts(attempts))
             if st == "done":
+                row["viewer_manifest"] = _public(cfg, f"{pid}/{v.id}/iiif.json")
+            if st in _LOGGED_STATUSES:
+                # The run's manifest.json (summary card in the run viewer);
+                # 404s until the wrapper publishes, which the viewer tolerates.
+                row["run_manifest"] = _public(cfg, f"{pid}/{v.id}/manifest.json")
+            if st in ("done", "running"):
+                row["pages_done"] = bucket.count_pages(pid, v.id)
+            if row["pages_total"] is None:
+                cached_v = (
+                    self.validation.get(v.manifest_url) if v.manifest_url else None
+                )
+                row["pages_total"] = cached_v.get("page_count") if cached_v else None
+            if row["pages_total"] is None and st == "done":
+                row["pages_total"] = row["pages_done"]
+            row["run_log"] = self._run_log(pid, v.id, st)
+        except Exception as e:  # noqa: BLE001 — one volume, never the tick
+            row["error"] = _describe(e)
+            log.warning("volume %s/%s: %s", pid, v.id, row["error"])
+            submit = None
+        return row, submit
+
+    def _run_log(self, pid: str, vid: str, st: str) -> str | None:
+        """The wrapper ships its own log to this key while it runs, so any
+        status a pod could have produced gets the link (live for running
+        volumes). The kube-API upload is the fallback for images that predate
+        the shipper — done + succeeded Job, no key."""
+        if st not in _LOGGED_STATUSES:
+            return None
+        log_key = keys.run_log_key(pid, vid)
+        if self.bucket.exists(log_key):
+            return _public(self.cfg, log_key)
+        if st == "done":
+            job = self.jobs.get(job_name(pid, vid))
+            if job is not None and job.succeeded:
+                # Jobs linger ttlSecondsAfterFinished (24h) after Complete —
+                # one upload per volume, guarded by the HEAD above.
+                self.bucket.put_text(
+                    log_key, self.cluster.job_logs(job_name(pid, vid), tail=500)
+                )
+                return _public(self.cfg, log_key)
+        return None
+
+    def campaign(
+        self, camp: Campaign, entry: dict[str, Any], claimed: dict[str, set[str]]
+    ) -> list[tuple[Volume, str]]:
+        """Fill ``entry`` for one campaign; returns its submission lane."""
+        pid = camp.pipeline_id
+        done = self.done_for(pid)
+        # ``derive`` reads attempts by volume id; the persisted counter is keyed
+        # by pipeline too, so hand derive a view of just this pipeline's budgets
+        # and keep the two in step as counters are bumped.
+        prefix = f"{pid}/"
+        budgets = {
+            k[len(prefix) :]: rec
+            for k, rec in self.attempts.items()
+            if k.startswith(prefix)
+        }
+        lane: list[tuple[Volume, str]] = []
+        for v in camp.volumes:
+            row, submit = self.volume_row(pid, v, done, budgets)
+            entry["volumes"].append(row)
+            if row["status"] == "done":
                 entry["totals"]["done"] += 1
-            pages_done = (
-                bucket.count_pages(pid, v.id) if st in ("done", "running") else None
-            )
-            if v.images:
-                pages_total: int | None = len(v.images)
-            else:
-                cached_v = validation.get(v.manifest_url) if v.manifest_url else None
-                pages_total = cached_v.get("page_count") if cached_v else None
-            if pages_total is None and st == "done":
-                pages_total = pages_done
-            # The wrapper ships its own log to this key while it runs, so any
-            # status a pod could have produced gets the link (live for
-            # running volumes). The kube-API upload below is the fallback for
-            # images that predate the shipper — done + succeeded Job, no key.
-            run_log = None
-            log_key = keys.run_log_key(pid, v.id)
-            if st in _LOGGED_STATUSES and bucket.exists(log_key):
-                run_log = f"{cfg.public_results_base.rstrip('/')}/{log_key}"
-            elif st == "done":
-                job = jobs.get(job_name(pid, v.id))
-                if job is not None and job.succeeded:
-                    # Jobs linger ttlSecondsAfterFinished (24h) after Complete —
-                    # one upload per volume, guarded by the HEAD above.
-                    bucket.put_text(
-                        log_key, cluster.job_logs(job_name(pid, v.id), tail=500)
-                    )
-                    run_log = f"{cfg.public_results_base.rstrip('/')}/{log_key}"
-            entry["volumes"].append(
-                {
-                    "id": v.id,
-                    "status": st,
-                    "attempts": record.n,
-                    "terminal": record.terminal,
-                    "updated": done.get(v.id),
-                    "failure_log": (
-                        f"{cfg.public_results_base.rstrip('/')}/"
-                        f"{keys.failure_log_key(pid, v.id)}"
-                        if st in ("retry", "needs-attention")
-                        else None
-                    ),
-                    "run_log": run_log,
-                    "pages_done": pages_done,
-                    "pages_total": pages_total,
-                    "error": None,
-                    "viewer_manifest": (
-                        f"{cfg.public_results_base.rstrip('/')}/{pid}/{v.id}/iiif.json"
-                        if st == "done"
-                        else None
-                    ),
-                    # The run's manifest.json (summary card in the run viewer);
-                    # 404s until the wrapper publishes, which the viewer tolerates.
-                    "run_manifest": (
-                        f"{cfg.public_results_base.rstrip('/')}/{pid}/{v.id}/manifest.json"
-                        if st in _LOGGED_STATUSES
-                        else None
-                    ),
-                    "source_manifest": public_src,
-                    "thumbnail": thumb,
-                }
-            )
+            if submit is not None:
+                lane.append((v, submit))
         known_totals = [
             v["pages_total"] for v in entry["volumes"] if v["pages_total"] is not None
         ]
@@ -515,17 +556,96 @@ def tick(
         ]
         entry["totals"]["pages_total"] = sum(known_totals) if known_totals else None
         entry["totals"]["pages_done"] = sum(known_done) if known_done else None
-        if pid not in blocked and lane:
-            pending[camp.name] = lane
+        return lane
 
-    lanes = {name: [v for v, _ in lane] for name, lane in pending.items()}
-    srcs = {(n, v.id): s for n, lane in pending.items() for v, s in lane}
-    for camp_name, volume in plan_submissions(lanes, in_flight, cfg.window):
-        camp = next(c for c in campaigns if c.name == camp_name)
-        spec = pipelines[camp.pipeline_id]
-        cluster.create_job(build_job(spec, volume, srcs[(camp_name, volume.id)], cfg))
+    # -- the pass ------------------------------------------------------------
 
-    bucket.write_json(keys.validation_key(), validation)
-    bucket.write_json(keys.attempts_key(), dump_attempts(attempts))
-    bucket.write_json(keys.status_key(), doc)
-    return doc
+    def run(self) -> dict:
+        cfg = self.cfg
+        self.check_pipelines()
+        self.warm_pipelines()
+        doc: dict[str, Any] = {
+            "generated_at": self.now_iso,
+            "tick_seconds": cfg.tick_seconds,
+            "campaigns_repo_url": cfg.campaigns_repo_web_url or cfg.campaigns_repo_url,
+            "warnings": self.warnings,
+            "campaigns": [],
+        }
+        # Orphans are a property of the PIPELINE prefix, not of one campaign:
+        # two campaigns on the same pipeline share the result namespace, so a
+        # volume claimed by either is not an orphan. Reported once, on the
+        # first campaign using that pipeline.
+        claimed: dict[str, set[str]] = {}
+        for camp in self.campaigns:
+            if camp.error or camp.pipeline_id not in self.pipelines:
+                continue
+            claimed.setdefault(camp.pipeline_id, set()).update(
+                v.id for v in camp.volumes
+            )
+        orphans_reported: set[str] = set()
+        pending: dict[str, list[tuple[Volume, str]]] = {}
+        for camp in self.campaigns:
+            entry = self.campaign_entry(camp)
+            doc["campaigns"].append(entry)
+            if camp.error or camp.pipeline_id not in self.pipelines:
+                if not camp.error:
+                    entry["error"] = f"unknown pipeline: {camp.pipeline_id}"
+                continue
+            pid = camp.pipeline_id
+            try:
+                if pid not in orphans_reported:
+                    entry["orphans"] = sorted(self.done_for(pid).keys() - claimed[pid])
+                    orphans_reported.add(pid)
+                lane = self.campaign(camp, entry, claimed)
+            except Exception as e:  # noqa: BLE001 — one campaign, not the tick
+                entry["error"] = _describe(e)
+                log.warning("campaign %s: %s", camp.name, entry["error"])
+                continue
+            if pid not in self.blocked and lane:
+                pending[camp.name] = lane
+        self.submit(pending)
+        self.bucket.write_json(keys.validation_key(), self.validation)
+        self.save_attempts()
+        self.bucket.write_json(keys.status_key(), doc)
+        return doc
+
+    def submit(self, pending: dict[str, list[tuple[Volume, str]]]) -> None:
+        # Only genuinely pending/running Jobs occupy a window slot (plus
+        # Terminating ones, whose pod may still hold the GPU). Terminal Jobs
+        # are done with the cluster; counting the succeeded ones leaks the
+        # window shut as a campaign completes (their TTL is 24h).
+        in_flight = sum(1 for j in self.jobs.values() if j.in_flight)
+        lanes = {name: [v for v, _ in lane] for name, lane in pending.items()}
+        srcs = {(n, v.id): s for n, lane in pending.items() for v, s in lane}
+        for camp_name, volume in plan_submissions(lanes, in_flight, self.cfg.window):
+            camp = next(c for c in self.campaigns if c.name == camp_name)
+            spec = self.pipelines[camp.pipeline_id]
+            job = build_job(spec, volume, srcs[(camp_name, volume.id)], self.cfg)
+            try:
+                self.cluster.create_job(job)
+            except Exception as e:  # noqa: BLE001 — one submission
+                self.warnings.append(
+                    f"campaign {camp_name}: submit {volume.id}: {_describe(e)}"
+                )
+                continue
+            self.submitted += 1
+
+
+def tick(
+    campaigns_dir: Path,
+    bucket,
+    cluster,
+    cfg: ReconcilerConfig,
+    now_iso: str,
+    fetch_json=None,
+) -> dict:
+    """One reconcile pass under the per-tick Lease (audit O8): a second tick
+    started by hand while one is running would double-submit and
+    double-charge attempts, so it is skipped with a log line instead."""
+    if not cluster.acquire_lease(cfg.lease_name, cfg.tick_deadline_seconds):
+        log.warning("tick skipped: lease %s is held by another tick", cfg.lease_name)
+        return {"generated_at": now_iso, "skipped": "lease held"}
+    try:
+        return _Pass(campaigns_dir, bucket, cluster, cfg, now_iso, fetch_json).run()
+    finally:
+        cluster.release_lease(cfg.lease_name)

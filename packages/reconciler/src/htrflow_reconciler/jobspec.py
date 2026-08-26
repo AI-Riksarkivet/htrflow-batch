@@ -54,6 +54,15 @@ class ReconcilerConfig(BaseModel):
     window: int = 20
     attempt_cap: int = 3
     active_deadline_seconds: int = 21600
+    #: STALE threshold advertised in status.json; must match the CronJob
+    #: schedule (RECONCILER_TICK_SECONDS, audit R12).
+    tick_seconds: int = 300
+    #: Upper bound on one tick, mirrored by the CronJob's activeDeadlineSeconds
+    #: (audit O7); also the Lease duration.
+    tick_deadline_seconds: int = 600
+    #: coordination.k8s.io Lease taken per tick (audit O8): a manual
+    #: ``kubectl create job --from=cronjob`` bypasses concurrencyPolicy.
+    lease_name: str = "htr-reconciler"
 
 
 def warmup_job_name(pipeline_id: str) -> str:
