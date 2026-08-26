@@ -1351,3 +1351,24 @@ def test_orphans_exclude_ids_declared_by_a_broken_sibling(tmp_path):
     byname = {c["name"]: c for c in doc["campaigns"]}
     assert byname["zzz-broken"]["error"] is not None
     assert byname["trolldom"]["orphans"] == ["ghost-vol"]
+
+
+# -- S1 at tick level ----------------------------------------------------------
+
+
+def test_empty_image_allow_list_is_warned_about(tmp_path):
+    doc = tick(_repo(tmp_path), FakeBucket(), FakeCluster(), CFG, NOW)
+    assert any("allow" in w.lower() and "image" in w.lower() for w in doc["warnings"])
+
+
+def test_pipeline_outside_the_allow_list_submits_nothing(tmp_path):
+    cfg = ReconcilerConfig(
+        public_results_base="http://pub/htr-results",
+        allowed_image_repos=("ghcr.io/riksarkivet/",),
+    )
+    cluster = FakeCluster()
+    doc = tick(_repo(tmp_path), FakeBucket(), cluster, cfg, NOW)
+    assert cluster.created == []
+    assert any("demo-v1" in w and "allow" in w.lower() for w in doc["warnings"])
+    assert not any("allow-list empty" in w for w in doc["warnings"])
+    assert doc["campaigns"][0]["error"] is not None  # unknown pipeline

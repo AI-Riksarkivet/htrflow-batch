@@ -56,7 +56,7 @@ def _attempt_key(pipeline_id: str, volume_id: str) -> str:
     return f"{pipeline_id}/{volume_id}"
 
 
-def _load_repo(campaigns_dir: Path):
+def _load_repo(campaigns_dir: Path, cfg: ReconcilerConfig):
     campaigns: list[Campaign] = []
     for p in sorted((campaigns_dir / "campaigns").glob("*.yaml")):
         try:
@@ -67,6 +67,11 @@ def _load_repo(campaigns_dir: Path):
         campaigns.append(parse_campaign(p.stem, text))
     pipelines: dict[str, PipelineSpec] = {}
     errors: list[str] = []
+    if not cfg.allowed_image_repos:
+        errors.append(
+            "image allow-list empty (RECONCILER_ALLOWED_IMAGE_REPOS): any "
+            "digest-pinned image in the campaigns repo will run on the GPU"
+        )
     for p in sorted((campaigns_dir / "pipelines").glob("*.yaml")):
         try:
             text = p.read_text(encoding="utf-8")
@@ -74,7 +79,12 @@ def _load_repo(campaigns_dir: Path):
             errors.append(f"pipeline {p.stem}: unreadable ({e})")
             continue
         try:
-            pipelines[p.stem] = parse_pipeline(p.stem, text)
+            pipelines[p.stem] = parse_pipeline(
+                p.stem,
+                text,
+                allowed_repos=cfg.allowed_image_repos,
+                require_revision=cfg.require_model_revision,
+            )
         except PipelineError as e:
             errors.append(str(e))
     return campaigns, pipelines, errors
@@ -307,7 +317,9 @@ class _Pass:
         self.cfg = cfg
         self.now_iso = now_iso
         self.fetch_json = fetch_json
-        self.campaigns, self.pipelines, self.warnings = _load_repo(Path(campaigns_dir))
+        self.campaigns, self.pipelines, self.warnings = _load_repo(
+            Path(campaigns_dir), cfg
+        )
         self.jobs: dict[str, JobState] = cluster.jobs()
         self.attempts = load_attempts(self._owned_json(keys.attempts_key()))
         self.validation = self._owned_json(keys.validation_key())

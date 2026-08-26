@@ -7,6 +7,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Sequence
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -24,8 +26,23 @@ _ID_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?\Z")
 _PIPELINE_ID_RE = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?\Z")
 
 
+# A model revision must be a full commit sha: a branch name or tag can be
+# moved under the pipeline id (audit S1).
+_REVISION_RE = re.compile(r"[0-9a-f]{40}\Z")
+
+
 class PipelineError(ValueError):
     pass
+
+
+def _http_url(value: object, what: str) -> str:
+    """Only http(s) sources reach the pre-validation fetch, the wrapper and the
+    browser's href/src (audit S4/S5)."""
+    url = str(value)
+    u = urlsplit(url)
+    if u.scheme not in ("http", "https") or not u.netloc:
+        raise ValueError(f"{what} must be an http(s) URL: {url!r}")
+    return url
 
 
 def _volume(entry: object) -> Volume:
@@ -41,12 +58,11 @@ def _volume(entry: object) -> Volume:
     vid = str(fields["id"])
     if not _ID_RE.match(vid):
         raise ValueError(f"unsafe volume id: {vid!r}")
-    manifest = fields.get("manifest")
-    if manifest:
-        return Volume(id=vid, manifest_url=str(manifest))
+    if "manifest" in fields:
+        return Volume(id=vid, manifest_url=_http_url(fields["manifest"], "manifest:"))
     images = fields.get("images")
     if isinstance(images, list) and images:
-        return Volume(id=vid, images=tuple(str(u) for u in images))
+        return Volume(id=vid, images=tuple(_http_url(u, "images:") for u in images))
     raise ValueError(f"volume {vid!r} needs manifest: or images:")
 
 
@@ -96,7 +112,44 @@ def parse_campaign(name: str, text: str) -> Campaign:
         )
 
 
-def parse_pipeline(pipeline_id: str, text: str) -> PipelineSpec:
+def _repo_allowed(image: str, allowed: Sequence[str]) -> bool:
+    """Prefix match on a path boundary: ``ghcr.io/riksarkivet/`` admits
+    ``ghcr.io/riksarkivet/x`` but not ``ghcr.io/riksarkivet-evil/x``."""
+    repo = image.split("@", 1)[0]
+    for entry in allowed:
+        entry = entry.strip()
+        if not entry:
+            continue
+        if repo == entry.rstrip("/") or repo.startswith(entry.rstrip("/") + "/"):
+            return True
+    return False
+
+
+def _check_revisions(pipeline_id: str, steps: object) -> None:
+    if not isinstance(steps, list):
+        return
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        settings = step.get("settings") or {}
+        ms = settings.get("model_settings") if isinstance(settings, dict) else None
+        if not isinstance(ms, dict) or not ms.get("model"):
+            continue
+        rev = str(ms.get("revision") or "")
+        if not _REVISION_RE.match(rev):
+            raise PipelineError(
+                f"pipeline {pipeline_id}: model {ms['model']!r} needs a 40-hex "
+                "revision (RECONCILER_REQUIRE_MODEL_REVISION)"
+            )
+
+
+def parse_pipeline(
+    pipeline_id: str,
+    text: str,
+    *,
+    allowed_repos: Sequence[str] = (),
+    require_revision: bool = False,
+) -> PipelineSpec:
     if not _PIPELINE_ID_RE.match(pipeline_id):
         raise PipelineError(
             f"unsafe pipeline id: {pipeline_id!r} (must be a DNS-1123 label: "
@@ -111,8 +164,15 @@ def parse_pipeline(pipeline_id: str, text: str) -> PipelineSpec:
     image = str(doc.get("image") or "")
     if "@sha256:" not in image:
         raise PipelineError(f"pipeline {pipeline_id}: image must be digest-pinned")
+    if allowed_repos and not _repo_allowed(image, allowed_repos):
+        raise PipelineError(
+            f"pipeline {pipeline_id}: image {image.split('@', 1)[0]!r} is not "
+            "under an allowed repository (RECONCILER_ALLOWED_IMAGE_REPOS)"
+        )
     if "steps" not in doc:
         raise PipelineError(f"pipeline {pipeline_id}: missing steps")
+    if require_revision:
+        _check_revisions(pipeline_id, doc["steps"])
     steps_yaml = yaml.safe_dump({"steps": doc["steps"]}, sort_keys=False)
     return PipelineSpec(
         id=pipeline_id,
