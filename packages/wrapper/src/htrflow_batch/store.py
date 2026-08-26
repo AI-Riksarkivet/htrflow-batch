@@ -128,3 +128,16 @@ class ResultStore:
     def get_bytes(self, rel_key: str) -> bytes:
         obj = self.client.get_object(Bucket=self.bucket, Key=self._key(rel_key))
         return obj["Body"].read()
+
+    def get_json_or_none(self, rel_key: str) -> dict | None:
+        """A JSON object under the volume prefix, or None when the key is
+        missing or not a JSON object (a store/network error still raises)."""
+        try:
+            data = self.get_bytes(rel_key)
+        except self.client.exceptions.NoSuchKey:
+            return None
+        try:
+            obj = json.loads(data)
+        except ValueError:
+            return None
+        return obj if isinstance(obj, dict) else None

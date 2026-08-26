@@ -102,6 +102,15 @@ def test_happy_path(env, cfg, s3):
     assert body["results"]["0001"]["status"] == "ok"
     assert "gpu_stall_seconds" in body and "wall_seconds" in body
     assert body["viewer_url"].endswith("iiif.json")
+    # W7: canvas -> source mapping, so a later run can tell a changed page
+    assert body["page_sources"] == {
+        f"{i:04d}": f"https://iiif.example/mock-vol/page-{i:05d}/full/2500,/0/default.jpg"
+        for i in (1, 2, 3)
+    }
+    assert body["canvas_ids"] == {
+        f"{i:04d}": f"https://iiif.example/mock-vol/page-{i:05d}/canvas"
+        for i in (1, 2, 3)
+    }
 
 
 def test_resume_skips_done(env, cfg, s3):
@@ -134,6 +143,69 @@ def test_resume_skips_done(env, cfg, s3):
     )
     canvas_names = {c["id"].rsplit("/", 1)[-1] for c in iiif["items"]}
     assert canvas_names == {"0001", "0002", "0003"}  # skipped page not omitted
+
+
+def test_resume_reprocesses_pages_whose_source_changed(env, cfg, s3):
+    """W7: resume was by position only; an edited images: list or a
+    re-ordered manifest kept stale outputs. The previous manifest.json's
+    page_sources are compared with the current image URLs."""
+    for name in ("0001", "0002", "0003"):
+        _put_done(s3, cfg, name)
+    src = "https://iiif.example/mock-vol/page-{:05d}/full/2500,/0/default.jpg"
+    s3.put_object(
+        Bucket=cfg.s3_bucket,
+        Key="demo-v1/SE-RA-1234/manifest.json",
+        Body=json.dumps(
+            {
+                "pages": 3,
+                "page_sources": {
+                    "0001": src.format(1),
+                    "0002": "https://iiif.example/OLD/page-00002/full/2500,/0/default.jpg",
+                    "0003": src.format(3),
+                },
+            }
+        ).encode(),
+    )
+    calls = []
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            calls.append(path.stem)
+            return inner(path)
+
+        return process
+
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    assert calls == ["0002"]
+    body = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert body["results"]["0001"]["status"] == "skipped"
+    assert body["results"]["0002"]["status"] == "ok"
+    assert body["page_sources"]["0002"] == src.format(2)
+
+
+def test_resume_without_previous_manifest_keeps_done_pages(env, cfg, s3):
+    """No manifest.json (the previous attempt never completed) = nothing to
+    compare against; done pages stay done."""
+    _put_done(s3, cfg, "0001")
+    calls = []
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            calls.append(path.stem)
+            return inner(path)
+
+        return process
+
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    assert calls == ["0002", "0003"]
 
 
 def test_resume_reprocesses_page_with_alto_but_no_page_xml(env, cfg, s3):
