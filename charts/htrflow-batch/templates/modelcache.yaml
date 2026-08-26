@@ -1,0 +1,22 @@
+{{- if .Values.modelCache.create }}
+# HF model cache (audit O4): written by warm-up Jobs, read-only by batch Jobs;
+# the reconciler and the example Job mount it by modelCache.name. Kept on
+# uninstall — a warmed cache is hours of downloads, and a re-install adopts
+# it back by the Helm ownership annotations that stay on the object.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.modelCache.name }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: {{ toJson .Values.modelCache.accessModes }}
+  {{- with .Values.modelCache.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.modelCache.size }}
+{{- end }}

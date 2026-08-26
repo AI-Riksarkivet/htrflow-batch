@@ -1,4 +1,5 @@
 {{- if .Values.reconciler.enabled }}
+{{- include "htrflow-batch.requireDigest" (list . .Values.reconciler.image "reconciler.image") }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -27,6 +28,16 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+  # Per-tick Lease (audit O8): a manual `kubectl create job --from=cronjob`
+  # bypasses concurrencyPolicy Forbid; the Lease is what actually serialises
+  # ticks. `create` cannot be scoped by name; get/update are.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["htr-reconciler"]
+    verbs: ["get", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -54,11 +65,17 @@ metadata:
 spec:
   schedule: {{ .Values.reconciler.schedule | quote }}
   concurrencyPolicy: Forbid
+  # A tick that cannot start within two minutes of its slot (controller
+  # restart, apiserver hiccup) is skipped rather than counted as 100 misses
+  # and suspending the CronJob (audit O7).
+  startingDeadlineSeconds: 120
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      activeDeadlineSeconds: 240
+      # ≥ the reconciler's git clone timeout; a deadline-killed tick submits
+      # nothing and writes nothing, so this must never be the common case.
+      activeDeadlineSeconds: {{ .Values.reconciler.tickDeadlineSeconds }}
       # A hard-failing tick must not burn six pods before the next schedule:
       # concurrencyPolicy Forbid already serialises ticks, and the next one
       # picks up wherever this one stopped.
@@ -73,18 +90,13 @@ spec:
           automountServiceAccountToken: true
           restartPolicy: Never
           securityContext:
-            runAsNonRoot: true
-            runAsUser: 1000
-            runAsGroup: 1000
-            fsGroup: 1000
-            seccompProfile: { type: RuntimeDefault }
+            {{- include "htrflow-batch.restrictedPod" 1000 | nindent 12 }}
           containers:
             - name: reconciler
               image: {{ .Values.reconciler.image | required "reconciler.image is required when reconciler.enabled" }}
+              imagePullPolicy: {{ include "htrflow-batch.pullPolicy" .Values.reconciler.image }}
               securityContext:
-                allowPrivilegeEscalation: false
-                readOnlyRootFilesystem: true
-                capabilities: { drop: ["ALL"] }
+                {{- include "htrflow-batch.restrictedContainer" . | nindent 16 }}
               env:
                 # Read-only root: the campaigns clone (tempfile.gettempdir())
                 # and git's HOME both land on the /tmp emptyDir.
@@ -115,10 +127,40 @@ spec:
                   value: {{ .Values.queue.name | quote }}
                 - name: RECONCILER_S3_SECRET
                   value: {{ .Values.s3.existingSecret | quote }}
+                - name: RECONCILER_DATA_PVC
+                  value: {{ .Values.modelCache.name | quote }}
                 - name: RECONCILER_WINDOW
-                  value: {{ .Values.reconciler.window | quote }}
+                  value: {{ .Values.reconciler.window | int64 | quote }}
                 - name: RECONCILER_ATTEMPT_CAP
-                  value: {{ .Values.reconciler.attemptCap | quote }}
+                  value: {{ .Values.reconciler.attemptCap | int64 | quote }}
+                # Contract (plan 2026-08-26): tick cadence, bounded work per
+                # tick, the Job placement/deadline knobs, the trust boundary.
+                - name: RECONCILER_TICK_SECONDS
+                  value: {{ .Values.reconciler.tickSeconds | int64 | quote }}
+                - name: RECONCILER_MAX_VALIDATIONS_PER_TICK
+                  value: {{ .Values.reconciler.maxValidationsPerTick | int64 | quote }}
+                - name: RECONCILER_FETCH_MAX_BYTES
+                  value: {{ .Values.reconciler.fetchMaxBytes | int64 | quote }}
+                - name: RECONCILER_LEASE_NAME
+                  value: htr-reconciler
+                - name: RECONCILER_JOB_MIN_DEADLINE_SECONDS
+                  value: {{ .Values.job.minDeadlineSeconds | int64 | quote }}
+                - name: RECONCILER_JOB_SECONDS_PER_PAGE
+                  value: {{ .Values.job.secondsPerPage | int64 | quote }}
+                - name: RECONCILER_JOB_MANIFEST_MAX_BYTES
+                  value: {{ .Values.job.manifestMaxBytes | int64 | quote }}
+                - name: RECONCILER_JOB_FETCH_MAX_BYTES
+                  value: {{ .Values.job.fetchMaxBytes | int64 | quote }}
+                - name: RECONCILER_JOB_RUNTIME_CLASS
+                  value: {{ .Values.job.runtimeClassName | quote }}
+                - name: RECONCILER_JOB_NODE_SELECTOR
+                  value: {{ .Values.job.nodeSelector | toJson | quote }}
+                - name: RECONCILER_JOB_TOLERATIONS
+                  value: {{ .Values.job.tolerations | toJson | quote }}
+                - name: RECONCILER_ALLOWED_IMAGE_REPOS
+                  value: {{ .Values.security.allowedImageRepos | join "," | quote }}
+                - name: RECONCILER_REQUIRE_MODEL_REVISION
+                  value: {{ .Values.security.requireModelRevision | ternary "true" "false" | quote }}
               volumeMounts:
                 - { name: s3, mountPath: /secrets/s3, readOnly: true }
                 - { name: tmp, mountPath: /tmp }

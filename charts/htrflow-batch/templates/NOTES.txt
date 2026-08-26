@@ -1,16 +1,30 @@
-htrflow-batch platform installed.
-- LocalQueue: {{ .Values.queue.name }} (namespace {{ .Release.Namespace }})
+htrflow-batch {{ .Chart.Version }} installed.
+- LocalQueue: {{ .Values.queue.name }} (namespace {{ .Release.Namespace }}); ClusterQueue admits this namespace only.
 - Kueue CRDs are a prerequisite, not installed by this chart.
+- Model cache PVC: {{ .Values.modelCache.name }}{{ if .Values.modelCache.create }} (rendered, kept on uninstall){{ else }} (must already exist){{ end }}.
 - Pipeline ConfigMaps are immutable: never reuse a pipeline id with different content — bump the id (D17).
 - Submit per-volume Jobs with suspend: true and label kueue.x-k8s.io/queue-name: {{ .Values.queue.name }}.
 - Jobs run offline on a read-only model cache: warm each pipeline once (`make warmup PIPELINE=<id> IMAGE=<ref>`);
   pipelines from the campaigns repo are warmed by the reconciler.
-- Pod Security: the chart does not own the namespace — label it once (`make psa-labels`):
-  enforce=baseline, warn=restricted, audit=restricted. Job, warm-up and reconciler pods meet `restricted`.
+- Pod Security: the chart does not own the namespace — label it once (`make psa-labels`, reads
+  security.psaEnforce={{ .Values.security.psaEnforce }}; warn/audit=restricted).
+- Upgrades: use --reset-then-reuse-values (plain --reuse-values keeps the old chart's defaults).
+- If Jobs stay `queued` while the GPU is idle, check the Kueue controller before the GPU (O17).
 {{- if .Values.network.enabled }}
-- NetworkPolicies rendered for Job / warm-up / reconciler pods (values: network.*). The S3 Secret
-  needs a `credentials` key in AWS ini format (docs: getting-started/deploy).
+- NetworkPolicies rendered{{ if .Values.network.defaultDeny }} with a namespace default deny{{ end }} (values: network.*).
+  The S3 Secret needs a `credentials` key in AWS ini format (docs: getting-started/deploy).
 {{- end }}
 {{- if .Values.viewer.enabled }}
 - Viewer: NodePort {{ .Values.viewer.nodePort }}
+{{- end }}
+{{- if .Values.devStack.rustfs.enabled }}
+- devStack RustFS: S3 on NodePort {{ .Values.devStack.rustfs.nodePortS3 }}{{ if .Values.devStack.rustfs.console.enabled }}, console on {{ .Values.devStack.rustfs.console.nodePort }}{{ end }};
+  credentials in Secret {{ .Values.s3.existingSecret }} (kubectl -n {{ .Release.Namespace }} get secret {{ .Values.s3.existingSecret }} -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d).
+  Bucket policy/CORS applied by the rustfs-init hook Job; run logs are {{ if .Values.devStack.rustfs.publicLogs }}PUBLIC{{ else }}credentialed{{ end }} (devStack.rustfs.publicLogs).
+{{- end }}
+{{- if .Values.devStack.allowTagImages }}
+- WARNING devStack.allowTagImages=true: control-plane images are tag-pinned and re-pulled on every rollout. PoC only.
+{{- end }}
+{{- if .Values.devStack.gitDaemon.enabled }}
+- git daemon: git://git-daemon.{{ .Release.Namespace }}.svc.cluster.local/{{ .Values.devStack.gitDaemon.repo }} (re-seed: kubectl -n {{ .Release.Namespace }} rollout restart deploy/git-daemon)
 {{- end }}
