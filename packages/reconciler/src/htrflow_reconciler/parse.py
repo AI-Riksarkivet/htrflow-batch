@@ -72,11 +72,14 @@ def _declared(doc: object) -> tuple[str, tuple[str, ...]]:
     if not isinstance(doc, dict):
         return "", ()
     ids: list[str] = []
-    for e in doc.get("volumes") or []:
+    entries = doc.get("volumes")
+    for e in entries if isinstance(entries, list) else []:
         if isinstance(e, str):
             ids.append(e)
-        elif isinstance(e, dict) and e.get("id") is not None:
-            ids.append(str(e["id"]))
+        elif isinstance(e, dict):
+            vid = e.get("id")
+            if vid is not None:
+                ids.append(str(vid))
     return str(doc.get("pipeline") or ""), tuple(ids)
 
 
@@ -133,12 +136,13 @@ def _check_revisions(pipeline_id: str, steps: object) -> None:
             continue
         settings = step.get("settings") or {}
         ms = settings.get("model_settings") if isinstance(settings, dict) else None
-        if not isinstance(ms, dict) or not ms.get("model"):
+        model = ms.get("model") if isinstance(ms, dict) else None
+        if not isinstance(ms, dict) or not model:
             continue
         rev = str(ms.get("revision") or "")
         if not _REVISION_RE.match(rev):
             raise PipelineError(
-                f"pipeline {pipeline_id}: model {ms['model']!r} needs a 40-hex "
+                f"pipeline {pipeline_id}: model {model!r} needs a 40-hex "
                 "revision (RECONCILER_REQUIRE_MODEL_REVISION)"
             )
 
