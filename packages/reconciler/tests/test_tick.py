@@ -196,7 +196,7 @@ def test_tick_retries_failed_transient(tmp_path):
     # captured logs, deleted the failed job, bumped attempts
     assert bucket.written["status/failures/demo-v1/R0000002.txt"] == "boom traceback"
     assert n in cluster.deleted
-    assert bucket.written["status/attempts.json"]["demo-v1/R0000002"] == 1
+    assert bucket.written["status/attempts.json"]["demo-v1/R0000002"]["n"] == 1
     byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
     assert byid["R0000002"]["status"] == "retry"
 
@@ -442,8 +442,8 @@ def test_tick_attempt_budgets_are_per_pipeline(tmp_path):
     assert old["status"] == "needs-attention" and old["attempts"] == 3
     assert new["status"] == "retry" and new["attempts"] == 1
     assert bucket.written["status/attempts.json"] == {
-        "demo-v1/R0000002": 3,
-        "demo-v2/R0000002": 1,
+        "demo-v1/R0000002": {"n": 3, "terminal": "capped"},
+        "demo-v2/R0000002": {"n": 1, "terminal": None},
     }
     assert job_name("demo-v1", "R0000002") not in cluster.deleted
     assert job_name("demo-v2", "R0000002") in cluster.deleted
@@ -864,3 +864,63 @@ def test_run_manifest_for_in_flight_and_done_only(tmp_path):
     assert byid["loose"]["status"] in ("pending", "queued", "running")
     if byid["loose"]["status"] == "pending":
         assert byid["loose"]["run_manifest"] is None
+
+
+def _rows(doc, campaign=0):
+    return {v["id"]: v for v in doc["campaigns"][campaign]["volumes"]}
+
+
+def test_exit_13_persists_a_terminal_record(tmp_path):
+    """R1: the verdict lands in attempts.json the tick it is first derived."""
+    bucket = FakeBucket()
+    jobs = _failed_job(exit_code=13)
+    tick(_repo(tmp_path), bucket, FakeCluster(jobs=jobs), CFG, NOW)
+    assert bucket.written["status/attempts.json"]["demo-v1/R0000001"] == {
+        "n": 0,
+        "terminal": "exit-13",
+    }
+    doc = tick(_repo(tmp_path), bucket, FakeCluster(), CFG, NOW)
+    assert _rows(doc)["R0000001"]["terminal"] == "exit-13"
+
+
+def test_capped_volume_persists_a_terminal_record(tmp_path):
+    bucket = FakeBucket(stored={"status/attempts.json": {"demo-v1/R0000001": 3}})
+    jobs = _failed_job(exit_code=1)
+    doc = tick(_repo(tmp_path), bucket, FakeCluster(jobs=jobs), CFG, NOW)
+    assert _rows(doc)["R0000001"]["status"] == "needs-attention"
+    assert bucket.written["status/attempts.json"]["demo-v1/R0000001"] == {
+        "n": 3,
+        "terminal": "capped",
+    }
+
+
+def test_terminal_record_keeps_a_reaped_volume_out_of_the_lane(tmp_path):
+    """R1: the Job is gone (24h TTL); the volume must not be resubmitted."""
+    record = {"n": 0, "terminal": "exit-13"}
+    stored = {"status/attempts.json": {"demo-v1/R0000001": record}}
+    bucket, cluster = FakeBucket(stored=stored), FakeCluster()
+    doc = tick(_repo(tmp_path), bucket, cluster, CFG, NOW)
+    row = _rows(doc)["R0000001"]
+    assert row["status"] == "needs-attention"
+    assert row["terminal"] == "exit-13"
+    assert row["failure_log"].endswith("status/failures/demo-v1/R0000001.txt")
+    assert "r0000001" not in _created_volumes(cluster)
+    # the record survives the tick untouched
+    assert bucket.written["status/attempts.json"]["demo-v1/R0000001"] == record
+
+
+def test_v1_attempt_ints_are_migrated_on_read(tmp_path):
+    bucket = FakeBucket(stored={"status/attempts.json": {"demo-v1/R0000001": 1}})
+    jobs = _failed_job(exit_code=1)
+    doc = tick(_repo(tmp_path), bucket, FakeCluster(jobs=jobs), CFG, NOW)
+    assert _rows(doc)["R0000001"]["attempts"] == 2
+    assert bucket.written["status/attempts.json"]["demo-v1/R0000001"] == {
+        "n": 2,
+        "terminal": None,
+    }
+
+
+def test_healthy_rows_carry_terminal_null(tmp_path):
+    bucket = FakeBucket(done={"R0000001"})
+    doc = tick(_repo(tmp_path), bucket, FakeCluster(), CFG, NOW)
+    assert all(v["terminal"] is None for v in doc["campaigns"][0]["volumes"])
