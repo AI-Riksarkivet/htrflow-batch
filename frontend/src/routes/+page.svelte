@@ -232,6 +232,8 @@
     display: flex;
     align-items: flex-start;
     gap: 0.75rem;
+    min-width: 0;
+    max-width: 100%;
   }
 
   .meta-block {
@@ -239,6 +241,13 @@
     flex-direction: column;
     align-items: flex-end;
     gap: 0.125rem;
+    min-width: 0;
+  }
+
+  /* A long repo URL wraps inside the header instead of widening the page. */
+  .repo {
+    overflow-wrap: anywhere;
+    text-align: right;
   }
 
   .theme-toggle {
