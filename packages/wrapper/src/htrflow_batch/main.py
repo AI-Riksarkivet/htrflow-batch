@@ -36,7 +36,8 @@ class SetupError(Exception):
 
 
 def _http_client() -> httpx.Client:
-    return httpx.Client()
+    # S5: campaign data drives these fetches; bound redirect chains too.
+    return httpx.Client(max_redirects=5)
 
 
 def _terminate(env: Mapping[str, str], reason: dict) -> None:
@@ -144,7 +145,9 @@ def _main(
         client = _http_client()
 
         # -- stage 1: setup -------------------------------------------------
-        source_manifest = fetch_manifest(cfg.manifest_url, client)
+        source_manifest = fetch_manifest(
+            cfg.manifest_url, client, max_bytes=cfg.manifest_max_bytes
+        )
         pages = pages_from_manifest(source_manifest, cfg.max_image_width)
         if cfg.max_pages:
             pages = pages[: cfg.max_pages]

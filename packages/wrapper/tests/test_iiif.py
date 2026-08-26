@@ -3,6 +3,7 @@ import pytest
 
 from htrflow_batch.iiif import (
     ManifestError,
+    TransientManifestError,
     fetch_manifest,
     pages_from_manifest,
 )
@@ -39,11 +40,98 @@ def test_fetch_manifest_ok(sample_manifest):
     assert m["type"] == "Manifest"
 
 
-def test_fetch_manifest_404_raises():
-    transport = httpx.MockTransport(lambda req: httpx.Response(404))
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 410])
+def test_fetch_manifest_4xx_is_permanent(status):
+    transport = httpx.MockTransport(lambda req: httpx.Response(status))
     client = httpx.Client(transport=transport)
-    with pytest.raises(ManifestError):
+    with pytest.raises(ManifestError) as ei:
         fetch_manifest("https://x/manifest", client)
+    assert not isinstance(ei.value, TransientManifestError)
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
+def test_fetch_manifest_5xx_and_429_are_transient(status):
+    """W1: a gateway blip must not park the volume in needs-attention."""
+    transport = httpx.MockTransport(lambda req: httpx.Response(status))
+    client = httpx.Client(transport=transport)
+    with pytest.raises(TransientManifestError):
+        fetch_manifest("https://x/manifest", client)
+
+
+def test_transient_manifest_error_is_not_permanent():
+    # main.py classifies ManifestError as exit 13; the transient one must
+    # fall through to the generic (retryable) branch.
+    assert not issubclass(TransientManifestError, ManifestError)
+
+
+@pytest.mark.parametrize("exc", [httpx.ConnectError, httpx.ReadTimeout])
+def test_fetch_manifest_network_error_is_transient(exc):
+    def handler(req):
+        raise exc("boom", request=req)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(TransientManifestError):
+        fetch_manifest("https://x/manifest", client)
+
+
+def test_fetch_manifest_non_json_is_permanent():
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(200, content=b"<html>login</html>")
+    )
+    client = httpx.Client(transport=transport)
+    with pytest.raises(ManifestError, match="not JSON"):
+        fetch_manifest("https://x/manifest", client)
+
+
+def test_fetch_manifest_non_object_json_is_permanent():
+    transport = httpx.MockTransport(lambda req: httpx.Response(200, json=[1, 2]))
+    client = httpx.Client(transport=transport)
+    with pytest.raises(ManifestError, match="not a JSON object"):
+        fetch_manifest("https://x/manifest", client)
+
+
+def test_fetch_manifest_rejects_non_http_scheme():
+    calls = []
+
+    def handler(req):
+        calls.append(req)
+        return httpx.Response(200, json={})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(ManifestError, match="http"):
+        fetch_manifest("ftp://x/manifest", client)
+    with pytest.raises(ManifestError, match="http"):
+        fetch_manifest("file:///etc/passwd", client)
+    assert calls == []
+
+
+def test_fetch_manifest_content_length_over_cap_is_permanent():
+    def handler(req):
+        return httpx.Response(200, headers={"Content-Length": "999"}, content=b"")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(ManifestError, match="too large"):
+        fetch_manifest("https://x/manifest", client, max_bytes=100)
+
+
+def test_fetch_manifest_streamed_body_over_cap_is_permanent():
+    """No Content-Length (chunked): the cap must apply to the bytes read."""
+
+    def handler(req):
+        return httpx.Response(200, stream=httpx.ByteStream(b"[" + b"1," * 200 + b"1]"))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(ManifestError, match="too large"):
+        fetch_manifest("https://x/manifest", client, max_bytes=100)
+
+
+def test_fetch_manifest_under_cap_ok(sample_manifest):
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(200, json=sample_manifest)
+    )
+    client = httpx.Client(transport=transport)
+    m = fetch_manifest("https://x/manifest", client, max_bytes=1 << 20)
+    assert m["type"] == "Manifest"
 
 
 def _canvas_with_service(width, height):
