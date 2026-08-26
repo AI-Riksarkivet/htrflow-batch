@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   campaignHealth,
+  isHttpUrl,
   isStale,
   pagesLabel,
   shortDate,
@@ -29,7 +30,25 @@ const pending: VolumeEntry = {
   viewer_manifest: null,
 };
 
+describe("isHttpUrl", () => {
+  test("accepts absolute http(s) URLs only", () => {
+    expect(isHttpUrl("http://x/y")).toBe(true);
+    expect(isHttpUrl("https://x/y?z=1")).toBe(true);
+    expect(isHttpUrl("HTTPS://X/")).toBe(true);
+    expect(isHttpUrl("javascript:alert(1)")).toBe(false);
+    expect(isHttpUrl("data:text/html,hi")).toBe(false);
+    expect(isHttpUrl("ftp://x/y")).toBe(false);
+    expect(isHttpUrl("/relative/path")).toBe(false);
+    expect(isHttpUrl("")).toBe(false);
+    expect(isHttpUrl(" http://x")).toBe(false);
+  });
+});
+
 describe("derive", () => {
+  test("a volume without a usable manifest has no viewer link", () => {
+    expect(viewerHref({ ...pending, source_manifest: null })).toBeNull();
+  });
+
   test("done volumes open the published manifest", () => {
     expect(viewerHref(done)).toBe(
       "uv.html#?manifest=http://pub/htr-results/demo-v1/R1/iiif.json",

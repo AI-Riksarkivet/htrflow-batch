@@ -4,12 +4,28 @@ import type { VolumeEntry } from "./status.js";
 /** A reconcile older than this many ticks means the reconciler is presumed dead. */
 const STALE_TICKS = 3;
 
-export function viewerHref(volume: VolumeEntry): string {
+/**
+ * Only absolute http(s) URLs may reach an href/src: campaign data and the
+ * query string are untrusted, and `javascript:` / `data:` would otherwise
+ * render straight into the DOM.
+ */
+export function isHttpUrl(value: string): boolean {
+  if (!/^https?:\/\//i.test(value)) return false;
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** null when the volume has no usable manifest to open (invalid URL). */
+export function viewerHref(volume: VolumeEntry): string | null {
   const manifest =
     volume.status === "done" && volume.viewer_manifest !== null
       ? volume.viewer_manifest
       : volume.source_manifest;
-  return `uv.html#?manifest=${manifest}`;
+  return manifest === null ? null : `uv.html#?manifest=${manifest}`;
 }
 
 export type CampaignHealth = "failed" | "active" | "done" | "idle";

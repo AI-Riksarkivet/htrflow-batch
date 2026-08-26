@@ -6,6 +6,16 @@
 // volume is parsed on its own, and a bad entry degrades to an error row
 // while the rest of the document renders as usual.
 import { z, type ZodIssue } from "zod";
+import { isHttpUrl } from "./derive.js";
+
+// Every URL field: anything but an absolute http(s) URL becomes null (and a
+// warning row) rather than an href. `source_manifest` used to be required;
+// a volume whose source is not a URL now renders "invalid url" in its slot.
+const httpUrlOrNull = z
+  .string()
+  .nullable()
+  .default(null)
+  .transform((value) => (value !== null && isHttpUrl(value) ? value : null));
 
 export const volumeStatusSchema = z
   .enum([
@@ -30,16 +40,25 @@ export const volumeEntrySchema = z.object({
   pages_done: z.number().nullable(),
   pages_total: z.number().nullable(),
   error: z.string().nullable(),
-  viewer_manifest: z.string().nullable(),
+  viewer_manifest: httpUrlOrNull,
   // manifest.json of the run (live or finished) — for the run viewer's
   // summary card; null for volumes whose pod never started.
-  run_manifest: z.string().nullable().default(null),
-  source_manifest: z.string(),
-  thumbnail: z.string().nullable(),
+  run_manifest: httpUrlOrNull,
+  source_manifest: httpUrlOrNull,
+  thumbnail: httpUrlOrNull,
   updated: z.string().nullable().default(null),
-  failure_log: z.string().nullable().default(null),
-  run_log: z.string().nullable().default(null),
+  failure_log: httpUrlOrNull,
+  run_log: httpUrlOrNull,
 });
+
+const URL_FIELDS = [
+  "viewer_manifest",
+  "run_manifest",
+  "source_manifest",
+  "thumbnail",
+  "failure_log",
+  "run_log",
+] as const;
 
 const totalsSchema = z.object({
   done: z.number(),
@@ -68,9 +87,14 @@ export const statusDocSchema = z.object({
 });
 
 export type VolumeStatus = z.infer<typeof volumeStatusSchema>;
-export type VolumeEntry = z.infer<typeof volumeEntrySchema>;
-export type CampaignEntry = z.infer<typeof campaignEntrySchema>;
-export type StatusDoc = z.infer<typeof statusDocSchema>;
+/** `invalid` marks a row that stands in for an entry that did not parse. */
+export type VolumeEntry = z.infer<typeof volumeEntrySchema> & { invalid?: true };
+export type CampaignEntry = Omit<z.infer<typeof campaignEntrySchema>, "volumes"> & {
+  volumes: VolumeEntry[];
+};
+export type StatusDoc = Omit<z.infer<typeof statusDocSchema>, "campaigns"> & {
+  campaigns: CampaignEntry[];
+};
 
 /** "volumes[2].attempts: expected number, received string" — no ZodError dumps. */
 export function formatIssues(issues: readonly ZodIssue[]): string {
@@ -112,12 +136,20 @@ function degradedVolume(raw: unknown, index: number, why: string): VolumeEntry {
     error: `${INVALID}: ${why}`,
     viewer_manifest: null,
     run_manifest: null,
-    source_manifest: "",
+    source_manifest: null,
     thumbnail: null,
     updated: null,
     failure_log: null,
     run_log: null,
+    invalid: true,
   };
+}
+
+/** Field names whose raw value was a string the schema refused as a URL. */
+function refusedUrls(raw: unknown, parsed: VolumeEntry): string[] {
+  if (raw === null || typeof raw !== "object") return [];
+  const r = raw as Record<string, unknown>;
+  return URL_FIELDS.filter((f) => typeof r[f] === "string" && parsed[f] === null);
 }
 
 function degradedCampaign(raw: unknown, index: number, why: string): CampaignEntry {
@@ -152,7 +184,14 @@ export function parseStatusDoc(raw: unknown): ParsedStatus {
     }
     const volumes = shell.data.volumes.map((rawVolume, vi) => {
       const parsed = volumeEntrySchema.safeParse(rawVolume);
-      if (parsed.success) return parsed.data;
+      if (parsed.success) {
+        for (const field of refusedUrls(rawVolume, parsed.data)) {
+          problems.push(
+            `${shell.data.name}/${parsed.data.id}: ${field} is not an http(s) URL, ignored`,
+          );
+        }
+        return parsed.data;
+      }
       const why = formatIssues(parsed.error.issues);
       const degraded = degradedVolume(rawVolume, vi, why);
       problems.push(`${shell.data.name}/${degraded.id}: ${why}`);

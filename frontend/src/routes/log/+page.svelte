@@ -1,6 +1,7 @@
 <script lang="ts">
   import { browser } from "$app/environment";
   import RunSummaryCard from "$lib/components/RunSummaryCard.svelte";
+  import { isHttpUrl } from "$lib/derive.js";
   import { runManifestSchema, type RunManifest } from "$lib/run.js";
   import {
     isTerminalLog,
@@ -22,8 +23,17 @@
     return new URLSearchParams(window.location.search).get(name);
   }
 
-  const logUrl = queryParam("log");
-  const manifestUrl = queryParam("manifest");
+  // The query string is untrusted input: only absolute http(s) URLs are
+  // fetched or linked. Anything else is treated as absent (and, for the log
+  // itself, reported).
+  function httpParam(name: string): string | null {
+    const value = queryParam(name);
+    return value !== null && isHttpUrl(value) ? value : null;
+  }
+
+  const rawLogUrl = queryParam("log");
+  const logUrl = httpParam("log");
+  const manifestUrl = httpParam("manifest");
   // live=1: the campaign table links a volume that is still in flight. The
   // wrapper re-uploads the log while it runs, so we re-fetch on its cadence
   // and stop once the wrapper's terminal line shows up.
@@ -40,7 +50,8 @@
 
   async function loadLog(): Promise<void> {
     if (logUrl === null) {
-      logError = "no log URL given";
+      logError =
+        rawLogUrl === null ? "no log URL given" : "log URL must be an absolute http(s) URL";
       return;
     }
     try {

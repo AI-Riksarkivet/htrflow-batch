@@ -53,6 +53,36 @@ describe("CampaignCard", () => {
     expect(within(bad).getByText(/invalid status entry: attempts/)).toBeInTheDocument();
   });
 
+  test("javascript: URLs never reach an href or src", () => {
+    const campaign = campaignFrom([
+      {
+        ...volume,
+        source_manifest: "javascript:alert(1)",
+        thumbnail: "javascript:alert(2)",
+        failure_log: "javascript:alert(3)",
+        viewer_manifest: "javascript:alert(4)",
+      },
+    ]);
+    const { container } = render(CampaignCard, { campaign });
+    const hrefs = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    expect(hrefs.some((h) => h?.startsWith("javascript:"))).toBe(false);
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByText("invalid url")).toBeInTheDocument();
+    // the run log is still reachable — only the refused fields are dropped
+    expect(screen.getByRole("link", { name: "log" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("log?log="),
+    );
+    expect(screen.queryByRole("link", { name: "open" })).toBeNull();
+  });
+
+  test("a degraded row has no links at all, not an 'invalid url' label", () => {
+    const campaign = campaignFrom([{ ...volume, attempts: "x" }]);
+    const { container } = render(CampaignCard, { campaign });
+    expect(container.querySelectorAll("td.links a")).toHaveLength(0);
+    expect(screen.queryByText("invalid url")).toBeNull();
+  });
+
   test("an unrecognised status renders the neutral unknown chip", () => {
     const campaign = campaignFrom([{ ...volume, status: "paused" }]);
     render(CampaignCard, { campaign });
