@@ -234,7 +234,11 @@ reconciler:                # GitOps campaign reconciler (spec: campaign-gitops)
   campaignsRepoWebUrl: ""  # browsable URL shown on the status page; falls back to campaignsRepoUrl
   schedule: "*/5 * * * *"
   tickSeconds: 300         # MUST equal the schedule interval: STALE threshold on the status page
-  tickDeadlineSeconds: 600 # Job activeDeadlineSeconds; keep ≥ the git clone timeout (300 s)
+  tickDeadlineSeconds: 600 # Job activeDeadlineSeconds; also the Lease duration and the git-timeout clamp
+  gitTimeoutSeconds: 300   # socket timeout for the campaigns clone/fetch (clamped to tickDeadlineSeconds)
+  gitTokenSecret:          # optional read-only token for an https:// campaigns repo
+    name: ""               # Secret name; empty = anonymous clone
+    key: token
   window: 20               # max not-yet-done Jobs existing at once
   attemptCap: 3
   maxValidationsPerTick: 50

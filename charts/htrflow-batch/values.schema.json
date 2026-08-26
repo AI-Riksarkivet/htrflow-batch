@@ -3,70 +3,180 @@
   "title": "htrflow-batch values",
   "type": "object",
   "additionalProperties": false,
-  "required": ["s3", "publicResultsBase", "modelCache", "queue", "pipelines", "job", "security", "network", "viewer", "devStack", "reconciler", "exampleJob"],
+  "required": [
+    "s3",
+    "publicResultsBase",
+    "modelCache",
+    "queue",
+    "pipelines",
+    "job",
+    "security",
+    "network",
+    "viewer",
+    "devStack",
+    "reconciler",
+    "exampleJob"
+  ],
   "definitions": {
-    "cidr": { "type": "string", "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}/[0-9]{1,2}$" },
-    "cidrList": { "type": "array", "items": { "$ref": "#/definitions/cidr" } },
-    "nodePort": { "type": "integer", "minimum": 30000, "maximum": 32767 },
-    "quantity": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E|m)?$" },
-    "imageRef": { "type": "string" },
-    "positiveInt": { "type": "integer", "minimum": 1 },
-    "stringMap": { "type": "object", "additionalProperties": { "type": "string" } },
+    "cidr": {
+      "type": "string",
+      "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}/[0-9]{1,2}$"
+    },
+    "cidrList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/cidr"
+      }
+    },
+    "nodePort": {
+      "type": "integer",
+      "minimum": 30000,
+      "maximum": 32767
+    },
+    "quantity": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E|m)?$"
+    },
+    "imageRef": {
+      "type": "string"
+    },
+    "positiveInt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
     "storage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["size", "storageClass"],
+      "required": [
+        "size",
+        "storageClass"
+      ],
       "properties": {
-        "size": { "$ref": "#/definitions/quantity" },
-        "storageClass": { "type": "string" }
+        "size": {
+          "$ref": "#/definitions/quantity"
+        },
+        "storageClass": {
+          "type": "string"
+        }
       }
     }
   },
   "properties": {
-    "global": { "type": "object" },
+    "global": {
+      "type": "object"
+    },
     "s3": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["bucket", "existingSecret"],
+      "required": [
+        "bucket",
+        "existingSecret"
+      ],
       "properties": {
-        "bucket": { "type": "string", "minLength": 3, "maxLength": 63, "pattern": "^[a-z0-9][a-z0-9.-]*[a-z0-9]$" },
-        "existingSecret": { "type": "string", "minLength": 1 }
+        "bucket": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 63,
+          "pattern": "^[a-z0-9][a-z0-9.-]*[a-z0-9]$"
+        },
+        "existingSecret": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
-    "publicResultsBase": { "type": "string", "pattern": "^(https?://.+)?$" },
+    "publicResultsBase": {
+      "type": "string",
+      "pattern": "^(https?://.+)?$"
+    },
     "modelCache": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["create", "name", "size", "storageClass", "accessModes"],
+      "required": [
+        "create",
+        "name",
+        "size",
+        "storageClass",
+        "accessModes"
+      ],
       "properties": {
-        "create": { "type": "boolean" },
-        "name": { "type": "string", "minLength": 1 },
-        "size": { "$ref": "#/definitions/quantity" },
-        "storageClass": { "type": "string" },
+        "create": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "size": {
+          "$ref": "#/definitions/quantity"
+        },
+        "storageClass": {
+          "type": "string"
+        },
         "accessModes": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "enum": ["ReadWriteOnce", "ReadOnlyMany", "ReadWriteMany", "ReadWriteOncePod"] }
+          "items": {
+            "type": "string",
+            "enum": [
+              "ReadWriteOnce",
+              "ReadOnlyMany",
+              "ReadWriteMany",
+              "ReadWriteOncePod"
+            ]
+          }
         }
       }
     },
     "queue": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "flavor", "resources"],
+      "required": [
+        "name",
+        "flavor",
+        "resources"
+      ],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "flavor": { "type": "string", "minLength": 1 },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "flavor": {
+          "type": "string",
+          "minLength": 1
+        },
         "resources": {
           "type": "array",
           "minItems": 1,
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["name", "quota"],
+            "required": [
+              "name",
+              "quota"
+            ],
             "properties": {
-              "name": { "type": "string", "minLength": 1 },
-              "quota": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "$ref": "#/definitions/quantity" }] }
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "quota": {
+                "oneOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "$ref": "#/definitions/quantity"
+                  }
+                ]
+              }
             }
           }
         }
@@ -74,41 +184,110 @@
     },
     "pipelines": {
       "type": "object",
-      "propertyNames": { "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
-      "additionalProperties": { "type": "string" }
+      "propertyNames": {
+        "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
     },
     "job": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["runtimeClassName", "nodeSelector", "tolerations", "minDeadlineSeconds", "secondsPerPage", "manifestMaxBytes", "fetchMaxBytes"],
+      "required": [
+        "runtimeClassName",
+        "nodeSelector",
+        "tolerations",
+        "minDeadlineSeconds",
+        "secondsPerPage",
+        "manifestMaxBytes",
+        "fetchMaxBytes"
+      ],
       "properties": {
-        "runtimeClassName": { "type": "string" },
-        "nodeSelector": { "$ref": "#/definitions/stringMap" },
-        "tolerations": { "type": "array", "items": { "type": "object" } },
-        "minDeadlineSeconds": { "$ref": "#/definitions/positiveInt" },
-        "secondsPerPage": { "$ref": "#/definitions/positiveInt" },
-        "manifestMaxBytes": { "$ref": "#/definitions/positiveInt" },
-        "fetchMaxBytes": { "$ref": "#/definitions/positiveInt" }
+        "runtimeClassName": {
+          "type": "string"
+        },
+        "nodeSelector": {
+          "$ref": "#/definitions/stringMap"
+        },
+        "tolerations": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "minDeadlineSeconds": {
+          "$ref": "#/definitions/positiveInt"
+        },
+        "secondsPerPage": {
+          "$ref": "#/definitions/positiveInt"
+        },
+        "manifestMaxBytes": {
+          "$ref": "#/definitions/positiveInt"
+        },
+        "fetchMaxBytes": {
+          "$ref": "#/definitions/positiveInt"
+        }
       }
     },
     "security": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["allowedImageRepos", "requireModelRevision", "psaEnforce", "verifyImages"],
+      "required": [
+        "allowedImageRepos",
+        "requireModelRevision",
+        "psaEnforce",
+        "verifyImages"
+      ],
       "properties": {
-        "allowedImageRepos": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-        "requireModelRevision": { "type": "boolean" },
-        "psaEnforce": { "type": "string", "enum": ["baseline", "restricted"] },
+        "allowedImageRepos": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "requireModelRevision": {
+          "type": "boolean"
+        },
+        "psaEnforce": {
+          "type": "string",
+          "enum": [
+            "baseline",
+            "restricted"
+          ]
+        },
         "verifyImages": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["enabled", "issuer", "subject", "imageReferences", "rekorUrl"],
+          "required": [
+            "enabled",
+            "issuer",
+            "subject",
+            "imageReferences",
+            "rekorUrl"
+          ],
           "properties": {
-            "enabled": { "type": "boolean" },
-            "issuer": { "type": "string" },
-            "subject": { "type": "string" },
-            "imageReferences": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-            "rekorUrl": { "type": "string", "pattern": "^https://.+" }
+            "enabled": {
+              "type": "boolean"
+            },
+            "issuer": {
+              "type": "string"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "imageReferences": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "rekorUrl": {
+              "type": "string",
+              "pattern": "^https://.+"
+            }
           }
         }
       }
@@ -116,38 +295,91 @@
     "network": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "defaultDeny", "iiifCidrs", "s3Cidrs", "clusterCidrs", "nodeCidrs", "apiServer", "reconciler", "viewer"],
+      "required": [
+        "enabled",
+        "defaultDeny",
+        "iiifCidrs",
+        "s3Cidrs",
+        "clusterCidrs",
+        "nodeCidrs",
+        "apiServer",
+        "reconciler",
+        "viewer"
+      ],
       "properties": {
-        "enabled": { "type": "boolean" },
-        "defaultDeny": { "type": "boolean" },
-        "iiifCidrs": { "$ref": "#/definitions/cidrList" },
-        "s3Cidrs": { "$ref": "#/definitions/cidrList" },
-        "clusterCidrs": { "$ref": "#/definitions/cidrList" },
-        "nodeCidrs": { "$ref": "#/definitions/cidrList" },
+        "enabled": {
+          "type": "boolean"
+        },
+        "defaultDeny": {
+          "type": "boolean"
+        },
+        "iiifCidrs": {
+          "$ref": "#/definitions/cidrList"
+        },
+        "s3Cidrs": {
+          "$ref": "#/definitions/cidrList"
+        },
+        "clusterCidrs": {
+          "$ref": "#/definitions/cidrList"
+        },
+        "nodeCidrs": {
+          "$ref": "#/definitions/cidrList"
+        },
         "apiServer": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["cidr", "port"],
+          "required": [
+            "cidr",
+            "port"
+          ],
           "properties": {
-            "cidr": { "oneOf": [{ "$ref": "#/definitions/cidr" }, { "type": "string", "maxLength": 0 }] },
-            "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+            "cidr": {
+              "oneOf": [
+                {
+                  "$ref": "#/definitions/cidr"
+                },
+                {
+                  "type": "string",
+                  "maxLength": 0
+                }
+              ]
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
           }
         },
         "reconciler": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["egressCidrs", "extraEgress"],
+          "required": [
+            "egressCidrs",
+            "extraEgress"
+          ],
           "properties": {
-            "egressCidrs": { "$ref": "#/definitions/cidrList" },
-            "extraEgress": { "type": "array", "items": { "type": "object" } }
+            "egressCidrs": {
+              "$ref": "#/definitions/cidrList"
+            },
+            "extraEgress": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
           }
         },
         "viewer": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["ingressCidrs"],
+          "required": [
+            "ingressCidrs"
+          ],
           "properties": {
-            "ingressCidrs": { "$ref": "#/definitions/cidrList" }
+            "ingressCidrs": {
+              "$ref": "#/definitions/cidrList"
+            }
           }
         }
       }
@@ -155,89 +387,206 @@
     "viewer": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "image", "nodePort", "defaultManifest", "securityHeaders"],
+      "required": [
+        "enabled",
+        "image",
+        "nodePort",
+        "defaultManifest",
+        "securityHeaders"
+      ],
       "properties": {
-        "enabled": { "type": "boolean" },
-        "image": { "$ref": "#/definitions/imageRef" },
-        "nodePort": { "$ref": "#/definitions/nodePort" },
-        "defaultManifest": { "type": "string" },
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "$ref": "#/definitions/imageRef"
+        },
+        "nodePort": {
+          "$ref": "#/definitions/nodePort"
+        },
+        "defaultManifest": {
+          "type": "string"
+        },
         "securityHeaders": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["enabled"],
-          "properties": { "enabled": { "type": "boolean" } }
+          "required": [
+            "enabled"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          }
         }
       }
     },
     "devStack": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["allowTagImages", "rustfs", "registry", "nvidiaDevicePlugin", "gitDaemon"],
+      "required": [
+        "allowTagImages",
+        "rustfs",
+        "registry",
+        "nvidiaDevicePlugin",
+        "gitDaemon"
+      ],
       "properties": {
-        "allowTagImages": { "type": "boolean" },
+        "allowTagImages": {
+          "type": "boolean"
+        },
         "rustfs": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["enabled", "accessKey", "secretKey", "nodePortS3", "console", "storage", "init", "publicLogs"],
+          "required": [
+            "enabled",
+            "accessKey",
+            "secretKey",
+            "nodePortS3",
+            "console",
+            "storage",
+            "init",
+            "publicLogs"
+          ],
           "properties": {
-            "enabled": { "type": "boolean" },
-            "accessKey": { "type": "string" },
-            "secretKey": { "type": "string" },
-            "nodePortS3": { "$ref": "#/definitions/nodePort" },
+            "enabled": {
+              "type": "boolean"
+            },
+            "accessKey": {
+              "type": "string"
+            },
+            "secretKey": {
+              "type": "string"
+            },
+            "nodePortS3": {
+              "$ref": "#/definitions/nodePort"
+            },
             "console": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["enabled", "nodePort"],
+              "required": [
+                "enabled",
+                "nodePort"
+              ],
               "properties": {
-                "enabled": { "type": "boolean" },
-                "nodePort": { "$ref": "#/definitions/nodePort" }
+                "enabled": {
+                  "type": "boolean"
+                },
+                "nodePort": {
+                  "$ref": "#/definitions/nodePort"
+                }
               }
             },
-            "storage": { "$ref": "#/definitions/storage" },
+            "storage": {
+              "$ref": "#/definitions/storage"
+            },
             "init": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["enabled", "image", "corsOrigins"],
+              "required": [
+                "enabled",
+                "image",
+                "corsOrigins"
+              ],
               "properties": {
-                "enabled": { "type": "boolean" },
-                "image": { "$ref": "#/definitions/imageRef" },
-                "corsOrigins": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+                "enabled": {
+                  "type": "boolean"
+                },
+                "image": {
+                  "$ref": "#/definitions/imageRef"
+                },
+                "corsOrigins": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
               }
             },
-            "publicLogs": { "type": "boolean" }
+            "publicLogs": {
+              "type": "boolean"
+            }
           }
         },
         "registry": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["enabled", "nodePort", "image", "runAsUser", "storage"],
+          "required": [
+            "enabled",
+            "nodePort",
+            "image",
+            "runAsUser",
+            "storage"
+          ],
           "properties": {
-            "enabled": { "type": "boolean" },
-            "nodePort": { "$ref": "#/definitions/nodePort" },
-            "image": { "$ref": "#/definitions/imageRef" },
-            "runAsUser": { "type": "integer", "minimum": 0 },
-            "storage": { "$ref": "#/definitions/storage" }
+            "enabled": {
+              "type": "boolean"
+            },
+            "nodePort": {
+              "$ref": "#/definitions/nodePort"
+            },
+            "image": {
+              "$ref": "#/definitions/imageRef"
+            },
+            "runAsUser": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "storage": {
+              "$ref": "#/definitions/storage"
+            }
           }
         },
         "nvidiaDevicePlugin": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["enabled", "image"],
+          "required": [
+            "enabled",
+            "image"
+          ],
           "properties": {
-            "enabled": { "type": "boolean" },
-            "image": { "$ref": "#/definitions/imageRef" }
+            "enabled": {
+              "type": "boolean"
+            },
+            "image": {
+              "$ref": "#/definitions/imageRef"
+            }
           }
         },
         "gitDaemon": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["enabled", "image", "bucket", "repo", "seedUrl"],
+          "required": [
+            "enabled",
+            "image",
+            "bucket",
+            "repo",
+            "seedUrl"
+          ],
           "properties": {
-            "enabled": { "type": "boolean" },
-            "image": { "$ref": "#/definitions/imageRef" },
-            "bucket": { "type": "string", "minLength": 3, "maxLength": 63, "pattern": "^[a-z0-9][a-z0-9.-]*[a-z0-9]$" },
-            "repo": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9._-]+$" },
-            "seedUrl": { "type": "string", "pattern": "^(https?://.+)?$" }
+            "enabled": {
+              "type": "boolean"
+            },
+            "image": {
+              "$ref": "#/definitions/imageRef"
+            },
+            "bucket": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 63,
+              "pattern": "^[a-z0-9][a-z0-9.-]*[a-z0-9]$"
+            },
+            "repo": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._-]+$"
+            },
+            "seedUrl": {
+              "type": "string",
+              "pattern": "^(https?://.+)?$"
+            }
           }
         }
       }
@@ -245,31 +594,103 @@
     "reconciler": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "image", "campaignsRepoUrl", "campaignsRepoWebUrl", "schedule", "tickSeconds", "tickDeadlineSeconds", "window", "attemptCap", "maxValidationsPerTick", "fetchMaxBytes", "publicResultsBase"],
+      "required": [
+        "enabled",
+        "image",
+        "campaignsRepoUrl",
+        "campaignsRepoWebUrl",
+        "schedule",
+        "tickSeconds",
+        "tickDeadlineSeconds",
+        "window",
+        "attemptCap",
+        "maxValidationsPerTick",
+        "fetchMaxBytes",
+        "publicResultsBase",
+        "gitTimeoutSeconds",
+        "gitTokenSecret"
+      ],
       "properties": {
-        "enabled": { "type": "boolean" },
-        "image": { "$ref": "#/definitions/imageRef" },
-        "campaignsRepoUrl": { "type": "string" },
-        "campaignsRepoWebUrl": { "type": "string" },
-        "schedule": { "type": "string", "minLength": 9 },
-        "tickSeconds": { "$ref": "#/definitions/positiveInt" },
-        "tickDeadlineSeconds": { "$ref": "#/definitions/positiveInt" },
-        "window": { "$ref": "#/definitions/positiveInt" },
-        "attemptCap": { "type": "integer", "minimum": 0 },
-        "maxValidationsPerTick": { "$ref": "#/definitions/positiveInt" },
-        "fetchMaxBytes": { "$ref": "#/definitions/positiveInt" },
-        "publicResultsBase": { "type": "string", "pattern": "^(https?://.+)?$" }
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "$ref": "#/definitions/imageRef"
+        },
+        "campaignsRepoUrl": {
+          "type": "string"
+        },
+        "campaignsRepoWebUrl": {
+          "type": "string"
+        },
+        "schedule": {
+          "type": "string",
+          "minLength": 9
+        },
+        "tickSeconds": {
+          "$ref": "#/definitions/positiveInt"
+        },
+        "tickDeadlineSeconds": {
+          "$ref": "#/definitions/positiveInt"
+        },
+        "window": {
+          "$ref": "#/definitions/positiveInt"
+        },
+        "attemptCap": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxValidationsPerTick": {
+          "$ref": "#/definitions/positiveInt"
+        },
+        "fetchMaxBytes": {
+          "$ref": "#/definitions/positiveInt"
+        },
+        "publicResultsBase": {
+          "type": "string",
+          "pattern": "^(https?://.+)?$"
+        },
+        "gitTimeoutSeconds": {
+          "$ref": "#/definitions/positiveInt"
+        },
+        "gitTokenSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            }
+          }
+        }
       }
     },
     "exampleJob": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "image", "manifestUrl", "pipelineId"],
+      "required": [
+        "enabled",
+        "image",
+        "manifestUrl",
+        "pipelineId"
+      ],
       "properties": {
-        "enabled": { "type": "boolean" },
-        "image": { "$ref": "#/definitions/imageRef" },
-        "manifestUrl": { "type": "string", "pattern": "^(https?://.+)?$" },
-        "pipelineId": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" }
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "$ref": "#/definitions/imageRef"
+        },
+        "manifestUrl": {
+          "type": "string",
+          "pattern": "^(https?://.+)?$"
+        },
+        "pipelineId": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+        }
       }
     }
   }
