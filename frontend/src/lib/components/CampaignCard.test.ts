@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/svelte";
+import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { describe, expect, test } from "vitest";
 import { parseStatusDoc, type CampaignEntry } from "$lib/status.js";
 import CampaignCard from "./CampaignCard.svelte";
@@ -95,6 +95,33 @@ describe("CampaignCard", () => {
     expect(img).toHaveAttribute("loading", "lazy");
     expect(container.querySelectorAll("img")).toHaveLength(1);
     expect(container.querySelectorAll(".thumb-placeholder")).toHaveLength(1);
+  });
+
+  test("pipeline chip is a sibling button: opens the YAML without collapsing the table", async () => {
+    const campaign = {
+      ...campaignFrom([volume]),
+      pipeline_yaml: "steps:\n  - step: Segmentation\n",
+    };
+    render(CampaignCard, { campaign });
+    const chip = screen.getByRole("button", { name: "demo-v1" });
+    const toggle = screen.getByRole("button", { name: /demo$/ });
+    // not nested: no button has a button ancestor
+    expect(chip.closest("button")).toBe(chip);
+    expect(chip.parentElement?.closest("button")).toBeNull();
+    expect(toggle.parentElement?.closest("button")).toBeNull();
+    expect(chip).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+    await fireEvent.click(chip);
+    expect(chip).toHaveAttribute("aria-expanded", "true");
+    const yaml = document.getElementById(chip.getAttribute("aria-controls") ?? "");
+    expect(yaml).toHaveTextContent("step: Segmentation");
+    expect(screen.getByRole("table")).toBeInTheDocument(); // still expanded
+
+    await fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(yaml).toBeInTheDocument(); // yaml is independent of the table
   });
 
   test("an unrecognised status renders the neutral unknown chip", () => {
