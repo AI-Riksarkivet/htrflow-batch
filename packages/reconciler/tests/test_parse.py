@@ -178,3 +178,98 @@ def test_broken_campaign_still_declares_its_volume_ids():
     assert c.error is not None
     assert c.pipeline_id == "demo-v1"
     assert c.declared_ids == ("R1", "a/b")
+
+
+# -- S1: the campaigns repo is a code-execution boundary -----------------------
+
+ALLOWED = ("ghcr.io/riksarkivet/", "docker.io/riksarkivet/htrflow-batch")
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "ghcr.io/riksarkivet/htrflow-batch@sha256:abc",
+        "ghcr.io/riksarkivet/anything/deeper@sha256:abc",
+        "docker.io/riksarkivet/htrflow-batch@sha256:abc",
+    ],
+)
+def test_parse_pipeline_accepts_images_under_allowed_repos(image):
+    p = parse_pipeline("p", f"image: {image}\nsteps: []\n", allowed_repos=ALLOWED)
+    assert p.image == image
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "docker.io/evil/htrflow-batch@sha256:abc",
+        "ghcr.io/riksarkivet-evil/x@sha256:abc",  # prefix on a path boundary
+        "docker.io/riksarkivet/htrflow-batch-evil@sha256:abc",
+        "riksarkivet/htrflow-batch@sha256:abc",  # implicit registry is not listed
+    ],
+)
+def test_parse_pipeline_rejects_images_outside_allowed_repos(image):
+    with pytest.raises(PipelineError, match="allow"):
+        parse_pipeline("p", f"image: {image}\nsteps: []\n", allowed_repos=ALLOWED)
+
+
+def test_parse_pipeline_empty_allow_list_accepts_any_digest_pinned_image():
+    p = parse_pipeline("p", "image: anyone/anything@sha256:abc\nsteps: []\n")
+    assert p.image.startswith("anyone/")
+
+
+STEPS_WITH_MODELS = """image: r/i@sha256:abc
+steps:
+  - step: Segmentation
+    settings:
+      model: yolo
+      model_settings:
+        model: Riksarkivet/yolov9-regions-1
+        {rev1}
+  - step: TextRecognition
+    settings:
+      model: TrOCR
+      model_settings:
+        model: Riksarkivet/trocr-base-handwritten-hist-swe-2
+        {rev2}
+  - step: Export
+"""
+
+
+def test_parse_pipeline_requires_a_40_hex_revision_per_model_when_enabled():
+    good = STEPS_WITH_MODELS.format(
+        rev1="revision: " + "a" * 40, rev2="revision: " + "b" * 40
+    )
+    parse_pipeline("p", good, require_revision=True)
+    missing = STEPS_WITH_MODELS.format(rev1="revision: " + "a" * 40, rev2="")
+    with pytest.raises(PipelineError, match="revision"):
+        parse_pipeline("p", missing, require_revision=True)
+    short = STEPS_WITH_MODELS.format(
+        rev1="revision: main", rev2="revision: " + "b" * 40
+    )
+    with pytest.raises(PipelineError, match="revision"):
+        parse_pipeline("p", short, require_revision=True)
+    # off by default: unpinned models pass
+    parse_pipeline("p", missing)
+
+
+# -- S4/S5: only http(s) sources reach the fetches and the browser ------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["javascript:alert(1)", "file:///etc/passwd", "ftp://x/m", "//x/m", "x/m", ""],
+)
+def test_parse_campaign_rejects_non_http_manifest(url):
+    c = parse_campaign(
+        "bad", f"pipeline: p\nvolumes:\n  - id: v\n    manifest: {json.dumps(url)}\n"
+    )
+    assert c.error is not None
+
+
+def test_parse_campaign_rejects_non_http_images():
+    text = (
+        "pipeline: p\nvolumes:\n  - id: v\n"
+        "    images: [https://x/1.jpg, 'javascript:alert(1)']\n"
+    )
+    c = parse_campaign("bad", text)
+    assert c.error is not None and "javascript" in c.error

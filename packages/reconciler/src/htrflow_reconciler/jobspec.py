@@ -75,6 +75,12 @@ class ReconcilerConfig(BaseModel):
     #: coordination.k8s.io Lease taken per tick (audit O8): a manual
     #: ``kubectl create job --from=cronjob`` bypasses concurrencyPolicy.
     lease_name: str = "htr-reconciler"
+    #: Image repositories a pipeline may pin (prefix match on a path boundary,
+    #: before ``@sha256:``). Empty admits any digest-pinned image, with a
+    #: warning in status.json (audit S1).
+    allowed_image_repos: tuple[str, ...] = ()
+    #: Every ``model_settings.model`` must carry a 40-hex ``revision``.
+    require_model_revision: bool = False
     #: Pre-validation is O(new volumes) per tick, never O(volumes) (audit X1).
     max_validations_per_tick: int = 50
     #: An unreachable manifest is not re-probed for this many ticks: a dead
