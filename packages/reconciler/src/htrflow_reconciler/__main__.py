@@ -35,6 +35,17 @@ class Settings(BaseSettings):
     reconciler_queue: str = "htr-batch"
     reconciler_s3_secret: str = "htr-batch-s3"
     reconciler_data_pvc: str = "htr-test-data"
+    # Audit remediation plan, "Reconciler env" contract: names and defaults.
+    reconciler_tick_seconds: int = 300
+    reconciler_lease_name: str = "htr-reconciler"
+    reconciler_allowed_image_repos: str = ""  # comma-separated; empty = any
+    reconciler_require_model_revision: bool = False
+    reconciler_job_min_deadline_seconds: int = 21600
+    reconciler_job_seconds_per_page: int = 30
+    reconciler_job_runtime_class: str = "nvidia"
+    reconciler_job_node_selector: dict[str, str] = {}
+    reconciler_job_tolerations: list[dict] = []
+    reconciler_max_validations_per_tick: int = 50
     reconciler_fetch_max_bytes: int = 16 * 1024 * 1024
     # One tick's wall-clock budget (the CronJob's activeDeadlineSeconds); the
     # git timeout is clamped to it so a hung clone cannot outlive the pod that
@@ -93,9 +104,13 @@ def fetch_json(
         return None
 
 
-def run() -> None:
-    settings = Settings()  # reads CAMPAIGNS_REPO_URL etc.; raises if missing
-    cfg = ReconcilerConfig(
+def build_config(settings: Settings) -> ReconcilerConfig:
+    repos = tuple(
+        r.strip()
+        for r in settings.reconciler_allowed_image_repos.split(",")
+        if r.strip()
+    )
+    return ReconcilerConfig(
         public_results_base=settings.public_results_base,
         internal_results_base=_internal_results_base(settings),
         campaigns_repo_url=settings.campaigns_repo_url,
@@ -106,7 +121,23 @@ def run() -> None:
         data_pvc=settings.reconciler_data_pvc,
         window=settings.reconciler_window,
         attempt_cap=settings.reconciler_attempt_cap,
+        tick_seconds=settings.reconciler_tick_seconds,
+        tick_deadline_seconds=settings.reconciler_tick_deadline_seconds,
+        lease_name=settings.reconciler_lease_name,
+        allowed_image_repos=repos,
+        require_model_revision=settings.reconciler_require_model_revision,
+        job_min_deadline_seconds=settings.reconciler_job_min_deadline_seconds,
+        job_seconds_per_page=settings.reconciler_job_seconds_per_page,
+        job_runtime_class=settings.reconciler_job_runtime_class,
+        job_node_selector=settings.reconciler_job_node_selector,
+        job_tolerations=settings.reconciler_job_tolerations,
+        max_validations_per_tick=settings.reconciler_max_validations_per_tick,
     )
+
+
+def run() -> None:
+    settings = Settings()  # reads CAMPAIGNS_REPO_URL etc.; raises if missing
+    cfg = build_config(settings)
     repo = checkout(
         settings.campaigns_repo_url,
         settings.campaigns_dir,
