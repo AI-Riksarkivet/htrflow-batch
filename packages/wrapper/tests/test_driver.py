@@ -280,3 +280,85 @@ def test_load_pipeline_model_download_oserror_stays_transient(tmp_path, monkeypa
 
     with pytest.raises(OSError, match="huggingface"):
         load_pipeline(str(pipeline_yaml), out_dir)
+
+
+def _inject_process_fakes(monkeypatch):
+    fake_htrflow = ModuleType("htrflow")
+    fake_pipeline_mod = ModuleType("htrflow.pipeline")
+    fake_steps = ModuleType("htrflow.pipeline.steps")
+    fake_steps.auto_import = lambda paths: [object()]
+    monkeypatch.setitem(sys.modules, "htrflow", fake_htrflow)
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline", fake_pipeline_mod)
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline.steps", fake_steps)
+
+
+class _NoopPipeline:
+    def run(self, document):
+        pass
+
+
+def test_process_page_returns_both_formats(tmp_path, monkeypatch):
+    _inject_process_fakes(monkeypatch)
+    out_dir = tmp_path / "outputs"
+    for fmt in ("alto", "page"):
+        (out_dir / fmt).mkdir(parents=True)
+        (out_dir / fmt / "0001.xml").write_text("<x/>")
+    image = tmp_path / "0001.jpg"
+    image.write_bytes(b"jpg")
+
+    from htrflow_batch.driver import process_page
+
+    files = process_page(_NoopPipeline(), image, out_dir)
+    assert set(files) == {"alto", "page"}
+
+
+def test_process_page_raises_when_a_format_is_missing(tmp_path, monkeypatch):
+    """W2: a page with ALTO but no PAGE XML must fail here, not be uploaded
+    half-complete and later verified as done."""
+    _inject_process_fakes(monkeypatch)
+    out_dir = tmp_path / "outputs"
+    (out_dir / "alto").mkdir(parents=True)
+    (out_dir / "alto" / "0001.xml").write_text("<x/>")
+    image = tmp_path / "0001.jpg"
+    image.write_bytes(b"jpg")
+
+    from htrflow_batch.driver import process_page
+
+    with pytest.raises(RuntimeError, match="page"):
+        process_page(_NoopPipeline(), image, out_dir)
+
+
+@pytest.mark.parametrize(
+    "exc", [KeyError("segmentatoin"), NotImplementedError("Model X is not supported")]
+)
+def test_load_pipeline_unknown_step_or_model_is_permanent(tmp_path, monkeypatch, exc):
+    """htrflow raises KeyError for an unknown step name (STEPS[...]) and
+    NotImplementedError for an unknown model class; both are config
+    mistakes and must become ValueError (exit 13), not a transient retry."""
+    mock_export_class = type("Export", (), {})
+
+    class MockPipeline:
+        def __init__(self, steps=None):
+            self.steps = steps or []
+
+        @staticmethod
+        def from_config(config):
+            raise exc
+
+    fake_pipeline_pipeline = ModuleType("htrflow.pipeline.pipeline")
+    fake_steps = ModuleType("htrflow.pipeline.steps")
+    fake_pipeline_pipeline.Pipeline = MockPipeline
+    fake_steps.Export = mock_export_class
+    monkeypatch.setitem(sys.modules, "htrflow", ModuleType("htrflow"))
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline", ModuleType("htrflow.pipeline"))
+    monkeypatch.setitem(
+        sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline
+    )
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline.steps", fake_steps)
+    pipeline_yaml = tmp_path / "pipeline.yaml"
+    pipeline_yaml.write_text("steps: []")
+
+    from htrflow_batch.driver import load_pipeline
+
+    with pytest.raises(ValueError, match="bad pipeline config"):
+        load_pipeline(str(pipeline_yaml), tmp_path / "out")

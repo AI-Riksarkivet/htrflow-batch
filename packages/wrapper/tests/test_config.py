@@ -57,3 +57,14 @@ def test_s3_endpoint_optional():
     del env["S3_ENDPOINT"]
     cfg = Config.from_env(env)
     assert cfg.s3_endpoint == ""
+
+
+def test_byte_caps_default_and_override():
+    cfg = Config.from_env(REQUIRED)
+    assert cfg.manifest_max_bytes == 16777216
+    assert cfg.fetch_max_bytes == 67108864
+    cfg = Config.from_env(
+        dict(REQUIRED, MANIFEST_MAX_BYTES="1024", FETCH_MAX_BYTES="2048")
+    )
+    assert cfg.manifest_max_bytes == 1024
+    assert cfg.fetch_max_bytes == 2048

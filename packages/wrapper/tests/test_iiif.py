@@ -3,6 +3,7 @@ import pytest
 
 from htrflow_batch.iiif import (
     ManifestError,
+    TransientManifestError,
     fetch_manifest,
     pages_from_manifest,
 )
@@ -39,11 +40,98 @@ def test_fetch_manifest_ok(sample_manifest):
     assert m["type"] == "Manifest"
 
 
-def test_fetch_manifest_404_raises():
-    transport = httpx.MockTransport(lambda req: httpx.Response(404))
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 410])
+def test_fetch_manifest_4xx_is_permanent(status):
+    transport = httpx.MockTransport(lambda req: httpx.Response(status))
     client = httpx.Client(transport=transport)
-    with pytest.raises(ManifestError):
+    with pytest.raises(ManifestError) as ei:
         fetch_manifest("https://x/manifest", client)
+    assert not isinstance(ei.value, TransientManifestError)
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
+def test_fetch_manifest_5xx_and_429_are_transient(status):
+    """W1: a gateway blip must not park the volume in needs-attention."""
+    transport = httpx.MockTransport(lambda req: httpx.Response(status))
+    client = httpx.Client(transport=transport)
+    with pytest.raises(TransientManifestError):
+        fetch_manifest("https://x/manifest", client)
+
+
+def test_transient_manifest_error_is_not_permanent():
+    # main.py classifies ManifestError as exit 13; the transient one must
+    # fall through to the generic (retryable) branch.
+    assert not issubclass(TransientManifestError, ManifestError)
+
+
+@pytest.mark.parametrize("exc", [httpx.ConnectError, httpx.ReadTimeout])
+def test_fetch_manifest_network_error_is_transient(exc):
+    def handler(req):
+        raise exc("boom", request=req)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(TransientManifestError):
+        fetch_manifest("https://x/manifest", client)
+
+
+def test_fetch_manifest_non_json_is_permanent():
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(200, content=b"<html>login</html>")
+    )
+    client = httpx.Client(transport=transport)
+    with pytest.raises(ManifestError, match="not JSON"):
+        fetch_manifest("https://x/manifest", client)
+
+
+def test_fetch_manifest_non_object_json_is_permanent():
+    transport = httpx.MockTransport(lambda req: httpx.Response(200, json=[1, 2]))
+    client = httpx.Client(transport=transport)
+    with pytest.raises(ManifestError, match="not a JSON object"):
+        fetch_manifest("https://x/manifest", client)
+
+
+def test_fetch_manifest_rejects_non_http_scheme():
+    calls = []
+
+    def handler(req):
+        calls.append(req)
+        return httpx.Response(200, json={})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(ManifestError, match="http"):
+        fetch_manifest("ftp://x/manifest", client)
+    with pytest.raises(ManifestError, match="http"):
+        fetch_manifest("file:///etc/passwd", client)
+    assert calls == []
+
+
+def test_fetch_manifest_content_length_over_cap_is_permanent():
+    def handler(req):
+        return httpx.Response(200, headers={"Content-Length": "999"}, content=b"")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(ManifestError, match="too large"):
+        fetch_manifest("https://x/manifest", client, max_bytes=100)
+
+
+def test_fetch_manifest_streamed_body_over_cap_is_permanent():
+    """No Content-Length (chunked): the cap must apply to the bytes read."""
+
+    def handler(req):
+        return httpx.Response(200, stream=httpx.ByteStream(b"[" + b"1," * 200 + b"1]"))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(ManifestError, match="too large"):
+        fetch_manifest("https://x/manifest", client, max_bytes=100)
+
+
+def test_fetch_manifest_under_cap_ok(sample_manifest):
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(200, json=sample_manifest)
+    )
+    client = httpx.Client(transport=transport)
+    m = fetch_manifest("https://x/manifest", client, max_bytes=1 << 20)
+    assert m["type"] == "Manifest"
 
 
 def _canvas_with_service(width, height):
@@ -116,3 +204,36 @@ def test_painting_body_p3_passthrough():
     canvas = _canvas_with_service(3000, 4000)
     body = painting_body(canvas)
     assert body["service"][0]["id"] == "https://img/iiif/page-1"
+
+
+@pytest.mark.parametrize(
+    "width,expected",
+    [
+        ("3000", "2500,"),  # numeric string, wide -> capped
+        ("1200", "max"),  # numeric string, narrow -> max
+        ("abc", "2500,"),  # junk -> cap (a 400 falls back to max in fetch)
+        (None, "2500,"),
+        ([3000], "2500,"),
+    ],
+)
+def test_non_int_canvas_width_does_not_crash(width, expected):
+    """W11: a non-int width raised TypeError and was retried to the cap."""
+    m = {"items": [_canvas_with_service(width, 4000)]}
+    pages = pages_from_manifest(m, width=2500)
+    assert (
+        pages[0].image_url == f"https://img/iiif/page-1/full/{expected}/0/default.jpg"
+    )
+
+
+def test_redact_url():
+    from htrflow_batch.iiif import redact_url, redact_urls
+
+    assert (
+        redact_url("https://u:p@h:8443/a/b.json?token=S#f") == "https://h:8443/a/b.json"
+    )
+    assert redact_url("http://h/x") == "http://h/x"
+    assert redact_url("not a url") == "not a url"
+    assert (
+        redact_urls("bad https://u:p@h/a?x=1 and http://h2/b?y=2 end")
+        == "bad https://h/a and http://h2/b end"
+    )
