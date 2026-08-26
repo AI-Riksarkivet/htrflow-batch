@@ -39,6 +39,8 @@ class JobState(BaseModel):
     #: ``metadata.deletionTimestamp``: a Foreground delete in progress. The
     #: Job stays listed (and Failed) until its pod is gone.
     deletion_timestamp: str | None = None
+    #: ``batch.htrflow/campaign`` label: what the fairness order counts (R5).
+    campaign: str | None = None
 
     @property
     def deleting(self) -> bool:

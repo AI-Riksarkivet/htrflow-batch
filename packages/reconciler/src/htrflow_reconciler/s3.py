@@ -8,7 +8,9 @@ land at ``<pipeline>/<volume>/…``, which is why ``jobspec.build_job`` pins
 
 from __future__ import annotations
 
+import hashlib
 import json
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timezone
 from typing import Any
@@ -22,8 +24,14 @@ def manifest_key(pipeline_id: str, volume_id: str) -> str:
     return f"{pipeline_id}/{volume_id}/manifest.json"
 
 
-def synthetic_manifest_key(pipeline_id: str, volume_id: str) -> str:
-    return f"sources/{pipeline_id}/{volume_id}/manifest.json"
+def synthetic_manifest_key(
+    pipeline_id: str, volume_id: str, images: Sequence[str]
+) -> str:
+    """The key carries a short hash of the image list (audit R9): the
+    manifest is write-once per key, so an ``images:`` edit in git yields a
+    new manifest instead of being ignored forever."""
+    digest = hashlib.sha256("\n".join(images).encode()).hexdigest()[:8]
+    return f"sources/{pipeline_id}/{volume_id}/{digest}/manifest.json"
 
 
 def failure_log_key(pipeline_id: str, volume_id: str) -> str:

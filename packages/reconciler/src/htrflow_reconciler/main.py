@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import posixpath
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -15,7 +16,13 @@ from urllib.parse import urlsplit, urlunsplit
 from . import s3 as keys
 from .attempts import Attempt, dump_attempts, load_attempts
 from .guards import check_drift
-from .jobspec import ReconcilerConfig, build_job, build_warmup_job, warmup_job_name
+from .jobspec import (
+    ReconcilerConfig,
+    build_job,
+    build_warmup_job,
+    label_value,
+    warmup_job_name,
+)
 from .models import Campaign, PipelineSpec, Volume
 from .parse import PipelineError, parse_campaign, parse_pipeline, step_summaries
 from .plan import plan_submissions
@@ -118,7 +125,7 @@ def _source_manifest_url(
         # type honest for the type checker.
         public = _browser_url(volume.manifest_url, cfg) or volume.manifest_url
         return public, volume.manifest_url
-    key = keys.synthetic_manifest_key(pipeline_id, volume.id)
+    key = keys.synthetic_manifest_key(pipeline_id, volume.id, volume.images)
     public = f"{cfg.public_results_base.rstrip('/')}/{key}"
     if cached.get("synthetic") != key:
         bucket.write_json(key, build_manifest(volume.id, list(volume.images), public))
@@ -302,9 +309,9 @@ class _Pass:
         self.fetch_json = fetch_json
         self.campaigns, self.pipelines, self.warnings = _load_repo(Path(campaigns_dir))
         self.jobs: dict[str, JobState] = cluster.jobs()
-        self.attempts = load_attempts(bucket.read_json(keys.attempts_key()))
-        self.validation: dict = bucket.read_json(keys.validation_key()) or {}
-        self.volumes: dict = bucket.read_json(keys.volumes_key()) or {}
+        self.attempts = load_attempts(self._owned_json(keys.attempts_key()))
+        self.validation = self._owned_json(keys.validation_key())
+        self.volumes = self._owned_json(keys.volumes_key())
         self.blocked: set[str] = set()
         self.submitted = 0
         self.retried = 0
@@ -312,6 +319,23 @@ class _Pass:
         # done_volumes is a paginated LIST + a HEAD per volume: probe each
         # pipeline once per tick, not once per campaign that uses it.
         self._done_cache: dict[str, dict[str, str]] = {}
+
+    def _owned_json(self, key: str) -> dict:
+        """A reconciler-owned JSON file, or ``{}`` with a warning when it is
+        corrupt (audit R8): a truncated upload must not poison every tick
+        until an operator notices."""
+        try:
+            raw = self.bucket.read_json(key)
+        except ValueError as e:
+            self.warnings.append(f"{key}: unreadable ({e}) — treated as absent")
+            log.warning("%s: unreadable (%s); treated as absent", key, e)
+            return {}
+        if raw is None:
+            return {}
+        if not isinstance(raw, dict):
+            self.warnings.append(f"{key}: not a JSON object — treated as absent")
+            return {}
+        return raw
 
     def done_for(self, pipeline_id: str) -> dict[str, str]:
         if pipeline_id not in self._done_cache:
@@ -430,15 +454,45 @@ class _Pass:
                 self.warnings.append(f"pipeline {pid}: warm-up: {_describe(e)}")
 
     def _warm(self, pid: str, spec: PipelineSpec, state: JobState | None, name: str):
+        """Warm-ups have the same budget as volumes (audit R7): a permanent
+        failure (exit 13: bad model id, bad YAML) or the attempt cap parks the
+        pipeline with its evidence kept, instead of a delete-recreate loop
+        every tick forever. Clearing ``warmup/<pid>`` in attempts.json (or a
+        new pipeline id) is the operator's retry."""
+        akey = f"warmup/{pid}"
+        record = self.attempts.get(akey, Attempt())
+        log_key = keys.warmup_log_key(pid)
+        if record.terminal:
+            self.warnings.append(
+                f"pipeline {pid}: model warm-up needs attention ({record.terminal}); "
+                f"log at {log_key}; clear {akey} in attempts.json to retry"
+            )
+            return
         if state is None:
             self.cluster.create_job(build_warmup_job(spec, self.cfg))
             self.warnings.append(f"pipeline {pid}: warming model cache ({name})")
         elif state.failed:
-            self.bucket.put_text(keys.warmup_log_key(pid), self.cluster.job_logs(name))
+            self.bucket.put_text(log_key, self.cluster.job_logs(name))
+            n = record.n + 1
+            verdict = None
+            if is_permanent(state):
+                verdict = "exit-13"
+            elif n >= self.cfg.attempt_cap:
+                verdict = "capped"
+            self.attempts[akey] = Attempt(n=n, terminal=verdict)
+            self.save_attempts()
+            if verdict:
+                self.warnings.append(
+                    f"pipeline {pid}: model warm-up needs attention ({verdict}, "
+                    f"exit {state.exit_code}); log at {log_key}; clear {akey} in "
+                    "attempts.json to retry"
+                )
+                return
             self.cluster.delete_job(name)
             self.warnings.append(
-                f"pipeline {pid}: model warm-up failed (exit {state.exit_code}); "
-                f"log at {keys.warmup_log_key(pid)}, retrying next tick"
+                f"pipeline {pid}: model warm-up failed (exit {state.exit_code}, "
+                f"attempt {n}/{self.cfg.attempt_cap}); log at {log_key}, "
+                "retrying next tick"
             )
         else:
             self.warnings.append(f"pipeline {pid}: warming model cache ({name})")
@@ -688,11 +742,10 @@ class _Pass:
         # first campaign using that pipeline.
         claimed: dict[str, set[str]] = {}
         for camp in self.campaigns:
-            if camp.error or camp.pipeline_id not in self.pipelines:
+            if camp.pipeline_id not in self.pipelines:
                 continue
-            claimed.setdefault(camp.pipeline_id, set()).update(
-                v.id for v in camp.volumes
-            )
+            # A campaign that failed to parse still names its volumes (R14).
+            claimed.setdefault(camp.pipeline_id, set()).update(camp.declared_ids)
         orphans_reported: set[str] = set()
         pending: dict[str, list[tuple[Volume, str]]] = {}
         for camp in self.campaigns:
@@ -746,12 +799,23 @@ class _Pass:
         # are done with the cluster; counting the succeeded ones leaks the
         # window shut as a campaign completes (their TTL is 24h).
         in_flight = sum(1 for j in self.jobs.values() if j.in_flight)
-        lanes = {name: [v for v, _ in lane] for name, lane in pending.items()}
+        # Fairness (audit R5): campaigns with the fewest Jobs in flight go
+        # first, so a big campaign cannot keep the free slot tick after tick.
+        # Ties fall back to file order (the name).
+        per_campaign = Counter(j.campaign for j in self.jobs.values() if j.in_flight)
+        order = sorted(pending, key=lambda n: (per_campaign[label_value(n)], n))
+        lanes = {name: [v for v, _ in pending[name]] for name in order}
         srcs = {(n, v.id): s for n, lane in pending.items() for v, s in lane}
         for camp_name, volume in plan_submissions(lanes, in_flight, self.cfg.window):
             camp = next(c for c in self.campaigns if c.name == camp_name)
             spec = self.pipelines[camp.pipeline_id]
-            job = build_job(spec, volume, srcs[(camp_name, volume.id)], self.cfg)
+            job = build_job(
+                spec,
+                volume,
+                srcs[(camp_name, volume.id)],
+                self.cfg,
+                campaign=camp_name,
+            )
             try:
                 self.cluster.create_job(job)
             except Exception as e:  # noqa: BLE001 — one submission

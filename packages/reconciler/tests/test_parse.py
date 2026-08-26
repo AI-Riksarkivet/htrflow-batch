@@ -148,3 +148,33 @@ def test_step_summaries_fallbacks():
 def test_step_summaries_junk_is_empty():
     assert step_summaries("steps: notalist") == []
     assert step_summaries(": not yaml [") == []
+
+
+def test_parse_pipeline_hash_is_canonical_json_of_the_steps():
+    """R10: the hash covers the parsed steps in canonical JSON, so a PyYAML
+    upgrade that re-flows the dump cannot read as drift. The yaml-dump sha
+    is kept for results published before this change."""
+    import hashlib
+
+    a = parse_pipeline("demo-v1", PIPELINE)
+    b = parse_pipeline(
+        "demo-v1",
+        PIPELINE.replace("  - step: Segmentation", "  - {step: Segmentation}"),
+    )
+    assert a.steps_sha256 == b.steps_sha256
+    canonical = json.dumps(
+        {"steps": [{"step": "Segmentation"}]}, sort_keys=True, separators=(",", ":")
+    )
+    assert a.steps_sha256 == hashlib.sha256(canonical.encode()).hexdigest()
+    assert a.legacy_sha256 == hashlib.sha256(a.steps_yaml.encode()).hexdigest()
+
+
+def test_broken_campaign_still_declares_its_volume_ids():
+    """R14: orphan detection needs the ids a malformed campaign meant to claim."""
+    c = parse_campaign(
+        "bad",
+        "pipeline: demo-v1\nvolumes:\n  - R1\n  - id: 'a/b'\n    manifest: http://x\n",
+    )
+    assert c.error is not None
+    assert c.pipeline_id == "demo-v1"
+    assert c.declared_ids == ("R1", "a/b")

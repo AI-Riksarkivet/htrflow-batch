@@ -5,6 +5,7 @@ submission, spec §3)."""
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 
 import yaml
@@ -49,7 +50,22 @@ def _volume(entry: object) -> Volume:
     raise ValueError(f"volume {vid!r} needs manifest: or images:")
 
 
+def _declared(doc: object) -> tuple[str, tuple[str, ...]]:
+    """(pipeline id, volume ids) as far as a possibly-malformed file states
+    them — for orphan accounting only, never for submission."""
+    if not isinstance(doc, dict):
+        return "", ()
+    ids: list[str] = []
+    for e in doc.get("volumes") or []:
+        if isinstance(e, str):
+            ids.append(e)
+        elif isinstance(e, dict) and e.get("id") is not None:
+            ids.append(str(e["id"]))
+    return str(doc.get("pipeline") or ""), tuple(ids)
+
+
 def parse_campaign(name: str, text: str) -> Campaign:
+    doc: object = None
     try:
         doc = yaml.safe_load(text)
         if not isinstance(doc, dict):
@@ -63,9 +79,21 @@ def parse_campaign(name: str, text: str) -> Campaign:
             if v.id in seen:
                 raise ValueError(f"duplicate volume id: {v.id}")
             seen.add(v.id)
-        return Campaign(name=name, pipeline_id=pipeline_id, volumes=volumes)
+        return Campaign(
+            name=name,
+            pipeline_id=pipeline_id,
+            volumes=volumes,
+            declared_ids=tuple(v.id for v in volumes),
+        )
     except Exception as e:
-        return Campaign(name=name, pipeline_id="", volumes=[], error=str(e))
+        pipeline_id, declared = _declared(doc)
+        return Campaign(
+            name=name,
+            pipeline_id=pipeline_id,
+            volumes=[],
+            error=str(e),
+            declared_ids=declared,
+        )
 
 
 def parse_pipeline(pipeline_id: str, text: str) -> PipelineSpec:
@@ -90,8 +118,17 @@ def parse_pipeline(pipeline_id: str, text: str) -> PipelineSpec:
         id=pipeline_id,
         image=image,
         steps_yaml=steps_yaml,
-        steps_sha256=hashlib.sha256(steps_yaml.encode()).hexdigest(),
+        steps_sha256=canonical_sha256({"steps": doc["steps"]}),
+        legacy_sha256=hashlib.sha256(steps_yaml.encode()).hexdigest(),
     )
+
+
+def canonical_sha256(steps: object) -> str:
+    """Hash of the parsed recipe, not of one library's serialisation of it
+    (audit R10): sorted keys, no whitespace, so a PyYAML upgrade that
+    re-flows the dump cannot read as drift."""
+    text = json.dumps(steps, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def step_summaries(steps_yaml: str) -> list[str]:
