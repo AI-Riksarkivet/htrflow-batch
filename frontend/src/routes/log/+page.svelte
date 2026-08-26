@@ -329,6 +329,15 @@
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
+    min-width: 0;
+  }
+
+  h1 {
+    overflow-wrap: anywhere;
+  }
+
+  .header-right {
+    flex-wrap: wrap;
   }
 
   .back {
@@ -471,11 +480,19 @@
     font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
     font-size: 12px;
     white-space: pre-wrap;
+    /* Unbroken URLs and paths wrap instead of widening the page. */
+    overflow-wrap: anywhere;
+  }
+
+  .log {
+    min-width: 0;
   }
 
   .log-line {
     display: grid;
-    grid-template-columns: auto auto 1fr;
+    /* minmax(0, 1fr): a 1fr track's min-content floor is the longest
+       unbreakable token, which pushed the grid past the viewport. */
+    grid-template-columns: auto auto minmax(0, 1fr);
     gap: 0 0.75ch;
     align-items: baseline;
   }

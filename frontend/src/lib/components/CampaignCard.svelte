@@ -68,13 +68,14 @@
     </p>
   {/if}
   {#if !collapsed && c.error === null}
+    <div class="table-scroll">
     <table class="volumes">
       <colgroup>
         <col class="c-thumb" />
         <col class="c-vid" />
         <col class="c-status" />
         <col class="c-num" />
-        <col class="c-num" />
+        <col class="c-num c-attempts" />
         <col class="c-updated" />
         <col class="c-links" />
       </colgroup>
@@ -84,8 +85,8 @@
           <th>volume</th>
           <th>status</th>
           <th class="num">pages</th>
-          <th class="num">attempts</th>
-          <th>updated</th>
+          <th class="num c-attempts">attempts</th>
+          <th class="c-updated">updated</th>
           <th>links</th>
         </tr>
       </thead>
@@ -129,8 +130,8 @@
                 ? `${v.pages_done ?? 0}/${v.pages_total ?? "?"}`
                 : "—"}
             </td>
-            <td class="num">{v.attempts > 0 ? v.attempts : "—"}</td>
-            <td class="updated">{shortDate(v.updated) ?? "—"}</td>
+            <td class="num c-attempts">{v.attempts > 0 ? v.attempts : "—"}</td>
+            <td class="updated c-updated">{shortDate(v.updated) ?? "—"}</td>
             <td class="links">
               <!-- Three fixed slots (open · source · log) so a missing
                    link leaves a gap instead of shifting its neighbours;
@@ -173,6 +174,7 @@
         {/each}
       </tbody>
     </table>
+    </div>
   {/if}
 </section>
 
@@ -204,8 +206,9 @@
   .camp {
     cursor: pointer;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.35rem 0.75rem;
     font-size: 1rem;
     font-weight: 600;
     background: none;
@@ -224,7 +227,8 @@
   }
 
   .camp-name {
-    flex-shrink: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   /* Counts sit flush right so they line up across campaigns regardless of
@@ -300,6 +304,15 @@
     line-height: 1.35;
   }
 
+  /* Narrow screens: the table scrolls inside its own container (the page
+     never scrolls sideways) and drops attempts/updated, the two columns a
+     phone reader is least likely to be after. */
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+
   col.c-thumb {
     width: 2.4rem;
   }
@@ -318,6 +331,32 @@
 
   col.c-links {
     width: 11rem;
+  }
+
+  /* After the col rules so the narrow widths win the cascade. The table
+     keeps a floor of 30rem and scrolls in .table-scroll; attempts/updated
+     go, the other fixed columns tighten so the volume name keeps ~10rem. */
+  @media (max-width: 48rem) {
+    table.volumes {
+      min-width: 32rem;
+    }
+
+    .c-attempts,
+    .c-updated {
+      display: none;
+    }
+
+    col.c-num {
+      width: 3.6rem;
+    }
+
+    col.c-links {
+      width: 9.6rem;
+    }
+
+    td.links .slot {
+      min-width: 2.9rem;
+    }
   }
 
   table.volumes th {
@@ -451,7 +490,7 @@
 
   td.links .slot {
     display: inline-block;
-    width: 3.3rem;
+    min-width: 3.3rem;
   }
 
   td.links a {
