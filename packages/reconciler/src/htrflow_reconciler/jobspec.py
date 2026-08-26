@@ -65,7 +65,15 @@ class ReconcilerConfig(BaseModel):
     data_pvc: str = "htr-test-data"
     window: int = 20
     attempt_cap: int = 3
-    active_deadline_seconds: int = 21600
+    #: Job ``activeDeadlineSeconds = max(min, pages x per_page)`` (audit O2):
+    #: ~13 s/page measured on the GB10, so a flat 6 h cannot finish a long
+    #: volume; the minimum applies when the page count is unknown.
+    job_min_deadline_seconds: int = 21600
+    job_seconds_per_page: int = 30
+    #: GPU placement (audit O15): empty runtime class omits the field.
+    job_runtime_class: str = "nvidia"
+    job_node_selector: dict[str, str] = {}
+    job_tolerations: list[dict] = []
     #: STALE threshold advertised in status.json; must match the CronJob
     #: schedule (RECONCILER_TICK_SECONDS, audit R12).
     tick_seconds: int = 300
@@ -131,6 +139,8 @@ def _pod_template(
     container: dict,
     volumes: list[dict],
     runtime_class: str | None,
+    node_selector: dict[str, str] | None = None,
+    tolerations: list[dict] | None = None,
 ) -> dict:
     spec = {
         "restartPolicy": "Never",
@@ -141,7 +151,37 @@ def _pod_template(
     }
     if runtime_class:
         spec["runtimeClassName"] = runtime_class
+    if node_selector:
+        spec["nodeSelector"] = dict(node_selector)
+    if tolerations:
+        spec["tolerations"] = [dict(t) for t in tolerations]
     return {"metadata": {"labels": labels}, "spec": spec}
+
+
+def _pod_failure_policy(container_name: str) -> dict:
+    """The contract the docs describe (audit O2/O3): a disruption (drain,
+    preemption) does not fail the Job — with ``backoffLimit: 0`` the pod is
+    simply replaced — and exit 13 fails it at once, so the Failed condition
+    carries reason ``PodFailurePolicy`` even after the pod is reaped (R6)."""
+    return {
+        "rules": [
+            {"action": "Ignore", "onPodConditions": [{"type": "DisruptionTarget"}]},
+            {
+                "action": "FailJob",
+                "onExitCodes": {
+                    "containerName": container_name,
+                    "operator": "In",
+                    "values": [13],
+                },
+            },
+        ]
+    }
+
+
+def deadline_seconds(cfg: ReconcilerConfig, page_count: int | None) -> int:
+    if not page_count:
+        return cfg.job_min_deadline_seconds
+    return max(cfg.job_min_deadline_seconds, page_count * cfg.job_seconds_per_page)
 
 
 def build_job(
@@ -151,6 +191,7 @@ def build_job(
     cfg: ReconcilerConfig,
     *,
     campaign: str = "",
+    page_count: int | None = None,
 ) -> dict:
     name = job_name(pipeline.id, volume.id)
     env = [
@@ -212,13 +253,16 @@ def build_job(
         "spec": {
             "suspend": True,
             "backoffLimit": 0,
-            "activeDeadlineSeconds": cfg.active_deadline_seconds,
+            "podFailurePolicy": _pod_failure_policy("wrapper"),
+            "activeDeadlineSeconds": deadline_seconds(cfg, page_count),
             "ttlSecondsAfterFinished": 86400,
             "template": _pod_template(
                 labels={"app": "htrflow-batch"},
                 container=container,
                 volumes=volumes,
-                runtime_class="nvidia",
+                runtime_class=cfg.job_runtime_class,
+                node_selector=cfg.job_node_selector,
+                tolerations=cfg.job_tolerations,
             ),
         },
     }
@@ -275,6 +319,7 @@ def build_warmup_job(pipeline: PipelineSpec, cfg: ReconcilerConfig) -> dict:
         },
         "spec": {
             "backoffLimit": 2,
+            "podFailurePolicy": _pod_failure_policy("warmup"),
             "activeDeadlineSeconds": 3600,
             "template": _pod_template(
                 labels={"app": "htrflow-warmup"},

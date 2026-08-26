@@ -407,7 +407,7 @@ def test_done_volumes_are_not_reprobed_once_cached(tmp_path):
     repo = _repo(tmp_path)
     bucket = CountingBucket(done={"R0000001"})
     doc = tick(repo, bucket, FakeCluster(), CFG, NOW)
-    assert bucket.count_calls == ["R0000001"]
+    assert bucket.count_calls.count("R0000001") == 1
     assert _rows(doc)["R0000001"]["pages_done"] == 638
     cache = bucket.written["status/volumes.json"]
     assert cache["demo-v1/R0000001"]["pages"] == 638
@@ -415,7 +415,7 @@ def test_done_volumes_are_not_reprobed_once_cached(tmp_path):
     bucket.count_calls.clear()
     bucket.exists_calls.clear()
     doc = tick(repo, bucket, FakeCluster(), CFG, NOW)
-    assert bucket.count_calls == []
+    assert "R0000001" not in bucket.count_calls  # submissions probe their own
     assert not [k for k in bucket.exists_calls if k.startswith("status/logs/")]
     assert _rows(doc)["R0000001"]["pages_done"] == 638
     assert _rows(doc)["R0000001"]["run_log"] is None
@@ -434,7 +434,7 @@ def test_done_volume_cache_invalidates_on_a_new_manifest_mtime(tmp_path):
     bucket.mtime = "2026-08-26T10:00:00Z"  # re-published (operator re-run)
     bucket.count_calls.clear()
     tick(repo, bucket, FakeCluster(), CFG, NOW)
-    assert bucket.count_calls == ["R0000001"]
+    assert bucket.count_calls.count("R0000001") == 1
 
 
 def test_done_volume_run_log_link_is_cached(tmp_path):
@@ -621,10 +621,9 @@ def test_tick_attempt_budgets_are_per_pipeline(tmp_path):
     # demo-v1 exhausted its cap of 3; demo-v2 starts fresh and retries
     assert old["status"] == "needs-attention" and old["attempts"] == 3
     assert new["status"] == "retry" and new["attempts"] == 1
-    assert bucket.written["status/attempts.json"] == {
-        "demo-v1/R0000002": {"n": 3, "terminal": "capped"},
-        "demo-v2/R0000002": {"n": 1, "terminal": None},
-    }
+    written = bucket.written["status/attempts.json"]
+    assert written["demo-v1/R0000002"] == {"n": 3, "terminal": "capped"}
+    assert written["demo-v2/R0000002"] == {"n": 1, "terminal": None}
     assert job_name("demo-v1", "R0000002") not in cluster.deleted
     assert job_name("demo-v2", "R0000002") in cluster.deleted
 
@@ -1314,7 +1313,8 @@ def test_corrupt_owned_json_is_a_warning_not_a_poison_pill(tmp_path):
     assert len(cluster.created) == 3
     assert any("attempts.json" in w for w in doc["warnings"])
     assert any("validation.json" in w for w in doc["warnings"])
-    assert bucket.written["status/attempts.json"] == {}
+    # nothing inherited from the corrupt file: only this tick's submissions
+    assert all(r["n"] == 0 for r in bucket.written["status/attempts.json"].values())
 
 
 # -- R9 images: edits take effect ---------------------------------------------
@@ -1372,3 +1372,61 @@ def test_pipeline_outside_the_allow_list_submits_nothing(tmp_path):
     assert any("demo-v1" in w and "allow" in w.lower() for w in doc["warnings"])
     assert not any("allow-list empty" in w for w in doc["warnings"])
     assert doc["campaigns"][0]["error"] is not None  # unknown pipeline
+
+
+# -- O2 at tick level ----------------------------------------------------------
+
+
+def test_submission_records_pages_done_and_passes_the_page_count(tmp_path):
+    def fetch_json(url):
+        return _p3_manifest(1000)
+
+    bucket, cluster = FakeBucket(), FakeCluster()
+    tick(_repo(tmp_path), bucket, cluster, CFG, NOW, fetch_json=fetch_json)
+    byvol = {
+        j["metadata"]["labels"]["batch.htrflow/volume"]: j for j in cluster.created
+    }
+    assert byvol["r0000001"]["spec"]["activeDeadlineSeconds"] == 30000
+    assert byvol["loose"]["spec"]["activeDeadlineSeconds"] == 21600
+    att = bucket.written["status/attempts.json"]
+    assert att["demo-v1/R0000001"] == {"n": 0, "terminal": None, "pages_at_submit": 0}
+
+
+def test_deadline_failure_with_progress_is_not_charged(tmp_path):
+    """O2: a long volume that hit its deadline but advanced pages_done is
+    resumed (the wrapper skips done pages), not charged an attempt."""
+
+    class ProgressBucket(FakeBucket):
+        def count_pages(self, pipeline_id, volume_id):
+            return 400 if volume_id == "R0000001" else 0
+
+    jobs = {
+        job_name("demo-v1", "R0000001"): JobState(
+            active=False, failed=True, exit_code=None, reason="DeadlineExceeded"
+        )
+    }
+    stored = {
+        "status/attempts.json": {
+            "demo-v1/R0000001": {"n": 1, "terminal": None, "pages_at_submit": 100}
+        }
+    }
+    bucket = ProgressBucket(stored=stored)
+    doc = tick(_repo(tmp_path), bucket, FakeCluster(jobs=jobs), CFG, NOW)
+    assert _rows(doc)["R0000001"]["status"] == "retry"
+    assert bucket.written["status/attempts.json"]["demo-v1/R0000001"]["n"] == 1
+
+
+def test_deadline_failure_without_progress_is_charged(tmp_path):
+    jobs = {
+        job_name("demo-v1", "R0000001"): JobState(
+            active=False, failed=True, exit_code=None, reason="DeadlineExceeded"
+        )
+    }
+    stored = {
+        "status/attempts.json": {
+            "demo-v1/R0000001": {"n": 1, "terminal": None, "pages_at_submit": 0}
+        }
+    }
+    bucket = FakeBucket(stored=stored)
+    tick(_repo(tmp_path), bucket, FakeCluster(jobs=jobs), CFG, NOW)
+    assert bucket.written["status/attempts.json"]["demo-v1/R0000001"]["n"] == 2
