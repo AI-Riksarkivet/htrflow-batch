@@ -49,6 +49,7 @@ nav = [
     {"Deployment" = "development/deployment.md"},
     {"Test Log" = "development/test-log.md"},
     {"Audit 2026-08-26" = "audits/2026-08-26-repo-audit.md"},
+    {"Hard-coded config inventory" = "audits/2026-08-26-hardcoded-inventory.md"},
   ]},
 ]
 
