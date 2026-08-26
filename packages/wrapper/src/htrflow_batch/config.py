@@ -42,6 +42,7 @@ class Config(BaseModel):
     max_pages: int = 0
     workdir: str = "/work"
     download_concurrency: int = 12
+    log_ship_seconds: float = 15.0  # 0 disables live shipping of the run log
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Config":
@@ -59,6 +60,7 @@ class Config(BaseModel):
         kwargs["max_pages"] = int(env.get("MAX_PAGES", "0"))
         kwargs["workdir"] = env.get("WORKDIR_PATH", "/work")
         kwargs["download_concurrency"] = int(env.get("DOWNLOAD_CONCURRENCY", "12"))
+        kwargs["log_ship_seconds"] = float(env.get("LOG_SHIP_SECONDS", "15"))
         return cls(**kwargs)
 
     @property

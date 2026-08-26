@@ -35,6 +35,7 @@ Source: [`packages/wrapper/src/htrflow_batch/config.py`](https://github.com/carp
 | `WORKDIR_PATH` | `/work` | Scratch dir (Jobs mount a 2 Gi memory-backed emptyDir) |
 | `DOWNLOAD_CONCURRENCY` | `12` | Parallel page downloads |
 | `IMAGE_DIGEST` | `unknown` | Provenance only — recorded verbatim in `manifest.json` |
+| `LOG_SHIP_SECONDS` | `15` | How often the run's own stdout/stderr is uploaded to `status/logs/<pipeline>/<volume>.txt` while it runs (`0` = final upload only) |
 
 Results land at `{S3_PREFIX}/{PIPELINE_ID}/{VOLUME_REF}/…` (`Config.volume_prefix`).
 
@@ -52,6 +53,7 @@ Source root: [`packages/wrapper/src/htrflow_batch/`](https://github.com/carpelan
 | `store.py` | `ResultStore` — deterministic S3 keys, explicit content types, `done_pages()` resume probe |
 | `viewer.py` | `build_viewer_manifest` — IIIF v3 manifest with ALTO annotation links (`iiif.json`) |
 | `main.py` | Stage machine (setup → fetch/transcribe → verify → publish), `publish_failure_metrics` |
+| `logship.py` | `LogCapture` — tees stdout/stderr and ships the buffer to S3 on an interval, so the frontend can follow a running volume |
 
 ## Completion contract
 
@@ -64,3 +66,14 @@ drift ground truth), `image_digest`, per-page results, and the run metrics
 On any failure the wrapper best-effort publishes `metrics-failed-latest.json`
 (stage, error, partial per-page results) before exiting non-zero — evidence
 for the operator, and never a completion marker.
+
+## Live run log
+
+`status/logs/<pipeline>/<volume>.txt` (bucket root — the reconciler's status
+namespace, not `volume_prefix`) is the run's own stdout/stderr, uploaded every
+`LOG_SHIP_SECONDS` while the volume runs and once more on exit, so the final
+object is the complete log rather than a tail. `kubectl logs` is unchanged
+(the tee writes through). Shipping never fails a run: upload errors are
+logged once and retried next interval. The buffer is capped at 4 MiB (head +
+tail kept, middle dropped with a marker). A retry overwrites the key with the
+new attempt; the failed attempt's tail lives in `status/failures/…`.

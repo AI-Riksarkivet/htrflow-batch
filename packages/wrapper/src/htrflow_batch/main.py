@@ -19,6 +19,7 @@ import httpx
 from .config import Config, ConfigError
 from .fetch import run_downloader
 from .iiif import ManifestError, fetch_manifest, pages_from_manifest
+from .logship import LogCapture
 from .store import ResultStore
 from .stream import PageOutcome, StreamStats, consume
 from .viewer import build_viewer_manifest, parse_alto_dims, parse_alto_dims_bytes
@@ -108,9 +109,23 @@ def main(
     env: Optional[Mapping[str, str]] = None,
     process_page_factory: Optional[Callable] = None,
 ) -> int:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
-    )
+    # Tee stdout/stderr BEFORE logging binds its stream, so the shipped run
+    # log carries htrflow's logging output and its bare prints alike
+    # (docs: wrapper, "Live run log"). finish() always restores the streams
+    # and does the final upload, on every exit path.
+    capture = LogCapture.install()
+    try:
+        return _main(env, process_page_factory, capture)
+    finally:
+        capture.finish()
+
+
+def _main(
+    env: Optional[Mapping[str, str]],
+    process_page_factory: Optional[Callable],
+    capture: LogCapture,
+) -> int:
+    capture.attach_logging()  # not basicConfig: see LogCapture.attach_logging
     env = dict(env if env is not None else os.environ)
     t_start = time.monotonic()
     stage = "setup"
@@ -123,6 +138,7 @@ def main(
         cfg = Config.from_env(env)
         prepare_writable_dirs(env)
         store = ResultStore(cfg)
+        capture.start_shipping(store.put_run_log, cfg.log_ship_seconds)
         workdir = Path(cfg.workdir)
         input_dir = workdir / "input"
         client = _http_client()
