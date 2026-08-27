@@ -1,6 +1,6 @@
 import logging
 import sys
-import time
+import threading
 
 from htrflow_batch.logship import TRUNCATION_MARKER, LogCapture
 
@@ -67,12 +67,16 @@ def test_ship_swallows_upload_errors_and_retries(caplog):
 
 def test_periodic_thread_ships_and_finish_does_final_upload():
     uploads: list[str] = []
+    shipped = threading.Event()
+
+    def upload(text: str) -> None:
+        uploads.append(text)
+        shipped.set()
+
     capture = LogCapture()
-    capture.start_shipping(uploads.append, interval=0.05)
+    capture.start_shipping(upload, interval=0.01)
     capture._append("a\n")
-    deadline = time.monotonic() + 2
-    while not uploads and time.monotonic() < deadline:
-        time.sleep(0.01)
+    assert shipped.wait(5), "the periodic thread never shipped"
     assert uploads == ["a\n"]
     capture._append("b\n")
     capture.finish()

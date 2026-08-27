@@ -1,4 +1,4 @@
-.PHONY: install format lint check test typecheck ci build build-viewer scan publish \
+.PHONY: install format lint check test typecheck test-driver-real ci build build-viewer scan publish \
         compose-up compose-test compose-smoke compose-down helm-lint helm-template docs-serve docs-build \
         poc-push poc-push-arm64 build-wrapper build-reconciler scan-reconciler clean \
         warmup psa-labels \
@@ -31,11 +31,15 @@ ARCH := $(shell uname -m)
 install:
 	uv sync --all-packages
 
+# ruff/ty run from the workspace venv (`uv run --no-sync`), never `uvx`: uvx
+# resolves the newest release on every host while uv.lock pins the versions
+# CI checks with, and the two drifted (audit T1). Root config in pyproject.toml
+# excludes docs/ (fenced code in plans is not source).
 format:
-	uvx ruff format packages scripts
+	uv run --no-sync ruff format .
 
 lint:
-	uvx ruff check --fix packages scripts
+	uv run --no-sync ruff check --fix .
 
 check: format lint
 
@@ -44,13 +48,33 @@ check: format lint
 test:
 	uv run --all-packages pytest -q
 
-# `uvx ty check` cannot resolve workspace imports on its own — point each
-# member at the shared workspace venv. CURDIR, not PWD: PWD is the shell's
-# inherited cwd and stays wrong under `make -C`.
+# ty from the workspace venv resolves both members' imports; the dagger
+# `typecheck` function runs the same command in CI.
 typecheck:
-	cd packages/wrapper && uvx ty check src --python $(CURDIR)/.venv
-	cd packages/reconciler && uvx ty check src --python $(CURDIR)/.venv
+	uv run --no-sync ty check packages/wrapper/src packages/reconciler/src
 
+# Level 0 htrflow API pin (audit T4): the real Pipeline.from_config / Export /
+# auto_import contract on a one-page CPU fixture, inside the locally built
+# wrapper image (`make build-wrapper`; IMAGE_TAG selects an existing tag).
+# pytest is not in the image, so it is installed into the venv for the run
+# (root: the venv is root-owned). `dagger call test-driver` is the CI twin.
+# The corp CA is mounted when present (same rule as DAGGER_CA) so the
+# pytest install gets through an intercepting proxy.
+PYTEST_VERSION = $(shell grep -A1 '^name = "pytest"$$' uv.lock | sed -n 's/^version = "\(.*\)"/\1/p')
+DOCKER_CA := $(shell test -f $(CA_BUNDLE) && echo -v $(CA_BUNDLE):/etc/ssl/certs/corp-ca.crt:ro \
+               -e SSL_CERT_FILE=/etc/ssl/certs/corp-ca.crt -e UV_SYSTEM_CERTS=true)
+test-driver-real:
+	docker run --rm --user 0 --entrypoint /bin/sh $(DOCKER_CA) \
+	  -e CUDA_VISIBLE_DEVICES= -e HF_HUB_OFFLINE=1 \
+	  -v $(CURDIR)/packages/wrapper/tests/test_driver_real.py:/driver-tests/test_driver_real.py:ro \
+	  -w /tmp $(WRAPPER_IMAGE) -c \
+	  'uv pip install --python /app/.venv/bin/python --no-cache "pytest==$(PYTEST_VERSION)" \
+	   && /app/.venv/bin/python -m pytest -m htrflow -q -p no:cacheprovider \
+	        -o "markers=htrflow: needs the htrflow runtime" /driver-tests'
+
+# `make ci` = what .github/workflows/ci.yml runs: `checks` carries ruff, ty,
+# the frontend (bun check/test/build) and the chart render; `test` is pytest.
+# typecheck runs locally first as well: it is the fastest signal.
 ci: typecheck
 	dagger call checks $(DAGGER_CA)
 	dagger call test $(DAGGER_CA)

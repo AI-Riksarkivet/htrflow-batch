@@ -14,6 +14,9 @@ packages = ["src/htrflow_batch"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "htrflow: needs the htrflow runtime; runs inside the wrapper image (make test-driver-real / dagger call test-driver)",
+]
 
 [tool.ruff]
 line-length = 88

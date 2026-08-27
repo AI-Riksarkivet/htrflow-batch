@@ -30,7 +30,7 @@ func (m *HtrflowBatch) ComposeTest(
 ) (string, error) {
 	service := m.ComposeUp(source)
 	output, err := dag.Container().
-		From("curlimages/curl:latest").
+		From(curlImage).
 		WithServiceBinding("viewer", service).
 		WithExec([]string{"curl", "-fsS", "-o", "/dev/null", "-w", "%{http_code}", "http://viewer:8080/uv.html"}).
 		Stdout(ctx)

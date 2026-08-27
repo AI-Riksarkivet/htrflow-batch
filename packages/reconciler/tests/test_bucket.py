@@ -2,9 +2,14 @@ from datetime import datetime, timezone
 
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 from moto import mock_aws
 
 from htrflow_reconciler.s3 import Bucket, manifest_key
+
+
+def _client_error(code: str, op: str = "HeadObject") -> ClientError:
+    return ClientError({"Error": {"Code": code, "Message": code}}, op)
 
 
 @pytest.fixture
@@ -84,3 +89,93 @@ def test_done_volumes_heads_run_in_a_thread_pool(bucket, monkeypatch):
     monkeypatch.setattr(bucket.c, "head_object", head)
     assert len(bucket.done_volumes("demo-v1")) == 6
     assert threading.get_ident() not in threads
+
+
+# -- T7 additions: exists / read_text / read_json / errors through boto ---------
+
+
+def test_exists_is_a_head_probe(bucket):
+    bucket.put_text("status/logs/demo-v1/R1.txt", "line\n")
+    assert bucket.exists("status/logs/demo-v1/R1.txt") is True
+    assert bucket.exists("status/logs/demo-v1/R2.txt") is False
+
+
+@pytest.mark.parametrize("code", ["404", "NotFound", "NoSuchKey"])
+def test_exists_treats_every_missing_code_as_absent(bucket, monkeypatch, code):
+    """S3-compatible stores disagree on the HEAD error code for a missing
+    key (RustFS/MinIO vs AWS); all of them mean 'not there'."""
+    monkeypatch.setattr(
+        bucket.c, "head_object", lambda **kw: (_ for _ in ()).throw(_client_error(code))
+    )
+    assert bucket.exists("x") is False
+
+
+def test_exists_reraises_access_denied(bucket, monkeypatch):
+    """A 403 is a credentials/policy problem, never 'absent': reading it as
+    absent would make the tick re-upload logs and mis-link volumes forever."""
+    monkeypatch.setattr(
+        bucket.c,
+        "head_object",
+        lambda **kw: (_ for _ in ()).throw(_client_error("403")),
+    )
+    with pytest.raises(ClientError):
+        bucket.exists("x")
+
+
+def test_read_text_missing_is_none_and_present_is_decoded(bucket):
+    assert bucket.read_text("status/logs/demo-v1/R1.txt") is None
+    bucket.put_text("status/logs/demo-v1/R1.txt", "råd\n")
+    assert bucket.read_text("status/logs/demo-v1/R1.txt") == "råd\n"
+    bucket.c.put_object(Bucket="htr-results", Key="bad.txt", Body=b"bad \xff\n")
+    assert bucket.read_text("bad.txt") == "bad �\n"
+
+
+def test_read_text_reraises_other_errors(bucket, monkeypatch):
+    monkeypatch.setattr(
+        bucket.c,
+        "get_object",
+        lambda **kw: (_ for _ in ()).throw(_client_error("403", "GetObject")),
+    )
+    with pytest.raises(ClientError):
+        bucket.read_text("x")
+
+
+def test_read_json_corrupt_body_raises_value_error(bucket):
+    """A truncated upload is a ValueError from the adapter; the tick's
+    ``_owned_json`` turns that into a warning and treats the file as absent
+    (see test_tick::test_corrupt_owned_json_is_a_warning_not_a_poison_pill).
+    The adapter itself must NOT swallow it: for a non-owned file the caller
+    has to know."""
+    bucket.c.put_object(
+        Bucket="htr-results", Key="status/attempts.json", Body=b"{trunc"
+    )
+    with pytest.raises(ValueError):
+        bucket.read_json("status/attempts.json")
+
+
+def test_read_json_round_trips_with_content_type(bucket):
+    bucket.write_json("status/status.json", {"a": [1, 2]})
+    head = bucket.c.head_object(Bucket="htr-results", Key="status/status.json")
+    assert head["ContentType"] == "application/json"
+    assert bucket.read_json("status/status.json") == {"a": [1, 2]}
+    bucket.put_text("status/failures/x.txt", "boom")
+    head = bucket.c.head_object(Bucket="htr-results", Key="status/failures/x.txt")
+    assert head["ContentType"] == "text/plain"
+
+
+def test_delete_removes_the_key_and_tolerates_absence(bucket):
+    bucket.put_text("status/logs/demo-v1/R1.txt", "x")
+    bucket.delete("status/logs/demo-v1/R1.txt")
+    assert bucket.exists("status/logs/demo-v1/R1.txt") is False
+    bucket.delete("status/logs/demo-v1/R1.txt")  # S3 DELETE is idempotent
+
+
+def test_done_volumes_reraises_access_denied(bucket, monkeypatch):
+    bucket.write_json(manifest_key("demo-v1", "R1"), {"pages": 1})
+    monkeypatch.setattr(
+        bucket.c,
+        "head_object",
+        lambda **kw: (_ for _ in ()).throw(_client_error("403")),
+    )
+    with pytest.raises(ClientError):
+        bucket.done_volumes("demo-v1")
