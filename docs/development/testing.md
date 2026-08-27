@@ -3,45 +3,63 @@
 ## Acceptance levels in detail
 
 0. **Library-API pin test** — import `Pipeline.from_config` and run a 1-page
-   fixture against the exact htrflow version in the pinned image; this is the
-   canary that a version bump broke the [D16 driver](../how-it-works/wrapper.md)
-   (fall back to L1/L2 if so).
-1. **Wrapper unit tests** — manifest walking, filename ordering, resume-list
-   diffing, **streaming loop** (consumer starvation accounting, per-page
-   failure propagation, rolling delete, uploader ordering), **verification
-   gate** (missing output ⇒ no `manifest.json`, transient exit), exit-code
-   mapping; mocked HTTP + S3 (moto or a throwaway MinIO).
-2. **Container smoke** — `docker run` the batch image against a real 2-page
-   manifest with a MinIO/RustFS target; assert ALTO files + `manifest.json`
-   land.
+   fixture against the exact htrflow version in the pinned image; the canary
+   that a version bump broke the [D16 driver](../how-it-works/wrapper.md)
+   (fall back to L1/L2 if so). **Not implemented today**: `driver.py` keeps
+   every htrflow import function-local so the suite runs without torch, and
+   the unit tests exercise it against fakes. The plan (CI work package B1)
+   is an opt-in `make test-driver-real` / dagger `test-driver` that runs
+   `packages/wrapper/tests/test_driver.py` inside the built wrapper image;
+   until it exists, the compose smoke (level 2) is what pins the API.
+1. **Unit tests** — wrapper: manifest walking (P2/P3, sized requests, the
+   400 → `max` fallback), fetch acceptance (raster magic, textual
+   content-types, byte caps, partial-file unlink), resume-list diffing incl.
+   `page_sources`, the **streaming loop** (consumer starvation accounting,
+   per-page failure propagation, rolling delete, `UploadOutage`), the
+   **verification gate** (missing output ⇒ no `manifest.json`, transient
+   exit), exit-code mapping incl. SIGTERM, log shipping, warm-up
+   classification. Reconciler: parse (ids, allow-list, revisions, http(s)
+   only), `derive` for every state, the tick against a fake bucket and
+   cluster (Lease, retries, sticky verdicts, progress rule, warm-up cap,
+   bounded validation, orphans, fairness), jobspec, guards, attempts
+   migration, dulwich checkout against a local repo. Frontend: schemas
+   (fail-soft, URL refusal, `unknown`), derivation, run-log grouping,
+   component and route tests on jsdom.
+2. **Container smoke** — the batch image against a real 2-page manifest with
+   a RustFS target; assert PAGE + ALTO files + `manifest.json` land.
 3. **Cluster acceptance** —
    a. 1 small volume end-to-end;
    b. ~10 volumes: never more than quota running, rest suspended, all
       eventually Complete, one `manifest.json` each;
    c. kill a running pod mid-volume: retry resumes, converges, no
       duplicate/corrupt outputs;
-   d. `htrq report` produces the fetch-vs-HTR numbers ([Phase 2](../roadmap/phase-2-cache.md)
-      gate input).
+   d. a campaign through the reconciler: declared in git, submitted,
+      watched on the campaign browser with its live log;
+   e. the fetch-vs-HTR numbers from the published `manifest.json`s
+      ([Phase 2](../roadmap/phase-2-cache.md) gate input).
 
-Levels 0–1 run in seconds and are enforced on every change; level 2 is the
+Level 1 runs in seconds and is enforced on every change; level 2 is the
 local compose stack; level 3 needs a real (or PoC) cluster and is what
 produced the [test log](test-log.md).
 
 ## How to run each level
 
-**Level 0–1 — wrapper unit tests:**
+**Level 1 — unit tests:**
 
 ```bash
 make test                       # uv run --all-packages pytest -q
+cd frontend && bun run test     # vitest
 # or, reproducibly, the way CI runs it:
 dagger call test                # add --ca-bundle on TLS-intercepting networks
 ```
 
-Both run the same pytest suite (141 tests as of this writing — 62 wrapper +
-79 reconciler); `dagger call test` runs it inside a `python:3.13-slim` + uv
-container with `uv sync --all-packages`, which pins the dependency resolution
-but says nothing about the production images — those are built separately by
-`dagger call build` / `dagger call build-viewer`.
+`make test` runs both Python packages — **375 tests** as of 2026-08-27
+(151 wrapper + 224 reconciler); the frontend suite is **76 tests in 10
+files**. `dagger call test` runs the Python suite inside a uv container
+with `uv sync --all-packages`, which pins the dependency resolution but
+says nothing about the production images — those are built separately by
+`dagger call build` / `dagger call build-viewer`. `make typecheck` (`ty`)
+is a separate gate; run it before pushing (see [CI](ci.md)).
 
 **Level 2 — container smoke, via the local compose stack:**
 
@@ -62,17 +80,24 @@ stack through dagger, but needs registry-pullable images, so treat
 
     Since the campaign browser landed, the viewer is `nginx-unprivileged`
     serving on **8080** with the SPA at `/` and UV at `/uv.html`. The
-    published `riksarkivet/htrflow-batch-viewer:latest` (and the PoC
-    registry's `uv4:v3`) are still the old port-80 images, so the viewer step
-    of the smoke will fail against them. Build and tag locally first:
+    published `riksarkivet/htrflow-batch-viewer:latest` (and any PoC
+    registry tag from before 2026-08) are still the old port-80 images, so
+    the viewer step of the smoke will fail against them. Build and tag
+    locally first:
 
     ```bash
     make viewer-image
     docker tag 127.0.0.1:30500/uv4:dev riksarkivet/htrflow-batch-viewer:latest
     ```
 
+**Chart:** `make helm-template` lints and renders the chart on its defaults
+and on `charts/htrflow-batch/ci/full-values.yaml` (every optional feature on,
+no cluster lookups) and runs `kubeconform -strict` when it is installed.
+
 **Level 3 — cluster acceptance:** no single make target — this is a real (or
 PoC) Kubernetes cluster with the [helm chart](../getting-started/deploy.md)
-installed, exercised via `kubectl`/`k9s`/`htrq` as described in
-[Run a Volume](../getting-started/run-a-volume.md). See the [test log](test-log.md)
-for the exact commands and results from the 2026-07-27/28 PoC run.
+installed, exercised via `kubectl`/`k9s` and the campaign browser as
+described in [Running a Campaign](../getting-started/campaigns.md) and
+[Local k3s development](local-k3s.md). See the [test log](test-log.md)
+for the exact commands and results from the 2026-07-27/28 and 2026-08-25
+runs.
