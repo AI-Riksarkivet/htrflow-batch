@@ -7,9 +7,10 @@ not by this chart — `templates/job-example.yaml` is a smoke artifact for PoC
 replay only (`exampleJob.enabled`, off by default).
 
 Every value is declared in `values.schema.json` (unknown keys and wrong types
-are rejected); `values.yaml` documents each one. `ci/full-values.yaml` turns
-every optional feature on for `helm lint -f` / `helm template -f` /
-`kubeconform` (`make helm-template`).
+are rejected); `values.yaml` documents each one and
+[docs/reference/chart.md](../../docs/reference/chart.md) tabulates them.
+`ci/full-values.yaml` turns every optional feature on for `helm lint -f` /
+`helm template -f` / `kubeconform` (`make helm-template`).
 
 ## Prerequisites
 
@@ -24,10 +25,25 @@ every optional feature on for `helm lint -f` / `helm template -f` /
   `security.psaEnforce`).
 - An S3 Secret (`s3.existingSecret`) with a `credentials` key in AWS ini
   format plus `S3_BUCKET` (and `S3_ENDPOINT` unless real AWS) — or
-  `devStack.rustfs.enabled=true`, which renders one.
+  `devStack.rustfs.enabled=true`, which renders one. Pods mount the file;
+  nothing is injected with `envFrom`.
 - `reconciler.image` and `viewer.image` must be **digest-pinned**
   (`…@sha256:…`). A tag is refused unless `devStack.allowTagImages=true`
   (PoC iteration only; tags are then pulled on every rollout).
+
+## Installing and replaying the PoC
+
+The install commands — the production-shaped install, the hardening steps,
+and the bare-k3s replay with the devStack components — live in one place:
+[docs/getting-started/deploy.md](../../docs/getting-started/deploy.md), with
+the day-to-day loop in
+[docs/development/local-k3s.md](../../docs/development/local-k3s.md).
+Cluster-local constants come from the repo-root `.env` (`.env.example` has
+the PoC defaults). The images to pin: `make poc-push` prints the wrapper and
+reconciler digests; `make viewer-image` builds the viewer and `docker push
+127.0.0.1:30500/uv4:<tag>` prints its digest — that is the value for
+`viewer.image` (not any pre-2026-08 `uv4:v*` tag, which listens on port 80
+and predates the campaign browser).
 
 ## Upgrading
 
@@ -35,6 +51,23 @@ Always `helm upgrade --reset-then-reuse-values` (or pass a full values
 file). Plain `--reuse-values` keeps the *old* chart's defaults, which once
 rendered every NetworkPolicy away; the chart now fails loudly when
 `.Values.network` is missing.
+
+### From 0.1.0 to 0.2.0 — what to decide first
+
+| Change | What to do |
+|---|---|
+| **Digest gate.** `reconciler.image` / `viewer.image` must be `@sha256:` pins. | Pin the digests (above), or `--set devStack.allowTagImages=true` for the PoC loop only. |
+| **Model-cache PVC is rendered** (`modelCache.create=true`, default). Helm refuses to take over a PVC it did not create. | Either `--set modelCache.create=false`, or adopt the existing PVC once (below) — adoption is the better end state (`resource-policy: keep` protects it). |
+| **`image.*` and `s3.endpoint` removed.** | Drop them from your values; the schema rejects unknown keys. Campaign Jobs pin their image in the pipeline YAML; pods read the endpoint from the Secret. |
+| **Namespace default deny** (`network.defaultDeny=true`). | Anything hand-applied in the namespace (a git daemon, probes) needs its own NetworkPolicy — or replace it with the chart's `devStack.gitDaemon` and drop `network.reconciler.extraEgress`. |
+| **git daemon in devStack** (`devStack.gitDaemon.enabled`). | Delete the hand-applied `deploy/git-daemon` + `svc/git-daemon` (same names, same seed URL) or adopt them. |
+| **RustFS console off by default**; `devStack.rustfs.nodePortConsole` → `devStack.rustfs.console.{enabled,nodePort}`. | `--set devStack.rustfs.console.enabled=true` if still wanted. |
+| **RustFS credentials generated** (no more `rustfsadmin`); existing ones are re-read from the Secret on upgrade. | Nothing; read them back as shown below. |
+| **Bucket policy split** by the `rustfs-init` hook: `<pipeline>/<volume>/*`, `sources/*`, `status/status.json` anonymous; `status/attempts.json`, `validation.json`, `failures/*`, `warmup/*` credentialed; `status/logs/*` anonymous while `devStack.rustfs.publicLogs=true`. | Nothing for the PoC; set `publicLogs=false` once the log viewer sits behind auth. |
+| **`security.psaEnforce`** (default `baseline`, because the git daemon runs as root). | `make psa-labels` after the upgrade; `restricted` once the daemon has a purpose-built image. |
+| **Registry runs as uid 1000** with a read-only rootfs. | `chown -R 1000:1000` the `registry-data` PVC from a throwaway pod, or `--set devStack.registry.runAsUser=0`. |
+| **`queue.resources` default** now admits the Job the reconciler builds (cpu 4 / 8Gi / 1 GPU). | Raise it to run Jobs in parallel. |
+| **Reconciler CronJob**: `startingDeadlineSeconds: 120`, `activeDeadlineSeconds` = `reconciler.tickDeadlineSeconds` (600), Lease RBAC, the `RECONCILER_*` contract env. | Requires the A1 reconciler image or newer (dulwich, Lease). |
 
 ## Immutability warning
 
@@ -61,47 +94,6 @@ kubectl -n htr-batch label pvc htr-test-data app.kubernetes.io/managed-by=Helm -
 # same three commands for: runtimeclass nvidia; -n kube-system daemonset nvidia-device-plugin;
 # -n htr-batch deployment git-daemon + service git-daemon
 ```
-
-## PoC replay (bare k3s, in-cluster devStack)
-
-This reproduces the smoke test (see the
-[development test log](../../docs/development/test-log.md)) using the
-chart's optional `devStack.*` components (RustFS S3 with its bucket-init
-Job, an in-cluster registry, the NVIDIA device plugin, a git daemon) instead
-of the standalone raw manifests they replace. Cluster-local constants come
-from the repo-root `.env` (`.env.example` has the defaults used below).
-
-```bash
-export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-make poc-push          # prints the wrapper/reconciler digests to pin below
-helm upgrade --install htr charts/htrflow-batch -n htr-batch --create-namespace \
-  --set devStack.rustfs.enabled=true --set devStack.registry.enabled=true \
-  --set devStack.nvidiaDevicePlugin.enabled=true --set devStack.gitDaemon.enabled=true \
-  --set devStack.allowTagImages=true \
-  --set publicResultsBase=http://localhost:30900/htr-results \
-  --set network.apiServer.cidr=<node-ip>/32 \
-  --set viewer.image=127.0.0.1:30500/uv4:dev \
-  --set reconciler.enabled=true --set reconciler.image=127.0.0.1:30500/htrflow-reconciler:dev \
-  --set reconciler.campaignsRepoUrl=git://git-daemon.htr-batch.svc.cluster.local/campaigns-local \
-  --set exampleJob.enabled=true --set exampleJob.image=127.0.0.1:30500/htrflow-batch:dev \
-  --set exampleJob.manifestUrl=http://rustfs.htr-batch.svc.cluster.local:9000/htr-fixtures/mock-vol/manifest.json \
-  --set-file pipelines.demo-v1=.docker/pipeline-demo-v1.yaml
-make psa-labels
-make warmup PIPELINE=demo-v1 IMAGE=127.0.0.1:30500/htrflow-batch:dev
-kubectl -n htr-batch patch job htr-vol-301 --type=json -p '[{"op":"replace","path":"/spec/suspend","value":false}]'
-k9s -n htr-batch   # watch
-```
-
-`exampleJob.enabled=true` renders the `htr-vol-301` Job with `suspend: true`;
-unsuspend it (or `kubectl create job --from`) to run the smoke test.
-Kill-and-resume test: wait until ~2 ALTOs exist under
-`demo-v1/mock-vol/alto/`, force-delete the pod, watch the retry pod log
-`resume: N pages already done` and converge to Complete.
-
-Host prerequisites (persisted on the PoC node): `fs.inotify.max_user_instances=1024`
-+ `max_user_watches=1048576` (`/etc/sysctl.d/99-k3s-inotify.conf`), k3s
-`node-ip` pinned in `/etc/rancher/k3s/config.yaml` (hostname resolves
-IPv6-only).
 
 ## devStack RustFS: credentials, buckets, policy (D19)
 
@@ -152,6 +144,8 @@ Added:
 - Reconciler CronJob: `startingDeadlineSeconds: 120`, `activeDeadlineSeconds`
   from `reconciler.tickDeadlineSeconds` (600), Lease RBAC
   (`coordination.k8s.io/leases`), env `RECONCILER_TICK_SECONDS`,
+  `RECONCILER_TICK_DEADLINE_SECONDS`, `RECONCILER_GIT_TIMEOUT`, optional
+  `GIT_TOKEN` (`reconciler.gitTokenSecret`),
   `RECONCILER_MAX_VALIDATIONS_PER_TICK`, `RECONCILER_FETCH_MAX_BYTES`,
   `RECONCILER_LEASE_NAME`, `RECONCILER_JOB_{MIN_DEADLINE_SECONDS,SECONDS_PER_PAGE,RUNTIME_CLASS,NODE_SELECTOR,TOLERATIONS}`,
   `RECONCILER_JOB_{MANIFEST_MAX_BYTES,FETCH_MAX_BYTES}`,
@@ -161,7 +155,9 @@ Added:
 - `security.{allowedImageRepos,requireModelRevision,psaEnforce,verifyImages.*}`;
   optional Kyverno `ClusterPolicy` (cosign keyless) when `verifyImages.enabled`.
 - Viewer: restricted securityContext (uid 101, read-only rootfs, no SA
-  token), nginx security headers (`viewer.securityHeaders.enabled`), pod
+  token), nginx security headers (`viewer.securityHeaders.enabled`),
+  `/config.js` served from the ConfigMap (`viewer.statusBase`, defaulting to
+  `publicResultsBase`) so the SPA finds `status.json` under its CSP, pod
   rolls on config change.
 - devStack: RustFS/registry restricted securityContext (RustFS uid 10001,
   registry `devStack.registry.runAsUser`), digest-pinned images, bucket-init
