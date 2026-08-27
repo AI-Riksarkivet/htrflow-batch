@@ -68,7 +68,7 @@ func (m *HtrflowBatch) PublishDocker(
 		if imageRepository == "" {
 			imageRepository = "riksarkivet/htrflow-batch"
 		}
-		container, err = m.Build(ctx, source)
+		container, err = m.Build(ctx, source, "")
 	case "viewer":
 		if imageRepository == "" {
 			imageRepository = "riksarkivet/htrflow-batch-viewer"

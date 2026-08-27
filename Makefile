@@ -58,14 +58,19 @@ typecheck:
 # wrapper image (`make build-wrapper`; IMAGE_TAG selects an existing tag).
 # pytest is not in the image, so it is installed into the venv for the run
 # (root: the venv is root-owned). `dagger call test-driver` is the CI twin.
+# The corp CA is mounted when present (same rule as DAGGER_CA) so the
+# pytest install gets through an intercepting proxy.
 PYTEST_VERSION = $(shell grep -A1 '^name = "pytest"$$' uv.lock | sed -n 's/^version = "\(.*\)"/\1/p')
+DOCKER_CA := $(shell test -f $(CA_BUNDLE) && echo -v $(CA_BUNDLE):/etc/ssl/certs/corp-ca.crt:ro \
+               -e SSL_CERT_FILE=/etc/ssl/certs/corp-ca.crt -e UV_SYSTEM_CERTS=true)
 test-driver-real:
-	docker run --rm --user 0 --entrypoint /bin/sh \
+	docker run --rm --user 0 --entrypoint /bin/sh $(DOCKER_CA) \
 	  -e CUDA_VISIBLE_DEVICES= -e HF_HUB_OFFLINE=1 \
 	  -v $(CURDIR)/packages/wrapper/tests/test_driver_real.py:/driver-tests/test_driver_real.py:ro \
 	  -w /tmp $(WRAPPER_IMAGE) -c \
 	  'uv pip install --python /app/.venv/bin/python --no-cache "pytest==$(PYTEST_VERSION)" \
-	   && /app/.venv/bin/python -m pytest -m htrflow -q -p no:cacheprovider /driver-tests'
+	   && /app/.venv/bin/python -m pytest -m htrflow -q -p no:cacheprovider \
+	        -o "markers=htrflow: needs the htrflow runtime" /driver-tests'
 
 # `make ci` = what .github/workflows/ci.yml runs: `checks` carries ruff, ty,
 # the frontend (bun check/test/build) and the chart render; `test` is pytest.

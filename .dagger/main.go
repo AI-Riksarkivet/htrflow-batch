@@ -55,7 +55,8 @@ func (m *HtrflowBatch) withCaBundle(container *dagger.Container, caBundle *dagge
 	return container.
 		WithMountedFile("/etc/ssl/certs/corp-ca.crt", caBundle).
 		WithEnvVariable("SSL_CERT_FILE", "/etc/ssl/certs/corp-ca.crt").
-		WithEnvVariable("UV_NATIVE_TLS", "true").
+		WithEnvVariable("UV_NATIVE_TLS", "true"). // uv <0.9 name, still honoured
+		WithEnvVariable("UV_SYSTEM_CERTS", "true").
 		WithEnvVariable("NODE_EXTRA_CA_CERTS", "/etc/ssl/certs/corp-ca.crt")
 }
 
