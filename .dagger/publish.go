@@ -26,8 +26,12 @@ func (m *HtrflowBatch) resolveTag(ctx context.Context, source *dagger.Directory,
 	return tag, nil
 }
 
-// PublishDocker tests, builds and publishes an image to a registry.
-// component: "wrapper" (default), "viewer" or "reconciler".
+// PublishDocker tests, builds and publishes an image to a registry and
+// returns the published reference WITH its digest
+// (`<registry>/<repo>:<tag>@sha256:…`) — publish.yml signs and attests that
+// digest. component: "wrapper" (default), "viewer" or "reconciler".
+// Tags are treated as immutable: the workflow refuses a tag that already
+// exists before calling this.
 func (m *HtrflowBatch) PublishDocker(
 	ctx context.Context,
 	// +default="wrapper"
@@ -52,6 +56,10 @@ func (m *HtrflowBatch) PublishDocker(
 	skipValidation bool,
 	// +optional
 	caBundle *dagger.File,
+	// HTRFLOW_BASE_REVISION build arg for the wrapper image (see Build);
+	// ignored for the other components
+	// +optional
+	baseRevision string,
 ) (string, error) {
 	resolvedTag, err := m.resolveTag(ctx, source, tag, skipValidation, caBundle)
 	if err != nil {
@@ -68,7 +76,7 @@ func (m *HtrflowBatch) PublishDocker(
 		if imageRepository == "" {
 			imageRepository = "riksarkivet/htrflow-batch"
 		}
-		container, err = m.Build(ctx, source)
+		container, err = m.Build(ctx, source, baseRevision)
 	case "viewer":
 		if imageRepository == "" {
 			imageRepository = "riksarkivet/htrflow-batch-viewer"

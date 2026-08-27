@@ -262,19 +262,24 @@ def test_partial_file_unlinked_on_write_failure(tmp_path):
 
 def test_stop_event_short_circuits_pending_downloads(tmp_path):
     """W10: once the run has failed, queued pages must not each spend their
-    retries/timeouts before the process can exit."""
-    import time
-
+    retries/timeouts before the process can exit. The mock server answers
+    the first page at once and holds every later one on a gate the test
+    opens after setting ``stop``: with concurrency 1 exactly one more
+    request is in flight, and the remaining 38 must be short-circuited
+    without ever reaching the server (no wall-clock assertion needed)."""
     stop = threading.Event()
+    gate = threading.Event()
+    in_flight = threading.Event()  # the second request has reached the server
     started = []
 
     def handler(req):
         started.append(req.url.path)
-        time.sleep(0.05)
+        if len(started) > 1:
+            in_flight.set()
+            assert gate.wait(5), "test never opened the gate"
         return httpx.Response(200, content=JPEG)
 
     q, slots = queue.Queue(), threading.Semaphore(64)
-    t0 = time.monotonic()
     t = threading.Thread(
         target=run_downloader,
         args=(_pages(40), tmp_path, q, slots, _client(handler)),
@@ -284,15 +289,20 @@ def test_stop_event_short_circuits_pending_downloads(tmp_path):
     t.start()
     first = q.get(timeout=5)
     assert first.path is not None
+    # Only once page 2 is inside the server is "one in flight" a fact; setting
+    # stop before that races the worker and short-circuits page 2 as well.
+    assert in_flight.wait(5), "second request never reached the server"
     stop.set()
+    gate.set()
     t.join(timeout=5)
     assert not t.is_alive()
-    assert time.monotonic() - t0 < 1.5  # not 40 x 50 ms
     results = []
     while True:
         r = q.get(timeout=1)
         if r is None:
             break
         results.append(r)
-    assert all(r.path is None and "stopped" in r.error for r in results[2:])
-    assert len(started) < 10
+    assert len(results) == 39  # every page after the first is still reported
+    assert results[0].path is not None  # the one the gate held, completed
+    assert all(r.path is None and "stopped" in r.error for r in results[1:])
+    assert len(started) == 2  # page 1, and the one already in flight
