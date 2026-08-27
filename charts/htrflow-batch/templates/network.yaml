@@ -40,7 +40,15 @@ node address it resolves to — hence the `lookup` auto-detection below.
 {{- end }}
 {{- $public := list }}
 {{- range .Values.network.reconciler.egressCidrs }}
+  {{- /* `except` entries must be strict subsets of `cidr` (the API server
+       rejects the object otherwise), so the cluster/node ranges are carved
+       out only of a catch-all block; a specific public range cannot contain
+       them and needs no carve-out. */}}
+  {{- if eq . "0.0.0.0/0" }}
   {{- $public = append $public (dict "ipBlock" (dict "cidr" . "except" $internal)) }}
+  {{- else }}
+  {{- $public = append $public (dict "ipBlock" (dict "cidr" .)) }}
+  {{- end }}
 {{- end }}
 {{- $anyPublic := list (dict "ipBlock" (dict "cidr" "0.0.0.0/0" "except" $internal)) }}
 {{- $labels := include "htrflow-batch.labels" . }}
