@@ -16,8 +16,13 @@ data:
   # so it passes the SPA's CSP (script-src 'self'); an inline script injected
   # into index.html would be blocked. Points the browser at status.json under
   # publicResultsBase (browser-reachable, never the in-cluster S3 endpoint).
+  {{- $statusBase := .Values.viewer.statusBase | default .Values.publicResultsBase }}
   config.js: |
-    window.STATUS_URL = {{ printf "%s/status/status.json" (.Values.viewer.statusBase | default .Values.publicResultsBase | required "publicResultsBase (or viewer.statusBase) is required when viewer.enabled" | trimSuffix "/") | quote }};
+    {{- if $statusBase }}
+    window.STATUS_URL = {{ printf "%s/status/status.json" ($statusBase | trimSuffix "/") | quote }};
+    {{- else }}
+    // publicResultsBase / viewer.statusBase unset: the app uses its build-time default.
+    {{- end }}
   default.conf: |
     server {
       listen 8080;
