@@ -1,0 +1,128 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Pins are tracked, not floated (audit T9): every image is tag+digest, every action a SHA, both lockfiles refreshed. One grouped PR a week per area; security updates any time.",
+  "extends": [
+    "config:recommended",
+    ":pinDigests",
+    "helpers:pinGitHubActionDigests",
+    ":semanticCommitsDisabled"
+  ],
+  "timezone": "Europe/Stockholm",
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 6,
+  "labels": ["dependencies"],
+  "enabledManagers": [
+    "dockerfile",
+    "docker-compose",
+    "github-actions",
+    "helm-values",
+    "pep621",
+    "bun",
+    "custom.regex"
+  ],
+  "pep621": {
+    "lockFileMaintenance": { "enabled": true }
+  },
+  "bun": {
+    "lockFileMaintenance": { "enabled": true }
+  },
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"],
+    "commitMessageAction": "Refresh lockfiles"
+  },
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "schedule": ["at any time"],
+    "labels": ["dependencies", "security"]
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Images pulled by the dagger module (.dagger/main.go const block): <repo>:<tag>@sha256:<digest>",
+      "managerFilePatterns": ["/^\\.dagger/.+\\.go$/"],
+      "matchStrings": [
+        "\"(?<depName>[a-z0-9./-]+(?::[0-9]+)?/?[a-z0-9._/-]*):(?<currentValue>[A-Za-z0-9._-]+)@(?<currentDigest>sha256:[a-f0-9]{64})\""
+      ],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Images referenced by digest in workflow run: steps (Trivy for the SBOM)",
+      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
+      "matchStrings": [
+        "\\s(?<depName>[a-z0-9./-]+(?::[0-9]+)?/?[a-z0-9._/-]*):(?<currentValue>[A-Za-z0-9._-]+)@(?<currentDigest>sha256:[a-f0-9]{64})\\s"
+      ],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "dagger engine version: dagger.json engineVersion and the dagger-for-github `version:` input must stay equal",
+      "managerFilePatterns": ["/^dagger\\.json$/", "/^\\.github/workflows/.+\\.ya?ml$/"],
+      "matchStrings": [
+        "\"engineVersion\":\\s*\"v(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
+        "version:\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"\\s*#\\s*= engineVersion"
+      ],
+      "depNameTemplate": "dagger/dagger",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.*)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Trivy image used by make scan-reconciler",
+      "managerFilePatterns": ["/^Makefile$/"],
+      "matchStrings": ["TRIVY_IMAGE \\?= (?<depName>aquasec/trivy):(?<currentValue>[0-9.]+)"],
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Container images anywhere (dockerfiles, chart values, dagger module, workflows): one weekly PR",
+      "matchDatasources": ["docker"],
+      "groupName": "container images",
+      "pinDigests": true
+    },
+    {
+      "description": "The htrflow base is a deliberate, tested pin: tag bumps by hand, digest refreshes only",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["airiksarkivet/htrflow"],
+      "matchUpdateTypes": ["major", "minor", "patch"],
+      "enabled": false
+    },
+    {
+      "description": "torch/torchvision follow the cu128 index by hand (dockerfile comment); uv itself is a pin",
+      "matchDatasources": ["pypi"],
+      "matchPackageNames": ["torch", "torchvision"],
+      "enabled": false
+    },
+    {
+      "description": "GitHub Actions: SHA pins with the version comment kept; one weekly PR",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions"
+    },
+    {
+      "description": "dagger engine (dagger.json + workflow version input): its own PR, the module must be re-verified",
+      "matchPackageNames": ["dagger/dagger"],
+      "groupName": "dagger engine"
+    },
+    {
+      "description": "Python dev tools (ruff, ty, pytest, moto) from the workspace lock",
+      "matchManagers": ["pep621"],
+      "matchDepTypes": ["dependency-groups"],
+      "groupName": "python dev tools"
+    },
+    {
+      "description": "Python runtime deps of both members: grouped, patch+minor only; majors get their own PR",
+      "matchManagers": ["pep621"],
+      "matchDepTypes": ["project.dependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "python runtime deps"
+    },
+    {
+      "description": "Campaign browser (bun.lock): one weekly PR, majors separate",
+      "matchManagers": ["bun"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "frontend deps"
+    }
+  ]
+}
