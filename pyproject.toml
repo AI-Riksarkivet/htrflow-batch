@@ -12,6 +12,22 @@ members = ["packages/*"]
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
 testpaths = ["packages/wrapper/tests", "packages/reconciler/tests"]
+markers = [
+    "htrflow: needs the htrflow runtime; runs inside the wrapper image (make test-driver-real / dagger call test-driver)",
+]
+
+# Root ruff config governs everything outside packages/* (scripts/, the
+# dagger module has no Python). Same rules as the members so `ruff check .`
+# from the root is one consistent gate. docs/ is excluded: ruff formats
+# fenced code in Markdown, and the plans under docs/superpowers are
+# scaffolding, not source (audit T11/T14).
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
 
 [dependency-groups]
 dev = [
