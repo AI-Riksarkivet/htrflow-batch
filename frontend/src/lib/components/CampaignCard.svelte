@@ -1,6 +1,11 @@
 <script lang="ts">
   // One campaign: header (name, pipeline chip, counts) and its volume table.
-  import { campaignHealth, pagesLabel, shortDate, viewerHref } from "$lib/derive.js";
+  import {
+    campaignHealth,
+    pagesLabel,
+    shortDate,
+    viewerHref,
+  } from "$lib/derive.js";
   import type { CampaignEntry } from "$lib/status.js";
 
   let { campaign: c }: { campaign: CampaignEntry } = $props();
@@ -15,6 +20,19 @@
 
   function statusLabel(status: string): string {
     return status === "pending" ? "planned" : status;
+  }
+
+  const TERMINAL_HINTS: Record<string, string> = {
+    "exit-13":
+      "permanent failure (wrapper exit 13): parked until an operator clears the attempts record or bumps the pipeline id",
+    capped:
+      "attempt cap reached: parked until an operator clears the attempts record or bumps the pipeline id",
+  };
+  function terminalHint(reason: string): string {
+    return (
+      TERMINAL_HINTS[reason] ??
+      `parked (${reason}): needs an operator to clear it`
+    );
   }
 
   // A broken thumbnail becomes the same neutral square as a missing one.
@@ -79,118 +97,136 @@
   {/if}
   {#if !collapsed && c.error === null}
     <div class="table-scroll" id={tableId}>
-    <table class="volumes">
-      <caption class="sr-only">Volumes in campaign {c.name}</caption>
-      <colgroup>
-        <col class="c-thumb" />
-        <col class="c-vid" />
-        <col class="c-status" />
-        <col class="c-num" />
-        <col class="c-num c-attempts" />
-        <col class="c-updated" />
-        <col class="c-links" />
-      </colgroup>
-      <thead>
-        <tr>
-          <th></th>
-          <th>volume</th>
-          <th>status</th>
-          <th class="num">pages</th>
-          <th class="num c-attempts">attempts</th>
-          <th class="c-updated">updated</th>
-          <th>links</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each c.volumes as v (v.id)}
-          <tr class:planned={v.status === "pending"}>
-            <td class="thumb">
-              <!-- Decorative: the row is identified by its id. Low fetch
+      <table class="volumes">
+        <caption class="sr-only">Volumes in campaign {c.name}</caption>
+        <colgroup>
+          <col class="c-thumb" />
+          <col class="c-vid" />
+          <col class="c-status" />
+          <col class="c-num" />
+          <col class="c-num c-attempts" />
+          <col class="c-updated" />
+          <col class="c-links" />
+        </colgroup>
+        <thead>
+          <tr>
+            <th></th>
+            <th>volume</th>
+            <th>status</th>
+            <th class="num">pages</th>
+            <th class="num c-attempts">attempts</th>
+            <th class="c-updated">updated</th>
+            <th>links</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each c.volumes as v (v.id)}
+            <tr class:planned={v.status === "pending"}>
+              <td class="thumb">
+                <!-- Decorative: the row is identified by its id. Low fetch
                    priority so eight thumbnails never race status.json or
                    the viewer; the reconciler sends sized IIIF URLs and null
                    for service-less manifests, which get a neutral square. -->
-              {#if v.thumbnail !== null}
-                <img
-                  src={v.thumbnail}
-                  alt=""
-                  loading="lazy"
-                  fetchpriority="low"
-                  decoding="async"
-                  width="26"
-                  height="26"
-                  onerror={(e) => e.currentTarget.replaceWith(placeholder())}
-                />
-              {:else}
-                <span class="thumb-placeholder" aria-hidden="true"></span>
-              {/if}
-            </td>
-            <td class="vid">
-              <span class="vid-name" title={v.id}>{v.id}</span>
-              {#if v.error !== null}
-                <span class="verr">{v.error}</span>
-              {/if}
-            </td>
-            <td>
-              <span class="status {v.status}">
-                <span class="dot"></span>
-                {statusLabel(v.status)}
-              </span>
-            </td>
-            <td class="num">
-              {v.pages_total !== null || v.pages_done !== null
-                ? `${v.pages_done ?? 0}/${v.pages_total ?? "?"}`
-                : "—"}
-            </td>
-            <td class="num c-attempts">{v.attempts > 0 ? v.attempts : "—"}</td>
-            <td class="updated c-updated">
-              {#if v.updated !== null && shortDate(v.updated) !== null}
-                <time datetime={v.updated} title={v.updated}>{shortDate(v.updated)}</time>
-              {:else}
-                —
-              {/if}
-            </td>
-            <td class="links">
-              <!-- Three fixed slots (open · source · log) so a missing
+                {#if v.thumbnail !== null}
+                  <img
+                    src={v.thumbnail}
+                    alt=""
+                    loading="lazy"
+                    fetchpriority="low"
+                    decoding="async"
+                    width="26"
+                    height="26"
+                    onerror={(e) => e.currentTarget.replaceWith(placeholder())}
+                  />
+                {:else}
+                  <span class="thumb-placeholder" aria-hidden="true"></span>
+                {/if}
+              </td>
+              <td class="vid">
+                <span class="vid-name" title={v.id}>{v.id}</span>
+                {#if v.error !== null}
+                  <span class="verr">{v.error}</span>
+                {/if}
+              </td>
+              <td>
+                <span class="status {v.status}">
+                  <span class="dot"></span>
+                  {statusLabel(v.status)}
+                </span>
+                {#if v.terminal !== null}
+                  <!-- Sticky: the reconciler will not resubmit until an
+                     operator clears the attempts record or bumps the
+                     pipeline id. -->
+                  <span class="terminal" title={terminalHint(v.terminal)}
+                    >{v.terminal}</span
+                  >
+                {/if}
+              </td>
+              <td class="num">
+                {v.pages_total !== null || v.pages_done !== null
+                  ? `${v.pages_done ?? 0}/${v.pages_total ?? "?"}`
+                  : "—"}
+              </td>
+              <td class="num c-attempts">{v.attempts > 0 ? v.attempts : "—"}</td
+              >
+              <td class="updated c-updated">
+                {#if v.updated !== null && shortDate(v.updated) !== null}
+                  <time datetime={v.updated} title={v.updated}
+                    >{shortDate(v.updated)}</time
+                  >
+                {:else}
+                  —
+                {/if}
+              </td>
+              <td class="links">
+                <!-- Three fixed slots (open · source · log) so a missing
                    link leaves a gap instead of shifting its neighbours;
                    the eye can scan a column of "source" straight down. -->
-              {#if v.invalid !== true}
-              {@const open = viewerHref(v)}
-              <span class="slot">
-                {#if v.status === "done" && open !== null}
-                  <a href={open} target="_blank" rel="noopener">open</a>
+                {#if v.invalid !== true}
+                  {@const open = viewerHref(v)}
+                  <span class="slot">
+                    {#if v.status === "done" && open !== null}
+                      <a href={open} target="_blank" rel="noopener">open</a>
+                    {/if}
+                  </span>
+                  <span class="slot">
+                    {#if v.source_manifest !== null}
+                      <a href={v.source_manifest} target="_blank" rel="noopener"
+                        >source</a
+                      >
+                    {:else}
+                      <span
+                        class="invalid-url"
+                        title="source_manifest is not an http(s) URL"
+                        >invalid url</span
+                      >
+                    {/if}
+                  </span>
+                  <span class="slot">
+                    {#if v.failure_log !== null}
+                      <a
+                        class="danger"
+                        href={v.failure_log}
+                        target="_blank"
+                        rel="noopener">log</a
+                      >
+                    {:else if v.run_log !== null}
+                      <a
+                        href={"log?log=" +
+                          encodeURIComponent(v.run_log) +
+                          (v.run_manifest !== null
+                            ? "&manifest=" + encodeURIComponent(v.run_manifest)
+                            : "") +
+                          (v.status !== "done" ? "&live=1" : "")}>log</a
+                      >
+                    {/if}
+                  </span>
                 {/if}
-              </span>
-              <span class="slot">
-                {#if v.source_manifest !== null}
-                  <a href={v.source_manifest} target="_blank" rel="noopener">source</a>
-                {:else}
-                  <span class="invalid-url" title="source_manifest is not an http(s) URL"
-                    >invalid url</span
-                  >
-                {/if}
-              </span>
-              <span class="slot">
-                {#if v.failure_log !== null}
-                  <a class="danger" href={v.failure_log} target="_blank" rel="noopener"
-                    >log</a
-                  >
-                {:else if v.run_log !== null}
-                  <a
-                    href={"log?log=" +
-                      encodeURIComponent(v.run_log) +
-                      (v.run_manifest !== null
-                        ? "&manifest=" + encodeURIComponent(v.run_manifest)
-                        : "") +
-                      (v.status !== "done" ? "&live=1" : "")}>log</a
-                  >
-                {/if}
-              </span>
-              {/if}
-            </td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
     </div>
   {/if}
 </section>
@@ -350,7 +386,6 @@
     -webkit-overflow-scrolling: touch;
   }
 
-
   col.c-thumb {
     width: 2.4rem;
   }
@@ -499,7 +534,8 @@
   }
 
   .status.queued,
-  .status.retry {
+  .status.retry,
+  .status.deleting {
     color: var(--warning);
     background: var(--warning-soft);
   }
@@ -515,6 +551,19 @@
   .status.unknown {
     color: var(--muted-foreground);
     background: var(--muted);
+  }
+
+  .terminal {
+    display: inline-block;
+    margin-left: 0.3rem;
+    font-size: 10.5px;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    color: var(--destructive);
+    border: 1px solid var(--destructive);
+    border-radius: 3px;
+    padding: 0 0.3rem;
+    line-height: 1.4;
+    cursor: help;
   }
 
   td.updated {

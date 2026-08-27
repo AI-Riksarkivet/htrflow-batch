@@ -5,6 +5,7 @@ import {
   isStale,
   pagesLabel,
   shortDate,
+  tickSummaryLabel,
   viewerHref,
 } from "./derive.js";
 import type { VolumeEntry } from "./status.js";
@@ -23,6 +24,7 @@ const done: VolumeEntry = {
   updated: null,
   failure_log: null,
   run_log: null,
+  terminal: null,
 };
 const pending: VolumeEntry = {
   ...done,
@@ -67,11 +69,29 @@ describe("derive", () => {
     expect(campaignHealth(st("done", "done"))).toBe("done");
     expect(campaignHealth(st("done", "running"))).toBe("active");
     expect(campaignHealth(st("done", "queued", "retry"))).toBe("active");
+    expect(campaignHealth(st("done", "deleting"))).toBe("active"); // retry in progress
     expect(campaignHealth(st("running", "needs-attention"))).toBe("failed");
     expect(campaignHealth(st("done", "unreachable"))).toBe("failed");
     expect(campaignHealth(st("pending", "pending"))).toBe("idle");
     expect(campaignHealth(st("done", "pending"))).toBe("idle");
     expect(campaignHealth([])).toBe("idle");
+  });
+
+  test("tick summary label lists only the fields present", () => {
+    expect(
+      tickSummaryLabel({
+        seconds: 4.06,
+        s3_calls: 12,
+        validations: 3,
+        submitted: 1,
+        retried: 0,
+      }),
+    ).toBe(
+      "last tick 4.1 s · 12 S3 calls · 3 validations · 1 submitted · 0 retried",
+    );
+    expect(tickSummaryLabel({ seconds: 0.5 })).toBe("last tick 0.5 s");
+    expect(tickSummaryLabel({})).toBeNull();
+    expect(tickSummaryLabel(null)).toBeNull();
   });
 
   test("stale when older than 3 ticks", () => {

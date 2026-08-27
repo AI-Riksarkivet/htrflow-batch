@@ -29,9 +29,9 @@ describe("RunSummaryCard", () => {
     const failed = screen.getByRole("region", { name: "failed pages" });
     expect(within(failed).getByText("boom 0003")).toBeInTheDocument();
     // slowest strip lists pages with the biggest seconds first
-    expect(screen.getByText("slowest pages").parentElement?.textContent).toMatch(
-      /0006.*0005.*0004.*0002.*0001/s,
-    );
+    expect(
+      screen.getByText("slowest pages").parentElement?.textContent,
+    ).toMatch(/0006.*0005.*0004.*0002.*0001/s);
   });
 
   test("one focusable cell per page with id and seconds in the label", () => {
@@ -42,6 +42,31 @@ describe("RunSummaryCard", () => {
     expect(cells[1]).toHaveAttribute("aria-label", "page 0002 · 2.0 s · ok");
     // roving tabindex: exactly one tab stop
     expect(cells.filter((c) => c.tabIndex === 0)).toHaveLength(1);
+  });
+
+  test("page ids link to the source image when the manifest carries page_sources", () => {
+    const m = manifest(3, ["0002"]);
+    m.page_sources = {
+      "0001": "https://iiif/0001.jpg",
+      "0002": "https://iiif/0002.jpg",
+    };
+    render(RunSummaryCard, { manifest: m });
+    const failed = screen.getByRole("region", { name: "failed pages" });
+    expect(within(failed).getByRole("link", { name: "0002" })).toHaveAttribute(
+      "href",
+      "https://iiif/0002.jpg",
+    );
+    const table = screen.getByRole("table", { name: /per-page results/i });
+    expect(
+      within(table).getByRole("link", { name: "0001" }),
+    ).toBeInTheDocument();
+    expect(within(table).queryByRole("link", { name: "0003" })).toBeNull();
+  });
+
+  test("an older manifest without page_sources renders plain ids", () => {
+    render(RunSummaryCard, { manifest: manifest(2) });
+    const table = screen.getByRole("table", { name: /per-page results/i });
+    expect(within(table).queryAllByRole("link")).toHaveLength(0);
   });
 
   test("the full table is behind details and pages by 100", async () => {

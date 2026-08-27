@@ -2,6 +2,7 @@
 // the pure summary math behind the run viewer. The manifest is written once,
 // when the wrapper finishes, and carries one result per page.
 import { z } from "zod";
+import { isHttpUrl } from "./derive.js";
 
 export const pageResultSchema = z.object({
   // "ok" | "failed" | "skipped" today; kept open so a new outcome renders as
@@ -23,6 +24,10 @@ export const runManifestSchema = z
     wall_seconds: z.number().optional(),
     bytes_fetched: z.number().optional(),
     pages_per_second: z.number().optional(),
+    // Newer wrappers: the image each page was fetched from and its canvas
+    // id; older runs have neither.
+    page_sources: z.record(z.string()).optional(),
+    canvas_ids: z.record(z.string().nullable()).optional(),
   })
   .passthrough();
 
@@ -31,6 +36,8 @@ export type RunManifest = z.infer<typeof runManifestSchema>;
 
 export interface PageStat extends PageResult {
   id: string;
+  /** Source image URL when the manifest carries one and it is http(s). */
+  source?: string;
 }
 
 export interface RunSummary {
@@ -50,7 +57,10 @@ export interface RunSummary {
 }
 
 /** Linear-interpolated percentile of an ascending list; null when empty. */
-export function percentile(sorted: readonly number[], p: number): number | null {
+export function percentile(
+  sorted: readonly number[],
+  p: number,
+): number | null {
   if (sorted.length === 0) return null;
   const pos = (sorted.length - 1) * p;
   const lo = Math.floor(pos);
@@ -60,14 +70,25 @@ export function percentile(sorted: readonly number[], p: number): number | null 
   return a + (b - a) * (pos - lo);
 }
 
-export function pageStats(results: Record<string, PageResult>): PageStat[] {
+export function pageStats(
+  results: Record<string, PageResult>,
+  sources: Record<string, string> = {},
+): PageStat[] {
   return Object.entries(results)
-    .map(([id, r]) => ({ id, ...r }))
+    .map(([id, r]) => {
+      const source = sources[id];
+      return source !== undefined && isHttpUrl(source)
+        ? { id, ...r, source }
+        : { id, ...r };
+    })
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
-export function summarizeRun(results: Record<string, PageResult>): RunSummary {
-  const pages = pageStats(results);
+export function summarizeRun(
+  results: Record<string, PageResult>,
+  sources: Record<string, string> = {},
+): RunSummary {
+  const pages = pageStats(results, sources);
   const timed = pages.filter((p) => p.status !== "skipped");
   const seconds = timed.map((p) => p.seconds).sort((a, b) => a - b);
   const slowest = [...timed].sort((a, b) => b.seconds - a.seconds).slice(0, 5);

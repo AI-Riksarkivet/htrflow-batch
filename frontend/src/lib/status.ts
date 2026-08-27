@@ -27,6 +27,9 @@ export const volumeStatusSchema = z
     "pending",
     "unreachable",
     "unsupported",
+    // Job under Foreground deletion (a retry in progress): back to queued
+    // the tick after.
+    "deleting",
     // A status this build does not know (a newer reconciler) renders as a
     // neutral chip instead of failing the whole document.
     "unknown",
@@ -49,6 +52,9 @@ export const volumeEntrySchema = z.object({
   updated: z.string().nullable().default(null),
   failure_log: httpUrlOrNull,
   run_log: httpUrlOrNull,
+  // attempts.json v2: why this volume is parked in needs-attention
+  // ("exit-13" | "capped" today); clearing it is an operator action.
+  terminal: z.string().nullable().default(null),
 });
 
 const URL_FIELDS = [
@@ -78,18 +84,37 @@ export const campaignEntrySchema = z.object({
   orphans: z.array(z.string()).default([]),
 });
 
+// What the last reconcile cost; every field optional so a partial summary
+// still renders and an old document (no summary) is fine.
+export const tickSummarySchema = z
+  .object({
+    seconds: z.number(),
+    s3_calls: z.number(),
+    validations: z.number(),
+    submitted: z.number(),
+    retried: z.number(),
+  })
+  .partial();
+
 export const statusDocSchema = z.object({
   generated_at: z.string(),
   tick_seconds: z.number(),
   campaigns_repo_url: z.string().nullable().default(null),
   warnings: z.array(z.string()),
   campaigns: z.array(campaignEntrySchema),
+  tick_summary: tickSummarySchema.nullable().catch(null).default(null),
 });
 
 export type VolumeStatus = z.infer<typeof volumeStatusSchema>;
+export type TickSummary = z.infer<typeof tickSummarySchema>;
 /** `invalid` marks a row that stands in for an entry that did not parse. */
-export type VolumeEntry = z.infer<typeof volumeEntrySchema> & { invalid?: true };
-export type CampaignEntry = Omit<z.infer<typeof campaignEntrySchema>, "volumes"> & {
+export type VolumeEntry = z.infer<typeof volumeEntrySchema> & {
+  invalid?: true;
+};
+export type CampaignEntry = Omit<
+  z.infer<typeof campaignEntrySchema>,
+  "volumes"
+> & {
   volumes: VolumeEntry[];
 };
 export type StatusDoc = Omit<z.infer<typeof statusDocSchema>, "campaigns"> & {
@@ -101,9 +126,12 @@ export function formatIssues(issues: readonly ZodIssue[]): string {
   return issues
     .map((issue) => {
       const path = issue.path
-        .map((p, i) => (typeof p === "number" ? `[${p}]` : i === 0 ? p : `.${p}`))
+        .map((p, i) =>
+          typeof p === "number" ? `[${p}]` : i === 0 ? p : `.${p}`,
+        )
         .join("");
-      const message = issue.message.charAt(0).toLowerCase() + issue.message.slice(1);
+      const message =
+        issue.message.charAt(0).toLowerCase() + issue.message.slice(1);
       return path === "" ? message : `${path}: ${message}`;
     })
     .join("; ");
@@ -141,6 +169,7 @@ function degradedVolume(raw: unknown, index: number, why: string): VolumeEntry {
     updated: null,
     failure_log: null,
     run_log: null,
+    terminal: null,
     invalid: true,
   };
 }
@@ -149,10 +178,16 @@ function degradedVolume(raw: unknown, index: number, why: string): VolumeEntry {
 function refusedUrls(raw: unknown, parsed: VolumeEntry): string[] {
   if (raw === null || typeof raw !== "object") return [];
   const r = raw as Record<string, unknown>;
-  return URL_FIELDS.filter((f) => typeof r[f] === "string" && parsed[f] === null);
+  return URL_FIELDS.filter(
+    (f) => typeof r[f] === "string" && parsed[f] === null,
+  );
 }
 
-function degradedCampaign(raw: unknown, index: number, why: string): CampaignEntry {
+function degradedCampaign(
+  raw: unknown,
+  index: number,
+  why: string,
+): CampaignEntry {
   return {
     name: nameOf(raw, "name", `campaign #${index + 1}`),
     pipeline: null,
@@ -165,8 +200,12 @@ function degradedCampaign(raw: unknown, index: number, why: string): CampaignEnt
   };
 }
 
-const envelopeSchema = statusDocSchema.extend({ campaigns: z.array(z.unknown()) });
-const campaignShellSchema = campaignEntrySchema.extend({ volumes: z.array(z.unknown()) });
+const envelopeSchema = statusDocSchema.extend({
+  campaigns: z.array(z.unknown()),
+});
+const campaignShellSchema = campaignEntrySchema.extend({
+  volumes: z.array(z.unknown()),
+});
 
 export function parseStatusDoc(raw: unknown): ParsedStatus {
   const envelope = envelopeSchema.safeParse(raw);

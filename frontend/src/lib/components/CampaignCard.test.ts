@@ -41,16 +41,23 @@ function campaignFrom(volumes: unknown[]): CampaignEntry {
 
 describe("CampaignCard", () => {
   test("a bad volume degrades to an error row; the good row still renders", () => {
-    const campaign = campaignFrom([volume, { ...volume, id: "R2", attempts: "x" }]);
+    const campaign = campaignFrom([
+      volume,
+      { ...volume, id: "R2", attempts: "x" },
+    ]);
     render(CampaignCard, { campaign });
     const rows = screen.getAllByRole("row").slice(1); // drop the header
     expect(rows).toHaveLength(2);
     expect(within(rows[0] as HTMLElement).getByText("R1")).toBeInTheDocument();
-    expect(within(rows[0] as HTMLElement).getByText("done")).toBeInTheDocument();
+    expect(
+      within(rows[0] as HTMLElement).getByText("done"),
+    ).toBeInTheDocument();
     const bad = rows[1] as HTMLElement;
     expect(within(bad).getByText("R2")).toBeInTheDocument();
     expect(within(bad).getByText("unknown")).toBeInTheDocument();
-    expect(within(bad).getByText(/invalid status entry: attempts/)).toBeInTheDocument();
+    expect(
+      within(bad).getByText(/invalid status entry: attempts/),
+    ).toBeInTheDocument();
   });
 
   test("javascript: URLs never reach an href or src", () => {
@@ -64,7 +71,9 @@ describe("CampaignCard", () => {
       },
     ]);
     const { container } = render(CampaignCard, { campaign });
-    const hrefs = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    const hrefs = [...container.querySelectorAll("a")].map((a) =>
+      a.getAttribute("href"),
+    );
     expect(hrefs.some((h) => h?.startsWith("javascript:"))).toBe(false);
     expect(container.querySelector("img")).toBeNull();
     expect(screen.getByText("invalid url")).toBeInTheDocument();
@@ -114,7 +123,9 @@ describe("CampaignCard", () => {
 
     await fireEvent.click(chip);
     expect(chip).toHaveAttribute("aria-expanded", "true");
-    const yaml = document.getElementById(chip.getAttribute("aria-controls") ?? "");
+    const yaml = document.getElementById(
+      chip.getAttribute("aria-controls") ?? "",
+    );
     expect(yaml).toHaveTextContent("step: Segmentation");
     expect(screen.getByRole("table")).toBeInTheDocument(); // still expanded
 
@@ -122,6 +133,27 @@ describe("CampaignCard", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("table")).toBeNull();
     expect(yaml).toBeInTheDocument(); // yaml is independent of the table
+  });
+
+  test("a terminal reason shows on the row with an operator hint; absent otherwise", () => {
+    const campaign = campaignFrom([
+      {
+        ...volume,
+        id: "parked",
+        status: "needs-attention",
+        terminal: "exit-13",
+        attempts: 1,
+      },
+      { ...volume, id: "fine" },
+    ]);
+    render(CampaignCard, { campaign });
+    const tag = screen.getByText("exit-13");
+    expect(tag).toHaveClass("terminal");
+    expect(tag).toHaveAttribute(
+      "title",
+      expect.stringMatching(/clears the attempts record/),
+    );
+    expect(document.querySelectorAll(".terminal")).toHaveLength(1);
   });
 
   test("an unrecognised status renders the neutral unknown chip", () => {
