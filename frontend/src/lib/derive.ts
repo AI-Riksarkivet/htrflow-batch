@@ -1,5 +1,5 @@
 // Pure view-derivation over status.json (schema: reconciler main.py).
-import type { VolumeEntry } from "./status.js";
+import type { TickSummary, VolumeEntry } from "./status.js";
 
 /** A reconcile older than this many ticks means the reconciler is presumed dead. */
 const STALE_TICKS = 3;
@@ -44,6 +44,7 @@ const ACTIVE_STATUSES: ReadonlySet<VolumeEntry["status"]> = new Set([
   "running",
   "queued",
   "retry",
+  "deleting",
 ]);
 
 export function campaignHealth(
@@ -92,4 +93,24 @@ export function shortDate(
     minute: "2-digit",
     timeZone,
   });
+}
+
+/**
+ * "last tick 4.1 s · 12 S3 calls · 3 validations · 1 submitted · 0 retried"
+ * — only the fields the reconciler sent; null when it sent none (or an old
+ * document with no summary at all).
+ */
+export function tickSummaryLabel(summary: TickSummary | null): string | null {
+  if (summary === null) return null;
+  const parts: string[] = [];
+  if (summary.seconds !== undefined)
+    parts.push(`last tick ${summary.seconds.toFixed(1)} s`);
+  if (summary.s3_calls !== undefined)
+    parts.push(`${summary.s3_calls} S3 calls`);
+  if (summary.validations !== undefined)
+    parts.push(`${summary.validations} validations`);
+  if (summary.submitted !== undefined)
+    parts.push(`${summary.submitted} submitted`);
+  if (summary.retried !== undefined) parts.push(`${summary.retried} retried`);
+  return parts.length > 0 ? parts.join(" · ") : null;
 }

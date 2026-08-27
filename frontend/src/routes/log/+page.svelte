@@ -2,22 +2,22 @@
   import { browser } from "$app/environment";
   import RunSummaryCard from "$lib/components/RunSummaryCard.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
+  // LIVE_MS matches the wrapper's log-ship period (polling faster buys
+  // nothing); LIVE_MAX_FAILURES stops a log that never appears from
+  // spinning forever. Both documented in $lib/config.
+  import { LIVE_MAX_FAILURES, LIVE_MS } from "$lib/config.js";
   import { isHttpUrl, shortDate } from "$lib/derive.js";
-  import { isTerminalManifest, runManifestSchema, type RunManifest } from "$lib/run.js";
+  import {
+    isTerminalManifest,
+    runManifestSchema,
+    type RunManifest,
+  } from "$lib/run.js";
   import {
     isTerminalLog,
     parseRunLog,
     splitLogLine,
     type LogGroup,
   } from "$lib/runlog.js";
-
-  // Matches the wrapper's LOG_SHIP_SECONDS default: polling faster than the
-  // pod uploads buys nothing.
-  const LIVE_MS = 15_000;
-  // A live log that never appears (wrong URL, bucket down) stops spinning
-  // after this many consecutive failed polls (5 min at LIVE_MS) and shows
-  // the error instead.
-  const LIVE_MAX_FAILURES = 20;
 
   // The route is opened as /log?log=<url>&manifest=<url> on a prerendered,
   // client-only SPA (see +layout.ts) — there is no SvelteKit load function
@@ -63,7 +63,9 @@
   async function loadLog(): Promise<void> {
     if (logUrl === null) {
       logError =
-        rawLogUrl === null ? "no log URL given" : "log URL must be an absolute http(s) URL";
+        rawLogUrl === null
+          ? "no log URL given"
+          : "log URL must be an absolute http(s) URL";
       return;
     }
     logInflight?.abort();
@@ -73,7 +75,10 @@
       // no-cache (not no-store): the browser revalidates with the object's
       // ETag and gets a 304 when nothing changed, instead of re-pulling a
       // multi-MB log every poll.
-      const res = await fetch(logUrl, { cache: "no-cache", signal: controller.signal });
+      const res = await fetch(logUrl, {
+        cache: "no-cache",
+        signal: controller.signal,
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const text = await res.text();
       logError = null;
@@ -109,7 +114,10 @@
     const controller = new AbortController();
     manifestInflight = controller;
     try {
-      const res = await fetch(manifestUrl, { cache: "no-cache", signal: controller.signal });
+      const res = await fetch(manifestUrl, {
+        cache: "no-cache",
+        signal: controller.signal,
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const parsed = runManifestSchema.safeParse(await res.json());
       if (parsed.success) {
@@ -145,7 +153,9 @@
     // Re-runs on every log update; scrolls only while following.
     void logText;
     if (live && stickToBottom && browser) {
-      requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+      requestAnimationFrame(() =>
+        window.scrollTo(0, document.body.scrollHeight),
+      );
     }
   });
 
@@ -181,12 +191,16 @@
           {#if live}
             <span class="pulse" aria-hidden="true"></span>live
             {#if updatedAt !== null}
-              · updated <time datetime={updatedAt} title={updatedAt}>{shortDate(updatedAt)}</time>
+              · updated <time datetime={updatedAt} title={updatedAt}
+                >{shortDate(updatedAt)}</time
+              >
             {:else}
               · waiting for first upload
             {/if}
           {:else if updatedAt !== null}
-            finished · <time datetime={updatedAt} title={updatedAt}>{shortDate(updatedAt)}</time>
+            finished · <time datetime={updatedAt} title={updatedAt}
+              >{shortDate(updatedAt)}</time
+            >
           {:else}
             stopped
           {/if}
@@ -235,7 +249,9 @@
         {#if g.kind === "http"}
           <details class="group http">
             <summary
-              >{g.lines.length} HTTP request{g.lines.length === 1 ? "" : "s"}</summary
+              >{g.lines.length} HTTP request{g.lines.length === 1
+                ? ""
+                : "s"}</summary
             >
             <div class="lines">
               {#each g.lines as line}

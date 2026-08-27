@@ -1,17 +1,16 @@
 <script lang="ts">
   import CampaignCard from "$lib/components/CampaignCard.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
-  import { isHttpUrl, isStale, shortDate } from "$lib/derive.js";
+  // Status URL and poll cadence: window.STATUS_URL / VITE_* / defaults, all
+  // documented in $lib/config.
+  import { RELOAD_MS, resolveStatusUrl } from "$lib/config.js";
+  import {
+    isHttpUrl,
+    isStale,
+    shortDate,
+    tickSummaryLabel,
+  } from "$lib/derive.js";
   import { parseStatusDoc, type StatusDoc } from "$lib/status.js";
-
-  const DEFAULT_STATUS_URL =
-    "http://localhost:30900/htr-results/status/status.json";
-  const RELOAD_MS = 60_000;
-
-  // Resolved per fetch, not once at init: the deployment may inject
-  // window.STATUS_URL late, and it lets the dev fixture be swapped in from the
-  // browser console without a rebuild (see README).
-  const statusUrl = (): string => window.STATUS_URL ?? DEFAULT_STATUS_URL;
 
   // The last good document stays on screen through a failed poll; `error`
   // is a banner on top of it, never a replacement for it.
@@ -28,14 +27,16 @@
     const controller = new AbortController();
     inflight = controller;
     try {
-      const res = await fetch(statusUrl(), {
+      const res = await fetch(resolveStatusUrl(), {
         cache: "no-store",
         signal: controller.signal,
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const parsed = parseStatusDoc(await res.json());
       if (parsed.doc === null) {
-        throw new Error(`not a status document (${parsed.problems.join("; ")})`);
+        throw new Error(
+          `not a status document (${parsed.problems.join("; ")})`,
+        );
       }
       doc = parsed.doc;
       problems = parsed.problems;
@@ -82,6 +83,12 @@
               >{shortDate(doc.generated_at) ?? doc.generated_at}</time
             >
           </p>
+          {@const tick = tickSummaryLabel(doc.tick_summary)}
+          {#if tick !== null}
+            <!-- What the last reconcile cost; the operator's first signal
+                 that a tick is growing (X1). -->
+            <p class="meta tick">{tick}</p>
+          {/if}
         {/if}
       </div>
       <ThemeToggle />
@@ -91,8 +98,9 @@
     <p class="banner error" role="alert">
       Cannot load status: {error}
       {#if doc !== null}
-        — showing the last good document (generated {shortDate(doc.generated_at) ??
-          doc.generated_at}).
+        — showing the last good document (generated {shortDate(
+          doc.generated_at,
+        ) ?? doc.generated_at}).
       {/if}
     </p>
   {/if}
@@ -101,7 +109,9 @@
   {:else}
     {#if isStale(doc.generated_at, doc.tick_seconds)}
       <p class="banner stale">
-        STALE — last reconcile <time datetime={doc.generated_at} title={doc.generated_at}
+        STALE — last reconcile <time
+          datetime={doc.generated_at}
+          title={doc.generated_at}
           >{shortDate(doc.generated_at) ?? doc.generated_at}</time
         >. The reconciler may be dead (this is not "no news").
       </p>
@@ -183,6 +193,11 @@
 
   .repo code {
     color: inherit;
+  }
+
+  .tick {
+    font-variant-numeric: tabular-nums;
+    text-align: right;
   }
 
   .banner {

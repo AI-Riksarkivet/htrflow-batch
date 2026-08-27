@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   formatDuration,
   isTerminalManifest,
+  pageStats,
   percentile,
   runManifestSchema,
   summarizeRun,
@@ -107,6 +108,24 @@ describe("summarizeRun", () => {
     expect(s.p95).toBeNull();
     expect(s.max).toBeNull();
     expect(s.slowest).toEqual([]);
+  });
+});
+
+describe("page_sources", () => {
+  test("parses, attaches http(s) sources to page stats, and tolerates absence", () => {
+    const parsed = runManifestSchema.parse({
+      ...base,
+      page_sources: { "0001": "https://iiif/0001.jpg", "0002": "javascript:x" },
+      canvas_ids: { "0001": "https://iiif/canvas/1", "0002": null },
+    });
+    const stats = pageStats(parsed.results, parsed.page_sources);
+    expect(stats[0]?.source).toBe("https://iiif/0001.jpg");
+    expect(stats[1]?.source).toBeUndefined(); // refused scheme
+    expect(stats[2]?.source).toBeUndefined(); // no entry
+    expect(pageStats(base.results)[0]?.source).toBeUndefined();
+    expect(
+      summarizeRun(parsed.results, parsed.page_sources).failedPages[0]?.source,
+    ).toBeUndefined();
   });
 });
 

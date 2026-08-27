@@ -13,8 +13,10 @@
 
   let { manifest }: { manifest: RunManifest } = $props();
 
-  const summary = $derived(summarizeRun(manifest.results));
-  const pages = $derived(pageStats(manifest.results));
+  const summary = $derived(
+    summarizeRun(manifest.results, manifest.page_sources),
+  );
+  const pages = $derived(pageStats(manifest.results, manifest.page_sources));
 
   function shortDigest(digest: string): string {
     return digest.slice(-12);
@@ -73,7 +75,9 @@
       <span class="label">slowest pages</span>
       <span class="value num slowest">
         {#each summary.slowest as p (p.id)}
-          <span class="slow">{p.id} <span class="sub">{p.seconds.toFixed(1)} s</span></span>
+          <span class="slow"
+            >{p.id} <span class="sub">{p.seconds.toFixed(1)} s</span></span
+          >
         {/each}
       </span>
     </div>
@@ -86,11 +90,26 @@
 
 {#if summary.failedPages.length > 0}
   <section class="failed" aria-label="failed pages">
-    <h2>{summary.failedPages.length} failed page{summary.failedPages.length === 1 ? "" : "s"}</h2>
+    <h2>
+      {summary.failedPages.length} failed page{summary.failedPages.length === 1
+        ? ""
+        : "s"}
+    </h2>
     <ul>
       {#each summary.failedPages as p (p.id)}
         <li>
-          <span class="pid">{p.id}</span>
+          <span class="pid">
+            {#if p.source !== undefined}
+              <a
+                href={p.source}
+                target="_blank"
+                rel="noopener"
+                title="source image">{p.id}</a
+              >
+            {:else}
+              {p.id}
+            {/if}
+          </span>
           <span class="err">{p.error ?? "no error recorded"}</span>
         </li>
       {/each}
@@ -197,6 +216,15 @@
 
   .failed .pid {
     font-weight: 500;
+  }
+
+  .failed .pid a {
+    color: var(--primary);
+    text-decoration: none;
+  }
+
+  .failed .pid a:hover {
+    text-decoration: underline;
   }
 
   .failed .err {

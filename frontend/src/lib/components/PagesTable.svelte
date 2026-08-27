@@ -13,7 +13,9 @@
 
 <div class="pager">
   <span class="range" aria-live="polite">
-    {pages.length === 0 ? "no pages" : `${offset + 1}–${last} of ${pages.length}`}
+    {pages.length === 0
+      ? "no pages"
+      : `${offset + 1}–${last} of ${pages.length}`}
   </span>
   <button
     type="button"
@@ -45,7 +47,18 @@
     <tbody>
       {#each slice as r (r.id)}
         <tr>
-          <td class="pid">{r.id}</td>
+          <td class="pid">
+            {#if r.source !== undefined}
+              <a
+                href={r.source}
+                target="_blank"
+                rel="noopener"
+                title="source image">{r.id}</a
+              >
+            {:else}
+              {r.id}
+            {/if}
+          </td>
           <td>
             <span class="chip {r.status}">{r.status}</span>
           </td>
@@ -124,6 +137,15 @@
 
   td.pid {
     font-weight: 500;
+  }
+
+  td.pid a {
+    color: var(--primary);
+    text-decoration: none;
+  }
+
+  td.pid a:hover {
+    text-decoration: underline;
   }
 
   td.err {

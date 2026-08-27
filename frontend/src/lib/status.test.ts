@@ -138,7 +138,9 @@ describe("parseStatusDoc", () => {
       status: "unknown",
       error: "invalid status entry: attempts: expected number, received string",
     });
-    expect(problems).toEqual(["c/bad: attempts: expected number, received string"]);
+    expect(problems).toEqual([
+      "c/bad: attempts: expected number, received string",
+    ]);
   });
 
   it("degrades a bad campaign to a broken card and keeps the rest", () => {
@@ -188,6 +190,35 @@ describe("parseStatusDoc", () => {
       "c/v1: source_manifest is not an http(s) URL, ignored",
       "c/v1: thumbnail is not an http(s) URL, ignored",
     ]);
+  });
+
+  it("knows the reconciler's deleting status (a retry in progress)", () => {
+    expect(volumeStatusSchema.parse("deleting")).toBe("deleting");
+  });
+
+  it("carries terminal and tick_summary when present, tolerates their absence", () => {
+    const withNew = parseStatusDoc({
+      ...oldDoc,
+      tick_summary: { seconds: 4.1, s3_calls: 12 },
+      campaigns: [
+        {
+          ...oldDoc.campaigns[0],
+          volumes: [
+            { ...volume, status: "needs-attention", terminal: "exit-13" },
+          ],
+        },
+      ],
+    });
+    expect(withNew.doc?.tick_summary).toEqual({ seconds: 4.1, s3_calls: 12 });
+    expect(withNew.doc?.campaigns[0]?.volumes[0]?.terminal).toBe("exit-13");
+
+    const without = parseStatusDoc(oldDoc);
+    expect(without.doc?.tick_summary).toBeNull();
+    expect(without.doc?.campaigns[0]?.volumes[0]?.terminal).toBeNull();
+
+    const junk = parseStatusDoc({ ...oldDoc, tick_summary: "later" });
+    expect(junk.doc).not.toBeNull();
+    expect(junk.doc?.tick_summary).toBeNull();
   });
 
   it("returns no doc when the envelope is unusable", () => {
