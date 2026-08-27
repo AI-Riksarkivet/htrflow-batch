@@ -26,6 +26,7 @@ nav = [
     {"Campaigns (GitOps)" = "how-it-works/campaigns.md"},
     {"Memory Budget" = "how-it-works/memory-budget.md"},
     {"Failure Handling" = "how-it-works/failure-handling.md"},
+    {"Live Run Log" = "how-it-works/live-run-log.md"},
   ]},
   { "Reference" = [
     {"Overview" = "reference/index.md"},
@@ -47,6 +48,7 @@ nav = [
     {"CI" = "development/ci.md"},
     {"Security" = "development/security.md"},
     {"Deployment" = "development/deployment.md"},
+    {"Local k3s" = "development/local-k3s.md"},
     {"Test Log" = "development/test-log.md"},
     {"Audit 2026-08-26" = "audits/2026-08-26-repo-audit.md"},
     {"Hard-coded config inventory" = "audits/2026-08-26-hardcoded-inventory.md"},
