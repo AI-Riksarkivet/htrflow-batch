@@ -269,11 +269,13 @@ def test_stop_event_short_circuits_pending_downloads(tmp_path):
     without ever reaching the server (no wall-clock assertion needed)."""
     stop = threading.Event()
     gate = threading.Event()
+    in_flight = threading.Event()  # the second request has reached the server
     started = []
 
     def handler(req):
         started.append(req.url.path)
         if len(started) > 1:
+            in_flight.set()
             assert gate.wait(5), "test never opened the gate"
         return httpx.Response(200, content=JPEG)
 
@@ -287,6 +289,9 @@ def test_stop_event_short_circuits_pending_downloads(tmp_path):
     t.start()
     first = q.get(timeout=5)
     assert first.path is not None
+    # Only once page 2 is inside the server is "one in flight" a fact; setting
+    # stop before that races the worker and short-circuits page 2 as well.
+    assert in_flight.wait(5), "second request never reached the server"
     stop.set()
     gate.set()
     t.join(timeout=5)
