@@ -25,6 +25,7 @@ class FakeBucket:
         self.written = {}
         self.put_text_calls = 0
         self.calls = 0  # every S3 round trip, like the real Bucket
+        self.read_keys: list[str] = []
 
     def done_volumes(self, pipeline_id):
         self.calls += 1 + len(self._done)
@@ -32,6 +33,7 @@ class FakeBucket:
 
     def read_json(self, key):
         self.calls += 1
+        self.read_keys.append(key)
         return self.stored.get(key) or self.written.get(key)
 
     def write_json(self, key, obj):
@@ -1545,3 +1547,41 @@ def test_permanent_source_rejections_are_cached_forever(tmp_path):
     much_later = "2027-01-01T00:00:00Z"
     tick(repo, bucket, FakeCluster(), CFG, much_later, fetch_json=fetch_json)
     assert fetched == []
+
+
+def test_done_volume_thumbnail_comes_from_the_wrapper_manifest(tmp_path):
+    """The wrapper writes <pid>/<vid>/thumb.jpg and records it in
+    manifest.json; the reconciler advertises it (browser URL) and caches the
+    answer with the volume record, so the steady state costs no S3 call."""
+    bucket = FakeBucket(done={"R0000001"})
+    bucket.stored["demo-v1/R0000001/manifest.json"] = {"thumbnail": "thumb.jpg"}
+    doc = tick(_repo(tmp_path), bucket, FakeCluster(), CFG, NOW)
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert (
+        byid["R0000001"]["thumbnail"]
+        == "http://pub/htr-results/demo-v1/R0000001/thumb.jpg"
+    )
+    vcache = bucket.read_json("status/volumes.json")["demo-v1/R0000001"]
+    assert vcache["thumb"] is True
+    calls_before = bucket.calls
+    tick(_repo(tmp_path), bucket, FakeCluster(), CFG, NOW)
+    # second tick: the volume record is reused, no manifest read
+    assert not any(
+        k == "demo-v1/R0000001/manifest.json" for k in bucket.read_keys[calls_before:]
+    )
+
+
+def test_done_volume_without_wrapper_thumbnail_keeps_the_iiif_one(tmp_path):
+    bucket = FakeBucket(done={"R0000001"})
+    bucket.stored["demo-v1/R0000001/manifest.json"] = {"pages": 1}
+    bucket.stored["status/validation.json"] = {
+        "https://lbiiif.riksarkivet.se/arkis!R0000001/manifest": {
+            "format": "p3",
+            "thumbnail": "http://img/full/200,/0/default.jpg",
+            "page_count": 1,
+            "checked_at": NOW,
+        }
+    }
+    doc = tick(_repo(tmp_path), bucket, FakeCluster(), CFG, NOW)
+    byid = {v["id"]: v for v in doc["campaigns"][0]["volumes"]}
+    assert byid["R0000001"]["thumbnail"] == "http://img/full/200,/0/default.jpg"

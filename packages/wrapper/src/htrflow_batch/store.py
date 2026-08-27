@@ -103,6 +103,14 @@ class ResultStore:
             ContentType="application/json",
         )
 
+    def put_bytes(self, rel_key: str, data: bytes, content_type: str) -> None:
+        self.client.put_object(
+            Bucket=self.bucket,
+            Key=self._key(rel_key),
+            Body=data,
+            ContentType=content_type,
+        )
+
     def put_text(self, rel_key: str, text: str, content_type: str) -> None:
         self.client.put_object(
             Bucket=self.bucket,

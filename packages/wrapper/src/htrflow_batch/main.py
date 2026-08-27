@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 import os
@@ -282,7 +283,16 @@ def _main(
         process = factory(cfg)
 
         state.stage = "stream"
-        stats = consume(out_q, slots, process, store.upload_page)
+        # The stream unlinks each page image once processed (memory budget),
+        # so the thumbnail is cut from the first page as it goes by.
+        thumb_box: dict[str, Optional[str]] = {}
+
+        def process_with_thumb(image_path: Path):
+            if "key" not in thumb_box:
+                thumb_box["key"] = make_thumbnail(store, image_path)
+            return process(image_path)
+
+        stats = consume(out_q, slots, process_with_thumb, store.upload_page)
         dl_thread.join()
         for p in pages:
             if p.name in done:
@@ -338,6 +348,8 @@ def _main(
         pipeline_text = Path(cfg.pipeline_path).read_text()
         store.put_text("pipeline.yaml", pipeline_text, "text/yaml")
 
+        thumb_key = thumb_box.get("key") or previous_thumbnail(store)
+
         wall = time.monotonic() - t_start
         ok_pages = [n for n, r in stats.results.items() if r.status == "ok"]
         viewer_url = (
@@ -367,6 +379,10 @@ def _main(
                 "gpu_stall_seconds": round(stats.stall_seconds, 1),
                 "pages_per_second": round(len(ok_pages) / wall, 3) if wall else 0,
                 "viewer_url": viewer_url,
+                # Relative key of the first-page picture the campaign browser
+                # shows (None when no page could be decoded); the reconciler
+                # reads it once per finished volume.
+                "thumbnail": thumb_key,
             },
         )
         log.info(
@@ -417,6 +433,48 @@ def _changed_sources(store: ResultStore, pages, done: set[str]) -> set[str]:
         for p in pages
         if p.name in done and p.name in sources and sources[p.name] != p.image_url
     }
+
+
+THUMB_KEY = "thumb.jpg"
+THUMB_WIDTH = 200
+
+
+def make_thumbnail(store, image_path: Path) -> Optional[str]:
+    """Best-effort ``thumb.jpg`` cut from one page image.
+
+    The campaign browser paints a 26 px picture per volume; serving the
+    source image for that costs megabytes per row (audit F2), and volumes
+    declared as ``images:`` have no IIIF service to size from. Pillow comes
+    with the htrflow base image but is not a wrapper dependency, so a missing
+    import (or an undecodable file) only means "no picture". Never raises:
+    the transcription is the job, the picture is a nicety.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        log.warning("Pillow not available; no thumbnail")
+        return None
+    try:
+        with Image.open(image_path) as img:
+            img = img.convert("RGB")
+            ratio = THUMB_WIDTH / img.width
+            img = img.resize((THUMB_WIDTH, max(1, round(img.height * ratio))))
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=80)
+        store.put_bytes(THUMB_KEY, buf.getvalue(), "image/jpeg")
+        return THUMB_KEY
+    except Exception as e:
+        log.warning("thumbnail from %s failed: %r", image_path.name, e)
+        return None
+
+
+def previous_thumbnail(store) -> Optional[str]:
+    """A resumed run that processed nothing keeps the thumbnail the previous
+    run recorded in manifest.json."""
+    previous = store.get_json_or_none("manifest.json")
+    if isinstance(previous, dict) and previous.get("thumbnail"):
+        return str(previous["thumbnail"])
+    return None
 
 
 def _publish_failure(cfg, store, stats, t_start: float, stage: str, e: BaseException):
