@@ -1,10 +1,10 @@
 import queue
 import threading
-import time
 from pathlib import Path
 
 import pytest
 
+from htrflow_batch import stream as stream_mod
 from htrflow_batch.fetch import FetchResult
 from htrflow_batch.iiif import PageRef
 from htrflow_batch.stream import UploadOutage, consume
@@ -68,17 +68,25 @@ def test_fetch_failure_recorded(tmp_path):
     assert slots._value == 1  # released
 
 
-def test_stall_accounting(tmp_path):
-    q, slots = queue.Queue(), threading.Semaphore(0)
+def test_stall_accounting(tmp_path, monkeypatch):
+    """GPU stall = time spent waiting on the queue. A fake clock advances
+    while ``get`` blocks, so the number is exact and no thread sleeps."""
+    clock = {"now": 100.0}
 
-    def feed():
-        time.sleep(0.3)
-        q.put(_fr(tmp_path, 1))
-        q.put(None)
+    class SlowQueue(queue.Queue):
+        def get(self, *a, **kw):
+            item = super().get(*a, **kw)
+            clock["now"] += 0.3 if item is not None else 0.1  # 0.4 s waiting
+            return item
 
-    threading.Thread(target=feed, daemon=True).start()
+    monkeypatch.setattr(
+        stream_mod.time, "monotonic", lambda: clock["now"], raising=True
+    )
+    q, slots = SlowQueue(), threading.Semaphore(0)
+    q.put(_fr(tmp_path, 1))
+    q.put(None)
     stats = consume(q, slots, lambda p: {}, lambda n, f: None)
-    assert stats.stall_seconds >= 0.25
+    assert stats.stall_seconds == pytest.approx(0.4)
 
 
 def test_keep_images_preserves_file(tmp_path):

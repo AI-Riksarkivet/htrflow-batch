@@ -44,12 +44,14 @@ class FakeBucket:
         self.put_text_calls += 1
 
     def exists(self, key):
+        # Like the real HEAD: anything in the bucket, pre-existing (stored)
+        # or written this tick (audit T13).
         self.calls += 1
-        return key in self.written
+        return key in self.written or key in self.stored
 
     def read_text(self, key):
         self.calls += 1
-        v = self.written.get(key)
+        v = self.written.get(key, self.stored.get(key))
         return v if isinstance(v, str) else None
 
     def delete(self, key):
