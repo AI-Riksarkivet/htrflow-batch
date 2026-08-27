@@ -77,7 +77,7 @@ func (m *HtrflowBatch) Typecheck(
 func (m *HtrflowBatch) frontend(source *dagger.Directory, caBundle *dagger.File) *dagger.Container {
 	bun := dag.Container().From(bunImage).File("/usr/local/bin/bun")
 	spa := dag.Container().
-		From(nodeImage).
+		From(frontendNodeImage).
 		WithFile("/usr/local/bin/bun", bun).
 		WithDirectory("/app", source.Directory("frontend"), dagger.ContainerWithDirectoryOpts{
 			Exclude: []string{"node_modules", "dist"},
