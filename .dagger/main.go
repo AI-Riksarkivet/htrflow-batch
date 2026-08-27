@@ -55,7 +55,9 @@ func (m *HtrflowBatch) buildWithUv(ctx context.Context, source *dagger.Directory
 	container := dag.Container().
 		From("python:3.13-slim").
 		WithDirectory("/app", source, dagger.ContainerWithDirectoryOpts{
-			Include: []string{"pyproject.toml", "uv.lock", "packages/"},
+			// scripts/ is linted too (audit T11); docs/ is excluded by the
+			// root ruff config and not needed here.
+			Include: []string{"pyproject.toml", "uv.lock", "packages/", "scripts/"},
 		}).
 		WithWorkdir("/app")
 	container = m.withUv(container)
