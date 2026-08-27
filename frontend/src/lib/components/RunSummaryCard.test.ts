@@ -44,6 +44,24 @@ describe("RunSummaryCard", () => {
     expect(cells.filter((c) => c.tabIndex === 0)).toHaveLength(1);
   });
 
+  test("summary math on a 480-page run: median / p95 / max and the total", () => {
+    // seconds = 2·i for i = 1..480 → sorted 2, 4, …, 960
+    const m = manifest(480);
+    for (const [id, r] of Object.entries(m.results)) r.seconds = Number(id) * 2;
+    render(RunSummaryCard, { manifest: m });
+    expect(screen.getByText("480 ok")).toBeInTheDocument();
+    // median = (480 + 482) / 2; p95 at position 455.05 → 912 + 0.05·2; max = 960
+    expect(
+      screen.getByText("per page · median / p95 / max").nextElementSibling,
+    ).toHaveTextContent("481.0 s / 912.1 s / 960.0 s");
+    // Σ 2·i = 480·481 = 230 880 s
+    expect(screen.getByText("total time").nextElementSibling).toHaveTextContent(
+      "64 h 8 min 0 s",
+    );
+    const grid = screen.getByRole("group", { name: /pages/ });
+    expect(within(grid).getAllByRole("button")).toHaveLength(480);
+  });
+
   test("page ids link to the source image when the manifest carries page_sources", () => {
     const m = manifest(3, ["0002"]);
     m.page_sources = {

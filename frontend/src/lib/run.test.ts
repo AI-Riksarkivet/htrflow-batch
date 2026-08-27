@@ -148,3 +148,43 @@ describe("isTerminalManifest", () => {
     expect(isTerminalManifest({ ...base, pages: 0, results: {} })).toBe(false);
   });
 });
+
+describe("summarizeRun at volume scale", () => {
+  test("480 pages: skipped pages are outside the timing stats, counts add up", () => {
+    // ids 0001..0480; the first 20 are skipped (0 s), the rest take i seconds,
+    // and four of those failed. Timed set = 21..480 (460 values).
+    const results: Record<
+      string,
+      { status: string; seconds: number; error?: string }
+    > = {};
+    for (let i = 1; i <= 480; i++) {
+      const id = String(i).padStart(4, "0");
+      if (i <= 20) results[id] = { status: "skipped", seconds: 0 };
+      else if (i % 100 === 0)
+        results[id] = { status: "failed", seconds: i, error: "boom" };
+      else results[id] = { status: "ok", seconds: i };
+    }
+    const s = summarizeRun(results);
+    expect(s.pages).toBe(480);
+    expect(s.skipped).toBe(20);
+    expect(s.failed).toBe(4); // 100, 200, 300, 400
+    expect(s.ok).toBe(480 - 20 - s.failed);
+    expect(s.median).toBeCloseTo(250.5); // (250 + 251) / 2
+    expect(s.p95).toBeCloseTo(457.05); // position 459·0.95 = 436.05 → 457 + 0.05
+    expect(s.max).toBe(480);
+    expect(s.totalSeconds).toBe((480 * 481) / 2 - (20 * 21) / 2);
+    expect(s.slowest.map((p) => p.id)).toEqual([
+      "0480",
+      "0479",
+      "0478",
+      "0477",
+      "0476",
+    ]);
+    expect(s.failedPages.map((p) => p.id)).toEqual([
+      "0100",
+      "0200",
+      "0300",
+      "0400",
+    ]);
+  });
+});

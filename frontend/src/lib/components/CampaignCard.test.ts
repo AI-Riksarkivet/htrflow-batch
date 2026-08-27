@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
 import { parseStatusDoc, type CampaignEntry } from "$lib/status.js";
 import CampaignCard from "./CampaignCard.svelte";
@@ -133,6 +134,35 @@ describe("CampaignCard", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("table")).toBeNull();
     expect(yaml).toBeInTheDocument(); // yaml is independent of the table
+  });
+
+  test("Enter on the pipeline chip opens the YAML and leaves the table open", async () => {
+    const user = userEvent.setup();
+    const campaign = {
+      ...campaignFrom([volume]),
+      pipeline_yaml: "steps:\n  - step: Segmentation\n",
+    };
+    render(CampaignCard, { campaign });
+    const chip = screen.getByRole("button", { name: "demo-v1" });
+    const toggle = screen.getByRole("button", { name: /demo$/ });
+
+    await user.tab(); // the campaign toggle comes first in DOM order
+    expect(toggle).toHaveFocus();
+    await user.tab();
+    expect(chip).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(chip).toHaveAttribute("aria-expanded", "true");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(document.getElementById("pipeline-demo")).toHaveTextContent(
+      "step: Segmentation",
+    );
+
+    // Space toggles it back; the table is still untouched.
+    await user.keyboard(" ");
+    expect(chip).toHaveAttribute("aria-expanded", "false");
+    expect(document.getElementById("pipeline-demo")).toBeNull();
+    expect(screen.getByRole("table")).toBeInTheDocument();
   });
 
   test("a terminal reason shows on the row with an operator hint; absent otherwise", () => {
