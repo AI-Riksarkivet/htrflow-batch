@@ -94,6 +94,7 @@ Condition is ignored — hence this shape. Keep in step with scripts/compose_ini
 {{- $private := list
       (printf "arn:aws:s3:::%s/status/attempts.json" $b)
       (printf "arn:aws:s3:::%s/status/validation.json" $b)
+      (printf "arn:aws:s3:::%s/status/volumes.json" $b)
       (printf "arn:aws:s3:::%s/status/failures/*" $b)
       (printf "arn:aws:s3:::%s/status/warmup/*" $b) }}
 {{- if not .Values.devStack.rustfs.publicLogs }}
