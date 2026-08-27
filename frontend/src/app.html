@@ -4,6 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>HTR Campaigns</title>
+    <!-- Deployment hook: overwrite /config.js to set window.STATUS_URL.
+         Same-origin, so it passes the script-src 'self' CSP. -->
+    <script src="%sveltekit.assets%/config.js"></script>
     %sveltekit.head%
   </head>
   <body>

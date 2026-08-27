@@ -1,15 +1,31 @@
 // Pure view-derivation over status.json (schema: reconciler main.py).
-import type { VolumeEntry } from "./status.js";
+import type { TickSummary, VolumeEntry } from "./status.js";
 
 /** A reconcile older than this many ticks means the reconciler is presumed dead. */
 const STALE_TICKS = 3;
 
-export function viewerHref(volume: VolumeEntry): string {
+/**
+ * Only absolute http(s) URLs may reach an href/src: campaign data and the
+ * query string are untrusted, and `javascript:` / `data:` would otherwise
+ * render straight into the DOM.
+ */
+export function isHttpUrl(value: string): boolean {
+  if (!/^https?:\/\//i.test(value)) return false;
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** null when the volume has no usable manifest to open (invalid URL). */
+export function viewerHref(volume: VolumeEntry): string | null {
   const manifest =
     volume.status === "done" && volume.viewer_manifest !== null
       ? volume.viewer_manifest
       : volume.source_manifest;
-  return `uv.html#?manifest=${manifest}`;
+  return manifest === null ? null : `uv.html#?manifest=${manifest}`;
 }
 
 export type CampaignHealth = "failed" | "active" | "done" | "idle";
@@ -28,6 +44,7 @@ const ACTIVE_STATUSES: ReadonlySet<VolumeEntry["status"]> = new Set([
   "running",
   "queued",
   "retry",
+  "deleting",
 ]);
 
 export function campaignHealth(
@@ -76,4 +93,24 @@ export function shortDate(
     minute: "2-digit",
     timeZone,
   });
+}
+
+/**
+ * "last tick 4.1 s · 12 S3 calls · 3 validations · 1 submitted · 0 retried"
+ * — only the fields the reconciler sent; null when it sent none (or an old
+ * document with no summary at all).
+ */
+export function tickSummaryLabel(summary: TickSummary | null): string | null {
+  if (summary === null) return null;
+  const parts: string[] = [];
+  if (summary.seconds !== undefined)
+    parts.push(`last tick ${summary.seconds.toFixed(1)} s`);
+  if (summary.s3_calls !== undefined)
+    parts.push(`${summary.s3_calls} S3 calls`);
+  if (summary.validations !== undefined)
+    parts.push(`${summary.validations} validations`);
+  if (summary.submitted !== undefined)
+    parts.push(`${summary.submitted} submitted`);
+  if (summary.retried !== undefined) parts.push(`${summary.retried} retried`);
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
