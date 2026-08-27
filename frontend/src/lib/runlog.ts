@@ -14,7 +14,8 @@ export interface ParsedLog {
   groups: LogGroup[];
 }
 
-const MODEL_RE = /Initialized (YOLO|TrOCR)|Model '.*' on device|Running inference/;
+const MODEL_RE =
+  /Initialized (YOLO|TrOCR)|Model '.*' on device|Running inference/;
 
 const LOG_LINE_RE =
   /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}),(\d{3}) (INFO|WARNING|ERROR|DEBUG|CRITICAL) (.*)$/;
@@ -67,7 +68,8 @@ export function parseRunLog(text: string): ParsedLog {
   // A trailing newline splits into a trailing "" element — drop it so it
   // doesn't become a spurious empty final group.
   const lastLine = rawLines[rawLines.length - 1];
-  const lines = rawLines.length > 0 && lastLine === "" ? rawLines.slice(0, -1) : rawLines;
+  const lines =
+    rawLines.length > 0 && lastLine === "" ? rawLines.slice(0, -1) : rawLines;
 
   const groups: LogGroup[] = [];
   let inTraceback = false;
@@ -103,7 +105,8 @@ export function parseRunLog(text: string): ParsedLog {
 
 // The wrapper's last lines on each exit path (main.py): success logs
 // "[<volume>] COMPLETE <n> pages ...", failures log "<kind> failure in <stage>:".
-const TERMINAL_RE = /\] COMPLETE \d+ pages|(permanent|transient) failure in \w+:/;
+const TERMINAL_RE =
+  /\] COMPLETE \d+ pages|(permanent|transient) failure in \w+:/;
 
 /**
  * True once a shipped run log carries the wrapper's terminal line, i.e. the

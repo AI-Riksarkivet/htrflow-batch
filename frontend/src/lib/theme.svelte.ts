@@ -8,7 +8,9 @@ export type Theme = "light" | "dark";
 export const THEME_KEY = "htr-theme";
 
 /** localStorage is user-writable: anything but the two known values is null. */
-export function readStoredTheme(storage: Pick<Storage, "getItem"> | null): Theme | null {
+export function readStoredTheme(
+  storage: Pick<Storage, "getItem"> | null,
+): Theme | null {
   try {
     const value = storage?.getItem(THEME_KEY);
     return value === "light" || value === "dark" ? value : null;
