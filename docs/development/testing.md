@@ -5,12 +5,11 @@
 0. **Library-API pin test** — import `Pipeline.from_config` and run a 1-page
    fixture against the exact htrflow version in the pinned image; the canary
    that a version bump broke the [D16 driver](../how-it-works/wrapper.md)
-   (fall back to L1/L2 if so). **Not implemented today**: `driver.py` keeps
-   every htrflow import function-local so the suite runs without torch, and
-   the unit tests exercise it against fakes. The plan (CI work package B1)
-   is an opt-in `make test-driver-real` / dagger `test-driver` that runs
-   `packages/wrapper/tests/test_driver.py` inside the built wrapper image;
-   until it exists, the compose smoke (level 2) is what pins the API.
+   (fall back to L1/L2 if so). Opt-in, because it needs the model weights:
+   `make test-driver-real` locally, `dagger call test-driver` in CI, both
+   running `packages/wrapper/tests/test_driver.py` inside the built wrapper
+   image. `driver.py` keeps every htrflow import function-local so the
+   ordinary suite (level 1) runs without torch against fakes.
 1. **Unit tests** — wrapper: manifest walking (P2/P3, sized requests, the
    400 → `max` fallback), fetch acceptance (raster magic, textual
    content-types, byte caps, partial-file unlink), resume-list diffing incl.
