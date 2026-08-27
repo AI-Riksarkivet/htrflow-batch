@@ -249,7 +249,7 @@
   "tick_seconds": 300,
   "tick_summary": {
     "retried": 1,
-    "s3_calls": 29,
+    "s3_calls": 30,
     "seconds": 0.0,
     "submitted": 2,
     "validations": 10

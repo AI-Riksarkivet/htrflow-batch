@@ -182,7 +182,9 @@ def main(
         # O2: the Job deadline or a node drain. Leave the same evidence a
         # failure would (termination message + complete run log), then exit
         # 143 so the reconciler classifies it as a retry, not exit 13.
-        log.error("SIGTERM in stage %s: shutting down", state.stage)
+        # Same shape as the other failure lines: the run viewer's terminal-line
+        # regex (frontend runlog.ts) is the contract that stops live polling.
+        log.error("transient failure in %s: SIGTERM, shutting down", state.stage)
         _terminate(env, {"stage": state.stage, "permanent": False, "error": "SIGTERM"})
         capture.finish()
         _hard_exit(EXIT_SIGTERM)
