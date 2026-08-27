@@ -100,8 +100,10 @@ class ReconcilerConfig(BaseModel):
 
 
 def warmup_job_name(pipeline_id: str) -> str:
-    """Deterministic warm-up Job name; the chart renders the same name for
-    ``values.pipelines`` so Helm and the reconciler never race on a pipeline."""
+    """Deterministic warm-up Job name. The manual path for chart-declared
+    pipelines (``make warmup`` -> ``htrflow_reconciler.warmup``) uses the
+    same function, so the two never race on a pipeline; the chart itself
+    renders no warm-up Job."""
     return f"htr-warmup-{pipeline_id}"
 
 

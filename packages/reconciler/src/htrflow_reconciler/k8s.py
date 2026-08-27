@@ -111,9 +111,10 @@ class Cluster:
     def warmups(self) -> dict[str, JobState]:
         """Snapshot of warm-up Jobs, by pipeline id.
 
-        Selected on ``app`` alone: the chart renders the same Job for
-        ``values.pipelines`` under Helm's ownership, and either origin is
-        proof the cache is warm.
+        Selected on ``app`` alone: chart-declared pipelines are warmed by
+        hand through ``make warmup`` (``htrflow_reconciler.warmup`` piped to
+        ``kubectl apply``), which renders the same Job spec, and either
+        origin is proof the cache is warm.
         """
         return self._job_states(
             "app=htrflow-warmup",
