@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import signal
@@ -747,3 +748,91 @@ def test_publish_failure_metrics_redacts_urls():
     publish_failure_metrics(store, cfg, stats, 1.0, "verify", "bad https://u:p@h/y?t=S")
     assert "token=S" not in calls[0]["results"]["0001"]["error"]
     assert "u:p@" not in calls[0]["error"] and "t=S" not in calls[0]["error"]
+
+
+def _jpeg_bytes(w: int = 600, h: int = 400) -> bytes:
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), (200, 180, 140)).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+@pytest.fixture
+def env_real_images(env, sample_manifest, monkeypatch):
+    """Like ``env`` but the image responses are real JPEGs, so the thumbnail
+    step has something to decode."""
+    data = _jpeg_bytes()
+
+    def handler(req):
+        if req.url.path.endswith("manifest.json"):
+            return httpx.Response(200, json=sample_manifest)
+        return httpx.Response(200, content=data, headers={"content-type": "image/jpeg"})
+
+    monkeypatch.setattr(
+        main_mod,
+        "_http_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    return env
+
+
+def test_thumbnail_is_published_from_the_first_page(env_real_images, cfg, s3):
+    from PIL import Image
+
+    rc = main(env_real_images, process_page_factory=fake_factory)
+    assert rc == EXIT_OK
+    obj = s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/thumb.jpg")
+    assert obj["ContentType"] == "image/jpeg"
+    img = Image.open(io.BytesIO(obj["Body"].read()))
+    # 600x400 scaled to width 200
+    assert img.width == 200 and 130 <= img.height <= 135
+    manifest = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert manifest["thumbnail"] == "thumb.jpg"
+
+
+def test_undecodable_first_page_skips_the_thumbnail_but_not_the_run(env, cfg, s3):
+    """The default env fixture serves junk bytes as images: no thumbnail, no
+    failure — the picture is a nicety, the transcription is the job."""
+    rc = main(env, process_page_factory=fake_factory)
+    assert rc == EXIT_OK
+    assert "demo-v1/SE-RA-1234/thumb.jpg" not in _keys(s3, cfg)
+    manifest = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert manifest["thumbnail"] is None
+
+
+def test_resumed_run_keeps_the_previous_thumbnail(env, cfg, s3):
+    """Every page already done: nothing is downloaded this run, so the thumb
+    written by the previous run is kept and still advertised."""
+    xml = b'<alto><Layout><Page WIDTH="2500" HEIGHT="3538"/></Layout></alto>'
+    for name in ("0001", "0002", "0003"):
+        for fmt in ("alto", "page"):
+            s3.put_object(
+                Bucket=cfg.s3_bucket,
+                Key=f"demo-v1/SE-RA-1234/{fmt}/{name}.xml",
+                Body=xml,
+            )
+    s3.put_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/thumb.jpg", Body=b"jpg")
+    s3.put_object(
+        Bucket=cfg.s3_bucket,
+        Key="demo-v1/SE-RA-1234/manifest.json",
+        Body=json.dumps({"thumbnail": "thumb.jpg", "page_sources": {}}).encode(),
+    )
+    rc = main(env, process_page_factory=fake_factory)
+    assert rc == EXIT_OK
+    manifest = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert manifest["thumbnail"] == "thumb.jpg"

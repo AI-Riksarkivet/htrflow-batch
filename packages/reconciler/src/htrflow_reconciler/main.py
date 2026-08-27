@@ -692,6 +692,15 @@ class _Pass:
         if "pages" not in vcache:
             vcache["pages"] = self.bucket.count_pages(pid, vid)
         row["pages_done"] = vcache["pages"]
+        if "thumb" not in vcache:
+            # The wrapper records its first-page thumb.jpg in manifest.json;
+            # one read per newly finished volume, then cached with the record.
+            manifest = self.bucket.read_json(f"{pid}/{vid}/manifest.json")
+            vcache["thumb"] = bool(
+                isinstance(manifest, dict) and manifest.get("thumbnail")
+            )
+        if vcache["thumb"]:
+            row["thumbnail"] = _public(self.cfg, f"{pid}/{vid}/thumb.jpg")
         log_key = keys.run_log_key(pid, vid)
         if "run_log" not in vcache:
             link = self._run_log(pid, vid, "done")
