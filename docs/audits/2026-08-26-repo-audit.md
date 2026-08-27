@@ -4,8 +4,15 @@
 > packages on `feat/campaign-browser-visibility`, per the
 > [remediation plan](../superpowers/plans/2026-08-26-audit-remediation-plan.md):
 > A1 reconciler (merge `9b36920`), A2 wrapper (`ade2b14`), A3 chart/ops
-> (`4399f19`), A4 frontend (`8e6f661`); B1 CI/tests and B2 docs were pending
-> when this note was written. Each package left a handoff under
+> (`4399f19`), A4 frontend (`8e6f661`), B1 CI/tests (`163d710`), B2 docs
+> (`32e550c`), plus follow-ups found by the new gates and by running the
+> result on the PoC cluster (`61eb891`, `bcb5c2f`: the reconciler had never
+> actually deleted a failed Job — `delete_namespaced_job` was called with
+> its arguments swapped — so retries burned attempts without a re-run; found
+> live, fixed, and the retry path verified end to end afterwards). The
+> wrapper now also writes a first-page `thumb.jpg` (`0b4c9de`), replacing
+> both the multi-MB source thumbnails (F2) and the blank placeholders.
+> Each package left a handoff under
 > `docs/superpowers/plans/2026-08-26-handoff-*.md`. The docs pass (B2)
 > rewrote the pages this report names in Appendix F and X12 to describe the
 > code as merged; its own notes on what still contradicts the plan are in
