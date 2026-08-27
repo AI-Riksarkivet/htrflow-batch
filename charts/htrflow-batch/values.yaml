@@ -90,7 +90,7 @@ security:
   verifyImages:
     enabled: false
     issuer: ""               # e.g. https://token.actions.githubusercontent.com
-    subject: ""              # e.g. https://github.com/Riksarkivet/htrflow-batch/.github/workflows/publish.yml@refs/tags/*
+    subject: ""              # e.g. https://github.com/Riksarkivet/htrflow-batch/.github/workflows/publish.yml@refs/heads/main (publish is workflow_dispatch: the identity carries the branch ref, not a tag)
     imageReferences: []
     rekorUrl: https://rekor.sigstore.dev
 
