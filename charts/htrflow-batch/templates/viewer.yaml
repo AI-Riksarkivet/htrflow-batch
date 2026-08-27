@@ -12,6 +12,12 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
 data:
+  # Runtime config for the campaign browser: served same-origin as /config.js
+  # so it passes the SPA's CSP (script-src 'self'); an inline script injected
+  # into index.html would be blocked. Points the browser at status.json under
+  # publicResultsBase (browser-reachable, never the in-cluster S3 endpoint).
+  config.js: |
+    window.STATUS_URL = {{ printf "%s/status/status.json" (.Values.viewer.statusBase | default .Values.publicResultsBase | required "publicResultsBase (or viewer.statusBase) is required when viewer.enabled" | trimSuffix "/") | quote }};
   default.conf: |
     server {
       listen 8080;
@@ -76,6 +82,10 @@ spec:
           volumeMounts:
             - name: nginx-conf
               mountPath: /etc/nginx/conf.d
+              readOnly: true
+            - name: nginx-conf
+              mountPath: /usr/share/nginx/html/config.js
+              subPath: config.js
               readOnly: true
             # nginx-unprivileged keeps its pid and every *_temp_path under
             # /tmp; /var/cache/nginx is the stock image's cache dir.

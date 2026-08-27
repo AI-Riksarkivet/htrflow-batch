@@ -151,6 +151,7 @@ viewer:                    # campaign browser at /, UV4 at /uv.html
   image: docker.io/riksarkivet/htrflow-batch-viewer@sha256:0000000000000000000000000000000000000000000000000000000000000000
   nodePort: 30800
   defaultManifest: ""      # DEPRECATED: when set, / redirects to UV instead of the campaign browser
+  statusBase: ""           # browser-reachable results base for status.json; defaults to publicResultsBase
   securityHeaders:
     enabled: true          # X-Content-Type-Options, Referrer-Policy, CSP frame-ancestors 'none'
 
