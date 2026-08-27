@@ -8,19 +8,25 @@
 | D4 | Phase 1 input: wrapper fetches **directly from IIIF** (async, width-capped) into a tmpfs workdir; instrumented so the idle numbers decide Phase 2 | settled |
 | D4b | Cache/data layer (nginx proxy vs Fluid+shim) | **deferred to Phase 2**, evidence-gated ([Phase 2: Cache Layer](../roadmap/phase-2-cache.md)) |
 | D5 | GPU pod workdir: tmpfs (`emptyDir: medium: Memory`), width cap + preflight guard | settled |
-| D6 | Output: **S3 (HCP)** behind a swappable `publish()` seam; keys namespaced by pipeline id | recommended, confirm |
-| D7 | Submission: **`htrq` CLI**, no in-cluster components | settled |
-| D8 | Wrapper must **verify outputs against inputs** after htrflow runs — htrflow's exit code is not trustworthy ([context](#known-upstream-flaw-the-design-must-absorb)) | settled |
-| D16 | Wrapper drives htrflow **as a library** — streaming producer–consumer: pages process as they download, ALTOs upload as they're written. Stock-CLI modes kept as fallbacks ([The Wrapper](wrapper.md)) | settled |
-| D17 | Pipelines are **immutable ConfigMaps, one per pipeline version** (`htr-pipeline-<id>`); a changed pipeline is a new id, enforced by the API server ([Pipeline configs](wrapper.md#pipeline-configs-d17)) | settled |
-| D18 | **No CRD, no controller, no API service in the PoC** — `htrq` CLI only. Frontend/API ([Evolution](../roadmap/evolution.md)) and campaign-CRD ([Evolution](../roadmap/evolution.md)) are designed evolution steps, not v1 | settled |
-| D19 | Viewer = **Riksarkivet universalviewer4 fork** (already renders ALTO via canvas `seeAlso`); wrapper emits a per-volume IIIF P3 manifest `iiif.json` at publish; canvas dims = width-capped processing dims; results store serves CORS + correct content-types ([output contract](wrapper.md#output-store-and-completion-contract), [Evolution](../roadmap/evolution.md)) | **validated on k3s PoC** (2026-07-28, [test log](../development/test-log.md)) — fork gotchas in [The Wrapper](wrapper.md#output-store-and-completion-contract) |
-| D14 | **Pod hardening**: every pod Pod-Security `restricted` (non-root, no caps, RO rootfs, seccomp, no SA token except the reconciler), secrets as files, egress-allowlist NetworkPolicies per role, and a **read-only, offline model cache** written only by a per-pipeline warm-up Job the reconciler gates on ([Security](../development/security.md), [Model handling](wrapper.md#model-handling)) | settled (2026-08-25) |
-| D9–D15 | Other improvement items (resume, naming, provenance, …) | open — see [Open Items](../roadmap/open-items.md) |
+| D6 | Output: **S3** behind a swappable store seam; keys namespaced by pipeline id | settled for S3 (the PoC runs on the devStack RustFS; a durable bucket — HCP or real S3 — is the production target, still to be confirmed) |
+| D7 | Submission: `htrq` CLI, no in-cluster components | **superseded (2026-07-29)** by the GitOps reconciler: volumes are declared in a campaigns repo and a CronJob submits them ([Campaigns (GitOps)](campaigns.md)). A CLI stays a proposal for hand-run experiments ([Evolution](../roadmap/evolution.md#htrq-cli-proposal-not-built)) |
+| D8 | Wrapper must **verify outputs against inputs** after htrflow runs — htrflow's exit code is not trustworthy ([context](#known-upstream-flaw-the-design-must-absorb)) | settled, built |
+| D9 | Resume from partial results | **built** — per-page keys, `page/` + `alto/` both required, `page_sources` compared on resume ([The Wrapper](wrapper.md#stages-around-the-streaming-loop)) |
+| D10 | Deterministic Job names as the idempotency key | **built** — `htr-<pipeline>-<volume>-<8hex>`; a duplicate create is `AlreadyExists` ([Reconciler](../reference/reconciler.md#job-naming-and-ownership)) |
+| D11 | Provenance manifest contents | **built** — `manifest.json` with pipeline YAML + sha, image digest, htrflow version, per-page results, timings, `page_sources` ([S3 Layout](../reference/s3-layout.md#manifestjson-completion-marker)) |
+| D12 | Structured failure via termination-log | **built** — `{"stage", "permanent", "error"}` on every non-zero exit incl. SIGTERM ([Failure Handling](failure-handling.md)) |
+| D13 | Priority lanes (`htr-interactive` > `htr-bulk`) | proposed, open ([Open Items](../roadmap/open-items.md)) |
+| D14 | **Pod hardening**: every pod Pod-Security `restricted` (non-root, no caps, RO rootfs, seccomp, no SA token except the reconciler), secrets as files, egress-allowlist NetworkPolicies per role, a **read-only, offline model cache** written only by a per-pipeline warm-up Job the reconciler gates on ([Security](../development/security.md), [Model handling](wrapper.md#model-handling)) | **built** (2026-08-25, verified on the k3s PoC; namespace default-deny and the digest gate added 2026-08-26) |
+| D15 | Submit dry-run (page count + estimated runtime before applying) | proposed, open — the reconciler's pre-validation covers the page count; runtime estimation has no home without a CLI |
+| D16 | Wrapper drives htrflow **as a library** — streaming producer–consumer: pages process as they download, results upload as they're written. Stock-CLI modes kept as fallbacks ([The Wrapper](wrapper.md)) | settled, built |
+| D17 | Pipelines are **immutable ConfigMaps, one per pipeline version** (`htr-pipeline-<id>`); a changed pipeline is a new id, enforced by the API server and by the reconciler's drift guards ([Pipeline configs](wrapper.md#pipeline-configs-d17)) | settled, built |
+| D18 | No CRD, no controller, no API service in the PoC | **superseded in part (2026-07-29)**: still no CRD and no API service, but a reconciler **CronJob** does exist — the one in-cluster component that reads git and creates Jobs. Frontend/API and a campaign CRD remain designed evolution steps ([Evolution](../roadmap/evolution.md)) |
+| D19 | Viewer = **Riksarkivet universalviewer4 fork** (already renders ALTO via canvas `seeAlso`); wrapper emits a per-volume IIIF P3 manifest `iiif.json` at publish; canvas dims = width-capped processing dims; results store serves CORS + correct content-types ([output contract](wrapper.md#output-store-and-completion-contract)) | **validated on k3s PoC** (2026-07-28, [test log](../development/test-log.md)) — fork gotchas in [The Wrapper](wrapper.md#output-store-and-completion-contract) |
+| D20 | **Campaigns are GitOps**: desired state in a git repo, a reconciler CronJob derives observed state from S3 + the cluster every tick and publishes `status.json`; a read-only browser renders it. No database ([Campaigns (GitOps)](campaigns.md), [spec](../superpowers/specs/2026-07-29-campaign-gitops-design.md)) | settled (2026-07-29), built, running on the k3s PoC |
 
 This table is the index into everything else in this section: each settled
-decision links to the page that details it, and the two still-open rows
-(D4b, D9–D15) link to where they're tracked.
+decision links to the page that details it; the open rows (D4b, D13, D15)
+link to where they're tracked.
 
 ## Context: what the htrflow image gives us
 

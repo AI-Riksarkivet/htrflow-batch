@@ -1,5 +1,18 @@
 # Repository audit — 2026-08-26
 
+> **Remediation (2026-08-26/27).** The findings below were worked in five
+> packages on `feat/campaign-browser-visibility`, per the
+> [remediation plan](../superpowers/plans/2026-08-26-audit-remediation-plan.md):
+> A1 reconciler (merge `9b36920`), A2 wrapper (`ade2b14`), A3 chart/ops
+> (`4399f19`), A4 frontend (`8e6f661`); B1 CI/tests and B2 docs were pending
+> when this note was written. Each package left a handoff under
+> `docs/superpowers/plans/2026-08-26-handoff-*.md`. The docs pass (B2)
+> rewrote the pages this report names in Appendix F and X12 to describe the
+> code as merged; its own notes on what still contradicts the plan are in
+> [the B2 handoff](../superpowers/plans/2026-08-26-handoff-b2-docs.md).
+> The report itself is left as written, with `file:line` pointers at
+> commit `44dddb6`.
+
 **Scope:** `htrflow-batch` at `feat/campaign-browser-visibility` (commit `44dddb6`, 42 commits ahead of `campaign-gitops`), plus the live release `htr` (revision 21) on the GB10 k3s node used as evidence.
 **Method:** seven independent read-only reviews, one per angle, each required to verify every finding in code or by probe (throwaway tests, Playwright, `kubectl`/`helm` read-only, `curl`) before reporting. Findings were then cross-checked and deduplicated here; each keeps its evidence pointer. Nothing below is inferred.
 **Baseline at audit time:** reconciler 121 tests (81 % coverage), wrapper 84 (93 %), frontend 26 (lib only), `svelte-check` 0/0, `helm lint` clean, `ruff` clean, `uv lock` fresh. `make typecheck` was red on one annotation (fixed in `44dddb6` during the audit).

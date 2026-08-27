@@ -1,7 +1,8 @@
 # Phase 2: Cache Layer
 
 **Trigger:** build this only if Phase 1 numbers or operations demand it —
-e.g. aggregate GPU stall fraction from `htrq report` exceeds ~10 %, or the IIIF
+e.g. the aggregate GPU stall fraction (`gpu_stall_seconds / wall_seconds`
+over the published `manifest.json`s) exceeds ~10 %, or the IIIF
 origin needs shielding from backfill load (repeat fetches on retries/re-runs).
 Note that the D16 streaming driver already reduces expected stall to roughly
 one page's download time per volume — so the remaining Phase 2 case rests
@@ -64,8 +65,8 @@ mirror), Alluxio WEB under-storage documentation, Fluid `data_warmup.md`
 
 ```mermaid
 flowchart LR
-    subgraph submitter["operator workstation"]
-        CLI["htrq submit &lt;ref&gt;"]
+    subgraph submitter["campaigns repo → reconciler CronJob"]
+        CLI["create Job per volume"]
     end
 
     subgraph cluster["Kubernetes cluster"]
@@ -135,7 +136,7 @@ acceleration; if the warmer never ran, Jobs are slower, not broken.
 ```mermaid
 sequenceDiagram
     autonumber
-    participant U as htrq CLI
+    participant U as reconciler tick
     participant K8s as kube-apiserver
     participant Q as Kueue
     participant W as warmer
@@ -266,7 +267,7 @@ pages can't be deleted from a read-only PVC. Outputs still go to a small tmpfs.
 | torch + models resident | ~6–8 Gi | ~6–8 Gi |
 | page images | ~128 Mi tmpfs lookahead window (D16 streaming) | **0 — in Alluxio MEM tier on the node** |
 | outputs (XML) | noise | noise (1 Gi tmpfs cap) |
-| pod memory request | 16 Gi | **12 Gi** |
+| pod memory request / limit | 8 Gi / 16 Gi | **12 Gi limit** |
 | node-level cache RAM | — | 2 × 12 Gi Alluxio workers |
 
 Same total RAM, relocated: cache RAM serves FUSE reads at memory speed on the

@@ -3,41 +3,74 @@
 The batch-Job container (`htrflow-batch`, module `htrflow_batch`): fetch pages
 from IIIF, run the htrflow pipeline, stream per-page results to S3, publish
 the viewer manifest and the completion marker. The narrative is in
-[How it Works → The Wrapper](../how-it-works/wrapper.md).
+[How it Works → The Wrapper](../how-it-works/wrapper.md); the failure
+semantics in [Failure Handling](../how-it-works/failure-handling.md).
 
 ## Environment contract
 
 Source: [`packages/wrapper/src/htrflow_batch/config.py`](https://github.com/carpelan/test/blob/main/packages/wrapper/src/htrflow_batch/config.py)
 
-`Config.from_env` fails fast with the full list of missing required vars.
+`Config.from_env` fails fast (exit 13) with the full list of missing required vars.
 
 **Required:**
 
 | Env var | Description |
 |---------|-------------|
 | `VOLUME_REF` | Volume id — last segment of the S3 result prefix |
-| `IIIF_MANIFEST_URL` | Source manifest (Presentation v2 or v3) |
+| `IIIF_MANIFEST_URL` | Source manifest (Presentation v2 or v3); must be `http(s)` |
 | `PIPELINE_PATH` | Path to the mounted pipeline YAML (Jobs: `/config/pipeline.yaml`) |
 | `PIPELINE_ID` | Pipeline id — first segment of the S3 result prefix |
 | `S3_BUCKET` | Results bucket |
-| `PUBLIC_RESULTS_BASE` | Browser-reachable base URL, used to build `iiif.json` ids |
+| `PUBLIC_RESULTS_BASE` | Browser-reachable base URL, used to build `iiif.json` ids and `viewer_url` |
 
 **Optional:**
 
 | Env var | Default | Description |
 |---------|---------|-------------|
 | `S3_ENDPOINT` | `""` | Empty = boto3 provider default chain |
+| `AWS_SHARED_CREDENTIALS_FILE` | *(boto3 default)* | Jobs set `/secrets/s3/credentials` — the mounted Secret file; credentials are never env |
 | `S3_PREFIX` | `""` | Extra prefix before `<pipeline>/<volume>/` — the reconciler pins it empty |
-| `MAX_IMAGE_WIDTH` | `2500` | Downscale request sent to the IIIF Image API |
-| `RESUME` | `true` | Skip pages that already have ALTO in S3 |
+| `MAX_IMAGE_WIDTH` | `2500` | Downscale request sent to the IIIF Image API (`/full/{w},/`; `max` for narrower canvases; a 400 falls back to `max`). Service-less canvases are fetched at native size |
+| `RESUME` | `true` | Skip pages that already have **both** PAGE and ALTO in S3 and whose `page_sources` URL is unchanged |
 | `LOOKAHEAD_PAGES` | `64` | Prefetch depth of the download pipeline |
 | `MAX_PAGES` | `0` | Truncate the volume (0 = all pages) — smoke tests |
 | `WORKDIR_PATH` | `/work` | Scratch dir (Jobs mount a 2 Gi memory-backed emptyDir) |
 | `DOWNLOAD_CONCURRENCY` | `12` | Parallel page downloads |
+| `MANIFEST_MAX_BYTES` | `16777216` | Byte cap on the manifest body (over it: exit 13) |
+| `FETCH_MAX_BYTES` | `67108864` | Byte cap on one image body (over it: the page fails without retry) |
 | `IMAGE_DIGEST` | `unknown` | Provenance only — recorded verbatim in `manifest.json` |
 | `LOG_SHIP_SECONDS` | `15` | How often the run's own stdout/stderr is uploaded to `status/logs/<pipeline>/<volume>.txt` while it runs (`0` = final upload only) |
+| `TERMINATION_LOG_PATH` | `/dev/termination-log` | Where the exit reason is written |
+| `HOME`, `TMPDIR`, `YOLO_CONFIG_DIR` | *(unset)* | Created at start when set — the Job points them into the tmpfs workdir because the root filesystem is read-only |
+| `HF_HOME`, `HF_HUB_OFFLINE` | *(unset)* | Set by the Job (`/data/hf`, `1`): models come from the read-only cache, never from HF Hub |
 
 Results land at `{S3_PREFIX}/{PIPELINE_ID}/{VOLUME_REF}/…` (`Config.volume_prefix`).
+
+## Stages
+
+`setup → resume → load → stream → verify → publish`; the current stage is
+what the termination log reports. Details in
+[The Wrapper → Stages](../how-it-works/wrapper.md#stages-around-the-streaming-loop).
+
+## Exit codes
+
+| Code | Class | Raised by |
+|---|---|---|
+| `0` | success | verify passed, `manifest.json` published |
+| `13` | permanent — `{"permanent": true}` | `ConfigError` (missing env); manifest URL not http(s); manifest HTTP 400/401/403/404/410; body over `MANIFEST_MAX_BYTES`; non-JSON or non-object JSON; no canvases; a canvas without an image; bad pipeline YAML, an unknown step or model class, an `Export` step in the YAML (`ValueError` from `driver.load_pipeline`) |
+| `1` | transient — `{"permanent": false}` | manifest 5xx/429/other status or a network error (`TransientManifestError`); the verify gate (pages missing or failed after fetch retries, `pipeline.run` exceptions, malformed XML); a model-load `OSError`; `UploadOutage` after 5 consecutive S3 upload failures; anything else |
+| `143` | SIGTERM — `{"permanent": false, "error": "SIGTERM"}` | the handler: termination log, final run-log ship, `os._exit(143)` |
+
+Page-fetch acceptance (never a whole-run verdict on its own): 3 attempts
+with 0.5 s × 2ⁿ backoff and a 120 s timeout each; textual Content-Types
+(`text/*`, JSON, XML, XHTML) refused; the first chunk must carry a raster
+signature (JPEG/PNG/GIF/TIFF/BMP/WebP/JP2); empty bodies refused; a body
+over `FETCH_MAX_BYTES` is not retried; a partial file is always unlinked.
+
+The warm-up entrypoint (`htrflow_batch.warmup`) uses the same codes: 13 for
+`ValueError` (incl. pydantic), `yaml.YAMLError`, `KeyError` (unknown step)
+and `NotImplementedError` (unknown model class), or when `HF_HUB_OFFLINE`
+is set; 1 for anything else.
 
 ## Modules
 
@@ -46,42 +79,40 @@ Source root: [`packages/wrapper/src/htrflow_batch/`](https://github.com/carpelan
 | Module | Description |
 |--------|-------------|
 | `config.py` | `Config.from_env` — the table above |
-| `iiif.py` | Manifest parsing: P3 and P2 (`pages_from_manifest`, sequences/canvases forms) |
-| `fetch.py` | Sized-image download with retry, width capping |
-| `stream.py` | The bounded producer/consumer pipeline (`consume`, `StreamStats`) — download ahead of the GPU, never further than `LOOKAHEAD_PAGES` |
-| `driver.py` | htrflow integration: build pipeline from YAML, `process_page`, ALTO + PAGE export |
-| `store.py` | `ResultStore` — deterministic S3 keys, explicit content types, `done_pages()` resume probe |
+| `iiif.py` | Manifest fetch with the S5 guards and the permanent/transient split; P3 and P2 parsing (`pages_from_manifest`); `redact_url`/`redact_urls` |
+| `fetch.py` | Bounded-lookahead downloader: sized-image requests, raster acceptance, byte cap, retry/backoff, `stop` on abort |
+| `stream.py` | The consumer loop (`consume`, `StreamStats`, `UploadOutage`) — process a page the moment it lands, upload, rolling-delete, never further ahead than `LOOKAHEAD_PAGES` |
+| `driver.py` | htrflow integration: build the pipeline from YAML (Export steps appended for `alto` and `page`), `process_page`, `htrflow_version` |
+| `store.py` | `ResultStore` — deterministic S3 keys, explicit content types, XML parsed before upload, `page` then `alto`, `done_pages()` (both formats), bounded boto timeouts, the run-log key |
 | `viewer.py` | `build_viewer_manifest` — IIIF v3 manifest with ALTO annotation links (`iiif.json`) |
-| `main.py` | Stage machine (setup → fetch/transcribe → verify → publish), `publish_failure_metrics` |
-| `logship.py` | `LogCapture` — tees stdout/stderr and ships the buffer to S3 on an interval, so the frontend can follow a running volume |
+| `logship.py` | `LogCapture` — tees stdout/stderr, redacts URLs, ships the buffer to S3 on an interval ([Live run log](../how-it-works/live-run-log.md)) |
+| `main.py` | The stage machine, the SIGTERM handler, `publish_failure_metrics`, `_changed_sources` |
+| `warmup.py` | The warm-up entrypoint: `Pipeline.from_config()` fills `HF_HOME` |
 
 ## Completion contract
 
 `manifest.json` is written **last**, only after the verify gate confirms every
-expected page has ALTO in S3 — it is the marker the reconciler's
+expected page has PAGE and ALTO in S3 — it is the marker the reconciler's
 `done_volumes()` probes. It embeds the pipeline YAML and its sha256 (the
-drift ground truth), `image_digest`, per-page results, and the run metrics
-(`wall_seconds`, `gpu_stall_seconds`, `pages_per_second`, `bytes_fetched`).
+drift ground truth), `image_digest`, per-page results, `page_sources` and
+`canvas_ids` (what a resume compares), the run metrics (`wall_seconds`,
+`gpu_stall_seconds`, `pages_per_second`, `bytes_fetched`) and `viewer_url`
+([field table](s3-layout.md#manifestjson-completion-marker)).
 
-On any failure the wrapper best-effort publishes `metrics-failed-latest.json`
-(stage, error, partial per-page results) before exiting non-zero — evidence
-for the operator, and never a completion marker.
+On any failure the wrapper writes the termination log first (local,
+instant), then best-effort publishes `metrics-failed-latest.json` (stage,
+error, partial per-page results) before exiting non-zero — evidence for the
+operator, and never a completion marker. Every URL in logs, termination
+messages, failure metrics and `page_sources` is redacted (no userinfo, no
+query string); `source_manifest` in `manifest.json` is written verbatim.
 
 ## Live run log
 
 `status/logs/<pipeline>/<volume>.txt` (bucket root — the reconciler's status
-namespace, not `volume_prefix`) is the run's own stdout/stderr, uploaded every
-`LOG_SHIP_SECONDS` while the volume runs and once more on exit, so the final
-object is the complete log rather than a tail. `kubectl logs` is unchanged
-(the tee writes through). Shipping never fails a run: upload errors are
-logged once and retried next interval. The buffer is capped at 4 M characters
-(1 M head + 2 M tail kept, middle dropped with a marker). A retry overwrites
-the key with the new attempt; the reconciler first copies the shipped log of
-the failed attempt to `status/failures/…` (complete, not a kube tail).
-
-Honest limits: only Python-level writes are teed — anything writing to fd 1/2
-directly (CUDA/C++ warnings, subprocesses) shows in `kubectl logs` only; a
-SIGTERM (Job deletion, preemption) exits without the final upload, so the
-object then lags by up to one interval. On a **versioned** bucket each upload
-is a new version (~240/h per running volume) — add a lifecycle rule or turn
-shipping off with `LOG_SHIP_SECONDS=0`.
+namespace, not `volume_prefix`) is the run's own stdout/stderr, claimed at
+start, uploaded every `LOG_SHIP_SECONDS` while it changed and once more on
+exit (including SIGTERM), so the final object is the complete log rather
+than a tail. Buffer cap 4 MiB (1 MiB head + 2 MiB tail kept, the middle
+dropped with a marker). Everything else — what is and is not captured, the
+reconciler's and the browser's side, versioned buckets — is on its own page:
+[Live run log](../how-it-works/live-run-log.md).

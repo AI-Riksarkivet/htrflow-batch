@@ -11,12 +11,24 @@ holds at most the lookahead window (uploader rolling-deletes processed images).
 | torch + models resident | ~6–8 Gi |
 | page images in flight (`LOOKAHEAD_PAGES=64` × ~2 MB @ width 2500) | ~128 Mi |
 | outputs awaiting upload (XML) | noise |
+| run-log buffer | ≤ 4 MiB (capped in `logship.py`) |
 | tmpfs `sizeLimit` | 2 Gi (generous) |
-| pod memory request/limit | 16 Gi |
+| pod memory **request** | 8 Gi (`jobspec.py`; what Kueue's quota must cover) |
+| pod memory **limit** | 16 Gi (what tmpfs and the OOM killer see) |
 
-- Width capping is **mandatory, enforced by the wrapper** — uncapped 6000 px
-  masters (~15–20 MB each) would still fit the window, but waste IIIF
-  bandwidth and slow the fetch path for nothing HTR can use.
+- Width capping is **mandatory, enforced by the wrapper** for canvases with
+  an IIIF image service — uncapped 6000 px masters (~15–20 MB each) would
+  still fit the window, but waste IIIF bandwidth and slow the fetch path for
+  nothing HTR can use.
+- **Service-less canvases** (synthetic `images:` volumes, static painting
+  bodies) cannot be downscaled server-side: they are fetched at native size
+  and htrflow processes the full-resolution image. The only bound is
+  `FETCH_MAX_BYTES` (64 MiB per image by default); keep such image lists
+  pre-sized.
+- `MANIFEST_MAX_BYTES` (16 MiB) bounds the manifest itself; the reconciler
+  applies the same cap to its pre-validation fetch (`reconciler.fetchMaxBytes`)
+  so a multi-GB "manifest" in the campaigns repo cannot OOM the 512 Mi
+  reconciler either.
 - A 1000-page volume can no longer OOMKill a pod — the old preflight
   size-guard reduces to sanity checks (non-empty manifest → else exit 13).
 - Disk escape hatch: the wrapper only sees `WORKDIR_PATH`; swapping the
