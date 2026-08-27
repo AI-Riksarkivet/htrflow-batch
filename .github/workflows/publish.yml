@@ -87,7 +87,7 @@ jobs:
             --docker-username env:DOCKERHUB_USERNAME
             --docker-password env:DOCKERHUB_TOKEN
           cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-          version: "latest"
+          version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
