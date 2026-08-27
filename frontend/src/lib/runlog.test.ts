@@ -19,7 +19,10 @@ describe("parseRunLog", () => {
     const { groups } = parseRunLog(log);
 
     expect(groups).toEqual([
-      { kind: "info", lines: ["2026-08-25 10:00:01 INFO Starting run for volume R1"] },
+      {
+        kind: "info",
+        lines: ["2026-08-25 10:00:01 INFO Starting run for volume R1"],
+      },
       {
         kind: "http",
         lines: [
@@ -27,7 +30,10 @@ describe("parseRunLog", () => {
           '2026-08-25 10:00:03 INFO HTTP Request: POST http://model/infer "200 OK"',
         ],
       },
-      { kind: "model", lines: ["2026-08-25 10:00:04 INFO Initialized YOLO model"] },
+      {
+        kind: "model",
+        lines: ["2026-08-25 10:00:04 INFO Initialized YOLO model"],
+      },
       {
         kind: "warning",
         lines: ["2026-08-25 10:00:05 WARNING low confidence on page 3"],
@@ -63,10 +69,9 @@ describe("parseRunLog", () => {
   });
 
   test("coalesces consecutive lines of the same kind into one group", () => {
-    const log = [
-      "INFO HTTP Request: GET /a",
-      "INFO HTTP Request: GET /b",
-    ].join("\n");
+    const log = ["INFO HTTP Request: GET /a", "INFO HTTP Request: GET /b"].join(
+      "\n",
+    );
     const { groups } = parseRunLog(log);
     expect(groups).toEqual([
       {
@@ -135,24 +140,43 @@ describe("isTerminalLog", () => {
   });
 
   test("failure lines end the run", () => {
-    expect(isTerminalLog("... \n2026-08-26 07:15:33,903 ERROR transient failure in stream: boom\n")).toBe(true);
-    expect(isTerminalLog("2026-08-26 07:15:33,903 ERROR permanent failure in setup: bad manifest\n")).toBe(true);
+    expect(
+      isTerminalLog(
+        "... \n2026-08-26 07:15:33,903 ERROR transient failure in stream: boom\n",
+      ),
+    ).toBe(true);
+    expect(
+      isTerminalLog(
+        "2026-08-26 07:15:33,903 ERROR permanent failure in setup: bad manifest\n",
+      ),
+    ).toBe(true);
   });
 
   test("an in-flight log is not terminal", () => {
-    expect(isTerminalLog("2026-08-26 07:15:33,903 INFO Wrote AltoXML file to /work/outputs/alto/0022.xml\n0022: Done!\n")).toBe(false);
+    expect(
+      isTerminalLog(
+        "2026-08-26 07:15:33,903 INFO Wrote AltoXML file to /work/outputs/alto/0022.xml\n0022: Done!\n",
+      ),
+    ).toBe(false);
     expect(isTerminalLog("")).toBe(false);
   });
 
   test("only the tail counts", () => {
-    const early = "2026-08-26 07:00:00,000 INFO [v] COMPLETE 2 pages (2 processed) in 1.0s, viewer: x\n";
-    const filler = Array.from({ length: 600 }, (_, i) => `line ${i}`).join("\n");
+    const early =
+      "2026-08-26 07:00:00,000 INFO [v] COMPLETE 2 pages (2 processed) in 1.0s, viewer: x\n";
+    const filler = Array.from({ length: 600 }, (_, i) => `line ${i}`).join(
+      "\n",
+    );
     expect(isTerminalLog(early + filler)).toBe(false);
   });
 
   test("a failure marker followed by a long traceback is still terminal", () => {
-    const marker = "2026-08-26 07:00:00,000 ERROR transient failure in stream: CUDA error\n";
-    const traceback = Array.from({ length: 150 }, (_, i) => `  File "x.py", line ${i}, in f`).join("\n");
+    const marker =
+      "2026-08-26 07:00:00,000 ERROR transient failure in stream: CUDA error\n";
+    const traceback = Array.from(
+      { length: 150 },
+      (_, i) => `  File "x.py", line ${i}, in f`,
+    ).join("\n");
     expect(isTerminalLog(marker + traceback)).toBe(true);
   });
 });
