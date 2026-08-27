@@ -106,6 +106,10 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   defaultDeny: true
   # What a batch Job may reach besides DNS and S3: the IIIF origin(s).
   # Default: lbiiif.riksarkivet.se (a single stable address).
+  # Where Jobs may fetch page images from (80/443): the IIIF origin. Volumes
+  # declared with images: hosted elsewhere (the htr_demo examples on Hugging
+  # Face) need their host here too; "0.0.0.0/0" is the PoC catch-all and still
+  # carves out the cluster, node and apiserver ranges.
   iiifCidrs: ["192.121.221.27/32"]
   # S3 endpoint(s) for Jobs and the reconciler. With devStack.rustfs the
   # in-cluster pod is selected automatically; a real endpoint goes here.

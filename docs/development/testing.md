@@ -53,8 +53,8 @@ cd frontend && bun run test     # vitest
 dagger call test                # add --ca-bundle on TLS-intercepting networks
 ```
 
-`make test` runs both Python packages — **375 tests** as of 2026-08-27
-(151 wrapper + 224 reconciler); the frontend suite is **76 tests in 10
+`make test` runs both Python packages — **471 tests** (+1 opt-in `htrflow`-marked)
+as of 2026-08-27 (154 wrapper + 317 reconciler); the frontend suite is **76 tests in 10
 files**. `dagger call test` runs the Python suite inside a uv container
 with `uv sync --all-packages`, which pins the dependency resolution but
 says nothing about the production images — those are built separately by

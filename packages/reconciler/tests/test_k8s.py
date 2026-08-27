@@ -132,8 +132,13 @@ class StubBatch:
             raise _api_error(self.create_error)
         self.created.append(body)
 
-    def delete_namespaced_job(self, ns, name, propagation_policy=None):
-        assert ns == NS
+    # Same positional order as the real client: (name, namespace, ...). The
+    # reconciler once passed (namespace, name) — a 404 for a Job called
+    # "htr-batch" in a namespace called "<job>", swallowed, so retries burned
+    # attempts without ever deleting anything. Keep the stub honest.
+    def delete_namespaced_job(self, name, namespace, propagation_policy=None):
+        assert namespace == NS, f"namespace argument was {namespace!r}"
+        assert name != NS, "name/namespace arguments swapped"
         self.deleted.append((name, propagation_policy))
         if self.delete_error:
             raise _api_error(self.delete_error)

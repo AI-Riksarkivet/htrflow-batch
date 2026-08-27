@@ -173,8 +173,11 @@ class Cluster:
 
     def delete_job(self, name: str) -> None:
         try:
+            # (name, namespace): the swapped order deleted a Job called
+            # "<namespace>" in a namespace called "<job>" -> 404, swallowed, and
+            # every retry burned an attempt without a re-run.
             self.batch.delete_namespaced_job(
-                self.ns, name, propagation_policy="Foreground"
+                name, self.ns, propagation_policy="Foreground"
             )
         except client.ApiException as e:
             if e.status != 404:

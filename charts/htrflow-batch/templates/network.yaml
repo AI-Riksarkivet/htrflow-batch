@@ -100,7 +100,14 @@ spec:
     {{- if .Values.network.iiifCidrs }}
     - to:
         {{- range .Values.network.iiifCidrs }}
+        {{- if eq . "0.0.0.0/0" }}
+        {{- /* PoC catch-all for images hosted outside the IIIF origin (e.g.
+             Hugging Face example pages): still no cluster, node or apiserver
+             reach. `except` must be a subset of `cidr`, so only here. */}}
+        - ipBlock: {{ dict "cidr" . "except" $internal | toJson }}
+        {{- else }}
         - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
         {{- end }}
       ports:
         - { port: 443 }
