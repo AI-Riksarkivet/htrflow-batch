@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import sample from "../../static/status.sample.json";
 import {
   formatIssues,
   parseStatusDoc,
@@ -219,6 +220,23 @@ describe("parseStatusDoc", () => {
     const junk = parseStatusDoc({ ...oldDoc, tick_summary: "later" });
     expect(junk.doc).not.toBeNull();
     expect(junk.doc?.tick_summary).toBeNull();
+  });
+
+  it("the dev fixture is the full current shape: parses clean, every status known", () => {
+    const { doc, problems } = parseStatusDoc(sample);
+    expect(problems).toEqual([]);
+    expect(doc).not.toBeNull();
+    expect(doc?.tick_summary).not.toBeNull();
+    const volumes = doc?.campaigns.flatMap((c) => c.volumes) ?? [];
+    expect(volumes.length).toBeGreaterThan(5);
+    expect(volumes.map((v) => v.status)).not.toContain("unknown");
+    expect(volumes.some((v) => v.terminal !== null)).toBe(true);
+    expect(doc?.campaigns.some((c) => c.error !== null)).toBe(true);
+    // every key the reconciler writes is present on every raw volume
+    const keys = Object.keys(volume).concat("terminal").sort();
+    for (const c of sample.campaigns) {
+      for (const v of c.volumes) expect(Object.keys(v).sort()).toEqual(keys);
+    }
   });
 
   it("returns no doc when the envelope is unusable", () => {

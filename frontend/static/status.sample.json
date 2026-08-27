@@ -1,51 +1,282 @@
 {
-  "generated_at": "2026-07-29T09:15:00+00:00",
+  "generated_at": "2026-08-26T08:55:12+00:00",
   "tick_seconds": 300,
+  "campaigns_repo_url": "https://github.com/Riksarkivet/htr-campaigns",
   "warnings": [
-    "demo-v1: recipe changed after results were published; grandfathered — published volumes keep the old steps"
+    "demo-v1: recipe changed after results were published; grandfathered — published volumes keep the old steps",
+    "warm-up warmup/swe-spreads-v2 needs attention: exit 13 (see status/logs/warmup/swe-spreads-v2.txt)"
   ],
+  "tick_summary": {
+    "seconds": 4.06,
+    "s3_calls": 12,
+    "validations": 3,
+    "submitted": 1,
+    "retried": 0
+  },
   "campaigns": [
     {
       "name": "demo",
       "pipeline": "demo-v1",
+      "pipeline_steps": [
+        "Segmentation: yolo (Riksarkivet/yolov9-lines-within-regions-1)",
+        "TextRecognition: TrOCR (Riksarkivet/trocr-base-handwritten-hist-swe-2)",
+        "OrderLines",
+        "Export: alto"
+      ],
+      "pipeline_yaml": "steps:\n  - step: Segmentation\n    settings:\n      model: yolo\n      model_settings:\n        model: Riksarkivet/yolov9-lines-within-regions-1\n  - step: TextRecognition\n    settings:\n      model: TrOCR\n      model_settings:\n        model: Riksarkivet/trocr-base-handwritten-hist-swe-2\n  - step: OrderLines\n  - step: Export\n    settings:\n      dest: outputs/alto\n      format: alto\n",
       "error": null,
-      "totals": { "done": 1, "total": 3 },
+      "totals": {
+        "done": 1,
+        "total": 7,
+        "pages_done": 722,
+        "pages_total": 2610
+      },
       "volumes": [
         {
           "id": "R0001203",
           "status": "done",
           "attempts": 0,
           "pages_done": 638,
-          "pages_total": null,
+          "pages_total": 638,
           "error": null,
           "viewer_manifest": "http://localhost:30900/htr-results/demo-v1/R0001203/iiif.json",
+          "run_manifest": "http://localhost:30900/htr-results/demo-v1/R0001203/manifest.json",
           "source_manifest": "https://lbiiif.riksarkivet.se/arkis!R0001203/manifest",
-          "thumbnail": "https://lbiiif.riksarkivet.se/arkis!R0001203/A0068318_00001/full/200,/0/default.jpg"
+          "thumbnail": "https://lbiiif.riksarkivet.se/v3/arkis!R0001203_00001/full/200,/0/default.jpg",
+          "updated": "2026-08-25T13:29:24Z",
+          "failure_log": null,
+          "run_log": "http://localhost:30900/htr-results/status/logs/demo-v1/R0001203.txt",
+          "terminal": null
         },
         {
           "id": "R0001204",
           "status": "running",
           "attempts": 1,
-          "pages_done": 42,
-          "pages_total": null,
+          "pages_done": 84,
+          "pages_total": 512,
           "error": null,
           "viewer_manifest": null,
+          "run_manifest": "http://localhost:30900/htr-results/demo-v1/R0001204/manifest.json",
           "source_manifest": "https://lbiiif.riksarkivet.se/arkis!R0001204/manifest",
-          "thumbnail": "https://lbiiif.riksarkivet.se/arkis!R0001204/A0068319_00001/full/200,/0/default.jpg"
+          "thumbnail": "https://lbiiif.riksarkivet.se/v3/arkis!R0001204_00001/full/200,/0/default.jpg",
+          "updated": null,
+          "failure_log": null,
+          "run_log": "http://localhost:30900/htr-results/status/logs/demo-v1/R0001204.txt",
+          "terminal": null
         },
         {
           "id": "R0001205",
           "status": "needs-attention",
+          "attempts": 1,
+          "pages_done": null,
+          "pages_total": 480,
+          "error": null,
+          "viewer_manifest": null,
+          "run_manifest": null,
+          "source_manifest": "https://lbiiif.riksarkivet.se/arkis!R0001205/manifest",
+          "thumbnail": "https://lbiiif.riksarkivet.se/v3/arkis!R0001205_00001/full/200,/0/default.jpg",
+          "updated": null,
+          "failure_log": "http://localhost:30900/htr-results/status/failures/demo-v1/R0001205.txt",
+          "run_log": null,
+          "terminal": "exit-13"
+        },
+        {
+          "id": "R0001206",
+          "status": "needs-attention",
           "attempts": 3,
+          "pages_done": null,
+          "pages_total": 300,
+          "error": null,
+          "viewer_manifest": null,
+          "run_manifest": null,
+          "source_manifest": "https://lbiiif.riksarkivet.se/arkis!R0001206/manifest",
+          "thumbnail": "https://lbiiif.riksarkivet.se/v3/arkis!R0001206_00001/full/200,/0/default.jpg",
+          "updated": null,
+          "failure_log": "http://localhost:30900/htr-results/status/failures/demo-v1/R0001206.txt",
+          "run_log": null,
+          "terminal": "capped"
+        },
+        {
+          "id": "R0001207",
+          "status": "retry",
+          "attempts": 1,
+          "pages_done": null,
+          "pages_total": 260,
+          "error": null,
+          "viewer_manifest": null,
+          "run_manifest": null,
+          "source_manifest": "https://lbiiif.riksarkivet.se/arkis!R0001207/manifest",
+          "thumbnail": "https://lbiiif.riksarkivet.se/v3/arkis!R0001207_00001/full/200,/0/default.jpg",
+          "updated": null,
+          "failure_log": "http://localhost:30900/htr-results/status/failures/demo-v1/R0001207.txt",
+          "run_log": null,
+          "terminal": null
+        },
+        {
+          "id": "R0001208",
+          "status": "queued",
+          "attempts": 0,
+          "pages_done": null,
+          "pages_total": 420,
+          "error": null,
+          "viewer_manifest": null,
+          "run_manifest": null,
+          "source_manifest": "https://lbiiif.riksarkivet.se/arkis!R0001208/manifest",
+          "thumbnail": "https://lbiiif.riksarkivet.se/v3/arkis!R0001208_00001/full/200,/0/default.jpg",
+          "updated": null,
+          "failure_log": null,
+          "run_log": null,
+          "terminal": null
+        },
+        {
+          "id": "R0001209",
+          "status": "pending",
+          "attempts": 0,
           "pages_done": null,
           "pages_total": null,
           "error": null,
           "viewer_manifest": null,
-          "source_manifest": "https://lbiiif.riksarkivet.se/arkis!R0001205/manifest",
-          "thumbnail": null
+          "run_manifest": null,
+          "source_manifest": "https://lbiiif.riksarkivet.se/arkis!R0001209/manifest",
+          "thumbnail": null,
+          "updated": null,
+          "failure_log": null,
+          "run_log": null,
+          "terminal": null
         }
       ],
       "orphans": ["R0009999"]
+    },
+    {
+      "name": "hardening-check",
+      "pipeline": "local-v4",
+      "pipeline_steps": [
+        "Segmentation: yolo (Riksarkivet/yolov9-lines-within-regions-1)",
+        "TextRecognition: TrOCR (Riksarkivet/trocr-base-handwritten-hist-swe-2)",
+        "Export: alto"
+      ],
+      "pipeline_yaml": "steps:\n  - step: Segmentation\n    settings:\n      model: yolo\n      model_settings:\n        model: Riksarkivet/yolov9-lines-within-regions-1\n  - step: TextRecognition\n    settings:\n      model: TrOCR\n      model_settings:\n        model: Riksarkivet/trocr-base-handwritten-hist-swe-2\n  - step: Export\n    settings:\n      dest: outputs/alto\n      format: alto\n",
+      "error": null,
+      "totals": { "done": 1, "total": 3, "pages_done": 4, "pages_total": 12 },
+      "volumes": [
+        {
+          "id": "mock-vol",
+          "status": "done",
+          "attempts": 0,
+          "pages_done": 4,
+          "pages_total": 4,
+          "error": null,
+          "viewer_manifest": "http://localhost:30900/htr-results/local-v4/mock-vol/iiif.json",
+          "run_manifest": "http://localhost:30900/htr-results/local-v4/mock-vol/manifest.json",
+          "source_manifest": "http://localhost:30900/htr-results/sources/local-v4/mock-vol/3f9a1c2b/manifest.json",
+          "thumbnail": null,
+          "updated": "2026-08-25T13:57:26Z",
+          "failure_log": null,
+          "run_log": "http://localhost:30900/htr-results/status/logs/local-v4/mock-vol.txt",
+          "terminal": null
+        },
+        {
+          "id": "mock-vol-2",
+          "status": "deleting",
+          "attempts": 1,
+          "pages_done": null,
+          "pages_total": 4,
+          "error": null,
+          "viewer_manifest": null,
+          "run_manifest": null,
+          "source_manifest": "http://localhost:30900/htr-results/sources/local-v4/mock-vol-2/7b2e0d44/manifest.json",
+          "thumbnail": null,
+          "updated": null,
+          "failure_log": "http://localhost:30900/htr-results/status/failures/local-v4/mock-vol-2.txt",
+          "run_log": null,
+          "terminal": null
+        },
+        {
+          "id": "mock-vol-3",
+          "status": "queued",
+          "attempts": 0,
+          "pages_done": null,
+          "pages_total": 4,
+          "error": "status/volumes.json: PutObject failed (AccessDenied); row from cache",
+          "viewer_manifest": null,
+          "run_manifest": null,
+          "source_manifest": "http://localhost:30900/htr-results/sources/local-v4/mock-vol-3/c01d9e5a/manifest.json",
+          "thumbnail": null,
+          "updated": null,
+          "failure_log": null,
+          "run_log": null,
+          "terminal": null
+        }
+      ],
+      "orphans": []
+    },
+    {
+      "name": "unreachable-source",
+      "pipeline": "demo-v1",
+      "pipeline_steps": [
+        "Segmentation: yolo (Riksarkivet/yolov9-lines-within-regions-1)",
+        "TextRecognition: TrOCR (Riksarkivet/trocr-base-handwritten-hist-swe-2)",
+        "OrderLines",
+        "Export: alto"
+      ],
+      "pipeline_yaml": "steps:\n  - step: Segmentation\n    settings:\n      model: yolo\n      model_settings:\n        model: Riksarkivet/yolov9-lines-within-regions-1\n  - step: TextRecognition\n    settings:\n      model: TrOCR\n      model_settings:\n        model: Riksarkivet/trocr-base-handwritten-hist-swe-2\n  - step: OrderLines\n  - step: Export\n    settings:\n      dest: outputs/alto\n      format: alto\n",
+      "error": null,
+      "totals": {
+        "done": 0,
+        "total": 2,
+        "pages_done": null,
+        "pages_total": null
+      },
+      "volumes": [
+        {
+          "id": "R0004242",
+          "status": "unreachable",
+          "attempts": 0,
+          "pages_done": null,
+          "pages_total": null,
+          "error": "manifest: HTTP 503 (retry in 3 ticks)",
+          "viewer_manifest": null,
+          "run_manifest": null,
+          "source_manifest": "https://lbiiif.riksarkivet.se/arkis!R0004242/manifest",
+          "thumbnail": null,
+          "updated": null,
+          "failure_log": null,
+          "run_log": null,
+          "terminal": null
+        },
+        {
+          "id": "R0004243",
+          "status": "unsupported",
+          "attempts": 0,
+          "pages_done": null,
+          "pages_total": null,
+          "error": "manifest: not IIIF Presentation 2 or 3",
+          "viewer_manifest": null,
+          "run_manifest": null,
+          "source_manifest": "https://example.org/not-iiif/R0004243.json",
+          "thumbnail": null,
+          "updated": null,
+          "failure_log": null,
+          "run_log": null,
+          "terminal": null
+        }
+      ],
+      "orphans": []
+    },
+    {
+      "name": "broken-yaml",
+      "pipeline": null,
+      "pipeline_steps": null,
+      "pipeline_yaml": null,
+      "error": "campaigns/broken-yaml.yaml: mapping values are not allowed here (line 3)",
+      "totals": {
+        "done": 0,
+        "total": 0,
+        "pages_done": null,
+        "pages_total": null
+      },
+      "volumes": [],
+      "orphans": []
     }
   ]
 }
