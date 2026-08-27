@@ -39,6 +39,7 @@ PAGES = [
 PRIVATE_STATUS_KEYS = [
     "status/attempts.json",
     "status/validation.json",
+    "status/volumes.json",
     "status/failures/*",
     "status/warmup/*",
 ]
