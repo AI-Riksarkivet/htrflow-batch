@@ -36,7 +36,7 @@ func (m *HtrflowBatch) BuildViewer(
 		Tree()
 
 	builder := dag.Container().
-		From("node:20-bookworm").
+		From(nodeImage).
 		WithDirectory("/src", uvSrc).
 		WithFile("/src/uv4.patch", source.File(".docker/uv4-uv-html.patch")).
 		WithWorkdir("/src")
@@ -49,21 +49,13 @@ func (m *HtrflowBatch) BuildViewer(
 
 	dist := builder.Directory("/src/dist")
 
-	spa := dag.Container().
-		From("oven/bun:1").
-		WithDirectory("/app", source.Directory("frontend"), dagger.ContainerWithDirectoryOpts{
-			Exclude: []string{"node_modules", "dist"},
-		}).
-		WithWorkdir("/app")
-	spa = m.withCaBundle(spa, caBundle)
-	spa = spa.
-		WithExec([]string{"bun", "install", "--frozen-lockfile"}).
-		WithExec([]string{"bun", "run", "build"})
+	// Same bun container as CheckFrontend: the image ships what CI checked.
+	spa := m.frontend(source, caBundle).WithExec([]string{"bun", "run", "build"})
 
 	// nginx-unprivileged: UID 101, listens on 8080 (the chart's containerPort,
 	// Service targetPort and nginx `listen` all match).
 	viewer := dag.Container().
-		From("nginxinc/nginx-unprivileged:1.27-alpine").
+		From(nginxImage).
 		WithDirectory("/usr/share/nginx/html", dist).
 		// status.sample.json is the dev fixture (static/), not part of the app.
 		WithDirectory("/usr/share/nginx/html", spa.Directory("/app/dist").WithoutFile("status.sample.json"))
