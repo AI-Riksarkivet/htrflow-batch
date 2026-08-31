@@ -7,7 +7,7 @@ title: Notify the requester when a campaign finishes
 
 # C09 · Notify the requester when a campaign finishes
 
-**Story.** As the person who asked for a campaign, I want a message when it completes or when it needs attention — email or Teams, to the address named in the campaign file — so that I do not have to keep the page open for a week.
+**Story.** As the data scientist who submitted a campaign, I want a message when it completes or when it needs attention — email or Teams, to the address named in the campaign file — so that I do not have to keep the page open for a week.
 
 ## Why it matters
 

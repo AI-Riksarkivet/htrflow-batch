@@ -7,7 +7,7 @@ title: Campaign detail page
 
 # C04 · Campaign detail page
 
-**Story.** As a project lead, I want a page per campaign showing progress over time, an estimated finish based on measured throughput, and the list of failed or waiting volumes with their reasons, so that I can answer "when will it be done and what is stuck" without asking the team.
+**Story.** As a data scientist running a campaign, I want a page per campaign showing progress over time, an estimated finish based on measured throughput, and the list of failed or waiting volumes with their reasons, so that I can answer "when will it be done and what is stuck" without opening a terminal.
 
 ## Why it matters
 

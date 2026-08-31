@@ -133,7 +133,7 @@ def call(method, url, ops):
 def story(path, dry):
     t, meta, body = read(path)
     sid = os.path.basename(path)[:3]
-    parts = re.split(r"^## Done when\s*$", body, flags=re.M)
+    parts = re.split(r"^## (?:Done when|Klart när)\s*$", body, flags=re.M)
     desc_md, ac_md = parts[0], (parts[1] if len(parts) > 1 else "")
     ops = [
         {
@@ -194,7 +194,7 @@ def story(path, dry):
 
 def feature(path, dry):
     t, meta, body = read(path)
-    body = body[: body.index("## Stories")] if "## Stories" in body else body
+    body = re.split(r"^## (?:Stories|Berättelser)\s*$", body, flags=re.M)[0]
     body = re.sub(r'!!! \w+ "[^"]*"\n(\n    .*)+', "", body)  # docs-site admonitions
     ops = [{"op": "add", "path": "/fields/System.Description", "value": md_block(body)}]
     if dry:

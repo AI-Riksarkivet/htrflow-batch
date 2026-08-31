@@ -15,7 +15,7 @@ The page lists everything in one scroll today, which is right for fifteen volume
 
 ## What this delivers
 
-- Filter chips (state, pipeline, needs-attention), sortable columns, a search box over campaign names and volume ids; state kept in the URL so views can be linked; keyboard-operable (C02).
+- Filter chips (state, pipeline, needs-attention), sortable columns, a search box over campaign names and volume ids; state kept in the URL so views can be linked; keyboard-operable.
 
 ## Done when
 

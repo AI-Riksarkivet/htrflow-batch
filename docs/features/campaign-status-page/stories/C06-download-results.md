@@ -7,11 +7,11 @@ title: Download a volume's results
 
 # C06 · Download a volume's results
 
-**Story.** As an archivist or a downstream system, I want to download a finished volume's ALTO (and PAGE) files as one bundle from the page, so that results can be taken into other tools without knowing the bucket layout.
+**Story.** As a data scientist or a downstream system, I want to download a finished volume's ALTO (and PAGE) files as one bundle from the page, so that results can be taken into other tools without knowing the bucket layout.
 
 ## Why it matters
 
-Results are in the bucket, anonymous-read per volume, but as hundreds of files under a prefix. A bundle is the difference between "available" and "usable" for people without S3 tooling.
+Results are in the bucket, anonymous-read per volume, but as hundreds of files under a prefix. A bundle is the difference between "available" and "usable" when the next step is a notebook or another tool.
 
 ## What this delivers
 
