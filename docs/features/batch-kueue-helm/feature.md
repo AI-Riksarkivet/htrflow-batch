@@ -91,6 +91,7 @@ tables below.
 | [B26](stories/B26-dependency-updates.md) | Automatic dependency updates with Dependabot |
 | [B37](stories/B37-every-image-reproducible-slsa-trivy.md) | Image inventory — no image runs that CI did not build |
 | [B42](stories/B42-htrflow-arm64-base-image.md) | `htrflow` base image for arm64 published and pinned by digest |
+| [B61](stories/B61-htrflow-image-org-namespace.md) | htrflow-imagen publiceras under riksarkivet/ på Docker Hub, inte airiksarkivet/ |
 | [B41](stories/B41-gpu-wrapper-image-in-ci.md) | GPU wrapper image (arm64) built in CI with SLSA provenance and a Trivy scan |
 | [B43](stories/B43-model-packaging-job-image.md) | Model-packaging job image built in CI with SLSA provenance and a Trivy scan |
 | [B36](stories/B36-registry-pull-through-cache.md) | A local registry as the single, cached source of images |
