@@ -7,7 +7,7 @@ title: Volume detail page
 
 # C05 · Volume detail page
 
-**Story.** As an archivist checking a result, I want a page per volume with a grid of its pages — thumbnail, status, confidence and timing per page — with the run log as a tab and a link into the viewer at any page, so that I can judge a volume's quality and jump to the weak pages.
+**Story.** As a data scientist evaluating a pipeline, I want a page per volume with a grid of its pages — thumbnail, status, confidence and timing per page — with the run log as a tab and a link into the viewer at any page, so that I can judge a pipeline's quality on real material and jump to the weak pages.
 
 ## Why it matters
 

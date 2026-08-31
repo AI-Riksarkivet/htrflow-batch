@@ -58,7 +58,7 @@ B_impl = [
     "B45",
 ]
 C_impl = ["B05", "B22", "B32"]
-C_open = [f"C{i:02d}" for i in range(1, 11)]
+C_open = [f"C{i:02d}" for i in range(4, 11)]  # C01–C03 retired: not a tool for archivists
 B_prod = [
     "B10",
     "B11",
@@ -205,7 +205,7 @@ desc = {
         "Campaigns status page",
         "campaign-status-page",
         "#2923",
-        "The read-only status page — every campaign and volume, live logs, links into the viewer — in Swedish, accessible, at archive scale",
+        "The read-only status page for the data scientists running campaigns — every campaign and volume, live logs, links into the viewer, at archive scale",
         f"{len(C_impl) + len(C_open)} ({len(C_impl)} built, {len(C_open)} not started)",
     ),
     "uv4": (

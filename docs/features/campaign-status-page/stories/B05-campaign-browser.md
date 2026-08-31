@@ -7,8 +7,8 @@ title: See progress and live logs in the browser
 
 # B05 · See progress and live logs in the browser
 
-**Story.** As anyone with a stake in a campaign — archivist, project lead,
-operator — I want a web page that shows every campaign and volume, what
+**Story.** As a data scientist running a campaign, or the operator keeping
+the platform up, I want a web page that shows every campaign and volume, what
 state it is in, and lets me open a running volume's log or a finished
 volume in the viewer, so that "how is it going?" never requires cluster
 access.

@@ -30,13 +30,16 @@ how it behaves at archive scale, and how it is tested.
 
 ## Why we are building it
 
-- **"How is it going?" must not require cluster access.** Archivists,
-  project leads and operators all ask it; the page is the answer.
+- **"How is it going?" must not require cluster access.** The data
+  scientists who run campaigns and the operators who keep the platform up
+  both ask it; the page is the answer.
 - **Honesty over polish.** If the reconciler has stopped, the page says
   so; a stale green tick is worse than no page.
-- **It will be the face of the system.** Once campaigns run for the
-  archive, this page is what people outside the team see — it needs to
-  be in Swedish, accessible by law, and recognisably Riksarkivet's.
+- **It is a working tool for data scientists**, not a public site: what
+  matters is the numbers — throughput, failures, confidence, timings —
+  and getting from a number to the page, the log or the result in one
+  click. Language, branding and accessibility statements are not in scope
+  while that is the audience.
 
 ## Stories
 
@@ -52,9 +55,6 @@ how it behaves at archive scale, and how it is tested.
 
 | Id | Story |
 |---|---|
-| [C01](stories/C01-swedish-ui.md) | Swedish user interface |
-| [C02](stories/C02-accessibility-dos.md) | Accessibility per DOS-lagen |
-| [C03](stories/C03-visual-identity.md) | Riksarkivet visual identity |
 | [C04](stories/C04-campaign-detail-page.md) | Campaign detail page |
 | [C05](stories/C05-volume-detail-page.md) | Volume detail page |
 | [C06](stories/C06-download-results.md) | Download a volume's results |
@@ -64,6 +64,8 @@ how it behaves at archive scale, and how it is tested.
 | [C10](stories/C10-status-page-dataflow-diagram.md) | Status page data-flow diagram |
 
 B05, B22 and B32 were created under the Batch feature and moved here; they
-keep their ids (ids are stable, never renumbered). Related stories
+keep their ids (ids are stable, never renumbered; C01–C03 — Swedish UI,
+accessibility statement, visual identity — were retired when the audience
+was settled as data scientists, and their numbers are not reused). Related stories
 elsewhere: S07 (a search page in the same SPA — Search's deliverable), U05
 (the address the page is served at), B20 (the quality score shown per page).
