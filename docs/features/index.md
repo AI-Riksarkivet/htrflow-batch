@@ -84,6 +84,7 @@ are the ones delivered by this repository:
 | [Campaigns status page](campaign-status-page/feature.md) | #2923 | The read-only status page for the data scientists running campaigns — every campaign and volume, live logs, links into the viewer, at archive scale | 10 (3 built, 7 not started) |
 | [UV4 linux](uv4-linux/feature.md) | #2801 | The Riksarkivet Universal Viewer built and run on Linux so anyone can open a transcribed volume from S3 in the browser, with the text next to the page image | 9 (4 built, 5 not started) |
 | [Search — Solr](search-solr/feature.md) | #2811 | Make every transcribed line findable across all volumes: a Solr index fed automatically from the results bucket, a search service, and a search page that opens the hit in the viewer with the line highlighted | 13 draft, unreviewed — not in Azure yet |
+| [ATR as a Service (ATRaaS)](atr-as-a-service/feature.md) | #2831 | The batch system as a free, registration-based service for public sector and universities: organisations, a public API, uploads, quotas, retention and a thin web UI on top of htrflow-batch | 18 (0 built, 18 not started) |
 
 The remaining feature under the epic — *Quality prediction step* (#2770)
 — is tracked in the `htrflow` repository; where a story here depends on it,

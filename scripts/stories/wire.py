@@ -101,7 +101,10 @@ B_after = ["B17", "B18", "B19", "B20"]
 U_impl = ["U01", "U02", "U03", "U08"]
 U_open = ["U04", "U05", "U06", "U07", "U09"]
 S_all = [f"S{i:02d}" for i in range(2, 15)]
-allids = set(B_impl + B_prod + B_after + U_impl + U_open + S_all + C_impl + C_open)
+T_all = [f"T{i:02d}" for i in range(1, 19)]
+allids = set(
+    B_impl + B_prod + B_after + U_impl + U_open + S_all + T_all + C_impl + C_open
+)
 missing = set(files) - allids
 extra = allids - set(files)
 assert not missing and not extra, (missing, extra)
@@ -193,6 +196,20 @@ elsewhere: S07 (a search page in the same SPA — Search's deliverable), U05
 )
 open(p, "w").write(s)
 
+# atr-as-a-service
+p = F + "atr-as-a-service/feature.md"
+s = open(p).read()
+head = s[: s.index("## Stories")]
+open(p, "w").write(
+    head
+    + f"""## Stories
+
+### Inte påbörjade — i ordning
+
+{rows(T_all, "atr-as-a-service")}
+"""
+)
+
 # index
 p = F + "index.md"
 s = open(p).read()
@@ -225,13 +242,20 @@ desc = {
         "Make every transcribed line findable across all volumes: a Solr index fed automatically from the results bucket, a search service, and a search page that opens the hit in the viewer with the line highlighted",
         f"{len(S_all)} draft, unreviewed — not in Azure yet",
     ),
+    "atraas": (
+        "ATR as a Service (ATRaaS)",
+        "atr-as-a-service",
+        "#2831",
+        "The batch system as a free, registration-based service for public sector and universities: organisations, a public API, uploads, quotas, retention and a thin web UI on top of htrflow-batch",
+        f"{len(T_all)} (0 built, {len(T_all)} not started)",
+    ),
 }
 table = (
     "| Feature | Azure | What it is, in one sentence | Stories |\n|---|---|---|---|\n"
     + "".join(
         f"| [{n}]({d}/feature.md) | {az} | {what} | {cnt} |\n"
         for n, d, az, what, cnt in [
-            desc[k] for k in ("batch", "status", "uv4", "search")
+            desc[k] for k in ("batch", "status", "uv4", "search", "atraas")
         ]
     )
 )
@@ -311,6 +335,11 @@ nav = (
       {"Feature #2811" = "features/search-solr/feature.md"},
 """
     + navrows(S_all, "search-solr")
+    + """    ]},
+    {"ATR as a Service" = [
+      {"Feature #2831" = "features/atr-as-a-service/feature.md"},
+"""
+    + navrows(T_all, "atr-as-a-service")
     + """    ]},
   ]},
 """
