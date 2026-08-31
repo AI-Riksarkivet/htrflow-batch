@@ -64,8 +64,6 @@ how it behaves at archive scale, and how it is tested.
 | [C10](stories/C10-status-page-dataflow-diagram.md) | Status page data-flow diagram |
 
 B05, B22 and B32 were created under the Batch feature and moved here; they
-keep their ids (ids are stable, never renumbered; C01–C03 — Swedish UI,
-accessibility statement, visual identity — were retired when the audience
-was settled as data scientists, and their numbers are not reused). Related stories
+keep their ids (ids are stable, never renumbered). Related stories
 elsewhere: S07 (a search page in the same SPA — Search's deliverable), U05
 (the address the page is served at), B20 (the quality score shown per page).
