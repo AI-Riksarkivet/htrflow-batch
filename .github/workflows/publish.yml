@@ -116,11 +116,17 @@ jobs:
           push-to-registry: true
 
       - name: SBOM (Trivy, SPDX)
+        # Trivy runs in its own container: pass registry credentials so a
+        # private (or freshly auto-created) Docker Hub repository still scans.
         run: |
           docker run --rm -v "$PWD:/out" \
+            -e TRIVY_USERNAME -e TRIVY_PASSWORD \
             aquasec/trivy:0.65.0@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436 \
-            image --format spdx-json --output /out/sbom.spdx.json \
+            image --skip-version-check --format spdx-json --output /out/sbom.spdx.json \
             "${IMAGE}@${{ steps.digest.outputs.digest }}"
+        env:
+          TRIVY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          TRIVY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: SBOM attestation
         uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
