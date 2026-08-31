@@ -1,5 +1,11 @@
 # htrflow-batch
 
+> **⚠️ Not for use yet.** This repository is under active development at
+> Riksarkivet's AI lab and is not ready for others to run: interfaces,
+> chart values and the campaigns format still change without notice, and
+> the published images are for our own dev cluster. Watch the releases;
+> we will remove this notice when there is a version we stand behind.
+
 Kueue-gated batch HTR platform around the [htrflow](https://github.com/AI-Riksarkivet/htrflow)
 image: a thin wrapper streams archival volumes page-by-page from IIIF into
 htrflow, verifies every output, and publishes ALTO/PAGE results plus an IIIF

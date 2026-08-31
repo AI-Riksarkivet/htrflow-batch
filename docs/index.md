@@ -1,5 +1,11 @@
 # htrflow-batch
 
+!!! warning "Not for use yet"
+    This project is under active development at Riksarkivet's AI lab and is
+    not ready for others to run: interfaces, chart values and the campaigns
+    format still change without notice, and the published images are for our
+    own dev cluster. This notice goes when there is a version we stand behind.
+
 Kueue-gated batch HTR platform around the htrflow image — streaming
 per-page results to S3 with IIIF viewer output, driven from a campaigns
 git repo.
