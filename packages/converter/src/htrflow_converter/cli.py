@@ -26,9 +26,9 @@ def main(argv: list[str] | None = None) -> int:
     validate_p = sub.add_parser("validate", help="validate campaigns/ and pipelines/")
     validate_p.add_argument("repo_dir")
     args = parser.parse_args(argv)
-    if args.command == "validate":
-        return _validate(args.repo_dir)
-    return 1
+    # "validate" is the only registered subcommand and add_subparsers(required=True)
+    # rejects anything else, so this is the only reachable command.
+    return _validate(args.repo_dir)
 
 
 if __name__ == "__main__":

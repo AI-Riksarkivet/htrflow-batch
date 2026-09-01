@@ -95,6 +95,71 @@ def test_missing_converter_yaml_falls_back_to_defaults():
     assert not any("converter.yaml" in p for p in exc_info.value.problems)
 
 
+def test_bad_window_reports_message_and_does_not_abort_other_files():
+    """Fix round 1 #1: a non-numeric window: must not crash load() (it used
+    to raise ValueError uncaught) and the second campaign's own problem in
+    the same repo must still be reported."""
+    root = FIXTURES / "bad" / "window"
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    problems = exc_info.value.problems
+    assert any(
+        "window must be a positive integer" in p and "not-a-number" in p
+        for p in problems
+    ), problems
+    assert any("duplicate volume id" in p for p in problems), problems
+
+
+def test_allowed_image_repos_rejects_sibling_prefix():
+    """Fix round 1 #2: ghcr.io/riksarkivet-evil must not be admitted by an
+    allow-list entry of ghcr.io/riksarkivet (path-boundary match)."""
+    root = FIXTURES / "bad" / "image-repo-sibling"
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    problems = exc_info.value.problems
+    assert any("not under an allowed repository" in p for p in problems), problems
+
+
+def test_allowed_image_repos_accepts_legitimate_repo():
+    root = GOOD / "allowed-repo"
+    campaigns, pipelines, cfg = _load(root)
+    assert cfg.allowed_image_repos == ["ghcr.io/riksarkivet"]
+    assert pipelines["demo-v1"].image.startswith("ghcr.io/riksarkivet/")
+
+
+def test_converter_yaml_errors_are_one_problem_per_field():
+    """Fix round 1 #3: two bad fields in converter.yaml must surface as two
+    separate problems, not one multi-line pydantic error string."""
+    root = FIXTURES / "bad" / "converter-two-errors"
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    converter_problems = [
+        p for p in exc_info.value.problems if p.startswith("converter.yaml:")
+    ]
+    assert len(converter_problems) == 2, converter_problems
+    assert all("\n" not in p for p in converter_problems)
+    assert any("window" in p for p in converter_problems)
+    assert any("bogus_field" in p for p in converter_problems)
+
+
+def test_require_model_revision_true_flags_step_missing_revision():
+    """Ruling: require_model_revision walks every step's model_settings,
+    not a single top-level Pipeline.model_revision."""
+    root = FIXTURES / "bad" / "require-model-revision"
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    problems = exc_info.value.problems
+    assert any("needs a 40-hex revision" in p for p in problems), problems
+
+
+def test_require_model_revision_false_does_not_flag_missing_revision():
+    # the good fixture's demo-v1.yaml has a step with model_settings.model
+    # set and no revision; require_model_revision defaults to False there.
+    campaigns, pipelines, cfg = _load(GOOD)
+    assert cfg.require_model_revision is False
+    assert pipelines["demo-v1"].model_revision == ""
+
+
 def test_volume_source_line_manifest_shape():
     v = Volume(id="R1", manifest="https://example.org/m")
     assert v.source_line() == "R1\thttps://example.org/m"
