@@ -15,6 +15,16 @@ controller instead of on JSON files in a bucket.
 the per-volume S3 result contents (`manifest.json`, ALTO/PAGE, `iiif.json`), Kueue queues,
 NetworkPolicies, supply chain, viewer image, GitOps of campaigns.
 
+**Size and cleanliness are requirements, not hopes.** The system must stay
+small enough for one person to hold in their head. Budgets, checked in CI
+(`scripts/loc-budget.sh`, fails the build when exceeded), non-test lines:
+controller ≤ 1 500 Go · wrapper ≤ 1 500 Python · frontend ≤ 2 500 TS/Svelte ·
+chart ≤ 700 template lines · one language per layer (Go / Python / Svelte), no
+fourth · no feature without a story id in its commit message · dead code is
+deleted in the same PR that makes it dead, never kept "for reference".
+Reference point today: reconciler 2 580, wrapper 1 833, frontend 3 952, chart
+1 405.
+
 **Non-goals (later stories):** external API with auth (T01/T03), uploads (T04),
 per-org quotas beyond one Kueue queue per namespace (T05), retention (T10).
 The design leaves room for them; it does not build them.
@@ -39,6 +49,11 @@ The design leaves room for them; it does not build them.
 | D14 | **Volume pair claims**: Job name = `hash(namespace, pipeline, volume)`; a volume already running/done under another CR in the namespace is marked `I` (`ClaimedBy=<cr>`) | Two CRs can never write one result prefix. |
 | D15 | **Submission interleaves across CRs before Kueue** (ported round-robin planner); the global in-flight cap counts *admitted* Jobs, not created ones | Prevents one CR filling Kueue's FIFO and starving the next. |
 | D16 | **Single API version `v1alpha1`** until T03 stabilises the shape; no conversion webhooks | Cheapest correct choice; ATRaaS will reshape it once. |
+| D17 | **Warm-up belongs to the Pipeline reconcile**: one warm-up Job per (pipeline, namespace) fills the model-cache PVC; `Pipeline` is `Ready` only when its digest is valid **and** the namespace's warm-up `Warmed`. Jobs keep `HF_HUB_OFFLINE=1` | Today's gate, ported; B35 (models baked into images) removes it later. |
+| D18 | **Labels move to the CRD group**: `htrflow.riksarkivet.se/{volume,pipeline,job,managed-by}`; the `app: htrflow-batch` label the NetworkPolicies select on stays | One naming scheme. |
+| D19 | **CR deletion never touches S3.** Cancel/prune leaves results; retention is T10's | ownerReference GC must not read as "results cascade". |
+| D20 | **Deterministic Job names** `htr-<sha1(ns/pipeline/volume)[:12]>`; a transient failure deletes the failed Job (after reading its termination message) before re-creating it | Claim check (D14) stays one name lookup; no attempt suffixes. |
+| D21 | **Out of scope, boundary stated**: per-tenant namespace + `LocalQueue` creation (chart for Riksarkivet now; a `Tenant` CR or rask's `Project` under T05); the read endpoint becomes its own Deployment when T03 adds auth | Same code, separate scaling later. |
 
 ## 3. API
 
@@ -102,13 +117,16 @@ emitted on the CR for phase changes, permanent failures and claim conflicts
 3. Pipeline `Ready`? else condition `Stalled/PipelineNotReady`, stop (re-run when Pipeline changes — watch with a mapping).
 4. **Validate** volumes still `P`: HEAD/GET the manifest with the same caps as today (`MANIFEST_MAX_BYTES`), permanent failures → `I`, transient → stay `P` with backoff. Bounded per reconcile (50), like `maxValidationsPerTick`.
 5. **Resume check**: a volume whose `manifest.json` already exists in S3 with the same `pipeline_sha256` → `D` without a Job (today's "done detection"). One HEAD per pending volume, once; result cached in status.
-6. **Submit (D14, D15)**: the planner interleaves `P` volumes across the namespace's CRs by creation time; while this CR's running < `spec.window` and globally *admitted* Jobs < cap: claim check (a Job named `hash(ns,pipeline,volume)` owned by another CR → `I:ClaimedBy=<cr>`), then create the Job — the `jobspec.py` port: labels `batch.htrflow/*`, `kueue.x-k8s.io/queue-name: <namespace LocalQueue>`, `backoffLimit: 0`, `podFailurePolicy` (exit 13 → FailJob, 143 → Ignore), `activeDeadlineSeconds = max(min, pages × perPage)`, `ttlSecondsAfterFinished`, ownerReference → the CR, env contract unchanged. Fairness across CRs in a namespace: round-robin by CR creation time (today's planner).
+6. **Submit (D14, D15)**: the planner interleaves `P` volumes across the namespace's CRs by creation time; while this CR's running < `spec.window` and globally *admitted* Jobs < cap: claim check (a Job named `hash(ns,pipeline,volume)` owned by another CR → `I:ClaimedBy=<cr>`), then create the Job — the `jobspec.py` port: labels `htrflow.riksarkivet.se/*` (D18), `kueue.x-k8s.io/queue-name: <namespace LocalQueue>`, `S3_PREFIX=<namespace>/` unless `--legacy-layout` (the wrapper already honours it), `backoffLimit: 0`, `podFailurePolicy` (exit 13 → FailJob, 143 → Ignore), `activeDeadlineSeconds = max(min, pages × perPage)`, `ttlSecondsAfterFinished`, ownerReference → the CR, env contract unchanged. Fairness across CRs in a namespace: round-robin by CR creation time (today's planner).
 7. **Job events** (watch owned Jobs): Succeeded → `D`; Failed with permanent reason → `F:n` final; Failed transient with attempts < `maxAttempts` → back to `P` (attempt counter in the code); ≥ max → `F:n`. Append to `failures` (capped), copy the wrapper's termination message as `reason`.
 8. Recompute `counts`, `phase`; `Succeeded` when pending+running = 0 and failed = 0; `Failed` when pending+running = 0 and failed > 0.
 9. Metrics: `htrflow_volumes_total{namespace,pipeline,outcome}`, `htrflow_pages_total{…}` (from `manifest.json` page count), `htrflow_volume_seconds` histogram, `htrflow_jobs_inflight` gauge.
 
 **Pipeline reconcile** (spec immutable, D13): verify digest form, optional model revision rule, render
-steps → sha256 → status; fan out ConfigMaps to namespaces with referencing jobs.
+steps → sha256 → status; fan out ConfigMaps to namespaces with referencing jobs;
+per such namespace ensure the warm-up Job (`build_warmup_job` port: CPU-only,
+outside Kueue, `python -m htrflow_batch.warmup`, never TTL-reaped) and set
+`Warmed` per namespace in status (D17). `Ready` = digest valid ∧ warmed.
 
 **Dropped from the reconciler**: Git clone, Lease, tick deadline, `status.json`,
 `attempts.json`, `validation.json`, `volumes.json`, thumbnails,
