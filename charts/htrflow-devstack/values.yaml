@@ -1,0 +1,84 @@
+# PoC-only in-cluster dependencies for charts/htrflow-batch, all off by
+# default. Install into the SAME namespace as the htrflow-batch release (the
+# two charts share no Helm values — they wire together by naming
+# convention only, documented per key below) — see README.md.
+
+# Must match charts/htrflow-batch's `s3.bucket` / `s3.existingSecret`
+# defaults (both default to the same names) so the Secret and bucket this
+# chart creates are the ones the platform's pods already expect.
+s3:
+  bucket: htr-results
+  secretName: htr-batch-s3
+
+rustfs:
+  enabled: false
+  # Root credentials of the in-cluster RustFS and of the generated S3
+  # Secret. Empty = generated once (random, 32 chars) and re-read from the
+  # existing Secret on every upgrade (Helm `lookup`); `helm template` has
+  # no cluster to look up and renders fresh random values each time.
+  accessKey: ""
+  secretKey: ""
+  nodePortS3: 30900
+  console:
+    enabled: false       # RustFS admin console (port 9001) — off: RUSTFS_CONSOLE_ENABLE=false, no NodePort
+    nodePort: 30901
+  # Sizing (O18): results ≈ 1–3 MB per page (ALTO + PAGE + JPEG + log);
+  # 5Gi ≈ 2–4k pages. Nothing is ever deleted by the platform — grow the
+  # PVC (local-path cannot resize; recreate) or prune old pipelines by hand.
+  storage:
+    size: 5Gi
+    storageClass: local-path
+  # Bucket setup Job (Helm post-install/upgrade hook): creates s3.bucket
+  # (and gitDaemon.bucket), sets the anonymous-read policy and CORS.
+  init:
+    enabled: true
+    image: docker.io/amazon/aws-cli@sha256:f0dcd994da5c36ab09becf4259bba4c45ed4ecfd03d51c701912f4d8425b2d49
+    corsOrigins: ["*"]   # tighten to the viewer origin beyond the PoC
+  # Anonymous GET on status/logs/* (per-volume run logs). The campaign
+  # browser links them, so the PoC keeps them public; they can carry a
+  # tokenised private IIIF URL on failure (audit X14) — set false and serve
+  # the log viewer through an authenticated proxy to close that.
+  # attempts.json, validation.json, failures/* and warmup/* always need
+  # credentials; <pipeline>/<volume>/*, sources/* and status/status.json
+  # are always anonymous-readable (the viewer fetches them directly).
+  publicLogs: true
+
+registry:
+  enabled: false
+  nodePort: 30500
+  image: docker.io/library/registry@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33
+  # The registry runs as this uid with a read-only root filesystem. A data
+  # PVC written by an older root-running registry must be chown'ed once
+  # (`chown -R 1000:1000 /var/lib/registry` from a throwaway pod; local-path
+  # ignores fsGroup). 0 = keep running as root.
+  runAsUser: 1000
+  # Sizing (O18): 60Gi ≈ 5 GPU wrapper images (~10 GB each). The registry
+  # has no GC of its own: delete tags over the API, then run
+  # `registry garbage-collect /etc/distribution/config.yml` in the pod.
+  storage:
+    size: 60Gi
+    storageClass: local-path
+
+nvidiaDevicePlugin:
+  # Renders RuntimeClass `nvidia` + the kube-system device-plugin DaemonSet.
+  # A cluster that already carries hand-applied copies must adopt them
+  # first (see README, "Adopting hand-applied resources").
+  enabled: false
+  image: nvcr.io/nvidia/k8s-device-plugin@sha256:25cc340fe6fd53c101e16fc452f503e7a92c219c64a80ed5381784b522dbbf77
+
+# In-cluster `git://` daemon serving a bare campaigns repo seeded from the
+# RustFS bucket (`<bucket>/<repo>.git`, pushed with `aws s3 sync` after
+# `git update-server-info`; git:// is what gives a clone `--depth 1`).
+# Historically fed the GitOps reconciler (removed in B63); kept here as a
+# PoC convenience for anyone still cloning the campaigns repo in-cluster —
+# nothing in charts/htrflow-batch talks to it any more (D12: campaigns are
+# rendered by packages/converter and `kubectl apply`d, not fetched by a
+# controller). PoC-only: alpine/git ships no git-daemon, so the pod installs
+# it at start (root, writable rootfs, egress to the Alpine CDN) — the one
+# pod in the namespace that is not restricted-clean.
+gitDaemon:
+  enabled: false
+  image: docker.io/alpine/git@sha256:6f8eae2205a85c51106a9650e574a37fb1d5e4f645e5f6ea57cb57b9462cd4cf
+  bucket: git-repos
+  repo: campaigns-local
+  seedUrl: ""            # default http://rustfs.<ns>.svc.cluster.local:9000/<bucket>/<repo>.git

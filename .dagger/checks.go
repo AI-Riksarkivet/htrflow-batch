@@ -4,6 +4,8 @@ import (
 	"context"
 	"dagger/htrflow-batch/internal/dagger"
 	"fmt"
+	"regexp"
+	"strings"
 )
 
 // ruff and ty come from the workspace venv (`uv run --no-sync`), never `uvx`:
@@ -109,17 +111,68 @@ func (m *HtrflowBatch) CheckFrontend(
 	return "frontend passed", nil
 }
 
-// Chart render inputs: defaults, and ci/full-values.yaml with every optional
-// feature on (no cluster lookups). Release/namespace mirror .env.example.
-var chartRenders = []struct{ name, values string }{
-	{"default", ""},
-	{"full", "/chart/ci/full-values.yaml"},
+// chartRender is one helm lint + helm template invocation: an optional
+// values file (relative to the chart's mounted root) plus extra --set
+// overrides for values the chart now `fail`s without outside a real cluster
+// (the API's digest gate, the apiserver CIDR the auto-lookup cannot reach).
+type chartRender struct {
+	name   string
+	values string
+	sets   []string
 }
 
-// CheckChart lints and renders the Helm chart on defaults and on
-// ci/full-values.yaml, then validates the rendered manifests with kubeconform
-// (-strict, unknown CRD kinds skipped). `make helm-template` is the local
-// twin (audit T2/T8).
+// digestZero is a syntactically valid (but unpullable) placeholder digest —
+// same shape `docs/getting-started` tells operators to swap for a real one.
+var digestZero = "sha256:" + strings.Repeat("0", 64)
+
+// Prod chart render inputs: "default" carries just enough --set to get past
+// the chart's required-value guards with no cluster to `lookup` against
+// (mirrors the command in the chart README / task brief); "full" turns on
+// every optional feature via ci/full-values.yaml. Release/namespace mirror
+// .env.example.
+var prodChartRenders = []chartRender{
+	{name: "default", sets: []string{
+		"publicResultsBase=https://x/",
+		"network.apiServer.cidr=10.16.51.10/32",
+		"api.image=docker.io/riksarkivet/htrflow-api@" + digestZero,
+	}},
+	{name: "full", values: "ci/full-values.yaml"},
+}
+
+// The devstack chart's own values are all `enabled: false` by default, so
+// "default" renders nothing (still worth lint+template-ing); "full" turns on
+// RustFS, the registry, the nvidia device plugin and the git daemon.
+var devstackChartRenders = []chartRender{
+	{name: "default"},
+	{name: "full", values: "ci/full-values.yaml"},
+}
+
+// docSepRe splits a multi-document `helm template` render on its `---`
+// document separators.
+var docSepRe = regexp.MustCompile(`(?m)^---\s*$`)
+
+// hasNamedDeployment reports whether the rendered manifest contains a
+// Deployment object named exactly `name` (kind and name checked within the
+// same YAML document, not just present anywhere in the file).
+func hasNamedDeployment(content, name string) bool {
+	nameLine := regexp.MustCompile(`(?m)^\s*name:\s*` + regexp.QuoteMeta(name) + `\s*$`)
+	for _, doc := range docSepRe.Split(content, -1) {
+		if strings.Contains(doc, "kind: Deployment") && nameLine.MatchString(doc) {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckChart lints and renders both Helm charts — the prod chart
+// (charts/htrflow-batch) on its digest/CIDR-complete defaults and on
+// ci/full-values.yaml, and the PoC-only devstack chart
+// (charts/htrflow-devstack) the same way — then asserts on the prod chart's
+// renders (B63 Task 5: the reconciler CronJob is gone, the read API
+// Deployment always renders, and no devstack-labelled object leaks into the
+// prod chart) before validating every render with kubeconform (-strict,
+// unknown CRD kinds skipped). `make helm-template` is the local twin (audit
+// T2/T8).
 func (m *HtrflowBatch) CheckChart(
 	ctx context.Context,
 	// +defaultPath="/"
@@ -132,28 +185,62 @@ func (m *HtrflowBatch) CheckChart(
 	helm := dag.Container().
 		From(helmImage).
 		WithDirectory("/chart", source.Directory("charts/htrflow-batch")).
+		WithDirectory("/chart-devstack", source.Directory("charts/htrflow-devstack")).
 		WithExec([]string{"mkdir", "-p", "/out"})
-	for _, r := range chartRenders {
-		lint := []string{"helm", "lint", "/chart"}
-		template := []string{"helm", "template", "htr", "/chart", "-n", "htr-batch"}
-		if r.values != "" {
-			lint = append(lint, "-f", r.values)
-			template = append(template, "-f", r.values)
+
+	charts := []struct {
+		dir, prefix string
+		renders     []chartRender
+	}{
+		{"/chart", "prod-", prodChartRenders},
+		{"/chart-devstack", "devstack-", devstackChartRenders},
+	}
+	var outNames []string
+	for _, c := range charts {
+		for _, r := range c.renders {
+			lint := []string{"helm", "lint", c.dir}
+			template := []string{"helm", "template", "htr", c.dir, "-n", "htr-batch"}
+			if r.values != "" {
+				lint = append(lint, "-f", c.dir+"/"+r.values)
+				template = append(template, "-f", c.dir+"/"+r.values)
+			}
+			for _, s := range r.sets {
+				lint = append(lint, "--set", s)
+				template = append(template, "--set", s)
+			}
+			outName := c.prefix + r.name
+			helm = helm.
+				WithExec(lint).
+				WithExec(template, dagger.ContainerWithExecOpts{RedirectStdout: "/out/" + outName + ".yaml"})
+			outNames = append(outNames, outName)
 		}
-		helm = helm.
-			WithExec(lint).
-			WithExec(template, dagger.ContainerWithExecOpts{RedirectStdout: "/out/" + r.name + ".yaml"})
 	}
 	if _, err := helm.Sync(ctx); err != nil {
 		return "", fmt.Errorf("helm lint/template failed: %w", err)
 	}
 
+	for _, name := range []string{"prod-default", "prod-full"} {
+		content, err := helm.File("/out/" + name + ".yaml").Contents(ctx)
+		if err != nil {
+			return "", fmt.Errorf("reading rendered %s: %w", name, err)
+		}
+		if strings.Contains(content, "kind: CronJob") {
+			return "", fmt.Errorf("prod chart (%s) renders a CronJob: the reconciler must be gone (B63)", name)
+		}
+		if !hasNamedDeployment(content, "htrflow-api") {
+			return "", fmt.Errorf("prod chart (%s) is missing the htrflow-api Deployment", name)
+		}
+		if strings.Contains(content, "app.kubernetes.io/component: devstack") {
+			return "", fmt.Errorf("prod chart (%s) renders a devstack-labelled object: devstack moved to its own chart", name)
+		}
+	}
+
 	kubeconform := dag.Container().From(kubeconformImage)
 	kubeconform = m.withCaBundle(kubeconform, caBundle)
 	args := []string{"/kubeconform", "-strict", "-ignore-missing-schemas", "-summary"}
-	for _, r := range chartRenders {
-		path := "/render/" + r.name + ".yaml"
-		kubeconform = kubeconform.WithFile(path, helm.File("/out/"+r.name+".yaml"))
+	for _, name := range outNames {
+		path := "/render/" + name + ".yaml"
+		kubeconform = kubeconform.WithFile(path, helm.File("/out/"+name+".yaml"))
 		args = append(args, path)
 	}
 	out, err := kubeconform.WithExec(args).Stdout(ctx)

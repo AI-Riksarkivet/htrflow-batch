@@ -2,12 +2,13 @@
 {{- /*
 Egress allowlists per pod role (docs: development/security, D14) plus a
 namespace-wide default deny with explicit ingress allows for the pods that
-serve something (viewer, RustFS, git daemon). Nothing may reach a Job, a
-warm-up or the reconciler.
+serve something (viewer, the read API). Nothing may reach a batch/warm-up
+Job. The read API's own ingress/egress policy is rendered by templates/api.yaml
+(it needs the same apiserver-CIDR lookup as this file but nothing else here).
 
 kube-router (k3s) evaluates egress AFTER service DNAT, so ClusterIP targets
 are matched by their backing pod (podSelector) or, for the apiserver, by the
-node address it resolves to — hence the `lookup` auto-detection below.
+node address it resolves to — hence the `lookup` auto-detection in api.yaml.
 */}}
 {{- $nodes := list }}
 {{- range .Values.network.nodeCidrs }}{{ $nodes = append $nodes . }}{{ end }}
@@ -18,37 +19,22 @@ node address it resolves to — hence the `lookup` auto-detection below.
     {{- end }}
   {{- end }}
 {{- end }}
-{{- $api := .Values.network.apiServer.cidr }}
-{{- if not $api }}
-  {{- with (lookup "v1" "Endpoints" "default" "kubernetes") }}
-    {{- with (index .subsets 0) }}{{ $api = printf "%s/32" (index .addresses 0).ip }}{{ end }}
-  {{- end }}
-{{- end }}
 {{- $internal := concat .Values.network.clusterCidrs $nodes }}
 {{- $dns := dict "to" (list (dict
       "namespaceSelector" (dict "matchLabels" (dict "kubernetes.io/metadata.name" "kube-system"))
       "podSelector" (dict "matchLabels" (dict "k8s-app" "kube-dns"))))
     "ports" (list (dict "port" 53 "protocol" "UDP") (dict "port" 53 "protocol" "TCP")) }}
-{{- $s3 := list }}
-{{- if .Values.devStack.rustfs.enabled }}
-  {{- $s3 = append $s3 (dict "to" (list (dict "podSelector" (dict "matchLabels" (dict "app" "rustfs")))) "ports" (list (dict "port" 9000))) }}
-{{- end }}
+{{- /*
+S3 egress for batch Jobs: an in-namespace `app: rustfs` pod is always
+allowed (a no-op podSelector match when charts/htrflow-devstack's RustFS
+isn't installed — the two charts share no values) plus any CIDR-based real
+endpoint from network.s3Cidrs.
+*/}}
+{{- $s3 := list (dict "to" (list (dict "podSelector" (dict "matchLabels" (dict "app" "rustfs")))) "ports" (list (dict "port" 9000))) }}
 {{- if .Values.network.s3Cidrs }}
   {{- $blocks := list }}
   {{- range .Values.network.s3Cidrs }}{{ $blocks = append $blocks (dict "ipBlock" (dict "cidr" .)) }}{{ end }}
   {{- $s3 = append $s3 (dict "to" $blocks) }}
-{{- end }}
-{{- $public := list }}
-{{- range .Values.network.reconciler.egressCidrs }}
-  {{- /* `except` entries must be strict subsets of `cidr` (the API server
-       rejects the object otherwise), so the cluster/node ranges are carved
-       out only of a catch-all block; a specific public range cannot contain
-       them and needs no carve-out. */}}
-  {{- if eq . "0.0.0.0/0" }}
-  {{- $public = append $public (dict "ipBlock" (dict "cidr" . "except" $internal)) }}
-  {{- else }}
-  {{- $public = append $public (dict "ipBlock" (dict "cidr" .)) }}
-  {{- end }}
 {{- end }}
 {{- $anyPublic := list (dict "ipBlock" (dict "cidr" "0.0.0.0/0" "except" $internal)) }}
 {{- $labels := include "htrflow-batch.labels" . }}
@@ -80,8 +66,9 @@ spec:
     - {{ toJson $dns }}
 {{- end }}
 ---
-# Batch Jobs: DNS, S3 and the IIIF origin. No HF Hub, no apiserver, nothing
-# in-cluster — a compromised Job has nowhere to go.
+# Batch Jobs (rendered by the converter, applied outside this chart): DNS, S3
+# and the IIIF origin. No HF Hub, no apiserver, nothing else in-cluster — a
+# compromised Job has nowhere to go.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -131,54 +118,10 @@ spec:
     - to: {{ toJson $anyPublic }}
       ports:
         - { port: 443 }
-{{- if .Values.reconciler.enabled }}
----
-# Reconciler: DNS, the apiserver (it creates Jobs), S3, and the campaigns
-# repo host.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: htr-reconciler
-  namespace: {{ .Release.Namespace }}
-  labels: {{- $labels | nindent 4 }}
-spec:
-  podSelector:
-    matchLabels: { app: htr-reconciler }
-  policyTypes: [Ingress, Egress]
-  egress:
-    - {{ toJson $dns }}
-    {{- if $api }}
-    - to:
-        - ipBlock: { cidr: {{ $api | quote }} }
-      ports:
-        - { port: {{ .Values.network.apiServer.port }} }
-    {{- else }}
-    {{- fail "network.apiServer.cidr is required when the kube-apiserver endpoint cannot be looked up (helm template / no RBAC)" }}
-    {{- end }}
-    {{- range $s3 }}
-    - {{ toJson . }}
-    {{- end }}
-    {{- if $public }}
-    - to: {{ toJson $public }}
-      ports:
-        - { port: 443 }
-        - { port: 22 }
-        - { port: 9418 }
-    {{- end }}
-    {{- if .Values.devStack.gitDaemon.enabled }}
-    - to:
-        - podSelector: { matchLabels: { app: git-daemon } }
-      ports:
-        - { port: 9418 }
-    {{- end }}
-    {{- range .Values.network.reconciler.extraEgress }}
-    - {{ toJson . }}
-    {{- end }}
-{{- end }}
 {{- if .Values.viewer.enabled }}
 ---
-# Viewer: browsers in (NodePort traffic arrives SNAT'd from the node); the
-# static site needs no egress at all.
+# Viewer: browsers in (NodePort traffic arrives SNAT'd from the node); egress
+# to the read API only (proxied at /api/).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -196,80 +139,10 @@ spec:
         {{- end }}
       ports:
         - { port: 8080 }
-{{- end }}
-{{- if .Values.devStack.rustfs.enabled }}
----
-# RustFS: S3 API from anywhere (Jobs, reconciler, init Job, browsers via the
-# NodePort); the console port only when it is enabled. No egress.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: htr-rustfs
-  namespace: {{ .Release.Namespace }}
-  labels: {{- $labels | nindent 4 }}
-spec:
-  podSelector:
-    matchLabels: { app: rustfs }
-  policyTypes: [Ingress, Egress]
-  ingress:
-    - from:
-        - ipBlock: { cidr: "0.0.0.0/0" }
-      ports:
-        - { port: 9000 }
-        {{- if .Values.devStack.rustfs.console.enabled }}
-        - { port: 9001 }
-        {{- end }}
-{{- if .Values.devStack.rustfs.init.enabled }}
----
-# Bucket init hook Job: only RustFS.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: htr-rustfs-init
-  namespace: {{ .Release.Namespace }}
-  labels: {{- $labels | nindent 4 }}
-spec:
-  podSelector:
-    matchLabels: { app: rustfs-init }
-  policyTypes: [Ingress, Egress]
   egress:
-    - {{ toJson $dns }}
     - to:
-        - podSelector: { matchLabels: { app: rustfs } }
+        - podSelector: { matchLabels: { app: htrflow-api } }
       ports:
-        - { port: 9000 }
-{{- end }}
-{{- end }}
-{{- if .Values.devStack.gitDaemon.enabled }}
----
-# git daemon: reconciler in on 9418; out to RustFS (seed clone) and, because
-# alpine/git installs git-daemon at start, the Alpine CDN (public 443/80).
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: htr-git-daemon
-  namespace: {{ .Release.Namespace }}
-  labels: {{- $labels | nindent 4 }}
-spec:
-  podSelector:
-    matchLabels: { app: git-daemon }
-  policyTypes: [Ingress, Egress]
-  ingress:
-    - from:
-        - podSelector: { matchLabels: { app: htr-reconciler } }
-      ports:
-        - { port: 9418 }
-  egress:
-    - {{ toJson $dns }}
-    {{- if .Values.devStack.rustfs.enabled }}
-    - to:
-        - podSelector: { matchLabels: { app: rustfs } }
-      ports:
-        - { port: 9000 }
-    {{- end }}
-    - to: {{ toJson $anyPublic }}
-      ports:
-        - { port: 443 }
-        - { port: 80 }
+        - { port: 8081 }
 {{- end }}
 {{- end }}

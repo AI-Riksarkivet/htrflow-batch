@@ -14,15 +14,11 @@ metadata:
 data:
   # Runtime config for the campaign browser: served same-origin as /config.js
   # so it passes the SPA's CSP (script-src 'self'); an inline script injected
-  # into index.html would be blocked. Points the browser at status.json under
-  # publicResultsBase (browser-reachable, never the in-cluster S3 endpoint).
-  {{- $statusBase := .Values.viewer.statusBase | default .Values.publicResultsBase }}
+  # into index.html would be blocked. API_BASE is same-origin (/api/v1,
+  # proxied to the read API below) — never the in-cluster Service DNS name,
+  # which the browser cannot resolve.
   config.js: |
-    {{- if $statusBase }}
-    window.STATUS_URL = {{ printf "%s/status/status.json" ($statusBase | trimSuffix "/") | quote }};
-    {{- else }}
-    // publicResultsBase / viewer.statusBase unset: the app uses its build-time default.
-    {{- end }}
+    window.API_BASE = "/api/v1";
   default.conf: |
     server {
       listen 8080;
@@ -50,6 +46,11 @@ data:
       # index.html for /).
       location = /log {
         try_files /log.html =404;
+      }
+      # Read API (D8, B63): same-origin so the SPA's CSP connect-src 'self'
+      # covers it and the browser never needs the in-cluster Service DNS name.
+      location /api/ {
+        proxy_pass http://htrflow-api:8081/api/;
       }
     }
 ---
