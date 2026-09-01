@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: campaign-kyrk
+  namespace: htr-test
+data:
+  volumes.txt: "R0001203\thttps://lbiiif.riksarkivet.se/arkis!R0001203/manifest\n\
+    dodsbok-1698\thttps://iiif.example.org/xyz/manifest\nloose-scans\timages:https://example.org/scan1.jpg,https://example.org/scan2.jpg\n"
