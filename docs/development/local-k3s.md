@@ -22,7 +22,6 @@ defaults and is loaded first, so a missing `.env` behaves exactly like it:
 | `HTR_REGISTRY` / `HTR_REGISTRY_NODEPORT` | `127.0.0.1:30500` / `30500` | `poc-push`, `viewer-image` (image names) |
 | `HTR_S3_ENDPOINT` / `HTR_S3_NODEPORT` / `HTR_BUCKET` | `http://localhost:30900` / `30900` / `htr-results` | compose; your own `aws` calls |
 | `HTR_VIEWER_NODEPORT` | `30800` | — |
-| `HTR_DATA_PVC` | `htr-test-data` | documentation only — set the same name in your campaigns repo's `converter.yaml` (`data_pvc`) |
 | `HTRFLOW_DIR` | `~/htrflow` | the arm64 base build's `git describe` |
 | `HTR_DEV_S3_ACCESS_KEY` / `SECRET_KEY` | `rustfsadmin` | the compose stack only — never a cluster |
 

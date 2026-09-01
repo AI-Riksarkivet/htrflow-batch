@@ -157,7 +157,7 @@ Or skip the browser and ask the cluster directly:
 ```bash
 kubectl -n htr-batch get job trolldomskommissionen \
   -o jsonpath='{.status.completedIndexes} done / {.status.failedIndexes} failed{"\n"}'
-curl -s http://<node>:30900/api/v1/jobs | jq .
+curl -s http://<node>:30800/api/v1/jobs | jq .
 ```
 
 ## Rebuilding the viewer image
