@@ -1,6 +1,6 @@
 # TranscriptionJob controller — design (B63, #2978)
 
-Status: draft for review · 2026-08-31 · replaces the CronJob reconciler and its
+Status: reviewed 2026-08-31 (open points resolved, review issues folded in) · replaces the CronJob reconciler and its
 S3 state files with a CRD + controller. Approved direction in chat; this is the
 written form.
 
@@ -12,7 +12,7 @@ else keeps job state. The codebase shrinks; ATRaaS (T01–T18) builds on the
 controller instead of on JSON files in a bucket.
 
 **Keep unchanged:** the wrapper (`packages/wrapper`) and its env/exit contract,
-S3 result layout (`<pipeline>/<volume>/…`, `manifest.json`), Kueue queues,
+the per-volume S3 result contents (`manifest.json`, ALTO/PAGE, `iiif.json`), Kueue queues,
 NetworkPolicies, supply chain, viewer image, GitOps of campaigns.
 
 **Non-goals (later stories):** external API with auth (T01/T03), uploads (T04),
@@ -33,6 +33,12 @@ The design leaves room for them; it does not build them.
 | D8 | **Status page reads `/api/v1/jobs` served by the controller** (read-only JSON projection of CRs), proxied by the viewer nginx | `status.json` goes; this endpoint is the seed of T03. |
 | D9 | **Campaign repo holds CR manifests**; Argo CD applies them in dev/prod, `make campaigns-apply` on the PoC | The controller never clones Git. Migration script converts today's YAML. |
 | D10 | **devStack leaves the prod chart** into `charts/htrflow-devstack` | 470 template lines of PoC-only objects out of the install path. |
+| D11 | **Jobs are the truth for in-flight work; status is derived.** An `R` entry with no owned Job is reset to `P` (one transient attempt) on every reconcile | Survives controller restarts, Job TTL and manual deletes; status can never strand a volume. |
+| D12 | **Results key = `<namespace>/<pipeline>/<volume>/`**; controller flag `--legacy-layout` keeps `<pipeline>/<volume>/` for Riksarkivet's existing data | Tenant isolation (T13) needs the namespace dimension; deciding it before code avoids a migration later. |
+| D13 | **Immutable specs via CEL** (`x-kubernetes-validations: self == oldSelf`): all of `Pipeline.spec`; `TranscriptionJob.spec.pipeline` and `.volumes`. Mutable: `paused`, `window`, `priority` | A changed pipeline is a new name (`demo-v2`); no grandfathering, no webhook. |
+| D14 | **Volume pair claims**: Job name = `hash(namespace, pipeline, volume)`; a volume already running/done under another CR in the namespace is marked `I` (`ClaimedBy=<cr>`) | Two CRs can never write one result prefix. |
+| D15 | **Submission interleaves across CRs before Kueue** (ported round-robin planner); the global in-flight cap counts *admitted* Jobs, not created ones | Prevents one CR filling Kueue's FIFO and starving the next. |
+| D16 | **Single API version `v1alpha1`** until T03 stabilises the shape; no conversion webhooks | Cheapest correct choice; ATRaaS will reshape it once. |
 
 ## 3. API
 
@@ -72,7 +78,7 @@ spec:
 status:
   phase: Pending|Validating|Running|Paused|Succeeded|Failed
   counts: {total, pending, running, done, failed, invalid}
-  volumes: {R0001203: "D", loc-mal2459400: "R", htr-demo: "F:2"}   # P pending · V validating · R running · D done · F:<attempts> failed · I invalid
+  volumes: {R0001203: "D:143", loc-mal2459400: "R:88", htr-demo: "F:2"}   # P pending · V validating · R:<pages> running · D:<pages> done · F:<attempts> failed · I:<reason> invalid — pages recorded after the manifest fetch (drives activeDeadlineSeconds)
   failures:                               # last 50, newest first
     - {volume, attempt, reason, exitCode, log: <s3 key>, at}
   resultsBase: https://…/results/          # publicResultsBase + pipeline
@@ -85,20 +91,23 @@ pipeline exists) move into the CRD schema where OpenAPI can express them
 
 ## 4. Controller behaviour
 
-One reconciler per CRD, leader-elected, single replica.
+One reconciler per CRD, leader-elected, single replica. Kubernetes Events are
+emitted on the CR for phase changes, permanent failures and claim conflicts
+(`kubectl describe transcriptionjob` tells the story; `failures[]` is the tail).
 
 **TranscriptionJob reconcile** (event-driven; requeue only on transient errors):
 1. Finalizer present? else add. `deletionTimestamp` set → delete owned Jobs, remove finalizer.
+0. **Reconcile in-flight truth (D11)**: list owned Jobs; every `R` without a Job → `P` (+1 transient attempt); every Job whose volume is not `R` → adopt its state.
 2. `spec.paused` → delete running Jobs (SIGTERM → wrapper exit 143 keeps done pages), phase `Paused`, stop.
 3. Pipeline `Ready`? else condition `Stalled/PipelineNotReady`, stop (re-run when Pipeline changes — watch with a mapping).
 4. **Validate** volumes still `P`: HEAD/GET the manifest with the same caps as today (`MANIFEST_MAX_BYTES`), permanent failures → `I`, transient → stay `P` with backoff. Bounded per reconcile (50), like `maxValidationsPerTick`.
 5. **Resume check**: a volume whose `manifest.json` already exists in S3 with the same `pipeline_sha256` → `D` without a Job (today's "done detection"). One HEAD per pending volume, once; result cached in status.
-6. **Submit**: while running < `spec.window` and global in-flight < controller cap: create a Job for the next `P` volume — the `jobspec.py` port: labels `batch.htrflow/*`, `kueue.x-k8s.io/queue-name: <namespace LocalQueue>`, `backoffLimit: 0`, `podFailurePolicy` (exit 13 → FailJob, 143 → Ignore), `activeDeadlineSeconds = max(min, pages × perPage)`, `ttlSecondsAfterFinished`, ownerReference → the CR, env contract unchanged. Fairness across CRs in a namespace: round-robin by CR creation time (today's planner).
+6. **Submit (D14, D15)**: the planner interleaves `P` volumes across the namespace's CRs by creation time; while this CR's running < `spec.window` and globally *admitted* Jobs < cap: claim check (a Job named `hash(ns,pipeline,volume)` owned by another CR → `I:ClaimedBy=<cr>`), then create the Job — the `jobspec.py` port: labels `batch.htrflow/*`, `kueue.x-k8s.io/queue-name: <namespace LocalQueue>`, `backoffLimit: 0`, `podFailurePolicy` (exit 13 → FailJob, 143 → Ignore), `activeDeadlineSeconds = max(min, pages × perPage)`, `ttlSecondsAfterFinished`, ownerReference → the CR, env contract unchanged. Fairness across CRs in a namespace: round-robin by CR creation time (today's planner).
 7. **Job events** (watch owned Jobs): Succeeded → `D`; Failed with permanent reason → `F:n` final; Failed transient with attempts < `maxAttempts` → back to `P` (attempt counter in the code); ≥ max → `F:n`. Append to `failures` (capped), copy the wrapper's termination message as `reason`.
 8. Recompute `counts`, `phase`; `Succeeded` when pending+running = 0 and failed = 0; `Failed` when pending+running = 0 and failed > 0.
 9. Metrics: `htrflow_volumes_total{namespace,pipeline,outcome}`, `htrflow_pages_total{…}` (from `manifest.json` page count), `htrflow_volume_seconds` histogram, `htrflow_jobs_inflight` gauge.
 
-**Pipeline reconcile**: verify digest form, optional model revision rule, render
+**Pipeline reconcile** (spec immutable, D13): verify digest form, optional model revision rule, render
 steps → sha256 → status; fan out ConfigMaps to namespaces with referencing jobs.
 
 **Dropped from the reconciler**: Git clone, Lease, tick deadline, `status.json`,
@@ -109,25 +118,33 @@ result prefix with no CR is simply not shown; `kubectl` is the inventory).
 ## 5. Read API for the status page (D8)
 
 `GET /api/v1/jobs` → `[{namespace, name, pipeline, phase, counts, createdAt, resultsBase}]`;
-`GET /api/v1/jobs/{ns}/{name}` → the CR status plus, per volume, the S3 links the
+`GET /api/v1/jobs/{ns}/{name}?offset=&limit=` → the CR status plus, per volume (paged, default 200), the S3 links the
 page needs (`manifest.json`, `iiif.json`, viewer URL, run log key) derived from
 `resultsBase` by convention — no S3 calls in the controller. Read-only, no
 auth (internal, same network position as today's `status.json`), served from
-the controller pod on `:8081`; the viewer nginx proxies `/api/`. The frontend's
+the controller pod on `:8081`; the viewer nginx proxies `/api/`. **Hard
+precondition of T03**: the endpoint becomes namespace-scoped and authenticated
+before any external organisation exists; until then it lists all namespaces. The frontend's
 `status.ts` derivation layer is replaced by this shape; `CampaignCard` and
 `PagesTable` keep their props.
 
 ## 6. Chart and packaging
 
 - `charts/htrflow-batch`: `crds/` (generated), `controller.yaml` (Deployment,
-  SA, Role/ClusterRole for Jobs/ConfigMaps/CRDs/Leases, PDB), NetworkPolicy for
-  the controller (API server + S3 HEAD + IIIF sources egress), values
-  `controller.{image, window, maxInflight, validationsPerReconcile, perPageSeconds, minDeadlineSeconds}`.
+  SA, ClusterRole for Jobs/ConfigMaps/Events scoped by namespace label
+  `htrflow.riksarkivet.se/tenant=true`, CRDs, Leases, PDB), NetworkPolicy for
+  the controller (API server + S3 HEAD + **IIIF sources egress** — the 2026-08-26
+  audit bug, carried as a test), a **read-only** S3 credential for the controller
+  (it only HEADs), values
+  `controller.{image, window (20), maxInflight (40), validationsPerReconcile (50), perPageSeconds, minDeadlineSeconds, legacyLayout, sourceTemplate}`
+  (`sourceTemplate` = the bare-id manifest URL template, today hardcoded to lbiiif). Job `ttlSecondsAfterFinished` 3600.
   Removed: `reconciler.yaml`, `job-example.yaml`, `devstack-*.yaml`, `pipelines.yaml`
   (pipelines are CRs now), `exampleJob`, `reconciler.*`, `devStack.*` values.
 - `charts/htrflow-devstack`: the four devstack templates, unchanged, own values.
 - Image `docker.io/riksarkivet/htrflow-controller` built by the same publish
   matrix (distroless, non-root, digest-pinned), replacing `htrflow-reconciler`.
+  Dagger gets `build-controller` (controller-gen, `go vet`, `go test` with envtest);
+  Renovate watches `packages/controller/go.mod`. A fourth toolchain in CI, accepted.
 - `scripts/campaigns/convert.py`: `campaigns/*.yaml` + `pipelines/*.yaml` →
   `Pipeline` and `TranscriptionJob` manifests (splitting at 10 000 volumes).
 
@@ -161,11 +178,17 @@ the controller pod on `:8081`; the viewer nginx proxies `/api/`. The frontend's
    CronJob" and `campaignsRepoUrl` values are replaced by Argo applying the
    campaigns repo's CR manifests.
 4. Docs: how-it-works/campaigns and reconciler pages rewritten around the CRs;
-   `docs/reference/campaign-yaml.md` becomes the CRD reference.
+   `docs/reference/campaign-yaml.md` becomes the CRD reference. The campaigns
+   repo README states in bold: **pausing is a Git change** (Argo `selfHeal`
+   reverts `kubectl` edits) and **removing a campaign file cancels it and GCs its
+   Jobs; results stay in S3.**
+5. PoC migration happens at a quiet point (no running Jobs); D14 makes a
+   double-submit impossible but not tidy.
 
-## 10. Open points (answer at review)
+## 10. Resolved at review (2026-08-31)
 
-- **D1 language**: Go (recommended) or Python/kopf?
-- Global in-flight cap default (today `window: 20` per system) — keep 20 as the
-  per-CR default and 40 as the global cap?
-- Should `Pipeline` also carry the CER/WER fields now (T12) or stay minimal?
+- D1: Go + controller-runtime.
+- Defaults: `window` 20 per CR, `maxInflight` 40 global (admitted Jobs).
+- `Pipeline` stays minimal; CER/WER fields arrive with T12 as an additive change.
+- Review issues 1–14 folded in as D11–D16, §4 step 0/6, §5 paging and T03
+  precondition, §6 RBAC/credentials/NetworkPolicy/TTL/CI, §9 items 4–5.
