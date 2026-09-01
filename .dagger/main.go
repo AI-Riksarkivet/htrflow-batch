@@ -77,8 +77,13 @@ func (m *HtrflowBatch) buildWithUv(ctx context.Context, source *dagger.Directory
 		From(pythonImage).
 		WithDirectory("/app", source, dagger.ContainerWithDirectoryOpts{
 			// scripts/ is linted too (audit T11); docs/ is excluded by the
-			// root ruff config and not needed here.
-			Include: []string{"pyproject.toml", "uv.lock", "packages/", "scripts/"},
+			// root ruff config and not needed here. .docker/ carries no
+			// Python but packages/wrapper/tests/test_dockerfile_workspace.py
+			// reads the dockerfiles — that gate only means something if it
+			// runs here, where nothing else builds them.
+			Include: []string{
+				"pyproject.toml", "uv.lock", "packages/", "scripts/", ".docker/",
+			},
 		}).
 		WithWorkdir("/app")
 	container = m.withUv(container)
