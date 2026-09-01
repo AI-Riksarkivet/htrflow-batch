@@ -26,12 +26,14 @@
       error = null;
     } catch (e) {
       if (controller.signal.aborted) return;
+      // ApiUnreachable is a network error or non-2xx — say so, with the
+      // transport detail. Anything else (a Zod parse failure: the API
+      // responded but the shape is wrong) is a bug on our side, not
+      // "unreachable" — the message would just be ZodError noise.
       error =
         e instanceof ApiUnreachable
-          ? e.message
-          : e instanceof Error
-            ? e.message
-            : String(e);
+          ? `API unreachable: ${e.message}`
+          : "invalid API response";
     }
   }
 
@@ -55,7 +57,7 @@
   </header>
   {#if error !== null}
     <p class="banner error" role="alert">
-      API unreachable: {error}
+      {error}
       {#if jobs !== null}
         — showing the last good list.
       {/if}

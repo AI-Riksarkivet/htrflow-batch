@@ -200,6 +200,36 @@ describe("CampaignCard", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1); // still just the initial load
   });
 
+  test("renders the failures block with both ids and reasons", async () => {
+    const secondFailure = {
+      ...volumeFailed,
+      index: 2,
+      id: "vol2",
+      reason: "transient failure in fetch: connection reset",
+    };
+    const detail = {
+      ...job,
+      failures: [volumeFailed, secondFailure],
+      volumes: [volumeDone],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(detail)),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(screen.getByText("failures (2)")).toBeInTheDocument();
+    expect(screen.getByText("vol1")).toBeInTheDocument();
+    expect(
+      screen.getByText("permanent failure in load: manifest unsupported"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("vol2")).toBeInTheDocument();
+    expect(
+      screen.getByText("transient failure in fetch: connection reset"),
+    ).toBeInTheDocument();
+  });
+
   test("header shows pipeline, phase and counts", async () => {
     vi.stubGlobal(
       "fetch",
