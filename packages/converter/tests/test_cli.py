@@ -105,7 +105,7 @@ def test_render_reports_a_clean_error_for_a_corrupt_existing_campaign_file(
 
 
 def test_render_removes_the_manifest_of_a_deleted_campaign(tmp_path):
-    """"Deleting a campaign's file cancels it" is only true if the render it
+    """ "Deleting a campaign's file cancels it" is only true if the render it
     is applied from stops producing that Job. A leftover rendered/ file keeps
     the cancelled campaign in every subsequent apply — and survives a prune,
     because the prune compares the cluster against exactly that file."""
