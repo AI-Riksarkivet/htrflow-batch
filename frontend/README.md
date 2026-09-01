@@ -109,7 +109,11 @@ no bucket base URL to resolve a bare key against, so the API builds it. The
 volume table's `log` link is
 `log?log=<encodeURIComponent(logUrl)>&manifest=<encodeURIComponent(manifestUrl)>`,
 plus `&live=1` when `state !== "done"` — `manifestUrl` (same `VolumeView`
-row) is what feeds `/log`'s `RunSummaryCard`.
+row) is what feeds `/log`'s `RunSummaryCard`. `JobDetail.failures` (up to 50
+newest failed-with-a-reason rows) renders as a compact callout above the
+table, visible even while it's collapsed, only when non-empty — one line per
+entry (`<id> — <reason>`, reason clamped to one line by CSS, no JS
+truncation), each line linking to the same log href as its table row.
 
 ## Layout
 

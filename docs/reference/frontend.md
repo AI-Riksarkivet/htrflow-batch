@@ -93,6 +93,13 @@ intersection); the chart's nginx only adds `frame-ancestors 'none'`.
   results-side URLs).
 - **No thumbnails.** The read API has no per-volume image field; the volume
   table is id / state / links only.
+- **Failures block.** `JobDetail.failures` (up to 50 newest
+  failed-with-a-reason rows, independent of the volume table's paging) is
+  rendered as a compact callout above the volume table, visible even while
+  the table is collapsed, only when non-empty: a `failures (<n>)` heading
+  and one line per entry, `<id> — <reason>` (reason CSS-clamped to one line,
+  no JS truncation), each line linking to the same `logHref` as its table
+  row.
 - **Paged volumes.** `CampaignCard` fetches its own volumes via `fetchJob`
   (`offset`/`limit`, default page 200), independently of the campaign list
   poll on `/`; a "load more" button pages in the next batch when

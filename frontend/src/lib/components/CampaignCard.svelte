@@ -17,6 +17,7 @@
 
   let collapsed = $state(false); // expanded by default
   let volumes = $state<VolumeView[]>([]);
+  let failures = $state<VolumeView[]>([]);
   let detailError = $state<string | null>(null);
   let loadingMore = $state(false);
 
@@ -52,6 +53,9 @@
       const offset = reset ? 0 : volumes.length;
       const detail = await fetchJob(job.namespace, job.name, offset, PAGE);
       volumes = reset ? detail.volumes : [...volumes, ...detail.volumes];
+      // Not paged by the API (up to 50 newest failed-with-a-reason rows,
+      // independent of offset/limit) — refreshed on every call.
+      failures = detail.failures;
       detailError = null;
     } catch (e) {
       detailError =
@@ -120,6 +124,21 @@
     <p class="notice error-row" role="alert">
       Cannot load volumes: {detailError}
     </p>
+  {/if}
+  {#if failures.length > 0}
+    <div class="failures">
+      <p class="failures-heading">failures ({failures.length})</p>
+      <ul class="failures-list">
+        {#each failures as f (f.id)}
+          <li>
+            <a class="failure-link" href={logHref(f)}>
+              <span class="fid">{f.id}</span> —
+              <span class="reason">{f.reason}</span>
+            </a>
+          </li>
+        {/each}
+      </ul>
+    </div>
   {/if}
   {#if !collapsed}
     <div class="table-scroll" id={tableId}>
@@ -314,6 +333,59 @@
 
   .error-row {
     color: var(--destructive);
+  }
+
+  /* Compact, always-visible callout (independent of the collapsed volume
+     table): the newest ≤50 failed-with-a-reason rows the API returns. */
+  .failures {
+    margin-top: 0.4rem;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--destructive);
+    border-radius: var(--radius);
+    background: var(--destructive-soft);
+  }
+
+  .failures-heading {
+    margin: 0 0 0.2rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    color: var(--destructive);
+  }
+
+  .failures-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-size: 12px;
+  }
+
+  .failure-link {
+    display: flex;
+    gap: 0.4rem;
+    align-items: baseline;
+    min-width: 0;
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .failure-link:hover .reason {
+    text-decoration: underline;
+  }
+
+  .fid {
+    flex-shrink: 0;
+    font-weight: 500;
+  }
+
+  /* One line, ellipsised — the wrapper's own message can run long; no JS
+     truncation, CSS only. */
+  .reason {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
   table.volumes {

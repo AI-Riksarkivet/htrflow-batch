@@ -86,4 +86,17 @@ describe("/ campaign page", () => {
     );
     expect(screen.getByText("htr-test/kyrk")).toBeInTheDocument();
   });
+
+  test("a malformed 200 body banners 'invalid API response', not 'unreachable'", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse([{ ...job, phase: "Bogus" }])),
+    );
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("invalid API response");
+    expect(alert).not.toHaveTextContent(/unreachable/);
+  });
 });
