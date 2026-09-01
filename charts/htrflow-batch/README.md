@@ -70,11 +70,11 @@ rendered every NetworkPolicy away; the chart now fails loudly when
 
 | Change | What to do |
 |---|---|
-| **The reconciler CronJob, `reconciler.*` values, `templates/reconciler.yaml` are gone.** Campaigns are Indexed Jobs rendered by `packages/converter` and applied outside this chart. | `kubectl -n <namespace> delete cronjob htr-reconciler` once, then switch to `make campaigns-apply DIR=…` (or the Argo CD Application the campaigns repo's CI wires up). |
+| **The old GitOps CronJob controller, its own values block and template are gone.** Campaigns are Indexed Jobs rendered by `packages/converter` and applied outside this chart. | `kubectl -n <namespace> get cronjob` to find the leftover CronJob from the old release and `delete` it once, then switch to `make campaigns-apply DIR=…` (or the Argo CD Application the campaigns repo's CI wires up). |
 | **`templates/pipelines.yaml` / `.Values.pipelines` are gone.** Pipeline ConfigMaps and their warm-up Jobs are rendered by the converter alongside campaigns, not by this chart. | Drop `pipelines.*` from your values; convert the pipeline YAML files into a campaigns repo's `pipelines/` directory instead. |
 | **`templates/job-example.yaml` / `.Values.exampleJob` are gone.** | Use a real (small) campaign for smoke-testing instead. |
-| **`devStack.*` moved to a separate chart, `charts/htrflow-devstack`**, except `devStack.allowTagImages` → `security.allowTagImages` (it gates this chart's own `viewer.image`/`api.image`, not anything devstack-only). **`devStack.gitDaemon` was not carried over** — it fed the reconciler over `git://`, which is also gone in 0.3.0, so it had no consumer left. | `helm uninstall` nothing yet: install `charts/htrflow-devstack` alongside this chart first (`make install-devstack`), *then* upgrade this chart — its NetworkPolicies for RustFS/registry moved with it; anything that hand-clones the old in-cluster git daemon needs a different path now. |
-| **New: the read API** (`api.image`, `api.resources`) — a Deployment `htrflow-api`, read-only RBAC on Jobs/Pods/ConfigMaps, `Service htrflow-api:8081`, proxied by the viewer at `/api/`. Always rendered (no `enabled` flag): `publicResultsBase` and `network.apiServer.cidr` are now required at render time (previously only needed with `reconciler.enabled`). | Set `api.image` to a digest-pinned `htrflow-api` image; set `network.apiServer.cidr` if the cluster's kube-apiserver endpoint cannot be `lookup`ed (e.g. `helm template`, or a kubeconfig without list-nodes RBAC). |
+| **`devStack.*` moved to a separate chart, `charts/htrflow-devstack`**, except `devStack.allowTagImages` → `security.allowTagImages` (it gates this chart's own `viewer.image`/`api.image`, not anything devstack-only). **`devStack.gitDaemon` was not carried over** — it fed the old CronJob controller over `git://`, which is also gone in 0.3.0, so it had no consumer left. | `helm uninstall` nothing yet: install `charts/htrflow-devstack` alongside this chart first (`make install-devstack`), *then* upgrade this chart — its NetworkPolicies for RustFS/registry moved with it; anything that hand-clones the old in-cluster git daemon needs a different path now. |
+| **New: the read API** (`api.image`, `api.resources`) — a Deployment `htrflow-api`, read-only RBAC on Jobs/Pods/ConfigMaps, `Service htrflow-api:8081`, proxied by the viewer at `/api/`. Always rendered (no `enabled` flag): `publicResultsBase` and `network.apiServer.cidr` are now required at render time (previously only needed when the old CronJob controller was turned on). | Set `api.image` to a digest-pinned `htrflow-api` image; set `network.apiServer.cidr` if the cluster's kube-apiserver endpoint cannot be `lookup`ed (e.g. `helm template`, or a kubeconfig without list-nodes RBAC). |
 | **New: `legacyLayout`** (default `false`). `false` writes/reads results under `<namespace>/<pipeline>/<volume>/…` (S3_PREFIX set by the converter); `true` keeps the pre-B63 `<pipeline>/<volume>/…` layout for existing data. | Set `legacyLayout: true` on any namespace with results written before 0.3.0, and pass the same value to the converter's `converter.yaml` (`legacyLayout`) so it agrees. |
 | **`viewer.statusBase` is gone; `/config.js` sets `window.API_BASE` instead of `window.STATUS_URL`.** The campaign browser reads campaigns from the read API, not `status.json`, from frontend Task 7 onward. | Nothing to set — `API_BASE` is always `/api/v1` (same-origin, proxied by nginx). |
 | **`job.*` values are gone.** Runtime class, node selector, tolerations, deadlines and byte caps are now the converter's `converter.yaml` (`runtime_class`, `node_selector`, `tolerations`, `max_seconds`, `manifest_max_bytes`, `fetch_max_bytes`), not this chart's. | Move any `job.*` overrides into the campaigns repo's `converter.yaml`. |
@@ -83,7 +83,7 @@ rendered every NetworkPolicy away; the chart now fails loudly when
 
 | Change | What to do |
 |---|---|
-| **Digest gate.** `viewer.image` (and, through 0.2.0, `reconciler.image`) must be `@sha256:` pins. | Pin the digests, or `--set security.allowTagImages=true` (named `devStack.allowTagImages` before 0.3.0) for the PoC loop only. |
+| **Digest gate.** `viewer.image` (and, through 0.2.0, the old CronJob controller's own image value) must be `@sha256:` pins. | Pin the digests, or `--set security.allowTagImages=true` (named `devStack.allowTagImages` before 0.3.0) for the PoC loop only. |
 | **Model-cache PVC is rendered** (`modelCache.create=true`, default). Helm refuses to take over a PVC it did not create. | Either `--set modelCache.create=false`, or adopt the existing PVC once (below) — adoption is the better end state (`resource-policy: keep` protects it). |
 | **`image.*` and `s3.endpoint` removed.** | Drop them from your values; the schema rejects unknown keys. Campaign Jobs pin their image in the pipeline YAML; pods read the endpoint from the Secret. |
 | **Namespace default deny** (`network.defaultDeny=true`). | Anything hand-applied in the namespace needs its own NetworkPolicy. |
@@ -105,7 +105,7 @@ kubectl -n htr-batch label pvc htr-test-data app.kubernetes.io/managed-by=Helm -
 
 (The `nvidia` RuntimeClass, the kube-system device-plugin DaemonSet and the
 the git daemon that historically ran alongside RustFS/registry is gone
-entirely (no consumer left once the reconciler was removed) — see
+entirely (no consumer left once the old CronJob controller was removed) — see
 `charts/htrflow-devstack`'s README for the RuntimeClass/DaemonSet adoption
 recipe.)
 
@@ -127,10 +127,10 @@ campaign browser at `window.API_BASE = "/api/v1"`.
 ### 0.3.0 — 2026-09-01 (B63: campaigns as Indexed Jobs)
 
 Breaking:
-- **Removed**: the GitOps reconciler (`templates/reconciler.yaml`,
-  `.Values.reconciler`, the CronJob, its ServiceAccount/Role/RoleBinding and
-  NetworkPolicy) — campaigns are Kubernetes Indexed Jobs rendered by
-  `packages/converter`, not reconciled from a schedule.
+- **Removed**: the old GitOps CronJob controller (its own template file,
+  values block, ServiceAccount/Role/RoleBinding and NetworkPolicy) —
+  campaigns are Kubernetes Indexed Jobs rendered by `packages/converter`,
+  not run from a schedule.
   `templates/pipelines.yaml` / `.Values.pipelines` — pipeline ConfigMaps and
   warm-up Jobs are rendered by the converter alongside campaigns.
   `templates/job-example.yaml` / `.Values.exampleJob` — the smoke-Job PoC
@@ -143,8 +143,9 @@ Breaking:
   RustFS/registry-init). `devStack.allowTagImages` became
   `security.allowTagImages` (it gates this chart's own `viewer.image` /
   `api.image`). `devStack.gitDaemon` / `templates/devstack-gitdaemon.yaml`
-  were **removed, not moved**: the GitOps reconciler that polled it over
-  `git://` is also gone in 0.3.0, so the daemon had no consumer left.
+  were **removed, not moved**: the old GitOps CronJob controller that
+  polled it over `git://` is also gone in 0.3.0, so the daemon had no
+  consumer left.
 - `values.schema.json`: `s3`, `publicResultsBase`, `legacyLayout`,
   `modelCache`, `queue`, `api`, `security`, `network`, `viewer` are the only
   top-level keys; everything above is rejected as unknown.
@@ -154,10 +155,10 @@ Added:
   Deployment `htrflow-api`, ServiceAccount + Role + RoleBinding (read-only
   `jobs`/`pods`/`configmaps`, this namespace only), Service
   `htrflow-api:8081`, NetworkPolicy `htr-api` (ingress from the viewer only;
-  egress to DNS and the apiserver only — same CIDR lookup the reconciler's
-  policy used). Always rendered: `publicResultsBase` and
-  `network.apiServer.cidr` are required values now (previously only with
-  `reconciler.enabled`).
+  egress to DNS and the apiserver only — same CIDR lookup the old CronJob
+  controller's policy used). Always rendered: `publicResultsBase` and
+  `network.apiServer.cidr` are required values now (previously only when
+  that controller was turned on).
 - `legacyLayout` (D9): `false` (default) writes results under
   `<namespace>/<pipeline>/<volume>/…`; `true` keeps the pre-B63
   `<pipeline>/<volume>/…` layout — set the same value in the converter's
@@ -177,13 +178,14 @@ Added:
 Breaking:
 - `image.*` and `s3.endpoint` removed (dead values; the pods take the
   endpoint from the Secret, campaign Jobs pin their image in the pipeline).
-- `reconciler.image` / `viewer.image` must be digest-pinned unless
-  `devStack.allowTagImages=true`. Tag refs get `imagePullPolicy: Always`.
+- The old CronJob controller's own image value / `viewer.image` must be
+  digest-pinned unless `devStack.allowTagImages=true`. Tag refs get
+  `imagePullPolicy: Always`.
 - `devStack.rustfs.nodePortConsole` → `devStack.rustfs.console.{enabled,nodePort}`;
   the console is off by default. RustFS credentials are no longer
   `rustfsadmin` — see above.
-- `queue.resources` defaults now admit the Job the reconciler builds
-  (cpu 4 / memory 8Gi / nvidia.com/gpu 1).
+- `queue.resources` defaults now admit the Job the old CronJob controller
+  built (cpu 4 / memory 8Gi / nvidia.com/gpu 1).
 - `values.schema.json`: unknown keys are rejected; `.Values.network` is required.
 - Namespace-wide default-deny NetworkPolicy (`network.defaultDeny`, on):
   hand-applied pods in the namespace need their own policy.
@@ -191,11 +193,11 @@ Breaking:
 Added:
 - `modelCache.{create,name,size,storageClass,accessModes}` renders the model
   cache PVC (kept on uninstall) and feeds `RECONCILER_DATA_PVC`.
-- Reconciler CronJob: `startingDeadlineSeconds: 120`, `activeDeadlineSeconds`
-  from `reconciler.tickDeadlineSeconds` (600), Lease RBAC
+- The (now-removed) CronJob controller: `startingDeadlineSeconds: 120`,
+  `activeDeadlineSeconds` from its own tick-deadline value (600), Lease RBAC
   (`coordination.k8s.io/leases`), env `RECONCILER_TICK_SECONDS`,
   `RECONCILER_TICK_DEADLINE_SECONDS`, `RECONCILER_GIT_TIMEOUT`, optional
-  `GIT_TOKEN` (`reconciler.gitTokenSecret`),
+  `GIT_TOKEN` (its own git-token-secret value),
   `RECONCILER_MAX_VALIDATIONS_PER_TICK`, `RECONCILER_FETCH_MAX_BYTES`,
   `RECONCILER_LEASE_NAME`, `RECONCILER_JOB_{MIN_DEADLINE_SECONDS,SECONDS_PER_PAGE,RUNTIME_CLASS,NODE_SELECTOR,TOLERATIONS}`,
   `RECONCILER_JOB_{MANIFEST_MAX_BYTES,FETCH_MAX_BYTES}`,
@@ -215,9 +217,9 @@ Added:
   `helm.sh/resource-policy: keep` on the S3 Secret, PVCs and the registry
   Namespace, sizing notes.
 - ClusterQueue `namespaceSelector` limited to the release namespace;
-  `network.reconciler.egressCidrs` narrowed to GitHub's git ranges;
+  its own `egressCidrs` value narrowed to GitHub's git ranges;
   `network.viewer.ingressCidrs`.
 
 ### 0.1.0
 
-Initial chart (queues, pipelines, viewer, devStack, reconciler, NetworkPolicies).
+Initial chart (queues, pipelines, viewer, devStack, the CronJob controller, NetworkPolicies).

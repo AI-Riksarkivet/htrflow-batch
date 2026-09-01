@@ -9,25 +9,27 @@ Two questions this page answers: what a pod on this platform *can* do
 file names a container image that runs on the GPU with the results bucket's
 write credentials and the model cache, and a Hugging Face model repo whose
 weights are pickles loaded in the warm-up pod (which has internet egress).
-There is no admission step between a merged commit and a running pod
-beyond what the reconciler checks. Treat the repo like CI config — protected
-`main`, required review, the immutability guard on pull requests — and turn
-on the controls the chart offers:
+There is no admission step between a merged commit and a running pod beyond
+what `htrflow-campaigns validate` checks in that repo's own CI — the
+converter itself never runs in the cluster. Treat the repo like CI config —
+protected `main`, required review — and turn on the controls it and the
+chart offer:
 
 | Control | Where | What it closes |
 |---|---|---|
-| **Image allow-list** — `security.allowedImageRepos` → `RECONCILER_ALLOWED_IMAGE_REPOS` | reconciler `parse_pipeline`, before any ConfigMap or Job exists | any digest-pinned image from any registry. Empty = anything runs, and the reconciler says so in `status.json` warnings |
+| **Image allow-list** — `converter.yaml`'s `allowed_image_repos` | the converter's `parse_pipeline`, before any manifest is rendered | any digest-pinned image from any registry. Empty = anything runs, and `validate` only warns |
 | **Digest pin** on `image:` (always) | `parse_pipeline` | a mutable tag changing what an id means |
-| **Model revision** — `security.requireModelRevision` → `RECONCILER_REQUIRE_MODEL_REVISION` | `parse_pipeline` | an unpinned HF repo swapping its weights under the same pipeline id |
+| **Model revision** — `converter.yaml`'s `require_model_revision` | `parse_pipeline` | an unpinned HF repo swapping its weights under the same pipeline id |
 | **Signed images** — `security.verifyImages.*` (Kyverno `ClusterPolicy`, cosign keyless) | admission, per Pod in the namespace | an image that was not built by the CI identity you name. Needs Kyverno installed and `publish.yml` signing ([CI](ci.md#workflows)); off by default |
-| **Control-plane digest gate** — `reconciler.image` / `viewer.image` must be `@sha256:` unless `devStack.allowTagImages` | chart template | anyone with registry push replacing the reconciler or viewer in place |
-| **http(s)-only sources, byte caps, redirect caps** | `parse_pipeline`/`parse_campaign`, the reconciler's `fetch_json` (16 MiB, 3 redirects, 10 s), the wrapper (`MANIFEST_MAX_BYTES`, `FETCH_MAX_BYTES`, 5 redirects, raster-only acceptance) | SSRF/DoS driven by campaign data |
-| **Transport** — `https://` with a read-only token (`reconciler.gitTokenSecret` → `GIT_TOKEN`), or the in-cluster `git://` daemon | reconciler `gitrepo` (dulwich; no `git` binary in the image) | an unauthenticated clone from the open internet. `git://` is fine in-cluster; over the network it is neither authenticated nor encrypted |
-| **URL redaction** | wrapper logs, termination log, failure metrics, `page_sources` | a tokenised private IIIF URL landing in the world-readable log |
+| **Control-plane digest gate** — `api.image` / `viewer.image` must be `@sha256:` unless `security.allowTagImages` | chart template | anyone with registry push replacing the read API or viewer in place |
+| **http(s)-only sources, byte caps, redirect caps** | `parse_pipeline`/`parse_campaign`, the wrapper (`MANIFEST_MAX_BYTES`, `FETCH_MAX_BYTES`, 5 redirects, raster-only acceptance) | SSRF/DoS driven by campaign data |
+| **Transport to the campaigns repo** — ordinary `git`/HTTPS, review-gated CI | the campaigns repo's own CI, outside this system entirely | there is no in-cluster clone or credential for it any more — nothing here reaches the campaigns repo at runtime |
+| **URL redaction** | wrapper logs, termination log, `page_sources` | a tokenised private IIIF URL landing in the world-readable log |
 
 What the pod can then do is bounded by the posture and the policies below —
 non-root, no capabilities, read-only rootfs, a read-only model cache, egress
-to DNS, S3 and the IIIF origin only, no API credential.
+to DNS, S3 and the IIIF origin only, no API credential (except the read API
+itself, see below).
 
 ### The bucket policy
 
@@ -39,60 +41,63 @@ root credential too and ignores anonymous-only conditions — verified
 
 | Keys | Anonymous read |
 |---|---|
-| `<pipeline>/<volume>/*` (results, `iiif.json`, `manifest.json`), `sources/*`, `status/status.json` | always — the viewer and the campaign browser fetch them directly |
+| `[<namespace>/]<pipeline>/<volume>/*` (results, `iiif.json`, `manifest.json`), `sources/*` | always — the viewer and the campaign browser fetch them directly |
 | `status/logs/*` (run logs) | **yes while `devStack.rustfs.publicLogs=true`** (default). The campaign browser links them; a run log can carry the redacted form of a private IIIF URL and whatever htrflow prints. Set it to `false` once the log viewer sits behind an authenticated proxy |
-| `status/attempts.json`, `status/validation.json`, `status/failures/*`, `status/warmup/*` | never — reconciler state and failure evidence |
 
-A real bucket (HCP, AWS) needs the same shape, written by hand.
+A handful of `status/attempts.json`-era key paths are still explicitly
+excluded by the rendered policy — nothing writes them any more, so they are
+harmless dead entries left over from before B63; they will simply never
+exist. A real bucket (HCP, AWS) needs the plain "everything except
+`status/logs/*` when private" shape above, written by hand.
 `scripts/compose_init.py` mirrors it for the compose stack.
 
-### Open: two S3 principals
+### Two S3 principals: resolved by removal
 
-Today one credential (the `credentials` file in `s3.existingSecret`) serves
-the reconciler and every Job. The intended end state is two: Job
-credentials scoped to `<pipeline>/<volume>/*` plus its run-log key, and
-reconciler credentials scoped to `status/*` and `sources/*`. It needs IAM
-users/policies created at bucket init and a second Secret consumed by
-`jobspec.py`; the bucket-policy split above only covers the anonymous side.
-Tracked in [Open Items](../roadmap/open-items.md).
+Through 0.2.0 one credential served the old CronJob controller and every
+batch Job, with a second, more narrowly scoped principal proposed
+as future work. As of B63 that open item is moot: the read API never
+touches S3 at all (it is a pure Kubernetes API client, read-only RBAC on
+Jobs/Pods/ConfigMaps), so the only S3-credentialed pods left are the
+campaign and warm-up pods themselves, both scoped by convention to their own
+`[<namespace>/]<pipeline>/<volume>/*` prefix.
 
 ## Pod security posture (D14 — enforced by the chart)
 
-Every pod the platform runs — the reconciler-built volume Jobs, the
-per-pipeline warm-up Jobs, the reconciler CronJob, the chart's example Job,
-the viewer, and the devStack RustFS, its init Job and the registry — meets
-Pod Security **`restricted`**:
+Every pod the platform runs — the converter-rendered campaign pods, the
+per-pipeline warm-up pods, the read API, the viewer, and (PoC only) the
+devStack RustFS, its init Job and the registry — meets Pod Security
+**`restricted`**:
 
 - `runAsNonRoot` (`USER` in the images *and* `runAsUser` in the pod spec, so
-  neither side can regress alone): uid 1000 for the Jobs, reconciler, init
-  Job and registry (`devStack.registry.runAsUser`), 101 for the viewer
+  neither side can regress alone): uid 1000 for the campaign/warm-up pods,
+  the read API and the registry (`registry.runAsUser`), 101 for the viewer
   (nginx-unprivileged), 10001 for RustFS; `fsGroup` likewise.
 - `capabilities.drop: [ALL]`, `allowPrivilegeEscalation: false`,
   `seccompProfile: RuntimeDefault`.
 - `readOnlyRootFilesystem`. Writable paths are explicit: the tmpfs workdir
   (`/work`) carries `HOME`, `TMPDIR` and `YOLO_CONFIG_DIR` — where ultralytics
   settings, triton/inductor JIT caches and temp files land — and the wrapper
-  creates them before any model is built. The reconciler gets an emptyDir at
-  `/tmp` (campaigns clone); the viewer `/tmp` and `/var/cache/nginx`.
-- `automountServiceAccountToken: false` on every pod except the reconciler,
-  which creates Jobs and is the one pod that legitimately holds an API
-  credential (namespace-scoped Role: jobs, configmaps get/create, pods,
-  pods/log, and the `htr-reconciler` Lease).
+  creates them before any model is built. The read API gets an emptyDir at
+  `/tmp`; the viewer `/tmp` and `/var/cache/nginx`.
+- `automountServiceAccountToken: false` on every pod except the **read
+  API**, which is the one pod that legitimately holds an API credential — a
+  namespace-scoped Role: get/list/watch on `jobs`, `pods`, `configmaps`,
+  nothing else, nothing cluster-wide.
 - **Secrets are files, not env.** The S3 Secret's `credentials` key (AWS ini
   format) is mounted at `/secrets/s3` (mode `0440`) and reaches boto3 through
   `AWS_SHARED_CREDENTIALS_FILE`; only the non-secret `S3_ENDPOINT` /
   `S3_BUCKET` are env. Nothing does `envFrom` a Secret.
-- **The model cache is read-only for Jobs.** Batch Jobs mount the cache PVC
-  `readOnly` and run `HF_HUB_OFFLINE=1`; the per-pipeline warm-up Job is the
-  single writer (see [Model handling](../how-it-works/wrapper.md#model-handling)).
-  A compromised Job cannot poison the weights every later Job loads.
+- **The model cache is read-only for campaign pods.** They mount the cache
+  PVC `readOnly` and run `HF_HUB_OFFLINE=1`; the per-pipeline warm-up pod is
+  the single writer (see [Model handling](../how-it-works/wrapper.md#model-handling)).
+  A compromised campaign pod cannot poison the weights every later run loads.
 
-**The one exception is the devStack git daemon** (`devStack.gitDaemon`):
-`alpine/git` ships no `git-daemon`, so the container installs it at start —
-root and a writable root filesystem, with capabilities dropped and no
-privilege escalation. That is why `security.psaEnforce` defaults to
-`baseline`; a purpose-built image running as uid 1000 is the fix
-([Evolution](../roadmap/evolution.md#other-items)).
+Every pod in both charts is restricted-clean as of B63 — there is no
+exception any more (the old devStack git daemon, the one pod that ran
+un-restricted, was removed along with the CronJob controller it served:
+nothing in the platform reads `git://` at runtime any more). `security.psaEnforce`
+still defaults to `baseline`, kept as the default rather than flipped in
+this pass, but `restricted` is worth trying now.
 
 The GPU still arrives through `runtimeClassName: nvidia` — runc plus the
 NVIDIA hooks, **not** a sandbox. A kernel-isolating runtime (gVisor `nvproxy`,
@@ -103,30 +108,29 @@ here; it is the next hardening step if one is wanted.
 
 Helm cannot label a namespace it did not create, so the Pod Security
 Admission labels are applied once by the operator (`make psa-labels`):
-`enforce=<security.psaEnforce>`, `warn=restricted`, `audit=restricted`.
-Enforcement is `baseline` only while the git daemon runs as root; the
+`enforce=<security.psaEnforce>`, `warn=restricted`, `audit=restricted`. The
 platform's own pods are restricted-clean, and the `warn` label is what
 proves it — a regression shows up as an admission warning on Job creation.
 
 ## NetworkPolicy (D14 — enforced by the chart)
 
-`templates/network.yaml` (values: `network.*`) renders a namespace-wide
-**default deny** (ingress and egress, `network.defaultDeny`), a DNS allow
-for every pod, and one policy per pod role. Rules match by CIDR and selector
-only — kube-router (k3s) has no FQDN rules, and it evaluates egress *after*
-service DNAT, so in-cluster targets are matched by their backing pod and the
+`templates/network.yaml` (values: `network.*`) plus the read API's own
+policy in `templates/api.yaml` renders a namespace-wide **default deny**
+(ingress and egress, `network.defaultDeny`), a DNS allow for every pod, and
+one policy per pod role. Rules match by CIDR and selector only —
+kube-router (k3s) has no FQDN rules, and it evaluates egress *after* service
+DNAT, so in-cluster targets are matched by their backing pod and the
 apiserver by the node address it resolves to (auto-detected with Helm
 `lookup`, overridable via `network.apiServer` / `network.nodeCidrs`).
 
 | Pod | Ingress | Egress (besides kube-dns) | Notably cannot reach |
 |---|---|---|---|
-| batch Job (`app=htrflow-batch`) | none | S3 (RustFS pod or `network.s3Cidrs`); the IIIF origin(s) `network.iiifCidrs` on 443/80 (default `lbiiif.riksarkivet.se`) | HF Hub, the apiserver, the registry, Harbor, anything else in-cluster, the internet |
-| warm-up Job (`app=htrflow-warmup`) | none | the public internet on 443 minus pod/service/node ranges (HF Hub is a CDN — there is no CIDR to pin) | S3, the apiserver, anything in-cluster |
-| reconciler (`app=htr-reconciler`) | none | the apiserver; S3; `network.reconciler.egressCidrs` on 443/22/9418 (GitHub's `git` ranges by default); the devStack git daemon on 9418 when enabled; `network.reconciler.extraEgress` | everything else |
-| viewer (`app=uv4-viewer`) | `network.viewer.ingressCidrs` on 8080 | none | — |
-| RustFS (`app=rustfs`) | 9000 from anywhere (and 9001 with the console) | none | — |
-| rustfs-init hook (`app=rustfs-init`) | none | RustFS 9000 | — |
-| git daemon (`app=git-daemon`) | 9418 from the reconciler | RustFS 9000 (seed clone); public 443/80 (the Alpine CDN, for the `apk add`) | — |
+| campaign pod (`app=htrflow-batch`) | none | S3 (RustFS pod or `network.s3Cidrs`); the IIIF origin(s) `network.iiifCidrs` on 443/80 (default `lbiiif.riksarkivet.se`) | HF Hub, the apiserver, the registry, Harbor, anything else in-cluster, the internet |
+| warm-up pod (`app=htrflow-warmup`) | none | the public internet on 443 minus pod/service/node ranges (HF Hub is a CDN — there is no CIDR to pin) | S3, the apiserver, anything in-cluster |
+| read API (`app=htrflow-api`) | the viewer pod, on 8081 | the apiserver only (`network.apiServer.cidr`) | S3, the IIIF origin, HF Hub, anything else in-cluster |
+| viewer (`app=uv4-viewer`) | `network.viewer.ingressCidrs` on 8080 | the read API only, on 8081 | S3, the apiserver, anything else |
+| RustFS (`app=rustfs`, devStack) | 9000 from anywhere (and 9001 with the console) | none | — |
+| rustfs-init hook (`app=rustfs-init`, devStack) | none | RustFS 9000 | — |
 
 Anything hand-applied in the namespace loses network access under the
 default deny unless it gets its own policy.
@@ -140,10 +144,12 @@ manifest, so the practical exposure is a compromised image's first second;
 closing it needs a CNI with synchronous enforcement (Cilium, Calico) — not a
 chart change.
 
-Verified on the k3s PoC (2026-08-25, [test log](test-log.md)): a probe pod
-labelled `app=htrflow-batch` reaches only the IIIF origin and RustFS; HF Hub,
-the apiserver, the in-cluster registry, Harbor, the node and the public
-internet are rejected, while an unlabelled control pod reaches all of them.
+Verified on the k3s PoC (2026-08-25, [test log](test-log.md), pre-B63): a
+probe pod labelled `app=htrflow-batch` reaches only the IIIF origin and
+RustFS; HF Hub, the apiserver, the in-cluster registry, Harbor, the node and
+the public internet are rejected, while an unlabelled control pod reaches
+all of them. The shape is unchanged by B63 — only the pod roles that emit it
+moved from the old CronJob controller to the converter's render output.
 
 ## Cache PVC migration
 
@@ -156,22 +162,19 @@ when it was written by an older root-running registry.
 
 ## devStack caveats
 
-The chart's optional `devStack.*` components exist purely to stand up a
-disposable single-node PoC ([Local k3s development](local-k3s.md)) and are
-off by default:
+`charts/htrflow-devstack`'s components exist purely to stand up a disposable
+single-node PoC ([Local k3s development](local-k3s.md)) and are off by
+default:
 
 - **RustFS** credentials are generated on first install (32 random chars,
   re-read from the Secret on upgrade) or set via
-  `devStack.rustfs.{accessKey,secretKey}`; the S3 API is a NodePort
-  (30900) reachable by anyone on the node's network, the admin console is
-  off. Its data is one unreplicated `local-path` PVC. Never enable it next to
-  real data; point `s3.existingSecret` at a real Secret instead.
+  `rustfs.{accessKey,secretKey}`; the S3 API is a NodePort (30900) reachable
+  by anyone on the node's network, the admin console is off. Its data is one
+  unreplicated `local-path` PVC. Never enable it next to real data; point
+  `s3.existingSecret` (in `charts/htrflow-batch`) at a real Secret instead.
 - **The registry** is unauthenticated by design (PoC image-iteration
   convenience; Harbor is the real registry on the cluster). Anyone on the
-  network can push over a tag — which is exactly why the chart refuses tag
-  references for the control-plane images unless `devStack.allowTagImages`.
-- **The git daemon** is the one non-restricted pod (above) and serves the
-  campaigns repo unauthenticated over `git://` inside the cluster only
-  (ingress from the reconciler alone).
+  network can push over a tag — which is exactly why the batch chart refuses
+  tag references for the control-plane images unless `security.allowTagImages`.
 - The compose smoke stack uses throwaway `rustfsadmin` credentials from
   `.env.example`; never reuse them for a cluster.

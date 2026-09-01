@@ -25,10 +25,10 @@ holds at most the lookahead window (uploader rolling-deletes processed images).
   and htrflow processes the full-resolution image. The only bound is
   `FETCH_MAX_BYTES` (64 MiB per image by default); keep such image lists
   pre-sized.
-- `MANIFEST_MAX_BYTES` (16 MiB) bounds the manifest itself; the reconciler
-  applies the same cap to its pre-validation fetch (`reconciler.fetchMaxBytes`)
-  so a multi-GB "manifest" in the campaigns repo cannot OOM the 512 Mi
-  reconciler either.
+- `MANIFEST_MAX_BYTES` (`converter.yaml`'s `manifest_max_bytes`, 16 MiB
+  default) bounds the manifest fetch the wrapper itself does — there is no
+  separate pre-validation fetch any more, so this is the only place the cap
+  applies.
 - A 1000-page volume can no longer OOMKill a pod — the old preflight
   size-guard reduces to sanity checks (non-empty manifest → else exit 13).
 - Disk escape hatch: the wrapper only sees `WORKDIR_PATH`; swapping the

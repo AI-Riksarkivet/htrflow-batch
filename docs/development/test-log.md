@@ -169,9 +169,11 @@ rebuild/push before the next cluster run.
 *Editorial note (not part of the original §14 text): the wrapper-hardening
 paragraph above landed in commit `af8df6a` ("Harden wrapper + sync design
 doc"), which is also where §14 itself was first appended to the design
-document. See [The Wrapper](../how-it-works/wrapper.md#job-template-one-volume-one-job)
+document. See [The Wrapper](../how-it-works/wrapper.md#job-template-one-campaign-one-indexed-job)
 for where that fix is referenced going forward (the `podFailurePolicy`
-`FailJob`-on-13 wiring it unblocked).*
+`FailJob`-on-13 wiring it unblocked; B63 renamed the section when the
+per-volume Job became a per-campaign Indexed Job, same `podFailurePolicy`
+shape).*
 
 ## 2026-08-25 — D14 pod hardening, verified on the k3s PoC
 

@@ -1,6 +1,7 @@
 # Campaign browser
 
-SvelteKit 2 + Svelte 5 static SPA over the reconciler's `status.json`. Two
+SvelteKit 2 + Svelte 5 static SPA over a legacy `status.json` (pre-B63 shape;
+migrating onto the read API's `GET /api/v1/jobs` is B63 Task 7). Two
 routes, no server:
 
 - `/` — every campaign as a card with its volume table (status, pages,
@@ -37,8 +38,8 @@ All of it lives in [`src/lib/config.ts`](src/lib/config.ts).
 
 | Setting                | Runtime (deploy)                             | Build time        | Default                                                 |
 | ---------------------- | -------------------------------------------- | ----------------- | ------------------------------------------------------- |
-| status.json URL        | `window.STATUS_URL` — overwrite `/config.js` | `VITE_STATUS_URL` | `http://localhost:30900/htr-results/status/status.json` |
-| campaign page re-fetch | —                                            | `VITE_RELOAD_MS`  | `60000` (the reconciler ticks every 5 min)              |
+| status document URL    | `window.STATUS_URL` — overwrite `/config.js` | `VITE_STATUS_URL` | `http://localhost:30900/htr-results/status/status.json` |
+| campaign page re-fetch | —                                            | `VITE_RELOAD_MS`  | `60000`                                                  |
 | live-log re-fetch      | —                                            | `VITE_LIVE_MS`    | `15000` (the wrapper's `LOG_SHIP_SECONDS`)              |
 | live-log give-up       | —                                            | —                 | `LIVE_MAX_FAILURES = 20` polls (5 min)                  |
 
@@ -126,7 +127,7 @@ warning, so it never reaches an `href` or `src`.
 Volume statuses: `done`, `running`, `queued`, `retry`, `deleting` (a retry's
 Job under deletion), `needs-attention`, `pending` (rendered "planned"),
 `unreachable`, `unsupported`. Any other value parses as `unknown` and gets a
-neutral chip, so a newer reconciler cannot blank the page. Campaign accent
+neutral chip, so an unrecognised shape cannot blank the page. Campaign accent
 (worst volume wins): red for `needs-attention` / `unreachable` /
 `unsupported`, blue for `running` / `queued` / `retry` / `deleting`, green
 when every volume is `done`, grey otherwise. A `terminal` volume shows the

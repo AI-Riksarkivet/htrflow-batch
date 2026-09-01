@@ -1,7 +1,9 @@
 # Campaign Browser
 
-The SvelteKit SPA served at `/` by the viewer image — two routes over the
-reconciler's `status.json`, no server. Source:
+The SvelteKit SPA served at `/` by the viewer image — two routes, no server.
+As of B63 it still reads the legacy `status.json` shape described below;
+migrating it onto the read API's `GET /api/v1/jobs` (packages/api) is B63
+Task 7, tracked separately from this page. Source:
 [`frontend/`](https://github.com/carpelan/test/tree/main/frontend); the
 `frontend/README.md` there is the developer-facing version of this page.
 
@@ -28,7 +30,7 @@ jsdom), Prettier, Bun as the package runner (`engines`: Node ≥ 22, Bun ≥ 1.1
 | File | Description |
 |------|-------------|
 | `src/lib/config.ts` | URL and cadence resolution (table below) |
-| `src/lib/status.ts` | Zod schemas mirroring the reconciler's `status.json` ([schema](s3-layout.md#statusjson)) and the fail-soft parser |
+| `src/lib/status.ts` | Zod schemas mirroring the legacy `status.json` shape and the fail-soft parser — pending migration to the read API (Task 7) |
 | `src/lib/derive.ts` | Pure view derivation: `viewerHref`, `campaignHealth`, `isStale`, `pagesLabel`, `shortDate`, `tickSummaryLabel`, `isHttpUrl` |
 | `src/lib/run.ts`, `runlog.ts` | `manifest.json` schema + summary math; run-log grouping and the terminal-line check |
 | `src/lib/theme.svelte.ts` | the one theme store (`ThemeToggle.svelte` on both routes) |
@@ -42,7 +44,7 @@ jsdom), Prettier, Bun as the package runner (`engines`: Node ≥ 22, Bun ≥ 1.1
 
 | Setting | Runtime (deploy) | Build time | Default |
 |---|---|---|---|
-| status.json URL | `window.STATUS_URL` — set by **overwriting `/config.js`** | `VITE_STATUS_URL` | `http://localhost:30900/htr-results/status/status.json` |
+| status document URL (legacy) | `window.STATUS_URL` — set by **overwriting `/config.js`** | `VITE_STATUS_URL` | `http://localhost:30900/htr-results/status/status.json` |
 | campaign page re-fetch | — | `VITE_RELOAD_MS` | `60000` |
 | live-log re-fetch | — | `VITE_LIVE_MS` | `15000` (the wrapper's `LOG_SHIP_SECONDS`) |
 | live-log give-up | — | — | `LIVE_MAX_FAILURES = 20` polls (5 min) |
@@ -75,7 +77,7 @@ A CSP header from the web server must not be stricter than the meta tag
 - **Statuses.** `done`, `running`, `queued`, `retry`, `deleting`,
   `needs-attention`, `pending` (rendered "planned"), `unreachable`,
   `unsupported`; any other value parses as `unknown` with a neutral chip, so
-  a newer reconciler cannot blank the page.
+  a shape it does not recognise cannot blank the page.
 - **`terminal` tag.** A non-null `terminal` (`exit-13`, `capped`) shows as a
   tag next to the chip; its title says an operator clears it (the attempts
   record, or a new pipeline id).
@@ -96,8 +98,9 @@ A CSP header from the web server must not be stricter than the meta tag
   (`4.1 s · 12 S3 calls · 3 validations · 1 submitted`); every field is
   optional and `{}`/absent hides the line.
 - **Stale banner** — shown when `generated_at` is older than
-  `3 × tick_seconds` (15 min at the default tick): the reconciler is presumed
-  dead, the numbers are historical.
+  `3 × tick_seconds` (15 min at the default tick): whatever produced the
+  document is presumed dead, the numbers are historical. There is nothing
+  left that produces this document any more (see the migration note above).
 - **Accessibility** — campaign header and pipeline chip are sibling buttons
   (no nested `role=button`); AA contrast in both themes; `prefers-reduced-motion`
   honoured; no horizontal overflow at 390 px.

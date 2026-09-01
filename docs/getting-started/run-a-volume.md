@@ -1,14 +1,18 @@
 # Run a Volume
 
 The normal way to run a volume is to declare it in the campaigns repo and let
-the reconciler submit it ([Running a Campaign](campaigns.md)). This page is
-about what a single volume Job *is*, for hand-run experiments and for
-reading what the reconciler creates.
+the converter's rendered Job pick it up ([Running a Campaign](campaigns.md)).
+This page is about what one volume's **index** *is* — for reading what the
+converter renders, and for hand-run experiments with the wrapper directly
+(no cluster needed — see [Local compose alternative](#local-compose-alternative)).
 
 ## The Job contract
 
-One archival volume = one Kubernetes Job. Jobs start `suspend: true` and
-carry the Kueue queue label; Kueue unsuspends them as quota frees:
+A whole **campaign** is one Kubernetes `batch/v1` Job with
+`completionMode: Indexed` — one index per volume, `$JOB_COMPLETION_INDEX`
+selecting a line of the campaign's `volumes.txt`. The Job starts
+`suspend: true` and carries the Kueue queue label; Kueue unsuspends it (up to
+`parallelism`) as quota frees:
 
 ```yaml
 kind: Job
@@ -17,24 +21,25 @@ metadata:
     kueue.x-k8s.io/queue-name: htr-batch
 spec:
   suspend: true
-  backoffLimit: 0
+  completionMode: Indexed
+  completions: 200                  # = number of volumes in the campaign
+  parallelism: 20                   # converter.yaml's window, or the campaign's own
+  backoffLimitPerIndex: 3
+  maxFailedIndexes: 200
   podFailurePolicy:
     rules:
       - action: Ignore
         onPodConditions: [{ type: DisruptionTarget }]
-      - action: FailJob
+      - action: FailIndex
         onExitCodes: { containerName: wrapper, operator: In, values: [13] }
-  activeDeadlineSeconds: 21600      # the reconciler derives it from the page count
   ttlSecondsAfterFinished: 86400
 ```
 
-Submit 200 volumes and exactly N run at once (N = queue quota); the rest
-wait in FIFO order (`kubectl get workloads -n htr-batch`). No preemption,
-no cohorts in Phase 1. The complete spec the reconciler builds — resources,
-mounts, labels, hardening — is in
-[The Wrapper → Job template](../how-it-works/wrapper.md#job-template-one-volume-one-job);
-`charts/htrflow-batch/templates/job-example.yaml` (`exampleJob.enabled`) is
-a rendered copy for the PoC smoke test.
+Submit a 200-volume campaign and exactly `parallelism` indexes run at once;
+the rest wait in FIFO order within the campaign (`kubectl get workloads -n
+htr-batch`). No preemption, no cohorts in Phase 1. The complete spec the
+converter renders — resources, mounts, labels, hardening — is in
+[The Wrapper → Job template](../how-it-works/wrapper.md#job-template-one-campaign-one-indexed-job).
 
 ## Wrapper env vars
 
@@ -60,10 +65,10 @@ behind these knobs.
 
 | Code | Meaning | Reaction |
 |---|---|---|
-| 0 | success (verified) | Job `Complete`; `manifest.json` in S3 = done |
-| 13 | permanent (bad manifest URL / 4xx / non-JSON / empty, bad pipeline YAML, unknown step or model) | `podFailurePolicy` fails the Job at once — the reconciler parks the volume as `needs-attention`, never retried |
-| 1 | transient (network, 5xx on the manifest, CUDA hiccup, verification gap, S3 outage) | the reconciler retries up to the attempt cap (default 3); resume makes it cheap |
-| 143 | SIGTERM (Job deadline, drain) after writing the termination log and shipping the log | retried; not charged an attempt when pages advanced |
+| 0 | success (verified) | index `Complete`; `manifest.json` in S3 = done |
+| 13 | permanent (bad manifest URL / 4xx / non-JSON / empty, bad pipeline YAML, unknown step or model) | `podFailurePolicy` fails the index at once (`FailIndex`) — never retried |
+| 1 | transient (network, 5xx on the manifest, CUDA hiccup, verification gap, S3 outage, `MAX_SECONDS` exceeded) | Kubernetes retries the index up to `backoffLimitPerIndex` (default 3); resume makes it cheap |
+| 143 | SIGTERM (drain that reaches the container) after writing the termination log and shipping the log | retried the same as exit 1 — pages already published are not redone |
 
 Failures write a structured reason to `/dev/termination-log`
 (`{"stage": "stream", "permanent": false, "error": "verify failed: missing=[…]"}`)

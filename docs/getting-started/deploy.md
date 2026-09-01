@@ -1,10 +1,14 @@
 # Deploy
 
-Everything ships as a single helm chart, `charts/htrflow-batch` (0.2.0).
-Per-volume Jobs are submitted at runtime by the reconciler (see
-[Running a Campaign](campaigns.md)) — the chart deploys the queueing, the
-model-cache PVC, the viewer, the reconciler, the NetworkPolicies and
-(optionally) the PoC support infrastructure. Every value is in
+Everything runtime-facing ships as two Helm charts. `charts/htrflow-batch`
+(0.3.0) deploys the queueing (Kueue objects), the model-cache PVC, the
+viewer, the read-only status API and the NetworkPolicies.
+`charts/htrflow-devstack` is the separate, PoC-only chart for in-cluster
+RustFS/registry/NVIDIA-device-plugin stand-ins ([Local k3s
+development](../development/local-k3s.md)). Campaigns themselves are not
+part of either chart — they are Indexed Jobs rendered by `packages/converter`
+from a campaigns repo and applied with `kubectl` or Argo CD (see [Running a
+Campaign](campaigns.md)). Every chart value is in
 [Chart Values](../reference/chart.md).
 
 ## Production-shaped install
@@ -13,7 +17,9 @@ model-cache PVC, the viewer, the reconciler, the NetworkPolicies and
 helm install htr charts/htrflow-batch -n htr-batch --create-namespace \
   --set publicResultsBase=<browser-reachable results base URL> \
   --set viewer.image=<registry>/htrflow-batch-viewer@sha256:<digest> \
+  --set api.image=<registry>/htrflow-api@sha256:<digest> \
   --set network.s3Cidrs='{<s3 endpoint cidr>}' \
+  --set network.apiServer.cidr=<kube-apiserver cidr, e.g. 10.16.51.56/32> \
   --set security.allowedImageRepos='{<registry>/}'
 make psa-labels
 ```
@@ -31,20 +37,23 @@ aws_access_key_id = …
 aws_secret_access_key = …
 ```
 
-The bucket needs anonymous `GetObject` on `<pipeline>/<volume>/*`,
-`sources/*` and `status/status.json` plus CORS (GET/HEAD from the viewer
-origin) — the browser fetches manifests, ALTO and `status.json` directly.
-The devStack `rustfs-init` hook applies exactly that policy to RustFS
-(`templates/_helpers.tpl`, `bucketPolicy`); a real bucket needs the
-equivalent ([Security → The bucket policy](../development/security.md#the-bucket-policy)).
+The bucket needs anonymous `GetObject` on `<namespace>/<pipeline>/<volume>/*`,
+`sources/*` and `status/logs/*` plus CORS (GET/HEAD from the viewer origin)
+— the browser fetches manifests, ALTO and the live run log directly, and
+`GET /api/v1/jobs` for everything else. The devStack `rustfs-init` hook
+applies exactly that policy to RustFS (`templates/_helpers.tpl`,
+`bucketPolicy`); a real bucket needs the equivalent
+([Security → The bucket policy](../development/security.md#the-bucket-policy)).
 
-`viewer.image` must be a digest (the chart refuses tags outside the PoC);
-build it with `make viewer-image` / `dagger call build-viewer` — the
-published `:latest` predates the campaign browser.
+`viewer.image` and `api.image` must both be digests (the chart refuses tags
+outside the PoC — `security.allowTagImages`); build the viewer with `make
+viewer-image` / `dagger call build-viewer`, the read API with `make
+build-api` / `dagger call publish-docker --component api`.
 
 Queue quota is a plain list of covered resources under `queue.resources`.
-The default admits exactly one Job as the reconciler builds it (requests
-cpu 4 / 8 Gi / 1 GPU); raise the quotas to run Jobs in parallel:
+The default admits exactly one campaign index as the converter renders it
+(requests cpu 4 / 8 Gi / 1 GPU); raise the quotas to run more volumes in
+parallel:
 
 ```yaml
 queue:
@@ -58,32 +67,30 @@ queue:
 ```
 
 The model cache PVC (`modelCache.*`, default 30 Gi RWO, kept on uninstall)
-is rendered by the chart. Pipeline ConfigMaps under `.Values.pipelines` are
-rendered immutable, one per id — never reuse a pipeline id with different
-content, bump the id instead; campaign pipelines come from git and are
-managed by the reconciler.
+is rendered by the chart; the converter's rendered warm-up Jobs and campaign
+Jobs are what actually write to and read from it — nothing in the chart
+renders a pipeline ConfigMap or a Job any more.
 
 ## Hardening steps the chart cannot do alone
 
 - **Namespace labels** (once): `make psa-labels` — Pod Security Admission
-  `enforce=<security.psaEnforce>` (`baseline` by default, only because the
-  devStack git daemon runs as root; `restricted` otherwise),
+  `enforce=<security.psaEnforce>` (`baseline` by default; nothing left in
+  either chart actually needs it — `restricted` is worth trying now),
   `warn=restricted`, `audit=restricted`.
 - **NetworkPolicy inputs** (`network.*` values): the IIIF origin CIDR(s)
   (`network.iiifCidrs`), a real S3 endpoint (`network.s3Cidrs`) when not
-  using devStack RustFS, and the campaigns host for the reconciler
-  (`network.reconciler.egressCidrs`, GitHub's `git` ranges by default). Node
-  addresses and the apiserver endpoint are looked up at install time; set
-  `network.nodeCidrs` / `network.apiServer.cidr` when rendering with
-  `helm template` or without list-nodes permission.
-- **Trust boundary** (`security.*`): set `security.allowedImageRepos` — an
-  empty list lets any digest-pinned image in the campaigns repo run on the
-  GPU (the reconciler warns) — and consider `requireModelRevision: true` and
-  the Kyverno `verifyImages` policy once images are cosign-signed
+  using devStack RustFS, and `network.apiServer.cidr` for the read API's
+  egress to the kube-apiserver (auto-detected via Helm `lookup` at install
+  time; set it explicitly for `helm template` or a kubeconfig without
+  list-nodes permission).
+- **Trust boundary** (`security.*`): set `security.allowedImageRepos` in
+  `converter.yaml` on the campaigns-repo side — an empty list lets any
+  digest-pinned image there run on the GPU (`htrflow-campaigns validate`
+  only warns) — and consider `require_model_revision: true` and the Kyverno
+  `verifyImages` policy once images are cosign-signed
   ([Security → Trust boundary](../development/security.md#trust-boundary)).
-- **Model cache**: Jobs run offline on a read-only cache. Pipelines from the
-  campaigns repo are warmed by the reconciler; chart-declared ones with
-  `make warmup PIPELINE=<id> IMAGE=<ref>`. A cache PVC that predates the
+- **Model cache**: campaign and warm-up Jobs run offline on a read-only /
+  writable-by-warm-up-only cache respectively. A cache PVC that predates the
   non-root pods needs a one-time `chown -R 1000:1000`
   ([Security](../development/security.md#cache-pvc-migration)).
 - **Campaigns repo**: protected `main`, required review — write access to it
@@ -98,58 +105,52 @@ make psa-labels
 
 Always `--reset-then-reuse-values` (or a full values file): plain
 `--reuse-values` keeps the old chart's defaults and once rendered every
-NetworkPolicy away. The 0.1.0 → 0.2.0 decisions (digest gate, PVC
-adoption, removed `image.*`/`s3.endpoint`, default deny, git daemon, console
-off, bucket-policy split, `psaEnforce`) are tabulated in the
-[chart README](https://github.com/carpelan/test/blob/main/charts/htrflow-batch/README.md#upgrading).
+NetworkPolicy away. Chart history (digest gate, PVC adoption, the 0.3.0
+removal of the old CronJob controller/pipelines/exampleJob, the read API's
+arrival, the `devStack.*` split into `charts/htrflow-devstack`) is tabulated
+in the
+[chart README](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/charts/htrflow-batch/README.md#upgrading).
 
 ## PoC replay (bare k3s, in-cluster devStack)
 
-This reproduces the smoke test on a single k3s node using the chart's
-optional `devStack.*` components (RustFS S3 with its bucket-init hook, an
-in-cluster registry, the NVIDIA device plugin and RuntimeClass, a git daemon
-serving the campaigns repo) instead of standalone raw manifests. Cluster
-constants come from the repo-root `.env` (`.env.example` has the defaults
-used here); the day-to-day loop around this — building the arm64 GPU image,
-seeding the git daemon, SSH forwards — is
+This reproduces the smoke test on a single k3s node using
+`charts/htrflow-devstack` (RustFS S3 with its bucket-init hook, an
+in-cluster registry, the NVIDIA device plugin and RuntimeClass) instead of
+standalone raw manifests. Cluster constants come from the repo-root `.env`
+(`.env.example` has the defaults used here); the day-to-day loop around this
+— building the arm64 GPU image, SSH forwards — is
 [Local k3s development](../development/local-k3s.md).
 
 ```bash
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-make poc-push                       # builds + pushes wrapper and reconciler, prints their digests
+make poc-push                       # builds + pushes wrapper and the read API, prints their digests
 make viewer-image && docker push 127.0.0.1:30500/uv4:dev   # prints the viewer digest
-helm upgrade --install htr charts/htrflow-batch -n htr-batch --create-namespace \
-  --set devStack.rustfs.enabled=true --set devStack.registry.enabled=true \
-  --set devStack.nvidiaDevicePlugin.enabled=true --set devStack.gitDaemon.enabled=true \
+helm upgrade --install htr-devstack charts/htrflow-devstack -n htr-batch --create-namespace \
+  --set rustfs.enabled=true --set registry.enabled=true \
+  --set nvidiaDevicePlugin.enabled=true
+helm upgrade --install htr charts/htrflow-batch -n htr-batch \
   --set publicResultsBase=http://localhost:30900/htr-results \
   --set network.apiServer.cidr=<node-ip>/32 \
   --set viewer.image=127.0.0.1:30500/uv4@sha256:<viewer digest> \
-  --set reconciler.enabled=true \
-  --set reconciler.image=127.0.0.1:30500/htrflow-reconciler@sha256:<reconciler digest> \
-  --set reconciler.campaignsRepoUrl=git://git-daemon.htr-batch.svc.cluster.local/campaigns-local \
-  --set security.allowedImageRepos='{127.0.0.1:30500/}' \
-  --set exampleJob.enabled=true --set exampleJob.image=127.0.0.1:30500/htrflow-batch:dev \
-  --set exampleJob.manifestUrl=http://rustfs.htr-batch.svc.cluster.local:9000/htr-fixtures/mock-vol/manifest.json \
-  --set-file pipelines.demo-v1=.docker/pipeline-demo-v1.yaml
+  --set api.image=127.0.0.1:30500/htrflow-api@sha256:<api digest> \
+  --set security.allowedImageRepos='{127.0.0.1:30500/}'
 make psa-labels
-make warmup PIPELINE=demo-v1 IMAGE=127.0.0.1:30500/htrflow-batch:dev
-kubectl -n htr-batch patch job htr-vol-301 --type=json -p '[{"op":"replace","path":"/spec/suspend","value":false}]'
+make campaigns-apply DIR=examples/campaigns   # or your own campaigns repo checkout
 k9s -n htr-batch   # watch
 ```
 
-`--set devStack.allowTagImages=true` lets you use `:dev` tags for
-`reconciler.image` / `viewer.image` instead of the digests while iterating
-(they are then pulled on every rollout). Swap `helm upgrade --install` for
-`helm template` (same flags, plus `network.nodeCidrs`) to render without a
-cluster. `exampleJob.enabled=true` renders the `htr-vol-301` Job with
-`suspend: true`; unsuspend it (or `kubectl create job --from`) to run the
-smoke test. Kill-and-resume test: wait until ~2 ALTOs exist under
-`demo-v1/mock-vol/alto/`, force-delete the pod, watch the retry pod log
-`resume: N pages already done` and converge to Complete.
+`--set security.allowTagImages=true` lets you use `:dev` tags for
+`api.image` / `viewer.image` instead of digests while iterating (they are
+then pulled on every rollout). Swap `helm upgrade --install` for `helm
+template` (same flags, plus `network.nodeCidrs`) to render without a
+cluster. Kill-and-resume test: wait until ~2 ALTOs exist under
+`<namespace>/demo-v1/mock-vol/alto/`, force-delete the running pod, watch
+the retry pod's log `resume: N pages already done` and converge to
+`Complete`.
 
-On a cluster that already carries a hand-made model-cache PVC, RuntimeClass,
-device plugin or git daemon, adopt them first or turn the corresponding
-value off (chart README, "Adopting hand-applied resources").
+On a cluster that already carries a hand-made model-cache PVC, RuntimeClass
+or device plugin, adopt it first or turn the corresponding value off (chart
+README, "Adopting hand-applied resources").
 
 Bucket policy and CORS are applied by the `rustfs-init` hook on every
 install/upgrade — no manual `aws-cli` pod any more. The RustFS credentials

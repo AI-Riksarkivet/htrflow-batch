@@ -65,7 +65,7 @@ mirror), Alluxio WEB under-storage documentation, Fluid `data_warmup.md`
 
 ```mermaid
 flowchart LR
-    subgraph submitter["campaigns repo → reconciler CronJob"]
+    subgraph submitter["campaigns repo CI → applied Indexed Job"]
         CLI["create Job per volume"]
     end
 
@@ -136,7 +136,7 @@ acceleration; if the warmer never ran, Jobs are slower, not broken.
 ```mermaid
 sequenceDiagram
     autonumber
-    participant U as reconciler tick
+    participant U as campaigns repo CI
     participant K8s as kube-apiserver
     participant Q as Kueue
     participant W as warmer

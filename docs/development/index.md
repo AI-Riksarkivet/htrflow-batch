@@ -39,6 +39,6 @@ full detail and how to run each one.
 | # | Level | Covers |
 |---|---|---|
 | 0 | Library-API pin test | `Pipeline.from_config` + a 1-page fixture against the exact htrflow version in the pinned image — the canary that a version bump broke the D16 driver. **Planned, opt-in** (`make test-driver-real`); not run today |
-| 1 | Unit tests | wrapper (manifest walking, fetch acceptance, resume, the streaming loop, the verification gate, exit-code mapping, log shipping), reconciler (parse, derive, tick, jobspec, guards, attempts), frontend (schemas, derivation, components); everything mocked |
+| 1 | Unit tests | wrapper (manifest walking, fetch acceptance, resume, the streaming loop, the verification gate, exit-code mapping, log shipping), converter (parse, render, append-only, the 10 000-volume split), read API (pure Job/Pod/ConfigMap projection functions), frontend (schemas, derivation, components); everything mocked |
 | 2 | Container smoke | the built image against a real 2-page manifest with a RustFS target; asserts PAGE/ALTO files + `manifest.json` land |
-| 3 | Cluster acceptance | Kueue gating, kill-and-resume, a campaign through the reconciler; the fetch-vs-HTR numbers from `manifest.json` — the Phase 2 gate input |
+| 3 | Cluster acceptance | Kueue gating, kill-and-resume, a campaign rendered and applied; the fetch-vs-HTR numbers from `manifest.json` — the Phase 2 gate input |

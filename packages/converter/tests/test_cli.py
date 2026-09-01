@@ -7,6 +7,17 @@ from htrflow_converter.cli import main
 
 FIXTURES = Path(__file__).parent / "fixtures"
 GOOD = FIXTURES / "good"
+REPO_ROOT = Path(__file__).parents[3]
+EXAMPLES_CAMPAIGNS = REPO_ROOT / "examples" / "campaigns"
+
+
+def test_validate_examples_campaigns_exits_0(capsys):
+    """examples/campaigns is the shape of a real campaigns repo, shown in
+    docs and copied by operators — this keeps it from rotting silently as
+    the converter's own rules evolve (B63 Task 6)."""
+    rc = main(["validate", str(EXAMPLES_CAMPAIGNS)])
+    out = capsys.readouterr().out
+    assert rc == 0, out
 
 
 def test_validate_good_repo_exits_0(capsys):
