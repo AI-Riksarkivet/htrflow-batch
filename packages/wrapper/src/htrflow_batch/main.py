@@ -167,7 +167,7 @@ def main(
     except Terminated:
         # O2: the Job deadline or a node drain. Leave the same evidence a
         # failure would (termination message + complete run log), then exit
-        # 143 so the reconciler classifies it as a retry, not exit 13.
+        # 143 so Kubernetes retries the index like exit 1, not FailIndex.
         # Same shape as the other failure lines: the run viewer's terminal-line
         # regex (frontend runlog.ts) is the contract that stops live polling.
         log.error("transient failure in %s: SIGTERM, shutting down", state.stage)

@@ -45,8 +45,8 @@ jobs:
         include:
           - component: wrapper
             repository: riksarkivet/htrflow-batch
-          - component: reconciler
-            repository: riksarkivet/htrflow-reconciler
+          - component: api
+            repository: riksarkivet/htrflow-api
           - component: viewer
             repository: riksarkivet/htrflow-batch-viewer
     env:

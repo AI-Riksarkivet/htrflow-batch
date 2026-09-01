@@ -8,8 +8,9 @@
 #
 # 0.3.0: campaigns are Indexed Jobs rendered by packages/converter and
 # applied outside this chart (kubectl / Argo) — the chart no longer renders
-# pipeline ConfigMaps, warm-up Jobs, campaign Jobs or the GitOps reconciler
-# CronJob. It adds the read-only status API (`api.*`) behind the viewer.
+# pipeline ConfigMaps, warm-up Jobs, campaign Jobs or the old GitOps
+# CronJob controller. It adds the read-only status API (`api.*`) behind the
+# viewer.
 
 s3:
   # Convention only — no template in this chart creates or reads this

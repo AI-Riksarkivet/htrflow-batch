@@ -16,7 +16,7 @@ var (
 	ruffCheckCmd       = []string{"uv", "run", "--no-sync", "ruff", "check", "."}
 	tyCheckCmd         = []string{
 		"uv", "run", "--no-sync", "ty", "check",
-		"packages/wrapper/src", "packages/reconciler/src",
+		"packages/wrapper/src", "packages/converter/src", "packages/api/src",
 	}
 )
 
@@ -45,9 +45,9 @@ func (m *HtrflowBatch) Lint(
 	return "ruff passed", nil
 }
 
-// Typecheck runs ty over both workspace members' sources with the locked ty.
+// Typecheck runs ty over the workspace members' sources with the locked ty.
 // The shared venv resolves cross-member imports, so one invocation from the
-// workspace root covers the wrapper and the reconciler.
+// workspace root covers the wrapper, the converter and the read API.
 func (m *HtrflowBatch) Typecheck(
 	ctx context.Context,
 	// +defaultPath="/"
@@ -169,7 +169,7 @@ func namedDeploymentDoc(content, name string) (string, bool) {
 // (charts/htrflow-batch) on its digest/CIDR-complete defaults and on
 // ci/full-values.yaml, and the PoC-only devstack chart
 // (charts/htrflow-devstack) the same way — then asserts on the prod chart's
-// renders (B63 Task 5: the reconciler CronJob is gone, the read API
+// renders (B63 Task 5: the CronJob controller is gone, the read API
 // Deployment always renders with a /healthz livenessProbe, and no
 // devstack-labelled object leaks into the prod chart) before validating
 // every render with kubeconform (-strict, unknown CRD kinds skipped).
@@ -226,7 +226,7 @@ func (m *HtrflowBatch) CheckChart(
 			return "", fmt.Errorf("reading rendered %s: %w", name, err)
 		}
 		if strings.Contains(content, "kind: CronJob") {
-			return "", fmt.Errorf("prod chart (%s) renders a CronJob: the reconciler must be gone (B63)", name)
+			return "", fmt.Errorf("prod chart (%s) renders a CronJob: the removed campaign controller must be gone (B63)", name)
 		}
 		apiDeploy, found := namedDeploymentDoc(content, "htrflow-api")
 		if !found {

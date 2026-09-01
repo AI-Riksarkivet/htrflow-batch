@@ -67,12 +67,12 @@ def main(
         # W12: malformed YAML, a config that fails pydantic validation, an
         # unknown step (htrflow: KeyError from STEPS[...]) or model class
         # (NotImplementedError). Retrying cannot help; exit 13 so the
-        # reconciler stops recreating the warm-up every tick.
+        # warm-up Job's own backoffLimit stops retrying it.
         log.error("warm-up failed (bad pipeline config): %r", e)
         return EXIT_PERMANENT
     except Exception as e:
-        # Network, disk-full, HF Hub 5xx: retryable — the Job's backoffLimit
-        # and the reconciler's delete-and-recreate handle it.
+        # Network, disk-full, HF Hub 5xx: retryable — the warm-up Job's own
+        # backoffLimit handles it.
         log.error("warm-up failed: %s\n%s", e, traceback.format_exc())
         return EXIT_TRANSIENT
     log.info(

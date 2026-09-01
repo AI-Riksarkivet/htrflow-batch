@@ -6,8 +6,8 @@
 # No git daemon here (there was one through B63 Task 5's first draft):
 # nothing in the platform reads git:// any more — campaigns are Indexed
 # Jobs rendered by packages/converter and applied with `kubectl`, not
-# fetched in-cluster by a reconciler — so it had no consumer and was
-# removed rather than kept as dead weight.
+# fetched in-cluster by a CronJob controller — so it had no consumer and
+# was removed rather than kept as dead weight.
 
 # Must match charts/htrflow-batch's `s3.bucket` / `s3.existingSecret`
 # defaults (both default to the same names) so the Secret and bucket this

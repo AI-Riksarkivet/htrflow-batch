@@ -69,7 +69,7 @@
     },
     {
       "customType": "regex",
-      "description": "Trivy image used by make scan-reconciler",
+      "description": "Trivy image used by make scan-api",
       "managerFilePatterns": ["/^Makefile$/"],
       "matchStrings": ["TRIVY_IMAGE \\?= (?<depName>aquasec/trivy):(?<currentValue>[0-9.]+)"],
       "datasourceTemplate": "docker"

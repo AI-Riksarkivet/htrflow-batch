@@ -9,7 +9,7 @@ import (
 // scanImage runs Trivy against an already-built container. ignoreUnfixed
 // skips findings the distribution has no fix for (Debian will_not_fix
 // entries in the slim base): a gate on those can never go green and is
-// what `make scan-reconciler` already does.
+// what `make scan-api` already does.
 func (m *HtrflowBatch) scanImage(
 	ctx context.Context,
 	container *dagger.Container,
@@ -73,11 +73,11 @@ func (m *HtrflowBatch) Scan(
 	return m.scanImage(ctx, container, severity, format, exitCode, ignoreUnfixed, caBundle)
 }
 
-// ScanReconciler runs Trivy against the reconciler image. Unlike the wrapper
-// this one has a slim debian base with no CUDA stack, so a clean gate is a
-// realistic expectation here; ci.yml runs it on every push and pull request
-// with --severity CRITICAL.
-func (m *HtrflowBatch) ScanReconciler(
+// ScanApi runs Trivy against the read API image. Unlike the wrapper this one
+// has a slim debian base with no CUDA stack, so a clean gate is a realistic
+// expectation here; ci.yml runs it on every push and pull request with
+// --severity CRITICAL.
+func (m *HtrflowBatch) ScanApi(
 	ctx context.Context,
 	// +defaultPath="/"
 	// +optional
@@ -95,9 +95,9 @@ func (m *HtrflowBatch) ScanReconciler(
 	// +optional
 	caBundle *dagger.File,
 ) (string, error) {
-	container, err := m.BuildReconciler(ctx, source)
+	container, err := m.BuildApi(ctx, source)
 	if err != nil {
-		return "", fmt.Errorf("reconciler build failed before scanning: %w", err)
+		return "", fmt.Errorf("api build failed before scanning: %w", err)
 	}
 	return m.scanImage(ctx, container, severity, format, exitCode, ignoreUnfixed, caBundle)
 }
