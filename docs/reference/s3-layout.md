@@ -13,11 +13,11 @@ key, so re-running a volume under a new recipe never overwrites old results.
   iiif.json                  # IIIF v3 viewer manifest with ALTO links (wrapper)
   pipeline.yaml              # the exact steps document the run used (wrapper)
   manifest.json              # completion marker — written LAST (wrapper)
-  metrics-failed-latest.json # evidence from the most recent FAILED run (wrapper)
 
-sources/<pipeline>/<volume>/<hash8>/
-  manifest.json              # synthetic IIIF manifest for images: volumes (reconciler);
-                             # hash8 = sha256 of the image list, so an edit yields a new key
+sources/<pipeline>/<volume>/
+  manifest.json              # synthetic IIIF manifest for IMAGES volumes, published
+                             # by the wrapper itself before processing; overwritten
+                             # every run (no content hash in the key)
 
 status/
   status.json                # the campaign browser's data source (reconciler)
@@ -29,9 +29,9 @@ status/
   warmup/<pipeline>.log             # log of a failed warm-up Job (reconciler)
 ```
 
-Writers: the **wrapper** writes under its own `<pipeline>/<volume>/` prefix
-plus its run-log key; the **reconciler** owns `sources/` and the rest of
-`status/` and never writes into result prefixes. Anonymous read (devStack
+Writers: the **wrapper** writes under its own `<pipeline>/<volume>/` prefix,
+its run-log key, and `sources/` (for `IMAGES` volumes); the **reconciler**
+owns the rest of `status/` and never writes into result prefixes. Anonymous read (devStack
 policy): everything except `status/attempts.json`, `validation.json`,
 `failures/*`, `warmup/*` — and `status/logs/*` when
 `devStack.rustfs.publicLogs=false`. Listing is always denied.
@@ -57,10 +57,6 @@ volume's `updated` stamp.
 | `source_manifest` | the manifest URL the Job fetched (verbatim) |
 | `max_image_width`, `bytes_fetched`, `wall_seconds`, `gpu_stall_seconds`, `pages_per_second` | run metrics |
 | `viewer_url` | the public `iiif.json` URL |
-
-`metrics-failed-latest.json` carries `volume`, `pipeline_id`, `stage`,
-`error` (redacted), `wall_seconds`, `gpu_stall_seconds` and the partial
-`results` of the most recent failed run.
 
 ## `status.json`
 

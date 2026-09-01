@@ -64,32 +64,12 @@ def test_viewer_manifest_declares_search_service(sample_manifest, cfg):
     assert svc["@id"] == "http://public/htr-results/demo-v1/SE-RA-1234/search"
 
 
-def test_canvas_thumbnail_from_image_service(sample_manifest, cfg):
-    """With a IIIF image service, thumbnails use a sized request (width
-    syntax — lbiiif 501s on !w,h)."""
+def test_canvas_has_no_thumbnail_key(sample_manifest, cfg):
+    """B63/D7: canvas thumbnails were dropped along with the campaign
+    browser's per-volume thumbnail — the viewer manifest must not carry one."""
     pages = pages_from_manifest(sample_manifest, width=2500)
     m = build_viewer_manifest(cfg, sample_manifest, pages, {"0001": (2500, 3538)})
-    thumb = m["items"][0]["thumbnail"][0]
-    assert (
-        thumb["id"]
-        == "https://iiif.example/mock-vol/page-00001/full/200,/0/default.jpg"
-    )
-    assert thumb["type"] == "Image"
-
-
-def test_canvas_thumbnail_falls_back_to_static_image(sample_manifest, cfg):
-    """Without an image service (mocked IIIF), the full image doubles as
-    thumbnail — UV renders nothing at all if the property is absent."""
-    for canvas in sample_manifest["items"]:
-        body = canvas["items"][0]["items"][0]["body"]
-        del body["service"]
-    pages = pages_from_manifest(sample_manifest, width=2500)
-    m = build_viewer_manifest(cfg, sample_manifest, pages, {"0001": (2500, 3538)})
-    thumb = m["items"][0]["thumbnail"][0]
-    assert (
-        thumb["id"] == "https://iiif.example/mock-vol/page-00001/full/max/0/default.jpg"
-    )
-    assert (thumb["width"], thumb["height"]) == (2500, 3538)
+    assert "thumbnail" not in m["items"][0]
 
 
 def _p2_viewer_manifest(cfg, p2_manifest) -> dict:
@@ -143,11 +123,3 @@ def test_viewer_manifest_label_falls_back_when_empty(cfg, p2_manifest):
     m = _p2_viewer_manifest(cfg, p2_manifest)
     assert m["items"][0]["label"] == {"none": ["0001"]}
     assert m["label"] == {"none": ["SE-RA-1234"]}
-
-
-def test_thumbnail_strips_trailing_slash_from_service_id():
-    """W13: a service id with a trailing slash produced '//full/200,/...'."""
-    from htrflow_batch.viewer import _thumbnail
-
-    thumb = _thumbnail({"service": [{"id": "https://img/iiif/p1/"}]}, 10, 10)
-    assert thumb[0]["id"] == "https://img/iiif/p1/full/200,/0/default.jpg"

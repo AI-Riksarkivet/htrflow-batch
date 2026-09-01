@@ -103,6 +103,18 @@ class ResultStore:
             ContentType="application/json",
         )
 
+    def put_json_at(self, key: str, obj: dict) -> None:
+        """Write JSON at a bucket key outside the per-volume prefix, honoring
+        S3_PREFIX like everything else — used for the IMAGES synthetic
+        manifest under ``sources/`` (docs: wrapper, IMAGES)."""
+        full_key = f"{self.cfg.s3_prefix}/{key}" if self.cfg.s3_prefix else key
+        self.client.put_object(
+            Bucket=self.bucket,
+            Key=full_key,
+            Body=json.dumps(obj, ensure_ascii=False).encode(),
+            ContentType="application/json",
+        )
+
     def put_bytes(self, rel_key: str, data: bytes, content_type: str) -> None:
         self.client.put_object(
             Bucket=self.bucket,

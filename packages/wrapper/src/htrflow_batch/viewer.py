@@ -31,33 +31,6 @@ def parse_alto_dims(path: Path) -> tuple[int, int]:
         raise ValueError(f"no WIDTH/HEIGHT element in {path}") from None
 
 
-def _thumbnail(body: dict, w: int, h: int) -> "list[dict] | None":
-    """UV renders no thumbnail at all when the property is absent and there
-    is no image service; prefer a sized IIIF request (width syntax — lbiiif
-    501s on !w,h), else fall back to the full static image."""
-    for svc in body.get("service") or []:
-        svc_id = svc.get("id") or svc.get("@id")
-        if svc_id:
-            return [
-                {
-                    "id": f"{svc_id.rstrip('/')}/full/200,/0/default.jpg",
-                    "type": "Image",
-                    "format": "image/jpeg",
-                }
-            ]
-    if body.get("id"):
-        return [
-            {
-                "id": body["id"],
-                "type": "Image",
-                "format": body.get("format", "image/jpeg"),
-                "width": w,
-                "height": h,
-            }
-        ]
-    return None
-
-
 def _language_map(value: object) -> dict:
     """Normalize any legal P2/P3 label to a P3 language map.
 
@@ -107,7 +80,6 @@ def build_viewer_manifest(
         src = page.canvas
         body = painting_body(src)
         canvas_id = f"{vol}/canvas/{page.name}"
-        thumbnail = _thumbnail(body, w, h)
         canvases.append(
             {
                 "id": canvas_id,
@@ -115,7 +87,6 @@ def build_viewer_manifest(
                 "label": _label(src.get("label"), page.name),
                 "width": w,
                 "height": h,  # capped processing dims (D19 alignment)
-                **({"thumbnail": thumbnail} if thumbnail else {}),
                 "seeAlso": [
                     {
                         "id": f"{vol}/alto/{page.name}.xml",

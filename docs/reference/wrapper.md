@@ -17,11 +17,11 @@ Source: [`packages/wrapper/src/htrflow_batch/config.py`](https://github.com/carp
 | Env var | Description |
 |---------|-------------|
 | `VOLUME_REF` | Volume id — last segment of the S3 result prefix |
-| `IIIF_MANIFEST_URL` | Source manifest (Presentation v2 or v3); must be `http(s)` |
+| `IIIF_MANIFEST_URL` or `IMAGES` | Exactly one of the two: a source manifest (Presentation v2 or v3, must be `http(s)`) or a comma-separated list of `http(s)` image URLs. `IMAGES` volumes get a synthetic P3 manifest built by the wrapper and published to `sources/<pipeline>/<volume>/manifest.json` before processing |
 | `PIPELINE_PATH` | Path to the mounted pipeline YAML (Jobs: `/config/pipeline.yaml`) |
 | `PIPELINE_ID` | Pipeline id — first segment of the S3 result prefix |
 | `S3_BUCKET` | Results bucket |
-| `PUBLIC_RESULTS_BASE` | Browser-reachable base URL, used to build `iiif.json` ids and `viewer_url` |
+| `PUBLIC_RESULTS_BASE` | Browser-reachable base URL, used to build `iiif.json` ids, `viewer_url` and the `IMAGES` synthetic manifest id |
 
 **Optional:**
 
@@ -40,6 +40,7 @@ Source: [`packages/wrapper/src/htrflow_batch/config.py`](https://github.com/carp
 | `FETCH_MAX_BYTES` | `67108864` | Byte cap on one image body (over it: the page fails without retry) |
 | `IMAGE_DIGEST` | `unknown` | Provenance only — recorded verbatim in `manifest.json` |
 | `LOG_SHIP_SECONDS` | `15` | How often the run's own stdout/stderr is uploaded to `status/logs/<pipeline>/<volume>.txt` while it runs (`0` = final upload only) |
+| `MAX_SECONDS` | `0` | Per-volume wall-clock budget (`0` = none); on expiry: termination log `{"permanent": false, "error": "MAX_SECONDS"}`, final run-log ship, `os._exit(1)` — retried like any other transient failure |
 | `TERMINATION_LOG_PATH` | `/dev/termination-log` | Where the exit reason is written |
 | `HOME`, `TMPDIR`, `YOLO_CONFIG_DIR` | *(unset)* | Created at start when set — the Job points them into the tmpfs workdir because the root filesystem is read-only |
 | `HF_HOME`, `HF_HUB_OFFLINE` | *(unset)* | Set by the Job (`/data/hf`, `1`): models come from the read-only cache, never from HF Hub |
@@ -58,7 +59,7 @@ what the termination log reports. Details in
 |---|---|---|
 | `0` | success | verify passed, `manifest.json` published |
 | `13` | permanent — `{"permanent": true}` | `ConfigError` (missing env); manifest URL not http(s); manifest HTTP 400/401/403/404/410; body over `MANIFEST_MAX_BYTES`; non-JSON or non-object JSON; no canvases; a canvas without an image; bad pipeline YAML, an unknown step or model class, an `Export` step in the YAML (`ValueError` from `driver.load_pipeline`) |
-| `1` | transient — `{"permanent": false}` | manifest 5xx/429/other status or a network error (`TransientManifestError`); the verify gate (pages missing or failed after fetch retries, `pipeline.run` exceptions, malformed XML); a model-load `OSError`; `UploadOutage` after 5 consecutive S3 upload failures; anything else |
+| `1` | transient — `{"permanent": false}` | manifest 5xx/429/other status or a network error (`TransientManifestError`); the verify gate (pages missing or failed after fetch retries, `pipeline.run` exceptions, malformed XML); a model-load `OSError`; `UploadOutage` after 5 consecutive S3 upload failures; `MAX_SECONDS` exceeded (`{"error": "MAX_SECONDS"}`); anything else |
 | `143` | SIGTERM — `{"permanent": false, "error": "SIGTERM"}` | the handler: termination log, final run-log ship, `os._exit(143)` |
 
 Page-fetch acceptance (never a whole-run verdict on its own): 3 attempts
@@ -83,11 +84,12 @@ Source root: [`packages/wrapper/src/htrflow_batch/`](https://github.com/carpelan
 | `fetch.py` | Bounded-lookahead downloader: sized-image requests, raster acceptance, byte cap, retry/backoff, `stop` on abort |
 | `stream.py` | The consumer loop (`consume`, `StreamStats`, `UploadOutage`) — process a page the moment it lands, upload, rolling-delete, never further ahead than `LOOKAHEAD_PAGES` |
 | `driver.py` | htrflow integration: build the pipeline from YAML (Export steps appended for `alto` and `page`), `process_page`, `htrflow_version` |
-| `store.py` | `ResultStore` — deterministic S3 keys, explicit content types, XML parsed before upload, `page` then `alto`, `done_pages()` (both formats), bounded boto timeouts, the run-log key |
+| `store.py` | `ResultStore` — deterministic S3 keys, explicit content types, XML parsed before upload, `page` then `alto`, `done_pages()` (both formats), bounded boto timeouts, the run-log key, `put_json_at` (bucket-root keys, e.g. `sources/`) |
+| `synthetic.py` | `build_manifest` — the synthetic P3 manifest for `IMAGES` volumes |
 | `viewer.py` | `build_viewer_manifest` — IIIF v3 manifest with ALTO annotation links (`iiif.json`) |
 | `logship.py` | `LogCapture` — tees stdout/stderr, redacts URLs, ships the buffer to S3 on an interval ([Live run log](../how-it-works/live-run-log.md)) |
-| `main.py` | The stage machine, the SIGTERM handler, `publish_failure_metrics`, `_changed_sources` |
-| `warmup.py` | The warm-up entrypoint: `Pipeline.from_config()` fills `HF_HOME` |
+| `main.py` | The stage machine, the SIGTERM and `MAX_SECONDS` handlers, `IMAGES` wiring, `_changed_sources` |
+| `warmup.py` | The warm-up entrypoint: `Pipeline.from_config()` fills `HF_HOME`, then drops the `<pipeline_id>.done` marker |
 
 ## Completion contract
 
@@ -99,12 +101,10 @@ drift ground truth), `image_digest`, per-page results, `page_sources` and
 `gpu_stall_seconds`, `pages_per_second`, `bytes_fetched`) and `viewer_url`
 ([field table](s3-layout.md#manifestjson-completion-marker)).
 
-On any failure the wrapper writes the termination log first (local,
-instant), then best-effort publishes `metrics-failed-latest.json` (stage,
-error, partial per-page results) before exiting non-zero — evidence for the
-operator, and never a completion marker. Every URL in logs, termination
-messages, failure metrics and `page_sources` is redacted (no userinfo, no
-query string); `source_manifest` in `manifest.json` is written verbatim.
+On any failure the wrapper writes the termination log (local, instant)
+before exiting non-zero — never a completion marker. Every URL in logs,
+termination messages and `page_sources` is redacted (no userinfo, no query
+string); `source_manifest` in `manifest.json` is written verbatim.
 
 ## Live run log
 

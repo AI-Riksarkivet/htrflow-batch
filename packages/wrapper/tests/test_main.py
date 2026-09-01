@@ -1,9 +1,8 @@
-import io
 import json
 import os
 import signal
+import threading
 from pathlib import Path
-from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -15,7 +14,6 @@ from htrflow_batch.main import (
     EXIT_SIGTERM,
     EXIT_TRANSIENT,
     main,
-    publish_failure_metrics,
 )
 from htrflow_batch.store import ResultStore
 
@@ -269,12 +267,8 @@ def test_malformed_alto_fails_the_page_at_upload(env, cfg, s3):
     assert "demo-v1/SE-RA-1234/page/0002.xml" not in keys
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
     assert term["stage"] == "verify" and "0002" in term["error"]
-    evidence = json.loads(
-        s3.get_object(
-            Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/metrics-failed-latest.json"
-        )["Body"].read()
-    )
-    assert "not well-formed" in evidence["results"]["0002"]["error"]
+    # B63/D7: no failure-evidence object is published any more
+    assert "demo-v1/SE-RA-1234/metrics-failed-latest.json" not in keys
 
 
 def test_publish_tolerates_unparseable_previously_uploaded_alto(env, cfg, s3):
@@ -351,8 +345,8 @@ def test_page_failure_is_transient_and_blocks_completion(env, cfg, s3):
     keys = _keys(s3, cfg)
     assert "demo-v1/SE-RA-1234/manifest.json" not in keys  # no false complete
     assert "demo-v1/SE-RA-1234/alto/0001.xml" in keys  # partials kept
-    # the run's timing/stall evidence outlives the pod
-    assert "demo-v1/SE-RA-1234/metrics-failed-latest.json" in keys
+    # B63/D7: no failure-evidence object is published any more
+    assert "demo-v1/SE-RA-1234/metrics-failed-latest.json" not in keys
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
     assert term["stage"] == "verify" and "0002" in str(term)
 
@@ -464,40 +458,6 @@ def test_publish_warns_when_no_dims_resolved(env, cfg, s3, caplog):
     keys = _keys(s3, cfg)
     assert "demo-v1/SE-RA-1234/iiif.json" not in keys
     assert "demo-v1/SE-RA-1234/manifest.json" in keys
-
-
-def test_publish_failure_metrics_records_run_evidence():
-    """A failed run must leave its timing/stall evidence in the bucket
-    (spec §4.8) — today it dies with the pod."""
-    calls = []
-    store = SimpleNamespace(put_json=lambda key, obj: calls.append((key, obj)))
-    cfg = SimpleNamespace(volume_ref="vol-x", pipeline_id="demo-v1")
-    stats = SimpleNamespace(
-        stall_seconds=12.34,
-        results={
-            "0001": SimpleNamespace(status="ok", seconds=3.2, error=None),
-            "0002": SimpleNamespace(status="failed", seconds=9.9, error="HTTP 400"),
-        },
-    )
-    publish_failure_metrics(store, cfg, stats, 100.0, "verify", "verify failed: x")
-    assert len(calls) == 1
-    (key, obj) = calls[0]
-    assert key == "metrics-failed-latest.json"
-    assert obj["stage"] == "verify"
-    assert obj["gpu_stall_seconds"] == 12.3
-    assert obj["results"]["0002"]["error"] == "HTTP 400"
-
-
-def test_publish_failure_metrics_never_raises(caplog):
-    def boom(key, obj):
-        raise OSError("bucket gone")
-
-    store = SimpleNamespace(put_json=boom)
-    cfg = SimpleNamespace(volume_ref="v", pipeline_id="p")
-    stats = SimpleNamespace(stall_seconds=0.0, results={})
-    with caplog.at_level("WARNING"):
-        publish_failure_metrics(store, cfg, stats, 1.0, "stream", "x")  # must not raise
-    assert "could not publish failure metrics" in caplog.text
 
 
 def test_setup_creates_the_writable_dirs_before_model_load(env, cfg, s3, tmp_path):
@@ -733,106 +693,206 @@ def test_manifest_json_page_sources_and_errors_are_redacted(
     )
 
 
-def test_publish_failure_metrics_redacts_urls():
-    calls = []
-    store = SimpleNamespace(put_json=lambda key, obj: calls.append(obj))
-    cfg = SimpleNamespace(volume_ref="v", pipeline_id="p")
-    stats = SimpleNamespace(
-        stall_seconds=0.0,
-        results={
-            "0001": SimpleNamespace(
-                status="failed", seconds=0.0, error="HTTP 500 https://h/x?token=S"
-            )
-        },
+def test_manifest_json_has_no_thumbnail_key(env, cfg, s3):
+    """B63/D7: thumbnails were dropped along with the campaign browser."""
+    rc = main(env, process_page_factory=fake_factory)
+    assert rc == EXIT_OK
+    manifest = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
     )
-    publish_failure_metrics(store, cfg, stats, 1.0, "verify", "bad https://u:p@h/y?t=S")
-    assert "token=S" not in calls[0]["results"]["0001"]["error"]
-    assert "u:p@" not in calls[0]["error"] and "t=S" not in calls[0]["error"]
+    assert "thumbnail" not in manifest
+    assert "demo-v1/SE-RA-1234/thumb.jpg" not in _keys(s3, cfg)
 
 
-def _jpeg_bytes(w: int = 600, h: int = 400) -> bytes:
-    import io
-
-    from PIL import Image
-
-    buf = io.BytesIO()
-    Image.new("RGB", (w, h), (200, 180, 140)).save(buf, format="JPEG")
-    return buf.getvalue()
+# -- IMAGES (B63/D6) -------------------------------------------------------
 
 
 @pytest.fixture
-def env_real_images(env, sample_manifest, monkeypatch):
-    """Like ``env`` but the image responses are real JPEGs, so the thumbnail
-    step has something to decode."""
-    data = _jpeg_bytes()
+def images_env(tmp_path, cfg, monkeypatch):
+    """Like ``env``, but IMAGES replaces IIIF_MANIFEST_URL — no manifest
+    fetch, only the two image downloads are mocked."""
 
     def handler(req):
-        if req.url.path.endswith("manifest.json"):
-            return httpx.Response(200, json=sample_manifest)
-        return httpx.Response(200, content=data, headers={"content-type": "image/jpeg"})
+        return httpx.Response(200, content=b"\xff\xd8\xff\xe0JPEGDATA")
 
     monkeypatch.setattr(
         main_mod,
         "_http_client",
         lambda: httpx.Client(transport=httpx.MockTransport(handler)),
     )
-    return env
+    pipeline = tmp_path / "pipeline.yaml"
+    pipeline.write_text("steps: []\n")
+    return {
+        "VOLUME_REF": "SE-RA-1234",
+        "IMAGES": "https://img.example/1.jpg,https://img.example/2.jpg",
+        "PIPELINE_PATH": str(pipeline),
+        "PIPELINE_ID": "demo-v1",
+        "S3_ENDPOINT": "",
+        "S3_BUCKET": "htr-results",
+        "PUBLIC_RESULTS_BASE": "http://public/htr-results",
+        "WORKDIR_PATH": str(tmp_path / "work"),
+        "TERMINATION_LOG_PATH": str(tmp_path / "term.log"),
+    }
 
 
-def test_thumbnail_is_published_from_the_first_page(env_real_images, cfg, s3):
-    from PIL import Image
-
-    rc = main(env_real_images, process_page_factory=fake_factory)
+def test_images_publishes_the_synthetic_manifest_and_processes_both_pages(
+    images_env, cfg, s3
+):
+    rc = main(images_env, process_page_factory=fake_factory)
     assert rc == EXIT_OK
-    obj = s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/thumb.jpg")
-    assert obj["ContentType"] == "image/jpeg"
-    img = Image.open(io.BytesIO(obj["Body"].read()))
-    # 600x400 scaled to width 200
-    assert img.width == 200 and 130 <= img.height <= 135
+    keys = _keys(s3, cfg)
+    assert "demo-v1/SE-RA-1234/alto/0001.xml" in keys
+    assert "demo-v1/SE-RA-1234/alto/0002.xml" in keys
+    src = json.loads(
+        s3.get_object(
+            Bucket=cfg.s3_bucket, Key="sources/demo-v1/SE-RA-1234/manifest.json"
+        )["Body"].read()
+    )
+    assert src["type"] == "Manifest" and len(src["items"]) == 2
     manifest = json.loads(
         s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
             "Body"
         ].read()
     )
-    assert manifest["thumbnail"] == "thumb.jpg"
+    assert manifest["pages"] == 2
+    assert manifest["source_manifest"] == (
+        "http://public/htr-results/sources/demo-v1/SE-RA-1234/manifest.json"
+    )
 
 
-def test_undecodable_first_page_skips_the_thumbnail_but_not_the_run(env, cfg, s3):
-    """The default env fixture serves junk bytes as images: no thumbnail, no
-    failure — the picture is a nicety, the transcription is the job."""
+def test_images_honours_s3_prefix_for_the_sources_key(images_env, cfg, s3):
+    rc = main(dict(images_env, S3_PREFIX="batch"), process_page_factory=fake_factory)
+    assert rc == EXIT_OK
+    assert s3.get_object(
+        Bucket=cfg.s3_bucket, Key="batch/sources/demo-v1/SE-RA-1234/manifest.json"
+    )
+
+
+def test_images_rejects_a_non_http_url(images_env, cfg, s3):
+    env = dict(images_env, IMAGES="not-a-url")
     rc = main(env, process_page_factory=fake_factory)
-    assert rc == EXIT_OK
-    assert "demo-v1/SE-RA-1234/thumb.jpg" not in _keys(s3, cfg)
-    manifest = json.loads(
-        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
-            "Body"
-        ].read()
-    )
-    assert manifest["thumbnail"] is None
+    assert rc == EXIT_PERMANENT
+    term = json.loads(Path(images_env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "setup" and "http(s)" in term["error"]
 
 
-def test_resumed_run_keeps_the_previous_thumbnail(env, cfg, s3):
-    """Every page already done: nothing is downloaded this run, so the thumb
-    written by the previous run is kept and still advertised."""
-    xml = b'<alto><Layout><Page WIDTH="2500" HEIGHT="3538"/></Layout></alto>'
-    for name in ("0001", "0002", "0003"):
-        for fmt in ("alto", "page"):
-            s3.put_object(
-                Bucket=cfg.s3_bucket,
-                Key=f"demo-v1/SE-RA-1234/{fmt}/{name}.xml",
-                Body=xml,
-            )
-    s3.put_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/thumb.jpg", Body=b"jpg")
-    s3.put_object(
-        Bucket=cfg.s3_bucket,
-        Key="demo-v1/SE-RA-1234/manifest.json",
-        Body=json.dumps({"thumbnail": "thumb.jpg", "page_sources": {}}).encode(),
-    )
-    rc = main(env, process_page_factory=fake_factory)
+# -- MAX_SECONDS (B63/D6) ---------------------------------------------------
+
+
+class _FakeTimer:
+    """Captures the (interval, callback) threading.Timer(...) was built
+    with, and whether it was cancelled — no real waiting."""
+
+    instances: list["_FakeTimer"] = []
+
+    def __init__(self, interval, fn):
+        self.interval = interval
+        self.fn = fn
+        self.cancelled = False
+        _FakeTimer.instances.append(self)
+
+    def start(self):
+        pass
+
+    def cancel(self):
+        self.cancelled = True
+
+
+@pytest.fixture
+def fake_timer(monkeypatch):
+    _FakeTimer.instances = []
+    monkeypatch.setattr(threading, "Timer", _FakeTimer)
+    return _FakeTimer
+
+
+def test_max_seconds_timer_is_started_and_cancelled_on_success(
+    env, cfg, s3, fake_timer
+):
+    """Cheap, deterministic check that the watchdog is wired up and torn down
+    on the normal-completion path, without waiting on a real timer."""
+    rc = main(dict(env, MAX_SECONDS="5"), process_page_factory=fake_factory)
     assert rc == EXIT_OK
-    manifest = json.loads(
-        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+    assert len(fake_timer.instances) == 1
+    assert fake_timer.instances[0].interval == 5
+    assert fake_timer.instances[0].cancelled is True
+
+
+def test_max_seconds_zero_starts_no_timer(env, cfg, s3, fake_timer):
+    rc = main(env, process_page_factory=fake_factory)  # MAX_SECONDS unset (0)
+    assert rc == EXIT_OK
+    assert fake_timer.instances == []
+
+
+def test_max_seconds_on_expiry_writes_termination_log_ships_log_and_hard_exits(
+    env, cfg, s3, fake_timer, monkeypatch
+):
+    """Unit-level: fire the watchdog's callback mid-run, exactly as the real
+    Timer thread would, and check the three actions the brief specifies —
+    termination log, final log ship, hard_exit(1) — without waiting on a
+    real timer."""
+    exits = []
+    monkeypatch.setattr(main_mod, "_hard_exit", lambda code: exits.append(code))
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            if path.stem == "0002":
+                fake_timer.instances[0].fn()  # fire, as the real Timer would
+            return inner(path)
+
+        return process
+
+    rc = main(dict(env, MAX_SECONDS="600"), process_page_factory=factory)
+    assert rc == EXIT_OK  # _hard_exit is mocked, so the run completes normally
+    assert fake_timer.instances[0].interval == 600
+    assert exits == [EXIT_TRANSIENT]
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term == {"stage": "stream", "permanent": False, "error": "MAX_SECONDS"}
+    body = (
+        s3.get_object(Bucket=cfg.s3_bucket, Key="status/logs/demo-v1/SE-RA-1234.txt")[
             "Body"
-        ].read()
+        ]
+        .read()
+        .decode()
     )
-    assert manifest["thumbnail"] == "thumb.jpg"
+    assert "MAX_SECONDS" in body
+
+
+def test_max_seconds_exceeded_hard_exits_1(env, cfg, s3, monkeypatch):
+    """End-to-end with a real (short) threading.Timer and a slow fake driver:
+    the watchdog fires in its own thread and force-exits — mocked here so the
+    test process itself is not killed — while the main thread is still
+    blocked processing a page."""
+    exits = []
+    hard_exit_called = threading.Event()
+
+    def fake_hard_exit(code):
+        exits.append(code)
+        hard_exit_called.set()
+
+    monkeypatch.setattr(main_mod, "_hard_exit", fake_hard_exit)
+    fired = threading.Event()
+
+    def factory(c):
+        def process(path):
+            fired.wait(timeout=5)
+            return _write_outputs(c, path.stem)
+
+        return process
+
+    env = dict(env, MAX_SECONDS="1")
+    real_terminate = main_mod._terminate
+
+    def spy_terminate(e, reason):
+        real_terminate(e, reason)
+        fired.set()  # let the blocked page finish once the watchdog has run
+
+    monkeypatch.setattr(main_mod, "_terminate", spy_terminate)
+    main(env, process_page_factory=factory)
+    assert hard_exit_called.wait(timeout=5)
+    assert exits == [EXIT_TRANSIENT]
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term == {"stage": "stream", "permanent": False, "error": "MAX_SECONDS"}
