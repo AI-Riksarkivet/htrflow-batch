@@ -2,7 +2,7 @@
         compose-up compose-test compose-smoke compose-down helm-lint helm-template install-devstack \
         docs-serve docs-build \
         poc-push poc-push-arm64 build-wrapper build-api scan-api clean \
-        campaigns-apply psa-labels \
+        campaigns-apply psa-labels e2e \
         frontend-install frontend-test frontend-check frontend-build frontend-dev viewer-image
 
 # Cluster-local constants (registry, S3 endpoint, bucket, namespace, release,
@@ -127,6 +127,35 @@ campaigns-apply:
 	uv run htrflow-campaigns render $(DIR) --out $(DIR)/rendered
 	kubectl apply $(if $(PRUNE),--prune -l $(CAMPAIGN_SELECTOR)) \
 	  -f $(DIR)/rendered/pipelines -f $(DIR)/rendered/campaigns
+
+# The reproducible core of the Indexed Jobs E2E (docs/development/e2e-indexed-jobs.md):
+# validate the campaigns repo, render + apply it, then block until every
+# campaign Job reaches a terminal condition, printing completedIndexes as it
+# goes. DIR is the campaigns repo; CAMPAIGN_TIMEOUT caps the wait (seconds).
+# The failure-path steps (a 404 manifest, MAX_SECONDS, pause/resume, prune)
+# are campaigns and kubectl in the run log, not this target.
+CAMPAIGN_TIMEOUT ?= 3600
+e2e:
+	@test -n "$(DIR)" || (echo "usage: make e2e DIR=<campaigns-repo-dir>"; exit 2)
+	uv run htrflow-campaigns validate $(DIR)
+	$(MAKE) campaigns-apply DIR=$(DIR)
+	@kubectl -n $(HTR_NAMESPACE) wait --for=condition=complete --timeout=600s \
+	  job -l htrflow.riksarkivet.se/managed-by=converter,app=htrflow-warmup
+	@deadline=$$(( $$(date +%s) + $(CAMPAIGN_TIMEOUT) )); \
+	while :; do \
+	  pending=""; \
+	  for j in $$(kubectl -n $(HTR_NAMESPACE) get job -l app=htrflow-batch -o name); do \
+	    done_idx=$$(kubectl -n $(HTR_NAMESPACE) get $$j -o jsonpath='{.status.completedIndexes}'); \
+	    total=$$(kubectl -n $(HTR_NAMESPACE) get $$j -o jsonpath='{.spec.completions}'); \
+	    cond=$$(kubectl -n $(HTR_NAMESPACE) get $$j -o jsonpath='{.status.conditions[?(@.status=="True")].type}'); \
+	    echo "$$j completions=$$total completedIndexes=[$$done_idx] $$cond"; \
+	    case "$$cond" in *Complete*|*Failed*) ;; *) pending="$$pending $$j" ;; esac; \
+	  done; \
+	  [ -z "$$pending" ] && break; \
+	  [ $$(date +%s) -ge $$deadline ] && { echo "::error::still running:$$pending"; exit 1; }; \
+	  sleep 15; \
+	done
+	@curl -fsS http://localhost:$(HTR_VIEWER_NODEPORT)/api/v1/jobs
 
 # Chart: lint + render on defaults and on ci/full-values.yaml (every feature
 # on, no cluster lookups), then kubeconform when it is installed. The local

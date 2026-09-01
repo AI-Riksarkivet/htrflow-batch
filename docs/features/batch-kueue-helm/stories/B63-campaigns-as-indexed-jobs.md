@@ -60,13 +60,24 @@ Kubernetes 1.33 och verifierat mot officiell dokumentation 2026-09-01.
 
 ## Klart när
 
-- [ ] En kampanj med 50 volymer körs igenom på PoC-noden från `rendered/`
+- [x] En kampanj med 50 volymer körs igenom på PoC-noden från `rendered/`
       till resultat i viewern, utan att `status/*.json` skrivs.
-- [ ] `kubectl get job <kampanj>` visar `completedIndexes`/`failedIndexes`;
-      `suspend: true` mitt i körningen lämnar klara volymer klara; borttagen
-      kampanjfil → Job prunad, S3 orört.
-- [ ] En volym med trasigt manifest hamnar i `failedIndexes` utan att stoppa
-      kampanjen; en volym över `MAX_SECONDS` görs om upp till tre gånger.
-- [ ] `packages/reconciler` finns inte; `grep -r status.json` ger noll träffar
-      utanför historik; alla fem budgetrader gröna i CI.
+      (`campaigns/e2e-50.yaml`, 50/50 indexes på en GPU; de enda
+      `status/*.json` på bucketen är reconcilerns egna, orörda sedan
+      13:30 UTC — se [E2E-loggen](../../../development/e2e-indexed-jobs.md).)
+- [x] `kubectl get job <kampanj>` visar `completedIndexes`/`failedIndexes`;
+      ~~`suspend: true` mitt i körningen lämnar klara volymer klara~~;
+      borttagen kampanjfil → Job prunad, S3 orört.
+      **Delvis:** progress, prune och "klara volymer bevaras" är verifierade,
+      men `suspend: true` på Joben håller inte — Kueue återupptar den inom
+      sekunder. Pausen som fungerar är `spec.active: false` på Workloaden,
+      vilket inte är en git-ändring. Öppen designfråga, se E2E-loggen.
+- [x] En volym med trasigt manifest hamnar i `failedIndexes` utan att stoppa
+      kampanjen (exit 13 → `FailIndex`, ett enda försök); en volym över
+      `MAX_SECONDS` görs om — och återupptar från redan publicerade sidor,
+      så 60 sidor blev klara på tredje försöket.
+- [x] `packages/reconciler` finns inte; `grep -r status.json` ger noll träffar
+      utanför historik; alla fem budgetrader gröna
+      (`scripts/loc-budget.sh`: wrapper 1850, converter 793/800, api 390/400,
+      frontend 2286/2500, chart 613/700).
 - [ ] I15 deployar chart 0.3.0 i dev, inte CronJob-reconcilern.
