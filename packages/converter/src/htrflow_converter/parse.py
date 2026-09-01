@@ -1,13 +1,9 @@
-"""Campaign/pipeline YAML -> domain types (spec §3), with validation.
-
-Ported from ``packages/reconciler/src/htrflow_reconciler/parse.py`` (that
-package is deleted in Task 6) — this module does not import it. Unlike the
-reconciler, a broken campaign or pipeline never raises on its own: every
-problem across every file is collected and reported together, so fixing one
-does not hide the next.
-
-Spec: docs/superpowers/specs/2026-09-01-indexed-jobs-design.md §3.
-"""
+"""Campaign/pipeline YAML -> domain types, with validation (spec §3, docs/
+superpowers/specs/2026-09-01-indexed-jobs-design.md). Ported (not imported —
+that package is deleted in Task 6) from
+``packages/reconciler/src/htrflow_reconciler/parse.py``. Every problem
+across every file is collected before raising once, so fixing one file never
+hides another's problem."""
 
 from __future__ import annotations
 
@@ -31,6 +27,38 @@ _NAME_RE = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?\Z")
 _IMAGE_RE = re.compile(r"[a-z0-9./:-]+@sha256:[0-9a-f]{64}\Z")
 
 _REVISION_RE = re.compile(r"[0-9a-f]{40}\Z")
+
+
+def _repo_allowed(image: str, allowed: list[str]) -> bool:
+    """Path-boundary prefix match: ``ghcr.io/riksarkivet`` admits
+    ``ghcr.io/riksarkivet/x`` but not ``ghcr.io/riksarkivet-evil/x``."""
+    repo = image.split("@", 1)[0]
+    for entry in allowed:
+        entry = entry.strip().rstrip("/")
+        if not entry:
+            continue
+        if repo == entry or repo.startswith(entry + "/"):
+            return True
+    return False
+
+
+def _check_revisions(pid: str, steps: list, problems: list[str]) -> None:
+    """One problem per model missing a 40-hex revision (ported from the
+    reconciler's ``_check_revisions``)."""
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        settings = step.get("settings") or {}
+        ms = settings.get("model_settings") if isinstance(settings, dict) else None
+        model = ms.get("model") if isinstance(ms, dict) else None
+        if not isinstance(ms, dict) or not model:
+            continue
+        rev = str(ms.get("revision") or "")
+        if not _REVISION_RE.match(rev):
+            problems.append(
+                f"{pid}: model {model!r} needs a 40-hex revision "
+                "(require_model_revision)"
+            )
 
 
 class ValidationError(Exception):
@@ -123,13 +151,24 @@ def _parse_campaign(
     if local:
         problems.extend(local)
         return None
-    window = doc.get("window")
+    window_raw = doc.get("window")
+    window: int | None = None
+    if window_raw is not None:
+        try:
+            window = int(window_raw)
+        except (TypeError, ValueError):
+            window = None
+        if window is None or window < 1:
+            problems.append(
+                f"{name}: window must be a positive integer: {window_raw!r}"
+            )
+            return None
     return Campaign(
         name=name,
         pipeline=pipeline_id,
         volumes=volumes,
         priority=str(doc.get("priority") or ""),
-        window=int(window) if window is not None else None,
+        window=window,
     )
 
 
@@ -152,9 +191,7 @@ def _parse_pipeline(
     if not _IMAGE_RE.match(image):
         problems.append(f"{pid}: image must be digest-pinned: {image!r}")
         return None
-    if cfg.allowed_image_repos and not any(
-        image.startswith(repo) for repo in cfg.allowed_image_repos
-    ):
+    if cfg.allowed_image_repos and not _repo_allowed(image, cfg.allowed_image_repos):
         problems.append(f"{pid}: image {image!r} is not under an allowed repository")
         return None
     steps = doc.get("steps")
@@ -165,9 +202,12 @@ def _parse_pipeline(
     if revision and not _REVISION_RE.match(revision):
         problems.append(f"{pid}: model_revision must be 40 hex chars: {revision!r}")
         return None
-    if cfg.require_model_revision and not revision:
-        problems.append(f"{pid}: needs a model_revision (require_model_revision)")
-        return None
+    if cfg.require_model_revision:
+        step_problems: list[str] = []
+        _check_revisions(pid, steps, step_problems)
+        if step_problems:
+            problems.extend(step_problems)
+            return None
     return Pipeline(id=pid, image=image, steps=steps, model_revision=revision)
 
 
@@ -185,7 +225,9 @@ def _load_config(path: Path, problems: list[str]) -> ConverterConfig:
     try:
         return ConverterConfig(**doc)
     except _PydanticValidationError as e:
-        problems.append(f"{path.name}: {e}")
+        for err in e.errors():
+            loc = ".".join(str(p) for p in err["loc"])
+            problems.append(f"{path.name}: {loc}: {err['msg']}")
         return ConverterConfig()
 
 
@@ -193,8 +235,7 @@ def load(
     campaigns_dir: Path, pipelines_dir: Path, config_path: Path
 ) -> tuple[list[Campaign], dict[str, Pipeline], ConverterConfig]:
     """Load and validate a campaigns repo. Raises :class:`ValidationError`
-    with every problem found (not just the first) when anything is wrong;
-    otherwise returns the parsed campaigns, pipelines (by id) and config."""
+    with every problem found, else returns (campaigns, pipelines by id, cfg)."""
     problems: list[str] = []
     cfg = _load_config(Path(config_path), problems)
 
