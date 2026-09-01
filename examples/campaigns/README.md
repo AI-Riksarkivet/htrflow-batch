@@ -29,10 +29,14 @@ campaign **is** one Kubernetes Indexed Job:
 > `kubectl edit` it by hand, or the next render/apply cycle silently undoes
 > your change.
 >
-> **Deleting a campaign's file cancels it.** Its Job and its `volumes.txt`
-> ConfigMap get pruned the next time `rendered/` is applied. **Results
-> already published to S3 are never touched by anything in this system —
-> not by pausing, not by cancelling.**
+> **Deleting a campaign's file cancels it.** The next `render` removes its
+> file from `rendered/`, and the apply that follows prunes its Job and its
+> `volumes.txt` ConfigMap — Argo CD prunes by default, and on a PoC
+> `make campaigns-apply PRUNE=1` does it with
+> `kubectl apply --prune -l htrflow.riksarkivet.se/managed-by=converter`
+> (a plain apply never deletes anything). **Results already published to S3
+> are never touched by anything in this system — not by pausing, not by
+> cancelling.**
 
 ## Adding a campaign
 

@@ -102,3 +102,40 @@ def test_render_reports_a_clean_error_for_a_corrupt_existing_campaign_file(
     out_text = capsys.readouterr().out
     assert "cannot read existing campaign" in out_text
     assert "Traceback" not in out_text
+
+
+def test_render_removes_the_manifest_of_a_deleted_campaign(tmp_path):
+    """"Deleting a campaign's file cancels it" is only true if the render it
+    is applied from stops producing that Job. A leftover rendered/ file keeps
+    the cancelled campaign in every subsequent apply — and survives a prune,
+    because the prune compares the cluster against exactly that file."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    out = tmp_path / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    rendered = out / "campaigns" / "kyrk.yaml"
+    assert rendered.exists()
+
+    (repo / "campaigns" / "kyrk.yaml").unlink()
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    assert not rendered.exists()
+    # Other campaigns and every pipeline are untouched.
+    assert list((out / "campaigns").glob("*.yaml"))
+    assert (out / "pipelines" / "demo-v1.yaml").exists()
+
+
+def test_render_removes_a_pipeline_manifest_when_the_pipeline_is_deleted(tmp_path):
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    out = tmp_path / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    stale = out / "pipelines" / "demo-v1.yaml"
+    assert stale.exists()
+
+    # A pipeline cannot be deleted while a campaign still names it, so the
+    # campaigns go first.
+    for path in (repo / "campaigns").glob("*.yaml"):
+        path.unlink()
+    (repo / "pipelines" / "demo-v1.yaml").unlink()
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    assert not stale.exists()

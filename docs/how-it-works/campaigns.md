@@ -13,8 +13,12 @@ campaigns repo:
 > **Pausing a campaign is a Git change** (`suspend: true` on the rendered
 > Job, applied by CI/Argo).
 >
-> **Deleting a campaign's file cancels it** — its Job and ConfigMap are
-> pruned. **Results already in S3 are never touched by anything here.**
+> **Deleting a campaign's file cancels it** — the next `render` drops its
+> manifest from `rendered/`, and the apply that follows prunes its Job and
+> ConfigMap (Argo CD prunes by default; `make campaigns-apply PRUNE=1` uses
+> `kubectl apply --prune -l htrflow.riksarkivet.se/managed-by=converter`,
+> the label every rendered object carries). **Results already in S3 are
+> never touched by anything here.**
 
 Everything else follows from those two rules plus ordinary Kubernetes
 semantics: nothing here "ticks", nothing here has to be alive for a campaign

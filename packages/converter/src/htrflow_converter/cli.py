@@ -60,6 +60,16 @@ def _existing_campaign_text(campaigns_out: Path, name: str) -> str | None:
     return "\n".join(_volumes_txt(p) for p in paths)
 
 
+def _prune(out: Path, written: set[Path]) -> None:
+    """Deleting a campaign (or pipeline) file must take its rendered manifest
+    with it: that manifest is what an apply --prune / Argo CD compares the
+    cluster against, so a leftover would keep resurrecting a cancelled Job.
+    A shrinking `-partN` split is the same case."""
+    for path in sorted(out.glob("*.yaml")):
+        if path not in written:
+            path.unlink()
+
+
 def _render(repo_dir: str, out_dir: str) -> int:
     repo = Path(repo_dir)
     try:
@@ -72,8 +82,11 @@ def _render(repo_dir: str, out_dir: str) -> int:
         return 1
     out = Path(out_dir)
     pipelines_out, campaigns_out = out / "pipelines", out / "campaigns"
+    written: set[Path] = set()
     for p in pipelines.values():
-        _write(pipelines_out / f"{p.id}.yaml", render.pipeline_objects(p, cfg))
+        path = pipelines_out / f"{p.id}.yaml"
+        _write(path, render.pipeline_objects(p, cfg))
+        written.add(path)
     for c in campaigns:
         new_text = "\n".join(v.source_line() for v in c.volumes)
         try:
@@ -89,6 +102,9 @@ def _render(repo_dir: str, out_dir: str) -> int:
             job = objects[i + 1]
             path = campaigns_out / f"{job['metadata']['name']}.yaml"
             _write(path, objects[i : i + 2])
+            written.add(path)
+    _prune(pipelines_out, written)
+    _prune(campaigns_out, written)
     return 0
 
 
