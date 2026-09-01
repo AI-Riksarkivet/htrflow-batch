@@ -22,6 +22,10 @@ packages = ["src/htrflow_api"]
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
 testpaths = ["tests"]
+# fastapi.testclient's TestClient still wires up httpx (starlette is nudging
+# everyone toward a hypothetical "httpx2"); nothing to act on here, just
+# quiets the noise.
+filterwarnings = ["ignore::starlette.exceptions.StarletteDeprecationWarning"]
 
 [tool.ruff]
 line-length = 88

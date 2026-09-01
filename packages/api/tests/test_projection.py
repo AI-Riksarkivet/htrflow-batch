@@ -182,7 +182,10 @@ class TestDetail:
         assert row3["altoPrefix"] == (
             "https://results.example.org/htr-test/demo-v1/vol3/alto/"
         )
-        assert row3["logKey"] == "htr-test/status/logs/demo-v1/vol3.txt"
+        # No namespace/S3_PREFIX prefix: matches ResultStore.run_log_key()
+        # (packages/wrapper/src/htrflow_batch/store.py), which writes the
+        # run log outside volume_prefix on purpose.
+        assert row3["logKey"] == "status/logs/demo-v1/vol3.txt"
 
     def test_failures_capped_and_newest_index_first(self):
         job = _job()
@@ -230,6 +233,25 @@ class TestDetail:
         d = projection.detail(job, configmap, pods, CFG, offset=0, limit=200)
         row3 = next(v for v in d["volumes"] if v["index"] == 3)
         assert row3["reason"] == '{"permanent": true, "error": "manifest unsupported"}'
+
+    def test_no_configmap_does_not_crash(self):
+        d = projection.detail(_job(), None, [], CFG, offset=0, limit=200)
+        assert d["volumes"] == []
+        assert d["failures"] == []
+
+    def test_configmap_fewer_lines_than_completions(self):
+        d = projection.detail(_job(), _configmap(n=3), [], CFG, offset=0, limit=200)
+        assert [v["index"] for v in d["volumes"]] == [0, 1, 2]
+
+    def test_laststate_terminated_reason_fallback(self):
+        pod = _pod(3)
+        pod["status"]["containerStatuses"][0]["state"] = {"running": {}}
+        pod["status"]["containerStatuses"][0]["lastState"] = {
+            "terminated": {"exitCode": 1, "message": '{"permanent": false}'}
+        }
+        d = projection.detail(_job(), _configmap(), [pod], CFG, offset=0, limit=200)
+        row3 = next(v for v in d["volumes"] if v["index"] == 3)
+        assert row3["reason"] == '{"permanent": false}'
 
 
 class TestConfigmapRef:
