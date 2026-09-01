@@ -28,7 +28,7 @@ it does not build them.
 
 | # | Decision | Why |
 |---|---|---|
-| D1 | **One `batch/v1` Indexed Job per campaign**: `completionMode: Indexed`, `completions` = number of volumes, `parallelism` = window (default 20), `backoffLimitPerIndex: 3`, `maxFailedIndexes` = completions, `podFailurePolicy` (exit 13 → `FailIndex`; `DisruptionTarget` → `Ignore`), `ttlSecondsAfterFinished: 86400`, `restartPolicy: Never`, Kueue labels `queue-name` (+ `priority-class` when set) and annotation `kueue.x-k8s.io/job-min-parallelism: "1"` | Per-volume retry, progress (`completedIndexes`/`failedIndexes`), suspend/resume and fair queueing come from Kubernetes ≥ 1.29 and Kueue; nothing to reconcile. Verified against the official docs and KEP-3850. |
+| D1 | **One `batch/v1` Indexed Job per campaign**: `completionMode: Indexed`, `completions` = number of volumes, `parallelism` = window (default 20), `backoffLimitPerIndex: 3`, `maxFailedIndexes` = completions, `podFailurePolicy` (exit 13 → `FailIndex`; `DisruptionTarget` → `Ignore`), `ttlSecondsAfterFinished: 86400`, `restartPolicy: Never`, Kueue labels `queue-name` (+ `priority-class` when set) — **no** `job-min-parallelism` annotation (E2E 2026-09-01: with partial admission Kueue rewrites `parallelism`, after which re-applying the unchanged file is rejected by the Kueue webhook for the Job's whole lifetime; instead `converter.yaml: window` is the per-cluster cap and campaign `window` = min(campaign, config)). Pause: `suspend: true` in Git is the declared intent, enforced on the Kueue Workload (`spec.active`) by the apply step (`scripts/kueue-pause-sync.sh`), because Kueue owns `spec.suspend` for admitted Workloads. | Per-volume retry, progress (`completedIndexes`/`failedIndexes`), suspend/resume and fair queueing come from Kubernetes ≥ 1.29 and Kueue; nothing to reconcile. Verified against the official docs and KEP-3850. |
 | D2 | **Volume list = one ConfigMap per campaign**, `volumes.txt`, one line per index: `<id>\t<manifest-url>` or `<id>\timages:<url1>,<url2>,…`. ≤ 10 000 volumes per Job; larger campaigns are split `-part1`, `-part2` by the converter | ConfigMaps ≤ 1 MiB; Job status fields stay small; a campaign is append-only (Job `completions` is immutable) — editing volumes means a new campaign, enforced at validate time. |
 | D3 | **Converter is a pure function** `campaigns/ + pipelines/ → manifests` (Python package `packages/converter`, CLI `htrflow-campaigns validate|render`). It never talks to the cluster or S3 | Reviewable output (`git diff` of rendered YAML); reusable by the ATRaaS API later (T03) as a library; no Argo plugin sidecar. |
 | D4 | **Rendered manifests are committed** to the campaigns repo (`rendered/`) by that repo's CI on merge; Argo CD's Application points at `rendered/`. On the PoC `make campaigns-apply` renders and applies | Argo stays plain (no config-management plugin); what runs is literally in Git. |
@@ -89,7 +89,7 @@ read-only on jobs/pods/configmaps, Service `:8081`). Remove: D12 list. Values:
   Deployment present, NetworkPolicy egress for `network.sources`).
 - E2E on the PoC (k3s ≥ 1.29 — check `kubectl version` first): 50-volume
   campaign → all indexes complete, viewer opens, no `status/*.json` written;
-  `suspend: true` mid-run keeps done indexes; partial admission with a
+  `suspend: true` mid-run keeps done indexes; (pause enforced via Workload.spec.active by the apply step); the window cap with a
   1-GPU quota; delete campaign file → Job pruned, S3 untouched.
 
 ## 7. Rollout
