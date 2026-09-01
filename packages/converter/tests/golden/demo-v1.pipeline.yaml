@@ -3,6 +3,9 @@ kind: ConfigMap
 metadata:
   name: htr-pipeline-demo-v1
   namespace: htr-test
+  labels:
+    htrflow.riksarkivet.se/managed-by: converter
+    htrflow.riksarkivet.se/pipeline: demo-v1
   annotations:
     htrflow.riksarkivet.se/pipeline-sha256: 2242f17e78f00a521f028a3d9230a5b9a36231d837d86e0036a6701676b49a36
 data:

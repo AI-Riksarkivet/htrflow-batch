@@ -155,9 +155,17 @@ def _job(
 
 
 def _configmap(
-    name: str, namespace: str, data: dict, annotations: dict | None = None
+    name: str,
+    namespace: str,
+    data: dict,
+    labels: dict,
+    annotations: dict | None = None,
 ) -> dict:
-    meta = {"name": name, "namespace": namespace}
+    # The labels are not decoration: `kubectl apply --prune -l
+    # htrflow.riksarkivet.se/managed-by=converter` (and Argo CD's own prune)
+    # find a deleted campaign's leftovers by them. An unlabelled ConfigMap
+    # would outlive the Job it fed.
+    meta = {"name": name, "namespace": namespace, "labels": labels}
     if annotations:
         meta["annotations"] = annotations
     return {"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta, "data": data}
@@ -208,6 +216,10 @@ def pipeline_objects(p: Pipeline, cfg: ConverterConfig) -> list[dict]:
         f"htr-pipeline-{p.id}",
         cfg.namespace,
         {"pipeline.yaml": p.pipeline_yaml()},
+        {
+            "htrflow.riksarkivet.se/managed-by": "converter",
+            "htrflow.riksarkivet.se/pipeline": label_value(p.id),
+        },
         {"htrflow.riksarkivet.se/pipeline-sha256": p.sha256},
     )
     return [cm, _warmup_job(p, cfg)]
@@ -256,9 +268,20 @@ def _wrapper_container(p: Pipeline, cfg: ConverterConfig) -> dict:
     )
 
 
-def _campaign_configmap(name: str, volumes: list[Volume], cfg: ConverterConfig) -> dict:
+def _campaign_configmap(
+    name: str, c: Campaign, p: Pipeline, volumes: list[Volume], cfg: ConverterConfig
+) -> dict:
     text = "\n".join(v.source_line() for v in volumes) + "\n" if volumes else ""
-    return _configmap(f"campaign-{name}", cfg.namespace, {"volumes.txt": text})
+    return _configmap(
+        f"campaign-{name}",
+        cfg.namespace,
+        {"volumes.txt": text},
+        {
+            "htrflow.riksarkivet.se/managed-by": "converter",
+            "htrflow.riksarkivet.se/campaign": label_value(c.name),
+            "htrflow.riksarkivet.se/pipeline": label_value(p.id),
+        },
+    )
 
 
 def _campaign_job(
@@ -322,6 +345,6 @@ def campaign_objects(c: Campaign, p: Pipeline, cfg: ConverterConfig) -> list[dic
     objects: list[dict] = []
     for i, vols in enumerate(parts, start=1):
         name = f"{c.name}-part{i}" if multi else c.name
-        objects.append(_campaign_configmap(name, vols, cfg))
+        objects.append(_campaign_configmap(name, c, p, vols, cfg))
         objects.append(_campaign_job(name, c, p, vols, cfg))
     return objects

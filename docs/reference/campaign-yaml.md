@@ -120,6 +120,15 @@ on the PoC) actually applies — `kubectl apply -f rendered/pipelines -f
 rendered/campaigns` (pipelines first, since a campaign's Job references its
 pipeline's ConfigMap).
 
+`render` also **removes** files under `--out` that this render did not
+produce, so deleting `campaigns/<name>.yaml` deletes
+`rendered/campaigns/<name>.yaml` too. Deleting the manifest is only half of
+cancelling: the apply has to prune as well (Argo CD does; `make
+campaigns-apply PRUNE=1` passes `kubectl apply --prune -l
+htrflow.riksarkivet.se/managed-by=converter`). Every object the converter
+renders — both ConfigMaps and both Jobs — carries that label for exactly
+this reason.
+
 ## Immutability
 
 A pipeline id is a **permanent name for a recipe**: changing the steps or the

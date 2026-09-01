@@ -259,3 +259,17 @@ def test_min_parallelism_annotation_only_above_parallelism_one():
     job = render.campaign_objects(parallel, demo, cfg)[1]
     assert job["spec"]["parallelism"] == 4
     assert job["metadata"]["annotations"] == {"kueue.x-k8s.io/job-min-parallelism": "1"}
+
+
+def test_every_rendered_object_carries_the_prune_selector():
+    """`kubectl apply --prune -l htrflow.riksarkivet.se/managed-by=converter`
+    (and Argo CD's prune) is what makes "deleting a campaign file cancels the
+    campaign" true. An object without the label survives its own deletion:
+    the campaign ConfigMap did, and outlived the Job it fed."""
+    kyrk, demo, cfg = _kyrk()
+    objs = render.pipeline_objects(demo, cfg) + render.campaign_objects(kyrk, demo, cfg)
+    assert len(objs) == 4  # pipeline CM + warm-up Job + campaign CM + campaign Job
+    for o in objs:
+        labels = o["metadata"]["labels"]
+        assert labels["htrflow.riksarkivet.se/managed-by"] == "converter", o["kind"]
+        assert labels["htrflow.riksarkivet.se/pipeline"] == "demo-v1"

@@ -114,10 +114,19 @@ compose-down:
 # to the cluster directly (no controller in the loop): pipelines first, since
 # campaigns reference them. DIR is the campaigns repo checkout (see
 # examples/campaigns/).
+#
+# PRUNE=1 additionally deletes the objects a *previous* render left behind
+# that this one no longer produces — what makes "deleting a campaign file
+# cancels the campaign" true without Argo CD. It is opt-in on purpose:
+# --prune deletes every converter-labelled object in the namespace that is
+# not in THIS apply, so running it against a partial checkout (a probe
+# directory with its own converter.yaml, say) would cancel everything else.
+CAMPAIGN_SELECTOR := htrflow.riksarkivet.se/managed-by=converter
 campaigns-apply:
 	@test -n "$(DIR)" || (echo "usage: make campaigns-apply DIR=<campaigns-repo-dir>"; exit 2)
 	uv run htrflow-campaigns render $(DIR) --out $(DIR)/rendered
-	kubectl apply -f $(DIR)/rendered/pipelines -f $(DIR)/rendered/campaigns
+	kubectl apply $(if $(PRUNE),--prune -l $(CAMPAIGN_SELECTOR)) \
+	  -f $(DIR)/rendered/pipelines -f $(DIR)/rendered/campaigns
 
 # Chart: lint + render on defaults and on ci/full-values.yaml (every feature
 # on, no cluster lookups), then kubeconform when it is installed. The local
