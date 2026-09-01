@@ -131,17 +131,9 @@ def _parse_campaign(
     if local:
         problems.extend(local)
         return None
-    window_raw = doc.get("window")
-    window: int | None = None
-    if window_raw is not None:
-        try:
-            window = int(window_raw)
-        except (TypeError, ValueError):
-            window = None
-        if window is None or window < 1:
-            return _fail(
-                problems, f"{name}: window must be a positive integer: {window_raw!r}"
-            )
+    window = doc.get("window")
+    if window is not None and not (isinstance(window, int) and window >= 1):
+        return _fail(problems, f"{name}: window must be a positive integer: {window!r}")
     return Campaign(
         name=name,
         pipeline=pipeline_id,
@@ -181,7 +173,12 @@ def _parse_pipeline(
         if step_problems:
             problems.extend(step_problems)
             return None
-    return Pipeline(id=pid, image=image, steps=steps, model_revision=revision)
+    ms = doc.get("max_seconds")
+    if ms is not None and not (isinstance(ms, int) and ms >= 1):
+        return _fail(problems, f"{pid}: max_seconds must be a positive integer: {ms!r}")
+    return Pipeline(
+        id=pid, image=image, steps=steps, model_revision=revision, max_seconds=ms
+    )
 
 
 def _load_config(path: Path, problems: list[str]) -> ConverterConfig:

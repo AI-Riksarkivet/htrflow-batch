@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 import pytest
@@ -173,3 +174,31 @@ def test_volume_source_line_images_shape():
         v.source_line()
         == "R1\timages:https://example.org/a.jpg,https://example.org/b.jpg"
     )
+
+
+def test_pipeline_max_seconds_parses_and_defaults_to_none(tmp_path):
+    """Fix round 1 #3: `max_seconds:` on a pipeline overrides converter.yaml's
+    global for that recipe's campaigns — a 60-page spread and a single page do
+    not want the same wall-clock budget."""
+    _, pipelines, _ = _load(GOOD)
+    assert pipelines["demo-v1"].max_seconds is None
+
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    pipeline = root / "pipelines" / "demo-v1.yaml"
+    pipeline.write_text(pipeline.read_text() + "\nmax_seconds: 60\n")
+    _, pipelines, _ = _load(root)
+    assert pipelines["demo-v1"].max_seconds == 60
+
+
+@pytest.mark.parametrize("bad", ["0", "-1", "not-a-number"])
+def test_pipeline_max_seconds_must_be_a_positive_integer(tmp_path, bad):
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    pipeline = root / "pipelines" / "demo-v1.yaml"
+    pipeline.write_text(pipeline.read_text() + f"\nmax_seconds: {bad}\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert any(
+        "max_seconds must be a positive integer" in p for p in exc_info.value.problems
+    ), exc_info.value.problems
