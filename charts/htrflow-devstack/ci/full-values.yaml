@@ -1,0 +1,22 @@
+# Every optional feature on, for `helm lint -f` / `helm template -f` /
+# kubeconform in CI. No cluster is needed.
+s3:
+  bucket: htr-results
+  secretName: htr-batch-s3
+
+rustfs:
+  enabled: true
+  accessKey: ci-access-key
+  secretKey: ci-secret-key-0123456789
+  console:
+    enabled: true
+  publicLogs: false
+
+registry:
+  enabled: true
+
+nvidiaDevicePlugin:
+  enabled: true
+
+gitDaemon:
+  enabled: true

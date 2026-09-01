@@ -1,0 +1,158 @@
+# Read-only status API (D8, B63): GET /api/v1/jobs[/…] over the Indexed Jobs
+# a campaign renders to (packages/api). Replaces the reconciler's
+# status.json; served on :8081, proxied by the viewer's nginx at /api/ —
+# never exposed outside the cluster directly (ClusterIP only, no NodePort).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: htrflow-api
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: htrflow-api
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+rules:
+  # Read-only, this namespace only (Role, not ClusterRole) — the API never
+  # creates, updates or deletes anything (packages/api/src/htrflow_api/kube.py).
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: htrflow-api
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: htrflow-api
+subjects:
+  - kind: ServiceAccount
+    name: htrflow-api
+    namespace: {{ .Release.Namespace }}
+---
+{{- include "htrflow-batch.requireDigest" (list . .Values.api.image "api.image") }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: htrflow-api
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+    app: htrflow-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: htrflow-api }
+  template:
+    metadata:
+      labels: { app: htrflow-api }   # NetworkPolicy selector (network.yaml, this file)
+    spec:
+      serviceAccountName: htrflow-api
+      # The one exception to this chart's "no SA token" pattern (viewer,
+      # batch/warm-up Jobs all set this false): the API IS a Kubernetes API
+      # client — it needs the token to authenticate get/list/watch calls to
+      # the apiserver. Everything else about it is Pod Security restricted.
+      automountServiceAccountToken: true
+      securityContext:
+        {{- include "htrflow-batch.restrictedPod" 1000 | nindent 8 }}
+      containers:
+        - name: api
+          image: {{ .Values.api.image }}
+          imagePullPolicy: {{ include "htrflow-batch.pullPolicy" .Values.api.image }}
+          securityContext:
+            {{- include "htrflow-batch.restrictedContainer" . | nindent 12 }}
+          env:
+            - name: HOME
+              value: /tmp
+            - name: HTRFLOW_PUBLIC_RESULTS_BASE
+              value: {{ .Values.publicResultsBase | required "publicResultsBase is required (the read API serves S3 links built from it)" | quote }}
+            - name: HTRFLOW_LEGACY_LAYOUT
+              value: {{ .Values.legacyLayout | ternary "true" "false" | quote }}
+            # The API acts on its own namespace; the downward API keeps it
+            # correct whatever --namespace the release uses.
+            - name: HTRFLOW_NAMESPACES
+              valueFrom:
+                fieldRef: { fieldPath: metadata.namespace }
+          ports:
+            - containerPort: 8081
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: htrflow-api
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+    app: htrflow-api
+spec:
+  type: ClusterIP
+  selector: { app: htrflow-api }
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081
+{{- if .Values.network.enabled }}
+---
+{{- /*
+Same apiserver-CIDR auto-detection as network.yaml (a separate template
+file, so it cannot share that file's local variables): the endpoint kube-
+router matches egress against AFTER service DNAT.
+*/}}
+{{- $api := .Values.network.apiServer.cidr }}
+{{- if not $api }}
+  {{- with (lookup "v1" "Endpoints" "default" "kubernetes") }}
+    {{- with (index .subsets 0) }}{{ $api = printf "%s/32" (index .addresses 0).ip }}{{ end }}
+  {{- end }}
+{{- end }}
+# Read API: ingress from the viewer only; egress to DNS and the apiserver
+# only (it never touches S3 or anything else in-cluster).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: htr-api
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app: htrflow-api }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: uv4-viewer } }
+      ports:
+        - { port: 8081 }
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    {{- if $api }}
+    - to:
+        - ipBlock: { cidr: {{ $api | quote }} }
+      ports:
+        - { port: {{ .Values.network.apiServer.port }} }
+    {{- else }}
+    {{- fail "network.apiServer.cidr is required when the kube-apiserver endpoint cannot be looked up (helm template / no RBAC)" }}
+    {{- end }}
+{{- end }}

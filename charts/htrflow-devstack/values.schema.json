@@ -1,0 +1,222 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "htrflow-devstack values",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "s3",
+    "rustfs",
+    "registry",
+    "nvidiaDevicePlugin",
+    "gitDaemon"
+  ],
+  "definitions": {
+    "nodePort": {
+      "type": "integer",
+      "minimum": 30000,
+      "maximum": 32767
+    },
+    "quantity": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E|m)?$"
+    },
+    "imageRef": {
+      "type": "string"
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "size",
+        "storageClass"
+      ],
+      "properties": {
+        "size": {
+          "$ref": "#/definitions/quantity"
+        },
+        "storageClass": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "properties": {
+    "global": {
+      "type": "object"
+    },
+    "s3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bucket",
+        "secretName"
+      ],
+      "properties": {
+        "bucket": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 63,
+          "pattern": "^[a-z0-9][a-z0-9.-]*[a-z0-9]$"
+        },
+        "secretName": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "rustfs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "accessKey",
+        "secretKey",
+        "nodePortS3",
+        "console",
+        "storage",
+        "init",
+        "publicLogs"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "accessKey": {
+          "type": "string"
+        },
+        "secretKey": {
+          "type": "string"
+        },
+        "nodePortS3": {
+          "$ref": "#/definitions/nodePort"
+        },
+        "console": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "nodePort"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "nodePort": {
+              "$ref": "#/definitions/nodePort"
+            }
+          }
+        },
+        "storage": {
+          "$ref": "#/definitions/storage"
+        },
+        "init": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "image",
+            "corsOrigins"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "image": {
+              "$ref": "#/definitions/imageRef"
+            },
+            "corsOrigins": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "publicLogs": {
+          "type": "boolean"
+        }
+      }
+    },
+    "registry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "nodePort",
+        "image",
+        "runAsUser",
+        "storage"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "nodePort": {
+          "$ref": "#/definitions/nodePort"
+        },
+        "image": {
+          "$ref": "#/definitions/imageRef"
+        },
+        "runAsUser": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "storage": {
+          "$ref": "#/definitions/storage"
+        }
+      }
+    },
+    "nvidiaDevicePlugin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "image"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "$ref": "#/definitions/imageRef"
+        }
+      }
+    },
+    "gitDaemon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "image",
+        "bucket",
+        "repo",
+        "seedUrl"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "$ref": "#/definitions/imageRef"
+        },
+        "bucket": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 63,
+          "pattern": "^[a-z0-9][a-z0-9.-]*[a-z0-9]$"
+        },
+        "repo": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "seedUrl": {
+          "type": "string",
+          "pattern": "^(https?://.+)?$"
+        }
+      }
+    }
+  }
+}

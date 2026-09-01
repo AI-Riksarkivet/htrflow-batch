@@ -1,11 +1,17 @@
-{{- if .Values.devStack.gitDaemon.enabled }}
-{{- $seed := .Values.devStack.gitDaemon.seedUrl | default (printf "http://rustfs.%s.svc.cluster.local:9000/%s/%s.git" .Release.Namespace .Values.devStack.gitDaemon.bucket .Values.devStack.gitDaemon.repo) }}
+{{- if .Values.gitDaemon.enabled }}
+{{- $seed := .Values.gitDaemon.seedUrl | default (printf "http://rustfs.%s.svc.cluster.local:9000/%s/%s.git" .Release.Namespace .Values.gitDaemon.bucket .Values.gitDaemon.repo) }}
 # In-cluster git daemon for a campaigns repo that must not leave the cluster
 # (image pins are registry-local). Mirrors the hand-applied PoC deployment
 # (audit O14/S8): an init container clones the bare repo from the bucket
 # (dumb HTTP — pushed there with `git update-server-info` + `aws s3 sync`),
-# the daemon serves it over git:// so the reconciler can `--depth 1`.
+# the daemon serves it over git:// so a client can `--depth 1` clone it.
 # Re-seed after a push: `kubectl -n {{ .Release.Namespace }} rollout restart deploy/git-daemon`.
+#
+# Nothing in charts/htrflow-batch talks to this any more (D12: the GitOps
+# reconciler that used to poll it over git:// is gone, replaced by
+# packages/converter + `kubectl apply`) — kept as a PoC convenience for
+# anyone still cloning the campaigns repo in-cluster; open to any pod in the
+# namespace (NetworkPolicy below) rather than a specific consumer.
 #
 # What is NOT restricted here, and why: alpine/git does not ship git-daemon,
 # so the container installs it at start — that needs root and a writable
@@ -18,7 +24,7 @@ kind: Deployment
 metadata:
   name: git-daemon
   namespace: {{ .Release.Namespace }}
-  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+  labels: {{- include "htrflow-devstack.labels" . | nindent 4 }}
     app: git-daemon
 spec:
   replicas: 1
@@ -33,9 +39,9 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       initContainers:
         - name: seed
-          image: {{ .Values.devStack.gitDaemon.image }}
-          imagePullPolicy: {{ include "htrflow-batch.pullPolicy" .Values.devStack.gitDaemon.image }}
-          args: ["clone", "--bare", {{ $seed | quote }}, "/repos/{{ .Values.devStack.gitDaemon.repo }}"]
+          image: {{ .Values.gitDaemon.image }}
+          imagePullPolicy: {{ include "htrflow-devstack.pullPolicy" .Values.gitDaemon.image }}
+          args: ["clone", "--bare", {{ $seed | quote }}, "/repos/{{ .Values.gitDaemon.repo }}"]
           env:
             - { name: HOME, value: /tmp }
           securityContext:
@@ -50,8 +56,8 @@ spec:
             limits: { memory: 128Mi }
       containers:
         - name: git-daemon
-          image: {{ .Values.devStack.gitDaemon.image }}
-          imagePullPolicy: {{ include "htrflow-batch.pullPolicy" .Values.devStack.gitDaemon.image }}
+          image: {{ .Values.gitDaemon.image }}
+          imagePullPolicy: {{ include "htrflow-devstack.pullPolicy" .Values.gitDaemon.image }}
           command: ["/bin/sh", "-c"]
           args:
             - apk add --no-cache git-daemon && exec git daemon --export-all --base-path=/repos --reuseaddr --verbose
@@ -76,7 +82,7 @@ kind: Service
 metadata:
   name: git-daemon
   namespace: {{ .Release.Namespace }}
-  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+  labels: {{- include "htrflow-devstack.labels" . | nindent 4 }}
     app: git-daemon
 spec:
   type: ClusterIP
@@ -85,4 +91,41 @@ spec:
     - name: git
       port: 9418
       targetPort: 9418
+---
+# git daemon: open to any pod in the namespace on 9418 (no fixed consumer
+# any more — see the comment above); out to RustFS (seed clone) and, because
+# alpine/git installs git-daemon at start, the Alpine CDN (public 443/80).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: htr-git-daemon
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-devstack.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app: git-daemon }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - { port: 9418 }
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    {{- if .Values.rustfs.enabled }}
+    - to:
+        - podSelector: { matchLabels: { app: rustfs } }
+      ports:
+        - { port: 9000 }
+    {{- end }}
+    - to:
+        - ipBlock: { cidr: "0.0.0.0/0", except: ["10.42.0.0/16", "10.43.0.0/16"] }
+      ports:
+        - { port: 443 }
+        - { port: 80 }
 {{- end }}

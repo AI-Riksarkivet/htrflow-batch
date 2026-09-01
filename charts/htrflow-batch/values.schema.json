@@ -6,16 +6,13 @@
   "required": [
     "s3",
     "publicResultsBase",
+    "legacyLayout",
     "modelCache",
     "queue",
-    "pipelines",
-    "job",
+    "api",
     "security",
     "network",
-    "viewer",
-    "devStack",
-    "reconciler",
-    "exampleJob"
+    "viewer"
   ],
   "definitions": {
     "cidr": {
@@ -40,30 +37,26 @@
     "imageRef": {
       "type": "string"
     },
-    "positiveInt": {
-      "type": "integer",
-      "minimum": 1
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requests",
+        "limits"
+      ],
+      "properties": {
+        "requests": {
+          "$ref": "#/definitions/stringMap"
+        },
+        "limits": {
+          "$ref": "#/definitions/stringMap"
+        }
+      }
     },
     "stringMap": {
       "type": "object",
       "additionalProperties": {
         "type": "string"
-      }
-    },
-    "storage": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "size",
-        "storageClass"
-      ],
-      "properties": {
-        "size": {
-          "$ref": "#/definitions/quantity"
-        },
-        "storageClass": {
-          "type": "string"
-        }
       }
     }
   },
@@ -94,6 +87,9 @@
     "publicResultsBase": {
       "type": "string",
       "pattern": "^(https?://.+)?$"
+    },
+    "legacyLayout": {
+      "type": "boolean"
     },
     "modelCache": {
       "type": "object",
@@ -182,51 +178,19 @@
         }
       }
     },
-    "pipelines": {
-      "type": "object",
-      "propertyNames": {
-        "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-      },
-      "additionalProperties": {
-        "type": "string"
-      }
-    },
-    "job": {
+    "api": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "runtimeClassName",
-        "nodeSelector",
-        "tolerations",
-        "minDeadlineSeconds",
-        "secondsPerPage",
-        "manifestMaxBytes",
-        "fetchMaxBytes"
+        "image",
+        "resources"
       ],
       "properties": {
-        "runtimeClassName": {
-          "type": "string"
+        "image": {
+          "$ref": "#/definitions/imageRef"
         },
-        "nodeSelector": {
-          "$ref": "#/definitions/stringMap"
-        },
-        "tolerations": {
-          "type": "array",
-          "items": {
-            "type": "object"
-          }
-        },
-        "minDeadlineSeconds": {
-          "$ref": "#/definitions/positiveInt"
-        },
-        "secondsPerPage": {
-          "$ref": "#/definitions/positiveInt"
-        },
-        "manifestMaxBytes": {
-          "$ref": "#/definitions/positiveInt"
-        },
-        "fetchMaxBytes": {
-          "$ref": "#/definitions/positiveInt"
+        "resources": {
+          "$ref": "#/definitions/resources"
         }
       }
     },
@@ -237,6 +201,7 @@
         "allowedImageRepos",
         "requireModelRevision",
         "psaEnforce",
+        "allowTagImages",
         "verifyImages"
       ],
       "properties": {
@@ -256,6 +221,9 @@
             "baseline",
             "restricted"
           ]
+        },
+        "allowTagImages": {
+          "type": "boolean"
         },
         "verifyImages": {
           "type": "object",
@@ -303,7 +271,6 @@
         "clusterCidrs",
         "nodeCidrs",
         "apiServer",
-        "reconciler",
         "viewer"
       ],
       "properties": {
@@ -351,25 +318,6 @@
             }
           }
         },
-        "reconciler": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "egressCidrs",
-            "extraEgress"
-          ],
-          "properties": {
-            "egressCidrs": {
-              "$ref": "#/definitions/cidrList"
-            },
-            "extraEgress": {
-              "type": "array",
-              "items": {
-                "type": "object"
-              }
-            }
-          }
-        },
         "viewer": {
           "type": "object",
           "additionalProperties": false,
@@ -392,8 +340,7 @@
         "image",
         "nodePort",
         "defaultManifest",
-        "securityHeaders",
-        "statusBase"
+        "securityHeaders"
       ],
       "properties": {
         "enabled": {
@@ -419,281 +366,6 @@
               "type": "boolean"
             }
           }
-        },
-        "statusBase": {
-          "type": "string"
-        }
-      }
-    },
-    "devStack": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "allowTagImages",
-        "rustfs",
-        "registry",
-        "nvidiaDevicePlugin",
-        "gitDaemon"
-      ],
-      "properties": {
-        "allowTagImages": {
-          "type": "boolean"
-        },
-        "rustfs": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "enabled",
-            "accessKey",
-            "secretKey",
-            "nodePortS3",
-            "console",
-            "storage",
-            "init",
-            "publicLogs"
-          ],
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            },
-            "accessKey": {
-              "type": "string"
-            },
-            "secretKey": {
-              "type": "string"
-            },
-            "nodePortS3": {
-              "$ref": "#/definitions/nodePort"
-            },
-            "console": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "enabled",
-                "nodePort"
-              ],
-              "properties": {
-                "enabled": {
-                  "type": "boolean"
-                },
-                "nodePort": {
-                  "$ref": "#/definitions/nodePort"
-                }
-              }
-            },
-            "storage": {
-              "$ref": "#/definitions/storage"
-            },
-            "init": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "enabled",
-                "image",
-                "corsOrigins"
-              ],
-              "properties": {
-                "enabled": {
-                  "type": "boolean"
-                },
-                "image": {
-                  "$ref": "#/definitions/imageRef"
-                },
-                "corsOrigins": {
-                  "type": "array",
-                  "minItems": 1,
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                }
-              }
-            },
-            "publicLogs": {
-              "type": "boolean"
-            }
-          }
-        },
-        "registry": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "enabled",
-            "nodePort",
-            "image",
-            "runAsUser",
-            "storage"
-          ],
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            },
-            "nodePort": {
-              "$ref": "#/definitions/nodePort"
-            },
-            "image": {
-              "$ref": "#/definitions/imageRef"
-            },
-            "runAsUser": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "storage": {
-              "$ref": "#/definitions/storage"
-            }
-          }
-        },
-        "nvidiaDevicePlugin": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "enabled",
-            "image"
-          ],
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            },
-            "image": {
-              "$ref": "#/definitions/imageRef"
-            }
-          }
-        },
-        "gitDaemon": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "enabled",
-            "image",
-            "bucket",
-            "repo",
-            "seedUrl"
-          ],
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            },
-            "image": {
-              "$ref": "#/definitions/imageRef"
-            },
-            "bucket": {
-              "type": "string",
-              "minLength": 3,
-              "maxLength": 63,
-              "pattern": "^[a-z0-9][a-z0-9.-]*[a-z0-9]$"
-            },
-            "repo": {
-              "type": "string",
-              "minLength": 1,
-              "pattern": "^[A-Za-z0-9._-]+$"
-            },
-            "seedUrl": {
-              "type": "string",
-              "pattern": "^(https?://.+)?$"
-            }
-          }
-        }
-      }
-    },
-    "reconciler": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "enabled",
-        "image",
-        "campaignsRepoUrl",
-        "campaignsRepoWebUrl",
-        "schedule",
-        "tickSeconds",
-        "tickDeadlineSeconds",
-        "window",
-        "attemptCap",
-        "maxValidationsPerTick",
-        "fetchMaxBytes",
-        "publicResultsBase",
-        "gitTimeoutSeconds",
-        "gitTokenSecret"
-      ],
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "image": {
-          "$ref": "#/definitions/imageRef"
-        },
-        "campaignsRepoUrl": {
-          "type": "string"
-        },
-        "campaignsRepoWebUrl": {
-          "type": "string"
-        },
-        "schedule": {
-          "type": "string",
-          "minLength": 9
-        },
-        "tickSeconds": {
-          "$ref": "#/definitions/positiveInt"
-        },
-        "tickDeadlineSeconds": {
-          "$ref": "#/definitions/positiveInt"
-        },
-        "window": {
-          "$ref": "#/definitions/positiveInt"
-        },
-        "attemptCap": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "maxValidationsPerTick": {
-          "$ref": "#/definitions/positiveInt"
-        },
-        "fetchMaxBytes": {
-          "$ref": "#/definitions/positiveInt"
-        },
-        "publicResultsBase": {
-          "type": "string",
-          "pattern": "^(https?://.+)?$"
-        },
-        "gitTimeoutSeconds": {
-          "$ref": "#/definitions/positiveInt"
-        },
-        "gitTokenSecret": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "name": {
-              "type": "string"
-            },
-            "key": {
-              "type": "string"
-            }
-          }
-        }
-      }
-    },
-    "exampleJob": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "enabled",
-        "image",
-        "manifestUrl",
-        "pipelineId"
-      ],
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "image": {
-          "$ref": "#/definitions/imageRef"
-        },
-        "manifestUrl": {
-          "type": "string",
-          "pattern": "^(https?://.+)?$"
-        },
-        "pipelineId": {
-          "type": "string",
-          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
         }
       }
     }

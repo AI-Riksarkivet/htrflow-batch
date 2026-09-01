@@ -1,5 +1,6 @@
 .PHONY: install format lint check test typecheck test-driver-real ci build build-viewer scan publish \
-        compose-up compose-test compose-smoke compose-down helm-lint helm-template docs-serve docs-build \
+        compose-up compose-test compose-smoke compose-down helm-lint helm-template install-devstack \
+        docs-serve docs-build \
         poc-push poc-push-arm64 build-wrapper build-reconciler scan-reconciler clean \
         warmup psa-labels \
         frontend-install frontend-test frontend-check frontend-build frontend-dev viewer-image
@@ -110,18 +111,43 @@ compose-down:
 	cd .docker && docker compose down -v
 
 # Chart: lint + render on defaults and on ci/full-values.yaml (every feature
-# on, no cluster lookups), then kubeconform when it is installed.
+# on, no cluster lookups), then kubeconform when it is installed. The local
+# twin of `dagger call check-chart` (.dagger/checks.go).
+#
+# The prod chart's "defaults" render needs three --set overrides no cluster
+# is present to `lookup`: the read API is always rendered (no enabled flag)
+# and requires publicResultsBase + network.apiServer.cidr + a digest-pinned
+# api.image. CHART_DEFAULT_SETS mirrors ci/full-values.yaml's shape with a
+# placeholder digest/CIDR — never install with these.
+DEVSTACK_CHART := charts/htrflow-devstack
+CHART_DEFAULT_SETS := --set publicResultsBase=https://x/ \
+                       --set network.apiServer.cidr=10.16.51.10/32 \
+                       --set api.image=docker.io/riksarkivet/htrflow-api@sha256:0000000000000000000000000000000000000000000000000000000000000000
 helm-lint:
-	helm lint $(CHART)
+	helm lint $(CHART) $(CHART_DEFAULT_SETS)
 	helm lint $(CHART) -f $(CHART)/ci/full-values.yaml
+	helm lint $(DEVSTACK_CHART)
+	helm lint $(DEVSTACK_CHART) -f $(DEVSTACK_CHART)/ci/full-values.yaml
 
 helm-template: helm-lint
-	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) > /dev/null
+	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_DEFAULT_SETS) > /dev/null
 	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/ci/full-values.yaml > /dev/null
+	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) > /dev/null
+	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) -f $(DEVSTACK_CHART)/ci/full-values.yaml > /dev/null
 	@if command -v kubeconform >/dev/null; then \
-	  helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) | kubeconform -strict -ignore-missing-schemas -summary && \
-	  helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/ci/full-values.yaml | kubeconform -strict -ignore-missing-schemas -summary; \
+	  helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_DEFAULT_SETS) | kubeconform -strict -ignore-missing-schemas -summary && \
+	  helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/ci/full-values.yaml | kubeconform -strict -ignore-missing-schemas -summary && \
+	  helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) | kubeconform -strict -ignore-missing-schemas -summary && \
+	  helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) -f $(DEVSTACK_CHART)/ci/full-values.yaml | kubeconform -strict -ignore-missing-schemas -summary; \
 	else echo "kubeconform not installed — schema validation skipped"; fi
+
+# PoC-only support infrastructure (RustFS, registry, nvidia device plugin,
+# git daemon) — its own chart, own release, same namespace as $(HTR_RELEASE)
+# (charts/htrflow-devstack/README.md, "Installing"). Not for production.
+install-devstack:
+	helm upgrade --install $(HTR_RELEASE)-devstack charts/htrflow-devstack -n $(HTR_NAMESPACE) --create-namespace \
+	  --set rustfs.enabled=true --set registry.enabled=true \
+	  --set nvidiaDevicePlugin.enabled=true --set gitDaemon.enabled=true
 
 docs-serve:
 	uvx zensical serve
