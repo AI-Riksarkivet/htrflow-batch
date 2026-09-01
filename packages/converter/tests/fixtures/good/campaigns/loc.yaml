@@ -1,0 +1,6 @@
+pipeline: demo-v1
+volumes:
+  - R0009999
+  - R0009998
+priority: high
+window: 5

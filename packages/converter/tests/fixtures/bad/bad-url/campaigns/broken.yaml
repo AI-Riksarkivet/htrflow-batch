@@ -1,0 +1,4 @@
+pipeline: demo-v1
+volumes:
+  - id: v1
+    manifest: "javascript:alert(1)"

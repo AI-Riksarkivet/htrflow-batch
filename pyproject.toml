@@ -11,7 +11,11 @@ members = ["packages/*"]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
-testpaths = ["packages/wrapper/tests", "packages/reconciler/tests"]
+testpaths = [
+    "packages/wrapper/tests",
+    "packages/reconciler/tests",
+    "packages/converter/tests",
+]
 markers = [
     "htrflow: needs the htrflow runtime; runs inside the wrapper image (make test-driver-real / dagger call test-driver)",
 ]
