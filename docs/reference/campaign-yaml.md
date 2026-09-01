@@ -38,6 +38,7 @@ require_model_revision: false
 pipeline: demo-v1          # required: a pipeline id from pipelines/
 priority: ""                # optional: a Kueue PriorityClass name
 window: 20                   # optional: this campaign's parallelism, clamped to converter.yaml's window
+suspend: false               # optional: true pauses this campaign (see "Pausing" below)
 volumes:
   # 1) Bare string: a Riksarkivet reference code. The manifest URL is
   #    templated from converter.yaml's source_template.
@@ -66,6 +67,7 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | Volume ids are unique within a campaign | Validation error (`duplicate volume id`) |
 | `window:`, when set, is a positive integer | Validation error |
 | `window:` above `converter.yaml`'s `window` | Silently clamped to it at render time — `converter.yaml`'s value is the per-cluster cap and should be set to what the ClusterQueue's GPU quota can actually admit. Rendering more and letting Kueue's partial admission shrink it on the live Job is what this replaced: Kueue then rewrites `spec.parallelism` and rejects every later apply of the unchanged rendered file (`cannot change when partial admission is enabled and the job is not suspended`) |
+| `suspend: true` | Renders `spec.suspend: true` — see [Pausing](#pausing) |
 | **A campaign whose rendered Job already exists in `rendered/` with a different volume list is rejected** | `render` prints `campaign <name> is append-only: create a new campaign` and exits non-zero — Job `completions` is immutable once created, so adding volumes means a new campaign file |
 
 The campaign file stem becomes the Job name and the `htrflow.riksarkivet.se/campaign`
@@ -133,6 +135,48 @@ campaigns-apply PRUNE=1` passes `kubectl apply --prune -l
 htrflow.riksarkivet.se/managed-by=converter`). Every object the converter
 renders — both ConfigMaps and both Jobs — carries that label for exactly
 this reason.
+
+## Pausing
+
+`suspend: true` on a campaign renders `spec.suspend: true` on its Job — but
+**Kueue owns `spec.suspend` for a Workload it has admitted** and flips it back
+within seconds. The rendered field is the declared intent; enforcement happens
+at apply time, on the Workload:
+
+```bash
+scripts/kueue-pause-sync.sh <namespace> <rendered/campaigns dir>
+```
+
+which patches `spec.active` on each campaign's Workload (`false` for a
+suspended campaign, `true` otherwise), idempotently and skipping Workloads
+Kueue has not created yet. `make campaigns-apply` runs it after every apply.
+Deactivating a Workload evicts its pods, keeps every finished index, and
+`kubectl get job` reports `suspend: true`; reactivating continues at the next
+index. Results already in S3 are never touched.
+
+With Argo CD, run the same script as a `PostSync` hook so a merged
+`suspend: true` takes effect on sync:
+
+```yaml title="argocd/pause-sync-hook.yaml"
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kueue-pause-sync
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: kueue-pause-sync   # get/list jobs+workloads, patch workloads
+      containers:
+        - name: sync
+          image: bitnami/kubectl@sha256:…    # any pinned kubectl image
+          command: ["/bin/bash", "/scripts/kueue-pause-sync.sh", "htr-batch", "/rendered/campaigns"]
+          volumeMounts: [{name: scripts, mountPath: /scripts}, {name: rendered, mountPath: /rendered}]
+      volumes: [ … ]                          # the script and the synced rendered/ tree
+```
 
 ## Immutability
 

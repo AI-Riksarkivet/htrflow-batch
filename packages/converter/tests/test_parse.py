@@ -202,3 +202,15 @@ def test_pipeline_max_seconds_must_be_a_positive_integer(tmp_path, bad):
     assert any(
         "max_seconds must be a positive integer" in p for p in exc_info.value.problems
     ), exc_info.value.problems
+
+
+def test_campaign_suspend_defaults_false_and_parses_true(tmp_path):
+    campaigns, _, _ = _load(GOOD)
+    assert all(c.suspend is False for c in campaigns)
+
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    campaign = root / "campaigns" / "kyrk.yaml"
+    campaign.write_text(campaign.read_text() + "\nsuspend: true\n")
+    campaigns, _, _ = _load(root)
+    assert next(c for c in campaigns if c.name == "kyrk").suspend is True

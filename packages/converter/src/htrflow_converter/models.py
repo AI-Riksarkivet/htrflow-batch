@@ -32,6 +32,8 @@ class Campaign(BaseModel):
     volumes: list[Volume] = Field(default_factory=list)
     priority: str = ""
     window: int | None = None
+    #: Renders ``spec.suspend``; the apply step enforces it against Kueue.
+    suspend: bool = False
 
 
 class Pipeline(BaseModel):

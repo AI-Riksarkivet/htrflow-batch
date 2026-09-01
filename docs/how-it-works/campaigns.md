@@ -10,8 +10,12 @@ no state files in the bucket.
 Two rules hold the design together, and belong on the front page of every
 campaigns repo:
 
-> **Pausing a campaign is a Git change** (`suspend: true` on the rendered
-> Job, applied by CI/Argo).
+> **Pausing a campaign is a Git change** (`suspend: true` on the campaign
+> file). It is *declared* in Git and *enforced by the apply step*: Kueue owns
+> `spec.suspend` for a Workload it has admitted and undoes it within seconds,
+> so `scripts/kueue-pause-sync.sh` (run by `make campaigns-apply`, or as an
+> Argo CD `PostSync` hook) puts the same intent on the Workload's
+> `spec.active`.
 >
 > **Deleting a campaign's file cancels it** — the next `render` drops its
 > manifest from `rendered/`, and the apply that follows prunes its Job and
@@ -106,6 +110,8 @@ volumes:
   goes in its own campaign file.
 - `window:` is clamped to `converter.yaml`'s `window`, the per-cluster cap:
   set that to what the ClusterQueue's GPU quota can actually admit.
+- `suspend: true` pauses the campaign — see
+  [Campaign & Pipeline YAML → Pausing](../reference/campaign-yaml.md#pausing).
 - Re-running with a changed recipe means a **new pipeline id** and a new
   campaign file — `demo-v1` and `demo-v2` results sit side by side under
   different S3 prefixes.

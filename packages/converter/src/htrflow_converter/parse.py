@@ -140,6 +140,7 @@ def _parse_campaign(
         volumes=volumes,
         priority=str(doc.get("priority") or ""),
         window=window,
+        suspend=bool(doc.get("suspend")),
     )
 
 

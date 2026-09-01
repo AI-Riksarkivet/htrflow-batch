@@ -5,6 +5,14 @@ name: Render
 # campaigns-apply` on a PoC) applies is always exactly what CI produced from
 # the merged commit, never something rendered by hand on a laptop.
 #
+# What this workflow does NOT do: enforce a campaign's `suspend:`. The render
+# puts `spec.suspend: true` on the Job, but Kueue owns that field for a
+# Workload it has admitted and undoes it — so whatever applies rendered/ must
+# also run htrflow-batch's `scripts/kueue-pause-sync.sh <ns>
+# <rendered/campaigns>` afterwards (with Argo CD: as a PostSync hook, example
+# manifest in htrflow-batch's docs/reference/campaign-yaml.md#pausing;
+# `make campaigns-apply` already does it).
+#
 # The converter is not an image: it is a plain Python package installed
 # with uvx straight from the htrflow-batch repo (see "Install the converter"
 # below). Pin the ref (a tag or a commit SHA) once htrflow-batch cuts
