@@ -9,8 +9,6 @@ metadata:
     htrflow.riksarkivet.se/campaign: kyrk
     htrflow.riksarkivet.se/pipeline: demo-v1
     kueue.x-k8s.io/queue-name: htr-test
-  annotations:
-    kueue.x-k8s.io/job-min-parallelism: '1'
 spec:
   completionMode: Indexed
   completions: 3

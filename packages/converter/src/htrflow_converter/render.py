@@ -288,7 +288,11 @@ def _campaign_job(
     name: str, c: Campaign, p: Pipeline, volumes: list[Volume], cfg: ConverterConfig
 ) -> dict:
     completions = len(volumes)
-    parallelism = c.window or cfg.window
+    # cfg.window is the per-cluster CAP: a campaign may ask for less, never
+    # more. Kueue partial admission would shrink an oversized parallelism on
+    # the live Job instead -- and then reject every later apply of the
+    # unchanged rendered file (docs: development/e2e-indexed-jobs.md).
+    parallelism = min(c.window or cfg.window, cfg.window)
     labels = {
         "app": "htrflow-batch",
         "htrflow.riksarkivet.se/managed-by": "converter",
@@ -328,15 +332,7 @@ def _campaign_job(
     # no per-63-char label truncation), unlike the label VALUES above, which
     # go through label_value(). Truncating this too would make "-part1" and
     # "-part10" collide once c.name is close to 63 chars.
-    # Kueue's job webhook validates job-min-parallelism against
-    # [0, parallelism-1] and rejects the Job outright when the range is empty
-    # -- `parallelism: 1` (one GPU, window 1) would be un-submittable:
-    # "Invalid value: 1: should be between 0 and 0". Partial admission only
-    # means anything above 1 anyway, so the annotation goes on only then.
-    annotations = (
-        {"kueue.x-k8s.io/job-min-parallelism": "1"} if parallelism > 1 else None
-    )
-    return _job(name, cfg.namespace, labels, spec, annotations=annotations)
+    return _job(name, cfg.namespace, labels, spec)
 
 
 def campaign_objects(c: Campaign, p: Pipeline, cfg: ConverterConfig) -> list[dict]:
