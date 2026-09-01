@@ -93,6 +93,7 @@ tables below.
 | [B42](stories/B42-htrflow-arm64-base-image.md) | `htrflow` base image for arm64 published and pinned by digest |
 | [B61](stories/B61-htrflow-image-org-namespace.md) | htrflow-imagen publiceras under riksarkivet/ på Docker Hub, inte airiksarkivet/ |
 | [B62](stories/B62-eupl-license.md) | htrflow-batch licensieras under EUPL-1.2, samma som htrflow |
+| [B63](stories/B63-controller-crd-source-of-truth.md) | Reconcilern ersätts av en controller med en CRD i etcd som sanningskälla för jobb |
 | [B41](stories/B41-gpu-wrapper-image-in-ci.md) | GPU wrapper image (arm64) built in CI with SLSA provenance and a Trivy scan |
 | [B43](stories/B43-model-packaging-job-image.md) | Model-packaging job image built in CI with SLSA provenance and a Trivy scan |
 | [B36](stories/B36-registry-pull-through-cache.md) | A local registry as the single, cached source of images |
