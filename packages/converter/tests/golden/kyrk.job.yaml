@@ -1,0 +1,171 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kyrk
+  namespace: htr-test
+  labels:
+    app: htrflow-batch
+    htrflow.riksarkivet.se/managed-by: converter
+    htrflow.riksarkivet.se/campaign: kyrk
+    htrflow.riksarkivet.se/pipeline: demo-v1
+    kueue.x-k8s.io/queue-name: htr-test
+  annotations:
+    kueue.x-k8s.io/job-min-parallelism: '1'
+spec:
+  completionMode: Indexed
+  completions: 3
+  parallelism: 10
+  backoffLimitPerIndex: 3
+  maxFailedIndexes: 3
+  podFailurePolicy:
+    rules:
+    - action: Ignore
+      onPodConditions:
+      - type: DisruptionTarget
+    - action: FailIndex
+      onExitCodes:
+        containerName: wrapper
+        operator: In
+        values:
+        - 13
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: htrflow-batch
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: wrapper
+        image: ghcr.io/riksarkivet/htrflow-batch@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        command:
+        - /bin/sh
+        - -c
+        args:
+        - "set -eu\nline=$(sed -n \"$((JOB_COMPLETION_INDEX + 1))p\" /campaign/volumes.txt)\n\
+          [ -n \"$line\" ] || { echo \"no volume for index $JOB_COMPLETION_INDEX\"\
+          \ >&2; exit 13; }\nid=${line%%\t*}; src=${line#*\t}\nexport VOLUME_REF=\"\
+          $id\"\ncase \"$src\" in images:*) export IMAGES=\"${src#images:}\" ;; *)\
+          \ export IIIF_MANIFEST_URL=\"$src\" ;; esac\nexec python -m htrflow_batch\n"
+        env:
+        - name: PIPELINE_PATH
+          value: /config/pipeline.yaml
+        - name: PIPELINE_ID
+          value: demo-v1
+        - name: S3_PREFIX
+          value: htr-test/
+        - name: PUBLIC_RESULTS_BASE
+          value: https://results.example.org
+        - name: IMAGE_DIGEST
+          value: ghcr.io/riksarkivet/htrflow-batch@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        - name: HF_HUB_OFFLINE
+          value: '1'
+        - name: MAX_SECONDS
+          value: '21600'
+        - name: MANIFEST_MAX_BYTES
+          value: '16777216'
+        - name: FETCH_MAX_BYTES
+          value: '67108864'
+        - name: HF_HOME
+          value: /data/hf
+        - name: WORKDIR_PATH
+          value: /work
+        - name: HOME
+          value: /work/home
+        - name: TMPDIR
+          value: /work/tmp
+        - name: YOLO_CONFIG_DIR
+          value: /work/ultralytics
+        - name: AWS_SHARED_CREDENTIALS_FILE
+          value: /secrets/s3/credentials
+        - name: S3_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: htr-batch-s3
+              key: S3_ENDPOINT
+              optional: true
+        - name: S3_BUCKET
+          valueFrom:
+            secretKeyRef:
+              name: htr-batch-s3
+              key: S3_BUCKET
+        volumeMounts:
+        - name: campaign
+          mountPath: /campaign
+          readOnly: true
+        - name: pipeline
+          mountPath: /config
+        - name: data
+          mountPath: /data
+          readOnly: true
+        - name: work
+          mountPath: /work
+        - name: s3
+          mountPath: /secrets/s3
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: '4'
+            memory: 8Gi
+            nvidia.com/gpu: '1'
+          limits:
+            cpu: '4'
+            memory: 16Gi
+            nvidia.com/gpu: '1'
+      volumes:
+      - name: campaign
+        configMap:
+          name: campaign-kyrk
+      - name: pipeline
+        configMap:
+          name: htr-pipeline-demo-v1
+      - name: data
+        persistentVolumeClaim:
+          claimName: htr-test-data
+      - name: work
+        emptyDir:
+          medium: Memory
+          sizeLimit: 2Gi
+      - name: s3
+        secret:
+          secretName: htr-batch-s3
+          defaultMode: 288
+      initContainers:
+      - name: warmup-wait
+        image: ghcr.io/riksarkivet/htrflow-batch@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        command:
+        - /bin/sh
+        - -c
+        - until [ -f /data/warmup/demo-v1.done ]; do sleep 10; done
+        volumeMounts:
+        - name: data
+          mountPath: /data
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 50m
+            memory: 64Mi
+      runtimeClassName: nvidia
