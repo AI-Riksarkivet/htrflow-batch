@@ -25,25 +25,25 @@ Svelte 5 (runes) + SvelteKit 2 with `adapter-static` (`prerender = true`,
 TypeScript, Zod at the boundary, Vitest (+ @testing-library/svelte on
 jsdom), Prettier, Bun as the package runner (`engines`: Node ≥ 22, Bun ≥ 1.1).
 
-| File | Description |
-|------|-------------|
-| `src/lib/config.ts` | API base and cadence resolution (table below) |
-| `src/lib/api.ts` | Read-API Zod schemas (`JobSummary`, `JobDetail`, `VolumeView`), `fetchJobs`/`fetchJob`, `ApiUnreachable`, and the pure view helpers `isHttpUrl`/`shortDate` |
-| `src/lib/run.ts`, `runlog.ts` | `manifest.json` schema + summary math; run-log grouping and the terminal-line check |
-| `src/lib/theme.svelte.ts` | the one theme store (`ThemeToggle.svelte` on both routes) |
-| `src/lib/components/` | `CampaignCard`, `RunSummaryCard`, `PageGrid`, `PagesTable`, `ThemeToggle` |
-| `src/routes/+page.svelte`, `routes/log/+page.svelte` | the two routes |
-| `src/app.css` | design tokens per theme (AA-checked), reduced-motion |
-| `static/config.js` | the deployment hook (`window.API_BASE`) |
+| File                                                 | Description                                                                                                                                                 |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/lib/config.ts`                                  | API base and cadence resolution (table below)                                                                                                               |
+| `src/lib/api.ts`                                     | Read-API Zod schemas (`JobSummary`, `JobDetail`, `VolumeView`), `fetchJobs`/`fetchJob`, `ApiUnreachable`, and the pure view helpers `isHttpUrl`/`shortDate` |
+| `src/lib/run.ts`, `runlog.ts`                        | `manifest.json` schema + summary math; run-log grouping and the terminal-line check                                                                         |
+| `src/lib/theme.svelte.ts`                            | the one theme store (`ThemeToggle.svelte` on both routes)                                                                                                   |
+| `src/lib/components/`                                | `CampaignCard`, `RunSummaryCard`, `PageGrid`, `PagesTable`, `ThemeToggle`                                                                                   |
+| `src/routes/+page.svelte`, `routes/log/+page.svelte` | the two routes                                                                                                                                              |
+| `src/app.css`                                        | design tokens per theme (AA-checked), reduced-motion                                                                                                        |
+| `static/config.js`                                   | the deployment hook (`window.API_BASE`)                                                                                                                     |
 
 ## Configuration
 
-| Setting | Runtime (deploy) | Build time | Default |
-|---|---|---|---|
-| read API base | `window.API_BASE` — set by **overwriting `/config.js`** | `VITE_API_BASE` | `/api/v1` |
-| campaign list re-fetch | — | `VITE_RELOAD_MS` | `60000` |
-| live-log re-fetch | — | `VITE_LIVE_MS` | `15000` (the wrapper's `LOG_SHIP_SECONDS`) |
-| live-log give-up | — | — | `LIVE_MAX_FAILURES = 20` polls (5 min) |
+| Setting                | Runtime (deploy)                                        | Build time       | Default                                    |
+| ---------------------- | ------------------------------------------------------- | ---------------- | ------------------------------------------ |
+| read API base          | `window.API_BASE` — set by **overwriting `/config.js`** | `VITE_API_BASE`  | `/api/v1`                                  |
+| campaign list re-fetch | —                                                       | `VITE_RELOAD_MS` | `60000`                                    |
+| live-log re-fetch      | —                                                       | `VITE_LIVE_MS`   | `15000` (the wrapper's `LOG_SHIP_SECONDS`) |
+| live-log give-up       | —                                                       | —                | `LIVE_MAX_FAILURES = 20` polls (5 min)     |
 
 The API base is resolved on every fetch, highest first: `window.API_BASE`,
 then `VITE_API_BASE`, then the default. **The page ships a CSP**
@@ -56,7 +56,7 @@ that: `templates/viewer.yaml` mounts a ConfigMap-rendered `config.js` with
 `window.API_BASE = "/api/v1"`, and its nginx proxies `/api/` to the read
 API's Service — same-origin, so `script-src 'self'` already covers it (no
 `connect-src` directive is set, so fetches are unrestricted by this CSP; the
-only restriction is on what may *execute* as script). A CSP header from the
+only restriction is on what may _execute_ as script). A CSP header from the
 web server must not be stricter than the meta tag (the browser enforces the
 intersection); the chart's nginx only adds `frame-ancestors 'none'`.
 
@@ -78,11 +78,14 @@ intersection); the chart's nginx only adds `frame-ancestors 'none'`.
   `Succeeded`/`Failed`) drives the card's left accent: red if `Failed` or
   any volume is `failed`, blue if `Running`, green if `Succeeded`, grey
   otherwise.
-- **Log link** — `log?log=<encodeURIComponent(logUrl)>`, plus `&live=1` for
-  a volume whose `state` is not `"done"`. `logUrl` is absolute and
-  bucket-rooted (`<public_results_base>/status/logs/<pipeline>/<id>.txt`,
-  no namespace/S3_PREFIX prefix): the browser has no bucket base URL to
-  resolve a bare key against, so the API builds the full URL — see
+- **Log link** —
+  `log?log=<encodeURIComponent(logUrl)>&manifest=<encodeURIComponent(manifestUrl)>`,
+  plus `&live=1` for a volume whose `state` is not `"done"`. Both URLs come
+  off the same `VolumeView` row: `manifestUrl` is what feeds `/log`'s
+  `RunSummaryCard`, and `logUrl` is absolute and bucket-rooted
+  (`<public_results_base>/status/logs/<pipeline>/<id>.txt`, no
+  namespace/S3_PREFIX prefix): the browser has no bucket base URL to resolve
+  a bare key against, so the API builds the full URL — see
   [Live Run Log](../how-it-works/live-run-log.md).
 - **Open link** — a `done` volume links `iiifUrl` as
   `uv.html#?manifest=<url>`; other states get no open link (there is no
