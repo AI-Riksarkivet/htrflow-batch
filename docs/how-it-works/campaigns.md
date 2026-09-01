@@ -170,8 +170,10 @@ Per campaign `campaigns/<name>.yaml`:
   `maxFailedIndexes` = completions, a `podFailurePolicy` (exit 13 →
   `FailIndex`; `DisruptionTarget` → `Ignore`), `ttlSecondsAfterFinished:
   86400`, Kueue labels (`kueue.x-k8s.io/queue-name`, plus a
-  `priority-class` label when `priority:` is set) and annotation
-  `kueue.x-k8s.io/job-min-parallelism: "1"`. Each pod runs
+  `priority-class` label when `priority:` is set) and, when `parallelism`
+  is above 1, the annotation `kueue.x-k8s.io/job-min-parallelism: "1"`
+  (Kueue's webhook validates it against `[0, parallelism-1]` and rejects a
+  `parallelism: 1` Job that carries it). Each pod runs
   `/bin/sh -c` args that read line `$JOB_COMPLETION_INDEX+1` of
   `/campaign/volumes.txt`, export `VOLUME_REF` and either
   `IIIF_MANIFEST_URL` or `IMAGES`, then `exec python -m htrflow_batch`; an

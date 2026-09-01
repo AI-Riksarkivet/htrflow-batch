@@ -241,3 +241,21 @@ def test_kubeconform_strict_passes_on_rendered_files(tmp_path):
         env=env,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_min_parallelism_annotation_only_above_parallelism_one():
+    """Kueue's job webhook validates ``job-min-parallelism`` against
+    ``[0, parallelism-1]`` and rejects the whole Job when that range is empty.
+    A one-GPU PoC (``window: 1``) hit exactly that on apply:
+    ``metadata.annotations[kueue.x-k8s.io/job-min-parallelism]: Invalid value:
+    1: should be between 0 and 0``."""
+    kyrk, demo, cfg = _kyrk()
+    serial = kyrk.model_copy(update={"window": 1})
+    job = render.campaign_objects(serial, demo, cfg)[1]
+    assert job["spec"]["parallelism"] == 1
+    assert "annotations" not in job["metadata"]
+
+    parallel = kyrk.model_copy(update={"window": 4})
+    job = render.campaign_objects(parallel, demo, cfg)[1]
+    assert job["spec"]["parallelism"] == 4
+    assert job["metadata"]["annotations"] == {"kueue.x-k8s.io/job-min-parallelism": "1"}

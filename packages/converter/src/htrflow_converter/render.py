@@ -265,6 +265,7 @@ def _campaign_job(
     name: str, c: Campaign, p: Pipeline, volumes: list[Volume], cfg: ConverterConfig
 ) -> dict:
     completions = len(volumes)
+    parallelism = c.window or cfg.window
     labels = {
         "app": "htrflow-batch",
         "htrflow.riksarkivet.se/managed-by": "converter",
@@ -284,7 +285,7 @@ def _campaign_job(
     spec = {
         "completionMode": "Indexed",
         "completions": completions,
-        "parallelism": c.window or cfg.window,
+        "parallelism": parallelism,
         "backoffLimitPerIndex": 3,
         "maxFailedIndexes": completions,
         "podFailurePolicy": _pod_failure_policy("wrapper", "FailIndex"),
@@ -304,13 +305,15 @@ def _campaign_job(
     # no per-63-char label truncation), unlike the label VALUES above, which
     # go through label_value(). Truncating this too would make "-part1" and
     # "-part10" collide once c.name is close to 63 chars.
-    return _job(
-        name,
-        cfg.namespace,
-        labels,
-        spec,
-        annotations={"kueue.x-k8s.io/job-min-parallelism": "1"},
+    # Kueue's job webhook validates job-min-parallelism against
+    # [0, parallelism-1] and rejects the Job outright when the range is empty
+    # -- `parallelism: 1` (one GPU, window 1) would be un-submittable:
+    # "Invalid value: 1: should be between 0 and 0". Partial admission only
+    # means anything above 1 anyway, so the annotation goes on only then.
+    annotations = (
+        {"kueue.x-k8s.io/job-min-parallelism": "1"} if parallelism > 1 else None
     )
+    return _job(name, cfg.namespace, labels, spec, annotations=annotations)
 
 
 def campaign_objects(c: Campaign, p: Pipeline, cfg: ConverterConfig) -> list[dict]:
