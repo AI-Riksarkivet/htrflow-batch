@@ -71,12 +71,15 @@
     return () => clearInterval(timer);
   });
 
-  // live=1 for a volume still in flight, so /log re-fetches on the
+  // manifest carries manifestUrl so /log's RunSummaryCard has something to
+  // render; live=1 for a volume still in flight, so /log re-fetches on the
   // wrapper's log-ship cadence instead of showing a static snapshot.
   function logHref(v: VolumeView): string {
     return (
       "log?log=" +
       encodeURIComponent(v.logUrl) +
+      "&manifest=" +
+      encodeURIComponent(v.manifestUrl) +
       (v.state !== "done" ? "&live=1" : "")
     );
   }

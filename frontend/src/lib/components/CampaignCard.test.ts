@@ -99,7 +99,7 @@ describe("CampaignCard", () => {
     ).toBeNull();
   });
 
-  test("the log link carries live=1 for a volume that is not done, and not for one that is", async () => {
+  test("the log link carries log+manifest always, and live=1 only for a volume that is not done", async () => {
     const detail = {
       ...job,
       failures: [],
@@ -118,14 +118,21 @@ describe("CampaignCard", () => {
     });
     expect(doneLog).toHaveAttribute(
       "href",
-      "log?log=" + encodeURIComponent(volumeDone.logUrl),
+      "log?log=" +
+        encodeURIComponent(volumeDone.logUrl) +
+        "&manifest=" +
+        encodeURIComponent(volumeDone.manifestUrl),
     );
     const failedLog = within(rows[1] as HTMLElement).getByRole("link", {
       name: "log",
     });
     expect(failedLog).toHaveAttribute(
       "href",
-      "log?log=" + encodeURIComponent(volumeFailed.logUrl) + "&live=1",
+      "log?log=" +
+        encodeURIComponent(volumeFailed.logUrl) +
+        "&manifest=" +
+        encodeURIComponent(volumeFailed.manifestUrl) +
+        "&live=1",
     );
   });
 

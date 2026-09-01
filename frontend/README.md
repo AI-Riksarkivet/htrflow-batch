@@ -106,8 +106,10 @@ Kubernetes API, so there is nothing to go stale).
 its own `RELOAD_MS` timer — independent of the list poll on `/`. `logUrl` is
 absolute and bucket-rooted (no namespace/S3_PREFIX prefix): the browser has
 no bucket base URL to resolve a bare key against, so the API builds it. The
-volume table's `log` link is `log?log=<encodeURIComponent(logUrl)>`, plus
-`&live=1` when `state !== "done"`.
+volume table's `log` link is
+`log?log=<encodeURIComponent(logUrl)>&manifest=<encodeURIComponent(manifestUrl)>`,
+plus `&live=1` when `state !== "done"` — `manifestUrl` (same `VolumeView`
+row) is what feeds `/log`'s `RunSummaryCard`.
 
 ## Layout
 
