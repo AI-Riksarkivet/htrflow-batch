@@ -24,10 +24,13 @@ Everything about operating a campaigns repo reduces to these two. They are
 Kubernetes semantics, not policy this repo invents — they are true because a
 campaign **is** one Kubernetes Indexed Job:
 
-> **Pausing a campaign is a Git change.** Set `suspend: true` on the
-> rendered Job (or ask whoever applies `rendered/` to do it) — never
-> `kubectl edit` it by hand, or the next render/apply cycle silently undoes
-> your change.
+> **Pausing a campaign is a Git change.** Set `suspend: true` in
+> `campaigns/<name>.yaml` — never `kubectl edit` the Job, or the next
+> render/apply cycle silently undoes your change. The rendered Job carries
+> `spec.suspend: true`, but Kueue owns that field for a Workload it has
+> admitted, so the apply step also patches the Workload's `spec.active`
+> (`scripts/kueue-pause-sync.sh`, run by `make campaigns-apply` or as an
+> Argo CD `PostSync` hook). Declared in Git, enforced at apply time.
 >
 > **Deleting a campaign's file cancels it.** The next `render` removes its
 > file from `rendered/`, and the apply that follows prunes its Job and its

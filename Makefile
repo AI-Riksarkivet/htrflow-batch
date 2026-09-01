@@ -115,6 +115,11 @@ compose-down:
 # campaigns reference them. DIR is the campaigns repo checkout (see
 # examples/campaigns/).
 #
+# A campaign's `suspend:` renders `spec.suspend` on the Job, but Kueue owns
+# that field for an admitted Workload and undoes it — so the apply is followed
+# by scripts/kueue-pause-sync.sh, which puts the same intent on the Workload's
+# `spec.active`. Declared in git, enforced at apply time.
+#
 # PRUNE=1 additionally deletes the objects a *previous* render left behind
 # that this one no longer produces — what makes "deleting a campaign file
 # cancels the campaign" true without Argo CD. It is opt-in on purpose:
@@ -127,6 +132,7 @@ campaigns-apply:
 	uv run htrflow-campaigns render $(DIR) --out $(DIR)/rendered
 	kubectl apply $(if $(PRUNE),--prune -l $(CAMPAIGN_SELECTOR)) \
 	  -f $(DIR)/rendered/pipelines -f $(DIR)/rendered/campaigns
+	scripts/kueue-pause-sync.sh $(HTR_NAMESPACE) $(DIR)/rendered/campaigns
 
 # The reproducible core of the Indexed Jobs E2E (docs/development/e2e-indexed-jobs.md):
 # validate the campaigns repo, render + apply it, then block until every

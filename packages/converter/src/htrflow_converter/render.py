@@ -332,6 +332,8 @@ def _campaign_job(
     # no per-63-char label truncation), unlike the label VALUES above, which
     # go through label_value(). Truncating this too would make "-part1" and
     # "-part10" collide once c.name is close to 63 chars.
+    if c.suspend:  # intent; scripts/kueue-pause-sync.sh enforces it under Kueue
+        spec = {"suspend": True, **spec}
     return _job(name, cfg.namespace, labels, spec)
 
 
