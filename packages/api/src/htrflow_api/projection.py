@@ -143,9 +143,13 @@ def _volume_state(
     return "active" if has_pod else "pending"
 
 
-def _log_key(namespace: str, pipeline: str, volume_id: str, cfg) -> str:
-    prefix = "" if cfg.legacy_layout else f"{namespace}/"
-    return f"{prefix}status/logs/{pipeline}/{volume_id}.txt"
+def _log_key(pipeline: str, volume_id: str) -> str:
+    """Bucket-root key, no namespace/S3_PREFIX prefix — matches
+    ``ResultStore.run_log_key()`` (packages/wrapper/src/htrflow_batch/store.py),
+    which writes the run log outside ``volume_prefix`` on purpose: the
+    ``status/`` tree is shared across namespaces, unlike the per-namespace
+    results under ``resultsBase``."""
+    return f"status/logs/{pipeline}/{volume_id}.txt"
 
 
 def detail(
@@ -164,7 +168,6 @@ def detail(
     failed = parse_index_ranges(status.get("failedIndexes"))
     pods_by_index = _pods_by_index(pods)
     results_base = summary["resultsBase"]
-    namespace = summary["namespace"]
     pipeline = summary["pipeline"]
 
     volumes = []
@@ -177,7 +180,7 @@ def detail(
             "manifestUrl": f"{results_base}/{vol_id}/manifest.json",
             "iiifUrl": f"{results_base}/{vol_id}/iiif.json",
             "altoPrefix": f"{results_base}/{vol_id}/alto/",
-            "logKey": _log_key(namespace, pipeline, vol_id, cfg),
+            "logKey": _log_key(pipeline, vol_id),
         }
         if idx in pods_by_index:
             newest = _newest(pods_by_index[idx])

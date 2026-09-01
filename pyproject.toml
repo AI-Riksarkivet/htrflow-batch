@@ -20,6 +20,10 @@ testpaths = [
 markers = [
     "htrflow: needs the htrflow runtime; runs inside the wrapper image (make test-driver-real / dagger call test-driver)",
 ]
+# fastapi.testclient's TestClient still wires up httpx (starlette is nudging
+# everyone toward a hypothetical "httpx2"); nothing to act on here, just
+# quiets the noise (packages/api/tests).
+filterwarnings = ["ignore::starlette.exceptions.StarletteDeprecationWarning"]
 
 # Root ruff config governs everything outside packages/* (scripts/, the
 # dagger module has no Python). Same rules as the members so `ruff check .`
