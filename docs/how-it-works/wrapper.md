@@ -190,7 +190,8 @@ reading a line of the campaign's `volumes.txt` ConfigMap.
   `htrflow.riksarkivet.se/pipeline`, `htrflow.riksarkivet.se/campaign`,
   `kueue.x-k8s.io/queue-name` (+ `kueue.x-k8s.io/priority-class` when the
   campaign sets `priority:`), annotation
-  `kueue.x-k8s.io/job-min-parallelism: "1"`; volume ids are label-safe by
+  `kueue.x-k8s.io/job-min-parallelism: "1"` when `parallelism` > 1 (Kueue's
+  webhook rejects it at `parallelism: 1`); volume ids are label-safe by
   construction (the parser rejects anything else).
 - Job name is the campaign file's stem (`-part2`, … past 10 000 volumes) —
   no per-volume Job name: **Kubernetes' own index bookkeeping is the retry
