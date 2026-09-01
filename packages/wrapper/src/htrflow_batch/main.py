@@ -188,12 +188,14 @@ def _main(
     # of holding the interpreter (executor workers are joined at exit).
     stop = threading.Event()
     timer: Optional[threading.Timer] = None
+    # cancel() can't stop an in-flight callback; whichever side acquires first wins.
+    terminating = threading.Lock()
     try:
         cfg = Config.from_env(env)
         prepare_writable_dirs(env)
         store = ResultStore(cfg)
         capture.start_shipping(store.put_run_log, cfg.log_ship_seconds)
-        timer = _start_max_seconds_timer(cfg, env, state, capture)
+        timer = _start_max_seconds_timer(cfg, env, state, capture, terminating)
         workdir = Path(cfg.workdir)
         input_dir = workdir / "input"
         client = _http_client()
@@ -365,6 +367,8 @@ def _main(
         # (downloaded images, local ALTO/PAGE outputs) is intentionally left
         # in place for postmortem inspection.
         shutil.rmtree(workdir, ignore_errors=True)
+        if not terminating.acquire(blocking=False):
+            return EXIT_TRANSIENT  # MAX_SECONDS already won the race
         return EXIT_OK
     except (ConfigError, ManifestError, SetupError, ValueError) as e:
         stop.set()
@@ -384,7 +388,11 @@ def _main(
 
 
 def _start_max_seconds_timer(
-    cfg: Config, env: Mapping[str, str], state: RunState, capture: LogCapture
+    cfg: Config,
+    env: Mapping[str, str],
+    state: RunState,
+    capture: LogCapture,
+    terminating: threading.Lock,
 ) -> Optional[threading.Timer]:
     """MAX_SECONDS: a per-volume wall-clock budget (docs: wrapper). Fires in
     its own thread; _hard_exit (os._exit) kills the process outright from
@@ -393,6 +401,8 @@ def _start_max_seconds_timer(
         return None
 
     def on_expiry() -> None:
+        if not terminating.acquire(blocking=False):
+            return  # the run already completed successfully; nothing to do
         log.error("transient failure in %s: MAX_SECONDS exceeded", state.stage)
         _terminate(
             env, {"stage": state.stage, "permanent": False, "error": "MAX_SECONDS"}

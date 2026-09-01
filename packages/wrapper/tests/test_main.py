@@ -819,6 +819,28 @@ def test_max_seconds_timer_is_started_and_cancelled_on_success(
     assert fake_timer.instances[0].cancelled is True
 
 
+def test_max_seconds_fired_after_success_does_not_reverse_the_outcome(
+    env, cfg, s3, fake_timer, monkeypatch
+):
+    """Review finding: timer.cancel() cannot stop a callback that has
+    already started, so on_expiry can still fire in the window between a
+    successful publish and the finally block's cancel(). Simulate that by
+    invoking the captured callback ourselves *after* main() has already
+    returned EXIT_OK (same fake-Timer pattern, driven post-hoc instead of
+    mid-run) — the shared "terminating" lock must make on_expiry a no-op:
+    no termination log, no _hard_exit call."""
+    exits = []
+    monkeypatch.setattr(main_mod, "_hard_exit", lambda code: exits.append(code))
+
+    rc = main(dict(env, MAX_SECONDS="600"), process_page_factory=fake_factory)
+    assert rc == EXIT_OK
+    assert not Path(env["TERMINATION_LOG_PATH"]).exists()
+
+    fake_timer.instances[0].fn()  # the real Timer thread firing late
+    assert exits == []  # on_expiry lost the race and backed off
+    assert not Path(env["TERMINATION_LOG_PATH"]).exists()
+
+
 def test_max_seconds_zero_starts_no_timer(env, cfg, s3, fake_timer):
     rc = main(env, process_page_factory=fake_factory)  # MAX_SECONDS unset (0)
     assert rc == EXIT_OK
@@ -846,7 +868,9 @@ def test_max_seconds_on_expiry_writes_termination_log_ships_log_and_hard_exits(
         return process
 
     rc = main(dict(env, MAX_SECONDS="600"), process_page_factory=factory)
-    assert rc == EXIT_OK  # _hard_exit is mocked, so the run completes normally
+    # on_expiry won the "terminating" race (fired first); the success path,
+    # finding the lock already held when it completes, backs off too.
+    assert rc == EXIT_TRANSIENT
     assert fake_timer.instances[0].interval == 600
     assert exits == [EXIT_TRANSIENT]
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
