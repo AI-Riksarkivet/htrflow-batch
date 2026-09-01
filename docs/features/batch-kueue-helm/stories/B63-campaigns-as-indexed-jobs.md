@@ -1,0 +1,72 @@
+---
+type: Product Backlog Item
+id: 2978
+parent: 2800
+title: Kampanjer körs som Kubernetes Indexed Jobs — reconcilern och dess statusfiler tas bort
+---
+
+# B63 · Kampanjer körs som Kubernetes Indexed Jobs — reconcilern och dess statusfiler tas bort
+
+**Story.** Som förvaltare av batch-systemet vill jag att en kampanj är ett
+vanligt Kubernetes-objekt — en Indexed Job där index *i* är volym *i* — som
+Kubernetes och Kueue själva schemalägger, gör om vid fel, pausar och
+rapporterar, i stället för YAML som en CronJob tolkar var femte minut och
+speglar till fyra JSON-filer i en bucket, så att kodbasen krymper till
+wrapper + en ren converter + ett tunt read API, och varje ATRaaS-behov
+(kö per organisation, avbryt, kvot) blir Kueue-konfiguration.
+
+## Varför det är viktigt
+
+Reconcilern är systemets komplexitetscentrum: 2 600 rader, en 580-raders
+tick-klass, Lease, `status.json`/`attempts.json`/`validation.json`/`volumes.json`
+som skrivs om varje tick — en egenbyggd scheduler ovanpå en bucket som
+kopierar det API-servern redan vet. Ett första försök att ersätta den med en
+CRD + Go-controller (gren `b63-controller`, sju tasks) visade att även det
+återuppfann något Kubernetes har: **Indexed Jobs** ger per-volym-retry
+(`backoffLimitPerIndex`), permanent fel utan retry (`FailIndex` på exit 13),
+progress (`completedIndexes`/`failedIndexes`), paus som bevarar klara volymer
+(`suspend`) och rättvis kö med partiell admission via Kueue — allt GA i
+Kubernetes 1.33 och verifierat mot officiell dokumentation 2026-09-01.
+
+## Vad som levereras
+
+- **Converter** (`packages/converter`, Python, ren funktion utan kluster- eller
+  S3-åtkomst): `campaigns/*.yaml` + `pipelines/*.yaml` → per pipeline en
+  ConfigMap `htr-pipeline-<id>` och warm-up Job; per kampanj en ConfigMap
+  med volymlistan (en rad per index, ≤ 10 000, annars delad) och en
+  **Indexed Job** (`completions` = antal volymer, `parallelism` = fönster,
+  `backoffLimitPerIndex: 3`, `maxFailedIndexes` = alla, podFailurePolicy,
+  Kueue-labels, `job-min-parallelism: 1`). `validate` körs i campaigns-repots
+  CI; `render` committar `rendered/` som Argo CD pekar på. Kampanjer är
+  append-only: ändrad volymlista avvisas, ny kampanj skapas.
+- **Wrapper**: två små tillägg — `MAX_SECONDS` (tidsgräns per volym, exit 1)
+  och `IMAGES` (bildlista som alternativ till IIIF-manifest; wrappern
+  bygger och publicerar den syntetiska manifesten själv) — och två
+  borttagningar: thumbnails och `metrics-failed-latest.json`.
+  Env-/exit-kontraktet är i övrigt oförändrat.
+- **Read API** (`packages/api`, Python, read-only RBAC): `/api/v1/jobs` och
+  `/api/v1/jobs/{ns}/{name}` som projektion av Job-status × volymlistan,
+  med S3-länkar och felorsak från pod-termineringsmeddelandet; proxas av
+  viewer-nginx. Ersätter `status.json`; statussidan läser detta.
+- **Chart 0.3.0**: `api.yaml` tillkommer; `reconciler.yaml`, `pipelines.yaml`,
+  `job-example.yaml` och devstack-mallarna (→ `charts/htrflow-devstack`)
+  försvinner; `legacyLayout` behåller `<pipeline>/<volym>/` för befintlig data,
+  nya tenants får `<namespace>/<pipeline>/<volym>/`.
+- **Borttaget**: `packages/reconciler`, CronJob, Lease, de fyra statusfilerna,
+  frontendens derivationslager, Go-controllern (aldrig mergad).
+- **Storleksbudget i CI** (`scripts/loc-budget.sh`): wrapper ≤ 1 500,
+  converter ≤ 400, API ≤ 400, frontend ≤ 2 500, chart ≤ 700 rader; bara
+  Python i batch-systemet.
+
+## Klart när
+
+- [ ] En kampanj med 50 volymer körs igenom på PoC-noden från `rendered/`
+      till resultat i viewern, utan att `status/*.json` skrivs.
+- [ ] `kubectl get job <kampanj>` visar `completedIndexes`/`failedIndexes`;
+      `suspend: true` mitt i körningen lämnar klara volymer klara; borttagen
+      kampanjfil → Job prunad, S3 orört.
+- [ ] En volym med trasigt manifest hamnar i `failedIndexes` utan att stoppa
+      kampanjen; en volym över `MAX_SECONDS` görs om upp till tre gånger.
+- [ ] `packages/reconciler` finns inte; `grep -r status.json` ger noll träffar
+      utanför historik; alla fem budgetrader gröna i CI.
+- [ ] I15 deployar chart 0.3.0 i dev, inte CronJob-reconcilern.
