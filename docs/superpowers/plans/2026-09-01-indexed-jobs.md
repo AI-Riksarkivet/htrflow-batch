@@ -188,6 +188,22 @@ exec python -m htrflow_batch
 - [ ] **Step 5: Failure paths** — a campaign with one bad manifest URL → that index in `failedIndexes`, others complete; `MAX_SECONDS=60` campaign → index retried 3× then failed; `suspend: true` applied mid-run → active pods gone, done indexes kept, resume continues; delete the campaign file + apply → Job pruned, S3 untouched; Kueue partial admission with `nominalQuota` 1 GPU and `parallelism: 4` → admitted with 1.
 - [ ] **Step 6: Record** in `docs/development/e2e-indexed-jobs.md`; update B63's story `Klart när` boxes; `python3 scripts/stories/azure_sync.py story …`; link the merge commit on #2978 (`Custom.Commits` + Hyperlink). Do not set state Done. Commit `docs: Indexed Jobs E2E on the PoC — resume, pause, partial admission, no status files (B63)`.
 
+### Task 9: Skeleton manifests instead of dict builders
+
+**Why:** `render.py` builds every Kubernetes object as nested dicts (`_container`, `_pod_template`, `_job`, `_configmap`, `_campaign_job`, `_warmup_job`); nobody can read the Job off the Python. Ship the skeletons as real YAML and keep only the field patching in Python. Output must stay byte-identical (the golden tests are the acceptance).
+
+**Files:**
+- Create: `packages/converter/src/htrflow_converter/manifests/campaign-job.yaml`, `warmup-job.yaml` (complete, valid `batch/v1` Jobs with every static field — securityContexts, `restartPolicy: Never`, `automountServiceAccountToken: false`, `podFailurePolicy`, `backoffLimitPerIndex: 3`, `ttlSecondsAfterFinished: 86400`, `completionMode: Indexed`, the `campaign`/`pipeline`/`data`/`work`/`s3` volumes and mounts, the wrapper env list, the `/campaign/volumes.txt` shell args as a block scalar — and placeholder values such as `name: CAMPAIGN` for the fields Python sets), `configmap.yaml`
+- Modify: `render.py` — `_load(name) -> dict` (`yaml.safe_load` of the packaged file via `importlib.resources`, `copy.deepcopy` per render), `_set(obj, "spec.template.spec.containers[0].image", value)` dotted-path helper (≤ 15 lines), and `_campaign_job`/`_warmup_job`/`_configmap` become "load skeleton, set dynamic fields" (name, namespace, labels, annotations, `completions`, `parallelism`, `maxFailedIndexes`, image, ConfigMap names, `claimName`, `secretName`, queue/priority labels, `runtimeClassName`, `nodeSelector`, `tolerations`, `MAX_SECONDS`/pipeline env). Delete `_container`, `_pod_template`, `_job`, `_resources`, `_workdir_env`, `_s3_env`, `_pod_failure_policy`, `_POD_SEC`, `_CTR_SEC`, `_SHELL_ARGS` once nothing uses them.
+- Modify: `packages/converter/pyproject.toml` (`[tool.hatch.build.targets.wheel]` includes `manifests/*.yaml`), `docs/reference/campaign-yaml.md` (one paragraph: the skeletons are the Job; point at the files), `.dagger/checks.go` kubeconform step also validates the two skeleton files as-is.
+- Test: `packages/converter/tests/test_render.py` — add `test_skeletons_are_valid_jobs` (load each skeleton, assert `kind`, `apiVersion`, `spec.completionMode == "Indexed"` for the campaign one); `test_set_dotted_path` (nested dict + list index); existing golden tests unchanged and green.
+
+- [ ] **Step 1: Failing tests** — the two new tests (`_load`/`_set` do not exist yet). Run `uv run pytest packages/converter -q`; expect ImportError/AttributeError.
+- [ ] **Step 2: Skeletons** — write the three YAML files by dumping today's output for the golden fixture (`htrflow-campaigns render tests/golden/... `) and replacing the dynamic values with placeholders; keep key order identical to today's dict order so the golden YAML stays byte-identical.
+- [ ] **Step 3: Rewrite** `render.py` onto `_load`/`_set`; delete the dict builders. Run `uv run pytest packages/converter -q` — all green incl. golden; `scripts/loc-budget.sh` converter ≤ 800 (expect a drop of ~80–100 lines).
+- [ ] **Step 4: kubeconform** — `dagger call checks` green with the skeleton files validated.
+- [ ] **Step 5: Commit** `refactor(converter): ship Job skeletons as YAML, patch fields in Python (B63)`.
+
 ## Self-review
 - Spec coverage: D1–D2 → Task 2; D3–D5 → Tasks 1–2, 6; D6–D7 → Task 3; D8 → Task 4, 7; D9 → Tasks 2, 5; D10 → Task 8 asserts; D11 untouched (open); D12 → Tasks 5–6; §5 → Task 5; §6 → each task + Task 8; §7 → Task 8.
 - Types: `JobSummary/JobDetail/VolumeView` shapes identical in Task 4 (Python) and Task 7 (Zod). `volumes.txt` line format identical in Task 1 (`source_line`), Task 2 (`args`), Task 3 (`IMAGES` parsing), Task 4 (ConfigMap read).
