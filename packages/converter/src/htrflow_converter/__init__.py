@@ -1,7 +1,4 @@
-"""htrflow-converter: campaign/pipeline YAML -> manifests (B63).
-
-Spec: docs/superpowers/specs/2026-09-01-indexed-jobs-design.md.
-"""
+"""htrflow-converter: campaign/pipeline YAML -> manifests (B63)."""
 
 from .models import Campaign, ConverterConfig, Pipeline, Volume
 from .parse import ValidationError, load

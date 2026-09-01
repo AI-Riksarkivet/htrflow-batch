@@ -1,7 +1,4 @@
-"""Domain types for campaign/pipeline YAML.
-
-Spec: docs/superpowers/specs/2026-09-01-indexed-jobs-design.md §3.
-"""
+"""Domain types for campaign/pipeline YAML (spec §3)."""
 
 from __future__ import annotations
 
@@ -21,7 +18,7 @@ class Volume(BaseModel):
     images: list[str] = Field(default_factory=list)
 
     def source_line(self) -> str:
-        """One line of a campaign's ``volumes.txt`` ConfigMap (spec §3)."""
+        """One line of a campaign's ``volumes.txt`` ConfigMap."""
         if self.manifest is not None:
             return f"{self.id}\t{self.manifest}"
         return f"{self.id}\timages:{','.join(self.images)}"
@@ -46,19 +43,15 @@ class Pipeline(BaseModel):
     model_revision: str = ""
 
     def pipeline_yaml(self) -> str:
-        """The ConfigMap payload: steps only, image is separate (spec §3)."""
         return yaml.safe_dump({"steps": self.steps}, sort_keys=False)
 
     @property
     def sha256(self) -> str:
-        """Drift ground truth annotation ``htrflow.riksarkivet.se/pipeline-sha256``."""
         return hashlib.sha256(self.pipeline_yaml().encode()).hexdigest()
 
 
 class ConverterConfig(BaseModel):
-    """``converter.yaml`` in the campaigns repo (spec §3). Unknown keys are
-    rejected so a typo in a tenant's config fails validate rather than being
-    silently ignored."""
+    """``converter.yaml`` in the campaigns repo; unknown keys rejected."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
