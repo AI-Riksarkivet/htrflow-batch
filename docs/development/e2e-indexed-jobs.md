@@ -394,12 +394,11 @@ $ kubectl -n htr-batch get pods -l batch.kubernetes.io/job-name=e2e-demo | tail 
 e2e-demo-4-jqcnq   1/1   Running   0   5s
 ```
 
-**This is a design gap, not a bug fixed here.** The behaviour the design
-promises is real and reachable; the *lever* named in
-`docs/how-it-works/campaigns.md` and `examples/campaigns/README.md`
-(`suspend: true` on the rendered Job) is the wrong one under Kueue, and
-`spec.active` on a Workload is not a Git change. Left open for the
-controller — see "Open questions" below.
+**This was a design gap, not a bug fixed in this round.** It is closed in
+[Fix round 1](#fix-round-1-same-day-1634-1640): `suspend:` stays the declared
+intent in Git, and `make campaigns-apply` (or an Argo CD `PostSync` hook) runs
+`scripts/kueue-pause-sync.sh`, which applies that intent to the Workload's
+`spec.active`.
 
 ### Kueue partial admission
 
@@ -444,7 +443,9 @@ fails for as long as the Job exists — including after it has completed, until
 `ttlSecondsAfterFinished` (24 h) removes it. `make campaigns-apply` is
 therefore **not** idempotent for any campaign whose `window` exceeds the
 queue's quota, contrary to what [Local k3s](local-k3s.md) says. Worked around
-here by deleting the finished `e2e-window` Job; left open below.
+here by deleting the finished `e2e-window` Job; **fixed** in
+[Fix round 1](#fix-round-1-same-day-1634-1640) by dropping partial admission
+and clamping `parallelism` to `converter.yaml`'s `window` at render time.
 
 ### Deleting a campaign file cancels it
 
@@ -501,6 +502,12 @@ e2e-badurl
 
 ## Open questions for the design
 
+!!! note "All three were ruled on and closed the same day"
+
+    See [Fix round 1](#fix-round-1-same-day-1634-1640) at the end of this
+    page for what was implemented and re-verified. The text below is left as
+    written — it is the record of what the system did before the fix.
+
 1. **Pause needs a Kueue-shaped lever.** `suspend: true` on a Job that Kueue
    has admitted is undone by Kueue within seconds (evidence above). The
    working lever is `spec.active: false` on the *Workload*, which is not a
@@ -535,3 +542,127 @@ e2e-badurl
   status documents, and this run's `e2e-v1/…` output.
 - `~/htr-test` branch `b63-indexed` is committed and **not pushed**; its
   pipeline pins a `127.0.0.1:30500` digest that resolves on this node only.
+
+---
+
+# Fix round 1 (same day, 16:34–16:40)
+
+Three of the open questions above came back as rulings and were implemented
+and re-verified on the same cluster, same images. The campaigns repo grew a
+`suspend:` field on `campaigns/e2e-pause.yaml`, a `max_seconds:` pipeline
+(`pipelines/e2e-slow-v1.yaml`) and a re-added `campaigns/e2e-window.yaml`;
+`probe-max-seconds/` is gone — the override it needed is a pipeline field now.
+
+## Pause is declared in Git and enforced at apply time
+
+`suspend: true` on a campaign renders `spec.suspend: true` (new `Campaign`
+field). Because Kueue owns that field for an admitted Workload, the apply
+step now also puts the intent on the Workload:
+`scripts/kueue-pause-sync.sh <ns> <rendered/campaigns>`, run by
+`make campaigns-apply` after every apply (Argo CD: the same script as a
+`PostSync` hook — manifest in
+[Campaign & Pipeline YAML → Pausing](../reference/campaign-yaml.md#pausing)).
+
+```console
+$ # campaigns/e2e-pause.yaml, 8 volumes, running with 3 done: add `suspend: true`
+$ kubectl -n htr-batch get job e2e-pause -o jsonpath='…'
+BEFORE suspend=false done=0-2 active=1
+
+$ make campaigns-apply DIR=/home/morgan/htr-test
+job.batch/e2e-pause configured
+scripts/kueue-pause-sync.sh htr-batch /home/morgan/htr-test/rendered/campaigns
+e2e-pause: job-e2e-pause-5b54e active=false
+workload.kueue.x-k8s.io/job-e2e-pause-5b54e patched
+
+$ kubectl -n htr-batch get job e2e-pause -o jsonpath='…'
+AFTER  suspend=true done=0-2 active= ready=0
+$ kubectl -n htr-batch get pods -l batch.kubernetes.io/job-name=e2e-pause
+e2e-pause-0-9d2rj  Completed
+e2e-pause-1-n28hx  Completed
+e2e-pause-2-v8qdk  Completed        # no running pod
+$ curl -s http://localhost:30800/api/v1/jobs | jq '.[]|select(.name=="e2e-pause")'
+{ "phase": "Paused", "counts": {"total":8,"active":0,"done":3,"failed":0}, "suspended": true }
+```
+
+It **held** — 65 s later `suspend` was still `true` (in round 0, a bare
+`suspend: true` was undone by Kueue in 2 s), and a second
+`make campaigns-apply` while paused printed nothing from the sync script (it
+skips a Workload already in the wanted state) and left the campaign paused.
+
+`suspend: false` + apply resumes at the next index, not the first:
+
+```console
+$ make campaigns-apply DIR=/home/morgan/htr-test
+e2e-pause: job-e2e-pause-5b54e active=true
+workload.kueue.x-k8s.io/job-e2e-pause-5b54e patched
+
+$ kubectl -n htr-batch get job e2e-pause -o jsonpath='…'
+RESUMED suspend=false done=0-2 active=1
+$ kubectl -n htr-batch get pods -l batch.kubernetes.io/job-name=e2e-pause | tail -1
+e2e-pause-3-cxbt6   1/1   Running   0   7s          # index 3, not index 0
+
+$ kubectl -n htr-batch get job e2e-pause
+NAME        STATUS     COMPLETIONS   DURATION
+e2e-pause   Complete   8/8           105s
+```
+
+## Partial admission is gone; `converter.yaml: window` is the cap
+
+The `kueue.x-k8s.io/job-min-parallelism` annotation is no longer rendered at
+all, and `parallelism` is `min(campaign window, converter window)`. The
+campaign that used to trigger the trap now renders what it runs:
+
+```console
+$ # campaigns/e2e-window.yaml declares `window: 4`; converter.yaml caps at 1
+$ kubectl -n htr-batch get job e2e-window -o jsonpath='…'
+parallelism=1 completions=4     # clamped at render time, no annotation on the Job
+
+$ kubectl -n htr-batch get job e2e-window
+NAME         STATUS     COMPLETIONS   DURATION
+e2e-window   Complete   4/4           69s
+```
+
+Re-applying the unchanged rendered files is now clean in every state — the
+webhook error from round 0 is gone:
+
+```console
+$ # with e2e-maxseconds RUNNING and e2e-50/e2e-badurl/e2e-retrycap terminal
+$ make campaigns-apply DIR=/home/morgan/htr-test
+job.batch/e2e-50 configured
+job.batch/e2e-badurl configured
+job.batch/e2e-maxseconds configured
+job.batch/e2e-pause configured
+job.batch/e2e-retrycap configured
+job.batch/e2e-window configured          # exit 0, no vjob.kb.io rejection
+
+$ # and again with all eight Jobs terminal: 16 objects configured/unchanged, exit 0
+```
+
+## Per-pipeline `max_seconds`
+
+`pipelines/<id>.yaml` may set `max_seconds:`; it overrides `converter.yaml`'s
+global for that recipe's campaigns. The nested `probe-max-seconds/` mini-repo
+is deleted — `pipelines/e2e-slow-v1.yaml` (`max_seconds: 60`) lives in the
+main repo beside `e2e-v1`:
+
+```console
+$ kubectl -n htr-batch get pods -l batch.kubernetes.io/job-name=e2e-maxseconds \
+    -o jsonpath='{.items[*].spec.containers[0].env[?(@.name=="MAX_SECONDS")].value}'
+60                       # pipeline e2e-slow-v1
+
+$ kubectl -n htr-batch get pod e2e-50-0-5h7c5 \
+    -o jsonpath='{.spec.containers[0].env[?(@.name=="MAX_SECONDS")].value}'
+21600                    # pipeline e2e-v1, converter.yaml's global
+```
+
+The 20-page probe volume finished inside its 60 s budget on the first attempt
+(~2.5 s/page once the models are warm), so the watchdog did not fire this
+time; that it fires and that the retry resumes is the 60-page evidence in the
+round-0 section above. What this run proves is the **override reaching the
+pod**.
+
+## What is still open
+
+Open question 1 (pause) and 2 (`parallelism`) above are closed by this round;
+3 (`max_seconds` scope) is closed by the pipeline field. The round-0 text is
+left as written — it is the record of what the system did before the fix.

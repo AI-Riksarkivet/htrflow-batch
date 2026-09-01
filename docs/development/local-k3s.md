@@ -171,23 +171,24 @@ in the chart READMEs.
 - **Kueue quota is one GPU**: a second index waits Suspended until the
   first finishes (a 480-spread volume runs ~12–13 s/page). `queued` with an
   idle GPU means Kueue is down, not busy.
-- **`make campaigns-apply` is safe to re-run** — with one exception:
-  `render` is a pure function and `kubectl apply` is idempotent, so
-  re-running only matters when the campaigns repo actually changed. The
-  exception is a campaign whose `window` exceeds the queue's quota: Kueue
-  rewrites `spec.parallelism` on admission, and re-applying the rendered
-  file then fails with `spec.parallelism: Forbidden: cannot change when
-  partial admission is enabled and the job is not suspended` until that Job
-  is gone ([E2E log](e2e-indexed-jobs.md)).
+- **`make campaigns-apply` is safe to re-run**: `render` is a pure function
+  and `kubectl apply` is idempotent, so re-running only matters when the
+  campaigns repo actually changed. (Verified against running, completed and
+  failed Jobs — the converter no longer uses Kueue partial admission, which
+  used to rewrite `spec.parallelism` on the live Job and make the rendered
+  file un-appliable: [E2E log](e2e-indexed-jobs.md).)
 - **Cancelling needs `PRUNE=1`**: a plain `kubectl apply` never deletes.
   `make campaigns-apply DIR=… PRUNE=1` adds
   `--prune -l htrflow.riksarkivet.se/managed-by=converter`, which is what
   actually removes a deleted campaign's Job and ConfigMap. Only ever run it
   against the *whole* campaigns repo — against a partial checkout it cancels
   everything the checkout does not contain.
-- **Pausing one campaign is not `suspend: true`** on a Kueue-admitted Job:
-  Kueue resumes it within seconds. `kubectl patch workload <wl> --type=merge
-  -p '{"spec":{"active":false}}'` is what holds ([E2E log](e2e-indexed-jobs.md)).
+- **Pausing is `suspend: true` in the campaign file plus the apply step.**
+  The rendered `spec.suspend` alone does not hold — Kueue owns that field for
+  an admitted Workload and undoes it in seconds — so `make campaigns-apply`
+  runs `scripts/kueue-pause-sync.sh`, which patches the Workload's
+  `spec.active`. Never `kubectl edit` the Job
+  ([E2E log](e2e-indexed-jobs.md)).
 - **RustFS is single-disk**: the results bucket is one `local-path` PVC on
   this node (`rustfs-data`, 5 Gi by default, kept on uninstall). Fine for
   iteration; not an archive.

@@ -36,7 +36,10 @@ Kubernetes 1.33 och verifierat mot officiell dokumentation 2026-09-01.
   med volymlistan (en rad per index, ≤ 10 000, annars delad) och en
   **Indexed Job** (`completions` = antal volymer, `parallelism` = fönster,
   `backoffLimitPerIndex: 3`, `maxFailedIndexes` = alla, podFailurePolicy,
-  Kueue-labels, `job-min-parallelism: 1`). `validate` körs i campaigns-repots
+  Kueue-labels; `parallelism` klipps vid `converter.yaml: window`, ingen
+  partiell admission — Kueue skriver annars om `spec.parallelism` på det
+  levande jobbet och avvisar varje senare apply av samma renderade fil).
+  `validate` körs i campaigns-repots
   CI; `render` committar `rendered/` som Argo CD pekar på. Kampanjer är
   append-only: ändrad volymlista avvisas, ny kampanj skapas.
 - **Wrapper**: två små tillägg — `MAX_SECONDS` (tidsgräns per volym, exit 1)
@@ -66,16 +69,22 @@ Kubernetes 1.33 och verifierat mot officiell dokumentation 2026-09-01.
       `status/*.json` på bucketen är reconcilerns egna, orörda sedan
       13:30 UTC — se [E2E-loggen](../../../development/e2e-indexed-jobs.md).)
 - [x] `kubectl get job <kampanj>` visar `completedIndexes`/`failedIndexes`;
-      ~~`suspend: true` mitt i körningen lämnar klara volymer klara~~;
-      borttagen kampanjfil → Job prunad, S3 orört.
-      **Delvis:** progress, prune och "klara volymer bevaras" är verifierade,
-      men `suspend: true` på Joben håller inte — Kueue återupptar den inom
-      sekunder. Pausen som fungerar är `spec.active: false` på Workloaden,
-      vilket inte är en git-ändring. Öppen designfråga, se E2E-loggen.
+      `suspend: true` mitt i körningen lämnar klara volymer klara; borttagen
+      kampanjfil → Job prunad, S3 orört.
+      Pausen deklareras i git (`suspend:` i kampanjfilen renderas till
+      `spec.suspend`) och **verkställs av apply-steget**: Kueue äger
+      `spec.suspend` för en admitterad Workload och ångrar den på sekunder,
+      så `make campaigns-apply` kör `scripts/kueue-pause-sync.sh` som sätter
+      samma avsikt på Workloadens `spec.active` (med Argo CD: samma skript
+      som PostSync-hook). Verifierat: pausen håller, tre klara index bevaras,
+      API:t rapporterar `Paused`, och `suspend: false` + apply fortsätter på
+      nästa index.
 - [x] En volym med trasigt manifest hamnar i `failedIndexes` utan att stoppa
       kampanjen (exit 13 → `FailIndex`, ett enda försök); en volym över
       `MAX_SECONDS` görs om — och återupptar från redan publicerade sidor,
-      så 60 sidor blev klara på tredje försöket.
+      så 60 sidor blev klara på tredje försöket. `max_seconds` sätts numera
+      per pipeline (`pipelines/<id>.yaml`) och faller tillbaka på
+      `converter.yaml`.
 - [x] `packages/reconciler` finns inte; `grep -r status.json` ger noll träffar
       utanför historik; alla fem budgetrader gröna
       (`scripts/loc-budget.sh`: wrapper 1850, converter 793/800, api 390/400,
