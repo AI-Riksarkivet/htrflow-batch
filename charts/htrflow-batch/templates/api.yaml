@@ -1,5 +1,5 @@
 # Read-only status API (D8, B63): GET /api/v1/jobs[/…] over the Indexed Jobs
-# a campaign renders to (packages/api). Replaces the reconciler's
+# a campaign renders to (packages/api). Replaces the old CronJob controller's
 # status.json; served on :8081, proxied by the viewer's nginx at /api/ —
 # never exposed outside the cluster directly (ClusterIP only, no NodePort).
 apiVersion: v1

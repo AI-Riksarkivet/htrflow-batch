@@ -1,8 +1,8 @@
 .PHONY: install format lint check test typecheck test-driver-real ci build build-viewer scan publish \
         compose-up compose-test compose-smoke compose-down helm-lint helm-template install-devstack \
         docs-serve docs-build \
-        poc-push poc-push-arm64 build-wrapper build-reconciler scan-reconciler clean \
-        warmup psa-labels \
+        poc-push poc-push-arm64 build-wrapper build-api scan-api clean \
+        campaigns-apply psa-labels \
         frontend-install frontend-test frontend-check frontend-build frontend-dev viewer-image
 
 # Cluster-local constants (registry, S3 endpoint, bucket, namespace, release,
@@ -49,10 +49,10 @@ check: format lint
 test:
 	uv run --all-packages pytest -q
 
-# ty from the workspace venv resolves both members' imports; the dagger
+# ty from the workspace venv resolves the members' imports; the dagger
 # `typecheck` function runs the same command in CI.
 typecheck:
-	uv run --no-sync ty check packages/wrapper/src packages/reconciler/src
+	uv run --no-sync ty check packages/wrapper/src packages/converter/src packages/api/src
 
 # Level 0 htrflow API pin (audit T4): the real Pipeline.from_config / Export /
 # auto_import contract on a one-page CPU fixture, inside the locally built
@@ -110,6 +110,15 @@ compose-smoke:
 compose-down:
 	cd .docker && docker compose down -v
 
+# Render a campaigns repo's pipelines/campaigns to Indexed Jobs and apply them
+# to the cluster directly (no controller in the loop): pipelines first, since
+# campaigns reference them. DIR is the campaigns repo checkout (see
+# examples/campaigns/).
+campaigns-apply:
+	@test -n "$(DIR)" || (echo "usage: make campaigns-apply DIR=<campaigns-repo-dir>"; exit 2)
+	uv run htrflow-campaigns render $(DIR) --out $(DIR)/rendered
+	kubectl apply -f $(DIR)/rendered/pipelines -f $(DIR)/rendered/campaigns
+
 # Chart: lint + render on defaults and on ci/full-values.yaml (every feature
 # on, no cluster lookups), then kubeconform when it is installed. The local
 # twin of `dagger call check-chart` (.dagger/checks.go).
@@ -161,15 +170,15 @@ docs-build:
 # recipe (.docker/htrflow-batch-gpu-arm64.dockerfile, needs the local
 # htrflow:v0.2.6-arm64 base — see that file) instead of the amd64 upstream
 # image, which only runs under qemu and cannot reach the GPU (audit O13).
-# Each push prints the digest to pin in values (`reconciler.image`,
-# `exampleJob.image`); the chart refuses tags unless devStack.allowTagImages.
+# Each push prints the digest to pin in values (`api.image`, or a campaign
+# pipeline's image); the chart refuses tags unless devStack.allowTagImages.
 ifeq ($(ARCH),aarch64)
 WRAPPER_DOCKERFILE ?= .docker/htrflow-batch-gpu-arm64.dockerfile
 else
 WRAPPER_DOCKERFILE ?= .docker/htrflow-batch.dockerfile
 endif
 WRAPPER_IMAGE := $(HTR_REGISTRY)/htrflow-batch:$(IMAGE_TAG)
-RECONCILER_IMAGE := $(HTR_REGISTRY)/htrflow-reconciler:$(IMAGE_TAG)
+API_IMAGE := $(HTR_REGISTRY)/htrflow-api:$(IMAGE_TAG)
 # Provenance label (audit W8): the arm64 recipe builds FROM a locally built
 # htrflow base, so the base's `git describe` from the HTRFLOW_DIR checkout
 # (.env) is stamped as se.riksarkivet.htrflow.base.revision. The amd64
@@ -186,38 +195,27 @@ endif
 build-wrapper:
 	docker build -f $(WRAPPER_DOCKERFILE) $(WRAPPER_BUILD_ARGS) -t $(WRAPPER_IMAGE) .
 
-build-reconciler:
-	docker build -f .docker/htrflow-reconciler.dockerfile -t $(RECONCILER_IMAGE) .
+build-api:
+	docker build -f .docker/htrflow-api.dockerfile -t $(API_IMAGE) .
 
-poc-push: build-wrapper build-reconciler
+poc-push: build-wrapper build-api
 	docker push $(WRAPPER_IMAGE)
-	docker push $(RECONCILER_IMAGE)
-	@echo "wrapper:    $$(docker inspect --format '{{index .RepoDigests 0}}' $(WRAPPER_IMAGE))"
-	@echo "reconciler: $$(docker inspect --format '{{index .RepoDigests 0}}' $(RECONCILER_IMAGE))"
+	docker push $(API_IMAGE)
+	@echo "wrapper: $$(docker inspect --format '{{index .RepoDigests 0}}' $(WRAPPER_IMAGE))"
+	@echo "api:     $$(docker inspect --format '{{index .RepoDigests 0}}' $(API_IMAGE))"
 
 # Explicit native-arm64 wrapper build regardless of the host architecture
 # (buildx with an arm64 builder, or the GB10 node itself).
 poc-push-arm64:
 	$(MAKE) poc-push WRAPPER_DOCKERFILE=.docker/htrflow-batch-gpu-arm64.dockerfile HTRFLOW_DIR=$(HTRFLOW_DIR)
 
-# Vulnerability scan of the reconciler image (the wrapper goes through
+# Vulnerability scan of the read API image (the wrapper goes through
 # `make scan` / dagger). Trivy pinned; HIGH/CRITICAL with a fix fail the target.
 TRIVY_IMAGE ?= aquasec/trivy:0.65.0
-scan-reconciler: build-reconciler
+scan-api: build-api
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
 	  -v trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image \
-	  --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 $(RECONCILER_IMAGE)
-
-# Pod hardening (docs: development/security, D14).
-# Warm one pipeline's model cache — the read-only, offline cache batch Jobs
-# use. The reconciler does this itself for campaigns-repo pipelines; this is
-# the manual path for `values.pipelines` / the example Job.
-DATA_PVC ?= $(HTR_DATA_PVC)
-warmup:
-	@test -n "$(PIPELINE)" -a -n "$(IMAGE)" || (echo "usage: make warmup PIPELINE=<id> IMAGE=<ref>"; exit 2)
-	uv run --package htrflow-reconciler python -m htrflow_reconciler.warmup \
-	  --pipeline $(PIPELINE) --image $(IMAGE) --namespace $(HTR_NAMESPACE) --data-pvc $(DATA_PVC) \
-	  | kubectl apply -f -
+	  --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 $(API_IMAGE)
 
 # Helm cannot label a namespace it did not create. The enforce level comes
 # from the installed release's `security.psaEnforce` (baseline by default;

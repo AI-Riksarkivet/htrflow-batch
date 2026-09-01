@@ -13,7 +13,6 @@ members = ["packages/*"]
 addopts = "--import-mode=importlib"
 testpaths = [
     "packages/wrapper/tests",
-    "packages/reconciler/tests",
     "packages/converter/tests",
     "packages/api/tests",
 ]

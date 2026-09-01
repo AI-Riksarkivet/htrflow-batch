@@ -35,8 +35,13 @@ jobs:
           cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
           version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
 
+      # Non-test line budgets (spec §1). SKIP_FRONTEND: the frontend row is
+      # over budget until B63 Task 7 trims it; Task 7 removes this env var.
+      - name: LOC budget
+        run: SKIP_FRONTEND=1 scripts/loc-budget.sh
+
   # Trivy (digest-pinned in .dagger/main.go) over the images this repo
-  # builds, blocking on CRITICAL (audit T6/X16). The reconciler image is
+  # builds, blocking on CRITICAL (audit T6/X16). The read API image is
   # slim and scanned on every run; the wrapper image carries the ~10 GB
   # CUDA base and is scanned on pushes to main and manual runs only.
   scan:
@@ -45,11 +50,11 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Scan the reconciler image (CRITICAL blocks)
+      - name: Scan the read API image (CRITICAL blocks)
         uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77 # v8.4.1
         with:
           verb: call
-          args: scan-reconciler --severity CRITICAL --ignore-unfixed
+          args: scan-api --severity CRITICAL --ignore-unfixed
           cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
           version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
 

@@ -33,15 +33,19 @@ func (m *HtrflowBatch) Build(
 	}), nil
 }
 
-// BuildReconciler creates the campaign reconciler image from
-// .docker/htrflow-reconciler.dockerfile. Light: CPU-only, no torch — it builds
-// the workspace member with uv rather than layering onto the htrflow base.
-func (m *HtrflowBatch) BuildReconciler(
+// BuildApi creates the read API image from .docker/htrflow-api.dockerfile.
+// Light: CPU-only, no torch — it builds the workspace member with uv rather
+// than layering onto the htrflow base. The converter is not built into an
+// image: it runs in CI/laptops via `uvx --from
+// "git+https://github.com/AI-Riksarkivet/htrflow-batch#subdirectory=packages/converter"
+// htrflow-campaigns` (or `uv tool install` from a checkout — see
+// examples/campaigns/.github/workflows/render.yml).
+func (m *HtrflowBatch) BuildApi(
 	ctx context.Context,
 	// +defaultPath="/"
 	source *dagger.Directory,
 ) (*dagger.Container, error) {
 	return source.DockerBuild(dagger.DirectoryDockerBuildOpts{
-		Dockerfile: ".docker/htrflow-reconciler.dockerfile",
+		Dockerfile: ".docker/htrflow-api.dockerfile",
 	}), nil
 }

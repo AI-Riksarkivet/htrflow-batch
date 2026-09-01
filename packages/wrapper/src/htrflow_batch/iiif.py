@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict
 MANIFEST_MAX_BYTES = 16 * 1024 * 1024
 
 #: Status codes that mean "this URL will not work tomorrow either".
-#: Everything else non-200 (5xx, 429, odd 4xx) is retried by the reconciler.
+#: Everything else non-200 (5xx, 429, odd 4xx) is retried by Kubernetes.
 PERMANENT_STATUSES = frozenset({400, 401, 403, 404, 410})
 
 
