@@ -15,13 +15,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     --mount=type=bind,source=packages/wrapper/pyproject.toml,target=packages/wrapper/pyproject.toml \
-    --mount=type=bind,source=packages/reconciler/pyproject.toml,target=packages/reconciler/pyproject.toml \
     --mount=type=bind,source=packages/converter/pyproject.toml,target=packages/converter/pyproject.toml \
     --mount=type=bind,source=packages/api/pyproject.toml,target=packages/api/pyproject.toml \
     uv sync --frozen --no-install-workspace --package htrflow-api --no-editable
 COPY pyproject.toml uv.lock ./
 COPY packages/wrapper/pyproject.toml packages/wrapper/pyproject.toml
-COPY packages/reconciler/pyproject.toml packages/reconciler/pyproject.toml
 COPY packages/converter/pyproject.toml packages/converter/pyproject.toml
 COPY packages/api packages/api
 RUN --mount=type=cache,target=/root/.cache/uv \
