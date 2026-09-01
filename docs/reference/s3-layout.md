@@ -54,7 +54,7 @@ volume's `updated` stamp.
 | `results` | `{"0001": {"status": "ok" \| "failed" \| "skipped", "seconds", "error"?}, …}` |
 | `page_sources` | `{"0001": <source image URL, userinfo/query stripped>, …}` — what resume compares |
 | `canvas_ids` | `{"0001": <source canvas id or null>, …}` |
-| `source_manifest` | the manifest URL the Job fetched (verbatim) |
+| `source_manifest` | the manifest URL the Job fetched (verbatim), or, for `IMAGES` volumes, the synthetic manifest id the wrapper published to `sources/` |
 | `max_image_width`, `bytes_fetched`, `wall_seconds`, `gpu_stall_seconds`, `pages_per_second` | run metrics |
 | `viewer_url` | the public `iiif.json` URL |
 

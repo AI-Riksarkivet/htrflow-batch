@@ -104,7 +104,9 @@ drift ground truth), `image_digest`, per-page results, `page_sources` and
 On any failure the wrapper writes the termination log (local, instant)
 before exiting non-zero — never a completion marker. Every URL in logs,
 termination messages and `page_sources` is redacted (no userinfo, no query
-string); `source_manifest` in `manifest.json` is written verbatim.
+string); `source_manifest` in `manifest.json` is written verbatim — the
+manifest URL the Job fetched, or, for `IMAGES` volumes, the synthetic
+manifest id the wrapper published to `sources/`.
 
 ## Live run log
 
