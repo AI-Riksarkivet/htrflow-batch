@@ -2,7 +2,7 @@
 // the pure summary math behind the run viewer. The manifest is written once,
 // when the wrapper finishes, and carries one result per page.
 import { z } from "zod";
-import { isHttpUrl } from "./derive.js";
+import { isHttpUrl } from "./api.js";
 
 export const pageResultSchema = z.object({
   // "ok" | "failed" | "skipped" today; kept open so a new outcome renders as

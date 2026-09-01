@@ -8,7 +8,7 @@ export default {
     adapter: adapter({ pages: "dist", assets: "dist" }),
     // Prerendered pages carry the policy as a <meta http-equiv> tag, with a
     // hash for SvelteKit's own inline init script. Only same-origin scripts
-    // run, so a deployment sets window.STATUS_URL by overwriting
+    // run, so a deployment sets window.API_BASE by overwriting
     // /config.js (see static/config.js), never by injecting inline script.
     // A CSP header sent by the web server must not be stricter than this one
     // (the browser enforces the intersection): either send none or include

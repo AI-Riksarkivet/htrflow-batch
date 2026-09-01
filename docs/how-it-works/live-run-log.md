@@ -60,10 +60,13 @@ running volume) — add a lifecycle rule or set `LOG_SHIP_SECONDS=0`.
 
 ## Read API side
 
-- `GET /api/v1/jobs/{namespace}/{name}` returns a deterministic
-  `logKey: status/logs/<pipeline>/<volume>.txt` for every volume row,
-  regardless of state — there is no existence check and nothing cached; the
-  browser fetches the key directly from S3 and treats a 404 as "no log yet".
+- `GET /api/v1/jobs/{namespace}/{name}` returns a deterministic, **absolute**
+  `logUrl: <public_results_base>/status/logs/<pipeline>/<volume>.txt` for
+  every volume row, regardless of state — there is no existence check and
+  nothing cached. It is absolute (not a bare bucket key) because the browser
+  has no bucket base URL of its own to resolve a key against; the API is the
+  only component that knows `public_results_base`. The browser fetches
+  `logUrl` directly and treats a 404 as "no log yet".
 - A **retry** does not retire or copy the key anywhere: the wrapper claims
   the same key again at the start of the new attempt (the first `PUT`
   above), so the previous attempt's log is simply overwritten by the next
@@ -78,17 +81,11 @@ running volume) — add a lifecycle rule or set `LOG_SHIP_SECONDS=0`.
 
 ## Browser side (`/log`)
 
-!!! note "Frontend migration pending (B63 Task 7)"
-
-    This section describes the browser's original `status.json`-derived
-    behaviour. `status.json` no longer exists — the frontend's move onto
-    `GET /api/v1/jobs` (the `logKey` field, always deterministic — see
-    "Read API side" above) is B63 Task 7. The `run_log`/`failure_log` field
-    names below are what the pre-B63 frontend read, not what the read API
-    returns.
-
-- The campaign table's `log` link renders whenever `run_log` (or
-  `failure_log`) is set. For a volume that is not `done` it adds `live=1`.
+- `CampaignCard.svelte` fetches its volumes from `GET /api/v1/jobs/{ns}/{name}`
+  (`$lib/api.ts`'s `fetchJob`, paged by `offset`/`limit`) and renders a `log`
+  link for every volume row, built from `logUrl`:
+  `log?log=<encodeURIComponent(logUrl)>`. For a volume whose `state` is not
+  `"done"` it adds `&live=1`.
 - Live mode re-fetches every `VITE_LIVE_MS` (15 s, ETag-revalidated), shows
   a "● live · updated HH:MM:SS" badge, keeps the view pinned to the bottom
   while the reader is at the bottom, and stops on the wrapper's terminal
@@ -112,6 +109,6 @@ below is unchanged by B63, the status-derivation columns are not:
 | Spec said | Built |
 |---|---|
 | tail 3 MiB kept | 1 MiB head + **2 MiB** tail (`TAIL_BYTES`), cut on line boundaries |
-| a status-deriving component emits a `run_log` link per volume state | the read API returns a deterministic `logKey` for every volume row, unconditionally (no existence check, no per-state logic) |
+| a status-deriving component emits a `run_log` link per volume state | the read API returns a deterministic, absolute `logUrl` for every volume row, unconditionally (no existence check, no per-state logic) |
 | a retry overwrites the key with the new attempt | unchanged: the wrapper's own claim-at-start (`PUT` at the top of `finish()`/`start_shipping`) is what makes a retry overwrite the previous attempt's log; there is no separate "retire" step anywhere in the design any more |
 | a SIGTERM exits without the final upload | the SIGTERM handler ships the final log before `os._exit(143)` |

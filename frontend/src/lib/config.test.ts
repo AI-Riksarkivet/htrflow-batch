@@ -1,14 +1,18 @@
 import { describe, expect, test } from "vitest";
-import { DEFAULT_STATUS_URL, envInt, resolveStatusUrl } from "./config.js";
+import { DEFAULT_API_BASE, envInt, resolveApiBase } from "./config.js";
 
 describe("config", () => {
-  test("window.STATUS_URL wins over the default; empty or missing falls back", () => {
-    expect(resolveStatusUrl({ STATUS_URL: "/status.sample.json" })).toBe(
-      "/status.sample.json",
+  test("window.API_BASE wins over the default; empty or missing falls back", () => {
+    expect(resolveApiBase({ API_BASE: "http://elsewhere/api/v1" })).toBe(
+      "http://elsewhere/api/v1",
     );
-    expect(resolveStatusUrl({ STATUS_URL: "" })).toBe(DEFAULT_STATUS_URL);
-    expect(resolveStatusUrl({})).toBe(DEFAULT_STATUS_URL);
-    expect(resolveStatusUrl(undefined)).toBe(DEFAULT_STATUS_URL);
+    expect(resolveApiBase({ API_BASE: "" })).toBe(DEFAULT_API_BASE);
+    expect(resolveApiBase({})).toBe(DEFAULT_API_BASE);
+    expect(resolveApiBase(undefined)).toBe(DEFAULT_API_BASE);
+  });
+
+  test("the default is same-origin /api/v1", () => {
+    expect(DEFAULT_API_BASE).toBe("/api/v1");
   });
 
   test("envInt accepts positive integers only", () => {

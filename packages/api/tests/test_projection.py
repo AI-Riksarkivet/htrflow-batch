@@ -182,10 +182,12 @@ class TestDetail:
         assert row3["altoPrefix"] == (
             "https://results.example.org/htr-test/demo-v1/vol3/alto/"
         )
-        # No namespace/S3_PREFIX prefix: matches ResultStore.run_log_key()
-        # (packages/wrapper/src/htrflow_batch/store.py), which writes the
-        # run log outside volume_prefix on purpose.
-        assert row3["logKey"] == "status/logs/demo-v1/vol3.txt"
+        # Absolute URL, no namespace/S3_PREFIX prefix: matches
+        # ResultStore.run_log_key() (packages/wrapper/src/htrflow_batch/store.py),
+        # which writes the run log outside volume_prefix on purpose.
+        assert row3["logUrl"] == (
+            "https://results.example.org/status/logs/demo-v1/vol3.txt"
+        )
 
     def test_failures_capped_and_newest_index_first(self):
         job = _job()

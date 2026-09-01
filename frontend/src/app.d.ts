@@ -1,6 +1,6 @@
 declare global {
   interface Window {
-    STATUS_URL?: string;
+    API_BASE?: string;
   }
 }
 

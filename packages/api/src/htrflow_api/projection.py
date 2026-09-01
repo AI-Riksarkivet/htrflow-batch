@@ -143,13 +143,15 @@ def _volume_state(
     return "active" if has_pod else "pending"
 
 
-def _log_key(pipeline: str, volume_id: str) -> str:
-    """Bucket-root key, no namespace/S3_PREFIX prefix — matches
-    ``ResultStore.run_log_key()`` (packages/wrapper/src/htrflow_batch/store.py),
-    which writes the run log outside ``volume_prefix`` on purpose: the
-    ``status/`` tree is shared across namespaces, unlike the per-namespace
-    results under ``resultsBase``."""
-    return f"status/logs/{pipeline}/{volume_id}.txt"
+def _log_url(pipeline: str, volume_id: str, cfg) -> str:
+    """Absolute URL at a bucket-root key, no namespace/S3_PREFIX prefix —
+    matches ``ResultStore.run_log_key()``
+    (packages/wrapper/src/htrflow_batch/store.py), which writes the run log
+    outside ``volume_prefix`` on purpose: the ``status/`` tree is shared
+    across namespaces, unlike the per-namespace results under
+    ``resultsBase``. Absolute (not a bare key) because the browser has no
+    bucket base URL to resolve a key against."""
+    return f"{cfg.public_results_base}/status/logs/{pipeline}/{volume_id}.txt"
 
 
 def detail(
@@ -180,7 +182,7 @@ def detail(
             "manifestUrl": f"{results_base}/{vol_id}/manifest.json",
             "iiifUrl": f"{results_base}/{vol_id}/iiif.json",
             "altoPrefix": f"{results_base}/{vol_id}/alto/",
-            "logKey": _log_key(pipeline, vol_id),
+            "logUrl": _log_url(pipeline, vol_id, cfg),
         }
         if idx in pods_by_index:
             newest = _newest(pods_by_index[idx])

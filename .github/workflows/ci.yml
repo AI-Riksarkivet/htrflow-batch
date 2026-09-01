@@ -35,10 +35,9 @@ jobs:
           cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
           version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
 
-      # Non-test line budgets (spec §1). SKIP_FRONTEND: the frontend row is
-      # over budget until B63 Task 7 trims it; Task 7 removes this env var.
+      # Non-test line budgets (spec §1).
       - name: LOC budget
-        run: SKIP_FRONTEND=1 scripts/loc-budget.sh
+        run: scripts/loc-budget.sh
 
   # Trivy (digest-pinned in .dagger/main.go) over the images this repo
   # builds, blocking on CRITICAL (audit T6/X16). The read API image is

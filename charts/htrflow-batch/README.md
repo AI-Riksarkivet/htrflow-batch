@@ -76,7 +76,7 @@ rendered every NetworkPolicy away; the chart now fails loudly when
 | **`devStack.*` moved to a separate chart, `charts/htrflow-devstack`**, except `devStack.allowTagImages` → `security.allowTagImages` (it gates this chart's own `viewer.image`/`api.image`, not anything devstack-only). **`devStack.gitDaemon` was not carried over** — it fed the old CronJob controller over `git://`, which is also gone in 0.3.0, so it had no consumer left. | `helm uninstall` nothing yet: install `charts/htrflow-devstack` alongside this chart first (`make install-devstack`), *then* upgrade this chart — its NetworkPolicies for RustFS/registry moved with it; anything that hand-clones the old in-cluster git daemon needs a different path now. |
 | **New: the read API** (`api.image`, `api.resources`) — a Deployment `htrflow-api`, read-only RBAC on Jobs/Pods/ConfigMaps, `Service htrflow-api:8081`, proxied by the viewer at `/api/`. Always rendered (no `enabled` flag): `publicResultsBase` and `network.apiServer.cidr` are now required at render time (previously only needed when the old CronJob controller was turned on). | Set `api.image` to a digest-pinned `htrflow-api` image; set `network.apiServer.cidr` if the cluster's kube-apiserver endpoint cannot be `lookup`ed (e.g. `helm template`, or a kubeconfig without list-nodes RBAC). |
 | **New: `legacyLayout`** (default `false`). `false` writes/reads results under `<namespace>/<pipeline>/<volume>/…` (S3_PREFIX set by the converter); `true` keeps the pre-B63 `<pipeline>/<volume>/…` layout for existing data. | Set `legacyLayout: true` on any namespace with results written before 0.3.0, and pass the same value to the converter's `converter.yaml` (`legacyLayout`) so it agrees. |
-| **`viewer.statusBase` is gone; `/config.js` sets `window.API_BASE` instead of `window.STATUS_URL`.** The campaign browser reads campaigns from the read API, not `status.json`, from frontend Task 7 onward. | Nothing to set — `API_BASE` is always `/api/v1` (same-origin, proxied by nginx). |
+| **`viewer.statusBase` is gone; `/config.js` sets `window.API_BASE`.** The campaign browser reads campaigns from the read API — there is no status document any more. | Nothing to set — `API_BASE` is always `/api/v1` (same-origin, proxied by nginx). |
 | **`job.*` values are gone.** Runtime class, node selector, tolerations, deadlines and byte caps are now the converter's `converter.yaml` (`runtime_class`, `node_selector`, `tolerations`, `max_seconds`, `manifest_max_bytes`, `fetch_max_bytes`), not this chart's. | Move any `job.*` overrides into the campaigns repo's `converter.yaml`. |
 
 ### From 0.1.0 to 0.2.0
@@ -164,10 +164,10 @@ Added:
   `<pipeline>/<volume>/…` layout — set the same value in the converter's
   `converter.yaml`.
 - Viewer: nginx `location /api/` proxies to `htrflow-api:8081/api/`;
-  `/config.js` sets `window.API_BASE = "/api/v1"` (replaces
-  `window.STATUS_URL` / `viewer.statusBase`, both gone — the campaign
-  browser reads the API, not `status.json`, from frontend Task 7 onward).
-  Its NetworkPolicy gained egress to the API (it previously needed none).
+  `/config.js` sets `window.API_BASE = "/api/v1"` — `viewer.statusBase` and
+  its runtime counterpart are gone, since the campaign browser now reads the
+  read API directly instead of a status document. Its NetworkPolicy gained
+  egress to the API (it previously needed none).
 - `htr-batch-job`'s S3 egress rule for an in-namespace `app: rustfs` pod is
   now unconditional (a no-op podSelector match unless
   `charts/htrflow-devstack`'s RustFS is installed) — the two charts share
@@ -209,8 +209,8 @@ Added:
 - Viewer: restricted securityContext (uid 101, read-only rootfs, no SA
   token), nginx security headers (`viewer.securityHeaders.enabled`),
   `/config.js` served from the ConfigMap (`viewer.statusBase`, defaulting to
-  `publicResultsBase`) so the SPA finds `status.json` under its CSP, pod
-  rolls on config change.
+  `publicResultsBase`) so the SPA finds its status document under its CSP,
+  pod rolls on config change.
 - devStack: RustFS/registry restricted securityContext (RustFS uid 10001,
   registry `devStack.registry.runAsUser`), digest-pinned images, bucket-init
   hook Job, `devStack.gitDaemon.*` (seeded from the bucket, own NetworkPolicy),

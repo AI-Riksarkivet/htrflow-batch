@@ -92,9 +92,9 @@ kubectl -n kube-system label daemonset nvidia-device-plugin app.kubernetes.io/ma
 - **Buckets** — the `rustfs-init` Helm hook Job (post-install/upgrade,
   `rustfs.init`) creates `s3.bucket`, applies the bucket policy and CORS,
   idempotently.
-- **Anonymous read is split** (audit X14): `<pipeline>/<volume>/*`,
-  `sources/*` and `status/status.json` are always anonymous (the viewer
-  fetches them directly); `status/attempts.json`, `status/validation.json`,
+- **Anonymous read is split** (audit X14): `<pipeline>/<volume>/*` and
+  `sources/*` are always anonymous (the viewer fetches them directly);
+  `status/attempts.json`, `status/validation.json`, `status/volumes.json`,
   `status/failures/*` and `status/warmup/*` always need credentials;
   `status/logs/*` is anonymous only while `rustfs.publicLogs=true` (default
   — the campaign browser links run logs; they can carry a tokenised private
