@@ -31,11 +31,20 @@ def _write(path: Path, docs: list[dict]) -> None:
     path.write_text(yaml.safe_dump_all(docs, sort_keys=False))
 
 
+class _CorruptRenderedFile(Exception):
+    def __init__(self, path: Path, reason: object) -> None:
+        super().__init__(f"{path}: cannot read existing campaign: {reason}")
+
+
 def _volumes_txt(path: Path) -> str:
-    cm = next(
-        d for d in yaml.safe_load_all(path.read_text()) if d.get("kind") == "ConfigMap"
-    )
-    return cm["data"]["volumes.txt"].rstrip("\n")
+    try:
+        docs = list(yaml.safe_load_all(path.read_text()))
+        cm = next(
+            d for d in docs if isinstance(d, dict) and d.get("kind") == "ConfigMap"
+        )
+        return cm["data"]["volumes.txt"].rstrip("\n")
+    except (yaml.YAMLError, StopIteration, KeyError, TypeError) as e:
+        raise _CorruptRenderedFile(path, e) from e
 
 
 def _part_number(path: Path) -> int:
@@ -67,7 +76,11 @@ def _render(repo_dir: str, out_dir: str) -> int:
         _write(pipelines_out / f"{p.id}.yaml", render.pipeline_objects(p, cfg))
     for c in campaigns:
         new_text = "\n".join(v.source_line() for v in c.volumes)
-        existing = _existing_campaign_text(campaigns_out, c.name)
+        try:
+            existing = _existing_campaign_text(campaigns_out, c.name)
+        except _CorruptRenderedFile as e:
+            print(str(e))
+            return 1
         if existing is not None and existing != new_text:
             print(f"campaign {c.name} is append-only: create a new campaign")
             return 1
