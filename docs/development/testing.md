@@ -16,14 +16,16 @@
    `page_sources`, the **streaming loop** (consumer starvation accounting,
    per-page failure propagation, rolling delete, `UploadOutage`), the
    **verification gate** (missing output ⇒ no `manifest.json`, transient
-   exit), exit-code mapping incl. SIGTERM, log shipping, warm-up
-   classification. Reconciler: parse (ids, allow-list, revisions, http(s)
-   only), `derive` for every state, the tick against a fake bucket and
-   cluster (Lease, retries, sticky verdicts, progress rule, warm-up cap,
-   bounded validation, orphans, fairness), jobspec, guards, attempts
-   migration, dulwich checkout against a local repo. Frontend: schemas
+   exit), exit-code mapping incl. SIGTERM and `MAX_SECONDS`, log shipping,
+   warm-up classification, the synthetic-manifest builder. Converter: parse
+   (ids, allow-list, revisions, http(s) only, append-only), render (golden
+   fixture → expected ConfigMap/Job YAML), the 10 000-volume split. Read
+   API: `projection.py`'s pure functions against hand-built Job/Pod/
+   ConfigMap dicts (phase derivation, index-range parsing, per-volume state,
+   termination messages) — no fixture cluster needed. Frontend: schemas
    (fail-soft, URL refusal, `unknown`), derivation, run-log grouping,
-   component and route tests on jsdom.
+   component and route tests on jsdom (still against the pre-B63 shape —
+   Task 7 migrates this).
 2. **Container smoke** — the batch image against a real 2-page manifest with
    a RustFS target; assert PAGE + ALTO files + `manifest.json` land.
 3. **Cluster acceptance** —
@@ -32,14 +34,16 @@
       eventually Complete, one `manifest.json` each;
    c. kill a running pod mid-volume: retry resumes, converges, no
       duplicate/corrupt outputs;
-   d. a campaign through the reconciler: declared in git, submitted,
-      watched on the campaign browser with its live log;
+   d. a campaign rendered and applied: declared in git, `htrflow-campaigns
+      render` + apply, watched on the campaign browser with its live log;
    e. the fetch-vs-HTR numbers from the published `manifest.json`s
       ([Phase 2](../roadmap/phase-2-cache.md) gate input).
 
 Level 1 runs in seconds and is enforced on every change; level 2 is the
 local compose stack; level 3 needs a real (or PoC) cluster and is what
-produced the [test log](test-log.md).
+produced the [test log](test-log.md) (pre-B63 runs — the mechanics they
+exercised, Kueue admission and kill-and-resume, are unchanged by B63; the
+submission path they describe is not).
 
 ## How to run each level
 
@@ -52,13 +56,14 @@ cd frontend && bun run test     # vitest
 dagger call test                # add --ca-bundle on TLS-intercepting networks
 ```
 
-`make test` runs both Python packages — **471 tests** (+1 opt-in `htrflow`-marked)
-as of 2026-08-27 (154 wrapper + 317 reconciler); the frontend suite is **76 tests in 10
-files**. `dagger call test` runs the Python suite inside a uv container
-with `uv sync --all-packages`, which pins the dependency resolution but
-says nothing about the production images — those are built separately by
-`dagger call build` / `dagger call build-viewer`. `make typecheck` (`ty`)
-is a separate gate; run it before pushing (see [CI](ci.md)).
+`make test` runs all three Python packages (wrapper, converter, api) —
+`uv run --all-packages pytest -q`; `pyproject.toml`'s `testpaths` names
+exactly those three. `dagger call test` runs the Python suite inside a uv
+container with `uv sync --all-packages`, which pins the dependency
+resolution but says nothing about the production images — those are built
+separately by `dagger call build` / `build-api` / `build-viewer`.
+`make typecheck` (`ty`) is a separate gate; run it before pushing (see
+[CI](ci.md)).
 
 **Level 2 — container smoke, via the local compose stack:**
 
@@ -89,9 +94,14 @@ stack through dagger, but needs registry-pullable images, so treat
     docker tag 127.0.0.1:30500/uv4:dev riksarkivet/htrflow-batch-viewer:latest
     ```
 
-**Chart:** `make helm-template` lints and renders the chart on its defaults
-and on `charts/htrflow-batch/ci/full-values.yaml` (every optional feature on,
-no cluster lookups) and runs `kubeconform -strict` when it is installed.
+**Chart:** `make helm-template` lints and renders both charts
+(`charts/htrflow-batch`, `charts/htrflow-devstack`) on their defaults and on
+each chart's `ci/full-values.yaml` (every optional feature on, no cluster
+lookups) and runs `kubeconform -strict` when it is installed.
+
+**Campaigns repo shape:** `htrflow-campaigns validate examples/campaigns`
+must pass — a test in `packages/converter/tests` runs it so the checked-in
+example repo never rots relative to the converter it demonstrates.
 
 **Level 3 — cluster acceptance:** no single make target — this is a real (or
 PoC) Kubernetes cluster with the [helm chart](../getting-started/deploy.md)
@@ -99,4 +109,5 @@ installed, exercised via `kubectl`/`k9s` and the campaign browser as
 described in [Running a Campaign](../getting-started/campaigns.md) and
 [Local k3s development](local-k3s.md). See the [test log](test-log.md)
 for the exact commands and results from the 2026-07-27/28 and 2026-08-25
-runs.
+runs (pre-B63; submission mechanics have since moved from the old CronJob
+controller to `make campaigns-apply` / Argo CD).

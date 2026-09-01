@@ -3,16 +3,19 @@
 ```mermaid
 flowchart LR
     subgraph git["campaigns repo (git)"]
-        CAMP["campaigns/*.yaml<br/>pipelines/*.yaml"]
+        CAMP["campaigns/*.yaml<br/>pipelines/*.yaml<br/>converter.yaml"]
+    end
+
+    subgraph ci["campaigns repo CI"]
+        CONV["converter<br/>htrflow-campaigns render"]
     end
 
     subgraph cluster["Kubernetes cluster"]
-        REC["reconciler CronJob<br/>every 5 min, Lease-serialised"]
         subgraph queueing["Kueue"]
             LQ["LocalQueue htr-batch"] --> CQ["ClusterQueue htr-batch-cq<br/>quota: N × nvidia.com/gpu"]
         end
 
-        subgraph job["GPU Job — one per volume: streaming driver (D16)"]
+        subgraph job["Indexed Job — one per campaign, one index per volume: streaming driver (D16)"]
             DLP["downloader pool<br/>threads, bounded lookahead"]
             PQ[("page queue<br/>on tmpfs")]
             CONS["consumer thread<br/>pipeline.run(page)<br/>models loaded ONCE"]
@@ -21,20 +24,23 @@ flowchart LR
         end
 
         WARM["warm-up Job (CPU)<br/>fills the model cache"]
+        API["read API :8081<br/>GET /api/v1/jobs"]
         LQ -.->|admits when quota free| job
+        API -->|"list/get, read-only RBAC"| job
     end
 
     IIIF["lbiiif.riksarkivet.se<br/>(IIIF image server)"]
     S3[("S3<br/>results bucket")]
     BROWSER["browser<br/>campaign browser + UV4"]
 
-    CAMP -->|"shallow clone"| REC
-    REC -->|"create Job (suspend: true)"| LQ
-    REC -->|"create once per pipeline"| WARM
-    REC -->|"HEAD manifest.json,<br/>write status/status.json"| S3
+    CAMP -->|"PR: validate"| CONV
+    CONV -->|"main: render, commit rendered/"| git
+    git -->|"Argo CD / kubectl apply<br/>(suspend: true)"| LQ
+    CONV -.->|"rendered once per pipeline"| WARM
     DLP -->|"width-capped GETs (WAN)"| IIIF
     UPL -->|"PAGE/ALTO per page, run log,<br/>manifest.json LAST"| S3
-    BROWSER -->|"status.json, iiif.json, ALTO"| S3
+    BROWSER -->|"GET /api/v1/jobs"| API
+    BROWSER -->|"iiif.json, ALTO, run log"| S3
 ```
 
 Five pieces, each boring on purpose:
@@ -42,36 +48,36 @@ Five pieces, each boring on purpose:
 | Piece | Owns | Explicitly does not own |
 |---|---|---|
 | **campaigns repo** | desired state: which volumes, which pipeline (image digest + steps) | anything that runs |
-| **reconciler** | the three-way join git ↔ S3 ↔ Jobs, submission into a bounded window, retries and budgets, `status.json` | HTR, queueing, the results themselves |
+| **converter** | a pure function from campaign YAML to Kubernetes manifests (`packages/converter`), run in the campaigns repo's own CI | the cluster, S3, retries, anything at runtime |
 | **Kueue** | admission, GPU quota, queue order | anything about HTR or data |
-| **k8s Job** | lifecycle: one pod, deadline, disruption absorption, the exit-13 verdict | queueing (starts `suspend: true`), retries (the reconciler's) |
+| **Indexed Job** | lifecycle for a whole campaign: per-index retries (`backoffLimitPerIndex`), disruption absorption, the exit-13 verdict per index, progress (`completedIndexes`/`failedIndexes`) | HTR, the results themselves |
 | **wrapper (streaming driver)** | I/O (IIIF in, S3 out), page queue, resume, **output verification**, provenance, the live log; drives htrflow in-process | HTR logic |
 | **htrflow** | HTR | everything else — unmodified package, driven as a library |
 
-The browser is a sixth, passive piece: it only ever reads S3
-([Campaign Browser](../reference/frontend.md)).
+The read API (`packages/api`) is a sixth, passive piece: read-only RBAC on
+Jobs/Pods/ConfigMaps, no state of its own, serving the status page's
+`GET /api/v1/jobs` — it derives everything from the live Job, nothing is
+cached ([Campaigns](campaigns.md#the-read-api-and-status-page)).
 
 ## Job lifecycle
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant G as campaigns repo
-    participant R as reconciler tick
+    participant G as campaigns repo CI
+    participant Ar as Argo CD / kubectl apply
     participant K8s as kube-apiserver
     participant Q as Kueue
-    participant P as GPU pod (streaming driver)
+    participant P as GPU pod (streaming driver), index i
     participant I as IIIF origin
     participant S3 as S3 results
 
-    R->>G: shallow clone (dulwich)
-    R->>S3: LIST <pipeline>/ + HEAD manifest.json (done set)
-    R->>K8s: list managed Jobs
-    R->>K8s: create Job htr-<pipeline>-<volume>-<hash> (suspend: true, queue-name label)
+    G->>G: htrflow-campaigns render -> rendered/ (committed)
+    Ar->>K8s: apply Job <campaign> (completionMode: Indexed,<br/>completions=N, suspend: true, queue-name label)
     Q->>Q: workload queued (FIFO)
-    Q->>K8s: quota free → unsuspend Job
-    K8s->>P: schedule pod (1 GPU, tmpfs workdir, read-only model cache)
-    P->>I: fetch IIIF manifest
+    Q->>K8s: quota free → unsuspend Job (up to `parallelism`)
+    K8s->>P: schedule pod for index i (1 GPU, tmpfs workdir, read-only model cache)
+    P->>I: fetch IIIF manifest for volumes.txt line i
     P->>S3: list page/ + alto/ (resume check)
     P->>P: Pipeline.from_config() — models load ONCE, overlapping the first downloads
     loop streaming — downloader ∥ consumer ∥ uploader run concurrently
@@ -83,12 +89,11 @@ sequenceDiagram
     end
     P->>P: VERIFY page/ + alto/ == page list (D8)
     P->>S3: upload iiif.json, pipeline.yaml, then manifest.json LAST (completion marker, incl. timings)
-    P->>K8s: exit 0 → Job Complete
-    R->>S3: next tick: HEAD manifest.json → done; write status/status.json
+    P->>K8s: exit 0 → index i in completedIndexes
 ```
 
 See [The Wrapper](wrapper.md) for the streaming driver's downloader/consumer/
 uploader roles and the `gpu_stall_seconds` instrumentation this diagram's
-loop produces, [Campaigns (GitOps)](campaigns.md) for the reconciler's tick,
-and [Failure Handling](failure-handling.md) for what happens off the happy
-path.
+loop produces, [Campaigns (Indexed Jobs)](campaigns.md) for the render →
+apply flow, and [Failure Handling](failure-handling.md) for what happens off
+the happy path.

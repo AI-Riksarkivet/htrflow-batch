@@ -1,0 +1,12 @@
+# One campaign = one Kubernetes Indexed Job, one index per volume. See
+# ../README.md for the two rules that make this safe to operate: campaigns
+# are append-only, and pause/cancel are Git changes.
+pipeline: demo-v1
+volumes:
+  # Bare string: a Riksarkivet reference code. The manifest URL is
+  # templated from converter.yaml's source_template.
+  - R0001203
+
+  # Explicit IIIF manifest (Presentation v2 or v3), http(s) only:
+  - id: loc-mal2459400
+    manifest: https://www.loc.gov/item/mal2459400/manifest.json

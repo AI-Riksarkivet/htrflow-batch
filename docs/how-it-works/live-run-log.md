@@ -1,28 +1,29 @@
 # Live Run Log
 
-How the campaign browser follows a running volume without anything ever
-reading the kube API from a browser: **the pod ships its own log to S3**.
-The browser only reads S3, the reconciler stays the only kube-API client,
-and the same path works against real AWS S3 in production. Design record:
-[the live-run-log spec](../superpowers/specs/2026-08-26-live-run-log-design.md);
-this page is what was built (the deviations from the spec are listed at
-the end).
+How the campaign browser follows a running volume without anything writing
+its own status document: **the pod ships its own log to S3**. The browser
+reads S3 directly for the log itself, and the read API (the only
+cluster-credentialed component) for which volume is running at all. Design
+record:
+[the live-run-log spec](../superpowers/specs/2026-08-26-live-run-log-design.md)
+— written against the previous CronJob-controller design and since carried
+over onto Indexed Jobs unchanged on the wrapper side; the deviations from
+the spec are listed at the end.
 
 ```mermaid
 sequenceDiagram
     participant P as wrapper pod
     participant S3 as S3 status/logs/<pipeline>/<volume>.txt
-    participant R as reconciler tick
+    participant API as read API
     participant B as browser (/log?live=1)
 
     P->>S3: PUT (claim the key at start)
     loop every LOG_SHIP_SECONDS (15 s), when the buffer changed
         P->>S3: PUT the whole buffer
     end
-    R->>S3: HEAD → status.json run_log link (running/queued/done)
-    B->>S3: GET every 15 s (ETag-revalidated) until the terminal line
+    B->>API: GET /api/v1/jobs/{ns}/{name} → per-index state
+    B->>S3: GET the log every 15 s (ETag-revalidated) until the terminal line
     P->>S3: PUT once more on exit — complete log (also on SIGTERM)
-    R->>S3: on failure: copy to status/failures/…, retire the key on retry
 ```
 
 ## Wrapper side (`htrflow_batch.logship`)
@@ -48,38 +49,43 @@ sequenceDiagram
 - Buffer cap **4 MiB**: beyond it the middle is dropped with a marker line,
   keeping the first 1 MiB and the last 2 MiB (cut on line boundaries), so a
   pathological run cannot grow memory or upload size without bound.
-- Key: `status/logs/<PIPELINE_ID>/<VOLUME_REF>.txt` at the bucket root —
-  the reconciler's status namespace, deliberately not under the volume
-  prefix. `LOG_SHIP_SECONDS=0` disables periodic shipping (`finish` still
-  ships).
+- Key: `status/logs/<PIPELINE_ID>/<VOLUME_REF>.txt` at the bucket root — a
+  shared `status/` namespace, deliberately not under the volume prefix.
+  `LOG_SHIP_SECONDS=0` disables periodic shipping (`finish` still ships).
 
 Honest limits: only Python-level writes are teed — anything writing to
 fd 1/2 directly (CUDA/C++ warnings, subprocesses) shows in `kubectl logs`
 only. On a **versioned** bucket each upload is a new version (~240/h per
 running volume) — add a lifecycle rule or set `LOG_SHIP_SECONDS=0`.
 
-## Reconciler side
+## Read API side
 
-- `run_log` in `status.json` is set for `done`, `running` and `queued`
-  volumes whenever the key exists (one HEAD per such volume per tick; for
-  done volumes the answer is cached in `status/volumes.json` once the Job is
-  gone). `run_manifest` (the run's `manifest.json`, 404 until published) is
-  linked for the same statuses so the run viewer can show its summary card.
-- For images that predate the shipper (`done` + succeeded Job + no key) the
-  reconciler uploads a 500-line `kubectl logs` tail once as a fallback.
-- On **retry**, before deleting the Job, the reconciler copies the shipped
-  log (complete) — or a 50-line kube tail when there is none — to
-  `status/failures/<pipeline>/<volume>.txt` and links it as `failure_log`,
-  then **retires** the run-log key so the next attempt is never linked to
-  the previous attempt's log as if it were live. On `needs-attention` the
-  copy is made too but the run-log key stays, so later ticks keep the
-  complete log rather than falling back to a tail.
+- `GET /api/v1/jobs/{namespace}/{name}` returns a deterministic
+  `logKey: status/logs/<pipeline>/<volume>.txt` for every volume row,
+  regardless of state — there is no existence check and nothing cached; the
+  browser fetches the key directly from S3 and treats a 404 as "no log yet".
+- A **retry** does not retire or copy the key anywhere: the wrapper claims
+  the same key again at the start of the new attempt (the first `PUT`
+  above), so the previous attempt's log is simply overwritten by the next
+  one's. There is no separate `status/failures/` tree any more — the log at
+  `status/logs/<pipeline>/<volume>.txt` is the complete evidence for
+  whichever attempt is most recent, and the read API's per-index `reason`
+  (the wrapper's own termination message) is the failure summary as long as
+  the failed pod itself still exists.
 - Anonymous read on `status/logs/*` is governed by
-  `devStack.rustfs.publicLogs` (default on); `status/failures/*` always needs
-  credentials — the browser reaches it only when the operator serves it
-  through something authenticated ([Security](../development/security.md#the-bucket-policy)).
+  `devStack.rustfs.publicLogs` (default on) — see
+  [Security](../development/security.md#the-bucket-policy).
 
 ## Browser side (`/log`)
+
+!!! note "Frontend migration pending (B63 Task 7)"
+
+    This section describes the browser's original `status.json`-derived
+    behaviour. `status.json` no longer exists — the frontend's move onto
+    `GET /api/v1/jobs` (the `logKey` field, always deterministic — see
+    "Read API side" above) is B63 Task 7. The `run_log`/`failure_log` field
+    names below are what the pre-B63 frontend read, not what the read API
+    returns.
 
 - The campaign table's `log` link renders whenever `run_log` (or
   `failure_log`) is set. For a volume that is not `done` it adds `live=1`.
@@ -100,10 +106,12 @@ running volume) — add a lifecycle rule or set `LOG_SHIP_SECONDS=0`.
 
 ## Where it deviates from the spec
 
+The spec was written for the pre-B63 frontend; the wrapper-side behaviour
+below is unchanged by B63, the status-derivation columns are not:
+
 | Spec said | Built |
 |---|---|
 | tail 3 MiB kept | 1 MiB head + **2 MiB** tail (`TAIL_BYTES`), cut on line boundaries |
-| `run_log` emitted for `done`, `running`, `retry`, `needs-attention`, `queued` | `run_log` for `done`/`running`/`queued`; failed volumes get the same evidence as `failure_log` (copied to `status/failures/`), and the run-log key is retired on retry |
-| a retry overwrites the key with the new attempt | the reconciler retires the key first; the next attempt claims it again at start |
-| — | `run_manifest` added so the run viewer can show the summary card |
+| a status-deriving component emits a `run_log` link per volume state | the read API returns a deterministic `logKey` for every volume row, unconditionally (no existence check, no per-state logic) |
+| a retry overwrites the key with the new attempt | unchanged: the wrapper's own claim-at-start (`PUT` at the top of `finish()`/`start_shipping`) is what makes a retry overwrite the previous attempt's log; there is no separate "retire" step anywhere in the design any more |
 | a SIGTERM exits without the final upload | the SIGTERM handler ships the final log before `os._exit(143)` |

@@ -9,14 +9,14 @@
 Kueue-gated batch HTR platform around the [htrflow](https://github.com/AI-Riksarkivet/htrflow)
 image: a thin wrapper streams archival volumes page-by-page from IIIF into
 htrflow, verifies every output, and publishes ALTO/PAGE results plus an IIIF
-manifest to S3 for viewing — all as plain Kubernetes Jobs under Kueue,
-declared in a campaigns git repo and submitted by a reconciler CronJob. No
-custom scheduler, no database.
+manifest to S3 for viewing — all as one Kubernetes Indexed Job per campaign
+under Kueue, declared in a campaigns git repo and rendered by a pure
+converter. No CRD, no controller, no database.
 
 ## Quickstart
 
 ```bash
-make install && make test   # uv workspace sync (packages/*) + the wrapper and reconciler unit tests
+make install && make test   # uv workspace sync (packages/*) + the wrapper, converter and api unit tests
 cd frontend && bun install && bun run test   # the campaign browser's tests
 make compose-up             # local smoke stack: S3 + fixtures + wrapper + viewer, no cluster needed
 ```
@@ -27,20 +27,23 @@ a `credentials` ini key are prerequisites):
 ```bash
 helm install htr charts/htrflow-batch -n htr-batch --create-namespace \
   --set publicResultsBase=<browser-reachable results base URL> \
-  --set viewer.image=<viewer image>@sha256:<digest>
+  --set viewer.image=<viewer image>@sha256:<digest> \
+  --set api.image=<read API image>@sha256:<digest>
 ```
 
-then declare volumes in a campaigns repo and enable the reconciler. See
-`docs/getting-started/` for prerequisites, deployment, and running a
-campaign end to end; `docs/development/local-k3s.md` for the single-node
-GPU PoC loop.
+then declare volumes in a campaigns repo — see
+[`examples/campaigns/`](examples/campaigns/) for its shape — and render +
+apply it (`make campaigns-apply DIR=…`, or the campaigns repo's own CI on
+merge). See `docs/getting-started/` for prerequisites, deployment, and
+running a campaign end to end; `docs/development/local-k3s.md` for the
+single-node GPU PoC loop.
 
 ## Documentation
 
 Full documentation lives in `docs/` — architecture, the streaming wrapper
-design, failure handling, the reference pages (chart values, reconciler and
-wrapper env, S3 layout), the Phase 2 roadmap, and development/CI notes.
-Serve it locally:
+design, failure handling, the reference pages (chart values, campaign/
+pipeline YAML, wrapper env, S3 layout), the Phase 2 roadmap, and
+development/CI notes. Serve it locally:
 
 ```bash
 make docs-serve

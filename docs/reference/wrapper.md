@@ -29,7 +29,7 @@ Source: [`packages/wrapper/src/htrflow_batch/config.py`](https://github.com/carp
 |---------|---------|-------------|
 | `S3_ENDPOINT` | `""` | Empty = boto3 provider default chain |
 | `AWS_SHARED_CREDENTIALS_FILE` | *(boto3 default)* | Jobs set `/secrets/s3/credentials` — the mounted Secret file; credentials are never env |
-| `S3_PREFIX` | `""` | Extra prefix before `<pipeline>/<volume>/` — the reconciler pins it empty |
+| `S3_PREFIX` | `""` | Extra prefix before `<pipeline>/<volume>/` — the converter sets it from `converter.yaml`'s `legacy_layout` (`""` legacy, else `<namespace>/`) |
 | `MAX_IMAGE_WIDTH` | `2500` | Downscale request sent to the IIIF Image API (`/full/{w},/`; `max` for narrower canvases; a 400 falls back to `max`). Service-less canvases are fetched at native size |
 | `RESUME` | `true` | Skip pages that already have **both** PAGE and ALTO in S3 and whose `page_sources` URL is unchanged |
 | `LOOKAHEAD_PAGES` | `64` | Prefetch depth of the download pipeline |
@@ -94,8 +94,8 @@ Source root: [`packages/wrapper/src/htrflow_batch/`](https://github.com/carpelan
 ## Completion contract
 
 `manifest.json` is written **last**, only after the verify gate confirms every
-expected page has PAGE and ALTO in S3 — it is the marker the reconciler's
-`done_volumes()` probes. It embeds the pipeline YAML and its sha256 (the
+expected page has PAGE and ALTO in S3 — its presence is the sole "done"
+signal, for anything that lists results directly. It embeds the pipeline YAML and its sha256 (the
 drift ground truth), `image_digest`, per-page results, `page_sources` and
 `canvas_ids` (what a resume compares), the run metrics (`wall_seconds`,
 `gpu_stall_seconds`, `pages_per_second`, `bytes_fetched`) and `viewer_url`
@@ -110,11 +110,11 @@ manifest id the wrapper published to `sources/`.
 
 ## Live run log
 
-`status/logs/<pipeline>/<volume>.txt` (bucket root — the reconciler's status
-namespace, not `volume_prefix`) is the run's own stdout/stderr, claimed at
-start, uploaded every `LOG_SHIP_SECONDS` while it changed and once more on
-exit (including SIGTERM), so the final object is the complete log rather
-than a tail. Buffer cap 4 MiB (1 MiB head + 2 MiB tail kept, the middle
-dropped with a marker). Everything else — what is and is not captured, the
-reconciler's and the browser's side, versioned buckets — is on its own page:
+`status/logs/<pipeline>/<volume>.txt` (bucket root, not `volume_prefix`) is
+the run's own stdout/stderr, claimed at start, uploaded every
+`LOG_SHIP_SECONDS` while it changed and once more on exit (including
+SIGTERM), so the final object is the complete log rather than a tail.
+Buffer cap 4 MiB (1 MiB head + 2 MiB tail kept, the middle dropped with a
+marker). Everything else — what is and is not captured, the read API's and
+the browser's side, versioned buckets — is on its own page:
 [Live run log](../how-it-works/live-run-log.md).

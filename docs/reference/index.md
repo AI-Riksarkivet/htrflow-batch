@@ -9,22 +9,22 @@ docstrings remain the authoritative signature reference.
 
 | Page | Description |
 |------|-------------|
-| [Campaign & Pipeline YAML](campaign-yaml.md) | The two file formats in the campaigns repo — what the reconciler parses and rejects |
-| [Reconciler](reconciler.md) | `htrflow-reconciler` package — modules, settings env, volume states, Job naming |
-| [Wrapper](wrapper.md) | `htrflow-batch` package — the env contract and the modules behind a batch Job |
+| [Campaign & Pipeline YAML](campaign-yaml.md) | The files in the campaigns repo — what the converter parses, renders and rejects |
+| [Wrapper](wrapper.md) | `htrflow-batch` package — the env contract and the modules behind a batch pod |
 | [Chart Values](chart.md) | `charts/htrflow-batch` — every `values.yaml` key and the objects it renders |
-| [S3 Layout & status.json](s3-layout.md) | Every key the system writes to the results bucket, and the `status.json` schema |
+| [S3 Layout](s3-layout.md) | Every key the system writes to the results bucket |
 | [Campaign Browser](frontend.md) | The SvelteKit SPA — config, derivation rules, build and test commands |
 
 ## Packages
 
 The repo is a [uv workspace](https://docs.astral.sh/uv/concepts/workspaces/)
-with two Python packages under `packages/*`, a TypeScript frontend, and a Helm
-chart:
+with three Python packages under `packages/*`, a TypeScript frontend, and a
+Helm chart:
 
 | Component | Path | Runs as |
 |-----------|------|---------|
-| Wrapper (`htrflow-batch`, module `htrflow_batch`) | `packages/wrapper/` | The container of every batch Job — fetch, transcribe, stream results to S3 |
-| Reconciler (`htrflow-reconciler`, module `htrflow_reconciler`) | `packages/reconciler/` | A CronJob — reconciles the campaigns git repo against S3 and the cluster |
+| Wrapper (`htrflow-batch`, module `htrflow_batch`) | `packages/wrapper/` | The container of every batch pod — fetch, transcribe, stream results to S3 |
+| Converter (`htrflow-converter`, CLI `htrflow-campaigns`) | `packages/converter/` | Pure function: campaign/pipeline YAML → Kubernetes manifests, run in the campaigns repo's own CI (no image, `uvx` install) |
+| Read API (`htrflow-api`, module `htrflow_api`) | `packages/api/` | A Deployment behind the viewer — read-only `GET /api/v1/jobs` over the Indexed Jobs a campaign renders to |
 | Campaign browser | `frontend/` | Static SPA in the viewer image, served at `/` |
-| Chart | `charts/htrflow-batch/` | Kueue objects, viewer, reconciler, PoC dev stack |
+| Chart | `charts/htrflow-batch/` | Kueue objects, viewer, read API, model cache PVC, NetworkPolicies |

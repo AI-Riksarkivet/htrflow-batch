@@ -71,8 +71,9 @@ Every stage name can appear in the termination log.
    are recorded, not fatal mid-loop — the loop drains what it can first.
    Five consecutive S3 upload failures abort the run (`UploadOutage`, exit 1).
 5. **verify (D8)** — every page accounted for: `page/` AND `alto/` uploaded,
-   no page marked failed. Any gap → exit 1 (the reconciler's retry + resume
-   converges); the missing/failed page list goes in the termination message.
+   no page marked failed. Any gap → exit 1 (Kubernetes retries the index;
+   resume converges); the missing/failed page list goes in the termination
+   message.
 6. **publish** — after a clean verify: `iiif.json` (viewer manifest, D19),
    `pipeline.yaml`, then `manifest.json` **last** (the sole completion
    marker). All uploads carry real content-types (`application/xml` for
@@ -87,12 +88,12 @@ into the SIGKILL.
 
 ### Exit codes
 
-| Code | Meaning | Job / reconciler reaction |
+| Code | Meaning | Job / Kubernetes reaction |
 |---|---|---|
-| 0 | success (verified) | Complete → `done` |
-| 13 | permanent (config, bad manifest URL / 4xx / non-JSON / empty / over cap, bad pipeline YAML, unknown step or model) | `podFailurePolicy` `FailJob` — `needs-attention`, never retried |
-| 1 | transient (network, 5xx/429 on the manifest, CUDA hiccup, verification gap, S3 outage) | retried by the reconciler up to the attempt cap, with resume |
-| 143 | SIGTERM with termination log + final log ship | retried; **not charged** when `pages_done` advanced |
+| 0 | success (verified) | index `Complete` |
+| 13 | permanent (config, bad manifest URL / 4xx / non-JSON / empty / over cap, bad pipeline YAML, unknown step or model) | `podFailurePolicy` `FailIndex` — index failed, never retried |
+| 1 | transient (network, 5xx/429 on the manifest, CUDA hiccup, verification gap, S3 outage) | retried by Kubernetes up to `backoffLimitPerIndex` (3), with resume |
+| 143 | SIGTERM with termination log + final log ship | retried the same as exit 1 — a resumed run skips pages already published |
 
 Failures write a structured reason to `/dev/termination-log`
 (`{"stage": "stream", "permanent": false, "error": "verify failed: missing=[…]"}`),
@@ -161,36 +162,46 @@ Kueue looks exactly like a busy GPU.
 No preemption, no cohorts in Phase 1 — first knobs to turn when sharing with
 other tenants.
 
-## Job template (one volume = one Job)
+## Job template (one campaign = one Indexed Job)
 
-Built by the reconciler's `jobspec.build_job`
-([source](https://github.com/carpelan/test/blob/main/packages/reconciler/src/htrflow_reconciler/jobspec.py));
+Rendered by the converter's `render._campaign_job`
+([source](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/packages/converter/src/htrflow_converter/render.py));
 the failure semantics are in [Failure Handling → The Job contract](failure-handling.md#the-job-contract).
 
-- Single container `wrapper`, `restartPolicy: Never`, image = the
-  pipeline's digest pin, passed again as `IMAGE_DIGEST` for provenance.
+A campaign is one `batch/v1` Job with `completionMode: Indexed` —
+`completions` = number of volumes, one index per volume, `$JOB_COMPLETION_INDEX`
+reading a line of the campaign's `volumes.txt` ConfigMap.
+
+- Single container `wrapper` per pod, `restartPolicy: Never`, image = the
+  pipeline's digest pin, passed again as `IMAGE_DIGEST` for provenance. An
+  init container `warmup-wait` blocks on the pipeline's warm-up marker file
+  before the wrapper starts.
 - Resources: requests cpu 4 / memory **8 Gi** / 1 GPU, limits cpu 4 /
   memory **16 Gi** / 1 GPU (tmpfs counts against the limit — see
   [Memory Budget](memory-budget.md)). `runtimeClassName`, `nodeSelector` and
-  `tolerations` from `job.*`.
-- `backoffLimit: 0`; `podFailurePolicy`: `Ignore` on `DisruptionTarget`
-  (a drain does not burn an attempt), `FailJob` on wrapper exit 13.
-- `activeDeadlineSeconds: max(21600, pages × 30)`;
-  `ttlSecondsAfterFinished: 86400` (24 h — inspectable, then self-cleans;
-  the evidence is copied to S3 before that).
-- Labels `app=htrflow-batch`, `batch.htrflow/managed-by=reconciler`,
-  `batch.htrflow/volume`, `batch.htrflow/pipeline`,
-  `batch.htrflow/campaign`; volume ids are label-safe by construction
-  (the parser rejects anything else).
-- Job name `htr-<pipeline>-<volume>-<8hex>` — deterministic, so a duplicate
-  create is a harmless `AlreadyExists` at the API server: **the cluster
-  enforces idempotent submission, not reconciler bookkeeping** (D10).
+  `tolerations` from `converter.yaml`.
+- `parallelism` = the campaign's `window:` or `converter.yaml`'s default
+  (20); `backoffLimitPerIndex: 3`; `maxFailedIndexes` = completions;
+  `podFailurePolicy`: `Ignore` on `DisruptionTarget` (a drain does not burn
+  a retry), `FailIndex` on wrapper exit 13.
+- `ttlSecondsAfterFinished: 86400` (24 h — inspectable, then self-cleans;
+  the evidence is in S3 before that).
+- Labels `app=htrflow-batch`, `htrflow.riksarkivet.se/managed-by=converter`,
+  `htrflow.riksarkivet.se/pipeline`, `htrflow.riksarkivet.se/campaign`,
+  `kueue.x-k8s.io/queue-name` (+ `kueue.x-k8s.io/priority-class` when the
+  campaign sets `priority:`), annotation
+  `kueue.x-k8s.io/job-min-parallelism: "1"`; volume ids are label-safe by
+  construction (the parser rejects anything else).
+- Job name is the campaign file's stem (`-part2`, … past 10 000 volumes) —
+  no per-volume Job name: **Kubernetes' own index bookkeeping is the retry
+  ledger, there is nothing else to reconcile** (D1/D2).
 - Env: the [wrapper contract](../reference/wrapper.md#environment-contract)
-  with `S3_PREFIX=""` pinned, `HF_HUB_OFFLINE=1`, `HF_HOME=/data/hf`,
-  `MANIFEST_MAX_BYTES`/`FETCH_MAX_BYTES` from `job.*`, and `HOME`, `TMPDIR`,
-  `YOLO_CONFIG_DIR` pointed into the tmpfs workdir.
-- Mounts: pipeline ConfigMap at `/config` (immutable, per version — see
-  [Pipeline configs](#pipeline-configs-d17)), the model cache PVC at `/data`
+  with `S3_PREFIX` from `converter.yaml`'s `legacy_layout`, `HF_HUB_OFFLINE=1`,
+  `HF_HOME=/data/hf`, `MANIFEST_MAX_BYTES`/`FETCH_MAX_BYTES`/`MAX_SECONDS`
+  from `converter.yaml`, and `HOME`, `TMPDIR`, `YOLO_CONFIG_DIR` pointed
+  into the tmpfs workdir.
+- Mounts: the campaign's `volumes.txt` ConfigMap at `/campaign` (read-only),
+  the pipeline ConfigMap at `/config`, the model cache PVC at `/data`
   **read-only**, a 2 Gi memory-backed emptyDir at `/work`, the S3 Secret at
   `/secrets/s3` (`credentials` file, mode `0440`). Pod Security `restricted`
   ([Security](../development/security.md)), no ServiceAccount token.
@@ -206,8 +217,8 @@ S3 behind a one-function seam — `ResultStore`:
 - Per-page keys, deterministic, blind overwrite → retries converge. Upload
   order is `page/<n>.xml` then `alto/<n>.xml`, both parsed as XML before the
   first PUT: a crash between the two leaves a PAGE without its ALTO
-  (reprocessed on resume), never the reverse, and the reconciler's
-  `pages_done` (ALTO count) strictly means "page complete".
+  (reprocessed on resume), never the reverse — an ALTO count strictly means
+  "page complete".
 - `manifest.json` uploaded **last**; its presence *is* "volume complete"
   (for that pipeline id).
 - Contents (D11): page count, `page_sources` (page → source image URL,
@@ -263,9 +274,9 @@ S3 behind a one-function seam — `ResultStore`:
   PoC needs a durable bucket (HCP or real S3) so viewer links do not die
   with a node.
 - Honest limit: with Job TTL at 24 h, long-term "what has been processed?"
-  is answered by listing `manifest.json` keys in S3 (which is exactly what
-  the reconciler does every tick) — acceptable, and what `status.json`
-  renders.
+  is answered by listing `manifest.json` keys in S3 once the Job itself is
+  gone — the read API's `completedIndexes`/`failedIndexes` view only
+  covers a Job that still exists.
 
 ## Model handling
 
@@ -291,20 +302,16 @@ the pipeline YAML. It exits 13 for a pipeline that is wrong (invalid YAML,
 pydantic validation, unknown step or model class) and 1 for one that is
 unlucky (network, disk). Who runs it:
 
-- **Campaigns-repo pipelines:** the reconciler, lazily — on first sight of a
-  pipeline that still has volumes to run (`htr-warmup-<id>`). It submits no
-  volumes for that pipeline until the Job's `Complete` condition lands and
-  reports `warming model cache` in the status warnings meanwhile. A
-  transient failure is logged to `status/warmup/<id>.log`, deleted and
-  recreated next tick — up to the attempt cap, shared with volumes under the
-  key `warmup/<id>`; exit 13 or the cap parks the pipeline
+- The converter renders one `htr-warmup-<id>` Job per pipeline whenever that
+  pipeline appears in `pipelines/`, alongside its `htr-pipeline-<id>`
+  ConfigMap (`htrflow-campaigns render`, applied with `make campaigns-apply`
+  or by Argo CD from `rendered/`). A campaign's batch pods wait on
+  `/data/warmup/<pipeline>.done` in an init container, so no volume runs
+  before its pipeline's cache is filled
   ([Failure Handling](failure-handling.md#warm-ups-fail-the-same-way)). The
-  Job is never TTL-reaped — its condition is the gate — so after replacing
-  the cache PVC, delete `htr-warmup-*` to re-warm.
-- **Chart-declared pipelines** (`values.pipelines`, the example Job):
-  `make warmup PIPELINE=<id> IMAGE=<ref>`, which renders the same Job spec
-  through `python -m htrflow_reconciler.warmup | kubectl apply`. The chart
-  itself renders no warm-up Job.
+  Job has no TTL — it is never reaped — so after replacing the cache PVC,
+  delete `htr-warmup-*` by hand to re-warm. The chart itself renders no
+  warm-up Job; it lives entirely with the campaigns repo now.
 
 Alternatives kept on record: no cache (v1 — every Job re-downloads while
 holding the GPU, needs `HF_TOKEN` + HF egress in every Job) and baking the
@@ -325,13 +332,13 @@ travel from authoring to a result:
 1. **Declare:** `pipelines/<id>.yaml` in the campaigns repo — the `steps:`
    document plus the digest-pinned `image:`
    ([Campaign & Pipeline YAML](../reference/campaign-yaml.md)).
-2. **Deploy:** the reconciler creates one **immutable ConfigMap per pipeline
-   id** — `htr-pipeline-<id>` with `immutable: true`, holding only the
-   `steps:` document. The API server then *enforces* the rule that a changed
-   pipeline is a new id: a deployed pipeline literally cannot be edited, only
-   superseded by `-v2`. (Bonus: kubelet stops watching immutable ConfigMaps —
-   cheaper at scale.) The drift guards refuse to submit when git and the
-   ConfigMap or the published results disagree.
+2. **Deploy:** the converter renders one ConfigMap per pipeline id —
+   `htr-pipeline-<id>`, holding only the `steps:` document, with its sha256
+   as the `htrflow.riksarkivet.se/pipeline-sha256` annotation. There is no
+   runtime drift guard: the rule that a changed pipeline is a new id
+   (`-v2`, never edited in place) is enforced by review convention on the
+   campaigns repo, not by the API server
+   ([Campaign & Pipeline YAML → Immutability](../reference/campaign-yaml.md#immutability)).
 3. **Select:** the campaign's `pipeline:` sets `PIPELINE_ID` (namespaces the
    S3 keys **and** is part of the Job-name hash, so the same volume under a
    different pipeline is a different Job, not a collision) and mounts that
@@ -348,12 +355,11 @@ there, on CPU, and park the pipeline instead of burning GPU Jobs.
 
 **Why not a `HtrPipeline` CRD:** the ConfigMap-per-version pattern is a
 deliberate poor-man's CRD — it delivers the CR properties that matter here
-(identity, API-server-enforced immutability, GitOps, kubectl UX) with zero
-controllers. What it lacks vs a real CRD — admission-time schema validation,
-a status subresource ("models warmed"), auto-warm-up on create — the
-reconciler covers on its tick (parse errors and drift in `status.json`
-warnings, the warm-up gate). The maturity ladder: **v1** immutable
-ConfigMaps + the reconciler's tick-time validation → **v2** an API service
-that lists and validates pipelines, ConfigMaps still underneath → **v3** a
-real CRD only if admission-time guarantees or a second machine consumer
-demand it (see [Evolution](../roadmap/evolution.md)).
+(identity, GitOps, kubectl UX) with zero controllers. What it lacks vs a
+real CRD — admission-time schema validation, a status subresource ("models
+warmed"), auto-warm-up on create — CI-time `htrflow-campaigns validate` and
+the warm-up gate cover instead. The maturity ladder: **v1** ConfigMaps +
+CI-time validation (today) → **v2** an API service that lists and validates
+pipelines, ConfigMaps still underneath → **v3** a real CRD only if
+admission-time guarantees or a second machine consumer demand it (see
+[Evolution](../roadmap/evolution.md)).

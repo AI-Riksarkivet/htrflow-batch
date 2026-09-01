@@ -1,0 +1,96 @@
+name: Render
+# On a pull request: validate campaigns/ + pipelines/ + converter.yaml,
+# nothing more — this never touches rendered/.
+# On main: render and commit rendered/, so what Argo CD (or `make
+# campaigns-apply` on a PoC) applies is always exactly what CI produced from
+# the merged commit, never something rendered by hand on a laptop.
+#
+# The converter is not an image: it is a plain Python package installed
+# with uvx straight from the htrflow-batch repo (see "Install the converter"
+# below). Pin the ref (a tag or a commit SHA) once htrflow-batch cuts
+# releases; @main is fine for now while B63 is still landing.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  # Pin to a released htrflow-batch tag once one exists; a commit SHA also
+  # works and is the most reproducible option.
+  CONVERTER_REF: main
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install the converter
+        run: |
+          uv tool install "git+https://github.com/AI-Riksarkivet/htrflow-batch@${CONVERTER_REF}#subdirectory=packages/converter"
+      - name: Validate
+        run: htrflow-campaigns validate .
+
+  render:
+    name: Render and commit rendered/
+    needs: validate
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+      - name: Install the converter
+        run: |
+          uv tool install "git+https://github.com/AI-Riksarkivet/htrflow-batch@${CONVERTER_REF}#subdirectory=packages/converter"
+      - name: Render
+        run: htrflow-campaigns render . --out rendered
+      - name: Commit rendered/ if it changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add rendered
+          git diff --cached --quiet && exit 0
+          git commit -m "render: $(git rev-parse --short HEAD)"
+          git push
+
+# --- Azure Pipelines equivalent (this repo's real home may be Azure Repos,
+# not GitHub — I15 decides). Uncomment and adapt into azure-pipelines.yml;
+# kept here as a reference so the two definitions stay in sync by review
+# rather than drifting silently apart.
+#
+# trigger:
+#   branches:
+#     include: [main]
+# pr:
+#   branches:
+#     include: ['*']
+# pool:
+#   vmImage: ubuntu-latest
+# variables:
+#   CONVERTER_REF: main
+# steps:
+#   - script: |
+#       curl -LsSf https://astral.sh/uv/install.sh | sh
+#       echo "$HOME/.local/bin" >> "$PATH"
+#     displayName: Install uv
+#   - script: |
+#       uv tool install "git+https://github.com/AI-Riksarkivet/htrflow-batch@$(CONVERTER_REF)#subdirectory=packages/converter"
+#     displayName: Install the converter
+#   - script: htrflow-campaigns validate .
+#     displayName: Validate
+#   - script: |
+#       htrflow-campaigns render . --out rendered
+#       git config user.name "Azure Pipelines"
+#       git config user.email "azure-pipelines@localhost"
+#       git add rendered
+#       git diff --cached --quiet || (git commit -m "render: $(Build.SourceVersion)" && git push origin HEAD:main)
+#     displayName: Render and commit rendered/ (main only)
+#     condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')

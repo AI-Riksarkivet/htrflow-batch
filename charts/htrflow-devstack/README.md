@@ -26,8 +26,8 @@ gates htrflow-batch's own control-plane images (`viewer.image`, `api.image`),
 not anything here.
 
 **No git daemon.** The original `devstack-gitdaemon.yaml` served a bare
-campaigns repo over `git://` for the GitOps reconciler to poll. The
-reconciler is gone as of htrflow-batch 0.3.0 (B63): campaigns are Indexed
+campaigns repo over `git://` for the old GitOps CronJob controller to poll.
+That controller is gone as of htrflow-batch 0.3.0 (B63): campaigns are Indexed
 Jobs rendered by `packages/converter` and applied with `kubectl apply` (or
 committed to a repo Argo CD watches) — nothing in the platform reads `git://`
 any more, so the daemon had no consumer left and was deleted rather than

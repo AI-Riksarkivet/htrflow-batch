@@ -1,0 +1,26 @@
+# PoC-shaped defaults for the htrflow-batch chart installed as release "htr"
+# in namespace "htr-batch" (see htrflow-batch's docs/development/local-k3s.md).
+# Every key here is optional in the converter — see
+# docs/reference/campaign-yaml.md in htrflow-batch for the full list and
+# defaults.
+namespace: htr-batch
+queue: htr-batch
+window: 20
+s3_secret: htr-batch-s3
+data_pvc: htr-test-data
+runtime_class: nvidia
+
+# Must be a browser-reachable URL base that serves the results bucket
+# (htrflow-batch's `publicResultsBase` chart value, same value). Swap for a
+# real one before applying anywhere but the PoC.
+public_results_base: "http://localhost:30900/htr-results"
+
+legacy_layout: false
+
+# Only images under this pipeline pins its digest against. Swap for your
+# own registry (and keep it in sync with the htrflow-batch chart's
+# security.allowedImageRepos documentation value).
+allowed_image_repos:
+  - "docker.io/riksarkivet/"
+
+require_model_revision: false
