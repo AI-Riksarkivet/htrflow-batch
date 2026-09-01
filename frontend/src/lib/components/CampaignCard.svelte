@@ -1,240 +1,192 @@
 <script lang="ts">
-  // One campaign: header (name, pipeline chip, counts) and its volume table.
+  // One campaign = one Indexed Job. The header is the JobSummary the parent
+  // already has (from GET /api/v1/jobs); the volume table is fetched
+  // separately and paged (GET /api/v1/jobs/{ns}/{name}?offset&limit), since
+  // a campaign can carry thousands of volumes. No thumbnails: the read API
+  // has no per-volume image, only the finished results.
   import {
-    campaignHealth,
-    pagesLabel,
+    ApiUnreachable,
+    fetchJob,
     shortDate,
-    viewerHref,
-  } from "$lib/derive.js";
-  import type { CampaignEntry } from "$lib/status.js";
+    type JobSummary,
+    type VolumeView,
+  } from "$lib/api.js";
+  import { RELOAD_MS } from "$lib/config.js";
 
-  let { campaign: c }: { campaign: CampaignEntry } = $props();
+  let { job }: { job: JobSummary } = $props();
 
   let collapsed = $state(false); // expanded by default
-  let yamlOpen = $state(false); // collapsed by default
+  let volumes = $state<VolumeView[]>([]);
+  let detailError = $state<string | null>(null);
+  let loadingMore = $state(false);
 
-  // Stable ids for aria-controls; campaign names are unique in a document.
-  const slug = $derived(c.name.replace(/[^a-zA-Z0-9_-]/g, "-"));
+  const PAGE = 200;
+
+  // Stable id for aria-controls; namespace/name is unique per Job.
+  const slug = $derived(
+    `${job.namespace}-${job.name}`.replace(/[^a-zA-Z0-9_-]/g, "-"),
+  );
   const tableId = $derived(`volumes-${slug}`);
-  const yamlId = $derived(`pipeline-${slug}`);
 
-  function statusLabel(status: string): string {
-    return status === "pending" ? "planned" : status;
+  // The card's left accent: worst-first, same intent as the old
+  // volume-derived campaignHealth but read straight off the Job phase now
+  // that the API computes it server-side.
+  const health = $derived(
+    job.phase === "Failed" || job.counts.failed > 0
+      ? "failed"
+      : job.phase === "Running"
+        ? "active"
+        : job.phase === "Succeeded"
+          ? "done"
+          : "idle",
+  );
+
+  const hasMore = $derived(volumes.length < job.counts.total);
+
+  // reset=true replaces the table (the poll tick); reset=false appends the
+  // next page (the "load more" button). A poll always collapses back to the
+  // first page — simpler than tracking how many pages were expanded, and
+  // the common case (a handful of volumes) never notices.
+  async function load(reset: boolean): Promise<void> {
+    try {
+      const offset = reset ? 0 : volumes.length;
+      const detail = await fetchJob(job.namespace, job.name, offset, PAGE);
+      volumes = reset ? detail.volumes : [...volumes, ...detail.volumes];
+      detailError = null;
+    } catch (e) {
+      detailError =
+        e instanceof ApiUnreachable ? e.message : "invalid API response";
+    }
   }
 
-  const TERMINAL_HINTS: Record<string, string> = {
-    "exit-13":
-      "permanent failure (wrapper exit 13): parked until an operator clears the attempts record or bumps the pipeline id",
-    capped:
-      "attempt cap reached: parked until an operator clears the attempts record or bumps the pipeline id",
-  };
-  function terminalHint(reason: string): string {
+  async function loadMore(): Promise<void> {
+    loadingMore = true;
+    await load(false);
+    loadingMore = false;
+  }
+
+  $effect(() => {
+    void load(true);
+    const timer = setInterval(() => void load(true), RELOAD_MS);
+    return () => clearInterval(timer);
+  });
+
+  // live=1 for a volume still in flight, so /log re-fetches on the
+  // wrapper's log-ship cadence instead of showing a static snapshot.
+  function logHref(v: VolumeView): string {
     return (
-      TERMINAL_HINTS[reason] ??
-      `parked (${reason}): needs an operator to clear it`
+      "log?log=" +
+      encodeURIComponent(v.logUrl) +
+      (v.state !== "done" ? "&live=1" : "")
     );
-  }
-
-  // A broken thumbnail becomes the same neutral square as a missing one.
-  function placeholder(): HTMLSpanElement {
-    const el = document.createElement("span");
-    el.className = "thumb-placeholder";
-    el.setAttribute("aria-hidden", "true");
-    return el;
   }
 </script>
 
-<section
-  class="campaign"
-  data-health={c.error !== null ? "failed" : campaignHealth(c.volumes)}
->
-  <!-- Two sibling buttons, not a button inside a button: Enter on the
-       pipeline chip opens the YAML and leaves the table alone. -->
+<section class="campaign" data-health={health}>
   <div class="camp">
     <button
       type="button"
       class="camp-toggle"
       aria-expanded={!collapsed}
-      aria-controls={c.error === null ? tableId : undefined}
+      aria-controls={tableId}
       onclick={() => (collapsed = !collapsed)}
     >
       <span class="disclosure" aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
-      <span class="camp-name">{c.name}</span>
+      <span class="camp-name">{job.namespace}/{job.name}</span>
     </button>
-    {#if c.error !== null}
-      <span class="chip needs-attention">broken</span>
-    {:else}
-      {#if c.pipeline_yaml !== null}
-        <button
-          type="button"
-          class="chip pipeline"
-          aria-expanded={yamlOpen}
-          aria-controls={yamlId}
-          title={c.pipeline_steps !== null && c.pipeline_steps.length > 0
-            ? c.pipeline_steps.join(" → ")
-            : "show pipeline YAML"}
-          onclick={() => (yamlOpen = !yamlOpen)}>{c.pipeline}</button
-        >
-      {:else}
-        <span class="chip pipeline static">{c.pipeline}</span>
+    <span class="chip pipeline">{job.pipeline}</span>
+    <span class="chip phase {job.phase.toLowerCase()}">{job.phase}</span>
+    <span class="counts">
+      {job.counts.done}/{job.counts.total} volumes
+      {#if job.counts.failed > 0}
+        <span class="bad"> · {job.counts.failed} failed</span>
       {/if}
-      <span class="counts">
-        {c.totals.done}/{c.totals.total} volumes
-        {#if pagesLabel(c.totals) !== null}
-          <span class="pages">· {pagesLabel(c.totals)}</span>
-        {/if}
-      </span>
-    {/if}
+      {#if job.counts.active > 0}
+        <span> · {job.counts.active} active</span>
+      {/if}
+    </span>
   </div>
-  {#if c.error !== null}<p class="notice error-row">{c.error}</p>{/if}
-  {#if yamlOpen && c.pipeline_yaml !== null}
-    <pre class="pipeline-yaml" id={yamlId}>{c.pipeline_yaml}</pre>
-  {/if}
-  {#if c.orphans.length > 0}
-    <p class="notice warn-row">
-      orphaned results (in bucket, not in git): {c.orphans.join(", ")}
+  {#if job.createdAt !== null}
+    <p class="meta">
+      created <time datetime={job.createdAt} title={job.createdAt}
+        >{shortDate(job.createdAt) ?? job.createdAt}</time
+      >
     </p>
   {/if}
-  {#if !collapsed && c.error === null}
+  {#if detailError !== null}
+    <p class="notice error-row" role="alert">
+      Cannot load volumes: {detailError}
+    </p>
+  {/if}
+  {#if !collapsed}
     <div class="table-scroll" id={tableId}>
       <table class="volumes">
-        <caption class="sr-only">Volumes in campaign {c.name}</caption>
+        <caption class="sr-only">Volumes in campaign {job.name}</caption>
         <colgroup>
-          <col class="c-thumb" />
           <col class="c-vid" />
           <col class="c-status" />
-          <col class="c-num" />
-          <col class="c-num c-attempts" />
-          <col class="c-updated" />
           <col class="c-links" />
         </colgroup>
         <thead>
           <tr>
-            <th></th>
             <th>volume</th>
             <th>status</th>
-            <th class="num">pages</th>
-            <th class="num c-attempts">attempts</th>
-            <th class="c-updated">updated</th>
             <th>links</th>
           </tr>
         </thead>
         <tbody>
-          {#each c.volumes as v (v.id)}
-            <tr class:planned={v.status === "pending"}>
-              <td class="thumb">
-                <!-- Decorative: the row is identified by its id. Low fetch
-                   priority so eight thumbnails never race status.json or
-                   the viewer; the reconciler sends sized IIIF URLs and null
-                   for service-less manifests, which get a neutral square. -->
-                {#if v.thumbnail !== null}
-                  <img
-                    src={v.thumbnail}
-                    alt=""
-                    loading="lazy"
-                    fetchpriority="low"
-                    decoding="async"
-                    width="26"
-                    height="26"
-                    onerror={(e) => e.currentTarget.replaceWith(placeholder())}
-                  />
-                {:else}
-                  <span class="thumb-placeholder" aria-hidden="true"></span>
-                {/if}
-              </td>
+          {#each volumes as v (v.id)}
+            <tr>
               <td class="vid">
                 <span class="vid-name" title={v.id}>{v.id}</span>
-                {#if v.error !== null}
-                  <span class="verr">{v.error}</span>
+                {#if v.reason !== undefined}
+                  <span class="verr">{v.reason}</span>
                 {/if}
               </td>
               <td>
-                <span class="status {v.status}">
+                <span class="status {v.state}">
                   <span class="dot"></span>
-                  {statusLabel(v.status)}
+                  {v.state}
                 </span>
-                {#if v.terminal !== null}
-                  <!-- Sticky: the reconciler will not resubmit until an
-                     operator clears the attempts record or bumps the
-                     pipeline id. -->
-                  <span class="terminal" title={terminalHint(v.terminal)}
-                    >{v.terminal}</span
-                  >
-                {/if}
-              </td>
-              <td class="num">
-                {v.pages_total !== null || v.pages_done !== null
-                  ? `${v.pages_done ?? 0}/${v.pages_total ?? "?"}`
-                  : "—"}
-              </td>
-              <td class="num c-attempts">{v.attempts > 0 ? v.attempts : "—"}</td
-              >
-              <td class="updated c-updated">
-                {#if v.updated !== null && shortDate(v.updated) !== null}
-                  <time datetime={v.updated} title={v.updated}
-                    >{shortDate(v.updated)}</time
-                  >
-                {:else}
-                  —
-                {/if}
               </td>
               <td class="links">
-                <!-- Three fixed slots (open · source · log) so a missing
-                   link leaves a gap instead of shifting its neighbours;
-                   the eye can scan a column of "source" straight down. -->
-                {#if v.invalid !== true}
-                  {@const open = viewerHref(v)}
-                  <span class="slot">
-                    {#if v.status === "done" && open !== null}
-                      <a href={open} target="_blank" rel="noopener">open</a>
-                    {/if}
-                  </span>
-                  <span class="slot">
-                    {#if v.source_manifest !== null}
-                      <a href={v.source_manifest} target="_blank" rel="noopener"
-                        >source</a
-                      >
-                    {:else}
-                      <span
-                        class="invalid-url"
-                        title="source_manifest is not an http(s) URL"
-                        >invalid url</span
-                      >
-                    {/if}
-                  </span>
-                  <span class="slot">
-                    {#if v.failure_log !== null}
-                      <a
-                        class="danger"
-                        href={v.failure_log}
-                        target="_blank"
-                        rel="noopener">log</a
-                      >
-                    {:else if v.run_log !== null}
-                      <a
-                        href={"log?log=" +
-                          encodeURIComponent(v.run_log) +
-                          (v.run_manifest !== null
-                            ? "&manifest=" + encodeURIComponent(v.run_manifest)
-                            : "") +
-                          (v.status !== "done" ? "&live=1" : "")}>log</a
-                      >
-                    {/if}
-                  </span>
-                {/if}
+                <span class="slot">
+                  {#if v.state === "done"}
+                    <a
+                      href={"uv.html#?manifest=" + v.iiifUrl}
+                      target="_blank"
+                      rel="noopener">open</a
+                    >
+                  {/if}
+                </span>
+                <span class="slot">
+                  <a href={logHref(v)}>log</a>
+                </span>
               </td>
             </tr>
           {/each}
         </tbody>
       </table>
+      {#if hasMore}
+        <button
+          type="button"
+          class="load-more"
+          disabled={loadingMore}
+          onclick={loadMore}
+        >
+          {loadingMore
+            ? "loading…"
+            : `load more (${volumes.length}/${job.counts.total})`}
+        </button>
+      {/if}
     </div>
   {/if}
 </section>
 
 <style>
-  /* The left accent is the campaign's health at a glance (worst volume
-     wins): green = everything published, blue = work in flight, red = a
-     volume needs a human, grey = nothing running and nothing done. */
+  /* The left accent is the campaign's health at a glance: green = every
+     index done, blue = a Job still running, red = a Job failed or carries a
+     failed index, grey = queued/paused/nothing moving. */
   .campaign {
     background: var(--card);
     border: 1px solid var(--border);
@@ -280,8 +232,7 @@
     min-width: 0;
   }
 
-  .camp-toggle:focus-visible,
-  .chip.pipeline:focus-visible {
+  .camp-toggle:focus-visible {
     outline: 2px solid var(--primary);
     outline-offset: 2px;
     border-radius: 3px;
@@ -298,8 +249,6 @@
     overflow-wrap: anywhere;
   }
 
-  /* Counts sit flush right so they line up across campaigns regardless of
-     how long each name + pipeline chip is. */
   .counts {
     margin-left: auto;
     color: var(--muted-foreground);
@@ -309,8 +258,8 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .pages {
-    font-weight: 400;
+  .bad {
+    color: var(--destructive);
   }
 
   .chip {
@@ -323,22 +272,36 @@
     width: fit-content;
   }
 
-  .chip.needs-attention {
+  .chip.pipeline {
+    background: var(--primary-soft);
+    color: var(--primary);
+  }
+
+  .chip.phase.succeeded {
+    background: var(--success-soft);
+    color: var(--success);
+  }
+
+  .chip.phase.running {
+    background: var(--primary-soft);
+    color: var(--primary);
+  }
+
+  .chip.phase.queued,
+  .chip.phase.paused {
+    background: var(--warning-soft);
+    color: var(--warning);
+  }
+
+  .chip.phase.failed {
     background: var(--destructive);
     color: var(--on-strong);
   }
 
-  .chip.pipeline {
-    background: var(--primary-soft);
-    color: var(--primary);
-    cursor: pointer;
-    border: none;
-    font-family: inherit;
-    line-height: 1.4;
-  }
-
-  .chip.pipeline.static {
-    cursor: default;
+  .meta {
+    color: var(--muted-foreground);
+    font-size: 0.8rem;
+    margin: 0.25rem 0 0;
   }
 
   .notice {
@@ -346,29 +309,10 @@
     margin: 0.25rem 0 0;
   }
 
-  pre.pipeline-yaml {
-    margin: 0.5rem 0 0;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 0.75rem 1rem;
-    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-    font-size: 12px;
-    white-space: pre-wrap;
-  }
-
   .error-row {
     color: var(--destructive);
   }
 
-  .warn-row {
-    color: var(--warning);
-  }
-
-  /* Fixed layout + explicit column widths: every campaign's table shares
-     the same grid, so status/pages/links line up when scanning down the
-     page instead of each table auto-sizing to its own content. Only the
-     volume column flexes. */
   table.volumes {
     width: 100%;
     table-layout: fixed;
@@ -378,58 +322,17 @@
     line-height: 1.35;
   }
 
-  /* Narrow screens: the table scrolls inside its own container (the page
-     never scrolls sideways) and drops attempts/updated, the two columns a
-     phone reader is least likely to be after. */
   .table-scroll {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
-  }
-
-  col.c-thumb {
-    width: 2.4rem;
   }
 
   col.c-status {
     width: 8rem;
   }
 
-  col.c-num {
-    width: 5rem;
-  }
-
-  col.c-updated {
-    width: 8rem;
-  }
-
   col.c-links {
-    width: 11rem;
-  }
-
-  /* After the col rules so the narrow widths win the cascade. The table
-     keeps a floor of 30rem and scrolls in .table-scroll; attempts/updated
-     go, the other fixed columns tighten so the volume name keeps ~10rem. */
-  @media (max-width: 48rem) {
-    table.volumes {
-      min-width: 32rem;
-    }
-
-    .c-attempts,
-    .c-updated {
-      display: none;
-    }
-
-    col.c-num {
-      width: 3.6rem;
-    }
-
-    col.c-links {
-      width: 9.6rem;
-    }
-
-    td.links .slot {
-      min-width: 2.9rem;
-    }
+    width: 8rem;
   }
 
   table.volumes th {
@@ -443,12 +346,6 @@
     border-bottom: 1px solid var(--border);
   }
 
-  table.volumes th.num,
-  table.volumes td.num {
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-  }
-
   table.volumes td {
     padding: 0.2rem 0.5rem;
     border-bottom: 1px solid var(--border);
@@ -457,29 +354,6 @@
 
   table.volumes tbody tr:last-child td {
     border-bottom: none;
-  }
-
-  tr.planned {
-    opacity: 0.65;
-  }
-
-  td.thumb {
-    padding-right: 0;
-  }
-
-  td.thumb img,
-  td.thumb :global(.thumb-placeholder) {
-    width: 1.6rem;
-    height: 1.6rem;
-    object-fit: cover;
-    border-radius: 3px;
-    display: block;
-  }
-
-  td.thumb :global(.thumb-placeholder) {
-    background: var(--muted);
-    border: 1px solid var(--border);
-    box-sizing: border-box;
   }
 
   td.vid {
@@ -495,8 +369,8 @@
     text-overflow: ellipsis;
   }
 
-  /* The reconciler's error text for the volume (or the reason this row
-     could not be parsed) — wraps, never widens the column. */
+  /* The wrapper's own termination message for this index, or the reason
+     the detail fetch itself failed — wraps, never widens the column. */
   .verr {
     display: block;
     font-weight: 400;
@@ -528,47 +402,19 @@
     background: var(--success-soft);
   }
 
-  .status.running {
+  .status.active {
     color: var(--primary);
     background: var(--primary-soft);
   }
 
-  .status.queued,
-  .status.retry,
-  .status.deleting {
-    color: var(--warning);
-    background: var(--warning-soft);
-  }
-
-  .status.needs-attention,
-  .status.unreachable,
-  .status.unsupported {
+  .status.failed {
     color: var(--destructive);
     background: var(--destructive-soft);
   }
 
-  .status.pending,
-  .status.unknown {
+  .status.pending {
     color: var(--muted-foreground);
     background: var(--muted);
-  }
-
-  .terminal {
-    display: inline-block;
-    margin-left: 0.3rem;
-    font-size: 10.5px;
-    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-    color: var(--destructive);
-    border: 1px solid var(--destructive);
-    border-radius: 3px;
-    padding: 0 0.3rem;
-    line-height: 1.4;
-    cursor: help;
-  }
-
-  td.updated {
-    color: var(--muted-foreground);
-    white-space: nowrap;
   }
 
   td.links {
@@ -577,7 +423,7 @@
 
   td.links .slot {
     display: inline-block;
-    min-width: 3.3rem;
+    min-width: 2.9rem;
   }
 
   td.links a {
@@ -589,12 +435,20 @@
     text-decoration: underline;
   }
 
-  td.links a.danger {
-    color: var(--destructive);
+  .load-more {
+    font: inherit;
+    color: var(--foreground);
+    background: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.15rem 0.75rem;
+    margin-top: 0.5rem;
+    cursor: pointer;
+    font-size: 0.8rem;
   }
 
-  .invalid-url {
-    color: var(--destructive);
-    font-size: 11px;
+  .load-more:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
 </style>

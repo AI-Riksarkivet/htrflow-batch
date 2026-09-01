@@ -1,50 +1,20 @@
 import { render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { DEFAULT_STATUS_URL, RELOAD_MS } from "$lib/config.js";
+import { RELOAD_MS } from "$lib/config.js";
 import CampaignsPage from "./+page.svelte";
 
-const volume = {
-  id: "R1",
-  status: "done",
-  attempts: 0,
-  pages_done: 3,
-  pages_total: 3,
-  error: null,
-  viewer_manifest: "http://bucket/p/R1/iiif.json",
-  run_manifest: null,
-  source_manifest: "http://iiif/R1/manifest",
-  thumbnail: null,
-  updated: "2026-08-26T08:54:43Z",
-  failure_log: null,
-  run_log: null,
-  terminal: null,
+const job = {
+  namespace: "htr-test",
+  name: "kyrk",
+  pipeline: "demo-v1",
+  phase: "Running",
+  counts: { total: 7, active: 1, done: 4, failed: 1 },
+  suspended: false,
+  createdAt: "2026-01-01T00:00:00Z",
+  resultsBase: "https://results.example.org/htr-test/demo-v1",
 };
 
-const doc = {
-  generated_at: new Date().toISOString(),
-  tick_seconds: 300,
-  campaigns_repo_url: "https://git.example/campaigns",
-  warnings: [],
-  tick_summary: {
-    seconds: 4.06,
-    s3_calls: 12,
-    validations: 3,
-    submitted: 1,
-    retried: 0,
-  },
-  campaigns: [
-    {
-      name: "demo",
-      pipeline: "demo-v1",
-      pipeline_steps: null,
-      pipeline_yaml: null,
-      error: null,
-      totals: { done: 1, total: 2, pages_done: 3, pages_total: 3 },
-      volumes: [volume, { ...volume, id: "R2", attempts: "many" }],
-      orphans: [],
-    },
-  ],
-};
+const detail = { ...job, failures: [], volumes: [] };
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -53,61 +23,67 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+// Routes every request by the URL it was given: /jobs (list) vs
+// /jobs/<ns>/<name> (a card's own detail fetch).
+function routedFetch(list: unknown, listStatus = 200): typeof fetch {
+  return vi.fn(async (url: string) => {
+    if (url.toString().includes("/jobs/")) return jsonResponse(detail);
+    return jsonResponse(list, listStatus);
+  }) as unknown as typeof fetch;
+}
+
 describe("/ campaign page", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
-    delete window.STATUS_URL;
   });
 
-  test("fetches window.STATUS_URL, shows the tick summary, degrades one bad volume", async () => {
-    window.STATUS_URL = "http://elsewhere/status.json";
-    const fetchMock = vi.fn(async () => jsonResponse(doc));
+  test("fetches GET /api/v1/jobs and renders one card per job", async () => {
+    const fetchMock = routedFetch([job]);
     vi.stubGlobal("fetch", fetchMock);
     render(CampaignsPage);
     await vi.advanceTimersByTimeAsync(0);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://elsewhere/status.json",
+      "/api/v1/jobs",
       expect.objectContaining({ cache: "no-store" }),
     );
-    expect(screen.getByText(/last tick 4\.1 s · 12 S3 calls/)).toHaveClass(
-      "tick",
-    );
-    expect(
-      screen.getByRole("link", { name: "https://git.example/campaigns" }),
-    ).toBeInTheDocument();
-    // the good row renders, the bad one is an error row, the page stands
-    expect(screen.getByText("R1")).toBeInTheDocument();
-    expect(screen.getByText("R2")).toBeInTheDocument();
-    expect(
-      screen.getByText(/status\.json: demo\/R2: attempts/),
-    ).toBeInTheDocument();
+    expect(screen.getByText("htr-test/kyrk")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  test("falls back to the default URL and keeps the last good document through a failed poll", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse({ ...doc, tick_summary: null }))
-      .mockResolvedValueOnce(jsonResponse("gone", 503));
+  test("shows an empty state with no campaigns", async () => {
+    vi.stubGlobal("fetch", routedFetch([]));
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByText("No campaigns.")).toBeInTheDocument();
+  });
+
+  test("keeps the last good list through a failed poll and banners 'API unreachable'", async () => {
+    // The list endpoint (/jobs, exact) succeeds once then fails; the card's
+    // own detail fetch (/jobs/<ns>/<name>) always succeeds, so only the list
+    // calls are asserted below.
+    let listCalls = 0;
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === "/api/v1/jobs") {
+        listCalls += 1;
+        return listCalls === 1
+          ? jsonResponse([job])
+          : jsonResponse("gone", 503);
+      }
+      return jsonResponse(detail);
+    }) as unknown as typeof fetch;
     vi.stubGlobal("fetch", fetchMock);
     render(CampaignsPage);
     await vi.advanceTimersByTimeAsync(0);
-
-    expect(fetchMock).toHaveBeenLastCalledWith(
-      DEFAULT_STATUS_URL,
-      expect.anything(),
-    );
-    expect(screen.queryByText(/last tick/)).toBeNull(); // no summary → no line
-    expect(screen.getByText("R1")).toBeInTheDocument();
+    expect(screen.getByText("htr-test/kyrk")).toBeInTheDocument();
 
     await vi.advanceTimersByTimeAsync(RELOAD_MS);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(listCalls).toBe(2);
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /Cannot load status: HTTP 503 — showing the last good document/,
+      /API unreachable: HTTP 503 — showing the last good list/,
     );
-    expect(screen.getByText("R1")).toBeInTheDocument();
+    expect(screen.getByText("htr-test/kyrk")).toBeInTheDocument();
   });
 });

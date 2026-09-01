@@ -1,197 +1,208 @@
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
-import userEvent from "@testing-library/user-event";
-import { describe, expect, test } from "vitest";
-import { parseStatusDoc, type CampaignEntry } from "$lib/status.js";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import type { JobSummary } from "$lib/api.js";
 import CampaignCard from "./CampaignCard.svelte";
 
-const volume = {
-  id: "R1",
-  status: "done",
-  attempts: 0,
-  pages_done: 3,
-  pages_total: 3,
-  error: null,
-  viewer_manifest: "http://pub/r1/iiif.json",
-  source_manifest: "https://src/r1/manifest",
-  thumbnail: null,
-  run_manifest: null,
-  updated: "2026-08-25T14:32:00Z",
-  failure_log: null,
-  run_log: "http://pub/logs/r1.txt",
+const job: JobSummary = {
+  namespace: "htr-test",
+  name: "kyrk",
+  pipeline: "demo-v1",
+  phase: "Running",
+  counts: { total: 3, active: 1, done: 1, failed: 1 },
+  suspended: false,
+  createdAt: "2026-01-01T00:00:00Z",
+  resultsBase: "https://results.example.org/htr-test/demo-v1",
 };
 
-function campaignFrom(volumes: unknown[]): CampaignEntry {
-  const { doc } = parseStatusDoc({
-    generated_at: "2026-08-25T10:00:00Z",
-    tick_seconds: 300,
-    warnings: [],
-    campaigns: [
-      {
-        name: "demo",
-        pipeline: "demo-v1",
-        error: null,
-        totals: { done: 1, total: volumes.length },
-        volumes,
-      },
-    ],
+const volumeDone = {
+  index: 0,
+  id: "vol0",
+  state: "done",
+  manifestUrl: "https://pub/htr-test/demo-v1/vol0/manifest.json",
+  iiifUrl: "https://pub/htr-test/demo-v1/vol0/iiif.json",
+  altoPrefix: "https://pub/htr-test/demo-v1/vol0/alto/",
+  logUrl: "https://pub/status/logs/demo-v1/vol0.txt",
+};
+
+const volumeFailed = {
+  index: 1,
+  id: "vol1",
+  state: "failed",
+  manifestUrl: "https://pub/htr-test/demo-v1/vol1/manifest.json",
+  iiifUrl: "https://pub/htr-test/demo-v1/vol1/iiif.json",
+  altoPrefix: "https://pub/htr-test/demo-v1/vol1/alto/",
+  logUrl: "https://pub/status/logs/demo-v1/vol1.txt",
+  reason: "permanent failure in load: manifest unsupported",
+};
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
   });
-  const c = doc?.campaigns[0];
-  if (c === undefined) throw new Error("fixture did not parse");
-  return c;
 }
 
 describe("CampaignCard", () => {
-  test("a bad volume degrades to an error row; the good row still renders", () => {
-    const campaign = campaignFrom([
-      volume,
-      { ...volume, id: "R2", attempts: "x" },
-    ]);
-    render(CampaignCard, { campaign });
-    const rows = screen.getAllByRole("row").slice(1); // drop the header
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  test("fetches its own volumes from the read API, paged by index", async () => {
+    const detail = {
+      ...job,
+      failures: [],
+      volumes: [volumeDone, volumeFailed],
+    };
+    const fetchMock = vi.fn(async () => jsonResponse(detail));
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/jobs/htr-test/kyrk?offset=0&limit=200",
+      expect.objectContaining({ cache: "no-store" }),
+    );
+    const rows = screen.getAllByRole("row").slice(1); // drop the header row
     expect(rows).toHaveLength(2);
-    expect(within(rows[0] as HTMLElement).getByText("R1")).toBeInTheDocument();
     expect(
-      within(rows[0] as HTMLElement).getByText("done"),
+      within(rows[0] as HTMLElement).getByText("vol0"),
     ).toBeInTheDocument();
-    const bad = rows[1] as HTMLElement;
-    expect(within(bad).getByText("R2")).toBeInTheDocument();
-    expect(within(bad).getByText("unknown")).toBeInTheDocument();
     expect(
-      within(bad).getByText(/invalid status entry: attempts/),
+      within(rows[1] as HTMLElement).getByText(/manifest unsupported/),
     ).toBeInTheDocument();
   });
 
-  test("javascript: URLs never reach an href or src", () => {
-    const campaign = campaignFrom([
-      {
-        ...volume,
-        source_manifest: "javascript:alert(1)",
-        thumbnail: "javascript:alert(2)",
-        failure_log: "javascript:alert(3)",
-        viewer_manifest: "javascript:alert(4)",
-      },
-    ]);
-    const { container } = render(CampaignCard, { campaign });
-    const hrefs = [...container.querySelectorAll("a")].map((a) =>
-      a.getAttribute("href"),
+  test("a done volume gets an 'open' link; a non-done volume does not", async () => {
+    const detail = {
+      ...job,
+      failures: [],
+      volumes: [volumeDone, volumeFailed],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(detail)),
     );
-    expect(hrefs.some((h) => h?.startsWith("javascript:"))).toBe(false);
-    expect(container.querySelector("img")).toBeNull();
-    expect(screen.getByText("invalid url")).toBeInTheDocument();
-    // the run log is still reachable — only the refused fields are dropped
-    expect(screen.getByRole("link", { name: "log" })).toHaveAttribute(
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(
+      within(rows[0] as HTMLElement).getByRole("link", { name: "open" }),
+    ).toHaveAttribute(
       "href",
-      expect.stringContaining("log?log="),
+      "uv.html#?manifest=https://pub/htr-test/demo-v1/vol0/iiif.json",
     );
-    expect(screen.queryByRole("link", { name: "open" })).toBeNull();
+    expect(
+      within(rows[1] as HTMLElement).queryByRole("link", { name: "open" }),
+    ).toBeNull();
   });
 
-  test("a degraded row has no links at all, not an 'invalid url' label", () => {
-    const campaign = campaignFrom([{ ...volume, attempts: "x" }]);
-    const { container } = render(CampaignCard, { campaign });
-    expect(container.querySelectorAll("td.links a")).toHaveLength(0);
-    expect(screen.queryByText("invalid url")).toBeNull();
-  });
-
-  test("thumbnails load low-priority and async; a null thumbnail gets a placeholder", () => {
-    const campaign = campaignFrom([
-      { ...volume, thumbnail: "https://iiif/x/full/200,/0/default.jpg" },
-      { ...volume, id: "R2", thumbnail: null },
-    ]);
-    const { container } = render(CampaignCard, { campaign });
-    const img = container.querySelector("img");
-    expect(img).toHaveAttribute("fetchpriority", "low");
-    expect(img).toHaveAttribute("decoding", "async");
-    expect(img).toHaveAttribute("loading", "lazy");
-    expect(container.querySelectorAll("img")).toHaveLength(1);
-    expect(container.querySelectorAll(".thumb-placeholder")).toHaveLength(1);
-  });
-
-  test("pipeline chip is a sibling button: opens the YAML without collapsing the table", async () => {
-    const campaign = {
-      ...campaignFrom([volume]),
-      pipeline_yaml: "steps:\n  - step: Segmentation\n",
+  test("the log link carries live=1 for a volume that is not done, and not for one that is", async () => {
+    const detail = {
+      ...job,
+      failures: [],
+      volumes: [volumeDone, volumeFailed],
     };
-    render(CampaignCard, { campaign });
-    const chip = screen.getByRole("button", { name: "demo-v1" });
-    const toggle = screen.getByRole("button", { name: /demo$/ });
-    // not nested: no button has a button ancestor
-    expect(chip.closest("button")).toBe(chip);
-    expect(chip.parentElement?.closest("button")).toBeNull();
-    expect(toggle.parentElement?.closest("button")).toBeNull();
-    expect(chip).toHaveAttribute("aria-expanded", "false");
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-
-    await fireEvent.click(chip);
-    expect(chip).toHaveAttribute("aria-expanded", "true");
-    const yaml = document.getElementById(
-      chip.getAttribute("aria-controls") ?? "",
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(detail)),
     );
-    expect(yaml).toHaveTextContent("step: Segmentation");
-    expect(screen.getByRole("table")).toBeInTheDocument(); // still expanded
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
 
+    const rows = screen.getAllByRole("row").slice(1);
+    const doneLog = within(rows[0] as HTMLElement).getByRole("link", {
+      name: "log",
+    });
+    expect(doneLog).toHaveAttribute(
+      "href",
+      "log?log=" + encodeURIComponent(volumeDone.logUrl),
+    );
+    const failedLog = within(rows[1] as HTMLElement).getByRole("link", {
+      name: "log",
+    });
+    expect(failedLog).toHaveAttribute(
+      "href",
+      "log?log=" + encodeURIComponent(volumeFailed.logUrl) + "&live=1",
+    );
+  });
+
+  test("no thumbnails: no <img> anywhere in the card", async () => {
+    const detail = { ...job, failures: [], volumes: [volumeDone] };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(detail)),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelector("img")).toBeNull();
+  });
+
+  test("a 'load more' button appears when more volumes remain, and pages them in", async () => {
+    const page1 = { ...job, failures: [], volumes: [volumeDone] };
+    const page2 = { ...job, failures: [], volumes: [volumeFailed] };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(page1))
+      .mockResolvedValueOnce(jsonResponse(page2));
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, {
+      job: { ...job, counts: { ...job.counts, total: 2 } },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const more = screen.getByRole("button", { name: /load more/ });
+    await fireEvent.click(more);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/v1/jobs/htr-test/kyrk?offset=1&limit=200",
+      expect.anything(),
+    );
+    expect(screen.getAllByRole("row")).toHaveLength(3); // header + 2 volumes
+    expect(screen.queryByRole("button", { name: /load more/ })).toBeNull();
+  });
+
+  test("an unreachable detail fetch shows an inline error, not a blank table", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse("gone", 503)),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Cannot load volumes: HTTP 503",
+    );
+  });
+
+  test("the toggle collapses and re-expands the table without refetching", async () => {
+    const detail = { ...job, failures: [], volumes: [volumeDone] };
+    const fetchMock = vi.fn(async () => jsonResponse(detail));
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const toggle = screen.getByRole("button", { name: /kyrk$/ });
+    expect(screen.getByRole("table")).toBeInTheDocument();
     await fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("table")).toBeNull();
-    expect(yaml).toBeInTheDocument(); // yaml is independent of the table
-  });
-
-  test("Enter on the pipeline chip opens the YAML and leaves the table open", async () => {
-    const user = userEvent.setup();
-    const campaign = {
-      ...campaignFrom([volume]),
-      pipeline_yaml: "steps:\n  - step: Segmentation\n",
-    };
-    render(CampaignCard, { campaign });
-    const chip = screen.getByRole("button", { name: "demo-v1" });
-    const toggle = screen.getByRole("button", { name: /demo$/ });
-
-    await user.tab(); // the campaign toggle comes first in DOM order
-    expect(toggle).toHaveFocus();
-    await user.tab();
-    expect(chip).toHaveFocus();
-    await user.keyboard("{Enter}");
-    expect(chip).toHaveAttribute("aria-expanded", "true");
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await fireEvent.click(toggle);
     expect(screen.getByRole("table")).toBeInTheDocument();
-    expect(document.getElementById("pipeline-demo")).toHaveTextContent(
-      "step: Segmentation",
-    );
-
-    // Space toggles it back; the table is still untouched.
-    await user.keyboard(" ");
-    expect(chip).toHaveAttribute("aria-expanded", "false");
-    expect(document.getElementById("pipeline-demo")).toBeNull();
-    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1); // still just the initial load
   });
 
-  test("a terminal reason shows on the row with an operator hint; absent otherwise", () => {
-    const campaign = campaignFrom([
-      {
-        ...volume,
-        id: "parked",
-        status: "needs-attention",
-        terminal: "exit-13",
-        attempts: 1,
-      },
-      { ...volume, id: "fine" },
-    ]);
-    render(CampaignCard, { campaign });
-    const tag = screen.getByText("exit-13");
-    expect(tag).toHaveClass("terminal");
-    expect(tag).toHaveAttribute(
-      "title",
-      expect.stringMatching(/clears the attempts record/),
+  test("header shows pipeline, phase and counts", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ ...job, failures: [], volumes: [] })),
     );
-    expect(document.querySelectorAll(".terminal")).toHaveLength(1);
-  });
-
-  test("an unrecognised status renders the neutral unknown chip", () => {
-    const campaign = campaignFrom([{ ...volume, status: "paused" }]);
-    render(CampaignCard, { campaign });
-    const chip = screen.getByText("unknown");
-    expect(chip.closest(".status")).toHaveClass("unknown");
-    // and no error text is invented for it
-    expect(screen.queryByText(/invalid status entry/)).toBeNull();
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByText("demo-v1")).toBeInTheDocument();
+    expect(screen.getByText("Running")).toBeInTheDocument();
+    expect(screen.getByText(/1\/3 volumes/)).toBeInTheDocument();
+    expect(screen.getByText(/1 failed/)).toBeInTheDocument();
   });
 });

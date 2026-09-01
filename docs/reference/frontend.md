@@ -1,16 +1,14 @@
 # Campaign Browser
 
-The SvelteKit SPA served at `/` by the viewer image — two routes, no server.
-As of B63 it still reads the legacy `status.json` shape described below;
-migrating it onto the read API's `GET /api/v1/jobs` (packages/api) is B63
-Task 7, tracked separately from this page. Source:
-[`frontend/`](https://github.com/carpelan/test/tree/main/frontend); the
-`frontend/README.md` there is the developer-facing version of this page.
+The SvelteKit SPA served at `/` by the viewer image — two routes, no server,
+reading the read API (`packages/api`) directly. Source:
+[`frontend/`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/frontend);
+the `frontend/README.md` there is the developer-facing version of this page.
 
-- `/` — every campaign as a card with its **volume table** (status chip,
-  `terminal` tag, pages, attempts, updated, links), the header meta
-  (campaigns repo link, generated-at, last tick cost) and the stale / error /
-  warning banners.
+- `/` — every campaign (one card per Indexed Job) with its **volume table**
+  (id, state chip, links), the pipeline chip, phase and counts in the
+  header, and an "API unreachable" banner over the last good list on a
+  failed poll. Each card fetches its own volumes, paged.
 - `/log?log=<url>&manifest=<url>[&live=1]` — the **run viewer**: the
   wrapper's run log grouped by stage, plus a summary card from
   `manifest.json` (ok/failed/skipped counts, total + wall, median/p95/max,
@@ -29,81 +27,76 @@ jsdom), Prettier, Bun as the package runner (`engines`: Node ≥ 22, Bun ≥ 1.1
 
 | File | Description |
 |------|-------------|
-| `src/lib/config.ts` | URL and cadence resolution (table below) |
-| `src/lib/status.ts` | Zod schemas mirroring the legacy `status.json` shape and the fail-soft parser — pending migration to the read API (Task 7) |
-| `src/lib/derive.ts` | Pure view derivation: `viewerHref`, `campaignHealth`, `isStale`, `pagesLabel`, `shortDate`, `tickSummaryLabel`, `isHttpUrl` |
+| `src/lib/config.ts` | API base and cadence resolution (table below) |
+| `src/lib/api.ts` | Read-API Zod schemas (`JobSummary`, `JobDetail`, `VolumeView`), `fetchJobs`/`fetchJob`, `ApiUnreachable`, and the pure view helpers `isHttpUrl`/`shortDate` |
 | `src/lib/run.ts`, `runlog.ts` | `manifest.json` schema + summary math; run-log grouping and the terminal-line check |
 | `src/lib/theme.svelte.ts` | the one theme store (`ThemeToggle.svelte` on both routes) |
 | `src/lib/components/` | `CampaignCard`, `RunSummaryCard`, `PageGrid`, `PagesTable`, `ThemeToggle` |
 | `src/routes/+page.svelte`, `routes/log/+page.svelte` | the two routes |
 | `src/app.css` | design tokens per theme (AA-checked), reduced-motion |
-| `static/config.js` | the deployment hook (`window.STATUS_URL`) |
-| `static/status.sample.json` | dev fixture — the full current shape, test-guarded |
+| `static/config.js` | the deployment hook (`window.API_BASE`) |
 
 ## Configuration
 
 | Setting | Runtime (deploy) | Build time | Default |
 |---|---|---|---|
-| status document URL (legacy) | `window.STATUS_URL` — set by **overwriting `/config.js`** | `VITE_STATUS_URL` | `http://localhost:30900/htr-results/status/status.json` |
-| campaign page re-fetch | — | `VITE_RELOAD_MS` | `60000` |
+| read API base | `window.API_BASE` — set by **overwriting `/config.js`** | `VITE_API_BASE` | `/api/v1` |
+| campaign list re-fetch | — | `VITE_RELOAD_MS` | `60000` |
 | live-log re-fetch | — | `VITE_LIVE_MS` | `15000` (the wrapper's `LOG_SHIP_SECONDS`) |
 | live-log give-up | — | — | `LIVE_MAX_FAILURES = 20` polls (5 min) |
 
-The status URL is resolved on every fetch, highest first: `window.STATUS_URL`,
-then `VITE_STATUS_URL`, then the default. **The page ships a CSP**
+The API base is resolved on every fetch, highest first: `window.API_BASE`,
+then `VITE_API_BASE`, then the default. **The page ships a CSP**
 (`svelte.config.js`, `kit.csp` in `hash` mode: `script-src 'self'` plus the
 hash of SvelteKit's own init script, `object-src 'none'`, `base-uri 'self'`),
-so a deployment sets `window.STATUS_URL` by serving its own **`/config.js`**
+so a deployment sets `window.API_BASE` by serving its own **`/config.js`**
 — a same-origin file loaded before the app — never by injecting an inline
 `<script>` into `index.html`, which the CSP blocks. The chart does exactly
-that: `templates/viewer.yaml` mounts a ConfigMap-rendered `config.js`
-pointing at `<viewer.statusBase | publicResultsBase>/status/status.json`.
-A CSP header from the web server must not be stricter than the meta tag
-(the browser enforces the intersection); the chart's nginx only adds
-`frame-ancestors 'none'`.
+that: `templates/viewer.yaml` mounts a ConfigMap-rendered `config.js` with
+`window.API_BASE = "/api/v1"`, and its nginx proxies `/api/` to the read
+API's Service — same-origin, so `script-src 'self'` already covers it (no
+`connect-src` directive is set, so fetches are unrestricted by this CSP; the
+only restriction is on what may *execute* as script). A CSP header from the
+web server must not be stricter than the meta tag (the browser enforces the
+intersection); the chart's nginx only adds `frame-ancestors 'none'`.
 
 ## Derivation rules
 
-- **Fail-soft parsing.** The envelope (`generated_at`, `tick_seconds`,
-  `warnings`, `campaigns`) must parse; each campaign and each volume is
-  parsed on its own, and a bad entry degrades to an error row with a
-  warning line under the header while the rest renders. A failed poll keeps
-  the last good document on screen under an alert banner.
-- **URL fields** (`viewer_manifest`, `run_manifest`, `source_manifest`,
-  `thumbnail`, `failure_log`, `run_log`) are accepted only as absolute
-  `http(s)` URLs — anything else becomes `null` plus a warning, so it never
-  reaches an `href` or `src`. The `/log` route applies the same rule to its
-  query parameters.
-- **Statuses.** `done`, `running`, `queued`, `retry`, `deleting`,
-  `needs-attention`, `pending` (rendered "planned"), `unreachable`,
-  `unsupported`; any other value parses as `unknown` with a neutral chip, so
-  a shape it does not recognise cannot blank the page.
-- **`terminal` tag.** A non-null `terminal` (`exit-13`, `capped`) shows as a
-  tag next to the chip; its title says an operator clears it (the attempts
-  record, or a new pipeline id).
-- **Viewer link** — a `done` volume links to its published `viewer_manifest`
-  (results + ALTO overlays); any other state links to its `source_manifest`
-  (the raw scans), both as `uv.html#?manifest=<url>`.
-- **Campaign health** (the card's left accent) — worst volume wins: red if
-  any volume is `needs-attention`/`unreachable`/`unsupported`, blue if any is
-  `running`/`queued`/`retry`/`deleting`, green if every volume is `done`,
-  grey otherwise.
-- **Run log** — `log` links `run_log` into `/log?log=…&manifest=<run_manifest>`;
-  for a volume that is not `done` it adds `live=1`. `failure_log` wins the
-  slot for failed volumes.
-- **Thumbnails** — `thumbnail` is a sized IIIF URL or `null`; `null` and a
-  broken image both render the neutral placeholder square. Images load with
-  `fetchpriority="low"`.
-- **Tick summary** — `tick_summary` renders as one line in the header
-  (`4.1 s · 12 S3 calls · 3 validations · 1 submitted`); every field is
-  optional and `{}`/absent hides the line.
-- **Stale banner** — shown when `generated_at` is older than
-  `3 × tick_seconds` (15 min at the default tick): whatever produced the
-  document is presumed dead, the numbers are historical. There is nothing
-  left that produces this document any more (see the migration note above).
-- **Accessibility** — campaign header and pipeline chip are sibling buttons
-  (no nested `role=button`); AA contrast in both themes; `prefers-reduced-motion`
-  honoured; no horizontal overflow at 390 px.
+- **Fail-hard parsing.** The read API is ours, not an untrusted document:
+  `src/lib/api.ts` parses every response with Zod's `.parse` (not
+  `.safeParse`), so a malformed shape throws instead of degrading a row.
+  `ApiUnreachable` covers a network error and a non-2xx status alike; the
+  page shows one "API unreachable" banner over the last good list. There is
+  no age-based staleness check — every response is computed live from the
+  Kubernetes API, so there is nothing that can go stale the way a
+  reconciler-written document could.
+- **States.** A `VolumeView.state` is `pending`, `active`, `done`, or
+  `failed` — computed by the API from the Job's index sets, not stored
+  anywhere; a `failed` row's `reason` is the wrapper's own termination
+  message, present only while a pod for that index still exists.
+- **Phase.** A campaign's `JobSummary.phase` (`Queued`/`Paused`/`Running`/
+  `Succeeded`/`Failed`) drives the card's left accent: red if `Failed` or
+  any volume is `failed`, blue if `Running`, green if `Succeeded`, grey
+  otherwise.
+- **Log link** — `log?log=<encodeURIComponent(logUrl)>`, plus `&live=1` for
+  a volume whose `state` is not `"done"`. `logUrl` is absolute and
+  bucket-rooted (`<public_results_base>/status/logs/<pipeline>/<id>.txt`,
+  no namespace/S3_PREFIX prefix): the browser has no bucket base URL to
+  resolve a bare key against, so the API builds the full URL — see
+  [Live Run Log](../how-it-works/live-run-log.md).
+- **Open link** — a `done` volume links `iiifUrl` as
+  `uv.html#?manifest=<url>`; other states get no open link (there is no
+  separate pre-run "source manifest" any more — the API only returns
+  results-side URLs).
+- **No thumbnails.** The read API has no per-volume image field; the volume
+  table is id / state / links only.
+- **Paged volumes.** `CampaignCard` fetches its own volumes via `fetchJob`
+  (`offset`/`limit`, default page 200), independently of the campaign list
+  poll on `/`; a "load more" button pages in the next batch when
+  `counts.total` exceeds what has loaded.
+- **Accessibility** — campaign header is a disclosure button; AA contrast in
+  both themes; `prefers-reduced-motion` honoured; no horizontal overflow at
+  390 px.
 
 ## Commands
 
@@ -111,7 +104,7 @@ A CSP header from the web server must not be stricter than the meta tag
 cd frontend
 bun install
 bun run dev        # http://localhost:5173; static/ is served at /
-bun run test       # vitest (pure + component tests, jsdom) — 76 tests
+bun run test       # vitest (pure + component tests, jsdom)
 bun run coverage   # vitest with @vitest/coverage-v8
 bun run check      # svelte-check, strict TypeScript
 bun run lint       # prettier --check
@@ -119,11 +112,7 @@ bun run format     # prettier --write
 bun run build      # static build → dist/, consumed by .docker/uv4-viewer.dockerfile
 ```
 
-To point the dev server at the fixture: `window.STATUS_URL =
-"/status.sample.json"` in the console (the next poll picks it up), or put
-that line in `static/config.js` while you work (don't commit it).
-
 The viewer image (`.docker/uv4-viewer.dockerfile`,
 `nginxinc/nginx-unprivileged`, port 8080) serves this build at `/` and
 Universal Viewer at `/uv.html`; `make viewer-image` stages `dist/` into the
-UV checkout and builds it (the dev fixture is not shipped).
+UV checkout and builds it.

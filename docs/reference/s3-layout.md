@@ -59,9 +59,10 @@ Jobs that still exist.
 
 ## Live status: the read API, not a file
 
-`GET /api/v1/jobs` and `GET /api/v1/jobs/{namespace}/{name}` (D8) replace
-what `status/status.json` used to be — computed on every request from the
-live Job/Pod/ConfigMap state, never cached or persisted anywhere:
+`GET /api/v1/jobs` and `GET /api/v1/jobs/{namespace}/{name}` (D8) are the
+whole story: no status document is written anywhere any more (see the note
+at the top of this page) — every response is computed live from the
+Job/Pod/ConfigMap state, never cached or persisted:
 
 - **Campaign summary**: `namespace`, `name`, `pipeline`, `phase`
   (`Queued`/`Paused`/`Running`/`Succeeded`/`Failed`, derived from the Job's
@@ -71,13 +72,14 @@ live Job/Pod/ConfigMap state, never cached or persisted anywhere:
 - **Per-volume detail** (paged by index, `offset`/`limit`): one row per line
   of the campaign's `volumes.txt` ConfigMap — `index`, `id`, `state`
   (`done`/`failed`/`active`/`pending`), `manifestUrl`/`iiifUrl`/`altoPrefix`
-  (built from `resultsBase`), `logKey`
-  (`status/logs/<pipeline>/<id>.txt`, unconditional), and `reason` — the
-  failed pod's own termination message — present only while a pod for that
-  index still exists.
+  (built from `resultsBase`), `logUrl` — an absolute URL
+  (`<public_results_base>/status/logs/<pipeline>/<id>.txt`, unconditional;
+  bucket-root, no namespace/S3_PREFIX prefix, since the browser has no
+  bucket base URL to resolve a bare key against) — and `reason` — the failed
+  pod's own termination message — present only while a pod for that index
+  still exists.
 - **Failures**: up to 50 of the most recent failed-with-a-reason rows,
   included in the detail response.
 
 Full field derivation: [`packages/api/src/htrflow_api/projection.py`](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/packages/api/src/htrflow_api/projection.py).
-The frontend's own consumption of this shape is being migrated in B63 Task 7
-— see [Campaign Browser](frontend.md).
+The frontend consumes this shape directly — see [Campaign Browser](frontend.md).

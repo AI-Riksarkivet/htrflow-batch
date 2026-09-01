@@ -6,7 +6,7 @@
   // nothing); LIVE_MAX_FAILURES stops a log that never appears from
   // spinning forever. Both documented in $lib/config.
   import { LIVE_MAX_FAILURES, LIVE_MS } from "$lib/config.js";
-  import { isHttpUrl, shortDate } from "$lib/derive.js";
+  import { isHttpUrl, shortDate } from "$lib/api.js";
   import {
     isTerminalManifest,
     runManifestSchema,

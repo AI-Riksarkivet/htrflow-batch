@@ -44,9 +44,9 @@ rustfs:
   # browser links them, so the PoC keeps them public; they can carry a
   # tokenised private IIIF URL on failure (audit X14) — set false and serve
   # the log viewer through an authenticated proxy to close that.
-  # attempts.json, validation.json, failures/* and warmup/* always need
-  # credentials; <pipeline>/<volume>/*, sources/* and status/status.json
-  # are always anonymous-readable (the viewer fetches them directly).
+  # attempts.json, validation.json, volumes.json, failures/* and warmup/*
+  # always need credentials; <pipeline>/<volume>/* and sources/* are always
+  # anonymous-readable (the viewer fetches them directly).
   publicLogs: true
 
 registry:

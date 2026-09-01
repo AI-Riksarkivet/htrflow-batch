@@ -58,8 +58,9 @@ Renders a ServiceAccount, a Role (get/list/watch on `jobs`, `pods`,
 the `htrflow-api` Deployment + Service (ClusterIP, no NodePort — reached
 only through the viewer's `/api/` proxy). It is the one pod in this chart
 that keeps its ServiceAccount token: it is the Kubernetes API client the
-status page reads through, replacing the old CronJob controller's
-`status.json`. Always rendered — there is no `enabled` flag.
+campaign browser reads through, computing everything live — there is no
+status document written by anything in this system any more. Always
+rendered — there is no `enabled` flag.
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -116,8 +117,8 @@ pods get no HF Hub egress at all — only the warm-up pod does.
 | `viewer.securityHeaders.enabled` | `true` | nginx sends `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Content-Security-Policy: frame-ancestors 'none'` (script/style/connect sources stay governed by the build's own CSP meta) |
 
 The viewer's `config.js` (served same-origin, so it passes the SPA's CSP)
-sets `window.API_BASE = "/api/v1"` — the frontend's move onto that from
-`window.STATUS_URL` is B63 Task 7 ([Campaign Browser](frontend.md)).
+sets `window.API_BASE = "/api/v1"`, which the frontend resolves on every
+fetch (see [Campaign Browser](frontend.md)).
 
 ## Removed in 0.3.0
 
