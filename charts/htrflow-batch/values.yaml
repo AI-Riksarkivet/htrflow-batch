@@ -84,8 +84,10 @@ security:
   requireModelRevision: false
   # Pod Security Admission level `make psa-labels` enforces on the namespace
   # (warn/audit are always `restricted`). The platform pods are restricted-
-  # clean; `baseline` is only needed while charts/htrflow-devstack's
-  # gitDaemon runs as root.
+  # clean. `baseline` was historically needed for charts/htrflow-devstack's
+  # git daemon (removed — it ran as root); nothing left in either chart
+  # needs it. Kept as the default here rather than flipped in this fix, but
+  # `restricted` is worth trying now.
   psaEnforce: baseline       # baseline | restricted
   # Tag references (`:dev`) for viewer.image / api.image. Off = the chart
   # refuses anything that is not `@sha256:`-pinned: anyone who can push to

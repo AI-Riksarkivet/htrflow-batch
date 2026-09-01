@@ -81,12 +81,23 @@ spec:
             - name: HTRFLOW_LEGACY_LAYOUT
               value: {{ .Values.legacyLayout | ternary "true" "false" | quote }}
             # The API acts on its own namespace; the downward API keeps it
-            # correct whatever --namespace the release uses.
+            # correct whatever --namespace the release uses. Deliberately
+            # single-valued today (one namespace, this release's) — the
+            # comma-separated list packages/api/src/htrflow_api/kube.py
+            # already parses is for a future multi-tenant deployment, not
+            # anything this chart wires up yet.
             - name: HTRFLOW_NAMESPACES
               valueFrom:
                 fieldRef: { fieldPath: metadata.namespace }
           ports:
             - containerPort: 8081
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8081 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8081 }
+            initialDelaySeconds: 10
+            periodSeconds: 30
           volumeMounts:
             - name: tmp
               mountPath: /tmp

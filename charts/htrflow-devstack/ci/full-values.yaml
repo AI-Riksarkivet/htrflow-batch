@@ -17,6 +17,3 @@ registry:
 
 nvidiaDevicePlugin:
   enabled: true
-
-gitDaemon:
-  enabled: true
