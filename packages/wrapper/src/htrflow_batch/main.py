@@ -55,9 +55,11 @@ class Terminated(BaseException):
 
 
 class RunState:
-    """What the signal handler needs to see: the stage the run is in."""
+    """Stage, plus `terminating`: success/failure/SIGTERM/MAX_SECONDS race for it."""
 
-    stage: str = "setup"
+    def __init__(self) -> None:
+        self.stage = "setup"
+        self.terminating = threading.Lock()
 
 
 def _set_signal(signum: int, handler):
@@ -86,7 +88,10 @@ def _http_client() -> httpx.Client:
     return httpx.Client(max_redirects=5)
 
 
-def _terminate(env: Mapping[str, str], reason: dict) -> None:
+def _terminate(env: Mapping[str, str], reason: dict, state: "RunState") -> bool:
+    """Writes the log iff it wins state.terminating; returns whether it wrote."""
+    if not state.terminating.acquire(blocking=False):
+        return False
     path = env.get("TERMINATION_LOG_PATH", "/dev/termination-log")
     error = reason.get("error")
     if isinstance(error, str):
@@ -101,6 +106,7 @@ def _terminate(env: Mapping[str, str], reason: dict) -> None:
         Path(path).write_text(json.dumps(reason))
     except OSError:
         log.warning("could not write termination log to %s", path)
+    return True
 
 
 #: Env vars the Job spec points into the tmpfs workdir (docs: security, D14).
@@ -165,7 +171,9 @@ def main(
         # Same shape as the other failure lines: the run viewer's terminal-line
         # regex (frontend runlog.ts) is the contract that stops live polling.
         log.error("transient failure in %s: SIGTERM, shutting down", state.stage)
-        _terminate(env, {"stage": state.stage, "permanent": False, "error": "SIGTERM"})
+        reason = {"stage": state.stage, "permanent": False, "error": "SIGTERM"}
+        if not _terminate(env, reason, state):
+            return EXIT_TRANSIENT  # MAX_SECONDS already won the race
         capture.finish()
         _hard_exit(EXIT_SIGTERM)
         return EXIT_SIGTERM  # reached only when _hard_exit is stubbed (tests)
@@ -188,14 +196,12 @@ def _main(
     # of holding the interpreter (executor workers are joined at exit).
     stop = threading.Event()
     timer: Optional[threading.Timer] = None
-    # cancel() can't stop an in-flight callback; whichever side acquires first wins.
-    terminating = threading.Lock()
     try:
         cfg = Config.from_env(env)
         prepare_writable_dirs(env)
         store = ResultStore(cfg)
         capture.start_shipping(store.put_run_log, cfg.log_ship_seconds)
-        timer = _start_max_seconds_timer(cfg, env, state, capture, terminating)
+        timer = _start_max_seconds_timer(cfg, env, state, capture)
         workdir = Path(cfg.workdir)
         input_dir = workdir / "input"
         client = _http_client()
@@ -367,20 +373,20 @@ def _main(
         # (downloaded images, local ALTO/PAGE outputs) is intentionally left
         # in place for postmortem inspection.
         shutil.rmtree(workdir, ignore_errors=True)
-        if not terminating.acquire(blocking=False):
+        if not state.terminating.acquire(blocking=False):
             return EXIT_TRANSIENT  # MAX_SECONDS already won the race
         return EXIT_OK
     except (ConfigError, ManifestError, SetupError, ValueError) as e:
         stop.set()
         stage = state.stage
         log.error("permanent failure in %s: %s", stage, e)
-        _terminate(env, {"stage": stage, "permanent": True, "error": str(e)})
-        return EXIT_PERMANENT
+        reason = {"stage": stage, "permanent": True, "error": str(e)}
+        return EXIT_PERMANENT if _terminate(env, reason, state) else EXIT_TRANSIENT
     except Exception as e:
         stop.set()
         stage = state.stage
         log.error("transient failure in %s: %s\n%s", stage, e, traceback.format_exc())
-        _terminate(env, {"stage": stage, "permanent": False, "error": str(e)})
+        _terminate(env, {"stage": stage, "permanent": False, "error": str(e)}, state)
         return EXIT_TRANSIENT
     finally:
         if timer is not None:
@@ -388,11 +394,7 @@ def _main(
 
 
 def _start_max_seconds_timer(
-    cfg: Config,
-    env: Mapping[str, str],
-    state: RunState,
-    capture: LogCapture,
-    terminating: threading.Lock,
+    cfg: Config, env: Mapping[str, str], state: RunState, capture: LogCapture
 ) -> Optional[threading.Timer]:
     """MAX_SECONDS: a per-volume wall-clock budget (docs: wrapper). Fires in
     its own thread; _hard_exit (os._exit) kills the process outright from
@@ -401,12 +403,10 @@ def _start_max_seconds_timer(
         return None
 
     def on_expiry() -> None:
-        if not terminating.acquire(blocking=False):
-            return  # the run already completed successfully; nothing to do
+        reason = {"stage": state.stage, "permanent": False, "error": "MAX_SECONDS"}
+        if not _terminate(env, reason, state):
+            return  # success/failure/SIGTERM already won the race
         log.error("transient failure in %s: MAX_SECONDS exceeded", state.stage)
-        _terminate(
-            env, {"stage": state.stage, "permanent": False, "error": "MAX_SECONDS"}
-        )
         capture.finish()
         _hard_exit(EXIT_TRANSIENT)
 
