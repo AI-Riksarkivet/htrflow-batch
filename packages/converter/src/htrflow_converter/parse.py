@@ -1,9 +1,4 @@
-"""Campaign/pipeline YAML -> domain types, with validation (spec §3, docs/
-superpowers/specs/2026-09-01-indexed-jobs-design.md). Ported (not imported —
-that package is deleted in Task 6) from
-``packages/reconciler/src/htrflow_reconciler/parse.py``. Every problem
-across every file is collected before raising once, so fixing one file never
-hides another's problem."""
+"""Campaign/pipeline YAML -> domain types, with validation (spec §3)."""
 
 from __future__ import annotations
 
@@ -16,35 +11,48 @@ from pydantic import ValidationError as _PydanticValidationError
 
 from .models import Campaign, ConverterConfig, Pipeline, Volume
 
-# Volume ids reach Job names and ConfigMap lines: alphanumeric at both ends,
-# no more than 63 chars.
 _VOLUME_ID_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?\Z")
-
-# Pipeline ids and campaign names become ConfigMap/Job names: DNS-1123
-# labels (lowercase, no underscores).
 _NAME_RE = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?\Z")
-
 _IMAGE_RE = re.compile(r"[a-z0-9./:-]+@sha256:[0-9a-f]{64}\Z")
-
 _REVISION_RE = re.compile(r"[0-9a-f]{40}\Z")
 
 
+class ValidationError(Exception):
+    def __init__(self, problems: list[str]) -> None:
+        super().__init__("; ".join(problems))
+        self.problems = problems
+
+
+def _fail(problems: list[str], msg: str) -> None:
+    problems.append(msg)
+
+
+def _safe_name(stem: str, problems: list[str], what: str) -> str | None:
+    if not _NAME_RE.match(stem):
+        return _fail(problems, f"{stem}: unsafe {what}: {stem!r}")
+    return stem
+
+
+def _read_yaml_mapping(path: Path, problems: list[str], what: str) -> dict | None:
+    try:
+        doc = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as e:
+        return _fail(problems, f"{path.stem}: bad {what} yaml: {e}")
+    if not isinstance(doc, dict):
+        return _fail(problems, f"{path.stem}: {what} file is not a mapping")
+    return doc
+
+
 def _repo_allowed(image: str, allowed: list[str]) -> bool:
-    """Path-boundary prefix match: ``ghcr.io/riksarkivet`` admits
-    ``ghcr.io/riksarkivet/x`` but not ``ghcr.io/riksarkivet-evil/x``."""
     repo = image.split("@", 1)[0]
-    for entry in allowed:
-        entry = entry.strip().rstrip("/")
-        if not entry:
-            continue
-        if repo == entry or repo.startswith(entry + "/"):
-            return True
-    return False
+    return any(
+        repo == e or repo.startswith(e + "/")
+        for e in (a.strip().rstrip("/") for a in allowed)
+        if e
+    )
 
 
 def _check_revisions(pid: str, steps: list, problems: list[str]) -> None:
-    """One problem per model missing a 40-hex revision (ported from the
-    reconciler's ``_check_revisions``)."""
     for step in steps:
         if not isinstance(step, dict):
             continue
@@ -53,20 +61,11 @@ def _check_revisions(pid: str, steps: list, problems: list[str]) -> None:
         model = ms.get("model") if isinstance(ms, dict) else None
         if not isinstance(ms, dict) or not model:
             continue
-        rev = str(ms.get("revision") or "")
-        if not _REVISION_RE.match(rev):
+        if not _REVISION_RE.match(str(ms.get("revision") or "")):
             problems.append(
                 f"{pid}: model {model!r} needs a 40-hex revision "
                 "(require_model_revision)"
             )
-
-
-class ValidationError(Exception):
-    """Every problem found while loading a campaigns repo, not just the first."""
-
-    def __init__(self, problems: list[str]) -> None:
-        super().__init__("; ".join(problems))
-        self.problems = problems
 
 
 def _http_url(value: str, what: str) -> str | None:
@@ -81,38 +80,26 @@ def _volume(
 ) -> Volume | None:
     if isinstance(entry, str):
         if not _VOLUME_ID_RE.match(entry):
-            problems.append(f"{where}: unsafe volume id: {entry!r}")
-            return None
+            return _fail(problems, f"{where}: unsafe volume id: {entry!r}")
         return Volume(id=entry, manifest=source_template.format(ref=entry))
-    if not isinstance(entry, dict):
-        problems.append(f"{where}: volume entry needs an id: {entry!r}")
-        return None
-    if "id" not in entry:
-        problems.append(f"{where}: volume entry needs an id: {entry!r}")
-        return None
+    if not isinstance(entry, dict) or "id" not in entry:
+        return _fail(problems, f"{where}: volume entry needs an id: {entry!r}")
     vid = str(entry.get("id"))
     if not _VOLUME_ID_RE.match(vid):
-        problems.append(f"{where}: unsafe volume id: {vid!r}")
-        return None
+        return _fail(problems, f"{where}: unsafe volume id: {vid!r}")
     manifest = entry.get("manifest")
     images_raw = entry.get("images")
     images = images_raw if isinstance(images_raw, list) else []
-    has_images = len(images) > 0
-    if (manifest is not None) == has_images:
-        problems.append(f"{where}: volume {vid!r} needs manifest or images")
-        return None
+    if (manifest is not None) == bool(images):
+        return _fail(problems, f"{where}: volume {vid!r} needs manifest or images")
     if manifest is not None:
         err = _http_url(str(manifest), f"{where}: volume {vid!r} manifest")
-        if err:
-            problems.append(err)
-            return None
-        return Volume(id=vid, manifest=str(manifest))
+        return _fail(problems, err) if err else Volume(id=vid, manifest=str(manifest))
     urls: list[str] = []
     for u in images:
         err = _http_url(str(u), f"{where}: volume {vid!r} images")
         if err:
-            problems.append(err)
-            return None
+            return _fail(problems, err)
         urls.append(str(u))
     return Volume(id=vid, images=urls)
 
@@ -120,22 +107,15 @@ def _volume(
 def _parse_campaign(
     path: Path, source_template: str, problems: list[str]
 ) -> Campaign | None:
-    name = path.stem
-    if not _NAME_RE.match(name):
-        problems.append(f"{name}: unsafe campaign name: {name!r}")
+    name = _safe_name(path.stem, problems, "campaign name")
+    if name is None:
         return None
-    try:
-        doc = yaml.safe_load(path.read_text())
-    except yaml.YAMLError as e:
-        problems.append(f"{name}: bad campaign yaml: {e}")
-        return None
-    if not isinstance(doc, dict):
-        problems.append(f"{name}: campaign file is not a mapping")
+    doc = _read_yaml_mapping(path, problems, "campaign")
+    if doc is None:
         return None
     pipeline_id = str(doc.get("pipeline") or "")
     if not pipeline_id:
-        problems.append(f"{name}: campaign needs pipeline:")
-        return None
+        return _fail(problems, f"{name}: campaign needs pipeline:")
     local: list[str] = []
     volumes: list[Volume] = []
     seen: set[str] = set()
@@ -159,10 +139,9 @@ def _parse_campaign(
         except (TypeError, ValueError):
             window = None
         if window is None or window < 1:
-            problems.append(
-                f"{name}: window must be a positive integer: {window_raw!r}"
+            return _fail(
+                problems, f"{name}: window must be a positive integer: {window_raw!r}"
             )
-            return None
     return Campaign(
         name=name,
         pipeline=pipeline_id,
@@ -175,33 +154,27 @@ def _parse_campaign(
 def _parse_pipeline(
     path: Path, cfg: ConverterConfig, problems: list[str]
 ) -> Pipeline | None:
-    pid = path.stem
-    if not _NAME_RE.match(pid):
-        problems.append(f"{pid}: unsafe pipeline id: {pid!r}")
+    pid = _safe_name(path.stem, problems, "pipeline id")
+    if pid is None:
         return None
-    try:
-        doc = yaml.safe_load(path.read_text())
-    except yaml.YAMLError as e:
-        problems.append(f"{pid}: bad pipeline yaml: {e}")
-        return None
-    if not isinstance(doc, dict):
-        problems.append(f"{pid}: pipeline file is not a mapping")
+    doc = _read_yaml_mapping(path, problems, "pipeline")
+    if doc is None:
         return None
     image = str(doc.get("image") or "")
     if not _IMAGE_RE.match(image):
-        problems.append(f"{pid}: image must be digest-pinned: {image!r}")
-        return None
+        return _fail(problems, f"{pid}: image must be digest-pinned: {image!r}")
     if cfg.allowed_image_repos and not _repo_allowed(image, cfg.allowed_image_repos):
-        problems.append(f"{pid}: image {image!r} is not under an allowed repository")
-        return None
+        return _fail(
+            problems, f"{pid}: image {image!r} is not under an allowed repository"
+        )
     steps = doc.get("steps")
     if not isinstance(steps, list):
-        problems.append(f"{pid}: missing steps")
-        return None
+        return _fail(problems, f"{pid}: missing steps")
     revision = str(doc.get("model_revision") or "")
     if revision and not _REVISION_RE.match(revision):
-        problems.append(f"{pid}: model_revision must be 40 hex chars: {revision!r}")
-        return None
+        return _fail(
+            problems, f"{pid}: model_revision must be 40 hex chars: {revision!r}"
+        )
     if cfg.require_model_revision:
         step_problems: list[str] = []
         _check_revisions(pid, steps, step_problems)
@@ -234,8 +207,6 @@ def _load_config(path: Path, problems: list[str]) -> ConverterConfig:
 def load(
     campaigns_dir: Path, pipelines_dir: Path, config_path: Path
 ) -> tuple[list[Campaign], dict[str, Pipeline], ConverterConfig]:
-    """Load and validate a campaigns repo. Raises :class:`ValidationError`
-    with every problem found, else returns (campaigns, pipelines by id, cfg)."""
     problems: list[str] = []
     cfg = _load_config(Path(config_path), problems)
 
