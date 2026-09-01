@@ -5,6 +5,11 @@
 # defaults.
 namespace: htr-batch
 queue: htr-batch
+
+# Job parallelism, AND the cap every campaign's own `window:` is clamped to.
+# Set it to what the ClusterQueue's nvidia.com/gpu quota can actually admit:
+# rendering more and letting Kueue's partial admission shrink it makes the
+# rendered file un-appliable afterwards (docs: reference/campaign-yaml.md).
 window: 20
 s3_secret: htr-batch-s3
 data_pvc: htr-test-data

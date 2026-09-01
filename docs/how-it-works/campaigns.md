@@ -104,6 +104,8 @@ volumes:
   Old results stay untouched and comparable side by side.
 - No per-volume pipeline overrides. A volume needing different treatment
   goes in its own campaign file.
+- `window:` is clamped to `converter.yaml`'s `window`, the per-cluster cap:
+  set that to what the ClusterQueue's GPU quota can actually admit.
 - Re-running with a changed recipe means a **new pipeline id** and a new
   campaign file — `demo-v1` and `demo-v2` results sit side by side under
   different S3 prefixes.
@@ -170,14 +172,17 @@ Per campaign `campaigns/<name>.yaml`:
 - `ConfigMap campaign-<name>` — `volumes.txt`, one line per index:
   `<id>\t<manifest-url>` or `<id>\timages:<url1>,<url2>,…`.
 - `Job <name>` — `completionMode: Indexed`, `completions` = number of
-  volumes, `parallelism` = `window`, `backoffLimitPerIndex: 3`,
+  volumes, `parallelism` = `min(campaign window, converter window)`,
+  `backoffLimitPerIndex: 3`,
   `maxFailedIndexes` = completions, a `podFailurePolicy` (exit 13 →
   `FailIndex`; `DisruptionTarget` → `Ignore`), `ttlSecondsAfterFinished:
   86400`, Kueue labels (`kueue.x-k8s.io/queue-name`, plus a
-  `priority-class` label when `priority:` is set) and, when `parallelism`
-  is above 1, the annotation `kueue.x-k8s.io/job-min-parallelism: "1"`
-  (Kueue's webhook validates it against `[0, parallelism-1]` and rejects a
-  `parallelism: 1` Job that carries it). Each pod runs
+  `priority-class` label when `priority:` is set). **No
+  `kueue.x-k8s.io/job-min-parallelism`**: partial admission rewrites
+  `spec.parallelism` on the live Job, and Kueue's own webhook then rejects
+  every later apply of the unchanged rendered file. `parallelism` is instead
+  clamped at render time to `converter.yaml`'s `window`, which is the
+  per-cluster cap. Each pod runs
   `/bin/sh -c` args that read line `$JOB_COMPLETION_INDEX+1` of
   `/campaign/volumes.txt`, export `VOLUME_REF` and either
   `IIIF_MANIFEST_URL` or `IMAGES`, then `exec python -m htrflow_batch`; an

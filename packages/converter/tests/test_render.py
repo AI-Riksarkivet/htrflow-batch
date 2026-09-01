@@ -67,7 +67,7 @@ def test_campaign_job_fields_per_global_constraints():
         "operator": "In",
         "values": [13],
     }
-    assert job["metadata"]["annotations"] == {"kueue.x-k8s.io/job-min-parallelism": "1"}
+    assert "annotations" not in job["metadata"]  # no partial admission (B63)
     labels = job["metadata"]["labels"]
     assert labels["app"] == "htrflow-batch"
     assert labels["kueue.x-k8s.io/queue-name"] == cfg.queue
@@ -243,22 +243,28 @@ def test_kubeconform_strict_passes_on_rendered_files(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_min_parallelism_annotation_only_above_parallelism_one():
-    """Kueue's job webhook validates ``job-min-parallelism`` against
-    ``[0, parallelism-1]`` and rejects the whole Job when that range is empty.
-    A one-GPU PoC (``window: 1``) hit exactly that on apply:
-    ``metadata.annotations[kueue.x-k8s.io/job-min-parallelism]: Invalid value:
-    1: should be between 0 and 0``."""
+def test_window_is_capped_by_the_converter_window():
+    """`converter.yaml: window` is the per-cluster cap, not merely a default:
+    a campaign may ask for less concurrency, never more. Rendering more than
+    the queue can admit used to be handled by Kueue's partial admission, which
+    rewrites `spec.parallelism` on the live Job and makes every later apply of
+    the unchanged rendered file fail its own webhook."""
     kyrk, demo, cfg = _kyrk()
-    serial = kyrk.model_copy(update={"window": 1})
-    job = render.campaign_objects(serial, demo, cfg)[1]
-    assert job["spec"]["parallelism"] == 1
-    assert "annotations" not in job["metadata"]
+    assert cfg.window == 10
+    over = kyrk.model_copy(update={"window": 40})
+    assert render.campaign_objects(over, demo, cfg)[1]["spec"]["parallelism"] == 10
+    under = kyrk.model_copy(update={"window": 2})
+    assert render.campaign_objects(under, demo, cfg)[1]["spec"]["parallelism"] == 2
+    unset = kyrk.model_copy(update={"window": None})
+    assert render.campaign_objects(unset, demo, cfg)[1]["spec"]["parallelism"] == 10
 
-    parallel = kyrk.model_copy(update={"window": 4})
-    job = render.campaign_objects(parallel, demo, cfg)[1]
-    assert job["spec"]["parallelism"] == 4
-    assert job["metadata"]["annotations"] == {"kueue.x-k8s.io/job-min-parallelism": "1"}
+
+def test_no_job_carries_the_partial_admission_annotation():
+    kyrk, demo, cfg = _kyrk()
+    for obj in render.pipeline_objects(demo, cfg) + render.campaign_objects(
+        kyrk, demo, cfg
+    ):
+        assert "kueue.x-k8s.io/job-min-parallelism" not in str(obj["metadata"])
 
 
 def test_every_rendered_object_carries_the_prune_selector():

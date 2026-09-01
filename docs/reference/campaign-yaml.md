@@ -16,7 +16,7 @@ rejected. All fields are optional — the values below are the defaults.
 ```yaml title="converter.yaml"
 namespace: htr-batch              # Kubernetes namespace campaigns render into
 queue: htr-batch                  # Kueue LocalQueue name
-window: 20                        # default Job parallelism; a campaign's own `window:` overrides it
+window: 20                        # Job parallelism, and the CAP a campaign's own `window:` is clamped to
 s3_secret: htr-batch-s3           # Secret carrying S3 credentials
 data_pvc: htr-test-data           # PVC mounted as the model cache
 runtime_class: nvidia             # RuntimeClass for GPU pods
@@ -37,7 +37,7 @@ require_model_revision: false
 ```yaml
 pipeline: demo-v1          # required: a pipeline id from pipelines/
 priority: ""                # optional: a Kueue PriorityClass name
-window: 20                   # optional: overrides converter.yaml's window for this campaign
+window: 20                   # optional: this campaign's parallelism, clamped to converter.yaml's window
 volumes:
   # 1) Bare string: a Riksarkivet reference code. The manifest URL is
   #    templated from converter.yaml's source_template.
@@ -65,6 +65,7 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | Volume ids match `[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?` — alphanumeric at both ends, ≤63 chars | Validation error (`unsafe volume id`). This is the Kubernetes **label-value** alphabet, not a DNS-1123 label: uppercase is allowed |
 | Volume ids are unique within a campaign | Validation error (`duplicate volume id`) |
 | `window:`, when set, is a positive integer | Validation error |
+| `window:` above `converter.yaml`'s `window` | Silently clamped to it at render time — `converter.yaml`'s value is the per-cluster cap and should be set to what the ClusterQueue's GPU quota can actually admit. Rendering more and letting Kueue's partial admission shrink it on the live Job is what this replaced: Kueue then rewrites `spec.parallelism` and rejects every later apply of the unchanged rendered file (`cannot change when partial admission is enabled and the job is not suspended`) |
 | **A campaign whose rendered Job already exists in `rendered/` with a different volume list is rejected** | `render` prints `campaign <name> is append-only: create a new campaign` and exits non-zero — Job `completions` is immutable once created, so adding volumes means a new campaign file |
 
 The campaign file stem becomes the Job name and the `htrflow.riksarkivet.se/campaign`
