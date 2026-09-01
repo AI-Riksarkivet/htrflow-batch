@@ -2,18 +2,16 @@
 
 **PoC-only.** This chart renders in-cluster stand-ins for infrastructure a
 real deployment gets from elsewhere: an S3-compatible object store
-(RustFS), a container image registry, the NVIDIA device plugin +
-`RuntimeClass`, and a git daemon for a campaigns repo. Every component is
-off by default (`rustfs.enabled`, `registry.enabled`,
-`nvidiaDevicePlugin.enabled`, `gitDaemon.enabled`) — nothing renders on a
+(RustFS) and a container image registry, plus the NVIDIA device plugin +
+`RuntimeClass`. Every component is off by default (`rustfs.enabled`,
+`registry.enabled`, `nvidiaDevicePlugin.enabled`) — nothing renders on a
 plain `helm install`.
 
 It exists to reproduce the [htrflow-batch](../htrflow-batch) chart's PoC on
 a bare k3s node without hand-applied manifests. **Do not install this on a
 cluster with real data or real S3 credentials.** None of these objects are
-production-shaped: the registry is unauthenticated, the git daemon runs
-part-root, RustFS's console (when enabled) has no auth in front of it
-beyond the root credential.
+production-shaped: the registry is unauthenticated, RustFS's console (when
+enabled) has no auth in front of it beyond the root credential.
 
 ## Split from htrflow-batch (0.3.0)
 
@@ -27,6 +25,18 @@ the other way, into htrflow-batch's `security.allowTagImages`, because it
 gates htrflow-batch's own control-plane images (`viewer.image`, `api.image`),
 not anything here.
 
+**No git daemon.** The original `devstack-gitdaemon.yaml` served a bare
+campaigns repo over `git://` for the GitOps reconciler to poll. The
+reconciler is gone as of htrflow-batch 0.3.0 (B63): campaigns are Indexed
+Jobs rendered by `packages/converter` and applied with `kubectl apply` (or
+committed to a repo Argo CD watches) — nothing in the platform reads `git://`
+any more, so the daemon had no consumer left and was deleted rather than
+carried forward as dead weight (it was briefly re-added with a broadened,
+consumer-less NetworkPolicy in an earlier draft of this chart; removed on
+review). If you need an in-cluster clone of a campaigns repo again for some
+other reason, reintroduce it deliberately with an actual consumer in mind,
+not by reverting this chart.
+
 ## Installing
 
 Install into the **same namespace** as the htrflow-batch release — the two
@@ -39,14 +49,14 @@ only by naming convention:
   platform's pods already expect.
 - htrflow-batch's NetworkPolicies (`network.defaultDeny`) apply
   namespace-wide; this chart renders its own ingress/egress allows for each
-  pod it creates in that namespace (RustFS, RustFS-init, the git daemon) so
-  they still work under that default deny. The registry lives in its own
-  `registry` namespace and is unaffected by it.
+  pod it creates in that namespace (RustFS, RustFS-init) so they still work
+  under that default deny. The registry lives in its own `registry`
+  namespace and is unaffected by it.
 
 ```bash
 helm install htr-devstack charts/htrflow-devstack -n htr-batch --create-namespace \
   --set rustfs.enabled=true --set registry.enabled=true \
-  --set nvidiaDevicePlugin.enabled=true --set gitDaemon.enabled=true
+  --set nvidiaDevicePlugin.enabled=true
 ```
 
 `make install-devstack` wraps this with the repo-root `.env` constants
@@ -58,18 +68,16 @@ smoke campaign).
 ## Adopting hand-applied resources
 
 Helm refuses to manage an object it did not create. On a cluster where the
-`nvidia` RuntimeClass, the kube-system device-plugin DaemonSet or a
-`git-daemon` Deployment/Service were applied by hand, either keep them
-outside this chart (`nvidiaDevicePlugin.enabled=false`,
-`gitDaemon.enabled=false`) or adopt them once before enabling the
-corresponding value:
+`nvidia` RuntimeClass or the kube-system device-plugin DaemonSet were
+applied by hand, either keep them outside this chart
+(`nvidiaDevicePlugin.enabled=false`) or adopt them once before enabling the
+value:
 
 ```bash
 kubectl -n kube-system annotate daemonset nvidia-device-plugin \
   meta.helm.sh/release-name=htr-devstack meta.helm.sh/release-namespace=htr-batch --overwrite
 kubectl -n kube-system label daemonset nvidia-device-plugin app.kubernetes.io/managed-by=Helm --overwrite
-# same two commands for: runtimeclass nvidia (cluster-scoped, no -n);
-# -n htr-batch deployment git-daemon + service git-daemon
+# same two commands for: runtimeclass nvidia (cluster-scoped, no -n)
 ```
 
 ## RustFS: credentials, buckets, policy (D19)
@@ -82,8 +90,8 @@ kubectl -n kube-system label daemonset nvidia-device-plugin app.kubernetes.io/ma
 - **Console** — off by default (`RUSTFS_CONSOLE_ENABLE=false`, no NodePort);
   `rustfs.console.enabled=true` exposes it on `rustfs.console.nodePort`.
 - **Buckets** — the `rustfs-init` Helm hook Job (post-install/upgrade,
-  `rustfs.init`) creates `s3.bucket` (and `gitDaemon.bucket`, credentials
-  only), applies the bucket policy and CORS, idempotently.
+  `rustfs.init`) creates `s3.bucket`, applies the bucket policy and CORS,
+  idempotently.
 - **Anonymous read is split** (audit X14): `<pipeline>/<volume>/*`,
   `sources/*` and `status/status.json` are always anonymous (the viewer
   fetches them directly); `status/attempts.json`, `status/validation.json`,
@@ -95,17 +103,6 @@ kubectl -n kube-system label daemonset nvidia-device-plugin app.kubernetes.io/ma
   `Deny` to the root credential too and ignores anonymous-only conditions
   (verified 2026-08-26); `scripts/compose_init.py` renders the same shape
   for the compose stack. Listing stays denied.
-
-## git daemon
-
-Historically fed the GitOps reconciler, which polled it over `git://`. The
-reconciler is gone as of htrflow-batch 0.3.0 (B63): campaigns are rendered
-by `packages/converter` and `kubectl apply`d (or committed to a repo Argo
-CD watches), so nothing in the platform talks to this daemon any more. It is
-kept here as a convenience for anyone who still wants an in-cluster clone of
-a campaigns repo (e.g. to keep image pins registry-local) — its
-NetworkPolicy allows any pod in the namespace to reach it on 9418, not a
-fixed consumer.
 
 ## Sizing (O18)
 

@@ -2,6 +2,12 @@
 # default. Install into the SAME namespace as the htrflow-batch release (the
 # two charts share no Helm values — they wire together by naming
 # convention only, documented per key below) — see README.md.
+#
+# No git daemon here (there was one through B63 Task 5's first draft):
+# nothing in the platform reads git:// any more — campaigns are Indexed
+# Jobs rendered by packages/converter and applied with `kubectl`, not
+# fetched in-cluster by a reconciler — so it had no consumer and was
+# removed rather than kept as dead weight.
 
 # Must match charts/htrflow-batch's `s3.bucket` / `s3.existingSecret`
 # defaults (both default to the same names) so the Secret and bucket this
@@ -28,8 +34,8 @@ rustfs:
   storage:
     size: 5Gi
     storageClass: local-path
-  # Bucket setup Job (Helm post-install/upgrade hook): creates s3.bucket
-  # (and gitDaemon.bucket), sets the anonymous-read policy and CORS.
+  # Bucket setup Job (Helm post-install/upgrade hook): creates s3.bucket,
+  # sets the anonymous-read policy and CORS.
   init:
     enabled: true
     image: docker.io/amazon/aws-cli@sha256:f0dcd994da5c36ab09becf4259bba4c45ed4ecfd03d51c701912f4d8425b2d49
@@ -65,20 +71,3 @@ nvidiaDevicePlugin:
   # first (see README, "Adopting hand-applied resources").
   enabled: false
   image: nvcr.io/nvidia/k8s-device-plugin@sha256:25cc340fe6fd53c101e16fc452f503e7a92c219c64a80ed5381784b522dbbf77
-
-# In-cluster `git://` daemon serving a bare campaigns repo seeded from the
-# RustFS bucket (`<bucket>/<repo>.git`, pushed with `aws s3 sync` after
-# `git update-server-info`; git:// is what gives a clone `--depth 1`).
-# Historically fed the GitOps reconciler (removed in B63); kept here as a
-# PoC convenience for anyone still cloning the campaigns repo in-cluster —
-# nothing in charts/htrflow-batch talks to it any more (D12: campaigns are
-# rendered by packages/converter and `kubectl apply`d, not fetched by a
-# controller). PoC-only: alpine/git ships no git-daemon, so the pod installs
-# it at start (root, writable rootfs, egress to the Alpine CDN) — the one
-# pod in the namespace that is not restricted-clean.
-gitDaemon:
-  enabled: false
-  image: docker.io/alpine/git@sha256:6f8eae2205a85c51106a9650e574a37fb1d5e4f645e5f6ea57cb57b9462cd4cf
-  bucket: git-repos
-  repo: campaigns-local
-  seedUrl: ""            # default http://rustfs.<ns>.svc.cluster.local:9000/<bucket>/<repo>.git

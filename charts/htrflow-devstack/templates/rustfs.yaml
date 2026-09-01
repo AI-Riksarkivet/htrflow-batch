@@ -157,7 +157,10 @@ spec:
 {{- if .Values.rustfs.init.enabled }}
 ---
 # Bucket setup (replaces the hand-run aws-cli pod of the PoC): idempotent,
-# re-run on every install/upgrade so a policy change in values lands.
+# re-run on every install/upgrade so a policy change in values lands. Only
+# creates s3.bucket — this chart has no git daemon (removed: nothing in the
+# platform reads git:// any more, campaigns are applied with `kubectl` from
+# rendered manifests), so there is no campaigns-repo bucket to seed.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -192,12 +195,6 @@ data:
     ensure_bucket "$S3_BUCKET"
     aws --endpoint-url "$ep" s3api put-bucket-policy --bucket "$S3_BUCKET" --policy file:///init/results-policy.json
     aws --endpoint-url "$ep" s3api put-bucket-cors --bucket "$S3_BUCKET" --cors-configuration file:///init/cors.json
-    {{- if .Values.gitDaemon.enabled }}
-    # Campaigns repo bucket: credentials only (the git daemon seeds from it
-    # with the same root credential; never anonymous — audit S9).
-    ensure_bucket {{ .Values.gitDaemon.bucket | quote }}
-    aws --endpoint-url "$ep" s3api delete-bucket-policy --bucket {{ .Values.gitDaemon.bucket | quote }} >/dev/null 2>&1 || true
-    {{- end }}
     echo "rustfs init complete"
 ---
 apiVersion: batch/v1

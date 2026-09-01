@@ -20,7 +20,7 @@ types are rejected); `values.yaml` documents each one and
 `helm template -f` / `kubeconform` (`make helm-template`).
 
 PoC-only in-cluster infrastructure (RustFS S3, a registry, the NVIDIA
-device plugin, a git daemon) is a separate chart:
+device plugin) is a separate chart:
 [charts/htrflow-devstack](../htrflow-devstack).
 
 ## Prerequisites
@@ -73,7 +73,7 @@ rendered every NetworkPolicy away; the chart now fails loudly when
 | **The reconciler CronJob, `reconciler.*` values, `templates/reconciler.yaml` are gone.** Campaigns are Indexed Jobs rendered by `packages/converter` and applied outside this chart. | `kubectl -n <namespace> delete cronjob htr-reconciler` once, then switch to `make campaigns-apply DIR=…` (or the Argo CD Application the campaigns repo's CI wires up). |
 | **`templates/pipelines.yaml` / `.Values.pipelines` are gone.** Pipeline ConfigMaps and their warm-up Jobs are rendered by the converter alongside campaigns, not by this chart. | Drop `pipelines.*` from your values; convert the pipeline YAML files into a campaigns repo's `pipelines/` directory instead. |
 | **`templates/job-example.yaml` / `.Values.exampleJob` are gone.** | Use a real (small) campaign for smoke-testing instead. |
-| **`devStack.*` moved to a separate chart, `charts/htrflow-devstack`**, except `devStack.allowTagImages` → `security.allowTagImages` (it gates this chart's own `viewer.image`/`api.image`, not anything devstack-only). | `helm uninstall` nothing yet: install `charts/htrflow-devstack` alongside this chart first (`make install-devstack`), *then* upgrade this chart — its NetworkPolicies for RustFS/registry/git-daemon moved with it. |
+| **`devStack.*` moved to a separate chart, `charts/htrflow-devstack`**, except `devStack.allowTagImages` → `security.allowTagImages` (it gates this chart's own `viewer.image`/`api.image`, not anything devstack-only). **`devStack.gitDaemon` was not carried over** — it fed the reconciler over `git://`, which is also gone in 0.3.0, so it had no consumer left. | `helm uninstall` nothing yet: install `charts/htrflow-devstack` alongside this chart first (`make install-devstack`), *then* upgrade this chart — its NetworkPolicies for RustFS/registry moved with it; anything that hand-clones the old in-cluster git daemon needs a different path now. |
 | **New: the read API** (`api.image`, `api.resources`) — a Deployment `htrflow-api`, read-only RBAC on Jobs/Pods/ConfigMaps, `Service htrflow-api:8081`, proxied by the viewer at `/api/`. Always rendered (no `enabled` flag): `publicResultsBase` and `network.apiServer.cidr` are now required at render time (previously only needed with `reconciler.enabled`). | Set `api.image` to a digest-pinned `htrflow-api` image; set `network.apiServer.cidr` if the cluster's kube-apiserver endpoint cannot be `lookup`ed (e.g. `helm template`, or a kubeconfig without list-nodes RBAC). |
 | **New: `legacyLayout`** (default `false`). `false` writes/reads results under `<namespace>/<pipeline>/<volume>/…` (S3_PREFIX set by the converter); `true` keeps the pre-B63 `<pipeline>/<volume>/…` layout for existing data. | Set `legacyLayout: true` on any namespace with results written before 0.3.0, and pass the same value to the converter's `converter.yaml` (`legacyLayout`) so it agrees. |
 | **`viewer.statusBase` is gone; `/config.js` sets `window.API_BASE` instead of `window.STATUS_URL`.** The campaign browser reads campaigns from the read API, not `status.json`, from frontend Task 7 onward. | Nothing to set — `API_BASE` is always `/api/v1` (same-origin, proxied by nginx). |
@@ -88,7 +88,7 @@ rendered every NetworkPolicy away; the chart now fails loudly when
 | **`image.*` and `s3.endpoint` removed.** | Drop them from your values; the schema rejects unknown keys. Campaign Jobs pin their image in the pipeline YAML; pods read the endpoint from the Secret. |
 | **Namespace default deny** (`network.defaultDeny=true`). | Anything hand-applied in the namespace needs its own NetworkPolicy. |
 | **RustFS console off by default**; `devStack.rustfs.nodePortConsole` → `devStack.rustfs.console.{enabled,nodePort}` (now `charts/htrflow-devstack`'s `rustfs.console.*`). | `--set rustfs.console.enabled=true` on the devstack chart if still wanted. |
-| **`security.psaEnforce`** (default `baseline`, because the devstack chart's git daemon runs as root). | `make psa-labels` after the upgrade; `restricted` once the daemon has a purpose-built image. |
+| **`security.psaEnforce`** (default `baseline`, historically because the devstack chart's git daemon ran as root — that daemon is gone in 0.3.0, so nothing left in either chart needs `baseline` by default; the value itself was not changed here, revisit it). | `make psa-labels` after the upgrade; `restricted` is worth trying now. |
 | **`queue.resources` default** now admits one Job's worth of resources (cpu 4 / 8Gi / 1 GPU). | Raise it to run more volumes in parallel. |
 
 ## Adopting hand-applied resources
@@ -104,8 +104,10 @@ kubectl -n htr-batch label pvc htr-test-data app.kubernetes.io/managed-by=Helm -
 ```
 
 (The `nvidia` RuntimeClass, the kube-system device-plugin DaemonSet and the
-git daemon moved to `charts/htrflow-devstack` — its README has the same
-recipe for those.)
+the git daemon that historically ran alongside RustFS/registry is gone
+entirely (no consumer left once the reconciler was removed) — see
+`charts/htrflow-devstack`'s README for the RuntimeClass/DaemonSet adoption
+recipe.)
 
 ## The read API and the viewer
 
@@ -135,11 +137,14 @@ Breaking:
   aid; use a real campaign instead. `.Values.job` — runtime
   class/nodeSelector/tolerations/deadlines/byte caps are now the
   converter's `converter.yaml`, not this chart's.
-- **Moved**: every `devStack.*` value and `templates/devstack-*.yaml` to a
-  new chart, `charts/htrflow-devstack` (own values, own NetworkPolicies for
-  RustFS/registry-init/git-daemon). `devStack.allowTagImages` became
+- **Moved**: `devStack.{rustfs,registry,nvidiaDevicePlugin}` and
+  `templates/devstack-{rustfs,registry,nvidia}.yaml` to a new chart,
+  `charts/htrflow-devstack` (own values, own NetworkPolicies for
+  RustFS/registry-init). `devStack.allowTagImages` became
   `security.allowTagImages` (it gates this chart's own `viewer.image` /
-  `api.image`).
+  `api.image`). `devStack.gitDaemon` / `templates/devstack-gitdaemon.yaml`
+  were **removed, not moved**: the GitOps reconciler that polled it over
+  `git://` is also gone in 0.3.0, so the daemon had no consumer left.
 - `values.schema.json`: `s3`, `publicResultsBase`, `legacyLayout`,
   `modelCache`, `queue`, `api`, `security`, `network`, `viewer` are the only
   top-level keys; everything above is rejected as unknown.

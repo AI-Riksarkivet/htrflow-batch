@@ -18,9 +18,6 @@ disabled — mirrors charts/htrflow-batch's htrflow-batch.validate.
 {{- if and .Values.rustfs.console.enabled (not .Values.rustfs.enabled) }}
 {{- fail "rustfs.console.enabled needs rustfs.enabled" }}
 {{- end }}
-{{- if and .Values.gitDaemon.enabled (not .Values.gitDaemon.seedUrl) (not .Values.rustfs.enabled) }}
-{{- fail "gitDaemon needs rustfs.enabled (seed bucket) or an explicit gitDaemon.seedUrl" }}
-{{- end }}
 {{- end }}
 
 {{/* Pod Security `restricted` — container part. */}}

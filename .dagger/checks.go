@@ -141,7 +141,7 @@ var prodChartRenders = []chartRender{
 
 // The devstack chart's own values are all `enabled: false` by default, so
 // "default" renders nothing (still worth lint+template-ing); "full" turns on
-// RustFS, the registry, the nvidia device plugin and the git daemon.
+// RustFS, the registry and the nvidia device plugin.
 var devstackChartRenders = []chartRender{
 	{name: "default"},
 	{name: "full", values: "ci/full-values.yaml"},
@@ -151,17 +151,18 @@ var devstackChartRenders = []chartRender{
 // document separators.
 var docSepRe = regexp.MustCompile(`(?m)^---\s*$`)
 
-// hasNamedDeployment reports whether the rendered manifest contains a
+// namedDeploymentDoc returns the YAML document of the rendered manifest's
 // Deployment object named exactly `name` (kind and name checked within the
-// same YAML document, not just present anywhere in the file).
-func hasNamedDeployment(content, name string) bool {
+// same document, not just present anywhere in the file), and whether one
+// was found at all.
+func namedDeploymentDoc(content, name string) (string, bool) {
 	nameLine := regexp.MustCompile(`(?m)^\s*name:\s*` + regexp.QuoteMeta(name) + `\s*$`)
 	for _, doc := range docSepRe.Split(content, -1) {
 		if strings.Contains(doc, "kind: Deployment") && nameLine.MatchString(doc) {
-			return true
+			return doc, true
 		}
 	}
-	return false
+	return "", false
 }
 
 // CheckChart lints and renders both Helm charts — the prod chart
@@ -169,10 +170,10 @@ func hasNamedDeployment(content, name string) bool {
 // ci/full-values.yaml, and the PoC-only devstack chart
 // (charts/htrflow-devstack) the same way — then asserts on the prod chart's
 // renders (B63 Task 5: the reconciler CronJob is gone, the read API
-// Deployment always renders, and no devstack-labelled object leaks into the
-// prod chart) before validating every render with kubeconform (-strict,
-// unknown CRD kinds skipped). `make helm-template` is the local twin (audit
-// T2/T8).
+// Deployment always renders with a /healthz livenessProbe, and no
+// devstack-labelled object leaks into the prod chart) before validating
+// every render with kubeconform (-strict, unknown CRD kinds skipped).
+// `make helm-template` is the local twin (audit T2/T8).
 func (m *HtrflowBatch) CheckChart(
 	ctx context.Context,
 	// +defaultPath="/"
@@ -227,8 +228,12 @@ func (m *HtrflowBatch) CheckChart(
 		if strings.Contains(content, "kind: CronJob") {
 			return "", fmt.Errorf("prod chart (%s) renders a CronJob: the reconciler must be gone (B63)", name)
 		}
-		if !hasNamedDeployment(content, "htrflow-api") {
+		apiDeploy, found := namedDeploymentDoc(content, "htrflow-api")
+		if !found {
 			return "", fmt.Errorf("prod chart (%s) is missing the htrflow-api Deployment", name)
+		}
+		if !strings.Contains(apiDeploy, "livenessProbe") {
+			return "", fmt.Errorf("prod chart (%s): htrflow-api Deployment is missing a livenessProbe (/healthz)", name)
 		}
 		if strings.Contains(content, "app.kubernetes.io/component: devstack") {
 			return "", fmt.Errorf("prod chart (%s) renders a devstack-labelled object: devstack moved to its own chart", name)

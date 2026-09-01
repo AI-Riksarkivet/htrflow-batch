@@ -141,13 +141,13 @@ helm-template: helm-lint
 	  helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) -f $(DEVSTACK_CHART)/ci/full-values.yaml | kubeconform -strict -ignore-missing-schemas -summary; \
 	else echo "kubeconform not installed — schema validation skipped"; fi
 
-# PoC-only support infrastructure (RustFS, registry, nvidia device plugin,
-# git daemon) — its own chart, own release, same namespace as $(HTR_RELEASE)
+# PoC-only support infrastructure (RustFS, registry, nvidia device plugin)
+# — its own chart, own release, same namespace as $(HTR_RELEASE)
 # (charts/htrflow-devstack/README.md, "Installing"). Not for production.
 install-devstack:
 	helm upgrade --install $(HTR_RELEASE)-devstack charts/htrflow-devstack -n $(HTR_NAMESPACE) --create-namespace \
 	  --set rustfs.enabled=true --set registry.enabled=true \
-	  --set nvidiaDevicePlugin.enabled=true --set gitDaemon.enabled=true
+	  --set nvidiaDevicePlugin.enabled=true
 
 docs-serve:
 	uvx zensical serve
@@ -220,10 +220,11 @@ warmup:
 	  | kubectl apply -f -
 
 # Helm cannot label a namespace it did not create. The enforce level comes
-# from the installed release's `security.psaEnforce` (baseline while the
-# devStack git daemon runs as root, restricted otherwise); warn/audit are
-# always restricted so the hardened pods stay provably restricted. Override
-# with PSA_ENFORCE=… before the first install.
+# from the installed release's `security.psaEnforce` (baseline by default;
+# historically because charts/htrflow-devstack's git daemon ran as root —
+# that daemon is gone as of B63, `psaEnforce` itself wasn't revisited here);
+# warn/audit are always restricted so the hardened pods stay provably
+# restricted. Override with PSA_ENFORCE=… before the first install.
 PSA_ENFORCE ?= $(shell helm get values $(HTR_RELEASE) -n $(HTR_NAMESPACE) --all -o json 2>/dev/null \
                  | jq -r '.security.psaEnforce // "baseline"' 2>/dev/null || echo baseline)
 psa-labels:

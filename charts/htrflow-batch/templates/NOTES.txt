@@ -21,5 +21,5 @@ htrflow-batch {{ .Chart.Version }} installed.
 {{- if .Values.security.allowTagImages }}
 - WARNING security.allowTagImages=true: control-plane images are tag-pinned and re-pulled on every rollout. PoC only.
 {{- end }}
-- PoC-only support infrastructure (RustFS, registry, nvidia device plugin, git daemon) is a separate
+- PoC-only support infrastructure (RustFS, registry, nvidia device plugin) is a separate
   chart: charts/htrflow-devstack (`make install-devstack`).
