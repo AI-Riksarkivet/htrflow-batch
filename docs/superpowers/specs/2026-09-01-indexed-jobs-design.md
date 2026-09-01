@@ -12,9 +12,11 @@ converter from campaign YAML to manifests, a thin read API for the status
 page, and the chart. No CRD, no controller, no state files in the bucket.
 
 **Size is a requirement** (checked by `scripts/loc-budget.sh`, non-test lines):
-wrapper ≤ 1 500 · converter ≤ 400 · read API ≤ 400 · frontend ≤ 2 500 · chart
+wrapper ≤ 1 500 · converter ≤ 800 · read API ≤ 400 · frontend ≤ 2 500 · chart
 ≤ 700 template lines · **Python only** in the batch system (Svelte in the
-frontend). Dead code is deleted in the PR that makes it dead.
+frontend). Dead code is deleted in the PR that makes it dead. (Converter
+revised 2026-09-01 after Task 2: the reconciler's equivalent parse+models+
+jobspec was ~600 lines, so 400 was a wrong estimate.)
 
 **Non-goals:** external API/auth (T01/T03), uploads (T04), per-org quotas beyond
 one Kueue queue per namespace (T05), retention (T10). The design leaves room;

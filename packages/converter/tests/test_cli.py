@@ -73,3 +73,21 @@ def test_render_a_new_campaign_renders_fine(tmp_path):
     rc = main(["render", str(repo), "--out", str(out)])
     assert rc == 0
     assert (out / "campaigns" / "brandnew.yaml").exists()
+
+
+def test_render_reports_a_clean_error_for_a_corrupt_existing_campaign_file(
+    tmp_path, capsys
+):
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    out = tmp_path / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+
+    (out / "campaigns" / "kyrk.yaml").write_text("foo: [1, 2\n")
+    capsys.readouterr()
+
+    rc = main(["render", str(repo), "--out", str(out)])
+    assert rc == 1
+    out_text = capsys.readouterr().out
+    assert "cannot read existing campaign" in out_text
+    assert "Traceback" not in out_text

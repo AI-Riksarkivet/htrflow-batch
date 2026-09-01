@@ -168,6 +168,61 @@ def test_priority_adds_the_kueue_priority_class_label():
     assert "kueue.x-k8s.io/priority-class" not in job2["metadata"]["labels"]
 
 
+def test_split_campaign_names_never_collide_even_when_close_to_63_chars():
+    _, demo, cfg = _kyrk()
+    name = "a" * 58
+    volumes = [
+        Volume(id=f"v{i}", manifest=f"https://example.org/{i}") for i in range(10_001)
+    ]
+    c = Campaign(name=name, pipeline="demo-v1", volumes=volumes)
+    cm1, job1, cm2, job2 = render.campaign_objects(c, demo, cfg)
+
+    assert job1["metadata"]["name"] != job2["metadata"]["name"]
+    assert job1["metadata"]["name"] == f"{name}-part1"
+    assert job2["metadata"]["name"] == f"{name}-part2"
+    assert cm1["metadata"]["name"] == f"campaign-{name}-part1"
+    assert cm2["metadata"]["name"] == f"campaign-{name}-part2"
+
+    def campaign_volume(job):
+        volumes = job["spec"]["template"]["spec"]["volumes"]
+        return next(v for v in volumes if v["name"] == "campaign")
+
+    assert campaign_volume(job1)["configMap"]["name"] == cm1["metadata"]["name"]
+    assert campaign_volume(job2)["configMap"]["name"] == cm2["metadata"]["name"]
+
+
+def test_no_yaml_anchors_from_shared_security_context_objects():
+    kyrk, demo, cfg = _kyrk()
+    job = render.campaign_objects(kyrk, demo, cfg)[1]
+    text = yaml.safe_dump_all([job], sort_keys=False)
+    assert "&id0" not in text
+    assert "*id0" not in text
+    pod_spec = job["spec"]["template"]["spec"]
+    wrapper_ctx = pod_spec["containers"][0]["securityContext"]
+    init_ctx = pod_spec["initContainers"][0]["securityContext"]
+    assert wrapper_ctx is not init_ctx
+
+
+def test_node_selector_and_tolerations_appear_in_the_pod_spec():
+    _, demo, cfg = _kyrk()
+    cfg = cfg.model_copy(
+        update={
+            "node_selector": {"gpu": "true"},
+            "tolerations": [
+                {"key": "gpu", "operator": "Exists", "effect": "NoSchedule"}
+            ],
+        }
+    )
+    v = [Volume(id="v1", manifest="https://x/y")]
+    c = Campaign(name="kyrk", pipeline="demo-v1", volumes=v)
+    job = render.campaign_objects(c, demo, cfg)[1]
+    pod_spec = job["spec"]["template"]["spec"]
+    assert pod_spec["nodeSelector"] == {"gpu": "true"}
+    assert pod_spec["tolerations"] == [
+        {"key": "gpu", "operator": "Exists", "effect": "NoSchedule"}
+    ]
+
+
 @pytest.mark.skipif(
     shutil.which("kubeconform") is None, reason="kubeconform not on PATH"
 )

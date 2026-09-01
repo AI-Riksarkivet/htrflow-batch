@@ -299,8 +299,13 @@ def _campaign_job(
             tolerations=cfg.tolerations,
         ),
     }
+    # ``name`` is the Job's own metadata.name (and the campaign ConfigMap's
+    # name suffix): a K8s object name is a DNS-1123 *subdomain* (<=253 chars,
+    # no per-63-char label truncation), unlike the label VALUES above, which
+    # go through label_value(). Truncating this too would make "-part1" and
+    # "-part10" collide once c.name is close to 63 chars.
     return _job(
-        label_value(name),
+        name,
         cfg.namespace,
         labels,
         spec,
