@@ -1,0 +1,9 @@
+pipeline: demo-v1
+volumes:
+  - R0001203
+  - id: dodsbok-1698
+    manifest: https://iiif.example.org/xyz/manifest
+  - id: loose-scans
+    images:
+      - https://example.org/scan1.jpg
+      - https://example.org/scan2.jpg

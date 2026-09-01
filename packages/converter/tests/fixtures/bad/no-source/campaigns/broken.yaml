@@ -1,0 +1,3 @@
+pipeline: demo-v1
+volumes:
+  - id: v1
