@@ -13,7 +13,6 @@ class ConfigError(ValueError):
 
 _REQUIRED = [
     ("volume_ref", "VOLUME_REF"),
-    ("manifest_url", "IIIF_MANIFEST_URL"),
     ("pipeline_path", "PIPELINE_PATH"),
     ("pipeline_id", "PIPELINE_ID"),
     ("s3_bucket", "S3_BUCKET"),
@@ -29,12 +28,14 @@ class Config(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     volume_ref: str
-    manifest_url: str
     pipeline_path: str
     pipeline_id: str
     s3_endpoint: str
     s3_bucket: str
     public_results_base: str
+    # Exactly one of these is set (docs: wrapper, IMAGES) — see from_env.
+    manifest_url: str = ""
+    images: str = ""
     s3_prefix: str = ""
     max_image_width: int = 2500
     resume: bool = True
@@ -46,6 +47,7 @@ class Config(BaseModel):
     # S5 byte caps on fetches driven by campaign data (docs: wrapper)
     manifest_max_bytes: int = 16 * 1024 * 1024
     fetch_max_bytes: int = 64 * 1024 * 1024
+    max_seconds: int = 0  # 0 = no per-volume wall-clock budget (docs: wrapper)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Config":
@@ -55,6 +57,10 @@ class Config(BaseModel):
             raise ConfigError(f"missing required env: {', '.join(missing)}")
         for attr, key in _REQUIRED:
             kwargs[attr] = env[key]
+        kwargs["manifest_url"] = env.get("IIIF_MANIFEST_URL", "")
+        kwargs["images"] = env.get("IMAGES", "")
+        if bool(kwargs["manifest_url"]) == bool(kwargs["images"]):
+            raise ConfigError("exactly one of IIIF_MANIFEST_URL or IMAGES must be set")
         kwargs["s3_endpoint"] = env.get("S3_ENDPOINT", "")
         kwargs["s3_prefix"] = env.get("S3_PREFIX", "").strip("/")
         kwargs["max_image_width"] = int(env.get("MAX_IMAGE_WIDTH", "2500"))
@@ -70,6 +76,7 @@ class Config(BaseModel):
         kwargs["fetch_max_bytes"] = int(
             env.get("FETCH_MAX_BYTES", str(64 * 1024 * 1024))
         )
+        kwargs["max_seconds"] = int(env.get("MAX_SECONDS", "0"))
         return cls(**kwargs)
 
     @property

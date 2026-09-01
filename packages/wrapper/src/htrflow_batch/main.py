@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import logging
 import os
@@ -24,6 +23,7 @@ from .config import Config, ConfigError
 from .fetch import run_downloader
 from .iiif import (
     ManifestError,
+    check_http_url,
     fetch_manifest,
     pages_from_manifest,
     redact_url,
@@ -32,6 +32,7 @@ from .iiif import (
 from .logship import LogCapture
 from .store import ResultStore
 from .stream import PageOutcome, StreamStats, consume
+from .synthetic import build_manifest
 from .viewer import build_viewer_manifest, parse_alto_dims, parse_alto_dims_bytes
 
 log = logging.getLogger("htrflow_batch")
@@ -128,8 +129,7 @@ def _default_factory(cfg: Config):
 
 
 def _results_json(stats: StreamStats) -> dict:
-    """Per-page outcomes for manifest.json / metrics-failed-latest.json;
-    error strings lose URL secrets (S6)."""
+    """Per-page outcomes for manifest.json; error strings lose URL secrets (S6)."""
     return {
         n: {
             "status": r.status,
@@ -138,26 +138,6 @@ def _results_json(stats: StreamStats) -> dict:
         }
         for n, r in sorted(stats.results.items())
     }
-
-
-def publish_failure_metrics(store, cfg, stats, wall: float, stage: str, error: str):
-    """Best-effort: preserve run evidence when a run fails (docs: wrapper).
-    Must never raise — it runs on the failure path."""
-    try:
-        store.put_json(
-            "metrics-failed-latest.json",
-            {
-                "volume": cfg.volume_ref,
-                "pipeline_id": cfg.pipeline_id,
-                "stage": stage,
-                "error": redact_urls(str(error))[:2000],
-                "wall_seconds": round(wall, 1),
-                "gpu_stall_seconds": round(stats.stall_seconds, 1),
-                "results": _results_json(stats),
-            },
-        )
-    except Exception:
-        log.warning("could not publish failure metrics", exc_info=True)
 
 
 def main(
@@ -201,29 +181,31 @@ def _main(
     capture: LogCapture,
     state: RunState,
 ) -> int:
+    """setup->resume->stream->verify->publish, under the MAX_SECONDS watchdog."""
     capture.attach_logging()  # not basicConfig: see LogCapture.attach_logging
     t_start = time.monotonic()
-    # Bound up-front so the failure paths below can tell "we never got that
-    # far" from "we have evidence worth publishing".
-    cfg: Optional[Config] = None
-    store: Optional[ResultStore] = None
-    stats: Optional[StreamStats] = None
     # W10: set on every failure path so queued downloads stop short instead
     # of holding the interpreter (executor workers are joined at exit).
     stop = threading.Event()
+    timer: Optional[threading.Timer] = None
     try:
         cfg = Config.from_env(env)
         prepare_writable_dirs(env)
         store = ResultStore(cfg)
         capture.start_shipping(store.put_run_log, cfg.log_ship_seconds)
+        timer = _start_max_seconds_timer(cfg, env, state, capture)
         workdir = Path(cfg.workdir)
         input_dir = workdir / "input"
         client = _http_client()
 
         # -- stage 1: setup -------------------------------------------------
-        source_manifest = fetch_manifest(
-            cfg.manifest_url, client, max_bytes=cfg.manifest_max_bytes
-        )
+        if cfg.images:
+            source_manifest, source_manifest_url = _synthetic_source(cfg, store)
+        else:
+            source_manifest = fetch_manifest(
+                cfg.manifest_url, client, max_bytes=cfg.manifest_max_bytes
+            )
+            source_manifest_url = cfg.manifest_url
         pages = pages_from_manifest(source_manifest, cfg.max_image_width)
         if cfg.max_pages:
             pages = pages[: cfg.max_pages]
@@ -285,16 +267,7 @@ def _main(
         process = factory(cfg)
 
         state.stage = "stream"
-        # The stream unlinks each page image once processed (memory budget),
-        # so the thumbnail is cut from the first page as it goes by.
-        thumb_box: dict[str, Optional[str]] = {}
-
-        def process_with_thumb(image_path: Path):
-            if "key" not in thumb_box:
-                thumb_box["key"] = make_thumbnail(store, image_path)
-            return process(image_path)
-
-        stats = consume(out_q, slots, process_with_thumb, store.upload_page)
+        stats = consume(out_q, slots, process, store.upload_page)
         dl_thread.join()
         for p in pages:
             if p.name in done:
@@ -325,9 +298,8 @@ def _main(
                 except (ValueError, ET.ParseError):
                     pass
             elif p.name in uploaded:
-                # resumed/skipped page: no local ALTO from this run, but a
-                # prior run already published one — fetch it to fill dims so
-                # the viewer manifest stays complete across resumes.
+                # resumed/skipped: no local ALTO this run, but a prior run
+                # published one — fetch it so the viewer manifest stays complete.
                 try:
                     data = store.get_bytes(f"alto/{p.name}.xml")
                     dims[p.name] = parse_alto_dims_bytes(data)
@@ -350,8 +322,6 @@ def _main(
         pipeline_text = Path(cfg.pipeline_path).read_text()
         store.put_text("pipeline.yaml", pipeline_text, "text/yaml")
 
-        thumb_key = thumb_box.get("key") or previous_thumbnail(store)
-
         wall = time.monotonic() - t_start
         ok_pages = [n for n, r in stats.results.items() if r.status == "ok"]
         viewer_url = (
@@ -368,7 +338,7 @@ def _main(
                 "image_digest": env.get("IMAGE_DIGEST", "unknown"),
                 "pages": len(pages),
                 "results": _results_json(stats),
-                "source_manifest": cfg.manifest_url,
+                "source_manifest": source_manifest_url,
                 # W7: which source image each page came from, so a resume
                 # after an edited images: list / re-ordered manifest can tell
                 # a stale page from a done one (_changed_sources). Redacted
@@ -381,10 +351,6 @@ def _main(
                 "gpu_stall_seconds": round(stats.stall_seconds, 1),
                 "pages_per_second": round(len(ok_pages) / wall, 3) if wall else 0,
                 "viewer_url": viewer_url,
-                # Relative key of the first-page picture the campaign browser
-                # shows (None when no page could be decoded); the reconciler
-                # reads it once per finished volume.
-                "thumbnail": thumb_key,
             },
         )
         log.info(
@@ -400,21 +366,59 @@ def _main(
         # in place for postmortem inspection.
         shutil.rmtree(workdir, ignore_errors=True)
         return EXIT_OK
-
     except (ConfigError, ManifestError, SetupError, ValueError) as e:
         stop.set()
         stage = state.stage
         log.error("permanent failure in %s: %s", stage, e)
         _terminate(env, {"stage": stage, "permanent": True, "error": str(e)})
-        _publish_failure(cfg, store, stats, t_start, stage, e)
         return EXIT_PERMANENT
     except Exception as e:
         stop.set()
         stage = state.stage
         log.error("transient failure in %s: %s\n%s", stage, e, traceback.format_exc())
         _terminate(env, {"stage": stage, "permanent": False, "error": str(e)})
-        _publish_failure(cfg, store, stats, t_start, stage, e)
         return EXIT_TRANSIENT
+    finally:
+        if timer is not None:
+            timer.cancel()
+
+
+def _start_max_seconds_timer(
+    cfg: Config, env: Mapping[str, str], state: RunState, capture: LogCapture
+) -> Optional[threading.Timer]:
+    """MAX_SECONDS: a per-volume wall-clock budget (docs: wrapper). Fires in
+    its own thread; _hard_exit (os._exit) kills the process outright from
+    any thread, so on_expiry need not unwind the main thread itself."""
+    if cfg.max_seconds <= 0:
+        return None
+
+    def on_expiry() -> None:
+        log.error("transient failure in %s: MAX_SECONDS exceeded", state.stage)
+        _terminate(
+            env, {"stage": state.stage, "permanent": False, "error": "MAX_SECONDS"}
+        )
+        capture.finish()
+        _hard_exit(EXIT_TRANSIENT)
+
+    timer = threading.Timer(cfg.max_seconds, on_expiry)
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
+def _synthetic_source(cfg: Config, store: ResultStore) -> tuple[dict, str]:
+    """IMAGES: build and publish the synthetic P3 manifest to
+    sources/<pipeline>/<volume>/manifest.json (S3_PREFIX honoured, docs:
+    wrapper), then hand it back as if it had been fetched."""
+    urls = [u for u in cfg.images.split(",") if u]
+    for u in urls:
+        check_http_url(u, "IMAGES URL")
+    prefix = f"{cfg.s3_prefix}/" if cfg.s3_prefix else ""
+    key = f"sources/{cfg.pipeline_id}/{cfg.volume_ref}/manifest.json"
+    manifest_id = f"{cfg.public_results_base.rstrip('/')}/{prefix}{key}"
+    doc = build_manifest(cfg.volume_ref, urls, manifest_id)
+    store.put_json_at(key, doc)
+    return doc, manifest_id
 
 
 def _canvas_id(canvas: dict) -> str | None:
@@ -435,63 +439,6 @@ def _changed_sources(store: ResultStore, pages, done: set[str]) -> set[str]:
         for p in pages
         if p.name in done and p.name in sources and sources[p.name] != p.image_url
     }
-
-
-THUMB_KEY = "thumb.jpg"
-THUMB_WIDTH = 200
-
-
-def make_thumbnail(store, image_path: Path) -> Optional[str]:
-    """Best-effort ``thumb.jpg`` cut from one page image.
-
-    The campaign browser paints a 26 px picture per volume; serving the
-    source image for that costs megabytes per row (audit F2), and volumes
-    declared as ``images:`` have no IIIF service to size from. Pillow comes
-    with the htrflow base image but is not a wrapper dependency, so a missing
-    import (or an undecodable file) only means "no picture". Never raises:
-    the transcription is the job, the picture is a nicety.
-    """
-    try:
-        from PIL import Image
-    except ImportError:
-        log.warning("Pillow not available; no thumbnail")
-        return None
-    try:
-        with Image.open(image_path) as img:
-            img = img.convert("RGB")
-            ratio = THUMB_WIDTH / img.width
-            img = img.resize((THUMB_WIDTH, max(1, round(img.height * ratio))))
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=80)
-        store.put_bytes(THUMB_KEY, buf.getvalue(), "image/jpeg")
-        return THUMB_KEY
-    except Exception as e:
-        log.warning("thumbnail from %s failed: %r", image_path.name, e)
-        return None
-
-
-def previous_thumbnail(store) -> Optional[str]:
-    """A resumed run that processed nothing keeps the thumbnail the previous
-    run recorded in manifest.json."""
-    previous = store.get_json_or_none("manifest.json")
-    if isinstance(previous, dict) and previous.get("thumbnail"):
-        return str(previous["thumbnail"])
-    return None
-
-
-def _publish_failure(cfg, store, stats, t_start: float, stage: str, e: BaseException):
-    """Skip setup-stage failures, where there is no store/stats to report on.
-
-    Runs *after* _terminate() on purpose: the termination log is a local
-    write_text that is effectively instant, while this S3 upload can hang for
-    minutes on default boto timeouts — especially when S3 is itself the reason
-    the run failed. Ordering it last means a stuck bucket cannot cost us the
-    kubernetes termination message.
-    """
-    if cfg is not None and store is not None and stats is not None:
-        publish_failure_metrics(
-            store, cfg, stats, time.monotonic() - t_start, stage, str(e)
-        )
 
 
 def _htrflow_version() -> str:

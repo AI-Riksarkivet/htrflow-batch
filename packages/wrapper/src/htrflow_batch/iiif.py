@@ -127,9 +127,8 @@ def _service_id(service: object) -> str | None:
 
 
 def _sized(sid: str, canvas: dict, width: int) -> str:
-    # NOTE: lbiiif rejects "!w,h" (501); "w," is the supported form.
-    # Level1 servers also reject upscaling (400), so a canvas narrower
-    # than the cap must ask for max instead.
+    # lbiiif rejects "!w,h" (501), "w," is supported; Level1 servers reject
+    # upscaling (400), so a canvas narrower than the cap must ask for max.
     cw = _int_or_none(canvas.get("width"))
     size = "max" if cw and cw <= width else f"{width},"
     return f"{sid.rstrip('/')}/full/{size}/0/default.jpg"

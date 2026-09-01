@@ -80,7 +80,27 @@ def main(
         pipeline_path,
         env.get("HF_HOME"),
     )
+    _write_marker(env)
     return EXIT_OK
+
+
+def _write_marker(env: Mapping[str, str]) -> None:
+    """Drop ``<data>/warmup/<pipeline_id>.done`` so a batch pod's init
+    container can gate on it (docs: wrapper). ``<data>`` is ``HF_HOME``'s
+    parent (``/data/hf`` -> ``/data``) so tests can redirect it via env.
+    Best-effort: a missing PIPELINE_ID or unwritable dir must not turn a
+    successful warm-up into a failure.
+    """
+    pipeline_id = env.get("PIPELINE_ID", "")
+    hf_home = env.get("HF_HOME", "")
+    if not pipeline_id or not hf_home:
+        return
+    try:
+        marker_dir = Path(hf_home).parent / "warmup"
+        marker_dir.mkdir(parents=True, exist_ok=True)
+        (marker_dir / f"{pipeline_id}.done").touch()
+    except OSError as e:
+        log.warning("could not write warm-up marker: %r", e)
 
 
 if __name__ == "__main__":

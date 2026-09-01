@@ -10,6 +10,7 @@ def _env(tmp_path: Path) -> dict:
     pipeline.write_text("steps: []\n")
     return {
         "PIPELINE_PATH": str(pipeline),
+        "PIPELINE_ID": "demo-v1",
         "HF_HOME": str(tmp_path / "hf"),
         "HOME": str(tmp_path / "work" / "home"),
         "TMPDIR": str(tmp_path / "work" / "tmp"),
@@ -25,6 +26,23 @@ def test_warmup_instantiates_the_pipeline_once(tmp_path):
     rc = main(_env(tmp_path), load=lambda path: loaded.append(path))
     assert rc == EXIT_OK
     assert loaded == [str(tmp_path / "pipeline.yaml")]
+
+
+def test_warmup_writes_the_done_marker_on_success(tmp_path):
+    """Batch pods' init container gates on <data>/warmup/<pipeline_id>.done
+    (<data> is HF_HOME's parent) before running (docs: wrapper)."""
+    rc = main(_env(tmp_path), load=lambda _: None)
+    assert rc == EXIT_OK
+    assert (tmp_path / "warmup" / "demo-v1.done").is_file()
+
+
+def test_warmup_writes_no_marker_on_failure(tmp_path):
+    def boom(_):
+        raise OSError("connection reset")
+
+    rc = main(_env(tmp_path), load=boom)
+    assert rc == EXIT_TRANSIENT
+    assert not (tmp_path / "warmup" / "demo-v1.done").exists()
 
 
 def test_warmup_creates_the_writable_dirs_first(tmp_path):

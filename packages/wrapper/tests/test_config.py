@@ -68,3 +68,31 @@ def test_byte_caps_default_and_override():
     )
     assert cfg.manifest_max_bytes == 1024
     assert cfg.fetch_max_bytes == 2048
+
+
+def test_max_seconds_default_and_override():
+    assert Config.from_env(REQUIRED).max_seconds == 0
+    cfg = Config.from_env(dict(REQUIRED, MAX_SECONDS="21600"))
+    assert cfg.max_seconds == 21600
+
+
+def test_images_is_an_alternative_to_manifest_url():
+    env = dict(REQUIRED)
+    del env["IIIF_MANIFEST_URL"]
+    env["IMAGES"] = "https://x/1.jpg,https://x/2.jpg"
+    cfg = Config.from_env(env)
+    assert cfg.images == "https://x/1.jpg,https://x/2.jpg"
+    assert cfg.manifest_url == ""
+
+
+def test_images_and_manifest_url_are_mutually_exclusive():
+    env = dict(REQUIRED, IMAGES="https://x/1.jpg")
+    with pytest.raises(ConfigError, match="exactly one"):
+        Config.from_env(env)
+
+
+def test_neither_images_nor_manifest_url_is_permanent():
+    env = dict(REQUIRED)
+    del env["IIIF_MANIFEST_URL"]
+    with pytest.raises(ConfigError, match="exactly one"):
+        Config.from_env(env)
