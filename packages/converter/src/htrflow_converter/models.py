@@ -41,6 +41,8 @@ class Pipeline(BaseModel):
     image: str
     steps: list[dict] = Field(default_factory=list)
     model_revision: str = ""
+    #: Per-volume wall-clock budget; overrides converter.yaml's max_seconds.
+    max_seconds: int | None = None
 
     def pipeline_yaml(self) -> str:
         return yaml.safe_dump({"steps": self.steps}, sort_keys=False)

@@ -245,7 +245,7 @@ def _wrapper_container(p: Pipeline, cfg: ConverterConfig) -> dict:
         {"name": "PUBLIC_RESULTS_BASE", "value": cfg.public_results_base},
         {"name": "IMAGE_DIGEST", "value": p.image},
         {"name": "HF_HUB_OFFLINE", "value": "1"},
-        {"name": "MAX_SECONDS", "value": str(cfg.max_seconds)},
+        {"name": "MAX_SECONDS", "value": str(p.max_seconds or cfg.max_seconds)},
         {"name": "MANIFEST_MAX_BYTES", "value": str(cfg.manifest_max_bytes)},
         {"name": "FETCH_MAX_BYTES", "value": str(cfg.fetch_max_bytes)},
         *_workdir_env(),

@@ -267,6 +267,18 @@ def test_no_job_carries_the_partial_admission_annotation():
         assert "kueue.x-k8s.io/job-min-parallelism" not in str(obj["metadata"])
 
 
+def test_pipeline_max_seconds_overrides_the_converter_default():
+    kyrk, demo, cfg = _kyrk()
+
+    def max_seconds(pipeline):
+        job = render.campaign_objects(kyrk, pipeline, cfg)[1]
+        env = job["spec"]["template"]["spec"]["containers"][0]["env"]
+        return next(e["value"] for e in env if e["name"] == "MAX_SECONDS")
+
+    assert max_seconds(demo) == str(cfg.max_seconds)
+    assert max_seconds(demo.model_copy(update={"max_seconds": 60})) == "60"
+
+
 def test_every_rendered_object_carries_the_prune_selector():
     """`kubectl apply --prune -l htrflow.riksarkivet.se/managed-by=converter`
     (and Argo CD's prune) is what makes "deleting a campaign file cancels the
