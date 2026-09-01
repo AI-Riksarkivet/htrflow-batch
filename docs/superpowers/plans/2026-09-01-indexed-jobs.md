@@ -252,6 +252,26 @@ exec python -m htrflow_batch
 - [ ] **Step 2: Apply** — rewrites and deletions per the inventory; nav fixed; root README trimmed. Commit `docs: current pages describe the Indexed Jobs system; stale pages removed (B63)` with the deleted pages listed in the body.
 - [ ] **Step 3: Verify** — the acceptance greps, `uvx zensical build --clean`, the `make -n` checks; record the results at the bottom of the audit file; commit `docs: audit verification (B63)`.
 
+### Task 13: Repository audit, many perspectives (after every other task)
+
+**Why:** Morgan: "make a new audit of the project too, for many perspectives, when we are done with all changes." Same method and format as `docs/audits/2026-08-26-repo-audit.md` (independent read-only reviews per angle, every finding verified in code or by probe, then cross-checked and ranked), so the two audits are comparable and findings become stories the way the August ones did (B-series under Feature "Batch, Kueue, Helm", H-series for image security).
+
+**Angles (one reviewer each, read-only, verification required for every finding):**
+A. Converter correctness (`packages/converter`: parse/render/split/prune, append-only rule, GitOps invariants, `rendered/` drift).
+B. Wrapper correctness (`packages/wrapper`: resume, streaming, verify, publish, exit codes, SIGTERM/MAX_SECONDS, log shipping).
+C. Read API + frontend (`packages/api`, `frontend`: projection vs. Kubernetes reality, paging, error surfacing, accessibility, CSP).
+D. Kubernetes / Helm / Kueue operability (`charts/*`, Indexed Job semantics at scale — 10 000 indexes, `backoffLimitPerIndex`, suspend/resume, partial admission, PSA, NetworkPolicies, RBAC of the API's ServiceAccount, TTL/garbage collection, quotas).
+E. Security & supply chain (images by digest, SBOM/SLSA/cosign in `publish.yml`, Trivy, secrets handling, bucket policy, the campaigns repo as a code-execution boundary, the API's unauthenticated surface, dependency pins, `uv.lock`/`bun.lock` freshness).
+F. CI, tests and reproducibility (`.dagger/*`, `.github/workflows/*`, `Makefile`, `scripts/loc-budget.sh`, coverage at the boundaries, flaky/slow tests, what `make ci` runs vs. GitHub).
+G. Documentation & spec drift (after Task 12: does every current page match the code; does the spec `2026-09-01-indexed-jobs-design.md` match what was built; open items).
+H. Scale, cost and operations (archive scale: thousands of volumes per campaign, many campaigns, one shared queue; S3 object counts and request costs; log volume; observability gaps; what an operator does at 03:00 when a Job wedges; the ATRaaS stories T01–T18 under Feature #2831 — which are unblocked by B63, which are still far).
+
+**Files:** `docs/audits/2026-09-<date>-repo-audit.md` (scope with commit SHA + live release used as evidence; baseline test/coverage/budget numbers; §1 verdict; §2 cross-cutting findings ranked with severity and `file:line`; §3 recommended order of work; §4 what holds; appendix per angle). `docs/audits/2026-09-<date>-audit-stories.md`: the findings mapped to proposed stories (id, Swedish title with English terms, one-paragraph body, acceptance boxes) — written as `.md` first for Morgan's review before anything goes to Azure DevOps (his standing rule). Nothing is fixed in this task; findings only.
+
+- [ ] **Step 1: Baseline** — record commit, test counts per package, `scripts/loc-budget.sh` output, `helm -n htr-batch list`, `kubectl version`.
+- [ ] **Step 2: Angles A–H** — each a separate read-only reviewer with the angle text above and the previous audit as the format example; each returns findings with evidence pointers only.
+- [ ] **Step 3: Cross-check, dedupe, rank; write the report and the stories file.** Commit `docs: repository audit 2026-09 (B63)`.
+
 ## Self-review
 - Spec coverage: D1–D2 → Task 2; D3–D5 → Tasks 1–2, 6; D6–D7 → Task 3; D8 → Task 4, 7; D9 → Tasks 2, 5; D10 → Task 8 asserts; D11 untouched (open); D12 → Tasks 5–6; §5 → Task 5; §6 → each task + Task 8; §7 → Task 8.
 - Types: `JobSummary/JobDetail/VolumeView` shapes identical in Task 4 (Python) and Task 7 (Zod). `volumes.txt` line format identical in Task 1 (`source_line`), Task 2 (`args`), Task 3 (`IMAGES` parsing), Task 4 (ConfigMap read).
