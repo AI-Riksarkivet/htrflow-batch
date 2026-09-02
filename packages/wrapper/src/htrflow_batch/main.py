@@ -317,8 +317,32 @@ def _verify(
     missing = sorted({p.name for p in pages} - uploaded)
     failed = sorted(n for n, r in stats.results.items() if r.status == "failed")
     if missing or failed:
-        raise RuntimeError(f"verify failed: missing={missing} failed={failed}")
+        raise RuntimeError(
+            f"verify failed: missing={missing} failed={failed}"
+            f"{_failure_detail(stats, failed)}"
+        )
     return uploaded
+
+
+#: How much of the failed pages' errors goes in the verify message: enough to
+#: name the cause, little enough to stay inside _terminate's 3500-char field
+#: cap (and the 4 KiB the kubelet keeps of a termination message).
+FAILED_DETAIL_PAGES = 10
+FAILED_DETAIL_CHARS = 200
+
+
+def _failure_detail(stats: StreamStats, failed: list[str]) -> str:
+    """Why those pages failed. Without it the operator reads
+    "verify failed: failed=['0042']" and has nothing else: a run with failed
+    pages never publishes manifest.json, where the errors would have gone."""
+    if not failed:
+        return ""
+    shown = "; ".join(
+        f"{n}: {(stats.results[n].error or '')[:FAILED_DETAIL_CHARS]}"
+        for n in failed[:FAILED_DETAIL_PAGES]
+    )
+    rest = len(failed) - FAILED_DETAIL_PAGES
+    return f" errors: {shown}" + (f" (+{rest} more)" if rest > 0 else "")
 
 
 def _start_max_seconds_timer(

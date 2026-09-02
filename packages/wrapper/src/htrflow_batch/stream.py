@@ -39,6 +39,15 @@ UploadFn = Callable[[str, "dict[str, Path]"], None]
 MAX_UPLOAD_FAILURES = 5
 
 
+def _failed(stats: "StreamStats", name: str, error: str | None) -> None:
+    """Record a page failure AND say why: with the run abandoned at the verify
+    gate, manifest.json is never published, so the run log is the only place
+    the cause survives. URLs inside the error are redacted by the root
+    handler's RedactingFormatter and by LogCapture (S6)."""
+    log.warning("page %s failed: %s", name, error)
+    stats.results[name] = PageOutcome(status="failed", error=error)
+
+
 class UploadOutage(RuntimeError):
     """The result store failed for N pages in a row: transient, abort now
     rather than drain the whole volume through a dead bucket."""
@@ -154,23 +163,23 @@ def consume(
         name = item.page.name
         try:
             if item.path is None:
-                stats.results[name] = PageOutcome(status="failed", error=item.error)
+                _failed(stats, name, item.error)
                 continue
             t0 = time.monotonic()
             try:
                 files = process(item.path)
             except Exception as e:  # drain-what-you-can; verify gate decides later
-                stats.results[name] = PageOutcome(status="failed", error=repr(e))
+                _failed(stats, name, repr(e))
                 continue
             try:
                 upload(name, files)
             except ValueError as e:
                 # the page's own outputs are bad (missing format, malformed
                 # XML — store.upload_page): a page failure, not an outage
-                stats.results[name] = PageOutcome(status="failed", error=repr(e))
+                _failed(stats, name, repr(e))
                 continue
             except Exception as e:
-                stats.results[name] = PageOutcome(status="failed", error=repr(e))
+                _failed(stats, name, repr(e))
                 upload_failures += 1
                 if upload_failures >= max_upload_failures:
                     raise UploadOutage(
