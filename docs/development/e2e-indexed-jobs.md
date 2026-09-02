@@ -1197,3 +1197,39 @@ rc no-env                   : 13
 Left to do once the registry PVC is chown'ed: push `e2e2`, repoint
 `pipelines/e2e-slow-v1.yaml` (new digest, or a new pipeline id) and re-run
 `e2e-deadline-60p` to confirm on the new image end to end.
+
+### Task 25, round 2 — the pod deadline on the rebuilt image, API on the same build
+
+The registry's data PVC was root-owned (see the devstack chart fix,
+`fix(devstack): registry fixes its data ownership on start`), so the first
+round ran the new manifests against the previous image. After the fix:
+
+```
+wrapper  127.0.0.1:30500/htrflow-batch@sha256:a5210fe93c96bbf8f30db6d975d459c00c4a3a1a011d5a03a2a44cdd7015d773
+api      127.0.0.1:30500/htrflow-api@sha256:9fcb4c30edcb5898c78ef9fe20588d168423e39ec06656da1f71d834132c9208
+```
+
+`~/htr-test` `935a0ae` points `pipelines/e2e-slow-v1.yaml` (max_seconds 60) at
+the new wrapper digest; campaign `e2e-deadline-v2` (one 60-page volume):
+
+```
+$ kubectl -n htr-batch get pods -l job-name=e2e-deadline-v2 \
+    -o custom-columns=N:.metadata.name,R:.status.reason,E:.status.containerStatuses[0].state.terminated.exitCode
+e2e-deadline-v2-0-7hkzf   DeadlineExceeded   143
+e2e-deadline-v2-0-9djc6   DeadlineExceeded   143
+e2e-deadline-v2-0-4vp8m   <none>             0
+$ kubectl -n htr-batch get job e2e-deadline-v2 -o jsonpath='{.status.completedIndexes}'   # 0
+```
+
+Two attempts killed by `activeDeadlineSeconds` (no `DisruptionTarget`, so
+they count against `backoffLimitPerIndex`), the third resumed from the
+pages already published and completed — the same shape as the Task 8
+watchdog run, now with no timer thread in the wrapper.
+
+Read API rolled to the same build (`helm upgrade htr … -f poc-values.yaml`,
+REVISION 29). `GET /api/v1/jobs/htr-batch/e2e-deadline-v2` shows the volume
+`done` with no reason: a row's reason comes from the newest pod for that
+index, which here is the successful attempt. `"error": "DeadlineExceeded"`
+is what the projection returns for a deadline-killed pod (unit test with the
+real pod JSON) and it is visible in the API only while the index is still
+failed or retrying.
