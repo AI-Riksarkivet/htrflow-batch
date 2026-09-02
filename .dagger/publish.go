@@ -29,7 +29,9 @@ func (m *HtrflowBatch) resolveTag(ctx context.Context, source *dagger.Directory,
 // PublishDocker tests, builds and publishes an image to a registry and
 // returns the published reference WITH its digest
 // (`<registry>/<repo>:<tag>@sha256:…`) — publish.yml signs and attests that
-// digest. component: "wrapper" (default) or "web".
+// digest. component: "wrapper" (default) or "web". The image is built for the
+// engine's own platform, so the runner's architecture decides what is pushed;
+// --tag-suffix is how one run's per-arch images get distinct tags.
 // Tags are treated as immutable: the workflow refuses a tag that already
 // exists before calling this.
 func (m *HtrflowBatch) PublishDocker(
@@ -56,10 +58,16 @@ func (m *HtrflowBatch) PublishDocker(
 	skipValidation bool,
 	// +optional
 	caBundle *dagger.File,
-	// HTRFLOW_BASE_REVISION build arg for the wrapper image (see Build);
+	// HTRFLOW_BASE_REVISION build arg for the wrapper image (see BuildWrapper);
 	// ignored for the other components
 	// +optional
 	baseRevision string,
+	// Suffix appended to the tag AFTER it has been validated against the
+	// wrapper version, e.g. "-amd64" for one arch of an image a manifest list
+	// then joins under the bare tag (publish.yml). Empty publishes the tag
+	// itself.
+	// +optional
+	tagSuffix string,
 ) (string, error) {
 	resolvedTag, err := m.resolveTag(ctx, source, tag, skipValidation, caBundle)
 	if err != nil {
@@ -76,7 +84,7 @@ func (m *HtrflowBatch) PublishDocker(
 		if imageRepository == "" {
 			imageRepository = "riksarkivet/htrflow-batch"
 		}
-		container, err = m.Build(ctx, source, baseRevision)
+		container, err = m.BuildWrapper(ctx, source, baseRevision, "")
 	case "web":
 		if imageRepository == "" {
 			imageRepository = "riksarkivet/htrflow-web"
@@ -91,7 +99,7 @@ func (m *HtrflowBatch) PublishDocker(
 		return "", fmt.Errorf("build failed during publish: %w", err)
 	}
 
-	imageRef := registry + "/" + imageRepository + ":" + resolvedTag
+	imageRef := registry + "/" + imageRepository + ":" + resolvedTag + tagSuffix
 	if dockerPassword != nil && dockerUsername != nil {
 		username, err := dockerUsername.Plaintext(ctx)
 		if err != nil {

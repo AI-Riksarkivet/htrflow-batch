@@ -98,7 +98,7 @@ def test_arm64_branch_keeps_the_extras_the_gb10_needs() -> None:
 def test_nothing_in_the_build_path_asks_for_a_foreign_platform() -> None:
     for path in BUILD_PATHS:
         for n, line in enumerate(path.read_text().splitlines(), 1):
-            if line.lstrip().startswith("#"):
+            if line.lstrip().startswith(("#", "//")):  # prose may name qemu
                 continue
             assert not _EMULATION.search(line), (
                 f"{path.name}:{n} cross-builds: {line.strip()}"

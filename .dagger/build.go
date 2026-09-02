@@ -14,10 +14,19 @@ func buildArgs(baseRevision string) []dagger.BuildArg {
 	return []dagger.BuildArg{{Name: "HTRFLOW_BASE_REVISION", Value: baseRevision}}
 }
 
-// Build creates the wrapper production image from .docker/htrflow-batch.dockerfile.
-// Heavy: the base (airiksarkivet/htrflow + cu128 torch) is ~10 GB; first run
-// populates the engine cache.
-func (m *HtrflowBatch) Build(
+// BuildWrapper creates the wrapper production image from
+// .docker/htrflow-batch.dockerfile. Heavy: the base (airiksarkivet/htrflow +
+// cu128 torch) is ~10 GB; first run populates the engine cache.
+//
+// The dockerfile serves both architectures — it selects its base stage from
+// TARGETARCH — so the image this returns is the ENGINE's architecture unless
+// a platform is named. Naming a foreign one means qemu, and uv segfaults
+// under qemu-x86_64 (docs/development/local-k3s.md), which is why every
+// caller in this repo leaves it empty and builds on a native runner instead:
+// ci.yml and publish.yml put the arm64 image on an ubuntu-24.04-arm runner.
+// The argument exists for a caller that has an engine per platform and wants
+// to say which one it is talking to.
+func (m *HtrflowBatch) BuildWrapper(
 	ctx context.Context,
 	// +defaultPath="/"
 	source *dagger.Directory,
@@ -26,10 +35,16 @@ func (m *HtrflowBatch) Build(
 	// label (audit W8). Empty keeps the dockerfile default.
 	// +optional
 	baseRevision string,
+	// Platform to build for, e.g. "linux/arm64". Empty (the default, and what
+	// every caller here passes) builds for the engine's own platform — no
+	// emulation. See the note above before setting it.
+	// +optional
+	platform dagger.Platform,
 ) (*dagger.Container, error) {
 	return source.DockerBuild(dagger.DirectoryDockerBuildOpts{
 		Dockerfile: ".docker/htrflow-batch.dockerfile",
 		BuildArgs:  buildArgs(baseRevision),
+		Platform:   platform,
 	}), nil
 }
 

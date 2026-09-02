@@ -40,14 +40,14 @@ func (m *HtrflowBatch) TestDriver(
 	// +defaultPath="/"
 	// +optional
 	source *dagger.Directory,
-	// HTRFLOW_BASE_REVISION build arg for the wrapper image (see Build)
+	// HTRFLOW_BASE_REVISION build arg for the wrapper image (see BuildWrapper)
 	// +optional
 	baseRevision string,
 	// CA bundle for TLS-intercepting networks (pytest install)
 	// +optional
 	caBundle *dagger.File,
 ) (string, error) {
-	image, err := m.Build(ctx, source, baseRevision)
+	image, err := m.BuildWrapper(ctx, source, baseRevision, "")
 	if err != nil {
 		return "", fmt.Errorf("wrapper build failed before the driver test: %w", err)
 	}
