@@ -82,7 +82,13 @@ devStack RustFS, its init Job and the registry — meets Pod Security
 - `automountServiceAccountToken: false` on every pod except the **web
   front**, which is the one pod that legitimately holds an API credential — a
   namespace-scoped Role: get/list/watch on `jobs`, `pods`, `configmaps`,
-  nothing else, nothing cluster-wide.
+  nothing else, nothing cluster-wide. Since 0.4.0 that pod is also the one on
+  the NodePort: the token-holding process is directly browser-facing rather
+  than behind an nginx proxy. The reachable surface is unchanged — `/api/v1`
+  was already unauthenticated and anyone who could reach the proxy could
+  reach it — but it does mean an RCE in this process reads the token, which
+  is why the Role stays read-only and namespace-scoped, and why T03's auth
+  layer is the precondition for exposing it beyond the PoC.
 - **Secrets are files, not env.** The S3 Secret's `credentials` key (AWS ini
   format) is mounted at `/secrets/s3` (mode `0440`) and reaches boto3 through
   `AWS_SHARED_CREDENTIALS_FILE`; only the non-secret `S3_ENDPOINT` /
