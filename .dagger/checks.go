@@ -74,8 +74,9 @@ func (m *HtrflowBatch) Typecheck(
 // <script>` executes vitest/vite under node when node is on PATH, which is
 // what every developer host does — under the bun runtime itself vitest
 // cannot see zod's named `z` export (verified: `bun --bun run test` fails
-// on status.test.ts), and oven/bun ships no real node. Shared by
-// CheckFrontend and BuildViewer so the image ships exactly what CI checked.
+// on status.test.ts), and oven/bun ships no real node. `bun run build` is
+// checked here and run again by the web image's own bun stage
+// (.docker/htrflow-web.dockerfile).
 func (m *HtrflowBatch) frontend(source *dagger.Directory, caBundle *dagger.File) *dagger.Container {
 	bun := dag.Container().From(bunImage).File("/usr/local/bin/bun")
 	spa := dag.Container().

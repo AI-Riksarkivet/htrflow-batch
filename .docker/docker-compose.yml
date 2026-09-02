@@ -1,4 +1,5 @@
-# Full local smoke stack (no k8s): S3 + fixtures + one wrapper run + viewer.
+# Full local smoke stack (no k8s): S3 + fixtures + one wrapper run + the web
+# front (the campaign browser and Universal Viewer, served site-only).
 # Wrapper env contract mirrors the k8s Job (see docs how-it-works/wrapper);
 # source of truth is packages/wrapper/src/htrflow_batch/config.py.
 #
@@ -8,12 +9,8 @@
 #     `docker build -f .docker/htrflow-batch.dockerfile -t
 #     riksarkivet/htrflow-batch:latest .` from repo root) so it picks up
 #     current packages/wrapper/ source (thumbnails + search-service in iiif.json).
-#   viewer: build it from this branch — the published :latest and the PoC
-#     registry's uv4:v3 predate the campaign browser (old port-80 layout):
-#       make viewer-image && \
-#       docker tag 127.0.0.1:30500/uv4:dev riksarkivet/htrflow-batch-viewer:latest
-#     Reproducible alternative: `dagger call build-viewer export --path
-#     /tmp/viewer.tar && docker load -i /tmp/viewer.tar` (then tag as above).
+#   web: built from this branch by compose itself (`--build`), so nothing has
+#     to be tagged by hand any more.
 #
 # Constants (${HTR_*}) come from the repo-root `.env` (defaults in
 # `.env.example`): the Makefile exports them, and every reference below
@@ -65,11 +62,11 @@ services:
       # "localhost:19000" is unreachable from inside the wrapper container
       # (its own loopback, not the host's). The same body.id is copied
       # verbatim into the published iiif.json, so a real browser session
-      # opening the viewer will not render the source page image (a known
-      # local-smoke-stack limitation); the ALTO/search overlay the viewer
-      # actually depends on is served from PUBLIC_RESULTS_BASE below, which
-      # *is* browser-resolvable, so the manifest-shape checks in step 3 and
-      # the viewer smoke test both still hold.
+      # opening UV will not render the source page image (a known
+      # local-smoke-stack limitation); the ALTO/search overlay UV actually
+      # depends on is served from PUBLIC_RESULTS_BASE below, which *is*
+      # browser-resolvable, so the manifest-shape checks in step 3 and the
+      # smoke test below both still hold.
       MOCK_BASE: http://rustfs:9000/htr-fixtures/mock-vol
       S3_BUCKET: ${HTR_BUCKET:-htr-results}
       # Anonymous read on status/logs/* — same trade-off as the chart's
@@ -108,19 +105,24 @@ services:
     # No entrypoint/command override: image ENTRYPOINT is
     # ["python", "-m", "htrflow_batch"] (see .docker/htrflow-batch.dockerfile).
 
-  viewer:
-    # REQUIRES a viewer image built from this branch: since the campaign
-    # browser landed, the image is nginx-unprivileged serving on 8080 (not 80)
-    # with the SPA at / and UV at /uv.html. The currently PUBLISHED
-    # riksarkivet/htrflow-batch-viewer:latest is still the old port-80 image
-    # and this service will NOT answer on 8080 with it. Build and tag first:
-    #   make viewer-image && \
-    #   docker tag 127.0.0.1:30500/uv4:dev riksarkivet/htrflow-batch-viewer:latest
-    # (or `dagger call build-viewer export --path /tmp/viewer.tar` +
-    # `docker load` + tag). Drop this note once :latest is republished.
-    image: riksarkivet/htrflow-batch-viewer:latest
+  web:
+    image: riksarkivet/htrflow-web:latest
+    build:
+      context: ..
+      dockerfile: .docker/htrflow-web.dockerfile
+    # Site only: there is no apiserver in a compose stack, so the console
+    # script (which builds a kube Reader at startup) would exit. create_app
+    # takes the reader lazily, so passing None serves /, /log and /uv.html
+    # and leaves /api/v1 broken — which is exactly what this stack checks.
+    command:
+      - python
+      - -c
+      - |
+        import uvicorn
+        from htrflow_web.app import create_app
+        uvicorn.run(create_app(None), host="0.0.0.0", port=8081)
     ports:
-      - "8080:8080"
+      - "8080:8081"
     depends_on:
       rustfs:
         condition: service_healthy

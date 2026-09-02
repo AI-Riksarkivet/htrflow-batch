@@ -33,10 +33,14 @@ func (m *HtrflowBatch) Build(
 	}), nil
 }
 
-// BuildWeb creates the web image from .docker/htrflow-web.dockerfile.
-// Light: CPU-only, no torch — it builds the workspace member with uv rather
-// than layering onto the htrflow base. The converter is not built into an
-// image: it runs in CI/laptops via `uvx --from
+// BuildWeb creates the web image from .docker/htrflow-web.dockerfile: the
+// campaign browser (bun), the Universal Viewer fork with uv4-uv-html.patch
+// applied (npm, pinned commit) and the read API that serves both. The whole
+// recipe lives in the dockerfile so `make build-web` and this build the same
+// image — there is no second copy of it here to drift.
+//
+// Light next to the wrapper: CPU-only, no torch. The converter is not built
+// into an image at all: it runs in CI/laptops via `uvx --from
 // "git+https://github.com/AI-Riksarkivet/htrflow-batch#subdirectory=packages/converter"
 // htrflow-campaigns` (or `uv tool install` from a checkout — see
 // examples/campaigns/.github/workflows/render.yml).
@@ -44,8 +48,19 @@ func (m *HtrflowBatch) BuildWeb(
 	ctx context.Context,
 	// +defaultPath="/"
 	source *dagger.Directory,
+	// CA bundle for TLS-intercepting networks (the git clone, npm and bun
+	// installs). Passed to the build as the optional `ca` secret the
+	// dockerfile mounts; without it the images' stock CA set is used.
+	// +optional
+	caBundle *dagger.File,
 ) (*dagger.Container, error) {
-	return source.DockerBuild(dagger.DirectoryDockerBuildOpts{
-		Dockerfile: ".docker/htrflow-web.dockerfile",
-	}), nil
+	opts := dagger.DirectoryDockerBuildOpts{Dockerfile: ".docker/htrflow-web.dockerfile"}
+	if caBundle != nil {
+		contents, err := caBundle.Contents(ctx)
+		if err != nil {
+			return nil, err
+		}
+		opts.Secrets = []*dagger.Secret{dag.SetSecret("ca", contents)}
+	}
+	return source.DockerBuild(opts), nil
 }
