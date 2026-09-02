@@ -2,7 +2,7 @@
 type: Product Backlog Item
 id:
 parent: 2811
-title: Define the index: what a document is and which fields it has
+title: "Define the index: what a document is and which fields it has"
 ---
 
 # S02 · Define the index: what a document is and which fields it has
