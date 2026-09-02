@@ -1,5 +1,4 @@
 import shutil
-import subprocess
 from pathlib import Path
 
 import yaml
@@ -174,52 +173,18 @@ def test_render_prints_every_removed_path_and_also_removes_yml(tmp_path, capsys)
     assert not stale_yml.exists()
 
 
-# Duplicated on purpose from scripts/kueue-pause-sync.sh: that script reads a
-# campaign's pause intent out of exactly this rendered file with exactly this
-# POSIX ERE. If render's formatting changes, this test breaks in CI instead of
-# the pause silently failing on the cluster.
-PAUSE_ERE = r"^[[:space:]]*suspend:[[:space:]]*true[[:space:]]*$"
-PAUSE_SYNC = REPO_ROOT / "scripts" / "kueue-pause-sync.sh"
-
-
-def _greps(pattern: str, path: Path) -> bool:
-    return subprocess.run(["grep", "-qE", pattern, str(path)]).returncode == 0
-
-
-def test_the_pause_sync_regex_matches_a_rendered_paused_campaign(tmp_path):
-    assert PAUSE_ERE in PAUSE_SYNC.read_text(), (
-        "scripts/kueue-pause-sync.sh no longer uses PAUSE_ERE"
-    )
-    repo = tmp_path / "repo"
-    shutil.copytree(GOOD, repo)
-    out = tmp_path / "rendered"
-    paused = repo / "campaigns" / "paused.yaml"
-    paused.write_text("pipeline: demo-v1\nsuspend: true\nvolumes:\n  - R7777777\n")
-    assert main(["render", str(repo), "--out", str(out)]) == 0
-
-    assert _greps(PAUSE_ERE, out / "campaigns" / "paused.yaml")
-    assert not _greps(PAUSE_ERE, out / "campaigns" / "kyrk.yaml")
-
-
-def test_the_makefile_prune_selector_is_a_label_the_renderer_writes(tmp_path):
-    """`make campaigns-apply PRUNE=1` deletes by CAMPAIGN_SELECTOR; anything
-    the renderer does not label with it survives a cancel."""
+def test_the_makefile_no_longer_defines_the_prune_selector():
+    """One definition, in `render.CAMPAIGN_SELECTOR`: `htrflow-campaigns
+    apply` passes it to `kubectl --prune` and `make campaigns-apply` calls
+    that. A second copy in the Makefile could drift from the label the
+    renderer writes, and a prune that matches nothing deletes nothing --
+    silently."""
     makefile = (REPO_ROOT / "Makefile").read_text()
-    selector = next(
-        line.split(":=", 1)[1].strip()
-        for line in makefile.splitlines()
-        if line.startswith("CAMPAIGN_SELECTOR")
-    )
-    key, _, value = selector.partition("=")
+    assert "CAMPAIGN_SELECTOR :=" not in makefile
+    assert "htrflow-campaigns apply $(DIR)" in makefile
 
-    out = tmp_path / "rendered"
-    assert main(["render", str(GOOD), "--out", str(out)]) == 0
-    docs = [
-        d
-        for path in sorted(out.rglob("*.yaml"))
-        for d in yaml.safe_load_all(path.read_text())
-    ]
-    assert docs
-    for doc in docs:
-        labels = doc["metadata"]["labels"]
-        assert labels.get(key) == value, (doc["kind"], doc["metadata"]["name"], labels)
+
+def test_the_pause_sync_script_is_gone():
+    """`htrflow-campaigns apply` owns the Workload sync now; a stale copy of
+    the shell script would be a second, silently diverging implementation."""
+    assert not (REPO_ROOT / "scripts" / "kueue-pause-sync.sh").exists()

@@ -110,15 +110,13 @@ compose-smoke:
 compose-down:
 	cd .docker && docker compose down -v
 
-# Render a campaigns repo's pipelines/campaigns to Indexed Jobs and apply them
-# to the cluster directly (no controller in the loop): pipelines first, since
-# campaigns reference them. DIR is the campaigns repo checkout (see
-# examples/campaigns/).
-#
-# A campaign's `suspend:` renders `spec.suspend` on the Job, but Kueue owns
-# that field for an admitted Workload and undoes it — so the apply is followed
-# by scripts/kueue-pause-sync.sh, which puts the same intent on the Workload's
-# `spec.active`. Declared in git, enforced at apply time.
+# Render a campaigns repo's pipelines/campaigns to Indexed Jobs and apply
+# them to the cluster directly (no controller in the loop). DIR is the
+# campaigns repo checkout (see examples/campaigns/). Everything this does —
+# render order, the prune selector, the Kueue pause sync — lives in
+# `htrflow-campaigns apply`, so CI, Argo CD and this target run one command
+# and cannot drift apart; `--out` keeps the PoC's habit of committing
+# `rendered/`.
 #
 # PRUNE=1 additionally deletes the objects a *previous* render left behind
 # that this one no longer produces — what makes "deleting a campaign file
@@ -126,13 +124,9 @@ compose-down:
 # --prune deletes every converter-labelled object in the namespace that is
 # not in THIS apply, so running it against a partial checkout (a probe
 # directory with its own converter.yaml, say) would cancel everything else.
-CAMPAIGN_SELECTOR := htrflow.riksarkivet.se/managed-by=converter
 campaigns-apply:
 	@test -n "$(DIR)" || (echo "usage: make campaigns-apply DIR=<campaigns-repo-dir>"; exit 2)
-	uv run htrflow-campaigns render $(DIR) --out $(DIR)/rendered
-	kubectl apply $(if $(PRUNE),--prune -l $(CAMPAIGN_SELECTOR)) \
-	  -f $(DIR)/rendered/pipelines -f $(DIR)/rendered/campaigns
-	scripts/kueue-pause-sync.sh $(HTR_NAMESPACE) $(DIR)/rendered/campaigns
+	uv run htrflow-campaigns apply $(DIR) --out $(DIR)/rendered $(if $(PRUNE),--prune)
 
 # The reproducible core of the Indexed Jobs E2E (docs/development/e2e-indexed-jobs.md):
 # validate the campaigns repo, render + apply it, then block until every
@@ -147,10 +141,11 @@ e2e:
 	$(MAKE) campaigns-apply DIR=$(DIR)
 	@kubectl -n $(HTR_NAMESPACE) wait --for=condition=complete --timeout=600s \
 	  job -l htrflow.riksarkivet.se/managed-by=converter,app=htrflow-warmup
-	@deadline=$$(( $$(date +%s) + $(CAMPAIGN_TIMEOUT) )); \
+	@sel=$$(uv run python -c "from htrflow_converter.render import CAMPAIGN_SELECTOR; print(CAMPAIGN_SELECTOR)"); \
+	deadline=$$(( $$(date +%s) + $(CAMPAIGN_TIMEOUT) )); \
 	while :; do \
 	  pending=""; \
-	  for j in $$(kubectl -n $(HTR_NAMESPACE) get job -l app=htrflow-batch,$(CAMPAIGN_SELECTOR) -o name); do \
+	  for j in $$(kubectl -n $(HTR_NAMESPACE) get job -l app=htrflow-batch,$$sel -o name); do \
 	    done_idx=$$(kubectl -n $(HTR_NAMESPACE) get $$j -o jsonpath='{.status.completedIndexes}'); \
 	    total=$$(kubectl -n $(HTR_NAMESPACE) get $$j -o jsonpath='{.spec.completions}'); \
 	    cond=$$(kubectl -n $(HTR_NAMESPACE) get $$j -o jsonpath='{.status.conditions[?(@.status=="True")].type}'); \
