@@ -17,6 +17,10 @@ from .config import Config
 PAGE_FORMATS = ("page", "alto")
 
 
+def _json_bytes(obj: dict) -> bytes:
+    return json.dumps(obj, ensure_ascii=False).encode()
+
+
 class ResultStore:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -47,6 +51,13 @@ class ResultStore:
 
     def _key(self, rel: str) -> str:
         return f"{self.prefix}/{rel}"
+
+    def _put(self, key: str, body: bytes, content_type: str, client=None) -> None:
+        """The single put_object call: every write below goes through here, so
+        bucket, explicit content type and client choice are stated once."""
+        (client or self.client).put_object(
+            Bucket=self.bucket, Key=key, Body=body, ContentType=content_type
+        )
 
     def _list_stems(self, fmt: str) -> set[str]:
         names: set[str] = set()
@@ -88,48 +99,23 @@ class ResultStore:
                 ) from e
             bodies[fmt] = data
         for fmt in PAGE_FORMATS:
-            self.client.put_object(
-                Bucket=self.bucket,
-                Key=self._key(f"{fmt}/{name}.xml"),
-                Body=bodies[fmt],
-                ContentType="application/xml",
-            )
+            self._put(self._key(f"{fmt}/{name}.xml"), bodies[fmt], "application/xml")
 
     def put_json(self, rel_key: str, obj: dict) -> None:
-        self.client.put_object(
-            Bucket=self.bucket,
-            Key=self._key(rel_key),
-            Body=json.dumps(obj, ensure_ascii=False).encode(),
-            ContentType="application/json",
-        )
+        self._put(self._key(rel_key), _json_bytes(obj), "application/json")
 
     def put_json_at(self, key: str, obj: dict) -> None:
         """Write JSON at a bucket key outside the per-volume prefix, honoring
         S3_PREFIX like everything else — used for the IMAGES synthetic
         manifest under ``sources/`` (docs: wrapper, IMAGES)."""
         full_key = f"{self.cfg.s3_prefix}/{key}" if self.cfg.s3_prefix else key
-        self.client.put_object(
-            Bucket=self.bucket,
-            Key=full_key,
-            Body=json.dumps(obj, ensure_ascii=False).encode(),
-            ContentType="application/json",
-        )
+        self._put(full_key, _json_bytes(obj), "application/json")
 
     def put_bytes(self, rel_key: str, data: bytes, content_type: str) -> None:
-        self.client.put_object(
-            Bucket=self.bucket,
-            Key=self._key(rel_key),
-            Body=data,
-            ContentType=content_type,
-        )
+        self._put(self._key(rel_key), data, content_type)
 
     def put_text(self, rel_key: str, text: str, content_type: str) -> None:
-        self.client.put_object(
-            Bucket=self.bucket,
-            Key=self._key(rel_key),
-            Body=text.encode(),
-            ContentType=content_type,
-        )
+        self._put(self._key(rel_key), text.encode(), content_type)
 
     def run_log_key(self) -> str:
         """Bucket-root key the read API/frontend read the run log from
@@ -138,11 +124,11 @@ class ResultStore:
         return f"status/logs/{self.cfg.pipeline_id}/{self.cfg.volume_ref}.txt"
 
     def put_run_log(self, text: str) -> None:
-        self._log_client.put_object(
-            Bucket=self.bucket,
-            Key=self.run_log_key(),
-            Body=text.encode("utf-8", errors="replace"),
-            ContentType="text/plain; charset=utf-8",
+        self._put(
+            self.run_log_key(),
+            text.encode("utf-8", errors="replace"),
+            "text/plain; charset=utf-8",
+            self._log_client,
         )
 
     def get_bytes(self, rel_key: str) -> bytes:
