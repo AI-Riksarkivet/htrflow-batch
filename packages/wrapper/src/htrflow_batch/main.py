@@ -332,8 +332,15 @@ def _verify(
     missing = sorted({p.name for p in pages} - uploaded)
     failed = sorted(n for n, r in stats.results.items() if r.status == "failed")
     if missing or failed:
-        detail = _failure_detail(stats, failed)
-        raise RuntimeError(f"verify failed: missing={missing} failed={failed}{detail}")
+        # Counts and the cause FIRST, the name lists last: _terminate clips
+        # the error field at 3500 chars and a few hundred missing page names
+        # fill that on their own — what gets dropped must be the names, never
+        # the reason the operator is reading the message for.
+        raise RuntimeError(
+            f"verify failed: {len(missing)} missing, {len(failed)} failed"
+            f"{_failure_detail(stats, failed)}"
+            f" missing={missing} failed={failed}"
+        )
     return uploaded
 
 
