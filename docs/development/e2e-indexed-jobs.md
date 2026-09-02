@@ -758,3 +758,214 @@ finished **3/3 in 69 s** (06:37:47 → 06:38:56, `completedIndexes: 0-2`).
 
 Pause on create is enforced but not race-free (callout above). Everything
 else from rounds 0 and 1 stays closed.
+
+---
+
+# Task 14 — one command, and the render-time pause experiment
+
+*Same node, same images, same campaigns repo branch (`~/htr-test`,
+`b63-indexed`).* Task 14 gave `render → apply → prune → pause` one owner,
+`htrflow-campaigns apply`. Before writing its pause step, the **render-time**
+alternative left open at the end of fix round 2 was measured on the cluster —
+because if it worked, the apply would need no Workload logic at all.
+
+## The experiment: can a paused campaign simply leave the queue?
+
+The idea: render a suspended campaign's Job with `spec.suspend: true` and
+**without** the `kueue.x-k8s.io/queue-name` label. Kueue then ignores the Job,
+so nothing flips `suspend` back, and a campaign committed as `suspend: true`
+never gets admitted at all — the ~4 s pod of fix round 2 would be gone. It
+only works if **both** transitions survive Kueue's webhook in *one*
+`kubectl apply`, which is all Argo CD or `apply` ever does.
+
+`campaigns/e2e-qlabel.yaml` (8 volumes, `window: 1`) was applied unpaused and
+was running index 0 when the first transition was made.
+
+### A. running → paused (label removed + `suspend: true`): **accepted**
+
+```console
+$ kubectl -n htr-batch get job e2e-qlabel -o custom-columns=SUSPEND:.spec.suspend,ACTIVE:.status.active
+SUSPEND   ACTIVE
+false     1                                     # 08:21:06, pod e2e-qlabel-0-w945h Running
+
+$ kubectl apply -f rendered/campaigns/e2e-qlabel.yaml   # label removed, suspend: true
+configmap/campaign-e2e-qlabel unchanged
+job.batch/e2e-qlabel configured                 # 08:21:20, exit 0
+
+$ kubectl -n htr-batch get events --field-selector involvedObject.name=e2e-qlabel
+2026-09-02T08:21:21Z   Suspended          Job suspended
+2026-09-02T08:21:21Z   SuccessfulDelete   Deleted pod: e2e-qlabel-0-k8sdt
+```
+
+The Job stayed `suspend: true` with zero pods for the next 30 s+. So far so
+good — **but the Workload it left behind is still admitted**:
+
+```console
+$ kubectl -n htr-batch get workload job-e2e-qlabel-ef0ef \
+    -o custom-columns=ACTIVE:.spec.active,ADMITTED:.status.conditions[?(@.type=="Admitted")].status
+ACTIVE   ADMITTED
+true     True                                   # 08:22:50, ~90 s after the pause
+
+$ kubectl get clusterqueue htr-batch-cq -o jsonpath='admitted={.status.admittedWorkloads} gpu_used=…'
+admitted=1 pending=0 gpu_used=1                 # one GPU reserved, zero pods
+```
+
+Kueue's Job reconciler ignores a Job without the queue-name label, so it never
+finalises that Workload — it is owned by the Job and outlives the pause,
+holding the campaign's quota. A second campaign applied while the first was
+"paused" this way was **starved**:
+
+```console
+$ kubectl apply -f rendered/campaigns/e2e-qneighbour.yaml   # 08:23:14, not paused
+job.batch/e2e-qneighbour created
+
+$ kubectl -n htr-batch get workload -o custom-columns=NAME:…,QUOTA:…,MSG:…
+job-e2e-qlabel-ef0ef       true   True    Quota reserved in ClusterQueue htr-batch-cq
+job-e2e-qneighbour-29337   true   False   couldn't assign flavors to pod set main:
+                                          insufficient unused quota for nvidia.com/gpu
+                                          in flavor default-flavor, 1 more needed
+```
+
+### B. paused → running (label added + `suspend: false`): **rejected**
+
+```console
+$ kubectl apply -f rendered/campaigns/e2e-qlabel.yaml     # 08:24:10, the unpaused render
+Error from server (Forbidden): error when applying patch:
+…
+admission webhook "vjob.kb.io" denied the request:
+metadata.labels[kueue.x-k8s.io/queue-name]: Invalid value: "htr-batch": field is immutable
+```
+
+Kueue's Job webhook treats the queue-name label as immutable unless **both**
+the old and the new object are suspended, and the resuming apply un-suspends
+in the same request. The brief's fallback — add the label back but leave
+`suspend: true` and let Kueue unsuspend on admission — *is* accepted:
+
+```console
+$ kubectl apply -f qlabel-resume-suspended.yaml           # 08:24:28
+job.batch/e2e-qlabel configured
+2026-09-02T08:24:28Z   Resumed            Job resumed
+2026-09-02T08:24:28Z   SuccessfulCreate   Created pod: e2e-qlabel-0-68xwj
+```
+
+…but it is not a render-time answer: the renderer would have to emit
+`suspend: true` for a campaign whose file says it is *running*, and Kueue
+flips that back to `false` on admission, so the very next apply of the
+unchanged rendered file would pause the campaign again for a few seconds.
+
+### Ruling
+
+Both transitions have to pass in one apply, and B does not. Independently, A
+leaks the campaign's quota for as long as it stays paused, which on a
+one-GPU cluster stops everything else. **The render-time pause is rejected**:
+`render` keeps writing the `kueue.x-k8s.io/queue-name` label on every
+campaign, and the apply-time `Workload.spec.active` patch stays — now inside
+`htrflow-campaigns apply` instead of `scripts/kueue-pause-sync.sh` (deleted).
+The ~4 s window for a campaign created already paused stays open and is
+documented in [the pausing reference](../reference/campaign-yaml.md#pausing).
+
+Cleanup: `e2e-qlabel` and `e2e-qneighbour` (Jobs + ConfigMaps) deleted, quota
+back to `admitted=0 pending=0 gpu_used=0`.
+
+## `make campaigns-apply` on the PoC, now one command
+
+`campaigns/e2e-applyrun.yaml` (2 volumes, `window: 2`, running) and
+`campaigns/e2e-applypause.yaml` (2 volumes, `suspend: true`, never applied
+before) were added and applied together:
+
+```console
+$ make campaigns-apply DIR=/home/morgan/htr-test           # 08:35:19
+uv run htrflow-campaigns apply /home/morgan/htr-test --out /home/morgan/htr-test/rendered
+kubectl apply -f /home/morgan/htr-test/rendered/pipelines
+…
+kubectl apply -f /home/morgan/htr-test/rendered/campaigns
+configmap/campaign-e2e-applypause created
+job.batch/e2e-applypause created
+configmap/campaign-e2e-applyrun created
+job.batch/e2e-applyrun created
+…
+kubectl -n htr-batch get job e2e-applypause -o 'jsonpath={.metadata.uid}'
+kubectl -n htr-batch get workload -l kueue.x-k8s.io/job-uid=1bf2eaa3-… -o name
+kubectl -n htr-batch get workload.kueue.x-k8s.io/job-e2e-applypause-dcce9 -o 'jsonpath={.spec.active}'
+e2e-applypause: workload.kueue.x-k8s.io/job-e2e-applypause-dcce9 active=false
+kubectl -n htr-batch patch workload.kueue.x-k8s.io/job-e2e-applypause-dcce9 \
+  --type merge -p '{"spec": {"active": false}}'
+workload.kueue.x-k8s.io/job-e2e-applypause-dcce9 patched
+```
+
+Every command the tool runs is echoed to stderr, including the read-only
+lookups — that transcript *is* the audit trail an apply leaves in CI.
+
+```console
+$ kubectl -n htr-batch get job e2e-applyrun e2e-applypause \
+    -o custom-columns=NAME:…,SUSPEND:.spec.suspend,ACTIVE:.status.active
+NAME             SUSPEND   ACTIVE
+e2e-applyrun     false     1
+e2e-applypause   true      <none>
+
+$ kubectl -n htr-batch get workload job-e2e-applypause-dcce9 job-e2e-applyrun-5f22e \
+    -o custom-columns=NAME:…,ACTIVE:.spec.active,ADMITTED:…,EVICTED:…
+job-e2e-applypause-dcce9   false    False      Deactivated
+job-e2e-applyrun-5f22e     true     True       <none>
+
+$ kubectl -n htr-batch get pods -l batch.kubernetes.io/job-name=e2e-applypause
+No resources found in htr-batch namespace.
+
+$ curl -s localhost:30800/api/v1/jobs        # trimmed to the two campaigns
+{"name": "e2e-applypause", "phase": "Queued",  "suspended": true,
+ "counts": {"total": 2, "active": 0, "done": 0, "failed": 0}}
+{"name": "e2e-applyrun",   "phase": "Running", "suspended": false,
+ "counts": {"total": 2, "active": 1, "done": 1, "failed": 0}}
+```
+
+The ~4 s window is **narrower but still there**: Kueue admitted the paused
+campaign and created `e2e-applypause-0-2x79m` at 08:35:19, the apply's patch
+landed and the pod was deleted at 08:35:20 — one second, because the pause
+step now runs in-process straight after the apply instead of via a second
+`make` recipe line. `e2e-applyrun` finished 2/2 at 08:36:40
+(`phase: Succeeded`, `manifest.json` HTTP 200 on the bucket).
+
+A second `make campaigns-apply` while the campaign was paused issued **no
+patch** (both Workloads already agreed with git) and the pause held:
+`suspend: true`, `spec.active: false`, zero pods.
+
+### Prune still only deletes what it should
+
+`campaigns/e2e-applypause.yaml` was deleted from the repo and the apply re-run
+with `PRUNE=1`:
+
+```console
+$ make campaigns-apply DIR=/home/morgan/htr-test PRUNE=1
+uv run htrflow-campaigns apply /home/morgan/htr-test --out …/rendered --prune
+removed: /home/morgan/htr-test/rendered/campaigns/e2e-applypause.yaml
+kubectl apply -f …/rendered/pipelines
+kubectl apply --prune -l htrflow.riksarkivet.se/managed-by=converter \
+  -f …/rendered/pipelines -f …/rendered/campaigns
+…
+configmap/campaign-e2e-applypause pruned
+job.batch/e2e-applypause pruned
+```
+
+Note the pruning apply is handed **both** directories. `--prune -l` deletes
+every object carrying the label that is not in *this* apply, and the pipeline
+ConfigMaps and warm-up Jobs carry it too — pruning against `campaigns/` alone
+would have deleted the two `htr-pipeline-*` ConfigMaps and both warm-up Jobs
+that the previous command had just applied. After the prune both pipeline
+ConfigMaps were still there.
+
+## Cluster state left behind
+
+`e2e-applyrun` (Complete 2/2) joins the completed campaigns from the earlier
+rounds; `e2e-applypause`, `e2e-qlabel` and `e2e-qneighbour` are gone. No
+campaign pod is running, and the ClusterQueue is idle
+(`admitted=0 pending=0 gpu_used=0`). Campaigns repo `~/htr-test` branch
+`b63-indexed` (still never pushed): `8b338b6`.
+
+!!! note "GPU flakiness during this run"
+
+    Several indexes failed a first attempt with `torch.AcceleratorError: CUDA
+    error: out of memory` and succeeded on the retry — on this node, with no
+    other GPU process visible to `nvidia-smi` and 70 GB of the unified 119 GB
+    free. It is an environment condition, not a campaign or converter bug
+    (`backoffLimitPerIndex: 3` absorbed it), but it is why a two-volume
+    campaign took 81 s here and 20 s per volume in fix round 2.
