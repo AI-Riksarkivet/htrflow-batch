@@ -669,3 +669,92 @@ pod**.
 Open question 1 (pause) and 2 (`parallelism`) above are closed by this round;
 3 (`max_seconds` scope) is closed by the pipeline field. The round-0 text is
 left as written — it is the record of what the system did before the fix.
+
+---
+
+# Fix round 2
+
+*Same node, same images, same campaigns repo branch.* Five review findings
+from fix round 1 were fixed; one of them — **pause on create** — was a real
+hole and is the only one with new cluster evidence, below. The others are
+code and documentation: `render` refusing an `--out` that contains its own
+sources and printing every deletion, bool/zero guards on `window` and
+`max_seconds`, the pause-intent grep made tolerant and covered by a test, and
+the correction that **Argo CD does not prune by default**
+(`syncPolicy.automated.prune` is `false` unless you set it).
+
+## Pause on create — a brand-new `suspend: true` campaign ran anyway
+
+`scripts/kueue-pause-sync.sh` skipped any campaign whose Kueue Workload did
+not exist yet. That is *every campaign on the apply that creates it*, so a
+campaign committed as `suspend: true` was admitted by Kueue and ran to
+completion — the pause only ever worked on a campaign that had already been
+applied once. The script now waits (10 × 1 s) for a paused campaign's
+Workload and exits non-zero if it never appears.
+
+`campaigns/e2e-pausenew.yaml` (3 volumes, `suspend: true`, never applied
+before):
+
+```console
+$ make campaigns-apply DIR=/home/morgan/htr-test
+…
+configmap/campaign-e2e-pausenew created
+job.batch/e2e-pausenew created
+…
+scripts/kueue-pause-sync.sh htr-batch /home/morgan/htr-test/rendered/campaigns
+e2e-pausenew: job-e2e-pausenew-38e9e active=false
+workload.kueue.x-k8s.io/job-e2e-pausenew-38e9e patched
+
+$ kubectl -n htr-batch get job e2e-pausenew \
+    -o custom-columns=SUSPEND:.spec.suspend,ACTIVE:.status.active,DONE:.status.completedIndexes
+SUSPEND   ACTIVE    DONE
+true      <none>    <none>
+
+$ kubectl -n htr-batch get workload job-e2e-pausenew-38e9e -o jsonpath='{.spec.active}'
+false
+
+$ curl -s localhost:30800/api/v1/jobs/htr-batch/e2e-pausenew | jq '{phase,suspended,counts}'
+{ "phase": "Queued", "suspended": true,
+  "counts": { "total": 3, "active": 0, "done": 0, "failed": 0 } }
+```
+
+It **held** — still `suspend: true`, Workload `active: false`, zero pods
+2 m 14 s later — and a second `make campaigns-apply` while paused issued no
+patch and changed nothing. Flipping the file to `suspend: false` and applying
+resumed it (`e2e-pausenew: job-e2e-pausenew-38e9e active=true`); the campaign
+finished **3/3 in 69 s** (06:37:47 → 06:38:56, `completedIndexes: 0-2`).
+
+!!! warning "Not closed: one pod still runs for ~4 s"
+
+    Kueue creates and **admits** the Workload in the same second the Job is
+    created, and unsuspends the Job before any apply-time script can look at
+    it. Measured on this run: Job created 06:35:07, `Resumed` +
+    `SuccessfulCreate pod: e2e-pausenew-0-4h5nf` at 06:35:07, the script's
+    patch at 06:35:10, `SuccessfulDelete` 06:35:10 — the pod lived ~4 s, got
+    far enough to read the manifest and start fetching the first image, and
+    was SIGTERMed:
+
+    ```console
+    $ curl -s localhost:30900/htr-results/status/logs/e2e-v1/e2e-pausenew-01.txt
+    06:35:11 INFO [e2e-pausenew-01] 1 pages in manifest
+    06:35:11 INFO [e2e-pausenew-01] resume: 0 done, 1 to process
+    06:35:11 ERROR transient failure in load: SIGTERM, shutting down
+    ```
+
+    No page, ALTO, `iiif.json` or `manifest.json` was written (404 on the
+    bucket); the only trace is that 496-byte log. So the campaign does not
+    *run*, but "no pod ever starts" is **not** true, and no amount of polling
+    can make it true: the race is lost before the apply returns.
+
+    The race-free levers are both **render-time** changes and therefore
+    design decisions, left for a ruling: render a suspended campaign's Job
+    **without** the `kueue.x-k8s.io/queue-name` label (Kueue then ignores the
+    Job entirely and the rendered `spec.suspend: true` holds by itself — but
+    a paused campaign leaves the queue, and the label has to come back on
+    resume), or render it with `parallelism: 0` (a Job that creates no pods
+    even while admitted — but a zero-count Kueue podSet may not validate).
+
+## What is still open after round 2
+
+Pause on create is enforced but not race-free (callout above). Everything
+else from rounds 0 and 1 stays closed.
