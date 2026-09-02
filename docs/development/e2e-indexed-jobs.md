@@ -132,7 +132,7 @@ The PoC values file (not committed; local digests):
 
 ```yaml
 publicResultsBase: "http://localhost:30900/htr-results"
-legacyLayout: true
+# plus the pre-B63 layout flag, set true — retired in Task 15 below
 modelCache: { create: false, name: htr-test-data }
 queue:
   name: htr-batch
@@ -159,7 +159,7 @@ no `converter.yaml`) on a new branch `b63-indexed`. `converter.yaml` carries
 the PoC values — `namespace: htr-batch`, `queue: htr-batch`, `window: 1`
 (one GPU), `data_pvc: htr-test-data`, `s3_secret: htr-batch-s3`,
 `runtime_class: nvidia`, `public_results_base:
-http://localhost:30900/htr-results`, `legacy_layout: true`,
+http://localhost:30900/htr-results`, the pre-B63 layout flag set true,
 `allowed_image_repos: ["127.0.0.1:30500/"]`. One pipeline (`e2e-v1`) pinned to
 the wrapper digest above; everything else deleted.
 
@@ -972,8 +972,9 @@ campaign pod is running, and the ClusterQueue is idle
 
 ## Task 15 — the PoC bucket moved to the namespaced layout
 
-`legacyLayout` existed only because this bucket predates
-`<namespace>/<pipeline>/<volume>/`. It was retired by moving the data once
+The chart/converter flag that kept the flat `<pipeline>/<volume>/` layout
+existed only because this bucket predates `<namespace>/<pipeline>/<volume>/`.
+It was retired by moving the data once
 (2026-09-02). Credentials came from the `htr-batch-s3` Secret into the
 environment; every command below is `aws --endpoint-url
 http://localhost:30900 …`.
@@ -983,7 +984,7 @@ http://localhost:30900 …`.
 Twenty top-level prefixes, 1 864 objects: eighteen pipeline ids written by
 the pre-B63 reconciler and the B63 e2e rounds, plus `sources/` (the
 synthetic IIIF manifests for `IMAGES` volumes) and `status/`. No `htr-batch/`
-prefix existed — the PoC ran with `legacyLayout: true` throughout.
+prefix existed — the PoC ran on the flat layout throughout.
 
 ```console
 $ aws s3 ls s3://htr-results/

@@ -29,7 +29,7 @@ Source: [`packages/wrapper/src/htrflow_batch/config.py`](https://github.com/carp
 |---------|---------|-------------|
 | `S3_ENDPOINT` | `""` | Empty = boto3 provider default chain |
 | `AWS_SHARED_CREDENTIALS_FILE` | *(boto3 default)* | Jobs set `/secrets/s3/credentials` — the mounted Secret file; credentials are never env |
-| `S3_PREFIX` | `""` | Extra prefix before `<pipeline>/<volume>/` — the converter sets it from `converter.yaml`'s `legacy_layout` (`""` legacy, else `<namespace>/`) |
+| `S3_PREFIX` | `""` | Extra prefix before `<pipeline>/<volume>/` (and before `sources/`) — the converter always sets it to `<namespace>/`. Empty only when the wrapper is run by hand |
 | `MAX_IMAGE_WIDTH` | `2500` | Downscale request sent to the IIIF Image API (`/full/{w},/`; `max` for narrower canvases; a 400 falls back to `max`). Service-less canvases are fetched at native size |
 | `RESUME` | `true` | Skip pages that already have **both** PAGE and ALTO in S3 and whose `page_sources` URL is unchanged |
 | `LOOKAHEAD_PAGES` | `64` | Prefetch depth of the download pipeline |

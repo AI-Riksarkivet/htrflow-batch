@@ -26,7 +26,6 @@ are rejected at install time).
 | `s3.existingSecret` | `htr-batch-s3` | Secret in the release namespace. Pods read the key **`credentials`** (AWS ini: `[default] aws_access_key_id / aws_secret_access_key`) as a file mounted at `/secrets/s3/credentials` via `AWS_SHARED_CREDENTIALS_FILE`, plus the non-secret `S3_BUCKET` and optional `S3_ENDPOINT` as env. **Nothing is injected with `envFrom`**; only tooling (compose, the devStack init Job, the RustFS server) reads `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` keys directly. See [Security](../development/security.md) |
 | `s3.bucket` | `htr-results` | Results bucket name; created and policied by the devStack `rustfs-init` hook. Keep it equal to the converter's `s3_secret`/bucket config so the two sides wire together by name |
 | `publicResultsBase` | `""` | **Required** — browser-reachable URL base for published results (viewer manifests and the read API's `resultsBase` embed it) |
-| `legacyLayout` | `false` | `true` keeps the pre-B63 `<pipeline>/<volume>/` layout (no per-namespace prefix) for existing data. Must match `converter.yaml`'s `legacy_layout` |
 
 ## Model cache (`modelCache.*`)
 
