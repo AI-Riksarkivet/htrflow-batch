@@ -288,6 +288,45 @@ def test_pipeline_max_seconds_overrides_the_converter_default():
     assert max_seconds(demo.model_copy(update={"max_seconds": 60})) == "60"
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "campaign-job.yaml",
+        "warmup-job.yaml",
+        "configmap.yaml",
+        "pipeline-configmap.yaml",
+    ],
+)
+def test_skeletons_are_valid_jobs(name):
+    """The packaged skeletons (render._load) are complete, well-formed
+    objects on their own -- this is also what kubeconform validates as-is in
+    CI (.dagger/checks.go)."""
+    doc = render._load(name)
+    assert doc["kind"] in ("Job", "ConfigMap")
+    assert doc["apiVersion"] in ("batch/v1", "v1")
+    if name == "campaign-job.yaml":
+        assert doc["spec"]["completionMode"] == "Indexed"
+
+
+def test_load_returns_a_fresh_copy_every_call():
+    a = render._load("configmap.yaml")
+    b = render._load("configmap.yaml")
+    assert a == b
+    assert a is not b
+    a["metadata"]["name"] = "mutated"
+    assert render._load("configmap.yaml")["metadata"]["name"] != "mutated"
+
+
+def test_set_dotted_path():
+    obj = {"a": {"b": [{"c": 1}, {"d": 2}]}}
+    render._set(obj, "a.b[0].c", 99)
+    assert obj["a"]["b"][0]["c"] == 99
+    render._set(obj, "a.b[1].e", "new")  # a new leaf key may be created
+    assert obj["a"]["b"][1]["e"] == "new"
+    with pytest.raises(KeyError):
+        render._set(obj, "a.nope.c", 1)  # unknown intermediate segment
+
+
 def test_every_rendered_object_carries_the_prune_selector():
     """`kubectl apply --prune -l htrflow.riksarkivet.se/managed-by=converter`
     (and Argo CD's prune) is what makes "deleting a campaign file cancels the
