@@ -140,7 +140,7 @@ e2e:
 	uv run htrflow-campaigns validate $(DIR)
 	$(MAKE) campaigns-apply DIR=$(DIR)
 	@kubectl -n $(HTR_NAMESPACE) wait --for=condition=complete --timeout=600s \
-	  job -l htrflow.riksarkivet.se/managed-by=converter,app=htrflow-warmup
+	  job -l "$$(uv run python -c "from htrflow_converter.render import CAMPAIGN_SELECTOR; print(CAMPAIGN_SELECTOR)"),app=htrflow-warmup"
 	@sel=$$(uv run python -c "from htrflow_converter.render import CAMPAIGN_SELECTOR; print(CAMPAIGN_SELECTOR)"); \
 	deadline=$$(( $$(date +%s) + $(CAMPAIGN_TIMEOUT) )); \
 	while :; do \
