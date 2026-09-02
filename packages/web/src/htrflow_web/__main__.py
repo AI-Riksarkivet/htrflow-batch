@@ -1,4 +1,4 @@
-"""``htrflow-api`` console-script entrypoint: uvicorn serving on :8081."""
+"""``htrflow-web`` console-script entrypoint: uvicorn serving on :8081."""
 
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
 .PHONY: install format lint check test typecheck test-driver-real ci build build-viewer scan publish \
         compose-up compose-test compose-smoke compose-down helm-lint helm-template install-devstack \
         docs-serve docs-build \
-        poc-push poc-push-arm64 build-wrapper build-api scan-api clean \
+        poc-push poc-push-arm64 build-wrapper build-web scan-web clean \
         campaigns-apply psa-labels e2e \
         frontend-install frontend-test frontend-check frontend-build frontend-dev viewer-image
 
@@ -52,7 +52,7 @@ test:
 # ty from the workspace venv resolves the members' imports; the dagger
 # `typecheck` function runs the same command in CI.
 typecheck:
-	uv run --no-sync ty check packages/wrapper/src packages/converter/src packages/api/src
+	uv run --no-sync ty check packages/wrapper/src packages/converter/src packages/web/src
 
 # Level 0 htrflow API pin (audit T4): the real Pipeline.from_config / Export /
 # auto_import contract on a one-page CPU fixture, inside the locally built
@@ -163,14 +163,14 @@ e2e:
 # twin of `dagger call check-chart` (.dagger/checks.go).
 #
 # The prod chart's "defaults" render needs three --set overrides no cluster
-# is present to `lookup`: the read API is always rendered (no enabled flag)
+# is present to `lookup`: the web front is always rendered (no enabled flag)
 # and requires publicResultsBase + network.apiServer.cidr + a digest-pinned
-# api.image. CHART_DEFAULT_SETS mirrors ci/full-values.yaml's shape with a
+# web.image. CHART_DEFAULT_SETS mirrors ci/full-values.yaml's shape with a
 # placeholder digest/CIDR — never install with these.
 DEVSTACK_CHART := charts/htrflow-devstack
 CHART_DEFAULT_SETS := --set publicResultsBase=https://x/ \
                        --set network.apiServer.cidr=10.16.51.10/32 \
-                       --set api.image=docker.io/riksarkivet/htrflow-api@sha256:0000000000000000000000000000000000000000000000000000000000000000
+                       --set web.image=docker.io/riksarkivet/htrflow-web@sha256:0000000000000000000000000000000000000000000000000000000000000000
 helm-lint:
 	helm lint $(CHART) $(CHART_DEFAULT_SETS)
 	helm lint $(CHART) -f $(CHART)/ci/full-values.yaml
@@ -209,7 +209,7 @@ docs-build:
 # recipe (.docker/htrflow-batch-gpu-arm64.dockerfile, needs the local
 # htrflow:v0.2.6-arm64 base — see that file) instead of the amd64 upstream
 # image, which only runs under qemu and cannot reach the GPU (audit O13).
-# Each push prints the digest to pin in values (`api.image`, or a campaign
+# Each push prints the digest to pin in values (`web.image`, or a campaign
 # pipeline's image); the chart refuses tags unless devStack.allowTagImages.
 ifeq ($(ARCH),aarch64)
 WRAPPER_DOCKERFILE ?= .docker/htrflow-batch-gpu-arm64.dockerfile
@@ -217,7 +217,7 @@ else
 WRAPPER_DOCKERFILE ?= .docker/htrflow-batch.dockerfile
 endif
 WRAPPER_IMAGE := $(HTR_REGISTRY)/htrflow-batch:$(IMAGE_TAG)
-API_IMAGE := $(HTR_REGISTRY)/htrflow-api:$(IMAGE_TAG)
+WEB_IMAGE := $(HTR_REGISTRY)/htrflow-web:$(IMAGE_TAG)
 # Provenance label (audit W8): the arm64 recipe builds FROM a locally built
 # htrflow base, so the base's `git describe` from the HTRFLOW_DIR checkout
 # (.env) is stamped as se.riksarkivet.htrflow.base.revision. The amd64
@@ -234,27 +234,27 @@ endif
 build-wrapper:
 	docker build -f $(WRAPPER_DOCKERFILE) $(WRAPPER_BUILD_ARGS) -t $(WRAPPER_IMAGE) .
 
-build-api:
-	docker build -f .docker/htrflow-api.dockerfile -t $(API_IMAGE) .
+build-web:
+	docker build -f .docker/htrflow-web.dockerfile -t $(WEB_IMAGE) .
 
-poc-push: build-wrapper build-api
+poc-push: build-wrapper build-web
 	docker push $(WRAPPER_IMAGE)
-	docker push $(API_IMAGE)
+	docker push $(WEB_IMAGE)
 	@echo "wrapper: $$(docker inspect --format '{{index .RepoDigests 0}}' $(WRAPPER_IMAGE))"
-	@echo "api:     $$(docker inspect --format '{{index .RepoDigests 0}}' $(API_IMAGE))"
+	@echo "web:     $$(docker inspect --format '{{index .RepoDigests 0}}' $(WEB_IMAGE))"
 
 # Explicit native-arm64 wrapper build regardless of the host architecture
 # (buildx with an arm64 builder, or the GB10 node itself).
 poc-push-arm64:
 	$(MAKE) poc-push WRAPPER_DOCKERFILE=.docker/htrflow-batch-gpu-arm64.dockerfile HTRFLOW_DIR=$(HTRFLOW_DIR)
 
-# Vulnerability scan of the read API image (the wrapper goes through
+# Vulnerability scan of the web image (the wrapper goes through
 # `make scan` / dagger). Trivy pinned; HIGH/CRITICAL with a fix fail the target.
 TRIVY_IMAGE ?= aquasec/trivy:0.65.0
-scan-api: build-api
+scan-web: build-web
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
 	  -v trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image \
-	  --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 $(API_IMAGE)
+	  --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 $(WEB_IMAGE)
 
 # Helm cannot label a namespace it did not create. The enforce level comes
 # from the installed release's `security.psaEnforce` (baseline by default;

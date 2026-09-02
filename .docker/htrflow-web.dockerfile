@@ -16,18 +16,18 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     --mount=type=bind,source=packages/wrapper/pyproject.toml,target=packages/wrapper/pyproject.toml \
     --mount=type=bind,source=packages/converter/pyproject.toml,target=packages/converter/pyproject.toml \
-    --mount=type=bind,source=packages/api/pyproject.toml,target=packages/api/pyproject.toml \
-    uv sync --frozen --no-install-workspace --package htrflow-api --no-editable
+    --mount=type=bind,source=packages/web/pyproject.toml,target=packages/web/pyproject.toml \
+    uv sync --frozen --no-install-workspace --package htrflow-web --no-editable
 COPY pyproject.toml uv.lock ./
 COPY packages/wrapper/pyproject.toml packages/wrapper/pyproject.toml
 COPY packages/converter/pyproject.toml packages/converter/pyproject.toml
-COPY packages/api packages/api
+COPY packages/web packages/web
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --package htrflow-api --no-editable
+    uv sync --locked --package htrflow-web --no-editable
 ENV PATH="/app/.venv/bin:$PATH" \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 # Pod Security restricted (D14): unprivileged user.
-RUN useradd --uid 1000 --user-group --no-create-home --shell /usr/sbin/nologin htrflow-api
+RUN useradd --uid 1000 --user-group --no-create-home --shell /usr/sbin/nologin htrflow-web
 USER 1000:1000
 EXPOSE 8081
-CMD ["htrflow-api"]
+CMD ["htrflow-web"]

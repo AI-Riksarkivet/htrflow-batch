@@ -24,8 +24,11 @@ check converter "$(count packages/converter/src -name '*.py')" 1000
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
 # that distinction is made, with the rationale that stops it being deleted
-# again as "a pointless string swap". (B63)
-check api       "$(count packages/api/src -name '*.py')" 420
+# again as "a pointless string swap". 420 -> 500 for Task 17, which merged
+# the nginx viewer image into this one: the package now also serves the SPA
+# and UV as static files (the mount order, the /log-style extensionless
+# rewrite and the security headers nginx used to send). (B63)
+check web       "$(count packages/web/src -name '*.py')" 500
 check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 2500
 check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 700
 exit $fail

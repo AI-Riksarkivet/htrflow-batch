@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from htrflow_api.app import create_app
+from htrflow_web.app import create_app
 
 JOB = {
     "metadata": {
@@ -134,7 +134,7 @@ def test_post_not_allowed(client: TestClient):
 def test_no_create_patch_delete_calls():
     """RBAC is read-only get/list/watch on jobs/pods/configmaps; the package
     must never call a mutating kubernetes-client method."""
-    src = Path(__file__).parent.parent / "src" / "htrflow_api"
+    src = Path(__file__).parent.parent / "src" / "htrflow_web"
     offenders = []
     pattern = re.compile(r"\.(create_|patch_|delete_)\w*\(")
     for path in src.rglob("*.py"):

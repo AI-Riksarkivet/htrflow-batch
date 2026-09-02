@@ -16,7 +16,7 @@ var (
 	ruffCheckCmd       = []string{"uv", "run", "--no-sync", "ruff", "check", "."}
 	tyCheckCmd         = []string{
 		"uv", "run", "--no-sync", "ty", "check",
-		"packages/wrapper/src", "packages/converter/src", "packages/api/src",
+		"packages/wrapper/src", "packages/converter/src", "packages/web/src",
 	}
 )
 

@@ -29,7 +29,7 @@ func (m *HtrflowBatch) resolveTag(ctx context.Context, source *dagger.Directory,
 // PublishDocker tests, builds and publishes an image to a registry and
 // returns the published reference WITH its digest
 // (`<registry>/<repo>:<tag>@sha256:…`) — publish.yml signs and attests that
-// digest. component: "wrapper" (default), "viewer" or "api".
+// digest. component: "wrapper" (default), "viewer" or "web".
 // Tags are treated as immutable: the workflow refuses a tag that already
 // exists before calling this.
 func (m *HtrflowBatch) PublishDocker(
@@ -37,7 +37,7 @@ func (m *HtrflowBatch) PublishDocker(
 	// +default="wrapper"
 	component string,
 	// Image repository; empty selects the default for the component
-	// (riksarkivet/htrflow-batch, -viewer or riksarkivet/htrflow-api)
+	// (riksarkivet/htrflow-batch, -viewer or riksarkivet/htrflow-web)
 	// +optional
 	imageRepository string,
 	// Image tag (empty: "v" + version from packages/wrapper/pyproject.toml)
@@ -83,15 +83,15 @@ func (m *HtrflowBatch) PublishDocker(
 		}
 		// Use pinned ref to mirror BuildViewer's default for reproducibility
 		container, err = m.BuildViewer(ctx, source, "f2e8f66d3bd5a69e8e392764204d13d9524f63b2", caBundle)
-	case "api":
+	case "web":
 		if imageRepository == "" {
-			imageRepository = "riksarkivet/htrflow-api"
+			imageRepository = "riksarkivet/htrflow-web"
 		}
 		// Tagged off the wrapper version like the viewer is: the repo releases
 		// its images as one set, not per workspace member.
-		container, err = m.BuildApi(ctx, source)
+		container, err = m.BuildWeb(ctx, source)
 	default:
-		return "", fmt.Errorf("unknown component %q (wrapper|viewer|api)", component)
+		return "", fmt.Errorf("unknown component %q (wrapper|viewer|web)", component)
 	}
 	if err != nil {
 		return "", fmt.Errorf("build failed during publish: %w", err)

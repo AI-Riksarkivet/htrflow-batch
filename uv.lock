@@ -4,10 +4,10 @@ requires-python = ">=3.10"
 
 [manifest]
 members = [
-    "htrflow-api",
     "htrflow-batch-workspace",
     "htrflow-batch-wrapper",
     "htrflow-converter",
+    "htrflow-web",
 ]
 
 [[package]]
@@ -696,23 +696,6 @@ wheels = [
 ]
 
 [[package]]
-name = "htrflow-api"
-version = "0.1.0"
-source = { editable = "packages/api" }
-dependencies = [
-    { name = "fastapi" },
-    { name = "kubernetes" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.110" },
-    { name = "kubernetes", specifier = ">=29" },
-    { name = "uvicorn", specifier = ">=0.29" },
-]
-
-[[package]]
 name = "htrflow-batch-workspace"
 version = "0.0.0"
 source = { virtual = "." }
@@ -771,6 +754,23 @@ dependencies = [
 requires-dist = [
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pyyaml", specifier = ">=6" },
+]
+
+[[package]]
+name = "htrflow-web"
+version = "0.1.0"
+source = { editable = "packages/web" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "kubernetes" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.110" },
+    { name = "kubernetes", specifier = ">=29" },
+    { name = "uvicorn", specifier = ">=0.29" },
 ]
 
 [[package]]
