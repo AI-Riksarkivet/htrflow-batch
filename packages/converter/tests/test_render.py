@@ -328,14 +328,17 @@ def test_set_dotted_path():
 
 
 def test_every_rendered_object_carries_the_prune_selector():
-    """`kubectl apply --prune -l htrflow.riksarkivet.se/managed-by=converter`
-    (and Argo CD's prune) is what makes "deleting a campaign file cancels the
-    campaign" true. An object without the label survives its own deletion:
-    the campaign ConfigMap did, and outlived the Job it fed."""
+    """`kubectl apply --prune -l <CAMPAIGN_SELECTOR>` (and Argo CD's prune) is
+    what makes "deleting a campaign file cancels the campaign" true. An object
+    without the label survives its own deletion: the campaign ConfigMap did,
+    and outlived the Job it fed. `cli.py` passes this same constant to
+    `kubectl`, so the label and the selector can never drift apart."""
+    assert render.CAMPAIGN_SELECTOR == "htrflow.riksarkivet.se/managed-by=converter"
+    key, _, value = render.CAMPAIGN_SELECTOR.partition("=")
     kyrk, demo, cfg = _kyrk()
     objs = render.pipeline_objects(demo, cfg) + render.campaign_objects(kyrk, demo, cfg)
     assert len(objs) == 4  # pipeline CM + warm-up Job + campaign CM + campaign Job
     for o in objs:
         labels = o["metadata"]["labels"]
-        assert labels["htrflow.riksarkivet.se/managed-by"] == "converter", o["kind"]
+        assert labels[key] == value, o["kind"]
         assert labels["htrflow.riksarkivet.se/pipeline"] == "demo-v1"
