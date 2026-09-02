@@ -17,6 +17,7 @@ from htrflow_batch.main import (
     main,
 )
 from htrflow_batch.store import ResultStore
+from htrflow_batch.stream import PageOutcome, StreamStats
 
 
 @pytest.fixture
@@ -304,6 +305,42 @@ def test_malformed_alto_fails_the_page_at_upload(env, cfg, s3):
     assert term["stage"] == "verify" and "0002" in term["error"]
     # B63/D7: no failure-evidence object is published any more
     assert "demo-v1/SE-RA-1234/metrics-failed-latest.json" not in keys
+
+
+def test_verify_failure_reports_why_each_page_failed(env, cfg, s3):
+    """A run with failed pages never publishes manifest.json, so the
+    termination message is the operator's only record of the cause. It used
+    to carry page names alone. URLs inside it are redacted (S6)."""
+
+    def factory(c):
+        def process(path):
+            if path.stem == "0002":
+                raise RuntimeError(
+                    "fetch of https://iiif.example/p2?token=SECRET went wrong"
+                )
+            return _write_outputs(c, path.stem)
+
+        return process
+
+    assert main(env, process_page_factory=factory) == EXIT_TRANSIENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "verify"
+    assert "0002: " in term["error"] and "went wrong" in term["error"]
+    assert "SECRET" not in term["error"]
+
+
+def test_verify_failure_detail_is_bounded():
+    """Every failed page's error in one field would blow past the 3500-char
+    cap _terminate truncates at (and the 4 KiB the kubelet keeps): at most 10
+    pages, each error clipped, the rest counted."""
+    names = [f"{i:04d}" for i in range(1, 51)]
+    stats = StreamStats(
+        results={n: PageOutcome(status="failed", error="x" * 500) for n in names}
+    )
+    detail = main_mod._failure_detail(stats, names)
+    assert detail.count("x" * 200) == 10 and "x" * 201 not in detail
+    assert "0011" not in detail and "(+40 more)" in detail
+    assert len(detail) < 3500
 
 
 def test_publish_tolerates_unparseable_previously_uploaded_alto(env, cfg, s3):

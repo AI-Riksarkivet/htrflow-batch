@@ -262,6 +262,25 @@ def test_fetch_failure_recorded(tmp_path):
     assert closed == [True]  # a failed fetch still ends the stream cleanly
 
 
+def test_each_page_failure_is_logged_with_its_cause(tmp_path, caplog):
+    """The per-page error used to live only in stats.results, and a run with
+    failed pages never publishes manifest.json — so the operator saw
+    "verify failed: failed=['0001']" and nothing about why."""
+
+    def process(path: Path):
+        raise RuntimeError("CUDA out of memory")
+
+    with caplog.at_level("WARNING"):
+        consume(
+            _items([_fr(tmp_path, 1, fail=True), _fr(tmp_path, 2)]),
+            process,
+            lambda n, f: None,
+        )
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("0001" in m and "500" in m for m in warnings)
+    assert any("0002" in m and "CUDA out of memory" in m for m in warnings)
+
+
 def test_stall_accounting(tmp_path, monkeypatch):
     """GPU stall = time spent waiting for the next page. A fake clock advances
     while ``next()`` runs, so the number is exact and no thread sleeps."""

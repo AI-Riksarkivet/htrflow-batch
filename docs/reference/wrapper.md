@@ -59,7 +59,7 @@ what the termination log reports. Details in
 |---|---|---|
 | `0` | success | verify passed, `manifest.json` published |
 | `13` | permanent — `{"permanent": true}` | `ConfigError` (missing env); manifest URL not http(s); manifest HTTP 400/401/403/404/410; body over `MANIFEST_MAX_BYTES`; non-JSON or non-object JSON; no canvases; a canvas without an image; bad pipeline YAML, an unknown step or model class, an `Export` step in the YAML (`ValueError` from `driver.load_pipeline`) |
-| `1` | transient — `{"permanent": false}` | manifest 5xx/429/other status or a network error (`TransientManifestError`); the verify gate (pages missing or failed after fetch retries, `pipeline.run` exceptions, malformed XML); a model-load `OSError`; `UploadOutage` after 5 consecutive S3 upload failures; `MAX_SECONDS` exceeded (`{"error": "MAX_SECONDS"}`); anything else |
+| `1` | transient — `{"permanent": false}` | manifest 5xx/429/other status or a network error (`TransientManifestError`); the verify gate (pages missing or failed after fetch retries, `pipeline.run` exceptions, malformed XML) — the message lists the missing and failed page names and, for the first 10 failed pages, the error behind each (clipped to 200 chars); every page failure is also logged as it happens; a model-load `OSError`; `UploadOutage` after 5 consecutive S3 upload failures; `MAX_SECONDS` exceeded (`{"error": "MAX_SECONDS"}`); anything else |
 | `143` | SIGTERM — `{"permanent": false, "error": "SIGTERM"}` | the handler: termination log, final run-log ship, `os._exit(143)` |
 
 Page-fetch acceptance (never a whole-run verdict on its own): 3 attempts
