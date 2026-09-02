@@ -27,8 +27,13 @@ check converter "$(count packages/converter/src -name '*.py')" 1000
 # again as "a pointless string swap". 420 -> 500 for Task 17, which merged
 # the nginx viewer image into this one: the package now also serves the SPA
 # and UV as static files (the mount order, the /log-style extensionless
-# rewrite and the security headers nginx used to send). (B63)
-check web       "$(count packages/web/src -name '*.py')" 500
+# rewrite and the security headers nginx used to send). 500 -> 550 in that
+# task's review round, which added two things the merge did not strictly
+# need but the two front doors do: HEAD on every route (FastAPI, unlike
+# Starlette, does not add it, and an unhandled HEAD falls through to the
+# static mount) and the HTRFLOW_WEB_SITE_ONLY reader that answers 503
+# instead of the process refusing to start without a cluster. (B63)
+check web       "$(count packages/web/src -name '*.py')" 550
 check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 2500
 check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 700
 exit $fail
