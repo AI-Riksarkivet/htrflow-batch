@@ -66,6 +66,12 @@ file). Plain `--reuse-values` keeps the *old* chart's defaults, which once
 rendered every NetworkPolicy away; the chart now fails loudly when
 `.Values.network` is missing.
 
+Everything below this line is history: each entry names the objects and
+value keys **as they were at that version** — `api.*`, `viewer.*`,
+`htrflow-api`, `templates/api.yaml`, `htr-api` — not their 0.4.0
+successors. Renaming them here would make the upgrade notes wrong for
+anyone actually on that version.
+
 ### From 0.2.0 to 0.3.0 — what to decide first (B63: campaigns as Indexed Jobs)
 
 | Change | What to do |
@@ -73,17 +79,17 @@ rendered every NetworkPolicy away; the chart now fails loudly when
 | **The old GitOps CronJob controller, its own values block and template are gone.** Campaigns are Indexed Jobs rendered by `packages/converter` and applied outside this chart. | `kubectl -n <namespace> get cronjob` to find the leftover CronJob from the old release and `delete` it once, then switch to `make campaigns-apply DIR=…` (or the Argo CD Application the campaigns repo's CI wires up). |
 | **`templates/pipelines.yaml` / `.Values.pipelines` are gone.** Pipeline ConfigMaps and their warm-up Jobs are rendered by the converter alongside campaigns, not by this chart. | Drop `pipelines.*` from your values; convert the pipeline YAML files into a campaigns repo's `pipelines/` directory instead. |
 | **`templates/job-example.yaml` / `.Values.exampleJob` are gone.** | Use a real (small) campaign for smoke-testing instead. |
-| **`devStack.*` moved to a separate chart, `charts/htrflow-devstack`**, except `devStack.allowTagImages` → `security.allowTagImages` (it gates this chart's own control-plane images, not anything devstack-only). **`devStack.gitDaemon` was not carried over** — it fed the old CronJob controller over `git://`, which is also gone in 0.3.0, so it had no consumer left. | `helm uninstall` nothing yet: install `charts/htrflow-devstack` alongside this chart first (`make install-devstack`), *then* upgrade this chart — its NetworkPolicies for RustFS/registry moved with it; anything that hand-clones the old in-cluster git daemon needs a different path now. |
-| **New: the read API** (`web.image`, `web.resources`) — a Deployment `htrflow-web`, read-only RBAC on Jobs/Pods/ConfigMaps, `Service htrflow-web:8081`, proxied by the viewer at `/api/`. Always rendered (no `enabled` flag): `publicResultsBase` and `network.apiServer.cidr` are now required at render time (previously only needed when the old CronJob controller was turned on). | Set `web.image` to a digest-pinned `htrflow-web` image; set `network.apiServer.cidr` if the cluster's kube-apiserver endpoint cannot be `lookup`ed (e.g. `helm template`, or a kubeconfig without list-nodes RBAC). |
+| **`devStack.*` moved to a separate chart, `charts/htrflow-devstack`**, except `devStack.allowTagImages` → `security.allowTagImages` (it gates this chart's own `viewer.image`/`api.image`, not anything devstack-only). **`devStack.gitDaemon` was not carried over** — it fed the old CronJob controller over `git://`, which is also gone in 0.3.0, so it had no consumer left. | `helm uninstall` nothing yet: install `charts/htrflow-devstack` alongside this chart first (`make install-devstack`), *then* upgrade this chart — its NetworkPolicies for RustFS/registry moved with it; anything that hand-clones the old in-cluster git daemon needs a different path now. |
+| **New: the read API** (`api.image`, `api.resources`) — a Deployment `htrflow-api`, read-only RBAC on Jobs/Pods/ConfigMaps, `Service htrflow-api:8081`, proxied by the viewer at `/api/`. Always rendered (no `enabled` flag): `publicResultsBase` and `network.apiServer.cidr` are now required at render time (previously only needed when the old CronJob controller was turned on). | Set `api.image` to a digest-pinned `htrflow-api` image; set `network.apiServer.cidr` if the cluster's kube-apiserver endpoint cannot be `lookup`ed (e.g. `helm template`, or a kubeconfig without list-nodes RBAC). |
 | **Results are namespaced.** They land at `<namespace>/<pipeline>/<volume>/…` (`S3_PREFIX=<namespace>/`, set by the converter), where 0.2.0 wrote `<pipeline>/<volume>/…`. There is no flag for the old layout. | Move existing data once before upgrading: `aws s3 mv --recursive s3://<bucket>/<pipeline>/ s3://<bucket>/<namespace>/<pipeline>/` for every pipeline id, and `sources/` the same way (`<namespace>/sources/…`). `status/` stays at the bucket root — it is namespace-free by design. |
-| **The viewer's `statusBase` value is gone; `/config.js` sets `window.API_BASE`.** The campaign browser reads campaigns from the read API — there is no status document any more. | Nothing to set — `API_BASE` is always `/api/v1`, same-origin. |
+| **`viewer.statusBase` is gone; `/config.js` sets `window.API_BASE`.** The campaign browser reads campaigns from the read API — there is no status document any more. | Nothing to set — `API_BASE` is always `/api/v1` (same-origin, proxied by nginx). |
 | **`job.*` values are gone.** Runtime class, node selector, tolerations, deadlines and byte caps are now the converter's `converter.yaml` (`runtime_class`, `node_selector`, `tolerations`, `max_seconds`, `manifest_max_bytes`, `fetch_max_bytes`), not this chart's. | Move any `job.*` overrides into the campaigns repo's `converter.yaml`. |
 
 ### From 0.1.0 to 0.2.0
 
 | Change | What to do |
 |---|---|
-| **Digest gate.** The viewer's image value (and, through 0.2.0, the old CronJob controller's own) must be `@sha256:` pins. | Pin the digests, or `--set security.allowTagImages=true` (named `devStack.allowTagImages` before 0.3.0) for the PoC loop only. |
+| **Digest gate.** `viewer.image` (and, through 0.2.0, the old CronJob controller's own image value) must be `@sha256:` pins. | Pin the digests, or `--set security.allowTagImages=true` (named `devStack.allowTagImages` before 0.3.0) for the PoC loop only. |
 | **Model-cache PVC is rendered** (`modelCache.create=true`, default). Helm refuses to take over a PVC it did not create. | Either `--set modelCache.create=false`, or adopt the existing PVC once (below) — adoption is the better end state (`resource-policy: keep` protects it). |
 | **`image.*` and `s3.endpoint` removed.** | Drop them from your values; the schema rejects unknown keys. Campaign Jobs pin their image in the pipeline YAML; pods read the endpoint from the Secret. |
 | **Namespace default deny** (`network.defaultDeny=true`). | Anything hand-applied in the namespace needs its own NetworkPolicy. |
@@ -125,6 +131,12 @@ namespace, never a ClusterRole. It is the one pod in this chart with
 
 ## Changelog
 
+Everything below this line is history: each entry names the objects and
+value keys **as they were at that version** — `api.*`, `viewer.*`,
+`htrflow-api`, `templates/api.yaml`, `htr-api` — not their 0.4.0
+successors. Renaming them here would make the upgrade notes wrong for
+anyone actually on that version.
+
 ### 0.4.0 — 2026-09-02 (B63: one web front)
 
 Breaking:
@@ -161,28 +173,27 @@ Breaking:
   `templates/devstack-{rustfs,registry,nvidia}.yaml` to a new chart,
   `charts/htrflow-devstack` (own values, own NetworkPolicies for
   RustFS/registry-init). `devStack.allowTagImages` became
-  `security.allowTagImages` (it gates this chart's own control-plane
-  images). `devStack.gitDaemon` / `templates/devstack-gitdaemon.yaml`
+  `security.allowTagImages` (it gates this chart's own `viewer.image` /
+  `api.image`). `devStack.gitDaemon` / `templates/devstack-gitdaemon.yaml`
   were **removed, not moved**: the old GitOps CronJob controller that
   polled it over `git://` is also gone in 0.3.0, so the daemon had no
   consumer left.
 - `values.schema.json`: `s3`, `publicResultsBase`,
-  `modelCache`, `queue`, `web`, `security`, `network` and (until 0.4.0) the
-  viewer block are the only top-level keys; everything above is rejected as
-  unknown.
+  `modelCache`, `queue`, `api`, `security`, `network`, `viewer` are the only
+  top-level keys; everything above is rejected as unknown.
 
 Added:
-- `web.{image,resources}` renders the read API (`templates/web.yaml`):
-  Deployment `htrflow-web`, ServiceAccount + Role + RoleBinding (read-only
+- `api.{image,resources}` renders the read API (`templates/api.yaml`):
+  Deployment `htrflow-api`, ServiceAccount + Role + RoleBinding (read-only
   `jobs`/`pods`/`configmaps`, this namespace only), Service
-  `htrflow-web:8081`, NetworkPolicy `htr-web` (ingress from the viewer pod
-  only; egress to DNS and the apiserver only — same CIDR lookup the old
-  CronJob controller's policy used). Always rendered: `publicResultsBase` and
+  `htrflow-api:8081`, NetworkPolicy `htr-api` (ingress from the viewer only;
+  egress to DNS and the apiserver only — same CIDR lookup the old CronJob
+  controller's policy used). Always rendered: `publicResultsBase` and
   `network.apiServer.cidr` are required values now (previously only when
   that controller was turned on).
-- Viewer: nginx `location /api/` proxies to `htrflow-web:8081/api/`;
-  `/config.js` sets `window.API_BASE = "/api/v1"` — its `statusBase` value and
-  the runtime counterpart are gone, since the campaign browser now reads the
+- Viewer: nginx `location /api/` proxies to `htrflow-api:8081/api/`;
+  `/config.js` sets `window.API_BASE = "/api/v1"` — `viewer.statusBase` and
+  its runtime counterpart are gone, since the campaign browser now reads the
   read API directly instead of a status document. Its NetworkPolicy gained
   egress to the API (it previously needed none).
 - `htr-batch-job`'s S3 egress rule for an in-namespace `app: rustfs` pod is
@@ -195,7 +206,7 @@ Added:
 Breaking:
 - `image.*` and `s3.endpoint` removed (dead values; the pods take the
   endpoint from the Secret, campaign Jobs pin their image in the pipeline).
-- The old CronJob controller's own image value and the viewer's must be
+- The old CronJob controller's own image value / `viewer.image` must be
   digest-pinned unless `devStack.allowTagImages=true`. Tag refs get
   `imagePullPolicy: Always`.
 - `devStack.rustfs.nodePortConsole` → `devStack.rustfs.console.{enabled,nodePort}`;
@@ -224,9 +235,9 @@ Added:
 - `security.{allowedImageRepos,requireModelRevision,psaEnforce,verifyImages.*}`;
   optional Kyverno `ClusterPolicy` (cosign keyless) when `verifyImages.enabled`.
 - Viewer: restricted securityContext (uid 101, read-only rootfs, no SA
-  token), nginx security headers (its `securityHeaders.enabled` value),
-  `/config.js` served from the ConfigMap (its `statusBase` value, defaulting
-  to `publicResultsBase`) so the SPA finds its status document under its CSP,
+  token), nginx security headers (`viewer.securityHeaders.enabled`),
+  `/config.js` served from the ConfigMap (`viewer.statusBase`, defaulting to
+  `publicResultsBase`) so the SPA finds its status document under its CSP,
   pod rolls on config change.
 - devStack: RustFS/registry restricted securityContext (RustFS uid 10001,
   registry `devStack.registry.runAsUser`), digest-pinned images, bucket-init
@@ -235,7 +246,7 @@ Added:
   Namespace, sizing notes.
 - ClusterQueue `namespaceSelector` limited to the release namespace;
   its own `egressCidrs` value narrowed to GitHub's git ranges;
-  the viewer's `ingressCidrs` (now `network.web.ingressCidrs`).
+  `network.viewer.ingressCidrs`.
 
 ### 0.1.0
 
