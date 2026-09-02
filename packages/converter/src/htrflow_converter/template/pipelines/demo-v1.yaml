@@ -1,0 +1,17 @@
+# A pipeline id names the FULL recipe: this image digest AND these steps,
+# together. Never edit this file in place once a campaign has run against
+# it — mint demo-v2.yaml instead (see the append-only / immutability
+# sections of ../README.md and htrflow-batch's
+# docs/reference/campaign-yaml.md#immutability).
+image: docker.io/riksarkivet/htrflow-batch@sha256:e7ec8f17401c513a7e41725c337d3f7759b4d9af4e61a09f97cc65a251092bdf
+steps:
+  - step: Segmentation
+    settings:
+      model: yolo
+      model_settings:
+        model: Riksarkivet/yolov9-regions-1
+  - step: TextRecognition
+    settings:
+      model: TrOCR
+      model_settings:
+        model: Riksarkivet/trocr-base-handwritten-hist-swe-2

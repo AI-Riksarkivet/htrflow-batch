@@ -1,10 +1,16 @@
 # A campaigns repo, in shape
 
-This is what a real campaigns repo looks like — the input to
-`htrflow-campaigns` (`packages/converter` in
-[htrflow-batch](https://github.com/AI-Riksarkivet/htrflow-batch)). Copy this
-directory as the starting point for your own repo; I15 (a future story)
-creates the real, permanent one.
+The input to `htrflow-campaigns` (`packages/converter` in
+[htrflow-batch](https://github.com/AI-Riksarkivet/htrflow-batch)). Start a
+new repo in exactly this shape with one command:
+
+```bash
+uvx --from "git+https://github.com/AI-Riksarkivet/htrflow-batch@<tag>#subdirectory=packages/converter" \
+  htrflow-campaigns init my-campaigns
+```
+
+(`<tag>` is a released htrflow-batch tag, or a commit SHA; `@main` works too
+while no release exists yet.)
 
 ```
 converter.yaml            # cluster-wide defaults: namespace, queue, window, S3 secret, PVC, …

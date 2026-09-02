@@ -3,8 +3,6 @@ template so a new repo (I15) is one command away and never drifts from the
 docs' example (see ``test_packaging.py::test_examples_match_template`` for
 the drift guard)."""
 
-from pathlib import Path
-
 from htrflow_converter.cli import main
 
 
