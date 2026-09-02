@@ -8,7 +8,7 @@ import pytest
 from htrflow_batch import stream as stream_mod
 from htrflow_batch.fetch import FetchResult
 from htrflow_batch.iiif import PageRef
-from htrflow_batch.stream import UploadOutage, consume, fetched
+from htrflow_batch.stream import PageStream, UploadOutage, consume
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 12  # JPEG SOI + APP0 marker
 
@@ -43,7 +43,7 @@ def _fr(tmp_path, i, fail=False):
 
 
 def _items(results, closed=None):
-    """A page stream shaped like ``fetched()``'s: consume() drives it with
+    """A page stream shaped like ``PageStream``'s: consume() drives it with
     next(), and its finally records the cleanup an abort must trigger (what
     the Semaphore's release used to stand for)."""
 
@@ -64,7 +64,7 @@ def test_fetched_downloads_every_page_and_counts_bytes(tmp_path):
     def handler(req):
         return httpx.Response(200, content=JPEG + req.url.path.encode())
 
-    stream = fetched(_pages(3), tmp_path / "in", _client(handler), lookahead=64)
+    stream = PageStream(_pages(3), tmp_path / "in", _client(handler), lookahead=64)
     results = list(stream)
     assert [r.page.name for r in results] == ["0001", "0002", "0003"]
     assert all(r.path and r.error is None for r in results)
@@ -93,7 +93,9 @@ def test_lookahead_bounds_downloads_in_flight_and_images_on_disk(tmp_path):
             live.pop()
         return httpx.Response(200, content=JPEG)
 
-    stream = fetched(_pages(6), tmp_path, _client(handler), lookahead=2, concurrency=6)
+    stream = PageStream(
+        _pages(6), tmp_path, _client(handler), lookahead=2, concurrency=6
+    )
     seen = []
     for item in stream:
         assert len(list(tmp_path.glob("*.jpg"))) <= 2  # never more than the window
@@ -113,7 +115,7 @@ def test_lookahead_one_downloads_a_single_page_ahead(tmp_path):
         started.append(req.url.path)
         return httpx.Response(200, content=JPEG)
 
-    stream = fetched(_pages(3), tmp_path, _client(handler), lookahead=1)
+    stream = PageStream(_pages(3), tmp_path, _client(handler), lookahead=1)
     try:
         _wait_for(lambda: started == ["/1"])
         time.sleep(0.05)
@@ -138,7 +140,9 @@ def test_results_arrive_in_submission_order(tmp_path):
             assert release.wait(5), "page 1 was never released"
         return httpx.Response(200, content=JPEG)
 
-    stream = fetched(_pages(3), tmp_path, _client(handler), lookahead=3, concurrency=3)
+    stream = PageStream(
+        _pages(3), tmp_path, _client(handler), lookahead=3, concurrency=3
+    )
     pages = iter(stream)
     _wait_for(lambda: len(list(tmp_path.glob("*.jpg"))) == 2)  # 2 and 3 landed
     release.set()
@@ -162,7 +166,7 @@ def test_a_downloader_failure_terminates_the_stream(tmp_path, monkeypatch, caplo
         return httpx.Response(200, content=JPEG)
 
     with caplog.at_level("ERROR"):
-        stream = fetched(_pages(3), tmp_path / "in", _client(handler), lookahead=64)
+        stream = PageStream(_pages(3), tmp_path / "in", _client(handler), lookahead=64)
         assert list(stream) == []
     assert "downloader failed" in caplog.text
     assert "mkdir failed" in caplog.text
@@ -187,7 +191,7 @@ def test_stop_event_short_circuits_pending_downloads(tmp_path):
             assert gate.wait(5), "test never opened the gate"
         return httpx.Response(200, content=JPEG)
 
-    stream = fetched(
+    stream = PageStream(
         _pages(40),
         tmp_path,
         _client(handler),

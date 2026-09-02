@@ -91,7 +91,7 @@ Source root: [`packages/wrapper/src/htrflow_batch/`](https://github.com/carpelan
 | `config.py` | `Config.from_env` — the table above |
 | `iiif.py` | Manifest fetch with the S5 guards and the permanent/transient split; P3 and P2 parsing (`pages_from_manifest`); `redact_url`/`redact_urls` |
 | `fetch.py` | One page, fetched safely (`fetch_page`): sized-image request, raster acceptance, byte cap, retry/backoff, `stop` on abort — it never raises, a failure comes back as a `FetchResult` with an error |
-| `stream.py` | The streaming loop. `fetched()` — the download stream, started when it is called, at most `LOOKAHEAD_PAGES` submitted ahead of the consumer, results in submission (manifest) order, `close()` cancels what is queued. `consume()` (`StreamStats`, `UploadOutage`) processes each page the moment it lands, uploads, rolling-deletes |
+| `stream.py` | The streaming loop. `PageStream` — the download stream, started when it is constructed, at most `LOOKAHEAD_PAGES` submitted ahead of the consumer, results in submission (manifest) order, `close()` cancels what is queued. `consume()` (`StreamStats`, `UploadOutage`) processes each page the moment it lands, uploads, rolling-deletes |
 | `driver.py` | htrflow integration: build the pipeline from YAML (Export steps appended for `alto` and `page`), `process_page`, `htrflow_version` |
 | `store.py` | `ResultStore` — deterministic S3 keys, explicit content types, XML parsed before upload, `page` then `alto`, `done_pages()` (both formats), bounded boto timeouts, the run-log key, `put_json_at` (bucket-root keys, e.g. `sources/`) |
 | `synthetic.py` | `build_manifest` — the synthetic P3 manifest for `IMAGES` volumes |
