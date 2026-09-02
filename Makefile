@@ -1,7 +1,7 @@
 .PHONY: install format lint check test typecheck test-driver-real ci build scan publish \
         compose-up compose-test compose-smoke compose-down helm-lint helm-template install-devstack \
         docs-serve docs-build \
-        poc-push poc-push-arm64 build-wrapper build-web scan-web clean \
+        poc-push poc-push-arm64 build-wrapper build-htrflow-base-arm64 build-web scan-web clean \
         campaigns-apply psa-labels e2e \
         frontend-install frontend-test frontend-check frontend-build frontend-dev
 
@@ -76,7 +76,7 @@ ci: typecheck
 	dagger call test $(DAGGER_CA)
 
 build:
-	dagger call build
+	dagger call build-wrapper
 
 scan:
 	dagger call scan-json $(DAGGER_CA)
@@ -204,34 +204,44 @@ docs-build:
 
 # PoC: build + push the images into the in-cluster k3s registry ($(HTR_REGISTRY),
 # from .env). Real registries go through `make publish` (dagger), which tests
-# before it pushes. On an arm64 host the wrapper is built from the native GPU
-# recipe (.docker/htrflow-batch-gpu-arm64.dockerfile, needs the local
-# htrflow:v0.2.6-arm64 base — see that file) instead of the amd64 upstream
-# image, which only runs under qemu and cannot reach the GPU (audit O13).
+# before it pushes. One wrapper dockerfile serves both architectures and
+# `docker build` picks the base stage for the host it runs on — never
+# `--platform`: the amd64 image only runs under qemu on this node, cannot
+# reach the GPU (audit O13), and uv segfaults under the emulator.
 # Each push prints the digest to pin in values (`web.image`, or a campaign
 # pipeline's image); the chart refuses tags unless devStack.allowTagImages.
-ifeq ($(ARCH),aarch64)
-WRAPPER_DOCKERFILE ?= .docker/htrflow-batch-gpu-arm64.dockerfile
-else
 WRAPPER_DOCKERFILE ?= .docker/htrflow-batch.dockerfile
-endif
 WRAPPER_IMAGE := $(HTR_REGISTRY)/htrflow-batch:$(IMAGE_TAG)
 WEB_IMAGE := $(HTR_REGISTRY)/htrflow-web:$(IMAGE_TAG)
-# Provenance label (audit W8): the arm64 recipe builds FROM a locally built
-# htrflow base, so the base's `git describe` from the HTRFLOW_DIR checkout
-# (.env) is stamped as se.riksarkivet.htrflow.base.revision. The amd64
-# recipe pulls the tagged upstream image and keeps the dockerfile default.
+# Provenance label (audit W8): on arm64 the wrapper builds FROM a locally
+# built htrflow base (the upstream image is amd64-only), so that base's
+# `git describe` from the HTRFLOW_DIR checkout (.env) is stamped as
+# se.riksarkivet.htrflow.base.revision. On amd64 the base is the pinned
+# upstream tag and the dockerfile's own default already says so.
 # Lazily expanded: git only runs when a wrapper build actually happens.
 HTRFLOW_DIR ?= $(HOME)/htrflow
-ifeq ($(WRAPPER_DOCKERFILE),.docker/htrflow-batch-gpu-arm64.dockerfile)
+HTRFLOW_ARM64_BASE ?= htrflow:v0.2.6-arm64
+ifeq ($(ARCH),aarch64)
 HTRFLOW_BASE_REVISION = $(shell git -C $(HTRFLOW_DIR) describe --tags --always --dirty 2>/dev/null || echo unknown)
-WRAPPER_BUILD_ARGS = --build-arg HTRFLOW_BASE_REVISION=$(HTRFLOW_BASE_REVISION)
+WRAPPER_BUILD_ARGS = --build-arg HTRFLOW_ARM64_BASE=$(HTRFLOW_ARM64_BASE) \
+                     --build-arg HTRFLOW_BASE_REVISION=$(HTRFLOW_BASE_REVISION)
 else
 WRAPPER_BUILD_ARGS =
 endif
 
 build-wrapper:
 	docker build -f $(WRAPPER_DOCKERFILE) $(WRAPPER_BUILD_ARGS) -t $(WRAPPER_IMAGE) .
+
+# The arm64 base the wrapper builds on. Built from the HTRFLOW_DIR checkout,
+# which this repo treats as read-only: htrflow's lockfile is gitignored
+# there, so the target refuses to run rather than writing a uv.lock into
+# someone else's working tree. CI does the same build in a throwaway clone
+# pinned to HTRFLOW_ARM64_BASE_REF (.github/workflows/publish.yml).
+build-htrflow-base-arm64:
+	@test -f $(HTRFLOW_DIR)/uv.lock || { \
+	  echo "no $(HTRFLOW_DIR)/uv.lock — run 'uv lock' in that checkout first (this target will not write into it)"; \
+	  exit 1; }
+	docker build -f $(HTRFLOW_DIR)/docker/htrflow.dockerfile -t $(HTRFLOW_ARM64_BASE) $(HTRFLOW_DIR)
 
 # The web image builds the SPA and the Universal Viewer inside itself, so
 # this needs no pre-built dist/ and no UV checkout. The corp CA is passed as
@@ -247,10 +257,11 @@ poc-push: build-wrapper build-web
 	@echo "wrapper: $$(docker inspect --format '{{index .RepoDigests 0}}' $(WRAPPER_IMAGE))"
 	@echo "web:     $$(docker inspect --format '{{index .RepoDigests 0}}' $(WEB_IMAGE))"
 
-# Explicit native-arm64 wrapper build regardless of the host architecture
-# (buildx with an arm64 builder, or the GB10 node itself).
+# Deprecated alias of `poc-push`, kept one release for muscle memory: there
+# is no separate arm64 recipe any more, `poc-push` builds the host's arch.
 poc-push-arm64:
-	$(MAKE) poc-push WRAPPER_DOCKERFILE=.docker/htrflow-batch-gpu-arm64.dockerfile HTRFLOW_DIR=$(HTRFLOW_DIR)
+	@echo 'note: poc-push-arm64 is deprecated - make poc-push already builds the host architecture'
+	$(MAKE) poc-push
 
 # Vulnerability scan of the web image (the wrapper goes through
 # `make scan` / dagger). Trivy pinned; HIGH/CRITICAL with a fix fail the target.

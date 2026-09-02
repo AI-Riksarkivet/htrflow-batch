@@ -66,7 +66,7 @@ func (m *HtrflowBatch) Scan(
 	// +optional
 	caBundle *dagger.File,
 ) (string, error) {
-	container, err := m.Build(ctx, source, "")
+	container, err := m.BuildWrapper(ctx, source, "", "")
 	if err != nil {
 		return "", fmt.Errorf("build failed before scanning: %w", err)
 	}
