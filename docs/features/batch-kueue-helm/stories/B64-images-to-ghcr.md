@@ -1,6 +1,6 @@
 ---
 type: Product Backlog Item
-id: ~
+id: 2979
 parent: 2800
 title: Imagerna publiceras till GHCR med workflow-identitet i stället för Docker Hub-token
 ---
