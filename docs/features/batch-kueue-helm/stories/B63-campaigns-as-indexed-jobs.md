@@ -74,7 +74,7 @@ Kubernetes 1.33 och verifierat mot officiell dokumentation 2026-09-01.
       Pausen deklareras i git (`suspend:` i kampanjfilen renderas till
       `spec.suspend`) och **verkställs av apply-steget**: Kueue äger
       `spec.suspend` för en admitterad Workload och ångrar den på sekunder,
-      så `make campaigns-apply` kör `scripts/kueue-pause-sync.sh` som sätter
+      så `make campaigns-apply` kör `htrflow-campaigns apply` som sätter
       samma avsikt på Workloadens `spec.active` (med Argo CD: samma skript
       som PostSync-hook). Verifierat: pausen håller, tre klara index bevaras,
       API:t rapporterar `Paused`, och `suspend: false` + apply fortsätter på
