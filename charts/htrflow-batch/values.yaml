@@ -27,13 +27,6 @@ s3:
 
 publicResultsBase: ""      # browser-reachable URL base for published results (REQUIRED for viewer manifests)
 
-# S3 key layout (D9): results land at `<namespace>/<pipeline>/<volume>/…`
-# (S3_PREFIX=<namespace>/, set by the converter). true keeps today's
-# `<pipeline>/<volume>/` (no namespace prefix) for Riksarkivet's existing
-# data — set the same value in the converter's `converter.yaml`
-# (`legacyLayout`) so results and the read API's `resultsBase` agree.
-legacyLayout: false
-
 # Model cache shared by warm-up Jobs (writer) and batch Jobs (read-only).
 # Single-node PoC note (O16): ReadWriteOnce pins every Job to the node that
 # holds the volume — fine on one GPU node, a scheduling constraint on more.

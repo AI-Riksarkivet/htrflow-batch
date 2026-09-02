@@ -2,7 +2,6 @@
 # kubeconform in CI. No cluster is needed: the apiserver CIDR and node CIDRs
 # are given explicitly so no Helm `lookup` is required.
 publicResultsBase: http://localhost:30900/htr-results
-legacyLayout: true
 
 modelCache:
   create: true

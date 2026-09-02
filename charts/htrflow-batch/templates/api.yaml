@@ -79,8 +79,6 @@ spec:
               value: /tmp
             - name: HTRFLOW_PUBLIC_RESULTS_BASE
               value: {{ .Values.publicResultsBase | required "publicResultsBase is required (the read API serves S3 links built from it)" | quote }}
-            - name: HTRFLOW_LEGACY_LAYOUT
-              value: {{ .Values.legacyLayout | ternary "true" "false" | quote }}
             # The API acts on its own namespace; the downward API keeps it
             # correct whatever --namespace the release uses. Deliberately
             # single-valued today (one namespace, this release's) — the

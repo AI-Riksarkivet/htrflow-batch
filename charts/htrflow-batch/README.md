@@ -75,7 +75,7 @@ rendered every NetworkPolicy away; the chart now fails loudly when
 | **`templates/job-example.yaml` / `.Values.exampleJob` are gone.** | Use a real (small) campaign for smoke-testing instead. |
 | **`devStack.*` moved to a separate chart, `charts/htrflow-devstack`**, except `devStack.allowTagImages` → `security.allowTagImages` (it gates this chart's own `viewer.image`/`api.image`, not anything devstack-only). **`devStack.gitDaemon` was not carried over** — it fed the old CronJob controller over `git://`, which is also gone in 0.3.0, so it had no consumer left. | `helm uninstall` nothing yet: install `charts/htrflow-devstack` alongside this chart first (`make install-devstack`), *then* upgrade this chart — its NetworkPolicies for RustFS/registry moved with it; anything that hand-clones the old in-cluster git daemon needs a different path now. |
 | **New: the read API** (`api.image`, `api.resources`) — a Deployment `htrflow-api`, read-only RBAC on Jobs/Pods/ConfigMaps, `Service htrflow-api:8081`, proxied by the viewer at `/api/`. Always rendered (no `enabled` flag): `publicResultsBase` and `network.apiServer.cidr` are now required at render time (previously only needed when the old CronJob controller was turned on). | Set `api.image` to a digest-pinned `htrflow-api` image; set `network.apiServer.cidr` if the cluster's kube-apiserver endpoint cannot be `lookup`ed (e.g. `helm template`, or a kubeconfig without list-nodes RBAC). |
-| **New: `legacyLayout`** (default `false`). `false` writes/reads results under `<namespace>/<pipeline>/<volume>/…` (S3_PREFIX set by the converter); `true` keeps the pre-B63 `<pipeline>/<volume>/…` layout for existing data. | Set `legacyLayout: true` on any namespace with results written before 0.3.0, and pass the same value to the converter's `converter.yaml` (`legacyLayout`) so it agrees. |
+| **Results are namespaced.** They land at `<namespace>/<pipeline>/<volume>/…` (`S3_PREFIX=<namespace>/`, set by the converter), where 0.2.0 wrote `<pipeline>/<volume>/…`. There is no flag for the old layout. | Move existing data once before upgrading: `aws s3 mv --recursive s3://<bucket>/<pipeline>/ s3://<bucket>/<namespace>/<pipeline>/` for every pipeline id, and `sources/` the same way (`<namespace>/sources/…`). `status/` stays at the bucket root — it is namespace-free by design. |
 | **`viewer.statusBase` is gone; `/config.js` sets `window.API_BASE`.** The campaign browser reads campaigns from the read API — there is no status document any more. | Nothing to set — `API_BASE` is always `/api/v1` (same-origin, proxied by nginx). |
 | **`job.*` values are gone.** Runtime class, node selector, tolerations, deadlines and byte caps are now the converter's `converter.yaml` (`runtime_class`, `node_selector`, `tolerations`, `max_seconds`, `manifest_max_bytes`, `fetch_max_bytes`), not this chart's. | Move any `job.*` overrides into the campaigns repo's `converter.yaml`. |
 
@@ -146,7 +146,7 @@ Breaking:
   were **removed, not moved**: the old GitOps CronJob controller that
   polled it over `git://` is also gone in 0.3.0, so the daemon had no
   consumer left.
-- `values.schema.json`: `s3`, `publicResultsBase`, `legacyLayout`,
+- `values.schema.json`: `s3`, `publicResultsBase`,
   `modelCache`, `queue`, `api`, `security`, `network`, `viewer` are the only
   top-level keys; everything above is rejected as unknown.
 
@@ -159,10 +159,6 @@ Added:
   controller's policy used). Always rendered: `publicResultsBase` and
   `network.apiServer.cidr` are required values now (previously only when
   that controller was turned on).
-- `legacyLayout` (D9): `false` (default) writes results under
-  `<namespace>/<pipeline>/<volume>/…`; `true` keeps the pre-B63
-  `<pipeline>/<volume>/…` layout — set the same value in the converter's
-  `converter.yaml`.
 - Viewer: nginx `location /api/` proxies to `htrflow-api:8081/api/`;
   `/config.js` sets `window.API_BASE = "/api/v1"` — `viewer.statusBase` and
   its runtime counterpart are gone, since the campaign browser now reads the
