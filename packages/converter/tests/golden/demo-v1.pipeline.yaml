@@ -54,9 +54,16 @@ spec:
       - name: warmup
         image: ghcr.io/riksarkivet/htrflow-batch@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         command:
-        - python
-        - -m
-        - htrflow_batch.warmup
+        - /bin/sh
+        - -c
+        args:
+        - 'set -eu
+
+          mkdir -p "$HOME" "$TMPDIR" "$YOLO_CONFIG_DIR" "$HF_HOME"
+
+          exec python -m htrflow_batch.warmup
+
+          '
         env:
         - name: PIPELINE_PATH
           value: /config/pipeline.yaml

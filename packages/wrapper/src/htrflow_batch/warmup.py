@@ -19,7 +19,7 @@ from typing import Callable, Mapping, Optional
 
 import yaml
 
-from .main import EXIT_OK, EXIT_PERMANENT, EXIT_TRANSIENT, prepare_writable_dirs
+from .main import EXIT_OK, EXIT_PERMANENT, EXIT_TRANSIENT
 
 log = logging.getLogger("htrflow_batch.warmup")
 
@@ -62,9 +62,6 @@ def main(
     if not pipeline_path or not Path(pipeline_path).is_file():
         log.error("PIPELINE_PATH missing or not a file: %r", pipeline_path)
         return EXIT_PERMANENT
-    prepare_writable_dirs(env)
-    if env.get("HF_HOME"):
-        Path(env["HF_HOME"]).mkdir(parents=True, exist_ok=True)
     try:
         load(pipeline_path)
     except PERMANENT_ERRORS as e:

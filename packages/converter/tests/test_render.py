@@ -99,6 +99,27 @@ def test_shell_args_contain_a_real_tab_and_exec():
     assert "exec python -m htrflow_batch" in args
 
 
+def test_both_jobs_make_the_writable_dirs_before_exec():
+    """readOnlyRootFilesystem: HOME/TMPDIR/YOLO_CONFIG_DIR point into the
+    tmpfs workdir and must exist before htrflow builds a model. The shell
+    prologue does it -- the wrapper no longer mkdirs them itself (Task 25
+    item 2). The warm-up also makes HF_HOME: a fresh cache PVC has no
+    /data/hf."""
+    kyrk, demo, cfg = _kyrk()
+    campaign = render.campaign_objects(kyrk, demo, cfg)[1]
+    args = campaign["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    mkdir = 'mkdir -p "$HOME" "$TMPDIR" "$YOLO_CONFIG_DIR"'
+    assert mkdir in args
+    assert args.index(mkdir) < args.index("exec python")
+
+    warmup = render.pipeline_objects(demo, cfg)[1]
+    container = warmup["spec"]["template"]["spec"]["containers"][0]
+    assert container["command"] == ["/bin/sh", "-c"]
+    warm_args = container["args"][0]
+    assert mkdir + ' "$HF_HOME"' in warm_args
+    assert "exec python -m htrflow_batch.warmup" in warm_args
+
+
 def test_init_container_present_with_pipeline_marker_path():
     kyrk, demo, cfg = _kyrk()
     job = render.campaign_objects(kyrk, demo, cfg)[1]

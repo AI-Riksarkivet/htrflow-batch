@@ -104,19 +104,6 @@ def _terminate(env: Mapping[str, str], reason: dict) -> None:
         log.warning("could not write termination log to %s", path)
 
 
-#: Env vars the Job spec points into the tmpfs workdir (docs: security, D14).
-#: Under readOnlyRootFilesystem these are the only places htrflow's stack may
-#: write outside HF_HOME: ultralytics settings, triton/inductor JIT caches
-#: (under HOME) and temp files. They must exist before any model is built.
-WRITABLE_DIR_VARS = ("HOME", "TMPDIR", "YOLO_CONFIG_DIR")
-
-
-def prepare_writable_dirs(env: Mapping[str, str]) -> None:
-    for var in WRITABLE_DIR_VARS:
-        if env.get(var):
-            Path(env[var]).mkdir(parents=True, exist_ok=True)
-
-
 def _default_factory(cfg: Config):
     from . import driver  # htrflow imports stay function-local
 
@@ -180,7 +167,6 @@ def _main(
     stop = threading.Event()
     try:
         cfg = Config.from_env(env)
-        prepare_writable_dirs(env)
         store = ResultStore(cfg)
         capture.start_shipping(store.put_run_log, cfg.log_ship_seconds)
         client = _http_client()

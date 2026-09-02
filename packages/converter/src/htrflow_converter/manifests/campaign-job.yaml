@@ -62,9 +62,17 @@ spec:
         command:
         - /bin/sh
         - -c
+        # The mkdir is the prologue's job, not the wrapper's: under
+        # readOnlyRootFilesystem HOME/TMPDIR/YOLO_CONFIG_DIR (set below, into
+        # the tmpfs `work` mount) are the only places htrflow's stack may
+        # write outside HF_HOME -- ultralytics settings, triton/inductor JIT
+        # caches under HOME, temp files -- and they must exist before any
+        # model is built. Comments live out here so they do not ship inside
+        # every rendered Job's shell script.
         args:
         - |
           set -eu
+          mkdir -p "$HOME" "$TMPDIR" "$YOLO_CONFIG_DIR"
           line=$(sed -n "$((JOB_COMPLETION_INDEX + 1))p" /campaign/volumes.txt)
           [ -n "$line" ] || { echo "no volume for index $JOB_COMPLETION_INDEX" >&2; exit 13; }
           id=${line%%	*}; src=${line#*	}
