@@ -6,7 +6,6 @@ import hashlib
 import json
 import logging
 import os
-import queue
 import shutil
 import signal
 import sys
@@ -20,7 +19,6 @@ from typing import Callable, Mapping, Optional
 import httpx
 
 from .config import Config, ConfigError
-from .fetch import run_downloader
 from .iiif import (
     ManifestError,
     check_http_url,
@@ -31,7 +29,7 @@ from .iiif import (
 )
 from .logship import LogCapture
 from .store import ResultStore
-from .stream import PageOutcome, StreamStats, consume
+from .stream import PageOutcome, StreamStats, consume, fetched
 from .synthetic import build_manifest
 from .viewer import build_viewer_manifest, parse_alto_dims, parse_alto_dims_bytes
 
@@ -237,46 +235,26 @@ def _main(
 
         # -- stage 3: streaming loop ------------------------------------------
         state.stage = "stream"
-        out_q: queue.Queue = queue.Queue()
-        slots = threading.Semaphore(cfg.lookahead_pages)
-        bytes_box = {}
+        pages_stream = fetched(
+            todo,
+            input_dir,
+            client,
+            lookahead=cfg.lookahead_pages,
+            concurrency=cfg.download_concurrency,
+            max_bytes=cfg.fetch_max_bytes,
+            stop=stop,
+        )
+        try:
+            # The first downloads are in flight, so the model load overlaps
+            # them (docs: wrapper, "Model handling") instead of preceding them.
+            state.stage = "load"  # W9: a model-load failure is not a stream failure
+            factory = process_page_factory or _default_factory
+            process = factory(cfg)
 
-        def dl():
-            # If run_downloader raises before it can enqueue its own
-            # completion sentinel (e.g. dest_dir mkdir fails), consume()
-            # would otherwise block forever on out_queue.get(). Catch here
-            # and always push the sentinel so the stream loop is guaranteed
-            # to terminate; the resulting missing pages fail the verify gate
-            # below, which is the correct (transient, retryable) outcome.
-            try:
-                bytes_box["n"] = run_downloader(
-                    todo,
-                    input_dir,
-                    out_q,
-                    slots,
-                    client,
-                    concurrency=cfg.download_concurrency,
-                    max_bytes=cfg.fetch_max_bytes,
-                    stop=stop,
-                )
-            except Exception as e:
-                log.error("downloader thread failed: %r", e)
-                bytes_box["error"] = repr(e)
-                out_q.put(None)
-
-        dl_thread = threading.Thread(target=dl, daemon=True, name="downloader")
-        dl_thread.start()
-
-        # Build/load the process fn only after the downloader thread is
-        # started, so model load overlaps the first downloads (docs: wrapper,
-        # "Model handling") instead of happening serially before any bytes move.
-        state.stage = "load"  # W9: a model-load failure is not a stream failure
-        factory = process_page_factory or _default_factory
-        process = factory(cfg)
-
-        state.stage = "stream"
-        stats = consume(out_q, slots, process, store.upload_page)
-        dl_thread.join()
+            state.stage = "stream"
+            stats = consume(pages_stream, process, store.upload_page)
+        finally:
+            pages_stream.close()  # never blocks; cancels what is still queued
         for p in pages:
             if p.name in done:
                 stats.results[p.name] = PageOutcome(status="skipped")
@@ -354,7 +332,7 @@ def _main(
                 "page_sources": {p.name: redact_url(p.image_url) for p in pages},
                 "canvas_ids": {p.name: _canvas_id(p.canvas) for p in pages},
                 "max_image_width": cfg.max_image_width,
-                "bytes_fetched": bytes_box.get("n", 0),
+                "bytes_fetched": pages_stream.bytes_fetched,
                 "wall_seconds": round(wall, 1),
                 "gpu_stall_seconds": round(stats.stall_seconds, 1),
                 "pages_per_second": round(len(ok_pages) / wall, 3) if wall else 0,

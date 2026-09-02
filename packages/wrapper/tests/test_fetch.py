@@ -1,11 +1,10 @@
-import queue
 import threading
 from pathlib import Path
 from unittest.mock import patch
 
 import httpx
 
-from htrflow_batch.fetch import FetchResult, run_downloader
+from htrflow_batch.fetch import FetchResult, fetch_page
 from htrflow_batch.iiif import PageRef
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 12  # JPEG SOI + APP0 marker
@@ -22,21 +21,24 @@ def _client(handler):
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
-def test_downloads_all_pages(tmp_path):
+def _fetch_all(pages, tmp_path, handler, **kw):
+    """What stream.PageStream's pool does, one page at a time."""
+    client = _client(handler)
+    return {p.name: fetch_page(p, tmp_path, client, **kw) for p in pages}
+
+
+def test_downloads_every_page_to_its_own_file(tmp_path):
     def handler(req):
         return httpx.Response(200, content=JPEG + req.url.path.encode())
 
-    q, slots = queue.Queue(), threading.Semaphore(64)
-    total = run_downloader(_pages(3), tmp_path, q, slots, _client(handler))
-    results = [q.get() for _ in range(3)]
-    assert q.get() is None  # sentinel
-    assert all(isinstance(r, FetchResult) and r.path for r in results)
+    results = _fetch_all(_pages(3), tmp_path, handler, retries=3, backoff=0.0)
+    assert all(isinstance(r, FetchResult) and r.path for r in results.values())
     assert sorted(p.name for p in tmp_path.iterdir()) == [
         "0001.jpg",
         "0002.jpg",
         "0003.jpg",
     ]
-    assert total == sum(r.size for r in results)
+    assert all(r.size == len(JPEG) + 2 for r in results.values())
 
 
 def test_failed_page_reports_error_not_exception(tmp_path):
@@ -45,38 +47,10 @@ def test_failed_page_reports_error_not_exception(tmp_path):
             return httpx.Response(500)
         return httpx.Response(200, content=JPEG)
 
-    q, slots = queue.Queue(), threading.Semaphore(64)
-    run_downloader(
-        _pages(3), tmp_path, q, slots, _client(handler), retries=2, backoff=0.0
-    )
-    results = {r.page.name: r for r in (q.get(), q.get(), q.get())}
-    assert q.get() is None
+    results = _fetch_all(_pages(3), tmp_path, handler, retries=2, backoff=0.0)
     assert results["0002"].path is None
     assert "500" in results["0002"].error
     assert results["0001"].path and results["0003"].path
-
-
-def test_lookahead_blocks(tmp_path):
-    """With 1 slot and a consumer that never releases, only 1 page downloads."""
-
-    def handler(req):
-        return httpx.Response(200, content=JPEG)
-
-    q, slots = queue.Queue(), threading.Semaphore(1)
-    t = threading.Thread(
-        target=run_downloader,
-        args=(_pages(3), tmp_path, q, slots, _client(handler)),
-        daemon=True,
-    )
-    t.start()
-    first = q.get(timeout=5)
-    assert first.page.name == "0001"
-    t.join(timeout=0.5)
-    assert t.is_alive()  # blocked waiting for a slot
-    slots.release()
-    slots.release()
-    t.join(timeout=5)
-    assert not t.is_alive()
 
 
 def test_non_httpx_exception_caught(tmp_path):
@@ -85,9 +59,6 @@ def test_non_httpx_exception_caught(tmp_path):
     def handler(req):
         return httpx.Response(200, content=JPEG)
 
-    q, slots = queue.Queue(), threading.Semaphore(64)
-
-    # Monkeypatch Path.open to raise OSError for page 2
     original_open = Path.open
 
     def patched_open(self, *a, **k):
@@ -96,29 +67,14 @@ def test_non_httpx_exception_caught(tmp_path):
         return original_open(self, *a, **k)
 
     with patch.object(Path, "open", patched_open):
-        run_downloader(_pages(3), tmp_path, q, slots, _client(handler), retries=1)
+        results = _fetch_all(_pages(3), tmp_path, handler, retries=1, backoff=0.0)
 
-    # Collect all results (3 pages + sentinel)
-    results = [q.get() for _ in range(3)]
-    assert q.get() is None
-
-    # Verify we got exactly 3 FetchResults
     assert len(results) == 3
-    assert all(isinstance(r, FetchResult) for r in results)
-
-    # Pages 1 and 3 should succeed
-    assert results[0].page.name == "0001"
-    assert results[0].path is not None
-    assert results[0].error is None
-
-    assert results[2].page.name == "0003"
-    assert results[2].path is not None
-    assert results[2].error is None
-
-    # Page 2 should have error
-    assert results[1].page.name == "0002"
-    assert results[1].path is None
-    assert "OSError" in results[1].error
+    assert all(isinstance(r, FetchResult) for r in results.values())
+    for name in ("0001", "0003"):
+        assert results[name].path is not None and results[name].error is None
+    assert results["0002"].path is None
+    assert "OSError" in results["0002"].error
 
 
 def test_upscale_400_falls_back_to_max(tmp_path):
@@ -133,28 +89,22 @@ def test_upscale_400_falls_back_to_max(tmp_path):
             return httpx.Response(200, content=JPEG + b"narrow-image")
         return httpx.Response(404)
 
-    pages = [
-        PageRef(
-            index=1,
-            name="0001",
-            image_url="https://img/iiif/full/2500,/0/default.jpg",
-            canvas={},
-        )
-    ]
-    q, slots = queue.Queue(), threading.Semaphore(64)
-    run_downloader(pages, tmp_path, q, slots, _client(handler), retries=3, backoff=0.0)
-    r = q.get()
-    assert q.get() is None
+    page = PageRef(
+        index=1,
+        name="0001",
+        image_url="https://img/iiif/full/2500,/0/default.jpg",
+        canvas={},
+    )
+    r = fetch_page(page, tmp_path, _client(handler), 3, 0.0)
     assert r.error is None
     assert r.path is not None and r.path.read_bytes() == JPEG + b"narrow-image"
 
 
-def _one(tmp_path, handler, **kw):
-    q, slots = queue.Queue(), threading.Semaphore(64)
-    run_downloader(_pages(1), tmp_path, q, slots, _client(handler), backoff=0.0, **kw)
-    r = q.get()
-    assert q.get() is None
-    return r
+def _one(tmp_path, handler, retries=3, max_bytes=None, stop=None):
+    kw = {} if max_bytes is None else {"max_bytes": max_bytes}
+    return fetch_page(
+        _pages(1)[0], tmp_path, _client(handler), retries, 0.0, stop=stop, **kw
+    )
 
 
 def test_html_200_is_retried_then_failed(tmp_path):
@@ -260,49 +210,17 @@ def test_partial_file_unlinked_on_write_failure(tmp_path):
     assert not (tmp_path / "0001.jpg").exists()
 
 
-def test_stop_event_short_circuits_pending_downloads(tmp_path):
-    """W10: once the run has failed, queued pages must not each spend their
-    retries/timeouts before the process can exit. The mock server answers
-    the first page at once and holds every later one on a gate the test
-    opens after setting ``stop``: with concurrency 1 exactly one more
-    request is in flight, and the remaining 38 must be short-circuited
-    without ever reaching the server (no wall-clock assertion needed)."""
-    stop = threading.Event()
-    gate = threading.Event()
-    in_flight = threading.Event()  # the second request has reached the server
+def test_stop_event_short_circuits_a_page_without_touching_the_network(tmp_path):
+    """W10, per page: once the run has failed a queued page must not spend
+    its retries/timeouts — it comes back "stopped" without a request."""
     started = []
 
     def handler(req):
         started.append(req.url.path)
-        if len(started) > 1:
-            in_flight.set()
-            assert gate.wait(5), "test never opened the gate"
         return httpx.Response(200, content=JPEG)
 
-    q, slots = queue.Queue(), threading.Semaphore(64)
-    t = threading.Thread(
-        target=run_downloader,
-        args=(_pages(40), tmp_path, q, slots, _client(handler)),
-        kwargs={"concurrency": 1, "stop": stop},
-        daemon=True,
-    )
-    t.start()
-    first = q.get(timeout=5)
-    assert first.path is not None
-    # Only once page 2 is inside the server is "one in flight" a fact; setting
-    # stop before that races the worker and short-circuits page 2 as well.
-    assert in_flight.wait(5), "second request never reached the server"
+    stop = threading.Event()
     stop.set()
-    gate.set()
-    t.join(timeout=5)
-    assert not t.is_alive()
-    results = []
-    while True:
-        r = q.get(timeout=1)
-        if r is None:
-            break
-        results.append(r)
-    assert len(results) == 39  # every page after the first is still reported
-    assert results[0].path is not None  # the one the gate held, completed
-    assert all(r.path is None and "stopped" in r.error for r in results[1:])
-    assert len(started) == 2  # page 1, and the one already in flight
+    r = _one(tmp_path, handler, retries=3, stop=stop)
+    assert r.path is None and "stopped" in r.error
+    assert started == []

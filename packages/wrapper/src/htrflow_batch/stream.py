@@ -1,16 +1,23 @@
-"""Consumer side of the streaming loop (docs: wrapper)."""
+"""The streaming loop (docs: wrapper): ``fetched()`` starts downloading the
+moment it is called — so a model load overlaps the first pages — and
+``consume()`` iterates it, processing and uploading each page as it lands."""
 
 from __future__ import annotations
 
-import queue
+import logging
 import threading
 import time
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable, Iterator
 
+import httpx
 from pydantic import BaseModel, Field
 
-from .fetch import FetchResult
+from .fetch import FETCH_MAX_BYTES, FetchResult, fetch_page
+from .iiif import PageRef
+
+log = logging.getLogger("htrflow_batch")
 
 
 class PageOutcome(BaseModel):
@@ -36,9 +43,100 @@ class UploadOutage(RuntimeError):
     rather than drain the whole volume through a dead bucket."""
 
 
+class PageStream:
+    """Bounded-lookahead download stream, iterated once.
+
+    ``lookahead`` bounds *submission*: a page's slot frees only when the
+    consumer comes back for the next result — by then it has deleted the
+    image — so tmpfs never holds more than ``lookahead`` pages, exactly what
+    the Semaphore this replaces guaranteed. Results come in completion order,
+    so a page still retrying does not hold up the pages behind it. ``stop``
+    (W10): once set nothing more is submitted and ``close()`` cancels what is
+    queued, so a run that has already failed need not wait out its downloads.
+    """
+
+    def __init__(
+        self,
+        pages: list[PageRef],
+        dest_dir: Path,
+        client: httpx.Client,
+        *,
+        lookahead: int,
+        concurrency: int = 12,
+        retries: int = 3,
+        backoff: float = 0.5,
+        max_bytes: int = FETCH_MAX_BYTES,
+        stop: threading.Event | None = None,
+    ) -> None:
+        self.bytes_fetched = 0
+        self.error: str | None = None
+        dest = Path(dest_dir)
+        self._args = (dest, client, retries, backoff, max_bytes, stop)
+        self._queued = list(pages)
+        self._lookahead = max(1, lookahead)
+        self._stop = stop
+        self._live: dict[Future, PageRef] = {}
+        self._outstanding = 0  # submitted, not yet released by the consumer
+        self._pool = ThreadPoolExecutor(max_workers=max(1, concurrency))
+        # The first window goes out here, on the caller's thread, so the model
+        # load that follows overlaps it. A failure must still leave a stream
+        # that terminates (the downloader's ``None`` sentinel did that): it
+        # yields nothing, and the verify gate reports the pages as missing.
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+            self._fill()
+        except Exception as e:
+            self._abandon(e)
+
+    def _fill(self) -> None:
+        while self._queued and self._outstanding < self._lookahead:
+            if self._stop is not None and self._stop.is_set():
+                self._queued.clear()  # W10: an aborted run submits no more
+                return
+            page = self._queued.pop(0)
+            self._live[self._pool.submit(fetch_page, page, *self._args)] = page
+            self._outstanding += 1
+
+    def _abandon(self, exc: Exception) -> None:
+        log.error("downloader failed: %r", exc)
+        self.error = repr(exc)
+        self._queued.clear()
+
+    def close(self) -> None:
+        """Never waits: a SIGTERM or MAX_SECONDS exit must not block on a
+        download sitting in its 120 s timeout (why ``_hard_exit`` exists)."""
+        self._pool.shutdown(wait=False, cancel_futures=True)
+
+    def __iter__(self) -> Iterator[FetchResult]:
+        try:
+            while self._live:
+                done, _ = wait(self._live, return_when=FIRST_COMPLETED)
+                for fut in done:
+                    page = self._live.pop(fut)
+                    try:
+                        result = fut.result()
+                    except Exception as e:  # fetch_page catches its own errors
+                        result = FetchResult(page=page, path=None, error=repr(e))
+                    self.bytes_fetched += result.size
+                    yield result
+                    # Back from the consumer: page done, image deleted —
+                    # its slot frees and the next page goes out.
+                    self._outstanding -= 1
+                    self._fill()
+        except Exception as e:
+            self._abandon(e)
+        finally:
+            self.close()
+
+
+#: Start the bounded-lookahead downloads:
+#: ``fetched(pages, dest_dir, client, lookahead=…)`` hands back the running
+#: stream to iterate (see ``PageStream``).
+fetched = PageStream
+
+
 def consume(
-    out_queue: "queue.Queue",
-    slots: threading.Semaphore,
+    items: Iterable[FetchResult],
     process: ProcessFn,
     upload: UploadFn,
     keep_images: bool = False,
@@ -46,13 +144,13 @@ def consume(
 ) -> StreamStats:
     stats = StreamStats()
     upload_failures = 0
+    pages = iter(items)
     while True:
         t_wait = time.monotonic()
-        item = out_queue.get()
+        item = next(pages, None)  # GPU stall = waiting for the next page
         stats.stall_seconds += time.monotonic() - t_wait
         if item is None:
             return stats
-        assert isinstance(item, FetchResult)
         name = item.page.name
         try:
             if item.path is None:
@@ -90,4 +188,3 @@ def consume(
                     item.path.unlink(missing_ok=True)
                 except Exception:
                     pass  # Ignore deletion errors; outcome is already recorded
-            slots.release()
