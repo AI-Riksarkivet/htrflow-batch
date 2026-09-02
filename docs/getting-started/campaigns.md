@@ -6,32 +6,33 @@ and I can watch it". The mechanics behind each step are in
 
 Prerequisites: the chart deployed ([Deploy](deploy.md)), the S3 secret in
 place, a browser-reachable `publicResultsBase`, `kubectl` access to the
-cluster, and the [`htrflow-campaigns` CLI](#0-install-the-converter-cli)
-available (locally, or through CI in your campaigns repo).
+cluster, and `uv` on your machine (or CI runner) to run the converter.
 
-## 0. Install the converter CLI
+## 0. Create the campaigns repo
 
-The converter is a plain Python package, not a container image — it never
-runs in the cluster. Run it as a `uvx` tool straight from this repo:
+Desired state lives in its own git repo. The converter is a plain Python
+package, not a container image — it never runs in the cluster; run it as a
+`uvx` tool straight from this repo to create a new campaigns repo in one
+command:
 
 ```bash
-uvx --from "git+https://github.com/AI-Riksarkivet/htrflow-batch#subdirectory=packages/converter" \
-  htrflow-campaigns --help
+uvx --from "git+https://github.com/AI-Riksarkivet/htrflow-batch@<tag>#subdirectory=packages/converter" \
+  htrflow-campaigns init my-campaigns
 ```
 
-or install it once with `uv tool install` from a checkout if `uvx --from`
-with a subdirectory URL does not resolve on your host:
+(`<tag>`: a released htrflow-batch tag, or a commit SHA; `@main` works too
+while no release exists yet.) If `uvx --from` with a subdirectory URL does
+not resolve on your host, install the CLI once instead:
 
 ```bash
 git clone https://github.com/AI-Riksarkivet/htrflow-batch
 uv tool install ./htrflow-batch/packages/converter
+htrflow-campaigns init my-campaigns
 ```
 
-## 1. Create the campaigns repo
-
-Desired state lives in its own git repo. See
-[`examples/campaigns/`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/examples/campaigns)
-for the exact shape to copy:
+Either way, `my-campaigns/` comes out in this shape — see it live at
+[`examples/campaigns/`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/examples/campaigns),
+which is exactly what the command above writes:
 
 ```
 converter.yaml                 # namespace, queue, window, S3 secret, PVC, …
@@ -53,7 +54,7 @@ The formats are in [Campaign & Pipeline YAML](../reference/campaign-yaml.md).
     only images from your registry can be named at all
     ([Security → Trust boundary](../development/security.md#trust-boundary)).
 
-## 2. Pin an image digest
+## 1. Pin an image digest
 
 Every pipeline file must name the wrapper image by digest; tags are rejected.
 After pushing the image, read the digest back (`make poc-push` prints it, or):
@@ -84,7 +85,7 @@ listed prefixes; with `require_model_revision`, every model needs a
     means a **new pipeline id and a new campaign file**, not an edit
     ([Immutability](../reference/campaign-yaml.md#immutability)).
 
-## 3. Render and apply
+## 2. Render and apply
 
 On the PoC, render and apply directly with `make campaigns-apply`:
 
@@ -108,7 +109,7 @@ commits `rendered/` on every push to `main`, and Argo CD's Application points
 its source at `rendered/` in that repo — nothing applies to the cluster
 outside of what CI committed.
 
-## 4. Add work — it is a commit
+## 3. Add work — it is a commit
 
 ```yaml title="campaigns/trolldomskommissionen.yaml"
 pipeline: demo-v1
@@ -135,7 +136,7 @@ file cancels it** — its Job and ConfigMap are pruned by an apply that is
 `make campaigns-apply PRUNE=1`; `kubectl delete -f` by hand on the PoC).
 **Results already in S3 are never touched by anything here.**
 
-## 5. Watch it
+## 4. Watch it
 
 The campaign browser is the viewer's front door:
 

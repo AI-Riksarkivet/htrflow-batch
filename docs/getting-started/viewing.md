@@ -18,7 +18,7 @@ For example, the PoC's mock volume:
 http://localhost:30800/uv.html#?manifest=http://localhost:30900/htr-results/demo-v1/mock-vol/iiif.json
 ```
 
-Requesting `/` serves the [campaign browser](campaigns.md#5-watch-it), which
+Requesting `/` serves the [campaign browser](campaigns.md#4-watch-it), which
 links into the viewer per volume. The deprecated `viewer.defaultManifest`
 chart value overrides that: when set, `/` 302-redirects (a *relative*
 redirect — nginx runs with `absolute_redirect off`, otherwise a NodePort URL

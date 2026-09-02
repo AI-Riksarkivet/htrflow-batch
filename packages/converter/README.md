@@ -15,6 +15,8 @@ with the rendered files.
 - Reference: [Campaign & Pipeline YAML](../../docs/reference/campaign-yaml.md)
   (every field with its default)
 - A repo in shape: [`examples/campaigns/`](../../examples/campaigns/README.md)
+  — `htrflow-campaigns init <dir>` writes exactly this, generated from
+  `src/htrflow_converter/template/`
 
 ## Commands
 
@@ -24,6 +26,7 @@ this directory prunes the shared venv down to the root.
 ```bash
 make install                                          # uv sync --all-packages
 uv run --all-packages pytest -q packages/converter    # this package's unit tests
+uv run htrflow-campaigns init <dir> [--force]         # write a new campaigns repo from the template
 uv run htrflow-campaigns validate <campaigns-repo>    # exit 1 and one line per problem
 uv run htrflow-campaigns render <campaigns-repo> --out <dir>
 make campaigns-apply DIR=<campaigns-repo> [PRUNE=1]   # render + kubectl apply + Kueue pause sync
@@ -53,11 +56,12 @@ the whole list.
 
 | Module | Role |
 |---|---|
-| `cli.py` | `validate` and `render` subcommands, the append-only check, pruning, the unsafe `--out` guard |
+| `cli.py` | `init`, `validate`, `render` and `apply` subcommands, the append-only check, pruning, the unsafe `--out` guard |
 | `parse.py` | YAML files to domain types via `Model.model_validate`; flattens `pydantic.ValidationError` into one-line problems; `ValidationError`; the cross-file unknown-pipeline check |
 | `models.py` | `Volume`, `Campaign`, `Pipeline`, `ConverterConfig` (frozen pydantic models) with all validation rules as field/model validators; `Pipeline.sha256` |
 | `render.py` | Patch the packaged skeletons into concrete objects; labels, Kueue queue and priority, env for the wrapper, the 10 000-volume split |
 | `manifests/` | The four YAML skeletons: `configmap.yaml`, `campaign-job.yaml`, `pipeline-configmap.yaml`, `warmup-job.yaml` |
+| `template/` | The campaigns repo `init` copies out, byte-identical to [`examples/campaigns/`](../../examples/campaigns/README.md) |
 
 ## Tests
 
@@ -65,4 +69,7 @@ the whole list.
 `tests/golden/` holds the expected rendered objects for the good one. Rendering
 changes show up as golden diffs, which is the intended review surface.
 `test_packaging.py` builds the real wheel and installs it into a throwaway
-venv to prove the `manifests/` skeletons ship with the package.
+venv to prove the `manifests/` and `template/` files ship with the package,
+and asserts `examples/campaigns/` is byte-identical to `template/` — run
+`htrflow-campaigns init --force examples/campaigns` and commit the result if
+that ever fails.
