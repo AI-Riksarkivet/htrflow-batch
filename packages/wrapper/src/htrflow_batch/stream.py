@@ -79,7 +79,6 @@ class PageStream:
         stop: threading.Event | None = None,
     ) -> None:
         self.bytes_fetched = 0
-        self.error: str | None = None
         dest = Path(dest_dir)
         self._fetch = partial(
             fetch_page,
@@ -116,8 +115,9 @@ class PageStream:
             self._outstanding += 1
 
     def _abandon(self, exc: Exception) -> None:
+        """Stop submitting and say so in the run log: the stream still
+        terminates, and the verify gate reports the pages it never yielded."""
         log.error("downloader failed: %r", exc)
-        self.error = repr(exc)
         self._queued.clear()
 
     def close(self) -> None:
