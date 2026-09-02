@@ -50,11 +50,11 @@ read-only — both rendered by the converter, referencing this PVC by
 | `queue.flavor` | `default-flavor` | ResourceFlavor |
 | `queue.resources` | cpu 4 / memory 8Gi / nvidia.com/gpu 1 | Covered quotas — every resource an index's pod requests must be listed. The default admits exactly one campaign index as the converter renders it (requests cpu 4 / 8 Gi / 1 GPU); raise it to run more volumes in parallel. Indexes stuck `queued` with an idle GPU usually mean a dead Kueue controller, not a busy GPU |
 
-## Read API (`api.*`)
+## Read API (`web.*`)
 
 Renders a ServiceAccount, a Role (get/list/watch on `jobs`, `pods`,
 `configmaps` — this namespace only, never cluster-wide) and RoleBinding, and
-the `htrflow-api` Deployment + Service (ClusterIP, no NodePort — reached
+the `htrflow-web` Deployment + Service (ClusterIP, no NodePort — reached
 only through the viewer's `/api/` proxy). It is the one pod in this chart
 that keeps its ServiceAccount token: it is the Kubernetes API client the
 campaign browser reads through, computing everything live — there is no
@@ -63,8 +63,8 @@ rendered — there is no `enabled` flag.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `api.image` | `docker.io/riksarkivet/htrflow-api@sha256:000…` | **Must be digest-pinned** unless `security.allowTagImages`. The all-zero default renders but cannot pull |
-| `api.resources` | requests cpu 50m / 128Mi, limits cpu 500m / 256Mi | |
+| `web.image` | `docker.io/riksarkivet/htrflow-web@sha256:000…` | **Must be digest-pinned** unless `security.allowTagImages`. The all-zero default renders but cannot pull |
+| `web.resources` | requests cpu 50m / 128Mi, limits cpu 500m / 256Mi | |
 
 ## Trust boundary (`security.*`)
 
@@ -73,7 +73,7 @@ rendered — there is no `enabled` flag.
 | `security.allowedImageRepos` | `[]` | Documentation/consistency only in this chart — the enforced allow-list lives in the campaigns repo's `converter.yaml` (`allowed_image_repos`); `htrflow-campaigns validate` warns, not the chart |
 | `security.requireModelRevision` | `false` | Same: mirrors `converter.yaml`'s `require_model_revision` for documentation purposes |
 | `security.psaEnforce` | `baseline` | Pod Security level `make psa-labels` enforces on the namespace (warn/audit are always `restricted`). Every pod in both charts is restricted-clean as of 0.3.0 — `restricted` is worth trying |
-| `security.allowTagImages` | `false` | Accept `:tag` references for `viewer.image` / `api.image` instead of `@sha256:` pins. Tag images get `imagePullPolicy: Always` so a re-pushed `:dev` lands on the next rollout |
+| `security.allowTagImages` | `false` | Accept `:tag` references for `viewer.image` / `web.image` instead of `@sha256:` pins. Tag images get `imagePullPolicy: Always` so a re-pushed `:dev` lands on the next rollout |
 | `security.verifyImages.enabled` | `false` | Renders a Kyverno `ClusterPolicy` (Kyverno ≥ 1.10 must be installed) that refuses any Pod in the namespace whose image is not cosign keyless-signed |
 | `security.verifyImages.issuer` / `subject` | `""` | OIDC issuer and subject of the signing identity — both required when enabled |
 | `security.verifyImages.imageReferences` | `[]` | Defaults to `allowedImageRepos` with `*` appended, or `"*"` when that is empty |
@@ -89,7 +89,7 @@ rendered — there is no `enabled` flag.
 
 ## NetworkPolicies (`network.*`)
 
-`templates/network.yaml` + the read API's own policy in `templates/api.yaml`;
+`templates/network.yaml` + the read API's own policy in `templates/web.yaml`;
 the narrative is in [Security](../development/security.md). Rules match by
 CIDR and selector only (no FQDN rules on kube-router), which is why campaign
 pods get no HF Hub egress at all — only the warm-up pod does.

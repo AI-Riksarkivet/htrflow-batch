@@ -21,7 +21,7 @@ chart offer:
 | **Digest pin** on `image:` (always) | `parse_pipeline` | a mutable tag changing what an id means |
 | **Model revision** — `converter.yaml`'s `require_model_revision` | `parse_pipeline` | an unpinned HF repo swapping its weights under the same pipeline id |
 | **Signed images** — `security.verifyImages.*` (Kyverno `ClusterPolicy`, cosign keyless) | admission, per Pod in the namespace | an image that was not built by the CI identity you name. Needs Kyverno installed and `publish.yml` signing ([CI](ci.md#workflows)); off by default |
-| **Control-plane digest gate** — `api.image` / `viewer.image` must be `@sha256:` unless `security.allowTagImages` | chart template | anyone with registry push replacing the read API or viewer in place |
+| **Control-plane digest gate** — `web.image` / `viewer.image` must be `@sha256:` unless `security.allowTagImages` | chart template | anyone with registry push replacing the read API or viewer in place |
 | **http(s)-only sources, byte caps, redirect caps** | `parse_pipeline`/`parse_campaign`, the wrapper (`MANIFEST_MAX_BYTES`, `FETCH_MAX_BYTES`, 5 redirects, raster-only acceptance) | SSRF/DoS driven by campaign data |
 | **Transport to the campaigns repo** — ordinary `git`/HTTPS, review-gated CI | the campaigns repo's own CI, outside this system entirely | there is no in-cluster clone or credential for it any more — nothing here reaches the campaigns repo at runtime |
 | **URL redaction** | wrapper logs, termination log, `page_sources` | a tokenised private IIIF URL landing in the world-readable log |
@@ -115,7 +115,7 @@ proves it — a regression shows up as an admission warning on Job creation.
 ## NetworkPolicy (D14 — enforced by the chart)
 
 `templates/network.yaml` (values: `network.*`) plus the read API's own
-policy in `templates/api.yaml` renders a namespace-wide **default deny**
+policy in `templates/web.yaml` renders a namespace-wide **default deny**
 (ingress and egress, `network.defaultDeny`), a DNS allow for every pod, and
 one policy per pod role. Rules match by CIDR and selector only —
 kube-router (k3s) has no FQDN rules, and it evaluates egress *after* service
@@ -127,7 +127,7 @@ apiserver by the node address it resolves to (auto-detected with Helm
 |---|---|---|---|
 | campaign pod (`app=htrflow-batch`) | none | S3 (RustFS pod or `network.s3Cidrs`); the IIIF origin(s) `network.iiifCidrs` on 443/80 (default `lbiiif.riksarkivet.se`) | HF Hub, the apiserver, the registry, Harbor, anything else in-cluster, the internet |
 | warm-up pod (`app=htrflow-warmup`) | none | the public internet on 443 minus pod/service/node ranges (HF Hub is a CDN — there is no CIDR to pin) | S3, the apiserver, anything in-cluster |
-| read API (`app=htrflow-api`) | the viewer pod, on 8081 | the apiserver only (`network.apiServer.cidr`) | S3, the IIIF origin, HF Hub, anything else in-cluster |
+| read API (`app=htrflow-web`) | the viewer pod, on 8081 | the apiserver only (`network.apiServer.cidr`) | S3, the IIIF origin, HF Hub, anything else in-cluster |
 | viewer (`app=uv4-viewer`) | `network.viewer.ingressCidrs` on 8080 | the read API only, on 8081 | S3, the apiserver, anything else |
 | RustFS (`app=rustfs`, devStack) | 9000 from anywhere (and 9001 with the console) | none | — |
 | rustfs-init hook (`app=rustfs-init`, devStack) | none | RustFS 9000 | — |

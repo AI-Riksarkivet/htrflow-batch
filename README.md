@@ -28,7 +28,7 @@ a `credentials` ini key are prerequisites):
 helm install htr charts/htrflow-batch -n htr-batch --create-namespace \
   --set publicResultsBase=<browser-reachable results base URL> \
   --set viewer.image=<viewer image>@sha256:<digest> \
-  --set api.image=<read API image>@sha256:<digest>
+  --set web.image=<read API image>@sha256:<digest>
 ```
 
 then declare volumes in a campaigns repo — see

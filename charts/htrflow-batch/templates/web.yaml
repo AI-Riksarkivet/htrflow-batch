@@ -1,24 +1,24 @@
 # Read-only status API (D8, B63): GET /api/v1/jobs[/…] over the Indexed Jobs
-# a campaign renders to (packages/api). Computes everything live from the
+# a campaign renders to (packages/web). Computes everything live from the
 # Kubernetes API — there is no status document written anywhere any more;
 # served on :8081, proxied by the viewer's nginx at /api/ — never exposed
 # outside the cluster directly (ClusterIP only, no NodePort).
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: htrflow-api
+  name: htrflow-web
   namespace: {{ .Release.Namespace }}
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: htrflow-api
+  name: htrflow-web
   namespace: {{ .Release.Namespace }}
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
 rules:
   # Read-only, this namespace only (Role, not ClusterRole) — the API never
-  # creates, updates or deletes anything (packages/api/src/htrflow_api/kube.py).
+  # creates, updates or deletes anything (packages/web/src/htrflow_web/kube.py).
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "watch"]
@@ -32,35 +32,35 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: htrflow-api
+  name: htrflow-web
   namespace: {{ .Release.Namespace }}
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: htrflow-api
+  name: htrflow-web
 subjects:
   - kind: ServiceAccount
-    name: htrflow-api
+    name: htrflow-web
     namespace: {{ .Release.Namespace }}
 ---
-{{- include "htrflow-batch.requireDigest" (list . .Values.api.image "api.image") }}
+{{- include "htrflow-batch.requireDigest" (list . .Values.web.image "web.image") }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: htrflow-api
+  name: htrflow-web
   namespace: {{ .Release.Namespace }}
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
-    app: htrflow-api
+    app: htrflow-web
 spec:
   replicas: 1
   selector:
-    matchLabels: { app: htrflow-api }
+    matchLabels: { app: htrflow-web }
   template:
     metadata:
-      labels: { app: htrflow-api }   # NetworkPolicy selector (network.yaml, this file)
+      labels: { app: htrflow-web }   # NetworkPolicy selector (network.yaml, this file)
     spec:
-      serviceAccountName: htrflow-api
+      serviceAccountName: htrflow-web
       # The one exception to this chart's "no SA token" pattern (viewer,
       # batch/warm-up Jobs all set this false): the API IS a Kubernetes API
       # client — it needs the token to authenticate get/list/watch calls to
@@ -70,8 +70,8 @@ spec:
         {{- include "htrflow-batch.restrictedPod" 1000 | nindent 8 }}
       containers:
         - name: api
-          image: {{ .Values.api.image }}
-          imagePullPolicy: {{ include "htrflow-batch.pullPolicy" .Values.api.image }}
+          image: {{ .Values.web.image }}
+          imagePullPolicy: {{ include "htrflow-batch.pullPolicy" .Values.web.image }}
           securityContext:
             {{- include "htrflow-batch.restrictedContainer" . | nindent 12 }}
           env:
@@ -82,7 +82,7 @@ spec:
             # The API acts on its own namespace; the downward API keeps it
             # correct whatever --namespace the release uses. Deliberately
             # single-valued today (one namespace, this release's) — the
-            # comma-separated list packages/api/src/htrflow_api/kube.py
+            # comma-separated list packages/web/src/htrflow_web/kube.py
             # already parses is for a future multi-tenant deployment, not
             # anything this chart wires up yet.
             - name: HTRFLOW_NAMESPACES
@@ -101,7 +101,7 @@ spec:
             - name: tmp
               mountPath: /tmp
           resources:
-            {{- toYaml .Values.api.resources | nindent 12 }}
+            {{- toYaml .Values.web.resources | nindent 12 }}
       volumes:
         - name: tmp
           emptyDir: { sizeLimit: 64Mi }
@@ -109,13 +109,13 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: htrflow-api
+  name: htrflow-web
   namespace: {{ .Release.Namespace }}
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
-    app: htrflow-api
+    app: htrflow-web
 spec:
   type: ClusterIP
-  selector: { app: htrflow-api }
+  selector: { app: htrflow-web }
   ports:
     - name: http
       port: 8081
@@ -138,12 +138,12 @@ router matches egress against AFTER service DNAT.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: htr-api
+  name: htr-web
   namespace: {{ .Release.Namespace }}
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
 spec:
   podSelector:
-    matchLabels: { app: htrflow-api }
+    matchLabels: { app: htrflow-web }
   policyTypes: [Ingress, Egress]
   ingress:
     - from:

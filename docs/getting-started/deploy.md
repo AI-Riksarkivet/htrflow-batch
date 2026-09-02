@@ -17,7 +17,7 @@ Campaign](campaigns.md)). Every chart value is in
 helm install htr charts/htrflow-batch -n htr-batch --create-namespace \
   --set publicResultsBase=<browser-reachable results base URL> \
   --set viewer.image=<registry>/htrflow-batch-viewer@sha256:<digest> \
-  --set api.image=<registry>/htrflow-api@sha256:<digest> \
+  --set web.image=<registry>/htrflow-web@sha256:<digest> \
   --set network.s3Cidrs='{<s3 endpoint cidr>}' \
   --set network.apiServer.cidr=<kube-apiserver cidr, e.g. 10.16.51.56/32> \
   --set security.allowedImageRepos='{<registry>/}'
@@ -45,10 +45,10 @@ applies exactly that policy to RustFS (`templates/_helpers.tpl`,
 `bucketPolicy`); a real bucket needs the equivalent
 ([Security → The bucket policy](../development/security.md#the-bucket-policy)).
 
-`viewer.image` and `api.image` must both be digests (the chart refuses tags
+`viewer.image` and `web.image` must both be digests (the chart refuses tags
 outside the PoC — `security.allowTagImages`); build the viewer with `make
 viewer-image` / `dagger call build-viewer`, the read API with `make
-build-api` / `dagger call publish-docker --component api`.
+build-web` / `dagger call publish-docker --component web`.
 
 Queue quota is a plain list of covered resources under `queue.resources`.
 The default admits exactly one campaign index as the converter renders it
@@ -132,7 +132,7 @@ helm upgrade --install htr charts/htrflow-batch -n htr-batch \
   --set publicResultsBase=http://localhost:30900/htr-results \
   --set network.apiServer.cidr=<node-ip>/32 \
   --set viewer.image=127.0.0.1:30500/uv4@sha256:<viewer digest> \
-  --set api.image=127.0.0.1:30500/htrflow-api@sha256:<api digest> \
+  --set web.image=127.0.0.1:30500/htrflow-web@sha256:<api digest> \
   --set security.allowedImageRepos='{127.0.0.1:30500/}'
 make psa-labels
 make campaigns-apply DIR=examples/campaigns   # or your own campaigns repo checkout
@@ -140,7 +140,7 @@ k9s -n htr-batch   # watch
 ```
 
 `--set security.allowTagImages=true` lets you use `:dev` tags for
-`api.image` / `viewer.image` instead of digests while iterating (they are
+`web.image` / `viewer.image` instead of digests while iterating (they are
 then pulled on every rollout). Swap `helm upgrade --install` for `helm
 template` (same flags, plus `network.nodeCidrs`) to render without a
 cluster. Kill-and-resume test: wait until ~2 ALTOs exist under

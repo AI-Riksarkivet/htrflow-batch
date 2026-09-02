@@ -50,7 +50,7 @@ data:
       # Read API (D8, B63): same-origin so the SPA's CSP connect-src 'self'
       # covers it and the browser never needs the in-cluster Service DNS name.
       location /api/ {
-        proxy_pass http://htrflow-api:8081/api/;
+        proxy_pass http://htrflow-web:8081/api/;
       }
     }
 ---

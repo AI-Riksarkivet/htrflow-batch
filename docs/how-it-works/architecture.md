@@ -54,7 +54,7 @@ Five pieces, each boring on purpose:
 | **wrapper (streaming driver)** | I/O (IIIF in, S3 out), page queue, resume, **output verification**, provenance, the live log; drives htrflow in-process | HTR logic |
 | **htrflow** | HTR | everything else — unmodified package, driven as a library |
 
-The read API (`packages/api`) is a sixth, passive piece: read-only RBAC on
+The read API (`packages/web`) is a sixth, passive piece: read-only RBAC on
 Jobs/Pods/ConfigMaps, no state of its own, serving the status page's
 `GET /api/v1/jobs` — it derives everything from the live Job, nothing is
 cached ([Campaigns](campaigns.md#the-read-api-and-status-page)).

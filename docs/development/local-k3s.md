@@ -52,7 +52,7 @@ make poc-push-arm64                          # the same recipe regardless of hos
 `se.riksarkivet.htrflow.base.revision`, because `manifest.json` only knows
 the package version (`0.2.6`) while the base is built well past that tag.
 It prints the wrapper and API digests at the end — the wrapper's goes into
-`pipelines/<id>.yaml` in the campaigns repo, the API's into `api.image`
+`pipelines/<id>.yaml` in the campaigns repo, the API's into `web.image`
 (or use `security.allowTagImages=true` and the `:dev` tag while iterating;
 tags are then pulled on every rollout).
 
@@ -147,7 +147,7 @@ when the pods went non-root ([Security](security.md#cache-pvc-migration)).
 
 ```bash
 helm upgrade htr charts/htrflow-batch -n htr-batch --reset-then-reuse-values \
-  --set api.image=127.0.0.1:30500/htrflow-api@sha256:<digest> \
+  --set web.image=127.0.0.1:30500/htrflow-web@sha256:<digest> \
   --set viewer.image=127.0.0.1:30500/uv4@sha256:<digest>
 make psa-labels
 ```

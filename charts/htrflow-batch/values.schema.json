@@ -8,7 +8,7 @@
     "publicResultsBase",
     "modelCache",
     "queue",
-    "api",
+    "web",
     "security",
     "network",
     "viewer"
@@ -174,7 +174,7 @@
         }
       }
     },
-    "api": {
+    "web": {
       "type": "object",
       "additionalProperties": false,
       "required": [

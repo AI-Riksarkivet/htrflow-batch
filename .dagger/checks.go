@@ -134,7 +134,7 @@ var prodChartRenders = []chartRender{
 	{name: "default", sets: []string{
 		"publicResultsBase=https://x/",
 		"network.apiServer.cidr=10.16.51.10/32",
-		"api.image=docker.io/riksarkivet/htrflow-api@" + digestZero,
+		"web.image=docker.io/riksarkivet/htrflow-web@" + digestZero,
 	}},
 	{name: "full", values: "ci/full-values.yaml"},
 }
@@ -169,7 +169,7 @@ func namedDeploymentDoc(content, name string) (string, bool) {
 // (charts/htrflow-batch) on its digest/CIDR-complete defaults and on
 // ci/full-values.yaml, and the PoC-only devstack chart
 // (charts/htrflow-devstack) the same way — then asserts on the prod chart's
-// renders (B63 Task 5: the CronJob controller is gone, the read API
+// renders (B63 Task 5: the CronJob controller is gone, the web
 // Deployment always renders with a /healthz livenessProbe, and no
 // devstack-labelled object leaks into the prod chart) before validating
 // every render, plus the converter's Job/ConfigMap manifest skeletons
@@ -230,12 +230,12 @@ func (m *HtrflowBatch) CheckChart(
 		if strings.Contains(content, "kind: CronJob") {
 			return "", fmt.Errorf("prod chart (%s) renders a CronJob: the removed campaign controller must be gone (B63)", name)
 		}
-		apiDeploy, found := namedDeploymentDoc(content, "htrflow-api")
+		webDeploy, found := namedDeploymentDoc(content, "htrflow-web")
 		if !found {
-			return "", fmt.Errorf("prod chart (%s) is missing the htrflow-api Deployment", name)
+			return "", fmt.Errorf("prod chart (%s) is missing the htrflow-web Deployment", name)
 		}
-		if !strings.Contains(apiDeploy, "livenessProbe") {
-			return "", fmt.Errorf("prod chart (%s): htrflow-api Deployment is missing a livenessProbe (/healthz)", name)
+		if !strings.Contains(webDeploy, "livenessProbe") {
+			return "", fmt.Errorf("prod chart (%s): htrflow-web Deployment is missing a livenessProbe (/healthz)", name)
 		}
 		if strings.Contains(content, "app.kubernetes.io/component: devstack") {
 			return "", fmt.Errorf("prod chart (%s) renders a devstack-labelled object: devstack moved to its own chart", name)

@@ -3,12 +3,12 @@
 Egress allowlists per pod role (docs: development/security, D14) plus a
 namespace-wide default deny with explicit ingress allows for the pods that
 serve something (viewer, the read API). Nothing may reach a batch/warm-up
-Job. The read API's own ingress/egress policy is rendered by templates/api.yaml
+Job. The read API's own ingress/egress policy is rendered by templates/web.yaml
 (it needs the same apiserver-CIDR lookup as this file but nothing else here).
 
 kube-router (k3s) evaluates egress AFTER service DNAT, so ClusterIP targets
 are matched by their backing pod (podSelector) or, for the apiserver, by the
-node address it resolves to — hence the `lookup` auto-detection in api.yaml.
+node address it resolves to — hence the `lookup` auto-detection in web.yaml.
 */}}
 {{- $nodes := list }}
 {{- range .Values.network.nodeCidrs }}{{ $nodes = append $nodes . }}{{ end }}
@@ -141,7 +141,7 @@ spec:
         - { port: 8080 }
   egress:
     - to:
-        - podSelector: { matchLabels: { app: htrflow-api } }
+        - podSelector: { matchLabels: { app: htrflow-web } }
       ports:
         - { port: 8081 }
 {{- end }}

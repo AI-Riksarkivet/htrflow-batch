@@ -5,12 +5,12 @@
 Three images: the GPU **wrapper** (`.docker/htrflow-batch.dockerfile`, amd64
 on the upstream base; `.docker/htrflow-batch-gpu-arm64.dockerfile` on a
 locally built arm64 base), the CPU-only **read API**
-(`.docker/htrflow-api.dockerfile`) and the **viewer**
+(`.docker/htrflow-web.dockerfile`) and the **viewer**
 (`.docker/uv4-viewer.dockerfile`). Reproducibly, through the dagger module:
 
 ```bash
 dagger call build                  # wrapper image (amd64), from .docker/htrflow-batch.dockerfile
-dagger call build-api              # read API image
+dagger call build-web              # read API image
 dagger call build-viewer           # UV4 viewer image, pinned upstream ref + patch + the SPA
 ```
 
@@ -44,10 +44,10 @@ For fast local-only iteration against a bare-k3s PoC's in-cluster registry
 (no dagger, no push credentials):
 
 ```bash
-make poc-push          # build-wrapper + build-api, push both, print their digests
+make poc-push          # build-wrapper + build-web, push both, print their digests
 make poc-push-arm64    # force the native arm64 GPU recipe regardless of host arch
-make build-api         # just the read API image
-make scan-api          # Trivy (0.65.0), HIGH/CRITICAL with a fix fails
+make build-web         # just the read API image
+make scan-web          # Trivy (0.65.0), HIGH/CRITICAL with a fix fails
 make viewer-image      # bun build + docker build of the viewer (tag 127.0.0.1:30500/uv4:dev)
 ```
 
@@ -80,7 +80,7 @@ against `packages/wrapper/pyproject.toml`'s version unless
 |---|---|---|
 | wrapper | `riksarkivet/htrflow-batch` | `docker.io` |
 | viewer | `riksarkivet/htrflow-batch-viewer` | `docker.io` |
-| api | `riksarkivet/htrflow-api` | `docker.io` |
+| api | `riksarkivet/htrflow-web` | `docker.io` |
 
 Override with `--image-repository` / `--registry`. In CI, `publish.yml` is
 manual (`workflow_dispatch`) only and supplies `DOCKERHUB_USERNAME` /
@@ -99,7 +99,7 @@ directly from a checkout:
 helm install htr charts/htrflow-batch -n htr-batch --create-namespace \
   --set publicResultsBase=<browser-reachable results base URL> \
   --set viewer.image=<registry>/htrflow-batch-viewer@sha256:<digest> \
-  --set api.image=<registry>/htrflow-api@sha256:<digest> \
+  --set web.image=<registry>/htrflow-web@sha256:<digest> \
   ...
 make psa-labels        # once; reads security.psaEnforce from the installed release
 ```

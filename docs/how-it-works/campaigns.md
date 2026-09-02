@@ -222,7 +222,7 @@ exhausts its retries it counts toward `maxFailedIndexes`; the Job's own
 
 ## The read API and status page
 
-`packages/api` (`GET /api/v1/jobs`, `GET /api/v1/jobs/{namespace}/{name}`)
+`packages/web` (`GET /api/v1/jobs`, `GET /api/v1/jobs/{namespace}/{name}`)
 is a thin, read-only projection of live Job/Pod/ConfigMap state — no state
 of its own, nothing cached, nothing written. A campaign's `phase` is derived
 straight from the Job: `Queued` (suspended, nothing done yet), `Paused`

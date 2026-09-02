@@ -9,7 +9,7 @@
 # 0.3.0: campaigns are Indexed Jobs rendered by packages/converter and
 # applied outside this chart (kubectl / Argo) — the chart no longer renders
 # pipeline ConfigMaps, warm-up Jobs, campaign Jobs or the old GitOps
-# CronJob controller. It adds the read-only status API (`api.*`) behind the
+# CronJob controller. It adds the read-only status API (`web.*`) behind the
 # viewer.
 
 s3:
@@ -60,9 +60,9 @@ queue:
 # Indexed Jobs a campaign renders to. No auth of its own — reachable only
 # from the viewer pod (NetworkPolicy) and only ever get/list/watch against
 # the cluster (Role, not ClusterRole).
-api:
+web:
   # Digest-pinned (…@sha256:…) unless security.allowTagImages is true.
-  image: docker.io/riksarkivet/htrflow-api@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  image: docker.io/riksarkivet/htrflow-web@sha256:0000000000000000000000000000000000000000000000000000000000000000
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 500m, memory: 256Mi }
@@ -83,7 +83,7 @@ security:
   # needs it. Kept as the default here rather than flipped in this fix, but
   # `restricted` is worth trying now.
   psaEnforce: baseline       # baseline | restricted
-  # Tag references (`:dev`) for viewer.image / api.image. Off = the chart
+  # Tag references (`:dev`) for viewer.image / web.image. Off = the chart
   # refuses anything that is not `@sha256:`-pinned: anyone who can push to
   # the registry could otherwise replace a control-plane image in place. Tag
   # images are always pulled (imagePullPolicy Always) so a re-pushed tag
