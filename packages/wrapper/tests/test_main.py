@@ -343,6 +343,40 @@ def test_verify_failure_detail_is_bounded():
     assert len(detail) < 3500
 
 
+def test_verify_detail_survives_the_termination_log_truncation(tmp_path):
+    """_terminate clips the error field at 3500 chars, and a page name costs
+    ~8 of them, so a volume with 500 missing pages overflows it on the names
+    alone. The cause has to be written before them — otherwise the operator
+    gets a truncated name list and no reason."""
+    from htrflow_batch.iiif import PageRef
+
+    class _NothingUploaded:
+        def uploaded_pages(self):
+            return set()
+
+    pages = [
+        PageRef(index=i, name=f"{i:04d}", image_url="https://x/p.jpg", canvas={})
+        for i in range(1, 501)
+    ]
+    stats = StreamStats(
+        results={"0001": PageOutcome(status="failed", error="boom: disk full")}
+    )
+    with pytest.raises(RuntimeError) as ei:
+        main_mod._verify(_NothingUploaded(), pages, stats, main_mod.RunState())
+    assert len(str(ei.value)) > 3500  # the names really do overflow the cap
+
+    log_path = tmp_path / "term.log"
+    main_mod._terminate(
+        {"TERMINATION_LOG_PATH": str(log_path)},
+        {"stage": "verify", "permanent": False, "error": str(ei.value)},
+        main_mod.RunState(),
+    )
+    term = json.loads(log_path.read_text())
+    assert term["error"].endswith("...(truncated)")
+    assert "500 missing, 1 failed" in term["error"]
+    assert "0001: boom: disk full" in term["error"]
+
+
 class _MissingCachedModel(FileNotFoundError, ValueError):
     """The shape of huggingface_hub.errors.LocalEntryNotFoundError — raised
     under HF_HUB_OFFLINE=1 for a model absent from the read-only cache. Its

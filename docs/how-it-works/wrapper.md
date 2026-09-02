@@ -98,7 +98,7 @@ into the SIGKILL.
 | 143 | SIGTERM with termination log + final log ship | retried the same as exit 1 — a resumed run skips pages already published |
 
 Failures write a structured reason to `/dev/termination-log`
-(`{"stage": "stream", "permanent": false, "error": "verify failed: missing=[…]"}`),
+(`{"stage": "stream", "permanent": false, "error": "verify failed: N missing, M failed errors: … missing=[…]"}`),
 URL-redacted, and `metrics-failed-latest.json` to the volume prefix. The
 whole contract is in [Failure Handling](failure-handling.md).
 

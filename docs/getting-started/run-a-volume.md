@@ -71,7 +71,7 @@ behind these knobs.
 | 143 | SIGTERM (drain that reaches the container) after writing the termination log and shipping the log | retried the same as exit 1 — pages already published are not redone |
 
 Failures write a structured reason to `/dev/termination-log`
-(`{"stage": "stream", "permanent": false, "error": "verify failed: missing=[…]"}`)
+(`{"stage": "stream", "permanent": false, "error": "verify failed: N missing, M failed errors: … missing=[…]"}`)
 so `kubectl describe pod` and the captured failure log show *why* without
 log spelunking; the full matrix is in
 [Failure Handling](../how-it-works/failure-handling.md). `MAX_PAGES` is your
