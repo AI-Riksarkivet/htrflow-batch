@@ -78,7 +78,11 @@ Kubernetes 1.33 och verifierat mot officiell dokumentation 2026-09-01.
       samma avsikt på Workloadens `spec.active` (med Argo CD: samma skript
       som PostSync-hook). Verifierat: pausen håller, tre klara index bevaras,
       API:t rapporterar `Paused`, och `suspend: false` + apply fortsätter på
-      nästa index.
+      nästa index. En kampanj som skapas *redan pausad* pausas också (fix
+      round 2) — men Kueue admitterar Workloaden i samma sekund som jobbet
+      skapas, så en pod hinner leva ~4 s innan apply-steget hinner ingripa.
+      Inget resultat skrivs, men "ingen pod startar någonsin" kräver ett
+      render-tidsbeslut (se E2E-loggen, Fix round 2).
 - [x] En volym med trasigt manifest hamnar i `failedIndexes` utan att stoppa
       kampanjen (exit 13 → `FailIndex`, ett enda försök); en volym över
       `MAX_SECONDS` görs om — och återupptar från redan publicerade sidor,
