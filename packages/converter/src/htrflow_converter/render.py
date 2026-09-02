@@ -147,7 +147,7 @@ def _campaign_job(
     if c.suspend:  # intent; scripts/kueue-pause-sync.sh enforces it under Kueue
         _set(job, "spec.suspend", True)
     else:
-        del job["spec"]["suspend"]
+        job["spec"].pop("suspend", None)
 
     _set(job, "spec.template.spec.containers[0].image", p.image)
     prefix = "" if cfg.legacy_layout else f"{cfg.namespace}/"

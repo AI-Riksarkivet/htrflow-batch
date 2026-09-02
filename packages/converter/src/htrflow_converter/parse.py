@@ -60,12 +60,29 @@ def _problems(stem: str, exc: _PydanticValidationError) -> list[str]:
     return out
 
 
+def _duplicate_volume_ids(doc: dict, stem: str, problems: list[str]) -> None:
+    seen: set[str] = set()
+    for entry in doc.get("volumes") or []:
+        vid = (
+            entry
+            if isinstance(entry, str)
+            else entry.get("id")
+            if isinstance(entry, dict)
+            else None
+        )
+        if vid is not None and str(vid) in seen:
+            problems.append(f"{stem}: duplicate volume id: {vid}")
+        seen.add(str(vid))
+
+
 def _parse_campaign(path: Path, context: dict, problems: list[str]) -> Campaign | None:
     doc = _read_yaml_mapping(path, problems, "campaign")
     if doc is None:
         return None
+    _duplicate_volume_ids(doc, path.stem, problems)
     try:
-        return Campaign.model_validate({"name": path.stem, **doc}, context=context)
+        # `path.stem` always wins over a `name:` the YAML happens to carry.
+        return Campaign.model_validate({**doc, "name": path.stem}, context=context)
     except _PydanticValidationError as e:
         problems.extend(_problems(path.stem, e))
         return None
@@ -76,7 +93,8 @@ def _parse_pipeline(path: Path, context: dict, problems: list[str]) -> Pipeline 
     if doc is None:
         return None
     try:
-        return Pipeline.model_validate({"id": path.stem, **doc}, context=context)
+        # `path.stem` always wins over an `id:` the YAML happens to carry.
+        return Pipeline.model_validate({**doc, "id": path.stem}, context=context)
     except _PydanticValidationError as e:
         problems.extend(_problems(path.stem, e))
         return None
