@@ -395,7 +395,7 @@ e2e-demo-4-jqcnq   1/1   Running   0   5s
 ```
 
 **This was a design gap, not a bug fixed in this round.** It is closed in
-[Fix round 1](#fix-round-1-same-day-1634-1640): `suspend:` stays the declared
+[Fix round 1](#fix-round-1): `suspend:` stays the declared
 intent in Git, and `make campaigns-apply` (or an Argo CD `PostSync` hook) runs
 `scripts/kueue-pause-sync.sh`, which applies that intent to the Workload's
 `spec.active`.
@@ -444,7 +444,7 @@ fails for as long as the Job exists — including after it has completed, until
 therefore **not** idempotent for any campaign whose `window` exceeds the
 queue's quota, contrary to what [Local k3s](local-k3s.md) says. Worked around
 here by deleting the finished `e2e-window` Job; **fixed** in
-[Fix round 1](#fix-round-1-same-day-1634-1640) by dropping partial admission
+[Fix round 1](#fix-round-1) by dropping partial admission
 and clamping `parallelism` to `converter.yaml`'s `window` at render time.
 
 ### Deleting a campaign file cancels it
@@ -465,7 +465,10 @@ Pruning is opt-in on the PoC (`make campaigns-apply PRUNE=1` →
 `kubectl apply --prune -l htrflow.riksarkivet.se/managed-by=converter`), because
 `--prune` deletes every converter-labelled object in the namespace that is not
 in *this* apply — running it against a partial checkout such as
-`probe-max-seconds/` would cancel everything else. Argo CD prunes on its own.
+`probe-max-seconds/` would cancel everything else. It is opt-in with Argo CD
+too: `syncPolicy.automated.prune` defaults to `false`, so an Application that
+manages a campaigns repo needs `prune: true` (or a `--prune` sync) or a
+deleted campaign's Job is left running.
 
 The label selector is also what keeps the prune from touching anything the
 converter did not render: the twenty pre-B63 `htr-pipeline-*` ConfigMaps
@@ -504,7 +507,7 @@ e2e-badurl
 
 !!! note "All three were ruled on and closed the same day"
 
-    See [Fix round 1](#fix-round-1-same-day-1634-1640) at the end of this
+    See [Fix round 1](#fix-round-1) at the end of this
     page for what was implemented and re-verified. The text below is left as
     written — it is the record of what the system did before the fix.
 
@@ -545,9 +548,9 @@ e2e-badurl
 
 ---
 
-# Fix round 1 (same day, 16:34–16:40)
+# Fix round 1
 
-Three of the open questions above came back as rulings and were implemented
+*Same day, 16:34–16:40.* Three of the open questions above came back as rulings and were implemented
 and re-verified on the same cluster, same images. The campaigns repo grew a
 `suspend:` field on `campaigns/e2e-pause.yaml`, a `max_seconds:` pipeline
 (`pipelines/e2e-slow-v1.yaml`) and a re-added `campaigns/e2e-window.yaml`;
