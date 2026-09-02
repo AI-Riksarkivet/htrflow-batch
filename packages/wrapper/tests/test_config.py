@@ -96,3 +96,16 @@ def test_neither_images_nor_manifest_url_is_permanent():
     del env["IIIF_MANIFEST_URL"]
     with pytest.raises(ConfigError, match="exactly one"):
         Config.from_env(env)
+
+
+def test_optional_env_is_coerced_by_pydantic():
+    """The class-level default is the only default and pydantic does the
+    parsing: it accepts the bool words the old hand-rolled _bool did, and a
+    value it cannot parse is a ValueError, which _main classifies exit 13."""
+    assert Config.from_env(dict(REQUIRED, RESUME="off")).resume is False
+    assert Config.from_env(dict(REQUIRED, RESUME="yes")).resume is True
+    assert (
+        Config.from_env(dict(REQUIRED, LOG_SHIP_SECONDS="2.5")).log_ship_seconds == 2.5
+    )
+    with pytest.raises(ValueError):
+        Config.from_env(dict(REQUIRED, LOOKAHEAD_PAGES="abc"))
