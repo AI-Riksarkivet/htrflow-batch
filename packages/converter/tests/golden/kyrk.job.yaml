@@ -33,6 +33,7 @@ spec:
         app: htrflow-batch
     spec:
       restartPolicy: Never
+      activeDeadlineSeconds: 21600
       terminationGracePeriodSeconds: 120
       automountServiceAccountToken: false
       securityContext:
@@ -67,8 +68,6 @@ spec:
           value: ghcr.io/riksarkivet/htrflow-batch@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         - name: HF_HUB_OFFLINE
           value: '1'
-        - name: MAX_SECONDS
-          value: '21600'
         - name: MANIFEST_MAX_BYTES
           value: '16777216'
         - name: FETCH_MAX_BYTES

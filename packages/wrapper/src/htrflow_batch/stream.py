@@ -123,8 +123,8 @@ class PageStream:
         self._queued.clear()
 
     def close(self) -> None:
-        """Never waits: a SIGTERM or MAX_SECONDS exit must not block on a
-        download sitting in its 120 s timeout (why ``_hard_exit`` exists)."""
+        """Never waits: a SIGTERM exit must not block on a download sitting
+        in its 120 s timeout (why ``_hard_exit`` exists)."""
         self._pool.shutdown(wait=False, cancel_futures=True)
 
     def __iter__(self) -> Iterator[FetchResult]:

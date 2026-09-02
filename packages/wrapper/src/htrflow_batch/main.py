@@ -52,11 +52,10 @@ class Terminated(BaseException):
 
 
 class RunState:
-    """Stage, plus `terminating`: success/failure/SIGTERM/MAX_SECONDS race for it."""
+    """The stage the run is in, for the failure messages and the run log."""
 
     def __init__(self) -> None:
         self.stage = "setup"
-        self.terminating = threading.Lock()
 
 
 def _set_signal(signum: int, handler):
@@ -85,10 +84,10 @@ def _http_client() -> httpx.Client:
     return httpx.Client(max_redirects=5)
 
 
-def _terminate(env: Mapping[str, str], reason: dict, state: "RunState") -> bool:
-    """Writes the log iff it wins state.terminating; returns whether it wrote."""
-    if not state.terminating.acquire(blocking=False):
-        return False
+def _terminate(env: Mapping[str, str], reason: dict) -> None:
+    """Write the structured failure reason to the termination log. Exactly one
+    call per run: the exit paths below are mutually exclusive, and SIGTERM --
+    now the only asynchronous one -- is raised in the main thread."""
     path = env.get("TERMINATION_LOG_PATH", "/dev/termination-log")
     error = reason.get("error")
     if isinstance(error, str):
@@ -103,7 +102,6 @@ def _terminate(env: Mapping[str, str], reason: dict, state: "RunState") -> bool:
         Path(path).write_text(json.dumps(reason))
     except OSError:
         log.warning("could not write termination log to %s", path)
-    return True
 
 
 #: Env vars the Job spec points into the tmpfs workdir (docs: security, D14).
@@ -150,15 +148,13 @@ def main(
     try:
         return _main(env, process_page_factory, capture, state)
     except Terminated:
-        # O2: the Job deadline or a node drain. Leave the same evidence a
+        # O2: the pod's activeDeadlineSeconds or a node drain. Leave the evidence a
         # failure would (termination message + complete run log), then exit
         # 143 so Kubernetes retries the index like exit 1, not FailIndex.
         # Same shape as the other failure lines: the run viewer's terminal-line
         # regex (frontend runlog.ts) is the contract that stops live polling.
         log.error("transient failure in %s: SIGTERM, shutting down", state.stage)
-        reason = {"stage": state.stage, "permanent": False, "error": "SIGTERM"}
-        if not _terminate(env, reason, state):
-            return EXIT_TRANSIENT  # MAX_SECONDS already won the race
+        _terminate(env, {"stage": state.stage, "permanent": False, "error": "SIGTERM"})
         capture.finish()
         _hard_exit(EXIT_SIGTERM)
         return EXIT_SIGTERM  # reached only when _hard_exit is stubbed (tests)
@@ -174,19 +170,19 @@ def _main(
     capture: LogCapture,
     state: RunState,
 ) -> int:
-    """setup->resume->stream->verify->publish, under the MAX_SECONDS watchdog."""
+    """setup->resume->stream->verify->publish. The per-volume wall-clock budget
+    is the pod's activeDeadlineSeconds (the converter renders it): at the
+    deadline the kubelet SIGTERMs us and main()'s handler does the rest."""
     capture.attach_logging()  # not basicConfig: see LogCapture.attach_logging
     t_start = time.monotonic()
     # W10: set on every failure path so queued downloads stop short instead
     # of holding the interpreter (executor workers are joined at exit).
     stop = threading.Event()
-    timer: Optional[threading.Timer] = None
     try:
         cfg = Config.from_env(env)
         prepare_writable_dirs(env)
         store = ResultStore(cfg)
         capture.start_shipping(store.put_run_log, cfg.log_ship_seconds)
-        timer = _start_max_seconds_timer(cfg, env, state, capture)
         client = _http_client()
 
         source, source_url, pages = _setup(cfg, client, store, state)
@@ -204,8 +200,6 @@ def _main(
         # (downloaded images, local ALTO/PAGE outputs) is intentionally left
         # in place for postmortem inspection.
         shutil.rmtree(cfg.workdir, ignore_errors=True)
-        if not state.terminating.acquire(blocking=False):
-            return EXIT_TRANSIENT  # MAX_SECONDS already won the race
         return EXIT_OK
     except OSError as e:
         # An I/O condition is never a config mistake, even when it is also a
@@ -220,13 +214,10 @@ def _main(
         stop.set()
         stage = state.stage
         log.error("permanent failure in %s: %s", stage, e)
-        reason = {"stage": stage, "permanent": True, "error": str(e)}
-        return EXIT_PERMANENT if _terminate(env, reason, state) else EXIT_TRANSIENT
+        _terminate(env, {"stage": stage, "permanent": True, "error": str(e)})
+        return EXIT_PERMANENT
     except Exception as e:
         return _transient(env, state, stop, e)
-    finally:
-        if timer is not None:
-            timer.cancel()
 
 
 def _transient(
@@ -235,7 +226,7 @@ def _transient(
     """Retryable: stop the queued downloads (W10), leave the evidence, exit 1."""
     stop.set()
     log.error("transient failure in %s: %s\n%s", state.stage, e, traceback.format_exc())
-    _terminate(env, {"stage": state.stage, "permanent": False, "error": str(e)}, state)
+    _terminate(env, {"stage": state.stage, "permanent": False, "error": str(e)})
     return EXIT_TRANSIENT
 
 
@@ -363,29 +354,6 @@ def _failure_detail(stats: StreamStats, failed: list[str]) -> str:
     )
     rest = len(failed) - FAILED_DETAIL_PAGES
     return f" errors: {shown}" + (f" (+{rest} more)" if rest > 0 else "")
-
-
-def _start_max_seconds_timer(
-    cfg: Config, env: Mapping[str, str], state: RunState, capture: LogCapture
-) -> Optional[threading.Timer]:
-    """MAX_SECONDS: a per-volume wall-clock budget (docs: wrapper). Fires in
-    its own thread; _hard_exit (os._exit) kills the process outright from
-    any thread, so on_expiry need not unwind the main thread itself."""
-    if cfg.max_seconds <= 0:
-        return None
-
-    def on_expiry() -> None:
-        reason = {"stage": state.stage, "permanent": False, "error": "MAX_SECONDS"}
-        if not _terminate(env, reason, state):
-            return  # success/failure/SIGTERM already won the race
-        log.error("transient failure in %s: MAX_SECONDS exceeded", state.stage)
-        capture.finish()
-        _hard_exit(EXIT_TRANSIENT)
-
-    timer = threading.Timer(cfg.max_seconds, on_expiry)
-    timer.daemon = True
-    timer.start()
-    return timer
 
 
 def _synthetic_source(cfg: Config, store: ResultStore) -> tuple[dict, str]:

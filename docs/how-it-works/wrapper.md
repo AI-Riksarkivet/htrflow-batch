@@ -202,9 +202,10 @@ reading a line of the campaign's `volumes.txt` ConfigMap.
   ledger, there is nothing else to reconcile** (D1/D2).
 - Env: the [wrapper contract](../reference/wrapper.md#environment-contract)
   with `S3_PREFIX=<namespace>/` from `converter.yaml`, `HF_HUB_OFFLINE=1`,
-  `HF_HOME=/data/hf`, `MANIFEST_MAX_BYTES`/`FETCH_MAX_BYTES`/`MAX_SECONDS`
-  from `converter.yaml`, and `HOME`, `TMPDIR`, `YOLO_CONFIG_DIR` pointed
-  into the tmpfs workdir.
+  `HF_HOME=/data/hf`, `MANIFEST_MAX_BYTES`/`FETCH_MAX_BYTES` from
+  `converter.yaml`, and `HOME`, `TMPDIR`, `YOLO_CONFIG_DIR` pointed into the
+  tmpfs workdir. The per-volume time budget is not env at all: it is the
+  pod's own `activeDeadlineSeconds`.
 - Mounts: the campaign's `volumes.txt` ConfigMap at `/campaign` (read-only),
   the pipeline ConfigMap at `/config`, the model cache PVC at `/data`
   **read-only**, a 2 Gi memory-backed emptyDir at `/work`, the S3 Secret at

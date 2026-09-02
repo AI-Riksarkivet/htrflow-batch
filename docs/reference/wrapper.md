@@ -40,8 +40,12 @@ Source: [`packages/wrapper/src/htrflow_batch/config.py`](https://github.com/carp
 | `FETCH_MAX_BYTES` | `67108864` | Byte cap on one image body (over it: the page fails without retry) |
 | `IMAGE_DIGEST` | `unknown` | Provenance only — recorded verbatim in `manifest.json` |
 | `LOG_SHIP_SECONDS` | `15` | How often the run's own stdout/stderr is uploaded to `status/logs/<pipeline>/<volume>.txt` while it runs (`0` = final upload only) |
-| `MAX_SECONDS` | `0` | Per-volume wall-clock budget (`0` = none); on expiry: termination log `{"permanent": false, "error": "MAX_SECONDS"}`, final run-log ship, `os._exit(1)` — retried like any other transient failure |
 | `TERMINATION_LOG_PATH` | `/dev/termination-log` | Where the exit reason is written |
+
+The per-volume wall-clock budget is not a wrapper setting: the campaign Job
+renders it as the pod's `activeDeadlineSeconds` (`converter.yaml`'s
+`max_seconds`, or the pipeline's own). At the deadline the kubelet SIGTERMs
+the wrapper, which takes the `143` path below.
 | `HOME`, `TMPDIR`, `YOLO_CONFIG_DIR` | *(unset)* | Created at start when set — the Job points them into the tmpfs workdir because the root filesystem is read-only |
 | `HF_HOME`, `HF_HUB_OFFLINE` | *(unset)* | Set by the Job (`/data/hf`, `1`): models come from the read-only cache, never from HF Hub |
 
@@ -68,8 +72,8 @@ what the termination log reports. Details in
 |---|---|---|
 | `0` | success | verify passed, `manifest.json` published |
 | `13` | permanent — `{"permanent": true}` | `ConfigError` (missing env); manifest URL not http(s); manifest HTTP 400/401/403/404/410; body over `MANIFEST_MAX_BYTES`; non-JSON or non-object JSON; no canvases; a canvas without an image, with a malformed shape, or with a non-http(s) image URL; bad pipeline YAML, an unknown step or model class, an `Export` step in the YAML (`ValueError` from `driver.load_pipeline`). An exception that is *also* an `OSError` never lands here — see the `1` row |
-| `1` | transient — `{"permanent": false}` | manifest 5xx/429/other status or a network error (`TransientManifestError`); the verify gate (pages missing or failed after fetch retries, `pipeline.run` exceptions, malformed XML) — the message lists the missing and failed page names and, for the first 10 failed pages, the error behind each (clipped to 200 chars); every page failure is also logged as it happens; any `OSError`, including one that is also a `ValueError` — `huggingface_hub.errors.LocalEntryNotFoundError` (a model missing from the read-only `HF_HOME` cache under `HF_HUB_OFFLINE=1`) subclasses both, and a re-warm fixes it; `UploadOutage` after 5 consecutive S3 upload failures; `MAX_SECONDS` exceeded (`{"error": "MAX_SECONDS"}`); anything else |
-| `143` | SIGTERM — `{"permanent": false, "error": "SIGTERM"}` | the handler: termination log, final run-log ship, `os._exit(143)` |
+| `1` | transient — `{"permanent": false}` | manifest 5xx/429/other status or a network error (`TransientManifestError`); the verify gate (pages missing or failed after fetch retries, `pipeline.run` exceptions, malformed XML) — the message lists the missing and failed page names and, for the first 10 failed pages, the error behind each (clipped to 200 chars); every page failure is also logged as it happens; any `OSError`, including one that is also a `ValueError` — `huggingface_hub.errors.LocalEntryNotFoundError` (a model missing from the read-only `HF_HOME` cache under `HF_HUB_OFFLINE=1`) subclasses both, and a re-warm fixes it; `UploadOutage` after 5 consecutive S3 upload failures; anything else |
+| `143` | SIGTERM — `{"permanent": false, "error": "SIGTERM"}` | the handler: termination log, final run-log ship, `os._exit(143)`. Sent by a node drain, or by the kubelet when the pod's `activeDeadlineSeconds` expires — the pod then also carries `status.reason: DeadlineExceeded`, which the read API surfaces |
 
 Page-fetch acceptance (never a whole-run verdict on its own): 3 attempts
 with 0.5 s × 2ⁿ backoff and a 120 s timeout each; textual Content-Types
@@ -98,7 +102,7 @@ Source root: [`packages/wrapper/src/htrflow_batch/`](https://github.com/carpelan
 | `viewer.py` | `build_viewer_manifest` — IIIF v3 manifest with ALTO annotation links (`iiif.json`) |
 | `logship.py` | `LogCapture` — tees stdout/stderr, redacts every URL appended to the buffer (`_append`) and every URL in the wrapper's own log records (`RedactingFormatter`), ships the buffer to S3 on an interval ([Live run log](../how-it-works/live-run-log.md)) |
 | `publish.py` | The publish stage: `alto_dims` (viewer dimensions from the ALTO), `run_manifest` (the `manifest.json` body), `run` (`iiif.json`, `pipeline.yaml`, `manifest.json` last) |
-| `main.py` | The stage machine (`_setup`/`_resume`/`_stream`/`_verify`, then `publish.run`), the SIGTERM and `MAX_SECONDS` handlers, `IMAGES` wiring, `_changed_sources` |
+| `main.py` | The stage machine (`_setup`/`_resume`/`_stream`/`_verify`, then `publish.run`), the SIGTERM handler, `IMAGES` wiring, `_changed_sources` |
 | `warmup.py` | The warm-up entrypoint: `Pipeline.from_config()` fills `HF_HOME`, then drops the `<pipeline_id>.done` marker |
 
 ## Completion contract

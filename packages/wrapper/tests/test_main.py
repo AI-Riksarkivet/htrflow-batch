@@ -1,7 +1,6 @@
 import json
 import os
 import signal
-import threading
 from pathlib import Path
 
 import httpx
@@ -369,7 +368,6 @@ def test_verify_detail_survives_the_termination_log_truncation(tmp_path):
     main_mod._terminate(
         {"TERMINATION_LOG_PATH": str(log_path)},
         {"stage": "verify", "permanent": False, "error": str(ei.value)},
-        main_mod.RunState(),
     )
     term = json.loads(log_path.read_text())
     assert term["error"].endswith("...(truncated)")
@@ -535,7 +533,6 @@ def test_terminate_with_long_error_writes_valid_json(tmp_path):
     main_mod._terminate(
         {"TERMINATION_LOG_PATH": str(log_path)},
         {"stage": "verify", "permanent": False, "error": long_error},
-        main_mod.RunState(),
     )
 
     term = json.loads(log_path.read_text())  # must not raise
@@ -792,7 +789,6 @@ def test_terminate_redacts_urls_in_the_error(tmp_path):
             "error": "fetch https://user:pw@iiif.example/x/full/max/0/default.jpg"
             "?token=SECRET failed",
         },
-        main_mod.RunState(),
     )
     term = json.loads(log_path.read_text())
     assert "SECRET" not in term["error"] and "user:pw" not in term["error"]
@@ -908,201 +904,3 @@ def test_images_rejects_a_non_http_url(images_env, cfg, s3):
     assert rc == EXIT_PERMANENT
     term = json.loads(Path(images_env["TERMINATION_LOG_PATH"]).read_text())
     assert term["stage"] == "setup" and "http(s)" in term["error"]
-
-
-# -- MAX_SECONDS (B63/D6) ---------------------------------------------------
-
-
-class _FakeTimer:
-    """Captures the (interval, callback) threading.Timer(...) was built
-    with, and whether it was cancelled — no real waiting."""
-
-    instances: list["_FakeTimer"] = []
-
-    def __init__(self, interval, fn):
-        self.interval = interval
-        self.fn = fn
-        self.cancelled = False
-        _FakeTimer.instances.append(self)
-
-    def start(self):
-        pass
-
-    def cancel(self):
-        self.cancelled = True
-
-
-@pytest.fixture
-def fake_timer(monkeypatch):
-    _FakeTimer.instances = []
-    monkeypatch.setattr(threading, "Timer", _FakeTimer)
-    return _FakeTimer
-
-
-def test_max_seconds_timer_is_started_and_cancelled_on_success(
-    env, cfg, s3, fake_timer
-):
-    """Cheap, deterministic check that the watchdog is wired up and torn down
-    on the normal-completion path, without waiting on a real timer."""
-    rc = main(dict(env, MAX_SECONDS="5"), process_page_factory=fake_factory)
-    assert rc == EXIT_OK
-    assert len(fake_timer.instances) == 1
-    assert fake_timer.instances[0].interval == 5
-    assert fake_timer.instances[0].cancelled is True
-
-
-def test_max_seconds_fired_after_success_does_not_reverse_the_outcome(
-    env, cfg, s3, fake_timer, monkeypatch
-):
-    """Review finding: timer.cancel() cannot stop a callback that has
-    already started, so on_expiry can still fire in the window between a
-    successful publish and the finally block's cancel(). Simulate that by
-    invoking the captured callback ourselves *after* main() has already
-    returned EXIT_OK (same fake-Timer pattern, driven post-hoc instead of
-    mid-run) — the shared "terminating" lock must make on_expiry a no-op:
-    no termination log, no _hard_exit call."""
-    exits = []
-    monkeypatch.setattr(main_mod, "_hard_exit", lambda code: exits.append(code))
-
-    rc = main(dict(env, MAX_SECONDS="600"), process_page_factory=fake_factory)
-    assert rc == EXIT_OK
-    assert not Path(env["TERMINATION_LOG_PATH"]).exists()
-
-    fake_timer.instances[0].fn()  # the real Timer thread firing late
-    assert exits == []  # on_expiry lost the race and backed off
-    assert not Path(env["TERMINATION_LOG_PATH"]).exists()
-
-
-def test_max_seconds_fired_after_a_permanent_failure_does_not_overwrite_it(
-    env, cfg, s3, fake_timer, monkeypatch
-):
-    """Review finding round 2: the failure paths must go through the same
-    `terminating` guard as success — a late on_expiry must not downgrade a
-    non-retryable exit 13 (with its own error) to a retryable exit 1."""
-    exits = []
-    monkeypatch.setattr(main_mod, "_hard_exit", lambda code: exits.append(code))
-
-    def factory(c):
-        raise ValueError("bad pipeline config: unknown step")
-
-    rc = main(dict(env, MAX_SECONDS="600"), process_page_factory=factory)
-    assert rc == EXIT_PERMANENT
-    term_before = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
-    assert term_before["permanent"] is True
-    assert "bad pipeline config" in term_before["error"]
-
-    fake_timer.instances[0].fn()  # the real Timer thread firing late
-    assert exits == []  # on_expiry lost the race and never called _hard_exit
-    term_after = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
-    assert term_after == term_before  # untouched
-
-
-def test_max_seconds_fired_after_sigterm_has_started_does_not_overwrite_it(
-    env, cfg, s3, fake_timer, monkeypatch
-):
-    """Same guard, the SIGTERM path this time — the handler in main()."""
-    exits = []
-    monkeypatch.setattr(main_mod, "_hard_exit", lambda code: exits.append(code))
-
-    def factory(c):
-        inner = fake_factory(c)
-
-        def process(path):
-            if path.stem == "0002":
-                os.kill(os.getpid(), signal.SIGTERM)
-            return inner(path)
-
-        return process
-
-    rc = main(dict(env, MAX_SECONDS="600"), process_page_factory=factory)
-    assert rc == EXIT_SIGTERM
-    assert exits == [EXIT_SIGTERM]
-    term_before = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
-    assert term_before == {"stage": "stream", "permanent": False, "error": "SIGTERM"}
-
-    fake_timer.instances[0].fn()  # the real Timer thread firing late
-    assert exits == [EXIT_SIGTERM]  # unchanged: on_expiry backed off
-    term_after = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
-    assert term_after == term_before
-
-
-def test_max_seconds_zero_starts_no_timer(env, cfg, s3, fake_timer):
-    rc = main(env, process_page_factory=fake_factory)  # MAX_SECONDS unset (0)
-    assert rc == EXIT_OK
-    assert fake_timer.instances == []
-
-
-def test_max_seconds_on_expiry_writes_termination_log_ships_log_and_hard_exits(
-    env, cfg, s3, fake_timer, monkeypatch
-):
-    """Unit-level: fire the watchdog's callback mid-run, exactly as the real
-    Timer thread would, and check the three actions the brief specifies —
-    termination log, final log ship, hard_exit(1) — without waiting on a
-    real timer."""
-    exits = []
-    monkeypatch.setattr(main_mod, "_hard_exit", lambda code: exits.append(code))
-
-    def factory(c):
-        inner = fake_factory(c)
-
-        def process(path):
-            if path.stem == "0002":
-                fake_timer.instances[0].fn()  # fire, as the real Timer would
-            return inner(path)
-
-        return process
-
-    rc = main(dict(env, MAX_SECONDS="600"), process_page_factory=factory)
-    # on_expiry won the "terminating" race (fired first); the success path,
-    # finding the lock already held when it completes, backs off too.
-    assert rc == EXIT_TRANSIENT
-    assert fake_timer.instances[0].interval == 600
-    assert exits == [EXIT_TRANSIENT]
-    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
-    assert term == {"stage": "stream", "permanent": False, "error": "MAX_SECONDS"}
-    body = (
-        s3.get_object(Bucket=cfg.s3_bucket, Key="status/logs/demo-v1/SE-RA-1234.txt")[
-            "Body"
-        ]
-        .read()
-        .decode()
-    )
-    assert "MAX_SECONDS" in body
-
-
-def test_max_seconds_exceeded_hard_exits_1(env, cfg, s3, monkeypatch):
-    """End-to-end with a real (short) threading.Timer and a slow fake driver:
-    the watchdog fires in its own thread and force-exits — mocked here so the
-    test process itself is not killed — while the main thread is still
-    blocked processing a page."""
-    exits = []
-    hard_exit_called = threading.Event()
-
-    def fake_hard_exit(code):
-        exits.append(code)
-        hard_exit_called.set()
-
-    monkeypatch.setattr(main_mod, "_hard_exit", fake_hard_exit)
-    fired = threading.Event()
-
-    def factory(c):
-        def process(path):
-            fired.wait(timeout=5)
-            return _write_outputs(c, path.stem)
-
-        return process
-
-    env = dict(env, MAX_SECONDS="1")
-    real_terminate = main_mod._terminate
-
-    def spy_terminate(e, reason, state):
-        won = real_terminate(e, reason, state)
-        fired.set()  # let the blocked page finish once the watchdog has run
-        return won
-
-    monkeypatch.setattr(main_mod, "_terminate", spy_terminate)
-    main(env, process_page_factory=factory)
-    assert hard_exit_called.wait(timeout=5)
-    assert exits == [EXIT_TRANSIENT]
-    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
-    assert term == {"stage": "stream", "permanent": False, "error": "MAX_SECONDS"}
