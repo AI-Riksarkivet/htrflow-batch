@@ -2,7 +2,7 @@
 type: Product Backlog Item
 id: 2870
 parent: 2800
-title: `htrflow` base image for arm64 published and pinned by digest
+title: "`htrflow` base image for arm64 published and pinned by digest"
 ---
 
 # B42 · `htrflow` base image for arm64 published and pinned by digest
