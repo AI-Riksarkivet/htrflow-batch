@@ -282,16 +282,21 @@ def test_suspend_true_renders_spec_suspend():
     assert render.campaign_objects(paused, demo, cfg)[1]["spec"]["suspend"] is True
 
 
-def test_pipeline_max_seconds_overrides_the_converter_default():
+def test_pipeline_max_seconds_renders_the_pod_deadline():
+    """The per-volume budget is the pod's own `activeDeadlineSeconds`, not a
+    wrapper env var: the kubelet SIGTERMs at the deadline and the attempt is
+    counted, so backoffLimitPerIndex retries the index (Task 25 item 1)."""
     kyrk, demo, cfg = _kyrk()
 
-    def max_seconds(pipeline):
+    def deadline(pipeline):
         job = render.campaign_objects(kyrk, pipeline, cfg)[1]
-        env = job["spec"]["template"]["spec"]["containers"][0]["env"]
-        return next(e["value"] for e in env if e["name"] == "MAX_SECONDS")
+        pod = job["spec"]["template"]["spec"]
+        env = pod["containers"][0]["env"]
+        assert not [e for e in env if e["name"] == "MAX_SECONDS"]
+        return pod["activeDeadlineSeconds"]
 
-    assert max_seconds(demo) == str(cfg.max_seconds)
-    assert max_seconds(demo.model_copy(update={"max_seconds": 60})) == "60"
+    assert deadline(demo) == cfg.max_seconds
+    assert deadline(demo.model_copy(update={"max_seconds": 60})) == 60
 
 
 @pytest.mark.parametrize(

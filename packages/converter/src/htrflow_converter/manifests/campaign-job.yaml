@@ -34,6 +34,15 @@ spec:
         app: htrflow-batch
     spec:
       restartPolicy: Never
+      # The per-volume wall-clock budget, rendered from the pipeline's
+      # `max_seconds:` or converter.yaml's default. The kubelet enforces it, so
+      # the wrapper needs no watchdog thread of its own: at the deadline it is
+      # SIGTERMed, writes its termination message and exits 143. Verified on
+      # k3s v1.35.5 (2026-09-02): a deadline kill leaves status.reason=
+      # DeadlineExceeded, exit code 143 and NO DisruptionTarget condition, so
+      # the Ignore rule above does not swallow it -- the attempt is counted and
+      # backoffLimitPerIndex retries the index, resuming from published pages.
+      activeDeadlineSeconds: 0
       # The wrapper's SIGTERM path (join the log-shipping thread, then one
       # final run-log PUT through a bounded S3 client) can take ~100 s on a
       # slow endpoint; the default 30 s would SIGKILL the pod mid-cleanup and
@@ -75,8 +84,6 @@ spec:
           value: IMAGE
         - name: HF_HUB_OFFLINE
           value: "1"
-        - name: MAX_SECONDS
-          value: "0"
         - name: MANIFEST_MAX_BYTES
           value: "0"
         - name: FETCH_MAX_BYTES

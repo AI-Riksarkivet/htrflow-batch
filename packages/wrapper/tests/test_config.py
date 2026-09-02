@@ -70,10 +70,11 @@ def test_byte_caps_default_and_override():
     assert cfg.fetch_max_bytes == 2048
 
 
-def test_max_seconds_default_and_override():
-    assert Config.from_env(REQUIRED).max_seconds == 0
+def test_max_seconds_is_not_a_wrapper_setting():
+    """The per-volume budget is the pod's activeDeadlineSeconds now; a stray
+    MAX_SECONDS in the env must be ignored, not resurrect a wrapper field."""
     cfg = Config.from_env(dict(REQUIRED, MAX_SECONDS="21600"))
-    assert cfg.max_seconds == 21600
+    assert not hasattr(cfg, "max_seconds")
 
 
 def test_images_is_an_alternative_to_manifest_url():

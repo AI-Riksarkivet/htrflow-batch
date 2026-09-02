@@ -16,7 +16,7 @@
    `page_sources`, the **streaming loop** (consumer starvation accounting,
    per-page failure propagation, rolling delete, `UploadOutage`), the
    **verification gate** (missing output ⇒ no `manifest.json`, transient
-   exit), exit-code mapping incl. SIGTERM and `MAX_SECONDS`, log shipping,
+   exit), exit-code mapping incl. SIGTERM, log shipping,
    warm-up classification, the synthetic-manifest builder. Converter: parse
    (ids, allow-list, revisions, http(s) only, append-only), render (golden
    fixture → expected ConfigMap/Job YAML), the 10 000-volume split. Read

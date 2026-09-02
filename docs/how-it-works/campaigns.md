@@ -208,12 +208,12 @@ More than 10 000 volumes in one campaign file is split by the converter into
 There is no reconciling loop deciding what to resubmit. A pod exiting 13
 (the wrapper's "do not retry" signal, e.g. an unsupported manifest) marks
 its index `FailIndex` — no retry. Any other non-zero exit or a killed pod
-(`SIGTERM`/`MAX_SECONDS`) is retried by Kubernetes up to
-`backoffLimitPerIndex: 3` for that index; the wrapper resumes from whatever
-pages it already published (measured on the PoC: a 60-page volume under a
-60 s `MAX_SECONDS` finished on its third attempt). `MAX_SECONDS` comes from
-the pipeline's own `max_seconds:` when it sets one, otherwise
-`converter.yaml`'s. A `DisruptionTarget` condition (node
+(SIGTERM — from a drain, or from the pod's own `activeDeadlineSeconds`) is
+retried by Kubernetes up to `backoffLimitPerIndex: 3` for that index; the
+wrapper resumes from whatever pages it already published (measured on the
+PoC: a 60-page volume under a 60 s deadline finished on its third attempt).
+That deadline comes from the pipeline's own `max_seconds:` when it sets one,
+otherwise `converter.yaml`'s. A `DisruptionTarget` condition (node
 preemption, eviction) is ignored and does not spend a retry. Once an index
 exhausts its retries it counts toward `maxFailedIndexes`; the Job's own
 `failedIndexes` and `completedIndexes` fields are the full state — see

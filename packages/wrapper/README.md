@@ -66,7 +66,8 @@ Optional, with defaults: `S3_ENDPOINT` (provider chain), `S3_PREFIX` (`""`),
 `MAX_IMAGE_WIDTH` (2500), `RESUME` (true), `LOOKAHEAD_PAGES` (64),
 `MAX_PAGES` (0 = all), `WORKDIR_PATH` (`/work`), `DOWNLOAD_CONCURRENCY` (12),
 `LOG_SHIP_SECONDS` (15), `MANIFEST_MAX_BYTES` (16 MiB), `FETCH_MAX_BYTES`
-(64 MiB), `MAX_SECONDS` (0 = no budget), `IMAGE_DIGEST` (provenance only).
+(64 MiB), `IMAGE_DIGEST` (provenance only). The per-volume time budget is
+the pod's `activeDeadlineSeconds`, not a wrapper setting.
 Results land under `{S3_PREFIX}/{PIPELINE_ID}/{VOLUME_REF}/`. The reference
 page has the full table with semantics.
 
@@ -75,7 +76,7 @@ page has the full table with semantics.
 | Module | Role |
 |---|---|
 | `config.py` | `Config.from_env`, fail-fast on missing env |
-| `main.py` | The stage machine, SIGTERM and `MAX_SECONDS` handling, exit-code mapping |
+| `main.py` | The stage machine, SIGTERM handling, exit-code mapping |
 | `iiif.py` | Manifest fetch with byte caps and the permanent/transient split; v2 and v3 parsing into an ordered page list |
 | `synthetic.py` | Synthetic v3 manifest for `IMAGES` volumes |
 | `fetch.py` | Bounded-lookahead downloader: sized requests, raster acceptance, retry and backoff |

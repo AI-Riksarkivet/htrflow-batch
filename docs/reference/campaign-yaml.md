@@ -24,7 +24,7 @@ node_selector: {}
 tolerations: []
 public_results_base: ""           # public URL prefix results are served from (required for the read API)
 source_template: "https://lbiiif.riksarkivet.se/arkis!{ref}/manifest"
-max_seconds: 21600                # MAX_SECONDS passed to the wrapper; a pipeline's own `max_seconds:` overrides it
+max_seconds: 21600                # each pod's activeDeadlineSeconds; a pipeline's own `max_seconds:` overrides it
 manifest_max_bytes: 16777216      # 16 MiB
 fetch_max_bytes: 67108864         # 64 MiB
 allowed_image_repos: []           # empty = any registry; see Security → Trust boundary
@@ -80,7 +80,8 @@ label.
 image: ghcr.io/riksarkivet/htrflow-batch@sha256:34d462b8de7d…
 
 max_seconds: 3600          # optional: this recipe's per-volume wall-clock
-                           # budget (MAX_SECONDS), overriding converter.yaml's
+                           # budget (the pod's activeDeadlineSeconds),
+                           # overriding converter.yaml's
 
 steps:                     # htrflow pipeline steps, passed through verbatim
   - step: Segmentation
@@ -107,7 +108,7 @@ validation error and blocks rendering for every campaign that uses it:
 | `image:` contains `@sha256:` | Digest pin — provenance is recorded per volume in `manifest.json` |
 | When `converter.yaml`'s `allowed_image_repos` is set: the repository (the part before `@`) equals one entry or starts with `<entry>/` | The campaigns repo is a code-execution boundary; the allow-list is what keeps it to images you built |
 | When `converter.yaml`'s `require_model_revision` is true: every `model_settings.model` carries a 40-hex `revision:` | HF Hub weights are pickles and an unpinned repo is mutable |
-| `max_seconds:`, when set, is a positive integer | It becomes the Job's `MAX_SECONDS` env for every campaign on this pipeline; unset falls back to `converter.yaml`. A sixty-page spread recipe and a single-page one do not want the same budget, and a budget the volume cannot meet costs `backoffLimitPerIndex` retries before the index is capped |
+| `max_seconds:`, when set, is a positive integer | It becomes `spec.template.spec.activeDeadlineSeconds` — the *pod's* deadline, so only the overrunning attempt is killed — for every campaign on this pipeline; unset falls back to `converter.yaml`. A sixty-page spread recipe and a single-page one do not want the same budget, and a budget the volume cannot meet costs `backoffLimitPerIndex` retries before the index is capped |
 | `steps:` is present | Only the `steps:` document goes into the ConfigMap; no `Export` steps (the wrapper appends them — a pipeline with one fails the warm-up) |
 
 ## `rendered/`

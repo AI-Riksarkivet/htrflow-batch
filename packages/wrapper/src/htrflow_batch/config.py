@@ -36,7 +36,6 @@ _OPTIONAL = [
     ("log_ship_seconds", "LOG_SHIP_SECONDS"),
     ("manifest_max_bytes", "MANIFEST_MAX_BYTES"),
     ("fetch_max_bytes", "FETCH_MAX_BYTES"),
-    ("max_seconds", "MAX_SECONDS"),
 ]
 
 
@@ -63,7 +62,6 @@ class Config(BaseModel):
     # S5 byte caps on fetches driven by campaign data (docs: wrapper)
     manifest_max_bytes: int = 16 * 1024 * 1024
     fetch_max_bytes: int = 64 * 1024 * 1024
-    max_seconds: int = 0  # 0 = no per-volume wall-clock budget (docs: wrapper)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Config":

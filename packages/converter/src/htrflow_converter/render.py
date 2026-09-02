@@ -161,7 +161,6 @@ def _campaign_job(
         "S3_PREFIX": f"{cfg.namespace}/",
         "PUBLIC_RESULTS_BASE": cfg.public_results_base,
         "IMAGE_DIGEST": p.image,
-        "MAX_SECONDS": str(p.max_seconds or cfg.max_seconds),
         "MANIFEST_MAX_BYTES": str(cfg.manifest_max_bytes),
         "FETCH_MAX_BYTES": str(cfg.fetch_max_bytes),
     }
@@ -170,6 +169,14 @@ def _campaign_job(
             e["value"] = dynamic_env[e["name"]]
         elif e["name"] in ("S3_ENDPOINT", "S3_BUCKET"):
             e["valueFrom"]["secretKeyRef"]["name"] = cfg.s3_secret
+
+    # The per-volume budget is the pod's own deadline, not a wrapper env var
+    # (docs: how-it-works/failure-handling).
+    _set(
+        job,
+        "spec.template.spec.activeDeadlineSeconds",
+        p.max_seconds or cfg.max_seconds,
+    )
 
     _set(job, "spec.template.spec.volumes[0].configMap.name", f"campaign-{name}")
     _set(job, "spec.template.spec.volumes[1].configMap.name", f"htr-pipeline-{p.id}")

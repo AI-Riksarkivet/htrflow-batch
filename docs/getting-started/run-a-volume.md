@@ -67,7 +67,7 @@ behind these knobs.
 |---|---|---|
 | 0 | success (verified) | index `Complete`; `manifest.json` in S3 = done |
 | 13 | permanent (bad manifest URL / 4xx / non-JSON / empty, bad pipeline YAML, unknown step or model) | `podFailurePolicy` fails the index at once (`FailIndex`) — never retried |
-| 1 | transient (network, 5xx on the manifest, CUDA hiccup, verification gap, S3 outage, `MAX_SECONDS` exceeded) | Kubernetes retries the index up to `backoffLimitPerIndex` (default 3); resume makes it cheap |
+| 1 | transient (network, 5xx on the manifest, CUDA hiccup, verification gap, S3 outage) | Kubernetes retries the index up to `backoffLimitPerIndex` (default 3); resume makes it cheap |
 | 143 | SIGTERM (drain that reaches the container) after writing the termination log and shipping the log | retried the same as exit 1 — pages already published are not redone |
 
 Failures write a structured reason to `/dev/termination-log`
