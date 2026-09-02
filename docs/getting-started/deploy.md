@@ -1,8 +1,9 @@
 # Deploy
 
 Everything runtime-facing ships as two Helm charts. `charts/htrflow-batch`
-(0.3.0) deploys the queueing (Kueue objects), the model-cache PVC, the
-viewer, the read-only status API and the NetworkPolicies.
+(0.4.0) deploys the queueing (Kueue objects), the model-cache PVC, the web
+front (campaign browser, Universal Viewer and the read-only status API in
+one Deployment) and the NetworkPolicies.
 `charts/htrflow-devstack` is the separate, PoC-only chart for in-cluster
 RustFS/registry/NVIDIA-device-plugin stand-ins ([Local k3s
 development](../development/local-k3s.md)). Campaigns themselves are not
@@ -16,7 +17,6 @@ Campaign](campaigns.md)). Every chart value is in
 ```bash
 helm install htr charts/htrflow-batch -n htr-batch --create-namespace \
   --set publicResultsBase=<browser-reachable results base URL> \
-  --set viewer.image=<registry>/htrflow-batch-viewer@sha256:<digest> \
   --set web.image=<registry>/htrflow-web@sha256:<digest> \
   --set network.s3Cidrs='{<s3 endpoint cidr>}' \
   --set network.apiServer.cidr=<kube-apiserver cidr, e.g. 10.16.51.56/32> \
@@ -38,17 +38,18 @@ aws_secret_access_key = …
 ```
 
 The bucket needs anonymous `GetObject` on `<namespace>/<pipeline>/<volume>/*`,
-`sources/*` and `status/logs/*` plus CORS (GET/HEAD from the viewer origin)
+`sources/*` and `status/logs/*` plus CORS (GET/HEAD from the web front's origin)
 — the browser fetches manifests, ALTO and the live run log directly, and
 `GET /api/v1/jobs` for everything else. The devStack `rustfs-init` hook
 applies exactly that policy to RustFS (`templates/_helpers.tpl`,
 `bucketPolicy`); a real bucket needs the equivalent
 ([Security → The bucket policy](../development/security.md#the-bucket-policy)).
 
-`viewer.image` and `web.image` must both be digests (the chart refuses tags
-outside the PoC — `security.allowTagImages`); build the viewer with `make
-viewer-image` / `dagger call build-viewer`, the read API with `make
-build-web` / `dagger call publish-docker --component web`.
+`web.image` must be a digest (the chart refuses tags outside the PoC —
+`security.allowTagImages`); build it with `make build-web` / `dagger call
+build-web`, publish it with `dagger call publish-docker --component web`.
+One image carries the read API, the campaign browser and the Universal
+Viewer, and it takes the NodePort (`web.nodePort`, default 30800).
 
 Queue quota is a plain list of covered resources under `queue.resources`.
 The default admits exactly one campaign index as the converter renders it
@@ -123,25 +124,23 @@ standalone raw manifests. Cluster constants come from the repo-root `.env`
 
 ```bash
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-make poc-push                       # builds + pushes wrapper and the read API, prints their digests
-make viewer-image && docker push 127.0.0.1:30500/uv4:dev   # prints the viewer digest
+make poc-push                       # builds + pushes the wrapper and web images, prints their digests
 helm upgrade --install htr-devstack charts/htrflow-devstack -n htr-batch --create-namespace \
   --set rustfs.enabled=true --set registry.enabled=true \
   --set nvidiaDevicePlugin.enabled=true
 helm upgrade --install htr charts/htrflow-batch -n htr-batch \
   --set publicResultsBase=http://localhost:30900/htr-results \
   --set network.apiServer.cidr=<node-ip>/32 \
-  --set viewer.image=127.0.0.1:30500/uv4@sha256:<viewer digest> \
-  --set web.image=127.0.0.1:30500/htrflow-web@sha256:<api digest> \
+  --set web.image=127.0.0.1:30500/htrflow-web@sha256:<web digest> \
   --set security.allowedImageRepos='{127.0.0.1:30500/}'
 make psa-labels
 make campaigns-apply DIR=examples/campaigns   # or your own campaigns repo checkout
 k9s -n htr-batch   # watch
 ```
 
-`--set security.allowTagImages=true` lets you use `:dev` tags for
-`web.image` / `viewer.image` instead of digests while iterating (they are
-then pulled on every rollout). Swap `helm upgrade --install` for `helm
+`--set security.allowTagImages=true` lets you use a `:dev` tag for
+`web.image` instead of a digest while iterating (it is then pulled on every
+rollout). Swap `helm upgrade --install` for `helm
 template` (same flags, plus `network.nodeCidrs`) to render without a
 cluster. Kill-and-resume test: wait until ~2 ALTOs exist under
 `<namespace>/demo-v1/mock-vol/alto/`, force-delete the running pod, watch

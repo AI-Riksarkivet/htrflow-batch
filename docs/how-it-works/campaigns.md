@@ -45,8 +45,7 @@ flowchart LR
     K["Kueue"]
     W["wrapper pods<br/>(one per volume, one index each)"]
     S[("S3 results bucket")]
-    API["read API :8081<br/>GET /api/v1/jobs"]
-    V["viewer nginx<br/>campaign browser + UV4"]
+    API["htrflow-web :8081<br/>GET /api/v1/jobs<br/>campaign browser + UV4"]
     B["browser"]
 
     G -->|"PR: validate"| C
@@ -54,9 +53,8 @@ flowchart LR
     R --> A -->|apply| K --> W
     W -->|"page/, alto/, iiif.json, manifest.json,<br/>status/logs/… every 15 s"| S
     API -->|"list/get Jobs, Pods, ConfigMaps"| K
-    B -->|"fetch /api/v1/jobs, iiif.json, logs"| API
+    B -->|"page, /uv.html, /api/v1/jobs"| API
     B -->|"fetch iiif.json, logs, manifest.json"| S
-    B --> V
 ```
 
 ## The campaigns repo
@@ -220,7 +218,7 @@ exhausts its retries it counts toward `maxFailedIndexes`; the Job's own
 [Failure Handling](failure-handling.md) for the exit-code table and
 [Model handling](wrapper.md#model-handling) for the warm-up gate.
 
-## The read API and status page
+## The web front and status page
 
 `packages/web` (`GET /api/v1/jobs`, `GET /api/v1/jobs/{namespace}/{name}`)
 is a thin, read-only projection of live Job/Pod/ConfigMap state — no state
@@ -232,9 +230,10 @@ campaign's `volumes.txt` ConfigMap crossed with `completedIndexes` /
 `failedIndexes` and any pod still present for that index (its termination
 message becomes `reason` on a failed row).
 
-The status page is a Svelte SPA served by the viewer nginx, proxied to the
-read API at `/api/`. It never writes anywhere and needs no cluster
-credentials of its own. Full reference: [Campaign Browser](../reference/frontend.md).
+The status page is a Svelte SPA served by that same process, on the same
+origin as `/api/v1` and Universal Viewer at `/uv.html` — one image, no
+proxy. It never writes anywhere and needs no cluster credentials of its
+own. Full reference: [Campaign Browser](../reference/frontend.md).
 
 ## Bucket layout
 

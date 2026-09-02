@@ -13,8 +13,10 @@ SvelteKit 2 + Svelte 5 static SPA over the read API (`packages/web`,
   `live=1` it re-fetches on the wrapper's log-ship cadence and stops on the
   terminal line, a finished manifest, or after `LIVE_MAX_FAILURES` misses.
 
-`bun run build` emits `dist/`, which `.docker/uv4-viewer.dockerfile` serves at
-`/` next to Universal Viewer at `/uv.html`.
+`bun run build` emits `dist/`, which `.docker/htrflow-web.dockerfile` copies
+into the read API's `/app/static` (over the Universal Viewer build, so `/` is
+this SPA and `/uv.html` is UV). One image, one origin: the API the browser
+talks to is the process serving the page.
 
 ## Commands
 
@@ -48,12 +50,12 @@ then `VITE_API_BASE`, then the default. The page carries a CSP
 (`script-src 'self'` plus the hash of SvelteKit's own init script, see
 `svelte.config.js`), so a deployment sets `window.API_BASE` by **overwriting
 `/config.js`** — a same-origin file loaded before the app — never by
-injecting an inline `<script>` into `index.html`. The chart's
-`templates/viewer.yaml` renders `config.js` with `window.API_BASE = "/api/v1"`
-and proxies `/api/` (nginx) to the read API's Service — same-origin, so the
-default `script-src 'self'` covers it with no `connect-src` change needed. A
-CSP header from the web server must not be stricter than the meta tag (the
-browser enforces the intersection).
+injecting an inline `<script>` into `index.html`. `static/config.js` ships
+`window.API_BASE = "/api/v1"`, which is same-origin because the read API
+serves this page — so the default `script-src 'self'` covers it with no
+`connect-src` change needed. The server's own CSP header
+(`frame-ancestors 'none'`, from `packages/web`) must not be stricter than
+the meta tag: the browser enforces the intersection.
 
 ## The read API
 
@@ -126,7 +128,7 @@ truncation), each line linking to the same log href as its table row.
 | `src/lib/components/`                         | `CampaignCard`, `RunSummaryCard`, `PageGrid`, `PagesTable`, `ThemeToggle`               |
 | `src/routes/+page.svelte`, `log/+page.svelte` | the two routes                                                                          |
 | `src/app.css`                                 | design tokens per theme (AA-checked), reduced-motion                                    |
-| `static/config.js`                            | the deployment hook (`window.API_BASE`)                                                 |
+| `static/config.js`                            | the deployment hook (`window.API_BASE`, `/api/v1` by default)                           |
 
 Tests sit next to their subject (`*.test.ts`); component tests use
 @testing-library/svelte + user-event on jsdom, route tests mock `fetch` and

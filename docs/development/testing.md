@@ -56,43 +56,30 @@ cd frontend && bun run test     # vitest
 dagger call test                # add --ca-bundle on TLS-intercepting networks
 ```
 
-`make test` runs all three Python packages (wrapper, converter, api) —
+`make test` runs all three Python packages (wrapper, converter, web) —
 `uv run --all-packages pytest -q`; `pyproject.toml`'s `testpaths` names
 exactly those three. `dagger call test` runs the Python suite inside a uv
 container with `uv sync --all-packages`, which pins the dependency
 resolution but says nothing about the production images — those are built
-separately by `dagger call build` / `build-web` / `build-viewer`.
+separately by `dagger call build` / `build-web`.
 `make typecheck` (`ty`) is a separate gate; run it before pushing (see
 [CI](ci.md)).
 
 **Level 2 — container smoke, via the local compose stack:**
 
 ```bash
-make compose-up      # background: S3 (RustFS) + fixtures + wrapper + viewer
+make compose-up      # background: S3 (RustFS) + fixtures + wrapper + web front
 make compose-smoke   # foreground: runs the wrapper to completion, then
-                      # smoke-checks the viewer serves uv.html
+                      # smoke-checks the web image serves uv.html
 make compose-down
 ```
 
 `make compose-smoke` builds the wrapper image fresh, waits for it to exit,
-brings up the viewer, and curls `http://localhost:8080/uv.html` — this is the
-verified default local check. `dagger call compose-test` drives the same
-stack through dagger, but needs registry-pullable images, so treat
-`compose-smoke` as the everyday path (see [CI](ci.md) for the caveat).
-
-!!! warning "The viewer image must be built from this branch"
-
-    Since the campaign browser landed, the viewer is `nginx-unprivileged`
-    serving on **8080** with the SPA at `/` and UV at `/uv.html`. The
-    published `riksarkivet/htrflow-batch-viewer:latest` (and any PoC
-    registry tag from before 2026-08) are still the old port-80 images, so
-    the viewer step of the smoke will fail against them. Build and tag
-    locally first:
-
-    ```bash
-    make viewer-image
-    docker tag 127.0.0.1:30500/uv4:dev riksarkivet/htrflow-batch-viewer:latest
-    ```
+builds and brings up the web image, and curls
+`http://localhost:8080/uv.html` — this is the verified default local check.
+`dagger call compose-test` drives the same stack through dagger. The web
+service runs site-only there (`create_app(None)`): a compose stack has no
+apiserver, so `/api/v1` is not part of this level.
 
 **Chart:** `make helm-template` lints and renders both charts
 (`charts/htrflow-batch`, `charts/htrflow-devstack`) on their defaults and on

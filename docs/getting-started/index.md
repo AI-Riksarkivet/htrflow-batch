@@ -57,7 +57,7 @@ husks need a manual delete before their Deployments respawn them.
 
 ## Local smoke stack (no cluster needed)
 
-If you just want to exercise the wrapper and viewer without a
+If you just want to exercise the wrapper and the web front without a
 Kubernetes cluster at all, see the `make compose-up` / `make
 compose-smoke` path in [Deploy](deploy.md#local-compose-smoke-stack) —
 it needs only Docker.

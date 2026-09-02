@@ -5,8 +5,8 @@
 # there is no status document written anywhere any more.
 # Open a volume directly with:
 #   http://<node>:{{ .Values.web.nodePort }}/uv.html#?manifest=<PUBLIC_RESULTS_BASE>/<pipeline>/<volume>/iiif.json
-# Until Task 17 an nginx image (uv4-viewer) served the site and proxied
-# /api/ here; the image, its ConfigMap and the proxy are gone.
+# Until Task 17 a separate nginx image served the site and proxied /api/
+# here; that image, its ConfigMap and the proxy are gone.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

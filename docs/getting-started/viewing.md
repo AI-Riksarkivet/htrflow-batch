@@ -6,10 +6,11 @@ renders IIIF Presentation 3 manifests with ALTO text overlays (canvas
 
 ## URL scheme
 
-The viewer takes its manifest as a URL fragment:
+The viewer takes its manifest as a URL fragment, on the web front's port
+(the same origin that serves the campaign browser and the read API):
 
 ```
-http://<viewer-host>/uv.html#?manifest=<url to iiif.json>
+http://<web-host>/uv.html#?manifest=<url to iiif.json>
 ```
 
 For example, the PoC's mock volume:
@@ -19,15 +20,13 @@ http://localhost:30800/uv.html#?manifest=http://localhost:30900/htr-results/demo
 ```
 
 Requesting `/` serves the [campaign browser](campaigns.md#4-watch-it), which
-links into the viewer per volume. The deprecated `viewer.defaultManifest`
-chart value overrides that: when set, `/` 302-redirects (a *relative*
-redirect — nginx runs with `absolute_redirect off`, otherwise a NodePort URL
-gets dropped from the Location header) to `uv.html#?manifest=...` instead, so
-the viewer's root URL can be bookmarked as a single-volume front door.
+links into the viewer per volume. (Through chart 0.3.0 a `defaultManifest`
+value could 302 `/` into UV instead; it was deprecated and is gone in 0.4.0
+— bookmark the `uv.html#?manifest=…` URL instead.)
 
-## Reaching the viewer over ssh (PoC / bare-k3s)
+## Reaching the web front over ssh (PoC / bare-k3s)
 
-On the bare-k3s PoC host, the viewer and RustFS are exposed as NodePorts
+On the bare-k3s PoC host, the web front and RustFS are exposed as NodePorts
 (30800 and 30900) that aren't routable from a laptop directly, and the
 node's own hostname resolves IPv6-only (see [Prerequisites](index.md)) so
 tunnelling straight to the hostname doesn't work either. Tunnel both ports
@@ -39,16 +38,16 @@ ssh -L 30800:10.16.51.53:30800 -L 30900:10.16.51.53:30900 <ssh-host>
 
 `<ssh-host>` is any machine you can ssh to that reaches 10.16.51.53 (e.g.
 your coder host); the `-L` targets resolve on the far side. Both ports are
-required — the viewer page comes from 30800 but the manifest, images and
-ALTO come from 30900.
+required — the page and the read API come from 30800 but the manifest,
+images and ALTO come from 30900.
 
 Then open `http://localhost:30800/` in a browser on your laptop.
 
 ## The localhost-URL caveat
 
 Because the tunnel maps both NodePorts to `localhost` on your laptop, the
-demo `iiif.json` and the viewer's redirect target must themselves be built
-with `http://localhost:{30900,30800}` URLs (not the node's real IP) — a
+demo `iiif.json` must itself be built with `http://localhost:30900` URLs
+(not the node's real IP) — a
 manifest built with the node's IP would be unreachable from inside the
 tunnel. This is a **PoC-only artifact** of ssh port-forwarding: production
 deployments need a real, browser-reachable `PUBLIC_RESULTS_BASE` behind an

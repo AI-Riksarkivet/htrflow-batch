@@ -10,7 +10,7 @@
 # applied outside this chart (kubectl / Argo) — the chart no longer renders
 # pipeline ConfigMaps, warm-up Jobs, campaign Jobs or the old GitOps
 # CronJob controller.
-# 0.4.0: `web.*` replaces `api.*` and `viewer.*` — one Deployment
+# 0.4.0: the `web` block replaces the old `api` and `viewer` ones — one Deployment
 # (`htrflow-web`) serves the campaign browser, Universal Viewer and the read
 # API, so the nginx viewer, its ConfigMap and its /api/ proxy are gone.
 

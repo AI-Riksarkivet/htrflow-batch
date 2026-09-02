@@ -18,7 +18,7 @@ converter. No CRD, no controller, no database.
 ```bash
 make install && make test   # uv workspace sync (packages/*) + the wrapper, converter and api unit tests
 cd frontend && bun install && bun run test   # the campaign browser's tests
-make compose-up             # local smoke stack: S3 + fixtures + wrapper + viewer, no cluster needed
+make compose-up             # local smoke stack: S3 + fixtures + wrapper + web front, no cluster needed
 ```
 
 For a real cluster, install the Helm chart (Kueue CRDs and an S3 Secret with
@@ -27,8 +27,7 @@ a `credentials` ini key are prerequisites):
 ```bash
 helm install htr charts/htrflow-batch -n htr-batch --create-namespace \
   --set publicResultsBase=<browser-reachable results base URL> \
-  --set viewer.image=<viewer image>@sha256:<digest> \
-  --set web.image=<read API image>@sha256:<digest>
+  --set web.image=<web image>@sha256:<digest>
 ```
 
 then declare volumes in a campaigns repo — see

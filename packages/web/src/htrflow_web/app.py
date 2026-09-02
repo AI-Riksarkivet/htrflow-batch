@@ -24,7 +24,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import projection
 
-#: Exactly what the retired nginx config sent (chart 0.3.0, viewer.yaml).
+#: Exactly what the retired nginx config sent (chart 0.3.0's viewer template).
 #: Script/style/connect sources are governed by the SvelteKit build's own
 #: ``<meta http-equiv>`` CSP (kit.csp); a header must not be stricter than it,
 #: since the browser enforces the intersection — so this one only forbids

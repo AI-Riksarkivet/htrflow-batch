@@ -21,7 +21,7 @@ chart offer:
 | **Digest pin** on `image:` (always) | `parse_pipeline` | a mutable tag changing what an id means |
 | **Model revision** — `converter.yaml`'s `require_model_revision` | `parse_pipeline` | an unpinned HF repo swapping its weights under the same pipeline id |
 | **Signed images** — `security.verifyImages.*` (Kyverno `ClusterPolicy`, cosign keyless) | admission, per Pod in the namespace | an image that was not built by the CI identity you name. Needs Kyverno installed and `publish.yml` signing ([CI](ci.md#workflows)); off by default |
-| **Control-plane digest gate** — `web.image` / `viewer.image` must be `@sha256:` unless `security.allowTagImages` | chart template | anyone with registry push replacing the read API or viewer in place |
+| **Control-plane digest gate** — `web.image` must be `@sha256:` unless `security.allowTagImages` | chart template | anyone with registry push replacing the web front in place |
 | **http(s)-only sources, byte caps, redirect caps** | `parse_pipeline`/`parse_campaign`, the wrapper (`MANIFEST_MAX_BYTES`, `FETCH_MAX_BYTES`, 5 redirects, raster-only acceptance) | SSRF/DoS driven by campaign data |
 | **Transport to the campaigns repo** — ordinary `git`/HTTPS, review-gated CI | the campaigns repo's own CI, outside this system entirely | there is no in-cluster clone or credential for it any more — nothing here reaches the campaigns repo at runtime |
 | **URL redaction** | wrapper logs, termination log, `page_sources` | a tokenised private IIIF URL landing in the world-readable log |
@@ -41,8 +41,8 @@ root credential too and ignores anonymous-only conditions — verified
 
 | Keys | Anonymous read |
 |---|---|
-| `[<namespace>/]<pipeline>/<volume>/*` (results, `iiif.json`, `manifest.json`), `sources/*` | always — the viewer and the campaign browser fetch them directly |
-| `status/logs/*` (run logs) | **yes while `devStack.rustfs.publicLogs=true`** (default). The campaign browser links them; a run log can carry the redacted form of a private IIIF URL and whatever htrflow prints. Set it to `false` once the log viewer sits behind an authenticated proxy |
+| `[<namespace>/]<pipeline>/<volume>/*` (results, `iiif.json`, `manifest.json`), `sources/*` | always — the browser fetches them directly from the results base, never through the platform |
+| `status/logs/*` (run logs) | **yes while `devStack.rustfs.publicLogs=true`** (default). The campaign browser links them; a run log can carry the redacted form of a private IIIF URL and whatever htrflow prints. Set it to `false` once the run-log view sits behind an authenticated proxy |
 
 A handful of `status/attempts.json`-era key paths are still explicitly
 excluded by the rendered policy — nothing writes them any more, so they are
@@ -64,23 +64,23 @@ campaign and warm-up pods themselves, both scoped by convention to their own
 ## Pod security posture (D14 — enforced by the chart)
 
 Every pod the platform runs — the converter-rendered campaign pods, the
-per-pipeline warm-up pods, the read API, the viewer, and (PoC only) the
+per-pipeline warm-up pods, the web front, and (PoC only) the
 devStack RustFS, its init Job and the registry — meets Pod Security
 **`restricted`**:
 
 - `runAsNonRoot` (`USER` in the images *and* `runAsUser` in the pod spec, so
   neither side can regress alone): uid 1000 for the campaign/warm-up pods,
-  the read API and the registry (`registry.runAsUser`), 101 for the viewer
-  (nginx-unprivileged), 10001 for RustFS; `fsGroup` likewise.
+  the web front and the registry (`registry.runAsUser`), 10001 for RustFS;
+  `fsGroup` likewise.
 - `capabilities.drop: [ALL]`, `allowPrivilegeEscalation: false`,
   `seccompProfile: RuntimeDefault`.
 - `readOnlyRootFilesystem`. Writable paths are explicit: the tmpfs workdir
   (`/work`) carries `HOME`, `TMPDIR` and `YOLO_CONFIG_DIR` — where ultralytics
   settings, triton/inductor JIT caches and temp files land — and both Jobs'
-  `sh -c` prologue `mkdir -p`s them before the wrapper is exec'd. The read API gets an emptyDir at
-  `/tmp`; the viewer `/tmp` and `/var/cache/nginx`.
-- `automountServiceAccountToken: false` on every pod except the **read
-  API**, which is the one pod that legitimately holds an API credential — a
+  `sh -c` prologue `mkdir -p`s them before the wrapper is exec'd. The web
+  front gets an emptyDir at `/tmp`.
+- `automountServiceAccountToken: false` on every pod except the **web
+  front**, which is the one pod that legitimately holds an API credential — a
   namespace-scoped Role: get/list/watch on `jobs`, `pods`, `configmaps`,
   nothing else, nothing cluster-wide.
 - **Secrets are files, not env.** The S3 Secret's `credentials` key (AWS ini
@@ -127,8 +127,7 @@ apiserver by the node address it resolves to (auto-detected with Helm
 |---|---|---|---|
 | campaign pod (`app=htrflow-batch`) | none | S3 (RustFS pod or `network.s3Cidrs`); the IIIF origin(s) `network.iiifCidrs` on 443/80 (default `lbiiif.riksarkivet.se`) | HF Hub, the apiserver, the registry, Harbor, anything else in-cluster, the internet |
 | warm-up pod (`app=htrflow-warmup`) | none | the public internet on 443 minus pod/service/node ranges (HF Hub is a CDN — there is no CIDR to pin) | S3, the apiserver, anything in-cluster |
-| read API (`app=htrflow-web`) | the viewer pod, on 8081 | the apiserver only (`network.apiServer.cidr`) | S3, the IIIF origin, HF Hub, anything else in-cluster |
-| viewer (`app=uv4-viewer`) | `network.viewer.ingressCidrs` on 8080 | the read API only, on 8081 | S3, the apiserver, anything else |
+| web front (`app=htrflow-web`) | `network.web.ingressCidrs` on 8081 (browsers; NodePort traffic arrives SNAT'd from the node) | the apiserver only (`network.apiServer.cidr`) | S3, the IIIF origin, HF Hub, anything else in-cluster |
 | RustFS (`app=rustfs`, devStack) | 9000 from anywhere (and 9001 with the console) | none | — |
 | rustfs-init hook (`app=rustfs-init`, devStack) | none | RustFS 9000 | — |
 
