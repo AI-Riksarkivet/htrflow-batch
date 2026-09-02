@@ -9,6 +9,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from typing import Callable, Iterable, Iterator
 
@@ -80,7 +81,15 @@ class PageStream:
         self.bytes_fetched = 0
         self.error: str | None = None
         dest = Path(dest_dir)
-        self._args = (dest, client, retries, backoff, max_bytes, stop)
+        self._fetch = partial(
+            fetch_page,
+            dest_dir=dest,
+            client=client,
+            retries=retries,
+            backoff=backoff,
+            max_bytes=max_bytes,
+            stop=stop,
+        )
         self._queued = list(pages)
         self._lookahead = max(1, lookahead)
         self._stop = stop
@@ -103,7 +112,7 @@ class PageStream:
                 self._queued.clear()  # W10: an aborted run submits no more
                 return
             page = self._queued.pop(0)
-            self._live.append((self._pool.submit(fetch_page, page, *self._args), page))
+            self._live.append((self._pool.submit(self._fetch, page), page))
             self._outstanding += 1
 
     def _abandon(self, exc: Exception) -> None:
