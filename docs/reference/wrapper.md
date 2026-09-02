@@ -116,6 +116,10 @@ the run's own stdout/stderr, claimed at start, uploaded every
 `LOG_SHIP_SECONDS` while it changed and once more on exit (including
 SIGTERM), so the final object is the complete log rather than a tail.
 Buffer cap 4 MiB (1 MiB head + 2 MiB tail kept, the middle dropped with a
-marker). Everything else — what is and is not captured, the read API's and
+marker). On SIGTERM that final ship is bounded but not instant — the
+shipping-thread join (30 s) plus one PUT through the log client (5 s
+connect, 30 s read, 2 attempts) — so the Job template gives the pod
+`terminationGracePeriodSeconds: 120` rather than the default 30 s. The
+warm-up Job does not capture or ship its log and keeps the default. Everything else — what is and is not captured, the read API's and
 the browser's side, versioned buckets — is on its own page:
 [Live run log](../how-it-works/live-run-log.md).

@@ -56,6 +56,9 @@ def test_campaign_job_fields_per_global_constraints():
     assert spec["maxFailedIndexes"] == 3
     assert spec["ttlSecondsAfterFinished"] == 86400
     assert spec["template"]["spec"]["restartPolicy"] == "Never"
+    # The wrapper's SIGTERM cleanup (log-ship join + final bounded S3 PUT)
+    # does not fit in the default 30 s.
+    assert spec["template"]["spec"]["terminationGracePeriodSeconds"] == 120
     assert "suspend" not in spec
     rules = spec["podFailurePolicy"]["rules"]
     assert rules[0] == {

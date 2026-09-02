@@ -34,6 +34,11 @@ spec:
         app: htrflow-batch
     spec:
       restartPolicy: Never
+      # The wrapper's SIGTERM path (join the log-shipping thread, then one
+      # final run-log PUT through a bounded S3 client) can take ~100 s on a
+      # slow endpoint; the default 30 s would SIGKILL the pod mid-cleanup and
+      # lose both the complete run log and the clean exit 143.
+      terminationGracePeriodSeconds: 120
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true

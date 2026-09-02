@@ -33,6 +33,7 @@ spec:
         app: htrflow-batch
     spec:
       restartPolicy: Never
+      terminationGracePeriodSeconds: 120
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
