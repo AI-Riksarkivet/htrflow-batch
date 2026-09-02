@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from htrflow_api import projection
@@ -242,6 +243,33 @@ class TestDetail:
     def test_configmap_fewer_lines_than_completions(self):
         d = projection.detail(_job(), _configmap(n=3), [], CFG, offset=0, limit=200)
         assert [v["index"] for v in d["volumes"]] == [0, 1, 2]
+
+    def test_pod_deadline_is_named_in_the_reason(self):
+        """The per-volume budget is the pod's activeDeadlineSeconds (Task 25):
+        the kubelet SIGTERMs the wrapper, which writes the same
+        `"error": "SIGTERM"` a node drain produces. Only the pod's
+        status.reason separates the two, so the row must carry it."""
+        pod = _pod(3, terminated_message='{"stage": "stream", "error": "SIGTERM"}')
+        pod["status"]["reason"] = "DeadlineExceeded"
+        d = projection.detail(_job(), _configmap(), [pod], CFG, offset=0, limit=200)
+        row3 = next(v for v in d["volumes"] if v["index"] == 3)
+        assert json.loads(row3["reason"]) == {
+            "stage": "stream",
+            "error": "DeadlineExceeded",
+        }
+
+    def test_a_drain_sigterm_keeps_its_reason(self):
+        """No status.reason: a drain, not a deadline — leave it alone."""
+        pod = _pod(3, terminated_message='{"stage": "stream", "error": "SIGTERM"}')
+        d = projection.detail(_job(), _configmap(), [pod], CFG, offset=0, limit=200)
+        row3 = next(v for v in d["volumes"] if v["index"] == 3)
+        assert json.loads(row3["reason"])["error"] == "SIGTERM"
+
+    def test_deadline_leaves_a_non_json_message_alone(self):
+        pod = _pod(3, terminated_message="killed")
+        pod["status"]["reason"] = "DeadlineExceeded"
+        d = projection.detail(_job(), _configmap(), [pod], CFG, offset=0, limit=200)
+        assert next(v for v in d["volumes"] if v["index"] == 3)["reason"] == "killed"
 
     def test_laststate_terminated_reason_fallback(self):
         pod = _pod(3)

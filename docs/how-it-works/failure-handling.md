@@ -106,7 +106,11 @@ Everything an operator needs is in the bucket well before the Job's
 
 The read API surfaces a failed pod's termination message as `reason` only
 while that pod still exists — once the pod is garbage-collected the log
-above is the remaining evidence for that attempt.
+above is the remaining evidence for that attempt. One field is rewritten on
+the way out: a pod whose `status.reason` is `DeadlineExceeded` has its
+`"error": "SIGTERM"` shown as `"error": "DeadlineExceeded"`. The wrapper
+cannot tell a deadline kill from a node drain — both arrive as SIGTERM — but
+the pod can, and an operator reading the card needs the difference.
 
 ## Retries, natively
 

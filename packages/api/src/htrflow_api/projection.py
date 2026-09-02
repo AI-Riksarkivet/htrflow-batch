@@ -8,6 +8,8 @@ cluster (docs: task-4-brief).
 
 from __future__ import annotations
 
+import json
+
 _PIPELINE_LABEL = "htrflow.riksarkivet.se/pipeline"
 _INDEX_LABEL = "batch.kubernetes.io/job-completion-index"
 _MAX_FAILURES = 50
@@ -97,19 +99,38 @@ def _volume_lines(configmap: dict | None) -> list[str]:
     return [line for line in data.get("volumes.txt", "").splitlines() if line]
 
 
-def _wrapper_message(container_statuses: list[dict] | None) -> str | None:
+def _wrapper_message(pod: dict) -> str | None:
     """The wrapper's termination message: ``state.terminated`` if the
     container is currently terminated, else ``lastState.terminated`` after a
     restart (D6/task-3)."""
-    for cs in container_statuses or []:
+    status = pod.get("status") or {}
+    for cs in status.get("containerStatuses") or []:
         if cs.get("name") != "wrapper":
             continue
         term = (cs.get("state") or {}).get("terminated")
         if term is None:
             term = (cs.get("lastState") or {}).get("terminated")
         if term is not None:
-            return term.get("message")
+            return _name_the_deadline(term.get("message"), status.get("reason"))
     return None
+
+
+def _name_the_deadline(message: str | None, pod_reason: str | None) -> str | None:
+    """A pod that overran its ``activeDeadlineSeconds`` is SIGTERMed exactly
+    like a drained one, and the wrapper cannot tell them apart -- it writes
+    ``"error": "SIGTERM"`` either way. The pod's own ``status.reason`` can, so
+    swap that one field for ``DeadlineExceeded``: the card then says "budget
+    exceeded", not "node drained". The message stays the same JSON object
+    (``stage``/``permanent``/``error``) every other reader already parses."""
+    if pod_reason != "DeadlineExceeded" or not message:
+        return message
+    try:
+        reason = json.loads(message)
+    except ValueError:
+        return message  # FallbackToLogsOnError, or an older wrapper
+    if not isinstance(reason, dict) or reason.get("error") != "SIGTERM":
+        return message
+    return json.dumps({**reason, "error": "DeadlineExceeded"})
 
 
 def _pod_completion_index(pod: dict) -> int | None:
@@ -185,9 +206,7 @@ def detail(
         }
         if idx in pods_by_index:
             newest = _newest(pods_by_index[idx])
-            message = _wrapper_message(
-                (newest.get("status") or {}).get("containerStatuses")
-            )
+            message = _wrapper_message(newest)
             if message is not None:
                 row["reason"] = message
         volumes.append(row)
