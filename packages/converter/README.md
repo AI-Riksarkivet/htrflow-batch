@@ -54,8 +54,8 @@ the whole list.
 | Module | Role |
 |---|---|
 | `cli.py` | `validate` and `render` subcommands, the append-only check, pruning, the unsafe `--out` guard |
-| `parse.py` | YAML files to domain types, with all validation rules and `ValidationError` |
-| `models.py` | `Volume`, `Campaign`, `Pipeline`, `ConverterConfig` (frozen pydantic models); `Pipeline.sha256` |
+| `parse.py` | YAML files to domain types via `Model.model_validate`; flattens `pydantic.ValidationError` into one-line problems; `ValidationError`; the cross-file unknown-pipeline check |
+| `models.py` | `Volume`, `Campaign`, `Pipeline`, `ConverterConfig` (frozen pydantic models) with all validation rules as field/model validators; `Pipeline.sha256` |
 | `render.py` | Patch the packaged skeletons into concrete objects; labels, Kueue queue and priority, env for the wrapper, the 10 000-volume split |
 | `manifests/` | The four YAML skeletons: `configmap.yaml`, `campaign-job.yaml`, `pipeline-configmap.yaml`, `warmup-job.yaml` |
 
