@@ -152,7 +152,9 @@ helm upgrade htr charts/htrflow-batch -n htr-batch --reset-then-reuse-values \
 make psa-labels
 ```
 
-Always `--reset-then-reuse-values`: plain `--reuse-values` keeps the old
+The same applies to `charts/htrflow-devstack` (e.g. a new default such as
+`registry.fixOwnership` never reaches an existing release with plain
+`--reuse-values`). Always `--reset-then-reuse-values`: plain `--reuse-values` keeps the old
 chart's defaults and once rendered every NetworkPolicy away. Chart history
 for this cluster (PVC adoption, registry uid, console, `allowTagImages`,
 the 0.3.0 `devStack.*` split into `charts/htrflow-devstack`) is tabulated

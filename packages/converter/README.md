@@ -40,7 +40,7 @@ that has already been rendered is an error. Create a new campaign instead.
 
 | File | Parsed by | Rendered as |
 |---|---|---|
-| `converter.yaml` | `ConverterConfig` (unknown keys rejected, all fields optional) | Namespace, queue, window cap, S3 Secret, model-cache PVC, runtime class, wrapper byte caps and `MAX_SECONDS`, image allow-list |
+| `converter.yaml` | `ConverterConfig` (unknown keys rejected, all fields optional) | Namespace, queue, window cap, S3 Secret, model-cache PVC, runtime class, wrapper byte caps, the default pod deadline (`max_seconds` → `activeDeadlineSeconds`), image allow-list |
 | `pipelines/<id>.yaml` | `Pipeline` (digest-pinned `image`, htrflow `steps`, optional `model_revision`, `max_seconds`) | ConfigMap `htr-pipeline-<id>` with the pipeline YAML and its sha256; Job `htr-warmup-<id>` |
 | `campaigns/<name>.yaml` | `Campaign` (`pipeline`, `volumes`, optional `priority`, `window`, `suspend`) | ConfigMap `campaign-<name>` with `volumes.txt`; Indexed Job `<name>` with `completions = len(volumes)` |
 
