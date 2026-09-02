@@ -108,8 +108,7 @@ class ResultStore:
         """Write JSON at a bucket key outside the per-volume prefix, honoring
         S3_PREFIX like everything else — used for the IMAGES synthetic
         manifest under ``sources/`` (docs: wrapper, IMAGES)."""
-        full_key = f"{self.cfg.s3_prefix}/{key}" if self.cfg.s3_prefix else key
-        self._put(full_key, _json_bytes(obj), "application/json")
+        self._put(self.cfg.root_key(key), _json_bytes(obj), "application/json")
 
     def put_bytes(self, rel_key: str, data: bytes, content_type: str) -> None:
         self._put(self._key(rel_key), data, content_type)

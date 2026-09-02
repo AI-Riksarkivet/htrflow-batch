@@ -79,6 +79,11 @@ class Config(BaseModel):
         kwargs["max_seconds"] = int(env.get("MAX_SECONDS", "0"))
         return cls(**kwargs)
 
+    def root_key(self, rel: str) -> str:
+        """A bucket-root key under ``S3_PREFIX`` — the one place that join is
+        written (``volume_prefix`` is its per-volume counterpart)."""
+        return f"{self.s3_prefix}/{rel}" if self.s3_prefix else rel
+
     @property
     def volume_prefix(self) -> str:
         parts = [p for p in (self.s3_prefix, self.pipeline_id, self.volume_ref) if p]
