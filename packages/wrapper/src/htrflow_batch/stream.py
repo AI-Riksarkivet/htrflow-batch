@@ -7,7 +7,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Iterable, Iterator
 
@@ -49,10 +50,11 @@ class PageStream:
     ``lookahead`` bounds *submission*: a page's slot frees only when the
     consumer comes back for the next result — by then it has deleted the
     image — so tmpfs never holds more than ``lookahead`` pages, exactly what
-    the Semaphore this replaces guaranteed. Results come in completion order,
-    so a page still retrying does not hold up the pages behind it. ``stop``
-    (W10): once set nothing more is submitted and ``close()`` cancels what is
-    queued, so a run that has already failed need not wait out its downloads.
+    the Semaphore this replaces guaranteed. Results come in submission order,
+    i.e. manifest order — waiting on the head of the queue, exactly as the
+    relay thread this replaces did. ``stop`` (W10): once set nothing more is
+    submitted and ``close()`` cancels what is queued, so a run that has
+    already failed need not wait out its downloads.
     """
 
     def __init__(
@@ -75,7 +77,7 @@ class PageStream:
         self._queued = list(pages)
         self._lookahead = max(1, lookahead)
         self._stop = stop
-        self._live: dict[Future, PageRef] = {}
+        self._live: deque[tuple[Future, PageRef]] = deque()
         self._outstanding = 0  # submitted, not yet released by the consumer
         self._pool = ThreadPoolExecutor(max_workers=max(1, concurrency))
         # The first window goes out here, on the caller's thread, so the model
@@ -94,7 +96,7 @@ class PageStream:
                 self._queued.clear()  # W10: an aborted run submits no more
                 return
             page = self._queued.pop(0)
-            self._live[self._pool.submit(fetch_page, page, *self._args)] = page
+            self._live.append((self._pool.submit(fetch_page, page, *self._args), page))
             self._outstanding += 1
 
     def _abandon(self, exc: Exception) -> None:
@@ -110,19 +112,17 @@ class PageStream:
     def __iter__(self) -> Iterator[FetchResult]:
         try:
             while self._live:
-                done, _ = wait(self._live, return_when=FIRST_COMPLETED)
-                for fut in done:
-                    page = self._live.pop(fut)
-                    try:
-                        result = fut.result()
-                    except Exception as e:  # fetch_page catches its own errors
-                        result = FetchResult(page=page, path=None, error=repr(e))
-                    self.bytes_fetched += result.size
-                    yield result
-                    # Back from the consumer: page done, image deleted —
-                    # its slot frees and the next page goes out.
-                    self._outstanding -= 1
-                    self._fill()
+                fut, page = self._live.popleft()
+                try:
+                    result = fut.result()  # in submission order, head first
+                except Exception as e:  # fetch_page catches its own errors
+                    result = FetchResult(page=page, path=None, error=repr(e))
+                self.bytes_fetched += result.size
+                yield result
+                # Back from the consumer: page done, image deleted —
+                # its slot frees and the next page goes out.
+                self._outstanding -= 1
+                self._fill()
         except Exception as e:
             self._abandon(e)
         finally:

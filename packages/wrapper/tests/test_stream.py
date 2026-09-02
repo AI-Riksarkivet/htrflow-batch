@@ -66,7 +66,7 @@ def test_fetched_downloads_every_page_and_counts_bytes(tmp_path):
 
     stream = fetched(_pages(3), tmp_path / "in", _client(handler), lookahead=64)
     results = list(stream)
-    assert sorted(r.page.name for r in results) == ["0001", "0002", "0003"]
+    assert [r.page.name for r in results] == ["0001", "0002", "0003"]
     assert all(r.path and r.error is None for r in results)
     assert sorted(p.name for p in (tmp_path / "in").iterdir()) == [
         "0001.jpg",
@@ -99,7 +99,7 @@ def test_lookahead_bounds_downloads_in_flight_and_images_on_disk(tmp_path):
         assert len(list(tmp_path.glob("*.jpg"))) <= 2  # never more than the window
         seen.append(item.page.name)
         item.path.unlink()  # what consume()'s finally does
-    assert sorted(seen) == [f"{i:04d}" for i in range(1, 7)]
+    assert seen == [f"{i:04d}" for i in range(1, 7)]
     assert len(started) == 6
     assert peak[0] <= 2
 
@@ -127,9 +127,10 @@ def test_lookahead_one_downloads_a_single_page_ahead(tmp_path):
         stream.close()
 
 
-def test_a_slow_page_does_not_hold_up_the_pages_behind_it(tmp_path):
-    """Results arrive in completion order: page 1 retrying is not a stall for
-    pages 2 and 3, which are already on disk."""
+def test_results_arrive_in_submission_order(tmp_path):
+    """Pages reach the consumer in manifest order, whatever order they land
+    in: page 1 still retrying holds up 2 and 3, exactly as the relay thread
+    did — page-first uploads and the run log follow the manifest."""
     release = threading.Event()
 
     def handler(req):
@@ -139,9 +140,9 @@ def test_a_slow_page_does_not_hold_up_the_pages_behind_it(tmp_path):
 
     stream = fetched(_pages(3), tmp_path, _client(handler), lookahead=3, concurrency=3)
     pages = iter(stream)
-    assert {next(pages).page.name, next(pages).page.name} == {"0002", "0003"}
+    _wait_for(lambda: len(list(tmp_path.glob("*.jpg"))) == 2)  # 2 and 3 landed
     release.set()
-    assert next(pages).page.name == "0001"
+    assert [next(pages).page.name for _ in range(3)] == ["0001", "0002", "0003"]
     with pytest.raises(StopIteration):
         next(pages)
 
@@ -204,11 +205,8 @@ def test_stop_event_short_circuits_pending_downloads(tmp_path):
     gate.set()
     rest = list(pages)
     assert len(rest) == 39  # every page after the first is still reported
-    completed = [r for r in rest if r.path is not None]
-    assert len(completed) == 1  # the one the gate held, completed
-    assert all(
-        r.path is None and "stopped" in r.error for r in rest if r not in completed
-    )
+    assert rest[0].path is not None  # the one the gate held, completed
+    assert all(r.path is None and "stopped" in r.error for r in rest[1:])
     assert len(started) == 2  # page 1, and the one already in flight
 
 
