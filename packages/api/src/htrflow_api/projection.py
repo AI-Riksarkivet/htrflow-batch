@@ -72,8 +72,7 @@ def _counts(job: dict) -> dict:
 
 
 def _results_base(namespace: str, pipeline: str, cfg) -> str:
-    prefix = "" if cfg.legacy_layout else f"{namespace}/"
-    return f"{cfg.public_results_base}/{prefix}{pipeline}"
+    return f"{cfg.public_results_base}/{namespace}/{pipeline}"
 
 
 def summarize(job: dict, cfg) -> dict:

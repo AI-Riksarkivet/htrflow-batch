@@ -56,10 +56,9 @@ else `Running`. Each volume row carries `manifestUrl`, `iiifUrl`,
 | Env var | Default | Meaning |
 |---|---|---|
 | `HTRFLOW_PUBLIC_RESULTS_BASE` | required | Browser-reachable base every result URL is built from |
-| `HTRFLOW_LEGACY_LAYOUT` | `false` | `true`: results live at `<pipeline>/<volume>/` with no namespace prefix |
 | `HTRFLOW_NAMESPACES` | own namespace in-cluster, else `htr-batch` | Comma-separated namespaces to list; the chart leaves it unset |
 
-The chart sets the first two from `publicResultsBase` and `legacyLayout`.
+The chart sets the first from `publicResultsBase`.
 
 ## Modules
 

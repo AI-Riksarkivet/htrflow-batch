@@ -6,9 +6,7 @@ from types import SimpleNamespace
 
 from htrflow_api import projection
 
-CFG = SimpleNamespace(
-    public_results_base="https://results.example.org", legacy_layout=False
-)
+CFG = SimpleNamespace(public_results_base="https://results.example.org")
 
 
 def _job(
@@ -120,12 +118,12 @@ class TestSummarize:
         assert summary["createdAt"] == "2026-01-01T00:00:00Z"
         assert summary["resultsBase"] == "https://results.example.org/htr-test/demo-v1"
 
-    def test_resultsbase_legacy_layout(self):
-        cfg = SimpleNamespace(
-            public_results_base="https://results.example.org", legacy_layout=True
-        )
-        summary = projection.summarize(_job(), cfg)
-        assert summary["resultsBase"] == "https://results.example.org/demo-v1"
+    def test_resultsbase_is_always_namespaced(self):
+        """The namespaced layout is the only layout (B63 task 15): the
+        namespace is in every `resultsBase`, whatever the namespace is."""
+        job = _job(namespace="htr-batch")
+        summary = projection.summarize(job, CFG)
+        assert summary["resultsBase"] == "https://results.example.org/htr-batch/demo-v1"
 
     def test_phase_queued(self):
         job = _job(suspend=True, completed="", failed="")
