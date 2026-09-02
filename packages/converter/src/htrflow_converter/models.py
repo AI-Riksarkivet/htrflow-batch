@@ -113,18 +113,6 @@ class Campaign(BaseModel):
     #: Renders ``spec.suspend``; the apply step enforces it against Kueue.
     suspend: bool = False
 
-    @model_validator(mode="before")
-    @classmethod
-    def _coerce_required(cls, data: Any) -> Any:
-        # `pipeline` is required, but a missing key must still raise "campaign
-        # needs pipeline:" (not pydantic's generic "Field required") -- so a
-        # missing/empty/falsy value is coerced to "" here and left for
-        # `_check_pipeline_ref` below to reject, exactly as a present-but-empty
-        # `pipeline: ""` already is.
-        if isinstance(data, dict):
-            data = {**data, "pipeline": str(data.get("pipeline") or "")}
-        return data
-
     @field_validator("name")
     @classmethod
     def _check_name(cls, v: str) -> str:
@@ -156,20 +144,6 @@ class Pipeline(BaseModel):
     model_revision: str = ""
     #: Per-volume wall-clock budget; overrides converter.yaml's max_seconds.
     max_seconds: int | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _coerce_required(cls, data: Any) -> Any:
-        # `image` and `steps` are required, but a missing key must still raise
-        # today's message ("image must be digest-pinned"/"missing steps"), not
-        # pydantic's generic "Field required" -- so a missing value is coerced
-        # to something `_check_image`/`_check_steps` below already rejects,
-        # exactly as a present-but-invalid value already is.
-        if isinstance(data, dict):
-            data = {**data, "image": str(data.get("image") or "")}
-            if not isinstance(data.get("steps"), list):
-                data = {**data, "steps": None}
-        return data
 
     @field_validator("id")
     @classmethod
