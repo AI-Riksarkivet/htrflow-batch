@@ -252,10 +252,20 @@ def test_non_http_canvas_image_url_is_permanent(url):
 
 
 def test_manifest_items_that_are_not_a_list_are_permanent():
-    with pytest.raises(ManifestError):
+    with pytest.raises(ManifestError, match="not a list of canvases"):
         pages_from_manifest({"items": "x"}, width=2500)
     with pytest.raises(ManifestError):
         pages_from_manifest({"sequences": {"canvases": []}}, width=2500)
+
+
+@pytest.mark.parametrize(
+    "manifest", [{}, {"items": []}, {"sequences": [{"canvases": []}]}]
+)
+def test_an_empty_manifest_says_it_has_no_canvases(manifest):
+    """An empty manifest is empty, not malformed: "items are not a list of
+    canvases" sent the operator looking for a shape bug that is not there."""
+    with pytest.raises(ManifestError, match="manifest has no canvases"):
+        pages_from_manifest(manifest, width=2500)
 
 
 def test_redact_url():

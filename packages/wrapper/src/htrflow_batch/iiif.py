@@ -206,6 +206,11 @@ def pages_from_manifest(manifest: dict, width: int) -> list[PageRef]:
         seqs = manifest.get("sequences")
         first = seqs[0] if isinstance(seqs, list) and seqs else {}
         canvases = first.get("canvases") if isinstance(first, dict) else []
+        # Neither shape carries canvases at all: that is an empty manifest,
+        # which the "no canvases" error below names accurately. Reserve
+        # "items are not a list" for an `items` that really is not one.
+        if canvases is None:
+            canvases = []
     if not isinstance(canvases, list):
         raise ManifestError("manifest items are not a list of canvases")
     pages: list[PageRef] = []
