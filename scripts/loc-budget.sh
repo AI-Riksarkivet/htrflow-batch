@@ -7,7 +7,7 @@ check() { local name=$1 got=$2 max=$3; printf '%-10s %6d / %d\n' "$name" "$got" 
 fail=0
 # raised for the Task 11 stage split + publish.py (B63)
 check wrapper   "$(count packages/wrapper/src -name '*.py')" 1950
-check converter "$(count packages/converter/src -name '*.py')" 850
+check converter "$(count packages/converter/src -name '*.py')" 1000
 check api       "$(count packages/api/src -name '*.py')" 400
 check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 2500
 check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 700

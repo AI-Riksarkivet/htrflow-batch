@@ -150,7 +150,7 @@ def _campaign_job(
     # hand-built `{"suspend": True, **spec}` used to. An unpaused campaign
     # drops the placeholder again so its rendered Job has no `suspend` field
     # at all, matching every campaign that has never been paused.
-    if c.suspend:  # intent; scripts/kueue-pause-sync.sh enforces it under Kueue
+    if c.suspend:  # intent; `htrflow-campaigns apply` enforces it under Kueue
         _set(job, "spec.suspend", True)
     else:
         job["spec"].pop("suspend", None)

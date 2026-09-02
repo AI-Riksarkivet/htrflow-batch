@@ -269,7 +269,7 @@ def test_no_job_carries_the_partial_admission_annotation():
 
 def test_suspend_true_renders_spec_suspend():
     """The campaign file's `suspend:` is the declared intent; the apply step
-    (scripts/kueue-pause-sync.sh) is what makes it stick under Kueue."""
+    (`htrflow-campaigns apply`) is what makes it stick under Kueue."""
     kyrk, demo, cfg = _kyrk()
     assert "suspend" not in render.campaign_objects(kyrk, demo, cfg)[1]["spec"]
     paused = kyrk.model_copy(update={"suspend": True})
