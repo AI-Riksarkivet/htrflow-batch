@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shutil
 import signal
 import sys
 import threading
@@ -182,10 +181,9 @@ def _main(
             cfg, env, store, source, source_url, pages, stats, uploaded, t_start, nbytes
         )
 
-        # Only clean up on success; on any failure path below, the workdir
-        # (downloaded images, local ALTO/PAGE outputs) is intentionally left
-        # in place for postmortem inspection.
-        shutil.rmtree(cfg.workdir, ignore_errors=True)
+        # No workdir cleanup: it is a memory-backed emptyDir that dies with the
+        # pod either way, and a terminated container's tmpfs cannot be
+        # inspected -- so deleting it bought nothing and kept nothing.
         return EXIT_OK
     except OSError as e:
         # An I/O condition is never a config mistake, even when it is also a
