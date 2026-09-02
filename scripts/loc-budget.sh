@@ -9,13 +9,16 @@ fail=0
 # 2026-09-02 wrapper audit's fixes (items 1-7: redacted resume compare,
 # per-page failure causes, HF-cache classification, malformed-canvas and
 # scheme guards, buffer-level redaction, _Tee.buffer) (B63).
-# 2000 -> 2050: the audit's simplifications came out LOC-neutral (they trade
-# duplicated call sites for named seams -- ResultStore._put, Config.root_key,
-# the from_env env table, driver.build_pipeline), and Task 24 then restored
-# ~35 lines of rationale that the 1950 budget had squeezed out of the audit
-# fixes. Comments that state WHY are not what this budget is meant to squeeze;
-# duplication is. (B63)
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2050
+# 2000 -> 2050 for Task 24, which restored ~35 lines of rationale the 1950
+# budget had squeezed out of the audit fixes: comments that state WHY are not
+# what this budget is meant to squeeze; duplication is. Back to 2000 after
+# Task 25 moved three responsibilities to the Kubernetes layer where they
+# belong -- the MAX_SECONDS watchdog to the pod's activeDeadlineSeconds, the
+# writable-dir mkdir to the Jobs' shell prologue, the workdir rmtree to
+# nothing at all (the emptyDir dies with the pod). The wrapper keeps only what
+# needs its process: resume, fetch retries, the verify gate, redaction,
+# SIGTERM and log shipping. (B63)
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2000
 check converter "$(count packages/converter/src -name '*.py')" 1000
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
