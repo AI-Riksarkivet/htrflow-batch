@@ -1233,3 +1233,74 @@ index, which here is the successful attempt. `"error": "DeadlineExceeded"`
 is what the projection returns for a deadline-killed pod (unit test with the
 real pod JSON) and it is visible in the API only while the index is still
 failed or retrying.
+
+## Task 17 — one image, one Deployment: `htrflow-web`
+
+The nginx viewer image and the read API merged. Built natively on the GB10
+(arm64) from the new three-stage dockerfile — bun builds the SPA, node 20
+clones the `universalviewer4` fork at the pinned
+`f2e8f66d3bd5a69e8e392764204d13d9524f63b2`, applies
+`.docker/uv4-uv-html.patch` and npm-builds it, and both land in
+`/app/static` of the read API image:
+
+```
+$ make build-web IMAGE_TAG=e2e && docker push 127.0.0.1:30500/htrflow-web:e2e
+web  127.0.0.1:30500/htrflow-web@sha256:8055c2495c51fb15e9bcf351195b954c0d1e95e5b3e215b3e2c8fe50160fcfe8
+```
+
+47 s cold on this node — the UV npm build dominates.
+
+**The upgrade needs the old Service deleted first.** Chart 0.4.0 puts
+NodePort 30800 on `htrflow-web`, and Helm creates the new Service before it
+deletes the retired one, so the first attempt failed with `spec.ports[0].
+nodePort: Invalid value: 30800: provided port is already allocated`. One
+`kubectl delete svc uv4-viewer` and the upgrade went through (REVISION 31,
+chart 0.4.0). The values file is the release's own values translated to
+`web.*` — the schema is strict, so `api.*`/`viewer.*` are rejected rather
+than ignored.
+
+```
+$ kubectl -n htr-batch get deploy
+NAME          READY   UP-TO-DATE   AVAILABLE   AGE
+htrflow-web   1/1     1            1           10s
+rustfs        1/1     1            1           8d
+$ kubectl -n htr-batch get cm uv4-viewer-nginx
+Error from server (NotFound): configmaps "uv4-viewer-nginx" not found
+$ kubectl -n htr-batch get networkpolicy | grep htr-
+htr-allow-dns  htr-batch-job  htr-default-deny  htr-rustfs  htr-rustfs-init  htr-warmup  htr-web
+```
+
+Every URL the nginx image served, now from uvicorn on 30800:
+
+```
+$ curl -sI http://localhost:30800/
+HTTP/1.1 200 OK
+server: uvicorn
+x-content-type-options: nosniff
+referrer-policy: strict-origin-when-cross-origin
+content-security-policy: frame-ancestors 'none'
+/uv.html   200 text/html          /log       200 text/html
+/config.js 200 text/javascript     /healthz   200 application/json
+/ra.svg    200 image/svg+xml       /nope      404
+$ curl -s http://localhost:30800/config.js | tail -1
+window.API_BASE = "/api/v1";
+$ curl -s http://localhost:30800/api/v1/jobs | head -c 120
+[{"namespace":"htr-batch","name":"e2e-deadline-v2","pipeline":"e2e-slow-v1","phase":"Succeeded",…
+```
+
+A done volume opens in UV on the same origin —
+`/uv.html#?manifest=http://localhost:30900/htr-results/htr-batch/e2e-slow-v1/e2e-deadline-v2/iiif.json`,
+the manifest itself 200s from RustFS.
+
+**The patch is in the shipped bundle** (this is the thing a rebuilt UV can
+silently lose). All four hunks, grepped from the served assets:
+
+| Hunk | Evidence in the deployed image |
+|---|---|
+| `uv.html` fetches `uv-iiif-config.json` | `const configUrl = urlAdapter.get('config') \|\| 'uv-iiif-config.json';` in `/uv.html`; `"textRightPanelEnabled": true` in `/uv-iiif-config.json` |
+| `TextRightPanel` scales ALTO coords by the Page WIDTH/HEIGHT | `querySelector("Page"),r=Number(a&&a.getAttribute("WIDTH")),…` in `/umd/6368.*.js` |
+| `clearAnnotations` re-adds body-orphaned rects in viewport coords | `getAttribute("data-x")…,l=A.viewer.viewport.imageToViewportRectangle(…)` in the same bundle |
+| the line-outline CSS | `.lineAnnotationRect { … border: 2px solid rgba(120, 251, 185, 0.7); box-sizing: border-box; … }` |
+
+Nothing else on the cluster changed: no campaign Job, ConfigMap, PVC, Secret
+or Kueue object was touched.
