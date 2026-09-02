@@ -24,6 +24,7 @@ from .iiif import (
     check_http_url,
     fetch_manifest,
     pages_from_manifest,
+    redact_url,
     redact_urls,
 )
 from .logship import LogCapture
@@ -361,7 +362,11 @@ def _synthetic_source(cfg: Config, store: ResultStore) -> tuple[dict, str]:
 def _changed_sources(store: ResultStore, pages, done: set[str]) -> set[str]:
     """Done pages whose image URL differs from the one the previous completed
     run recorded in manifest.json (W7). No previous manifest, or one without
-    page_sources (older wrapper), means nothing to compare: keep them done."""
+    page_sources (older wrapper), means nothing to compare: keep them done.
+
+    publish stores page_sources REDACTED (S6), so the current URL is redacted
+    before comparing: a tokenised private IIIF URL would otherwise differ from
+    its stored form on every retry and reprocess the whole volume, forever."""
     previous = store.get_json_or_none("manifest.json")
     sources = (previous or {}).get("page_sources")
     if not isinstance(sources, dict):
@@ -369,5 +374,7 @@ def _changed_sources(store: ResultStore, pages, done: set[str]) -> set[str]:
     return {
         p.name
         for p in pages
-        if p.name in done and p.name in sources and sources[p.name] != p.image_url
+        if p.name in done
+        and p.name in sources
+        and sources[p.name] != redact_url(p.image_url)
     }
