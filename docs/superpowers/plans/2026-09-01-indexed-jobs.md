@@ -272,6 +272,75 @@ H. Scale, cost and operations (archive scale: thousands of volumes per campaign,
 - [ ] **Step 2: Angles A–H** — each a separate read-only reviewer with the angle text above and the previous audit as the format example; each returns findings with evidence pointers only.
 - [ ] **Step 3: Cross-check, dedupe, rank; write the report and the stories file.** Commit `docs: repository audit 2026-09 (B63)`.
 
+### Task 14: `htrflow-campaigns apply` — one owner for render → apply → prune → pause
+
+**Why:** apply logic is spread over the Makefile target, `scripts/kueue-pause-sync.sh`, a prune selector duplicated between `Makefile` and `render.py`, and an Argo PostSync manifest. One subcommand owns it, tested with a fake `kubectl`. Zero behaviour change for operators: `make campaigns-apply DIR=… [PRUNE=1]` keeps working by calling it.
+
+**Files:**
+- Modify: `packages/converter/src/htrflow_converter/cli.py` — subcommand `apply <repo> [--out DIR] [--prune] [--kubectl kubectl] [--pause-wait 10]`: render into `--out` (default a temp dir), `kubectl apply -f <out>/pipelines`, `kubectl apply -f <out>/campaigns` (with `--prune -l <SELECTOR>` when `--prune`; the selector is `CAMPAIGN_SELECTOR` in `render.py`, the only definition), then pause sync: for each rendered campaign Job read `spec.suspend` from the rendered dict (not a grep), look up the Workload (`kubectl get workload -n <ns> -l kueue.x-k8s.io/job-uid=<uid> -o name`), wait ≤ `--pause-wait` s for it when suspended, `kubectl patch workload … --type merge -p '{"spec":{"active":<bool>}}'` only when it differs; exit non-zero if a paused campaign's Workload never appears. `kubectl` via `subprocess.run` (no Kubernetes client dependency); every command printed to stderr.
+- Delete: `scripts/kueue-pause-sync.sh`; the intent-regex test from Task 8 fix round 2 (obsolete — intent now comes from the rendered dict).
+- Modify: `Makefile` (`campaigns-apply` = `uv run htrflow-campaigns apply $(DIR) $(if $(PRUNE),--prune)`; `CAMPAIGN_SELECTOR` removed), `examples/campaigns/.github/workflows/render.yml` (comment: apply from CI/Argo = `htrflow-campaigns apply --prune`), `docs/reference/campaign-yaml.md#pausing` + `docs/how-it-works/campaigns.md` (one command; Argo PostSync hook runs `htrflow-campaigns apply` — replace the placeholder manifest with one that runs the converter image `riksarkivet/htrflow-converter`? NO: no new image — the hook runs `ghcr.io/astral-sh/uv` with `uvx --from git+…` — keep it documented as untested).
+- Test: `packages/converter/tests/test_apply.py` — a `kubectl` stub script on `PATH` that logs argv to a file and answers `get workload` from a canned map: assert the exact command sequence (pipelines before campaigns; `--prune -l <selector>` only with `--prune`; patch only when `active` differs; waits then fails for a paused campaign whose Workload never appears). `scripts/loc-budget.sh`: converter budget → 1000 (ruled; apply ≈ 120 lines).
+- E2E: on the PoC, `make campaigns-apply DIR=/home/morgan/htr-test` once with a paused and a running campaign → same evidence as Task 8 fix round 2 (Workload `active`, pods, API phase); append to `docs/development/e2e-indexed-jobs.md`.
+
+- [ ] Step 1: `test_apply.py` failing. - [ ] Step 2: implement `apply`; delete the script; Makefile/docs. - [ ] Step 3: tests, `make ci`, budget, zensical. - [ ] Step 4: PoC run + run-log addendum. - [ ] Step 5: Commit `feat(converter): htrflow-campaigns apply owns render, apply, prune and pause (B63)`.
+
+### Task 15: Retire `legacy_layout`
+
+**Why:** the flag exists in wrapper, API, converter and chart only because the PoC bucket predates the namespaced S3 layout (`<ns>/<pipeline>/<volume>/`). Migrate the PoC data once, delete the branch everywhere. Zero loss for every other deployment.
+
+**Files:**
+- First, verify: `grep -rn "legacy_layout\|LEGACY_LAYOUT\|legacyLayout"` across `packages/*/src`, `charts`, `docs`, `examples`, `~/htr-test/converter.yaml`; list every bucket that uses the legacy layout (only the PoC's `htr-results` is expected — if the run log or docs name another, STOP and report).
+- Migrate the PoC bucket: `aws --endpoint-url http://localhost:30900 s3 mv --recursive s3://htr-results/<pipeline>/ s3://htr-results/htr-batch/<pipeline>/` for every pipeline prefix (dry-run first with `--dryrun`, record counts before/after; `status/` stays at the root — it is namespace-free by design). Credentials from the cluster Secret; never printed.
+- Delete the flag: `packages/wrapper/src/htrflow_batch/{config,store}.py`, `packages/api/src/htrflow_api/{kube,projection}.py`, `packages/converter/src/htrflow_converter/{models,render}.py` (the `HTRFLOW_LEGACY_LAYOUT` env), `charts/htrflow-batch/values.yaml` + templates, docs (`s3-layout.md`, `chart.md`, `campaign-yaml.md`, `local-k3s.md`), `~/htr-test/converter.yaml` (branch `b63-indexed`), tests and golden files.
+- E2E: after the move, `curl http://localhost:30800/api/v1/jobs/htr-batch/<job>` for a completed campaign → `manifestUrl` resolves (HTTP 200) under the new prefix; the viewer opens a volume.
+
+- [ ] Step 1: inventory + dry-run. - [ ] Step 2: migrate, verify counts. - [ ] Step 3: delete the flag (tests first: remove the legacy cases, add one asserting the namespaced path is the only path). - [ ] Step 4: `uv run --all-packages pytest -q`, `make ci`, budgets, zensical; run-log addendum. - [ ] Step 5: Commit `refactor: drop legacy_layout; the namespaced S3 layout is the only layout (B63)`.
+
+### Task 16: `htrflow-campaigns init <dir>`
+
+**Why:** I15 (htrflow-batch in ai-dev) needs a campaigns repo in Azure Repos; the example layout should be one command away and never drift from the docs.
+
+**Files:**
+- Move the template to package data: `packages/converter/src/htrflow_converter/template/` = today's `examples/campaigns/` content (README, `converter.yaml`, `campaigns/demo.yaml`, `pipelines/demo-v1.yaml`, `.github/workflows/render.yml`); `examples/campaigns/` becomes a generated copy with a test asserting it equals the template (`test_examples_match_template`), so the docs' example and the packaged template cannot drift.
+- `cli.py`: `init <dir>` copies the template (refuses a non-empty dir unless `--force`), prints the next steps (edit `converter.yaml`, `htrflow-campaigns validate <dir>`). `pyproject.toml` includes the template in the wheel. Test: init into a temp dir → `validate` passes on it.
+- Docs: `docs/getting-started/campaigns.md` and `examples/campaigns/README.md` start with `uvx --from … htrflow-campaigns init my-campaigns`.
+
+- [ ] Step 1: test failing. - [ ] Step 2: implement. - [ ] Step 3: green, budget (converter ≤ 1000), zensical. - [ ] Step 4: Commit `feat(converter): htrflow-campaigns init writes the campaigns repo template (B63)`.
+
+### Task 17: One image for API + UI (viewer image and proxy retired)
+
+**Why:** three images and a proxy where two images will do. The read API serves the SvelteKit build and the Universal Viewer assets as static files: no nginx image, no `/api/` proxy, no `config.js` ConfigMap, one Deployment + Service fewer. Zero feature loss: same URLs (`/`, `/log`, `/uv.html`, `/api/v1/…`), same security headers, same CSP.
+
+**Files:**
+- `packages/api/src/htrflow_api/app.py`: mount `StaticFiles(directory=STATIC_DIR, html=True)` at `/` AFTER the API routes; `/log` → `log.html` (adapter-static output); security-headers middleware (`X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Content-Security-Policy: frame-ancestors 'none'` — exactly what the nginx config sends today, read it from `charts/htrflow-batch/templates/viewer.yaml` before deleting it); `/config.js` served from the same static dir with `window.API_BASE = "/api/v1"` baked at build (or as a tiny route). API budget → 500.
+- `.docker/htrflow-api.dockerfile`: multi-stage — stage 1 `oven/bun` builds `frontend/`; stage 2 builds UV from the Riksarkivet `universalviewer4` fork at a PINNED commit with `.docker/uv4-uv-html.patch` applied (read `.docker/uv4-viewer.dockerfile` and `make viewer-image` for the exact steps and the `NODE_EXTRA_CA_CERTS` note); stage 3 the existing uv/python image + `COPY --from` both into `/app/static`. Delete `.docker/uv4-viewer.dockerfile` and the `viewer-image`/`UV4_DIR` Makefile bits; `.dagger/build.go`/`publish.go`/`scan.go` + `.github/workflows/publish.yml`: the `viewer` case is gone, `api` builds the combined image; `renovate.json` pins for the UV commit and bun image.
+- Chart: delete `templates/viewer.yaml`; `api.yaml` gets the NodePort (`viewer.nodePort` → `api.nodePort`, still 30800 on the PoC), probes on `/healthz`, the same restricted securityContext; `values.yaml` + `README.md` + `docs/reference/chart.md` + `docs/reference/frontend.md` + `docs/getting-started/deploy.md` + `local-k3s.md` updated; NetworkPolicies (`network.yaml`) — the API pod now takes browser ingress on 8081 and no longer needs an egress rule to a viewer.
+- Frontend: `config.ts` default stays `/api/v1`; the `frontend/README.md` deployment section rewritten.
+- Test: API test that `/`, `/log`, `/uv.html`, `/config.js` return 200 from a temp static dir and that `/api/v1/jobs` still wins over static; header middleware test. `bun run build` unchanged. Chart: `make helm-template` + kubeconform.
+- E2E: build the combined image natively on the PoC (`127.0.0.1:30500/htrflow-api:e2e2`), `helm upgrade`, open `http://localhost:30800/`, `/uv.html#?manifest=<iiif.json of a done volume>`, `/api/v1/jobs`; record in the run log. Nothing else on the cluster changes.
+
+- [ ] Step 1: API static+headers tests failing. - [ ] Step 2: app + dockerfile + dagger/publish. - [ ] Step 3: chart + docs. - [ ] Step 4: `make ci`, budgets, zensical, PoC upgrade + smoke, run log. - [ ] Step 5: Commits `feat(api): serve the campaign browser and UV from the read API (B63)`, `chore(chart): retire the viewer Deployment; API takes the NodePort (B63)`.
+
+### Task 18: One wrapper Dockerfile, native builds for both architectures
+
+**Why:** `.docker/htrflow-batch.dockerfile` (amd64) and `.docker/htrflow-batch-gpu-arm64.dockerfile` (arm64) differ mainly in the torch wheel source and base image; `publish.yml` builds only amd64, the PoC builds the other by hand. One file with `ARG TARGETARCH` and per-arch pins, built natively on each platform — never under qemu (uv segfaults under emulation; see `docs/development/deployment.md` / memory).
+
+**Files:**
+- `.docker/htrflow-batch.dockerfile`: `ARG TARGETARCH`; base image and torch index/pins selected per arch (both digest-pinned; keep the arm64 recipe's `HTRFLOW_BASE_REVISION` build arg and every hard-won step — read the arm64 file line by line before merging); delete the arm64 file. `Makefile`: `build-wrapper` builds the host arch; `poc-push-arm64` becomes an alias of `poc-push`. `.dagger/build.go`: `BuildWrapper(platform)`; `publish.yml`: a matrix of `ubuntu-24.04` and `ubuntu-24.04-arm` runners (public repo — free), each pushing a per-arch tag, then a manifest list `riksarkivet/htrflow-batch:<tag>` via `docker buildx imagetools create`; cosign/SBOM/SLSA per arch image. `docs/development/deployment.md`, `local-k3s.md` updated.
+- Test: `packages/wrapper/tests/test_dockerfile_workspace.py` extended for the single file (both arch branches reference every workspace member; no `qemu`/`--platform` emulation anywhere in Makefile/dagger). Build natively on the PoC (arm64) → the wrapper image runs a synthetic volume (`make e2e` subset); amd64 build proven by the CI run on the pushed branch (do NOT publish a tag — a dry `workflow_dispatch` with `push: false` if the workflow supports it, else the `ci.yml` build job).
+
+- [ ] Step 1: test failing. - [ ] Step 2: merge the files. - [ ] Step 3: arm64 native build + smoke on the PoC; run log. - [ ] Step 4: Commit `chore(docker): one wrapper Dockerfile, per-arch pins, native builds (B63)`.
+
+### Task 19: Run viewer — one page model for the table and the grid (no feature removed)
+
+**Why:** the `/log` run viewer is ~1 000 of the frontend's 2 286 lines; `PagesTable.svelte` and `PageGrid.svelte` each re-derive the page rows from `manifest.json`. One derived `PageRow[]` in `run.ts` (name, status, seconds, error, colour bucket, scale) feeds both; the components become presentation only. Every feature stays: ok/failed/skipped counts, total + wall, median/p95/max, five slowest, failed pages with errors, per-page cells coloured by status and scaled by seconds, the `<details>` table in slices of 100, live mode, terminal-line stop.
+
+**Files:** `frontend/src/lib/run.ts` (+ tests), `components/{RunSummaryCard,PagesTable,PageGrid}.svelte`, `routes/log/+page.svelte`; `docs/reference/frontend.md`.
+**Test:** `bun run test` (existing tests are the acceptance; add `run.test.ts` cases for the derived rows), `bun run check`, `bun run build`, budget ≤ 2500 (expect −150…−250).
+
+- [ ] Step 1: `PageRow` tests failing. - [ ] Step 2: derive once, render twice. - [ ] Step 3: green + budget. - [ ] Step 4: Commit `refactor(frontend): one derived page model for the run viewer (B63)`.
+
 ## Self-review
 - Spec coverage: D1–D2 → Task 2; D3–D5 → Tasks 1–2, 6; D6–D7 → Task 3; D8 → Task 4, 7; D9 → Tasks 2, 5; D10 → Task 8 asserts; D11 untouched (open); D12 → Tasks 5–6; §5 → Task 5; §6 → each task + Task 8; §7 → Task 8.
 - Types: `JobSummary/JobDetail/VolumeView` shapes identical in Task 4 (Python) and Task 7 (Zod). `volumes.txt` line format identical in Task 1 (`source_line`), Task 2 (`args`), Task 3 (`IMAGES` parsing), Task 4 (ConfigMap read).
