@@ -6,7 +6,6 @@
   "required": [
     "s3",
     "publicResultsBase",
-    "legacyLayout",
     "modelCache",
     "queue",
     "api",
@@ -87,9 +86,6 @@
     "publicResultsBase": {
       "type": "string",
       "pattern": "^(https?://.+)?$"
-    },
-    "legacyLayout": {
-      "type": "boolean"
     },
     "modelCache": {
       "type": "object",
