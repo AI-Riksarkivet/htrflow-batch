@@ -207,6 +207,14 @@ def _main(
         if not state.terminating.acquire(blocking=False):
             return EXIT_TRANSIENT  # MAX_SECONDS already won the race
         return EXIT_OK
+    except OSError as e:
+        # An I/O condition is never a config mistake, even when it is also a
+        # ValueError: huggingface_hub's LocalEntryNotFoundError subclasses
+        # FileNotFoundError AND ValueError, and under HF_HUB_OFFLINE=1 it is
+        # what a model missing from the read-only cache raises. A re-warm and
+        # a retry fix that, so it must not FailIndex the volume (this is also
+        # driver.load_pipeline's "an OSError stays transient" contract).
+        return _transient(env, state, stop, e)
     except (ConfigError, ManifestError, SetupError, ValueError) as e:
         stop.set()
         stage = state.stage
@@ -214,14 +222,20 @@ def _main(
         reason = {"stage": stage, "permanent": True, "error": str(e)}
         return EXIT_PERMANENT if _terminate(env, reason, state) else EXIT_TRANSIENT
     except Exception as e:
-        stop.set()
-        stage = state.stage
-        log.error("transient failure in %s: %s\n%s", stage, e, traceback.format_exc())
-        _terminate(env, {"stage": stage, "permanent": False, "error": str(e)}, state)
-        return EXIT_TRANSIENT
+        return _transient(env, state, stop, e)
     finally:
         if timer is not None:
             timer.cancel()
+
+
+def _transient(
+    env: Mapping[str, str], state: RunState, stop: threading.Event, e: BaseException
+) -> int:
+    """Retryable failure: stop the queued downloads (W10), leave the evidence."""
+    stop.set()
+    log.error("transient failure in %s: %s\n%s", state.stage, e, traceback.format_exc())
+    _terminate(env, {"stage": state.stage, "permanent": False, "error": str(e)}, state)
+    return EXIT_TRANSIENT
 
 
 def _setup(

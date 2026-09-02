@@ -343,6 +343,26 @@ def test_verify_failure_detail_is_bounded():
     assert len(detail) < 3500
 
 
+class _MissingCachedModel(FileNotFoundError, ValueError):
+    """The shape of huggingface_hub.errors.LocalEntryNotFoundError — raised
+    under HF_HUB_OFFLINE=1 for a model absent from the read-only cache. Its
+    MRO in the wrapper image (huggingface_hub 0.36.2) ends
+    ... FileNotFoundError, OSError, ValueError, Exception."""
+
+
+def test_a_missing_cached_model_is_transient(env, cfg, s3):
+    """A bare ValueError from the model factory is a config mistake (exit 13,
+    FailIndex). This one is also an OSError: the cache is simply not warm yet,
+    and a re-warm plus a retry fixes it — exit 1, not a failed index."""
+
+    def factory(c):
+        raise _MissingCachedModel("model 'x' not found in /data/hf")
+
+    assert main(env, process_page_factory=factory) == EXIT_TRANSIENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["permanent"] is False and term["stage"] == "load"
+
+
 def test_publish_tolerates_unparseable_previously_uploaded_alto(env, cfg, s3):
     """A resumed page whose stored ALTO cannot be parsed must not fail
     publish: iiif.json simply omits that canvas (with a warning)."""
