@@ -231,7 +231,7 @@ def test_ok_flow_uploads_and_deletes(tmp_path):
     assert stats.results["0001"].status == "ok"
     assert "0001" in uploaded
     assert not (tmp_path / "0001.jpg").exists()  # rolling cleanup
-    assert closed == [True]  # the stream was drained to the end
+    assert closed == [True]  # the stream ran to the end, not half-iterated
 
 
 def test_process_failure_recorded_and_loop_continues(tmp_path):
@@ -249,7 +249,7 @@ def test_process_failure_recorded_and_loop_continues(tmp_path):
     assert stats.results["0001"].status == "failed"
     assert "boom" in stats.results["0001"].error
     assert stats.results["0002"].status == "ok"
-    assert closed == [True]  # both pages consumed, stream drained
+    assert closed == [True]  # both pages consumed, stream not left half-iterated
 
 
 def test_fetch_failure_recorded(tmp_path):
@@ -259,7 +259,7 @@ def test_fetch_failure_recorded(tmp_path):
     )
     assert stats.results["0001"].status == "failed"
     assert "500" in stats.results["0001"].error
-    assert closed == [True]
+    assert closed == [True]  # a failed fetch still ends the stream cleanly
 
 
 def test_stall_accounting(tmp_path, monkeypatch):
@@ -321,7 +321,7 @@ def test_consecutive_upload_failures_abort_the_stream(tmp_path):
             max_upload_failures=5,
         )
     assert attempts == ["0001", "0002", "0003", "0004", "0005"]
-    assert closed == [True]  # the abort closes the stream (no download leaks)
+    assert closed == [True]  # the abort closes the stream, not left half-iterated
 
 
 def test_upload_failure_counter_resets_on_success(tmp_path):

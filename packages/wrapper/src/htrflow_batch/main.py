@@ -280,7 +280,7 @@ def _stream(
     """Download ∥ process ∥ upload, never more than LOOKAHEAD_PAGES ahead:
     the per-page outcomes and the bytes fetched."""
     state.stage = "stream"
-    pages = fetched(
+    stream = fetched(
         todo,
         Path(cfg.workdir) / "input",
         client,
@@ -296,12 +296,12 @@ def _stream(
         process = (factory or _default_factory)(cfg)
 
         state.stage = "stream"
-        stats = consume(pages, process, store.upload_page)
+        stats = consume(stream, process, store.upload_page)
     finally:
-        pages.close()  # never blocks; cancels what is still queued
+        stream.close()  # never blocks; cancels what is still queued
     for name in done:
         stats.results[name] = PageOutcome(status="skipped")
-    return stats, pages.bytes_fetched
+    return stats, stream.bytes_fetched
 
 
 def _verify(
