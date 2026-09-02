@@ -47,6 +47,15 @@ Source: [`packages/wrapper/src/htrflow_batch/config.py`](https://github.com/carp
 
 Results land at `{S3_PREFIX}/{PIPELINE_ID}/{VOLUME_REF}/…` (`Config.volume_prefix`).
 
+**Workdir bound.** The images in flight are what sits in `WORKDIR_PATH`:
+`LOOKAHEAD_PAGES` × `FETCH_MAX_BYTES` — 64 × 64 MiB = 4 GiB worst case
+against the Job's 2 Gi memory-backed `emptyDir`, which the kubelet answers
+with eviction rather than a clean failure. Sized IIIF requests
+(`MAX_IMAGE_WIDTH`) land at ~1 MB a page, so the bound only bites volumes of
+service-less canvases fetched at native size (see `fetch.py`'s "Known limit").
+Pre-size such image lists, or lower `LOOKAHEAD_PAGES`/`FETCH_MAX_BYTES` for
+them.
+
 ## Stages
 
 `setup → resume → load → stream → verify → publish`; the current stage is
