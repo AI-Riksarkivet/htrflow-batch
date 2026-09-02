@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from htrflow_batch import main as main_mod
+from htrflow_batch.iiif import redact_url
 from htrflow_batch.main import (
     EXIT_OK,
     EXIT_PERMANENT,
@@ -186,6 +187,40 @@ def test_resume_reprocesses_pages_whose_source_changed(env, cfg, s3):
     assert body["results"]["0001"]["status"] == "skipped"
     assert body["results"]["0002"]["status"] == "ok"
     assert body["page_sources"]["0002"] == src.format(2)
+
+
+def test_resume_keeps_done_pages_whose_stored_source_is_redacted(images_env, cfg, s3):
+    """page_sources is stored redacted (S6), so the comparison must redact
+    too. A tokenised private IIIF URL otherwise looked "changed" on every
+    retry and the whole volume was reprocessed, forever."""
+    url = "https://img.example/1.jpg?token=SECRET"
+    _put_done(s3, cfg, "0001")
+    s3.put_object(
+        Bucket=cfg.s3_bucket,
+        Key="demo-v1/SE-RA-1234/manifest.json",
+        Body=json.dumps(
+            {"pages": 1, "page_sources": {"0001": redact_url(url)}}
+        ).encode(),
+    )
+    calls = []
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            calls.append(path.stem)
+            return inner(path)
+
+        return process
+
+    assert main(dict(images_env, IMAGES=url), process_page_factory=factory) == EXIT_OK
+    assert calls == []
+    body = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert body["results"]["0001"]["status"] == "skipped"
 
 
 def test_resume_without_previous_manifest_keeps_done_pages(env, cfg, s3):
