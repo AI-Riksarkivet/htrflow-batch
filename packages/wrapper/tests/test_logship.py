@@ -1,8 +1,9 @@
+import io
 import logging
 import sys
 import threading
 
-from htrflow_batch.logship import TRUNCATION_MARKER, LogCapture
+from htrflow_batch.logship import TRUNCATION_MARKER, LogCapture, _Tee
 
 
 def test_tee_writes_through_and_captures(capsys):
@@ -267,3 +268,14 @@ def test_prints_and_foreign_handlers_are_redacted():
     text = capture.text()
     assert "SECRET" not in text and "OTHER" not in text and "u:p@" not in text
     assert "https://h/img.jpg" in text and "https://h/x" in text
+
+
+def test_tee_forwards_buffer_to_the_original_stream():
+    """A library writing raw bytes to sys.stdout.buffer used to hit
+    AttributeError: io.TextIOBase has no buffer of its own."""
+    raw = io.BytesIO()
+    original = io.TextIOWrapper(raw, encoding="utf-8")
+    tee = _Tee(original, LogCapture())
+    tee.buffer.write(b"bytes")
+    tee.buffer.flush()
+    assert raw.getvalue() == b"bytes"

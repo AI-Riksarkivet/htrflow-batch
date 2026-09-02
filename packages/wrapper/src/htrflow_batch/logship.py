@@ -69,6 +69,13 @@ class _Tee(io.TextIOBase):
     def encoding(self) -> str:  # type: ignore[override]
         return getattr(self._original, "encoding", "utf-8")
 
+    @property
+    def buffer(self):
+        """io.TextIOBase has none, and a library writing raw bytes to
+        ``sys.stdout.buffer`` would get AttributeError. Those bytes go to the
+        original stream only — the capture holds text."""
+        return self._original.buffer
+
 
 class LogCapture:
     def __init__(
