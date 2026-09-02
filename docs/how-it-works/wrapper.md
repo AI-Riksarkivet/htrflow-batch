@@ -201,7 +201,7 @@ reading a line of the campaign's `volumes.txt` ConfigMap.
   no per-volume Job name: **Kubernetes' own index bookkeeping is the retry
   ledger, there is nothing else to reconcile** (D1/D2).
 - Env: the [wrapper contract](../reference/wrapper.md#environment-contract)
-  with `S3_PREFIX` from `converter.yaml`'s `legacy_layout`, `HF_HUB_OFFLINE=1`,
+  with `S3_PREFIX=<namespace>/` from `converter.yaml`, `HF_HUB_OFFLINE=1`,
   `HF_HOME=/data/hf`, `MANIFEST_MAX_BYTES`/`FETCH_MAX_BYTES`/`MAX_SECONDS`
   from `converter.yaml`, and `HOME`, `TMPDIR`, `YOLO_CONFIG_DIR` pointed
   into the tmpfs workdir.

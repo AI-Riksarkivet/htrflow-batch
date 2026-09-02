@@ -23,7 +23,6 @@ runtime_class: nvidia             # RuntimeClass for GPU pods
 node_selector: {}
 tolerations: []
 public_results_base: ""           # public URL prefix results are served from (required for the read API)
-legacy_layout: false              # true: <pipeline>/<volume>/ layout, no per-namespace prefix
 source_template: "https://lbiiif.riksarkivet.se/arkis!{ref}/manifest"
 max_seconds: 21600                # MAX_SECONDS passed to the wrapper; a pipeline's own `max_seconds:` overrides it
 manifest_max_bytes: 16777216      # 16 MiB

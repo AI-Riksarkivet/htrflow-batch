@@ -1,24 +1,28 @@
 # S3 Layout
 
 Everything the system writes lands in one bucket (default `htr-results`).
-Results are namespaced `<namespace>/<pipeline>/<volume>/` (or
-`<pipeline>/<volume>/` with `converter.yaml`'s `legacy_layout: true`) — the
-pipeline id is part of the key, so re-running a volume under a new recipe
-never overwrites old results. There is no status document written by
-anything in this system any more: campaign and volume progress is derived
-live from the Kubernetes API by the read API (`packages/api`), never stored.
+Results are namespaced `<namespace>/<pipeline>/<volume>/` — the namespace
+comes from `S3_PREFIX`, which the converter always sets to the campaign's
+namespace, and the pipeline id is part of the key, so re-running a volume
+under a new recipe never overwrites old results. This is the only layout:
+the flat `<pipeline>/<volume>/` form results took before B63 is gone, and
+Riksarkivet's PoC bucket was moved once (`aws s3 mv`, [Indexed Jobs
+E2E](../development/e2e-indexed-jobs.md)). There is no status document
+written by anything in this system any more: campaign and volume progress is
+derived live from the Kubernetes API by the read API (`packages/api`), never
+stored.
 
 ## Key layout
 
 ```
-[<namespace>/]<pipeline>/<volume>/
+<namespace>/<pipeline>/<volume>/
   page/<page>.xml            # per-page PAGE XML, uploaded FIRST (wrapper)
   alto/<page>.xml            # per-page ALTO, uploaded second — "page done" (wrapper)
   iiif.json                  # IIIF v3 viewer manifest with ALTO links (wrapper)
   pipeline.yaml              # the exact steps document the run used (wrapper)
   manifest.json              # completion marker — written LAST (wrapper)
 
-sources/[<namespace>/]<pipeline>/<volume>/
+<namespace>/sources/<pipeline>/<volume>/
   manifest.json              # synthetic IIIF manifest for IMAGES volumes, published
                              # by the wrapper itself before processing; overwritten
                              # every run
@@ -28,10 +32,13 @@ status/
 ```
 
 Writers: the **wrapper** is the only writer in the whole tree — its own
-`<pipeline>/<volume>/` prefix, its run-log key under `status/logs/`, and
-`sources/` (for `IMAGES` volumes). Nothing else in this system writes to S3
-at all: the read API is entirely Kubernetes-API-backed and never touches the
-bucket. Anonymous read (devStack policy): everything except `status/logs/*`
+`<namespace>/<pipeline>/<volume>/` prefix, its run-log key under
+`status/logs/`, and `sources/` (for `IMAGES` volumes). `S3_PREFIX` goes in
+*front* of the `sources/` key, so the synthetic manifests sit at
+`<namespace>/sources/…`, not `sources/<namespace>/…`; `status/` alone is
+namespace-free, since the browser resolves run-log links against the bucket
+root. Nothing else in this system writes to S3 at all: the read API is
+entirely Kubernetes-API-backed and never touches the bucket. Anonymous read (devStack policy): everything except `status/logs/*`
 when `devStack.rustfs.publicLogs=false`. Listing is always denied.
 
 ## `manifest.json` (completion marker)
