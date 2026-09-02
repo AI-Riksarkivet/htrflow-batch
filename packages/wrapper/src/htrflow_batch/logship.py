@@ -146,6 +146,13 @@ class LogCapture:
     def _append(self, s: str) -> None:
         if not s:
             return
+        # S6: redact HERE, not only in RedactingFormatter. Everything that
+        # reaches the world-readable run log comes through the tee — bare
+        # print()s, handlers htrflow installs itself, a root StreamHandler
+        # attach_logging reuses rather than formats. Measured 0.6 us for a
+        # line without a URL and 8.8 us for one with; the run log is ~240
+        # lines an hour.
+        s = redact_urls(s)
         with self._lock:
             self._chunks.append(s)
             self._size += len(s)
