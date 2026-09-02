@@ -77,12 +77,16 @@ func (m *HtrflowBatch) buildWithUv(ctx context.Context, source *dagger.Directory
 		From(pythonImage).
 		WithDirectory("/app", source, dagger.ContainerWithDirectoryOpts{
 			// scripts/ is linted too (audit T11); docs/ is excluded by the
-			// root ruff config and not needed here. .docker/ carries no
-			// Python but packages/wrapper/tests/test_dockerfile_workspace.py
-			// reads the dockerfiles — that gate only means something if it
-			// runs here, where nothing else builds them.
+			// root ruff config and not needed here. .docker/ and Makefile
+			// carry no Python, but two tests read them and only mean
+			// something if they run here: test_dockerfile_workspace.py
+			// (nothing else builds those dockerfiles) and the converter's
+			// test that the Makefile's prune selector is a label render.py
+			// actually writes. examples/ is the campaigns-repo fixture that
+			// `htrflow-campaigns validate` is run against.
 			Include: []string{
 				"pyproject.toml", "uv.lock", "packages/", "scripts/", ".docker/",
+				"Makefile", "examples/",
 			},
 		}).
 		WithWorkdir("/app")
