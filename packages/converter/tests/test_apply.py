@@ -125,9 +125,7 @@ def test_apply_without_out_renders_into_a_temp_dir(tmp_path, kubectl):
     assert not rendered.is_relative_to(repo)
 
 
-def test_prune_passes_the_renderers_selector_and_both_directories(
-    tmp_path, kubectl
-):
+def test_prune_passes_the_renderers_selector_and_both_directories(tmp_path, kubectl):
     """``--prune`` deletes every object carrying CAMPAIGN_SELECTOR that is
     not in *this* apply — so the pruning apply has to see the pipelines too,
     or it would delete the pipeline ConfigMaps and warm-up Jobs it just
@@ -210,9 +208,10 @@ def test_a_paused_campaign_whose_workload_never_appears_waits_then_fails(
     kubectl.canned(uids={"kyrk": "uid-kyrk", "loc": "uid-loc", "pausy": "uid-p"})
     rc = main(["apply", str(repo), "--out", str(out), "--pause-wait", "3"])
     assert rc == 1
+    lookup = ["-n", "htr-test", "get", "workload", "-l",
+              "kueue.x-k8s.io/job-uid=uid-p", "-o", "name"]  # fmt: skip
     lookups = [c for c in kubectl.verbs("workload") if "-l" in c]
-    assert lookups.count(["-n", "htr-test", "get", "workload", "-l",
-                          "kueue.x-k8s.io/job-uid=uid-p", "-o", "name"]) == 4
+    assert lookups.count(lookup) == 4, lookups  # once, then --pause-wait retries
     assert "pausy: paused in git" in capsys.readouterr().err
 
 
@@ -246,7 +245,5 @@ def test_a_render_error_never_reaches_the_cluster(tmp_path, kubectl, capsys):
 
 def test_kubectl_binary_is_configurable(tmp_path, kubectl):
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    assert (
-        main(["apply", str(repo), "--out", str(out), "--kubectl", kubectl.path]) == 0
-    )
+    assert main(["apply", str(repo), "--out", str(out), "--kubectl", kubectl.path]) == 0
     assert len(kubectl.verbs("apply")) == 2
