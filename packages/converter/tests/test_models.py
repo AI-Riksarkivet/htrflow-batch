@@ -41,23 +41,48 @@ def test_pipeline_image_outside_allowed_repos_rejected_via_context():
     )
 
 
-def test_pipeline_missing_image_key_rejected_like_a_bad_one():
+def test_pipeline_missing_image_key_is_a_plain_field_required_error():
     with pytest.raises(ValidationError) as exc_info:
         Pipeline.model_validate({"id": "p", "steps": [{"step": "Segmentation"}]})
+    errors = exc_info.value.errors()
+    assert any(e["loc"] == ("image",) and e["type"] == "missing" for e in errors)
+
+
+def test_pipeline_invalid_image_still_gets_the_old_message():
+    with pytest.raises(ValidationError) as exc_info:
+        Pipeline.model_validate(
+            {"id": "p", "image": "repo/img:v5", "steps": [{"step": "Segmentation"}]}
+        )
     assert any(
         "image must be digest-pinned" in str(e["msg"]) for e in exc_info.value.errors()
     )
 
 
-def test_pipeline_missing_steps_key_rejected():
+def test_pipeline_missing_steps_key_is_a_plain_field_required_error():
     with pytest.raises(ValidationError) as exc_info:
         Pipeline.model_validate({"id": "p", "image": "ghcr.io/x/y@sha256:" + "a" * 64})
+    errors = exc_info.value.errors()
+    assert any(e["loc"] == ("steps",) and e["type"] == "missing" for e in errors)
+
+
+def test_pipeline_steps_present_but_not_a_list_still_gets_the_old_message():
+    with pytest.raises(ValidationError) as exc_info:
+        Pipeline.model_validate(
+            {"id": "p", "image": "ghcr.io/x/y@sha256:" + "a" * 64, "steps": "nope"}
+        )
     assert any("missing steps" in str(e["msg"]) for e in exc_info.value.errors())
 
 
-def test_campaign_missing_pipeline_key_rejected():
+def test_campaign_missing_pipeline_key_is_a_plain_field_required_error():
     with pytest.raises(ValidationError) as exc_info:
         Campaign.model_validate({"name": "c"})
+    errors = exc_info.value.errors()
+    assert any(e["loc"] == ("pipeline",) and e["type"] == "missing" for e in errors)
+
+
+def test_campaign_empty_pipeline_still_gets_the_old_message():
+    with pytest.raises(ValidationError) as exc_info:
+        Campaign.model_validate({"name": "c", "pipeline": ""})
     assert any(
         "campaign needs pipeline:" in str(e["msg"]) for e in exc_info.value.errors()
     )
