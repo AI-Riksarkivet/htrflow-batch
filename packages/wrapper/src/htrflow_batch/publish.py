@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Mapping
@@ -127,7 +128,7 @@ def run(
     pages: list[PageRef],
     stats: StreamStats,
     uploaded: set[str],
-    wall: float,
+    t_start: float,
     bytes_fetched: int,
 ) -> None:
     """iiif.json (when any dims resolved), pipeline.yaml, manifest.json last."""
@@ -138,6 +139,10 @@ def run(
         )
     pipeline_text = Path(cfg.pipeline_path).read_text()
     store.put_text("pipeline.yaml", pipeline_text, "text/yaml")
+    # Snapshotted here, not before the stage: reading stored ALTO back and
+    # writing iiif.json/pipeline.yaml is time this run spent (wall_seconds
+    # and pages_per_second have always covered it).
+    wall = time.monotonic() - t_start
     body = run_manifest(
         cfg, env, pages, stats, source_manifest_url, pipeline_text, wall, bytes_fetched
     )

@@ -195,9 +195,8 @@ def _main(
         )
         uploaded = _verify(store, pages, stats, state)
         state.stage = "publish"
-        wall = time.monotonic() - t_start
         publish.run(
-            cfg, env, store, source, source_url, pages, stats, uploaded, wall, nbytes
+            cfg, env, store, source, source_url, pages, stats, uploaded, t_start, nbytes
         )
 
         # Only clean up on success; on any failure path below, the workdir

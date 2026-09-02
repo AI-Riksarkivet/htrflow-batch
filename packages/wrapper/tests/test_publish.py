@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from htrflow_batch import publish
+from htrflow_batch.config import Config
 from htrflow_batch.iiif import PageRef
 from htrflow_batch.stream import PageOutcome, StreamStats
 
@@ -92,3 +95,73 @@ def test_run_manifest_without_an_image_digest_or_a_wall_clock(cfg):
     assert body["image_digest"] == "unknown"
     assert body["pages_per_second"] == 0  # no division by a zero wall clock
     assert body["results"] == {}
+
+
+ALTO = '<alto><Layout><Page WIDTH="2500" HEIGHT="3538"/></Layout></alto>'
+
+
+def _cfg(tmp_path):
+    (tmp_path / "pipeline.yaml").write_text(PIPELINE)
+    return Config.from_env(
+        {
+            "VOLUME_REF": "SE-RA-1234",
+            "IIIF_MANIFEST_URL": "https://iiif.example/mock-vol/manifest.json",
+            "PIPELINE_PATH": str(tmp_path / "pipeline.yaml"),
+            "PIPELINE_ID": "demo-v1",
+            "S3_BUCKET": "htr-results",
+            "PUBLIC_RESULTS_BASE": "http://public/htr-results",
+            "WORKDIR_PATH": str(tmp_path / "work"),
+        }
+    )
+
+
+class _SlowStore:
+    """A store whose reads and writes cost measurable time on a fake clock."""
+
+    def __init__(self, clock):
+        self.clock = clock
+        self.puts = {}
+
+    def get_bytes(self, key):  # a resumed page's stored ALTO
+        self.clock["now"] += 1.0
+        return ALTO.encode()
+
+    def put_json(self, key, obj):
+        self.clock["now"] += 2.0
+        self.puts[key] = obj
+
+    def put_text(self, key, text, content_type):
+        self.clock["now"] += 4.0
+        self.puts[key] = text
+
+
+def test_wall_seconds_spans_the_publish_uploads(tmp_path, monkeypatch):
+    """wall_seconds is snapshotted after iiif.json and pipeline.yaml are
+    written, not before the stage: on a resumed volume, reading stored ALTO
+    back and writing the viewer manifest is real time the run spent."""
+    clock = {"now": 100.0}
+    monkeypatch.setattr(publish.time, "monotonic", lambda: clock["now"])
+    cfg = _cfg(tmp_path)
+    alto_dir = Path(cfg.workdir) / "outputs" / "alto"
+    alto_dir.mkdir(parents=True)
+    (alto_dir / "0002.xml").write_text(ALTO)  # this run wrote page 2
+    store = _SlowStore(clock)
+
+    publish.run(
+        cfg,
+        {},
+        store,
+        {"label": {"none": ["vol"]}, "items": []},
+        "https://iiif.example/mock-vol/manifest.json",
+        _pages(),
+        StreamStats(results={"0002": PageOutcome(status="ok", seconds=1.0)}),
+        {"0001"},  # page 1 was published by an earlier run
+        100.0,  # t_start
+        4096,
+    )
+
+    # 1 s reading page 1's stored ALTO + 2 s iiif.json + 4 s pipeline.yaml,
+    # snapshotted before manifest.json's own 2 s PUT.
+    assert store.puts["manifest.json"]["wall_seconds"] == 7.0
+    assert store.puts["manifest.json"]["pages_per_second"] == round(1 / 7.0, 3)
+    assert list(store.puts) == ["iiif.json", "pipeline.yaml", "manifest.json"]
