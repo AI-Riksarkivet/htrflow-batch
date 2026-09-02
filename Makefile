@@ -12,7 +12,7 @@
 -include .env.example
 -include .env
 export HTR_RELEASE HTR_NAMESPACE HTR_REGISTRY HTR_REGISTRY_NODEPORT HTR_S3_ENDPOINT HTR_S3_NODEPORT \
-       HTR_BUCKET HTR_VIEWER_NODEPORT HTR_DEV_S3_ACCESS_KEY HTR_DEV_S3_SECRET_KEY HTRFLOW_DIR
+       HTR_BUCKET HTR_WEB_NODEPORT HTR_DEV_S3_ACCESS_KEY HTR_DEV_S3_SECRET_KEY HTRFLOW_DIR
 
 # On RA hosts dagger containers need the corp CA; harmless elsewhere if the file exists.
 CA_BUNDLE ?= /etc/ssl/certs/ca-certificates.crt
@@ -147,7 +147,7 @@ e2e:
 	  [ $$(date +%s) -ge $$deadline ] && { echo "::error::still running:$$pending"; exit 1; }; \
 	  sleep 15; \
 	done
-	@curl -fsS http://localhost:$(HTR_VIEWER_NODEPORT)/api/v1/jobs
+	@curl -fsS http://localhost:$(HTR_WEB_NODEPORT)/api/v1/jobs
 
 # Chart: lint + render on defaults and on ci/full-values.yaml (every feature
 # on, no cluster lookups), then kubeconform when it is installed. The local

@@ -9,8 +9,10 @@
 # 0.3.0: campaigns are Indexed Jobs rendered by packages/converter and
 # applied outside this chart (kubectl / Argo) — the chart no longer renders
 # pipeline ConfigMaps, warm-up Jobs, campaign Jobs or the old GitOps
-# CronJob controller. It adds the read-only status API (`web.*`) behind the
-# viewer.
+# CronJob controller.
+# 0.4.0: `web.*` replaces `api.*` and `viewer.*` — one Deployment
+# (`htrflow-web`) serves the campaign browser, Universal Viewer and the read
+# API, so the nginx viewer, its ConfigMap and its /api/ proxy are gone.
 
 s3:
   # Convention only — no template in this chart creates or reads this
@@ -25,7 +27,7 @@ s3:
   bucket: htr-results
   existingSecret: htr-batch-s3
 
-publicResultsBase: ""      # browser-reachable URL base for published results (REQUIRED for viewer manifests)
+publicResultsBase: ""      # browser-reachable URL base for published results (REQUIRED: every result URL is built from it)
 
 # Model cache shared by warm-up Jobs (writer) and batch Jobs (read-only).
 # Single-node PoC note (O16): ReadWriteOnce pins every Job to the node that
@@ -56,13 +58,17 @@ queue:
     - name: nvidia.com/gpu
       quota: 1
 
-# Read-only status API behind the viewer (D8): GET /api/v1/jobs[/…] over the
-# Indexed Jobs a campaign renders to. No auth of its own — reachable only
-# from the viewer pod (NetworkPolicy) and only ever get/list/watch against
-# the cluster (Role, not ClusterRole).
+# The web front (D8/D19): the campaign browser at /, Universal Viewer at
+# /uv.html and GET /api/v1/jobs[/…] over the Indexed Jobs a campaign renders
+# to — one Deployment on a NodePort. No auth of its own; it only ever
+# get/list/watches against the cluster (Role, not ClusterRole) and sends the
+# same security headers the retired nginx did (audit S4, now in the app).
 web:
-  # Digest-pinned (…@sha256:…) unless security.allowTagImages is true.
+  # Digest-pinned (…@sha256:…) unless security.allowTagImages is true. The
+  # all-zero digest is a placeholder that renders but cannot pull: set the
+  # digest of the image you built (`make poc-push` prints it).
   image: docker.io/riksarkivet/htrflow-web@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  nodePort: 30800
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 500m, memory: 256Mi }
@@ -83,7 +89,7 @@ security:
   # needs it. Kept as the default here rather than flipped in this fix, but
   # `restricted` is worth trying now.
   psaEnforce: baseline       # baseline | restricted
-  # Tag references (`:dev`) for viewer.image / web.image. Off = the chart
+  # Tag references (`:dev`) for web.image. Off = the chart
   # refuses anything that is not `@sha256:`-pinned: anyone who can push to
   # the registry could otherwise replace a control-plane image in place. Tag
   # images are always pulled (imagePullPolicy Always) so a re-pushed tag
@@ -106,8 +112,8 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   # is why batch Jobs get no HF Hub egress at all: only the warm-up Job does.
   enabled: true
   # Namespace-wide default deny (ingress + egress) with explicit allows for
-  # every pod the chart renders: viewer ingress, API ingress, kube-dns
-  # egress for all. Anything hand-applied in the namespace (including
+  # every pod the chart renders: web ingress and kube-dns egress for all.
+  # Anything hand-applied in the namespace (including
   # charts/htrflow-devstack's pods) loses network access unless it gets its
   # own policy — charts/htrflow-devstack renders one for each of its pods.
   defaultDeny: true
@@ -132,20 +138,8 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   apiServer:
     cidr: ""               # e.g. 10.16.51.56/32 — kube-apiserver as reached AFTER service DNAT; required by the read API's NetworkPolicy
     port: 6443
-  viewer:
-    # Who may reach the viewer's port (NodePort traffic arrives SNAT'd from
-    # the node, so the node range must be included — 0.0.0.0/0 keeps the
-    # PoC's "any browser that can reach the node" behaviour).
+  web:
+    # Who may reach the web front's port (NodePort traffic arrives SNAT'd
+    # from the node, so the node range must be included — 0.0.0.0/0 keeps
+    # the PoC's "any browser that can reach the node" behaviour).
     ingressCidrs: ["0.0.0.0/0"]
-
-viewer:                    # campaign browser at /, UV4 at /uv.html, proxies /api/ to the read API
-  enabled: true
-  # Digest-pinned (…@sha256:…) unless security.allowTagImages is true. The
-  # all-zero digest is a placeholder that renders but cannot pull: set the
-  # digest of the image you built (`make viewer-image` prints it) — the
-  # published :latest still predates the 8080/campaign-browser layout.
-  image: docker.io/riksarkivet/htrflow-batch-viewer@sha256:0000000000000000000000000000000000000000000000000000000000000000
-  nodePort: 30800
-  defaultManifest: ""      # DEPRECATED: when set, / redirects to UV instead of the campaign browser
-  securityHeaders:
-    enabled: true          # X-Content-Type-Options, Referrer-Policy, CSP frame-ancestors 'none'

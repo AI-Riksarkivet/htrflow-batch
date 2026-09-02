@@ -9,6 +9,7 @@ modelCache:
 
 web:
   image: 127.0.0.1:30500/htrflow-web@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  nodePort: 30800
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: "1", memory: 256Mi }
@@ -28,7 +29,3 @@ network:
   apiServer:
     cidr: 10.16.51.56/32
   s3Cidrs: ["10.0.0.5/32"]
-
-viewer:
-  image: 127.0.0.1:30500/uv4@sha256:11a3a359c47bfadf0d6a11e5031024b21befa20595e812e3d786b8ff27d29e25
-  defaultManifest: http://localhost:30900/htr-results/demo-v1/mock-vol/iiif.json

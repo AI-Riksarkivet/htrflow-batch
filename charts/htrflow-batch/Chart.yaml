@@ -1,8 +1,8 @@
 apiVersion: v2
 name: htrflow-batch
-description: Kueue-gated batch HTR platform around the htrflow image (queues, model cache, a read-only status API and a results viewer). Campaigns are rendered as Indexed Jobs by packages/converter, applied outside this chart.
+description: Kueue-gated batch HTR platform around the htrflow image (queues, model cache and one web front serving the campaign browser, Universal Viewer and the read-only status API). Campaigns are rendered as Indexed Jobs by packages/converter, applied outside this chart.
 type: application
 # Bump on every template/values change (README "Changelog"); a stable
 # version hid 21 revisions of drift on the PoC (audit O6).
-version: 0.3.0
+version: 0.4.0
 appVersion: "0.2.0"
