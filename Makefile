@@ -150,7 +150,7 @@ e2e:
 	@deadline=$$(( $$(date +%s) + $(CAMPAIGN_TIMEOUT) )); \
 	while :; do \
 	  pending=""; \
-	  for j in $$(kubectl -n $(HTR_NAMESPACE) get job -l app=htrflow-batch -o name); do \
+	  for j in $$(kubectl -n $(HTR_NAMESPACE) get job -l app=htrflow-batch,$(CAMPAIGN_SELECTOR) -o name); do \
 	    done_idx=$$(kubectl -n $(HTR_NAMESPACE) get $$j -o jsonpath='{.status.completedIndexes}'); \
 	    total=$$(kubectl -n $(HTR_NAMESPACE) get $$j -o jsonpath='{.spec.completions}'); \
 	    cond=$$(kubectl -n $(HTR_NAMESPACE) get $$j -o jsonpath='{.status.conditions[?(@.status=="True")].type}'); \

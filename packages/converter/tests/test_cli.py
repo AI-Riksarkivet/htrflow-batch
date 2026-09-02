@@ -1,4 +1,5 @@
 import shutil
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -171,6 +172,33 @@ def test_render_prints_every_removed_path_and_also_removes_yml(tmp_path, capsys)
     assert f"removed: {out / 'campaigns' / 'kyrk.yaml'}" in err, err
     assert f"removed: {stale_yml}" in err, err
     assert not stale_yml.exists()
+
+
+# Duplicated on purpose from scripts/kueue-pause-sync.sh: that script reads a
+# campaign's pause intent out of exactly this rendered file with exactly this
+# POSIX ERE. If render's formatting changes, this test breaks in CI instead of
+# the pause silently failing on the cluster.
+PAUSE_ERE = r"^[[:space:]]*suspend:[[:space:]]*true[[:space:]]*$"
+PAUSE_SYNC = REPO_ROOT / "scripts" / "kueue-pause-sync.sh"
+
+
+def _greps(pattern: str, path: Path) -> bool:
+    return subprocess.run(["grep", "-qE", pattern, str(path)]).returncode == 0
+
+
+def test_the_pause_sync_regex_matches_a_rendered_paused_campaign(tmp_path):
+    assert PAUSE_ERE in PAUSE_SYNC.read_text(), (
+        "scripts/kueue-pause-sync.sh no longer uses PAUSE_ERE"
+    )
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    out = tmp_path / "rendered"
+    paused = repo / "campaigns" / "paused.yaml"
+    paused.write_text("pipeline: demo-v1\nsuspend: true\nvolumes:\n  - R7777777\n")
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+
+    assert _greps(PAUSE_ERE, out / "campaigns" / "paused.yaml")
+    assert not _greps(PAUSE_ERE, out / "campaigns" / "kyrk.yaml")
 
 
 def test_the_makefile_prune_selector_is_a_label_the_renderer_writes(tmp_path):
