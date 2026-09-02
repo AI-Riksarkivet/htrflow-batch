@@ -5,7 +5,8 @@
 //
 //   window.API_BASE = "https://batch.example.org/api/v1";
 //
-// Left unset, the app falls back to its build-time default (see
-// src/lib/config.ts and the README). The chart's viewer.yaml renders this
-// file with window.API_BASE = "/api/v1" — same-origin, proxied by nginx to
-// the read API Service.
+// The default below is same-origin: since B63 Task 17 the read API serves
+// this very file (packages/web), so /api/v1 is always the API next to the
+// page. Deleting the line falls back to the build-time default in
+// src/lib/config.ts, which is the same value.
+window.API_BASE = "/api/v1";
