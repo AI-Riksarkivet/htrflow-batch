@@ -227,6 +227,10 @@ def pages_from_manifest(manifest: dict, width: int) -> list[PageRef]:
             ) from e
         if not isinstance(url, str) or not url:
             raise ManifestError(f"canvas {i} has no image")
+        # S5: the manifest is campaign data. A file:/ftp: body id used to
+        # reach httpx per page (UnsupportedProtocol) and be retried; it is
+        # permanent, and named as such, here.
+        check_http_url(url, f"canvas {i} image URL")
         pages.append(PageRef(index=i, name=f"{i:04d}", image_url=url, canvas=canvas))
     if not pages:
         raise ManifestError("manifest has no canvases")

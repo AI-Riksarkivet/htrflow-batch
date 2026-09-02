@@ -242,6 +242,15 @@ def test_malformed_canvas_is_permanent(canvas):
         pages_from_manifest({"items": [canvas]}, width=2500)
 
 
+@pytest.mark.parametrize("url", ["file:///etc/passwd", "ftp://h/1.jpg", "/rel.jpg"])
+def test_non_http_canvas_image_url_is_permanent(url):
+    """check_http_url ran for IMAGES only; a file:/ftp: body id failed per
+    page inside httpx (UnsupportedProtocol) and was retried as transient."""
+    canvas = {"items": [{"items": [{"body": {"id": url}}]}]}
+    with pytest.raises(ManifestError, match="http"):
+        pages_from_manifest({"items": [canvas]}, width=2500)
+
+
 def test_manifest_items_that_are_not_a_list_are_permanent():
     with pytest.raises(ManifestError):
         pages_from_manifest({"items": "x"}, width=2500)
