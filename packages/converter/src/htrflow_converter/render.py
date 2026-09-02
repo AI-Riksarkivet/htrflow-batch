@@ -19,6 +19,12 @@ MAX_VOLUMES_PER_JOB = 10_000
 # Label/annotation keys below are set by direct dict indexing, never through
 # ``_set``: they contain literal ``.`` characters (a real Kubernetes label
 # key), which ``_set``'s dotted-path parser would otherwise split on.
+_MANAGED_BY_LABEL = "htrflow.riksarkivet.se/managed-by"
+#: The label every rendered object carries and the one an ``apply --prune``
+#: (or Argo CD's own prune) deletes a cancelled campaign's leftovers by. The
+#: only definition: ``cli.py`` passes it to ``kubectl``, the Makefile asks
+#: this module for it, and ``test_render.py`` asserts the renderer writes it.
+CAMPAIGN_SELECTOR = f"{_MANAGED_BY_LABEL}=converter"
 _CAMPAIGN_LABEL = "htrflow.riksarkivet.se/campaign"
 _PIPELINE_LABEL = "htrflow.riksarkivet.se/pipeline"
 _QUEUE_LABEL = "kueue.x-k8s.io/queue-name"
