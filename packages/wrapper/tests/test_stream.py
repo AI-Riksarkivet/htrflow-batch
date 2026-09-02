@@ -165,7 +165,7 @@ def test_a_downloader_failure_terminates_the_stream(tmp_path, monkeypatch, caplo
         stream = fetched(_pages(3), tmp_path / "in", _client(handler), lookahead=64)
         assert list(stream) == []
     assert "downloader failed" in caplog.text
-    assert "mkdir failed" in (stream.error or "")
+    assert "mkdir failed" in caplog.text
 
 
 def test_stop_event_short_circuits_pending_downloads(tmp_path):
