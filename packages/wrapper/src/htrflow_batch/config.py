@@ -20,8 +20,24 @@ _REQUIRED = [
 ]
 
 
-def _bool(v: str) -> bool:
-    return v.strip().lower() in ("1", "true", "yes", "on")
+#: Optional fields: (attribute, env var). The raw string goes to pydantic,
+#: which coerces it ("64" -> int, "15" -> float, "off"/"true" -> bool) and
+#: raises ValidationError -- a ValueError, so _main classifies it PERMANENT
+#: (exit 13) -- for one it cannot. The class-level default below is therefore
+#: the single source of truth for every default.
+_OPTIONAL = [
+    ("s3_endpoint", "S3_ENDPOINT"),
+    ("max_image_width", "MAX_IMAGE_WIDTH"),
+    ("resume", "RESUME"),
+    ("lookahead_pages", "LOOKAHEAD_PAGES"),
+    ("max_pages", "MAX_PAGES"),
+    ("workdir", "WORKDIR_PATH"),
+    ("download_concurrency", "DOWNLOAD_CONCURRENCY"),
+    ("log_ship_seconds", "LOG_SHIP_SECONDS"),
+    ("manifest_max_bytes", "MANIFEST_MAX_BYTES"),
+    ("fetch_max_bytes", "FETCH_MAX_BYTES"),
+    ("max_seconds", "MAX_SECONDS"),
+]
 
 
 class Config(BaseModel):
@@ -30,7 +46,7 @@ class Config(BaseModel):
     volume_ref: str
     pipeline_path: str
     pipeline_id: str
-    s3_endpoint: str
+    s3_endpoint: str = ""
     s3_bucket: str
     public_results_base: str
     # Exactly one of these is set (docs: wrapper, IMAGES) — see from_env.
@@ -51,32 +67,20 @@ class Config(BaseModel):
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Config":
-        kwargs: dict[str, Any] = {}
         missing = [k for _, k in _REQUIRED if not env.get(k)]
         if missing:
             raise ConfigError(f"missing required env: {', '.join(missing)}")
-        for attr, key in _REQUIRED:
-            kwargs[attr] = env[key]
+        kwargs: dict[str, Any] = {attr: env[key] for attr, key in _REQUIRED}
         kwargs["manifest_url"] = env.get("IIIF_MANIFEST_URL", "")
         kwargs["images"] = env.get("IMAGES", "")
         if bool(kwargs["manifest_url"]) == bool(kwargs["images"]):
             raise ConfigError("exactly one of IIIF_MANIFEST_URL or IMAGES must be set")
-        kwargs["s3_endpoint"] = env.get("S3_ENDPOINT", "")
-        kwargs["s3_prefix"] = env.get("S3_PREFIX", "").strip("/")
-        kwargs["max_image_width"] = int(env.get("MAX_IMAGE_WIDTH", "2500"))
-        kwargs["resume"] = _bool(env.get("RESUME", "true"))
-        kwargs["lookahead_pages"] = int(env.get("LOOKAHEAD_PAGES", "64"))
-        kwargs["max_pages"] = int(env.get("MAX_PAGES", "0"))
-        kwargs["workdir"] = env.get("WORKDIR_PATH", "/work")
-        kwargs["download_concurrency"] = int(env.get("DOWNLOAD_CONCURRENCY", "12"))
-        kwargs["log_ship_seconds"] = float(env.get("LOG_SHIP_SECONDS", "15"))
-        kwargs["manifest_max_bytes"] = int(
-            env.get("MANIFEST_MAX_BYTES", str(16 * 1024 * 1024))
-        )
-        kwargs["fetch_max_bytes"] = int(
-            env.get("FETCH_MAX_BYTES", str(64 * 1024 * 1024))
-        )
-        kwargs["max_seconds"] = int(env.get("MAX_SECONDS", "0"))
+        for attr, key in _OPTIONAL:
+            if key in env:
+                kwargs[attr] = env[key]
+        if "S3_PREFIX" in env:
+            # the only value the wrapper edits before pydantic sees it
+            kwargs["s3_prefix"] = env["S3_PREFIX"].strip("/")
         return cls(**kwargs)
 
     def root_key(self, rel: str) -> str:
