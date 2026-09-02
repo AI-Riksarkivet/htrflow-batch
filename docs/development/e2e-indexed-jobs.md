@@ -969,3 +969,91 @@ campaign pod is running, and the ClusterQueue is idle
     free. It is an environment condition, not a campaign or converter bug
     (`backoffLimitPerIndex: 3` absorbed it), but it is why a two-volume
     campaign took 81 s here and 20 s per volume in fix round 2.
+
+## Task 15 — the PoC bucket moved to the namespaced layout
+
+`legacyLayout` existed only because this bucket predates
+`<namespace>/<pipeline>/<volume>/`. It was retired by moving the data once
+(2026-09-02). Credentials came from the `htr-batch-s3` Secret into the
+environment; every command below is `aws --endpoint-url
+http://localhost:30900 …`.
+
+### Before
+
+Twenty top-level prefixes, 1 864 objects: eighteen pipeline ids written by
+the pre-B63 reconciler and the B63 e2e rounds, plus `sources/` (the
+synthetic IIIF manifests for `IMAGES` volumes) and `status/`. No `htr-batch/`
+prefix existed — the PoC ran with `legacyLayout: true` throughout.
+
+```console
+$ aws s3 ls s3://htr-results/
+   PRE e2e-slow-v1/  e2e-v1/  eng-modern-v2/  eng-modern-v3/  local-v2-gpu/
+   PRE local-v3/  local-v4/  local-v5/  local-v6/  local-v7/
+   PRE medieval-v1/  medieval-v2/  nor-singlepage-v1/  nor-singlepage-v2/
+   PRE sources/  status/  swe-singlepage-v1/  swe-singlepage-v2/
+   PRE swe-spreads-v1/  swe-spreads-v2/
+$ aws s3 ls --recursive s3://htr-results/ | wc -l
+1864
+$ aws s3 ls --recursive s3://htr-results/htr-batch/ | wc -l
+0
+```
+
+| prefix | objects | prefix | objects |
+|---|---:|---|---:|
+| `e2e-slow-v1/` | 43 | `medieval-v1/` | 5 |
+| `e2e-v1/` | 539 | `medieval-v2/` | 5 |
+| `eng-modern-v2/` | 5 | `nor-singlepage-v1/` | 5 |
+| `eng-modern-v3/` | 5 | `nor-singlepage-v2/` | 5 |
+| `local-v2-gpu/` | 7 | `sources/` | 107 |
+| `local-v3/` | 7 | `swe-singlepage-v1/` | 11 |
+| `local-v4/` | 11 | `swe-singlepage-v2/` | 11 |
+| `local-v5/` | 7 | `swe-spreads-v1/` | 9 |
+| `local-v6/` | 7 | `swe-spreads-v2/` | 963 |
+| `local-v7/` | 9 | **`status/` (stays)** | **103** |
+
+`sources/` moves with the rest: the wrapper prefixes `S3_PREFIX` in *front*
+of the `sources/` key (`ResultStore.put_json_at`), so the namespaced form is
+`htr-batch/sources/<pipeline>/<volume>/manifest.json`, not
+`sources/<namespace>/…`. `status/` is namespace-free by design
+(`ResultStore.run_log_key`) and was not touched — it still holds
+`status/logs/`, plus `status/attempts.json` and `status/failures/` left by
+the retired reconciler.
+
+### Dry-run, then the move
+
+For each prefix `<p>` other than `status/`:
+
+```console
+$ aws s3 mv --recursive --dryrun s3://htr-results/<p>/ s3://htr-results/htr-batch/<p>/
+$ aws s3 mv --recursive         s3://htr-results/<p>/ s3://htr-results/htr-batch/<p>/
+```
+
+The dry-run listed exactly the per-prefix counts above (1 761 moves in
+total, = 1 864 − 103). The real run moved the same 1 761; after each prefix
+the source listed 0 objects and the destination listed the count it started
+with (nothing pre-existed under `htr-batch/`). No `rm`, no `delete` — `mv`
+only.
+
+### After
+
+```console
+$ aws s3 ls s3://htr-results/
+                           PRE htr-batch/
+                           PRE status/
+$ aws s3 ls --recursive s3://htr-results/ | wc -l
+1864
+$ aws s3 ls --recursive s3://htr-results/htr-batch/ | wc -l
+1761
+$ aws s3 ls --recursive s3://htr-results/status/ | wc -l
+103
+```
+
+Zero loss, verified key by key: the sorted key list before, with every
+non-`status/` key prefixed `htr-batch/`, is byte-identical to the sorted key
+list after (`diff` empty).
+
+Old absolute URLs recorded *inside* results (`viewer_url`, `source_manifest`
+in each `manifest.json`) still name the pre-move paths and now 404. Nothing
+resolves them at runtime — the read API rebuilds every link from
+`resultsBase`, and a re-run rewrites the manifest — so they were left alone
+rather than rewritten.
