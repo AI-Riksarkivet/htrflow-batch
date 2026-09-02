@@ -1058,3 +1058,27 @@ in each `manifest.json`) still name the pre-move paths and now 404. Nothing
 resolves them at runtime — the read API rebuilds every link from
 `resultsBase`, and a re-run rewrites the manifest — so they were left alone
 rather than rewritten.
+
+### Release upgraded (controller, after the implementer was cut off)
+
+The implementer hit its session limit before `helm upgrade`, so for a few
+minutes the running API (release rev 27, `legacyLayout: true`) still built
+legacy URLs against a bucket that had already moved — every `manifestUrl`
+was a 404. `--reuse-values` cannot fix that: the chart's `values.schema.json`
+rejects the now-unknown `legacyLayout` key
+(`additional properties 'legacyLayout' not allowed`), so the upgrade was
+done with the release's values minus that key:
+
+```
+$ helm -n htr-batch get values htr -o yaml | … drop legacyLayout … > poc-values.yaml
+$ helm -n htr-batch upgrade htr charts/htrflow-batch -f poc-values.yaml
+REVISION: 28   STATUS: deployed
+$ kubectl -n htr-batch rollout status deploy/htrflow-api      # rolled out
+$ kubectl … get deploy htrflow-api -o jsonpath='{…env[*].name}' | grep -c LEGACY   # 0
+$ curl -s http://localhost:30800/api/v1/jobs/htr-batch/e2e-applyrun?limit=1
+200 http://localhost:30900/htr-results/htr-batch/e2e-v1/e2e-applyrun-01/manifest.json
+200 http://localhost:30900/htr-results/htr-batch/e2e-v1/e2e-applyrun-01/iiif.json
+```
+
+Lesson for the runbook: when a chart drops a value, upgrade with an explicit
+values file, not `--reuse-values` — the schema is strict on purpose.
