@@ -20,7 +20,14 @@ packages = ["src/htrflow_converter"]
 # render.py reads these skeletons at runtime via importlib.resources, so they
 # must ship in the wheel -- pinned explicitly rather than relying on
 # hatchling's default non-.py inclusion (test_packaging.py verifies this).
-artifacts = ["src/htrflow_converter/manifests/*.yaml"]
+# `init`'s template/ needs the same treatment, dotfiles included: `**` here
+# does carry .github/workflows/render.yml into both the sdist and the wheel
+# (verified by hand -- unzip -l the built wheel -- and pinned by
+# test_packaging.py's own template test).
+artifacts = [
+    "src/htrflow_converter/manifests/*.yaml",
+    "src/htrflow_converter/template/**",
+]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"

@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from importlib import resources
 from pathlib import Path
 
 import yaml
@@ -19,6 +20,49 @@ from . import render
 from .parse import ValidationError, load
 
 _PART_RE = re.compile(r"-part(\d+)\.yaml\Z")
+
+_NEXT_STEPS = """\
+Your campaigns repo is ready at {dir}.
+
+Next steps:
+  1. Open converter.yaml and set it up for your cluster (namespace, queue,
+     which image registries are allowed, and so on).
+  2. Replace the demo pipeline and campaign with your own, or edit them in
+     place to get started.
+  3. Check your work: htrflow-campaigns validate {dir}
+  4. Commit and push. Every pull request gets checked automatically, and a
+     change on the main branch is turned into the files a cluster applies.
+     See this repo's README.md for what "pausing" and "deleting" a running
+     campaign mean.
+"""
+
+
+def _copy_tree(src, dst: Path) -> None:
+    """Copy an ``importlib.resources`` traversable directory onto a real
+    filesystem path. ``shutil.copytree`` cannot take a traversable -- the
+    template ships inside the installed wheel, not as a plain directory."""
+    dst.mkdir(parents=True, exist_ok=True)
+    for entry in src.iterdir():
+        target = dst / entry.name
+        if entry.is_dir():
+            _copy_tree(entry, target)
+        else:
+            target.write_bytes(entry.read_bytes())
+
+
+def _init(dir_: str, force: bool) -> int:
+    dest = Path(dir_)
+    if dest.exists():
+        if not dest.is_dir():
+            print(f"{dest} exists and is not a directory", file=sys.stderr)
+            return 2
+        if any(dest.iterdir()) and not force:
+            print(f"{dest} is not empty: pass --force to overwrite it", file=sys.stderr)
+            return 2
+    template = resources.files("htrflow_converter") / "template"
+    _copy_tree(template, dest)
+    print(_NEXT_STEPS.format(dir=dir_))
+    return 0
 
 
 def _validate(repo_dir: str) -> int:
@@ -282,6 +326,11 @@ def _apply(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="htrflow-campaigns")
     sub = parser.add_subparsers(dest="command", required=True)
+    init_p = sub.add_parser("init", help="write a new campaigns repo from the template")
+    init_p.add_argument("dir")
+    init_p.add_argument(
+        "--force", action="store_true", help="overwrite a non-empty directory"
+    )
     validate_p = sub.add_parser("validate", help="validate campaigns/ and pipelines/")
     validate_p.add_argument("repo_dir")
     render_p = sub.add_parser("render", help="render ConfigMaps and Jobs")
@@ -307,6 +356,8 @@ def main(argv: list[str] | None = None) -> int:
         "--dry-run", action="store_true", help="print the kubectl commands only"
     )
     args = parser.parse_args(argv)
+    if args.command == "init":
+        return _init(args.dir, args.force)
     if args.command == "render":
         return _render(args.repo_dir, args.out)
     if args.command == "apply":
