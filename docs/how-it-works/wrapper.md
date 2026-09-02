@@ -180,8 +180,10 @@ reading a line of the campaign's `volumes.txt` ConfigMap.
   memory **16 Gi** / 1 GPU (tmpfs counts against the limit — see
   [Memory Budget](memory-budget.md)). `runtimeClassName`, `nodeSelector` and
   `tolerations` from `converter.yaml`.
-- `parallelism` = the campaign's `window:` or `converter.yaml`'s default
-  (20); `backoffLimitPerIndex: 3`; `maxFailedIndexes` = completions;
+- `parallelism` = **min(the campaign's `window:`, `converter.yaml`'s
+  `window:`)** — the campaign asks, `converter.yaml` caps (a campaign with no
+  `window:` of its own gets the cap); `backoffLimitPerIndex: 3`;
+  `maxFailedIndexes` = completions;
   `podFailurePolicy`: `Ignore` on `DisruptionTarget` (a drain does not burn
   a retry), `FailIndex` on wrapper exit 13.
 - `ttlSecondsAfterFinished: 86400` (24 h — inspectable, then self-cleans;
@@ -189,10 +191,10 @@ reading a line of the campaign's `volumes.txt` ConfigMap.
 - Labels `app=htrflow-batch`, `htrflow.riksarkivet.se/managed-by=converter`,
   `htrflow.riksarkivet.se/pipeline`, `htrflow.riksarkivet.se/campaign`,
   `kueue.x-k8s.io/queue-name` (+ `kueue.x-k8s.io/priority-class` when the
-  campaign sets `priority:`), no `kueue.x-k8s.io/job-min-parallelism` —
-  `parallelism` is clamped to `converter.yaml`'s `window` at render time
-  instead of shrunk by Kueue on the live Job; volume ids are label-safe by
-  construction (the parser rejects anything else).
+  campaign sets `priority:`), no `kueue.x-k8s.io/job-min-parallelism` — the
+  `min()` above is applied at render time instead of Kueue shrinking
+  `parallelism` on the live Job; volume ids are label-safe by construction
+  (the parser rejects anything else).
 - Job name is the campaign file's stem (`-part2`, … past 10 000 volumes) —
   no per-volume Job name: **Kubernetes' own index bookkeeping is the retry
   ledger, there is nothing else to reconcile** (D1/D2).

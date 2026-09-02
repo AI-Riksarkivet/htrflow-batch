@@ -19,10 +19,13 @@ campaigns repo:
 >
 > **Deleting a campaign's file cancels it** — the next `render` drops its
 > manifest from `rendered/`, and the apply that follows prunes its Job and
-> ConfigMap (Argo CD prunes by default; `make campaigns-apply PRUNE=1` uses
+> ConfigMap — but **only if that apply is asked to prune**: Argo CD requires
+> `syncPolicy.automated.prune: true` (or a manual sync with `--prune`), and
+> by hand it is `make campaigns-apply PRUNE=1`, which passes
 > `kubectl apply --prune -l htrflow.riksarkivet.se/managed-by=converter`,
-> the label every rendered object carries). **Results already in S3 are
-> never touched by anything here.**
+> the label every rendered object carries. Without it the deleted campaign's
+> Job simply stays. **Results already in S3 are never touched by anything
+> here.**
 
 Everything else follows from those two rules plus ordinary Kubernetes
 semantics: nothing here "ticks", nothing here has to be alive for a campaign

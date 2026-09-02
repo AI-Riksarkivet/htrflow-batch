@@ -32,10 +32,12 @@ campaign **is** one Kubernetes Indexed Job:
 > (`scripts/kueue-pause-sync.sh`, run by `make campaigns-apply` or as an
 > Argo CD `PostSync` hook). Declared in Git, enforced at apply time.
 >
-> **Deleting a campaign's file cancels it.** The next `render` removes its
-> file from `rendered/`, and the apply that follows prunes its Job and its
-> `volumes.txt` ConfigMap — Argo CD prunes by default, and on a PoC
-> `make campaigns-apply PRUNE=1` does it with
+> **Deleting a campaign's file cancels it** — *if the apply prunes*. The
+> next `render` removes its file from `rendered/`, and the apply that follows
+> deletes its Job and its `volumes.txt` ConfigMap only when pruning is turned
+> on: Argo CD needs `syncPolicy.automated.prune: true` (it defaults to
+> `false`, and a manual sync prunes only with `--prune`), and on a PoC it is
+> `make campaigns-apply PRUNE=1`, which runs
 > `kubectl apply --prune -l htrflow.riksarkivet.se/managed-by=converter`
 > (a plain apply never deletes anything). **Results already published to S3
 > are never touched by anything in this system — not by pausing, not by

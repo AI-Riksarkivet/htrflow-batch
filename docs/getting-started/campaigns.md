@@ -124,10 +124,13 @@ Removing a volume from a campaign file only affects future campaign files —
 per the append-only rule below, an already-rendered campaign's volume list
 cannot be edited in place; results already in S3 are never touched.
 
-**Pausing a campaign is a Git change** — `suspend: true` on the campaign's
-rendered Job, applied the normal way. **Deleting a campaign's file cancels
-it** — its Job and ConfigMap are pruned by Argo (or `kubectl delete -f`, on
-the PoC). **Results already in S3 are never touched by anything here.**
+**Pausing a campaign is a Git change** — `suspend: true` on the campaign
+file; the apply step puts the same intent on the Kueue Workload (see
+[Pausing](../reference/campaign-yaml.md#pausing)). **Deleting a campaign's
+file cancels it** — its Job and ConfigMap are pruned by an apply that is
+*asked* to prune (Argo CD with `syncPolicy.automated.prune: true`, or
+`make campaigns-apply PRUNE=1`; `kubectl delete -f` by hand on the PoC).
+**Results already in S3 are never touched by anything here.**
 
 ## 5. Watch it
 

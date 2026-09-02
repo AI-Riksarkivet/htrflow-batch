@@ -130,11 +130,14 @@ pipeline's ConfigMap).
 `render` also **removes** files under `--out` that this render did not
 produce, so deleting `campaigns/<name>.yaml` deletes
 `rendered/campaigns/<name>.yaml` too. Deleting the manifest is only half of
-cancelling: the apply has to prune as well (Argo CD does; `make
-campaigns-apply PRUNE=1` passes `kubectl apply --prune -l
-htrflow.riksarkivet.se/managed-by=converter`). Every object the converter
-renders — both ConfigMaps and both Jobs — carries that label for exactly
-this reason.
+cancelling: the apply has to prune as well, and **pruning is opt-in on both
+sides**. Argo CD's `syncPolicy.automated.prune` defaults to `false` and a
+manual sync does not prune unless asked, so an Application that manages this
+repo needs `syncPolicy.automated.prune: true` (or `argocd app sync --prune`);
+by hand it is `make campaigns-apply PRUNE=1`, which passes `kubectl apply
+--prune -l htrflow.riksarkivet.se/managed-by=converter`. Every object the
+converter renders — both ConfigMaps and both Jobs — carries that label for
+exactly this reason.
 
 ## Pausing
 
@@ -148,14 +151,33 @@ scripts/kueue-pause-sync.sh <namespace> <rendered/campaigns dir>
 ```
 
 which patches `spec.active` on each campaign's Workload (`false` for a
-suspended campaign, `true` otherwise), idempotently and skipping Workloads
-Kueue has not created yet. `make campaigns-apply` runs it after every apply.
-Deactivating a Workload evicts its pods, keeps every finished index, and
-`kubectl get job` reports `suspend: true`; reactivating continues at the next
-index. Results already in S3 are never touched.
+suspended campaign, `true` otherwise), idempotently. `make campaigns-apply`
+runs it after every apply. Deactivating a Workload evicts its pods, keeps
+every finished index, and `kubectl get job` reports `suspend: true`;
+reactivating continues at the next index. Results already in S3 are never
+touched.
+
+**A brand-new paused campaign has no Workload at the instant the apply
+returns** — Kueue creates it a moment later, and that moment is exactly the
+window in which Kueue would admit and start the campaign. Skipping it would
+therefore *run* a campaign that git says is paused, so the script waits
+(10 × 1 s) for a paused campaign's Workload and exits non-zero with a message
+if it never appears: re-run the apply. A campaign that is *not* paused is
+still skipped when its Workload is missing — a Workload that does not exist
+is not admitted either, and the next apply catches it.
+
+**The apply also writes `active: true` for every campaign that is not
+suspended.** So a Workload that Kueue deactivated on its own — a requeue
+limit hit, `maximumExecutionTimeSeconds` exceeded — is re-admitted at the next
+apply and the campaign resumes at the next unfinished index. Git is the truth
+about what should be running; nothing on the cluster stays paused unless the
+campaign file says so.
 
 With Argo CD, run the same script as a `PostSync` hook so a merged
-`suspend: true` takes effect on sync:
+`suspend: true` takes effect on sync. **The manifest below is illustrative and
+has not been run** — there is no Argo CD on the PoC (the E2E drives the script
+through `make campaigns-apply` instead), and the image digest, the
+ServiceAccount and the two volumes are placeholders you have to fill in:
 
 ```yaml title="argocd/pause-sync-hook.yaml"
 apiVersion: batch/v1
