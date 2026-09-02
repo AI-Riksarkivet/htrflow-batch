@@ -233,6 +233,7 @@ def test_dry_run_renders_but_runs_nothing(tmp_path, kubectl, capsys):
     assert (out / "campaigns" / "pausy.yaml").exists()
     err = capsys.readouterr().err
     assert f"kubectl apply -f {out / 'pipelines'}" in err
+    assert "pause sync was skipped" in err
 
 
 def test_a_render_error_never_reaches_the_cluster(tmp_path, kubectl, capsys):
