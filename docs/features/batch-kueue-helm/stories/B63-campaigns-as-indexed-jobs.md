@@ -47,18 +47,21 @@ Kubernetes 1.33 och verifierat mot officiell dokumentation 2026-09-01.
   bygger och publicerar den syntetiska manifesten själv) — och två
   borttagningar: thumbnails och `metrics-failed-latest.json`.
   Env-/exit-kontraktet är i övrigt oförändrat.
-- **Read API** (`packages/api`, Python, read-only RBAC): `/api/v1/jobs` och
-  `/api/v1/jobs/{ns}/{name}` som projektion av Job-status × volymlistan,
-  med S3-länkar och felorsak från pod-termineringsmeddelandet; proxas av
-  viewer-nginx. Ersätter `status.json`; statussidan läser detta.
-- **Chart 0.3.0**: `api.yaml` tillkommer; `reconciler.yaml`, `pipelines.yaml`,
+- **Webbfronten** (`packages/web`, Python, read-only RBAC): `/api/v1/jobs`
+  och `/api/v1/jobs/{ns}/{name}` som projektion av Job-status × volymlistan,
+  med S3-länkar och felorsak från pod-termineringsmeddelandet. Ersätter
+  `status.json`; statussidan läser detta. Samma process serverar också
+  kampanjwebben på `/` och Universal Viewer på `/uv.html`, så nginx-imagen
+  och `/api/`-proxyn är borta (0.4.0).
+- **Chart 0.3.0/0.4.0**: `web.yaml` tillkommer (och tar NodePorten i 0.4.0);
+  `viewer.yaml`, `reconciler.yaml`, `pipelines.yaml`,
   `job-example.yaml` och devstack-mallarna (→ `charts/htrflow-devstack`)
   försvinner; `legacyLayout` behåller `<pipeline>/<volym>/` för befintlig data,
   nya tenants får `<namespace>/<pipeline>/<volym>/`.
 - **Borttaget**: `packages/reconciler`, CronJob, Lease, de fyra statusfilerna,
   frontendens derivationslager, Go-controllern (aldrig mergad).
-- **Storleksbudget i CI** (`scripts/loc-budget.sh`): wrapper ≤ 1 950,
-  converter ≤ 1 000, API ≤ 400, frontend ≤ 2 500, chart ≤ 700 rader; bara
+- **Storleksbudget i CI** (`scripts/loc-budget.sh`): wrapper ≤ 2 000,
+  converter ≤ 1 000, web ≤ 500, frontend ≤ 2 500, chart ≤ 700 rader; bara
   Python i batch-systemet.
 
 ## Klart när

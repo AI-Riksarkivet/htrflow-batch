@@ -269,8 +269,8 @@ S3 behind a one-function seam — `ResultStore`:
   - The fork feeds raw ALTO pixel coords to OpenSeadragon as **viewport**
     coords → line overlays land ~10⁵ px off-canvas for plain images; fix is
     `viewport.imageToViewportRectangle(...)`. Both fixes are captured in
-    `.docker/uv4-uv-html.patch` and baked into every viewer image
-    (`make viewer-image`, `dagger call build-viewer`).
+    `.docker/uv4-uv-html.patch` and applied in the web image's UV build
+    stage (`make build-web`, `dagger call build-web`).
 - **Live run log:** the wrapper tees its own stdout/stderr and ships the
   buffer to `status/logs/<pipeline-id>/<volume-ref>.txt` while it runs —
   how the frontend follows a running volume without anything ever reading

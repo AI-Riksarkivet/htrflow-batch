@@ -1,7 +1,7 @@
 # Campaign Browser
 
-The SvelteKit SPA served at `/` by the viewer image — two routes, no server,
-reading the read API (`packages/web`) directly. Source:
+The SvelteKit SPA served at `/` by the web image — two routes, no server,
+reading the read API (`packages/web`) that serves it. Source:
 [`frontend/`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/frontend);
 the `frontend/README.md` there is the developer-facing version of this page.
 
@@ -51,14 +51,14 @@ then `VITE_API_BASE`, then the default. **The page ships a CSP**
 hash of SvelteKit's own init script, `object-src 'none'`, `base-uri 'self'`),
 so a deployment sets `window.API_BASE` by serving its own **`/config.js`**
 — a same-origin file loaded before the app — never by injecting an inline
-`<script>` into `index.html`, which the CSP blocks. The chart does exactly
-that: `templates/viewer.yaml` mounts a ConfigMap-rendered `config.js` with
-`window.API_BASE = "/api/v1"`, and its nginx proxies `/api/` to the read
-API's Service — same-origin, so `script-src 'self'` already covers it (no
-`connect-src` directive is set, so fetches are unrestricted by this CSP; the
-only restriction is on what may _execute_ as script). A CSP header from the
-web server must not be stricter than the meta tag (the browser enforces the
-intersection); the chart's nginx only adds `frame-ancestors 'none'`.
+`<script>` into `index.html`, which the CSP blocks. `static/config.js`,
+built into the image, ships `window.API_BASE = "/api/v1"` — same-origin,
+because the read API is the process serving the page, so `script-src 'self'`
+already covers it (no `connect-src` directive is set, so fetches are
+unrestricted by this CSP; the only restriction is on what may _execute_ as
+script). A CSP header from the server must not be stricter than the meta tag
+(the browser enforces the intersection); `packages/web` only adds
+`frame-ancestors 'none'`.
 
 ## Derivation rules
 
@@ -119,10 +119,11 @@ bun run coverage   # vitest with @vitest/coverage-v8
 bun run check      # svelte-check, strict TypeScript
 bun run lint       # prettier --check
 bun run format     # prettier --write
-bun run build      # static build → dist/, consumed by .docker/uv4-viewer.dockerfile
+bun run build      # static build → dist/, consumed by .docker/htrflow-web.dockerfile
 ```
 
-The viewer image (`.docker/uv4-viewer.dockerfile`,
-`nginxinc/nginx-unprivileged`, port 8080) serves this build at `/` and
-Universal Viewer at `/uv.html`; `make viewer-image` stages `dist/` into the
-UV checkout and builds it.
+The web image (`.docker/htrflow-web.dockerfile`, port 8081) builds this SPA
+in its first stage and copies it into `/app/static` over the Universal
+Viewer build, so `/` is the SPA, `/uv.html` is UV and `/api/v1/…` is the
+read API — one origin, no proxy. `make build-web` builds the whole thing;
+nothing has to be staged by hand.

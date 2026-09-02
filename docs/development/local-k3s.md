@@ -19,9 +19,9 @@ defaults and is loaded first, so a missing `.env` behaves exactly like it:
 | Key | Default | Used by |
 |---|---|---|
 | `HTR_RELEASE` / `HTR_NAMESPACE` | `htr` / `htr-batch` | `helm-template`, `psa-labels` |
-| `HTR_REGISTRY` / `HTR_REGISTRY_NODEPORT` | `127.0.0.1:30500` / `30500` | `poc-push`, `viewer-image` (image names) |
+| `HTR_REGISTRY` / `HTR_REGISTRY_NODEPORT` | `127.0.0.1:30500` / `30500` | `poc-push` (image names) |
 | `HTR_S3_ENDPOINT` / `HTR_S3_NODEPORT` / `HTR_BUCKET` | `http://localhost:30900` / `30900` / `htr-results` | compose; your own `aws` calls |
-| `HTR_VIEWER_NODEPORT` | `30800` | — |
+| `HTR_WEB_NODEPORT` | `30800` | `make e2e`'s final `/api/v1/jobs` curl |
 | `HTRFLOW_DIR` | `~/htrflow` | the arm64 base build's `git describe` |
 | `HTR_DEV_S3_ACCESS_KEY` / `SECRET_KEY` | `rustfsadmin` | the compose stack only — never a cluster |
 
@@ -68,10 +68,10 @@ fails the build instead of silently changing them.
 
 containerd pulls `127.0.0.1:30500/…` over plain HTTP with no
 `registries.yaml` (localhost fallback); `docker push` to it from the node
-also just works. The viewer: `make viewer-image` (needs a built
-`universalviewer4` checkout at `UV4_DIR`, default `~/universalviewer4`) and
-`docker push 127.0.0.1:30500/uv4:dev`, which prints the digest for
-`viewer.image`.
+also just works. The web image needs nothing checked out beside it —
+`make build-web` builds the SPA and the Universal Viewer inside the image —
+so `make poc-push` covers both images and prints the digest for
+`web.image`.
 
 ## The campaigns repo, applied from a laptop
 
@@ -118,11 +118,10 @@ through a host that can reach it:
 ssh -L 30800:<node-ip>:30800 -L 30900:<node-ip>:30900 <ssh-host>
 ```
 
-Then `http://localhost:30800/` is the campaign browser and the viewer, and
-`http://localhost:30900/htr-results/…` is what every link on it resolves to.
-Both are required — the page comes from 30800, results, logs, images and
-ALTO from 30900 (the read API itself is cluster-internal only, reached
-through the viewer's `/api/` proxy on 30800). This is exactly why
+Then `http://localhost:30800/` is the campaign browser, the viewer and the
+read API, and `http://localhost:30900/htr-results/…` is what every link on
+it resolves to. Both are required — the page and `/api/v1/…` come from
+30800, results, logs, images and ALTO from 30900. This is exactly why
 `publicResultsBase` is a `localhost` URL on the PoC
 ([Viewing Results](../getting-started/viewing.md#the-localhost-url-caveat)).
 `kubectl port-forward` on the registry Service is the equivalent for
@@ -147,8 +146,7 @@ when the pods went non-root ([Security](security.md#cache-pvc-migration)).
 
 ```bash
 helm upgrade htr charts/htrflow-batch -n htr-batch --reset-then-reuse-values \
-  --set web.image=127.0.0.1:30500/htrflow-web@sha256:<digest> \
-  --set viewer.image=127.0.0.1:30500/uv4@sha256:<digest>
+  --set web.image=127.0.0.1:30500/htrflow-web@sha256:<digest>
 make psa-labels
 ```
 

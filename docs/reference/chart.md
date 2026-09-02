@@ -1,7 +1,8 @@
 # Chart Values
 
-`charts/htrflow-batch` (version **0.3.0**) — one chart for the Kueue queue
-objects, the model-cache PVC, the viewer, the read-only status API and the
+`charts/htrflow-batch` (version **0.4.0**) — one chart for the Kueue queue
+objects, the model-cache PVC, the web front (campaign browser, Universal
+Viewer and the read-only status API in one Deployment) and the
 NetworkPolicies. The PoC-only support infrastructure (RustFS, an in-cluster
 registry, the NVIDIA device plugin) lives in the separate
 `charts/htrflow-devstack` chart. Campaigns themselves are not rendered by
@@ -50,21 +51,29 @@ read-only — both rendered by the converter, referencing this PVC by
 | `queue.flavor` | `default-flavor` | ResourceFlavor |
 | `queue.resources` | cpu 4 / memory 8Gi / nvidia.com/gpu 1 | Covered quotas — every resource an index's pod requests must be listed. The default admits exactly one campaign index as the converter renders it (requests cpu 4 / 8 Gi / 1 GPU); raise it to run more volumes in parallel. Indexes stuck `queued` with an idle GPU usually mean a dead Kueue controller, not a busy GPU |
 
-## Read API (`web.*`)
+## Web front (`web.*`)
 
 Renders a ServiceAccount, a Role (get/list/watch on `jobs`, `pods`,
 `configmaps` — this namespace only, never cluster-wide) and RoleBinding, and
-the `htrflow-web` Deployment + Service (ClusterIP, no NodePort — reached
-only through the viewer's `/api/` proxy). It is the one pod in this chart
-that keeps its ServiceAccount token: it is the Kubernetes API client the
-campaign browser reads through, computing everything live — there is no
-status document written by anything in this system any more. Always
-rendered — there is no `enabled` flag.
+the `htrflow-web` Deployment + Service (NodePort). One container serves the
+campaign browser at `/`, Universal Viewer at `/uv.html` and the read API at
+`/api/v1/…`; it is the one pod in this chart that keeps its ServiceAccount
+token, because it is the Kubernetes API client the browser reads through,
+computing everything live — there is no status document written by anything
+in this system any more. Always rendered — there is no `enabled` flag.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `web.image` | `docker.io/riksarkivet/htrflow-web@sha256:000…` | **Must be digest-pinned** unless `security.allowTagImages`. The all-zero default renders but cannot pull |
+| `web.image` | `docker.io/riksarkivet/htrflow-web@sha256:000…` | **Must be digest-pinned** unless `security.allowTagImages`. The all-zero default renders but cannot pull: set the digest of the image you built (`make poc-push` prints it) |
+| `web.nodePort` | `30800` | NodePort; the container listens on 8081 |
 | `web.resources` | requests cpu 50m / 128Mi, limits cpu 500m / 256Mi | |
+
+The app sends `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+strict-origin-when-cross-origin` and `Content-Security-Policy:
+frame-ancestors 'none'` on every response (audit S4; script/style/connect
+sources stay governed by the build's own CSP meta). `/config.js`, built into
+the image, sets `window.API_BASE = "/api/v1"` — same-origin, because the
+same process serves both (see [Campaign Browser](frontend.md)).
 
 ## Trust boundary (`security.*`)
 
@@ -73,7 +82,7 @@ rendered — there is no `enabled` flag.
 | `security.allowedImageRepos` | `[]` | Documentation/consistency only in this chart — the enforced allow-list lives in the campaigns repo's `converter.yaml` (`allowed_image_repos`); `htrflow-campaigns validate` warns, not the chart |
 | `security.requireModelRevision` | `false` | Same: mirrors `converter.yaml`'s `require_model_revision` for documentation purposes |
 | `security.psaEnforce` | `baseline` | Pod Security level `make psa-labels` enforces on the namespace (warn/audit are always `restricted`). Every pod in both charts is restricted-clean as of 0.3.0 — `restricted` is worth trying |
-| `security.allowTagImages` | `false` | Accept `:tag` references for `viewer.image` / `web.image` instead of `@sha256:` pins. Tag images get `imagePullPolicy: Always` so a re-pushed `:dev` lands on the next rollout |
+| `security.allowTagImages` | `false` | Accept a `:tag` reference for `web.image` instead of an `@sha256:` pin. Tag images get `imagePullPolicy: Always` so a re-pushed `:dev` lands on the next rollout |
 | `security.verifyImages.enabled` | `false` | Renders a Kyverno `ClusterPolicy` (Kyverno ≥ 1.10 must be installed) that refuses any Pod in the namespace whose image is not cosign keyless-signed |
 | `security.verifyImages.issuer` / `subject` | `""` | OIDC issuer and subject of the signing identity — both required when enabled |
 | `security.verifyImages.imageReferences` | `[]` | Defaults to `allowedImageRepos` with `*` appended, or `"*"` when that is empty |
@@ -102,22 +111,17 @@ pods get no HF Hub egress at all — only the warm-up pod does.
 | `network.s3Cidrs` | `[]` | External S3 endpoint(s) for campaign and warm-up pods; the devStack RustFS pod is selected automatically |
 | `network.clusterCidrs` | `["10.42.0.0/16", "10.43.0.0/16"]` | Pod and service ranges that pods with *public* egress (the warm-up pod) must not reach |
 | `network.nodeCidrs` | `[]` | Node addresses (same purpose); auto-detected with Helm `lookup` when empty — set for `helm template` |
-| `network.apiServer.cidr` / `port` | `""` / `6443` | kube-apiserver as reached after service DNAT; auto-detected from the `kubernetes` Endpoints when empty. **The read API's NetworkPolicy fails to render without it under `helm template`** |
-| `network.viewer.ingressCidrs` | `["0.0.0.0/0"]` | Who may reach the viewer's port 8080 (NodePort traffic arrives SNAT'd from the node) |
+| `network.apiServer.cidr` / `port` | `""` / `6443` | kube-apiserver as reached after service DNAT; auto-detected from the `kubernetes` Endpoints when empty. **The web front's NetworkPolicy fails to render without it under `helm template`** |
+| `network.web.ingressCidrs` | `["0.0.0.0/0"]` | Who may reach the web front's port 8081 (NodePort traffic arrives SNAT'd from the node) |
 
-## Viewer (`viewer.*`)
+## Removed in 0.4.0
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `viewer.enabled` | `true` | Deploy the viewer (campaign browser at `/`, UV4 at `/uv.html`, `/api/` proxied to the read API); Pod Security restricted, uid 101, no SA token |
-| `viewer.image` | `docker.io/riksarkivet/htrflow-batch-viewer@sha256:000…` | **Must be digest-pinned** unless `security.allowTagImages`. The all-zero default renders but cannot pull: set the digest of the image you built (`make viewer-image`, then `docker push` prints it) |
-| `viewer.nodePort` | `30800` | NodePort; the container listens on 8080 |
-| `viewer.defaultManifest` | `""` | Deprecated: when set, `/` 302-redirects into UV instead of the campaign browser |
-| `viewer.securityHeaders.enabled` | `true` | nginx sends `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Content-Security-Policy: frame-ancestors 'none'` (script/style/connect sources stay governed by the build's own CSP meta) |
-
-The viewer's `config.js` (served same-origin, so it passes the SPA's CSP)
-sets `window.API_BASE = "/api/v1"`, which the frontend resolves on every
-fetch (see [Campaign Browser](frontend.md)).
+The whole `viewer` values block: `enabled`, `image`, `nodePort` (now
+`web.nodePort`), `defaultManifest` (deprecated since the campaign browser
+landed) and `securityHeaders.enabled` (the headers are unconditional now,
+sent by the app). `network.viewer` is renamed `network.web`. The nginx Deployment, its Service, its
+`config.js`/`default.conf` ConfigMap and its `/api/` proxy are gone: the
+read API image now carries the site.
 
 ## Removed in 0.3.0
 

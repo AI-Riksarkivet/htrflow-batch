@@ -11,8 +11,8 @@ from the public results base. Read-only by construction: the code only calls
 get and list, the chart grants get/list/watch, and a test greps the source to
 keep it that way. There is no authentication.
 
-Until B63 Task 17 the site was a separate nginx image (`uv4-viewer`)
-proxying `/api/` here; one Deployment, one Service and one image do it now.
+Until B63 Task 17 the site was a separate nginx image proxying `/api/`
+here; one Deployment, one Service and one image do it now.
 
 - Design: [Campaigns as Indexed Jobs](../../docs/superpowers/specs/2026-09-01-indexed-jobs-design.md),
   decision D8

@@ -138,7 +138,7 @@ file cancels it** — its Job and ConfigMap are pruned by an apply that is
 
 ## 4. Watch it
 
-The campaign browser is the viewer's front door:
+The campaign browser is the platform's front door:
 
 ```
 http://<node>:30800/
@@ -157,7 +157,7 @@ per-volume state are read straight off the live Job every time the page asks.
 
     On the bare-k3s PoC both NodePorts must be tunnelled — the page comes from
     30800, results and logs from 30900. See
-    [Viewing Results](viewing.md#reaching-the-viewer-over-ssh-poc-bare-k3s).
+    [Viewing Results](viewing.md#reaching-the-web-front-over-ssh-poc-bare-k3s).
 
 Or skip the browser and ask the cluster directly:
 
@@ -167,22 +167,17 @@ kubectl -n htr-batch get job trolldomskommissionen \
 curl -s http://<node>:30800/api/v1/jobs | jq .
 ```
 
-## Rebuilding the viewer image
+## Rebuilding the web image
 
-The SPA is baked into the viewer image next to UV4, so any UI change needs a
-rebuild:
+The SPA and UV4 are baked into the web image next to the read API, so any UI
+change needs a rebuild:
 
 ```bash
-make viewer-image                # local: bun build + docker build, tags 127.0.0.1:30500/uv4:dev
-docker push 127.0.0.1:30500/uv4:dev   # prints the digest to pin as viewer.image
-dagger call build-viewer         # reproducible: clones + patches UV, bun-builds the SPA
+make build-web                   # local: bun-builds the SPA, clones + patches UV, tags 127.0.0.1:30500/htrflow-web:dev
+docker push 127.0.0.1:30500/htrflow-web:dev   # prints the digest to pin as web.image
+dagger call build-web            # the same dockerfile, through the dagger engine
 ```
 
-The image runs unprivileged and listens on **8080** (the chart's
-`containerPort` and Service `targetPort` follow; NodePort 30800 is unchanged).
-
-!!! info "`viewer.defaultManifest` is deprecated"
-
-    It predates the campaign browser: when set, `/` 302-redirects to a single
-    manifest in UV instead of serving the browser. Leave it empty unless you
-    deliberately want the old single-volume front door.
+The image runs unprivileged and listens on **8081** (the chart's
+`containerPort` and Service `targetPort` follow; NodePort 30800 is
+unchanged).

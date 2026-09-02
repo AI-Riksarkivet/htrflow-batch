@@ -1,6 +1,6 @@
 """Static serving: the SPA, Universal Viewer and /config.js out of STATIC_DIR.
 
-This is what the retired nginx image did (chart 0.3.0 templates/viewer.yaml):
+This is what the retired nginx image did (chart 0.3.0's viewer template):
 serve the campaign browser at /, UV at /uv.html, map the extensionless /log
 to adapter-static's log.html, and send three security headers on everything.
 The API routes must still win over the static mount.

@@ -1,8 +1,8 @@
 # The web front (B63 Task 17): one image with the read API, the campaign
 # browser SPA and the Universal Viewer. Build context = repo root.
 #
-# Until Task 17 this was two images — this one and an nginx site (uv4-viewer)
-# proxying /api/ here. The nginx image, its ConfigMap and the proxy are gone:
+# Until Task 17 this was two images — this one and an nginx site proxying
+# /api/ here. The nginx image, its ConfigMap and the proxy are gone:
 # stages 1 and 2 build the two front ends, stage 3 is the Python service that
 # serves them out of /app/static (packages/web, HTRFLOW_WEB_STATIC).
 #

@@ -25,6 +25,6 @@ Helm chart:
 |-----------|------|---------|
 | Wrapper (`htrflow-batch`, module `htrflow_batch`) | `packages/wrapper/` | The container of every batch pod — fetch, transcribe, stream results to S3 |
 | Converter (`htrflow-converter`, CLI `htrflow-campaigns`) | `packages/converter/` | Pure function: campaign/pipeline YAML → Kubernetes manifests, run in the campaigns repo's own CI (no image, `uvx` install) |
-| Read API (`htrflow-web`, module `htrflow_web`) | `packages/web/` | A Deployment behind the viewer — read-only `GET /api/v1/jobs` over the Indexed Jobs a campaign renders to |
-| Campaign browser | `frontend/` | Static SPA in the viewer image, served at `/` |
-| Chart | `charts/htrflow-batch/` | Kueue objects, viewer, read API, model cache PVC, NetworkPolicies |
+| Web front (`htrflow-web`, module `htrflow_web`) | `packages/web/` | One Deployment: read-only `GET /api/v1/jobs` over the Indexed Jobs a campaign renders to, plus the campaign browser and Universal Viewer as static files |
+| Campaign browser | `frontend/` | Static SPA built into the web image, served at `/` |
+| Chart | `charts/htrflow-batch/` | Kueue objects, the web front, model cache PVC, NetworkPolicies |
