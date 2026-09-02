@@ -20,8 +20,6 @@ runtime_class: nvidia
 # real one before applying anywhere but the PoC.
 public_results_base: "http://localhost:30900/htr-results"
 
-legacy_layout: false
-
 # Only images under this pipeline pins its digest against. Swap for your
 # own registry (and keep it in sync with the htrflow-batch chart's
 # security.allowedImageRepos documentation value).

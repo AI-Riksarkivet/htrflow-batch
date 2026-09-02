@@ -156,10 +156,9 @@ def _campaign_job(
         job["spec"].pop("suspend", None)
 
     _set(job, "spec.template.spec.containers[0].image", p.image)
-    prefix = "" if cfg.legacy_layout else f"{cfg.namespace}/"
     dynamic_env = {
         "PIPELINE_ID": p.id,
-        "S3_PREFIX": prefix,
+        "S3_PREFIX": f"{cfg.namespace}/",
         "PUBLIC_RESULTS_BASE": cfg.public_results_base,
         "IMAGE_DIGEST": p.image,
         "MAX_SECONDS": str(p.max_seconds or cfg.max_seconds),
