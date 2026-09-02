@@ -127,8 +127,7 @@ def test_resume_skips_done(env, cfg, s3):
 
     rc = main(env, process_page_factory=factory)
     assert rc == EXIT_OK
-    # completion order: which pages ran is the contract, not their order
-    assert sorted(calls) == ["0002", "0003"]
+    assert "0001" not in calls and calls == ["0002", "0003"]
     body = json.loads(
         s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
             "Body"
@@ -205,7 +204,7 @@ def test_resume_without_previous_manifest_keeps_done_pages(env, cfg, s3):
         return process
 
     assert main(env, process_page_factory=factory) == EXIT_OK
-    assert sorted(calls) == ["0002", "0003"]
+    assert calls == ["0002", "0003"]
 
 
 def test_resume_reprocesses_page_with_alto_but_no_page_xml(env, cfg, s3):
@@ -224,7 +223,7 @@ def test_resume_reprocesses_page_with_alto_but_no_page_xml(env, cfg, s3):
         return process
 
     assert main(env, process_page_factory=factory) == EXIT_OK
-    assert sorted(calls) == ["0001", "0002", "0003"]
+    assert calls == ["0001", "0002", "0003"]
     assert "demo-v1/SE-RA-1234/page/0001.xml" in _keys(s3, cfg)
 
 
@@ -576,7 +575,7 @@ def test_sigterm_is_not_swallowed_by_the_per_page_handler(env, cfg, s3, monkeypa
         return process
 
     assert main(env, process_page_factory=factory) == EXIT_SIGTERM
-    assert seen[-1] == "0001"  # no further page was processed
+    assert seen == ["0001"]  # no further page was processed
 
 
 def test_store_outage_aborts_in_stream_stage(
