@@ -1,43 +1,28 @@
-"""ConfigMaps, warm-up Jobs and campaign Indexed Jobs, as dicts (spec §3)."""
+"""ConfigMaps, warm-up Jobs and campaign Indexed Jobs, patched from packaged
+YAML skeletons in ``manifests/`` (spec §3)."""
 
 from __future__ import annotations
 
 import copy
+import functools
 import re
+from importlib import resources
+
+import yaml
 
 from .models import Campaign, ConverterConfig, Pipeline, Volume
 
 _LABEL_JUNK = re.compile(r"[^A-Za-z0-9_.-]")
-WORKDIR = "/work"
-HF_HOME = "/data/hf"
+_PATH_RE = re.compile(r"[^.\[\]]+|\[\d+\]")
 MAX_VOLUMES_PER_JOB = 10_000
 
-_POD_SEC = {
-    "runAsNonRoot": True,
-    "runAsUser": 1000,
-    "runAsGroup": 1000,
-    "fsGroup": 1000,
-    "seccompProfile": {"type": "RuntimeDefault"},
-}
-_CTR_SEC = {
-    "allowPrivilegeEscalation": False,
-    "readOnlyRootFilesystem": True,
-    "capabilities": {"drop": ["ALL"]},
-}
-
-# A real TAB (not `\t\t` as text) between id and source: sed writes one, and
-# `${line%%<TAB>*}`/`${line#*<TAB>}` must match it.
-_SHELL_ARGS = (
-    "set -eu\n"
-    'line=$(sed -n "$((JOB_COMPLETION_INDEX + 1))p" /campaign/volumes.txt)\n'
-    '[ -n "$line" ] || '
-    '{ echo "no volume for index $JOB_COMPLETION_INDEX" >&2; exit 13; }\n'
-    "id=${line%%\t*}; src=${line#*\t}\n"
-    'export VOLUME_REF="$id"\n'
-    'case "$src" in images:*) export IMAGES="${src#images:}" ;; '
-    '*) export IIIF_MANIFEST_URL="$src" ;; esac\n'
-    "exec python -m htrflow_batch\n"
-)
+# Label/annotation keys below are set by direct dict indexing, never through
+# ``_set``: they contain literal ``.`` characters (a real Kubernetes label
+# key), which ``_set``'s dotted-path parser would otherwise split on.
+_CAMPAIGN_LABEL = "htrflow.riksarkivet.se/campaign"
+_PIPELINE_LABEL = "htrflow.riksarkivet.se/pipeline"
+_PRIORITY_LABEL = "kueue.x-k8s.io/priority-class"
+_SHA_ANNOTATION = "htrflow.riksarkivet.se/pipeline-sha256"
 
 
 def label_value(text: str) -> str:
@@ -50,291 +35,157 @@ def split(volumes: list[Volume], size: int = MAX_VOLUMES_PER_JOB) -> list[list[V
     return [volumes[i : i + size] for i in range(0, len(volumes), size)]
 
 
-def _resources(cpu: str, mem_req: str, mem_lim: str, gpu: str | None = None) -> dict:
-    req = {"cpu": cpu, "memory": mem_req}
-    lim = {"cpu": cpu, "memory": mem_lim}
-    if gpu:
-        req["nvidia.com/gpu"] = lim["nvidia.com/gpu"] = gpu
-    return {"requests": req, "limits": lim}
+@functools.lru_cache(maxsize=None)
+def _base(name: str) -> dict:
+    text = (resources.files("htrflow_converter") / "manifests" / name).read_text()
+    return yaml.safe_load(text)
 
 
-def _container(
-    name: str,
-    image: str,
-    *,
-    mounts: list[dict],
-    resources: dict,
-    command: list[str] | None = None,
-    args: list[str] | None = None,
-    env: list[dict] | None = None,
-) -> dict:
-    c: dict = {"name": name, "image": image}
-    if command:
-        c["command"] = command
-    if args:
-        c["args"] = args
-    if env is not None:
-        c["env"] = env
-    c["volumeMounts"] = mounts
-    c["securityContext"] = copy.deepcopy(_CTR_SEC)
-    c["resources"] = resources
-    return c
+def _load(name: str) -> dict:
+    """A fresh deep copy of the packaged manifest skeleton ``name``."""
+    return copy.deepcopy(_base(name))
 
 
-def _workdir_env() -> list[dict]:
-    return [
-        {"name": "HF_HOME", "value": HF_HOME},
-        {"name": "WORKDIR_PATH", "value": WORKDIR},
-        {"name": "HOME", "value": f"{WORKDIR}/home"},
-        {"name": "TMPDIR", "value": f"{WORKDIR}/tmp"},
-        {"name": "YOLO_CONFIG_DIR", "value": f"{WORKDIR}/ultralytics"},
-    ]
+def _set(obj: dict, path: str, value: object) -> None:
+    """Set ``obj``'s dotted/``[i]``-indexed ``path`` in place. Every
+    intermediate segment must already exist (a typo raises instead of
+    silently creating nested structure); only the final segment may be new.
+    Not for a key that itself contains a literal ``.`` -- index those
+    directly (see the module-level label/annotation constants)."""
+    parts = _PATH_RE.findall(path)
+    for part in parts[:-1]:
+        obj = obj[int(part[1:-1])] if part[0] == "[" else obj[part]
+    last = parts[-1]
+    if last[0] == "[":
+        obj[int(last[1:-1])] = value
+    else:
+        obj[last] = value
 
 
-def _s3_env(secret: str) -> list[dict]:
-    ep = {"secretKeyRef": {"name": secret, "key": "S3_ENDPOINT", "optional": True}}
-    bk = {"secretKeyRef": {"name": secret, "key": "S3_BUCKET"}}
-    return [
-        {"name": "AWS_SHARED_CREDENTIALS_FILE", "value": "/secrets/s3/credentials"},
-        {"name": "S3_ENDPOINT", "valueFrom": ep},
-        {"name": "S3_BUCKET", "valueFrom": bk},
-    ]
-
-
-def _pod_failure_policy(container_name: str, second_rule_action: str) -> dict:
-    return {
-        "rules": [
-            {"action": "Ignore", "onPodConditions": [{"type": "DisruptionTarget"}]},
-            {
-                "action": second_rule_action,
-                "onExitCodes": {
-                    "containerName": container_name,
-                    "operator": "In",
-                    "values": [13],
-                },
-            },
-        ]
-    }
-
-
-def _pod_template(
-    *,
-    labels: dict,
-    containers: list[dict],
-    volumes: list[dict],
-    init_containers: list[dict] | None = None,
-    runtime_class: str | None = None,
-    node_selector: dict[str, str] | None = None,
-    tolerations: list[dict] | None = None,
-) -> dict:
-    spec = {
-        "restartPolicy": "Never",
-        "automountServiceAccountToken": False,
-        "securityContext": copy.deepcopy(_POD_SEC),
-        "containers": containers,
-        "volumes": volumes,
-    }
-    if init_containers:
-        spec["initContainers"] = init_containers
-    if runtime_class:
-        spec["runtimeClassName"] = runtime_class
-    if node_selector:
-        spec["nodeSelector"] = dict(node_selector)
-    if tolerations:
-        spec["tolerations"] = [dict(t) for t in tolerations]
-    return {"metadata": {"labels": labels}, "spec": spec}
-
-
-def _job(
-    name: str, namespace: str, labels: dict, spec: dict, annotations: dict | None = None
-) -> dict:
-    meta = {"name": name, "namespace": namespace, "labels": labels}
-    if annotations:
-        meta["annotations"] = annotations
-    return {"apiVersion": "batch/v1", "kind": "Job", "metadata": meta, "spec": spec}
-
-
-def _configmap(
-    name: str,
-    namespace: str,
-    data: dict,
-    labels: dict,
-    annotations: dict | None = None,
-) -> dict:
-    # The labels are not decoration: `kubectl apply --prune -l
-    # htrflow.riksarkivet.se/managed-by=converter` (and Argo CD's own prune)
-    # find a deleted campaign's leftovers by them. An unlabelled ConfigMap
-    # would outlive the Job it fed.
-    meta = {"name": name, "namespace": namespace, "labels": labels}
-    if annotations:
-        meta["annotations"] = annotations
-    return {"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta, "data": data}
+def _pipeline_configmap(p: Pipeline, cfg: ConverterConfig) -> dict:
+    cm = _load("pipeline-configmap.yaml")
+    _set(cm, "metadata.name", f"htr-pipeline-{p.id}")
+    _set(cm, "metadata.namespace", cfg.namespace)
+    cm["metadata"]["labels"][_PIPELINE_LABEL] = label_value(p.id)
+    cm["metadata"]["annotations"][_SHA_ANNOTATION] = p.sha256
+    cm["data"]["pipeline.yaml"] = p.pipeline_yaml()
+    return cm
 
 
 def _warmup_job(p: Pipeline, cfg: ConverterConfig) -> dict:
-    env = [
-        {"name": "PIPELINE_PATH", "value": "/config/pipeline.yaml"},
-        {"name": "PIPELINE_ID", "value": p.id},
-        {"name": "CUDA_VISIBLE_DEVICES", "value": ""},
-        *_workdir_env(),
-    ]
-    container = _container(
-        "warmup",
-        p.image,
-        command=["python", "-m", "htrflow_batch.warmup"],
-        env=env,
-        mounts=[
-            {"name": "pipeline", "mountPath": "/config"},
-            {"name": "data", "mountPath": "/data"},
-            {"name": "work", "mountPath": WORKDIR},
-        ],
-        resources=_resources("2", "4Gi", "8Gi"),
+    job = _load("warmup-job.yaml")
+    _set(job, "metadata.name", f"htr-warmup-{p.id}")
+    _set(job, "metadata.namespace", cfg.namespace)
+    job["metadata"]["labels"][_PIPELINE_LABEL] = label_value(p.id)
+    _set(job, "spec.template.spec.containers[0].image", p.image)
+    for e in job["spec"]["template"]["spec"]["containers"][0]["env"]:
+        if e["name"] == "PIPELINE_ID":
+            e["value"] = p.id
+    _set(job, "spec.template.spec.volumes[0].configMap.name", f"htr-pipeline-{p.id}")
+    _set(
+        job,
+        "spec.template.spec.volumes[1].persistentVolumeClaim.claimName",
+        cfg.data_pvc,
     )
-    volumes = [
-        {"name": "pipeline", "configMap": {"name": f"htr-pipeline-{p.id}"}},
-        {"name": "data", "persistentVolumeClaim": {"claimName": cfg.data_pvc}},
-        {"name": "work", "emptyDir": {"sizeLimit": "4Gi"}},
-    ]
-    spec = {
-        "backoffLimit": 2,
-        "podFailurePolicy": _pod_failure_policy("warmup", "FailJob"),
-        "activeDeadlineSeconds": 3600,
-        "template": _pod_template(
-            labels={"app": "htrflow-warmup"}, containers=[container], volumes=volumes
-        ),
-    }
-    labels = {
-        "app": "htrflow-warmup",
-        "htrflow.riksarkivet.se/managed-by": "converter",
-        "htrflow.riksarkivet.se/pipeline": label_value(p.id),
-    }
-    return _job(f"htr-warmup-{p.id}", cfg.namespace, labels, spec)
+    return job
 
 
 def pipeline_objects(p: Pipeline, cfg: ConverterConfig) -> list[dict]:
-    cm = _configmap(
-        f"htr-pipeline-{p.id}",
-        cfg.namespace,
-        {"pipeline.yaml": p.pipeline_yaml()},
-        {
-            "htrflow.riksarkivet.se/managed-by": "converter",
-            "htrflow.riksarkivet.se/pipeline": label_value(p.id),
-        },
-        {"htrflow.riksarkivet.se/pipeline-sha256": p.sha256},
-    )
-    return [cm, _warmup_job(p, cfg)]
-
-
-def _warmup_wait_container(image: str, pipeline_id: str) -> dict:
-    marker = f"/data/warmup/{pipeline_id}.done"
-    return _container(
-        "warmup-wait",
-        image,
-        command=["/bin/sh", "-c", f"until [ -f {marker} ]; do sleep 10; done"],
-        mounts=[{"name": "data", "mountPath": "/data", "readOnly": True}],
-        resources=_resources("50m", "64Mi", "64Mi"),
-    )
-
-
-def _wrapper_container(p: Pipeline, cfg: ConverterConfig) -> dict:
-    prefix = "" if cfg.legacy_layout else f"{cfg.namespace}/"
-    env = [
-        {"name": "PIPELINE_PATH", "value": "/config/pipeline.yaml"},
-        {"name": "PIPELINE_ID", "value": p.id},
-        {"name": "S3_PREFIX", "value": prefix},
-        {"name": "PUBLIC_RESULTS_BASE", "value": cfg.public_results_base},
-        {"name": "IMAGE_DIGEST", "value": p.image},
-        {"name": "HF_HUB_OFFLINE", "value": "1"},
-        {"name": "MAX_SECONDS", "value": str(p.max_seconds or cfg.max_seconds)},
-        {"name": "MANIFEST_MAX_BYTES", "value": str(cfg.manifest_max_bytes)},
-        {"name": "FETCH_MAX_BYTES", "value": str(cfg.fetch_max_bytes)},
-        *_workdir_env(),
-        *_s3_env(cfg.s3_secret),
-    ]
-    return _container(
-        "wrapper",
-        p.image,
-        command=["/bin/sh", "-c"],
-        args=[_SHELL_ARGS],
-        env=env,
-        mounts=[
-            {"name": "campaign", "mountPath": "/campaign", "readOnly": True},
-            {"name": "pipeline", "mountPath": "/config"},
-            {"name": "data", "mountPath": "/data", "readOnly": True},
-            {"name": "work", "mountPath": WORKDIR},
-            {"name": "s3", "mountPath": "/secrets/s3", "readOnly": True},
-        ],
-        resources=_resources("4", "8Gi", "16Gi", gpu="1"),
-    )
+    return [_pipeline_configmap(p, cfg), _warmup_job(p, cfg)]
 
 
 def _campaign_configmap(
     name: str, c: Campaign, p: Pipeline, volumes: list[Volume], cfg: ConverterConfig
 ) -> dict:
+    # The labels are not decoration: `kubectl apply --prune -l
+    # htrflow.riksarkivet.se/managed-by=converter` (and Argo CD's own prune)
+    # find a deleted campaign's leftovers by them. An unlabelled ConfigMap
+    # would outlive the Job it fed.
+    cm = _load("configmap.yaml")
     text = "\n".join(v.source_line() for v in volumes) + "\n" if volumes else ""
-    return _configmap(
-        f"campaign-{name}",
-        cfg.namespace,
-        {"volumes.txt": text},
-        {
-            "htrflow.riksarkivet.se/managed-by": "converter",
-            "htrflow.riksarkivet.se/campaign": label_value(c.name),
-            "htrflow.riksarkivet.se/pipeline": label_value(p.id),
-        },
-    )
+    _set(cm, "metadata.name", f"campaign-{name}")
+    _set(cm, "metadata.namespace", cfg.namespace)
+    cm["metadata"]["labels"][_CAMPAIGN_LABEL] = label_value(c.name)
+    cm["metadata"]["labels"][_PIPELINE_LABEL] = label_value(p.id)
+    cm["data"]["volumes.txt"] = text
+    return cm
 
 
 def _campaign_job(
     name: str, c: Campaign, p: Pipeline, volumes: list[Volume], cfg: ConverterConfig
 ) -> dict:
+    job = _load("campaign-job.yaml")
     completions = len(volumes)
     # cfg.window is the per-cluster CAP: a campaign may ask for less, never
     # more. Kueue partial admission would shrink an oversized parallelism on
     # the live Job instead -- and then reject every later apply of the
     # unchanged rendered file (docs: development/e2e-indexed-jobs.md).
     parallelism = min(c.window or cfg.window, cfg.window)
-    labels = {
-        "app": "htrflow-batch",
-        "htrflow.riksarkivet.se/managed-by": "converter",
-        "htrflow.riksarkivet.se/campaign": label_value(c.name),
-        "htrflow.riksarkivet.se/pipeline": label_value(p.id),
-        "kueue.x-k8s.io/queue-name": cfg.queue,
-    }
-    if c.priority:
-        labels["kueue.x-k8s.io/priority-class"] = c.priority
-    volumes_spec = [
-        {"name": "campaign", "configMap": {"name": f"campaign-{name}"}},
-        {"name": "pipeline", "configMap": {"name": f"htr-pipeline-{p.id}"}},
-        {"name": "data", "persistentVolumeClaim": {"claimName": cfg.data_pvc}},
-        {"name": "work", "emptyDir": {"medium": "Memory", "sizeLimit": "2Gi"}},
-        {"name": "s3", "secret": {"secretName": cfg.s3_secret, "defaultMode": 0o440}},
-    ]
-    spec = {
-        "completionMode": "Indexed",
-        "completions": completions,
-        "parallelism": parallelism,
-        "backoffLimitPerIndex": 3,
-        "maxFailedIndexes": completions,
-        "podFailurePolicy": _pod_failure_policy("wrapper", "FailIndex"),
-        "ttlSecondsAfterFinished": 86400,
-        "template": _pod_template(
-            labels={"app": "htrflow-batch"},
-            containers=[_wrapper_container(p, cfg)],
-            init_containers=[_warmup_wait_container(p.image, p.id)],
-            volumes=volumes_spec,
-            runtime_class=cfg.runtime_class,
-            node_selector=cfg.node_selector,
-            tolerations=cfg.tolerations,
-        ),
-    }
+
     # ``name`` is the Job's own metadata.name (and the campaign ConfigMap's
     # name suffix): a K8s object name is a DNS-1123 *subdomain* (<=253 chars,
-    # no per-63-char label truncation), unlike the label VALUES above, which
-    # go through label_value(). Truncating this too would make "-part1" and
-    # "-part10" collide once c.name is close to 63 chars.
+    # no per-63-char label truncation), unlike the label VALUES below, which
+    # go through label_value().
+    _set(job, "metadata.name", name)
+    _set(job, "metadata.namespace", cfg.namespace)
+    labels = job["metadata"]["labels"]
+    labels[_CAMPAIGN_LABEL] = label_value(c.name)
+    labels[_PIPELINE_LABEL] = label_value(p.id)
+    labels["kueue.x-k8s.io/queue-name"] = cfg.queue
+    if c.priority:
+        labels[_PRIORITY_LABEL] = c.priority
+
+    _set(job, "spec.completions", completions)
+    _set(job, "spec.parallelism", parallelism)
+    _set(job, "spec.maxFailedIndexes", completions)
     if c.suspend:  # intent; scripts/kueue-pause-sync.sh enforces it under Kueue
-        spec = {"suspend": True, **spec}
-    return _job(name, cfg.namespace, labels, spec)
+        _set(job, "spec.suspend", True)
+
+    _set(job, "spec.template.spec.containers[0].image", p.image)
+    prefix = "" if cfg.legacy_layout else f"{cfg.namespace}/"
+    dynamic_env = {
+        "PIPELINE_ID": p.id,
+        "S3_PREFIX": prefix,
+        "PUBLIC_RESULTS_BASE": cfg.public_results_base,
+        "IMAGE_DIGEST": p.image,
+        "MAX_SECONDS": str(p.max_seconds or cfg.max_seconds),
+        "MANIFEST_MAX_BYTES": str(cfg.manifest_max_bytes),
+        "FETCH_MAX_BYTES": str(cfg.fetch_max_bytes),
+    }
+    for e in job["spec"]["template"]["spec"]["containers"][0]["env"]:
+        if e["name"] in dynamic_env:
+            e["value"] = dynamic_env[e["name"]]
+        elif e["name"] in ("S3_ENDPOINT", "S3_BUCKET"):
+            e["valueFrom"]["secretKeyRef"]["name"] = cfg.s3_secret
+
+    _set(job, "spec.template.spec.volumes[0].configMap.name", f"campaign-{name}")
+    _set(job, "spec.template.spec.volumes[1].configMap.name", f"htr-pipeline-{p.id}")
+    _set(
+        job,
+        "spec.template.spec.volumes[2].persistentVolumeClaim.claimName",
+        cfg.data_pvc,
+    )
+    _set(job, "spec.template.spec.volumes[4].secret.secretName", cfg.s3_secret)
+
+    _set(job, "spec.template.spec.initContainers[0].image", p.image)
+    marker = f"/data/warmup/{p.id}.done"
+    _set(
+        job,
+        "spec.template.spec.initContainers[0].command[2]",
+        f"until [ -f {marker} ]; do sleep 10; done",
+    )
+
+    if cfg.runtime_class:
+        _set(job, "spec.template.spec.runtimeClassName", cfg.runtime_class)
+    if cfg.node_selector:
+        _set(job, "spec.template.spec.nodeSelector", dict(cfg.node_selector))
+    if cfg.tolerations:
+        _set(
+            job,
+            "spec.template.spec.tolerations",
+            [dict(t) for t in cfg.tolerations],
+        )
+    return job
 
 
 def campaign_objects(c: Campaign, p: Pipeline, cfg: ConverterConfig) -> list[dict]:

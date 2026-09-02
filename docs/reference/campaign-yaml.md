@@ -139,6 +139,14 @@ by hand it is `make campaigns-apply PRUNE=1`, which passes `kubectl apply
 converter renders — both ConfigMaps and both Jobs — carries that label for
 exactly this reason.
 
+The four objects above are not built up field-by-field in Python: the
+skeletons **are** the Job/ConfigMap, checked in as real YAML at
+[`packages/converter/src/htrflow_converter/manifests/`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/packages/converter/src/htrflow_converter/manifests)
+(`campaign-job.yaml`, `warmup-job.yaml`, `configmap.yaml`,
+`pipeline-configmap.yaml`) with placeholder values (`name: CAMPAIGN`,
+`image: IMAGE`, …) for the fields `render.py` fills in at render time — read
+them there for the exact static shape of what gets applied.
+
 ## Pausing
 
 `suspend: true` on a campaign renders `spec.suspend: true` on its Job — but

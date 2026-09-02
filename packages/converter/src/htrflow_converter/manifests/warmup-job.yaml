@@ -1,0 +1,91 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: WARMUP
+  namespace: NAMESPACE
+  labels:
+    app: htrflow-warmup
+    htrflow.riksarkivet.se/managed-by: converter
+    htrflow.riksarkivet.se/pipeline: PIPELINE
+spec:
+  backoffLimit: 2
+  podFailurePolicy:
+    rules:
+    - action: Ignore
+      onPodConditions:
+      - type: DisruptionTarget
+    - action: FailJob
+      onExitCodes:
+        containerName: warmup
+        operator: In
+        values:
+        - 13
+  activeDeadlineSeconds: 3600
+  template:
+    metadata:
+      labels:
+        app: htrflow-warmup
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: warmup
+        image: IMAGE
+        command:
+        - python
+        - -m
+        - htrflow_batch.warmup
+        env:
+        - name: PIPELINE_PATH
+          value: /config/pipeline.yaml
+        - name: PIPELINE_ID
+          value: PIPELINE
+        - name: CUDA_VISIBLE_DEVICES
+          value: ""
+        - name: HF_HOME
+          value: /data/hf
+        - name: WORKDIR_PATH
+          value: /work
+        - name: HOME
+          value: /work/home
+        - name: TMPDIR
+          value: /work/tmp
+        - name: YOLO_CONFIG_DIR
+          value: /work/ultralytics
+        volumeMounts:
+        - name: pipeline
+          mountPath: /config
+        - name: data
+          mountPath: /data
+        - name: work
+          mountPath: /work
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: "2"
+            memory: 4Gi
+          limits:
+            cpu: "2"
+            memory: 8Gi
+      volumes:
+      - name: pipeline
+        configMap:
+          name: PIPELINE-CONFIGMAP
+      - name: data
+        persistentVolumeClaim:
+          claimName: DATA_PVC
+      - name: work
+        emptyDir:
+          sizeLimit: 4Gi

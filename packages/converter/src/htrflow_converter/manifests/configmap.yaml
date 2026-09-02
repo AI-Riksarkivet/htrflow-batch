@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: CAMPAIGN-CONFIGMAP
+  namespace: NAMESPACE
+  labels:
+    htrflow.riksarkivet.se/managed-by: converter
+    htrflow.riksarkivet.se/campaign: CAMPAIGN
+    htrflow.riksarkivet.se/pipeline: PIPELINE
+data:
+  volumes.txt: ""

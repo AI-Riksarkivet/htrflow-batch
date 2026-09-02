@@ -17,6 +17,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/htrflow_converter"]
+# render.py reads these skeletons at runtime via importlib.resources, so they
+# must ship in the wheel -- pinned explicitly rather than relying on
+# hatchling's default non-.py inclusion (test_packaging.py verifies this).
+artifacts = ["src/htrflow_converter/manifests/*.yaml"]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"

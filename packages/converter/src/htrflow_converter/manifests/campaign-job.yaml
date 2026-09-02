@@ -1,0 +1,171 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: CAMPAIGN
+  namespace: NAMESPACE
+  labels:
+    app: htrflow-batch
+    htrflow.riksarkivet.se/managed-by: converter
+    htrflow.riksarkivet.se/campaign: CAMPAIGN
+    htrflow.riksarkivet.se/pipeline: PIPELINE
+    kueue.x-k8s.io/queue-name: QUEUE
+spec:
+  completionMode: Indexed
+  completions: 1
+  parallelism: 1
+  backoffLimitPerIndex: 3
+  maxFailedIndexes: 1
+  podFailurePolicy:
+    rules:
+    - action: Ignore
+      onPodConditions:
+      - type: DisruptionTarget
+    - action: FailIndex
+      onExitCodes:
+        containerName: wrapper
+        operator: In
+        values:
+        - 13
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: htrflow-batch
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: wrapper
+        image: IMAGE
+        command:
+        - /bin/sh
+        - -c
+        args:
+        - |
+          set -eu
+          line=$(sed -n "$((JOB_COMPLETION_INDEX + 1))p" /campaign/volumes.txt)
+          [ -n "$line" ] || { echo "no volume for index $JOB_COMPLETION_INDEX" >&2; exit 13; }
+          id=${line%%	*}; src=${line#*	}
+          export VOLUME_REF="$id"
+          case "$src" in images:*) export IMAGES="${src#images:}" ;; *) export IIIF_MANIFEST_URL="$src" ;; esac
+          exec python -m htrflow_batch
+        env:
+        - name: PIPELINE_PATH
+          value: /config/pipeline.yaml
+        - name: PIPELINE_ID
+          value: PIPELINE
+        - name: S3_PREFIX
+          value: ""
+        - name: PUBLIC_RESULTS_BASE
+          value: ""
+        - name: IMAGE_DIGEST
+          value: IMAGE
+        - name: HF_HUB_OFFLINE
+          value: "1"
+        - name: MAX_SECONDS
+          value: "0"
+        - name: MANIFEST_MAX_BYTES
+          value: "0"
+        - name: FETCH_MAX_BYTES
+          value: "0"
+        - name: HF_HOME
+          value: /data/hf
+        - name: WORKDIR_PATH
+          value: /work
+        - name: HOME
+          value: /work/home
+        - name: TMPDIR
+          value: /work/tmp
+        - name: YOLO_CONFIG_DIR
+          value: /work/ultralytics
+        - name: AWS_SHARED_CREDENTIALS_FILE
+          value: /secrets/s3/credentials
+        - name: S3_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: S3_SECRET
+              key: S3_ENDPOINT
+              optional: true
+        - name: S3_BUCKET
+          valueFrom:
+            secretKeyRef:
+              name: S3_SECRET
+              key: S3_BUCKET
+        volumeMounts:
+        - name: campaign
+          mountPath: /campaign
+          readOnly: true
+        - name: pipeline
+          mountPath: /config
+        - name: data
+          mountPath: /data
+          readOnly: true
+        - name: work
+          mountPath: /work
+        - name: s3
+          mountPath: /secrets/s3
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: "4"
+            memory: 8Gi
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "4"
+            memory: 16Gi
+            nvidia.com/gpu: "1"
+      volumes:
+      - name: campaign
+        configMap:
+          name: CAMPAIGN-CONFIGMAP
+      - name: pipeline
+        configMap:
+          name: PIPELINE-CONFIGMAP
+      - name: data
+        persistentVolumeClaim:
+          claimName: DATA_PVC
+      - name: work
+        emptyDir:
+          medium: Memory
+          sizeLimit: 2Gi
+      - name: s3
+        secret:
+          secretName: S3_SECRET
+          defaultMode: 288
+      initContainers:
+      - name: warmup-wait
+        image: IMAGE
+        command:
+        - /bin/sh
+        - -c
+        - WARMUP_WAIT_COMMAND
+        volumeMounts:
+        - name: data
+          mountPath: /data
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 50m
+            memory: 64Mi

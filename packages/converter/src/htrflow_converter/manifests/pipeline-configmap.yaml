@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: PIPELINE-CONFIGMAP
+  namespace: NAMESPACE
+  labels:
+    htrflow.riksarkivet.se/managed-by: converter
+    htrflow.riksarkivet.se/pipeline: PIPELINE
+  annotations:
+    htrflow.riksarkivet.se/pipeline-sha256: SHA256
+data:
+  pipeline.yaml: ""

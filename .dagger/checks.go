@@ -172,8 +172,10 @@ func namedDeploymentDoc(content, name string) (string, bool) {
 // renders (B63 Task 5: the CronJob controller is gone, the read API
 // Deployment always renders with a /healthz livenessProbe, and no
 // devstack-labelled object leaks into the prod chart) before validating
-// every render with kubeconform (-strict, unknown CRD kinds skipped).
-// `make helm-template` is the local twin (audit T2/T8).
+// every render, plus the converter's Job/ConfigMap manifest skeletons
+// (packages/converter/src/htrflow_converter/manifests, B63 Task 9), with
+// kubeconform (-strict, unknown CRD kinds skipped). `make helm-template` is
+// the local twin (audit T2/T8).
 func (m *HtrflowBatch) CheckChart(
 	ctx context.Context,
 	// +defaultPath="/"
@@ -248,6 +250,22 @@ func (m *HtrflowBatch) CheckChart(
 		kubeconform = kubeconform.WithFile(path, helm.File("/out/"+name+".yaml"))
 		args = append(args, path)
 	}
+
+	// The converter's Job/ConfigMap skeletons (B63 Task 9: render.py loads
+	// these and patches dynamic fields rather than building nested dicts) are
+	// complete, valid objects on their own, placeholder values included --
+	// validate them as-is so a skeleton edit that breaks the schema (e.g. a
+	// placeholder of the wrong type) fails here instead of only surfacing in
+	// a real render.
+	manifestsDir := source.Directory("packages/converter/src/htrflow_converter/manifests")
+	for _, name := range []string{
+		"campaign-job.yaml", "warmup-job.yaml", "configmap.yaml", "pipeline-configmap.yaml",
+	} {
+		path := "/render/converter-" + name
+		kubeconform = kubeconform.WithFile(path, manifestsDir.File(name))
+		args = append(args, path)
+	}
+
 	out, err := kubeconform.WithExec(args).Stdout(ctx)
 	if err != nil {
 		return "", fmt.Errorf("kubeconform failed: %w", err)
