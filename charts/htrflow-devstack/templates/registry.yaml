@@ -64,6 +64,26 @@ spec:
         {{- else }}
         seccompProfile: { type: RuntimeDefault }
         {{- end }}
+      {{- if and (ne $uid 0) .Values.registry.fixOwnership }}
+      # local-path PVs ignore fsGroup, and a PVC first written by a
+      # root-running registry stays root-owned: every blob upload then 500s.
+      # Fix the ownership on start (idempotent, a no-op once it matches)
+      # instead of asking an operator to chown from a throwaway pod.
+      initContainers:
+        - name: fix-ownership
+          image: {{ .Values.registry.image }}
+          imagePullPolicy: {{ include "htrflow-devstack.pullPolicy" .Values.registry.image }}
+          command: ["sh", "-c", "chown -R {{ $uid }}:{{ $uid }} /var/lib/registry"]
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"], add: ["CHOWN", "FOWNER", "DAC_OVERRIDE"] }
+            seccompProfile: { type: RuntimeDefault }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/registry
+      {{- end }}
       containers:
         - name: registry
           image: {{ .Values.registry.image }}
