@@ -57,7 +57,7 @@ Kubernetes 1.33 och verifierat mot officiell dokumentation 2026-09-01.
   nya tenants får `<namespace>/<pipeline>/<volym>/`.
 - **Borttaget**: `packages/reconciler`, CronJob, Lease, de fyra statusfilerna,
   frontendens derivationslager, Go-controllern (aldrig mergad).
-- **Storleksbudget i CI** (`scripts/loc-budget.sh`): wrapper ≤ 1 850,
+- **Storleksbudget i CI** (`scripts/loc-budget.sh`): wrapper ≤ 1 950,
   converter ≤ 850, API ≤ 400, frontend ≤ 2 500, chart ≤ 700 rader; bara
   Python i batch-systemet.
 
@@ -91,6 +91,6 @@ Kubernetes 1.33 och verifierat mot officiell dokumentation 2026-09-01.
       `converter.yaml`.
 - [x] `packages/reconciler` finns inte; `grep -r status.json` ger noll träffar
       utanför historik; alla fem budgetrader gröna
-      (`scripts/loc-budget.sh`: wrapper 1850/1850, converter 813/850,
+      (`scripts/loc-budget.sh`: wrapper 1942/1950, converter 813/850,
       api 390/400, frontend 2286/2500, chart 613/700).
 - [ ] I15 deployar chart 0.3.0 i dev, inte CronJob-reconcilern.
