@@ -1082,3 +1082,118 @@ $ curl -s http://localhost:30800/api/v1/jobs/htr-batch/e2e-applyrun?limit=1
 
 Lesson for the runbook: when a chart drops a value, upgrade with an explicit
 values file, not `--reuse-values` — the schema is strict on purpose.
+
+## Task 25 — the per-volume budget is the pod's `activeDeadlineSeconds`
+
+`MAX_SECONDS` is gone from the wrapper. The converter renders the same number
+(the pipeline's `max_seconds:`, else `converter.yaml`'s) as
+`spec.template.spec.activeDeadlineSeconds`, and the kubelet enforces it.
+
+### The blocking question: does a deadline kill set `DisruptionTarget`?
+
+If it did, the Job's `Ignore onPodConditions DisruptionTarget` rule would not
+count the failure and the index would retry forever. Probed with a throwaway
+`e2e-deadline` Job (busybox, `activeDeadlineSeconds: 20`, the campaign Job's
+own `podFailurePolicy` and `backoffLimitPerIndex: 3`) on **k3s v1.35.5+k3s1**
+(client and server), 2026-09-02:
+
+```
+status.phase   = Failed
+status.reason  = DeadlineExceeded
+status.message = Pod was active on the node longer than the specified deadline
+conditions     = PodReadyToStartContainers, Initialized, Ready,
+                 ContainersReady, PodScheduled          # no DisruptionTarget
+containerStatuses[wrapper].state.terminated
+               = {exitCode: 143, reason: "Error"}
+pod log        = "caught SIGTERM"                       # graceful, not SIGKILL
+job.status     = failed 4, failedIndexes "0",
+                 conditions Failed/FailureTarget "Job has failed indexes"
+```
+
+**No `DisruptionTarget`.** The `Ignore` rule does not match, the attempts are
+counted, and `backoffLimitPerIndex` bounds them (1 + 3 = 4 pods, then the
+index failed). So the `podFailurePolicy` needs no change — in particular no
+`Count` rule on exit 143, which would also have started counting the genuine
+node drains that are ignored today. The probe Job was deleted afterwards.
+
+### The campaign run
+
+`campaigns/e2e-deadline-60p.yaml` (60 pages) on `pipelines/e2e-slow-v1.yaml`
+(`max_seconds: 60`) → the rendered Job carries `activeDeadlineSeconds: 60`
+and **no** `MAX_SECONDS` env. One Job, three pods:
+
+```
+e2e-…-0-w66sv 12:36:30Z Failed  status.reason=DeadlineExceeded exit=143
+              {"stage": "stream", "permanent": false, "error": "SIGTERM"}
+              resume: 0 done, 60 to process
+e2e-…-0-cwxdv 12:37:41Z Failed  status.reason=DeadlineExceeded exit=143
+              {"stage": "stream", "permanent": false, "error": "SIGTERM"}
+              resume: 21 done, 39 to process
+e2e-…-0-m9cdg 12:39:02Z Succeeded  exit=0  reason=Completed
+              resume: 42 done, 18 to process
+
+job.status = {failed: 2, failedIndexes: "", completedIndexes: "0",
+              succeeded: 1, Complete "Reached expected number of succeeded pods"}
+```
+
+Both deadline kills were counted (`failed: 2`) and neither failed the index;
+resume carried 0 → 21 → 42 → done. Same shape as the old `MAX_SECONDS` probe,
+one layer down.
+
+### What the read API shows
+
+Caught while the deadline-killed pod was still the newest for its index:
+
+```
+$ GET /api/v1/jobs/htr-batch/e2e-deadline-api
+{"state": "active",
+ "reason": "{\"stage\": \"stream\", \"permanent\": false, \"error\": \"SIGTERM\"}"}
+$ kubectl … get pod e2e-deadline-api-0-4tlhc -o jsonpath='{.status.reason}'
+DeadlineExceeded
+```
+
+The wrapper cannot tell a deadline kill from a node drain — both are SIGTERM —
+so `projection._name_the_deadline` swaps that one field using the pod's
+`status.reason`. Fed **that pod's real JSON**, the new projection returns:
+
+```
+{"stage": "stream", "permanent": false, "error": "DeadlineExceeded"}
+```
+
+### Caveat: the images could not be pushed
+
+`make poc-push-arm64 IMAGE_TAG=e2e2` **built** both images natively but could
+not push: the in-cluster registry's data PVC is owned `root:root` while the
+pod now runs as uid 1000, so every blob upload 500s with
+
+```
+filesystem: mkdir /var/lib/registry/docker/registry/v2/repositories/
+  htrflow-batch/_uploads/<uuid>: permission denied
+```
+
+This is the case `charts/htrflow-devstack/values.yaml` already documents
+under `registry.runAsUser` — "a data PVC written by an older root-running
+registry must be chown'ed once (`chown -R 1000:1000 /var/lib/registry` from a
+throwaway pod; local-path ignores fsGroup)" — and it predates this task.
+
+So the cluster run above used the **new rendered manifests** with the
+**previously pushed wrapper image**. That still exercises everything the
+change is about: `activeDeadlineSeconds`, the new `sh -c` prologue, the
+SIGTERM path, the counting, the retry and resume. Under the new manifest the
+old wrapper starts no watchdog either (`MAX_SECONDS` is no longer rendered, so
+`cfg.max_seconds` is 0), so the runtime path is identical. The new image was
+verified locally instead:
+
+```
+$ docker run --rm --entrypoint python 127.0.0.1:30500/htrflow-batch:e2e2 -c …
+imports OK
+has _start_max_seconds_timer: False
+has prepare_writable_dirs   : False
+RunState attrs              : {'stage': 'setup'}
+shutil in main.py           : False
+rc no-env                   : 13
+```
+
+Left to do once the registry PVC is chown'ed: push `e2e2`, repoint
+`pipelines/e2e-slow-v1.yaml` (new digest, or a new pipeline id) and re-run
+`e2e-deadline-60p` to confirm on the new image end to end.
