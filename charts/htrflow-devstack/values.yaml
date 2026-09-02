@@ -54,10 +54,12 @@ registry:
   nodePort: 30500
   image: docker.io/library/registry@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33
   # The registry runs as this uid with a read-only root filesystem. A data
-  # PVC written by an older root-running registry must be chown'ed once
-  # (`chown -R 1000:1000 /var/lib/registry` from a throwaway pod; local-path
-  # ignores fsGroup). 0 = keep running as root.
+  # local-path ignores fsGroup, so a PVC first written by a root-running
+  # registry stays root-owned; with fixOwnership a root init container
+  # chowns /var/lib/registry to runAsUser on every start (idempotent).
+  # 0 = keep running as root (no init container).
   runAsUser: 1000
+  fixOwnership: true
   # Sizing (O18): 60Gi ≈ 5 GPU wrapper images (~10 GB each). The registry
   # has no GC of its own: delete tags over the API, then run
   # `registry garbage-collect /etc/distribution/config.yml` in the pod.

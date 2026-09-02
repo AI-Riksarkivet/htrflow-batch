@@ -164,6 +164,10 @@
         },
         "storage": {
           "$ref": "#/definitions/storage"
+        },
+        "fixOwnership": {
+          "type": "boolean",
+          "description": "Root init container chowns /var/lib/registry to runAsUser on start (local-path ignores fsGroup)."
         }
       }
     },
