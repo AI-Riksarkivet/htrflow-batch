@@ -225,6 +225,30 @@ def test_non_int_canvas_width_does_not_crash(width, expected):
     )
 
 
+@pytest.mark.parametrize(
+    "canvas",
+    [
+        {"items": "x"},  # not a list of annotation pages
+        {"items": [{"items": [{"body": "https://img/1.jpg"}]}]},  # body is a string
+        {"items": [{"items": "x"}]},
+        {"images": [{"resource": "https://img/1.jpg"}]},  # P2, same shape error
+    ],
+)
+def test_malformed_canvas_is_permanent(canvas):
+    """A junk canvas shape used to raise AttributeError/TypeError -> exit 1
+    and three retries of a condition that cannot change (W11 fixed the same
+    class of bug for widths)."""
+    with pytest.raises(ManifestError, match="canvas 1"):
+        pages_from_manifest({"items": [canvas]}, width=2500)
+
+
+def test_manifest_items_that_are_not_a_list_are_permanent():
+    with pytest.raises(ManifestError):
+        pages_from_manifest({"items": "x"}, width=2500)
+    with pytest.raises(ManifestError):
+        pages_from_manifest({"sequences": {"canvases": []}}, width=2500)
+
+
 def test_redact_url():
     from htrflow_batch.iiif import redact_url, redact_urls
 

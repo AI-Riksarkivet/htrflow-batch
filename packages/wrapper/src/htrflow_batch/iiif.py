@@ -200,15 +200,32 @@ def painting_body(canvas: dict) -> dict:
     return {}
 
 
+def _p2_canvases(manifest: dict) -> list:
+    """P2: sequences[0].canvases, tolerant of a manifest that is not shaped
+    like one."""
+    seqs = manifest.get("sequences")
+    first = seqs[0] if isinstance(seqs, list) and seqs else None
+    canvases = first.get("canvases") if isinstance(first, dict) else None
+    return canvases if isinstance(canvases, list) else []
+
+
 def pages_from_manifest(manifest: dict, width: int) -> list[PageRef]:
-    canvases = manifest.get("items") or []
-    if not canvases:  # P2: sequences[0].canvases
-        seqs = manifest.get("sequences") or []
-        canvases = (seqs[0].get("canvases") or []) if seqs else []
+    canvases = manifest.get("items") or _p2_canvases(manifest)
+    if not isinstance(canvases, list):
+        raise ManifestError("manifest items are not a list of canvases")
     pages: list[PageRef] = []
     for i, canvas in enumerate(canvases, start=1):
-        url = _image_url(canvas, width)
-        if url is None:
+        # A junk canvas shape (items that is not a list, an annotation whose
+        # body is a bare URL string) used to raise AttributeError/TypeError
+        # -> exit 1 and three retries of a condition that cannot change.
+        # It is the manifest that is wrong: permanent, like a missing image.
+        try:
+            url = _image_url(canvas, width) if isinstance(canvas, dict) else None
+        except (AttributeError, TypeError, KeyError, IndexError) as e:
+            raise ManifestError(
+                f"canvas {i} is malformed: {type(e).__name__}: {e}"
+            ) from e
+        if not isinstance(url, str) or not url:
             raise ManifestError(f"canvas {i} has no image")
         pages.append(PageRef(index=i, name=f"{i:04d}", image_url=url, canvas=canvas))
     if not pages:
