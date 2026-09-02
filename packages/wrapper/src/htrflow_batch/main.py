@@ -20,6 +20,7 @@ from . import publish
 from .config import Config, ConfigError
 from .iiif import (
     ManifestError,
+    PageRef,
     check_http_url,
     fetch_manifest,
     pages_from_manifest,
@@ -27,7 +28,7 @@ from .iiif import (
 )
 from .logship import LogCapture
 from .store import ResultStore
-from .stream import PageOutcome, consume, fetched
+from .stream import PageOutcome, StreamStats, consume, fetched
 from .synthetic import build_manifest
 
 log = logging.getLogger("htrflow_batch")
@@ -185,92 +186,24 @@ def _main(
         store = ResultStore(cfg)
         capture.start_shipping(store.put_run_log, cfg.log_ship_seconds)
         timer = _start_max_seconds_timer(cfg, env, state, capture)
-        workdir = Path(cfg.workdir)
-        input_dir = workdir / "input"
         client = _http_client()
 
-        # -- stage 1: setup -------------------------------------------------
-        if cfg.images:
-            source_manifest, source_manifest_url = _synthetic_source(cfg, store)
-        else:
-            source_manifest = fetch_manifest(
-                cfg.manifest_url, client, max_bytes=cfg.manifest_max_bytes
-            )
-            source_manifest_url = cfg.manifest_url
-        pages = pages_from_manifest(source_manifest, cfg.max_image_width)
-        if cfg.max_pages:
-            pages = pages[: cfg.max_pages]
-        log.info("[%s] %d pages in manifest", cfg.volume_ref, len(pages))
-
-        # -- stage 2: resume -------------------------------------------------
-        state.stage = "resume"
-        done = store.done_pages() if cfg.resume else set()
-        changed = _changed_sources(store, pages, done) if done else set()
-        if changed:
-            log.info(
-                "[%s] resume: %d done pages have a new source image, reprocessing",
-                cfg.volume_ref,
-                len(changed),
-            )
-            done -= changed
-        todo = [p for p in pages if p.name not in done]
-        log.info(
-            "[%s] resume: %d done, %d to process", cfg.volume_ref, len(done), len(todo)
+        source, source_url, pages = _setup(cfg, client, store, state)
+        todo, done = _resume(cfg, store, pages, state)
+        stats, nbytes = _stream(
+            cfg, client, store, todo, done, process_page_factory, state, stop
         )
-
-        # -- stage 3: streaming loop ------------------------------------------
-        state.stage = "stream"
-        pages_stream = fetched(
-            todo,
-            input_dir,
-            client,
-            lookahead=cfg.lookahead_pages,
-            concurrency=cfg.download_concurrency,
-            max_bytes=cfg.fetch_max_bytes,
-            stop=stop,
-        )
-        try:
-            # The first downloads are in flight, so the model load overlaps
-            # them (docs: wrapper, "Model handling") instead of preceding them.
-            state.stage = "load"  # W9: a model-load failure is not a stream failure
-            factory = process_page_factory or _default_factory
-            process = factory(cfg)
-
-            state.stage = "stream"
-            stats = consume(pages_stream, process, store.upload_page)
-        finally:
-            pages_stream.close()  # never blocks; cancels what is still queued
-        for p in pages:
-            if p.name in done:
-                stats.results[p.name] = PageOutcome(status="skipped")
-
-        # -- stage 4: verify (D8) ---------------------------------------------
-        state.stage = "verify"
-        uploaded = store.uploaded_pages()
-        expected = {p.name for p in pages}
-        missing = sorted(expected - uploaded)
-        failed = sorted(n for n, r in stats.results.items() if r.status == "failed")
-        if missing or failed:
-            raise RuntimeError(f"verify failed: missing={missing} failed={failed}")
-
-        # -- stage 5: publish (iiif.json, pipeline.yaml, manifest.json LAST) --
+        uploaded = _verify(store, pages, stats, state)
         state.stage = "publish"
+        wall = time.monotonic() - t_start
         publish.run(
-            cfg,
-            env,
-            store,
-            source_manifest,
-            source_manifest_url,
-            pages,
-            stats,
-            uploaded,
-            time.monotonic() - t_start,
-            pages_stream.bytes_fetched,
+            cfg, env, store, source, source_url, pages, stats, uploaded, wall, nbytes
         )
+
         # Only clean up on success; on any failure path below, the workdir
         # (downloaded images, local ALTO/PAGE outputs) is intentionally left
         # in place for postmortem inspection.
-        shutil.rmtree(workdir, ignore_errors=True)
+        shutil.rmtree(cfg.workdir, ignore_errors=True)
         if not state.terminating.acquire(blocking=False):
             return EXIT_TRANSIENT  # MAX_SECONDS already won the race
         return EXIT_OK
@@ -289,6 +222,103 @@ def _main(
     finally:
         if timer is not None:
             timer.cancel()
+
+
+def _setup(
+    cfg: Config, client: httpx.Client, store: ResultStore, state: RunState
+) -> tuple[dict, str, list[PageRef]]:
+    """The source manifest — fetched, or synthesized from IMAGES and published
+    under sources/ — its URL, and the ordered pages it enumerates."""
+    state.stage = "setup"
+    if cfg.images:
+        source, url = _synthetic_source(cfg, store)
+    else:
+        source = fetch_manifest(
+            cfg.manifest_url, client, max_bytes=cfg.manifest_max_bytes
+        )
+        url = cfg.manifest_url
+    pages = pages_from_manifest(source, cfg.max_image_width)
+    if cfg.max_pages:
+        pages = pages[: cfg.max_pages]
+    log.info("[%s] %d pages in manifest", cfg.volume_ref, len(pages))
+    return source, url, pages
+
+
+def _resume(
+    cfg: Config, store: ResultStore, pages: list[PageRef], state: RunState
+) -> tuple[list[PageRef], set[str]]:
+    """The pages left to process, and the done ones (skipped in the results).
+    A page is done only when both formats are in S3 and its source image URL
+    is the one the last completed run recorded (W7)."""
+    state.stage = "resume"
+    done = store.done_pages() if cfg.resume else set()
+    done &= {p.name for p in pages}  # S3 can hold pages this run does not cover
+    changed = _changed_sources(store, pages, done) if done else set()
+    if changed:
+        log.info(
+            "[%s] resume: %d done pages have a new source image, reprocessing",
+            cfg.volume_ref,
+            len(changed),
+        )
+        done -= changed
+    todo = [p for p in pages if p.name not in done]
+    log.info(
+        "[%s] resume: %d done, %d to process", cfg.volume_ref, len(done), len(todo)
+    )
+    return todo, done
+
+
+def _stream(
+    cfg: Config,
+    client: httpx.Client,
+    store: ResultStore,
+    todo: list[PageRef],
+    done: set[str],
+    factory: Optional[Callable],
+    state: RunState,
+    stop: threading.Event,
+) -> tuple[StreamStats, int]:
+    """Download ∥ process ∥ upload, never more than LOOKAHEAD_PAGES ahead:
+    the per-page outcomes and the bytes fetched."""
+    state.stage = "stream"
+    pages = fetched(
+        todo,
+        Path(cfg.workdir) / "input",
+        client,
+        lookahead=cfg.lookahead_pages,
+        concurrency=cfg.download_concurrency,
+        max_bytes=cfg.fetch_max_bytes,
+        stop=stop,
+    )
+    try:
+        # The first downloads are in flight, so the model load overlaps them
+        # (docs: wrapper, "Model handling") instead of preceding them.
+        state.stage = "load"  # W9: a model-load failure is not a stream failure
+        process = (factory or _default_factory)(cfg)
+
+        state.stage = "stream"
+        stats = consume(pages, process, store.upload_page)
+    finally:
+        pages.close()  # never blocks; cancels what is still queued
+    for name in done:
+        stats.results[name] = PageOutcome(status="skipped")
+    return stats, pages.bytes_fetched
+
+
+def _verify(
+    store: ResultStore, pages: list[PageRef], stats: StreamStats, state: RunState
+) -> set[str]:
+    """D8: every page has PAGE and ALTO in S3 and none is marked failed. A gap
+    is transient — Kubernetes retries the index and resume converges — and the
+    missing/failed lists go in the termination message. Returns what is stored,
+    which publish reads back for the pages this run skipped."""
+    state.stage = "verify"
+    uploaded = store.uploaded_pages()
+    missing = sorted({p.name for p in pages} - uploaded)
+    failed = sorted(n for n, r in stats.results.items() if r.status == "failed")
+    if missing or failed:
+        raise RuntimeError(f"verify failed: missing={missing} failed={failed}")
+    return uploaded
 
 
 def _start_max_seconds_timer(
