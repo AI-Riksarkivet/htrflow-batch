@@ -8,8 +8,14 @@ fail=0
 # raised for the Task 11 stage split + publish.py, then again for the
 # 2026-09-02 wrapper audit's fixes (items 1-7: redacted resume compare,
 # per-page failure causes, HF-cache classification, malformed-canvas and
-# scheme guards, buffer-level redaction, _Tee.buffer) (B63)
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2000
+# scheme guards, buffer-level redaction, _Tee.buffer) (B63).
+# 2000 -> 2050: the audit's simplifications came out LOC-neutral (they trade
+# duplicated call sites for named seams -- ResultStore._put, Config.root_key,
+# the from_env env table, driver.build_pipeline), and Task 24 then restored
+# ~35 lines of rationale that the 1950 budget had squeezed out of the audit
+# fixes. Comments that state WHY are not what this budget is meant to squeeze;
+# duplication is. (B63)
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2050
 check converter "$(count packages/converter/src -name '*.py')" 1000
 check api       "$(count packages/api/src -name '*.py')" 400
 check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 2500
