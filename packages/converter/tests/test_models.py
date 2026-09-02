@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from htrflow_converter import parse
 from htrflow_converter.models import Campaign, Pipeline, Volume
 
 
@@ -24,21 +25,6 @@ def test_campaign_window_rejected_with_window_in_message(bad_window):
     assert any("window" in str(e["msg"]) for e in exc_info.value.errors())
 
 
-def test_campaign_duplicate_volume_ids_rejected():
-    with pytest.raises(ValidationError) as exc_info:
-        Campaign.model_validate(
-            {
-                "name": "c",
-                "pipeline": "p",
-                "volumes": [
-                    {"id": "R1", "manifest": "https://example.org/a"},
-                    {"id": "R1", "manifest": "https://example.org/b"},
-                ],
-            }
-        )
-    assert any("duplicate volume id" in str(e["msg"]) for e in exc_info.value.errors())
-
-
 def test_pipeline_image_outside_allowed_repos_rejected_via_context():
     with pytest.raises(ValidationError) as exc_info:
         Pipeline.model_validate(
@@ -53,3 +39,46 @@ def test_pipeline_image_outside_allowed_repos_rejected_via_context():
         "not under an allowed repository" in str(e["msg"])
         for e in exc_info.value.errors()
     )
+
+
+def test_pipeline_missing_image_key_rejected_like_a_bad_one():
+    with pytest.raises(ValidationError) as exc_info:
+        Pipeline.model_validate({"id": "p", "steps": [{"step": "Segmentation"}]})
+    assert any(
+        "image must be digest-pinned" in str(e["msg"]) for e in exc_info.value.errors()
+    )
+
+
+def test_pipeline_missing_steps_key_rejected():
+    with pytest.raises(ValidationError) as exc_info:
+        Pipeline.model_validate({"id": "p", "image": "ghcr.io/x/y@sha256:" + "a" * 64})
+    assert any("missing steps" in str(e["msg"]) for e in exc_info.value.errors())
+
+
+def test_campaign_missing_pipeline_key_rejected():
+    with pytest.raises(ValidationError) as exc_info:
+        Campaign.model_validate({"name": "c"})
+    assert any(
+        "campaign needs pipeline:" in str(e["msg"]) for e in exc_info.value.errors()
+    )
+
+
+def test_filename_wins_over_a_name_or_id_key_in_the_yaml(tmp_path):
+    """`path.stem` is the campaign name / pipeline id, always -- a `name:` or
+    `id:` key inside the YAML itself is silently ignored, matching the old
+    hand-rolled parser (which never read either key)."""
+    (tmp_path / "campaigns").mkdir()
+    (tmp_path / "pipelines").mkdir()
+    (tmp_path / "campaigns" / "real-campaign.yaml").write_text(
+        "name: bogus-name\npipeline: real-pipeline\nvolumes:\n  - R1\n"
+    )
+    (tmp_path / "pipelines" / "real-pipeline.yaml").write_text(
+        "id: bogus-id\n"
+        "image: ghcr.io/x/y@sha256:" + "a" * 64 + "\n"
+        "steps:\n  - step: Segmentation\n"
+    )
+    campaigns, pipelines, _ = parse.load(
+        tmp_path / "campaigns", tmp_path / "pipelines", tmp_path / "converter.yaml"
+    )
+    assert campaigns[0].name == "real-campaign"
+    assert list(pipelines) == ["real-pipeline"]

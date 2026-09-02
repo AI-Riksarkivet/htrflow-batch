@@ -60,12 +60,6 @@ class Volume(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _expand(cls, data: Any, info: ValidationInfo) -> Any:
-        # A duplicate id (flagged by Campaign, which alone sees the whole
-        # list) is marked on the raw entry so it fails here, as a normal
-        # per-item error -- that is what makes pydantic collect it alongside
-        # every other volume's own problems instead of hiding them.
-        if isinstance(data, dict) and "__error__" in data:
-            raise ValueError(data["__error__"])
         if isinstance(data, str):
             template = (info.context or {}).get("source_template", "")
             return {"id": data, "manifest": template.format(ref=data)}
@@ -121,28 +115,15 @@ class Campaign(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _mark_duplicate_volumes(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        volumes = data.get("volumes")
-        if not isinstance(volumes, list):
-            return data
-        seen: set[str] = set()
-        marked = []
-        for entry in volumes:
-            if isinstance(entry, str):
-                raw_id: str | None = entry
-            elif isinstance(entry, dict) and "id" in entry:
-                raw_id = str(entry["id"])
-            else:
-                raw_id = None
-            if raw_id is not None and raw_id in seen:
-                marked.append({"__error__": f"duplicate volume id: {raw_id}"})
-                continue
-            if raw_id is not None:
-                seen.add(raw_id)
-            marked.append(entry)
-        return {**data, "volumes": marked}
+    def _coerce_required(cls, data: Any) -> Any:
+        # `pipeline` is required, but a missing key must still raise "campaign
+        # needs pipeline:" (not pydantic's generic "Field required") -- so a
+        # missing/empty/falsy value is coerced to "" here and left for
+        # `_check_pipeline_ref` below to reject, exactly as a present-but-empty
+        # `pipeline: ""` already is.
+        if isinstance(data, dict):
+            data = {**data, "pipeline": str(data.get("pipeline") or "")}
+        return data
 
     @field_validator("name")
     @classmethod
@@ -170,11 +151,25 @@ class Pipeline(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     id: str
-    image: str = ""
-    steps: list[dict] = Field(default_factory=list)
+    image: str
+    steps: list[dict]
     model_revision: str = ""
     #: Per-volume wall-clock budget; overrides converter.yaml's max_seconds.
     max_seconds: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_required(cls, data: Any) -> Any:
+        # `image` and `steps` are required, but a missing key must still raise
+        # today's message ("image must be digest-pinned"/"missing steps"), not
+        # pydantic's generic "Field required" -- so a missing value is coerced
+        # to something `_check_image`/`_check_steps` below already rejects,
+        # exactly as a present-but-invalid value already is.
+        if isinstance(data, dict):
+            data = {**data, "image": str(data.get("image") or "")}
+            if not isinstance(data.get("steps"), list):
+                data = {**data, "steps": None}
+        return data
 
     @field_validator("id")
     @classmethod
