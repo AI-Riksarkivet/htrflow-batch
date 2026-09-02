@@ -390,6 +390,10 @@ H. Scale, cost and operations (archive scale: thousands of volumes per campaign,
 - Docs: `docs/development/security.md` (policy table: rule → where enforced → message), `campaign-yaml.md`, `chart.md`, the ai-dev story I04/I15 cross-reference (note for Morgan; ai-dev docs are his to commit).
 - Tiny commits; `make ci`, budgets, kubeconform (Kyverno CRD kinds skipped — `-ignore-missing-schemas` is already set), zensical.
 
+### Task 23: Wrapper audit fixes (2026-09-02)
+
+**Brief:** `docs/superpowers/audits/2026-09-02-wrapper-audit.md` — the handoff is the requirements. Items 1–3 are fixes (resume compares redacted vs raw URLs; page failure causes never logged or surfaced; SIGTERM cleanup can exceed the 30 s grace period → `terminationGracePeriodSeconds: 120` on the Job template, golden regenerated, `failure-handling.md` noted). Item 4: verify `LocalEntryNotFoundError`'s MRO inside the built image and classify (transient) or document, pinned by a test. Items 5–7: junk manifest shapes → `ManifestError` (permanent); redaction applied in `LogCapture._append` (covers print/foreign handlers) with a test; manifest image URLs scheme-checked; `_Tee.buffer` forwarded; tmpfs worst-case bound documented. Zero functionality loss; one logical step per commit with its regression test; wrapper budget ≤ 1950 (if the fixes need more, raise to 2000 and say so — audit fixes are not growth to trim elsewhere); verification block at the end of the audit file must be run before claiming done.
+
 ## Self-review
 - Spec coverage: D1–D2 → Task 2; D3–D5 → Tasks 1–2, 6; D6–D7 → Task 3; D8 → Task 4, 7; D9 → Tasks 2, 5; D10 → Task 8 asserts; D11 untouched (open); D12 → Tasks 5–6; §5 → Task 5; §6 → each task + Task 8; §7 → Task 8.
 - Types: `JobSummary/JobDetail/VolumeView` shapes identical in Task 4 (Python) and Task 7 (Zod). `volumes.txt` line format identical in Task 1 (`source_line`), Task 2 (`args`), Task 3 (`IMAGES` parsing), Task 4 (ConfigMap read).
