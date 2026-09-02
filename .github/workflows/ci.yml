@@ -35,7 +35,8 @@ jobs:
           cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
           version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
 
-      # Non-test line budgets (spec §1): wrapper 1850, converter 850
+      # Non-test line budgets (spec §1): wrapper 1950 (raised from 1850 for
+      # the Task 11 stage split + publish.py), converter 850
       # (raised from 800 for render's --out safety check and the
       # bool/zero guards), api 400, frontend 2500, chart 700.
       - name: LOC budget
