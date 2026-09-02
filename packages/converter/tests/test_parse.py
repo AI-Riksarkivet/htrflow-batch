@@ -214,3 +214,45 @@ def test_campaign_suspend_defaults_false_and_parses_true(tmp_path):
     campaign.write_text(campaign.read_text() + "\nsuspend: true\n")
     campaigns, _, _ = _load(root)
     assert next(c for c in campaigns if c.name == "kyrk").suspend is True
+
+
+@pytest.mark.parametrize("bad", ["0", "-1", "true", "1.5"])
+def test_campaign_window_must_be_a_positive_non_bool_integer(tmp_path, bad):
+    """`bool` is an `int` in Python, so `window: true` used to render
+    `parallelism: 1` instead of failing validation; `window: 0` would render a
+    Job that never starts a pod."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    campaign = root / "campaigns" / "kyrk.yaml"
+    campaign.write_text(campaign.read_text() + f"\nwindow: {bad}\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert any(
+        "window must be a positive integer" in p for p in exc_info.value.problems
+    ), exc_info.value.problems
+
+
+@pytest.mark.parametrize("bad", ["true", "0"])
+def test_pipeline_max_seconds_rejects_bool_and_zero(tmp_path, bad):
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    pipeline = root / "pipelines" / "demo-v1.yaml"
+    pipeline.write_text(pipeline.read_text() + f"\nmax_seconds: {bad}\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert any(
+        "max_seconds must be a positive integer" in p for p in exc_info.value.problems
+    ), exc_info.value.problems
+
+
+@pytest.mark.parametrize("key", ["window", "max_seconds"])
+def test_converter_config_rejects_a_non_positive_window_or_max_seconds(tmp_path, key):
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + f"\n{key}: 0\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert any(f"converter.yaml: {key}" in p for p in exc_info.value.problems), (
+        exc_info.value.problems
+    )

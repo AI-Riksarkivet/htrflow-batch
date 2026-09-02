@@ -61,7 +61,7 @@ class ConverterConfig(BaseModel):
 
     namespace: str = "htr-batch"
     queue: str = "htr-batch"
-    window: int = 20
+    window: int = Field(default=20, ge=1)
     s3_secret: str = "htr-batch-s3"
     data_pvc: str = "htr-test-data"
     runtime_class: str = "nvidia"
@@ -70,7 +70,7 @@ class ConverterConfig(BaseModel):
     public_results_base: str = ""
     legacy_layout: bool = False
     source_template: str = "https://lbiiif.riksarkivet.se/arkis!{ref}/manifest"
-    max_seconds: int = 21600
+    max_seconds: int = Field(default=21600, ge=1)
     manifest_max_bytes: int = 16 * _MiB
     fetch_max_bytes: int = 64 * _MiB
     allowed_image_repos: list[str] = Field(default_factory=list)

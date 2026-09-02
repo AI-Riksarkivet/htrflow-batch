@@ -27,6 +27,11 @@ def _fail(problems: list[str], msg: str) -> None:
     problems.append(msg)
 
 
+def _positive_int(v: object) -> bool:
+    # `bool` is an `int` in Python: `window: true` is a typo, not a window of 1.
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 1
+
+
 def _safe_name(stem: str, problems: list[str], what: str) -> str | None:
     if not _NAME_RE.match(stem):
         return _fail(problems, f"{stem}: unsafe {what}: {stem!r}")
@@ -132,7 +137,7 @@ def _parse_campaign(
         problems.extend(local)
         return None
     window = doc.get("window")
-    if window is not None and not (isinstance(window, int) and window >= 1):
+    if window is not None and not _positive_int(window):
         return _fail(problems, f"{name}: window must be a positive integer: {window!r}")
     return Campaign(
         name=name,
@@ -175,7 +180,7 @@ def _parse_pipeline(
             problems.extend(step_problems)
             return None
     ms = doc.get("max_seconds")
-    if ms is not None and not (isinstance(ms, int) and ms >= 1):
+    if ms is not None and not _positive_int(ms):
         return _fail(problems, f"{pid}: max_seconds must be a positive integer: {ms!r}")
     return Pipeline(
         id=pid, image=image, steps=steps, model_revision=revision, max_seconds=ms
