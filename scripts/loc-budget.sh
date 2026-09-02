@@ -17,7 +17,12 @@ fail=0
 # duplication is. (B63)
 check wrapper   "$(count packages/wrapper/src -name '*.py')" 2050
 check converter "$(count packages/converter/src -name '*.py')" 1000
-check api       "$(count packages/api/src -name '*.py')" 400
+# 400 -> 420: Task 25 moved the per-volume budget to the pod's
+# activeDeadlineSeconds, and only the pod's status.reason can then tell a
+# deadline kill from a node drain -- projection._name_the_deadline is where
+# that distinction is made, with the rationale that stops it being deleted
+# again as "a pointless string swap". (B63)
+check api       "$(count packages/api/src -name '*.py')" 420
 check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 2500
 check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 700
 exit $fail
