@@ -1,8 +1,12 @@
-# Read-only status API (D8, B63): GET /api/v1/jobs[/…] over the Indexed Jobs
-# a campaign renders to (packages/web). Computes everything live from the
-# Kubernetes API — there is no status document written anywhere any more;
-# served on :8081, proxied by the viewer's nginx at /api/ — never exposed
-# outside the cluster directly (ClusterIP only, no NodePort).
+# The web front (D8/D19, B63 Task 17): one Deployment serving the campaign
+# browser at /, Universal Viewer at /uv.html and the read-only status API at
+# /api/v1/jobs[/…] over the Indexed Jobs a campaign renders to
+# (packages/web). Everything is computed live from the Kubernetes API —
+# there is no status document written anywhere any more.
+# Open a volume directly with:
+#   http://<node>:{{ .Values.web.nodePort }}/uv.html#?manifest=<PUBLIC_RESULTS_BASE>/<pipeline>/<volume>/iiif.json
+# Until Task 17 an nginx image (uv4-viewer) served the site and proxied
+# /api/ here; the image, its ConfigMap and the proxy are gone.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -61,15 +65,15 @@ spec:
       labels: { app: htrflow-web }   # NetworkPolicy selector (network.yaml, this file)
     spec:
       serviceAccountName: htrflow-web
-      # The one exception to this chart's "no SA token" pattern (viewer,
-      # batch/warm-up Jobs all set this false): the API IS a Kubernetes API
+      # The one exception to this chart's "no SA token" pattern (the
+      # batch/warm-up Jobs set this false): this pod IS a Kubernetes API
       # client — it needs the token to authenticate get/list/watch calls to
       # the apiserver. Everything else about it is Pod Security restricted.
       automountServiceAccountToken: true
       securityContext:
         {{- include "htrflow-batch.restrictedPod" 1000 | nindent 8 }}
       containers:
-        - name: api
+        - name: web
           image: {{ .Values.web.image }}
           imagePullPolicy: {{ include "htrflow-batch.pullPolicy" .Values.web.image }}
           securityContext:
@@ -114,12 +118,14 @@ metadata:
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
     app: htrflow-web
 spec:
-  type: ClusterIP
+  # The browser's way in (audit S4 headers are sent by the app itself now).
+  type: NodePort
   selector: { app: htrflow-web }
   ports:
     - name: http
       port: 8081
       targetPort: 8081
+      nodePort: {{ .Values.web.nodePort }}
 {{- if .Values.network.enabled }}
 ---
 {{- /*
@@ -133,8 +139,10 @@ router matches egress against AFTER service DNAT.
     {{- with (index .subsets 0) }}{{ $api = printf "%s/32" (index .addresses 0).ip }}{{ end }}
   {{- end }}
 {{- end }}
-# Read API: ingress from the viewer only; egress to DNS and the apiserver
-# only (it never touches S3 or anything else in-cluster).
+# Web front: browsers in (NodePort traffic arrives SNAT'd from the node, so
+# the node range must be in network.web.ingressCidrs); egress to DNS and the
+# apiserver only — it never touches S3 or anything else in-cluster, and the
+# results it links to are fetched by the browser, not by this pod.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -147,7 +155,9 @@ spec:
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
-        - podSelector: { matchLabels: { app: uv4-viewer } }
+        {{- range .Values.network.web.ingressCidrs }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
       ports:
         - { port: 8081 }
   egress:

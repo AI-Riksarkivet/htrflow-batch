@@ -10,8 +10,7 @@
     "queue",
     "web",
     "security",
-    "network",
-    "viewer"
+    "network"
   ],
   "definitions": {
     "cidr": {
@@ -179,11 +178,15 @@
       "additionalProperties": false,
       "required": [
         "image",
+        "nodePort",
         "resources"
       ],
       "properties": {
         "image": {
           "$ref": "#/definitions/imageRef"
+        },
+        "nodePort": {
+          "$ref": "#/definitions/nodePort"
         },
         "resources": {
           "$ref": "#/definitions/resources"
@@ -267,7 +270,7 @@
         "clusterCidrs",
         "nodeCidrs",
         "apiServer",
-        "viewer"
+        "web"
       ],
       "properties": {
         "enabled": {
@@ -314,7 +317,7 @@
             }
           }
         },
-        "viewer": {
+        "web": {
           "type": "object",
           "additionalProperties": false,
           "required": [
@@ -323,43 +326,6 @@
           "properties": {
             "ingressCidrs": {
               "$ref": "#/definitions/cidrList"
-            }
-          }
-        }
-      }
-    },
-    "viewer": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "enabled",
-        "image",
-        "nodePort",
-        "defaultManifest",
-        "securityHeaders"
-      ],
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "image": {
-          "$ref": "#/definitions/imageRef"
-        },
-        "nodePort": {
-          "$ref": "#/definitions/nodePort"
-        },
-        "defaultManifest": {
-          "type": "string"
-        },
-        "securityHeaders": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "enabled"
-          ],
-          "properties": {
-            "enabled": {
-              "type": "boolean"
             }
           }
         }

@@ -24,7 +24,7 @@ but only when the schema is evaluated; this fires from any template.
 {{- end }}
 
 {{/*
-Control-plane images (viewer, api) must be digest-pinned: a tag can be
+Control-plane images (web.image) must be digest-pinned: a tag can be
 re-pushed by anyone with registry write access (audit S3).
 security.allowTagImages opens the PoC iteration loop. Usage:
 include "htrflow-batch.requireDigest" (list $ <ref> "<values key>")

@@ -1,10 +1,11 @@
 {{- if .Values.network.enabled }}
 {{- /*
 Egress allowlists per pod role (docs: development/security, D14) plus a
-namespace-wide default deny with explicit ingress allows for the pods that
-serve something (viewer, the read API). Nothing may reach a batch/warm-up
-Job. The read API's own ingress/egress policy is rendered by templates/web.yaml
-(it needs the same apiserver-CIDR lookup as this file but nothing else here).
+namespace-wide default deny with an explicit ingress allow for the one pod
+that serves something (the web front). Nothing may reach a batch/warm-up
+Job. The web front's own ingress/egress policy is rendered by
+templates/web.yaml (it needs the same apiserver-CIDR lookup as this file but
+nothing else here).
 
 kube-router (k3s) evaluates egress AFTER service DNAT, so ClusterIP targets
 are matched by their backing pod (podSelector) or, for the apiserver, by the
@@ -118,31 +119,4 @@ spec:
     - to: {{ toJson $anyPublic }}
       ports:
         - { port: 443 }
-{{- if .Values.viewer.enabled }}
----
-# Viewer: browsers in (NodePort traffic arrives SNAT'd from the node); egress
-# to the read API only (proxied at /api/).
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: htr-viewer
-  namespace: {{ .Release.Namespace }}
-  labels: {{- $labels | nindent 4 }}
-spec:
-  podSelector:
-    matchLabels: { app: uv4-viewer }
-  policyTypes: [Ingress, Egress]
-  ingress:
-    - from:
-        {{- range .Values.network.viewer.ingressCidrs }}
-        - ipBlock: { cidr: {{ . | quote }} }
-        {{- end }}
-      ports:
-        - { port: 8080 }
-  egress:
-    - to:
-        - podSelector: { matchLabels: { app: htrflow-web } }
-      ports:
-        - { port: 8081 }
-{{- end }}
 {{- end }}

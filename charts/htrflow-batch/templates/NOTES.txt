@@ -14,10 +14,8 @@ htrflow-batch {{ .Chart.Version }} installed.
 - NetworkPolicies rendered{{ if .Values.network.defaultDeny }} with a namespace default deny{{ end }} (values: network.*).
   The S3 Secret ({{ .Values.s3.existingSecret }}) needs a `credentials` key in AWS ini format (docs: getting-started/deploy).
 {{- end }}
-{{- if .Values.viewer.enabled }}
-- Viewer: NodePort {{ .Values.viewer.nodePort }}; reads campaigns from the read API at /api/v1/jobs.
-{{- end }}
-- Read API: Deployment htrflow-web, Service htrflow-web:8081 (in-cluster only, proxied by the viewer at /api/).
+- Web front: Deployment htrflow-web on NodePort {{ .Values.web.nodePort }} — campaign browser at /,
+  Universal Viewer at /uv.html, read API at /api/v1/jobs. One image, no proxy (0.4.0).
 {{- if .Values.security.allowTagImages }}
 - WARNING security.allowTagImages=true: control-plane images are tag-pinned and re-pulled on every rollout. PoC only.
 {{- end }}

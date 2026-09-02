@@ -22,7 +22,7 @@ because they have nothing to do with what the platform actually runs
 outside any chart) — bundling PoC scaffolding with the production chart's
 values and size budget was the wrong shape. `devStack.allowTagImages` moved
 the other way, into htrflow-batch's `security.allowTagImages`, because it
-gates htrflow-batch's own control-plane images (`viewer.image`, `api.image`),
+gates htrflow-batch's own control-plane image (`web.image`),
 not anything here.
 
 **No git daemon.** The original `devstack-gitdaemon.yaml` served a bare
@@ -62,7 +62,7 @@ helm install htr-devstack charts/htrflow-devstack -n htr-batch --create-namespac
 `make install-devstack` wraps this with the repo-root `.env` constants
 (`.env.example` has the PoC defaults). See
 [docs/getting-started/deploy.md](../../docs/getting-started/deploy.md) for
-the full PoC replay flow (wrapper/viewer/api image builds, warm-up, the
+the full PoC replay flow (wrapper/web image builds, warm-up, the
 smoke campaign).
 
 ## Adopting hand-applied resources
@@ -93,7 +93,7 @@ kubectl -n kube-system label daemonset nvidia-device-plugin app.kubernetes.io/ma
   `rustfs.init`) creates `s3.bucket`, applies the bucket policy and CORS,
   idempotently.
 - **Anonymous read is split** (audit X14): `<pipeline>/<volume>/*` and
-  `sources/*` are always anonymous (the viewer fetches them directly);
+  `sources/*` are always anonymous (the browser fetches them directly);
   `status/attempts.json`, `status/validation.json`, `status/volumes.json`,
   `status/failures/*` and `status/warmup/*` always need credentials;
   `status/logs/*` is anonymous only while `rustfs.publicLogs=true` (default

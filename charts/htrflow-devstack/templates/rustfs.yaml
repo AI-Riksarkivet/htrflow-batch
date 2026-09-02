@@ -130,7 +130,7 @@ spec:
       nodePort: {{ .Values.rustfs.console.nodePort }}
     {{- end }}
 ---
-# RustFS: S3 API from anywhere (Jobs, the read API's viewer-facing origin,
+# RustFS: S3 API from anywhere (Jobs, the browser-facing origin,
 # the init Job, browsers via the NodePort); the console port only when it is
 # enabled. No egress. Namespace default-deny is rendered by
 # charts/htrflow-batch (network.defaultDeny) — this policy is what lets
