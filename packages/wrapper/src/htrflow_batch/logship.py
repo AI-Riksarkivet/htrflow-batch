@@ -155,7 +155,11 @@ class LogCapture:
             return
         # S6: here, not only in RedactingFormatter — bare print()s and handlers
         # htrflow (or an earlier basicConfig) installed reach the world-readable
-        # run log through the tee too. 0.6 us/write, 8.8 with a URL; ~240 lines/h.
+        # run log through the tee too. Per write(), which covers every reachable
+        # case: print() writes the whole line in one call (the separator and the
+        # newline are their own writes) and StreamHandler writes message plus
+        # terminator in one, so a URL never straddles two writes.
+        # 0.6 us/write, 8.8 with a URL; ~240 lines/h.
         s = redact_urls(s)
         with self._lock:
             self._chunks.append(s)
