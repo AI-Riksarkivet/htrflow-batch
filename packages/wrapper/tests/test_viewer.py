@@ -1,7 +1,7 @@
 import pytest
 
 from htrflow_batch.iiif import pages_from_manifest
-from htrflow_batch.viewer import build_viewer_manifest, parse_alto_dims
+from htrflow_batch.viewer import build_viewer_manifest, parse_alto_dims_bytes
 
 ALTO = """<?xml version="1.0" encoding="UTF-8"?>
 <alto xmlns="http://www.loc.gov/standards/alto/ns-v4#">
@@ -12,14 +12,14 @@ ALTO = """<?xml version="1.0" encoding="UTF-8"?>
 def test_parse_alto_dims(tmp_path):
     p = tmp_path / "0001.xml"
     p.write_text(ALTO)
-    assert parse_alto_dims(p) == (2500, 3538)
+    assert parse_alto_dims_bytes(p.read_bytes()) == (2500, 3538)
 
 
 def test_parse_alto_dims_missing(tmp_path):
     p = tmp_path / "bad.xml"
     p.write_text("<alto/>")
     with pytest.raises(ValueError):
-        parse_alto_dims(p)
+        parse_alto_dims_bytes(p.read_bytes())
 
 
 def test_parse_alto_dims_page_priority_over_nested_printspace(tmp_path):
@@ -34,7 +34,7 @@ def test_parse_alto_dims_page_priority_over_nested_printspace(tmp_path):
 </alto>"""
     p = tmp_path / "nested.xml"
     p.write_text(alto_nested)
-    assert parse_alto_dims(p) == (2500, 3538)
+    assert parse_alto_dims_bytes(p.read_bytes()) == (2500, 3538)
 
 
 def test_build_viewer_manifest(sample_manifest, cfg):

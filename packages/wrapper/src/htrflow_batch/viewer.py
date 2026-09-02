@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from pathlib import Path
 
 from .config import Config
 from .iiif import PageRef, painting_body
@@ -22,13 +21,6 @@ def parse_alto_dims_bytes(data: bytes) -> tuple[int, int]:
     if candidates:
         return candidates[0]
     raise ValueError("no WIDTH/HEIGHT element in ALTO data")
-
-
-def parse_alto_dims(path: Path) -> tuple[int, int]:
-    try:
-        return parse_alto_dims_bytes(Path(path).read_bytes())
-    except ValueError:
-        raise ValueError(f"no WIDTH/HEIGHT element in {path}") from None
 
 
 def _language_map(value: object) -> dict:
