@@ -76,8 +76,8 @@ devStack RustFS, its init Job and the registry — meets Pod Security
   `seccompProfile: RuntimeDefault`.
 - `readOnlyRootFilesystem`. Writable paths are explicit: the tmpfs workdir
   (`/work`) carries `HOME`, `TMPDIR` and `YOLO_CONFIG_DIR` — where ultralytics
-  settings, triton/inductor JIT caches and temp files land — and the wrapper
-  creates them before any model is built. The read API gets an emptyDir at
+  settings, triton/inductor JIT caches and temp files land — and both Jobs'
+  `sh -c` prologue `mkdir -p`s them before the wrapper is exec'd. The read API gets an emptyDir at
   `/tmp`; the viewer `/tmp` and `/var/cache/nginx`.
 - `automountServiceAccountToken: false` on every pod except the **read
   API**, which is the one pod that legitimately holds an API credential — a

@@ -45,14 +45,6 @@ def test_warmup_writes_no_marker_on_failure(tmp_path):
     assert not (tmp_path / "warmup" / "demo-v1.done").exists()
 
 
-def test_warmup_creates_the_writable_dirs_first(tmp_path):
-    env = _env(tmp_path)
-    seen = {}
-    main(env, load=lambda _: seen.update({k: Path(env[k]).is_dir() for k in env}))
-    assert seen["HOME"] and seen["TMPDIR"] and seen["YOLO_CONFIG_DIR"]
-    assert seen["HF_HOME"]
-
-
 def test_warmup_refuses_to_run_offline(tmp_path):
     """Offline warm-up cannot download anything: a mis-wired Job must fail
     loudly (permanent) rather than "succeed" and gate the pipeline open."""

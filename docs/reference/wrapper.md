@@ -46,7 +46,7 @@ The per-volume wall-clock budget is not a wrapper setting: the campaign Job
 renders it as the pod's `activeDeadlineSeconds` (`converter.yaml`'s
 `max_seconds`, or the pipeline's own). At the deadline the kubelet SIGTERMs
 the wrapper, which takes the `143` path below.
-| `HOME`, `TMPDIR`, `YOLO_CONFIG_DIR` | *(unset)* | Created at start when set — the Job points them into the tmpfs workdir because the root filesystem is read-only |
+| `HOME`, `TMPDIR`, `YOLO_CONFIG_DIR` | *(unset)* | The Job points them into the tmpfs workdir because the root filesystem is read-only, and its `sh -c` prologue creates them before exec'ing the wrapper |
 | `HF_HOME`, `HF_HUB_OFFLINE` | *(unset)* | Set by the Job (`/data/hf`, `1`): models come from the read-only cache, never from HF Hub |
 
 Results land at `{S3_PREFIX}/{PIPELINE_ID}/{VOLUME_REF}/…` (`Config.volume_prefix`).

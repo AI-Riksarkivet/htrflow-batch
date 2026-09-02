@@ -50,11 +50,12 @@ spec:
         - /bin/sh
         - -c
         args:
-        - "set -eu\nline=$(sed -n \"$((JOB_COMPLETION_INDEX + 1))p\" /campaign/volumes.txt)\n\
-          [ -n \"$line\" ] || { echo \"no volume for index $JOB_COMPLETION_INDEX\"\
-          \ >&2; exit 13; }\nid=${line%%\t*}; src=${line#*\t}\nexport VOLUME_REF=\"\
-          $id\"\ncase \"$src\" in images:*) export IMAGES=\"${src#images:}\" ;; *)\
-          \ export IIIF_MANIFEST_URL=\"$src\" ;; esac\nexec python -m htrflow_batch\n"
+        - "set -eu\nmkdir -p \"$HOME\" \"$TMPDIR\" \"$YOLO_CONFIG_DIR\"\nline=$(sed\
+          \ -n \"$((JOB_COMPLETION_INDEX + 1))p\" /campaign/volumes.txt)\n[ -n \"\
+          $line\" ] || { echo \"no volume for index $JOB_COMPLETION_INDEX\" >&2; exit\
+          \ 13; }\nid=${line%%\t*}; src=${line#*\t}\nexport VOLUME_REF=\"$id\"\ncase\
+          \ \"$src\" in images:*) export IMAGES=\"${src#images:}\" ;; *) export IIIF_MANIFEST_URL=\"\
+          $src\" ;; esac\nexec python -m htrflow_batch\n"
         env:
         - name: PIPELINE_PATH
           value: /config/pipeline.yaml

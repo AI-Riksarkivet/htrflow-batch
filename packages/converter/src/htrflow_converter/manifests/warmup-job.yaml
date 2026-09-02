@@ -39,9 +39,16 @@ spec:
       - name: warmup
         image: IMAGE
         command:
-        - python
-        - -m
-        - htrflow_batch.warmup
+        - /bin/sh
+        - -c
+        # Same prologue as the campaign Job (see campaign-job.yaml), plus
+        # HF_HOME: this is the one pod that mounts the cache PVC read-write,
+        # and a fresh volume has no /data/hf yet.
+        args:
+        - |
+          set -eu
+          mkdir -p "$HOME" "$TMPDIR" "$YOLO_CONFIG_DIR" "$HF_HOME"
+          exec python -m htrflow_batch.warmup
         env:
         - name: PIPELINE_PATH
           value: /config/pipeline.yaml
