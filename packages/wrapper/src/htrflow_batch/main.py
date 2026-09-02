@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -12,26 +11,24 @@ import sys
 import threading
 import time
 import traceback
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Callable, Mapping, Optional
 
 import httpx
 
+from . import publish
 from .config import Config, ConfigError
 from .iiif import (
     ManifestError,
     check_http_url,
     fetch_manifest,
     pages_from_manifest,
-    redact_url,
     redact_urls,
 )
 from .logship import LogCapture
 from .store import ResultStore
-from .stream import PageOutcome, StreamStats, consume, fetched
+from .stream import PageOutcome, consume, fetched
 from .synthetic import build_manifest
-from .viewer import build_viewer_manifest, parse_alto_dims, parse_alto_dims_bytes
 
 log = logging.getLogger("htrflow_batch")
 
@@ -130,18 +127,6 @@ def _default_factory(cfg: Config):
         return driver.process_page(pipeline, image_path, out_dir)
 
     return process
-
-
-def _results_json(stats: StreamStats) -> dict:
-    """Per-page outcomes for manifest.json; error strings lose URL secrets (S6)."""
-    return {
-        n: {
-            "status": r.status,
-            "seconds": round(r.seconds, 2),
-            **({"error": redact_urls(r.error)} if r.error else {}),
-        }
-        for n, r in sorted(stats.results.items())
-    }
 
 
 def main(
@@ -270,82 +255,17 @@ def _main(
 
         # -- stage 5: publish (iiif.json, pipeline.yaml, manifest.json LAST) --
         state.stage = "publish"
-        dims = {}
-        out_dir = Path(cfg.workdir) / "outputs"
-        for p in pages:
-            alto = (
-                sorted((out_dir / "alto").glob(f"**/{p.name}*.xml"))
-                if (out_dir / "alto").exists()
-                else []
-            )
-            if alto:
-                try:
-                    dims[p.name] = parse_alto_dims(alto[0])
-                except (ValueError, ET.ParseError):
-                    pass
-            elif p.name in uploaded:
-                # resumed/skipped: no local ALTO this run, but a prior run
-                # published one — fetch it so the viewer manifest stays complete.
-                try:
-                    data = store.get_bytes(f"alto/{p.name}.xml")
-                    dims[p.name] = parse_alto_dims_bytes(data)
-                except (ValueError, ET.ParseError):
-                    pass
-                except Exception:
-                    log.warning("could not read stored ALTO for %s", p.name)
-        if len(dims) < len(pages):
-            log.warning("viewer manifest covers %d/%d pages", len(dims), len(pages))
-        if not dims:
-            log.warning(
-                "[%s] no ALTO dims resolved for any page; "
-                "iiif.json not published, viewer_url will 404",
-                cfg.volume_ref,
-            )
-        if dims:
-            store.put_json(
-                "iiif.json", build_viewer_manifest(cfg, source_manifest, pages, dims)
-            )
-        pipeline_text = Path(cfg.pipeline_path).read_text()
-        store.put_text("pipeline.yaml", pipeline_text, "text/yaml")
-
-        wall = time.monotonic() - t_start
-        ok_pages = [n for n, r in stats.results.items() if r.status == "ok"]
-        viewer_url = (
-            f"{cfg.public_results_base.rstrip('/')}/{cfg.volume_prefix}/iiif.json"
-        )
-        store.put_json(
-            "manifest.json",
-            {
-                "volume": cfg.volume_ref,
-                "pipeline_id": cfg.pipeline_id,
-                "pipeline_sha256": hashlib.sha256(pipeline_text.encode()).hexdigest(),
-                "pipeline_yaml": pipeline_text,
-                "htrflow_version": _htrflow_version(),
-                "image_digest": env.get("IMAGE_DIGEST", "unknown"),
-                "pages": len(pages),
-                "results": _results_json(stats),
-                "source_manifest": source_manifest_url,
-                # W7: which source image each page came from, so a resume
-                # after an edited images: list / re-ordered manifest can tell
-                # a stale page from a done one (_changed_sources). Redacted
-                # (S6): the bucket is public and tokens rotate anyway.
-                "page_sources": {p.name: redact_url(p.image_url) for p in pages},
-                "canvas_ids": {p.name: _canvas_id(p.canvas) for p in pages},
-                "max_image_width": cfg.max_image_width,
-                "bytes_fetched": pages_stream.bytes_fetched,
-                "wall_seconds": round(wall, 1),
-                "gpu_stall_seconds": round(stats.stall_seconds, 1),
-                "pages_per_second": round(len(ok_pages) / wall, 3) if wall else 0,
-                "viewer_url": viewer_url,
-            },
-        )
-        log.info(
-            "[%s] COMPLETE %d pages (%d processed) in %.1fs, viewer: %s",
-            cfg.volume_ref,
-            len(pages),
-            len(ok_pages),
-            wall,
-            viewer_url,
+        publish.run(
+            cfg,
+            env,
+            store,
+            source_manifest,
+            source_manifest_url,
+            pages,
+            stats,
+            uploaded,
+            time.monotonic() - t_start,
+            pages_stream.bytes_fetched,
         )
         # Only clean up on success; on any failure path below, the workdir
         # (downloaded images, local ALTO/PAGE outputs) is intentionally left
@@ -409,11 +329,6 @@ def _synthetic_source(cfg: Config, store: ResultStore) -> tuple[dict, str]:
     return doc, manifest_id
 
 
-def _canvas_id(canvas: dict) -> str | None:
-    cid = canvas.get("id") or canvas.get("@id")
-    return cid if isinstance(cid, str) else None
-
-
 def _changed_sources(store: ResultStore, pages, done: set[str]) -> set[str]:
     """Done pages whose image URL differs from the one the previous completed
     run recorded in manifest.json (W7). No previous manifest, or one without
@@ -427,12 +342,3 @@ def _changed_sources(store: ResultStore, pages, done: set[str]) -> set[str]:
         for p in pages
         if p.name in done and p.name in sources and sources[p.name] != p.image_url
     }
-
-
-def _htrflow_version() -> str:
-    try:
-        from .driver import htrflow_version
-
-        return htrflow_version()
-    except Exception:
-        return "unknown"
