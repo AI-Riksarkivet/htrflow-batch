@@ -142,7 +142,7 @@ Breaking:
 | Change | What to do |
 |---|---|
 | The viewer Deployment, Service and ConfigMap are gone; `htrflow-web` is on the NodePort. | Translate your values file: drop the whole `viewer` block, move its `nodePort` to `web.nodePort` and its `image` to nothing (build one `htrflow-web` image with `make build-web`), rename `network.viewer` to `network.web`. The schema is strict, so an untranslated file is rejected at upgrade time rather than silently ignored. |
-| The old viewer objects are not pruned by an upgrade if they were applied by a *different* release. | They are Helm-owned here, so `helm upgrade` deletes them. Check with `kubectl -n <namespace> get deploy,svc,cm -l app.kubernetes.io/instance=<release>`. |
+| **The upgrade fails with `nodePort: Invalid value: 30800: provided port is already allocated`.** Helm creates the new `htrflow-web` Service before deleting the retired viewer Service, and they want the same NodePort. | Delete the old Service once, then upgrade: `kubectl -n <namespace> delete svc uv4-viewer`. Everything else the viewer left (its Deployment, ConfigMap and NetworkPolicy) is removed by the upgrade itself. |
 
 ### 0.3.0 — 2026-09-01 (B63: campaigns as Indexed Jobs)
 
