@@ -309,7 +309,9 @@ H. Scale, cost and operations (archive scale: thousands of volumes per campaign,
 
 - [ ] Step 1: test failing. - [ ] Step 2: implement. - [ ] Step 3: green, budget (converter ≤ 1000), zensical. - [ ] Step 4: Commit `feat(converter): htrflow-campaigns init writes the campaigns repo template (B63)`.
 
-### Task 17: One image for API + UI (viewer image and proxy retired)
+### Task 17: One image for API + UI (viewer image and proxy retired) — named `htrflow-web`
+
+**Naming (Morgan, 2026-09-02: "uv4-viewer … is badly named … this is a bit more than that"):** the merged deployable is the system's web front — the campaign browser at `/` and `/log`, Universal Viewer at `/uv.html`, the read API at `/api/v1/…`. Name it **`htrflow-web`** everywhere in this task: image `riksarkivet/htrflow-web` (publish matrix, `.dagger/publish.go`, `renovate.json`), Deployment/Service `htrflow-web`, chart values `web.*` (replacing `api.*` and `viewer.*`), NodePort value `web.nodePort`, Python package directory `packages/web` with module `htrflow_web` (`git mv` `packages/api` → `packages/web`, rename the import everywhere, `pyproject.toml` workspace member, `.docker/htrflow-web.dockerfile`), `scripts/loc-budget.sh` row `web` (budget 500), tests directory, docs (`docs/reference/chart.md`, `frontend.md`, `getting-started/deploy.md`, `local-k3s.md`, README files), the B63 story text, and the memory of the old names only in history pages. `uv4-viewer` and `htrflow-api` must not survive outside `docs/audits`, `docs/superpowers`, `docs/features`, decision/test logs (acceptance grep). Do the rename as its own small commits BEFORE the static-serving change so each step is reviewable.
 
 **Why:** three images and a proxy where two images will do. The read API serves the SvelteKit build and the Universal Viewer assets as static files: no nginx image, no `/api/` proxy, no `config.js` ConfigMap, one Deployment + Service fewer. Zero feature loss: same URLs (`/`, `/log`, `/uv.html`, `/api/v1/…`), same security headers, same CSP.
 
