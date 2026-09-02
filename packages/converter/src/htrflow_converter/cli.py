@@ -272,6 +272,9 @@ def _apply(
         if kubectl.run(*second):
             return 1
         if dry_run:
+            # The pause sync's commands depend on what the cluster answers,
+            # so there is nothing truthful to print for it here.
+            print("(--dry-run: the Kueue pause sync was skipped)", file=sys.stderr)
             return 0
         return _pause_sync(kubectl, out / "campaigns", pause_wait)
 
