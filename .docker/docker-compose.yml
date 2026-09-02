@@ -9,8 +9,9 @@
 #     `docker build -f .docker/htrflow-batch.dockerfile -t
 #     riksarkivet/htrflow-batch:latest .` from repo root) so it picks up
 #     current packages/wrapper/ source (thumbnails + search-service in iiif.json).
-#   web: built from this branch by compose itself (`--build`), so nothing has
-#     to be tagged by hand any more.
+#   web: `make compose-smoke` builds it from this branch and tags it
+#     `riksarkivet/htrflow-web:latest` before starting this service (the
+#     service itself is image-only — see the comment on it below).
 #
 # Constants (${HTR_*}) come from the repo-root `.env` (defaults in
 # `.env.example`): the Makefile exports them, and every reference below
@@ -106,21 +107,19 @@ services:
     # ["python", "-m", "htrflow_batch"] (see .docker/htrflow-batch.dockerfile).
 
   web:
+    # NO `build:` here on purpose. `dagger call compose-test` mounts only
+    # this directory as the compose project, so a build context of `..`
+    # cannot resolve (it looked for /.docker/.docker/htrflow-web.dockerfile);
+    # the wrapper above gets away with a build only because compose-test
+    # never starts it. So this service is image-only: registry-pullable, or
+    # tagged locally first — which is what `make compose-smoke` does.
     image: riksarkivet/htrflow-web:latest
-    build:
-      context: ..
-      dockerfile: .docker/htrflow-web.dockerfile
-    # Site only: there is no apiserver in a compose stack, so the console
-    # script (which builds a kube Reader at startup) would exit. create_app
-    # takes the reader lazily, so passing None serves /, /log and /uv.html
-    # and leaves /api/v1 broken — which is exactly what this stack checks.
-    command:
-      - python
-      - -c
-      - |
-        import uvicorn
-        from htrflow_web.app import create_app
-        uvicorn.run(create_app(None), host="0.0.0.0", port=8081)
+    # Site only: a compose stack has no apiserver, so the read API would have
+    # nothing to read and the console script would exit on a missing
+    # kubeconfig. In this mode /, /log and /uv.html are served and /api/v1/…
+    # answers 503 — the site is exactly what this stack checks.
+    environment:
+      HTRFLOW_WEB_SITE_ONLY: "1"
     ports:
       - "8080:8081"
     depends_on:

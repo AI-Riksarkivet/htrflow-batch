@@ -6,7 +6,10 @@ import (
 	"fmt"
 )
 
-// ComposeUp loads .docker/docker-compose.yml and starts the stack on the Dagger engine
+// ComposeUp loads .docker/docker-compose.yml and starts the stack on the
+// Dagger engine. Only .docker/ is mounted, which is the compose project root
+// — so any service this brings up must be image-only (a `build:` context of
+// `..` cannot resolve here); see the note on the `web` service.
 func (m *HtrflowBatch) ComposeUp(
 	// +defaultPath="/"
 	// +optional
@@ -19,8 +22,10 @@ func (m *HtrflowBatch) ComposeUp(
 }
 
 // ComposeTest starts the compose stack and verifies the web image serves
-// uv.html. The service is built from .docker/htrflow-web.dockerfile and runs
-// site-only (no apiserver in a compose stack), listening on 8081.
+// uv.html. It needs riksarkivet/htrflow-web:latest to be pullable (see
+// ComposeUp); the service runs site-only — no apiserver in a compose stack —
+// and listens on 8081. `make compose-smoke` is the local twin that builds
+// and tags the image from this branch first.
 func (m *HtrflowBatch) ComposeTest(
 	ctx context.Context,
 	// +defaultPath="/"
