@@ -5,9 +5,10 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from htrflow_converter import render
-from htrflow_converter.models import Campaign, Volume
+from htrflow_converter.models import Campaign, ConverterConfig, Volume
 from htrflow_converter.parse import load
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -139,18 +140,20 @@ def test_campaign_objects_for_10001_volumes_makes_two_jobs_and_configmaps():
     assert cm2["metadata"]["name"] == "campaign-kyrk-part2"
 
 
-def test_legacy_layout_flips_s3_prefix():
+def test_s3_prefix_is_always_the_namespace():
+    """The namespaced layout is the only layout (B63 Task 15): `S3_PREFIX` is
+    the campaign's namespace, unconditionally. `converter.yaml` forbids extra
+    keys, so a config still carrying the retired layout flag is rejected
+    rather than silently ignored."""
     _, demo, cfg = _kyrk()
     v = [Volume(id="v1", manifest="https://x/y")]
     c = Campaign(name="kyrk", pipeline="demo-v1", volumes=v)
+    job = render.campaign_objects(c, demo, cfg)[1]
+    env = job["spec"]["template"]["spec"]["containers"][0]["env"]
+    assert next(e["value"] for e in env if e["name"] == "S3_PREFIX") == "htr-test/"
 
-    def s3_prefix(cfg_):
-        job = render.campaign_objects(c, demo, cfg_)[1]
-        env = job["spec"]["template"]["spec"]["containers"][0]["env"]
-        return next(e["value"] for e in env if e["name"] == "S3_PREFIX")
-
-    assert s3_prefix(cfg) == f"{cfg.namespace}/"
-    assert s3_prefix(cfg.model_copy(update={"legacy_layout": True})) == ""
+    with pytest.raises(ValidationError):
+        ConverterConfig(namespace="htr-test", retired_flag=True)
 
 
 def test_priority_adds_the_kueue_priority_class_label():

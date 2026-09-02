@@ -230,7 +230,6 @@ class ConverterConfig(BaseModel):
     node_selector: dict[str, str] = Field(default_factory=dict)
     tolerations: list[dict] = Field(default_factory=list)
     public_results_base: str = ""
-    legacy_layout: bool = False
     source_template: str = "https://lbiiif.riksarkivet.se/arkis!{ref}/manifest"
     max_seconds: int = Field(default=21600, ge=1)
     manifest_max_bytes: int = 16 * _MiB
