@@ -342,6 +342,18 @@ H. Scale, cost and operations (archive scale: thousands of volumes per campaign,
 
 - [ ] Step 1: `PageRow` tests failing. - [ ] Step 2: derive once, render twice. - [ ] Step 3: green + budget. - [ ] Step 4: Commit `refactor(frontend): one derived page model for the run viewer (B63)`.
 
+### Task 20: Small fixes — CI source exclude-list, `PartiallyFailed` phase, "load more" survives polls
+
+**Why:** three real defects found during execution, each small and zero-loss.
+
+**A. Dagger test source: exclude, don't include.** `.dagger/main.go` builds the test container from an `Include` allow-list (`pyproject.toml`, `uv.lock`, `packages/`, `scripts/`, `.docker/`, `Makefile`, `examples/`) — twice a test passed vacuously in CI because its input was not on the list. Replace with the full repo directory minus an `Exclude` list derived from what `.gitignore` names plus the obviously irrelevant (`.git`, `.worktrees`, `.venv`, `node_modules`, `frontend/node_modules`, `site`, `.superpowers`, `frontend/coverage`, `**/__pycache__`, `.pytest_cache`); apply the same to the checks container if it has its own list. Test: a new converter test that reads `docs/reference/campaign-yaml.md` (a path NOT on the old list) exists and passes under `make ci` — proving docs are now visible to tests; document in `docs/development/ci.md` that the container sees the whole repo minus the exclude list.
+
+**B. `PartiallyFailed` phase.** `packages/api/src/htrflow_api/projection.py::_phase`: when the Job's `Failed` condition is true AND `completedIndexes` is non-empty → `"PartiallyFailed"`; `Failed` only when nothing completed. `frontend/src/lib/api.ts` `jobPhaseSchema` gains the value; the card's phase chip shows "partially failed" with the warning colour (not the error colour); `docs/reference/frontend.md` phase list and `docs/how-it-works/campaigns.md` updated. Tests: projection (both branches), Zod parse, chip rendering.
+
+**C. "Load more" survives polls.** `frontend/src/lib/components/CampaignCard.svelte`: a poll re-fetches as many pages as are currently loaded (`limit = max(PAGE, volumes.length)` rounded up to the page size, `offset 0`) instead of collapsing to the first page; "load more" appends as today; `counts.total` still ends paging. Test: after loading two pages a poll keeps all rows; a new volume count is reflected. Frontend budget ≤ 2500.
+
+- [ ] Step 1: failing tests for A, B, C. - [ ] Step 2: implement. - [ ] Step 3: `make ci`, `bun run test|check|build`, budgets, zensical. - [ ] Step 4: Commits `fix(ci): dagger test source is the repo minus an exclude list (B63)`, `feat(api): PartiallyFailed phase for campaigns with some failed indexes (B63)`, `fix(frontend): loaded volume pages survive a poll (B63)`.
+
 ## Self-review
 - Spec coverage: D1–D2 → Task 2; D3–D5 → Tasks 1–2, 6; D6–D7 → Task 3; D8 → Task 4, 7; D9 → Tasks 2, 5; D10 → Task 8 asserts; D11 untouched (open); D12 → Tasks 5–6; §5 → Task 5; §6 → each task + Task 8; §7 → Task 8.
 - Types: `JobSummary/JobDetail/VolumeView` shapes identical in Task 4 (Python) and Task 7 (Zod). `volumes.txt` line format identical in Task 1 (`source_line`), Task 2 (`args`), Task 3 (`IMAGES` parsing), Task 4 (ConfigMap read).
