@@ -732,13 +732,13 @@ def test_failure_path_stops_the_downloader(env, cfg, s3, monkeypatch):
     """W10: after an early failure the queued downloads must not keep the
     interpreter alive (ThreadPoolExecutor workers are joined at exit)."""
     seen = {}
-    real = main_mod.fetched
+    real = main_mod.PageStream
 
     def spy(*a, **k):
         seen["stop"] = k.get("stop")
         return real(*a, **k)
 
-    monkeypatch.setattr(main_mod, "fetched", spy)
+    monkeypatch.setattr(main_mod, "PageStream", spy)
 
     def factory(c):
         raise OSError("model load failed")

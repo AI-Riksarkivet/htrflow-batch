@@ -1,5 +1,5 @@
-"""The streaming loop (docs: wrapper): ``fetched()`` starts downloading the
-moment it is called — so a model load overlaps the first pages — and
+"""The streaming loop (docs: wrapper): ``PageStream(...)`` starts downloading
+the moment it is constructed — so a model load overlaps the first pages — and
 ``consume()`` iterates it, processing and uploading each page as it lands."""
 
 from __future__ import annotations
@@ -143,12 +143,6 @@ class PageStream:
             self._abandon(e)
         finally:
             self.close()
-
-
-#: Start the bounded-lookahead downloads:
-#: ``fetched(pages, dest_dir, client, lookahead=…)`` hands back the running
-#: stream to iterate (see ``PageStream``).
-fetched = PageStream
 
 
 def consume(

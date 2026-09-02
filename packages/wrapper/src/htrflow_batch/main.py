@@ -29,7 +29,7 @@ from .iiif import (
 )
 from .logship import LogCapture
 from .store import ResultStore
-from .stream import PageOutcome, StreamStats, consume, fetched
+from .stream import PageOutcome, PageStream, StreamStats, consume
 from .synthetic import build_manifest
 
 log = logging.getLogger("htrflow_batch")
@@ -291,7 +291,7 @@ def _stream(
     """Download ∥ process ∥ upload, never more than LOOKAHEAD_PAGES ahead:
     the per-page outcomes and the bytes fetched."""
     state.stage = "stream"
-    stream = fetched(
+    stream = PageStream(
         todo,
         Path(cfg.workdir) / "input",
         client,

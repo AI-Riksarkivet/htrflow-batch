@@ -11,11 +11,11 @@ lock with hashes) and its runtime deps `httpx`, `boto3`.
 **The wrapper is a streaming driver (D16), not a CLI shell-out.** It imports
 htrflow as a library — `Pipeline.from_config()` once at startup (models load
 once) — then runs a producer–consumer pipeline with three concurrent roles
-(`stream.fetched()` ∥ `stream.consume()`):
+(`stream.PageStream` ∥ `stream.consume()`):
 
 | Role | What it does |
 |---|---|
-| **downloader pool** (`stream.fetched()`: threads, `DOWNLOAD_CONCURRENCY` in flight, never more than `LOOKAHEAD_PAGES` submitted ahead of the consumer) | fetches pages, submitted in manifest order, into tmpfs; per-page retry with backoff; refuses anything that is not a raster image; hands over each page in manifest order (submission order: the consumer waits on the head of the window) |
+| **downloader pool** (`stream.PageStream`: threads, `DOWNLOAD_CONCURRENCY` in flight, never more than `LOOKAHEAD_PAGES` submitted ahead of the consumer) | fetches pages, submitted in manifest order, into tmpfs; per-page retry with backoff; refuses anything that is not a raster image; hands over each page in manifest order (submission order: the consumer waits on the head of the window) |
 | **consumer** (single thread — the GPU serializes work anyway) | `pipeline.run(document)` per page, in order, the moment that page is available; a page's lookahead slot frees only when the consumer is done with it (image deleted), which is what bounds tmpfs; holds each page's result/exception directly (fixes the [known upstream flaw](decision-log.md#known-upstream-flaw-the-design-must-absorb) at the source) |
 | **uploader** | ships each page's PAGE XML then ALTO to S3 the moment htrflow writes them (deterministic keys, blind overwrite); rolling-deletes the source image once its page is done |
 
@@ -61,7 +61,7 @@ Every stage name can appear in the termination log.
    **both** exist. Pages whose recorded `page_sources` URL differs from the
    manifest's are reprocessed (`RESUME=false` forces everything). Skipped
    pages are never downloaded.
-3. **load** — `stream.fetched()` starts the downloads, **then**
+3. **load** — `stream.PageStream(...)` starts the downloads, **then**
    `Pipeline.from_config($PIPELINE_PATH)`: model load overlaps the first
    pages' downloads, so startup GPU-idle is `max(model_load,
    first_page_download)`, not the sum (see [Model handling](#model-handling)).
@@ -293,7 +293,7 @@ Two distinct per-Job costs — don't conflate them:
 | **load** (`HF_HOME` → GPU) | per Job, always — `Pipeline.from_config()` instantiates step models eagerly (verified: `steps.py` builds models at construction; TrOCR `__init__` calls `from_pretrained`); every `pipeline.run(page)` reuses them | ~30–60 s, amortized to noise at volume granularity |
 
 The streaming driver overlaps the load with the first pages' downloads
-(`stream.fetched()` first — it submits its first window on the calling
+(`stream.PageStream(...)` first — it submits its first window on the calling
 thread — *then* `from_config()`), so startup GPU-idle is
 `max(model_load, first_page_download)`, not the sum.
 
