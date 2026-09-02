@@ -70,7 +70,9 @@ def _duplicate_volume_ids(doc: dict, stem: str, problems: list[str]) -> None:
             if isinstance(entry, dict)
             else None
         )
-        if vid is not None and str(vid) in seen:
+        if vid is None:
+            continue  # pydantic reports the missing id; nothing to compare
+        if str(vid) in seen:
             problems.append(f"{stem}: duplicate volume id: {vid}")
         seen.add(str(vid))
 
