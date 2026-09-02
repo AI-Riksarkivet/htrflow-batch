@@ -14,7 +14,7 @@ from .config import Config
 from .iiif import PageRef, redact_url, redact_urls
 from .store import ResultStore
 from .stream import StreamStats
-from .viewer import build_viewer_manifest, parse_alto_dims, parse_alto_dims_bytes
+from .viewer import build_viewer_manifest, parse_alto_dims_bytes
 
 log = logging.getLogger("htrflow_batch")
 
@@ -29,20 +29,21 @@ def alto_dims(
     dims: dict[str, tuple[int, int]] = {}
     alto_dir = Path(cfg.workdir) / "outputs" / "alto"
     for p in pages:
-        alto = sorted(alto_dir.glob(f"**/{p.name}*.xml")) if alto_dir.exists() else []
-        if alto:
-            try:
-                dims[p.name] = parse_alto_dims(alto[0])
-            except (ValueError, ET.ParseError):
-                pass
+        local = sorted(alto_dir.glob(f"**/{p.name}*.xml")) if alto_dir.exists() else []
+        if local:
+            data = local[0].read_bytes()
         elif p.name in uploaded:
             try:
                 data = store.get_bytes(f"alto/{p.name}.xml")
-                dims[p.name] = parse_alto_dims_bytes(data)
-            except (ValueError, ET.ParseError):
-                pass
             except Exception:
                 log.warning("could not read stored ALTO for %s", p.name)
+                continue
+        else:
+            continue
+        try:
+            dims[p.name] = parse_alto_dims_bytes(data)
+        except (ValueError, ET.ParseError):
+            pass  # an ALTO that will not parse is left out, not fatal
     if len(dims) < len(pages):
         log.warning("viewer manifest covers %d/%d pages", len(dims), len(pages))
     if not dims:
