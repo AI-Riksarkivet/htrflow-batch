@@ -19,11 +19,11 @@ lists what the module exposes on your checkout.
 | `build` | production wrapper image from `.docker/htrflow-batch.dockerfile` |
 | `build-web` | the web image from `.docker/htrflow-web.dockerfile` (CPU-only, no torch): bun-builds the campaign browser SPA from `frontend/`, clones the Riksarkivet `universalviewer4` fork at the pinned `UV4_REF`, applies `.docker/uv4-uv-html.patch` and builds it with npm (UV's own toolchain), then puts both in the read API's `/app/static` — UV first, the SPA on top, so `/` is the SPA and `/uv.html` is UV. The corp CA goes in as the optional `ca` build secret |
 | `scan` | Trivy scan of the built wrapper image (table output, exits non-zero on findings — not wired into `ci.yml`, since the CUDA/ubuntu base will never be alpine-clean) |
-| `scan-web` | Trivy scan of the built web image (HIGH/CRITICAL, `--ignore-unfixed`) — CPU-only slim base, a clean gate is realistic here so `ci.yml` runs it on every push and PR; `make scan-web` is the local twin |
+| `scan-web` | Trivy scan of the built web image (HIGH/CRITICAL, `--ignore-unfixed`) — a slim CPU-only base, so a clean gate is realistic; `make scan-web` is the local twin. It builds the image first, UV clone and npm build included, which is why `ci.yml` gates it the same way as the wrapper scan |
 | `scan-json` | same as `scan` (the wrapper), JSON output, never fails the call |
 | `publish-docker` | tests, builds, and pushes an image (`--component wrapper\|web`) to a registry; validates the tag against `packages/wrapper/pyproject.toml`'s version unless `--skip-validation` |
 | `compose-up` | starts the `.docker/docker-compose.yml` stack as a dagger Service |
-| `compose-test` | brings up the compose stack and curls the web service's `uv.html`; compose builds that image itself |
+| `compose-test` | brings up the compose stack and curls the web service's `uv.html`. The module mounts only `.docker/` as the compose project, so the `web` service is image-only (`riksarkivet/htrflow-web:latest` must be pullable); `make compose-smoke` is the local path that builds and tags it from the branch first |
 
 The converter is not built by any dagger function — it is a pure Python
 package, installed with `uvx --from
@@ -71,9 +71,13 @@ apply`: render a campaigns repo, `kubectl apply` its `pipelines/` then
 - **`ci.yml`** ("Tests") — on push to `main` and on pull requests: `dagger
   call checks`, `dagger call test`, and the `scripts/loc-budget.sh` line
   budgets (`SKIP_FRONTEND=1` until B63 Task 7 brings the frontend back under
-  its 2 500-line budget); a separate job runs `dagger call scan-web` on
-  every push/PR and `dagger call scan` (the wrapper, ~10 GB CUDA base) on
-  pushes to `main` and manual runs only. The dagger action is SHA-pinned and
+  its 2 500-line budget); a separate job runs `dagger call scan-web` and
+  `dagger call scan` (the wrapper) on pushes to `main` and manual runs
+  only. Both scans have to build their image first and both builds are
+  expensive — the wrapper's ~10 GB CUDA base, and the web image's UV clone
+  + npm build + bun build — so the pull-request path runs neither. A PR
+  that changes a dockerfile gets its scan when it lands on `main`, before
+  any image is published from it. The dagger action is SHA-pinned and
   its engine `version` is pinned to `engineVersion` in `dagger.json`.
 - **`publish.yml`** — manual (`workflow_dispatch`) only, one explicit tag
   per run, a matrix over the components (wrapper, web): it refuses

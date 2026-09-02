@@ -89,12 +89,20 @@ publish:
 compose-up:
 	cd .docker && docker compose up -d
 
+# NOTE: requires riksarkivet/htrflow-web:latest to be registry-pullable —
+# the dagger compose module mounts only .docker/, so the web service cannot
+# build from the repo root and is image-only. That image is not published
+# yet, so on this branch use `make compose-smoke`, which builds and tags it
+# locally first.
 compose-test:
 	dagger call compose-test
 
+# The compose `web` service is image-only (see the note on compose-test), so
+# build it from this branch and tag it under the name compose expects first.
 compose-smoke:
+	$(MAKE) build-web WEB_IMAGE=riksarkivet/htrflow-web:latest
 	cd .docker && docker compose up --build --abort-on-container-exit --exit-code-from wrapper wrapper && \
-	docker compose up -d --build web && \
+	docker compose up -d web && \
 	curl -fsS -o /dev/null http://localhost:8080/uv.html && \
 	docker compose down -v
 

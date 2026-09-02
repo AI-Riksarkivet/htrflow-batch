@@ -35,17 +35,19 @@ jobs:
           cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
           version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
 
-      # Non-test line budgets (spec §1): wrapper 1950 (raised from 1850 for
-      # the Task 11 stage split + publish.py), converter 1000 (raised from
-      # 850 for the `apply` subcommand, which absorbed the Makefile target
-      # and scripts/kueue-pause-sync.sh), api 400, frontend 2500, chart 700.
+      # Non-test line budgets (spec §1); the current numbers and the reason
+      # for each raise live in scripts/loc-budget.sh itself.
       - name: LOC budget
         run: scripts/loc-budget.sh
 
   # Trivy (digest-pinned in .dagger/main.go) over the images this repo
-  # builds, blocking on CRITICAL (audit T6/X16). The read API image is
-  # slim and scanned on every run; the wrapper image carries the ~10 GB
-  # CUDA base and is scanned on pushes to main and manual runs only.
+  # builds, blocking on CRITICAL (audit T6/X16). Both scans build their
+  # image first and both builds are expensive — the wrapper carries the
+  # ~10 GB CUDA base, and since B63 Task 17 the web image clones and
+  # npm-builds Universal Viewer and bun-builds the SPA — so both run on
+  # pushes to main and manual runs only, not on every pull request. A PR
+  # changing a dockerfile therefore gets its scan when it lands; nothing a
+  # PR can change reaches a cluster before that.
   scan:
     name: Vulnerability scan (Trivy)
     runs-on: ubuntu-latest
@@ -53,6 +55,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Scan the web image (CRITICAL blocks)
+        if: github.event_name != 'pull_request'
         uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77 # v8.4.1
         with:
           verb: call

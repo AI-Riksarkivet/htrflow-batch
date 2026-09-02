@@ -74,12 +74,19 @@ make compose-smoke   # foreground: runs the wrapper to completion, then
 make compose-down
 ```
 
-`make compose-smoke` builds the wrapper image fresh, waits for it to exit,
-builds and brings up the web image, and curls
+`make compose-smoke` builds the web image and tags it
+`riksarkivet/htrflow-web:latest`, builds the wrapper image fresh and waits
+for it to exit, then brings the web service up and curls
 `http://localhost:8080/uv.html` — this is the verified default local check.
-`dagger call compose-test` drives the same stack through dagger. The web
-service runs site-only there (`create_app(None)`): a compose stack has no
-apiserver, so `/api/v1` is not part of this level.
+The compose `web` service is deliberately image-only: `dagger call
+compose-test` drives the same stack but mounts only `.docker/` as the
+compose project, where a `build:` context of `..` cannot resolve — so it
+needs `riksarkivet/htrflow-web:latest` to be registry-pullable, and that
+image is not published yet. Use `compose-smoke` on this branch.
+
+The web service runs site-only in both (`HTRFLOW_WEB_SITE_ONLY=1`): a
+compose stack has no apiserver, so `/api/v1/…` answers 503 by design and the
+site is what this level checks.
 
 **Chart:** `make helm-template` lints and renders both charts
 (`charts/htrflow-batch`, `charts/htrflow-devstack`) on their defaults and on
