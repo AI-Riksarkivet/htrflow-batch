@@ -87,7 +87,7 @@ Source root: [`packages/wrapper/src/htrflow_batch/`](https://github.com/carpelan
 | `store.py` | `ResultStore` — deterministic S3 keys, explicit content types, XML parsed before upload, `page` then `alto`, `done_pages()` (both formats), bounded boto timeouts, the run-log key, `put_json_at` (bucket-root keys, e.g. `sources/`) |
 | `synthetic.py` | `build_manifest` — the synthetic P3 manifest for `IMAGES` volumes |
 | `viewer.py` | `build_viewer_manifest` — IIIF v3 manifest with ALTO annotation links (`iiif.json`) |
-| `logship.py` | `LogCapture` — tees stdout/stderr, redacts URLs, ships the buffer to S3 on an interval ([Live run log](../how-it-works/live-run-log.md)) |
+| `logship.py` | `LogCapture` — tees stdout/stderr, redacts every URL appended to the buffer (`_append`) and every URL in the wrapper's own log records (`RedactingFormatter`), ships the buffer to S3 on an interval ([Live run log](../how-it-works/live-run-log.md)) |
 | `publish.py` | The publish stage: `alto_dims` (viewer dimensions from the ALTO), `run_manifest` (the `manifest.json` body), `run` (`iiif.json`, `pipeline.yaml`, `manifest.json` last) |
 | `main.py` | The stage machine (`_setup`/`_resume`/`_stream`/`_verify`, then `publish.run`), the SIGTERM and `MAX_SECONDS` handlers, `IMAGES` wiring, `_changed_sources` |
 | `warmup.py` | The warm-up entrypoint: `Pipeline.from_config()` fills `HF_HOME`, then drops the `<pipeline_id>.done` marker |

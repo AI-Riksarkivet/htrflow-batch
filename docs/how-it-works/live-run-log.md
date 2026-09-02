@@ -33,8 +33,11 @@ sequenceDiagram
   to one in-memory buffer, in arrival order. It is installed **before**
   logging is configured, so the root `StreamHandler` binds the tee —
   htrflow's own `logging` output and its bare `print`s both land in the
-  buffer. The handler's formatter redacts URLs (no userinfo, no query) on
-  the way through.
+  buffer. Every chunk appended to the buffer is URL-redacted (no userinfo,
+  no query) as it arrives, so a bare `print` and a handler a library
+  installed itself are covered too — not only the wrapper's own log lines,
+  which the root handler's `RedactingFormatter` also redacts on the way to
+  `kubectl logs`.
 - Once the `ResultStore` exists, `start_shipping(upload, LOG_SHIP_SECONDS)`
   uploads immediately (so a retried volume replaces the previous attempt's
   log before the reader's first poll), then a daemon thread re-uploads the

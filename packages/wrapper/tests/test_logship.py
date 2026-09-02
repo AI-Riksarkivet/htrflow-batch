@@ -247,3 +247,23 @@ def test_attached_logging_redacts_urls():
     text = capture.text()
     assert "https://h/img.jpg" in text
     assert "SECRET" not in text and "u:p@" not in text
+
+
+def test_prints_and_foreign_handlers_are_redacted():
+    """S6: RedactingFormatter only covers the handler attach_logging installs.
+    A bare print(), and a handler a library installs on the tee itself, both
+    reach the buffer through _Tee — so the redaction has to happen there: the
+    shipped run log is world-readable."""
+    capture = LogCapture.install()
+    logger = logging.getLogger("test_logship_foreign")
+    handler = logging.StreamHandler()  # no RedactingFormatter, like htrflow's
+    try:
+        print("see https://u:p@h/img.jpg?token=SECRET now")
+        logger.addHandler(handler)
+        logger.error("GET https://h/x?token=OTHER")
+    finally:
+        logger.removeHandler(handler)
+        capture.finish()
+    text = capture.text()
+    assert "SECRET" not in text and "OTHER" not in text and "u:p@" not in text
+    assert "https://h/img.jpg" in text and "https://h/x" in text
