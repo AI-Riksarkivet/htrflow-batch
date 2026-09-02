@@ -38,6 +38,11 @@ SECURITY_HEADERS = {
 #: Where the image puts the built site (.docker/htrflow-web.dockerfile).
 DEFAULT_STATIC_DIR = "/app/static"
 
+#: FastAPI, unlike Starlette's own Route, does not add HEAD to a GET route —
+#: and an unhandled HEAD would fall through to the static mount below and
+#: 404. Every route here is safe under HEAD (the body is simply dropped).
+GET_HEAD = ["GET", "HEAD"]
+
 
 def static_dir_from_env() -> Path:
     """The built site's directory: ``HTRFLOW_WEB_STATIC``, else the image's."""
@@ -58,9 +63,33 @@ class BuiltSite(StaticFiles):
         try:
             return await super().get_response(path, scope)
         except StarletteHTTPException as exc:
-            if exc.status_code != 404 or "." in path.rsplit("/", 1)[-1]:
+            # StaticFiles normpaths the request path, so "/" arrives as "."
+            # (and "" if that ever changes): html=True has already tried
+            # index.html for it, and ".html" would be a nonsense lookup.
+            root = path in ("", ".", "/")
+            if exc.status_code != 404 or root or "." in path.rsplit("/", 1)[-1]:
                 raise
             return await super().get_response(path + ".html", scope)
+
+
+class NoCluster:
+    """Reader stand-in for site-only mode: every API call is a clean 503.
+
+    ``HTRFLOW_WEB_SITE_ONLY`` (the local compose stack) has the site but no
+    apiserver. Wiring this instead of a ``kube.Reader`` keeps the routes
+    registered — so ``/api/v1/…`` answers honestly rather than falling
+    through to the static mount as a 404 or blowing up as a 500.
+    """
+
+    cfg = None
+
+    def _no_cluster(self, *_args, **_kwargs):
+        raise HTTPException(
+            status_code=503,
+            detail="site-only mode (HTRFLOW_WEB_SITE_ONLY): no cluster to read",
+        )
+
+    list_jobs = get_job = get_configmap = list_pods = _no_cluster
 
 
 def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
@@ -72,11 +101,11 @@ def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
         response.headers.update(SECURITY_HEADERS)
         return response
 
-    @app.get("/healthz")
+    @app.api_route("/healthz", methods=GET_HEAD)
     def healthz() -> dict:
         return {"ok": True}
 
-    @app.get("/api/v1/jobs")
+    @app.api_route("/api/v1/jobs", methods=GET_HEAD)
     def list_jobs() -> list[dict]:
         jobs = sorted(
             reader.list_jobs(),
@@ -85,7 +114,7 @@ def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
         )
         return [projection.summarize(job, reader.cfg) for job in jobs]
 
-    @app.get("/api/v1/jobs/{namespace}/{name}")
+    @app.api_route("/api/v1/jobs/{namespace}/{name}", methods=GET_HEAD)
     def get_job(
         namespace: str,
         name: str,

@@ -1,7 +1,7 @@
 [project]
 name = "htrflow-web"
 version = "0.1.0"
-description = "Read-only /api/v1/jobs projection of Indexed Jobs (docs: docs/superpowers/specs/2026-09-01-indexed-jobs-design.md D8)"
+description = "The web front: the campaign browser, Universal Viewer and the read-only /api/v1/jobs projection of Indexed Jobs, from one process (docs: docs/superpowers/specs/2026-09-01-indexed-jobs-design.md D8)"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.110",
