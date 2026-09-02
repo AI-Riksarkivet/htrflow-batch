@@ -95,11 +95,14 @@ make campaigns-apply DIR=/path/to/your-campaigns-repo
 which is exactly:
 
 ```bash
-uv run htrflow-campaigns render $(DIR) --out $(DIR)/rendered
-kubectl apply -f $(DIR)/rendered/pipelines -f $(DIR)/rendered/campaigns
+uv run htrflow-campaigns apply $(DIR) --out $(DIR)/rendered
 ```
 
-(pipelines first — a campaign's Job references its pipeline's ConfigMap).
+— one command that renders, applies `rendered/pipelines` and then
+`rendered/campaigns` (pipelines first: a campaign's Job references its
+pipeline's ConfigMap), and finally puts each campaign's `suspend:` on its
+Kueue Workload. Add `--dry-run` to see the `kubectl` commands without running
+them; every command it does run is echoed to stderr.
 Beyond the PoC, `examples/campaigns/.github/workflows/render.yml` renders and
 commits `rendered/` on every push to `main`, and Argo CD's Application points
 its source at `rendered/` in that repo — nothing applies to the cluster

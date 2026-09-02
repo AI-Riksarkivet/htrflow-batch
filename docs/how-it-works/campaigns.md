@@ -13,9 +13,9 @@ campaigns repo:
 > **Pausing a campaign is a Git change** (`suspend: true` on the campaign
 > file). It is *declared* in Git and *enforced by the apply step*: Kueue owns
 > `spec.suspend` for a Workload it has admitted and undoes it within seconds,
-> so `scripts/kueue-pause-sync.sh` (run by `make campaigns-apply`, or as an
-> Argo CD `PostSync` hook) puts the same intent on the Workload's
-> `spec.active`.
+> so the last step of `htrflow-campaigns apply` (which is what
+> `make campaigns-apply` and an Argo CD `PostSync` hook both run) puts the
+> same intent on the Workload's `spec.active`.
 >
 > **Deleting a campaign's file cancels it** — the next `render` drops its
 > manifest from `rendered/`, and the apply that follows prunes its Job and

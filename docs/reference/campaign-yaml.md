@@ -155,24 +155,41 @@ within seconds. The rendered field is the declared intent; enforcement happens
 at apply time, on the Workload:
 
 ```bash
-scripts/kueue-pause-sync.sh <namespace> <rendered/campaigns dir>
+htrflow-campaigns apply <campaigns-repo>      # = make campaigns-apply DIR=…
 ```
 
-which patches `spec.active` on each campaign's Workload (`false` for a
-suspended campaign, `true` otherwise), idempotently. `make campaigns-apply`
-runs it after every apply. Deactivating a Workload evicts its pods, keeps
-every finished index, and `kubectl get job` reports `suspend: true`;
-reactivating continues at the next index. Results already in S3 are never
-touched.
+The last step of that command patches `spec.active` on each campaign's
+Workload (`false` for a suspended campaign, `true` otherwise), idempotently.
+Deactivating a Workload evicts its pods, keeps every finished index, and
+`kubectl get job` reports `suspend: true`; reactivating continues at the next
+index. Results already in S3 are never touched.
 
 **A brand-new paused campaign has no Workload at the instant the apply
 returns** — Kueue creates it a moment later, and that moment is exactly the
 window in which Kueue would admit and start the campaign. Skipping it would
-therefore *run* a campaign that git says is paused, so the script waits
-(10 × 1 s) for a paused campaign's Workload and exits non-zero with a message
-if it never appears: re-run the apply. A campaign that is *not* paused is
-still skipped when its Workload is missing — a Workload that does not exist
-is not admitted either, and the next apply catches it.
+therefore *run* a campaign that git says is paused, so the apply waits
+(`--pause-wait`, 10 × 1 s by default) for a paused campaign's Workload and
+exits non-zero with a message if it never appears: re-run the apply. A
+campaign that is *not* paused is still skipped when its Workload is missing —
+a Workload that does not exist is not admitted either, and the next apply
+catches it.
+
+!!! warning "A campaign committed as `suspend: true` still runs one pod for ~4 s"
+
+    Kueue creates, admits and unsuspends the Job in the same second it is
+    created — before any apply-time step can look at it — so one pod starts
+    and is deleted a few seconds later, mid-volume. Nothing is written for
+    that volume (the index is simply retried when the campaign resumes) but
+    it is not "no pod ever starts".
+
+    The race-free alternative — rendering a paused campaign's Job **without**
+    the `kueue.x-k8s.io/queue-name` label, so Kueue never sees it — was
+    measured on the PoC and rejected: it strands an admitted Workload that
+    goes on holding the campaign's quota, starving every other campaign in
+    the ClusterQueue, and Kueue's webhook then refuses to put the label back
+    (`metadata.labels[kueue.x-k8s.io/queue-name]: field is immutable`) on the
+    resuming apply. The measurements are in
+    [the E2E run log](../development/e2e-indexed-jobs.md) under *Task 14*.
 
 **The apply also writes `active: true` for every campaign that is not
 suspended.** So a Workload that Kueue deactivated on its own — a requeue
@@ -181,17 +198,20 @@ apply and the campaign resumes at the next unfinished index. Git is the truth
 about what should be running; nothing on the cluster stays paused unless the
 campaign file says so.
 
-With Argo CD, run the same script as a `PostSync` hook so a merged
+With Argo CD, run the same command as a `PostSync` hook so a merged
 `suspend: true` takes effect on sync. **The manifest below is illustrative and
-has not been run** — there is no Argo CD on the PoC (the E2E drives the script
-through `make campaigns-apply` instead), and the image digest, the
-ServiceAccount and the two volumes are placeholders you have to fill in:
+has not been run** — there is no Argo CD on the PoC (the E2E drives the
+command through `make campaigns-apply` instead), and the image digest, the
+ServiceAccount and the checkout are placeholders you have to fill in. No new
+image is needed: `uvx` installs the converter from this repo at the pinned
+ref, and the pod needs a checkout of the campaigns repo to render (the hook
+re-renders rather than trusting the synced `rendered/`):
 
 ```yaml title="argocd/pause-sync-hook.yaml"
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: kueue-pause-sync
+  name: htrflow-campaigns-apply
   annotations:
     argocd.argoproj.io/hook: PostSync
     argocd.argoproj.io/hook-delete-policy: HookSucceeded
@@ -199,14 +219,22 @@ spec:
   template:
     spec:
       restartPolicy: Never
-      serviceAccountName: kueue-pause-sync   # get/list jobs+workloads, patch workloads
+      serviceAccountName: htrflow-campaigns-apply  # get/list jobs+workloads,
+                                                   # patch workloads, apply
       containers:
-        - name: sync
-          image: bitnami/kubectl@sha256:…    # any pinned kubectl image
-          command: ["/bin/bash", "/scripts/kueue-pause-sync.sh", "htr-batch", "/rendered/campaigns"]
-          volumeMounts: [{name: scripts, mountPath: /scripts}, {name: rendered, mountPath: /rendered}]
-      volumes: [ … ]                          # the script and the synced rendered/ tree
+        - name: apply
+          image: ghcr.io/astral-sh/uv@sha256:…     # any pinned uv image
+          command: ["uvx", "--from",
+                    "git+https://github.com/AI-Riksarkivet/htrflow-batch@<ref>#subdirectory=packages/converter",
+                    "htrflow-campaigns", "apply", "/repo"]
+          volumeMounts: [{name: repo, mountPath: /repo}]
+      volumes: [ … ]                               # the campaigns repo checkout
 ```
+
+`kubectl` has to be on that image's `PATH` (`uv` images do not ship one — add
+it, or use an image that has both). Add `--prune` to make a deleted campaign
+file cancel its campaign; leave it off and Argo CD's own prune does the same
+job.
 
 ## Immutability
 

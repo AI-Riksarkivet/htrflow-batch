@@ -5,13 +5,15 @@ name: Render
 # campaigns-apply` on a PoC) applies is always exactly what CI produced from
 # the merged commit, never something rendered by hand on a laptop.
 #
-# What this workflow does NOT do: enforce a campaign's `suspend:`. The render
-# puts `spec.suspend: true` on the Job, but Kueue owns that field for a
-# Workload it has admitted and undoes it — so whatever applies rendered/ must
-# also run htrflow-batch's `scripts/kueue-pause-sync.sh <ns>
-# <rendered/campaigns>` afterwards (with Argo CD: as a PostSync hook, example
-# manifest in htrflow-batch's docs/reference/campaign-yaml.md#pausing;
-# `make campaigns-apply` already does it).
+# What this workflow does NOT do: apply anything. It renders; something else
+# applies. That something should be `htrflow-campaigns apply <repo> --prune`
+# — the same converter, one command: it renders, applies pipelines then
+# campaigns, prunes what a deleted campaign file left behind, and enforces
+# `suspend:` on the Kueue Workload (the rendered `spec.suspend` alone does
+# not hold, Kueue owns that field for a Workload it has admitted). With Argo
+# CD it is a PostSync hook — example manifest in htrflow-batch's
+# docs/reference/campaign-yaml.md#pausing; by hand it is
+# `make campaigns-apply DIR=<repo> PRUNE=1`.
 #
 # The converter is not an image: it is a plain Python package installed
 # with uvx straight from the htrflow-batch repo (see "Install the converter"

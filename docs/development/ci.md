@@ -61,8 +61,9 @@ bundle gets bun through the RA proxy for `make frontend-install`.
 defaults and `ci/full-values.yaml` + kubeconform), `install-devstack`,
 `docs-serve`, `docs-build` (`uvx zensical`), `poc-push` / `poc-push-arm64`
 (build + push the wrapper and read API images into the in-cluster k3s
-registry, printing the digests to pin), `campaigns-apply` (render a
-campaigns repo and `kubectl apply` its `pipelines/` then `campaigns/`),
+registry, printing the digests to pin), `campaigns-apply` (`htrflow-campaigns
+apply`: render a campaigns repo, `kubectl apply` its `pipelines/` then
+`campaigns/`, sync each campaign's pause),
 `psa-labels`, `frontend-install/test/check/build/dev`, `viewer-image`,
 `clean`. The cluster-local constants they use come from `.env`
 ([Local k3s development](local-k3s.md)).

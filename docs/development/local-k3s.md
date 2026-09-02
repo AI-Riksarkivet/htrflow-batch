@@ -185,10 +185,9 @@ in the chart READMEs.
   everything the checkout does not contain.
 - **Pausing is `suspend: true` in the campaign file plus the apply step.**
   The rendered `spec.suspend` alone does not hold — Kueue owns that field for
-  an admitted Workload and undoes it in seconds — so `make campaigns-apply`
-  runs `scripts/kueue-pause-sync.sh`, which patches the Workload's
-  `spec.active`. Never `kubectl edit` the Job
-  ([E2E log](e2e-indexed-jobs.md)).
+  an admitted Workload and undoes it in seconds — so the last step of
+  `htrflow-campaigns apply` patches the Workload's `spec.active`. Never
+  `kubectl edit` the Job ([E2E log](e2e-indexed-jobs.md)).
 - **RustFS is single-disk**: the results bucket is one `local-path` PVC on
   this node (`rustfs-data`, 5 Gi by default, kept on uninstall). Fine for
   iteration; not an archive.
