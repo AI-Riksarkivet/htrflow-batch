@@ -11,7 +11,7 @@ applied outside this chart (`kubectl apply`, or Argo CD watching a
 [docs/how-it-works/campaigns.md](../../docs/how-it-works/campaigns.md). This
 chart only renders what those Jobs and the status page need: the Kueue
 queue, the model-cache PVC, NetworkPolicies for `app: htrflow-batch` /
-`app: htrflow-warmup` pods, the read API (`htrflow-api`) and the viewer.
+`app: htrflow-warmup` pods, the read API (`htrflow-web`) and the viewer.
 
 Every value is declared in `values.schema.json` (unknown keys and wrong
 types are rejected); `values.yaml` documents each one and
@@ -41,7 +41,7 @@ device plugin) is a separate chart:
   `charts/htrflow-devstack`'s RustFS renders it instead (keep `s3.bucket` /
   `s3.existingSecret` here in step with that chart's `s3.bucket` /
   `s3.secretName`).
-- `viewer.image` and `api.image` must be **digest-pinned** (`…@sha256:…`).
+- `viewer.image` and `web.image` must be **digest-pinned** (`…@sha256:…`).
   A tag is refused unless `security.allowTagImages=true` (PoC iteration
   only; tags are then pulled on every rollout).
 
@@ -55,7 +55,7 @@ the day-to-day loop in
 Cluster-local constants come from the repo-root `.env` (`.env.example` has
 the PoC defaults). The images to pin: `make viewer-image` builds the viewer
 and `docker push 127.0.0.1:30500/uv4:<tag>` prints its digest — that is the
-value for `viewer.image`; the read API's image (`packages/api`) is built and
+value for `viewer.image`; the read API's image (`packages/web`) is built and
 published alongside the wrapper — see
 [docs/reference/chart.md](../../docs/reference/chart.md).
 
@@ -73,8 +73,8 @@ rendered every NetworkPolicy away; the chart now fails loudly when
 | **The old GitOps CronJob controller, its own values block and template are gone.** Campaigns are Indexed Jobs rendered by `packages/converter` and applied outside this chart. | `kubectl -n <namespace> get cronjob` to find the leftover CronJob from the old release and `delete` it once, then switch to `make campaigns-apply DIR=…` (or the Argo CD Application the campaigns repo's CI wires up). |
 | **`templates/pipelines.yaml` / `.Values.pipelines` are gone.** Pipeline ConfigMaps and their warm-up Jobs are rendered by the converter alongside campaigns, not by this chart. | Drop `pipelines.*` from your values; convert the pipeline YAML files into a campaigns repo's `pipelines/` directory instead. |
 | **`templates/job-example.yaml` / `.Values.exampleJob` are gone.** | Use a real (small) campaign for smoke-testing instead. |
-| **`devStack.*` moved to a separate chart, `charts/htrflow-devstack`**, except `devStack.allowTagImages` → `security.allowTagImages` (it gates this chart's own `viewer.image`/`api.image`, not anything devstack-only). **`devStack.gitDaemon` was not carried over** — it fed the old CronJob controller over `git://`, which is also gone in 0.3.0, so it had no consumer left. | `helm uninstall` nothing yet: install `charts/htrflow-devstack` alongside this chart first (`make install-devstack`), *then* upgrade this chart — its NetworkPolicies for RustFS/registry moved with it; anything that hand-clones the old in-cluster git daemon needs a different path now. |
-| **New: the read API** (`api.image`, `api.resources`) — a Deployment `htrflow-api`, read-only RBAC on Jobs/Pods/ConfigMaps, `Service htrflow-api:8081`, proxied by the viewer at `/api/`. Always rendered (no `enabled` flag): `publicResultsBase` and `network.apiServer.cidr` are now required at render time (previously only needed when the old CronJob controller was turned on). | Set `api.image` to a digest-pinned `htrflow-api` image; set `network.apiServer.cidr` if the cluster's kube-apiserver endpoint cannot be `lookup`ed (e.g. `helm template`, or a kubeconfig without list-nodes RBAC). |
+| **`devStack.*` moved to a separate chart, `charts/htrflow-devstack`**, except `devStack.allowTagImages` → `security.allowTagImages` (it gates this chart's own `viewer.image`/`web.image`, not anything devstack-only). **`devStack.gitDaemon` was not carried over** — it fed the old CronJob controller over `git://`, which is also gone in 0.3.0, so it had no consumer left. | `helm uninstall` nothing yet: install `charts/htrflow-devstack` alongside this chart first (`make install-devstack`), *then* upgrade this chart — its NetworkPolicies for RustFS/registry moved with it; anything that hand-clones the old in-cluster git daemon needs a different path now. |
+| **New: the read API** (`web.image`, `web.resources`) — a Deployment `htrflow-web`, read-only RBAC on Jobs/Pods/ConfigMaps, `Service htrflow-web:8081`, proxied by the viewer at `/api/`. Always rendered (no `enabled` flag): `publicResultsBase` and `network.apiServer.cidr` are now required at render time (previously only needed when the old CronJob controller was turned on). | Set `web.image` to a digest-pinned `htrflow-web` image; set `network.apiServer.cidr` if the cluster's kube-apiserver endpoint cannot be `lookup`ed (e.g. `helm template`, or a kubeconfig without list-nodes RBAC). |
 | **Results are namespaced.** They land at `<namespace>/<pipeline>/<volume>/…` (`S3_PREFIX=<namespace>/`, set by the converter), where 0.2.0 wrote `<pipeline>/<volume>/…`. There is no flag for the old layout. | Move existing data once before upgrading: `aws s3 mv --recursive s3://<bucket>/<pipeline>/ s3://<bucket>/<namespace>/<pipeline>/` for every pipeline id, and `sources/` the same way (`<namespace>/sources/…`). `status/` stays at the bucket root — it is namespace-free by design. |
 | **`viewer.statusBase` is gone; `/config.js` sets `window.API_BASE`.** The campaign browser reads campaigns from the read API — there is no status document any more. | Nothing to set — `API_BASE` is always `/api/v1` (same-origin, proxied by nginx). |
 | **`job.*` values are gone.** Runtime class, node selector, tolerations, deadlines and byte caps are now the converter's `converter.yaml` (`runtime_class`, `node_selector`, `tolerations`, `max_seconds`, `manifest_max_bytes`, `fetch_max_bytes`), not this chart's. | Move any `job.*` overrides into the campaigns repo's `converter.yaml`. |
@@ -111,14 +111,14 @@ recipe.)
 
 ## The read API and the viewer
 
-`htrflow-api` (Deployment, Service `htrflow-api:8081`) serves
+`htrflow-web` (Deployment, Service `htrflow-web:8081`) serves
 `GET /api/v1/jobs[/{ns}/{name}]` read-only over the Indexed Jobs a campaign
 renders to — Role/RoleBinding scoped to `get`/`list`/`watch` on
 `jobs`/`pods`/`configmaps` in the release namespace, never a ClusterRole. It
 is the one pod in this chart with `automountServiceAccountToken: true`
 (everything else, including the viewer, has it off) because it *is* a
 Kubernetes API client. It is reachable only from the viewer pod
-(NetworkPolicy `htr-api`) — never exposed on a NodePort. The viewer's nginx
+(NetworkPolicy `htr-web`) — never exposed on a NodePort. The viewer's nginx
 proxies `/api/` to it (`templates/viewer.yaml`), and `/config.js` points the
 campaign browser at `window.API_BASE = "/api/v1"`.
 
@@ -142,24 +142,24 @@ Breaking:
   `charts/htrflow-devstack` (own values, own NetworkPolicies for
   RustFS/registry-init). `devStack.allowTagImages` became
   `security.allowTagImages` (it gates this chart's own `viewer.image` /
-  `api.image`). `devStack.gitDaemon` / `templates/devstack-gitdaemon.yaml`
+  `web.image`). `devStack.gitDaemon` / `templates/devstack-gitdaemon.yaml`
   were **removed, not moved**: the old GitOps CronJob controller that
   polled it over `git://` is also gone in 0.3.0, so the daemon had no
   consumer left.
 - `values.schema.json`: `s3`, `publicResultsBase`,
-  `modelCache`, `queue`, `api`, `security`, `network`, `viewer` are the only
+  `modelCache`, `queue`, `web`, `security`, `network`, `viewer` are the only
   top-level keys; everything above is rejected as unknown.
 
 Added:
-- `api.{image,resources}` renders the read API (`templates/api.yaml`):
-  Deployment `htrflow-api`, ServiceAccount + Role + RoleBinding (read-only
+- `web.{image,resources}` renders the read API (`templates/web.yaml`):
+  Deployment `htrflow-web`, ServiceAccount + Role + RoleBinding (read-only
   `jobs`/`pods`/`configmaps`, this namespace only), Service
-  `htrflow-api:8081`, NetworkPolicy `htr-api` (ingress from the viewer only;
+  `htrflow-web:8081`, NetworkPolicy `htr-web` (ingress from the viewer only;
   egress to DNS and the apiserver only — same CIDR lookup the old CronJob
   controller's policy used). Always rendered: `publicResultsBase` and
   `network.apiServer.cidr` are required values now (previously only when
   that controller was turned on).
-- Viewer: nginx `location /api/` proxies to `htrflow-api:8081/api/`;
+- Viewer: nginx `location /api/` proxies to `htrflow-web:8081/api/`;
   `/config.js` sets `window.API_BASE = "/api/v1"` — `viewer.statusBase` and
   its runtime counterpart are gone, since the campaign browser now reads the
   read API directly instead of a status document. Its NetworkPolicy gained

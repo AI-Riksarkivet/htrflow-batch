@@ -7,8 +7,8 @@ modelCache:
   create: true
   storageClass: local-path
 
-api:
-  image: 127.0.0.1:30500/htrflow-api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+web:
+  image: 127.0.0.1:30500/htrflow-web@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: "1", memory: 256Mi }

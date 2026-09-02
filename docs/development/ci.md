@@ -11,16 +11,16 @@ lists what the module exposes on your checkout.
 |---|---|
 | `checks` | runs `lint`, `typecheck`, `check-frontend` and `check-chart` in that order; what `make ci` runs locally |
 | `lint` | `ruff format --check` + `ruff check` on the workspace, from the locked venv (`uv run --no-sync`, never `uvx`) |
-| `check-chart` | `helm lint` + a render, on the defaults and on each chart's `ci/full-values.yaml` (every optional template on), for both `charts/htrflow-batch` and `charts/htrflow-devstack`, then `kubeconform -strict` on every render; asserts the prod chart renders no `CronJob`, always renders the `htrflow-api` Deployment with a `/healthz` livenessProbe, and leaks no devstack-labelled object |
+| `check-chart` | `helm lint` + a render, on the defaults and on each chart's `ci/full-values.yaml` (every optional template on), for both `charts/htrflow-batch` and `charts/htrflow-devstack`, then `kubeconform -strict` on every render; asserts the prod chart renders no `CronJob`, always renders the `htrflow-web` Deployment with a `/healthz` livenessProbe, and leaks no devstack-labelled object |
 | `check-frontend` | `bun install --frozen-lockfile && bun run lint && bun run check && bun run test && bun run build` in an `oven/bun` container (CA bundle wired as for uv) |
 | `typecheck` | `ty check` on the wrapper, converter and api packages from the locked venv, what `make typecheck` runs locally |
 | `test` | workspace pytest suite in a uv container (`uv run --no-sync pytest`, no GPU required) — wrapper, converter, api |
 | `test-driver` | opt-in: `packages/wrapper/tests/test_driver.py` against the real htrflow inside the built wrapper image — the level-0 pin test ([Testing](testing.md)); `make test-driver-real` is the local twin |
 | `build` | production wrapper image from `.docker/htrflow-batch.dockerfile` |
-| `build-api` | read API image from `.docker/htrflow-api.dockerfile` (CPU-only, no torch) |
+| `build-web` | read API image from `.docker/htrflow-web.dockerfile` (CPU-only, no torch) |
 | `build-viewer` | reproducible UV4 viewer image: clone the Riksarkivet `universalviewer4` fork at a pinned ref, apply `.docker/uv4-uv-html.patch`, build it with npm (UV's own toolchain), layer onto `nginxinc/nginx-unprivileged:1.27-alpine` — and bun-build the campaign browser SPA from `frontend/` on top, so `/` is the SPA and `/uv.html` is UV |
 | `scan` | Trivy scan of the built wrapper image (table output, exits non-zero on findings — not wired into `ci.yml`, since the CUDA/ubuntu base will never be alpine-clean) |
-| `scan-api` | Trivy scan of the built read API image (HIGH/CRITICAL, `--ignore-unfixed`) — CPU-only slim base, a clean gate is realistic here so `ci.yml` runs it on every push and PR; `make scan-api` is the local twin |
+| `scan-web` | Trivy scan of the built read API image (HIGH/CRITICAL, `--ignore-unfixed`) — CPU-only slim base, a clean gate is realistic here so `ci.yml` runs it on every push and PR; `make scan-web` is the local twin |
 | `scan-json` | same as `scan` (the wrapper), JSON output, never fails the call |
 | `publish-docker` | tests, builds, and pushes an image (`--component wrapper\|viewer\|api`) to a registry; validates the tag against `packages/wrapper/pyproject.toml`'s version unless `--skip-validation` |
 | `compose-up` | starts the `.docker/docker-compose.yml` stack as a dagger Service |
@@ -54,7 +54,7 @@ bundle gets bun through the RA proxy for `make frontend-install`.
 
 `install`, `format`, `lint`, `check` (format + lint), `test`, `typecheck`,
 `ci` (typecheck + dagger `checks` + `test`), `build`, `build-viewer`,
-`build-wrapper`, `build-api`, `scan`, `scan-api`, `publish` (manual,
+`build-wrapper`, `build-web`, `scan`, `scan-web`, `publish` (manual,
 `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN`), `compose-up`, `compose-test`,
 `compose-smoke` (the verified local path — see [Testing](testing.md)),
 `compose-down`, `helm-lint`, `helm-template` (lint + render both charts on
@@ -73,7 +73,7 @@ apply`: render a campaigns repo, `kubectl apply` its `pipelines/` then
 - **`ci.yml`** ("Tests") — on push to `main` and on pull requests: `dagger
   call checks`, `dagger call test`, and the `scripts/loc-budget.sh` line
   budgets (`SKIP_FRONTEND=1` until B63 Task 7 brings the frontend back under
-  its 2 500-line budget); a separate job runs `dagger call scan-api` on
+  its 2 500-line budget); a separate job runs `dagger call scan-web` on
   every push/PR and `dagger call scan` (the wrapper, ~10 GB CUDA base) on
   pushes to `main` and manual runs only. The dagger action is SHA-pinned and
   its engine `version` is pinned to `engineVersion` in `dagger.json`.

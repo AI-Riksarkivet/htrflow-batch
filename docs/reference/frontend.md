@@ -1,7 +1,7 @@
 # Campaign Browser
 
 The SvelteKit SPA served at `/` by the viewer image — two routes, no server,
-reading the read API (`packages/api`) directly. Source:
+reading the read API (`packages/web`) directly. Source:
 [`frontend/`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/frontend);
 the `frontend/README.md` there is the developer-facing version of this page.
 

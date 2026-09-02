@@ -1,6 +1,6 @@
 # Campaign browser
 
-SvelteKit 2 + Svelte 5 static SPA over the read API (`packages/api`,
+SvelteKit 2 + Svelte 5 static SPA over the read API (`packages/web`,
 `GET /api/v1/jobs`). Two routes, no server:
 
 - `/` — every campaign (one row per Indexed Job) as a card: pipeline chip,

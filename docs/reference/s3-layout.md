@@ -9,7 +9,7 @@ the flat `<pipeline>/<volume>/` form results took before B63 is gone, and
 Riksarkivet's PoC bucket was moved once (`aws s3 mv`, [Indexed Jobs
 E2E](../development/e2e-indexed-jobs.md)). There is no status document
 written by anything in this system any more: campaign and volume progress is
-derived live from the Kubernetes API by the read API (`packages/api`), never
+derived live from the Kubernetes API by the read API (`packages/web`), never
 stored.
 
 ## Key layout
@@ -88,5 +88,5 @@ Job/Pod/ConfigMap state, never cached or persisted:
 - **Failures**: up to 50 of the most recent failed-with-a-reason rows,
   included in the detail response.
 
-Full field derivation: [`packages/api/src/htrflow_api/projection.py`](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/packages/api/src/htrflow_api/projection.py).
+Full field derivation: [`packages/web/src/htrflow_web/projection.py`](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/packages/web/src/htrflow_web/projection.py).
 The frontend consumes this shape directly — see [Campaign Browser](frontend.md).
