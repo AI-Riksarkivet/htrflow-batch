@@ -23,8 +23,10 @@ from .main import EXIT_OK, EXIT_PERMANENT, EXIT_TRANSIENT, prepare_writable_dirs
 
 log = logging.getLogger("htrflow_batch.warmup")
 
-#: Errors Pipeline.from_config raises for a pipeline that is wrong, not
-#: unlucky (docs: wrapper, "Warm-up").
+#: Errors a pipeline that is wrong, not unlucky, reaches ``main`` with
+#: (docs: wrapper, "Warm-up"). ``driver.build_pipeline`` already translates
+#: htrflow's own KeyError/NotImplementedError into ValueError; the two stay
+#: listed for a ``load`` callable that does not go through the driver.
 PERMANENT_ERRORS: tuple[type[BaseException], ...] = (
     ValueError,  # incl. pydantic ValidationError; driver's "bad pipeline config"
     yaml.YAMLError,
@@ -36,9 +38,11 @@ __all__ = ["EXIT_OK", "EXIT_PERMANENT", "EXIT_TRANSIENT", "main"]
 
 
 def _load(pipeline_path: str) -> None:
-    from htrflow.pipeline.pipeline import Pipeline  # ty: ignore[unresolved-import]
+    """Building the pipeline is the download — the same construction, and the
+    same error translation, a batch Job runs (driver.build_pipeline)."""
+    from .driver import build_pipeline  # htrflow imports stay function-local
 
-    Pipeline.from_config(pipeline_path)
+    build_pipeline(pipeline_path)
 
 
 def main(
