@@ -139,3 +139,59 @@ def test_render_removes_a_pipeline_manifest_when_the_pipeline_is_deleted(tmp_pat
     (repo / "pipelines" / "demo-v1.yaml").unlink()
     assert main(["render", str(repo), "--out", str(out)]) == 0
     assert not stale.exists()
+
+
+def test_render_refuses_an_out_dir_that_contains_the_sources(tmp_path, capsys):
+    """`--out` is a directory render *deletes from* (see `_prune`). Pointing it
+    at the campaigns repo — or anything above it — would delete the campaigns
+    and pipelines it just read."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    for out in (repo, repo / "campaigns", repo / "pipelines", tmp_path):
+        assert main(["render", str(repo), "--out", str(out)]) == 1, out
+        err = capsys.readouterr().err
+        assert "would delete" in err, err
+    # nothing was touched
+    assert (repo / "campaigns" / "kyrk.yaml").exists()
+    assert (repo / "pipelines" / "demo-v1.yaml").exists()
+
+
+def test_render_prints_every_removed_path_and_also_removes_yml(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    out = tmp_path / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    stale_yml = out / "campaigns" / "gone.yml"
+    stale_yml.write_text("{}\n")
+    (repo / "campaigns" / "kyrk.yaml").unlink()
+    capsys.readouterr()
+
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    err = capsys.readouterr().err
+    assert f"removed: {out / 'campaigns' / 'kyrk.yaml'}" in err, err
+    assert f"removed: {stale_yml}" in err, err
+    assert not stale_yml.exists()
+
+
+def test_the_makefile_prune_selector_is_a_label_the_renderer_writes(tmp_path):
+    """`make campaigns-apply PRUNE=1` deletes by CAMPAIGN_SELECTOR; anything
+    the renderer does not label with it survives a cancel."""
+    makefile = (REPO_ROOT / "Makefile").read_text()
+    selector = next(
+        line.split(":=", 1)[1].strip()
+        for line in makefile.splitlines()
+        if line.startswith("CAMPAIGN_SELECTOR")
+    )
+    key, _, value = selector.partition("=")
+
+    out = tmp_path / "rendered"
+    assert main(["render", str(GOOD), "--out", str(out)]) == 0
+    docs = [
+        d
+        for path in sorted(out.rglob("*.yaml"))
+        for d in yaml.safe_load_all(path.read_text())
+    ]
+    assert docs
+    for doc in docs:
+        labels = doc["metadata"]["labels"]
+        assert labels.get(key) == value, (doc["kind"], doc["metadata"]["name"], labels)

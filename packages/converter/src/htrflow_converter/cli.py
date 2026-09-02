@@ -65,9 +65,20 @@ def _prune(out: Path, written: set[Path]) -> None:
     with it: that manifest is what an apply --prune / Argo CD compares the
     cluster against, so a leftover would keep resurrecting a cancelled Job.
     A shrinking `-partN` split is the same case."""
-    for path in sorted(out.glob("*.yaml")):
+    for path in sorted([*out.glob("*.yaml"), *out.glob("*.yml")]):
         if path not in written:
             path.unlink()
+            print(f"removed: {path}", file=sys.stderr)
+
+
+def _unsafe_out(repo: Path, out: Path) -> str | None:
+    """`--out` is a directory this command *deletes from*. Pointing it at the
+    campaigns repo itself would delete the sources it just read."""
+    out_r = out.resolve()
+    for src in (repo.resolve(), *(repo / d for d in ("campaigns", "pipelines"))):
+        if out_r == src.resolve() or src.resolve().is_relative_to(out_r):
+            return f"--out {out} would delete {src}: render into a directory of its own"
+    return None
 
 
 def _render(repo_dir: str, out_dir: str) -> int:
@@ -81,6 +92,10 @@ def _render(repo_dir: str, out_dir: str) -> int:
             print(problem)
         return 1
     out = Path(out_dir)
+    unsafe = _unsafe_out(repo, out)
+    if unsafe is not None:
+        print(unsafe, file=sys.stderr)
+        return 1
     pipelines_out, campaigns_out = out / "pipelines", out / "campaigns"
     written: set[Path] = set()
     for p in pipelines.values():
