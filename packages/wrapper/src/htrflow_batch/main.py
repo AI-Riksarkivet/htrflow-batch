@@ -209,9 +209,12 @@ def _main(
         return EXIT_OK
     except OSError as e:
         # An I/O condition is never a config mistake, even when it is also a
-        # ValueError: HF's LocalEntryNotFoundError subclasses both, and is what
-        # a model missing from the read-only cache raises under HF_HUB_OFFLINE
-        # — a re-warm fixes it, so it must not FailIndex the volume.
+        # ValueError: huggingface_hub's LocalEntryNotFoundError subclasses
+        # FileNotFoundError AND ValueError, and under HF_HUB_OFFLINE=1 it is
+        # what a model missing from the read-only cache raises. A re-warm and
+        # a retry fix that, so it must not FailIndex the volume (this is also
+        # driver.build_pipeline's "an OSError from model construction stays
+        # transient" contract).
         return _transient(env, state, stop, e)
     except (ConfigError, ManifestError, SetupError, ValueError) as e:
         stop.set()
@@ -226,7 +229,9 @@ def _main(
             timer.cancel()
 
 
-def _transient(env: Mapping[str, str], state: RunState, stop, e: Exception) -> int:
+def _transient(
+    env: Mapping[str, str], state: RunState, stop: threading.Event, e: BaseException
+) -> int:
     """Retryable: stop the queued downloads (W10), leave the evidence, exit 1."""
     stop.set()
     log.error("transient failure in %s: %s\n%s", state.stage, e, traceback.format_exc())
@@ -332,16 +337,24 @@ def _verify(
     return uploaded
 
 
+#: How much of the failed pages' errors goes in the verify message: enough to
+#: name the cause, little enough to stay inside _terminate's 3500-char field
+#: cap (and the 4 KiB the kubelet keeps of a termination message).
+FAILED_DETAIL_PAGES = 10
+FAILED_DETAIL_CHARS = 200
+
+
 def _failure_detail(stats: StreamStats, failed: list[str]) -> str:
-    """Why those pages failed — the first 10, 200 chars each, the rest counted
-    (bounded to stay inside _terminate's 3500-char field cap). Without it the
-    operator reads "verify failed: failed=['0042']" and nothing more."""
+    """Why those pages failed. Without it the operator reads
+    "verify failed: failed=['0042']" and has nothing else: a run with failed
+    pages never publishes manifest.json, where the errors would have gone."""
     if not failed:
         return ""
     shown = "; ".join(
-        f"{n}: {(stats.results[n].error or '')[:200]}" for n in failed[:10]
+        f"{n}: {(stats.results[n].error or '')[:FAILED_DETAIL_CHARS]}"
+        for n in failed[:FAILED_DETAIL_PAGES]
     )
-    rest = len(failed) - 10
+    rest = len(failed) - FAILED_DETAIL_PAGES
     return f" errors: {shown}" + (f" (+{rest} more)" if rest > 0 else "")
 
 
