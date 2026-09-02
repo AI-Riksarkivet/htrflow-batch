@@ -37,14 +37,9 @@ def _own_namespace() -> str:
         return _DEFAULT_NAMESPACE
 
 
-def _truthy(value: str | None) -> bool:
-    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
 @dataclass(frozen=True)
 class Config:
     public_results_base: str
-    legacy_layout: bool = False
     namespaces: tuple[str, ...] = ()
 
     @classmethod
@@ -57,7 +52,6 @@ class Config:
         namespaces = tuple(n.strip() for n in raw.split(",") if n.strip())
         return cls(
             public_results_base=base.rstrip("/"),
-            legacy_layout=_truthy(env.get("HTRFLOW_LEGACY_LAYOUT")),
             namespaces=namespaces or (_own_namespace(),),
         )
 

@@ -52,9 +52,7 @@ CONFIGMAP = {
 
 
 class FakeReader:
-    cfg = SimpleNamespace(
-        public_results_base="https://results.example.org", legacy_layout=False
-    )
+    cfg = SimpleNamespace(public_results_base="https://results.example.org")
 
     def list_jobs(self) -> list[dict]:
         return [JOB]
