@@ -10,6 +10,7 @@ metadata:
     htrflow.riksarkivet.se/pipeline: PIPELINE
     kueue.x-k8s.io/queue-name: QUEUE
 spec:
+  suspend: false
   completionMode: Indexed
   completions: 1
   parallelism: 1

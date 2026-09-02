@@ -21,6 +21,7 @@ MAX_VOLUMES_PER_JOB = 10_000
 # key), which ``_set``'s dotted-path parser would otherwise split on.
 _CAMPAIGN_LABEL = "htrflow.riksarkivet.se/campaign"
 _PIPELINE_LABEL = "htrflow.riksarkivet.se/pipeline"
+_QUEUE_LABEL = "kueue.x-k8s.io/queue-name"
 _PRIORITY_LABEL = "kueue.x-k8s.io/priority-class"
 _SHA_ANNOTATION = "htrflow.riksarkivet.se/pipeline-sha256"
 
@@ -131,15 +132,22 @@ def _campaign_job(
     labels = job["metadata"]["labels"]
     labels[_CAMPAIGN_LABEL] = label_value(c.name)
     labels[_PIPELINE_LABEL] = label_value(p.id)
-    labels["kueue.x-k8s.io/queue-name"] = cfg.queue
+    labels[_QUEUE_LABEL] = cfg.queue
     if c.priority:
         labels[_PRIORITY_LABEL] = c.priority
 
     _set(job, "spec.completions", completions)
     _set(job, "spec.parallelism", parallelism)
     _set(job, "spec.maxFailedIndexes", completions)
+    # The skeleton carries `spec.suspend: false` as spec's first key so a
+    # paused campaign's rendered Job keeps `suspend` in the same place a
+    # hand-built `{"suspend": True, **spec}` used to. An unpaused campaign
+    # drops the placeholder again so its rendered Job has no `suspend` field
+    # at all, matching every campaign that has never been paused.
     if c.suspend:  # intent; scripts/kueue-pause-sync.sh enforces it under Kueue
         _set(job, "spec.suspend", True)
+    else:
+        del job["spec"]["suspend"]
 
     _set(job, "spec.template.spec.containers[0].image", p.image)
     prefix = "" if cfg.legacy_layout else f"{cfg.namespace}/"
