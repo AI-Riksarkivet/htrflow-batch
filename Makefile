@@ -1,9 +1,9 @@
-.PHONY: install format lint check test typecheck test-driver-real ci build build-viewer scan publish \
+.PHONY: install format lint check test typecheck test-driver-real ci build scan publish \
         compose-up compose-test compose-smoke compose-down helm-lint helm-template install-devstack \
         docs-serve docs-build \
         poc-push poc-push-arm64 build-wrapper build-web scan-web clean \
         campaigns-apply psa-labels e2e \
-        frontend-install frontend-test frontend-check frontend-build frontend-dev viewer-image
+        frontend-install frontend-test frontend-check frontend-build frontend-dev
 
 # Cluster-local constants (registry, S3 endpoint, bucket, namespace, release,
 # NodePorts) live in a root `.env`; `.env.example` carries the PoC defaults
@@ -17,11 +17,6 @@ export HTR_RELEASE HTR_NAMESPACE HTR_REGISTRY HTR_REGISTRY_NODEPORT HTR_S3_ENDPO
 # On RA hosts dagger containers need the corp CA; harmless elsewhere if the file exists.
 CA_BUNDLE ?= /etc/ssl/certs/ca-certificates.crt
 DAGGER_CA := $(shell test -f $(CA_BUNDLE) && echo --ca-bundle $(CA_BUNDLE))
-
-# Local checkout of the Riksarkivet universalviewer4 fork, already built
-# (`npm install && npm run build` → dist/). It is the docker build context for
-# the viewer image; `viewer-image` stages the SPA into it.
-UV4_DIR ?= $(HOME)/universalviewer4
 
 CHART := charts/htrflow-batch
 IMAGE_TAG ?= dev
@@ -83,9 +78,6 @@ ci: typecheck
 build:
 	dagger call build
 
-build-viewer:
-	dagger call build-viewer $(DAGGER_CA)
-
 scan:
 	dagger call scan-json $(DAGGER_CA)
 
@@ -97,13 +89,12 @@ publish:
 compose-up:
 	cd .docker && docker compose up -d
 
-# NOTE: requires the viewer image to be registry-pullable; on hosts where it is only tagged locally, use compose-smoke instead.
 compose-test:
 	dagger call compose-test
 
 compose-smoke:
 	cd .docker && docker compose up --build --abort-on-container-exit --exit-code-from wrapper wrapper && \
-	docker compose up -d viewer && \
+	docker compose up -d --build web && \
 	curl -fsS -o /dev/null http://localhost:8080/uv.html && \
 	docker compose down -v
 
@@ -234,8 +225,13 @@ endif
 build-wrapper:
 	docker build -f $(WRAPPER_DOCKERFILE) $(WRAPPER_BUILD_ARGS) -t $(WRAPPER_IMAGE) .
 
+# The web image builds the SPA and the Universal Viewer inside itself, so
+# this needs no pre-built dist/ and no UV checkout. The corp CA is passed as
+# the optional `ca` build secret when present (RA hosts intercept TLS; the
+# git clone and the npm/bun installs need it).
+DOCKER_SECRET_CA := $(shell test -f $(CA_BUNDLE) && echo --secret id=ca,src=$(CA_BUNDLE))
 build-web:
-	docker build -f .docker/htrflow-web.dockerfile -t $(WEB_IMAGE) .
+	docker build -f .docker/htrflow-web.dockerfile $(DOCKER_SECRET_CA) -t $(WEB_IMAGE) .
 
 poc-push: build-wrapper build-web
 	docker push $(WRAPPER_IMAGE)
@@ -287,15 +283,6 @@ frontend-build:
 
 frontend-dev:
 	cd frontend && bun run dev
-
-# Stage the SPA into the UV repo (the docker build context) and build the nginx
-# image. Local tag only — publishing goes through `dagger call build-viewer`.
-# `docker push` afterwards prints the digest to pin as `viewer.image`.
-VIEWER_IMAGE := $(HTR_REGISTRY)/uv4:$(IMAGE_TAG)
-viewer-image: frontend-build
-	rm -rf $(UV4_DIR)/campaign-app && cp -r frontend/dist $(UV4_DIR)/campaign-app
-	rm -f $(UV4_DIR)/campaign-app/status.sample.json   # dev fixture, not shipped
-	docker build -f .docker/uv4-viewer.dockerfile -t $(VIEWER_IMAGE) $(UV4_DIR)
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +

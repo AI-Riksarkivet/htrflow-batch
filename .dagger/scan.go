@@ -95,7 +95,7 @@ func (m *HtrflowBatch) ScanWeb(
 	// +optional
 	caBundle *dagger.File,
 ) (string, error) {
-	container, err := m.BuildWeb(ctx, source)
+	container, err := m.BuildWeb(ctx, source, caBundle)
 	if err != nil {
 		return "", fmt.Errorf("web build failed before scanning: %w", err)
 	}

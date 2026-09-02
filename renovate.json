@@ -69,7 +69,17 @@
     },
     {
       "customType": "regex",
-      "description": "Trivy image used by make scan-api",
+      "description": "Riksarkivet/universalviewer4 commit the web image builds UV from (.docker/htrflow-web.dockerfile). The bun and node stages of that file are covered by the dockerfile manager; this ARG is not. Bumping it may need .docker/uv4-uv-html.patch re-derived, so it gets its own PR.",
+      "managerFilePatterns": ["/^\\.docker/htrflow-web\\.dockerfile$/"],
+      "matchStrings": ["ARG UV4_REF=(?<currentDigest>[a-f0-9]{40})"],
+      "depNameTemplate": "Riksarkivet/universalviewer4",
+      "packageNameTemplate": "https://github.com/Riksarkivet/universalviewer4",
+      "currentValueTemplate": "develop",
+      "datasourceTemplate": "git-refs"
+    },
+    {
+      "customType": "regex",
+      "description": "Trivy image used by make scan-web",
       "managerFilePatterns": ["/^Makefile$/"],
       "matchStrings": ["TRIVY_IMAGE \\?= (?<depName>aquasec/trivy):(?<currentValue>[0-9.]+)"],
       "datasourceTemplate": "docker"
@@ -94,6 +104,11 @@
       "matchDatasources": ["pypi"],
       "matchPackageNames": ["torch", "torchvision"],
       "enabled": false
+    },
+    {
+      "description": "The Universal Viewer fork commit: its own PR — the uv4-uv-html.patch may need re-deriving against it",
+      "matchPackageNames": ["Riksarkivet/universalviewer4"],
+      "groupName": "universalviewer4"
     },
     {
       "description": "GitHub Actions: SHA pins with the version comment kept; one weekly PR",

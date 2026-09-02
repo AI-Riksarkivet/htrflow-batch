@@ -15,13 +15,12 @@ func (m *HtrflowBatch) ComposeUp(
 	project := dag.DockerCompose().Project(dagger.DockerComposeProjectOpts{
 		Source: source.Directory(".docker"),
 	})
-	return project.Service("viewer").Up()
+	return project.Service("web").Up()
 }
 
-// ComposeTest starts the compose stack and verifies the viewer serves uv.html.
-// The viewer container listens on 8080 (nginx-unprivileged), not 80, and the
-// compose service must resolve to an image built from this branch — the
-// published :latest still has the old port-80 root layout.
+// ComposeTest starts the compose stack and verifies the web image serves
+// uv.html. The service is built from .docker/htrflow-web.dockerfile and runs
+// site-only (no apiserver in a compose stack), listening on 8081.
 func (m *HtrflowBatch) ComposeTest(
 	ctx context.Context,
 	// +defaultPath="/"
@@ -31,11 +30,11 @@ func (m *HtrflowBatch) ComposeTest(
 	service := m.ComposeUp(source)
 	output, err := dag.Container().
 		From(curlImage).
-		WithServiceBinding("viewer", service).
-		WithExec([]string{"curl", "-fsS", "-o", "/dev/null", "-w", "%{http_code}", "http://viewer:8080/uv.html"}).
+		WithServiceBinding("web", service).
+		WithExec([]string{"curl", "-fsS", "-o", "/dev/null", "-w", "%{http_code}", "http://web:8081/uv.html"}).
 		Stdout(ctx)
 	if err != nil {
 		return "", fmt.Errorf("compose health check failed: %w", err)
 	}
-	return fmt.Sprintf("viewer healthy (HTTP %s)", output), nil
+	return fmt.Sprintf("web healthy (HTTP %s)", output), nil
 }

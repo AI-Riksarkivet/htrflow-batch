@@ -29,7 +29,7 @@ func (m *HtrflowBatch) resolveTag(ctx context.Context, source *dagger.Directory,
 // PublishDocker tests, builds and publishes an image to a registry and
 // returns the published reference WITH its digest
 // (`<registry>/<repo>:<tag>@sha256:…`) — publish.yml signs and attests that
-// digest. component: "wrapper" (default), "viewer" or "web".
+// digest. component: "wrapper" (default) or "web".
 // Tags are treated as immutable: the workflow refuses a tag that already
 // exists before calling this.
 func (m *HtrflowBatch) PublishDocker(
@@ -37,7 +37,7 @@ func (m *HtrflowBatch) PublishDocker(
 	// +default="wrapper"
 	component string,
 	// Image repository; empty selects the default for the component
-	// (riksarkivet/htrflow-batch, -viewer or riksarkivet/htrflow-web)
+	// (riksarkivet/htrflow-batch or riksarkivet/htrflow-web)
 	// +optional
 	imageRepository string,
 	// Image tag (empty: "v" + version from packages/wrapper/pyproject.toml)
@@ -77,21 +77,15 @@ func (m *HtrflowBatch) PublishDocker(
 			imageRepository = "riksarkivet/htrflow-batch"
 		}
 		container, err = m.Build(ctx, source, baseRevision)
-	case "viewer":
-		if imageRepository == "" {
-			imageRepository = "riksarkivet/htrflow-batch-viewer"
-		}
-		// Use pinned ref to mirror BuildViewer's default for reproducibility
-		container, err = m.BuildViewer(ctx, source, "f2e8f66d3bd5a69e8e392764204d13d9524f63b2", caBundle)
 	case "web":
 		if imageRepository == "" {
 			imageRepository = "riksarkivet/htrflow-web"
 		}
-		// Tagged off the wrapper version like the viewer is: the repo releases
-		// its images as one set, not per workspace member.
-		container, err = m.BuildWeb(ctx, source)
+		// Tagged off the wrapper version: the repo releases its images as one
+		// set, not per workspace member.
+		container, err = m.BuildWeb(ctx, source, caBundle)
 	default:
-		return "", fmt.Errorf("unknown component %q (wrapper|viewer|web)", component)
+		return "", fmt.Errorf("unknown component %q (wrapper|web)", component)
 	}
 	if err != nil {
 		return "", fmt.Errorf("build failed during publish: %w", err)
