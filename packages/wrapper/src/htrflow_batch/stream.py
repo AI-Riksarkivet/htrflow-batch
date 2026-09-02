@@ -40,10 +40,8 @@ MAX_UPLOAD_FAILURES = 5
 
 
 def _failed(stats: "StreamStats", name: str, error: str | None) -> None:
-    """Record a page failure AND say why: with the run abandoned at the verify
-    gate, manifest.json is never published, so the run log is the only place
-    the cause survives. URLs inside the error are redacted by the root
-    handler's RedactingFormatter and by LogCapture (S6)."""
+    """Record a page failure AND say why: a run the verify gate abandons never
+    publishes manifest.json, so the run log is where the cause survives."""
     log.warning("page %s failed: %s", name, error)
     stats.results[name] = PageOutcome(status="failed", error=error)
 

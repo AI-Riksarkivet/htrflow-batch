@@ -71,9 +71,9 @@ class _Tee(io.TextIOBase):
 
     @property
     def buffer(self):
-        """io.TextIOBase has none, and a library writing raw bytes to
-        ``sys.stdout.buffer`` would get AttributeError. Those bytes go to the
-        original stream only — the capture holds text."""
+        """io.TextIOBase has none: a library writing raw bytes to
+        ``sys.stdout.buffer`` got AttributeError. They bypass the capture
+        (text only) and reach ``kubectl logs``."""
         return self._original.buffer
 
 
@@ -153,12 +153,9 @@ class LogCapture:
     def _append(self, s: str) -> None:
         if not s:
             return
-        # S6: redact HERE, not only in RedactingFormatter. Everything that
-        # reaches the world-readable run log comes through the tee — bare
-        # print()s, handlers htrflow installs itself, a root StreamHandler
-        # attach_logging reuses rather than formats. Measured 0.6 us for a
-        # line without a URL and 8.8 us for one with; the run log is ~240
-        # lines an hour.
+        # S6: here, not only in RedactingFormatter — bare print()s and handlers
+        # htrflow (or an earlier basicConfig) installed reach the world-readable
+        # run log through the tee too. 0.6 us/write, 8.8 with a URL; ~240 lines/h.
         s = redact_urls(s)
         with self._lock:
             self._chunks.append(s)

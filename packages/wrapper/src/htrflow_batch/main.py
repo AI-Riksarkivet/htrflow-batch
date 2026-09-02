@@ -209,11 +209,9 @@ def _main(
         return EXIT_OK
     except OSError as e:
         # An I/O condition is never a config mistake, even when it is also a
-        # ValueError: huggingface_hub's LocalEntryNotFoundError subclasses
-        # FileNotFoundError AND ValueError, and under HF_HUB_OFFLINE=1 it is
-        # what a model missing from the read-only cache raises. A re-warm and
-        # a retry fix that, so it must not FailIndex the volume (this is also
-        # driver.load_pipeline's "an OSError stays transient" contract).
+        # ValueError: HF's LocalEntryNotFoundError subclasses both, and is what
+        # a model missing from the read-only cache raises under HF_HUB_OFFLINE
+        # — a re-warm fixes it, so it must not FailIndex the volume.
         return _transient(env, state, stop, e)
     except (ConfigError, ManifestError, SetupError, ValueError) as e:
         stop.set()
@@ -228,10 +226,8 @@ def _main(
             timer.cancel()
 
 
-def _transient(
-    env: Mapping[str, str], state: RunState, stop: threading.Event, e: BaseException
-) -> int:
-    """Retryable failure: stop the queued downloads (W10), leave the evidence."""
+def _transient(env: Mapping[str, str], state: RunState, stop, e: Exception) -> int:
+    """Retryable: stop the queued downloads (W10), leave the evidence, exit 1."""
     stop.set()
     log.error("transient failure in %s: %s\n%s", state.stage, e, traceback.format_exc())
     _terminate(env, {"stage": state.stage, "permanent": False, "error": str(e)}, state)
@@ -331,31 +327,21 @@ def _verify(
     missing = sorted({p.name for p in pages} - uploaded)
     failed = sorted(n for n, r in stats.results.items() if r.status == "failed")
     if missing or failed:
-        raise RuntimeError(
-            f"verify failed: missing={missing} failed={failed}"
-            f"{_failure_detail(stats, failed)}"
-        )
+        detail = _failure_detail(stats, failed)
+        raise RuntimeError(f"verify failed: missing={missing} failed={failed}{detail}")
     return uploaded
 
 
-#: How much of the failed pages' errors goes in the verify message: enough to
-#: name the cause, little enough to stay inside _terminate's 3500-char field
-#: cap (and the 4 KiB the kubelet keeps of a termination message).
-FAILED_DETAIL_PAGES = 10
-FAILED_DETAIL_CHARS = 200
-
-
 def _failure_detail(stats: StreamStats, failed: list[str]) -> str:
-    """Why those pages failed. Without it the operator reads
-    "verify failed: failed=['0042']" and has nothing else: a run with failed
-    pages never publishes manifest.json, where the errors would have gone."""
+    """Why those pages failed — the first 10, 200 chars each, the rest counted
+    (bounded to stay inside _terminate's 3500-char field cap). Without it the
+    operator reads "verify failed: failed=['0042']" and nothing more."""
     if not failed:
         return ""
     shown = "; ".join(
-        f"{n}: {(stats.results[n].error or '')[:FAILED_DETAIL_CHARS]}"
-        for n in failed[:FAILED_DETAIL_PAGES]
+        f"{n}: {(stats.results[n].error or '')[:200]}" for n in failed[:10]
     )
-    rest = len(failed) - FAILED_DETAIL_PAGES
+    rest = len(failed) - 10
     return f" errors: {shown}" + (f" (+{rest} more)" if rest > 0 else "")
 
 
@@ -401,10 +387,8 @@ def _changed_sources(store: ResultStore, pages, done: set[str]) -> set[str]:
     """Done pages whose image URL differs from the one the previous completed
     run recorded in manifest.json (W7). No previous manifest, or one without
     page_sources (older wrapper), means nothing to compare: keep them done.
-
-    publish stores page_sources REDACTED (S6), so the current URL is redacted
-    before comparing: a tokenised private IIIF URL would otherwise differ from
-    its stored form on every retry and reprocess the whole volume, forever."""
+    publish stores page_sources REDACTED (S6), so compare redacted: a tokenised
+    URL otherwise differs from its stored form on every retry, forever."""
     previous = store.get_json_or_none("manifest.json")
     sources = (previous or {}).get("page_sources")
     if not isinstance(sources, dict):
