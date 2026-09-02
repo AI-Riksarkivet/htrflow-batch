@@ -1,4 +1,4 @@
-# htrflow-api
+# htrflow-web
 
 The read API behind the campaign browser. A small FastAPI service that lists
 the campaign Indexed Jobs in its namespace and projects them, together with
@@ -15,7 +15,7 @@ cluster-internal path.
   decision D8
 - Consumer: [Campaign browser](../../frontend/README.md) and the
   [frontend reference](../../docs/reference/frontend.md)
-- Deployment: the `htrflow-api` Deployment and Service in
+- Deployment: the `htrflow-web` Deployment and Service in
   [`charts/htrflow-batch`](../../charts/htrflow-batch/README.md), proxied by the
   viewer at `/api/`
 
@@ -26,9 +26,9 @@ this directory prunes the shared venv down to the root.
 
 ```bash
 make install                                    # uv sync --all-packages
-uv run --all-packages pytest -q packages/api    # this package's unit tests
-HTRFLOW_PUBLIC_RESULTS_BASE=https://results.example.org uv run htrflow-api   # :8081, uses your kubeconfig
-make build-api                                  # the image, .docker/htrflow-api.dockerfile
+uv run --all-packages pytest -q packages/web    # this package's unit tests
+HTRFLOW_PUBLIC_RESULTS_BASE=https://results.example.org uv run htrflow-web   # :8081, uses your kubeconfig
+make build-api                                  # the image, .docker/htrflow-web.dockerfile
 make scan-api                                   # Trivy, HIGH/CRITICAL with a fix fail
 ```
 
@@ -67,7 +67,7 @@ The chart sets the first from `publicResultsBase`.
 | `app.py` | `create_app(reader)`: the three routes over a duck-typed reader, so tests wire a fake |
 | `kube.py` | `Config.from_env`, `Reader`: raw-JSON get/list against Jobs, ConfigMaps and Pods, in-cluster or kubeconfig |
 | `projection.py` | Pure functions from API-server dicts to `JobSummary` and `JobDetail`; `parse_index_ranges` for `completedIndexes` |
-| `__main__.py` | The `htrflow-api` console script: uvicorn on `0.0.0.0:8081` |
+| `__main__.py` | The `htrflow-web` console script: uvicorn on `0.0.0.0:8081` |
 
 ## Tests
 

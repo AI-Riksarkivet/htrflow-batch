@@ -46,7 +46,7 @@ RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
     --mount=type=bind,source=pyproject.toml,target=/opt/workspace/pyproject.toml \
     --mount=type=bind,source=packages/wrapper/pyproject.toml,target=/opt/workspace/packages/wrapper/pyproject.toml \
     --mount=type=bind,source=packages/converter/pyproject.toml,target=/opt/workspace/packages/converter/pyproject.toml \
-    --mount=type=bind,source=packages/api/pyproject.toml,target=/opt/workspace/packages/api/pyproject.toml \
+    --mount=type=bind,source=packages/web/pyproject.toml,target=/opt/workspace/packages/web/pyproject.toml \
     cd /opt/workspace \
     && uv export --locked --package htrflow-batch-wrapper --no-dev --no-emit-project \
          -o /tmp/wrapper-requirements.txt \

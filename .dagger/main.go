@@ -17,7 +17,7 @@ const (
 	DefaultRegistry   = "docker.io"
 	DefaultImageRepo  = "riksarkivet/htrflow-batch"
 	DefaultViewerRepo = "riksarkivet/htrflow-batch-viewer"
-	DefaultApiRepo    = "riksarkivet/htrflow-api"
+	DefaultWebRepo    = "riksarkivet/htrflow-web"
 )
 
 // Every image the pipeline pulls, pinned by tag AND multi-arch index digest

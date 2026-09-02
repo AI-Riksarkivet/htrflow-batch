@@ -21,7 +21,7 @@ REPO = Path(__file__).resolve().parents[3]
 DOCKERFILES = [
     "htrflow-batch.dockerfile",
     "htrflow-batch-gpu-arm64.dockerfile",
-    "htrflow-api.dockerfile",
+    "htrflow-web.dockerfile",
 ]
 _BIND = re.compile(r"--mount=type=bind,source=(packages/[^,]+/pyproject\.toml),")
 

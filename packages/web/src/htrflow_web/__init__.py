@@ -1,4 +1,4 @@
-"""htrflow-api: read-only /api/v1/jobs projection of Indexed Jobs.
+"""htrflow-web: read-only /api/v1/jobs projection of Indexed Jobs.
 
 docs: docs/superpowers/specs/2026-09-01-indexed-jobs-design.md (D8).
 

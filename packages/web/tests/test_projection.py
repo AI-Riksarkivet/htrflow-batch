@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from htrflow_api import projection
+from htrflow_web import projection
 
 CFG = SimpleNamespace(public_results_base="https://results.example.org")
 

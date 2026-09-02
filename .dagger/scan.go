@@ -9,7 +9,7 @@ import (
 // scanImage runs Trivy against an already-built container. ignoreUnfixed
 // skips findings the distribution has no fix for (Debian will_not_fix
 // entries in the slim base): a gate on those can never go green and is
-// what `make scan-api` already does.
+// what `make scan-web` already does.
 func (m *HtrflowBatch) scanImage(
 	ctx context.Context,
 	container *dagger.Container,
@@ -73,11 +73,11 @@ func (m *HtrflowBatch) Scan(
 	return m.scanImage(ctx, container, severity, format, exitCode, ignoreUnfixed, caBundle)
 }
 
-// ScanApi runs Trivy against the read API image. Unlike the wrapper this one
+// ScanWeb runs Trivy against the web image. Unlike the wrapper this one
 // has a slim debian base with no CUDA stack, so a clean gate is a realistic
 // expectation here; ci.yml runs it on every push and pull request with
 // --severity CRITICAL.
-func (m *HtrflowBatch) ScanApi(
+func (m *HtrflowBatch) ScanWeb(
 	ctx context.Context,
 	// +defaultPath="/"
 	// +optional
@@ -95,9 +95,9 @@ func (m *HtrflowBatch) ScanApi(
 	// +optional
 	caBundle *dagger.File,
 ) (string, error) {
-	container, err := m.BuildApi(ctx, source)
+	container, err := m.BuildWeb(ctx, source)
 	if err != nil {
-		return "", fmt.Errorf("api build failed before scanning: %w", err)
+		return "", fmt.Errorf("web build failed before scanning: %w", err)
 	}
 	return m.scanImage(ctx, container, severity, format, exitCode, ignoreUnfixed, caBundle)
 }
