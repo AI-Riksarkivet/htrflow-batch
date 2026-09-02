@@ -3,7 +3,9 @@
 The campaigns git repo has three files/directories the converter reads:
 `converter.yaml` (cluster-wide defaults), `campaigns/*.yaml` (what to run)
 and `pipelines/*.yaml` (how to run it). The filename stem is the campaign /
-pipeline id.
+pipeline id. `htrflow-campaigns init <dir>` writes a repo in exactly this
+shape — see [Running a Campaign → Create the campaigns
+repo](../getting-started/campaigns.md#0-create-the-campaigns-repo).
 
 Source: [`packages/converter/src/htrflow_converter/parse.py`](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/packages/converter/src/htrflow_converter/parse.py),
 [`models.py`](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/packages/converter/src/htrflow_converter/models.py).
