@@ -1,10 +1,9 @@
-"""Bounded-lookahead downloader (docs: wrapper).
+"""One page, fetched safely (docs: wrapper).
 
-Runs in a plain thread with a separate relay thread. Main thread acquires
-bounded slots and submits downloads to a pool of worker threads via httpx sync
-client. Relay thread enqueues results in submission order while main thread may
-block acquiring slots, preventing deadlock. `slots` (Semaphore(lookahead_pages))
-bounds pages-in-flight-or-unconsumed so tmpfs never holds more than the window.
+``fetch_page`` is the unit of work the bounded-lookahead pool in
+``stream.PageStream`` runs: one image, retried with backoff, never raising —
+a page it cannot fetch comes back as a ``FetchResult`` carrying the error,
+which the stream records and the verify gate acts on.
 
 Every response is checked before it is kept (W4): the body must be non-empty
 and start with a known raster signature (JPEG/PNG/TIFF/GIF/BMP/WebP/JP2), and
@@ -23,11 +22,9 @@ time scale with it). Keep such image lists pre-sized.
 
 from __future__ import annotations
 
-import queue
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
@@ -108,7 +105,7 @@ def _save(resp: httpx.Response, path: Path, max_bytes: int) -> int:
     return size
 
 
-def _fetch_one(
+def fetch_page(
     page: PageRef,
     dest_dir: Path,
     client: httpx.Client,
@@ -146,75 +143,3 @@ def _fetch_one(
         if attempt < retries - 1:
             time.sleep(backoff * (2**attempt))
     return FetchResult(page=page, path=None, error=last)
-
-
-def run_downloader(
-    pages: list[PageRef],
-    dest_dir: Path,
-    out_queue: queue.Queue,
-    slots: threading.Semaphore,
-    client: httpx.Client,
-    concurrency: int = 12,
-    retries: int = 3,
-    backoff: float = 0.5,
-    max_bytes: int = FETCH_MAX_BYTES,
-    stop: threading.Event | None = None,
-) -> int:
-    """Download ``pages`` into ``dest_dir``, results on ``out_queue`` in
-    order, ``None`` last. ``stop`` (W10): once set, pending pages complete
-    immediately as failed and the pool is shut down with its queued futures
-    cancelled, so a run that already failed can exit without waiting for
-    every queued download to time out."""
-    dest_dir = Path(dest_dir)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
-    # Use a separate thread to enqueue results in order.
-    # This allows results to be available on the queue even when the main
-    # thread is blocked acquiring slots, preventing deadlock.
-    futures_queue: queue.Queue = queue.Queue()
-    total_holder = [0]  # Use list to allow mutation in nested function
-    done_event = threading.Event()
-
-    def enqueue_results_in_order():
-        while True:
-            try:
-                page_and_fut = futures_queue.get(timeout=0.1)
-            except queue.Empty:
-                if done_event.is_set():
-                    break
-                continue
-            page, fut = page_and_fut
-            try:
-                result = fut.result()  # Block until this future completes
-            except Exception as e:
-                # Belt-and-braces: if fut.result() raises unexpectedly (should not
-                # happen since _fetch_one catches all exceptions), create error result
-                result = FetchResult(page=page, path=None, error=repr(e))
-            total_holder[0] += result.size
-            out_queue.put(result)
-
-    enqueue_thread = threading.Thread(target=enqueue_results_in_order, daemon=True)
-    enqueue_thread.start()
-
-    pool = ThreadPoolExecutor(max_workers=concurrency)
-    try:
-        for page in pages:
-            if stop is not None and stop.is_set():
-                break
-            slots.acquire()  # bounded lookahead: consumer releases
-            if stop is not None and stop.is_set():
-                slots.release()
-                break
-            fut = pool.submit(
-                _fetch_one, page, dest_dir, client, retries, backoff, max_bytes, stop
-            )
-            futures_queue.put((page, fut))
-    finally:
-        done_event.set()
-        stopped = stop is not None and stop.is_set()
-        pool.shutdown(wait=not stopped, cancel_futures=stopped)
-
-    # Wait for enqueue thread to finish
-    enqueue_thread.join()
-    out_queue.put(None)
-    return total_holder[0]

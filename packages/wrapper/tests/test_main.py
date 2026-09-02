@@ -127,7 +127,8 @@ def test_resume_skips_done(env, cfg, s3):
 
     rc = main(env, process_page_factory=factory)
     assert rc == EXIT_OK
-    assert "0001" not in calls and calls == ["0002", "0003"]
+    # completion order: which pages ran is the contract, not their order
+    assert sorted(calls) == ["0002", "0003"]
     body = json.loads(
         s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
             "Body"
@@ -204,7 +205,7 @@ def test_resume_without_previous_manifest_keeps_done_pages(env, cfg, s3):
         return process
 
     assert main(env, process_page_factory=factory) == EXIT_OK
-    assert calls == ["0002", "0003"]
+    assert sorted(calls) == ["0002", "0003"]
 
 
 def test_resume_reprocesses_page_with_alto_but_no_page_xml(env, cfg, s3):
@@ -223,7 +224,7 @@ def test_resume_reprocesses_page_with_alto_but_no_page_xml(env, cfg, s3):
         return process
 
     assert main(env, process_page_factory=factory) == EXIT_OK
-    assert calls == ["0001", "0002", "0003"]
+    assert sorted(calls) == ["0001", "0002", "0003"]
     assert "demo-v1/SE-RA-1234/page/0001.xml" in _keys(s3, cfg)
 
 
@@ -364,14 +365,18 @@ def test_max_pages_caps(env, cfg, s3):
 
 
 def test_downloader_crash_does_not_hang(env, cfg, s3, monkeypatch):
-    """If run_downloader raises before enqueuing its sentinel, consume() must
-    still terminate (via the except-path sentinel in main.dl()) instead of
-    blocking forever on out_queue.get()."""
+    """If the downloader dies before it can produce a single page (here the
+    dest dir cannot be created), the stream must still terminate instead of
+    leaving consume() waiting forever — the pages are then missing, which is
+    the verify gate's business."""
+    real_mkdir = Path.mkdir
 
-    def boom(*a, **k):
-        raise OSError("dest_dir mkdir failed")
+    def boom(self, *a, **k):
+        if self.name == "input":
+            raise OSError("dest_dir mkdir failed")
+        return real_mkdir(self, *a, **k)
 
-    monkeypatch.setattr(main_mod, "run_downloader", boom)
+    monkeypatch.setattr(Path, "mkdir", boom)
     rc = main(env, process_page_factory=fake_factory)
     assert rc == EXIT_TRANSIENT
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
@@ -571,7 +576,7 @@ def test_sigterm_is_not_swallowed_by_the_per_page_handler(env, cfg, s3, monkeypa
         return process
 
     assert main(env, process_page_factory=factory) == EXIT_SIGTERM
-    assert seen == ["0001"]  # no further page was processed
+    assert seen[-1] == "0001"  # no further page was processed
 
 
 def test_store_outage_aborts_in_stream_stage(
@@ -636,13 +641,13 @@ def test_failure_path_stops_the_downloader(env, cfg, s3, monkeypatch):
     """W10: after an early failure the queued downloads must not keep the
     interpreter alive (ThreadPoolExecutor workers are joined at exit)."""
     seen = {}
-    real = main_mod.run_downloader
+    real = main_mod.fetched
 
     def spy(*a, **k):
         seen["stop"] = k.get("stop")
         return real(*a, **k)
 
-    monkeypatch.setattr(main_mod, "run_downloader", spy)
+    monkeypatch.setattr(main_mod, "fetched", spy)
 
     def factory(c):
         raise OSError("model load failed")
