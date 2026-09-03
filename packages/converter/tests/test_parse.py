@@ -84,8 +84,7 @@ EXPECTED = {
         "manifest: <IIIF manifest URL>, or images: <list of image URLs>",
     ],
     "converter-two-errors": [
-        'converter.yaml: "window" must be a whole number (got "not-an-int" '
-        "— quotes make it text)",
+        'converter.yaml: "window" must be a whole number (got "not-an-int")',
         'converter.yaml: "bogus_field" is not a setting this file has — '
         "remove it, or fix the spelling",
     ],
@@ -113,8 +112,11 @@ EXPECTED = {
     ],
     "window": [
         'campaigns/a.yaml: "window" must be a whole number of 1 or more (got '
-        '"not-a-number" — quotes make it text)',
+        '"not-a-number")',
         'campaigns/b.yaml: volume "R1" is listed twice — remove the duplicate',
+    ],
+    "bad-suspend": [
+        'campaigns/broken.yaml: "suspend" must be true or false (got "maybe")',
     ],
 }
 
@@ -159,6 +161,53 @@ def test_summary_counts_problems_and_files(case, summary):
     with pytest.raises(ValidationError) as exc_info:
         _load(FIXTURES / "bad" / case)
     assert exc_info.value.summary == summary
+
+
+@pytest.mark.parametrize(
+    "line,expected",
+    [
+        # The audited set of pydantic error types (parse._TYPE_SENTENCES), one
+        # value per type an author can actually reach. None of these may show
+        # "Input should be ..." or a bare list index.
+        ("window: 0", '"window" must be 1 or more (got 0)'),
+        ("window: not-an-int", '"window" must be a whole number (got "not-an-int")'),
+        ("window: 1.5", '"window" must be a whole number (got 1.5)'),
+        ("window: {a: 1}", '"window" must be a whole number (got a block of settings)'),
+        ("window: [1]", '"window" must be a whole number (got a list)'),
+        ("namespace: [1]", '"namespace" must be text (got a list)'),
+        (
+            "require_model_revision: maybe",
+            '"require_model_revision" must be true or false (got "maybe")',
+        ),
+        (
+            "require_model_revision: [1]",
+            '"require_model_revision" must be true or false (got a list)',
+        ),
+        ("tolerations: 3", '"tolerations" must be a list of entries (got 3)'),
+        (
+            "tolerations: [3]",
+            '"tolerations" entry 1 must be settings written as "key: value" '
+            "lines (got 3)",
+        ),
+        (
+            "node_selector: 3",
+            '"node_selector" must be settings written as "key: value" lines (got 3)',
+        ),
+        ("node_selector: {a: 1}", '"node_selector.a" must be text (got 1)'),
+        (
+            "nope: 1",
+            '"nope" is not a setting this file has — remove it, or fix the spelling',
+        ),
+    ],
+)
+def test_every_pydantic_error_type_reads_as_a_sentence(tmp_path, line, expected):
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + f"\n{line}\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [f"converter.yaml: {expected}"]
 
 
 def test_errors_within_one_campaign_are_all_collected_not_just_first():
