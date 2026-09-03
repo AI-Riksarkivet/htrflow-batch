@@ -140,8 +140,11 @@ campaigns/broken.yaml: volume "R1" is listed twice — remove the duplicate
 | An image outside `allowed_image_repos` | `the image is not from an allowed repository ("ghcr.io/other/x@sha256:…") — converter.yaml allows only: ghcr.io/riksarkivet` |
 | A model with no `revision:` while `require_model_revision` is on | `the model "Riksarkivet/yolov9-regions-1" is not pinned to a revision — converter.yaml sets require_model_revision, so add revision: <40-character commit hash>` |
 | `steps:` that is not a list | `"steps" must be a list of steps — write steps: and then "- step: <Name>" entries under it` |
-| `window: "5"` (quoted, so YAML makes it text), `window: 0`, `window: true` | `"window" must be a whole number of 1 or more (got "5" — quotes make it text)` |
+| `window: "5"` (quoted, so YAML makes it text), `window: 0`, `window: true` | `"window" must be a whole number of 1 or more (got "5" — quotes make it text)` — the "quotes" half is added only when the value really is a number, so `suspend: maybe` is not told about quotes it does not have |
 | `max_seconds:` likewise | `"max_seconds" must be a whole number of seconds, 1 or more (got 0)` |
+| `suspend: maybe` (or any other non-boolean) | `"suspend" must be true or false (got "maybe")` |
+| A setting given a list or a block where one value belongs | `"window" must be a whole number (got a list)` — the value is described, never dumped as a Python repr |
+| A bad value inside a nested setting | `"node_selector.a" must be text (got 1)`, `"tolerations" entry 1 must be settings written as "key: value" lines (got 3)` — a list position is counted from 1, never shown as `tolerations.0` |
 | A key `converter.yaml` does not have | `"bogus_field" is not a setting this file has — remove it, or fix the spelling` |
 | A required key left out | `"image" is missing — add "image:" to this file` |
 | Broken indentation or quoting | `this file is not valid YAML — <the line and column PyYAML names>` |
