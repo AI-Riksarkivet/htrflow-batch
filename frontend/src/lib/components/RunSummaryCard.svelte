@@ -4,7 +4,7 @@
   // request.
   import {
     formatDuration,
-    pageStats,
+    pageRows,
     summarizeRun,
     type RunManifest,
   } from "$lib/run.js";
@@ -16,7 +16,9 @@
   const summary = $derived(
     summarizeRun(manifest.results, manifest.page_sources),
   );
-  const pages = $derived(pageStats(manifest.results, manifest.page_sources));
+  // One derived row per page, computed once and handed to both the grid and
+  // the full table below.
+  const rows = $derived(pageRows(manifest));
 
   function shortDigest(digest: string): string {
     return digest.slice(-12);
@@ -84,8 +86,8 @@
   {/if}
 </section>
 
-{#if pages.length > 0}
-  <PageGrid {pages} max={summary.max} />
+{#if rows.length > 0}
+  <PageGrid {rows} />
 {/if}
 
 {#if summary.failedPages.length > 0}
@@ -117,10 +119,10 @@
   </section>
 {/if}
 
-{#if pages.length > 0}
+{#if rows.length > 0}
   <details class="all-pages">
-    <summary>all {pages.length} pages</summary>
-    <PagesTable {pages} />
+    <summary>all {rows.length} pages</summary>
+    <PagesTable {rows} sources={manifest.page_sources} />
   </details>
 {/if}
 

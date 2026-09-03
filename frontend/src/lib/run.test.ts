@@ -214,7 +214,14 @@ describe("pageRows", () => {
       },
     });
     expect(rows).toEqual([
-      { name: "0001", status: "ok", seconds: 1, error: undefined, bucket: 0, scale: 1 },
+      {
+        name: "0001",
+        status: "ok",
+        seconds: 1,
+        error: undefined,
+        bucket: 0,
+        scale: 1,
+      },
       {
         name: "0002",
         status: "failed",
