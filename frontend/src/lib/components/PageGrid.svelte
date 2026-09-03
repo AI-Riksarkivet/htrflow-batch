@@ -8,8 +8,9 @@
 
   let { rows }: { rows: PageRow[] } = $props();
 
-  // Index = PageRow["bucket"]; unused indices fall back to the base .cell style.
-  const BUCKET_CLASS = ["ok", "failed", "skipped", "", ""] as const;
+  // Index = PageRow["bucket"]; index 3 (an outcome the wrapper never
+  // emits) and the reserved 4 fall back to the base .cell style.
+  const BUCKET_CLASS = ["ok", "failed", "skipped"] as const;
 
   let readout = $state<string | null>(null);
   let focusIdx = $state(0);
@@ -53,7 +54,7 @@
     {#each rows as r, i (r.name)}
       <button
         type="button"
-        class="cell {BUCKET_CLASS[r.bucket]}"
+        class="cell {BUCKET_CLASS[r.bucket] ?? ''}"
         style="--t: {r.scale}"
         tabindex={i === focusIdx ? 0 : -1}
         aria-label={label(r)}
