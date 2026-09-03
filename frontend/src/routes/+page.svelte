@@ -68,12 +68,6 @@
 </main>
 
 <style>
-  h1 {
-    font-size: 1.25rem;
-    font-weight: 600;
-    margin: 0;
-  }
-
   .title-row {
     display: flex;
     align-items: center;
@@ -85,15 +79,10 @@
     width: auto;
   }
 
+  /* The only route whose header centres vertically (app.css: .page) — a
+     single-line title needs no top alignment. */
   .page {
-    display: flex;
     align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 0.5rem 1.5rem;
-    margin-bottom: 1.5rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
   }
 
   .banner {
@@ -103,7 +92,6 @@
   }
 
   .error {
-    color: var(--destructive);
     border: 1px solid var(--destructive);
     background: var(--destructive-soft);
   }
