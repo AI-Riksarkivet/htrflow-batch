@@ -113,6 +113,48 @@ validation error and blocks rendering for every campaign that uses it:
 | `max_seconds:`, when set, is a positive integer | It becomes `spec.template.spec.activeDeadlineSeconds` — the *pod's* deadline, so only the overrunning attempt is killed — for every campaign on this pipeline; unset falls back to `converter.yaml`. A sixty-page spread recipe and a single-page one do not want the same budget, and a budget the volume cannot meet costs `backoffLimitPerIndex` retries before the index is capped |
 | `steps:` is present | Only the `steps:` document goes into the ConfigMap; no `Export` steps (the wrapper appends them — a pipeline with one fails the warm-up) |
 
+## When something is wrong
+
+`validate` and `render` print one line per problem and then a count, and
+render nothing at all if there is one problem — a half-rendered `rendered/`
+would be worse than none. Every line is
+`path/to/file.yaml: <what is wrong> — <what to write instead>`; there are no
+Python tracebacks, no `volumes.0.id` paths and no pydantic phrasing in them,
+because the person reading them is looking at YAML, not at a parser.
+
+```
+campaigns/broken.yaml: volume 1 ("a/b") has an id with characters that are not allowed — use only letters, digits, ".", "_" and "-", at most 63 of them
+campaigns/broken.yaml: volume "R1" is listed twice — remove the duplicate
+2 problems in 1 file — nothing was rendered
+```
+
+| What you wrote | What you are told |
+| --- | --- |
+| An `id:` with `/`, a space or 64+ characters | `volume 3 ("a/b") has an id with characters that are not allowed — use only letters, digits, ".", "_" and "-", at most 63 of them` |
+| The same id twice in one campaign | `volume "R1" is listed twice — remove the duplicate` |
+| A volume with neither `manifest:` nor `images:` (or with both) | `volume 3 needs exactly one source — give it manifest: <IIIF manifest URL>, or images: <list of image URLs>` |
+| A `manifest:` that is not an http(s) URL | `volume 3 has a manifest that is not an http(s) URL ("javascript:alert(1)") — write the whole URL, starting with https://` |
+| A list entry that is neither a bare id nor a mapping with `id:` | `volume 3 has no id — write the entry as "- R1", or as "- id: R1" with manifest: or images:` |
+| `pipeline:` naming a file that is not in `pipelines/` | `pipeline "kyrk-v3" has no file in pipelines/ — add pipelines/kyrk-v3.yaml, or point pipeline: at one that is there` |
+| A tag instead of a digest in `image:` | `"image" is not pinned to a digest (got "repo/img:v5") — write image: <registry>/<repo>@sha256:<64 hex digits>` |
+| An image outside `allowed_image_repos` | `the image is not from an allowed repository ("ghcr.io/other/x@sha256:…") — converter.yaml allows only: ghcr.io/riksarkivet` |
+| A model with no `revision:` while `require_model_revision` is on | `the model "Riksarkivet/yolov9-regions-1" is not pinned to a revision — converter.yaml sets require_model_revision, so add revision: <40-character commit hash>` |
+| `steps:` that is not a list | `"steps" must be a list of steps — write steps: and then "- step: <Name>" entries under it` |
+| `window: "5"` (quoted, so YAML makes it text), `window: 0`, `window: true` | `"window" must be a whole number of 1 or more (got "5" — quotes make it text)` |
+| `max_seconds:` likewise | `"max_seconds" must be a whole number of seconds, 1 or more (got 0)` |
+| A key `converter.yaml` does not have | `"bogus_field" is not a setting this file has — remove it, or fix the spelling` |
+| A required key left out | `"image" is missing — add "image:" to this file` |
+| Broken indentation or quoting | `this file is not valid YAML — <the line and column PyYAML names>` |
+| A file that is a list, or free text | `this file must be campaign settings written as "key: value" lines — a bare list or a piece of text is not one` |
+
+A campaign whose pipeline file is itself broken is **not** also told its
+pipeline is missing: that file's own problem is already in the list, and
+saying it twice would send its author looking for a file that is right there.
+
+The wording is pinned verbatim, per fixture, in
+`packages/converter/tests/test_parse.py` (`EXPECTED`) — changing a sentence
+is a deliberate edit there.
+
 ## `rendered/`
 
 `htrflow-campaigns render <repo-dir> --out <repo-dir>/rendered` writes:

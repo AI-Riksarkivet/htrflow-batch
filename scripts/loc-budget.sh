@@ -19,7 +19,17 @@ fail=0
 # needs its process: resume, fetch retries, the verify gate, redaction,
 # SIGTERM and log shipping. (B63)
 check wrapper   "$(count packages/wrapper/src -name '*.py')" 2000
-check converter "$(count packages/converter/src -name '*.py')" 1000
+# 1000 -> 1150 in Task 20G, which made every problem the converter reports a
+# sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
+# -- <what to write instead>") instead of pydantic's own phrasing over a
+# `volumes.0.id` path. That is ~135 lines, and almost all of it is English:
+# ~20 messages at three or four source lines each once ruff has wrapped them
+# to 88 columns, plus the one table that turns pydantic's error types into
+# the same voice. This budget exists to squeeze duplication and sprawl, and
+# the messages a person reads are neither -- they ARE the feature here, so
+# they are counted and capped rather than compressed into shorter, worse
+# sentences. (B63)
+check converter "$(count packages/converter/src -name '*.py')" 1150
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
