@@ -6,8 +6,10 @@ Kubernetes manifests: one ConfigMap plus one warm-up Job per pipeline, and one
 `volumes.txt` ConfigMap plus one Indexed Job per campaign. A campaign **is**
 its Indexed Job: each volume is one completion index, the Job carries the
 Kueue queue label, and pausing or deleting a campaign is a change to its YAML
-file. Nothing here talks to a cluster; `kubectl apply` or Argo CD does that
-with the rendered files.
+file. Only one command here talks to a cluster — `apply`, which renders and
+then server-side applies through the official Kubernetes client (no
+`kubectl` binary, no subprocess); Argo CD applies the same rendered files on
+a real deployment.
 
 - Design: [Campaigns as Indexed Jobs](../../docs/superpowers/specs/2026-09-01-indexed-jobs-design.md),
   §3 for the objects rendered here
@@ -29,7 +31,7 @@ uv run --all-packages pytest -q packages/converter    # this package's unit test
 uv run htrflow-campaigns init <dir> [--force]         # write a new campaigns repo from the template
 uv run htrflow-campaigns validate <campaigns-repo>    # exit 1 and one line per problem
 uv run htrflow-campaigns render <campaigns-repo> --out <dir>
-make campaigns-apply DIR=<campaigns-repo> [PRUNE=1]   # render + kubectl apply + Kueue pause sync
+make campaigns-apply DIR=<campaigns-repo> [PRUNE=1]   # = htrflow-campaigns apply: render + apply + Kueue pause sync
 ```
 
 `render` writes `<dir>/pipelines/<id>.yaml` and `<dir>/campaigns/<name>.yaml`
@@ -38,6 +40,19 @@ two directories it did not write, so a deleted campaign file takes its
 manifest with it. It refuses an `--out` that is, or contains, the campaigns
 repo itself. Campaigns are append-only: changing the volume list of a campaign
 that has already been rendered is an error. Create a new campaign instead.
+
+`apply` renders into a temporary directory (or `--out`), then, against the
+namespace in `converter.yaml`: server-side applies every pipeline object and
+then every campaign object (field manager `htrflow-campaigns`); with
+`--prune`, deletes every Job and ConfigMap labelled
+`htrflow.riksarkivet.se/managed-by=converter` that this render did not
+produce; and finally puts each campaign's `suspend:` on its Kueue Workload's
+`spec.active`, waiting up to `--pause-wait` seconds for a brand-new paused
+campaign's Workload to appear. Every action is one printed line. `--dry-run`
+renders and prints what would be applied without opening a connection. It
+authenticates from `$KUBECONFIG` or, in a pod, from the mounted
+ServiceAccount token — the htrflow-batch chart renders a suitable
+ServiceAccount behind `apply.rbac.enabled`.
 
 ## Inputs
 

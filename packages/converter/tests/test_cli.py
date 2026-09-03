@@ -192,7 +192,7 @@ def test_render_prints_every_removed_path_and_also_removes_yml(tmp_path, capsys)
 
 def test_the_makefile_no_longer_defines_the_prune_selector():
     """One definition, in `render.CAMPAIGN_SELECTOR`: `htrflow-campaigns
-    apply` passes it to `kubectl --prune` and `make campaigns-apply` calls
+    apply --prune` lists the cluster by it and `make campaigns-apply` calls
     that. A second copy in the Makefile could drift from the label the
     renderer writes, and a prune that matches nothing deletes nothing --
     silently."""

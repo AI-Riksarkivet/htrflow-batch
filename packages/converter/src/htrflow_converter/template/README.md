@@ -44,11 +44,11 @@ campaign **is** one Kubernetes Indexed Job:
 > deletes its Job and its `volumes.txt` ConfigMap only when pruning is turned
 > on: Argo CD needs `syncPolicy.automated.prune: true` (it defaults to
 > `false`, and a manual sync prunes only with `--prune`), and on a PoC it is
-> `make campaigns-apply PRUNE=1`, which runs
-> `kubectl apply --prune -l htrflow.riksarkivet.se/managed-by=converter`
-> (a plain apply never deletes anything). **Results already published to S3
-> are never touched by anything in this system — not by pausing, not by
-> cancelling.**
+> `make campaigns-apply PRUNE=1`, which deletes every Job and ConfigMap
+> labelled `htrflow.riksarkivet.se/managed-by=converter` that the render did
+> not produce (a plain apply never deletes anything). **Results already
+> published to S3 are never touched by anything in this system — not by
+> pausing, not by cancelling.**
 
 ## Adding a campaign
 
@@ -93,12 +93,15 @@ before campaigns — a campaign's Job references its pipeline's ConfigMap by
 name:
 
 ```bash
-kubectl apply -f rendered/pipelines -f rendered/campaigns
+htrflow-campaigns apply .                                   # renders, applies in order, syncs the pause
+kubectl apply -f rendered/pipelines -f rendered/campaigns   # or by hand, from rendered/
 ```
 
 `make campaigns-apply DIR=<this-repo>` (from an
 [htrflow-batch](https://github.com/AI-Riksarkivet/htrflow-batch) checkout)
-does exactly the render + apply above in one step, for the PoC. On a real
+is the first command above, for the PoC — it renders, applies pipelines then
+campaigns through the Kubernetes API, and puts each campaign's `suspend:` on
+its Kueue Workload. Add `PRUNE=1` to cancel deleted campaigns. On a real
 deployment, an Argo CD `Application` watches this repo's `rendered/`
 directory instead — nothing applies to the cluster that this repo's own CI
 did not commit first.
