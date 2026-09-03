@@ -99,7 +99,11 @@ script). A CSP header from the server must not be stricter than the meta tag
     viewer is reachable from the first tick. Empty when there is neither.
   - **source** — `VolumeView.sourceUrl`, the URL half of the volume's
     `volumes.txt` line, straight to the source manifest. Empty for an
-    `images:` volume, which lists bare image URLs and has no manifest.
+    `images:` volume, which lists bare image URLs and has no manifest, and
+    empty for anything that is not an absolute http(s) URL: `volumes.txt` is
+    a file humans edit in a git repo, so `isHttpUrl` guards it again at the
+    last step before it becomes an href (this also gates the "open"
+    fallback).
 - **Pipeline chip.** A button once the detail has loaded: its `title` is
   `JobDetail.pipelineSteps` joined by ` → `, and clicking it toggles
   `JobDetail.pipelineYaml` in an inline `<pre>` (`aria-expanded` /
@@ -109,8 +113,12 @@ script). A CSP header from the server must not be stricter than the meta tag
   choice in `localStorage` under `htrflow.card.<namespace>/<name>` — every
   access wrapped, since a browser may refuse storage; the card then simply
   forgets. While folded it still shows the failures block and a one-line
-  **latest strip**: the newest `active` volume, else the newest `done` one,
-  with the same three link slots, so UV and the run log stay one click away.
+  **latest strip**: `JobDetail.latest` — the newest `active` volume, else the
+  newest `done` one, else nothing — with the same three link slots, so UV and
+  the run log stay one click away. The API computes it over **every** volume,
+  like `failures` and unlike `volumes`: picking it in the browser would only
+  ever see the page that happens to be loaded, and for a campaign of
+  thousands the index in flight is never in the first 200.
 - **No thumbnails.** The read API has no per-volume image field; the volume
   table is id / state / links only.
 - **Failures block.** `JobDetail.failures` (up to 50 newest
@@ -127,7 +135,10 @@ script). A CSP header from the server must not be stricter than the meta tag
   currently open** (`offset 0`, the limit rounded up to whole pages and
   capped at the API's own `limit` ceiling of 1000, rows past that left as
   last fetched), so a tick never undoes "load more".
-- **Accessibility** — campaign header is a disclosure button; AA contrast in
+- **Accessibility** — campaign header is a disclosure button, carrying
+  `aria-controls` only while the volume table is rendered (a folded card has
+  no table, and a dangling IDREF is invalid ARIA — `aria-expanded` carries
+  the state on its own); AA contrast in
   both themes; `prefers-reduced-motion` honoured; no horizontal overflow at
   390 px.
 
