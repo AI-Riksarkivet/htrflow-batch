@@ -337,6 +337,8 @@ H. Scale, cost and operations (archive scale: thousands of volumes per campaign,
 
 ### Task 19: Run viewer — one page model for the table and the grid (no feature removed)
 
+> **Outcome 2026-09-03: implemented, reviewed, REVERTED.** The premise was false — `RunSummaryCard` already derived the rows once and passed them to both children; the change was +65 lines of indirection and coerced unknown statuses to the word "skipped". Reverted in six revert commits. The one real win (bar scale computed once, unit-tested) is a ≤ 20-line follow-up for Task 20's frontend pass: export a tested `scale(seconds, max)` from `run.ts`, nothing else.
+
 **Why:** the `/log` run viewer is ~1 000 of the frontend's 2 286 lines; `PagesTable.svelte` and `PageGrid.svelte` each re-derive the page rows from `manifest.json`. One derived `PageRow[]` in `run.ts` (name, status, seconds, error, colour bucket, scale) feeds both; the components become presentation only. Every feature stays: ok/failed/skipped counts, total + wall, median/p95/max, five slowest, failed pages with errors, per-page cells coloured by status and scaled by seconds, the `<details>` table in slices of 100, live mode, terminal-line stop.
 
 **Files:** `frontend/src/lib/run.ts` (+ tests), `components/{RunSummaryCard,PagesTable,PageGrid}.svelte`, `routes/log/+page.svelte`; `docs/reference/frontend.md`.
