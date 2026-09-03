@@ -230,7 +230,9 @@ def detail(
     results_base = summary["resultsBase"]
     pipeline = summary["pipeline"]
 
-    volumes = []
+    # Annotated because the rows are heterogeneous (int index, str URLs,
+    # nullable sourceUrl) and the sort below needs a comparable key type.
+    volumes: list[dict] = []
     for idx, line in enumerate(_volume_lines(configmap)):
         vol_id = line.split("\t", 1)[0]
         row = {
