@@ -159,6 +159,30 @@ describe("CampaignCard", () => {
     expect(images.getByRole("link", { name: "log" })).toBeInTheDocument();
   });
 
+  test("a sourceUrl that is not an http(s) URL never becomes a link", async () => {
+    // volumes.txt is a file humans edit in a git repo; the card checks the
+    // URL again at the last step before it becomes an href.
+    const hostile = {
+      ...volumeFailed,
+      sourceUrl: "javascript:alert(1)",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes: [hostile] }),
+      ),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+
+    const row = screen.getAllByRole("row").slice(1)[0] as HTMLElement;
+    expect(within(row).queryByRole("link", { name: "source" })).toBeNull();
+    // and it must not reach the viewer through the "open" slot either
+    expect(within(row).queryByRole("link", { name: "open" })).toBeNull();
+    expect(within(row).getByRole("link", { name: "log" })).toBeInTheDocument();
+  });
+
   test("the log link carries log+manifest always, and live=1 only for a volume that is not done", async () => {
     const detail = {
       ...detail0,
