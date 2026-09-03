@@ -2,6 +2,7 @@
 // the pure summary math behind the run viewer. The manifest is written once,
 // when the wrapper finishes, and carries one result per page.
 import { z } from "zod";
+import { altoUrl } from "./alto.js";
 import { isHttpUrl } from "./api.js";
 
 export const pageResultSchema = z.object({
@@ -28,6 +29,10 @@ export const runManifestSchema = z
     // id; older runs have neither.
     page_sources: z.record(z.string()).optional(),
     canvas_ids: z.record(z.string().nullable()).optional(),
+    // publish.py: "<public_results_base>/<volume>/iiif.json" — the ALTO
+    // viewer derives each page's ALTO URL from it (altoUrl). Absent on a
+    // volume whose ALTO would not parse (build_viewer_manifest skipped).
+    viewer_url: z.string().optional(),
   })
   .passthrough();
 
@@ -38,6 +43,9 @@ export interface PageStat extends PageResult {
   id: string;
   /** Source image URL when the manifest carries one and it is http(s). */
   source?: string;
+  /** This page's ALTO URL, derived from `viewer_url` when the manifest
+   * carries one and it is http(s). */
+  alto?: string;
 }
 
 export interface RunSummary {
@@ -73,13 +81,19 @@ export function percentile(
 export function pageStats(
   results: Record<string, PageResult>,
   sources: Record<string, string> = {},
+  viewerUrl?: string,
 ): PageStat[] {
+  const alto =
+    viewerUrl !== undefined && isHttpUrl(viewerUrl) ? viewerUrl : null;
   return Object.entries(results)
     .map(([id, r]) => {
       const source = sources[id];
-      return source !== undefined && isHttpUrl(source)
-        ? { id, ...r, source }
-        : { id, ...r };
+      const stat: PageStat =
+        source !== undefined && isHttpUrl(source)
+          ? { id, ...r, source }
+          : { id, ...r };
+      if (alto !== null) stat.alto = altoUrl(alto, id);
+      return stat;
     })
     .sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -87,8 +101,9 @@ export function pageStats(
 export function summarizeRun(
   results: Record<string, PageResult>,
   sources: Record<string, string> = {},
+  viewerUrl?: string,
 ): RunSummary {
-  const pages = pageStats(results, sources);
+  const pages = pageStats(results, sources, viewerUrl);
   const timed = pages.filter((p) => p.status !== "skipped");
   const seconds = timed.map((p) => p.seconds).sort((a, b) => a - b);
   const slowest = [...timed].sort((a, b) => b.seconds - a.seconds).slice(0, 5);

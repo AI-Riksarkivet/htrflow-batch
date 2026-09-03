@@ -14,9 +14,11 @@
   let { manifest }: { manifest: RunManifest } = $props();
 
   const summary = $derived(
-    summarizeRun(manifest.results, manifest.page_sources),
+    summarizeRun(manifest.results, manifest.page_sources, manifest.viewer_url),
   );
-  const pages = $derived(pageStats(manifest.results, manifest.page_sources));
+  const pages = $derived(
+    pageStats(manifest.results, manifest.page_sources, manifest.viewer_url),
+  );
 
   function shortDigest(digest: string): string {
     return digest.slice(-12);

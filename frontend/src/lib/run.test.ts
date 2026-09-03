@@ -130,6 +130,30 @@ describe("page_sources", () => {
   });
 });
 
+describe("viewer_url / alto", () => {
+  test("derives each page's ALTO URL alongside iiif.json when viewer_url is http(s)", () => {
+    const stats = pageStats(
+      base.results,
+      {},
+      "https://bucket/htr-results/v1/vol/iiif.json",
+    );
+    expect(stats[0]?.alto).toBe(
+      "https://bucket/htr-results/v1/vol/alto/0001.xml",
+    );
+    expect(
+      summarizeRun(base.results, {}, "https://bucket/v1/vol/iiif.json")
+        .failedPages[0]?.alto,
+    ).toBe("https://bucket/v1/vol/alto/0003.xml");
+  });
+
+  test("no viewer_url, or a refused scheme, leaves alto undefined", () => {
+    expect(pageStats(base.results)[0]?.alto).toBeUndefined();
+    expect(
+      pageStats(base.results, {}, "javascript:x")[0]?.alto,
+    ).toBeUndefined();
+  });
+});
+
 describe("scale", () => {
   test("a fraction of the slowest page, with a visible floor", () => {
     expect(scale(10, 10)).toBe(1);
