@@ -230,7 +230,10 @@ gave up, but what those indexes published is there) or `Failed` (the same
 condition with nothing completed). Per-volume rows come from the
 campaign's `volumes.txt` ConfigMap crossed with `completedIndexes` /
 `failedIndexes` and any pod still present for that index (its termination
-message becomes `reason` on a failed row).
+message becomes `reason` on a failed row); the URL half of each line becomes
+that row's `sourceUrl`. The detail response also reads the Job's
+`htr-pipeline-<id>` ConfigMap, so the card can list the pipeline's steps and
+show its YAML — a missing ConfigMap is no steps, not an error.
 
 The status page is a Svelte SPA served by that same process, on the same
 origin as `/api/v1` and Universal Viewer at `/uv.html` — one image, no
