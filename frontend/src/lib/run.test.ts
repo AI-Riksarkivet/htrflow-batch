@@ -5,6 +5,7 @@ import {
   pageStats,
   percentile,
   runManifestSchema,
+  scale,
   summarizeRun,
   type RunManifest,
 } from "./run.js";
@@ -126,6 +127,21 @@ describe("page_sources", () => {
     expect(
       summarizeRun(parsed.results, parsed.page_sources).failedPages[0]?.source,
     ).toBeUndefined();
+  });
+});
+
+describe("scale", () => {
+  test("a fraction of the slowest page, with a visible floor", () => {
+    expect(scale(10, 10)).toBe(1);
+    expect(scale(5, 10)).toBe(0.5);
+    expect(scale(0.01, 10)).toBe(0.12); // the floor: a sliver, not nothing
+    expect(scale(20, 10)).toBe(1); // clamped, never taller than the cell
+  });
+
+  test("no usable maximum means no bar", () => {
+    expect(scale(5, null)).toBe(0);
+    expect(scale(5, 0)).toBe(0);
+    expect(scale(5, -1)).toBe(0);
   });
 });
 

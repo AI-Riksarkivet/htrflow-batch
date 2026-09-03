@@ -106,6 +106,16 @@ export function summarizeRun(
   };
 }
 
+/**
+ * A page cell's bar height as a fraction of the slowest page's seconds. The
+ * 0.12 floor keeps a fast page visible as a sliver instead of nothing; no
+ * usable maximum (a run where every page was skipped) means no bar at all.
+ */
+export function scale(seconds: number, max: number | null): number {
+  if (max === null || max <= 0) return 0;
+  return Math.max(0.12, Math.min(1, seconds / max));
+}
+
 /** "12.3 s" under a minute, "1 h 43 min 38 s" above — a 480-page run is hours. */
 export function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds.toFixed(1)} s`;

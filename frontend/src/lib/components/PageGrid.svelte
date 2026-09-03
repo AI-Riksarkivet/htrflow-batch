@@ -3,7 +3,7 @@
   // to the slowest page. Cells are buttons with a roving tabindex so the
   // grid is one tab stop and arrow keys walk the pages; hover/focus prints
   // the page id and seconds in the readout line (and the native title).
-  import type { PageStat } from "$lib/run.js";
+  import { scale, type PageStat } from "$lib/run.js";
 
   let { pages, max }: { pages: PageStat[]; max: number | null } = $props();
 
@@ -13,11 +13,6 @@
 
   function label(p: PageStat): string {
     return `page ${p.id} · ${p.seconds.toFixed(1)} s · ${p.status}`;
-  }
-
-  function shade(p: PageStat): number {
-    if (max === null || max <= 0) return 0;
-    return Math.max(0.12, Math.min(1, p.seconds / max));
   }
 
   function moveFocus(next: number): void {
@@ -55,7 +50,7 @@
       <button
         type="button"
         class="cell {p.status}"
-        style="--t: {shade(p)}"
+        style="--t: {scale(p.seconds, max)}"
         tabindex={i === focusIdx ? 0 : -1}
         aria-label={label(p)}
         title={label(p)}
