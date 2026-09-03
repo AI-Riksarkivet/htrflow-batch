@@ -109,6 +109,22 @@ describe("describeReason", () => {
     );
   });
 
+  test("a permanent setup failure that is not about the manifest", () => {
+    // A missing env is raised before the stage moves past `setup`; pointing
+    // its reader at the manifest URL would be the wrong file.
+    expect(
+      reasonOf({
+        stage: "setup",
+        permanent: true,
+        error: "missing required env: S3_BUCKET",
+      }),
+    ).toBe(
+      "Failed while reading the manifest: missing required env: S3_BUCKET. " +
+        "This volume will not be retried — fix the cause, then put the " +
+        "volume in a new campaign.",
+    );
+  });
+
   test("an unknown permanent failure still says what to do next", () => {
     expect(
       reasonOf({ stage: "load", permanent: true, error: "unknown step 'Foo'" }),
