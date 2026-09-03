@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "Campaign/pipeline YAML -> manifests (docs: docs/superpowers/specs/2026-09-01-indexed-jobs-design.md)"
 requires-python = ">=3.10"
 dependencies = [
+    # `apply` talks to the API server directly (server-side apply, our own
+    # selector prune, the Kueue pause patch) -- one client library and one
+    # auth path across the repo (packages/web pins the same range).
+    "kubernetes>=29",
     "pydantic>=2.7",
     "pyyaml>=6",
 ]

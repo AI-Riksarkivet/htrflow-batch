@@ -746,12 +746,14 @@ name = "htrflow-converter"
 version = "0.1.0"
 source = { editable = "packages/converter" }
 dependencies = [
+    { name = "kubernetes" },
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "kubernetes", specifier = ">=29" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pyyaml", specifier = ">=6" },
 ]
