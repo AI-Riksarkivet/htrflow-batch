@@ -8,6 +8,8 @@ import { ApiUnreachable, type VolumeReason } from "./api.js";
 import { RELOAD_MS } from "./config.js";
 
 /** A stage name from the wrapper, as the thing it was doing. */
+// `config` is deliberately absent: it never reaches this map, because a
+// config failure gets its own sentence below rather than a stage word.
 const STAGE_WORDS: Record<string, string> = {
   setup: "reading the manifest",
   resume: "checking earlier results",
@@ -94,15 +96,18 @@ export function describeReason(reason: VolumeReason): string {
       "log to see what happened."
     );
   }
-  // Not every permanent setup failure is about the manifest: a missing or
-  // contradictory env is also raised before the stage moves on, and telling
-  // its reader to fix a manifest URL would send them to the wrong file. The
-  // wrapper's own manifest errors all name what they are about (iiif.py).
-  if (
-    stage === "setup" &&
-    permanent === true &&
-    /^(manifest|canvas)\b/.test(error)
-  ) {
+  if (stage === "config") {
+    // Not a manifest problem and not the campaign author's to fix: the env
+    // comes from converter.yaml and the chart, so this reader is being sent
+    // somewhere else entirely (the wrapper sets this stage around
+    // Config.from_env for exactly that reason).
+    return (
+      `The volume's settings are incomplete or wrong: ${stop(error)} ` +
+      "This is a deployment problem, not a manifest problem — check the " +
+      "campaign's converter.yaml and the chart values."
+    );
+  }
+  if (stage === "setup" && permanent === true) {
     return (
       `The IIIF manifest could not be read: ${stop(error)} ` +
       "Fix the manifest URL in the campaign file — this volume will not be " +
