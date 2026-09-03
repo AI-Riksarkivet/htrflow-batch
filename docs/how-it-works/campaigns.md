@@ -224,8 +224,10 @@ exhausts its retries it counts toward `maxFailedIndexes`; the Job's own
 is a thin, read-only projection of live Job/Pod/ConfigMap state — no state
 of its own, nothing cached, nothing written. A campaign's `phase` is derived
 straight from the Job: `Queued` (suspended, nothing done yet), `Paused`
-(suspended, some indexes done), `Running`, `Succeeded` or `Failed` (from the
-Job's own `Complete`/`Failed` conditions). Per-volume rows come from the
+(suspended, some indexes done), `Running`, `Succeeded`, `PartiallyFailed`
+(the `Failed` condition with a non-empty `completedIndexes` — the campaign
+gave up, but what those indexes published is there) or `Failed` (the same
+condition with nothing completed). Per-volume rows come from the
 campaign's `volumes.txt` ConfigMap crossed with `completedIndexes` /
 `failedIndexes` and any pod still present for that index (its termination
 message becomes `reason` on a failed row).
