@@ -95,6 +95,73 @@ the manifest, page fetch or transcription failures surfacing at verify, a
 model-load `OSError`, five consecutive upload failures (`UploadOutage`).
 Full table: [Wrapper reference](../reference/wrapper.md#exit-codes).
 
+## What a person is told
+
+The machine-readable forms above — exit codes, the termination JSON, the
+`permanent failure in <stage>:` prefix — are for Kubernetes, the read API and
+the run viewer's stop rule. None of them is a message, and none of them ever
+reaches a person unedited. Every surface that talks to people says the same
+three things in plain sentences: **what happened, where, and what to do
+next**; no JSON, no Python reprs, no stage names or `loc` paths.
+
+Each surface has exactly one place where that translation happens:
+
+| Surface | Where the sentence is written |
+|---|---|
+| Campaign page (volume rows, failures block, banners) | `frontend/src/lib/reasons.ts` — `describeReason`, `describeApiError`; wording pinned in `reasons.test.ts` |
+| Run log | `packages/wrapper/src/htrflow_batch/main.py` — `_advice`, appended after the prefix |
+| Converter CLI | `packages/converter/…/parse.py` + the models' validators — see [Campaign & Pipeline YAML](../reference/campaign-yaml.md#when-something-is-wrong) |
+
+### A failed volume, on the campaign page
+
+`reason` reaches the browser as `{stage, permanent, error}`; the card renders
+one sentence per case and never the fields themselves.
+
+| `error` | What the reader is told | What the operator does |
+|---|---|---|
+| `DeadlineExceeded` (also `MAX_SECONDS`, from a pre-Task-25 wrapper) | "Stopped when this volume's time budget ran out; the next attempt resumes from the pages already finished." | Nothing, unless it keeps happening — then raise `max_seconds` on the pipeline |
+| `SIGTERM` | "The pod was stopped by the cluster (a node drain or a pause); the volume will be retried." | Nothing; the index is retried |
+| Anything at stage `setup` with `permanent: true` | "The IIIF manifest could not be read: `<error>`. Fix the manifest URL in the campaign file — this volume will not be retried." | Fix the URL in `campaigns/<name>.yaml`, then put the volume in a new campaign |
+| `verify failed: … missing=[…] failed=[…]` | "3 pages could not be processed (p012, p045, p101); the volume is retried automatically and only those pages are redone." | Read the run log for the per-page causes; act only if the retries also fail |
+| Anything else, with a stage | "Failed while processing pages: `<error>`." + "It will be retried automatically." / "This volume will not be retried — fix the cause, then put the volume in a new campaign." | Depends on the error; the run log is one click away on the same row |
+| A termination message the API could not parse (raw JSON in `error`) | "The pod stopped without a message this page can read; open the run log to see what happened." | Open the run log |
+
+Stage names become the thing the pod was doing: `setup` → reading the
+manifest, `resume` → checking earlier results, `load` → loading the model,
+`stream` → processing pages, `verify` → checking results, `publish` →
+publishing results.
+
+### The campaign page itself
+
+| What went wrong | What the reader is told |
+|---|---|
+| A non-2xx or a network error, with a list already on screen | "Can't reach the campaign service right now (HTTP 503). Showing the list we last received. Retrying every 60 seconds." |
+| The same, with nothing on screen yet | "Can't reach the campaign service right now (HTTP 500). Retrying every 60 seconds." |
+| `404` on a campaign's detail | "This campaign no longer exists (finished campaigns are removed after 24 hours)." |
+| A 200 whose shape does not parse | "The campaign service answered in a form this page doesn't understand. Reload the page; if it keeps happening, the page and the service are running different versions." |
+
+### The run log
+
+The wrapper's terminal lines keep their prefix — it is the contract the run
+viewer's stop rule keys on — and gain a sentence after an em dash:
+
+```
+ERROR permanent failure in setup: manifest is not JSON — a retry changes nothing — fix the campaign or pipeline file
+ERROR transient failure in verify: verify failed: 1 missing, 0 failed missing=['0002'] failed=[] — some pages produced no result; the retry redoes only those
+ERROR transient failure in stream: SIGTERM — stopped by the cluster (drain, pause, or time budget); retried
+```
+
+| Failure | The sentence |
+|---|---|
+| `verify failed: …` | "some pages produced no result; the retry redoes only those" |
+| `SIGTERM` | "stopped by the cluster (drain, pause, or time budget); retried" |
+| Any permanent failure | "a retry changes nothing — fix the campaign or pipeline file" |
+| Any other transient failure | "the index is retried, resuming from the pages already done" |
+
+Exit codes and the termination JSON are unchanged by this: the wrapper still
+writes `{"stage", "permanent", "error"}` with the bare error in it, and the
+read API still parses that.
+
 ## Evidence that survives the Job
 
 Everything an operator needs is in the bucket well before the Job's
