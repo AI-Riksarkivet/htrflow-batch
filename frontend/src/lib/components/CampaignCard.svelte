@@ -12,6 +12,7 @@
     type VolumeView,
   } from "$lib/api.js";
   import { RELOAD_MS } from "$lib/config.js";
+  import { untrack } from "svelte";
 
   let { job }: { job: JobSummary } = $props();
 
@@ -48,6 +49,10 @@
   let loadingMore = $state(false);
 
   const PAGE = 200;
+  // The API refuses a larger limit (packages/web app.py, `le=1000`), so a
+  // card with more than five pages open refreshes the first five and keeps
+  // the rest as last fetched.
+  const MAX_LIMIT = 1000;
 
   // Stable id for aria-controls; namespace/name is unique per Job.
   const slug = $derived(
@@ -79,14 +84,27 @@
   );
 
   // reset=true replaces the table (the poll tick); reset=false appends the
-  // next page (the "load more" button). A poll always collapses back to the
-  // first page — simpler than tracking how many pages were expanded, and
-  // the common case (a handful of volumes) never notices.
+  // next page (the "load more" button). A poll re-fetches every page that is
+  // currently open, rounded up to whole pages, so a tick does not undo
+  // "load more" under the reader's cursor; counts.total still ends paging.
   async function load(reset: boolean): Promise<void> {
     try {
       const offset = reset ? 0 : volumes.length;
-      const detail = await fetchJob(job.namespace, job.name, offset, PAGE);
-      volumes = reset ? detail.volumes : [...volumes, ...detail.volumes];
+      const limit = reset
+        ? Math.min(
+            MAX_LIMIT,
+            Math.max(PAGE, Math.ceil(volumes.length / PAGE) * PAGE),
+          )
+        : PAGE;
+      const detail = await fetchJob(job.namespace, job.name, offset, limit);
+      // A short answer is the whole list, so it replaces what is loaded; a
+      // full one may have more behind it, and those rows stay as they were
+      // rather than vanishing under the reader.
+      const refreshed =
+        detail.volumes.length === limit
+          ? [...detail.volumes, ...volumes.slice(limit)]
+          : detail.volumes;
+      volumes = reset ? refreshed : [...volumes, ...detail.volumes];
       // Not paged by the API (up to 50 newest failed-with-a-reason rows,
       // independent of offset/limit) — refreshed on every call.
       failures = detail.failures;
@@ -106,7 +124,11 @@
   }
 
   $effect(() => {
-    void load(true);
+    // untrack: load() reads `volumes` to size its refresh and then writes it,
+    // and an effect that reads its own output re-runs forever. Nothing here
+    // needs re-subscribing anyway — the list keys each card by
+    // namespace/name, so a card never changes campaign under its own feet.
+    untrack(() => void load(true));
     const timer = setInterval(() => void load(true), RELOAD_MS);
     return () => clearInterval(timer);
   });
