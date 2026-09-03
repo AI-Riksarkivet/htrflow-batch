@@ -97,13 +97,14 @@ jobs:
   # pinned commit, then the merged dockerfile's base-arm64 branch, on a
   # native arm64 runner (free for public repositories). Nothing is pushed —
   # this job exists so a break in either recipe shows up here instead of in
-  # a publish run or on the node. It carries the same gate as the scans: the
-  # base is a CUDA image built from a fresh lock and the wrapper adds a
-  # multi-gigabyte torch on top, which is far too much for every pull
-  # request. A PR that changes the dockerfile gets this when it lands.
+  # a publish run or on the node.
+  #
+  # Unlike the scans it runs on pull requests too: measured at 2 m 51 s
+  # end to end (base 1 m 50 s, wrapper 40 s), which is cheaper than the
+  # `checks` job. Both architectures of a dockerfile change are therefore
+  # proven before it lands, not after.
   build-arm64:
     name: Wrapper image (native arm64)
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
