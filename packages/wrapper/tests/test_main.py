@@ -431,6 +431,65 @@ def test_bad_manifest_is_permanent(env, cfg, s3, monkeypatch):
     assert term["stage"] == "setup"
 
 
+@pytest.mark.parametrize(
+    "permanent,error,sentence",
+    [
+        (
+            False,
+            "verify failed: 2 missing, 0 failed missing=['0002']",
+            "some pages produced no result; the retry redoes only those",
+        ),
+        (
+            False,
+            "SIGTERM",
+            "stopped by the cluster (drain, pause, or time budget); retried",
+        ),
+        (
+            True,
+            "manifest is not JSON",
+            "a retry changes nothing — fix the campaign or pipeline file",
+        ),
+        (
+            False,
+            "connection reset",
+            "the index is retried, resuming from the pages already done",
+        ),
+    ],
+)
+def test_every_failure_line_ends_in_plain_language(permanent, error, sentence):
+    """B63 Task 20G: the machine-readable prefix stays (the run viewer's
+    terminal-line rule and the read API key on it); what follows the em dash
+    is for whoever opened the log."""
+    assert main_mod._advice(permanent, error) == sentence
+
+
+def test_a_permanent_failure_line_keeps_its_prefix_and_gains_a_sentence(
+    env, cfg, s3, monkeypatch, caplog
+):
+    """The prefix `permanent failure in <stage>:` is a contract with the
+    frontend's terminal-line regex (frontend/src/lib/runlog.ts); the sentence
+    after it is new, and neither may push the other out."""
+
+    def handler(req):
+        return httpx.Response(404)
+
+    monkeypatch.setattr(
+        main_mod,
+        "_http_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    with caplog.at_level("ERROR"):
+        assert main(env, process_page_factory=fake_factory) == EXIT_PERMANENT
+    line = next(m for m in caplog.messages if "failure in" in m)
+    assert line.startswith("permanent failure in setup:")
+    assert line.endswith(
+        "— a retry changes nothing — fix the campaign or pipeline file"
+    )
+    # ...and the machine-readable record is untouched.
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["permanent"] is True and "—" not in term["error"]
+
+
 def test_manifest_5xx_is_transient(env, cfg, s3, monkeypatch):
     """W1: a 503 from the IIIF server is a retry, not needs-attention."""
     monkeypatch.setattr(

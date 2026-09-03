@@ -139,7 +139,8 @@ def main(
         # 143 so Kubernetes retries the index like exit 1, not FailIndex.
         # Same shape as the other failure lines: the run viewer's terminal-line
         # regex (frontend runlog.ts) is the contract that stops live polling.
-        log.error("transient failure in %s: SIGTERM, shutting down", state.stage)
+        advice = _advice(False, "SIGTERM")
+        log.error("transient failure in %s: SIGTERM — %s", state.stage, advice)
         _terminate(env, {"stage": state.stage, "permanent": False, "error": "SIGTERM"})
         capture.finish()
         _hard_exit(EXIT_SIGTERM)
@@ -197,11 +198,25 @@ def _main(
     except (ConfigError, ManifestError, SetupError, ValueError) as e:
         stop.set()
         stage = state.stage
-        log.error("permanent failure in %s: %s", stage, e)
+        log.error("permanent failure in %s: %s — %s", stage, e, _advice(True, str(e)))
         _terminate(env, {"stage": stage, "permanent": True, "error": str(e)})
         return EXIT_PERMANENT
     except Exception as e:
         return _transient(env, state, stop, e)
+
+
+def _advice(permanent: bool, error: str) -> str:
+    """The plain-language half of a failure line: what it means for this
+    volume and what the operator does next. Both machine-readable halves --
+    the prefix the run viewer's terminal-line rule keys on (frontend
+    runlog.ts) and the termination JSON -- are untouched."""
+    if error.startswith("verify failed"):
+        return "some pages produced no result; the retry redoes only those"
+    if error.startswith("SIGTERM"):
+        return "stopped by the cluster (drain, pause, or time budget); retried"
+    if permanent:
+        return "a retry changes nothing — fix the campaign or pipeline file"
+    return "the index is retried, resuming from the pages already done"
 
 
 def _transient(
@@ -209,7 +224,8 @@ def _transient(
 ) -> int:
     """Retryable: stop the queued downloads (W10), leave the evidence, exit 1."""
     stop.set()
-    log.error("transient failure in %s: %s\n%s", state.stage, e, traceback.format_exc())
+    advice, trace = _advice(False, str(e)), traceback.format_exc()
+    log.error("transient failure in %s: %s — %s\n%s", state.stage, e, advice, trace)
     _terminate(env, {"stage": state.stage, "permanent": False, "error": str(e)})
     return EXIT_TRANSIENT
 
