@@ -75,9 +75,12 @@ script). A CSP header from the server must not be stricter than the meta tag
   anywhere; a `failed` row's `reason` is the wrapper's own termination
   message, present only while a pod for that index still exists.
 - **Phase.** A campaign's `JobSummary.phase` (`Queued`/`Paused`/`Running`/
-  `Succeeded`/`Failed`) drives the card's left accent: red if `Failed` or
-  any volume is `failed`, blue if `Running`, green if `Succeeded`, grey
-  otherwise.
+  `Succeeded`/`PartiallyFailed`/`Failed`) drives the card's left accent: red
+  if `Failed`, `PartiallyFailed` or any volume is `failed`, blue if
+  `Running`, green if `Succeeded`, grey otherwise. `PartiallyFailed` — the
+  Job gave up with some indexes already published — shows as "partially
+  failed" in the warning colour, not the error colour: part of the campaign
+  did come out.
 - **Log link** —
   `log?log=<encodeURIComponent(logUrl)>&manifest=<encodeURIComponent(manifestUrl)>`,
   plus `&live=1` for a volume whose `state` is not `"done"`. Both URLs come
