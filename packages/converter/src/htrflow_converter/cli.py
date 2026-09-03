@@ -65,14 +65,22 @@ def _init(dir_: str, force: bool) -> int:
     return 0
 
 
+def _report(e: ValidationError, tail: str) -> int:
+    """The problems, then a closing line that counts them. The count is the
+    part a reader acts on first: one problem in one file is a typo, nine in
+    four files is a bad merge, and either way nothing downstream ran."""
+    for problem in e.problems:
+        print(problem)
+    print(e.summary + tail)
+    return 1
+
+
 def _validate(repo_dir: str) -> int:
     repo = Path(repo_dir)
     try:
         load(repo / "campaigns", repo / "pipelines", repo / "converter.yaml")
     except ValidationError as e:
-        for problem in e.problems:
-            print(problem)
-        return 1
+        return _report(e, "")
     return 0
 
 
@@ -138,9 +146,7 @@ def _render(repo_dir: str, out_dir: str) -> int:
             repo / "campaigns", repo / "pipelines", repo / "converter.yaml"
         )
     except ValidationError as e:
-        for problem in e.problems:
-            print(problem)
-        return 1
+        return _report(e, " — nothing was rendered")
     out = Path(out_dir)
     unsafe = _unsafe_out(repo, out)
     if unsafe is not None:

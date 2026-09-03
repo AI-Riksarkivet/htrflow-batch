@@ -33,7 +33,10 @@ def test_validate_bad_repo_exits_1_and_prints_problems(capsys):
     out = capsys.readouterr().out
     lines = out.splitlines()
     assert len(lines) >= 1
-    assert any("image must be digest-pinned" in line for line in lines)
+    assert any("is not pinned to a digest" in line for line in lines)
+    # `validate` renders nothing by definition, so it drops that half of the
+    # closing line and only counts.
+    assert lines[-1] == "1 problem in 1 file"
 
 
 def test_validate_bad_repo_prints_one_problem_per_line(capsys):
@@ -41,8 +44,22 @@ def test_validate_bad_repo_prints_one_problem_per_line(capsys):
     assert rc == 1
     out = capsys.readouterr().out
     lines = [line for line in out.splitlines() if line]
-    assert any("unsafe volume id" in line for line in lines)
-    assert any("duplicate volume id" in line for line in lines)
+    assert any(
+        "has an id with characters that are not allowed" in line for line in lines
+    )
+    assert any("is listed twice" in line for line in lines)
+
+
+def test_render_says_nothing_was_rendered_and_writes_nothing(tmp_path, capsys):
+    """The closing line answers the question the author asks next: did any of
+    this reach the out directory? (No -- load() fails before the first write.)"""
+    out = tmp_path / "rendered"
+    rc = main(["render", str(FIXTURES / "bad" / "multi-file"), "--out", str(out)])
+    assert rc == 1
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        "2 problems in 2 files — nothing was rendered"
+    )
+    assert not out.exists()
 
 
 def test_render_writes_the_expected_file_names(tmp_path):
