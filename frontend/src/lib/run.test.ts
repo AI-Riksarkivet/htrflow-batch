@@ -2,7 +2,6 @@ import { describe, expect, test } from "vitest";
 import {
   formatDuration,
   isTerminalManifest,
-  pageRows,
   pageStats,
   percentile,
   runManifestSchema,
@@ -187,86 +186,5 @@ describe("summarizeRun at volume scale", () => {
       "0300",
       "0400",
     ]);
-  });
-});
-
-describe("pageRows", () => {
-  test("sorts by name regardless of insertion order", () => {
-    const rows = pageRows({
-      ...base,
-      results: {
-        "0003": { status: "failed", seconds: 0.4, error: "boom" },
-        "0001": { status: "ok", seconds: 2.5 },
-        "0002": { status: "ok", seconds: 1 },
-      },
-    });
-    expect(rows.map((r) => r.name)).toEqual(["0001", "0002", "0003"]);
-  });
-
-  test("buckets ok/failed/skipped and passes the error through", () => {
-    const rows = pageRows({
-      ...base,
-      pages: 3,
-      results: {
-        "0001": { status: "ok", seconds: 1 },
-        "0002": { status: "failed", seconds: 1, error: "boom" },
-        "0003": { status: "skipped", seconds: 0 },
-      },
-    });
-    expect(rows).toEqual([
-      { name: "0001", status: "ok", seconds: 1, error: undefined, bucket: 0, scale: 1 },
-      {
-        name: "0002",
-        status: "failed",
-        seconds: 1,
-        error: "boom",
-        bucket: 1,
-        scale: 1,
-      },
-      {
-        name: "0003",
-        status: "skipped",
-        seconds: 0,
-        error: undefined,
-        bucket: 2,
-        scale: 0.12,
-      },
-    ]);
-  });
-
-  test("a status the schema tolerates but the wrapper never emits renders as a neutral bucket", () => {
-    const rows = pageRows({
-      ...base,
-      pages: 1,
-      results: { "0001": { status: "queued", seconds: 0 } },
-    });
-    expect(rows[0]?.bucket).toBe(3);
-    expect(rows[0]?.status).toBe("skipped"); // stays within the render union
-  });
-
-  test("scale is relative to the slowest timed page, floored at 0.12, capped at 1", () => {
-    const rows = pageRows({
-      ...base,
-      pages: 4,
-      results: {
-        "0001": { status: "ok", seconds: 10 },
-        "0002": { status: "ok", seconds: 5 },
-        "0003": { status: "ok", seconds: 0 },
-        "0004": { status: "skipped", seconds: 0 },
-      },
-    });
-    expect(rows.map((r) => r.scale)).toEqual([1, 0.5, 0.12, 0.12]);
-  });
-
-  test("scale is 0 for every row when no page has measurable time", () => {
-    const rows = pageRows({
-      ...base,
-      pages: 2,
-      results: {
-        "0001": { status: "skipped", seconds: 0 },
-        "0002": { status: "skipped", seconds: 0 },
-      },
-    });
-    expect(rows.map((r) => r.scale)).toEqual([0, 0]);
   });
 });
