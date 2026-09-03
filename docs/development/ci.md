@@ -30,6 +30,29 @@ package, installed with `uvx --from
 "git+https://github.com/AI-Riksarkivet/htrflow-batch#subdirectory=packages/converter"
 htrflow-campaigns` wherever it runs (a campaigns repo's own CI, or a laptop).
 
+## What the containers see: exclude, not include
+
+`lint`, `typecheck` and `test` build their container from `buildWithUv` in
+`.dagger/main.go`, which mounts the **whole repository minus `repoExclude`**
+— a package-level exclude list (VCS/worktree plumbing, `.gitignore`'s
+entries, and other packages' dependency/build caches). `check-frontend`
+does the same for the `frontend/` subtree with its own smaller exclude list
+in `checks.go`.
+
+This used to be the other way around: `buildWithUv` mounted the repo
+through an `Include` allow-list (`pyproject.toml`, `uv.lock`, `packages/`,
+`scripts/`, `.docker/`, `Makefile`, `examples/`). An allow-list is silently
+wrong by default — any new top-level path (a fixture, a doc a test reads, a
+new package) is invisible inside the container until someone remembers to
+add it there too, so a test can pass in CI for the wrong reason: its input
+just wasn't mounted, not because the input was actually checked. That
+happened twice. An exclude-list inverts the failure mode: a new path is
+visible by default, and only the entries in `repoExclude` are hidden, so
+missing one is an over-inclusion (fixable, harmless) rather than a
+silent gap. `packages/converter/tests/test_repo_visible_in_ci.py` pins this
+by reading `docs/reference/campaign-yaml.md` — a path that was never on the
+old allow-list — inside the `test` container.
+
 ## The `--ca-bundle` flag
 
 Every network-touching function accepts an optional `--ca-bundle <file>`
