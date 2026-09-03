@@ -35,7 +35,7 @@ const volumeFailed = {
   altoPrefix: "https://pub/htr-test/demo-v1/vol1/alto/",
   logUrl: "https://pub/status/logs/demo-v1/vol1.txt",
   sourceUrl: "https://iiif.example.org/vol1/manifest",
-  reason: "permanent failure in load: manifest unsupported",
+  reason: { stage: "load", permanent: true, error: "model not found" },
 };
 
 // Every detail response carries these; a fixture without them would only
@@ -106,7 +106,7 @@ describe("CampaignCard", () => {
       within(rows[0] as HTMLElement).getByText("vol0"),
     ).toBeInTheDocument();
     expect(
-      within(rows[1] as HTMLElement).getByText(/manifest unsupported/),
+      within(rows[1] as HTMLElement).getByText(/model not found/),
     ).toBeInTheDocument();
   });
 
@@ -308,9 +308,12 @@ describe("CampaignCard", () => {
     );
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Cannot load volumes: HTTP 503",
+    // A sentence, not the transport detail: no bare "HTTP 503" line.
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(
+      "Can't reach the campaign service right now (HTTP 503).",
     );
+    expect(alert).toHaveTextContent("Retrying every 60 seconds.");
   });
 
   test("folded by default; the toggle opens and closes without refetching", async () => {
@@ -435,7 +438,11 @@ describe("CampaignCard", () => {
       ...volumeFailed,
       index: 2,
       id: "vol2",
-      reason: "transient failure in fetch: connection reset",
+      reason: {
+        stage: "stream",
+        permanent: false,
+        error: "verify failed: 2 missing, 0 failed missing=['p012', 'p045']",
+      },
     };
     const detail = {
       ...detail0,
@@ -451,13 +458,47 @@ describe("CampaignCard", () => {
 
     expect(screen.getByText("failures (2)")).toBeInTheDocument();
     expect(screen.getByText("vol1")).toBeInTheDocument();
+    // Sentences, not the wrapper's fields: no reader ever sees a stage
+    // name, a `permanent` flag or a Python list repr.
     expect(
-      screen.getByText("permanent failure in load: manifest unsupported"),
+      screen.getByText(
+        "Failed while loading the model: model not found. This volume will " +
+          "not be retried — fix the cause, then put the volume in a new " +
+          "campaign.",
+      ),
     ).toBeInTheDocument();
     expect(screen.getByText("vol2")).toBeInTheDocument();
     expect(
-      screen.getByText("transient failure in fetch: connection reset"),
+      screen.getByText(
+        "2 pages could not be processed (p012, p045); the volume is retried " +
+          "automatically and only those pages are redone.",
+      ),
     ).toBeInTheDocument();
+  });
+
+  test("a raw termination message renders as a sentence, never as JSON", async () => {
+    const raw = {
+      ...volumeFailed,
+      reason: {
+        stage: null,
+        permanent: null,
+        error: '{"stage": "setup", "permanent": true}',
+      },
+    };
+    const detail = { ...detail0, failures: [raw], volumes: [] };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(detail)),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const block = screen.getByText("failures (1)").closest("div");
+    expect(block?.textContent).toContain(
+      "The pod stopped without a message this page can read; open the run " +
+        "log to see what happened.",
+    );
+    expect(block?.textContent).not.toContain("permanent");
   });
 
   test("the pipeline chip lists its steps and toggles the YAML", async () => {
