@@ -65,6 +65,28 @@ func (m *HtrflowBatch) withCaBundle(container *dagger.Container, caBundle *dagge
 // (packages/wrapper) — used to scope uv --package selections.
 const WrapperPackage = "htrflow-batch-wrapper"
 
+// repoExclude is what every CI container that mounts the *whole* repo
+// leaves out. It replaces the old per-container `Include` allow-lists
+// (B63 Task 20A): an allow-list silently hides new paths from every test
+// that runs inside these containers — twice a test passed only because its
+// fixture wasn't on the list, which an exclude-list can't do (a new file is
+// visible by default). Derived from .gitignore plus paths that are
+// obviously irrelevant to CI (VCS/worktree plumbing, other packages'
+// dependency/build caches). Keep in sync with .gitignore by hand; there is
+// no tooling that parses one into the other.
+var repoExclude = []string{
+	// VCS / worktrees — .worktrees holds sibling checkouts of this same
+	// repo (this file may itself be running from inside one); never a CI
+	// input.
+	".git", ".worktrees",
+	// .gitignore
+	".superpowers", "**/__pycache__", "**/*.pyc", ".venv", "site", ".cache",
+	".env", ".claude/worktrees",
+	// not gitignored, but irrelevant to every container built here
+	"**/node_modules", "**/.pytest_cache",
+	"frontend/coverage", "frontend/.svelte-kit", "frontend/dist", "frontend/build",
+}
+
 // buildWithUv creates a dev container with uv and the workspace's deps synced.
 // The repo is a uv workspace (root pyproject.toml + uv.lock, members under
 // packages/), so the sync runs at the workspace root with --all-packages.
@@ -74,18 +96,9 @@ func (m *HtrflowBatch) buildWithUv(ctx context.Context, source *dagger.Directory
 	container := dag.Container().
 		From(pythonImage).
 		WithDirectory("/app", source, dagger.ContainerWithDirectoryOpts{
-			// scripts/ is linted too (audit T11); docs/ is excluded by the
-			// root ruff config and not needed here. .docker/ and Makefile
-			// carry no Python, but two tests read them and only mean
-			// something if they run here: test_dockerfile_workspace.py
-			// (nothing else builds those dockerfiles) and the converter's
-			// test that the Makefile's prune selector is a label render.py
-			// actually writes. examples/ is the campaigns-repo fixture that
-			// `htrflow-campaigns validate` is run against.
-			Include: []string{
-				"pyproject.toml", "uv.lock", "packages/", "scripts/", ".docker/",
-				"Makefile", "examples/",
-			},
+			// Whole repo minus repoExclude (B63 Task 20A) — see its comment
+			// for why this replaced the old per-path Include allow-list.
+			Exclude: repoExclude,
 		}).
 		WithWorkdir("/app")
 	container = m.withUv(container)
