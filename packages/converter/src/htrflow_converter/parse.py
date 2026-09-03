@@ -77,15 +77,20 @@ def _load_config(path: Path, problems: list[str]) -> ConverterConfig:
 #: "Input should be a valid integer") and its ``loc`` is a path into a parsed
 #: object; a campaign author has neither in front of them, only a YAML file.
 #: Anything not listed keeps pydantic's ``msg``, which is at least English.
+#: The list is the audited one: feeding every field of every model a wrong
+#: value emits exactly these ten types plus ``value_error`` (our own
+#: validators, which raise their sentence directly). ``float_parsing`` was
+#: dropped with that audit -- no model has a float field to reach it.
 _TYPE_SENTENCES = {
     "missing": 'is missing — add "{key}:" to this file',
     "extra_forbidden": "is not a setting this file has — remove it, or fix"
     " the spelling",
     "int_type": "must be a whole number (got {got})",
     "int_parsing": "must be a whole number (got {got})",
-    "float_parsing": "must be a number (got {got})",
+    "int_from_float": "must be a whole number (got {got})",
     "string_type": "must be text (got {got})",
     "bool_type": "must be true or false (got {got})",
+    "bool_parsing": "must be true or false (got {got})",
     "list_type": "must be a list of entries (got {got})",
     "dict_type": 'must be settings written as "key: value" lines (got {got})',
     "greater_than_equal": "must be {ctx[ge]} or more (got {got})",
@@ -104,7 +109,14 @@ def _what(loc: tuple, value: object) -> str:
         # Both are taken from the file name, so that is the thing to fix.
         what = "campaign name" if loc[-1] == "name" else "pipeline id"
         return f"the {what} (taken from the file name)"
-    return f'"{loc[-1]}"' if loc else ""
+    if not loc:
+        return ""
+    # A nested loc is a key path the author can see in their own file
+    # (`node_selector.a`); a list index in it is not, so it is counted from 1
+    # and spelled out. `loc[-1]` alone would name a bare `0` for `steps.0`.
+    keys = ".".join(str(p) for p in loc if not isinstance(p, int))
+    nth = next((f" entry {p + 1}" for p in loc if isinstance(p, int)), "")
+    return f'"{keys}"{nth}'
 
 
 def _problems(rel: str, exc: _PydanticValidationError) -> list[str]:
