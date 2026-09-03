@@ -1385,3 +1385,175 @@ render changes, and a Job's `spec.template` is immutable, so `kubectl apply`
 rejects them: `Job.batch "htr-warmup-e2e-v1" is invalid: spec.template …
 field is immutable`. The new pipeline and campaign applied cleanly; the two
 stale warmup Jobs need deleting before the repo-wide target works again.
+
+## Task 21 — `apply` on the Kubernetes client, no `kubectl` in the loop
+
+*Same node, same images (`e2e-t18-v1`, the merged-dockerfile wrapper), same
+campaigns repo `~/htr-test`, now on branch `task-21`.* Task 14's `apply`
+shelled out to `kubectl`; this one talks to the API server through the
+official `kubernetes` client — server-side apply, our own selector prune,
+the same Kueue pause sync. Command, flags (minus `--kubectl`) and behaviour
+were supposed to be unchanged; this run is what checks that.
+
+The repo was reduced to the two campaigns of this run (`e2e-t21run`,
+2 volumes, not paused; `e2e-t21pause`, 2 volumes, `suspend: true`, never
+applied before) and all three pipelines were kept. Every campaign file from
+the earlier rounds was deleted in the same commit — which is why the prune
+below has more to say than one line.
+
+### Does a server-side apply need `create` as well as `patch`?
+
+Asked first, because the chart's new `apply.rbac` Role depends on the
+answer. A throwaway ServiceAccount with `get,list,patch,delete` on
+configmaps and nothing else:
+
+```console
+$ kubectl --as=system:serviceaccount:htr-batch:e2e-ssa \
+    apply --server-side --field-manager=htrflow-campaigns -f e2e-ssa-probe.yaml
+Error from server (Forbidden): configmaps "e2e-ssa-probe" is forbidden:
+User "system:serviceaccount:htr-batch:e2e-ssa" cannot create resource
+"configmaps" in API group "" in the namespace "htr-batch"
+
+$ kubectl -n htr-batch patch role e2e-ssa … verbs: [get,list,create,patch,delete]
+$ kubectl --as=… apply --server-side …    # first time: the object is created
+configmap/e2e-ssa-probe serverside-applied
+$ kubectl --as=… apply --server-side …    # again: now it exists
+configmap/e2e-ssa-probe serverside-applied
+```
+
+So **an apply-patch that has to create the object is authorized as both
+`patch` and `create`**. `charts/htrflow-batch/templates/apply-rbac.yaml`
+grants `create` on `jobs` and `configmaps` for that reason and *not* on
+`workloads`, which the pause sync only ever patches. (The probe SA, Role,
+RoleBinding and ConfigMap were deleted afterwards.)
+
+### One apply, a paused campaign and a running one
+
+```console
+$ make campaigns-apply DIR=/home/morgan/htr-test          # 15:14:13
+uv run htrflow-campaigns apply /home/morgan/htr-test --out …/rendered
+removed: …/rendered/campaigns/e2e-50.yaml
+…                                        # 11 stale rendered files
+applied: ConfigMap/htr-pipeline-e2e-slow-v1
+applied: Job/htr-warmup-e2e-slow-v1
+applied: ConfigMap/htr-pipeline-e2e-t18-v1
+applied: Job/htr-warmup-e2e-t18-v1
+applied: ConfigMap/htr-pipeline-e2e-v1
+applied: Job/htr-warmup-e2e-v1
+applied: ConfigMap/campaign-e2e-t21pause
+applied: Job/e2e-t21pause
+applied: ConfigMap/campaign-e2e-t21run
+applied: Job/e2e-t21run
+e2e-t21pause: workload/job-e2e-t21pause-92c5d active=false
+```
+
+One line per action, and only actions: the read-only lookups that Task 14
+echoed as `kubectl get …` are gone, and so is the `kubectl apply` transcript
+— what a CI log now carries is what *changed*. `e2e-t21run`'s Workload
+already agreed with git, so it produced no line at all.
+
+```console
+$ kubectl -n htr-batch get job e2e-t21run e2e-t21pause \
+    -o custom-columns=NAME:…,SUSPEND:.spec.suspend,ACTIVE:.status.active
+NAME           SUSPEND   ACTIVE
+e2e-t21run     false     1
+e2e-t21pause   true      <none>
+
+$ kubectl -n htr-batch get workload -o custom-columns=NAME:…,ACTIVE:.spec.active,ADMITTED:…,EVICTED:…
+job-e2e-t21pause-92c5d   false    False      Deactivated
+job-e2e-t21run-e2550     true     True       <none>
+
+$ kubectl -n htr-batch get pods -l batch.kubernetes.io/job-name=e2e-t21pause
+No resources found in htr-batch namespace.
+
+$ curl -s http://localhost:30800/api/v1/jobs        # trimmed to the two campaigns
+{"name": "e2e-t21pause", "phase": "Queued",  "suspended": true,
+ "counts": {"total": 2, "active": 0, "done": 0, "failed": 0}}
+{"name": "e2e-t21run",   "phase": "Running", "suspended": false,
+ "counts": {"total": 2, "active": 1, "done": 0, "failed": 0}}
+```
+
+**The pause-on-create window is now sub-second.** Kueue still admits the
+paused campaign before anything can look at it, but the pod it created and
+the pod it deleted carry the same timestamp:
+
+```console
+$ kubectl -n htr-batch get events … | grep t21pause
+e2e-t21pause           CreatedWorkload    Created Workload: htr-batch/job-e2e-t21pause-92c5d
+e2e-t21pause           Started            Admitted by clusterQueue htr-batch-cq
+e2e-t21pause-0-w748k   Scheduled          Successfully assigned … to pgx-8a26
+job-e2e-t21pause-92c5d EvictedDueToDeactivated  The workload is deactivated
+2026-09-03T13:14:13Z  e2e-t21pause  SuccessfulCreate  Created pod: e2e-t21pause-0-w748k
+2026-09-03T13:14:13Z  e2e-t21pause  SuccessfulDelete  Deleted pod: e2e-t21pause-0-w748k
+```
+
+Task 14 measured one second here (apply, then a separate `kubectl get`/
+`kubectl patch` round trip). Nothing about the race changed — it is the same
+Kueue behaviour documented under *Pause on create* — but there is no
+process spawn between the apply and the patch any more.
+
+`e2e-t21run` finished 2/2 at 15:15:00 (47 s), `phase: Succeeded`,
+`manifest.json` HTTP 200 on the bucket.
+
+### `--prune`, after deleting a campaign file
+
+`campaigns/e2e-t21pause.yaml` was deleted (and, in the branch's first
+commit, every campaign file from the earlier rounds — their Jobs had already
+been TTL'd away, their `volumes.txt` ConfigMaps had not):
+
+```console
+$ make campaigns-apply DIR=/home/morgan/htr-test PRUNE=1     # 15:15:11
+removed: …/rendered/campaigns/e2e-t21pause.yaml
+applied: ConfigMap/htr-pipeline-e2e-slow-v1
+applied: Job/htr-warmup-e2e-slow-v1
+…                                        # all three pipelines, then e2e-t21run
+pruned: Job/e2e-t18
+pruned: Job/e2e-t21pause
+pruned: ConfigMap/campaign-e2e-50
+pruned: ConfigMap/campaign-e2e-applyrun
+…                                        # 9 more campaign-* ConfigMaps
+pruned: ConfigMap/campaign-e2e-t21pause
+```
+
+What did **not** get pruned is the point: the three `htr-pipeline-*`
+ConfigMaps and the three `htr-warmup-*` Jobs the same command had just
+applied. The prune lists Jobs and ConfigMaps by
+`htrflow.riksarkivet.se/managed-by=converter` and deletes what *this* render
+did not produce, so it has to see the pipelines too — the same rule as
+Task 14's "hand `--prune` both directories", now enforced by the set the
+command builds rather than by remembering to pass two `-f` flags. Jobs go
+with `propagationPolicy=Background`, so their pods go too. Results in S3 are
+untouched: `e2e-t18`'s `manifest.json` is still 200 after its Job was pruned.
+
+### A re-apply that changes nothing
+
+```console
+$ make campaigns-apply DIR=/home/morgan/htr-test PRUNE=1     # 15:15:31
+applied: ConfigMap/htr-pipeline-e2e-slow-v1
+…
+applied: Job/e2e-t21run
+--- resourceVersion: job 17512214 -> 17512214, configmap 17512029 -> 17512029
+```
+
+No `removed:`, no `pruned:`, no Workload patch — and the `resourceVersion`
+of the campaign's Job and ConfigMap is **unchanged**, which is the real
+proof: server-side apply of an identical object is a no-op inside the API
+server, not just a quiet one in the client. `metadata.managedFields` on the
+Job lists `htrflow-campaigns` alongside `kueue` and `k3s`, which is what
+lets the three of them own different fields of the same object without
+fighting.
+
+Also worth noting: `applied: Job/e2e-t21run` succeeded against a **Complete**
+Job. A Job's `spec.template` is immutable, and Task 25's log records
+`kubectl apply` failing on exactly that for stale warm-up Jobs; an apply that
+does not change the template is accepted either way, so this run says nothing
+new about that hazard — it is still there for a *changed* pipeline.
+
+### Cluster state left behind
+
+`e2e-t21run` (Complete 2/2) and the three warm-up Jobs (Complete), their
+pods Completed; `e2e-t21pause`, `e2e-t18` and every stale `campaign-e2e-*`
+ConfigMap from the earlier rounds are gone. Nothing is running, the
+ClusterQueue is idle (`admitted=0 pending=0`). Campaigns repo `~/htr-test`
+branch `task-21` (still never pushed): `7ac0840`; branch `b63-indexed` still
+holds all the earlier campaign files.
