@@ -36,6 +36,7 @@ const volume = {
   iiifUrl: "https://results.example.org/htr-test/demo-v1/vol0/iiif.json",
   altoPrefix: "https://results.example.org/htr-test/demo-v1/vol0/alto/",
   logUrl: "https://results.example.org/status/logs/demo-v1/vol0.txt",
+  sourceUrl: "https://iiif.example.org/vol0/manifest",
 };
 
 const pipeline = { pipelineSteps: ["Segmentation"], pipelineYaml: "steps:\n" };

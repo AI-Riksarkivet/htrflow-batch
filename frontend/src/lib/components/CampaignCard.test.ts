@@ -22,6 +22,7 @@ const volumeDone = {
   iiifUrl: "https://pub/htr-test/demo-v1/vol0/iiif.json",
   altoPrefix: "https://pub/htr-test/demo-v1/vol0/alto/",
   logUrl: "https://pub/status/logs/demo-v1/vol0.txt",
+  sourceUrl: "https://iiif.example.org/vol0/manifest",
 };
 
 const volumeFailed = {
@@ -32,6 +33,7 @@ const volumeFailed = {
   iiifUrl: "https://pub/htr-test/demo-v1/vol1/iiif.json",
   altoPrefix: "https://pub/htr-test/demo-v1/vol1/alto/",
   logUrl: "https://pub/status/logs/demo-v1/vol1.txt",
+  sourceUrl: "https://iiif.example.org/vol1/manifest",
   reason: "permanent failure in load: manifest unsupported",
 };
 
@@ -45,6 +47,25 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { "content-type": "application/json" },
   });
+}
+
+/** Cards are folded by default; most tests want the volume table open. */
+async function expand(): Promise<void> {
+  await fireEvent.click(screen.getByRole("button", { name: /kyrk$/ }));
+}
+
+/**
+ * jsdom here ships no localStorage at all, which is one of the cases the
+ * card's try/catch is for — so the tests that care about the remembered fold
+ * state stub one in, and every other test exercises the no-storage default.
+ */
+function stubStorage(): Map<string, string> {
+  const map = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (k: string) => map.get(k) ?? null,
+    setItem: (k: string, v: string) => void map.set(k, v),
+  });
+  return map;
 }
 
 describe("CampaignCard", () => {
@@ -64,6 +85,7 @@ describe("CampaignCard", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/jobs/htr-test/kyrk?offset=0&limit=200",
@@ -79,11 +101,18 @@ describe("CampaignCard", () => {
     ).toBeInTheDocument();
   });
 
-  test("a done volume gets an 'open' link; a non-done volume does not", async () => {
+  test("every row has the three slots: open, source and log", async () => {
+    const imagesVolume = {
+      ...volumeFailed,
+      index: 2,
+      id: "vol2",
+      state: "pending",
+      sourceUrl: null, // an `images:` volume has no manifest to open
+    };
     const detail = {
       ...detail0,
       failures: [],
-      volumes: [volumeDone, volumeFailed],
+      volumes: [volumeDone, volumeFailed, imagesVolume],
     };
     vi.stubGlobal(
       "fetch",
@@ -91,17 +120,34 @@ describe("CampaignCard", () => {
     );
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
 
     const rows = screen.getAllByRole("row").slice(1);
-    expect(
-      within(rows[0] as HTMLElement).getByRole("link", { name: "open" }),
-    ).toHaveAttribute(
+    const done = within(rows[0] as HTMLElement);
+    // done: the published result
+    expect(done.getByRole("link", { name: "open" })).toHaveAttribute(
       "href",
       "uv.html#?manifest=https://pub/htr-test/demo-v1/vol0/iiif.json",
     );
+    expect(done.getByRole("link", { name: "source" })).toHaveAttribute(
+      "href",
+      "https://iiif.example.org/vol0/manifest",
+    );
+    expect(done.getByRole("link", { name: "log" })).toBeInTheDocument();
+
+    // not done, but it has a source: "open" shows the source manifest
     expect(
-      within(rows[1] as HTMLElement).queryByRole("link", { name: "open" }),
-    ).toBeNull();
+      within(rows[1] as HTMLElement).getByRole("link", { name: "open" }),
+    ).toHaveAttribute(
+      "href",
+      "uv.html#?manifest=https://iiif.example.org/vol1/manifest",
+    );
+
+    // no source at all: the open and source slots stay empty, log stays
+    const images = within(rows[2] as HTMLElement);
+    expect(images.queryByRole("link", { name: "open" })).toBeNull();
+    expect(images.queryByRole("link", { name: "source" })).toBeNull();
+    expect(images.getByRole("link", { name: "log" })).toBeInTheDocument();
   });
 
   test("the log link carries log+manifest always, and live=1 only for a volume that is not done", async () => {
@@ -116,6 +162,7 @@ describe("CampaignCard", () => {
     );
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
 
     const rows = screen.getAllByRole("row").slice(1);
     const doneLog = within(rows[0] as HTMLElement).getByRole("link", {
@@ -164,6 +211,7 @@ describe("CampaignCard", () => {
       job: { ...job, counts: { ...job.counts, total: 2 } },
     });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
 
     const more = screen.getByRole("button", { name: /load more/ });
     await fireEvent.click(more);
@@ -189,7 +237,7 @@ describe("CampaignCard", () => {
     );
   });
 
-  test("the toggle collapses and re-expands the table without refetching", async () => {
+  test("folded by default; the toggle opens and closes without refetching", async () => {
     const detail = { ...detail0, failures: [], volumes: [volumeDone] };
     const fetchMock = vi.fn(async () => jsonResponse(detail));
     vi.stubGlobal("fetch", fetchMock);
@@ -197,12 +245,109 @@ describe("CampaignCard", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     const toggle = screen.getByRole("button", { name: /kyrk$/ });
-    expect(screen.getByRole("table")).toBeInTheDocument();
-    await fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("table")).toBeNull();
     await fireEvent.click(toggle);
     expect(screen.getByRole("table")).toBeInTheDocument();
+    await fireEvent.click(toggle);
+    expect(screen.queryByRole("table")).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1); // still just the initial load
+  });
+
+  test("the fold state is remembered per campaign", async () => {
+    const store = stubStorage();
+    const detail = { ...detail0, failures: [], volumes: [volumeDone] };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(detail)),
+    );
+    const first = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+    expect(store.get("htrflow.card.htr-test/kyrk")).toBe("open");
+    first.unmount();
+
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByRole("table")).toBeInTheDocument(); // opens as left
+  });
+
+  test("a card whose storage throws still renders, folded", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes: [volumeDone] }),
+      ),
+    );
+    const boom = () => {
+      throw new Error("storage disabled"); // cookies blocked, private mode
+    };
+    vi.stubGlobal("localStorage", { getItem: boom, setItem: boom });
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.queryByRole("table")).toBeNull();
+    await expand();
+    expect(screen.getByRole("table")).toBeInTheDocument();
+  });
+
+  test("while folded, the newest volume keeps open · source · log in reach", async () => {
+    const active = {
+      ...volumeDone,
+      index: 2,
+      id: "vol2",
+      state: "active",
+      sourceUrl: "https://iiif.example.org/vol2/manifest",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          failures: [],
+          volumes: [volumeDone, active],
+        }),
+      ),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(screen.queryByRole("table")).toBeNull(); // still folded
+    expect(screen.getByText("vol2")).toBeInTheDocument(); // the active one wins
+    expect(screen.getByRole("link", { name: "open" })).toHaveAttribute(
+      "href",
+      "uv.html#?manifest=https://iiif.example.org/vol2/manifest",
+    );
+    expect(screen.getByRole("link", { name: "source" })).toHaveAttribute(
+      "href",
+      "https://iiif.example.org/vol2/manifest",
+    );
+    expect(screen.getByRole("link", { name: "log" })).toHaveAttribute(
+      "href",
+      expect.stringContaining(encodeURIComponent(active.logUrl)),
+    );
+  });
+
+  test("no volume in flight: the folded strip shows the newest done one", async () => {
+    const olderDone = { ...volumeDone, index: 0, id: "vol0" };
+    const newerDone = { ...volumeDone, index: 1, id: "vol1" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          failures: [],
+          volumes: [
+            olderDone,
+            newerDone,
+            { ...volumeFailed, index: 2, id: "vol2" },
+          ],
+        }),
+      ),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByText("vol1")).toBeInTheDocument();
+    expect(screen.queryByText("vol0")).toBeNull();
   });
 
   test("renders the failures block with both ids and reasons", async () => {
