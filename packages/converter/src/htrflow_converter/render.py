@@ -22,8 +22,8 @@ MAX_VOLUMES_PER_JOB = 10_000
 _MANAGED_BY_LABEL = "htrflow.riksarkivet.se/managed-by"
 #: The label every rendered object carries and the one an ``apply --prune``
 #: (or Argo CD's own prune) deletes a cancelled campaign's leftovers by. The
-#: only definition: ``cli.py`` passes it to ``kubectl``, the Makefile asks
-#: this module for it, and ``test_render.py`` asserts the renderer writes it.
+#: only definition: ``cluster.py`` lists by it, the Makefile asks this
+#: module for it, and ``test_render.py`` asserts the renderer writes it.
 CAMPAIGN_SELECTOR = f"{_MANAGED_BY_LABEL}=converter"
 _CAMPAIGN_LABEL = "htrflow.riksarkivet.se/campaign"
 _PIPELINE_LABEL = "htrflow.riksarkivet.se/pipeline"
@@ -104,9 +104,9 @@ def pipeline_objects(p: Pipeline, cfg: ConverterConfig) -> list[dict]:
 def _campaign_configmap(
     name: str, c: Campaign, p: Pipeline, volumes: list[Volume], cfg: ConverterConfig
 ) -> dict:
-    # The labels are not decoration: `kubectl apply --prune -l
-    # htrflow.riksarkivet.se/managed-by=converter` (and Argo CD's own prune)
-    # find a deleted campaign's leftovers by them. An unlabelled ConfigMap
+    # The labels are not decoration: `htrflow-campaigns apply --prune` (and
+    # Argo CD's own prune) find a deleted campaign's leftovers by listing
+    # `htrflow.riksarkivet.se/managed-by=converter`. An unlabelled ConfigMap
     # would outlive the Job it fed.
     cm = _load("configmap.yaml")
     text = "\n".join(v.source_line() for v in volumes) + "\n" if volumes else ""

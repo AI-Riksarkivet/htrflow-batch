@@ -10,9 +10,12 @@ name: Render
 # — the same converter, one command: it renders, applies pipelines then
 # campaigns, prunes what a deleted campaign file left behind, and enforces
 # `suspend:` on the Kueue Workload (the rendered `spec.suspend` alone does
-# not hold, Kueue owns that field for a Workload it has admitted). With Argo
-# CD it is a PostSync hook — example manifest in htrflow-batch's
-# docs/reference/campaign-yaml.md#pausing; by hand it is
+# not hold, Kueue owns that field for a Workload it has admitted). It talks
+# to the API server through the official Kubernetes client, so a runner or
+# hook pod needs credentials (a kubeconfig, or a ServiceAccount token — the
+# htrflow-batch chart renders one behind `apply.rbac.enabled`) but no
+# `kubectl` binary. With Argo CD it is a PostSync hook — example manifest in
+# htrflow-batch's docs/reference/campaign-yaml.md#pausing; by hand it is
 # `make campaigns-apply DIR=<repo> PRUNE=1`.
 #
 # The converter is not an image: it is a plain Python package installed

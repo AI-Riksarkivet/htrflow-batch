@@ -170,9 +170,10 @@ rendered/
 
 This directory is generated, committed by the campaigns repo's own CI on
 `main` (never hand-edited), and is what Argo CD (or `make campaigns-apply`
-on the PoC) actually applies — `kubectl apply -f rendered/pipelines -f
-rendered/campaigns` (pipelines first, since a campaign's Job references its
-pipeline's ConfigMap).
+on the PoC) actually applies — pipelines first, since a campaign's Job
+references its pipeline's ConfigMap. `htrflow-campaigns apply` does that
+ordering itself; by hand it is `kubectl apply -f rendered/pipelines -f
+rendered/campaigns`.
 
 `render` also **removes** files under `--out` that this render did not
 produce, so deleting `campaigns/<name>.yaml` deletes
@@ -181,10 +182,12 @@ cancelling: the apply has to prune as well, and **pruning is opt-in on both
 sides**. Argo CD's `syncPolicy.automated.prune` defaults to `false` and a
 manual sync does not prune unless asked, so an Application that manages this
 repo needs `syncPolicy.automated.prune: true` (or `argocd app sync --prune`);
-by hand it is `make campaigns-apply PRUNE=1`, which passes `kubectl apply
---prune -l htrflow.riksarkivet.se/managed-by=converter`. Every object the
-converter renders — both ConfigMaps and both Jobs — carries that label for
-exactly this reason.
+by hand it is `make campaigns-apply PRUNE=1`, which runs
+`htrflow-campaigns apply --prune` — that lists every Job and ConfigMap in
+the namespace carrying `htrflow.riksarkivet.se/managed-by=converter` and
+deletes the ones this render did not produce. Every object the converter
+renders — both ConfigMaps and both Jobs — carries that label for exactly
+this reason.
 
 The four objects above are not built up field-by-field in Python: the
 skeletons **are** the Job/ConfigMap, checked in as real YAML at
@@ -205,8 +208,9 @@ at apply time, on the Workload:
 htrflow-campaigns apply <campaigns-repo>      # = make campaigns-apply DIR=…
 ```
 
-The last step of that command patches `spec.active` on each campaign's
-Workload (`false` for a suspended campaign, `true` otherwise), idempotently.
+The command talks to the API server directly (the official Kubernetes
+client, server-side apply — there is no `kubectl` to install), and its last
+step patches `spec.active` on each campaign's Workload (`false` for a suspended campaign, `true` otherwise), idempotently.
 Deactivating a Workload evicts its pods, keeps every finished index, and
 `kubectl get job` reports `suspend: true`; reactivating continues at the next
 index. Results already in S3 are never touched.
@@ -248,11 +252,11 @@ campaign file says so.
 With Argo CD, run the same command as a `PostSync` hook so a merged
 `suspend: true` takes effect on sync. **The manifest below is illustrative and
 has not been run** — there is no Argo CD on the PoC (the E2E drives the
-command through `make campaigns-apply` instead), and the image digest, the
-ServiceAccount and the checkout are placeholders you have to fill in. No new
-image is needed: `uvx` installs the converter from this repo at the pinned
-ref, and the pod needs a checkout of the campaigns repo to render (the hook
-re-renders rather than trusting the synced `rendered/`):
+command through `make campaigns-apply` instead), and the image digest and
+the checkout are placeholders you have to fill in. No new image is needed:
+`uvx` installs the converter from this repo at the pinned ref, and the pod
+needs a checkout of the campaigns repo to render (the hook re-renders rather
+than trusting the synced `rendered/`):
 
 ```yaml title="argocd/pause-sync-hook.yaml"
 apiVersion: batch/v1
@@ -266,8 +270,8 @@ spec:
   template:
     spec:
       restartPolicy: Never
-      serviceAccountName: htrflow-campaigns-apply  # get/list jobs+workloads,
-                                                   # patch workloads, apply
+      serviceAccountName: htrflow-campaigns        # helm ... --set
+                                                   # apply.rbac.enabled=true
       containers:
         - name: apply
           image: ghcr.io/astral-sh/uv@sha256:…     # any pinned uv image
@@ -278,10 +282,15 @@ spec:
       volumes: [ … ]                               # the campaigns repo checkout
 ```
 
-`kubectl` has to be on that image's `PATH` (`uv` images do not ship one — add
-it, or use an image that has both). Add `--prune` to make a deleted campaign
-file cancel its campaign; leave it off and Argo CD's own prune does the same
-job.
+The ServiceAccount is what the htrflow-batch chart renders behind
+`apply.rbac.enabled=true` (default `false`): a Role — never a ClusterRole —
+with `get`/`list`/`create`/`patch`/`delete` on `jobs` and `configmaps` and
+`get`/`list`/`patch` on `workloads.kueue.x-k8s.io`, in the release namespace
+only. `create` is not redundant next to `patch`: a server-side apply whose
+object does not exist yet is authorized as both. Nothing else has to be on
+the image — the converter carries its own Kubernetes client, so there is no
+`kubectl` to install. Add `--prune` to make a deleted campaign file cancel
+its campaign; leave it off and Argo CD's own prune does the same job.
 
 ## Immutability
 

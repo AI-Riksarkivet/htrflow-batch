@@ -3,9 +3,9 @@
 A **campaign** is one Kubernetes `batch/v1` Job with `completionMode: Indexed`
 — one index per volume. Kubernetes and [Kueue](https://kueue.sigs.k8s.io/)
 own scheduling, retries, progress and pause; this repo owns only the
-wrapper (unchanged core), a pure converter from campaign YAML to manifests,
-and a thin read API for the status page. There is no CronJob, no controller,
-no state files in the bucket.
+wrapper (unchanged core), a pure converter from campaign YAML to manifests
+(plus the one command that applies them), and a thin read API for the status
+page. There is no CronJob, no controller, no state files in the bucket.
 
 Two rules hold the design together, and belong on the front page of every
 campaigns repo:
@@ -21,9 +21,9 @@ campaigns repo:
 > manifest from `rendered/`, and the apply that follows prunes its Job and
 > ConfigMap — but **only if that apply is asked to prune**: Argo CD requires
 > `syncPolicy.automated.prune: true` (or a manual sync with `--prune`), and
-> by hand it is `make campaigns-apply PRUNE=1`, which passes
-> `kubectl apply --prune -l htrflow.riksarkivet.se/managed-by=converter`,
-> the label every rendered object carries. Without it the deleted campaign's
+> by hand it is `make campaigns-apply PRUNE=1`, which deletes every Job and
+> ConfigMap labelled `htrflow.riksarkivet.se/managed-by=converter` that the
+> render did not produce. Without it the deleted campaign's
 > Job simply stays. **Results already in S3 are never touched by anything
 > here.**
 
@@ -41,7 +41,7 @@ flowchart LR
     G["campaigns repo<br/>campaigns/*.yaml + pipelines/*.yaml + converter.yaml"]
     C["converter (CI)<br/>htrflow-campaigns render"]
     R["rendered/<br/>committed to git"]
-    A["Argo CD / kubectl apply"]
+    A["Argo CD / htrflow-campaigns apply"]
     K["Kueue"]
     W["wrapper pods<br/>(one per volume, one index each)"]
     S[("S3 results bucket")]
