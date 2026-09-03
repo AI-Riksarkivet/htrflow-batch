@@ -39,7 +39,11 @@ const volume = {
   sourceUrl: "https://iiif.example.org/vol0/manifest",
 };
 
-const pipeline = { pipelineSteps: ["Segmentation"], pipelineYaml: "steps:\n" };
+const pipeline = {
+  pipelineSteps: ["Segmentation"],
+  pipelineYaml: "steps:\n",
+  latest: null,
+};
 
 describe("fetchJobs", () => {
   afterEach(() => {
@@ -171,6 +175,25 @@ describe("schemas", () => {
     });
     expect(parsed.pipelineSteps).toEqual(["Segmentation"]);
     expect(parsed.pipelineYaml).toBe("steps:\n");
+  });
+
+  test("latest is a whole volume row, or null", () => {
+    const parsed = jobDetailSchema.parse({
+      ...summary,
+      ...pipeline,
+      latest: volume,
+      failures: [],
+      volumes: [],
+    });
+    expect(parsed.latest?.id).toBe("vol0");
+    expect(
+      jobDetailSchema.parse({
+        ...summary,
+        ...pipeline,
+        failures: [],
+        volumes: [],
+      }).latest,
+    ).toBeNull();
   });
 
   test("a detail without the pipeline fields is refused", () => {

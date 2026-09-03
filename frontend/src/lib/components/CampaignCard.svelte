@@ -43,6 +43,7 @@
   let yamlOpen = $state(false); // collapsed by default
   let volumes = $state<VolumeView[]>([]);
   let failures = $state<VolumeView[]>([]);
+  let latest = $state<VolumeView | null>(null);
   let pipelineSteps = $state<string[]>([]);
   let pipelineYaml = $state("");
   let detailError = $state<string | null>(null);
@@ -108,6 +109,9 @@
       // Not paged by the API (up to 50 newest failed-with-a-reason rows,
       // independent of offset/limit) — refreshed on every call.
       failures = detail.failures;
+      // Also computed over every volume, so it is right for a campaign whose
+      // in-flight index is far past the loaded page.
+      latest = detail.latest;
       pipelineSteps = detail.pipelineSteps;
       pipelineYaml = detail.pipelineYaml;
       detailError = null;
@@ -132,14 +136,6 @@
     const timer = setInterval(() => void load(true), RELOAD_MS);
     return () => clearInterval(timer);
   });
-
-  // Reachable while folded: the volume a person is most likely to want — the
-  // newest one still running, else the newest finished. Volumes arrive in
-  // index order, so the last match is the newest.
-  function newest(state: VolumeView["state"]): VolumeView | null {
-    return volumes.findLast((v) => v.state === state) ?? null;
-  }
-  const latest = $derived(newest("active") ?? newest("done"));
 
   // The finished result once there is one, the source manifest before that
   // (the old derive.viewerHref) — so "open" is a live link from the first

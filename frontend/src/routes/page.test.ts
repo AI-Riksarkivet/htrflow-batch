@@ -18,6 +18,7 @@ const detail = {
   ...job,
   pipelineSteps: [],
   pipelineYaml: "",
+  latest: null,
   failures: [],
   volumes: [],
 };

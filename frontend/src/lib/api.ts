@@ -100,6 +100,10 @@ export const jobDetailSchema = jobSummarySchema.extend({
   // chip toggles. Both empty when the pipeline ConfigMap is gone.
   pipelineSteps: z.array(z.string()),
   pipelineYaml: z.string(),
+  // The volume a folded card shows: newest active, else newest done, else
+  // null. Computed by the API over EVERY volume — picking it here would
+  // only ever see the page that happens to be loaded.
+  latest: volumeViewSchema.nullable(),
   failures: z.array(volumeViewSchema),
   volumes: z.array(volumeViewSchema),
 });
