@@ -322,9 +322,14 @@ describe("CampaignCard", () => {
 
     const toggle = screen.getByRole("button", { name: /kyrk$/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
+    // No dangling IDREF while there is no table to point at.
+    expect(toggle).not.toHaveAttribute("aria-controls");
     expect(screen.queryByRole("table")).toBeNull();
     await fireEvent.click(toggle);
     expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(
+      document.getElementById(toggle.getAttribute("aria-controls") ?? ""),
+    ).not.toBeNull();
     await fireEvent.click(toggle);
     expect(screen.queryByRole("table")).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1); // still just the initial load
