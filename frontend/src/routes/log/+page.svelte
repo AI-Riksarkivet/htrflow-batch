@@ -219,7 +219,7 @@
     {#if manifest.pipeline_yaml}
       <details class="pipeline-yaml">
         <summary>pipeline</summary>
-        <pre>{manifest.pipeline_yaml}</pre>
+        <pre class="code-block">{manifest.pipeline_yaml}</pre>
       </details>
     {/if}
   {/if}
@@ -272,22 +272,10 @@
 </main>
 
 <style>
+  /* The volume name appended to the title can run long; app.css's h1 has no
+     opinion on wrapping since most routes' titles are short and fixed. */
   h1 {
-    font-size: 1.25rem;
-    font-weight: 600;
-    margin: 0;
     overflow-wrap: anywhere;
-  }
-
-  .page {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 0.5rem 1.5rem;
-    margin-bottom: 1.5rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
   }
 
   .title-block {
@@ -318,24 +306,6 @@
   .logo {
     height: 1.6rem;
     width: auto;
-  }
-
-  .header-right {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .raw {
-    color: var(--muted-foreground);
-    font-size: 0.85rem;
-    text-decoration: none;
-  }
-
-  .raw:hover {
-    color: var(--primary);
-    text-decoration: underline;
   }
 
   .live-badge {
@@ -382,14 +352,6 @@
     }
   }
 
-  .error {
-    color: var(--destructive);
-  }
-
-  .muted {
-    color: var(--muted-foreground);
-  }
-
   details.pipeline-yaml {
     margin-bottom: 1.25rem;
   }
@@ -402,13 +364,6 @@
 
   details.pipeline-yaml pre {
     margin: 0.5rem 0 0;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 0.75rem 1rem;
-    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-    font-size: 12px;
-    white-space: pre-wrap;
   }
 
   .log {

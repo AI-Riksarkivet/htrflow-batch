@@ -101,6 +101,80 @@ main {
   }
 }
 
+/* Route header chrome shared by every page (/, /log, /alto): title/back on
+   the left, controls (ThemeToggle and friends) on the right, a bottom rule.
+   Global (not per-component scoped styles) precisely because three routes
+   need the identical rules — a route with a genuinely different need
+   overrides one property locally, at higher specificity, rather than this
+   being copied a fourth time (B63 Task 26). */
+.page {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.header-right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.raw {
+  color: var(--muted-foreground);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.raw:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
+.error {
+  color: var(--destructive);
+}
+
+.muted {
+  color: var(--muted-foreground);
+}
+
+h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+/* A small pill: a page's status, a line's confidence bucket. Callers add
+   their own semantic colour class (e.g. `.chip.ok`, `.chip.high`). */
+.chip {
+  font-size: 0.7rem;
+  font-weight: 500;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+/* A block of source text a reader might copy from: the run log's pipeline
+   YAML toggle and the ALTO viewer's raw-XML toggle. Spacing above/below is
+   each caller's own (a `<details>` vs a bare `<pre>`). */
+.code-block {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Visually hidden, still read by assistive tech (captions, labels). */
 .sr-only {
   position: absolute;
