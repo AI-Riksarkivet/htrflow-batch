@@ -38,6 +38,13 @@ check converter "$(count packages/converter/src -name '*.py')" 1000
 # YAML toggle) and VolumeView.sourceUrl (the "source" link). Restored
 # functionality, not growth. (B63)
 check web       "$(count packages/web/src -name '*.py')" 600
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 2500
+# 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
+# the status document went away: the pipeline chip's step tooltip and YAML
+# toggle, the per-volume "source" link (with the narrow-screen column rule
+# the third slot needs), and -- new, but the reason the card can now be
+# folded by default -- the latest-volume strip that keeps the viewer and the
+# run log one click away while it is folded. Restored functionality, not
+# growth. (B63)
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 2700
 check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 700
 exit $fail
