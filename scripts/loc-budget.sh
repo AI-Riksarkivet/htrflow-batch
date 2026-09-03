@@ -32,8 +32,12 @@ check converter "$(count packages/converter/src -name '*.py')" 1000
 # need but the two front doors do: HEAD on every route (FastAPI, unlike
 # Starlette, does not add it, and an unhandled HEAD falls through to the
 # static mount) and the HTRFLOW_WEB_SITE_ONLY reader that answers 503
-# instead of the process refusing to start without a cluster. (B63)
-check web       "$(count packages/web/src -name '*.py')" 550
+# instead of the process refusing to start without a cluster. 550 -> 600 in
+# Task 20, which restored two things Task 7 dropped when the status document
+# went away: JobDetail.pipelineSteps/pipelineYaml (the chip's tooltip and its
+# YAML toggle) and VolumeView.sourceUrl (the "source" link). Restored
+# functionality, not growth. (B63)
+check web       "$(count packages/web/src -name '*.py')" 600
 check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 2500
 check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 700
 exit $fail
