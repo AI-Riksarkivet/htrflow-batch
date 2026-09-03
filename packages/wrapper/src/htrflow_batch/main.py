@@ -157,7 +157,7 @@ def _main(
     capture: LogCapture,
     state: RunState,
 ) -> int:
-    """setup->resume->stream->verify->publish. The per-volume wall-clock budget
+    """config->setup->resume->stream->verify->publish. The wall-clock budget
     is the pod's activeDeadlineSeconds (the converter renders it): at the
     deadline the kubelet SIGTERMs us and main()'s handler does the rest."""
     capture.attach_logging()  # not basicConfig: see LogCapture.attach_logging
@@ -166,7 +166,14 @@ def _main(
     # of holding the interpreter (executor workers are joined at exit).
     stop = threading.Event()
     try:
+        # `config` is a stage of its own, not the first half of `setup`: a bad
+        # or missing env is a deployment fault (converter.yaml, the chart
+        # values), and a reader told to go and fix a manifest URL because of
+        # one would be sent to the wrong file entirely. The read API and the
+        # campaign page key on this field, so the distinction has to be here.
+        state.stage = "config"
         cfg = Config.from_env(env)
+        state.stage = "setup"
         store = ResultStore(cfg)
         capture.start_shipping(store.put_run_log, cfg.log_ship_seconds)
         client = _http_client()

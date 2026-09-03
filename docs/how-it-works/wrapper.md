@@ -53,6 +53,10 @@ knobs that shape the streaming loop:
 
 Every stage name can appear in the termination log.
 
+0. **config** — read and check the env (`Config.from_env`). Its own stage, so
+   a deployment fault (a missing variable, `IIIF_MANIFEST_URL` and `IMAGES`
+   both set) is never reported as a manifest problem: exit 13, and the
+   campaign page says to look at `converter.yaml` and the chart values.
 1. **setup** — fetch the IIIF manifest (http(s) only, ≤ 5 redirects, 60 s,
    capped at `MANIFEST_MAX_BYTES`), enumerate canvases → ordered page list,
    zero-padded filenames. An empty manifest, a canvas without an image,

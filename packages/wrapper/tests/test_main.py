@@ -463,6 +463,33 @@ def test_every_failure_line_ends_in_plain_language(permanent, error, sentence):
     assert main_mod._advice(permanent, error) == sentence
 
 
+def test_a_missing_env_is_reported_as_the_config_stage(env, cfg, s3):
+    """A bad env is a deployment fault, not a manifest one. The stage is the
+    only structured signal that says so -- without it the campaign page can
+    only guess from the error text, and told the reader to go and fix a
+    manifest URL for a missing bucket name (B63 Task 20G fix round 1)."""
+    del env["VOLUME_REF"]
+    assert main(env, process_page_factory=fake_factory) == EXIT_PERMANENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "config"
+    assert term["permanent"] is True
+    assert "VOLUME_REF" in term["error"]
+
+
+def test_a_manifest_failure_is_still_the_setup_stage(env, cfg, s3, monkeypatch):
+    """The counterpart: `config` must not swallow what follows it."""
+    monkeypatch.setattr(
+        main_mod,
+        "_http_client",
+        lambda: httpx.Client(
+            transport=httpx.MockTransport(lambda r: httpx.Response(404))
+        ),
+    )
+    assert main(env, process_page_factory=fake_factory) == EXIT_PERMANENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "setup"
+
+
 def test_a_permanent_failure_line_keeps_its_prefix_and_gains_a_sentence(
     env, cfg, s3, monkeypatch, caplog
 ):

@@ -62,7 +62,7 @@ them.
 
 ## Stages
 
-`setup → resume → load → stream → verify → publish`; the current stage is
+`config → setup → resume → load → stream → verify → publish`; the current stage is
 what the termination log reports. Details in
 [The Wrapper → Stages](../how-it-works/wrapper.md#stages-around-the-streaming-loop).
 
