@@ -84,8 +84,9 @@ export function pageStats(
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
-/** Same guard as `pageStats`, for a caller holding a `PageRow` (which
- * doesn't carry `source`) plus the manifest's map. */
+/** A page's source image URL when the manifest carries one and it is
+ * http(s) — the same guard `pageStats` applies, for a caller that only has
+ * a `PageRow` (which doesn't carry `source`) plus the manifest's map. */
 export function pageSource(
   sources: Record<string, string> | undefined,
   name: string,
@@ -135,17 +136,21 @@ export function isTerminalManifest(m: RunManifest): boolean {
   return m.pages > 0 && Object.keys(m.results).length >= m.pages;
 }
 
-/** One row per page — what the grid and the full table each render: the
- * colour bucket (0 ok, 1 failed, 2 skipped, 3 an outcome the schema
- * tolerates but the wrapper never emits today, 4 reserved) and bar scale
- * (0.12..1 relative to the run's slowest timed page, 0 with no timing
- * signal) that `PageGrid` used to compute per render. */
+/** One row per page — what the grid and the full table each render. */
 export type PageRow = {
   name: string;
   status: "ok" | "failed" | "skipped";
   seconds: number;
   error?: string;
+  /**
+   * The grid's colour class: 0 ok, 1 failed, 2 skipped. `pageResultSchema`
+   * keeps `status` open for a future outcome the wrapper doesn't emit
+   * today; such a page renders as bucket 3 (neutral) rather than breaking
+   * the row's type. 4 is reserved.
+   */
   bucket: 0 | 1 | 2 | 3 | 4;
+  /** The grid's bar size: 0.12..1 relative to the run's slowest timed page,
+   * 0 when no page in the run took measurable time. */
   scale: number;
 };
 
@@ -155,30 +160,29 @@ const KNOWN_BUCKET: Record<string, PageRow["bucket"]> = {
   skipped: 2,
 };
 
+/**
+ * `PagesTable` and `PageGrid` used to each work out their own colour class
+ * and bar size from `PageStat`; this derives both once; sorted by name like
+ * `pageStats`.
+ */
 export function pageRows(manifest: RunManifest): PageRow[] {
-  const stats = pageStats(manifest.results);
-  const timedMax = stats.reduce(
-    (max, p) => (p.status === "skipped" ? max : Math.max(max, p.seconds)),
+  const entries = Object.entries(manifest.results).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+  // Same "timed" cut as summarizeRun's max: everything but skipped pages.
+  const timedMax = entries.reduce(
+    (max, [, r]) => (r.status === "skipped" ? max : Math.max(max, r.seconds)),
     0,
   );
-  return stats.map((p) => {
-    const status: PageRow["status"] =
-      p.status === "ok" || p.status === "failed" || p.status === "skipped"
-        ? p.status
-        : "skipped";
-    const scale =
-      timedMax > 0 ? Math.max(0.12, Math.min(1, p.seconds / timedMax)) : 0;
-    const bucket = KNOWN_BUCKET[p.status] ?? 3;
-    // exactOptionalPropertyTypes: only set `error` when the page had one.
-    return p.error !== undefined
-      ? {
-          name: p.id,
-          status,
-          seconds: p.seconds,
-          error: p.error,
-          bucket,
-          scale,
-        }
-      : { name: p.id, status, seconds: p.seconds, bucket, scale };
-  });
+  return entries.map(([name, r]) => ({
+    name,
+    status:
+      r.status === "ok" || r.status === "failed" || r.status === "skipped"
+        ? r.status
+        : "skipped",
+    seconds: r.seconds,
+    error: r.error,
+    bucket: KNOWN_BUCKET[r.status] ?? 3,
+    scale: timedMax > 0 ? Math.max(0.12, Math.min(1, r.seconds / timedMax)) : 0,
+  }));
 }

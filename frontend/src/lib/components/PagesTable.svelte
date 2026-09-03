@@ -9,7 +9,7 @@
     pageSize = 100,
   }: {
     rows: PageRow[];
-    sources: Record<string, string> | undefined;
+    sources?: Record<string, string>;
     pageSize?: number;
   } = $props();
 
@@ -20,7 +20,9 @@
 
 <div class="pager">
   <span class="range" aria-live="polite">
-    {rows.length === 0 ? "no pages" : `${offset + 1}–${last} of ${rows.length}`}
+    {rows.length === 0
+      ? "no pages"
+      : `${offset + 1}–${last} of ${rows.length}`}
   </span>
   <button
     type="button"
@@ -55,11 +57,8 @@
         <tr>
           <td class="pid">
             {#if source !== undefined}
-              <a
-                href={source}
-                target="_blank"
-                rel="noopener"
-                title="source image">{r.name}</a
+              <a href={source} target="_blank" rel="noopener" title="source image"
+                >{r.name}</a
               >
             {:else}
               {r.name}
