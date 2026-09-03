@@ -1,6 +1,6 @@
 # Campaign Browser
 
-The SvelteKit SPA served at `/` by the web image — two routes, no server,
+The SvelteKit SPA served at `/` by the web image — three routes, no server,
 reading the read API (`packages/web`) that serves it. Source:
 [`frontend/`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/frontend);
 the `frontend/README.md` there is the developer-facing version of this page.
@@ -16,7 +16,13 @@ the `frontend/README.md` there is the developer-facing version of this page.
   coloured by status and scaled by seconds, and the full table behind
   `<details>` in slices of 100 — readable at 480 pages). With `live=1` it
   re-fetches on the wrapper's log-ship cadence and stops on the terminal
-  line, a manifest that covers every page, or after 20 failed polls.
+  line, a manifest that covers every page, or after 20 failed polls. Each
+  row of the full table also carries an **alto** column (below) once the
+  manifest has a `viewer_url`.
+- `/alto?src=<url>` — the **ALTO viewer**: one page's ALTO XML as text, in
+  reading order, each line tinted by its `WC` confidence, with a raw-XML
+  toggle. Reached from the run viewer's alto column; see
+  [Viewing Results](../getting-started/viewing.md#reading-a-pages-alto).
 
 ## Stack
 
@@ -29,11 +35,12 @@ jsdom), Prettier, Bun as the package runner (`engines`: Node ≥ 22, Bun ≥ 1.1
 | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/lib/config.ts`                                  | API base and cadence resolution (table below)                                                                                                               |
 | `src/lib/api.ts`                                     | Read-API Zod schemas (`JobSummary`, `JobDetail`, `VolumeView`), `fetchJobs`/`fetchJob`, `ApiUnreachable`, and the pure view helpers `isHttpUrl`/`shortDate` |
-| `src/lib/run.ts`, `runlog.ts`                        | `manifest.json` schema + summary math (incl. `scale()`, the page grid's bar height); run-log grouping and the terminal-line check                            |
-| `src/lib/theme.svelte.ts`                            | the one theme store (`ThemeToggle.svelte` on both routes)                                                                                                   |
+| `src/lib/run.ts`, `runlog.ts`                        | `manifest.json` schema + summary math (incl. `scale()`, the page grid's bar height; each page's `alto` URL); run-log grouping and the terminal-line check   |
+| `src/lib/alto.ts`                                    | `parseAlto` (ALTO XML → text lines + confidence), `altoUrl`, `prettyXml` (the raw-XML toggle)                                                              |
+| `src/lib/theme.svelte.ts`                            | the one theme store (`ThemeToggle.svelte` on every route)                                                                                                   |
 | `src/lib/components/`                                | `CampaignCard`, `RunSummaryCard`, `PageGrid`, `PagesTable`, `ThemeToggle`                                                                                   |
-| `src/routes/+page.svelte`, `routes/log/+page.svelte` | the two routes                                                                                                                                              |
-| `src/app.css`                                        | design tokens per theme (AA-checked), reduced-motion                                                                                                        |
+| `src/routes/+page.svelte`, `routes/log/`, `routes/alto/` | the three routes                                                                                                                                        |
+| `src/app.css`                                        | design tokens per theme (AA-checked), reduced-motion, and the header/chip/code-block chrome shared by every route (kept out of each route's scoped styles) |
 | `static/config.js`                                   | the deployment hook (`window.API_BASE`)                                                                                                                     |
 
 ## Configuration
@@ -105,6 +112,24 @@ script). A CSP header from the server must not be stricter than the meta tag
   namespace/S3_PREFIX prefix): the browser has no bucket base URL to resolve
   a bare key against, so the API builds the full URL — see
   [Live Run Log](../how-it-works/live-run-log.md).
+- **ALTO column (§ reading-a-pages-alto).** `RunManifest.viewer_url`
+  (publish.py: `<public_results_base>/<volume>/iiif.json`) is now typed in
+  `runManifestSchema`, not just passed through; `pageStats`/`summarizeRun`
+  derive each page's ALTO URL alongside it —
+  `altoUrl(viewer_url, pageId)` swaps `iiif.json` for
+  `alto/<pageId>.xml`, the sibling directory `viewer.py`'s `seeAlso` already
+  points at — and attach it as `PageStat.alto` when `viewer_url` is a valid
+  http(s) URL (an older manifest without one just has no alto column).
+  `PagesTable`'s **alto** cell renders `view` (`/alto?src=<encodeURIComponent(url)>`)
+  and `download` (fetch + `Blob` + a same-origin object URL — `<a download>`
+  is ignored cross-origin, and the results bucket is a different origin from
+  this page) when a row has one, nothing otherwise. `/alto` itself parses the
+  fetched XML with `lib/alto.ts`'s `parseAlto` (namespace-agnostic —
+  `getElementsByTagNameNS("*", …)` — so a default namespace, a prefix, or
+  none all work) into text lines tinted by `WC` in four buckets
+  (high/medium/low/unknown, a legend line names the cutoffs), with a raw-XML
+  toggle (`prettyXml`) and three plain-sentence errors: unreachable, not
+  valid XML, and valid XML with no text lines.
 - **Three link slots.** Every volume row — and the folded card's latest
   strip — renders the same three fixed slots, **open · source · log**, from
   one snippet, so a missing link leaves a gap instead of shifting its

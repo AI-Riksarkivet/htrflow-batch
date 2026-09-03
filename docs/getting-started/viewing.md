@@ -24,6 +24,27 @@ links into the viewer per volume. (Through chart 0.3.0 a `defaultManifest`
 value could 302 `/` into UV instead; it was deprecated and is gone in 0.4.0
 — bookmark the `uv.html#?manifest=…` URL instead.)
 
+## Reading a page's ALTO
+
+Every page's ALTO XML is public alongside the manifest
+(`<public_results_base>/<volume>/alto/<page>.xml`), and the run viewer's
+per-page table (`/log?…`) links straight to it, once expanded, in an
+**alto** column:
+
+- **view** opens `/alto?src=<url to the page's ALTO XML>` — a text render of
+  the page's lines, in reading order, each tinted by its `WC` (word
+  confidence) in four bands (a legend line above the text names the
+  cutoffs). A **raw XML** button next to the theme toggle swaps the text for
+  the pretty-printed source, for a look at markup the text view leaves out
+  (`ID`s, bounding boxes, `HYP`/`SUBS_CONTENT` hyphenation detail); a **raw**
+  link opens the untouched file. A page whose ALTO can't be read, isn't XML,
+  or has no text at all says so in one sentence.
+- **download** fetches the same XML and saves it as `<page>.xml` — the
+  results bucket is a different origin from the campaign browser, and a
+  plain `<a download>` is silently ignored across origins, so this goes
+  through `fetch` + `Blob` + a same-origin object URL instead. A failed
+  download says so in one sentence rather than doing nothing.
+
 ## Reaching the web front over ssh (PoC / bare-k3s)
 
 On the bare-k3s PoC host, the web front and RustFS are exposed as NodePorts
