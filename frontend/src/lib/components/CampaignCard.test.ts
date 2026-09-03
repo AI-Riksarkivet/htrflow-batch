@@ -301,6 +301,23 @@ describe("CampaignCard", () => {
     expect(screen.getAllByRole("row")).toHaveLength(251); // still both pages
   });
 
+  test("a 404 says the campaign has aged out, not that the service is down", async () => {
+    // ttlSecondsAfterFinished reaps a finished campaign after 24 h, so a
+    // card left open on a screen overnight is the ordinary way to meet this.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse("job not found", 404)),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(
+      "This campaign no longer exists (finished campaigns are removed after " +
+        "24 hours).",
+    );
+    expect(alert).not.toHaveTextContent(/404|not found/);
+  });
+
   test("an unreachable detail fetch shows an inline error, not a blank table", async () => {
     vi.stubGlobal(
       "fetch",
