@@ -18,8 +18,11 @@
 FROM oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4 AS spa
 WORKDIR /app
 COPY frontend/package.json frontend/bun.lock ./
+# RA hosts sit behind a TLS-intercepting proxy; CI does not — only point bun
+# at the mounted CA when the secret was actually passed (present, non-empty).
 RUN --mount=type=secret,id=ca,target=/etc/ssl/certs/corp-ca.crt \
-    NODE_EXTRA_CA_CERTS=/etc/ssl/certs/corp-ca.crt bun install --frozen-lockfile
+    if [ -s /etc/ssl/certs/corp-ca.crt ]; then export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/corp-ca.crt; fi \
+    && bun install --frozen-lockfile
 COPY frontend/ ./
 RUN bun run build
 
@@ -36,8 +39,10 @@ ARG UV4_REPO=https://github.com/Riksarkivet/universalviewer4
 ARG UV4_REF=f2e8f66d3bd5a69e8e392764204d13d9524f63b2
 WORKDIR /src
 COPY .docker/uv4-uv-html.patch /tmp/uv4.patch
+# RA hosts sit behind a TLS-intercepting proxy; CI does not — only export the
+# CA env vars when the mounted secret was actually passed (present, non-empty).
 RUN --mount=type=secret,id=ca,target=/etc/ssl/certs/corp-ca.crt \
-    export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/corp-ca.crt GIT_SSL_CAINFO=/etc/ssl/certs/corp-ca.crt \
+    if [ -s /etc/ssl/certs/corp-ca.crt ]; then export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/corp-ca.crt GIT_SSL_CAINFO=/etc/ssl/certs/corp-ca.crt; fi \
     && git init -q . \
     && git remote add origin "$UV4_REPO" \
     && git fetch -q --depth 1 origin "$UV4_REF" \
