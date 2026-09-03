@@ -174,14 +174,16 @@
      "source" straight down. One snippet, so the folded strip and the table
      row can never drift apart. -->
 {#snippet links(v: VolumeView)}
+  {@const open = openHref(v)}
+  {@const source = sourceOf(v)}
   <span class="slot">
-    {#if openHref(v) !== null}
-      <a href={openHref(v)} target="_blank" rel="noopener">open</a>
+    {#if open !== null}
+      <a href={open} target="_blank" rel="noopener">open</a>
     {/if}
   </span>
   <span class="slot">
-    {#if sourceOf(v) !== null}
-      <a href={sourceOf(v)} target="_blank" rel="noopener">source</a>
+    {#if source !== null}
+      <a href={source} target="_blank" rel="noopener">source</a>
     {/if}
   </span>
   <span class="slot">
@@ -191,11 +193,18 @@
 
 <section class="campaign" data-health={health}>
   <div class="camp">
+    <!-- aria-controls only while the table exists: it must be an IDREF that
+         resolves, and a folded card renders no table (the pre-Task-7 card
+         dropped the attribute the same way when it had none to point at).
+         aria-expanded alone carries the open/closed state, and aria-controls
+         is optional in the disclosure pattern; rendering an empty element
+         just to keep the id would be worse — the reference would resolve to
+         nothing at all. -->
     <button
       type="button"
       class="camp-toggle"
       aria-expanded={!collapsed}
-      aria-controls={tableId}
+      aria-controls={collapsed ? undefined : tableId}
       onclick={toggle}
     >
       <span class="disclosure" aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
