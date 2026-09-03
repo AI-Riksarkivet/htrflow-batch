@@ -193,6 +193,15 @@ in the chart READMEs.
   used to rewrite `spec.parallelism` on the live Job and make the rendered
   file un-appliable: [E2E log](e2e-indexed-jobs.md).)
 - **Cancelling needs `PRUNE=1`**: a plain `kubectl apply` never deletes.
+- **`make install-devstack NVIDIA_DEVICE_PLUGIN=false` refuses while GPU
+  pods are running**: disabling the plugin deletes the chart-managed
+  `nvidia` RuntimeClass and device-plugin DaemonSet, which took a live pod
+  down for two minutes the one time it happened
+  ([E2E log](e2e-indexed-jobs.md), "A failed Helm install still owns what
+  it applied"). The target checks the cluster for a pod outside
+  `kube-system` using `runtimeClassName: nvidia` or requesting
+  `nvidia.com/gpu` and exits non-zero if it finds one; `FORCE=1` skips the
+  check.
   `make campaigns-apply DIR=… PRUNE=1` adds
   `--prune -l htrflow.riksarkivet.se/managed-by=converter`, which is what
   actually removes a deleted campaign's Job and ConfigMap. Only ever run it
