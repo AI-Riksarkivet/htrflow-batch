@@ -83,7 +83,10 @@ func (m *HtrflowBatch) frontend(source *dagger.Directory, caBundle *dagger.File)
 		From(frontendNodeImage).
 		WithFile("/usr/local/bin/bun", bun).
 		WithDirectory("/app", source.Directory("frontend"), dagger.ContainerWithDirectoryOpts{
-			Exclude: []string{"node_modules", "dist"},
+			// Same allow-list-vs-exclude-list reasoning as repoExclude
+			// (main.go, B63 Task 20A), applied to the frontend/ subtree
+			// this container mounts.
+			Exclude: []string{"node_modules", "dist", "coverage", ".svelte-kit", "build"},
 		}).
 		WithWorkdir("/app")
 	spa = m.withCaBundle(spa, caBundle)
