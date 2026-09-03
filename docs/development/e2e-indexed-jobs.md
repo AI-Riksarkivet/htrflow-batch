@@ -17,7 +17,7 @@ paths are campaigns plus `kubectl`, written out below.
 | Node | GB10 (arm64, 1 × NVIDIA GB10), k3s **v1.35.5+k3s1** (client and server) |
 | Kueue | ClusterQueue `htr-batch-cq`, LocalQueue `htr-batch`, `nominalQuota` cpu 8 / memory 32Gi / **nvidia.com/gpu 1** (unchanged by this run) |
 | Helm | `htr` → `htrflow-batch-0.3.0` (rev 27), `htr-devstack` → `htrflow-devstack-0.1.0` (rev 3) |
-| Wrapper | `htrflow-batch-wrapper` **0.2.0**, built natively from `.docker/htrflow-batch-gpu-arm64.dockerfile` on `htrflow:v0.2.6-arm64` (`HTRFLOW_BASE_REVISION=v0.2.6-78-gf7de861`) |
+| Wrapper | `htrflow-batch-wrapper` **0.2.0**, built natively from `.docker/htrflow-batch-gpu-arm64.dockerfile` on `htrflow:v0.2.6-arm64` (`HTRFLOW_BASE_REVISION=v0.2.6-78-gf7de861`) — that file is gone since Task 18 below, which merged it into `.docker/htrflow-batch.dockerfile` |
 | Campaigns repo | `~/htr-test`, branch `b63-indexed` (never pushed) |
 
 `backoffLimitPerIndex` needs Kubernetes ≥ 1.29; 1.35.5 has it GA.
@@ -1304,3 +1304,84 @@ silently lose). All four hunks, grepped from the served assets:
 
 Nothing else on the cluster changed: no campaign Job, ConfigMap, PVC, Secret
 or Kueue object was touched.
+
+## Task 18 — one wrapper dockerfile, built natively per architecture
+
+`.docker/htrflow-batch-gpu-arm64.dockerfile` is gone. The one remaining
+wrapper dockerfile declares both bases and the runtime stage picks:
+
+```
+base-amd64   airiksarkivet/htrflow:v0.2.6-35f48a7@sha256:e56a87f7…  + cu128 torch
+base-arm64   ${HTRFLOW_ARM64_BASE} (= htrflow:v0.2.6-arm64)         + torch 2.13.0/0.28.0
+runtime      FROM base-${TARGETARCH}
+```
+
+BuildKit only resolves the stage the target needs — probed with a throwaway
+dockerfile on this node before the merge: building on arm64, the log shows
+`[internal] load metadata for docker.io/library/alpine` and nothing for the
+amd64-only image, so an arm64 build never even looks it up.
+
+Built and pushed on the GB10 from the merged file:
+
+```
+$ make build-wrapper IMAGE_TAG=e2e3 && docker push 127.0.0.1:30500/htrflow-batch:e2e3
+#9 [runtime 2/7] RUN if [ "arm64" = "arm64" ]; then  uv pip install … "torch==2.13.0" …
+#13 [runtime 6/7] RUN if [ "arm64" = "arm64" ]; then  apt-get install … gcc libc6-dev
+                       python3.10-dev … "sentencepiece==0.2.2" "transformers==4.57.6"
+wrapper  127.0.0.1:30500/htrflow-batch@sha256:85c997f7c0ca0c2145a13522bea617343ab4466c114e124489fa8729e29c3f50
+```
+
+20 s, warm cache. `$TARGETARCH` is substituted before the shell sees it —
+the step name in the log reads `if [ "arm64" = "arm64" ]`, which is how you
+can tell from a build log alone which branch a layer took.
+
+The provenance labels come from the base stage the build selected, so an
+un-passed `HTRFLOW_BASE_REVISION` still tells the truth, and no `ENV` had to
+be added to the image to carry them:
+
+```
+$ docker image inspect 127.0.0.1:30500/htrflow-batch:e2e3 --format '{{json .Config.Labels}}'
+"org.opencontainers.image.base.name": "htrflow:v0.2.6-arm64",
+"se.riksarkivet.htrflow.base.revision": "v0.2.6-79-g0ede4da"
+$ … --format 'arch={{.Architecture}} user={{.Config.User}}'
+arch=arm64 user=1000:1000
+```
+
+`pipelines/e2e-t18-v1.yaml` (that digest, the usual three-step Swedish
+handwriting recipe) and a two-page `campaigns/e2e-t18.yaml` in `~/htr-test`:
+
+```
+$ kubectl -n htr-batch get job e2e-t18
+NAME      STATUS     COMPLETIONS   DURATION
+e2e-t18   Complete   1/1           26s
+… Initialized YOLO model 'Riksarkivet/yolov9-regions-1' … on device cuda:0
+… Initialized YOLO model 'Riksarkivet/yolov9-lines-within-regions-1' … on device cuda:0
+… Initialized TrOCR model from Riksarkivet/trocr-base-handwritten-hist-swe-2 on device cuda:0.
+… Initialized TrOCR processor from Riksarkivet/trocr-base-handwritten-hist-swe-2.
+… [e2e-t18] COMPLETE 2 pages (2 processed) in 18.1s, viewer: …/e2e-t18/iiif.json
+$ curl -s http://localhost:30800/api/v1/jobs | head -c 120
+[{"namespace":"htr-batch","name":"e2e-t18","pipeline":"e2e-t18-v1","phase":"Succeeded",…
+```
+
+The TrOCR *processor* line is the one that matters: it is what needs
+`sentencepiece` (the model ships only a slow tokenizer) and `transformers`
+4.x (5 dropped the slow→fast conversion), and `cuda:0` is what needs
+triton's compiler. All three extras survived the merge into the guarded
+`RUN`.
+
+**Two things this run also exposed, neither caused by the merge:**
+
+*The first attempt failed on `CUDA error: out of memory`* while the warmup
+Job for the same new pipeline was still finishing on the same node — four
+pod attempts inside 100 s, all in `YOLO(...).to(device)`, the wrapper
+classifying it as a transient load failure each time. Re-applied later on an
+idle GPU it completed on the first attempt. Unified memory on the GB10 means
+a concurrent build or warmup competes with the campaign for the same pool;
+the retry ceiling reached `Failed` faster than the contention cleared.
+
+*`make e2e DIR=~/htr-test` can no longer re-apply the whole PoC repo.* The
+warmup Jobs for `e2e-v1` and `e2e-slow-v1` were created before Task 25's
+render changes, and a Job's `spec.template` is immutable, so `kubectl apply`
+rejects them: `Job.batch "htr-warmup-e2e-v1" is invalid: spec.template …
+field is immutable`. The new pipeline and campaign applied cleanly; the two
+stale warmup Jobs need deleting before the repo-wide target works again.
