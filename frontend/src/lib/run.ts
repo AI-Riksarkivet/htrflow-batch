@@ -84,17 +84,6 @@ export function pageStats(
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
-/** A page's source image URL when the manifest carries one and it is
- * http(s) — the same guard `pageStats` applies, for a caller that only has
- * a `PageRow` (which doesn't carry `source`) plus the manifest's map. */
-export function pageSource(
-  sources: Record<string, string> | undefined,
-  name: string,
-): string | undefined {
-  const source = sources?.[name];
-  return source !== undefined && isHttpUrl(source) ? source : undefined;
-}
-
 export function summarizeRun(
   results: Record<string, PageResult>,
   sources: Record<string, string> = {},
@@ -134,55 +123,4 @@ export function formatDuration(seconds: number): string {
  */
 export function isTerminalManifest(m: RunManifest): boolean {
   return m.pages > 0 && Object.keys(m.results).length >= m.pages;
-}
-
-/** One row per page — what the grid and the full table each render. */
-export type PageRow = {
-  name: string;
-  status: "ok" | "failed" | "skipped";
-  seconds: number;
-  error?: string;
-  /**
-   * The grid's colour class: 0 ok, 1 failed, 2 skipped. `pageResultSchema`
-   * keeps `status` open for a future outcome the wrapper doesn't emit
-   * today; such a page renders as bucket 3 (neutral) rather than breaking
-   * the row's type. 4 is reserved.
-   */
-  bucket: 0 | 1 | 2 | 3 | 4;
-  /** The grid's bar size: 0.12..1 relative to the run's slowest timed page,
-   * 0 when no page in the run took measurable time. */
-  scale: number;
-};
-
-const KNOWN_BUCKET: Record<string, PageRow["bucket"]> = {
-  ok: 0,
-  failed: 1,
-  skipped: 2,
-};
-
-/**
- * `PagesTable` and `PageGrid` used to each work out their own colour class
- * and bar size from `PageStat`; this derives both once; sorted by name like
- * `pageStats`.
- */
-export function pageRows(manifest: RunManifest): PageRow[] {
-  const entries = Object.entries(manifest.results).sort(([a], [b]) =>
-    a.localeCompare(b),
-  );
-  // Same "timed" cut as summarizeRun's max: everything but skipped pages.
-  const timedMax = entries.reduce(
-    (max, [, r]) => (r.status === "skipped" ? max : Math.max(max, r.seconds)),
-    0,
-  );
-  return entries.map(([name, r]) => ({
-    name,
-    status:
-      r.status === "ok" || r.status === "failed" || r.status === "skipped"
-        ? r.status
-        : "skipped",
-    seconds: r.seconds,
-    error: r.error,
-    bucket: KNOWN_BUCKET[r.status] ?? 3,
-    scale: timedMax > 0 ? Math.max(0.12, Math.min(1, r.seconds / timedMax)) : 0,
-  }));
 }
