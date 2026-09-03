@@ -152,6 +152,26 @@ describe("isTerminalLog", () => {
     ).toBe(true);
   });
 
+  // B63 Task 20G: the wrapper appends a plain-language sentence after the
+  // prefix (main._advice). The prefix is what this rule keys on, so the two
+  // have to coexist — this is the test that says so out loud.
+  test("a failure line with its plain-language tail is still terminal", () => {
+    expect(
+      isTerminalLog(
+        "2026-08-26 07:15:33,903 ERROR permanent failure in setup: manifest " +
+          "is not JSON — a retry changes nothing — fix the campaign or " +
+          "pipeline file\n",
+      ),
+    ).toBe(true);
+    expect(
+      isTerminalLog(
+        "2026-08-26 07:15:33,903 ERROR transient failure in verify: verify " +
+          "failed: 1 missing, 0 failed missing=['0002'] failed=[] — some " +
+          "pages produced no result; the retry redoes only those\n",
+      ),
+    ).toBe(true);
+  });
+
   test("an in-flight log is not terminal", () => {
     expect(
       isTerminalLog(
