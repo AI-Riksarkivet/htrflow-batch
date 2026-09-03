@@ -38,10 +38,12 @@ const volumeFailed = {
   reason: "permanent failure in load: manifest unsupported",
 };
 
-// Every detail response carries the pipeline fields; a fixture without them
-// would only exercise the Zod failure path.
-const pipelineless = { pipelineSteps: [], pipelineYaml: "" };
-const detail0 = { ...job, ...pipelineless };
+// Every detail response carries these; a fixture without them would only
+// exercise the Zod failure path. `latest` is what the folded strip shows —
+// the API computes it over every volume, so null here means "nothing has
+// started", not "nothing is loaded".
+const detailBase = { pipelineSteps: [], pipelineYaml: "", latest: null };
+const detail0 = { ...job, ...detailBase };
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -339,21 +341,26 @@ describe("CampaignCard", () => {
     expect(screen.getByRole("table")).toBeInTheDocument();
   });
 
-  test("while folded, the newest volume keeps open · source · log in reach", async () => {
+  test("while folded, the API's latest volume keeps open · source · log in reach", async () => {
+    // Deliberately NOT among `volumes`: the strip comes from the API's
+    // `latest`, computed over every volume, not from the page the card
+    // happens to have loaded — which for a big campaign never holds the
+    // index in flight.
     const active = {
       ...volumeDone,
-      index: 2,
-      id: "vol2",
+      index: 260,
+      id: "vol260",
       state: "active",
-      sourceUrl: "https://iiif.example.org/vol2/manifest",
+      sourceUrl: "https://iiif.example.org/vol260/manifest",
     };
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
         jsonResponse({
           ...detail0,
+          latest: active,
           failures: [],
-          volumes: [volumeDone, active],
+          volumes: [volumeDone],
         }),
       ),
     );
@@ -361,14 +368,15 @@ describe("CampaignCard", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(screen.queryByRole("table")).toBeNull(); // still folded
-    expect(screen.getByText("vol2")).toBeInTheDocument(); // the active one wins
+    expect(screen.getByText("vol260")).toBeInTheDocument();
+    expect(screen.queryByText("vol0")).toBeNull(); // not the loaded row
     expect(screen.getByRole("link", { name: "open" })).toHaveAttribute(
       "href",
-      "uv.html#?manifest=https://iiif.example.org/vol2/manifest",
+      "uv.html#?manifest=https://iiif.example.org/vol260/manifest",
     );
     expect(screen.getByRole("link", { name: "source" })).toHaveAttribute(
       "href",
-      "https://iiif.example.org/vol2/manifest",
+      "https://iiif.example.org/vol260/manifest",
     );
     expect(screen.getByRole("link", { name: "log" })).toHaveAttribute(
       "href",
@@ -376,27 +384,21 @@ describe("CampaignCard", () => {
     );
   });
 
-  test("no volume in flight: the folded strip shows the newest done one", async () => {
-    const olderDone = { ...volumeDone, index: 0, id: "vol0" };
-    const newerDone = { ...volumeDone, index: 1, id: "vol1" };
+  test("no latest volume: the folded card shows no strip", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
         jsonResponse({
           ...detail0,
+          latest: null,
           failures: [],
-          volumes: [
-            olderDone,
-            newerDone,
-            { ...volumeFailed, index: 2, id: "vol2" },
-          ],
+          volumes: [volumeDone],
         }),
       ),
     );
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    expect(screen.getByText("vol1")).toBeInTheDocument();
-    expect(screen.queryByText("vol0")).toBeNull();
+    expect(screen.queryByRole("link", { name: "log" })).toBeNull();
   });
 
   test("renders the failures block with both ids and reasons", async () => {
@@ -472,7 +474,7 @@ describe("CampaignCard", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
-        jsonResponse({ ...partly, ...pipelineless, failures: [], volumes: [] }),
+        jsonResponse({ ...partly, ...detailBase, failures: [], volumes: [] }),
       ),
     );
     render(CampaignCard, { job: partly });
