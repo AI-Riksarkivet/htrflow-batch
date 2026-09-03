@@ -4,13 +4,9 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import json
 import re
-import shlex
-import subprocess
 import sys
 import tempfile
-import time
 from importlib import resources
 from pathlib import Path
 
@@ -179,115 +175,27 @@ def _render(repo_dir: str, out_dir: str) -> int:
     return 0
 
 
-class _Kubectl:
-    """``kubectl`` as a subprocess -- deliberately no Kubernetes client
-    dependency: this command runs from CI images and from ``uvx``, where the
-    only thing that can be assumed is the binary. Every command is echoed to
-    stderr, so an apply is auditable from a CI log alone."""
+def _cluster(namespace: str):
+    """The API-server adapter, behind a function: `validate` and `render`
+    never touch a cluster (nor pay the client's import), and a test swaps
+    the whole cluster out here."""
+    from .cluster import Cluster
 
-    def __init__(self, binary: str, dry_run: bool = False) -> None:
-        self.binary, self.dry_run = binary, dry_run
-
-    def _echo(self, args: tuple[str, ...]) -> None:
-        print(shlex.join([self.binary, *args]), file=sys.stderr)
-
-    def run(self, *args: str) -> int:
-        self._echo(args)
-        if self.dry_run:
-            return 0
-        return subprocess.run([self.binary, *args]).returncode
-
-    def read(self, *args: str) -> str:
-        """stdout of a read-only query; empty when the object is absent."""
-        self._echo(args)
-        p = subprocess.run([self.binary, *args], capture_output=True, text=True)
-        return p.stdout.strip() if p.returncode == 0 else ""
+    return Cluster(namespace)
 
 
-def _campaign_jobs(campaigns_out: Path) -> list[dict]:
-    """The rendered campaign Jobs, in apply order. The pause intent is read
-    from these dicts -- the same documents that were just applied."""
-    jobs: list[dict] = []
-    for path in sorted(campaigns_out.glob("*.yaml")):
-        jobs += [
-            d
-            for d in yaml.safe_load_all(path.read_text())
-            if isinstance(d, dict) and d.get("kind") == "Job"
+def _objects(dir_: Path) -> list[dict]:
+    """Every rendered document under ``dir_``, in file order."""
+    objects: list[dict] = []
+    for path in sorted(dir_.glob("*.yaml")):
+        objects += [
+            d for d in yaml.safe_load_all(path.read_text()) if isinstance(d, dict)
         ]
-    return jobs
-
-
-def _workload(kubectl: _Kubectl, ns: str, job: str) -> str:
-    """The Kueue Workload of ``job``, or empty. Kueue labels it with the
-    Job's uid, which is the only link that survives a delete/recreate."""
-    uid = kubectl.read("-n", ns, "get", "job", job, "-o", "jsonpath={.metadata.uid}")
-    if not uid:
-        return ""
-    found = kubectl.read(
-        "-n", ns, "get", "workload", "-l", f"kueue.x-k8s.io/job-uid={uid}", "-o", "name"
-    )
-    return found.splitlines()[0] if found else ""
-
-
-def _pause_sync(kubectl: _Kubectl, campaigns_out: Path, pause_wait: int) -> int:
-    """Put each campaign's declared pause on its Kueue Workload.
-
-    ``suspend: true`` renders ``spec.suspend: true`` on the Job, but Kueue
-    OWNS that field for a Workload it has admitted and flips it back within
-    seconds -- the rendered field is intent, not enforcement. The lever that
-    holds is ``spec.active`` on the Workload. Idempotent: a Workload that
-    already agrees is left alone.
-
-    A Workload appears a moment AFTER its Job, and for a campaign that is
-    paused in git that moment is exactly the window in which Kueue would
-    admit and start it -- so a paused campaign waits, and fails loudly if the
-    Workload never turns up. A campaign that is NOT paused needs no wait: a
-    Workload that does not exist is not admitted either, and the next apply
-    catches it. See docs/development/e2e-indexed-jobs.md (Task 14) for why
-    the render-time alternative -- dropping the queue-name label -- was not
-    taken.
-    """
-    failed = 0
-    for job in _campaign_jobs(campaigns_out):
-        name = job["metadata"]["name"]
-        ns = job["metadata"]["namespace"]
-        want = not job["spec"].get("suspend", False)
-        wl = _workload(kubectl, ns, name)
-        if not wl and not want:
-            for _ in range(pause_wait):
-                time.sleep(1)
-                wl = _workload(kubectl, ns, name)
-                if wl:
-                    break
-        if not wl:
-            if want:
-                print(f"{name}: no Workload yet, skipping", file=sys.stderr)
-                continue
-            print(
-                f"{name}: paused in git, but no Kueue Workload appeared within "
-                f"{pause_wait}s — the pause is NOT enforced; re-run the apply",
-                file=sys.stderr,
-            )
-            failed = 1
-            continue
-        current = kubectl.read("-n", ns, "get", wl, "-o", "jsonpath={.spec.active}")
-        if (current or "true") == str(want).lower():
-            continue
-        print(f"{name}: {wl} active={str(want).lower()}", file=sys.stderr)
-        patch = json.dumps({"spec": {"active": want}})
-        failed |= min(
-            kubectl.run("-n", ns, "patch", wl, "--type", "merge", "-p", patch), 1
-        )
-    return failed
+    return objects
 
 
 def _apply(
-    repo_dir: str,
-    out_dir: str | None,
-    prune: bool,
-    binary: str,
-    pause_wait: int,
-    dry_run: bool,
+    repo_dir: str, out_dir: str | None, prune: bool, pause_wait: int, dry_run: bool
 ) -> int:
     with contextlib.ExitStack() as stack:
         if out_dir is None:
@@ -295,38 +203,46 @@ def _apply(
         rc = _render(repo_dir, out_dir)
         if rc:
             return rc
-        out = Path(out_dir)
-        pipelines, campaigns = str(out / "pipelines"), str(out / "campaigns")
-        kubectl = _Kubectl(binary, dry_run)
+        repo, out = Path(repo_dir), Path(out_dir)
         # Pipelines first: a campaign's Job mounts its pipeline's ConfigMap
         # and waits on its warm-up Job's marker file.
-        if kubectl.run("apply", "-f", pipelines):
-            return 1
-        # --prune deletes every object carrying CAMPAIGN_SELECTOR that is not
-        # in THIS apply -- which is what makes deleting a campaign file cancel
-        # the campaign. It therefore has to see the pipelines too: pruning
-        # against campaigns/ alone would delete the pipeline ConfigMaps and
-        # warm-up Jobs the previous command just applied.
-        second = ["apply", "-f", campaigns]
-        if prune:
-            second = [
-                "apply",
-                "--prune",
-                "-l",
-                render.CAMPAIGN_SELECTOR,
-                "-f",
-                pipelines,
-                "-f",
-                campaigns,
-            ]
-        if kubectl.run(*second):
-            return 1
+        pipelines, campaigns = _objects(out / "pipelines"), _objects(out / "campaigns")
         if dry_run:
-            # The pause sync's commands depend on what the cluster answers,
-            # so there is nothing truthful to print for it here.
-            print("(--dry-run: the Kueue pause sync was skipped)", file=sys.stderr)
+            for obj in pipelines + campaigns:
+                print(f"would apply: {obj['kind']}/{obj['metadata']['name']}")
+            if prune:
+                print(
+                    f"would prune: every {render.CAMPAIGN_SELECTOR} Job/ConfigMap "
+                    "in the namespace that is not listed above"
+                )
+            print("(--dry-run: nothing was sent to the API server)")
             return 0
-        return _pause_sync(kubectl, out / "campaigns", pause_wait)
+        # The namespace comes from converter.yaml, not from the rendered
+        # objects: a repo whose last campaign was deleted renders nothing at
+        # all, which is exactly when --prune has work to do. (_render just
+        # loaded this, so it cannot fail here.)
+        cfg = load(repo / "campaigns", repo / "pipelines", repo / "converter.yaml")[2]
+        cluster = _cluster(cfg.namespace)
+        # (live object, declared pause) per campaign Job: the live one has the
+        # uid Kueue labels the Workload with, the rendered one has what git
+        # says. Warm-up Jobs are not campaigns and get no pause sync.
+        jobs: list[tuple[dict, bool]] = []
+        for objects, is_campaign in ((pipelines, False), (campaigns, True)):
+            for obj in objects:
+                live = cluster.apply(obj)
+                print(f"applied: {obj['kind']}/{obj['metadata']['name']}")
+                if is_campaign and obj["kind"] == "Job":
+                    jobs.append((live, obj["spec"].get("suspend", False)))
+        if prune:
+            # What makes deleting a campaign file cancel the campaign. Both
+            # directories: see Cluster.prune.
+            cluster.prune(
+                {(o["kind"], o["metadata"]["name"]) for o in pipelines + campaigns}
+            )
+        failed = 0
+        for live, suspended in jobs:
+            failed |= cluster.sync_pause(live, suspended, pause_wait)
+        return failed
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -342,7 +258,7 @@ def main(argv: list[str] | None = None) -> int:
     render_p = sub.add_parser("render", help="render ConfigMaps and Jobs")
     render_p.add_argument("repo_dir")
     render_p.add_argument("--out", required=True)
-    apply_p = sub.add_parser("apply", help="render, then kubectl apply (and prune)")
+    apply_p = sub.add_parser("apply", help="render, then apply (and prune)")
     apply_p.add_argument("repo_dir")
     apply_p.add_argument("--out", help="render here instead of a temp directory")
     apply_p.add_argument(
@@ -351,7 +267,6 @@ def main(argv: list[str] | None = None) -> int:
         help="delete the objects a previous render left behind (opt-in: it "
         "deletes every converter-labelled object not in this apply)",
     )
-    apply_p.add_argument("--kubectl", default="kubectl")
     apply_p.add_argument(
         "--pause-wait",
         type=int,
@@ -359,7 +274,9 @@ def main(argv: list[str] | None = None) -> int:
         help="seconds to wait for a new paused campaign's Kueue Workload",
     )
     apply_p.add_argument(
-        "--dry-run", action="store_true", help="print the kubectl commands only"
+        "--dry-run",
+        action="store_true",
+        help="render and print what would be applied, without a cluster",
     )
     args = parser.parse_args(argv)
     if args.command == "init":
@@ -368,12 +285,7 @@ def main(argv: list[str] | None = None) -> int:
         return _render(args.repo_dir, args.out)
     if args.command == "apply":
         return _apply(
-            args.repo_dir,
-            args.out,
-            args.prune,
-            args.kubectl,
-            args.pause_wait,
-            args.dry_run,
+            args.repo_dir, args.out, args.prune, args.pause_wait, args.dry_run
         )
     return _validate(args.repo_dir)
 
