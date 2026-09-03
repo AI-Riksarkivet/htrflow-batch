@@ -86,6 +86,9 @@ export const volumeViewSchema = z.object({
   iiifUrl: z.string(),
   altoPrefix: z.string(),
   logUrl: z.string(),
+  // The volume's source manifest, straight off its volumes.txt line; null
+  // for an `images:` volume, which has no manifest to open.
+  sourceUrl: z.string().nullable(),
   reason: z.string().optional(),
 });
 

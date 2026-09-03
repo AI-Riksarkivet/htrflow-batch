@@ -15,7 +15,30 @@
 
   let { job }: { job: JobSummary } = $props();
 
-  let collapsed = $state(false); // expanded by default
+  // Cards start folded: the page is a list of campaigns to scan, not a wall
+  // of volume tables. The choice is remembered per campaign; every storage
+  // access is wrapped, because a browser can refuse it (private mode, a
+  // file:// page, cookies-blocked) and that is not an error worth showing.
+  const memoryKey = $derived(`htrflow.card.${job.namespace}/${job.name}`);
+
+  function remembered(): boolean {
+    try {
+      return localStorage.getItem(memoryKey) !== "open";
+    } catch {
+      return true;
+    }
+  }
+
+  function toggle(): void {
+    collapsed = !collapsed;
+    try {
+      localStorage.setItem(memoryKey, collapsed ? "closed" : "open");
+    } catch {
+      // Nothing to remember it with; the card still opens and closes.
+    }
+  }
+
+  let collapsed = $state(remembered());
   let yamlOpen = $state(false); // collapsed by default
   let volumes = $state<VolumeView[]>([]);
   let failures = $state<VolumeView[]>([]);
@@ -88,6 +111,22 @@
     return () => clearInterval(timer);
   });
 
+  // Reachable while folded: the volume a person is most likely to want — the
+  // newest one still running, else the newest finished. Volumes arrive in
+  // index order, so the last match is the newest.
+  function newest(state: VolumeView["state"]): VolumeView | null {
+    return volumes.findLast((v) => v.state === state) ?? null;
+  }
+  const latest = $derived(newest("active") ?? newest("done"));
+
+  // The finished result once there is one, the source manifest before that
+  // (the old derive.viewerHref) — so "open" is a live link from the first
+  // tick, not only after the volume publishes.
+  function openHref(v: VolumeView): string | null {
+    const manifest = v.state === "done" ? v.iiifUrl : v.sourceUrl;
+    return manifest === null ? null : `uv.html#?manifest=${manifest}`;
+  }
+
   // manifest carries manifestUrl so /log's RunSummaryCard has something to
   // render; live=1 for a volume still in flight, so /log re-fetches on the
   // wrapper's log-ship cadence instead of showing a static snapshot.
@@ -102,6 +141,26 @@
   }
 </script>
 
+<!-- Three fixed slots (open · source · log) so a missing link leaves a gap
+     instead of shifting its neighbours; the eye can scan a column of
+     "source" straight down. One snippet, so the folded strip and the table
+     row can never drift apart. -->
+{#snippet links(v: VolumeView)}
+  <span class="slot">
+    {#if openHref(v) !== null}
+      <a href={openHref(v)} target="_blank" rel="noopener">open</a>
+    {/if}
+  </span>
+  <span class="slot">
+    {#if v.sourceUrl !== null}
+      <a href={v.sourceUrl} target="_blank" rel="noopener">source</a>
+    {/if}
+  </span>
+  <span class="slot">
+    <a href={logHref(v)}>log</a>
+  </span>
+{/snippet}
+
 <section class="campaign" data-health={health}>
   <div class="camp">
     <button
@@ -109,7 +168,7 @@
       class="camp-toggle"
       aria-expanded={!collapsed}
       aria-controls={tableId}
-      onclick={() => (collapsed = !collapsed)}
+      onclick={toggle}
     >
       <span class="disclosure" aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
       <span class="camp-name">{job.namespace}/{job.name}</span>
@@ -158,6 +217,13 @@
       Cannot load volumes: {detailError}
     </p>
   {/if}
+  {#if collapsed && latest !== null}
+    <p class="latest">
+      <span class="latest-state {latest.state}">{latest.state}</span>
+      <span class="latest-id" title={latest.id}>{latest.id}</span>
+      <span class="links">{@render links(latest)}</span>
+    </p>
+  {/if}
   {#if failures.length > 0}
     <div class="failures">
       <p class="failures-heading">failures ({failures.length})</p>
@@ -204,20 +270,7 @@
                   {v.state}
                 </span>
               </td>
-              <td class="links">
-                <span class="slot">
-                  {#if v.state === "done"}
-                    <a
-                      href={"uv.html#?manifest=" + v.iiifUrl}
-                      target="_blank"
-                      rel="noopener">open</a
-                    >
-                  {/if}
-                </span>
-                <span class="slot">
-                  <a href={logHref(v)}>log</a>
-                </span>
-              </td>
+              <td class="links">{@render links(v)}</td>
             </tr>
           {/each}
         </tbody>
@@ -466,8 +519,9 @@
     width: 8rem;
   }
 
+  /* Three slots at 3.3rem, as before Task 7 dropped "source". */
   col.c-links {
-    width: 8rem;
+    width: 11rem;
   }
 
   table.volumes th {
@@ -552,22 +606,65 @@
     background: var(--muted);
   }
 
-  td.links {
+  td.links,
+  .latest .links {
     white-space: nowrap;
   }
 
-  td.links .slot {
+  .slot {
     display: inline-block;
-    min-width: 2.9rem;
+    min-width: 3.3rem;
   }
 
-  td.links a {
+  td.links a,
+  .latest a {
     color: var(--primary);
     text-decoration: none;
   }
 
-  td.links a:hover {
+  td.links a:hover,
+  .latest a:hover {
     text-decoration: underline;
+  }
+
+  /* The folded card's one-line window on the campaign: the volume most
+     likely to be wanted, with the same three links its table row has, so
+     UV and the run log are one click away without unfolding. */
+  .latest {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin: 0.25rem 0 0;
+    font-size: 12.5px;
+    min-width: 0;
+  }
+
+  .latest-state {
+    color: var(--muted-foreground);
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    flex-shrink: 0;
+  }
+
+  .latest-state.active {
+    color: var(--primary);
+  }
+
+  .latest-state.done {
+    color: var(--success);
+  }
+
+  .latest-id {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-weight: 500;
+  }
+
+  .latest .links {
+    margin-left: auto;
   }
 
   .load-more {
