@@ -108,6 +108,15 @@ def _volume_lines(configmap: dict | None) -> list[str]:
     return [line for line in data.get("volumes.txt", "").splitlines() if line]
 
 
+def _source_url(line: str) -> str | None:
+    """The URL half of a ``volumes.txt`` line (``<id>\t<manifest url>``) — what
+    the card's "source" link opens in the viewer before there are results.
+    An ``images:`` line lists bare image URLs instead of a manifest, so it has
+    no source to open (converter ``models.Volume.source_line``)."""
+    source = line.partition("\t")[2]
+    return source if source.startswith(("http://", "https://")) else None
+
+
 def _wrapper_message(pod: dict) -> str | None:
     """The wrapper's termination message: ``state.terminated`` if the
     container is currently terminated, else ``lastState.terminated`` after a
@@ -232,6 +241,7 @@ def detail(
             "iiifUrl": f"{results_base}/{vol_id}/iiif.json",
             "altoPrefix": f"{results_base}/{vol_id}/alto/",
             "logUrl": _log_url(pipeline, vol_id, cfg),
+            "sourceUrl": _source_url(line),
         }
         if idx in pods_by_index:
             newest = _newest(pods_by_index[idx])

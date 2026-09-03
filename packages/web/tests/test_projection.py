@@ -221,6 +221,28 @@ class TestDetail:
             "https://results.example.org/status/logs/demo-v1/vol3.txt"
         )
 
+    def test_source_url_is_the_manifest_half_of_the_line(self):
+        d = projection.detail(_job(), _configmap(), [], CFG)
+        assert d["volumes"][0]["sourceUrl"] == (
+            "https://iiif.example.org/vol0/manifest"
+        )
+
+    def test_an_images_line_has_no_source_url(self):
+        cm = {
+            "metadata": {"name": "campaign-kyrk", "namespace": "htr-test"},
+            "data": {"volumes.txt": "vol0\timages:https://a/1.jpg,https://a/2.jpg\n"},
+        }
+        d = projection.detail(_job(), cm, [], CFG)
+        assert d["volumes"][0]["sourceUrl"] is None
+
+    def test_a_line_without_a_source_has_no_source_url(self):
+        cm = {
+            "metadata": {"name": "campaign-kyrk", "namespace": "htr-test"},
+            "data": {"volumes.txt": "vol0\n"},
+        }
+        d = projection.detail(_job(), cm, [], CFG)
+        assert d["volumes"][0]["sourceUrl"] is None
+
     def test_failures_capped_and_newest_index_first(self):
         job = _job()
         configmap = _configmap()
