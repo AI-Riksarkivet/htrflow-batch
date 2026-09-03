@@ -199,8 +199,9 @@ in the chart READMEs.
   down for two minutes the one time it happened
   ([E2E log](e2e-indexed-jobs.md), "A failed Helm install still owns what
   it applied"). The target checks the cluster for a pod outside
-  `kube-system` using `runtimeClassName: nvidia` or requesting
-  `nvidia.com/gpu` and exits non-zero if it finds one; `FORCE=1` skips the
+  `kube-system` that is Running or Pending (finished pods do not hold the
+  GPU) and uses `runtimeClassName: nvidia` or requests
+  `nvidia.com/gpu`, and exits non-zero if it finds one; `FORCE=1` skips the
   check.
   `make campaigns-apply DIR=… PRUNE=1` adds
   `--prune -l htrflow.riksarkivet.se/managed-by=converter`, which is what
