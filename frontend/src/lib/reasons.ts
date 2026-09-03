@@ -94,7 +94,15 @@ export function describeReason(reason: VolumeReason): string {
       "log to see what happened."
     );
   }
-  if (stage === "setup" && permanent === true) {
+  // Not every permanent setup failure is about the manifest: a missing or
+  // contradictory env is also raised before the stage moves on, and telling
+  // its reader to fix a manifest URL would send them to the wrong file. The
+  // wrapper's own manifest errors all name what they are about (iiif.py).
+  if (
+    stage === "setup" &&
+    permanent === true &&
+    /^(manifest|canvas)\b/.test(error)
+  ) {
     return (
       `The IIIF manifest could not be read: ${stop(error)} ` +
       "Fix the manifest URL in the campaign file — this volume will not be " +
