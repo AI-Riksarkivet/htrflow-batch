@@ -61,7 +61,7 @@ dagger call test                # add --ca-bundle on TLS-intercepting networks
 exactly those three. `dagger call test` runs the Python suite inside a uv
 container with `uv sync --all-packages`, which pins the dependency
 resolution but says nothing about the production images — those are built
-separately by `dagger call build` / `build-web`.
+separately by `dagger call build-wrapper` / `build-web`.
 `make typecheck` (`ty`) is a separate gate; run it before pushing (see
 [CI](ci.md)).
 

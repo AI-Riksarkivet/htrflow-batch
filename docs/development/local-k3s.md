@@ -22,7 +22,7 @@ defaults and is loaded first, so a missing `.env` behaves exactly like it:
 | `HTR_REGISTRY` / `HTR_REGISTRY_NODEPORT` | `127.0.0.1:30500` / `30500` | `poc-push` (image names) |
 | `HTR_S3_ENDPOINT` / `HTR_S3_NODEPORT` / `HTR_BUCKET` | `http://localhost:30900` / `30900` / `htr-results` | compose; your own `aws` calls |
 | `HTR_WEB_NODEPORT` | `30800` | `make e2e`'s final `/api/v1/jobs` curl |
-| `HTRFLOW_DIR` | `~/htrflow` | the arm64 base build's `git describe` |
+| `HTRFLOW_DIR` | `~/htrflow` | `build-htrflow-base-arm64`; the base's `git describe` |
 | `HTR_DEV_S3_ACCESS_KEY` / `SECRET_KEY` | `rustfsadmin` | the compose stack only — never a cluster |
 
 The chart takes the same values via `--set`; the Python packages take them
@@ -33,19 +33,26 @@ from their own env ([Reference](../reference/index.md)).
 The upstream `airiksarkivet/htrflow` image is amd64-only. It *runs* on the
 GB10 under qemu (binfmt), but the GPU never crosses the emulation boundary
 (a 2-page volume: ~55 s native vs 1 h+ emulated on CPU) and the `uv` binary
-segfaults under `qemu-x86_64`. So the wrapper is built natively from
-`.docker/htrflow-batch-gpu-arm64.dockerfile` on top of a locally built
-base:
+segfaults under `qemu-x86_64`. So the wrapper is built natively, from the
+one `.docker/htrflow-batch.dockerfile` — its `base-arm64` stage, which
+`docker build` selects from the host's `TARGETARCH` — on top of a locally
+built base:
 
 ```bash
-# 1. the base, from the htrflow checkout (HTRFLOW_DIR). The lockfile is
-#    gitignored there, so lock first — a missing uv.lock fails the build.
-cd ~/htrflow && uv lock && docker build -f docker/htrflow.dockerfile -t htrflow:v0.2.6-arm64 .
+# 1. the base, from the htrflow checkout (HTRFLOW_DIR). Its lockfile is
+#    gitignored, so `uv lock` in that checkout first: this repo treats it
+#    as read-only and the target refuses to run without a uv.lock rather
+#    than writing one into someone else's working tree.
+make build-htrflow-base-arm64                # docker/htrflow.dockerfile -> htrflow:v0.2.6-arm64
 
-# 2. the wrapper + read API, pushed to the in-cluster registry
-cd ~/htrflow-batch && make poc-push          # arch-aware: picks the arm64 recipe on aarch64
-make poc-push-arm64                          # the same recipe regardless of host arch
+# 2. the wrapper + web front, pushed to the in-cluster registry
+make poc-push                                # builds the host's architecture
 ```
+
+CI does exactly this on an `ubuntu-24.04-arm` runner, in a throwaway clone
+of htrflow pinned to `HTRFLOW_ARM64_BASE_REF`
+(`.github/actions/build-htrflow-base-arm64`), so the recipe on this page
+and the one that publishes images cannot drift.
 
 `poc-push` stamps `HTRFLOW_BASE_REVISION` (`git -C $HTRFLOW_DIR describe
 --tags --always --dirty`) into the image label
@@ -56,15 +63,16 @@ It prints the wrapper and API digests at the end — the wrapper's goes into
 (or use `security.allowTagImages=true` and the `:dev` tag while iterating;
 tags are then pulled on every rollout).
 
-Three extras beyond the amd64 recipe are required and pinned in the
-dockerfile: `gcc` + Python headers (triton's JIT needs a compiler at
-runtime), `sentencepiece`, and `transformers<5` (v5 dropped the slow→fast
-tokenizer conversion; models without `tokenizer.json`, e.g.
-`microsoft/trocr-base-handwritten`, fail). torch comes from the base's own
-lock (PyPI aarch64 wheels bundle CUDA 13; torch reports `2.13.0+cu130` and
-runs on the GB10) — the "cu128 swap" of the amd64 recipe is a no-op on this
-arch and the dockerfile pins the versions explicitly so a drifting base
-fails the build instead of silently changing them.
+Three extras beyond the amd64 branch are required and pinned in the
+dockerfile, all behind `if [ "$TARGETARCH" = "arm64" ]`: `gcc` + Python
+headers (triton's JIT needs a compiler at runtime), `sentencepiece`, and
+`transformers<5` (v5 dropped the slow→fast tokenizer conversion; models
+without `tokenizer.json`, e.g. `microsoft/trocr-base-handwritten`, fail).
+torch comes from the base's own lock (PyPI aarch64 wheels bundle CUDA 13;
+torch reports `2.13.0+cu130` and runs on the GB10) — the "cu128 swap" of
+the amd64 branch is a no-op on this arch and the dockerfile pins the
+versions explicitly so a drifting base fails the build instead of silently
+changing them.
 
 containerd pulls `127.0.0.1:30500/…` over plain HTTP with no
 `registries.yaml` (localhost fallback); `docker push` to it from the node
