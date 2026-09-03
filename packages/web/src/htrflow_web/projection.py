@@ -134,10 +134,7 @@ def _wrapper_reason(pod: dict) -> dict | None:
         term = (cs.get("state") or {}).get("terminated")
         if term is None:
             term = (cs.get("lastState") or {}).get("terminated")
-        if term is not None:
-            message = term.get("message")
-            if message is None:
-                return None
+        if term is not None and (message := term.get("message")) is not None:
             return _name_the_deadline(_reason(message), status.get("reason"))
     return None
 
