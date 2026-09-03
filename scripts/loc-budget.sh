@@ -18,7 +18,12 @@ fail=0
 # nothing at all (the emptyDir dies with the pod). The wrapper keeps only what
 # needs its process: resume, fetch retries, the verify gate, redaction,
 # SIGTERM and log shipping. (B63)
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2000
+# 2000 -> 2010 in Task 20G fix round 1: `config` became a stage of its own,
+# set around Config.from_env, so a bad env stops being reported as a `setup`
+# failure and stops being described to a reader as a manifest problem. Two
+# assignments and the comment that says why the distinction has to live in
+# the wrapper rather than be guessed from the error text downstream. (B63)
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2010
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
