@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { JobSummary } from "$lib/api.js";
+import { RELOAD_MS } from "$lib/config.js";
 import CampaignCard from "./CampaignCard.svelte";
 
 const job: JobSummary = {
@@ -223,6 +224,49 @@ describe("CampaignCard", () => {
     );
     expect(screen.getAllByRole("row")).toHaveLength(3); // header + 2 volumes
     expect(screen.queryByRole("button", { name: /load more/ })).toBeNull();
+  });
+
+  test("a poll keeps every page that has been loaded", async () => {
+    // PAGE is 200; two pages loaded means the poll must ask for 400 from 0.
+    const page = (from: number, n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        ...volumeDone,
+        index: from + i,
+        id: `vol${from + i}`,
+      }));
+    const first = page(0, 200);
+    const second = page(200, 50);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ ...detail0, failures: [], volumes: first }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ ...detail0, failures: [], volumes: second }),
+      )
+      .mockResolvedValue(
+        jsonResponse({
+          ...detail0,
+          failures: [],
+          volumes: [...first, ...second],
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, {
+      job: { ...job, counts: { ...job.counts, total: 250 } },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+    await fireEvent.click(screen.getByRole("button", { name: /load more/ }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getAllByRole("row")).toHaveLength(251); // header + 250
+
+    await vi.advanceTimersByTimeAsync(RELOAD_MS); // the poll tick
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/v1/jobs/htr-test/kyrk?offset=0&limit=400",
+      expect.anything(),
+    );
+    expect(screen.getAllByRole("row")).toHaveLength(251); // still both pages
   });
 
   test("an unreachable detail fetch shows an inline error, not a blank table", async () => {
