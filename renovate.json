@@ -79,6 +79,16 @@
     },
     {
       "customType": "regex",
+      "description": "AI-Riksarkivet/htrflow commit the arm64 wrapper base is built from (.github/workflows/{ci,publish}.yml build it natively on an arm64 runner). Bumping it rebuilds that base, so it gets its own PR; keep the two workflows on the same commit.",
+      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
+      "matchStrings": ["HTRFLOW_ARM64_BASE_REF: (?<currentDigest>[a-f0-9]{40})"],
+      "depNameTemplate": "AI-Riksarkivet/htrflow",
+      "packageNameTemplate": "https://github.com/AI-Riksarkivet/htrflow",
+      "currentValueTemplate": "main",
+      "datasourceTemplate": "git-refs"
+    },
+    {
+      "customType": "regex",
       "description": "Trivy image used by make scan-web",
       "managerFilePatterns": ["/^Makefile$/"],
       "matchStrings": ["TRIVY_IMAGE \\?= (?<depName>aquasec/trivy):(?<currentValue>[0-9.]+)"],
@@ -98,6 +108,17 @@
       "matchPackageNames": ["airiksarkivet/htrflow"],
       "matchUpdateTypes": ["major", "minor", "patch"],
       "enabled": false
+    },
+    {
+      "description": "The arm64 wrapper base is a local tag built in the same job from source, not a registry image — there is nothing to look up",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["htrflow"],
+      "enabled": false
+    },
+    {
+      "description": "The htrflow commit the arm64 base is built from: its own PR, the base and the wrapper on top of it must be re-verified",
+      "matchPackageNames": ["AI-Riksarkivet/htrflow"],
+      "groupName": "htrflow arm64 base"
     },
     {
       "description": "torch/torchvision follow the cu128 index by hand (dockerfile comment); uv itself is a pin",

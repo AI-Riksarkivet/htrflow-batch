@@ -8,6 +8,13 @@ on:
 permissions:
   contents: read
 
+env:
+  # AI-Riksarkivet/htrflow commit the arm64 wrapper base is built from; the
+  # same pin publish.yml carries, tracked by renovate (git-refs). See
+  # .github/actions/build-htrflow-base-arm64.
+  HTRFLOW_ARM64_BASE_REF: 0ede4da5493cf01ac97024558a5e4f468d5f360f
+  HTRFLOW_ARM64_BASE: htrflow:v0.2.6-arm64
+
 # Every gate is a dagger function so `make ci` and this workflow run the same
 # thing (audit X11). `checks` = ruff + ty + campaign browser (svelte-check,
 # vitest, build) + chart (helm lint/template on defaults and ci/full-values,
@@ -71,3 +78,40 @@ jobs:
           args: scan --severity CRITICAL --ignore-unfixed
           cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
           version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
+
+  # The wrapper image on the OTHER architecture, built exactly the way the
+  # GB10 node and publish.yml build it: the htrflow base from source at the
+  # pinned commit, then the merged dockerfile's base-arm64 branch, on a
+  # native arm64 runner (free for public repositories). Nothing is pushed —
+  # this job exists so a break in either recipe shows up here instead of in
+  # a publish run or on the node. It carries the same gate as the scans: the
+  # base is a CUDA image built from a fresh lock and the wrapper adds a
+  # multi-gigabyte torch on top, which is far too much for every pull
+  # request. A PR that changes the dockerfile gets this when it lands.
+  build-arm64:
+    name: Wrapper image (native arm64)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Build the arm64 htrflow base
+        id: base
+        uses: ./.github/actions/build-htrflow-base-arm64
+        with:
+          ref: ${{ env.HTRFLOW_ARM64_BASE_REF }}
+          image: ${{ env.HTRFLOW_ARM64_BASE }}
+
+      - name: Build the wrapper on top of it (no push)
+        run: |
+          docker build -f .docker/htrflow-batch.dockerfile \
+            --build-arg "HTRFLOW_ARM64_BASE=${HTRFLOW_ARM64_BASE}" \
+            --build-arg "HTRFLOW_BASE_REVISION=${{ steps.base.outputs.revision }}" \
+            -t htrflow-batch:ci-arm64 .
+
+      - name: What was built
+        # The provenance labels are inherited from the base stage the build
+        # selected — proof that TARGETARCH picked base-arm64, not base-amd64.
+        run: |
+          docker image inspect htrflow-batch:ci-arm64 --format \
+            'arch={{.Architecture}} base={{index .Config.Labels "org.opencontainers.image.base.name"}} revision={{index .Config.Labels "se.riksarkivet.htrflow.base.revision"}}'

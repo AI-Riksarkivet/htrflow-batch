@@ -44,15 +44,17 @@ ARM64_EXTRAS = [
     "transformers==4.",
 ]
 
-# Build paths that must never cross-build: a `--platform` flag or a qemu /
-# binfmt setup step is exactly how the wrapper image ends up emulated.
+# Build paths that must never cross-build: a `--platform` flag or a
+# qemu/binfmt setup step is exactly how the wrapper image ends up emulated.
+# Prose may of course NAME qemu — saying why not to is the point — so only
+# the things that actually turn emulation on are matched.
 BUILD_PATHS = [
     REPO / "Makefile",
     *sorted((REPO / ".dagger").glob("*.go")),
     *sorted((REPO / ".github" / "workflows").glob("*.yml")),
     *sorted((REPO / ".github" / "actions").rglob("*.yml")),
 ]
-_EMULATION = re.compile(r"--platform|setup-qemu|qemu|binfmt", re.I)
+_EMULATION = re.compile(r"--platform|setup-qemu|qemu-user|binfmt", re.I)
 
 
 def _members() -> set[str]:
