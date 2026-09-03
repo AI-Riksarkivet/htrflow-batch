@@ -45,7 +45,7 @@ commit (`UV4_REF`), applies `.docker/uv4-uv-html.patch`, builds UV with npm
 browser onto the Python runtime as `/app/static`. See [CI](ci.md) for the
 full function table.
 
-Every input is pinned (audit W8/S7): base images and the uv binary by
+Every input is pinned (audit W8/S7) — with one honest limit: the arm64 base's `HTRFLOW_ARM64_BASE_REF` pins htrflow's *source*, not its dependency resolution (its lockfile is gitignored), so the wrapper's own torch/torchvision pins are what catch drift there. Base images and the uv binary by
 digest, torch/torchvision by version per arch, the wrapper's dependencies
 from the workspace lock with hashes (`uv export --locked …
 --require-hashes`, so a stale `uv.lock` fails the build). The arm64 base is

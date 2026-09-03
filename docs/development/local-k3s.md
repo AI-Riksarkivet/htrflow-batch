@@ -39,10 +39,12 @@ one `.docker/htrflow-batch.dockerfile` — its `base-arm64` stage, which
 built base:
 
 ```bash
-# 1. the base, from the htrflow checkout (HTRFLOW_DIR). Its lockfile is
-#    gitignored, so `uv lock` in that checkout first: this repo treats it
-#    as read-only and the target refuses to run without a uv.lock rather
-#    than writing one into someone else's working tree.
+# 0. htrflow's lockfile is gitignored — create it in that checkout yourself
+#    (this repo treats ~/htrflow as read-only and the target below refuses
+#    to run without a uv.lock rather than writing one into someone else's
+#    working tree):
+(cd "$HTRFLOW_DIR" && uv lock)
+# 1. the base, from the htrflow checkout (HTRFLOW_DIR)
 make build-htrflow-base-arm64                # docker/htrflow.dockerfile -> htrflow:v0.2.6-arm64
 
 # 2. the wrapper + web front, pushed to the in-cluster registry
@@ -51,8 +53,13 @@ make poc-push                                # builds the host's architecture
 
 CI does exactly this on an `ubuntu-24.04-arm` runner, in a throwaway clone
 of htrflow pinned to `HTRFLOW_ARM64_BASE_REF`
-(`.github/actions/build-htrflow-base-arm64`), so the recipe on this page
-and the one that publishes images cannot drift.
+(`.github/actions/build-htrflow-base-arm64`), so the *recipe* on this page
+and the one that publishes images cannot drift. The *resolved dependency
+set* can: htrflow's `uv.lock` is gitignored, so the pin fixes htrflow's
+source, not what `uv lock` resolves on the day — the base CI builds is not
+bit-identical to the node's. The explicit `torch==2.13.0` /
+`torchvision==0.28.0` pins in the wrapper dockerfile are what turn a drift
+in the base's resolution into a build failure instead of a silent change.
 
 `poc-push` stamps `HTRFLOW_BASE_REVISION` (`git -C $HTRFLOW_DIR describe
 --tags --always --dirty`) into the image label

@@ -40,11 +40,11 @@ permissions:
   contents: read
 
 env:
-  # AI-Riksarkivet/htrflow commit the arm64 base is built from. ef0ed37 is
-  # the last commit that touches anything the base image copies (src/,
-  # uv.lock, pyproject.toml); this is main's tip with the two docs-only
-  # commits after it, so its tree of the image's inputs is identical to the
-  # base the GB10 node has been running since 2026-08-25.
+  # AI-Riksarkivet/htrflow commit the arm64 base is built from: 0ede4da is
+  # main's tip on 2026-09-02; the last commit that touches anything the base
+  # image copies (src/, uv.lock, pyproject.toml) is ef0ed37, two docs-only
+  # commits earlier, so 0ede4da's tree of the image's inputs is identical to
+  # the base the GB10 node has been running since 2026-08-25.
   HTRFLOW_ARM64_BASE_REF: 0ede4da5493cf01ac97024558a5e4f468d5f360f
   HTRFLOW_ARM64_BASE: htrflow:v0.2.6-arm64
 
