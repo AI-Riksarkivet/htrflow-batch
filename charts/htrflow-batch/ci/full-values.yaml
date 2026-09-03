@@ -14,6 +14,10 @@ web:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: "1", memory: 256Mi }
 
+apply:
+  rbac:
+    enabled: true
+
 security:
   allowedImageRepos: ["127.0.0.1:30500/", "ghcr.io/riksarkivet/"]
   requireModelRevision: true

@@ -137,6 +137,23 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 successors. Renaming them here would make the upgrade notes wrong for
 anyone actually on that version.
 
+### 0.5.0 — 2026-09-03 (B63: an identity for `apply`)
+
+Added:
+- `templates/apply-rbac.yaml`, behind **`apply.rbac.enabled` (default
+  `false`)**: ServiceAccount/Role/RoleBinding `htrflow-campaigns` for
+  `htrflow-campaigns apply` (packages/converter) when it runs *inside* the
+  cluster — an Argo CD `PostSync` hook, a CI Job — rather than from an
+  operator's kubeconfig. Role, not ClusterRole: `get`/`list`/`create`/
+  `patch`/`delete` on `jobs` and `configmaps` (create and patch are the
+  server-side apply; delete is `--prune`) and `get`/`list`/`patch` on
+  `workloads.kueue.x-k8s.io` (the pause sync's `spec.active`).
+
+Not breaking: leaving `apply.rbac.enabled` at `false` renders nothing new.
+The values schema is strict, so a values file that predates 0.5.0 is
+accepted unchanged (the key has a default) — but `--reset-then-reuse-values`
+still applies as always.
+
 ### 0.4.0 — 2026-09-02 (B63: one web front)
 
 Breaking:
