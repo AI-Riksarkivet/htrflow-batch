@@ -230,6 +230,18 @@ describe("CampaignCard", () => {
     ).toBeInTheDocument();
   });
 
+  test("a partially failed campaign says so in words, in the warning colour", async () => {
+    const partly: JobSummary = { ...job, phase: "PartiallyFailed" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ ...partly, failures: [], volumes: [] })),
+    );
+    render(CampaignCard, { job: partly });
+    await vi.advanceTimersByTimeAsync(0);
+    const chip = screen.getByText("partially failed");
+    expect(chip).toHaveClass("partiallyfailed"); // warning, not destructive
+  });
+
   test("header shows pipeline, phase and counts", async () => {
     vi.stubGlobal(
       "fetch",

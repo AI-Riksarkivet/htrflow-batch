@@ -154,6 +154,12 @@ describe("schemas", () => {
     ).toMatchObject({ volumes: [volume] });
   });
 
+  test("PartiallyFailed is a phase of its own", () => {
+    expect(
+      jobSummarySchema.parse({ ...summary, phase: "PartiallyFailed" }).phase,
+    ).toBe("PartiallyFailed");
+  });
+
   test("an unknown phase is rejected, not coerced to a neutral value", () => {
     expect(() =>
       jobSummarySchema.parse({ ...summary, phase: "Bogus" }),
