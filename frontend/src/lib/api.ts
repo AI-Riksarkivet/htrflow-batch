@@ -42,6 +42,9 @@ export function shortDate(
 
 export const jobPhaseSchema = z.enum([
   "Succeeded",
+  // The Job gave up with some indexes already published — not the same
+  // story as Failed, which means nothing came out of the campaign.
+  "PartiallyFailed",
   "Failed",
   "Queued",
   "Paused",

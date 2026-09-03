@@ -33,7 +33,9 @@
   // volume-derived campaignHealth but read straight off the Job phase now
   // that the API computes it server-side.
   const health = $derived(
-    job.phase === "Failed" || job.counts.failed > 0
+    job.phase === "Failed" ||
+      job.phase === "PartiallyFailed" ||
+      job.counts.failed > 0
       ? "failed"
       : job.phase === "Running"
         ? "active"
@@ -43,6 +45,11 @@
   );
 
   const hasMore = $derived(volumes.length < job.counts.total);
+
+  // Every other phase is already a word; this one is two.
+  const phaseLabel = $derived(
+    job.phase === "PartiallyFailed" ? "partially failed" : job.phase,
+  );
 
   // reset=true replaces the table (the poll tick); reset=false appends the
   // next page (the "load more" button). A poll always collapses back to the
@@ -102,7 +109,7 @@
       <span class="camp-name">{job.namespace}/{job.name}</span>
     </button>
     <span class="chip pipeline">{job.pipeline}</span>
-    <span class="chip phase {job.phase.toLowerCase()}">{job.phase}</span>
+    <span class="chip phase {job.phase.toLowerCase()}">{phaseLabel}</span>
     <span class="counts">
       {job.counts.done}/{job.counts.total} volumes
       {#if job.counts.failed > 0}
@@ -310,7 +317,9 @@
   }
 
   .chip.phase.queued,
-  .chip.phase.paused {
+  .chip.phase.paused,
+  /* Warning, not error: some of the campaign did publish. */
+  .chip.phase.partiallyfailed {
     background: var(--warning-soft);
     color: var(--warning);
   }
