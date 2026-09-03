@@ -89,8 +89,14 @@ export const volumeViewSchema = z.object({
   reason: z.string().optional(),
 });
 
-// GET /api/v1/jobs/{namespace}/{name}: JobSummary + paged volumes/failures.
+// GET /api/v1/jobs/{namespace}/{name}: JobSummary + paged volumes/failures,
+// plus the pipeline the campaign runs (detail only — the list would carry
+// one YAML document per row for a chip nobody has clicked).
 export const jobDetailSchema = jobSummarySchema.extend({
+  // Step names in order, for the pipeline chip's tooltip; the raw YAML the
+  // chip toggles. Both empty when the pipeline ConfigMap is gone.
+  pipelineSteps: z.array(z.string()),
+  pipelineYaml: z.string(),
   failures: z.array(volumeViewSchema),
   volumes: z.array(volumeViewSchema),
 });

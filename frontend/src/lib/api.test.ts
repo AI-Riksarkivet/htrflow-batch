@@ -38,6 +38,8 @@ const volume = {
   logUrl: "https://results.example.org/status/logs/demo-v1/vol0.txt",
 };
 
+const pipeline = { pipelineSteps: ["Segmentation"], pipelineYaml: "steps:\n" };
+
 describe("fetchJobs", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -100,7 +102,7 @@ describe("fetchJob", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   test("builds the paged URL and parses the detail", async () => {
-    const detail = { ...summary, failures: [], volumes: [volume] };
+    const detail = { ...summary, ...pipeline, failures: [], volumes: [volume] };
     const fetchMock = vi.fn(async () => jsonResponse(detail));
     vi.stubGlobal("fetch", fetchMock);
     const result = await fetchJob("htr-test", "kyrk", 5, 50);
@@ -112,7 +114,7 @@ describe("fetchJob", () => {
   });
 
   test("defaults to offset=0, limit=200", async () => {
-    const detail = { ...summary, failures: [], volumes: [] };
+    const detail = { ...summary, ...pipeline, failures: [], volumes: [] };
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => jsonResponse(detail)),
@@ -125,7 +127,7 @@ describe("fetchJob", () => {
   });
 
   test("namespace and name are URL-encoded", async () => {
-    const detail = { ...summary, failures: [], volumes: [] };
+    const detail = { ...summary, ...pipeline, failures: [], volumes: [] };
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => jsonResponse(detail)),
@@ -150,8 +152,30 @@ describe("schemas", () => {
   test("jobSummarySchema and jobDetailSchema parse the API's own shapes", () => {
     expect(jobSummarySchema.parse(summary)).toEqual(summary);
     expect(
-      jobDetailSchema.parse({ ...summary, failures: [], volumes: [volume] }),
+      jobDetailSchema.parse({
+        ...summary,
+        ...pipeline,
+        failures: [],
+        volumes: [volume],
+      }),
     ).toMatchObject({ volumes: [volume] });
+  });
+
+  test("the detail carries the pipeline's steps and YAML", () => {
+    const parsed = jobDetailSchema.parse({
+      ...summary,
+      ...pipeline,
+      failures: [],
+      volumes: [],
+    });
+    expect(parsed.pipelineSteps).toEqual(["Segmentation"]);
+    expect(parsed.pipelineYaml).toBe("steps:\n");
+  });
+
+  test("a detail without the pipeline fields is refused", () => {
+    expect(() =>
+      jobDetailSchema.parse({ ...summary, failures: [], volumes: [] }),
+    ).toThrow();
   });
 
   test("PartiallyFailed is a phase of its own", () => {
@@ -171,6 +195,7 @@ describe("schemas", () => {
     expect(
       jobDetailSchema.parse({
         ...summary,
+        ...pipeline,
         failures: [],
         volumes: [withReason],
       }),
