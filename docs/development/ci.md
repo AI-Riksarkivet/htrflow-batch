@@ -79,10 +79,11 @@ apply`: render a campaigns repo, `kubectl apply` its `pipelines/` then
   their image first and both builds are expensive — the wrapper's ~10 GB CUDA base, and the web image's UV clone
   + npm build + bun build — so the pull-request path runs neither. A PR
   that changes a dockerfile gets its scan when it lands on `main`, before
-  any image is published from it. A third job, `build-arm64`, is gated the
-  same way: on an `ubuntu-24.04-arm` runner it builds the htrflow base from
-  source at `HTRFLOW_ARM64_BASE_REF` and then the wrapper's `base-arm64`
-  branch on top, pushing nothing — the arch the amd64 jobs cannot prove.
+  any image is published from it. A fourth job, `build-arm64`, runs on
+  every trigger including pull requests: on an `ubuntu-24.04-arm` runner it
+  builds the htrflow base from source at `HTRFLOW_ARM64_BASE_REF` and then
+  the wrapper's `base-arm64` branch on top, pushing nothing — the arch the
+  amd64 jobs cannot prove, in under three minutes.
   The dagger action is SHA-pinned and its engine `version` is pinned to
   `engineVersion` in `dagger.json`.
 - **`publish.yml`** — manual (`workflow_dispatch`) only, one explicit tag

@@ -31,18 +31,11 @@ outputs:
 runs:
   using: composite
   steps:
-    # The base plus the wrapper on top is >12 GB of images and layers, and a
-    # hosted runner starts with ~14 GB free. Reclaim the language runtimes
-    # nothing here uses; the before/after `df` is in the log when it is not
-    # enough.
-    - name: Reclaim runner disk
-      shell: bash
-      run: |
-        df -h /
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/local/.ghcup /opt/ghc || true
-        sudo apt-get clean
-        df -h /
-
+    # The base plus the wrapper on top is >12 GB of images and layers, so
+    # this used to reclaim the runner's unused language runtimes first. It
+    # does not need to: measured on ubuntu-24.04-arm, `/` is 145 GB with
+    # 102 GB free after both builds. The `df -h` stays, so the day that
+    # stops being true the log says so instead of the build dying on ENOSPC.
     - name: Clone, lock and build
       id: build
       shell: bash
