@@ -337,6 +337,38 @@ class TestDetail:
         assert row3["reason"] == '{"permanent": false}'
 
 
+class TestLatest:
+    """The folded card's one-line strip; computed over every volume, so it is
+    right for a campaign whose in-flight index is past the first page."""
+
+    def test_active_wins_over_done(self):
+        d = projection.detail(_job(), _configmap(), [_pod(4, active=True)], CFG)
+        assert d["latest"]["id"] == "vol4"  # 0-2 and 5 are done
+
+    def test_newest_done_when_nothing_is_active(self):
+        d = projection.detail(_job(), _configmap(), [], CFG)
+        assert d["latest"]["id"] == "vol5"  # completedIndexes "0-2,5"
+
+    def test_none_when_nothing_has_started(self):
+        job = _job(completed="", failed="", active=0)
+        d = projection.detail(job, _configmap(), [], CFG)
+        assert d["latest"] is None
+
+    def test_ignores_the_offset_limit_window(self):
+        """The strip must not be a function of what the card has paged in."""
+        job = _job(completions=300, completed="0-250", failed="")
+        d = projection.detail(job, _configmap(n=300), [], CFG, offset=0, limit=200)
+        assert [v["index"] for v in d["volumes"]] == list(range(200))
+        assert d["latest"]["id"] == "vol250"
+
+    def test_an_active_volume_past_the_first_page_still_wins(self):
+        job = _job(completions=300, completed="0-250", failed="")
+        pods = [_pod(260, active=True)]
+        d = projection.detail(job, _configmap(n=300), pods, CFG, offset=0, limit=200)
+        assert d["latest"]["id"] == "vol260"
+        assert d["latest"]["state"] == "active"
+
+
 class TestPipeline:
     def test_steps_and_yaml_come_off_the_pipeline_configmap(self):
         d = projection.detail(

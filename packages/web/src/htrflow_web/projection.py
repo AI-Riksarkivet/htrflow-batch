@@ -218,6 +218,19 @@ def _pipeline_steps(text: str) -> list[str]:
     ]
 
 
+def _latest(volumes: list[dict]) -> dict | None:
+    """The volume a folded card shows: the newest ``active`` one by index,
+    else the newest ``done`` one, else nothing. Computed here over EVERY
+    volume rather than in the browser over the loaded page, because a
+    campaign of thousands shows its first 200 rows and the volume in flight
+    is almost never among them."""
+    for state in ("active", "done"):
+        matching = [v for v in volumes if v["state"] == state]
+        if matching:
+            return max(matching, key=lambda v: v["index"])
+    return None
+
+
 def detail(
     job: dict,
     configmap: dict | None,
@@ -273,6 +286,9 @@ def detail(
         # clicked yet.
         "pipelineSteps": _pipeline_steps(pipeline_yaml),
         "pipelineYaml": pipeline_yaml,
+        # Like `failures`, computed over every volume and unaffected by
+        # offset/limit.
+        "latest": _latest(volumes),
         "failures": failures,
         "volumes": volumes[offset : offset + limit],
     }

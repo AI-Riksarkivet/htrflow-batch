@@ -134,6 +134,11 @@ def test_job_detail_carries_the_pipeline_steps_and_yaml(client: TestClient):
     assert body["pipelineYaml"] == "steps:\n- step: Segmentation\n"
 
 
+def test_job_detail_carries_the_latest_volume(client: TestClient):
+    body = client.get("/api/v1/jobs/htr-test/kyrk").json()
+    assert body["latest"]["id"] == "vol0"  # completedIndexes "0", none active
+
+
 def test_job_detail_paging(client: TestClient):
     resp = client.get("/api/v1/jobs/htr-test/kyrk?offset=1&limit=1")
     assert resp.status_code == 200
