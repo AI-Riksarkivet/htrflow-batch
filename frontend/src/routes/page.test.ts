@@ -67,7 +67,7 @@ describe("/ campaign page", () => {
     expect(screen.getByText("No campaigns.")).toBeInTheDocument();
   });
 
-  test("keeps the last good list through a failed poll and banners 'API unreachable'", async () => {
+  test("keeps the last good list through a failed poll and says so in words", async () => {
     // The list endpoint (/jobs, exact) succeeds once then fails; the card's
     // own detail fetch (/jobs/<ns>/<name>) always succeeds, so only the list
     // calls are asserted below.
@@ -89,12 +89,13 @@ describe("/ campaign page", () => {
     await vi.advanceTimersByTimeAsync(RELOAD_MS);
     expect(listCalls).toBe(2);
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /API unreachable: HTTP 503 — showing the last good list/,
+      "Can't reach the campaign service right now (HTTP 503). Showing the " +
+        "list we last received. Retrying every 60 seconds.",
     );
     expect(screen.getByText("htr-test/kyrk")).toBeInTheDocument();
   });
 
-  test("a malformed 200 body banners 'invalid API response', not 'unreachable'", async () => {
+  test("a malformed 200 body says the versions differ, not 'unreachable'", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => jsonResponse([{ ...job, phase: "Bogus" }])),
@@ -103,7 +104,9 @@ describe("/ campaign page", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent("invalid API response");
-    expect(alert).not.toHaveTextContent(/unreachable/);
+    expect(alert).toHaveTextContent(
+      "The campaign service answered in a form this page doesn't understand.",
+    );
+    expect(alert).not.toHaveTextContent(/unreachable|ZodError/);
   });
 });

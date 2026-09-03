@@ -7,8 +7,8 @@ the `frontend/README.md` there is the developer-facing version of this page.
 
 - `/` — every campaign (one card per Indexed Job) with its **volume table**
   (id, state chip, links), the pipeline chip, phase and counts in the
-  header, and an "API unreachable" banner over the last good list on a
-  failed poll. Each card fetches its own volumes, paged.
+  header, and — on a failed poll — a banner in plain words over the last
+  list it received. Each card fetches its own volumes, paged.
 - `/log?log=<url>&manifest=<url>[&live=1]` — the **run viewer**: the
   wrapper's run log grouped by stage, plus a summary card from
   `manifest.json` (ok/failed/skipped counts, total + wall, median/p95/max,
@@ -66,14 +66,25 @@ script). A CSP header from the server must not be stricter than the meta tag
   `src/lib/api.ts` parses every response with Zod's `.parse` (not
   `.safeParse`), so a malformed shape throws instead of degrading a row.
   `ApiUnreachable` covers a network error and a non-2xx status alike; the
-  page shows one "API unreachable" banner over the last good list. There is
+  page shows one banner over the last good list. There is
   no age-based staleness check — every response is computed live from the
   Kubernetes API, so there is nothing that can go stale the way a
   reconciler-written document could.
 - **States.** A `VolumeView.state` is `pending`, `active`, `done`, or
   `failed` — computed by the API from the Job's index sets, not stored
-  anywhere; a `failed` row's `reason` is the wrapper's own termination
-  message, present only while a pod for that index still exists.
+  anywhere; a `failed` row's `reason` is `{stage, permanent, error}` parsed
+  by the API out of the wrapper's termination message (`stage`/`permanent`
+  `null` when it was not the wrapper's JSON), present only while a pod for
+  that index still exists.
+- **Sentences, not fields.** No reader ever sees `reason`'s fields, a
+  `ZodError` or a transport string: `src/lib/reasons.ts` turns a `reason`
+  into one sentence (`describeReason`) and a failed fetch into one sentence
+  (`describeApiError`), each saying what happened, where, and what to do
+  next. It is the single place where a message a person reads is written —
+  the wording is pinned verbatim in `reasons.test.ts`, and the table is in
+  [Failure handling](../how-it-works/failure-handling.md). A `reason` the
+  API could not parse renders as "the pod stopped without a message this
+  page can read", never as the raw JSON.
 - **Phase.** A campaign's `JobSummary.phase` (`Queued`/`Paused`/`Running`/
   `Succeeded`/`PartiallyFailed`/`Failed`) drives the card's left accent: red
   if `Failed`, `PartiallyFailed` or any volume is `failed`, blue if
@@ -125,9 +136,9 @@ script). A CSP header from the server must not be stricter than the meta tag
   failed-with-a-reason rows, independent of the volume table's paging) is
   rendered as a compact callout above the volume table, visible even while
   the table is collapsed, only when non-empty: a `failures (<n>)` heading
-  and one line per entry, `<id> — <reason>` (reason CSS-clamped to one line,
-  no JS truncation), each line linking to the same `logHref` as its table
-  row.
+  and one line per entry, `<id> — <sentence>` from `describeReason`
+  (CSS-clamped to one line, no JS truncation), each line linking to the same
+  `logHref` as its table row.
 - **Paged volumes.** `CampaignCard` fetches its own volumes via `fetchJob`
   (`offset`/`limit`, default page 200), independently of the campaign list
   poll on `/`; a "load more" button pages in the next batch when

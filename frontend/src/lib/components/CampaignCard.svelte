@@ -5,7 +5,6 @@
   // a campaign can carry thousands of volumes. No thumbnails: the read API
   // has no per-volume image, only the finished results.
   import {
-    ApiUnreachable,
     fetchJob,
     isHttpUrl,
     shortDate,
@@ -13,6 +12,7 @@
     type VolumeView,
   } from "$lib/api.js";
   import { RELOAD_MS } from "$lib/config.js";
+  import { describeApiError, describeReason } from "$lib/reasons.js";
   import { untrack } from "svelte";
 
   let { job }: { job: JobSummary } = $props();
@@ -117,8 +117,9 @@
       pipelineYaml = detail.pipelineYaml;
       detailError = null;
     } catch (e) {
-      detailError =
-        e instanceof ApiUnreachable ? e.message : "invalid API response";
+      // One sentence, never the transport detail or a ZodError: what the
+      // reader can do about it is the point ($lib/reasons).
+      detailError = describeApiError(e, volumes.length > 0);
     }
   }
 
@@ -250,9 +251,7 @@
     </p>
   {/if}
   {#if detailError !== null}
-    <p class="notice error-row" role="alert">
-      Cannot load volumes: {detailError}
-    </p>
+    <p class="notice error-row" role="alert">{detailError}</p>
   {/if}
   {#if collapsed && latest !== null}
     <p class="latest">
@@ -269,7 +268,11 @@
           <li>
             <a class="failure-link" href={logHref(f)}>
               <span class="fid">{f.id}</span> —
-              <span class="reason">{f.reason}</span>
+              <span class="reason"
+                >{f.reason === undefined
+                  ? "Failed, with no message from the pod."
+                  : describeReason(f.reason)}</span
+              >
             </a>
           </li>
         {/each}
@@ -298,7 +301,7 @@
               <td class="vid">
                 <span class="vid-name" title={v.id}>{v.id}</span>
                 {#if v.reason !== undefined}
-                  <span class="verr">{v.reason}</span>
+                  <span class="verr">{describeReason(v.reason)}</span>
                 {/if}
               </td>
               <td>

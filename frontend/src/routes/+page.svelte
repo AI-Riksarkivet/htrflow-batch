@@ -3,8 +3,9 @@
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   // fetchJobs reads GET /api/v1/jobs (the read API); RELOAD_MS is the poll
   // cadence, both documented in $lib/config / $lib/api.
-  import { ApiUnreachable, fetchJobs, type JobSummary } from "$lib/api.js";
+  import { fetchJobs, type JobSummary } from "$lib/api.js";
   import { RELOAD_MS } from "$lib/config.js";
+  import { describeApiError } from "$lib/reasons.js";
 
   // The last good list stays on screen through a failed poll; `error` is a
   // banner on top of it, never a replacement for it.
@@ -26,14 +27,11 @@
       error = null;
     } catch (e) {
       if (controller.signal.aborted) return;
-      // ApiUnreachable is a network error or non-2xx — say so, with the
-      // transport detail. Anything else (a Zod parse failure: the API
-      // responded but the shape is wrong) is a bug on our side, not
-      // "unreachable" — the message would just be ZodError noise.
-      error =
-        e instanceof ApiUnreachable
-          ? `API unreachable: ${e.message}`
-          : "invalid API response";
+      // One sentence for the reader: what is wrong, that the list on
+      // screen is the older one, and that it retries on its own. The
+      // transport detail (a fetch error string, a ZodError) never reaches
+      // the banner — see $lib/reasons.
+      error = describeApiError(e, jobs !== null);
     }
   }
 
@@ -56,12 +54,7 @@
     <ThemeToggle />
   </header>
   {#if error !== null}
-    <p class="banner error" role="alert">
-      {error}
-      {#if jobs !== null}
-        — showing the last good list.
-      {/if}
-    </p>
+    <p class="banner error" role="alert">{error}</p>
   {/if}
   {#if jobs === null}
     {#if error === null}<p>Loading…</p>{/if}
