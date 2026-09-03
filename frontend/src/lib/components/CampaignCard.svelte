@@ -7,6 +7,7 @@
   import {
     ApiUnreachable,
     fetchJob,
+    isHttpUrl,
     shortDate,
     type JobSummary,
     type VolumeView,
@@ -137,11 +138,20 @@
     return () => clearInterval(timer);
   });
 
+  // Defence in depth. `sourceUrl` is the API's copy of a line from a
+  // campaign's volumes.txt, which is a file humans edit in a git repo — so
+  // it is checked here too, at the last step before it becomes an href, the
+  // way the old card checked every URL the status document carried. Anything
+  // but an absolute http(s) URL is no link at all.
+  function sourceOf(v: VolumeView): string | null {
+    return v.sourceUrl !== null && isHttpUrl(v.sourceUrl) ? v.sourceUrl : null;
+  }
+
   // The finished result once there is one, the source manifest before that
   // (the old derive.viewerHref) — so "open" is a live link from the first
   // tick, not only after the volume publishes.
   function openHref(v: VolumeView): string | null {
-    const manifest = v.state === "done" ? v.iiifUrl : v.sourceUrl;
+    const manifest = v.state === "done" ? v.iiifUrl : sourceOf(v);
     return manifest === null ? null : `uv.html#?manifest=${manifest}`;
   }
 
@@ -170,8 +180,8 @@
     {/if}
   </span>
   <span class="slot">
-    {#if v.sourceUrl !== null}
-      <a href={v.sourceUrl} target="_blank" rel="noopener">source</a>
+    {#if sourceOf(v) !== null}
+      <a href={sourceOf(v)} target="_blank" rel="noopener">source</a>
     {/if}
   </span>
   <span class="slot">
