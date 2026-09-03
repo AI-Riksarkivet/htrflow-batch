@@ -13,6 +13,9 @@
 # 0.4.0: the `web` block replaces the old `api` and `viewer` ones — one Deployment
 # (`htrflow-web`) serves the campaign browser, Universal Viewer and the read
 # API, so the nginx viewer, its ConfigMap and its /api/ proxy are gone.
+# 0.5.0: `apply.rbac` (off) renders a ServiceAccount for `htrflow-campaigns
+# apply` when that command runs inside the cluster instead of from a
+# kubeconfig.
 
 s3:
   # Convention only — no template in this chart creates or reads this
@@ -72,6 +75,15 @@ web:
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 500m, memory: 256Mi }
+
+# `htrflow-campaigns apply` (packages/converter) run INSIDE the cluster — an
+# Argo CD PostSync hook, a CI Job — needs an identity with write access to
+# the campaign Jobs. Off by default: on a PoC the command runs from an
+# operator's kubeconfig, and an idle ServiceAccount that may delete Jobs is
+# a liability. See docs/reference/campaign-yaml.md#pausing.
+apply:
+  rbac:
+    enabled: false
 
 security:
   # Image repositories a campaign Job may pin (prefix match before

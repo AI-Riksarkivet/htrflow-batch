@@ -1,0 +1,59 @@
+{{- if .Values.apply.rbac.enabled }}
+# An identity for `htrflow-campaigns apply` (packages/converter) when it runs
+# INSIDE the cluster — an Argo CD PostSync hook, a CI Job — instead of from
+# an operator's kubeconfig. Off by default: on a PoC the command runs from a
+# laptop, and an unused ServiceAccount that may delete Jobs is a liability.
+#
+# The verbs are exactly what packages/converter/src/htrflow_converter
+# cluster.py issues: server-side apply is a PATCH, the prune is a `list` plus
+# a `delete`, and the Kueue pause sync `list`s Workloads and `patch`es one
+# `spec.active`. `create` on jobs/configmaps is there because an apply-patch
+# whose object does not exist yet is authorized as BOTH `patch` and `create`
+# — measured on the PoC, `patch` alone gives "cannot create resource" on the
+# first apply and works on every later one (docs/development
+# /e2e-indexed-jobs.md, Task 21). Workloads are only ever patched, never
+# created, so they need no `create`. No ClusterRole and no `watch`: one
+# namespace, no informers.
+#
+# This grants delete on Jobs in the release namespace, which is what --prune
+# is. Bind it to the campaigns pipeline and nothing else.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: htrflow-campaigns
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: htrflow-campaigns
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: ["kueue.x-k8s.io"]
+    resources: ["workloads"]
+    verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: htrflow-campaigns
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: htrflow-campaigns
+subjects:
+  - kind: ServiceAccount
+    name: htrflow-campaigns
+    namespace: {{ .Release.Namespace }}
+{{- end }}
