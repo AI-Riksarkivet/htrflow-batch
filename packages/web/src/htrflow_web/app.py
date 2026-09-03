@@ -126,8 +126,12 @@ def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="job not found")
         cm_name = projection.configmap_ref(job)
         configmap = reader.get_configmap(namespace, cm_name) if cm_name else None
+        pipe_name = projection.configmap_ref(job, "pipeline")
+        pipeline_cm = reader.get_configmap(namespace, pipe_name) if pipe_name else None
         pods = reader.list_pods(namespace, name)
-        return projection.detail(job, configmap, pods, reader.cfg, offset, limit)
+        return projection.detail(
+            job, configmap, pods, reader.cfg, offset, limit, pipeline_cm
+        )
 
     # Last, so the routes above win over any file of the same name. Absent
     # outside the image (a local `uv run htrflow-web` builds no site), which

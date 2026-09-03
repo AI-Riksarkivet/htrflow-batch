@@ -30,6 +30,10 @@ JOB = {
             "spec": {
                 "volumes": [
                     {"name": "campaign", "configMap": {"name": "campaign-kyrk"}},
+                    {
+                        "name": "pipeline",
+                        "configMap": {"name": "htr-pipeline-demo-v1"},
+                    },
                 ]
             }
         },
@@ -50,6 +54,11 @@ CONFIGMAP = {
     },
 }
 
+PIPELINE_CONFIGMAP = {
+    "metadata": {"name": "htr-pipeline-demo-v1", "namespace": "htr-test"},
+    "data": {"pipeline.yaml": "steps:\n- step: Segmentation\n"},
+}
+
 
 class FakeReader:
     cfg = SimpleNamespace(public_results_base="https://results.example.org")
@@ -66,7 +75,10 @@ class FakeReader:
         return None
 
     def get_configmap(self, namespace: str, name: str) -> dict | None:
-        return CONFIGMAP
+        return {
+            "campaign-kyrk": CONFIGMAP,
+            "htr-pipeline-demo-v1": PIPELINE_CONFIGMAP,
+        }.get(name)
 
     def list_pods(self, namespace: str, job_name: str) -> list[dict]:
         return []
@@ -112,6 +124,14 @@ def test_job_detail_shape(client: TestClient):
     assert body["volumes"][0]["id"] == "vol0"
     assert body["volumes"][0]["state"] == "done"
     assert body["failures"] == []
+
+
+def test_job_detail_carries_the_pipeline_steps_and_yaml(client: TestClient):
+    """Both ConfigMaps are read for one detail response: the campaign's
+    volumes.txt and the pipeline's pipeline.yaml."""
+    body = client.get("/api/v1/jobs/htr-test/kyrk").json()
+    assert body["pipelineSteps"] == ["Segmentation"]
+    assert body["pipelineYaml"] == "steps:\n- step: Segmentation\n"
 
 
 def test_job_detail_paging(client: TestClient):

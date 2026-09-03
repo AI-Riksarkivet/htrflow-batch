@@ -7,6 +7,10 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
     "kubernetes>=29",
+    # Reads the pipeline ConfigMap's pipeline.yaml for JobDetail.pipelineSteps.
+    # Already in the tree as a kubernetes dependency; named here because this
+    # package imports it directly.
+    "pyyaml>=6",
 ]
 
 [project.scripts]
