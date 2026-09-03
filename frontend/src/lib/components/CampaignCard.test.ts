@@ -35,6 +35,11 @@ const volumeFailed = {
   reason: "permanent failure in load: manifest unsupported",
 };
 
+// Every detail response carries the pipeline fields; a fixture without them
+// would only exercise the Zod failure path.
+const pipelineless = { pipelineSteps: [], pipelineYaml: "" };
+const detail0 = { ...job, ...pipelineless };
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -51,7 +56,7 @@ describe("CampaignCard", () => {
 
   test("fetches its own volumes from the read API, paged by index", async () => {
     const detail = {
-      ...job,
+      ...detail0,
       failures: [],
       volumes: [volumeDone, volumeFailed],
     };
@@ -76,7 +81,7 @@ describe("CampaignCard", () => {
 
   test("a done volume gets an 'open' link; a non-done volume does not", async () => {
     const detail = {
-      ...job,
+      ...detail0,
       failures: [],
       volumes: [volumeDone, volumeFailed],
     };
@@ -101,7 +106,7 @@ describe("CampaignCard", () => {
 
   test("the log link carries log+manifest always, and live=1 only for a volume that is not done", async () => {
     const detail = {
-      ...job,
+      ...detail0,
       failures: [],
       volumes: [volumeDone, volumeFailed],
     };
@@ -137,7 +142,7 @@ describe("CampaignCard", () => {
   });
 
   test("no thumbnails: no <img> anywhere in the card", async () => {
-    const detail = { ...job, failures: [], volumes: [volumeDone] };
+    const detail = { ...detail0, failures: [], volumes: [volumeDone] };
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => jsonResponse(detail)),
@@ -148,8 +153,8 @@ describe("CampaignCard", () => {
   });
 
   test("a 'load more' button appears when more volumes remain, and pages them in", async () => {
-    const page1 = { ...job, failures: [], volumes: [volumeDone] };
-    const page2 = { ...job, failures: [], volumes: [volumeFailed] };
+    const page1 = { ...detail0, failures: [], volumes: [volumeDone] };
+    const page2 = { ...detail0, failures: [], volumes: [volumeFailed] };
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse(page1))
@@ -185,7 +190,7 @@ describe("CampaignCard", () => {
   });
 
   test("the toggle collapses and re-expands the table without refetching", async () => {
-    const detail = { ...job, failures: [], volumes: [volumeDone] };
+    const detail = { ...detail0, failures: [], volumes: [volumeDone] };
     const fetchMock = vi.fn(async () => jsonResponse(detail));
     vi.stubGlobal("fetch", fetchMock);
     render(CampaignCard, { job });
@@ -208,7 +213,7 @@ describe("CampaignCard", () => {
       reason: "transient failure in fetch: connection reset",
     };
     const detail = {
-      ...job,
+      ...detail0,
       failures: [volumeFailed, secondFailure],
       volumes: [volumeDone],
     };
@@ -230,11 +235,51 @@ describe("CampaignCard", () => {
     ).toBeInTheDocument();
   });
 
+  test("the pipeline chip lists its steps and toggles the YAML", async () => {
+    const detail = {
+      ...detail0,
+      pipelineSteps: ["Segmentation", "TextRecognition"],
+      pipelineYaml: "steps:\n- step: Segmentation\n",
+      failures: [],
+      volumes: [],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(detail)),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const chip = screen.getByRole("button", { name: "demo-v1" });
+    expect(chip).toHaveAttribute("title", "Segmentation → TextRecognition");
+    expect(chip).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText(/- step: Segmentation/)).toBeNull();
+
+    await fireEvent.click(chip);
+    expect(chip).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/- step: Segmentation/)).toBeInTheDocument();
+  });
+
+  test("no pipeline YAML: the chip is a static label, not a button", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes: [] }),
+      ),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.queryByRole("button", { name: "demo-v1" })).toBeNull();
+    expect(screen.getByText("demo-v1")).toBeInTheDocument();
+  });
+
   test("a partially failed campaign says so in words, in the warning colour", async () => {
     const partly: JobSummary = { ...job, phase: "PartiallyFailed" };
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse({ ...partly, failures: [], volumes: [] })),
+      vi.fn(async () =>
+        jsonResponse({ ...partly, ...pipelineless, failures: [], volumes: [] }),
+      ),
     );
     render(CampaignCard, { job: partly });
     await vi.advanceTimersByTimeAsync(0);
@@ -245,7 +290,9 @@ describe("CampaignCard", () => {
   test("header shows pipeline, phase and counts", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse({ ...job, failures: [], volumes: [] })),
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes: [] }),
+      ),
     );
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);

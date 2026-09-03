@@ -14,7 +14,13 @@ const job = {
   resultsBase: "https://results.example.org/htr-test/demo-v1",
 };
 
-const detail = { ...job, failures: [], volumes: [] };
+const detail = {
+  ...job,
+  pipelineSteps: [],
+  pipelineYaml: "",
+  failures: [],
+  volumes: [],
+};
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {

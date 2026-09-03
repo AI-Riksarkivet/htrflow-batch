@@ -16,8 +16,11 @@
   let { job }: { job: JobSummary } = $props();
 
   let collapsed = $state(false); // expanded by default
+  let yamlOpen = $state(false); // collapsed by default
   let volumes = $state<VolumeView[]>([]);
   let failures = $state<VolumeView[]>([]);
+  let pipelineSteps = $state<string[]>([]);
+  let pipelineYaml = $state("");
   let detailError = $state<string | null>(null);
   let loadingMore = $state(false);
 
@@ -28,6 +31,7 @@
     `${job.namespace}-${job.name}`.replace(/[^a-zA-Z0-9_-]/g, "-"),
   );
   const tableId = $derived(`volumes-${slug}`);
+  const yamlId = $derived(`pipeline-${slug}`);
 
   // The card's left accent: worst-first, same intent as the old
   // volume-derived campaignHealth but read straight off the Job phase now
@@ -63,6 +67,8 @@
       // Not paged by the API (up to 50 newest failed-with-a-reason rows,
       // independent of offset/limit) — refreshed on every call.
       failures = detail.failures;
+      pipelineSteps = detail.pipelineSteps;
+      pipelineYaml = detail.pipelineYaml;
       detailError = null;
     } catch (e) {
       detailError =
@@ -108,7 +114,24 @@
       <span class="disclosure" aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
       <span class="camp-name">{job.namespace}/{job.name}</span>
     </button>
-    <span class="chip pipeline">{job.pipeline}</span>
+    <!-- Two sibling buttons, not a button inside a button: Enter on the
+         pipeline chip opens the YAML and leaves the table alone. Static
+         until the detail has loaded (or when the pipeline ConfigMap is
+         gone): there is nothing to toggle yet. -->
+    {#if pipelineYaml !== ""}
+      <button
+        type="button"
+        class="chip pipeline"
+        aria-expanded={yamlOpen}
+        aria-controls={yamlId}
+        title={pipelineSteps.length > 0
+          ? pipelineSteps.join(" → ")
+          : "show pipeline YAML"}
+        onclick={() => (yamlOpen = !yamlOpen)}>{job.pipeline}</button
+      >
+    {:else}
+      <span class="chip pipeline static">{job.pipeline}</span>
+    {/if}
     <span class="chip phase {job.phase.toLowerCase()}">{phaseLabel}</span>
     <span class="counts">
       {job.counts.done}/{job.counts.total} volumes
@@ -120,6 +143,9 @@
       {/if}
     </span>
   </div>
+  {#if yamlOpen && pipelineYaml !== ""}
+    <pre class="pipeline-yaml" id={yamlId}>{pipelineYaml}</pre>
+  {/if}
   {#if job.createdAt !== null}
     <p class="meta">
       created <time datetime={job.createdAt} title={job.createdAt}
@@ -304,6 +330,31 @@
   .chip.pipeline {
     background: var(--primary-soft);
     color: var(--primary);
+    cursor: pointer;
+    border: none;
+    font-family: inherit;
+    line-height: 1.4;
+  }
+
+  .chip.pipeline.static {
+    cursor: default;
+  }
+
+  .chip.pipeline:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  pre.pipeline-yaml {
+    margin: 0.5rem 0 0;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
   }
 
   .chip.phase.succeeded {
