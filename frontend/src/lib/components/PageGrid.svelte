@@ -1,27 +1,27 @@
 <script lang="ts">
-  // One small cell per page: colour = bucket, bar height = scale — both
-  // computed once by pageRows(). Cells are buttons with a roving tabindex
-  // so the grid is one tab stop and arrow keys walk the pages; hover/focus
-  // prints the page name and seconds in the readout line (and the native
-  // title).
-  import type { PageRow } from "$lib/run.js";
+  // One small cell per page: colour = status, bar height = seconds relative
+  // to the slowest page. Cells are buttons with a roving tabindex so the
+  // grid is one tab stop and arrow keys walk the pages; hover/focus prints
+  // the page id and seconds in the readout line (and the native title).
+  import type { PageStat } from "$lib/run.js";
 
-  let { rows }: { rows: PageRow[] } = $props();
-
-  // Index = PageRow["bucket"]; index 3 (an outcome the wrapper never
-  // emits) and the reserved 4 fall back to the base .cell style.
-  const BUCKET_CLASS = ["ok", "failed", "skipped"] as const;
+  let { pages, max }: { pages: PageStat[]; max: number | null } = $props();
 
   let readout = $state<string | null>(null);
   let focusIdx = $state(0);
   let grid: HTMLDivElement | undefined = $state();
 
-  function label(r: PageRow): string {
-    return `page ${r.name} · ${r.seconds.toFixed(1)} s · ${r.status}`;
+  function label(p: PageStat): string {
+    return `page ${p.id} · ${p.seconds.toFixed(1)} s · ${p.status}`;
+  }
+
+  function shade(p: PageStat): number {
+    if (max === null || max <= 0) return 0;
+    return Math.max(0.12, Math.min(1, p.seconds / max));
   }
 
   function moveFocus(next: number): void {
-    const clamped = Math.max(0, Math.min(rows.length - 1, next));
+    const clamped = Math.max(0, Math.min(pages.length - 1, next));
     focusIdx = clamped;
     const cell = grid?.children[clamped];
     if (cell instanceof HTMLElement) cell.focus();
@@ -32,7 +32,7 @@
       ArrowRight: i + 1,
       ArrowLeft: i - 1,
       Home: 0,
-      End: rows.length - 1,
+      End: pages.length - 1,
     };
     const next = step[event.key];
     if (next === undefined) return;
@@ -51,19 +51,19 @@
     aria-label="pages: colour is status, height is seconds"
     bind:this={grid}
   >
-    {#each rows as r, i (r.name)}
+    {#each pages as p, i (p.id)}
       <button
         type="button"
-        class="cell {BUCKET_CLASS[r.bucket] ?? ''}"
-        style="--t: {r.scale}"
+        class="cell {p.status}"
+        style="--t: {shade(p)}"
         tabindex={i === focusIdx ? 0 : -1}
-        aria-label={label(r)}
-        title={label(r)}
-        onmouseenter={() => (readout = label(r))}
+        aria-label={label(p)}
+        title={label(p)}
+        onmouseenter={() => (readout = label(p))}
         onmouseleave={() => (readout = null)}
         onfocus={() => {
           focusIdx = i;
-          readout = label(r);
+          readout = label(p);
         }}
         onblur={() => (readout = null)}
         onkeydown={(e) => onKey(e, i)}
