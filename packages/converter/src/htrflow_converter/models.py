@@ -30,6 +30,22 @@ _NAME_RE = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?\Z")
 _IMAGE_RE = re.compile(r"[a-z0-9./:-]+@sha256:[0-9a-f]{64}\Z")
 _REVISION_RE = re.compile(r"[0-9a-f]{40}\Z")
 
+#: `name`/`id` are taken from the file name (parse.py overrides whatever the
+#: YAML says), so the only way to fix either is to rename the file.
+_RENAME_THE_FILE = (
+    "cannot be a Kubernetes object name — rename the file to lower-case "
+    'letters, digits, "." and "-" only, at most 63 characters'
+)
+
+
+def shown(value: object) -> str:
+    """A value echoed back the way the author wrote it. A number in quotes is
+    the mistake behind half of these messages -- YAML then hands us text -- so
+    say so, rather than leave them to spot ``5`` against ``"5"``."""
+    if isinstance(value, str):
+        return f'"{value}" — quotes make it text'
+    return str(value).lower()
+
 
 def _positive_int(v: object) -> bool:
     # `bool` is an `int` in Python: `window: true` is a typo, not a window of 1.
@@ -64,21 +80,30 @@ class Volume(BaseModel):
             template = (info.context or {}).get("source_template", "")
             return {"id": data, "manifest": template.format(ref=data)}
         if not isinstance(data, dict) or "id" not in data:
-            raise ValueError(f"volume entry needs an id: {data!r}")
+            raise ValueError(
+                'has no id — write the entry as "- R1", or as "- id: R1" '
+                "with manifest: or images:"
+            )
         return {**data, "id": str(data["id"])}
 
     @field_validator("id")
     @classmethod
     def _check_id(cls, v: str) -> str:
         if not _VOLUME_ID_RE.match(v):
-            raise ValueError(f"unsafe volume id: {v!r}")
+            raise ValueError(
+                "has an id with characters that are not allowed — use only "
+                'letters, digits, ".", "_" and "-", at most 63 of them'
+            )
         return v
 
     @field_validator("manifest")
     @classmethod
     def _check_manifest(cls, v: str | None) -> str | None:
         if v is not None and not _http_url(v):
-            raise ValueError(f"manifest must be an http(s) URL: {v!r}")
+            raise ValueError(
+                f'has a manifest that is not an http(s) URL ("{v}") — write '
+                "the whole URL, starting with https://"
+            )
         return v
 
     @field_validator("images")
@@ -86,13 +111,19 @@ class Volume(BaseModel):
     def _check_images(cls, v: list[str]) -> list[str]:
         for u in v:
             if not _http_url(u):
-                raise ValueError(f"images must be an http(s) URL: {u!r}")
+                raise ValueError(
+                    f'lists an image that is not an http(s) URL ("{u}") — '
+                    "every entry under images: is a whole URL"
+                )
         return v
 
     @model_validator(mode="after")
     def _check_source(self) -> "Volume":
         if (self.manifest is not None) == bool(self.images):
-            raise ValueError(f"volume {self.id!r} needs manifest or images")
+            raise ValueError(
+                "needs exactly one source — give it manifest: <IIIF manifest "
+                "URL>, or images: <list of image URLs>"
+            )
         return self
 
     def source_line(self) -> str:
@@ -117,21 +148,23 @@ class Campaign(BaseModel):
     @classmethod
     def _check_name(cls, v: str) -> str:
         if not _NAME_RE.match(v):
-            raise ValueError(f"unsafe campaign name: {v!r}")
+            raise ValueError(_RENAME_THE_FILE)
         return v
 
     @field_validator("pipeline")
     @classmethod
     def _check_pipeline_ref(cls, v: str) -> str:
         if not v:
-            raise ValueError("campaign needs pipeline:")
+            raise ValueError(
+                "is empty — name one of the files in pipelines/, without the .yaml"
+            )
         return v
 
     @field_validator("window", mode="before")
     @classmethod
     def _check_window(cls, v: object) -> object:
         if v is not None and not _positive_int(v):
-            raise ValueError(f"window must be a positive integer: {v!r}")
+            raise ValueError(f"must be a whole number of 1 or more (got {shown(v)})")
         return v
 
 
@@ -149,42 +182,56 @@ class Pipeline(BaseModel):
     @classmethod
     def _check_id(cls, v: str) -> str:
         if not _NAME_RE.match(v):
-            raise ValueError(f"unsafe pipeline id: {v!r}")
+            raise ValueError(_RENAME_THE_FILE)
         return v
 
     @field_validator("image")
     @classmethod
     def _check_image(cls, v: str) -> str:
         if not _IMAGE_RE.match(v):
-            raise ValueError(f"image must be digest-pinned: {v!r}")
+            raise ValueError(
+                f'is not pinned to a digest (got "{v}") — write image: '
+                "<registry>/<repo>@sha256:<64 hex digits>"
+            )
         return v
 
     @field_validator("steps", mode="before")
     @classmethod
     def _check_steps(cls, v: object) -> object:
         if not isinstance(v, list):
-            raise ValueError("missing steps")
+            raise ValueError(
+                'must be a list of steps — write steps: and then "- step: '
+                '<Name>" entries under it'
+            )
         return v
 
     @field_validator("model_revision")
     @classmethod
     def _check_model_revision(cls, v: str) -> str:
         if v and not _REVISION_RE.match(v):
-            raise ValueError(f"model_revision must be 40 hex chars: {v!r}")
+            raise ValueError(
+                f"must be a 40-character commit hash (got {shown(v)}) — copy "
+                "it from the model's page on Hugging Face"
+            )
         return v
 
     @field_validator("max_seconds", mode="before")
     @classmethod
     def _check_max_seconds(cls, v: object) -> object:
         if v is not None and not _positive_int(v):
-            raise ValueError(f"max_seconds must be a positive integer: {v!r}")
+            raise ValueError(
+                f"must be a whole number of seconds, 1 or more (got {shown(v)})"
+            )
         return v
 
     @model_validator(mode="after")
     def _check_repo_allowed(self, info: ValidationInfo) -> "Pipeline":
         allowed = (info.context or {}).get("allowed_image_repos") or []
         if allowed and not _repo_allowed(self.image, allowed):
-            raise ValueError(f"image {self.image!r} is not under an allowed repository")
+            raise ValueError(
+                f'the image is not from an allowed repository ("{self.image}")'
+                f" — converter.yaml allows only: {', '.join(allowed)}"
+            )
         return self
 
     @model_validator(mode="after")
@@ -202,7 +249,9 @@ class Pipeline(BaseModel):
                 continue
             if not _REVISION_RE.match(str(ms.get("revision") or "")):
                 problems.append(
-                    f"model {model!r} needs a 40-hex revision (require_model_revision)"
+                    f'the model "{model}" is not pinned to a revision — '
+                    "converter.yaml sets require_model_revision, so add "
+                    "revision: <40-character commit hash>"
                 )
         if problems:
             raise ValueError("; ".join(problems))
