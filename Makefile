@@ -200,7 +200,7 @@ NVIDIA_DEVICE_PLUGIN ?= true
 
 install-devstack:
 	@if [ "$(NVIDIA_DEVICE_PLUGIN)" = "false" ] && [ "$(FORCE)" != "1" ] && \
-	  kubectl get pods -A -o json | jq -e '[.items[] | select(.metadata.namespace!="kube-system") | select(.spec.runtimeClassName=="nvidia" or any(.spec.containers[]?; (.resources.requests["nvidia.com/gpu"]? // .resources.limits["nvidia.com/gpu"]?) != null))] | length > 0' >/dev/null; then \
+	  kubectl get pods -A -o json | jq -e '[.items[] | select(.metadata.namespace!="kube-system") | select(.status.phase=="Running" or .status.phase=="Pending") | select(.spec.runtimeClassName=="nvidia" or any(.spec.containers[]?; (.resources.requests["nvidia.com/gpu"]? // .resources.limits["nvidia.com/gpu"]?) != null))] | length > 0' >/dev/null; then \
 	  echo "install-devstack: refusing NVIDIA_DEVICE_PLUGIN=false -- GPU pods are running and depend on the RuntimeClass/DaemonSet this would delete; set FORCE=1 to override."; exit 1; \
 	fi
 	helm upgrade --install $(HTR_RELEASE)-devstack charts/htrflow-devstack -n $(HTR_NAMESPACE) --create-namespace \
