@@ -139,8 +139,23 @@ class TestSummarize:
         assert projection.summarize(job, CFG)["phase"] == "Succeeded"
 
     def test_phase_failed(self):
-        job = _job(conditions=[{"type": "Failed", "status": "True"}])
+        """Nothing completed: the campaign produced nothing."""
+        job = _job(completed="", conditions=[{"type": "Failed", "status": "True"}])
         assert projection.summarize(job, CFG)["phase"] == "Failed"
+
+    def test_phase_partially_failed(self):
+        """The Job gave up, but four indexes had already published."""
+        job = _job(conditions=[{"type": "Failed", "status": "True"}])
+        assert projection.summarize(job, CFG)["phase"] == "PartiallyFailed"
+
+    def test_phase_succeeded_wins_over_failed(self):
+        job = _job(
+            conditions=[
+                {"type": "Complete", "status": "True"},
+                {"type": "Failed", "status": "True"},
+            ]
+        )
+        assert projection.summarize(job, CFG)["phase"] == "Succeeded"
 
 
 class TestDetail:

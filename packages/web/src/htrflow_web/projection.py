@@ -55,7 +55,11 @@ def _phase(job: dict) -> str:
     ):
         return "Succeeded"
     if any(c.get("type") == "Failed" and c.get("status") == "True" for c in conditions):
-        return "Failed"
+        # A Job that gave up still keeps whatever its completed indexes
+        # published: a plain "Failed" would read as "nothing came out of this
+        # campaign", which is wrong whenever completedIndexes is non-empty.
+        done = len(parse_index_ranges(status.get("completedIndexes")))
+        return "PartiallyFailed" if done else "Failed"
     if bool((job.get("spec") or {}).get("suspend")):
         done = len(parse_index_ranges(status.get("completedIndexes")))
         return "Queued" if done == 0 else "Paused"
