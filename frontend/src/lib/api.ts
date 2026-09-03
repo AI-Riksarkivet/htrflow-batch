@@ -77,6 +77,19 @@ export const volumeStateSchema = z.enum([
   "failed",
 ]);
 
+/**
+ * Why a volume failed, as the API parsed it out of the wrapper's termination
+ * message. `stage`/`permanent` are null when that message was not the
+ * wrapper's JSON object (an older wrapper, a kubelet log tail), in which case
+ * `error` is the raw text. Rendering is $lib/reasons — never these fields
+ * straight into the DOM.
+ */
+export const volumeReasonSchema = z.object({
+  stage: z.string().nullable(),
+  permanent: z.boolean().nullable(),
+  error: z.string(),
+});
+
 // One row per line of the campaign's volumes.txt ConfigMap.
 export const volumeViewSchema = z.object({
   index: z.number(),
@@ -89,7 +102,7 @@ export const volumeViewSchema = z.object({
   // The volume's source manifest, straight off its volumes.txt line; null
   // for an `images:` volume, which has no manifest to open.
   sourceUrl: z.string().nullable(),
-  reason: z.string().optional(),
+  reason: volumeReasonSchema.optional(),
 });
 
 // GET /api/v1/jobs/{namespace}/{name}: JobSummary + paged volumes/failures,
@@ -112,6 +125,7 @@ export type JobPhase = z.infer<typeof jobPhaseSchema>;
 export type JobCounts = z.infer<typeof jobCountsSchema>;
 export type JobSummary = z.infer<typeof jobSummarySchema>;
 export type VolumeState = z.infer<typeof volumeStateSchema>;
+export type VolumeReason = z.infer<typeof volumeReasonSchema>;
 export type VolumeView = z.infer<typeof volumeViewSchema>;
 export type JobDetail = z.infer<typeof jobDetailSchema>;
 

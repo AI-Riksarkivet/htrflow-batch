@@ -215,15 +215,38 @@ describe("schemas", () => {
   });
 
   test("reason is optional on a volume row", () => {
-    const withReason = { ...volume, reason: "exit 1" };
+    const reason = { stage: "setup", permanent: true, error: "no canvases" };
     expect(
       jobDetailSchema.parse({
         ...summary,
         ...pipeline,
         failures: [],
-        volumes: [withReason],
+        volumes: [{ ...volume, reason }],
       }),
-    ).toMatchObject({ volumes: [{ reason: "exit 1" }] });
+    ).toMatchObject({ volumes: [{ reason }] });
+  });
+
+  test("a reason the API could not parse still carries the three fields", () => {
+    const reason = { stage: null, permanent: null, error: "Killed" };
+    expect(
+      jobDetailSchema.parse({
+        ...summary,
+        ...pipeline,
+        failures: [],
+        volumes: [{ ...volume, reason }],
+      }),
+    ).toMatchObject({ volumes: [{ reason }] });
+  });
+
+  test("a reason that is still the old bare string is rejected", () => {
+    expect(() =>
+      jobDetailSchema.parse({
+        ...summary,
+        ...pipeline,
+        failures: [],
+        volumes: [{ ...volume, reason: "exit 1" }],
+      }),
+    ).toThrow();
   });
 });
 
