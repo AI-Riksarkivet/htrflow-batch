@@ -9,6 +9,32 @@
   let offset = $state(0);
   const last = $derived(Math.min(offset + pageSize, pages.length));
   const slice = $derived(pages.slice(offset, last));
+
+  let downloadError = $state<string | null>(null);
+
+  // <a download> is ignored cross-origin (the results bucket is a different
+  // origin from this page), so the download goes through fetch + Blob: pull
+  // the bytes ourselves, hand the browser a same-origin object URL to save.
+  async function downloadAlto(url: string, page: string): Promise<void> {
+    downloadError = null;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      try {
+        const a = document.createElement("a");
+        a.href = objectUrl;
+        a.download = `${page}.xml`;
+        a.click();
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      downloadError = `Could not download ${page}.xml: ${message}. Try "view" and save from there instead.`;
+    }
+  }
 </script>
 
 <div class="pager">
@@ -33,6 +59,10 @@
   </button>
 </div>
 
+{#if downloadError !== null}
+  <p class="error" role="alert">{downloadError}</p>
+{/if}
+
 <div class="table-scroll">
   <table class="pages">
     <caption class="sr-only">Per-page results: id, status, seconds</caption>
@@ -42,10 +72,12 @@
         <th scope="col">status</th>
         <th scope="col" class="num">seconds</th>
         <th scope="col">error</th>
+        <th scope="col">alto</th>
       </tr>
     </thead>
     <tbody>
       {#each slice as r (r.id)}
+        {@const alto = r.alto}
         <tr>
           <td class="pid">
             {#if r.source !== undefined}
@@ -64,6 +96,14 @@
           </td>
           <td class="num">{r.seconds.toFixed(1)}</td>
           <td class="err">{r.error ?? ""}</td>
+          <td class="alto">
+            {#if alto !== undefined}
+              <a href={`/alto?src=${encodeURIComponent(alto)}`}>view</a>
+              <button type="button" onclick={() => downloadAlto(alto, r.id)}>
+                download
+              </button>
+            {/if}
+          </td>
         </tr>
       {/each}
     </tbody>
@@ -153,13 +193,30 @@
     overflow-wrap: anywhere;
   }
 
+  td.alto {
+    white-space: nowrap;
+  }
+
+  td.alto a,
+  td.alto button {
+    font: inherit;
+    color: var(--primary);
+  }
+
+  td.alto button {
+    background: none;
+    border: none;
+    padding: 0;
+    margin-left: 0.6ch;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+
+  .error {
+    font-size: 0.85rem;
+  }
+
   .chip {
-    font-size: 0.7rem;
-    font-weight: 500;
-    padding: 0.1rem 0.5rem;
-    border-radius: 999px;
-    background: var(--muted);
-    color: var(--muted-foreground);
     width: fit-content;
   }
 
