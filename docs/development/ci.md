@@ -73,10 +73,10 @@ apply`: render a campaigns repo, `kubectl apply` its `pipelines/` then
 - **`ci.yml`** ("Tests") — on push to `main` and on pull requests: `dagger
   call checks`, `dagger call test`, and the `scripts/loc-budget.sh` line
   budgets (`SKIP_FRONTEND=1` until B63 Task 7 brings the frontend back under
-  its 2 500-line budget); a separate job runs `dagger call scan-web` and
-  `dagger call scan` (the wrapper) on pushes to `main` and manual runs
-  only. Both scans have to build their image first and both builds are
-  expensive — the wrapper's ~10 GB CUDA base, and the web image's UV clone
+  its 2 500-line budget); `dagger call scan-web` and `dagger call scan` (the
+  wrapper) run on pushes to `main` and manual runs only, one job each so a
+  failure in one still builds the other image. Both scans have to build
+  their image first and both builds are expensive — the wrapper's ~10 GB CUDA base, and the web image's UV clone
   + npm build + bun build — so the pull-request path runs neither. A PR
   that changes a dockerfile gets its scan when it lands on `main`, before
   any image is published from it. A third job, `build-arm64`, is gated the

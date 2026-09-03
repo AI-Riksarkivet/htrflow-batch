@@ -48,21 +48,26 @@ jobs:
         run: scripts/loc-budget.sh
 
   # Trivy (digest-pinned in .dagger/main.go) over the images this repo
-  # builds, blocking on CRITICAL (audit T6/X16). Both scans build their
-  # image first and both builds are expensive — the wrapper carries the
-  # ~10 GB CUDA base, and since B63 Task 17 the web image clones and
-  # npm-builds Universal Viewer and bun-builds the SPA — so both run on
-  # pushes to main and manual runs only, not on every pull request. A PR
-  # changing a dockerfile therefore gets its scan when it lands; nothing a
-  # PR can change reaches a cluster before that.
-  scan:
-    name: Vulnerability scan (Trivy)
-    runs-on: ubuntu-latest
+  # builds, blocking on CRITICAL (audit T6/X16). Each scan builds its image
+  # first and both builds are expensive — the wrapper carries the ~10 GB
+  # CUDA base, and since B63 Task 17 the web image clones and npm-builds
+  # Universal Viewer and bun-builds the SPA — so they run on pushes to main
+  # and manual runs only, not on every pull request. A PR changing a
+  # dockerfile therefore gets its scan when it lands; nothing a PR can
+  # change reaches a cluster before that.
+  #
+  # One job each, not two steps in one job: they build unrelated images, and
+  # as two steps a failure in the first (the UV4 clone, say) meant the other
+  # image was never even built — the amd64 wrapper build silently stopped
+  # being exercised.
+  scan-web:
+    name: Vulnerability scan (web)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Scan the web image (CRITICAL blocks)
-        if: github.event_name != 'pull_request'
         uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77 # v8.4.1
         with:
           verb: call
@@ -70,8 +75,16 @@ jobs:
           cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
           version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
 
+  # Also the amd64 half of the wrapper dockerfile's proof: this is the only
+  # job that builds its `base-amd64` stage.
+  scan-wrapper:
+    name: Vulnerability scan (wrapper, amd64)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
       - name: Scan the wrapper image (CRITICAL blocks)
-        if: github.event_name != 'pull_request'
         uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77 # v8.4.1
         with:
           verb: call

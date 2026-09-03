@@ -51,10 +51,20 @@ runs:
         rm -rf "$DIR"
         git clone --filter=blob:none "$REPO_URL" "$DIR"
         git -C "$DIR" checkout --detach "$REF"
-        # Locked with exactly the uv the wrapper dockerfile carries.
+        # Locked with the same uv version the wrapper dockerfile carries,
+        # but the debian-slim variant, not the distroless one: uv has to
+        # probe the filesystem for a libc before it can resolve wheel tags
+        # and the distroless image has no binaries to probe
+        # ("Failed to find any common binaries to determine libc from").
+        # The pinned commit fixes htrflow's SOURCE, not this resolution --
+        # its lockfile is gitignored, so a base built today can carry newer
+        # dependencies than the one on the GB10 node. The wrapper dockerfile
+        # pins torch/torchvision explicitly for exactly that reason: a base
+        # whose lock has drifted fails the build instead of changing
+        # silently.
         docker run --rm -v "$DIR:/w" -w /w \
-          ghcr.io/astral-sh/uv:0.12.6@sha256:88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d \
-          lock
+          ghcr.io/astral-sh/uv:0.12.6-debian-slim@sha256:9ac2caa67916b63d27595589abd0f0f10930974c885cd962ee30b71fbab42d9f \
+          uv lock
         docker build -f "$DIR/docker/htrflow.dockerfile" -t "$IMAGE" "$DIR"
         echo "revision=$(git -C "$DIR" describe --tags --always)" >> "$GITHUB_OUTPUT"
         df -h /
