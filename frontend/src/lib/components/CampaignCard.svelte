@@ -546,6 +546,24 @@
     width: 11rem;
   }
 
+  /* After the col rules so the narrow widths win the cascade: on a phone
+     the three slots would leave the volume name a few characters, so both
+     fixed columns tighten instead (the old card's rule, restored with the
+     third slot). */
+  @media (max-width: 48rem) {
+    col.c-status {
+      width: 5rem;
+    }
+
+    col.c-links {
+      width: 9.6rem;
+    }
+
+    .slot {
+      min-width: 2.9rem;
+    }
+  }
+
   table.volumes th {
     text-align: left;
     font-weight: 500;
