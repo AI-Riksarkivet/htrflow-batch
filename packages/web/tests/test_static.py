@@ -31,6 +31,7 @@ class EmptyReader:
 def static_dir(tmp_path: Path) -> Path:
     (tmp_path / "index.html").write_text("<h1>campaign browser</h1>")
     (tmp_path / "log.html").write_text("<h1>run log</h1>")
+    (tmp_path / "alto.html").write_text("<h1>alto viewer</h1>")
     (tmp_path / "uv.html").write_text("<h1>universal viewer</h1>")
     (tmp_path / "config.js").write_text('window.API_BASE = "/api/v1";\n')
     (tmp_path / "_app").mkdir()
@@ -52,6 +53,7 @@ def client(static_dir: Path) -> TestClient:
     [
         ("/", "campaign browser"),
         ("/log", "run log"),
+        ("/alto", "alto viewer"),
         ("/uv.html", "universal viewer"),
         ("/config.js", "API_BASE"),
         ("/_app/start.js", "bundle"),
@@ -123,7 +125,7 @@ class TestSiteOnly:
     def client(self, static_dir: Path) -> TestClient:
         return TestClient(create_app(NoCluster(), static_dir=static_dir))
 
-    @pytest.mark.parametrize("path", ["/", "/log", "/uv.html", "/config.js"])
+    @pytest.mark.parametrize("path", ["/", "/log", "/alto", "/uv.html", "/config.js"])
     def test_site_still_served(self, client: TestClient, path: str):
         assert client.get(path).status_code == 200
 
