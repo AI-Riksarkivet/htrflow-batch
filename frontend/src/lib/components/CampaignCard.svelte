@@ -30,6 +30,8 @@
     }
   }
 
+  let collapsed = $state(remembered());
+
   function toggle(): void {
     collapsed = !collapsed;
     try {
@@ -38,8 +40,6 @@
       // Nothing to remember it with; the card still opens and closes.
     }
   }
-
-  let collapsed = $state(remembered());
   let yamlOpen = $state(false); // collapsed by default
   let volumes = $state<VolumeView[]>([]);
   let failures = $state<VolumeView[]>([]);
