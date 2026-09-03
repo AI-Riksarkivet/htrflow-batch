@@ -29,7 +29,7 @@ jsdom), Prettier, Bun as the package runner (`engines`: Node ≥ 22, Bun ≥ 1.1
 | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/lib/config.ts`                                  | API base and cadence resolution (table below)                                                                                                               |
 | `src/lib/api.ts`                                     | Read-API Zod schemas (`JobSummary`, `JobDetail`, `VolumeView`), `fetchJobs`/`fetchJob`, `ApiUnreachable`, and the pure view helpers `isHttpUrl`/`shortDate` |
-| `src/lib/run.ts`, `runlog.ts`                        | `manifest.json` schema + summary math; run-log grouping and the terminal-line check                                                                         |
+| `src/lib/run.ts`, `runlog.ts`                        | `manifest.json` schema, summary math, and `pageRows()` — the one derived per-page row model; run-log grouping and the terminal-line check                  |
 | `src/lib/theme.svelte.ts`                            | the one theme store (`ThemeToggle.svelte` on both routes)                                                                                                   |
 | `src/lib/components/`                                | `CampaignCard`, `RunSummaryCard`, `PageGrid`, `PagesTable`, `ThemeToggle`                                                                                   |
 | `src/routes/+page.svelte`, `routes/log/+page.svelte` | the two routes                                                                                                                                              |
@@ -62,6 +62,16 @@ script). A CSP header from the server must not be stricter than the meta tag
 
 ## Derivation rules
 
+- **One row model for the run viewer.** `pageRows(manifest)` in `run.ts` is
+  the only place that turns `manifest.results` into per-page rows: sorted
+  by name, with the colour bucket and bar scale `PageGrid` used to compute
+  on every render precomputed once. `RunSummaryCard` derives `rows` and
+  hands the same array to `PageGrid` and `PagesTable`, which are
+  presentation only; `PagesTable`'s source-image links come from a
+  separate `pageSource(sources, name)` lookup against `page_sources`, since
+  a `PageRow` doesn't carry it. `summarizeRun` (counts, median/p95/max,
+  slowest, failed pages with errors) stays a second, independent read of
+  the same manifest — a different projection, not a duplicate of `rows`.
 - **Fail-hard parsing.** The read API is ours, not an untrusted document:
   `src/lib/api.ts` parses every response with Zod's `.parse` (not
   `.safeParse`), so a malformed shape throws instead of degrading a row.
