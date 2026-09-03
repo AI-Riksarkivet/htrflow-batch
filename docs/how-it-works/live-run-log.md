@@ -93,7 +93,9 @@ running volume) — add a lifecycle rule or set `LOG_SHIP_SECONDS=0`.
   a "● live · updated HH:MM:SS" badge, keeps the view pinned to the bottom
   while the reader is at the bottom, and stops on the wrapper's terminal
   line (`[<volume>] COMPLETE <n> pages`, `permanent failure in <stage>:`,
-  `transient failure in <stage>:` — `isTerminalLog` in `runlog.ts`), on a
+  `transient failure in <stage>:` — `isTerminalLog` in `runlog.ts`; each
+  failure line then carries a plain-language sentence after an em dash, which
+  the rule ignores), on a
   `manifest.json` that covers every page, or after `LIVE_MAX_FAILURES` (20)
   consecutive failed polls. A SIGTERM'd attempt ends with `SIGTERM in stage
   …`, which is **not** in that pattern: the view keeps polling until the
