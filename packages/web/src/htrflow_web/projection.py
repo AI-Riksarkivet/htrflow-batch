@@ -117,10 +117,16 @@ def _source_url(line: str) -> str | None:
     return source if source.startswith(("http://", "https://")) else None
 
 
-def _wrapper_message(pod: dict) -> str | None:
-    """The wrapper's termination message: ``state.terminated`` if the
-    container is currently terminated, else ``lastState.terminated`` after a
-    restart (D6/task-3)."""
+def _wrapper_reason(pod: dict) -> dict | None:
+    """The wrapper's termination message as this API's structured ``reason``:
+    ``state.terminated`` if the container is currently terminated, else
+    ``lastState.terminated`` after a restart (D6/task-3).
+
+    Structured, not the raw text, because the raw text is JSON the wrapper
+    writes for machines -- a card that renders it shows a person a JSON blob.
+    Parsing it once here means every reader (this page's cards, a future
+    client) gets the same three fields instead of each re-deriving them.
+    """
     status = pod.get("status") or {}
     for cs in status.get("containerStatuses") or []:
         if cs.get("name") != "wrapper":
@@ -129,26 +135,44 @@ def _wrapper_message(pod: dict) -> str | None:
         if term is None:
             term = (cs.get("lastState") or {}).get("terminated")
         if term is not None:
-            return _name_the_deadline(term.get("message"), status.get("reason"))
+            message = term.get("message")
+            if message is None:
+                return None
+            return _name_the_deadline(_reason(message), status.get("reason"))
     return None
 
 
-def _name_the_deadline(message: str | None, pod_reason: str | None) -> str | None:
+def _reason(message: str) -> dict:
+    """``{"stage", "permanent", "error"}`` from the wrapper's termination log.
+
+    Anything that is not that object -- an older wrapper, a kubelet
+    ``FallbackToLogsOnError`` tail, a truncated write -- becomes the raw text
+    in ``error`` with the other two fields ``null``, so the shape a client
+    parses never depends on which wrapper wrote the pod.
+    """
+    try:
+        doc = json.loads(message)
+    except ValueError:
+        doc = None
+    if not isinstance(doc, dict) or not isinstance(doc.get("error"), str):
+        return {"stage": None, "permanent": None, "error": message}
+    stage, permanent = doc.get("stage"), doc.get("permanent")
+    return {
+        "stage": stage if isinstance(stage, str) else None,
+        "permanent": permanent if isinstance(permanent, bool) else None,
+        "error": doc["error"],
+    }
+
+
+def _name_the_deadline(reason: dict, pod_reason: str | None) -> dict:
     """A pod that overran its ``activeDeadlineSeconds`` is SIGTERMed exactly
     like a drained one, and the wrapper cannot tell them apart -- it writes
     ``"error": "SIGTERM"`` either way. The pod's own ``status.reason`` can, so
     swap that one field for ``DeadlineExceeded``: the card then says "budget
-    exceeded", not "node drained". The message stays the same JSON object
-    (``stage``/``permanent``/``error``) every other reader already parses."""
-    if pod_reason != "DeadlineExceeded" or not message:
-        return message
-    try:
-        reason = json.loads(message)
-    except ValueError:
-        return message  # FallbackToLogsOnError, or an older wrapper
-    if not isinstance(reason, dict) or reason.get("error") != "SIGTERM":
-        return message
-    return json.dumps({**reason, "error": "DeadlineExceeded"})
+    exceeded", not "node drained"."""
+    if pod_reason != "DeadlineExceeded" or reason.get("error") != "SIGTERM":
+        return reason
+    return {**reason, "error": "DeadlineExceeded"}
 
 
 def _pod_completion_index(pod: dict) -> int | None:
@@ -267,9 +291,9 @@ def detail(
         }
         if idx in pods_by_index:
             newest = _newest(pods_by_index[idx])
-            message = _wrapper_message(newest)
-            if message is not None:
-                row["reason"] = message
+            reason = _wrapper_reason(newest)
+            if reason is not None:
+                row["reason"] = reason
         volumes.append(row)
 
     failures = sorted(

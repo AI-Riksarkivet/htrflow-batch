@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 
 from htrflow_web import projection
@@ -201,7 +200,13 @@ class TestDetail:
             6: "pending",
         }
         row3 = next(v for v in d["volumes"] if v["index"] == 3)
-        assert row3["reason"] == '{"permanent": true, "error": "manifest unsupported"}'
+        # Structured, not the wrapper's raw JSON text: the card renders a
+        # sentence from these fields, and a JSON blob is not a sentence.
+        assert row3["reason"] == {
+            "stage": None,
+            "permanent": True,
+            "error": "manifest unsupported",
+        }
         row4 = next(v for v in d["volumes"] if v["index"] == 4)
         assert "reason" not in row4
         assert row3["id"] == "vol3"
@@ -288,7 +293,33 @@ class TestDetail:
         ]
         d = projection.detail(job, configmap, pods, CFG, offset=0, limit=200)
         row3 = next(v for v in d["volumes"] if v["index"] == 3)
-        assert row3["reason"] == '{"permanent": true, "error": "manifest unsupported"}'
+        assert row3["reason"]["error"] == "manifest unsupported"
+
+    def test_a_message_that_is_not_the_wrapper_object_becomes_the_raw_error(self):
+        """An older wrapper, a kubelet FallbackToLogsOnError tail or a
+        truncated write: the client still gets the three fields, with the
+        text it cannot parse in `error` rather than a missing key."""
+        pods = [_pod(3, terminated_message="Killed\n")]
+        d = projection.detail(_job(), _configmap(), pods, CFG)
+        row3 = next(v for v in d["volumes"] if v["index"] == 3)
+        assert row3["reason"] == {
+            "stage": None,
+            "permanent": None,
+            "error": "Killed\n",
+        }
+
+    def test_a_non_string_stage_or_permanent_is_dropped_not_passed_through(self):
+        pods = [
+            _pod(
+                3,
+                terminated_message=(
+                    '{"stage": 7, "permanent": "yes", "error": "boom"}'
+                ),
+            )
+        ]
+        d = projection.detail(_job(), _configmap(), pods, CFG)
+        row3 = next(v for v in d["volumes"] if v["index"] == 3)
+        assert row3["reason"] == {"stage": None, "permanent": None, "error": "boom"}
 
     def test_no_configmap_does_not_crash(self):
         d = projection.detail(_job(), None, [], CFG, offset=0, limit=200)
@@ -308,8 +339,9 @@ class TestDetail:
         pod["status"]["reason"] = "DeadlineExceeded"
         d = projection.detail(_job(), _configmap(), [pod], CFG, offset=0, limit=200)
         row3 = next(v for v in d["volumes"] if v["index"] == 3)
-        assert json.loads(row3["reason"]) == {
+        assert row3["reason"] == {
             "stage": "stream",
+            "permanent": None,
             "error": "DeadlineExceeded",
         }
 
@@ -318,23 +350,31 @@ class TestDetail:
         pod = _pod(3, terminated_message='{"stage": "stream", "error": "SIGTERM"}')
         d = projection.detail(_job(), _configmap(), [pod], CFG, offset=0, limit=200)
         row3 = next(v for v in d["volumes"] if v["index"] == 3)
-        assert json.loads(row3["reason"])["error"] == "SIGTERM"
+        assert row3["reason"]["error"] == "SIGTERM"
 
     def test_deadline_leaves_a_non_json_message_alone(self):
         pod = _pod(3, terminated_message="killed")
         pod["status"]["reason"] = "DeadlineExceeded"
         d = projection.detail(_job(), _configmap(), [pod], CFG, offset=0, limit=200)
-        assert next(v for v in d["volumes"] if v["index"] == 3)["reason"] == "killed"
+        row3 = next(v for v in d["volumes"] if v["index"] == 3)
+        assert row3["reason"] == {"stage": None, "permanent": None, "error": "killed"}
 
     def test_laststate_terminated_reason_fallback(self):
         pod = _pod(3)
         pod["status"]["containerStatuses"][0]["state"] = {"running": {}}
         pod["status"]["containerStatuses"][0]["lastState"] = {
-            "terminated": {"exitCode": 1, "message": '{"permanent": false}'}
+            "terminated": {
+                "exitCode": 1,
+                "message": '{"stage": "load", "permanent": false, "error": "OOM"}',
+            }
         }
         d = projection.detail(_job(), _configmap(), [pod], CFG, offset=0, limit=200)
         row3 = next(v for v in d["volumes"] if v["index"] == 3)
-        assert row3["reason"] == '{"permanent": false}'
+        assert row3["reason"] == {
+            "stage": "load",
+            "permanent": False,
+            "error": "OOM",
+        }
 
 
 class TestLatest:
