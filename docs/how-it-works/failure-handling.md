@@ -121,10 +121,16 @@ one sentence per case and never the fields themselves.
 |---|---|---|
 | `DeadlineExceeded` (also `MAX_SECONDS`, from a pre-Task-25 wrapper) | "Stopped when this volume's time budget ran out; the next attempt resumes from the pages already finished." | Nothing, unless it keeps happening — then raise `max_seconds` on the pipeline |
 | `SIGTERM` | "The pod was stopped by the cluster (a node drain or a pause); the volume will be retried." | Nothing; the index is retried |
-| Anything at stage `setup` with `permanent: true` | "The IIIF manifest could not be read: `<error>`. Fix the manifest URL in the campaign file — this volume will not be retried." | Fix the URL in `campaigns/<name>.yaml`, then put the volume in a new campaign |
+| Stage `config` (the wrapper sets it around `Config.from_env`) | "The volume's settings are incomplete or wrong: `<error>`. This is a deployment problem, not a manifest problem — check the campaign's converter.yaml and the chart values." | Fix `converter.yaml` or the chart values and re-render; nothing in the campaign file is wrong |
+| A manifest or canvas error at stage `setup`, `permanent: true` | "The IIIF manifest could not be read: `<error>`. Fix the manifest URL in the campaign file — this volume will not be retried." | Fix the URL in `campaigns/<name>.yaml`, then put the volume in a new campaign |
 | `verify failed: … missing=[…] failed=[…]` | "3 pages could not be processed (p012, p045, p101); the volume is retried automatically and only those pages are redone." | Read the run log for the per-page causes; act only if the retries also fail |
 | Anything else, with a stage | "Failed while processing pages: `<error>`." + "It will be retried automatically." / "This volume will not be retried — fix the cause, then put the volume in a new campaign." | Depends on the error; the run log is one click away on the same row |
 | A termination message the API could not parse (raw JSON in `error`) | "The pod stopped without a message this page can read; open the run log to see what happened." | Open the run log |
+
+The two are told apart by the wrapper's `stage`, not by matching on the error
+text: `config` covers everything `Config.from_env` rejects (a missing
+variable, `IIIF_MANIFEST_URL` and `IMAGES` both set), and only what follows
+it is `setup`.
 
 Stage names become the thing the pod was doing: `setup` → reading the
 manifest, `resume` → checking earlier results, `load` → loading the model,
