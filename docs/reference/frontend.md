@@ -80,7 +80,11 @@ script). A CSP header from the server must not be stricter than the meta tag
   `ZodError` or a transport string: `src/lib/reasons.ts` turns a `reason`
   into one sentence (`describeReason`) and a failed fetch into one sentence
   (`describeApiError`), each saying what happened, where, and what to do
-  next. It is the single place where a message a person reads is written —
+  next. Which sentence a `reason` gets is decided by its **fields**, never by
+  matching on the error text: a bad env and an unreadable manifest send their
+  reader to different files, and the wrapper's `stage` (`config` vs `setup`)
+  is what tells them apart. It is the single place where a message a person
+  reads is written —
   the wording is pinned verbatim in `reasons.test.ts`, and the table is in
   [Failure handling](../how-it-works/failure-handling.md). A `reason` the
   API could not parse renders as "the pod stopped without a message this

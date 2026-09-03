@@ -109,19 +109,19 @@ describe("describeReason", () => {
     );
   });
 
-  test("a permanent setup failure that is not about the manifest", () => {
-    // A missing env is raised before the stage moves past `setup`; pointing
-    // its reader at the manifest URL would be the wrong file.
+  test("a bad env is a deployment problem, not a manifest one", () => {
+    // The counter-case to the row above: same permanence, different stage,
+    // and a reader sent to converter.yaml instead of the campaign file.
     expect(
       reasonOf({
-        stage: "setup",
+        stage: "config",
         permanent: true,
         error: "missing required env: S3_BUCKET",
       }),
     ).toBe(
-      "Failed while reading the manifest: missing required env: S3_BUCKET. " +
-        "This volume will not be retried — fix the cause, then put the " +
-        "volume in a new campaign.",
+      "The volume's settings are incomplete or wrong: missing required env: " +
+        "S3_BUCKET. This is a deployment problem, not a manifest problem — " +
+        "check the campaign's converter.yaml and the chart values.",
     );
   });
 
