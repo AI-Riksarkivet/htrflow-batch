@@ -208,7 +208,14 @@ def _pipeline_steps(text: str) -> list[str]:
     steps = doc.get("steps") if isinstance(doc, dict) else None
     if not isinstance(steps, list):
         return []
-    return [s["step"] for s in steps if isinstance(s, dict) and "step" in s]
+    # Strings only: the schema says `step: <name>` but a hand-edited
+    # ConfigMap can put anything there, and the field is typed `string[]` all
+    # the way to the chip's tooltip.
+    return [
+        s["step"]
+        for s in steps
+        if isinstance(s, dict) and isinstance(s.get("step"), str)
+    ]
 
 
 def detail(

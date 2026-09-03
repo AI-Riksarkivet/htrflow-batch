@@ -371,6 +371,19 @@ class TestPipeline:
         )
         assert d["pipelineSteps"] == []
 
+    def test_a_non_string_step_is_skipped(self):
+        """`pipelineSteps` is typed string[] all the way to the chip."""
+        d = projection.detail(
+            _job(),
+            _configmap(),
+            [],
+            CFG,
+            pipeline_configmap=_pipeline_configmap(
+                "steps:\n- step: 3\n- step: Export\n"
+            ),
+        )
+        assert d["pipelineSteps"] == ["Export"]
+
     def test_an_entry_without_a_step_key_is_skipped(self):
         d = projection.detail(
             _job(),
