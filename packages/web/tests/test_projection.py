@@ -68,6 +68,24 @@ def _configmap(namespace="htr-test", name="campaign-kyrk", n=7) -> dict:
     }
 
 
+PIPELINE_YAML = (
+    "steps:\n"
+    "- step: Segmentation\n"
+    "  settings:\n"
+    "    model: yolo\n"
+    "- step: TextRecognition\n"
+    "  settings:\n"
+    "    model: TrOCR\n"
+)
+
+
+def _pipeline_configmap(text=PIPELINE_YAML, name="htr-pipeline-demo-v1") -> dict:
+    return {
+        "metadata": {"name": name, "namespace": "htr-test"},
+        "data": {"pipeline.yaml": text},
+    }
+
+
 def _pod(
     index: int, *, active=False, terminated_message=None, created="2026-01-01T00:00:01Z"
 ) -> dict:
@@ -297,9 +315,59 @@ class TestDetail:
         assert row3["reason"] == '{"permanent": false}'
 
 
+class TestPipeline:
+    def test_steps_and_yaml_come_off_the_pipeline_configmap(self):
+        d = projection.detail(
+            _job(), _configmap(), [], CFG, pipeline_configmap=_pipeline_configmap()
+        )
+        assert d["pipelineSteps"] == ["Segmentation", "TextRecognition"]
+        assert d["pipelineYaml"] == PIPELINE_YAML
+
+    def test_missing_configmap_is_no_steps_not_an_error(self):
+        d = projection.detail(_job(), _configmap(), [], CFG)
+        assert d["pipelineSteps"] == []
+        assert d["pipelineYaml"] == ""
+
+    def test_a_configmap_without_steps_is_no_steps(self):
+        d = projection.detail(
+            _job(),
+            _configmap(),
+            [],
+            CFG,
+            pipeline_configmap=_pipeline_configmap("model: yolo\n"),
+        )
+        assert d["pipelineSteps"] == []
+        assert d["pipelineYaml"] == "model: yolo\n"
+
+    def test_unparsable_yaml_is_no_steps(self):
+        d = projection.detail(
+            _job(),
+            _configmap(),
+            [],
+            CFG,
+            pipeline_configmap=_pipeline_configmap("steps: [oh: no: yes\n"),
+        )
+        assert d["pipelineSteps"] == []
+
+    def test_an_entry_without_a_step_key_is_skipped(self):
+        d = projection.detail(
+            _job(),
+            _configmap(),
+            [],
+            CFG,
+            pipeline_configmap=_pipeline_configmap(
+                "steps:\n- settings: {}\n- step: Export\n"
+            ),
+        )
+        assert d["pipelineSteps"] == ["Export"]
+
+
 class TestConfigmapRef:
     def test_finds_campaign_volume(self):
         assert projection.configmap_ref(_job()) == "campaign-kyrk"
+
+    def test_finds_the_pipeline_volume(self):
+        assert projection.configmap_ref(_job(), "pipeline") == "htr-pipeline-demo-v1"
 
     def test_missing_campaign_volume(self):
         job = {"spec": {"template": {"spec": {"volumes": []}}}}

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 
+import yaml
+
 _PIPELINE_LABEL = "htrflow.riksarkivet.se/pipeline"
 _INDEX_LABEL = "batch.kubernetes.io/job-completion-index"
 _MAX_FAILURES = 50
@@ -38,11 +40,14 @@ def _labels(obj: dict) -> dict:
     return (obj.get("metadata") or {}).get("labels") or {}
 
 
-def configmap_ref(job: dict) -> str | None:
-    """Name of the ConfigMap mounted as the Job's ``campaign`` volume."""
+def configmap_ref(job: dict, volume: str = "campaign") -> str | None:
+    """Name of the ConfigMap mounted as one of the Job's volumes: ``campaign``
+    holds ``volumes.txt``, ``pipeline`` holds ``pipeline.yaml``. Reading the
+    name off the pod spec rather than rebuilding ``htr-pipeline-<id>`` keeps
+    the naming convention in the converter, where it is rendered."""
     pod_spec = ((job.get("spec") or {}).get("template") or {}).get("spec") or {}
     for v in pod_spec.get("volumes") or []:
-        if v.get("name") == "campaign":
+        if v.get("name") == volume:
             return (v.get("configMap") or {}).get("name")
     return None
 
@@ -178,6 +183,25 @@ def _log_url(pipeline: str, volume_id: str, cfg) -> str:
     return f"{cfg.public_results_base}/status/logs/{pipeline}/{volume_id}.txt"
 
 
+def _pipeline_yaml(configmap: dict | None) -> str:
+    return ((configmap or {}).get("data") or {}).get("pipeline.yaml", "")
+
+
+def _pipeline_steps(text: str) -> list[str]:
+    """The ``step`` name of each entry under ``steps:``, in order — what the
+    card's pipeline chip lists in its tooltip. A ConfigMap that is missing,
+    empty or shaped differently is no steps rather than an error: the chip
+    then just names the pipeline, and the campaign is unaffected either way."""
+    try:
+        doc = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return []
+    steps = doc.get("steps") if isinstance(doc, dict) else None
+    if not isinstance(steps, list):
+        return []
+    return [s["step"] for s in steps if isinstance(s, dict) and "step" in s]
+
+
 def detail(
     job: dict,
     configmap: dict | None,
@@ -185,6 +209,7 @@ def detail(
     cfg,
     offset: int = 0,
     limit: int = 200,
+    pipeline_configmap: dict | None = None,
 ) -> dict:
     """``JobDetail``: ``JobSummary`` plus per-index rows and top failures for
     ``GET /api/v1/jobs/{ns}/{name}``, paged by index."""
@@ -221,8 +246,14 @@ def detail(
         reverse=True,
     )[:_MAX_FAILURES]
 
+    pipeline_yaml = _pipeline_yaml(pipeline_configmap)
     return {
         **summary,
+        # Detail only, never the list: one pipeline YAML per campaign row
+        # would be most of the list response's bytes for a chip nobody has
+        # clicked yet.
+        "pipelineSteps": _pipeline_steps(pipeline_yaml),
+        "pipelineYaml": pipeline_yaml,
         "failures": failures,
         "volumes": volumes[offset : offset + limit],
     }

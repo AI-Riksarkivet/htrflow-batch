@@ -763,6 +763,7 @@ source = { editable = "packages/web" }
 dependencies = [
     { name = "fastapi" },
     { name = "kubernetes" },
+    { name = "pyyaml" },
     { name = "uvicorn" },
 ]
 
@@ -770,6 +771,7 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.110" },
     { name = "kubernetes", specifier = ">=29" },
+    { name = "pyyaml", specifier = ">=6" },
     { name = "uvicorn", specifier = ">=0.29" },
 ]
 
