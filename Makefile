@@ -191,10 +191,21 @@ helm-template: helm-lint
 # PoC-only support infrastructure (RustFS, registry, nvidia device plugin)
 # — its own chart, own release, same namespace as $(HTR_RELEASE)
 # (charts/htrflow-devstack/README.md, "Installing"). Not for production.
+# NVIDIA_DEVICE_PLUGIN=false renders the chart without the RuntimeClass and
+# device-plugin DaemonSet every GPU pod depends on -- doing that while GPU
+# pods are running deleted both from under them once (a 2-minute outage,
+# docs/development/e2e-indexed-jobs.md "A failed Helm install still owns
+# what it applied"). The guard below refuses that unless FORCE=1.
+NVIDIA_DEVICE_PLUGIN ?= true
+
 install-devstack:
+	@if [ "$(NVIDIA_DEVICE_PLUGIN)" = "false" ] && [ "$(FORCE)" != "1" ] && \
+	  kubectl get pods -A -o json | jq -e '[.items[] | select(.metadata.namespace!="kube-system") | select(.spec.runtimeClassName=="nvidia" or any(.spec.containers[]?; (.resources.requests["nvidia.com/gpu"]? // .resources.limits["nvidia.com/gpu"]?) != null))] | length > 0' >/dev/null; then \
+	  echo "install-devstack: refusing NVIDIA_DEVICE_PLUGIN=false -- GPU pods are running and depend on the RuntimeClass/DaemonSet this would delete; set FORCE=1 to override."; exit 1; \
+	fi
 	helm upgrade --install $(HTR_RELEASE)-devstack charts/htrflow-devstack -n $(HTR_NAMESPACE) --create-namespace \
 	  --set rustfs.enabled=true --set registry.enabled=true \
-	  --set nvidiaDevicePlugin.enabled=true
+	  --set nvidiaDevicePlugin.enabled=$(NVIDIA_DEVICE_PLUGIN)
 
 docs-serve:
 	uvx zensical serve

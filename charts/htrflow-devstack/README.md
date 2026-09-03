@@ -60,10 +60,23 @@ helm install htr-devstack charts/htrflow-devstack -n htr-batch --create-namespac
 ```
 
 `make install-devstack` wraps this with the repo-root `.env` constants
-(`.env.example` has the PoC defaults). See
+(`.env.example` has the PoC defaults) and `NVIDIA_DEVICE_PLUGIN` (default
+`true`) in place of the `--set nvidiaDevicePlugin.enabled` above. See
 [docs/getting-started/deploy.md](../../docs/getting-started/deploy.md) for
 the full PoC replay flow (wrapper/web image builds, warm-up, the
 smoke campaign).
+
+**The target refuses `NVIDIA_DEVICE_PLUGIN=false` while GPU pods are
+running.** Disabling the device plugin deletes the chart-managed `nvidia`
+RuntimeClass and the `nvidia-device-plugin` DaemonSet — every GPU pod
+depends on both, and a prior E2E run took a live pod down for two minutes
+by deleting them out from under it (`docs/development/e2e-indexed-jobs.md`,
+"A failed Helm install still owns what it applied"). `make install-devstack
+NVIDIA_DEVICE_PLUGIN=false` first checks the cluster for any pod (outside
+`kube-system`, so the device plugin's own pod doesn't block disabling
+itself) that uses `runtimeClassName: nvidia` or requests `nvidia.com/gpu`,
+and exits non-zero with one sentence if it finds one. `FORCE=1` skips the
+check.
 
 ## Adopting hand-applied resources
 
