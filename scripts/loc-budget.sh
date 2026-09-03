@@ -60,6 +60,16 @@ check web       "$(count packages/web/src -name '*.py')" 600
 # folded by default -- the latest-volume strip that keeps the viewer and the
 # run log one click away while it is folded. Restored functionality, not
 # growth. (B63)
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 2700
+# 2700 -> 2800 -> 3000 for Task 26: the ALTO viewer (raised for the ALTO
+# viewer route (Task 26)) -- a fourth route (`lib/alto.ts`'s namespace-agnostic
+# parser + pretty-printer, `routes/alto`'s text/raw-XML views, the PagesTable
+# download column) that did not exist before. 2800 was not enough on its own
+# merit: three CSS rules that had been copy-pasted across every route's
+# `<style>` block (`.page`/`.header-right`/`.raw`/`.error`/`.muted`, `h1`,
+# `.chip`, and the run-log/ALTO `.code-block` `<pre>`) moved into app.css
+# (not counted here -- it is not `.ts`/`.svelte`) and were deleted from their
+# three call sites first, so the 3000 that remains is the feature itself,
+# not sprawl this budget is meant to catch. (B63)
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3000
 check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 700
 exit $fail
