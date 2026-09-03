@@ -56,10 +56,13 @@ async function expand(): Promise<void> {
 }
 
 /**
- * jsdom here ships no localStorage at all, which is one of the cases the
- * card's try/catch is for — so the tests that care about the remembered fold
- * state stub one in, and every other test exercises the no-storage default.
+ * The card remembers its fold state in localStorage, and the environments
+ * these tests run in disagree about whether there is one (CI's jsdom has it,
+ * the local one does not). Stub a fresh store per test so neither the
+ * environment nor the previous test can decide whether a card starts folded.
  */
+let storage: Map<string, string>;
+
 function stubStorage(): Map<string, string> {
   const map = new Map<string, string>();
   vi.stubGlobal("localStorage", {
@@ -70,7 +73,10 @@ function stubStorage(): Map<string, string> {
 }
 
 describe("CampaignCard", () => {
-  beforeEach(() => vi.useFakeTimers());
+  beforeEach(() => {
+    vi.useFakeTimers();
+    storage = stubStorage();
+  });
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
@@ -299,7 +305,6 @@ describe("CampaignCard", () => {
   });
 
   test("the fold state is remembered per campaign", async () => {
-    const store = stubStorage();
     const detail = { ...detail0, failures: [], volumes: [volumeDone] };
     vi.stubGlobal(
       "fetch",
@@ -308,7 +313,7 @@ describe("CampaignCard", () => {
     const first = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
     await expand();
-    expect(store.get("htrflow.card.htr-test/kyrk")).toBe("open");
+    expect(storage.get("htrflow.card.htr-test/kyrk")).toBe("open");
     first.unmount();
 
     render(CampaignCard, { job });
