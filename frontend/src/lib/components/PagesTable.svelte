@@ -1,21 +1,28 @@
 <script lang="ts">
   // The full per-page table, rendered a slice at a time: a 480-row table is
   // nobody's first question, but it stays available for a hunt.
-  import type { PageStat } from "$lib/run.js";
+  import { pageSource, type PageRow } from "$lib/run.js";
 
-  let { pages, pageSize = 100 }: { pages: PageStat[]; pageSize?: number } =
-    $props();
+  let {
+    rows,
+    sources,
+    pageSize = 100,
+  }: {
+    rows: PageRow[];
+    sources?: Record<string, string>;
+    pageSize?: number;
+  } = $props();
 
   let offset = $state(0);
-  const last = $derived(Math.min(offset + pageSize, pages.length));
-  const slice = $derived(pages.slice(offset, last));
+  const last = $derived(Math.min(offset + pageSize, rows.length));
+  const slice = $derived(rows.slice(offset, last));
 </script>
 
 <div class="pager">
   <span class="range" aria-live="polite">
-    {pages.length === 0
+    {rows.length === 0
       ? "no pages"
-      : `${offset + 1}–${last} of ${pages.length}`}
+      : `${offset + 1}–${last} of ${rows.length}`}
   </span>
   <button
     type="button"
@@ -26,7 +33,7 @@
   </button>
   <button
     type="button"
-    disabled={last >= pages.length}
+    disabled={last >= rows.length}
     onclick={() => (offset = last)}
   >
     next
@@ -45,18 +52,16 @@
       </tr>
     </thead>
     <tbody>
-      {#each slice as r (r.id)}
+      {#each slice as r (r.name)}
+        {@const source = pageSource(sources, r.name)}
         <tr>
           <td class="pid">
-            {#if r.source !== undefined}
-              <a
-                href={r.source}
-                target="_blank"
-                rel="noopener"
-                title="source image">{r.id}</a
+            {#if source !== undefined}
+              <a href={source} target="_blank" rel="noopener" title="source image"
+                >{r.name}</a
               >
             {:else}
-              {r.id}
+              {r.name}
             {/if}
           </td>
           <td>
