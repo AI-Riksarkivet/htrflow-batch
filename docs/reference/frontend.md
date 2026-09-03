@@ -29,7 +29,7 @@ jsdom), Prettier, Bun as the package runner (`engines`: Node ≥ 22, Bun ≥ 1.1
 | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/lib/config.ts`                                  | API base and cadence resolution (table below)                                                                                                               |
 | `src/lib/api.ts`                                     | Read-API Zod schemas (`JobSummary`, `JobDetail`, `VolumeView`), `fetchJobs`/`fetchJob`, `ApiUnreachable`, and the pure view helpers `isHttpUrl`/`shortDate` |
-| `src/lib/run.ts`, `runlog.ts`                        | `manifest.json` schema + summary math; run-log grouping and the terminal-line check                                                                         |
+| `src/lib/run.ts`, `runlog.ts`                        | `manifest.json` schema + summary math (incl. `scale()`, the page grid's bar height); run-log grouping and the terminal-line check                            |
 | `src/lib/theme.svelte.ts`                            | the one theme store (`ThemeToggle.svelte` on both routes)                                                                                                   |
 | `src/lib/components/`                                | `CampaignCard`, `RunSummaryCard`, `PageGrid`, `PagesTable`, `ThemeToggle`                                                                                   |
 | `src/routes/+page.svelte`, `routes/log/+page.svelte` | the two routes                                                                                                                                              |
@@ -90,10 +90,27 @@ script). A CSP header from the server must not be stricter than the meta tag
   namespace/S3_PREFIX prefix): the browser has no bucket base URL to resolve
   a bare key against, so the API builds the full URL — see
   [Live Run Log](../how-it-works/live-run-log.md).
-- **Open link** — a `done` volume links `iiifUrl` as
-  `uv.html#?manifest=<url>`; other states get no open link (there is no
-  separate pre-run "source manifest" any more — the API only returns
-  results-side URLs).
+- **Three link slots.** Every volume row — and the folded card's latest
+  strip — renders the same three fixed slots, **open · source · log**, from
+  one snippet, so a missing link leaves a gap instead of shifting its
+  neighbours and the eye can scan a column of "source" straight down.
+  - **open** — `uv.html#?manifest=<url>`: the published `iiifUrl` once the
+    volume is `done`, the volume's own `sourceUrl` before that, so the
+    viewer is reachable from the first tick. Empty when there is neither.
+  - **source** — `VolumeView.sourceUrl`, the URL half of the volume's
+    `volumes.txt` line, straight to the source manifest. Empty for an
+    `images:` volume, which lists bare image URLs and has no manifest.
+- **Pipeline chip.** A button once the detail has loaded: its `title` is
+  `JobDetail.pipelineSteps` joined by ` → `, and clicking it toggles
+  `JobDetail.pipelineYaml` in an inline `<pre>` (`aria-expanded` /
+  `aria-controls`). Both fields come from the `htr-pipeline-<id>` ConfigMap;
+  when it is gone the chip stays a static label with nothing to toggle.
+- **Folded by default.** A card starts collapsed and remembers the reader's
+  choice in `localStorage` under `htrflow.card.<namespace>/<name>` — every
+  access wrapped, since a browser may refuse storage; the card then simply
+  forgets. While folded it still shows the failures block and a one-line
+  **latest strip**: the newest `active` volume, else the newest `done` one,
+  with the same three link slots, so UV and the run log stay one click away.
 - **No thumbnails.** The read API has no per-volume image field; the volume
   table is id / state / links only.
 - **Failures block.** `JobDetail.failures` (up to 50 newest
@@ -106,7 +123,10 @@ script). A CSP header from the server must not be stricter than the meta tag
 - **Paged volumes.** `CampaignCard` fetches its own volumes via `fetchJob`
   (`offset`/`limit`, default page 200), independently of the campaign list
   poll on `/`; a "load more" button pages in the next batch when
-  `counts.total` exceeds what has loaded.
+  `counts.total` exceeds what has loaded. A poll re-fetches **every page
+  currently open** (`offset 0`, the limit rounded up to whole pages and
+  capped at the API's own `limit` ceiling of 1000, rows past that left as
+  last fetched), so a tick never undoes "load more".
 - **Accessibility** — campaign header is a disclosure button; AA contrast in
   both themes; `prefers-reduced-motion` honoured; no horizontal overflow at
   390 px.
