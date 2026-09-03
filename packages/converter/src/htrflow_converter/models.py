@@ -41,10 +41,17 @@ _RENAME_THE_FILE = (
 def shown(value: object) -> str:
     """A value echoed back the way the author wrote it. A number in quotes is
     the mistake behind half of these messages -- YAML then hands us text -- so
-    say so, rather than leave them to spot ``5`` against ``"5"``."""
-    if isinstance(value, str):
-        return f'"{value}" — quotes make it text'
-    return str(value).lower()
+    say so, rather than leave them to spot ``5`` against ``"5"``. Only for a
+    value that IS a number, though: telling the author of ``suspend: maybe``
+    that quotes made it text describes a file they did not write."""
+    if isinstance(value, (list, tuple)):
+        return "a list"  # never str() -- that is a Python repr, with its quotes
+    if isinstance(value, dict):
+        return "a block of settings"
+    if not isinstance(value, str):
+        return str(value).lower()
+    digits = value.strip().lstrip("-+").isdigit()
+    return f'"{value}"' + (" — quotes make it text" if digits else "")
 
 
 def _positive_int(v: object) -> bool:
