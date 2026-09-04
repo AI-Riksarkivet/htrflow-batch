@@ -49,13 +49,30 @@ def test_warmup_writes_no_marker_on_failure(tmp_path):
 def test_warmup_refuses_to_run_offline(tmp_path):
     """Offline warm-up cannot download anything: a mis-wired Job must fail
     loudly (permanent) rather than "succeed" and gate the pipeline open."""
-    rc = main({**_env(tmp_path), "HF_HUB_OFFLINE": "1"}, load=lambda _: None)
+    term_path = tmp_path / "termination-log"
+    env = {
+        **_env(tmp_path),
+        "HF_HUB_OFFLINE": "1",
+        "TERMINATION_LOG_PATH": str(term_path),
+    }
+    rc = main(env, load=lambda _: None)
     assert rc == EXIT_PERMANENT
+    term = json.loads(term_path.read_text())
+    assert term["stage"] == "warmup" and term["permanent"] is True
+    assert "HF_HUB_OFFLINE" in term["error"]
 
 
 def test_warmup_missing_pipeline_is_permanent(tmp_path):
-    env = {**_env(tmp_path), "PIPELINE_PATH": str(tmp_path / "nope.yaml")}
+    term_path = tmp_path / "termination-log"
+    env = {
+        **_env(tmp_path),
+        "PIPELINE_PATH": str(tmp_path / "nope.yaml"),
+        "TERMINATION_LOG_PATH": str(term_path),
+    }
     assert main(env, load=lambda _: None) == EXIT_PERMANENT
+    term = json.loads(term_path.read_text())
+    assert term["stage"] == "warmup" and term["permanent"] is True
+    assert "nope.yaml" in term["error"]
 
 
 def test_warmup_download_failure_is_transient(tmp_path):
