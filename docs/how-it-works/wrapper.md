@@ -103,8 +103,9 @@ into the SIGKILL.
 
 Failures write a structured reason to `/dev/termination-log`
 (`{"stage": "stream", "permanent": false, "error": "verify failed: N missing, M failed errors: … missing=[…]"}`),
-URL-redacted, and `metrics-failed-latest.json` to the volume prefix. The
-whole contract is in [Failure Handling](failure-handling.md).
+URL-redacted — and nothing at all to S3 beyond the run log: a failed volume
+leaves no marker object of its own. The whole contract is in
+[Failure Handling](failure-handling.md).
 
 **Instrumentation for the Phase 2 gate:** `manifest.json` records `pages`,
 `bytes_fetched`, `wall_seconds`, per-page timings, and — the key metric —
@@ -159,8 +160,8 @@ spec:
   clusterQueue: htr-batch-cq
 ```
 
-Jobs carry `kueue.x-k8s.io/queue-name: htr-batch`, start `suspend: true`;
-Kueue unsuspends as quota frees. Submit 200 volumes → exactly N run, the rest
+Jobs carry `kueue.x-k8s.io/queue-name: htr-batch`; Kueue's webhook
+suspends them on creation and unsuspends as quota frees. Submit 200 volumes → exactly N run, the rest
 wait in FIFO order (`kubectl get workloads -n htr-batch`). If Jobs sit
 `queued` while the GPU is idle, check the Kueue controller first — a dead
 Kueue looks exactly like a busy GPU.
@@ -355,10 +356,10 @@ travel from authoring to a result:
    (`-v2`, never edited in place) is enforced by review convention on the
    campaigns repo, not by the API server
    ([Campaign & Pipeline YAML → Immutability](../reference/campaign-yaml.md#immutability)).
-3. **Select:** the campaign's `pipeline:` sets `PIPELINE_ID` (namespaces the
-   S3 keys **and** is part of the Job-name hash, so the same volume under a
-   different pipeline is a different Job, not a collision) and mounts that
-   ConfigMap; `PIPELINE_PATH` points at the file inside it.
+3. **Select:** the campaign's `pipeline:` sets `PIPELINE_ID`, which
+   namespaces the S3 keys — the same volume under a different pipeline
+   writes under a different prefix, never over the first run's results — and
+   mounts that ConfigMap; `PIPELINE_PATH` points at the file inside it.
 4. **Run:** the wrapper calls `Pipeline.from_config($PIPELINE_PATH)` — to
    htrflow it's just a file.
 5. **Provenance:** the wrapper embeds the YAML content + its sha256 and the

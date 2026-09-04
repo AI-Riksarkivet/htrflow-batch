@@ -283,7 +283,8 @@ post-processes it:
    including every Swedish-content source (Alvin, manuscripta.se, KB,
    Finna). Reachable today: `loc.gov` / `tile.loc.gov`,
    `iiif.bodleian.ox.ac.uk`.
-5. **Run logs are public** while `devStack.rustfs.publicLogs=true` — the
+5. **Run logs are public** while the devstack chart's `rustfs.publicLogs`
+   is `true` (the default) — the
    browser needs them, and a log can carry the redacted host/path of a
    private IIIF source. Set it false behind an authenticated proxy.
 6. **A permanently-failed volume has no declarative "skip".** The remedy is

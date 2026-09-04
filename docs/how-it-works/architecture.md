@@ -35,7 +35,7 @@ flowchart LR
 
     CAMP -->|"PR: validate"| CONV
     CONV -->|"main: render, commit rendered/"| git
-    git -->|"Argo CD / kubectl apply<br/>(suspend: true)"| LQ
+    git -->|"Argo CD / htrflow-campaigns apply"| LQ
     CONV -.->|"rendered once per pipeline"| WARM
     DLP -->|"width-capped GETs (WAN)"| IIIF
     UPL -->|"PAGE/ALTO per page, run log,<br/>manifest.json LAST"| S3
@@ -66,7 +66,7 @@ everything from the live Job, nothing is cached
 sequenceDiagram
     autonumber
     participant G as campaigns repo CI
-    participant Ar as Argo CD / kubectl apply
+    participant Ar as Argo CD / htrflow-campaigns apply
     participant K8s as kube-apiserver
     participant Q as Kueue
     participant P as GPU pod (streaming driver), index i
@@ -74,8 +74,8 @@ sequenceDiagram
     participant S3 as S3 results
 
     G->>G: htrflow-campaigns render -> rendered/ (committed)
-    Ar->>K8s: apply Job <campaign> (completionMode: Indexed,<br/>completions=N, suspend: true, queue-name label)
-    Q->>Q: workload queued (FIFO)
+    Ar->>K8s: apply Job <campaign> (completionMode: Indexed,<br/>completions=N, queue-name label)
+    Q->>Q: webhook suspends the Job; workload queued (FIFO)
     Q->>K8s: quota free → unsuspend Job (up to `parallelism`)
     K8s->>P: schedule pod for index i (1 GPU, tmpfs workdir, read-only model cache)
     P->>I: fetch IIIF manifest for volumes.txt line i
