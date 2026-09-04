@@ -252,6 +252,7 @@ def test_list_jobs_survives_a_failed_warmup_with_no_pods():
 
 
 JOB2 = {**JOB, "metadata": {**JOB["metadata"], "name": "kyrk2"}}
+JOB_OTHER_NS = {**JOB, "metadata": {**JOB["metadata"], "namespace": "htr-other"}}
 
 
 class TwoCampaignsOneFailedWarmupReader(FailedWarmupReader):
@@ -262,20 +263,40 @@ class TwoCampaignsOneFailedWarmupReader(FailedWarmupReader):
         self.list_pods_calls = 0
 
     def list_jobs(self) -> list[dict]:
-        return [JOB, JOB2]
+        return [JOB, JOB2, JOB_OTHER_NS]
+
+    def list_warmups(self) -> list[dict]:
+        w = super().list_warmups()[0]
+        other = {**w, "metadata": {**w["metadata"], "namespace": "htr-other"}}
+        return [w, other]
 
     def list_pods(self, namespace: str, job_name: str) -> list[dict]:
         self.list_pods_calls += 1
-        return super().list_pods(namespace, job_name)
+        pods = super().list_pods(namespace, job_name)
+        if namespace != "htr-other":
+            return pods
+        import copy
+
+        pods = copy.deepcopy(pods)
+        term = pods[0]["status"]["containerStatuses"][0]["state"]["terminated"]
+        term["message"] = term["message"].replace("Yolo9", "Other9")
+        return pods
 
 
-def test_list_jobs_calls_list_pods_once_for_a_shared_failed_warmup():
+def test_list_jobs_calls_list_pods_once_per_failed_warmup_per_namespace():
+    """Two campaigns in one namespace share one call; a same-named warm-up
+    in another namespace is its own call with its own reason."""
     reader = TwoCampaignsOneFailedWarmupReader()
     client = TestClient(create_app(reader))
     body = client.get("/api/v1/jobs").json()
-    assert len(body) == 2
+    assert len(body) == 3
     assert all(row["warmup"]["phase"] == "failed" for row in body)
-    assert reader.list_pods_calls == 1
+    assert reader.list_pods_calls == 2
+    by_ns = {row["namespace"]: row["warmup"]["reason"]["error"] for row in body}
+    assert by_ns == {
+        "htr-test": "unknown model class Yolo9",
+        "htr-other": "unknown model class Other9",
+    }
 
 
 def test_job_detail_carries_the_warmup_field_too():

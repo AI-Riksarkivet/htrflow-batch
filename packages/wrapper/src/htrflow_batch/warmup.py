@@ -91,11 +91,8 @@ def main(
     try:
         load(pipeline_path)
     except Exception as e:
-        # W12: malformed YAML, a config that fails pydantic validation, an
-        # unknown step/model class, or a bad HF repo id/revision — retrying
-        # cannot help; exit 13 so the warm-up Job's own backoffLimit stops
-        # retrying it. Everything else (network, disk-full, HF Hub 5xx, a
-        # model merely missing from a not-yet-warm cache) is retryable.
+        # W12: exit 13 so the warm-up Job's own backoffLimit stops retrying
+        # a pipeline that cannot get better; everything else is retryable.
         permanent = isinstance(e, PERMANENT_ERRORS) and not isinstance(
             e, TRANSIENT_FIRST
         )
