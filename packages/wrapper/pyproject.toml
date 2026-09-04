@@ -3,7 +3,13 @@ name = "htrflow-batch-wrapper"
 version = "0.2.0"
 description = "D16 streaming wrapper: IIIF -> htrflow -> S3 (docs: how-it-works/wrapper)"
 requires-python = ">=3.10"
-dependencies = ["httpx>=0.27", "boto3>=1.34", "pyyaml", "pydantic>=2.7"]
+dependencies = [
+    "httpx>=0.27",
+    "boto3>=1.34",
+    "pyyaml",
+    "pydantic>=2.7",
+    "huggingface-hub>=0.30",
+]
 
 [build-system]
 requires = ["hatchling"]
