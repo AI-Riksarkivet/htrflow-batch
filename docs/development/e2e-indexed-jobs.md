@@ -1879,3 +1879,126 @@ Two changes on top of the above, both from an explicit values file
 `requireModelRevision` is `false`. Also left in `htr-batch` from (f):
 `htr-warmup-e2e-t22-v3` (Complete) and `configmap/htr-pipeline-e2e-t22-v3`;
 the `e2e-t22v3run` campaign and its ConfigMap were pruned.
+
+## Task 28 — warm-up status on the campaign card
+
+Same cluster, campaigns repo `~/htr-test`, new branch `task-28` off `task-22`
+(`691bebb`/`52b1741`/`a72d260`, never pushed). No `helm upgrade`: the web
+image was never touched, so ruling 5 needed only the API running locally
+against the cluster's kubeconfig.
+
+### Warm-up Job actually running Task 28's code
+
+`e2e-t22-v2`'s wrapper digest predates this task, so a bogus-model pipeline
+against it would fail with no termination message at all (the old image
+never called `_terminate`). Built and pushed a throwaway tag from this
+worktree's HEAD instead:
+
+```console
+$ make build-wrapper IMAGE_TAG=task28    # cached almost entirely; only the
+                                          # source-copy/install layer re-ran
+$ docker push 127.0.0.1:30500/htrflow-batch:task28
+task28: digest: sha256:c633aafc474f2c2356ea00e0eebb6d0c8c34440c8f8571a03dc79f36b252d156
+```
+
+`pipelines/e2e-t28.yaml`: that digest, one `Segmentation` step,
+`model_settings.model: Riksarkivet/this-model-does-not-exist-task28`,
+`revision: 0000…0000` (syntactically 40-hex — `requireModelRevision` is
+`false` on this PoC's live values anyway, per the note above, but the real
+model-revision policy would have admitted it too). `campaigns/e2e-t28.yaml`:
+one volume, `window: 1`.
+
+```console
+$ uv run htrflow-campaigns validate ~/htr-test   # exit 0, no output
+$ uv run htrflow-campaigns apply ~/htr-test --out ~/htr-test/rendered
+applied: ConfigMap/htr-pipeline-e2e-t22-v2
+applied: Job/htr-warmup-e2e-t22-v2
+applied: ConfigMap/htr-pipeline-e2e-t22-v3
+applied: Job/htr-warmup-e2e-t22-v3
+applied: ConfigMap/htr-pipeline-e2e-t28
+applied: Job/htr-warmup-e2e-t28
+applied: ConfigMap/campaign-e2e-t22run
+applied: Job/e2e-t22run
+applied: ConfigMap/campaign-e2e-t28
+applied: Job/e2e-t28
+```
+
+`htr-warmup-e2e-t28`'s pod errored in ~4 s each try (a fast 401/`Repository
+Not Found`, not a timeout) — `RepositoryNotFoundError` is not one of
+`warmup.PERMANENT_ERRORS`, so each attempt is TRANSIENT (exit 1) and
+Kubernetes retries it up to `backoffLimit: 2`; the Job's own `Failed`
+condition (`BackoffLimitExceeded`) landed ~40 s after the first pod, at
+`13:01:43`. Every one of the three pods' termination messages matched:
+
+```json
+{"stage": "warmup", "permanent": false, "error": "401 Client Error. (Request ID: …)\n\nRepository Not Found for url: https://huggingface.co/api/models/Riksarkivet/this-model-does-not-exist-task28/tree/main\nPlease make sure you specified the correct `repo_id` and `repo_type`.\n…"}
+```
+
+(The first apply, against the old `e2e-t22-v2` digest, produced the same
+`RepositoryNotFoundError` traceback in the pod log but an **empty**
+termination message on all three pods — confirming the old image predates
+`_terminate` in `warmup.main`. Both warm-up and campaign Jobs were deleted
+— image is an immutable Job field — before re-applying against the
+`task28` digest.)
+
+### The API, run locally against the cluster
+
+```console
+$ HTRFLOW_PUBLIC_RESULTS_BASE=http://localhost:30900/htr-results \
+  HTRFLOW_NAMESPACES=htr-batch uv run htrflow-web &
+$ curl -s http://localhost:8081/healthz
+{"ok":true}
+```
+
+`GET /api/v1/jobs` — `e2e-t28` (`Running`, blocked on `warmup-wait`, never
+seen by the old code path) alongside the untouched `e2e-t22run`:
+
+```json
+[
+  {
+    "namespace": "htr-batch", "name": "e2e-t28", "pipeline": "e2e-t28",
+    "phase": "Running",
+    "warmup": {
+      "phase": "failed",
+      "reason": {
+        "stage": "warmup", "permanent": false,
+        "error": "401 Client Error. (Request ID: …)\n\nRepository Not Found for url: https://huggingface.co/api/models/Riksarkivet/this-model-does-not-exist-task28/tree/main\n…"
+      }
+    }
+  },
+  {
+    "namespace": "htr-batch", "name": "e2e-t22run", "pipeline": "e2e-t22-v2",
+    "phase": "Succeeded",
+    "warmup": { "phase": "succeeded" }
+  }
+]
+```
+
+(fields shown trimmed to what changed; the full response also carries
+`counts`, `suspended`, `createdAt`, `resultsBase` as before.)
+
+### Prune
+
+```console
+$ rm campaigns/e2e-t28.yaml pipelines/e2e-t28.yaml
+$ uv run htrflow-campaigns apply ~/htr-test --out ~/htr-test/rendered --prune
+removed: /home/morgan/htr-test/rendered/pipelines/e2e-t28.yaml
+removed: /home/morgan/htr-test/rendered/campaigns/e2e-t28.yaml
+applied: ConfigMap/htr-pipeline-e2e-t22-v2
+applied: Job/htr-warmup-e2e-t22-v2
+applied: ConfigMap/htr-pipeline-e2e-t22-v3
+applied: Job/htr-warmup-e2e-t22-v3
+applied: ConfigMap/campaign-e2e-t22run
+applied: Job/e2e-t22run
+pruned: Job/e2e-t28
+pruned: Job/htr-warmup-e2e-t28
+pruned: ConfigMap/campaign-e2e-t28
+pruned: ConfigMap/htr-pipeline-e2e-t28
+```
+
+`GET /api/v1/jobs` afterward: one row, `e2e-t22run`, `warmup.phase:
+"succeeded"` — the same shape as before this task started. Nothing about
+`e2e-t22-v2`/`e2e-t22-v3`'s warm-up Jobs, `e2e-t22run` itself, or the
+cluster's Kyverno policies was touched. `htrflow-batch:task28` was left in
+the PoC's local registry (a throwaway tag, harmless there) rather than
+deleted; nothing references it after the prune above.
