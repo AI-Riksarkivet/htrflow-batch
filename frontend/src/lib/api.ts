@@ -58,6 +58,35 @@ export const jobCountsSchema = z.object({
   failed: z.number(),
 });
 
+/**
+ * Why a volume or warm-up failed, as the API parsed it out of the wrapper's
+ * termination message. `stage`/`permanent` are null when that message was
+ * not the wrapper's JSON object (an older wrapper, a kubelet log tail), in
+ * which case `error` is the raw text. Rendering is $lib/reasons — never
+ * these fields straight into the DOM.
+ */
+export const volumeReasonSchema = z.object({
+  stage: z.string().nullable(),
+  permanent: z.boolean().nullable(),
+  error: z.string(),
+});
+
+// The pipeline's warm-up Job, matched onto this campaign's row (Task 28):
+// `missing` means no warm-up Job exists for the pipeline at all, so the
+// campaign's pods will sit blocked on it forever.
+export const warmupPhaseSchema = z.enum([
+  "missing",
+  "pending",
+  "running",
+  "succeeded",
+  "failed",
+]);
+
+export const warmupSchema = z.object({
+  phase: warmupPhaseSchema,
+  reason: volumeReasonSchema.optional(),
+});
+
 // One row per campaign Job — GET /api/v1/jobs.
 export const jobSummarySchema = z.object({
   namespace: z.string(),
@@ -68,6 +97,7 @@ export const jobSummarySchema = z.object({
   suspended: z.boolean(),
   createdAt: z.string().nullable(),
   resultsBase: z.string(),
+  warmup: warmupSchema,
 });
 
 export const volumeStateSchema = z.enum([
@@ -76,19 +106,6 @@ export const volumeStateSchema = z.enum([
   "done",
   "failed",
 ]);
-
-/**
- * Why a volume failed, as the API parsed it out of the wrapper's termination
- * message. `stage`/`permanent` are null when that message was not the
- * wrapper's JSON object (an older wrapper, a kubelet log tail), in which case
- * `error` is the raw text. Rendering is $lib/reasons — never these fields
- * straight into the DOM.
- */
-export const volumeReasonSchema = z.object({
-  stage: z.string().nullable(),
-  permanent: z.boolean().nullable(),
-  error: z.string(),
-});
 
 // One row per line of the campaign's volumes.txt ConfigMap.
 export const volumeViewSchema = z.object({
@@ -123,6 +140,8 @@ export const jobDetailSchema = jobSummarySchema.extend({
 
 export type JobPhase = z.infer<typeof jobPhaseSchema>;
 export type JobCounts = z.infer<typeof jobCountsSchema>;
+export type WarmupPhase = z.infer<typeof warmupPhaseSchema>;
+export type Warmup = z.infer<typeof warmupSchema>;
 export type JobSummary = z.infer<typeof jobSummarySchema>;
 export type VolumeState = z.infer<typeof volumeStateSchema>;
 export type VolumeReason = z.infer<typeof volumeReasonSchema>;

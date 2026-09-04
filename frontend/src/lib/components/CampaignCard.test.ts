@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { JobSummary } from "$lib/api.js";
 import { RELOAD_MS } from "$lib/config.js";
+import { describeReason } from "$lib/reasons.js";
 import CampaignCard from "./CampaignCard.svelte";
 
 const job: JobSummary = {
@@ -13,6 +14,7 @@ const job: JobSummary = {
   suspended: false,
   createdAt: "2026-01-01T00:00:00Z",
   resultsBase: "https://results.example.org/htr-test/demo-v1",
+  warmup: { phase: "succeeded" },
 };
 
 const volumeDone = {
@@ -568,6 +570,74 @@ describe("CampaignCard", () => {
     await vi.advanceTimersByTimeAsync(0);
     const chip = screen.getByText("partially failed");
     expect(chip).toHaveClass("partiallyfailed"); // warning, not destructive
+  });
+
+  describe("warm-up status chip", () => {
+    function stubDetail(j: JobSummary): void {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          jsonResponse({ ...j, ...detailBase, failures: [], volumes: [] }),
+        ),
+      );
+    }
+
+    test("pending", async () => {
+      const pending: JobSummary = { ...job, warmup: { phase: "pending" } };
+      stubDetail(pending);
+      render(CampaignCard, { job: pending });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screen.getByText("warm-up pending")).toHaveClass("pending");
+    });
+
+    test("running", async () => {
+      const running: JobSummary = { ...job, warmup: { phase: "running" } };
+      stubDetail(running);
+      render(CampaignCard, { job: running });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screen.getByText("warm-up running")).toHaveClass("running");
+    });
+
+    test("missing: no warm-up Job at all, and the card reads as failed", async () => {
+      const missing: JobSummary = { ...job, warmup: { phase: "missing" } };
+      stubDetail(missing);
+      const { container } = render(CampaignCard, { job: missing });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screen.getByText("no warm-up")).toHaveClass("missing");
+      expect(container.querySelector(".campaign")).toHaveAttribute(
+        "data-health",
+        "failed",
+      );
+    });
+
+    test("failed: the chip's tooltip, and a line under it once the card is open", async () => {
+      const reason = {
+        stage: "warmup",
+        permanent: true,
+        error: "unknown model class 'Yolo9'",
+      };
+      const failed: JobSummary = {
+        ...job,
+        warmup: { phase: "failed", reason },
+      };
+      stubDetail(failed);
+      render(CampaignCard, { job: failed });
+      await vi.advanceTimersByTimeAsync(0);
+      const chip = screen.getByText("warm-up failed");
+      expect(chip).toHaveClass("failed");
+      expect(chip).toHaveAttribute("title", describeReason(reason));
+      expect(screen.queryByText(describeReason(reason))).toBeNull();
+      await expand();
+      expect(screen.getByText(describeReason(reason))).toBeInTheDocument();
+    });
+
+    test("succeeded: no chip at all", async () => {
+      stubDetail(job);
+      render(CampaignCard, { job });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screen.queryByText(/warm-up/)).toBeNull();
+      expect(screen.queryByText("no warm-up")).toBeNull();
+    });
   });
 
   test("header shows pipeline, phase and counts", async () => {

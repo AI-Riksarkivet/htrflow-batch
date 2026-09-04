@@ -7,6 +7,7 @@ import {
   jobDetailSchema,
   jobSummarySchema,
   shortDate,
+  warmupSchema,
 } from "./api.js";
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -25,6 +26,7 @@ const summary = {
   suspended: false,
   createdAt: "2026-01-01T00:00:00Z",
   resultsBase: "https://results.example.org/htr-test/demo-v1",
+  warmup: { phase: "succeeded" },
 };
 
 const volume = {
@@ -247,6 +249,27 @@ describe("schemas", () => {
         volumes: [{ ...volume, reason: "exit 1" }],
       }),
     ).toThrow();
+  });
+
+  test("warmup is required on a job row, missing has no reason", () => {
+    expect(() =>
+      jobSummarySchema.parse({ ...summary, warmup: undefined }),
+    ).toThrow();
+    expect(warmupSchema.parse({ phase: "missing" })).toEqual({
+      phase: "missing",
+    });
+  });
+
+  test("a failed warmup carries the same reason shape a volume does", () => {
+    const reason = { stage: "warmup", permanent: true, error: "bad model id" };
+    expect(warmupSchema.parse({ phase: "failed", reason })).toEqual({
+      phase: "failed",
+      reason,
+    });
+  });
+
+  test("an unknown warmup phase is rejected", () => {
+    expect(() => warmupSchema.parse({ phase: "bogus" })).toThrow();
   });
 });
 

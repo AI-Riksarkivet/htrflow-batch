@@ -65,17 +65,30 @@
 
   // The card's left accent: worst-first, same intent as the old
   // volume-derived campaignHealth but read straight off the Job phase now
-  // that the API computes it server-side.
+  // that the API computes it server-side. A failed or missing warm-up (Task
+  // 28) is worst-first too: the campaign cannot start on its own either way.
   const health = $derived(
     job.phase === "Failed" ||
       job.phase === "PartiallyFailed" ||
-      job.counts.failed > 0
+      job.counts.failed > 0 ||
+      job.warmup.phase === "failed" ||
+      job.warmup.phase === "missing"
       ? "failed"
       : job.phase === "Running"
         ? "active"
         : job.phase === "Succeeded"
           ? "done"
           : "idle",
+  );
+
+  // "warm-up pending" / "warm-up running" / "warm-up failed" / "no warm-up";
+  // null (no chip) once the warm-up has succeeded.
+  const warmupChip = $derived(
+    job.warmup.phase === "succeeded"
+      ? null
+      : job.warmup.phase === "missing"
+        ? "no warm-up"
+        : `warm-up ${job.warmup.phase}`,
   );
 
   const hasMore = $derived(volumes.length < job.counts.total);
@@ -229,6 +242,14 @@
     {:else}
       <span class="chip pipeline static">{job.pipeline}</span>
     {/if}
+    {#if warmupChip !== null}
+      <span
+        class="chip warmup {job.warmup.phase}"
+        title={job.warmup.reason
+          ? describeReason(job.warmup.reason)
+          : undefined}>{warmupChip}</span
+      >
+    {/if}
     <span class="chip phase {job.phase.toLowerCase()}">{phaseLabel}</span>
     <span class="counts">
       {job.counts.done}/{job.counts.total} volumes
@@ -242,6 +263,12 @@
   </div>
   {#if yamlOpen && pipelineYaml !== ""}
     <pre class="pipeline-yaml" id={yamlId}>{pipelineYaml}</pre>
+  {/if}
+  <!-- Same text as the chip's title, but only while the card is open — the
+       chip's own tooltip already covers it folded, and there is no log to
+       link instead (Task 28). -->
+  {#if !collapsed && job.warmup.reason}
+    <p class="notice error-row">{describeReason(job.warmup.reason)}</p>
   {/if}
   {#if job.createdAt !== null}
     <p class="meta">
@@ -469,6 +496,18 @@
   }
 
   .chip.phase.failed {
+    background: var(--destructive);
+    color: var(--on-strong);
+  }
+
+  .chip.warmup.pending,
+  .chip.warmup.running {
+    background: var(--warning-soft);
+    color: var(--warning);
+  }
+
+  .chip.warmup.failed,
+  .chip.warmup.missing {
     background: var(--destructive);
     color: var(--on-strong);
   }

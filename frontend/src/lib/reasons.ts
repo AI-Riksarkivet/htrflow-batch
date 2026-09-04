@@ -114,6 +114,16 @@ export function describeReason(reason: VolumeReason): string {
       "retried."
     );
   }
+  if (stage === "warmup" && permanent !== null) {
+    // The warm-up Job's own backoffLimit has already exhausted its retries
+    // by the time the API reports "failed" (Task 28) — re-applying the
+    // pipeline is what starts a new warm-up, not time.
+    return permanent
+      ? `The warm-up failed: ${stop(error)} Fix the pipeline file, then ` +
+          "re-apply it — the warm-up will not retry on its own."
+      : `The warm-up failed: ${stop(error)} Re-apply the pipeline to try ` +
+          "again.";
+  }
   const doing = stage === null ? undefined : STAGE_WORDS[stage];
   const head =
     doing === undefined
