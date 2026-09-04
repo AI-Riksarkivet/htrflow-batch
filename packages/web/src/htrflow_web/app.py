@@ -113,8 +113,11 @@ def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
             reverse=True,
         )
         warmup_jobs = reader.list_warmups()
+        reasons: dict[str, dict | None] = {}  # list_pods once per warm-up Job
         return [
-            projection.summarize(job, reader.cfg, _warmup_status(job, warmup_jobs))
+            projection.summarize(
+                job, reader.cfg, _warmup_status(job, warmup_jobs, reasons)
+            )
             for job in jobs
         ]
 
@@ -133,12 +136,14 @@ def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
         pipe_name = projection.configmap_ref(job, "pipeline")
         pipeline_cm = reader.get_configmap(namespace, pipe_name) if pipe_name else None
         pods = reader.list_pods(namespace, name)
-        warmup = _warmup_status(job, reader.list_warmups())
+        warmup = _warmup_status(job, reader.list_warmups(), {})
         return projection.detail(
             job, configmap, pods, reader.cfg, offset, limit, pipeline_cm, warmup
         )
 
-    def _warmup_status(job: dict, warmup_jobs: list[dict]) -> dict:
+    def _warmup_status(
+        job: dict, warmup_jobs: list[dict], reasons: dict[str, dict | None]
+    ) -> dict:
         warmup_job = projection.match_warmup(job, warmup_jobs)
         if warmup_job is None:
             return {"phase": "missing"}
@@ -147,7 +152,12 @@ def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
             return {"phase": phase}
         namespace = (job.get("metadata") or {}).get("namespace", "")
         name = (warmup_job.get("metadata") or {}).get("name", "")
-        reason = projection.warmup_reason(reader.list_pods(namespace, name))
+        # Memoized by warm-up Job name: several campaigns can share one
+        # failed warm-up (same namespace + pipeline label), and list_jobs
+        # must not call list_pods once per campaign for the same reason.
+        if name not in reasons:
+            reasons[name] = projection.warmup_reason(reader.list_pods(namespace, name))
+        reason = reasons[name]
         return {"phase": phase, "reason": reason} if reason else {"phase": phase}
 
     # Last, so the routes above win over any file of the same name. Absent

@@ -234,6 +234,33 @@ def test_list_jobs_carries_a_succeeded_warmup_with_no_reason():
     assert body[0]["warmup"] == {"phase": "succeeded"}
 
 
+JOB2 = {**JOB, "metadata": {**JOB["metadata"], "name": "kyrk2"}}
+
+
+class TwoCampaignsOneFailedWarmupReader(FailedWarmupReader):
+    """Same namespace + pipeline label on both campaigns, so both match the
+    one failed warm-up -- list_pods must be called once, not per campaign."""
+
+    def __init__(self) -> None:
+        self.list_pods_calls = 0
+
+    def list_jobs(self) -> list[dict]:
+        return [JOB, JOB2]
+
+    def list_pods(self, namespace: str, job_name: str) -> list[dict]:
+        self.list_pods_calls += 1
+        return super().list_pods(namespace, job_name)
+
+
+def test_list_jobs_calls_list_pods_once_for_a_shared_failed_warmup():
+    reader = TwoCampaignsOneFailedWarmupReader()
+    client = TestClient(create_app(reader))
+    body = client.get("/api/v1/jobs").json()
+    assert len(body) == 2
+    assert all(row["warmup"]["phase"] == "failed" for row in body)
+    assert reader.list_pods_calls == 1
+
+
 def test_job_detail_carries_the_warmup_field_too():
     """Task 28: the detail response inherits `warmup` from the same
     matching the list row does -- not just a `missing` default."""

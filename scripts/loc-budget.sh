@@ -96,7 +96,11 @@ check converter "$(count packages/converter/src -name '*.py')" 1283
 # warmup field; app.py's _warmup_status wires them together, matching by
 # namespace + pipeline label and reading the warm-up Job's own pods only for
 # a failed match (ruling 2's one extra list_pods; nothing cached). (B63)
-check web       "$(count packages/web/src -name '*.py')" 650
+# 650 -> 660 in Task 28 fix round item 3: _warmup_status now memoizes the
+# failed-match reason by warm-up Job name for the request, so two campaigns
+# sharing one failed warm-up cost one list_pods call, not one per campaign.
+# (B63)
+check web       "$(count packages/web/src -name '*.py')" 660
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
