@@ -69,36 +69,32 @@ def _api_error(
     return ClusterError(f"{verb} {target}: {e.status} {e.reason}{message}")
 
 
-def _unreachable(api: Any, e: HTTPError) -> ClusterError:
+def _unreachable(e: HTTPError) -> ClusterError:
     """``MaxRetryError`` -- a bad or unreachable ``KUBECONFIG`` server -- is
     a ``urllib3.exceptions.HTTPError``, not an ``ApiException``: catching
-    only the latter misses the commonest failure of all. ``api`` (a typed
-    API instance, or ``CustomObjectsApi``) carries its own ``Configuration``,
-    so the host comes from there rather than being parsed out of ``e``."""
-    host = api.api_client.configuration.host
+    only the latter misses the commonest failure of all. The host is the one
+    the loaded config points at, not something parsed out of ``e``."""
+    host = client.Configuration.get_default_copy().host
     reason = str(getattr(e, "reason", None) or e).splitlines()[0]
     return ClusterError(f"cannot reach the Kubernetes API server at {host}: {reason}")
 
 
 @contextlib.contextmanager
-def _errors(verb: str, kind: str, name: str, namespace: str, api: Any):
+def _errors(verb: str, kind: str, name: str, namespace: str):
+    """Every API call goes through here: a problem leaves as a sentence."""
     try:
         yield
     except ApiException as e:
         raise _api_error(verb, kind, name, namespace, e) from e
     except HTTPError as e:
-        raise _unreachable(api, e) from e
+        raise _unreachable(e) from e
 
 
 def _raw(
     verb: str, kind: str, name: str, namespace: str, fn: Any, *args: Any, **kwargs: Any
 ) -> dict:
-    try:
+    with _errors(verb, kind, name, namespace):
         return json.loads(fn(*args, _preload_content=False, **kwargs).data)
-    except ApiException as e:
-        raise _api_error(verb, kind, name, namespace, e) from e
-    except HTTPError as e:
-        raise _unreachable(fn.__self__, e) from e
 
 
 class Cluster:
@@ -174,13 +170,14 @@ class Cluster:
                 if (kind, name) in rendered:
                     continue
                 extra = {"propagation_policy": "Background"} if kind == "Job" else {}
-                self._method(kind, "delete")(name, self.namespace, **extra)
+                with _errors("delete", kind, name, self.namespace):
+                    self._method(kind, "delete")(name, self.namespace, **extra)
                 print(f"pruned: {kind}/{name}")
 
     def _workload(self, uid: str) -> dict | None:
         """The Kueue Workload of the Job with ``uid``. Kueue labels it with
         that uid, the only link that survives a delete/recreate of the Job."""
-        with _errors("list", "Workload", "", self.namespace, self.custom):
+        with _errors("list", "Workload", "", self.namespace):
             listed = self.custom.list_namespaced_custom_object(
                 *_KUEUE,
                 self.namespace,
@@ -226,7 +223,7 @@ class Cluster:
             return 0
         wl_name = wl["metadata"]["name"]
         print(f"{name}: workload/{wl_name} active={str(want).lower()}")
-        with _errors("patch", "Workload", wl_name, self.namespace, self.custom):
+        with _errors("patch", "Workload", wl_name, self.namespace):
             self.custom.patch_namespaced_custom_object(
                 *_KUEUE,
                 self.namespace,

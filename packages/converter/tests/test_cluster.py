@@ -130,6 +130,26 @@ def test_prune_lists_by_the_renderers_label_and_deletes_jobs_in_background(clust
     assert deletes[0]["query"]["propagationPolicy"] == "Background"
 
 
+def test_prune_delete_forbidden_is_one_sentence(cluster, monkeypatch):
+    """``--prune`` needs ``delete`` where a plain apply does not; a Role that
+    lacks it must fail in the same voice as everything else, not as a
+    traceback out of the delete loop."""
+    real = client.ApiClient.call_api
+
+    def call_api(self, resource_path, method, *a, **kw):
+        if method == "DELETE":
+            raise ApiException(status=403, reason="Forbidden")
+        return real(self, resource_path, method, *a, **kw)
+
+    cluster.answer["GET"] = {"items": [{"metadata": {"name": "gone"}}]}
+    monkeypatch.setattr(client.ApiClient, "call_api", call_api)
+    with pytest.raises(ClusterError) as exc:
+        cluster.prune(set())
+    assert str(exc.value).startswith(
+        "not allowed to delete Job/gone in htr-batch: Forbidden"
+    )
+
+
 def test_forbidden_is_one_sentence(cluster, monkeypatch):
     """``ApiException`` 401/403 names the verb, the object and the fix --
     turning on the chart's RBAC -- rather than a raw HTTP status."""

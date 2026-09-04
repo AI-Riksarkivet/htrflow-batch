@@ -42,8 +42,8 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2010
 # `--prune` flag, and each object is applied (and printed) individually
 # instead of a directory at a time. Not sprawl: it is the price of not
 # shelling out. (B63)
-# 1200 -> 1297 in Task 21 fix: cluster error mapping; Task 22 lowers it
-check converter "$(count packages/converter/src -name '*.py')" 1297
+# 1200 -> 1293 in Task 21 fix: cluster error mapping; Task 22 lowers it
+check converter "$(count packages/converter/src -name '*.py')" 1293
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
