@@ -117,7 +117,7 @@ see [Building images](#building-images) above.
 
 ## Chart release notes
 
-The chart (`charts/htrflow-batch`, version 0.4.0) is not yet published to a
+The chart (`charts/htrflow-batch`, version 0.6.0) is not yet published to a
 chart repository — there is no packaging/release workflow for it. Install
 directly from a checkout:
 

@@ -4,7 +4,7 @@ Clone the repo, then from the repo root:
 
 ```bash
 make install   # uv sync --all-packages
-make test      # uv run --all-packages pytest -q — both Python packages
+make test      # uv run --all-packages pytest -q — all three Python packages
 cd frontend && bun install && bun run test   # the campaign browser
 ```
 
@@ -18,7 +18,7 @@ frontend is a separate Bun/SvelteKit project under `frontend/`
 ([Campaign Browser](../reference/frontend.md)).
 
 `make check` runs `ruff format` + `ruff check --fix`; `make typecheck` runs
-`ty` on both packages against the workspace venv; `make ci` runs typecheck
+`ty` on the wrapper, converter and web packages against the workspace venv; `make ci` runs typecheck
 plus the dagger `checks` and `test` functions, which is what CI runs, so a
 green `make ci` locally is a strong signal a PR will pass. Cluster-local
 constants (registry, S3 NodePort, namespace, release) come from `.env`

@@ -81,22 +81,27 @@ bundle gets bun through the RA proxy for `make frontend-install`.
 `compose-smoke` (the verified local path — see [Testing](testing.md)),
 `compose-down`, `helm-lint`, `helm-template` (lint + render both charts on
 defaults and `ci/full-values.yaml` + kubeconform), `install-devstack`,
-`docs-serve`, `docs-build` (`uvx zensical`), `poc-push` (build + push the
-wrapper and web images into the in-cluster k3s registry, printing the
-digests to pin; `poc-push-arm64` is a deprecated alias of it),
-`build-htrflow-base-arm64` (the arm64 base the wrapper builds on, from
-`HTRFLOW_DIR`), `campaigns-apply` (`htrflow-campaigns
-apply`: render a campaigns repo, `kubectl apply` its `pipelines/` then
-`campaigns/`, sync each campaign's pause),
-`psa-labels`, `frontend-install/test/check/build/dev`, `clean`. The cluster-local constants they use come from `.env`
+`install-kyverno` (the admission controller `security.policies.enabled`
+needs), `docs-serve`, `docs-build` (`uvx zensical`), `config-reference`
+(regenerates `docs/reference/configuration.md`; a test asserts the committed
+page equals it), `poc-push` (build + push the wrapper and web images into
+the in-cluster k3s registry, printing the digests to pin; `poc-push-arm64`
+is a deprecated alias of it), `build-htrflow-base-arm64` (the arm64 base the
+wrapper builds on, from `HTRFLOW_DIR`), `campaigns-apply`
+(`htrflow-campaigns apply`: render a campaigns repo, server-side apply its
+`pipelines/` then `campaigns/` through the Kubernetes client, sync each
+campaign's pause; `PRUNE=1` adds `--prune`), `e2e` (validate, apply, then
+block until every campaign Job reaches a terminal condition),
+`psa-labels`, `frontend-install/test/check/build/dev`, `clean`. The
+cluster-local constants they use come from `.env`
 ([Local k3s development](local-k3s.md)).
 
 ## Workflows
 
 - **`ci.yml`** ("Tests") — on push to `main` and on pull requests: `dagger
   call checks`, `dagger call test`, and the `scripts/loc-budget.sh` line
-  budgets (`SKIP_FRONTEND=1` until B63 Task 7 brings the frontend back under
-  its 2 500-line budget); `dagger call scan-web` and `dagger call scan` (the
+  budgets (`scripts/loc-budget.sh`, every package included); `dagger call
+  scan-web` and `dagger call scan` (the
   wrapper) run on pushes to `main` and manual runs only, one job each so a
   failure in one still builds the other image. Both scans have to build
   their image first and both builds are expensive — the wrapper's ~10 GB CUDA base, and the web image's UV clone
