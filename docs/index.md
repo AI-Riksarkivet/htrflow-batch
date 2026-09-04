@@ -46,10 +46,13 @@ repository audit on 2026-08-26 was remediated in the same branch
 ([audit report](audits/2026-08-26-repo-audit.md)). B63 (2026-09-01) then
 replaced the original GitOps CronJob controller with campaigns as
 Kubernetes Indexed Jobs — no CRD, no controller — behind a pure converter
-and a thin read API; frontend migration onto the new read API is tracked as
-its own follow-up. Kueue contention under more than one concurrent GPU
-Job, priority lanes, a durable results bucket and an archive-scale campaign
-remain open ([Open Items](roadmap/open-items.md)).
+and a thin read API, and carried the campaign browser over onto it: the
+whole front end (browser, Universal Viewer and the read API) is now one
+`htrflow-web` process, cluster policy is enforced by Kyverno rather than by
+the converter, and the per-volume time budget is the pod's own
+`activeDeadlineSeconds`. Kueue contention under more than one concurrent
+GPU Job, priority lanes, a durable results bucket and an archive-scale
+campaign remain open ([Open Items](roadmap/open-items.md)).
 
 ## Where to go next
 
