@@ -59,6 +59,21 @@ SURFACES = [
     ("chart", "`charts/htrflow-batch`", "`values.yaml`", None),
 ]
 
+#: Env the wrapper reads outside `Config` — not campaign settings, so no
+#: `Field` belongs to them. `test_no_setting_may_carry_a_secret` scans the
+#: package source for these reads too. Kept here, not just as prose, so the
+#: page and the test cannot silently drift from what the source actually
+#: reads.
+_WARMUP = "the warm-up entrypoint's own contract"
+ALSO_READ = [
+    ("IMAGE_DIGEST", "publish.py", "provenance the Job skeleton stamps"),
+    ("TERMINATION_LOG_PATH", "main.py", "the path Kubernetes sets, not chosen here"),
+    ("HF_HUB_OFFLINE", "warmup.py", _WARMUP),
+    ("HF_HOME", "warmup.py", _WARMUP),
+    ("PIPELINE_ID", "warmup.py", _WARMUP),
+    ("PIPELINE_PATH", "warmup.py", _WARMUP),
+]
+
 
 def _show(value: Any) -> str:
     if value in ("", None, [], {}, ()):
@@ -112,6 +127,15 @@ def render() -> str:
             f"| {_security(surface, key)} |\n"
             for key, default in rows
         ]
+        if surface == "wrapper":
+            out.append(
+                "\n`Config` is not the whole wrapper env: these six names\n"
+                "are read directly, by the warm-up entrypoint or by the Job\n"
+                "skeleton, never as a campaign setting.\n\n"
+                "### Also read from the environment\n\n"
+                "| Key | Read by | Why not `Config` |\n|---|---|---|\n"
+            )
+            out += [f"| `{k}` | `{f}` | {why} |\n" for k, f, why in ALSO_READ]
     return "".join(out) + foot
 
 
