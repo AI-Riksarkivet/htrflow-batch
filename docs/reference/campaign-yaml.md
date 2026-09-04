@@ -99,7 +99,8 @@ steps:                     # htrflow pipeline steps, passed through verbatim
       model: yolo
       model_settings:
         model: Riksarkivet/yolov9-regions-1
-        revision: 0123456789abcdef0123456789abcdef01234567   # required when the
+        revision: 0123456789abcdef0123456789abcdef01234567   # YOLO: top-level,
+                                                             # required when the
                                                              # cluster sets
                                                              # requireModelRevision
   - step: TextRecognition
@@ -107,7 +108,10 @@ steps:                     # htrflow pipeline steps, passed through verbatim
       model: TrOCR
       model_settings:
         model: Riksarkivet/trocr-base-handwritten-hist-swe-2
-        revision: …
+        model_kwargs:
+          revision: …          # Hugging Face models (TrOCR, Donut, DiT):
+                               # under model_kwargs, forwarded to
+                               # from_pretrained -- NOT top-level
 ```
 
 Rules enforced by `parse_pipeline` — a broken pipeline is reported as a
@@ -124,9 +128,15 @@ Two rules the converter used to apply here are the **cluster's**, enforced
 by Kyverno at admission and by the Kyverno CLI in this repo's CI, not by
 `validate`: the image's repository must be one the release's
 `security.allowedImageRepos` names, and — when `security.requireModelRevision`
-is on — every `model_settings.model` must carry a 40-hex `revision:`. They
-are checked against everything the namespace admits, not only against what
-this repo rendered.
+is on — every `model_settings.model` must carry a 40-hex `revision:`, either
+top-level under `model_settings` (YOLO) or under `model_settings.model_kwargs`
+(TrOCR and other Hugging Face-backed models, whose loader forwards
+`model_kwargs` straight to `from_pretrained`) — either placement satisfies
+the rule, but a model only reads the one its own loader expects, so pinning
+it the wrong way for that model still fails to load. Only **top-level**
+`steps:` are walked; a step nested inside a conditional or composite
+construct is not. Both rules are checked against everything the namespace
+admits, not only against what this repo rendered.
 
 ## When something is wrong
 
