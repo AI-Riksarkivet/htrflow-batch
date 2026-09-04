@@ -235,6 +235,14 @@ that row's `sourceUrl`. The detail response also reads the Job's
 `htr-pipeline-<id>` ConfigMap, so the card can list the pipeline's steps and
 show its YAML — a missing ConfigMap is no steps, not an error.
 
+Every row also carries `warmup: {phase, reason?}` — the pipeline's warm-up
+Job (the [warm-up gate](wrapper.md#model-handling)), matched by namespace +
+pipeline label: `missing` (no such Job — the campaign's pods will sit
+blocked on it forever), `pending`, `running`, `succeeded` or `failed` (with
+the same structured `reason` a volume carries; there is no warm-up log to
+link instead). This is what tells a reader why a campaign's pods are stuck
+in `Init:0/1` when the campaign's own `phase` still says `Running`.
+
 The status page is a Svelte SPA served by that same process, on the same
 origin as `/api/v1` and Universal Viewer at `/uv.html` — one image, no
 proxy. It never writes anywhere and needs no cluster credentials of its
