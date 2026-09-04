@@ -97,6 +97,18 @@ def test_apply_is_a_server_side_apply_patch(cluster, obj, path):
     assert call["body"] is obj, "the manifest itself is the patch"
 
 
+def test_an_unknown_kind_is_a_sentence_not_a_keyerror(cluster):
+    """The day a ``Service`` (or anything else this tool does not render)
+    shows up in ``manifests/``, ``apply`` must not blow up with a bare
+    ``KeyError: 'Service'``."""
+    obj = {"kind": "Service", "metadata": {"name": "x", "namespace": "htr-batch"}}
+    with pytest.raises(ClusterError) as exc:
+        cluster.apply(obj)
+    assert str(exc.value) == (
+        "Service/x: htrflow-campaigns apply only handles Job, ConfigMap"
+    )
+
+
 def test_apply_returns_what_the_server_stored(cluster):
     """The uid in the response is the only link to the Kueue Workload."""
     cluster.answer["PATCH"] = {"metadata": {"name": "kyrk", "uid": "uid-1"}}
