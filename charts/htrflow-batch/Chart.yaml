@@ -4,5 +4,5 @@ description: Kueue-gated batch HTR platform around the htrflow image (queues, mo
 type: application
 # Bump on every template/values change (README "Changelog"); a stable
 # version hid 21 revisions of drift on the PoC (audit O6).
-version: 0.5.0
+version: 0.6.0
 appVersion: "0.2.0"

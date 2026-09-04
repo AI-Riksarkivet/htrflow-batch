@@ -86,14 +86,26 @@ apply:
     enabled: false
 
 security:
-  # Image repositories a campaign Job may pin (prefix match before
-  # `@sha256:`). Empty = any registry — the converter's `validate` only
-  # warns. A campaigns repo with write access is a code-execution boundary
-  # (audit X4): set this in production.
+  # Image repositories a Job or Pod in this namespace may pin (prefix match
+  # on a path boundary, before `@sha256:`). Empty = any registry. A
+  # campaigns repo with write access is a code-execution boundary (audit
+  # X4): set this in production. Enforced by the `policies` block below —
+  # with `policies.enabled: false` this value is documentation, and the
+  # default for `verifyImages.imageReferences`.
   allowedImageRepos: []      # e.g. ["ghcr.io/riksarkivet/", "127.0.0.1:30500/"]
   # Require a 40-hex `revision:` on every pipeline step's model (HF Hub
-  # weights are pickles; an unpinned repo is mutable).
+  # weights are pickles; an unpinned repo is mutable). Same: enforced by
+  # `policies` below.
   requireModelRevision: false
+  # Kyverno ClusterPolicies (B63 Task 22) that enforce the two values above
+  # plus digest pinning on everything the namespace admits — not only on
+  # what `htrflow-campaigns render` produced. Needs Kyverno installed
+  # (`make install-kyverno` on the PoC); off by default because a policy
+  # nothing reconciles is worse than no policy at all. The same policies run
+  # in a campaigns repo's CI through the Kyverno CLI, so authors still fail
+  # in the pull request rather than at apply time.
+  policies:
+    enabled: false
   # Pod Security Admission level `make psa-labels` enforces on the namespace
   # (warn/audit are always `restricted`). The platform pods are restricted-
   # clean. `baseline` was historically needed for charts/htrflow-devstack's

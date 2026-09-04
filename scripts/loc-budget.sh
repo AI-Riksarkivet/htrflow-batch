@@ -81,5 +81,13 @@ check web       "$(count packages/web/src -name '*.py')" 600
 # three call sites first, so the 3000 that remains is the feature itself,
 # not sprawl this budget is meant to catch. (B63)
 check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3000
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 700
+# 700 -> 730 in Task 22, which moved three cluster rules out of the
+# converter and into `templates/policies/`: digest pinning, the image
+# allow-list and the model-revision requirement, as Kyverno ClusterPolicies
+# the API server enforces on everything the namespace admits (the converter
+# only ever saw what the converter rendered). ~195 lines for three policies,
+# a third of it the comments that say why each is written with `context` +
+# `deny` rather than `foreach` -- a rule whose message cannot name the
+# offending image is a rule its reader has to guess at. (B63)
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 730
 exit $fail
