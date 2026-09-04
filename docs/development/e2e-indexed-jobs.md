@@ -1557,3 +1557,215 @@ ConfigMap from the earlier rounds are gone. Nothing is running, the
 ClusterQueue is idle (`admitted=0 pending=0`). Campaigns repo `~/htr-test`
 branch `task-21` (still never pushed): `7ac0840`; branch `b63-indexed` still
 holds all the earlier campaign files.
+
+## Task 22 — policy is Kyverno's, and the converter stopped guessing
+
+Same cluster, same campaigns repo (`~/htr-test`, branch `task-22`, never
+pushed). What changed: the image allow-list and the model-revision rule
+left `packages/converter` for three `ClusterPolicy` objects the chart ships
+(`security.policies.enabled`, chart 0.6.0), and Kyverno was installed to
+enforce them.
+
+```console
+$ make install-kyverno         # chart 3.9.0, app v1.19.0, namespace kyverno
+STATUS: deployed
+$ helm upgrade htr charts/htrflow-batch -n htr-batch -f poc-values-t22.yaml
+$ kubectl get clusterpolicies.kyverno.io
+NAME                                     ADMISSION   BACKGROUND   READY
+htrflow-batch-images-allowed-htr-batch   true        true         True
+htrflow-batch-images-pinned-htr-batch    true        true         True
+htrflow-batch-model-revision-htr-batch   true        true         True
+```
+
+Values added on top of the live ones (never `--reuse-values`; the schema is
+strict, so the base came from `helm get values htr -n htr-batch -o yaml`):
+
+```yaml
+security:
+  allowedImageRepos:
+    - 127.0.0.1:30500/
+    - rustfs/        # see "the allow-list covers the platform too", below
+  policies:
+    enabled: true
+  requireModelRevision: true
+```
+
+### `converter.yaml` had to lose two keys first
+
+```console
+$ htrflow-campaigns validate ~/htr-test
+converter.yaml: allowed_image_repos moved to the htrflow-batch chart (security.allowedImageRepos, enforced by Kyverno) — remove it from converter.yaml
+1 problem in 1 file
+```
+
+`extra="forbid"` would have said *"is not a setting this file has — remove
+it, or fix the spelling"*, which sends the author looking for a typo. The
+sentence has to name the chart value that replaced the key.
+
+### (a) A rendered Job whose digest was hand-edited to a tag
+
+The converter still refuses a tag in `image:` — the renderer needs the
+digest — so this one cannot come *through* the converter at all. That is
+the point: it was applied by hand, which is exactly the path the old
+converter rule never saw.
+
+```console
+$ sed 's|@sha256:85c997f7…|:dev|' rendered/campaigns/e2e-t22ok.yaml | kubectl apply -f -
+Error from server: admission webhook "validate.kyverno.svc-fail" denied the request:
+
+resource Job/htr-batch/e2e-t22tag was blocked due to the following policies
+
+htrflow-batch-images-pinned-htr-batch:
+  job-images-pinned: 'image must be pinned by digest: 127.0.0.1:30500/htrflow-batch:dev, 127.0.0.1:30500/htrflow-batch:dev'
+```
+
+(Twice, because the init container and the worker share the image.) A
+hand-made Pod is refused by both image policies at once:
+
+```console
+$ kubectl apply -f handmade.yaml     # busybox:latest, one container
+Error from server: admission webhook "validate.kyverno.svc-fail" denied the request:
+…
+htrflow-batch-images-allowed-htr-batch:
+  pod-images-allowed: 'image is not from an allowed repository: docker.io/library/busybox:latest — allowed: 127.0.0.1:30500/, rustfs/'
+htrflow-batch-images-pinned-htr-batch:
+  pod-images-pinned: 'image must be pinned by digest: docker.io/library/busybox:latest'
+```
+
+### (b) A pipeline from a foreign registry, through `apply`
+
+`validate` passes — the allow-list is not its business any more — and the
+rejection arrives at the Job apply, through `cluster.py`'s one
+`ClusterError` boundary, as **one sentence and exit 1**:
+
+```console
+$ htrflow-campaigns validate bad-repo       # exit 0
+$ htrflow-campaigns apply bad-repo --out bad-repo/rendered
+apply Job/htr-warmup-e2e-t22foreign-v1: 400 Bad Request admission webhook "validate.kyverno.svc-fail" denied the request: resource Job/htr-batch/htr-warmup-e2e-t22foreign-v1 was blocked due to the following policies htrflow-batch-images-allowed-htr-batch: job-images-allowed: 'image is not from an allowed repository: ghcr.io/riksarkivet/htrflow-batch@sha256:85c997f7c0ca0c2145a13522bea617343ab4466c114e124489fa8729e29c3f50 — allowed: 127.0.0.1:30500/, rustfs/'
+applied: ConfigMap/htr-pipeline-e2e-t22foreign-v1
+apply exit=1
+```
+
+No second error mapping was added for Kyverno. `_api_error`'s generic
+branch already prints `<verb> <kind>/<name>: <status> <reason> <server
+message>`; the only change was to **reflow** the server's message, because
+Kyverno answers with a paragraph (blank lines and all) and every other
+problem this package prints is one sentence. Same treatment `parse.py`
+gives PyYAML's errors.
+
+### (c) A model with no `revision:`
+
+The pipeline's ConfigMap is refused *before* its warm-up Job exists:
+
+```console
+$ htrflow-campaigns apply bad-rev --out bad-rev/rendered
+apply ConfigMap/htr-pipeline-e2e-t22norev-v1: 400 Bad Request admission webhook "validate.kyverno.svc-fail" denied the request: resource ConfigMap/htr-batch/htr-pipeline-e2e-t22norev-v1 was blocked due to the following policies htrflow-batch-model-revision-htr-batch: pipeline-models-pinned: 'models not pinned to a revision: Riksarkivet/yolov9-regions-1, Riksarkivet/yolov9-lines-within-regions-1, Riksarkivet/trocr-base-handwritten-hist-swe-2 — add revision: <40-character commit hash> to each model_settings'
+```
+
+### (d) A compliant campaign runs
+
+```console
+$ make campaigns-apply DIR=/home/morgan/htr-test PRUNE=1
+applied: ConfigMap/htr-pipeline-e2e-t22-v2
+applied: Job/htr-warmup-e2e-t22-v2
+applied: ConfigMap/campaign-e2e-t22run
+applied: Job/e2e-t22run
+pruned: …                                   # the Task 21 leftovers
+
+$ kubectl -n htr-batch get jobs
+NAME                    STATUS     COMPLETIONS   DURATION
+e2e-t22run              Complete   2/2           2m21s
+htr-warmup-e2e-t22-v2   Complete   1/1           7s
+
+$ curl -s -o /dev/null -w '%{http_code}\n' \
+    http://localhost:30900/htr-results/htr-batch/e2e-t22-v2/e2e-t22run-01/manifest.json
+200
+```
+
+### (e) The Kyverno CLI reproduces all of it, before anything is applied
+
+The policies come from `helm template … --show-only 'templates/policies/*.yaml'`
+of the same chart — not a copy checked into the campaigns repo, which would
+be a second source of truth.
+
+```console
+$ kyverno apply policies.yaml --resource all-ok.yaml       # the compliant render
+pass: 6, fail: 0, warn: 0, error: 0, skip: 0               # exit 0
+$ kyverno apply policies.yaml --resource all-tag.yaml      # digests replaced by :dev
+1 - job-images-pinned image must be pinned by digest: 127.0.0.1:30500/htrflow-batch:dev, …
+pass: 4, fail: 2                                            # exit 1
+$ kyverno apply policies.yaml --resource all-bad.yaml      # foreign registry
+1 - job-images-allowed image is not from an allowed repository: ghcr.io/riksarkivet/… — allowed: 127.0.0.1:30500/
+pass: 4, fail: 2
+$ kyverno apply policies.yaml --resource all-norev.yaml    # no revision
+1 - pipeline-models-pinned models not pinned to a revision: Riksarkivet/yolov9-regions-1, …
+pass: 5, fail: 1
+```
+
+> **Trap: `--resource` is not repeatable.** `kyverno apply … --resource
+> rendered/campaigns --resource rendered/pipelines` reported *"Applying 5
+> policy rule(s) to 2 resource(s)"* and checked only one of the two
+> directories — the other was silently dropped, and a foreign-registry
+> warm-up Job went unreported. `--resource` on a directory is also not
+> recursive (`--resource rendered/` found **0** resources). The CI step
+> therefore concatenates every rendered document into one file, with a
+> `---` between files so two documents cannot merge, and passes that single
+> path.
+
+### The allow-list covers the platform too, not just campaigns
+
+`security.allowedImageRepos` is a namespace rule: it is checked on every
+Pod in the namespace, `charts/htrflow-devstack`'s RustFS included, whose
+image is `rustfs/rustfs@sha256:…` and under no prefix the PoC allowed. The
+running pod was untouched (admission is not retroactive) but the next
+restart would have been refused, so `rustfs/` went on the list. On a real
+deployment the same applies to anything else sharing the namespace.
+
+### Blocking finding: `requireModelRevision` and TrOCR do not fit
+
+Pinning a revision on a `TextRecognition` step makes the warm-up fail
+outright on this htrflow image:
+
+```
+TypeError: BaseModel.__init__() got an unexpected keyword argument 'revision'
+  File "/app/src/htrflow/models/huggingface/trocr.py", line 62, in __init__
+```
+
+YOLO takes `revision` and resolves the snapshot
+(`…/snapshots/6fb01d223f39ac325280d99e4a2d1804694e5e99/model.pt`); TrOCR
+does not accept the keyword at all. So on this image the policy is
+satisfiable only by a pipeline with no text-recognition step — which is
+what `e2e-t22-v2` is, and why the compliant campaign above segments but does
+not transcribe. **`security.requireModelRevision: true` is not usable for a
+real HTR recipe until htrflow's TrOCR model passes `revision` through to
+`from_pretrained`.** The old `converter.yaml` rule had the same hole; it was
+never exercised because it defaulted to off. Leave the value `false` in
+production for now — the two image policies do not depend on it.
+
+### Also worth knowing
+
+Kyverno v1.19 prints, on every apply of a `ClusterPolicy`:
+
+```
+Warning: ClusterPolicy (kyverno.io) is deprecated and will be removed in a
+future release; migrate to ValidatingPolicy, MutatingPolicy,
+GeneratingPolicy or ImageValidatingPolicy (policies.kyverno.io)
+```
+
+`ClusterPolicy` is what v1.19 runs and what the CLI applies, so the chart
+ships it; the CEL migration is a task of its own.
+
+Each policy is written as `context` + `deny`, not `foreach`: Kyverno refuses
+a policy whose message names a `foreach` element (*"variable 'element.image'
+present outside of foreach at path /validate/message"*), and a rule that
+cannot say *which* image is wrong makes its reader hunt for it. The context
+entry collects the offenders with one JMESPath and the message lists them.
+
+### Cluster state left behind
+
+Kyverno installed (namespace `kyverno`, release `kyverno`, 4 controllers);
+the three ClusterPolicies Ready and `Enforce`; `htr` at chart 0.6.0 with
+`security.policies.enabled: true` and `requireModelRevision: true`.
+In `htr-batch`: `e2e-t22run` (Complete 2/2) and `htr-warmup-e2e-t22-v2`
+(Complete) with their two ConfigMaps — everything from Task 21 pruned.
+Campaigns repo `~/htr-test` branch `task-22`, still never pushed.
