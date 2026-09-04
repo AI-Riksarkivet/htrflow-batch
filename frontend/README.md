@@ -92,7 +92,7 @@ the Kubernetes API, so there is nothing that can go stale.
 // GET /api/v1/jobs/{namespace}/{name}?offset=0&limit=200 — JobSummary + this
 {
   "pipelineSteps": ["Segmentation", "TextRecognition"], // the chip's tooltip
-  "pipelineYaml": "steps:\n  - step: Segmentation\n…",  // the chip's toggle
+  "pipelineYaml": "steps:\n  - step: Segmentation\n…", // the chip's toggle
   "latest": {/* the VolumeView a folded card shows, or null */},
   "failures": [/* up to 50 most recent failed-with-a-reason VolumeView rows */],
   "volumes": [
@@ -134,18 +134,18 @@ truncation), each line linking to the same log href as its table row.
 
 ## Layout
 
-| File                                          | What                                                                                    |
-| --------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `src/lib/config.ts`                           | API base and cadence resolution (table above)                                           |
-| `src/lib/api.ts`                              | Read-API Zod schemas, `fetchJobs`/`fetchJob`, `ApiUnreachable`, `isHttpUrl`/`shortDate` |
-| `src/lib/run.ts`, `runlog.ts`                 | `manifest.json` schema + summary math (incl. each page's `alto` URL); run-log grouping  |
-| `src/lib/alto.ts`                             | `parseAlto` (ALTO XML → text lines + confidence), `altoUrl`, `prettyXml`                |
-| `src/lib/reasons.ts`                          | the one place a `reason` or a fetch failure becomes a sentence a person reads           |
-| `src/lib/theme.svelte.ts`                     | the one theme store (`ThemeToggle.svelte` on every route)                               |
-| `src/lib/components/`                         | `CampaignCard`, `RunSummaryCard`, `PageGrid`, `PagesTable`, `ThemeToggle`               |
-| `src/routes/+page.svelte`, `log/`, `alto/`    | the three routes                                                                        |
-| `src/app.css`                                 | design tokens per theme (AA-checked), reduced-motion, the chrome shared by every route  |
-| `static/config.js`                            | the deployment hook (`window.API_BASE`, `/api/v1` by default)                           |
+| File                                       | What                                                                                    |
+| ------------------------------------------ | --------------------------------------------------------------------------------------- |
+| `src/lib/config.ts`                        | API base and cadence resolution (table above)                                           |
+| `src/lib/api.ts`                           | Read-API Zod schemas, `fetchJobs`/`fetchJob`, `ApiUnreachable`, `isHttpUrl`/`shortDate` |
+| `src/lib/run.ts`, `runlog.ts`              | `manifest.json` schema + summary math (incl. each page's `alto` URL); run-log grouping  |
+| `src/lib/alto.ts`                          | `parseAlto` (ALTO XML → text lines + confidence), `altoUrl`, `prettyXml`                |
+| `src/lib/reasons.ts`                       | the one place a `reason` or a fetch failure becomes a sentence a person reads           |
+| `src/lib/theme.svelte.ts`                  | the one theme store (`ThemeToggle.svelte` on every route)                               |
+| `src/lib/components/`                      | `CampaignCard`, `RunSummaryCard`, `PageGrid`, `PagesTable`, `ThemeToggle`               |
+| `src/routes/+page.svelte`, `log/`, `alto/` | the three routes                                                                        |
+| `src/app.css`                              | design tokens per theme (AA-checked), reduced-motion, the chrome shared by every route  |
+| `static/config.js`                         | the deployment hook (`window.API_BASE`, `/api/v1` by default)                           |
 
 Tests sit next to their subject (`*.test.ts`); component tests use
 @testing-library/svelte + user-event on jsdom, route tests mock `fetch` and
