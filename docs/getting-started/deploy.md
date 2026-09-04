@@ -135,7 +135,7 @@ helm upgrade --install htr charts/htrflow-batch -n htr-batch \
   --set publicResultsBase=http://localhost:30900/htr-results \
   --set network.apiServer.cidr=<node-ip>/32 \
   --set web.image=127.0.0.1:30500/htrflow-web@sha256:<web digest> \
-  --set security.allowedImageRepos='{127.0.0.1:30500/}' \
+  --set security.allowedImageRepos='{127.0.0.1:30500/,rustfs/,docker.io/amazon/aws-cli}' \
   --set security.policies.enabled=true    # needs `make install-kyverno`
 make psa-labels
 make campaigns-apply DIR=examples/campaigns   # or your own campaigns repo checkout
