@@ -71,13 +71,12 @@ root credential too and ignores anonymous-only conditions — verified
 | Keys | Anonymous read |
 |---|---|
 | `[<namespace>/]<pipeline>/<volume>/*` (results, `iiif.json`, `manifest.json`), `sources/*` | always — the browser fetches them directly from the results base, never through the platform |
-| `status/logs/*` (run logs) | **yes while `devStack.rustfs.publicLogs=true`** (default). The campaign browser links them; a run log can carry the redacted form of a private IIIF URL and whatever htrflow prints. Set it to `false` once the run-log view sits behind an authenticated proxy |
+| `status/logs/*` (run logs) | **yes while the devstack chart's `rustfs.publicLogs` is `true`** (default). The campaign browser links them; a run log can carry the redacted form of a private IIIF URL and whatever htrflow prints. Set it to `false` once the run-log view sits behind an authenticated proxy |
 
-A handful of `status/attempts.json`-era key paths are still explicitly
-excluded by the rendered policy — nothing writes them any more, so they are
-harmless dead entries left over from before B63; they will simply never
-exist. A real bucket (HCP, AWS) needs the plain "everything except
-`status/logs/*` when private" shape above, written by hand.
+That is the whole list: `status/logs/<pipeline>/<volume>.txt` is the only
+key anything writes under `status/` (`ResultStore.run_log_key`), so the
+policy's private set is either empty or that one prefix. A real bucket
+(HCP, AWS) needs the same shape, written by hand.
 `scripts/compose_init.py` mirrors it for the compose stack.
 
 ### Two S3 principals: resolved by removal

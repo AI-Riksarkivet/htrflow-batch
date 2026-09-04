@@ -65,10 +65,10 @@ in the base's resolution into a build failure instead of a silent change.
 --tags --always --dirty`) into the image label
 `se.riksarkivet.htrflow.base.revision`, because `manifest.json` only knows
 the package version (`0.2.6`) while the base is built well past that tag.
-It prints the wrapper and API digests at the end — the wrapper's goes into
-`pipelines/<id>.yaml` in the campaigns repo, the API's into `web.image`
-(or use `security.allowTagImages=true` and the `:dev` tag while iterating;
-tags are then pulled on every rollout).
+It prints the wrapper and web digests at the end — the wrapper's goes into
+`pipelines/<id>.yaml` in the campaigns repo, the web front's into
+`web.image` (or use `security.allowTagImages=true` and the `:dev` tag while
+iterating; tags are then pulled on every rollout).
 
 Three extras beyond the amd64 branch are required and pinned in the
 dockerfile, all behind `if [ "$TARGETARCH" = "arm64" ]`: `gcc` + Python
@@ -94,7 +94,7 @@ Pipeline files pin `127.0.0.1:30500/…` digests, which resolve only on this
 node — so the PoC's campaigns repo must never reach a shared `main` (and
 there is nothing in-cluster that needs to clone it any more: no CronJob
 controller, no git daemon). Render and apply directly against the PoC
-cluster with `kubectl`:
+cluster from your own kubeconfig:
 
 ```bash
 cd ~/htr-test                                   # the PoC campaigns repo, branch local-k3s
@@ -117,8 +117,9 @@ never resolves `localhost`, so its own S3 writes go through `S3_ENDPOINT`
 `PUBLIC_RESULTS_BASE` is only ever embedded as browser-facing text
 (`viewer_url` in `manifest.json`, the `id` inside a published `iiif.json`
 or synthetic manifest) — there is no separate "internal results base" to
-keep in sync any more, and nothing rewrites URLs after the fact (there is
-no `status.json` left to do that job). On real AWS (`S3_ENDPOINT` empty)
+keep in sync any more, and nothing rewrites URLs after the fact, because
+nothing in this system stores a derived copy of them. On real AWS
+(`S3_ENDPOINT` empty)
 this distinction disappears entirely. Anything *you* put in a campaign
 file — a fixture manifest on the RustFS bucket, say — must use the
 in-cluster form (`http://rustfs.htr-batch.svc.cluster.local:9000/…`),
@@ -187,12 +188,18 @@ in the chart READMEs.
   first finishes (a 480-spread volume runs ~12–13 s/page). `queued` with an
   idle GPU means Kueue is down, not busy.
 - **`make campaigns-apply` is safe to re-run**: `render` is a pure function
-  and `kubectl apply` is idempotent, so re-running only matters when the
+  and a server-side apply is idempotent, so re-running only matters when the
   campaigns repo actually changed. (Verified against running, completed and
   failed Jobs — the converter no longer uses Kueue partial admission, which
   used to rewrite `spec.parallelism` on the live Job and make the rendered
   file un-appliable: [E2E log](e2e-indexed-jobs.md).)
-- **Cancelling needs `PRUNE=1`**: a plain `kubectl apply` never deletes.
+- **Cancelling needs `PRUNE=1`**: an apply on its own never deletes.
+  `make campaigns-apply DIR=… PRUNE=1` passes `--prune`, which lists every
+  Job and ConfigMap in the namespace labelled
+  `htrflow.riksarkivet.se/managed-by=converter` and deletes the ones this
+  render did not produce. Only ever run it against the *whole* campaigns
+  repo — against a partial checkout it cancels everything the checkout does
+  not contain.
 - **`make install-devstack NVIDIA_DEVICE_PLUGIN=false` refuses while GPU
   pods are running**: disabling the plugin deletes the chart-managed
   `nvidia` RuntimeClass and device-plugin DaemonSet, which took a live pod
@@ -203,11 +210,6 @@ in the chart READMEs.
   GPU) and uses `runtimeClassName: nvidia` or requests
   `nvidia.com/gpu`, and exits non-zero if it finds one; `FORCE=1` skips the
   check.
-  `make campaigns-apply DIR=… PRUNE=1` adds
-  `--prune -l htrflow.riksarkivet.se/managed-by=converter`, which is what
-  actually removes a deleted campaign's Job and ConfigMap. Only ever run it
-  against the *whole* campaigns repo — against a partial checkout it cancels
-  everything the checkout does not contain.
 - **Pausing is `suspend: true` in the campaign file plus the apply step.**
   The rendered `spec.suspend` alone does not hold — Kueue owns that field for
   an admitted Workload and undoes it in seconds — so the last step of

@@ -18,14 +18,15 @@
    **verification gate** (missing output ⇒ no `manifest.json`, transient
    exit), exit-code mapping incl. SIGTERM, log shipping,
    warm-up classification, the synthetic-manifest builder. Converter: parse
-   (ids, allow-list, revisions, http(s) only, append-only), render (golden
-   fixture → expected ConfigMap/Job YAML), the 10 000-volume split. Read
-   API: `projection.py`'s pure functions against hand-built Job/Pod/
-   ConfigMap dicts (phase derivation, index-range parsing, per-volume state,
-   termination messages) — no fixture cluster needed. Frontend: schemas
-   (fail-soft, URL refusal, `unknown`), derivation, run-log grouping,
-   component and route tests on jsdom (still against the pre-B63 shape —
-   Task 7 migrates this).
+   (ids, http(s) only, append-only, and the sentence a `converter.yaml` gets
+   for a key that moved to the chart), render (golden fixture → expected
+   ConfigMap/Job YAML), the 10 000-volume split, and the chart-agreement
+   test that regenerates `docs/reference/configuration.md`. Web front:
+   `projection.py`'s pure functions against hand-built Job/Pod/ConfigMap
+   dicts (phase derivation, index-range parsing, per-volume state,
+   termination messages, warm-up matching) plus the route and static-mount
+   tests — no fixture cluster needed. Frontend: schemas, derivation, the
+   ALTO parser, run-log grouping, and component and route tests on jsdom.
 2. **Container smoke** — the batch image against a real 2-page manifest with
    a RustFS target; assert PAGE + ALTO files + `manifest.json` land.
 3. **Cluster acceptance** —
