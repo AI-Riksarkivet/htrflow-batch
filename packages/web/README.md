@@ -66,15 +66,28 @@ one extra `list_pods`, for the wrapper's termination message as `reason`.
 | `HTRFLOW_WEB_STATIC` | `/app/static` | The built site. Missing directory = API only, which is what a local run gets |
 | `HTRFLOW_WEB_SITE_ONLY` | unset | Any non-empty value: serve the site without a cluster — `/api/v1/…` answers `503`, nothing tries to load a kubeconfig. The local compose stack runs this way |
 
-The chart sets the first from `publicResultsBase`; the image bakes the
-second's default.
+All four are read in one place — `kube.Config`, a frozen pydantic model whose
+fields carry their own env name (`Field(alias=...)`), the same idiom the
+wrapper and the converter use (B63 Task 27). `app.py` and `__main__.py` read
+no environment of their own. The chart sets the first from `publicResultsBase`;
+`HTRFLOW_WEB_STATIC` empty means the directory the image bakes in.
+
+**Why the `HTRFLOW_` prefix here and bare names in the wrapper.** These four
+are an operator's settings for a long-lived service that shares a pod
+environment with whatever the platform sets, so they are namespaced. The
+wrapper's (`PUBLIC_RESULTS_BASE`, `S3_BUCKET`, …) are an in-pod contract
+written by the rendered Job itself
+(`packages/converter/src/htrflow_converter/manifests/campaign-job.yaml`):
+nothing else writes that pod's environment, and renaming them would break
+every campaign Job in flight. Neither surface ever carries a secret — see
+[Configuration reference](../../docs/reference/configuration.md).
 
 ## Modules
 
 | Module | Role |
 |---|---|
-| `app.py` | `create_app(reader, static_dir=None)`: the three routes over a duck-typed reader (so tests wire a fake), the three security headers the old nginx sent, then the static mount. `NoCluster` is the site-only reader |
-| `kube.py` | `Config.from_env`, `Reader`: raw-JSON get/list against Jobs, ConfigMaps and Pods, in-cluster or kubeconfig |
+| `app.py` | `create_app(reader, static_dir=None)` (`__main__` passes `cfg.static_dir`): the three routes over a duck-typed reader (so tests wire a fake), the three security headers the old nginx sent, then the static mount. `NoCluster` is the site-only reader |
+| `kube.py` | `Config` (the whole env contract) and `Reader`: raw-JSON get/list against Jobs, ConfigMaps and Pods, in-cluster or kubeconfig |
 | `projection.py` | Pure functions from API-server dicts to `JobSummary` and `JobDetail`; `parse_index_ranges` for `completedIndexes` |
 | `__main__.py` | The `htrflow-web` console script: uvicorn on `0.0.0.0:8081`; picks the reader (`kube.Reader`, or `NoCluster` under `HTRFLOW_WEB_SITE_ONLY`) |
 
