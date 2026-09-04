@@ -210,9 +210,9 @@ def test_a_paused_campaign_whose_workload_never_appears_waits_then_fails(
     repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
     rc = cli.main(["apply", str(repo), "--out", str(out), "--pause-wait", "3"])
     assert rc == 1
-    out_text = capsys.readouterr().out
-    assert "pausy: paused in git" in out_text
-    assert "kyrk: no Workload yet, skipping" in out_text
+    captured = capsys.readouterr()
+    assert "pausy: paused in git" in captured.err
+    assert "kyrk: no Workload yet, skipping" in captured.out
 
 
 def test_a_running_campaign_without_a_workload_is_skipped(tmp_path, cluster):
