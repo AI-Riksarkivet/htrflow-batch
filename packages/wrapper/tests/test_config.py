@@ -1,6 +1,12 @@
+import re
+
 import pytest
 
 from htrflow_batch.config import Config, ConfigError
+
+#: A name that would mean a credential is travelling as an environment
+#: variable rather than as the mounted Secret file.
+_SECRETISH = r"KEY|TOKEN|PASSWORD|SECRET_ACCESS"
 
 REQUIRED = {
     "VOLUME_REF": "SE-RA-1234",
@@ -110,3 +116,15 @@ def test_optional_env_is_coerced_by_pydantic():
     )
     with pytest.raises(ValueError):
         Config.from_env(dict(REQUIRED, LOOKAHEAD_PAGES="abc"))
+
+
+def test_no_setting_may_carry_a_secret():
+    """The wrapper's S3 credentials are a mounted Secret file
+    (``AWS_SHARED_CREDENTIALS_FILE=/secrets/s3/credentials``), never an env
+    var: env is readable in ``kubectl describe``, in a crash dump and in
+    every child process. A new setting that looks like a credential fails
+    here rather than in a review."""
+    carriers = [n for n in Config.env_names() if re.search(_SECRETISH, n)]
+    assert carriers == [], (
+        f"{carriers}: secrets reach the wrapper as a mounted file, never as env"
+    )
