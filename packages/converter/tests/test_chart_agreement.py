@@ -13,6 +13,7 @@ all — docs/reference/configuration.md lists what is one-sided.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -80,8 +81,9 @@ def test_the_results_base_reaches_both_of_its_consumers():
     assert ".Values.publicResultsBase" in web
     job_env = _load(JOB_SKELETON)["spec"]["template"]["spec"]["containers"][0]["env"]
     assert "PUBLIC_RESULTS_BASE" in [e["name"] for e in job_env]
-    render = (CONVERTER_SRC / "render.py").read_text(encoding="utf-8")
-    assert '"PUBLIC_RESULTS_BASE": cfg.public_results_base' in render
+    render_src = (CONVERTER_SRC / "render.py").read_text(encoding="utf-8")
+    pattern = r'"PUBLIC_RESULTS_BASE"\s*:\s*cfg\.public_results_base'
+    assert re.search(pattern, render_src)
 
 
 def test_security_names_only_keys_the_generator_emits():
