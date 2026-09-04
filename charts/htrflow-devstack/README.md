@@ -28,8 +28,8 @@ not anything here.
 **No git daemon.** The original `devstack-gitdaemon.yaml` served a bare
 campaigns repo over `git://` for the old GitOps CronJob controller to poll.
 That controller is gone as of htrflow-batch 0.3.0 (B63): campaigns are Indexed
-Jobs rendered by `packages/converter` and applied with `kubectl apply` (or
-committed to a repo Argo CD watches) — nothing in the platform reads `git://`
+Jobs rendered by `packages/converter` and applied by `htrflow-campaigns
+apply` (or committed to a repo Argo CD watches) — nothing reads `git://`
 any more, so the daemon had no consumer left and was deleted rather than
 carried forward as dead weight (it was briefly re-added with a broadened,
 consumer-less NetworkPolicy in an earlier draft of this chart; removed on
@@ -123,16 +123,18 @@ kubectl -n kube-system label daemonset nvidia-device-plugin app.kubernetes.io/ma
   `rustfs.init`) creates `s3.bucket`, applies the bucket policy and CORS,
   idempotently.
 - **Anonymous read is split** (audit X14): `<pipeline>/<volume>/*` and
-  `sources/*` are always anonymous (the browser fetches them directly);
-  `status/attempts.json`, `status/validation.json`, `status/volumes.json`
-  and `status/failures/*` always need credentials;
+  `sources/*` are always anonymous (the browser fetches them directly), and
   `status/logs/*` is anonymous only while `rustfs.publicLogs=true` (default
   — the campaign browser links run logs; they can carry a tokenised private
-  IIIF URL on failure, so set it false behind an authenticated proxy). The
-  policy is a single `Allow` with `NotResource` because RustFS applies a
-  `Deny` to the root credential too and ignores anonymous-only conditions
-  (verified 2026-08-26); `scripts/compose_init.py` renders the same shape
-  for the compose stack. Listing stays denied.
+  IIIF URL on failure, so set it false behind an authenticated proxy). That
+  is the whole split: the run log is the only key anything writes under
+  `status/` (`packages/wrapper`'s `ResultStore.run_log_key`), so with
+  `publicLogs` on the policy is a plain `Resource` allow on the bucket and
+  with it off a single `Allow` with `NotResource` — `NotResource` rather
+  than a `Deny` because RustFS applies a `Deny` to the root credential too
+  and ignores anonymous-only conditions (verified 2026-08-26).
+  `scripts/compose_init.py` renders the same shape for the compose stack.
+  Listing stays denied.
 
 ## Sizing (O18)
 
@@ -147,6 +149,25 @@ kubectl -n kube-system label daemonset nvidia-device-plugin app.kubernetes.io/ma
 
 Everything below this line is history: each entry names the objects and
 value keys as they were at that version.
+
+### 0.3.0 — 2026-09-04 (B63 Task 12: the bucket policy names only live keys)
+
+Changed, not breaking: `htrflow-devstack.bucketPolicy` no longer excludes
+`status/attempts.json`, `status/validation.json`, `status/volumes.json` or
+`status/failures/*`. Nothing has written any of them since B63 removed the
+reconciler — `packages/wrapper` writes exactly one key under `status/`,
+`status/logs/<pipeline>/<volume>.txt` — so the four entries only made the
+rendered policy harder to read. With `rustfs.publicLogs` on (the default)
+the statement is now a plain `Resource` allow on `<bucket>/*`; with it off
+it is an `Allow` with `NotResource: [<bucket>/status/logs/*]`, unchanged in
+effect. `scripts/compose_init.py`'s `PRIVATE_STATUS_KEYS` was emptied in the
+same change — the two mirror each other by contract.
+
+### 0.2.0 — 2026-09-01 (B63: credentials nobody chose are refused)
+
+Breaking: `devStack.insecureDefaults` (default `false`) — the render refuses
+RustFS on an empty or repo-published `rustfs.accessKey`/`secretKey`. See
+"0.2.0: credentials nobody chose are refused" above.
 
 ### 0.1.1 — 2026-09-04 (B63 Task 28 fix round)
 

@@ -46,9 +46,9 @@ in a pod environment nothing else writes.
   campaign browser are open to anyone who can reach the port —
   `network.web.ingressCidrs` is the only gate.
 - **The results bucket is public-read**: everything under
-  `publicResultsBase` except `status/attempts.json`, `status/validation.json`,
-  `status/volumes.json`, `status/failures/*` and (unless `rustfs.publicLogs`)
-  `status/logs/*`.
+  `publicResultsBase`, except `status/logs/*` when `rustfs.publicLogs` is
+  off. There is nothing else to exclude — the run log is the only key
+  anything writes under `status/`.
 
 The *Security* column below reads *what the key exposes — who enforces it*:
 **cluster** = the API server or an admission policy, **render** = `helm

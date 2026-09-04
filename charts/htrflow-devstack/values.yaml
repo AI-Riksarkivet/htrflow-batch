@@ -5,9 +5,9 @@
 #
 # No git daemon here (there was one through B63 Task 5's first draft):
 # nothing in the platform reads git:// any more — campaigns are Indexed
-# Jobs rendered by packages/converter and applied with `kubectl`, not
-# fetched in-cluster by a CronJob controller — so it had no consumer and
-# was removed rather than kept as dead weight.
+# Jobs rendered by packages/converter and applied by `htrflow-campaigns
+# apply` (or Argo CD), not fetched in-cluster by a CronJob controller — so
+# it had no consumer and was removed rather than kept as dead weight.
 
 # RustFS's root credentials are also the S3 credentials every batch Job and
 # the results bucket get, so this chart refuses to render RustFS on a
@@ -55,9 +55,9 @@ rustfs:
   # browser links them, so the PoC keeps them public; they can carry a
   # tokenised private IIIF URL on failure (audit X14) — set false and serve
   # the run-log view through an authenticated proxy to close that.
-  # attempts.json, validation.json, volumes.json, failures/* and warmup/*
-  # always need credentials; <pipeline>/<volume>/* and sources/* are always
-  # anonymous-readable (the browser fetches them directly).
+  # This is the whole private set: <pipeline>/<volume>/* and sources/* are
+  # always anonymous-readable (the browser fetches them directly), and
+  # status/logs/* is the only other key anything writes.
   publicLogs: true
 
 registry:

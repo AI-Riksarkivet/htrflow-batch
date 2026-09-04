@@ -77,21 +77,26 @@ is readable except the platform's private state. RustFS honours NotResource
 on an Allow (verified 2026-08-26 against rustfs@sha256:41fe8938…); a Deny
 statement would also block the credentialed principals, and an anonymous-only
 Condition is ignored — hence this shape. Keep in step with scripts/compose_init.py.
+
+The private list holds at most `status/logs/*`: that is the only key anything
+writes under `status/` (packages/wrapper's ResultStore.run_log_key; nothing
+else in the platform touches the bucket). The reconciler-era entries
+(attempts.json, validation.json, volumes.json, failures/*) were dropped in
+0.3.0 — nothing has written them since B63, so excluding them only made the
+rendered policy harder to read. With publicLogs on there is no private key
+at all, and the statement becomes a plain Resource allow.
 */}}
 {{- define "htrflow-devstack.bucketPolicy" -}}
 {{- $b := .Values.s3.bucket }}
-{{- $private := list
-      (printf "arn:aws:s3:::%s/status/attempts.json" $b)
-      (printf "arn:aws:s3:::%s/status/validation.json" $b)
-      (printf "arn:aws:s3:::%s/status/volumes.json" $b)
-      (printf "arn:aws:s3:::%s/status/failures/*" $b) }}
-{{- if not .Values.rustfs.publicLogs }}
-{{- $private = append $private (printf "arn:aws:s3:::%s/status/logs/*" $b) }}
-{{- end }}
-{{- dict "Version" "2012-10-17" "Statement" (list (dict
+{{- $statement := dict
       "Sid" "AnonymousReadResults"
       "Effect" "Allow"
       "Principal" (dict "AWS" (list "*"))
-      "Action" (list "s3:GetObject")
-      "NotResource" $private)) | toJson }}
+      "Action" (list "s3:GetObject") }}
+{{- if .Values.rustfs.publicLogs }}
+{{- $_ := set $statement "Resource" (list (printf "arn:aws:s3:::%s/*" $b)) }}
+{{- else }}
+{{- $_ := set $statement "NotResource" (list (printf "arn:aws:s3:::%s/status/logs/*" $b)) }}
+{{- end }}
+{{- dict "Version" "2012-10-17" "Statement" (list $statement) | toJson }}
 {{- end }}
