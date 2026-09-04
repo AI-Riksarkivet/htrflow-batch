@@ -184,6 +184,17 @@ def test_no_incluster_and_no_kubeconfig_is_one_sentence(monkeypatch):
     )
 
 
+def test_pause_sync_failure_goes_to_stderr(cluster, capsys):
+    """This is the one line that accompanies a non-zero exit -- it must not
+    be mixed into the progress output on stdout."""
+    cluster.answer["GET"] = {"items": []}
+    rc = cluster.sync_pause({"metadata": {"name": "k", "uid": "u9"}}, True, 0)
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "paused in git" in captured.err
+    assert "paused in git" not in captured.out
+
+
 def test_the_workload_is_found_by_the_jobs_uid(cluster):
     cluster.answer["GET"] = {"items": []}
     assert cluster.sync_pause({"metadata": {"name": "k", "uid": "u9"}}, False, 0) == 0

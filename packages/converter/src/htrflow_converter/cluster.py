@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import sys
 import time
 from typing import Any
 
@@ -217,7 +218,8 @@ class Cluster:
                 return 0
             print(
                 f"{name}: paused in git, but no Kueue Workload appeared within "
-                f"{wait}s — the pause is NOT enforced; re-run the apply"
+                f"{wait}s — the pause is NOT enforced; re-run the apply",
+                file=sys.stderr,
             )
             return 1
         want = not suspended
