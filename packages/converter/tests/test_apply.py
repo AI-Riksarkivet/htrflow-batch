@@ -79,7 +79,7 @@ class FakeCluster(Cluster):
         self.namespace = namespace
         return self
 
-    def _method(self, kind: str, verb: str):
+    def _method(self, kind: str, verb: str, name: str = ""):
         def patch(name, ns, obj, **kw):
             self.calls.append(("apply", kind, name))
             return _Body({"metadata": {"name": name, "uid": f"uid-{name}"}})
@@ -248,10 +248,10 @@ def test_a_cluster_error_prints_the_sentence_and_exits_1(tmp_path, cluster, caps
         "apply.rbac.enabled"
     )
 
-    def boom(kind, verb):
+    def boom(kind, verb, name=""):
         if verb == "patch":
             raise cluster_mod.ClusterError(sentence)
-        return FakeCluster._method(cluster, kind, verb)
+        return FakeCluster._method(cluster, kind, verb, name)
 
     cluster._method = boom
     repo, out = _repo(tmp_path), tmp_path / "rendered"

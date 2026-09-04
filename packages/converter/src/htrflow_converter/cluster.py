@@ -120,7 +120,12 @@ class Cluster:
         self.core = client.CoreV1Api()
         self.custom = client.CustomObjectsApi()
 
-    def _method(self, kind: str, verb: str) -> Any:
+    def _method(self, kind: str, verb: str, name: str = "") -> Any:
+        if kind not in _KINDS:
+            raise ClusterError(
+                f"{kind}/{name}: htrflow-campaigns apply only handles "
+                f"{', '.join(_KINDS)}"
+            )
         api, noun = _KINDS[kind]
         return getattr(getattr(self, api), f"{verb}_namespaced_{noun}")
 
@@ -138,7 +143,7 @@ class Cluster:
             kind,
             name,
             namespace,
-            self._method(kind, "patch"),
+            self._method(kind, "patch", name),
             name,
             namespace,
             obj,
