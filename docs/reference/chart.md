@@ -1,6 +1,6 @@
 # Chart Values
 
-`charts/htrflow-batch` (version **0.4.0**) — one chart for the Kueue queue
+`charts/htrflow-batch` (version **0.6.0**) — one chart for the Kueue queue
 objects, the model-cache PVC, the web front (campaign browser, Universal
 Viewer and the read-only status API in one Deployment) and the
 NetworkPolicies. The PoC-only support infrastructure (RustFS, an in-cluster
