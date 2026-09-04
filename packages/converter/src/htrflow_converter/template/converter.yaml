@@ -4,6 +4,12 @@
 # docs/reference/campaign-yaml.md in htrflow-batch for the full list and
 # defaults.
 namespace: htr-batch
+# These three name objects charts/htrflow-batch creates, and must agree with
+# it by convention: `queue` <-> the chart's `queue.name`, `s3_secret` <->
+# `s3.existingSecret`, `data_pvc` <-> `modelCache.name`. The two charts and
+# this file agree by convention only — neither can see the other — and
+# packages/converter/tests/test_chart_agreement.py fails when a rename
+# lands on one side only. `runtime_class` has no chart counterpart.
 queue: htr-batch
 
 # Job parallelism, AND the cap every campaign's own `window:` is clamped to.
@@ -11,10 +17,6 @@ queue: htr-batch
 # rendering more and letting Kueue's partial admission shrink it makes the
 # rendered file un-appliable afterwards (docs: reference/campaign-yaml.md).
 window: 20
-# These three name objects charts/htrflow-batch creates (`queue.name`,
-# `s3.existingSecret`, `modelCache.name`): the two charts and this file agree
-# by convention, and packages/converter/tests/test_chart_agreement.py fails
-# when a rename lands on one side only.
 s3_secret: htr-batch-s3
 data_pvc: htr-test-data
 runtime_class: nvidia
