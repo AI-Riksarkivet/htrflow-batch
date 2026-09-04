@@ -104,7 +104,11 @@ check web       "$(count packages/web/src -name '*.py')" 650
 # (not counted here -- it is not `.ts`/`.svelte`) and were deleted from their
 # three call sites first, so the 3000 that remains is the feature itself,
 # not sprawl this budget is meant to catch. (B63)
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3000
+# 3000 -> 3068 for Task 28: api.ts's warmupPhaseSchema/warmupSchema (and the
+# reason schema moved up to sit above them), reasons.ts's warmup stage
+# phrase, and CampaignCard.svelte's chip (health, label, tooltip, the
+# open-card reason line, four CSS rules). (B63)
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3068
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

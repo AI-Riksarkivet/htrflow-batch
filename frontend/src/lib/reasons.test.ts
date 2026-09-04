@@ -135,6 +135,34 @@ describe("describeReason", () => {
     );
   });
 
+  test("a permanently bad pipeline config fails the warm-up for good", () => {
+    expect(
+      reasonOf({
+        stage: "warmup",
+        permanent: true,
+        error: "unknown model class 'Yolo9'",
+      }),
+    ).toBe(
+      "The warm-up failed: unknown model class 'Yolo9'. Fix the pipeline " +
+        "file, then re-apply it — the warm-up will not retry on its own.",
+    );
+  });
+
+  test("a transiently failed warm-up still needs a re-apply, not just time", () => {
+    // The warm-up Job's own backoffLimit has already exhausted its retries
+    // by the time the API reports "failed" (Task 28).
+    expect(
+      reasonOf({
+        stage: "warmup",
+        permanent: false,
+        error: "connection reset",
+      }),
+    ).toBe(
+      "The warm-up failed: connection reset. Re-apply the pipeline to try " +
+        "again.",
+    );
+  });
+
   test("an unknown stage falls back to a plain sentence", () => {
     expect(
       reasonOf({ stage: "teleport", permanent: false, error: "boom" }),
