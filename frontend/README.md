@@ -1,17 +1,21 @@
 # Campaign browser
 
 SvelteKit 2 + Svelte 5 static SPA over the read API (`packages/web`,
-`GET /api/v1/jobs`). Two routes, no server:
+`GET /api/v1/jobs`). Three routes, no server:
 
 - `/` — every campaign (one row per Indexed Job) as a card: pipeline chip,
-  phase, counts, and its volume table (id, state, links), fetched and paged
-  separately from the list. An "API unreachable" banner on top of the last
-  good list when a poll fails.
+  warm-up chip, phase, counts, and its volume table (id, state, links),
+  fetched and paged separately from the list. Cards start folded and show a
+  one-line latest strip while they are. An "API unreachable" banner on top
+  of the last good list when a poll fails.
 - `/log?log=<url>&manifest=<url>[&live=1]` — the run viewer: the wrapper's
   run log grouped by stage, plus a summary card (counts, median / p95 / max,
   slowest pages, failed pages, a per-page grid) from `manifest.json`. With
   `live=1` it re-fetches on the wrapper's log-ship cadence and stops on the
   terminal line, a finished manifest, or after `LIVE_MAX_FAILURES` misses.
+- `/alto?src=<url>` — the ALTO viewer: one page's ALTO XML as text in
+  reading order, each line tinted by its `WC` confidence, with a raw-XML
+  toggle. Reached from the run viewer's alto column.
 
 `bun run build` emits `dist/`, which `.docker/htrflow-web.dockerfile` copies
 into the read API's `/app/static` (over the Universal Viewer build, so `/` is
@@ -61,13 +65,12 @@ the meta tag: the browser enforces the intersection.
 
 `src/lib/api.ts` is the boundary: Zod schemas for `JobSummary`/`JobDetail`/
 `VolumeView`, and `fetchJobs()` / `fetchJob(namespace, name, offset, limit)`.
-Unlike the old reconciler-written status document, this is our own API — a malformed response is
-a bug on our side, not an untrusted document, so parsing **fails hard**
-(`.parse`, not `.safeParse`): no per-row degrading. `ApiUnreachable` covers
-both a network error and a non-2xx status; the page shows one "API
-unreachable" banner over the last good list, nothing state-dependent like
-the old age-based STALE check (every response is computed live from the
-Kubernetes API, so there is nothing to go stale).
+This is our own API, not a document we found — a malformed response is a bug
+on our side, so parsing **fails hard** (`.parse`, not `.safeParse`): no
+per-row degrading. `ApiUnreachable` covers both a network error and a
+non-2xx status; the page shows one "API unreachable" banner over the last
+good list. There is no staleness check: every response is computed live from
+the Kubernetes API, so there is nothing that can go stale.
 
 ```jsonc
 // GET /api/v1/jobs — JobSummary[]
@@ -75,17 +78,22 @@ Kubernetes API, so there is nothing to go stale).
   "namespace": "htr-test",
   "name": "kyrk",
   "pipeline": "demo-v1",
-  "phase": "Running", // Succeeded | Failed | Queued | Paused | Running
+  "phase": "Running", // Succeeded | PartiallyFailed | Failed | Queued | Paused | Running
   "counts": { "total": 7, "active": 1, "done": 4, "failed": 1 },
   "suspended": false,
   "createdAt": "2026-01-01T00:00:00Z",
   "resultsBase": "https://results.example.org/htr-test/demo-v1",
+  "warmup": { "phase": "succeeded" }, // missing | pending | running | succeeded
+  //                                  // | failed (then also `reason`)
 }
 ```
 
 ```jsonc
 // GET /api/v1/jobs/{namespace}/{name}?offset=0&limit=200 — JobSummary + this
 {
+  "pipelineSteps": ["Segmentation", "TextRecognition"], // the chip's tooltip
+  "pipelineYaml": "steps:\n  - step: Segmentation\n…",  // the chip's toggle
+  "latest": {/* the VolumeView a folded card shows, or null */},
   "failures": [/* up to 50 most recent failed-with-a-reason VolumeView rows */],
   "volumes": [
     {
@@ -95,13 +103,20 @@ Kubernetes API, so there is nothing to go stale).
       "manifestUrl": "https://…/vol3/manifest.json",
       "iiifUrl": "https://…/vol3/iiif.json",
       "altoPrefix": "https://…/vol3/alto/",
+      "sourceUrl": "https://iiif.example.org/vol3/manifest", // null for `images:`
       "logUrl": "https://…/status/logs/demo-v1/vol3.txt", // absolute, always present
-      "reason": "…", // the wrapper's own termination message; present only
-      // while a pod for that index still exists
+      "reason": { "stage": "setup", "permanent": true, "error": "…" },
+      // the wrapper's own termination message, parsed; present only while a
+      // pod for that index still exists
     },
   ],
 }
 ```
+
+`latest`, `failures`, `pipelineSteps` and `pipelineYaml` are computed over
+**every** volume, unaffected by `offset`/`limit` — a campaign of thousands
+shows its first 200 rows, and the volume in flight is almost never among
+them.
 
 `CampaignCard.svelte` fetches its own volumes via `fetchJob`, paged by
 `offset`/`limit` (a "load more" button pages in the next `limit` rows), on
@@ -123,11 +138,13 @@ truncation), each line linking to the same log href as its table row.
 | --------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `src/lib/config.ts`                           | API base and cadence resolution (table above)                                           |
 | `src/lib/api.ts`                              | Read-API Zod schemas, `fetchJobs`/`fetchJob`, `ApiUnreachable`, `isHttpUrl`/`shortDate` |
-| `src/lib/run.ts`, `runlog.ts`                 | `manifest.json` schema + summary math; run-log grouping                                 |
-| `src/lib/theme.svelte.ts`                     | the one theme store (`ThemeToggle.svelte` on both routes)                               |
+| `src/lib/run.ts`, `runlog.ts`                 | `manifest.json` schema + summary math (incl. each page's `alto` URL); run-log grouping  |
+| `src/lib/alto.ts`                             | `parseAlto` (ALTO XML → text lines + confidence), `altoUrl`, `prettyXml`                |
+| `src/lib/reasons.ts`                          | the one place a `reason` or a fetch failure becomes a sentence a person reads           |
+| `src/lib/theme.svelte.ts`                     | the one theme store (`ThemeToggle.svelte` on every route)                               |
 | `src/lib/components/`                         | `CampaignCard`, `RunSummaryCard`, `PageGrid`, `PagesTable`, `ThemeToggle`               |
-| `src/routes/+page.svelte`, `log/+page.svelte` | the two routes                                                                          |
-| `src/app.css`                                 | design tokens per theme (AA-checked), reduced-motion                                    |
+| `src/routes/+page.svelte`, `log/`, `alto/`    | the three routes                                                                        |
+| `src/app.css`                                 | design tokens per theme (AA-checked), reduced-motion, the chrome shared by every route  |
 | `static/config.js`                            | the deployment hook (`window.API_BASE`, `/api/v1` by default)                           |
 
 Tests sit next to their subject (`*.test.ts`); component tests use

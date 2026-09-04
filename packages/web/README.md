@@ -43,15 +43,18 @@ names.
 | Route | Returns |
 |---|---|
 | `GET /healthz` | `{"ok": true}` |
-| `GET /`, `/log`, `/uv.html`, `/config.js`, … | The built site from `HTRFLOW_WEB_STATIC` (mounted last, so no file can shadow an API route). Extensionless paths resolve to adapter-static's `<route>.html`, which is how `/log` works on a refresh |
+| `GET /`, `/log`, `/alto`, `/uv.html`, `/config.js`, … | The built site from `HTRFLOW_WEB_STATIC` (mounted last, so no file can shadow an API route). Extensionless paths resolve to adapter-static's `<route>.html`, which is how `/log` and `/alto` work on a refresh |
 | `GET /api/v1/jobs` | One `JobSummary` per campaign Job, newest first: namespace, name, pipeline, phase, counts, suspended, createdAt, resultsBase, warmup |
-| `GET /api/v1/jobs/{namespace}/{name}?offset=0&limit=200` | `JobDetail`: the summary plus `volumes` (one row per index, paged, `limit` at most 1000) and `failures` (the 50 highest failed indexes that have a reason) |
+| `GET /api/v1/jobs/{namespace}/{name}?offset=0&limit=200` | `JobDetail`: the summary plus `volumes` (one row per index, paged, `limit` at most 1000), `failures` (the 50 highest failed indexes that have a reason), `latest` (the newest active volume, else the newest done one) and `pipelineSteps`/`pipelineYaml` from the `htr-pipeline-<id>` ConfigMap. The last three are computed over every volume, not just the requested page |
 
-Phase is derived from the Job: `Succeeded` or `Failed` from its conditions,
-otherwise `Queued` or `Paused` when suspended (no index done yet, or some),
-else `Running`. Each volume row carries `manifestUrl`, `iiifUrl`,
-`altoPrefix` under the results base and `logUrl` under the shared
-`status/logs/` tree. Only Jobs labelled `app=htrflow-batch` and
+Phase is derived from the Job: `Succeeded` from its `Complete` condition;
+`Failed`, or `PartiallyFailed` when the `Failed` condition arrives with a
+non-empty `completedIndexes` (the campaign gave up, but what those indexes
+published is there); otherwise `Queued` or `Paused` when suspended (no index
+done yet, or some), else `Running`. Each volume row carries `manifestUrl`,
+`iiifUrl`, `altoPrefix` under the results base, `logUrl` under the shared
+`status/logs/` tree, and `sourceUrl` — the URL half of its `volumes.txt`
+line, absent for an `images:` volume. Only Jobs labelled `app=htrflow-batch` and
 `managed-by=converter` are listed, which excludes the warm-up Jobs — those
 are read separately (`app=htrflow-warmup`) and matched onto each row's
 `warmup` field by namespace + pipeline label (Task 28); a failed match costs

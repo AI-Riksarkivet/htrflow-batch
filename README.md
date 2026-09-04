@@ -16,7 +16,7 @@ converter. No CRD, no controller, no database.
 ## Quickstart
 
 ```bash
-make install && make test   # uv workspace sync (packages/*) + the wrapper, converter and api unit tests
+make install && make test   # uv workspace sync (packages/*) + the wrapper, converter and web unit tests
 cd frontend && bun install && bun run test   # the campaign browser's tests
 make compose-up             # local smoke stack: S3 + fixtures + wrapper + web front, no cluster needed
 ```

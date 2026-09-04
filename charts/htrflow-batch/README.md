@@ -7,7 +7,7 @@ the read-only status API in one Deployment).
 **Campaigns are Kubernetes Indexed Jobs, not objects this chart renders.**
 `packages/converter` (`htrflow-campaigns render <repo-dir> --out <dir>`)
 turns a campaigns repo into pipeline/campaign ConfigMaps and Jobs; those are
-applied outside this chart (`kubectl apply`, or Argo CD watching a
+applied outside this chart (`htrflow-campaigns apply`, or Argo CD watching a
 `rendered/` directory) — see
 [docs/how-it-works/campaigns.md](../../docs/how-it-works/campaigns.md). This
 chart only renders what those Jobs and the status page need: the Kueue
@@ -68,9 +68,10 @@ rendered every NetworkPolicy away; the chart now fails loudly when
 
 Everything below this line is history: each entry names the objects and
 value keys **as they were at that version** — `api.*`, `viewer.*`,
-`htrflow-api`, `templates/api.yaml`, `htr-api` — not their 0.4.0
-successors. Renaming them here would make the upgrade notes wrong for
-anyone actually on that version.
+`htrflow-api`, `templates/api.yaml`, `htr-api` — not the `web.*` /
+`htrflow-web` / `templates/web.yaml` they became in 0.4.0. Renaming them
+here would make the upgrade notes wrong for anyone actually on that
+version.
 
 ### From 0.2.0 to 0.3.0 — what to decide first (B63: campaigns as Indexed Jobs)
 
@@ -109,11 +110,9 @@ kubectl -n htr-batch annotate pvc htr-test-data \
 kubectl -n htr-batch label pvc htr-test-data app.kubernetes.io/managed-by=Helm --overwrite
 ```
 
-(The `nvidia` RuntimeClass, the kube-system device-plugin DaemonSet and the
-the git daemon that historically ran alongside RustFS/registry is gone
-entirely (no consumer left once the old CronJob controller was removed) — see
-`charts/htrflow-devstack`'s README for the RuntimeClass/DaemonSet adoption
-recipe.)
+(The `nvidia` RuntimeClass and the kube-system device-plugin DaemonSet moved
+to `charts/htrflow-devstack` in 0.3.0 — see that chart's README for their
+adoption recipe.)
 
 ## The web front
 
@@ -133,9 +132,10 @@ namespace, never a ClusterRole. It is the one pod in this chart with
 
 Everything below this line is history: each entry names the objects and
 value keys **as they were at that version** — `api.*`, `viewer.*`,
-`htrflow-api`, `templates/api.yaml`, `htr-api` — not their 0.4.0
-successors. Renaming them here would make the upgrade notes wrong for
-anyone actually on that version.
+`htrflow-api`, `templates/api.yaml`, `htr-api` — not the `web.*` /
+`htrflow-web` / `templates/web.yaml` they became in 0.4.0. Renaming them
+here would make the upgrade notes wrong for anyone actually on that
+version.
 
 ### 0.6.0 — 2026-09-04 (B63: policy is Kyverno's, not the converter's)
 
