@@ -4,10 +4,14 @@
 
 # Configuration
 
-Every setting of every surface, generated from the three config models and
-the chart's `values.yaml`. It replaces the reconciler-era
+Every setting of the wrapper, the web front, the converter and the
+`htrflow-batch` chart, generated from the three config models and the
+chart's `values.yaml`. It replaces the reconciler-era
 [hardcoded-value inventory](../audits/2026-08-26-hardcoded-inventory.md),
-which stays as history.
+which stays as history. The PoC-only `htrflow-devstack` chart (RustFS, the
+in-cluster registry, `devStack.insecureDefaults`,
+`rustfs.accessKey`/`secretKey`) is a separate surface, documented in its own
+[README](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/charts/htrflow-devstack/README.md).
 
 **One idiom.** Each package's settings are one frozen pydantic model with
 `extra="forbid"` whose fields carry their own source name — `Field(alias=…)`

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Generate docs/reference/configuration.md: every setting of every surface.
+"""Generate docs/reference/configuration.md: every setting of the wrapper,
+the web front, the converter and the `htrflow-batch` chart.
 
 Tables from the three pydantic models and the chart's values.yaml, prose
 from config_reference.md beside this file (split on its `<!-- TABLES -->`
