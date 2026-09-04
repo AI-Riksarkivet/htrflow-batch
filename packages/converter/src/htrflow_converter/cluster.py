@@ -65,7 +65,10 @@ def _api_error(
     message = ""
     if e.body:
         with contextlib.suppress(json.JSONDecodeError, TypeError, KeyError):
-            message = f" {json.loads(e.body)['message']}"
+            # Reflowed: an admission webhook's rejection (Kyverno's, say)
+            # arrives as a paragraph with blank lines in it, and everything
+            # else this package prints is one sentence per problem.
+            message = " " + " ".join(json.loads(e.body)["message"].split())
     return ClusterError(f"{verb} {target}: {e.status} {e.reason}{message}")
 
 

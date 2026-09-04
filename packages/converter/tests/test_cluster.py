@@ -171,6 +171,22 @@ def test_the_other_api_error_sentences():
         "apply Job/kyrk: 422 Unprocessable Entity admission webhook denied: "
         "image must be pinned"
     )
+    # Kyverno sends a paragraph, blank lines and all; every other problem
+    # this package prints is one sentence, so this one is reflowed too.
+    kyverno = ApiException(status=400, reason="Bad Request")
+    kyverno.body = json.dumps(
+        {
+            "message": 'admission webhook "validate.kyverno.svc-fail" denied '
+            "the request: \n\nresource Job/htr-batch/kyrk was blocked due to "
+            "the following policies \n\nhtrflow-batch-images-pinned-htr-batch:"
+            "\n  job-images-pinned: 'image must be pinned by digest: x:dev'\n"
+        }
+    )
+    reflowed = str(_api_error("apply", "Job", "kyrk", "htr-batch", kyverno))
+    assert "\n" not in reflowed
+    assert reflowed.endswith(
+        "job-images-pinned: 'image must be pinned by digest: x:dev'"
+    )
     plain = ApiException(status=500, reason="Internal Server Error")
     plain.body = "<html>"
     assert str(_api_error("apply", "Job", "kyrk", "htr-batch", plain)) == (
