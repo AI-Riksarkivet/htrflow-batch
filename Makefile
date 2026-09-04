@@ -182,6 +182,9 @@ helm-template: helm-lint
 	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/ci/full-values.yaml > /dev/null
 	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) > /dev/null
 	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) -f $(DEVSTACK_CHART)/ci/full-values.yaml > /dev/null
+	@# RustFS on credentials nobody chose must be refused (B63 Task 27).
+	@! helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) --set rustfs.enabled=true > /dev/null 2>&1 \
+	  || { echo "devstack rendered RustFS with no credentials: the devStack.insecureDefaults guard is gone"; exit 1; }
 	@if command -v kubeconform >/dev/null; then \
 	  helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_DEFAULT_SETS) | kubeconform -strict -ignore-missing-schemas -summary && \
 	  helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/ci/full-values.yaml | kubeconform -strict -ignore-missing-schemas -summary && \
@@ -218,7 +221,8 @@ install-devstack:
 	@if [ "$(KYVERNO)" = "true" ]; then $(MAKE) install-kyverno; fi
 	helm upgrade --install $(HTR_RELEASE)-devstack charts/htrflow-devstack -n $(HTR_NAMESPACE) --create-namespace \
 	  --set rustfs.enabled=true --set registry.enabled=true \
-	  --set nvidiaDevicePlugin.enabled=$(NVIDIA_DEVICE_PLUGIN)
+	  --set nvidiaDevicePlugin.enabled=$(NVIDIA_DEVICE_PLUGIN) \
+	  --set devStack.insecureDefaults=true
 
 docs-serve:
 	uvx zensical serve

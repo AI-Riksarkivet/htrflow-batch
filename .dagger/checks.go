@@ -123,6 +123,9 @@ type chartRender struct {
 	name   string
 	values string
 	sets   []string
+	// mustFail inverts the render: helm is expected to refuse it. A guard
+	// nothing exercises is a guard that quietly stops firing.
+	mustFail bool
 }
 
 // digestZero is a syntactically valid (but unpullable) placeholder digest —
@@ -149,6 +152,9 @@ var prodChartRenders = []chartRender{
 var devstackChartRenders = []chartRender{
 	{name: "default"},
 	{name: "full", values: "ci/full-values.yaml"},
+	// RustFS on the chart's own empty credentials: refused unless
+	// devStack.insecureDefaults says the stack is a toy (B63 Task 27).
+	{name: "no-credentials", sets: []string{"rustfs.enabled=true"}, mustFail: true},
 }
 
 // docSepRe splits a multi-document `helm template` render on its `---`
@@ -214,6 +220,11 @@ func (m *HtrflowBatch) CheckChart(
 			for _, s := range r.sets {
 				lint = append(lint, "--set", s)
 				template = append(template, "--set", s)
+			}
+			if r.mustFail {
+				helm = helm.WithExec([]string{"sh", "-c",
+					"! " + strings.Join(template, " ") + " >/dev/null 2>&1"})
+				continue
 			}
 			outName := c.prefix + r.name
 			helm = helm.

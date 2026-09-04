@@ -130,7 +130,8 @@ export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 make poc-push                       # builds + pushes the wrapper and web images, prints their digests
 helm upgrade --install htr-devstack charts/htrflow-devstack -n htr-batch --create-namespace \
   --set rustfs.enabled=true --set registry.enabled=true \
-  --set nvidiaDevicePlugin.enabled=true
+  --set nvidiaDevicePlugin.enabled=true \
+  --set devStack.insecureDefaults=true    # PoC: accept generated RustFS credentials
 helm upgrade --install htr charts/htrflow-batch -n htr-batch \
   --set publicResultsBase=http://localhost:30900/htr-results \
   --set network.apiServer.cidr=<node-ip>/32 \

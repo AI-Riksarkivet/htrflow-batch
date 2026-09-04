@@ -4,6 +4,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "devStack",
     "s3",
     "rustfs",
     "registry",
@@ -42,6 +43,19 @@
   "properties": {
     "global": {
       "type": "object"
+    },
+    "devStack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "insecureDefaults"
+      ],
+      "properties": {
+        "insecureDefaults": {
+          "type": "boolean",
+          "description": "Accept RustFS credentials nobody chose \u2014 empty (generated per render) or published in this repo. PoC and CI only."
+        }
+      }
     },
     "s3": {
       "type": "object",

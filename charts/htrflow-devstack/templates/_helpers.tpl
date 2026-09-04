@@ -18,6 +18,14 @@ disabled — mirrors charts/htrflow-batch's htrflow-batch.validate.
 {{- if and .Values.rustfs.console.enabled (not .Values.rustfs.enabled) }}
 {{- fail "rustfs.console.enabled needs rustfs.enabled" }}
 {{- end }}
+{{- /* Credentials nobody chose: empty (generated afresh on every render) or a
+     value this repo publishes. See values.yaml's devStack block. */}}
+{{- $known := list "" "ci-access-key" "ci-secret-key-0123456789" "minioadmin" "rustfsadmin" }}
+{{- if and .Values.rustfs.enabled (not .Values.devStack.insecureDefaults) }}
+{{- if or (has .Values.rustfs.accessKey $known) (has .Values.rustfs.secretKey $known) }}
+{{- fail "rustfs.accessKey/secretKey is empty or a value published in this repo: set credentials of your own, or set devStack.insecureDefaults: true to accept generated or known ones (charts/htrflow-devstack/values.yaml says why)" }}
+{{- end }}
+{{- end }}
 {{- end }}
 
 {{/* Pod Security `restricted` — container part. */}}
