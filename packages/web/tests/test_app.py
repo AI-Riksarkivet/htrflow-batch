@@ -212,6 +212,17 @@ class SucceededWarmupReader(FakeReader):
         return [WARMUP_JOB_SUCCEEDED]
 
 
+class FailedWarmupNoPodsReader(FakeReader):
+    """A failed warm-up Job whose pods are already gone (GC, node loss) --
+    `_warmup_status` must not crash calling `newest([])`."""
+
+    def list_warmups(self) -> list[dict]:
+        return [WARMUP_JOB_FAILED]
+
+    def list_pods(self, namespace: str, job_name: str) -> list[dict]:
+        return []
+
+
 def test_list_jobs_carries_a_failed_warmups_reason():
     """No warm-up log exists (Task 28) -- the reason is the only way a bad
     model id reaches a reader, so the list row must carry it, not just the
@@ -232,6 +243,12 @@ def test_list_jobs_carries_a_succeeded_warmup_with_no_reason():
     client = TestClient(create_app(SucceededWarmupReader()))
     body = client.get("/api/v1/jobs").json()
     assert body[0]["warmup"] == {"phase": "succeeded"}
+
+
+def test_list_jobs_survives_a_failed_warmup_with_no_pods():
+    client = TestClient(create_app(FailedWarmupNoPodsReader()))
+    body = client.get("/api/v1/jobs").json()
+    assert body[0]["warmup"] == {"phase": "failed"}
 
 
 JOB2 = {**JOB, "metadata": {**JOB["metadata"], "name": "kyrk2"}}
