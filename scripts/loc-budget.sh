@@ -51,8 +51,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2010
 # still carries one of those keys where the rule went, and the `validate`
 # help that says what this command no longer checks. A rule that moved out
 # of the tool has to leave a signpost behind, or its author reads
-# "not a setting this file has" and goes looking for a typo. (B63)
-check converter "$(count packages/converter/src -name '*.py')" 1284
+# "not a setting this file has" and goes looking for a typo. 1284 -> 1287
+# in the same task: an admission webhook's rejection arrives as a paragraph
+# with blank lines in it, and _api_error now reflows it, since every other
+# problem this package prints is one sentence. (B63)
+check converter "$(count packages/converter/src -name '*.py')" 1287
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
