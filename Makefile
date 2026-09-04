@@ -1,7 +1,7 @@
 .PHONY: install format lint check test typecheck test-driver-real ci build scan publish \
         compose-up compose-test compose-smoke compose-down helm-lint helm-template \
         install-devstack install-kyverno \
-        docs-serve docs-build \
+        docs-serve docs-build config-reference \
         poc-push poc-push-arm64 build-wrapper build-htrflow-base-arm64 build-web scan-web clean \
         campaigns-apply psa-labels e2e \
         frontend-install frontend-test frontend-check frontend-build frontend-dev
@@ -227,8 +227,14 @@ install-devstack:
 docs-serve:
 	uvx zensical serve
 
-docs-build:
+docs-build: config-reference
 	uvx zensical build --clean
+
+# docs/reference/configuration.md is generated from the three config models
+# and the chart's values (B63 Task 27). The committed page must equal this
+# output -- packages/converter/tests/test_chart_agreement.py asserts it.
+config-reference:
+	uv run --no-sync python scripts/config_reference.py
 
 # PoC: build + push the images into the in-cluster k3s registry ($(HTR_REGISTRY),
 # from .env). Real registries go through `make publish` (dagger), which tests

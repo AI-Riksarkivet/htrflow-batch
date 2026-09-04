@@ -13,6 +13,7 @@ all — docs/reference/configuration.md lists what is one-sided.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import yaml
@@ -25,12 +26,10 @@ EXAMPLE = ROOT / "examples" / "campaigns" / "converter.yaml"
 CONVERTER_SRC = ROOT / "packages" / "converter" / "src" / "htrflow_converter"
 JOB_SKELETON = CONVERTER_SRC / "manifests" / "campaign-job.yaml"
 
-#: (ConverterConfig field, path in charts/htrflow-batch/values.yaml).
-AGREEMENTS = [
-    ("queue", "queue.name"),
-    ("s3_secret", "s3.existingSecret"),
-    ("data_pvc", "modelCache.name"),
-]
+# The (converter field, chart values path) table is written once, in the
+# generator that also prints it into docs/reference/configuration.md.
+sys.path.insert(0, str(ROOT / "scripts"))
+from config_reference import AGREEMENTS, PAGE, render  # noqa: E402
 
 
 def _load(path: Path) -> dict:
@@ -75,3 +74,14 @@ def test_the_results_base_reaches_both_of_its_consumers():
     assert "PUBLIC_RESULTS_BASE" in [e["name"] for e in job_env]
     render = (CONVERTER_SRC / "render.py").read_text(encoding="utf-8")
     assert '"PUBLIC_RESULTS_BASE": cfg.public_results_base' in render
+
+
+def test_the_configuration_page_is_what_the_generator_prints():
+    """docs/reference/configuration.md is generated from the three models and
+    the chart's values (`make config-reference`). Editing it by hand, or
+    changing a default without regenerating, fails here — which is the whole
+    reason the page is generated rather than written."""
+    assert PAGE.read_text(encoding="utf-8") == render(), (
+        f"{PAGE.relative_to(ROOT)} is not what scripts/config_reference.py "
+        "prints — run `make config-reference`"
+    )

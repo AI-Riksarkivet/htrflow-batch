@@ -3,6 +3,9 @@
 Two questions this page answers: what a pod on this platform *can* do
 (posture, network), and who can make it do something — the trust boundary.
 
+Every setting of every surface, with what it exposes and who enforces it, is
+the generated [Configuration reference](../reference/configuration.md).
+
 ## Trust boundary
 
 **Write access to the campaigns repo equals cluster operator.** A pipeline
