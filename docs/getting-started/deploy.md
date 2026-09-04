@@ -1,15 +1,15 @@
 # Deploy
 
 Everything runtime-facing ships as two Helm charts. `charts/htrflow-batch`
-(0.4.0) deploys the queueing (Kueue objects), the model-cache PVC, the web
+(0.6.0) deploys the queueing (Kueue objects), the model-cache PVC, the web
 front (campaign browser, Universal Viewer and the read-only status API in
-one Deployment) and the NetworkPolicies.
+one Deployment), the Kyverno policies and the NetworkPolicies.
 `charts/htrflow-devstack` is the separate, PoC-only chart for in-cluster
 RustFS/registry/NVIDIA-device-plugin stand-ins ([Local k3s
 development](../development/local-k3s.md)). Campaigns themselves are not
 part of either chart — they are Indexed Jobs rendered by `packages/converter`
-from a campaigns repo and applied with `kubectl` or Argo CD (see [Running a
-Campaign](campaigns.md)). Every chart value is in
+from a campaigns repo and applied by `htrflow-campaigns apply` or Argo CD
+(see [Running a Campaign](campaigns.md)). Every chart value is in
 [Chart Values](../reference/chart.md).
 
 ## Production-shaped install
