@@ -1721,26 +1721,104 @@ running pod was untouched (admission is not retroactive) but the next
 restart would have been refused, so `rustfs/` went on the list. On a real
 deployment the same applies to anything else sharing the namespace.
 
-### Blocking finding: `requireModelRevision` and TrOCR do not fit
+### Finding: the revision rule only knew YOLO's placement
 
-Pinning a revision on a `TextRecognition` step makes the warm-up fail
-outright on this htrflow image:
+Pinning a revision on a `TextRecognition` step the way the first cut of the
+policy expected — top-level under `model_settings`, the same place YOLO
+takes it — makes the warm-up fail outright on this htrflow image:
 
 ```
 TypeError: BaseModel.__init__() got an unexpected keyword argument 'revision'
   File "/app/src/htrflow/models/huggingface/trocr.py", line 62, in __init__
 ```
 
-YOLO takes `revision` and resolves the snapshot
-(`…/snapshots/6fb01d223f39ac325280d99e4a2d1804694e5e99/model.pt`); TrOCR
-does not accept the keyword at all. So on this image the policy is
-satisfiable only by a pipeline with no text-recognition step — which is
-what `e2e-t22-v2` is, and why the compliant campaign above segments but does
-not transcribe. **`security.requireModelRevision: true` is not usable for a
-real HTR recipe until htrflow's TrOCR model passes `revision` through to
-`from_pretrained`.** The old `converter.yaml` rule had the same hole; it was
-never exercised because it defaulted to off. Leave the value `false` in
-production for now — the two image policies do not depend on it.
+That traceback is not htrflow refusing `revision:` — it is this pipeline
+handing TrOCR a keyword its own `__init__` does not take. htrflow's
+Hugging Face-backed models (TrOCR, Donut, DiT) take a pinned revision as
+`model_settings.model_kwargs.revision`, forwarded straight to
+`VisionEncoderDecoderModel.from_pretrained` — `trocr.py`'s own docstring
+shows exactly this shape. YOLO's Ultralytics wrapper takes it top-level,
+`model_settings.revision`, and resolves the snapshot
+(`…/snapshots/6fb01d223f39ac325280d99e4a2d1804694e5e99/model.pt`). The
+Kyverno policy (like the converter rule it replaced) only recognised YOLO's
+placement, so a TrOCR step pinned the way htrflow documents was refused by
+our own rule, and pinning it the YOLO way is what produced the traceback
+above. That was our bug, not htrflow's, and it is why the compliant
+campaign in (d) above segments but does not transcribe — `e2e-t22-v2` has
+no text-recognition step, because no placement satisfied the old policy.
+
+**Fixed in this round** (fix round 2, item 7): the policy now counts a
+model as pinned when either `model_settings.revision` or
+`model_settings.model_kwargs.revision` matches the 40-hex pattern. See
+"e2e-t22-v3: the real recipe, transcribed" below for the pipeline that
+proves it.
+
+### (f) `e2e-t22-v3`: the real recipe, transcribed
+
+Fix round 2's item 7(c): with the fixed policy live on the release (`htr`
+upgraded from the worktree's chart, `security.requireModelRevision: true`
+still on) and a fresh 40-hex revision read from the Hub for each of the
+three models (`huggingface_hub.HfApi().model_info(repo).sha`), a pipeline
+with both YOLO steps pinned top-level and the TrOCR step pinned under
+`model_kwargs`:
+
+```yaml
+steps:
+  - step: Segmentation
+    settings:
+      model: yolo
+      model_settings:
+        model: Riksarkivet/yolov9-regions-1
+        revision: 6fb01d223f39ac325280d99e4a2d1804694e5e99
+  - step: Segmentation
+    settings:
+      model: yolo
+      model_settings:
+        model: Riksarkivet/yolov9-lines-within-regions-1
+        revision: f62260d9ae6e782c43c3fd789b7d7e19d64608d9
+  - step: TextRecognition
+    settings:
+      model: TrOCR
+      model_settings:
+        model: Riksarkivet/trocr-base-handwritten-hist-swe-2
+        model_kwargs:
+          revision: aa79fcb1850bf3155ebc442570d6c6bfc0ac8100
+```
+
+```console
+$ uv run htrflow-campaigns apply ~/htr-test --out ~/htr-test/rendered
+applied: ConfigMap/htr-pipeline-e2e-t22-v3     # admitted — both placements recognised
+applied: Job/htr-warmup-e2e-t22-v3
+applied: ConfigMap/campaign-e2e-t22v3run
+applied: Job/e2e-t22v3run
+
+$ kubectl -n htr-batch get jobs e2e-t22v3run htr-warmup-e2e-t22-v3
+NAME                    STATUS     COMPLETIONS   DURATION
+e2e-t22v3run            Complete   1/1           …
+htr-warmup-e2e-t22-v3   Complete   1/1           10s
+```
+
+The one volume needed three retries before it completed — each failed
+attempt was `torch.AcceleratorError: CUDA error: out of memory` in the
+YOLO segmentation step, transient GPU memory contention on this shared PoC
+node, unrelated to the policy or to either revision placement; the fourth
+pod succeeded.
+
+```console
+$ curl -s http://localhost:30900/htr-results/htr-batch/e2e-t22-v3/e2e-t22v3run-01/manifest.json
+{"pages": 1, "results": {"0001": {"status": "ok", …}}, …}
+
+$ curl -s http://localhost:30900/htr-results/htr-batch/e2e-t22-v3/e2e-t22v3run-01/alto/0001.xml \
+    | grep -c '<String CONTENT='
+27
+```
+
+27 `<String CONTENT="…">` entries of real transcribed Swedish text (e.g.
+`"och utan bok, och förstå sin Christendom"`) — the first campaign in this
+task's E2E that actually transcribes with the revision policy enforced.
+`campaigns/e2e-t22v3run.yaml` was then deleted and pruned the same way as
+any other finished test campaign; `pipelines/e2e-t22-v3.yaml` and its
+warm-up stay, same pattern as `e2e-t22-v2`.
 
 ### Also worth knowing
 
