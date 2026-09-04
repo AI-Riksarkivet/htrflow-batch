@@ -144,9 +144,9 @@ Added:
   `false`)**: ServiceAccount/Role/RoleBinding `htrflow-campaigns` for
   `htrflow-campaigns apply` (packages/converter) when it runs *inside* the
   cluster — an Argo CD `PostSync` hook, a CI Job — rather than from an
-  operator's kubeconfig. Role, not ClusterRole: `get`/`list`/`create`/
-  `patch`/`delete` on `jobs` and `configmaps` (create and patch are the
-  server-side apply; delete is `--prune`) and `get`/`list`/`patch` on
+  operator's kubeconfig. Role, not ClusterRole: `list`/`create`/`patch`/
+  `delete` on `jobs` and `configmaps` (create and patch are the
+  server-side apply; delete is `--prune`) and `list`/`patch` on
   `workloads.kueue.x-k8s.io` (the pause sync's `spec.active`).
 
 Not breaking: leaving `apply.rbac.enabled` at `false` renders nothing new.

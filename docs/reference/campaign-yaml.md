@@ -284,8 +284,8 @@ spec:
 
 The ServiceAccount is what the htrflow-batch chart renders behind
 `apply.rbac.enabled=true` (default `false`): a Role — never a ClusterRole —
-with `get`/`list`/`create`/`patch`/`delete` on `jobs` and `configmaps` and
-`get`/`list`/`patch` on `workloads.kueue.x-k8s.io`, in the release namespace
+with `list`/`create`/`patch`/`delete` on `jobs` and `configmaps` and
+`list`/`patch` on `workloads.kueue.x-k8s.io`, in the release namespace
 only. `create` is not redundant next to `patch`: a server-side apply whose
 object does not exist yet is authorized as both. Nothing else has to be on
 the image — the converter carries its own Kubernetes client, so there is no
