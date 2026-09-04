@@ -137,6 +137,40 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 successors. Renaming them here would make the upgrade notes wrong for
 anyone actually on that version.
 
+### 0.6.0 — 2026-09-04 (B63: policy is Kyverno's, not the converter's)
+
+Added:
+- `templates/policies/`, behind **`security.policies.enabled` (default
+  `false`)**: three Kyverno `ClusterPolicy` objects, all
+  `validationFailureAction: Enforce`, `background: true`, named with the
+  release namespace as a suffix.
+  - `htrflow-batch-images-pinned-<ns>` — every container and initContainer
+    image of every `Job` and `Pod` in the namespace is `@sha256:`-pinned.
+  - `htrflow-batch-images-allowed-<ns>` — rendered only when
+    `security.allowedImageRepos` is non-empty: the repository (the part
+    before `@`) is one of those prefixes, matched on a path boundary.
+  - `htrflow-batch-model-revision-<ns>` — rendered only when
+    `security.requireModelRevision`: every `model_settings.model` in a
+    converter-rendered pipeline ConfigMap's `pipeline.yaml` carries a 40-hex
+    `revision:`.
+- `templates/kyverno.yaml` (the `verifyImages` policy) moved unchanged to
+  `templates/policies/verify-images.yaml`; it stays behind its own
+  `security.verifyImages.enabled`.
+
+Changed, not breaking: `security.allowedImageRepos` and
+`security.requireModelRevision` stop being documentation. They were the
+campaigns repo's `converter.yaml` keys `allowed_image_repos` /
+`require_model_revision`, which are **removed from the converter** in the
+same change — a `converter.yaml` still carrying either is now a validation
+error pointing here. Leaving `security.policies.enabled` at `false` renders
+nothing new, and then nothing enforces the allow-list or the revision rule
+at all; the digest *shape* of a pipeline's `image:` is still checked by
+`htrflow-campaigns validate`.
+
+Requires Kyverno in the cluster (`make install-kyverno` on the PoC) when
+`security.policies.enabled` is `true`. A campaigns repo's CI runs the same
+policies with the Kyverno CLI against `rendered/`.
+
 ### 0.5.0 — 2026-09-03 (B63: an identity for `apply`)
 
 Added:

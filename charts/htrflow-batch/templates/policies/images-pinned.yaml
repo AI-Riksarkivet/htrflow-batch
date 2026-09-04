@@ -1,0 +1,74 @@
+{{- if .Values.security.policies.enabled }}
+# Every image the namespace admits is pinned by digest (B63 Task 22). This
+# used to be a converter rule, which only ever saw what the converter
+# rendered; Kyverno sees every Job and every Pod, whoever wrote it.
+# Cluster-scoped object, so a second release in another namespace needs its
+# own name — hence the namespace suffix.
+#
+# Autogen is off and the Job rule is written out rather than derived from
+# the Pod one: the Kyverno CLI in a campaigns repo's CI then runs exactly
+# the rule the cluster runs, and a rejected Job is named by ONE message
+# instead of two.
+#
+# `context` + `deny`, not `foreach`: a message may not name a `foreach`
+# element (Kyverno rejects `element.image` outside the loop), and a message
+# that does not say WHICH image is wrong sends its reader hunting. The
+# context entry collects the offending images; the message lists them.
+# Kyverno's own curly-brace variables are Helm raw literals so Helm hands
+# them through untouched.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: htrflow-batch-images-pinned-{{ .Release.Namespace }}
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: job-images-pinned
+      match:
+        any:
+          - resources:
+              kinds: [Job]
+              namespaces: [{{ .Release.Namespace | quote }}]
+      context:
+        - name: unpinned
+          variable:
+            jmesPath: >-
+              request.object.spec.template.spec.[containers, initContainers][] | [?image]
+              | [?!regex_match('^\S+@sha256:[0-9a-f]{64}$', image)].image
+            default: []
+      validate:
+        message: >-
+          image must be pinned by digest: {{ `{{ join(', ', unpinned) }}` }}
+        deny:
+          conditions:
+            all:
+              - key: {{ `"{{ length(unpinned) }}"` }}
+                operator: GreaterThan
+                value: 0
+    - name: pod-images-pinned
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [{{ .Release.Namespace | quote }}]
+      context:
+        - name: unpinned
+          variable:
+            jmesPath: >-
+              request.object.spec.[containers, initContainers][] | [?image]
+              | [?!regex_match('^\S+@sha256:[0-9a-f]{64}$', image)].image
+            default: []
+      validate:
+        message: >-
+          image must be pinned by digest: {{ `{{ join(', ', unpinned) }}` }}
+        deny:
+          conditions:
+            all:
+              - key: {{ `"{{ length(unpinned) }}"` }}
+                operator: GreaterThan
+                value: 0
+{{- end }}

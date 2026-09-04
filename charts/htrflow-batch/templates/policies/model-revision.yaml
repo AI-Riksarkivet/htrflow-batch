@@ -1,0 +1,51 @@
+{{- if and .Values.security.policies.enabled .Values.security.requireModelRevision }}
+# Every model a pipeline loads is pinned to a 40-hex Hugging Face commit
+# (B63 Task 22). HF Hub weights are pickles and a repo id alone is mutable,
+# so an unpinned model is a code-execution hole that opens later.
+#
+# The subject is the pipeline ConfigMap the converter renders: its
+# `pipeline.yaml` key is the htrflow steps document, parsed here with
+# Kyverno's `parse_yaml` so the rule reads the structure the wrapper will.
+# Only top-level steps are walked, exactly as the converter's rule did. The
+# `|| 'steps: []'` is for the campaign ConfigMaps, which carry the same
+# label but a `volumes.txt` and no pipeline. `context` + `deny` rather than
+# `foreach` for the reason spelled out in images-pinned.yaml: the message
+# names the model.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: htrflow-batch-model-revision-{{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: pipeline-models-pinned
+      match:
+        any:
+          - resources:
+              kinds: [ConfigMap]
+              namespaces: [{{ .Release.Namespace | quote }}]
+              selector:
+                matchLabels:
+                  htrflow.riksarkivet.se/managed-by: converter
+      context:
+        - name: unpinned
+          variable:
+            jmesPath: >-
+              parse_yaml(request.object.data."pipeline.yaml" || 'steps: []').steps
+              | [?settings.model_settings.model]
+              | [?!regex_match('^[0-9a-f]{40}$', settings.model_settings.revision || '')].settings.model_settings.model
+            default: []
+      validate:
+        message: >-
+          the model {{ `{{ join(', ', unpinned) }}` }} is not pinned to a
+          revision — add revision: <40-character commit hash> to its
+          model_settings
+        deny:
+          conditions:
+            all:
+              - key: {{ `"{{ length(unpinned) }}"` }}
+                operator: GreaterThan
+                value: 0
+{{- end }}

@@ -1,0 +1,76 @@
+{{- if and .Values.security.policies.enabled .Values.security.allowedImageRepos }}
+{{- $repos := list }}
+{{- range .Values.security.allowedImageRepos }}
+{{- $repos = append $repos (regexReplaceAll `([.+*?()|\[\]{}^$\\])` (trimSuffix "/" .) `\${1}`) }}
+{{- end }}
+{{- $re := printf "^(?:%s)(?:/.*)?$" (join "|" $repos) }}
+{{- $allowed := join ", " .Values.security.allowedImageRepos }}
+# Every image the namespace admits comes from an allowed repository (B63
+# Task 22) — the same prefix rule the converter used to apply at render
+# time, matched on a path boundary so `ghcr.io/riksarkivet` does not admit
+# `ghcr.io/riksarkivet-evil`. The repository is the part before `@`; the
+# digest pin itself is the images-pinned policy's job.
+#
+# This covers EVERY pod in the namespace, the platform's own included: an
+# image outside these prefixes cannot start here, so a supporting workload
+# from another registry (charts/htrflow-devstack's RustFS, say) needs its
+# prefix on this list too. `context` + `deny` rather than `foreach` for the
+# reason spelled out in images-pinned.yaml: the message names the image.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: htrflow-batch-images-allowed-{{ .Release.Namespace }}
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: job-images-allowed
+      match:
+        any:
+          - resources:
+              kinds: [Job]
+              namespaces: [{{ .Release.Namespace | quote }}]
+      context:
+        - name: foreign
+          variable:
+            jmesPath: >-
+              request.object.spec.template.spec.[containers, initContainers][] | [?image]
+              | [?!regex_match({{ $re | squote }}, split(image, '@')[0])].image
+            default: []
+      validate:
+        message: >-
+          image is not from an allowed repository: {{ `{{ join(', ', foreign) }}` }}
+          — allowed: {{ $allowed }}
+        deny:
+          conditions:
+            all:
+              - key: {{ `"{{ length(foreign) }}"` }}
+                operator: GreaterThan
+                value: 0
+    - name: pod-images-allowed
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [{{ .Release.Namespace | quote }}]
+      context:
+        - name: foreign
+          variable:
+            jmesPath: >-
+              request.object.spec.[containers, initContainers][] | [?image]
+              | [?!regex_match({{ $re | squote }}, split(image, '@')[0])].image
+            default: []
+      validate:
+        message: >-
+          image is not from an allowed repository: {{ `{{ join(', ', foreign) }}` }}
+          — allowed: {{ $allowed }}
+        deny:
+          conditions:
+            all:
+              - key: {{ `"{{ length(foreign) }}"` }}
+                operator: GreaterThan
+                value: 0
+{{- end }}
