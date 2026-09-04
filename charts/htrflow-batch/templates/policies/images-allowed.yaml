@@ -1,7 +1,7 @@
 {{- if and .Values.security.policies.enabled .Values.security.allowedImageRepos }}
 {{- $repos := list }}
 {{- range .Values.security.allowedImageRepos }}
-{{- $repos = append $repos (regexReplaceAll `([.+*?()|\[\]{}^$\\])` (trimSuffix "/" .) `\${1}`) }}
+{{- $repos = append $repos (regexReplaceAll `([.+*?()|\[\]{}^$\\])` (trimAll "/" (trim .)) `\${1}`) }}
 {{- end }}
 {{- $re := printf "^(?:%s)(?:/.*)?$" (join "|" $repos) }}
 {{- $allowed := join ", " .Values.security.allowedImageRepos }}
