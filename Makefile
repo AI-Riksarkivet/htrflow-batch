@@ -1,5 +1,6 @@
 .PHONY: install format lint check test typecheck test-driver-real ci build scan publish \
-        compose-up compose-test compose-smoke compose-down helm-lint helm-template install-devstack \
+        compose-up compose-test compose-smoke compose-down helm-lint helm-template \
+        install-devstack install-kyverno \
         docs-serve docs-build \
         poc-push poc-push-arm64 build-wrapper build-htrflow-base-arm64 build-web scan-web clean \
         campaigns-apply psa-labels e2e \
@@ -197,8 +198,20 @@ helm-template: helm-lint
 # docs/development/e2e-indexed-jobs.md "A failed Helm install still owns
 # what it applied"). The guard below refuses that unless FORCE=1.
 NVIDIA_DEVICE_PLUGIN ?= true
+# Kyverno is the enforcement point for the chart's `security.policies`
+# (digest pins, the image allow-list, model revisions -- B63 Task 22). Its
+# own namespace and its own release: it is a cluster-wide admission
+# controller, not a piece of this platform, and making it a devstack
+# subchart would tie every `helm upgrade` of the PoC to it.
+KYVERNO ?= true
+KYVERNO_CHART_VERSION ?= 3.9.0
+
+install-kyverno:
+	helm upgrade --install kyverno oci://ghcr.io/kyverno/charts/kyverno \
+	  -n kyverno --create-namespace --version $(KYVERNO_CHART_VERSION) --wait
 
 install-devstack:
+	@if [ "$(KYVERNO)" = "true" ]; then $(MAKE) install-kyverno; fi
 	@if [ "$(NVIDIA_DEVICE_PLUGIN)" = "false" ] && [ "$(FORCE)" != "1" ] && \
 	  kubectl get pods -A -o json | jq -e '[.items[] | select(.metadata.namespace!="kube-system") | select(.status.phase=="Running" or .status.phase=="Pending") | select(.spec.runtimeClassName=="nvidia" or any(.spec.containers[]?; (.resources.requests["nvidia.com/gpu"]? // .resources.limits["nvidia.com/gpu"]?) != null))] | length > 0' >/dev/null; then \
 	  echo "install-devstack: refusing NVIDIA_DEVICE_PLUGIN=false -- GPU pods are running and depend on the RuntimeClass/DaemonSet this would delete; set FORCE=1 to override."; exit 1; \
