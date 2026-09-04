@@ -35,6 +35,7 @@ from config_reference import (  # noqa: E402
     PAGE,
     SECURITY,
     SURFACES,
+    WEB_DEFAULT_DOC,
     _chart_rows,
     _model_rows,
     render,
@@ -97,6 +98,7 @@ def test_security_names_only_keys_the_generator_emits():
         for k, _ in (_model_rows(m, doc) if m else _chart_rows(values))
     }
     assert set(SECURITY) <= emitted
+    assert set(WEB_DEFAULT_DOC) <= emitted
 
 
 def test_the_configuration_page_is_what_the_generator_prints():
