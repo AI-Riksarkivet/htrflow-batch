@@ -99,6 +99,47 @@ def test_warmup_transient_failure_writes_termination_message(tmp_path):
     }
 
 
+def test_warmup_bad_repo_id_is_permanent(tmp_path):
+    """A bogus HF model id (401/404 from the Hub) is a config mistake, not a
+    network hiccup — exit 13, same as an unknown step (failure-handling.md,
+    "Warm-ups fail the same way")."""
+    import httpx
+    from huggingface_hub.errors import RepositoryNotFoundError
+
+    term_path = tmp_path / "termination-log"
+    env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
+    # huggingface_hub's HfHubHTTPError wants a real response object across
+    # its supported versions; the content is irrelevant to this test.
+    response = httpx.Response(404, request=httpx.Request("GET", "https://hf.co"))
+
+    def boom(_):
+        raise RepositoryNotFoundError(
+            "Repository Not Found for url: ...", response=response
+        )
+
+    rc = main(env, load=boom)
+    assert rc == EXIT_PERMANENT
+    term = json.loads(term_path.read_text())
+    assert term["permanent"] is True
+
+
+def test_warmup_local_entry_not_found_is_transient(tmp_path):
+    """LocalEntryNotFoundError subclasses ValueError by MRO (0.36.2) but
+    means the cache is simply not warm yet -- a re-warm and retry fix it."""
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    term_path = tmp_path / "termination-log"
+    env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
+
+    def boom(_):
+        raise LocalEntryNotFoundError("model 'x' not found in the local cache")
+
+    rc = main(env, load=boom)
+    assert rc == EXIT_TRANSIENT
+    term = json.loads(term_path.read_text())
+    assert term["permanent"] is False
+
+
 def test_warmup_bad_config_is_permanent(tmp_path):
     """W12: a typo'd step/model or malformed YAML looped forever as a
     transient warm-up; nothing about it changes on retry."""

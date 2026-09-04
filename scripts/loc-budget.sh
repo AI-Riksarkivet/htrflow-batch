@@ -23,7 +23,13 @@ fail=0
 # failure and stops being described to a reader as a manifest problem. Two
 # assignments and the comment that says why the distinction has to live in
 # the wrapper rather than be guessed from the error text downstream. (B63)
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2010
+# 2010 -> 2028 in Task 28 fix round item 1: a bad HF repo id/revision
+# (RepositoryNotFoundError/RevisionNotFoundError) joins PERMANENT_ERRORS, and
+# LocalEntryNotFoundError (a ValueError by MRO, but a cache miss) is carved
+# back out via TRANSIENT_FIRST -- the import, the two tuples and their
+# rationale comments, and the collapsed except block that classifies both.
+# (B63)
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2028
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

@@ -18,6 +18,11 @@ from pathlib import Path
 from typing import Callable, Mapping, Optional
 
 import yaml
+from huggingface_hub.errors import (
+    LocalEntryNotFoundError,
+    RepositoryNotFoundError,
+    RevisionNotFoundError,
+)
 
 from .main import EXIT_OK, EXIT_PERMANENT, EXIT_TRANSIENT, _terminate
 
@@ -27,12 +32,23 @@ log = logging.getLogger("htrflow_batch.warmup")
 #: (docs: wrapper, "Warm-up"). ``driver.build_pipeline`` already translates
 #: htrflow's own KeyError/NotImplementedError into ValueError; the two stay
 #: listed for a ``load`` callable that does not go through the driver.
+#: ``RepositoryNotFoundError``/``RevisionNotFoundError`` (and, by
+#: inheritance, ``GatedRepoError``): a bad model id or revision in the
+#: pipeline YAML, not a network hiccup — MROs verified in the image's
+#: huggingface_hub 0.36.2 (docs: how-it-works/failure-handling.md).
 PERMANENT_ERRORS: tuple[type[BaseException], ...] = (
     ValueError,  # incl. pydantic ValidationError; driver's "bad pipeline config"
     yaml.YAMLError,
     KeyError,  # unknown step name: htrflow STEPS[step.lower()]
     NotImplementedError,  # unknown model class: htrflow get_model_by_name
+    RepositoryNotFoundError,
+    RevisionNotFoundError,
 )
+
+#: ``LocalEntryNotFoundError`` subclasses ``ValueError`` by MRO (0.36.2), but
+#: it means the model is not in the cache yet -- a network miss, not a bad
+#: pipeline -- so it must not fall into ``PERMANENT_ERRORS`` by inheritance.
+TRANSIENT_FIRST: tuple[type[BaseException], ...] = (LocalEntryNotFoundError,)
 
 __all__ = ["EXIT_OK", "EXIT_PERMANENT", "EXIT_TRANSIENT", "main"]
 
@@ -64,23 +80,25 @@ def main(
         return EXIT_PERMANENT
     try:
         load(pipeline_path)
-    except PERMANENT_ERRORS as e:
+    except Exception as e:
         # W12: malformed YAML, a config that fails pydantic validation, an
-        # unknown step (htrflow: KeyError from STEPS[...]) or model class
-        # (NotImplementedError). Retrying cannot help; exit 13 so the
-        # warm-up Job's own backoffLimit stops retrying it.
-        log.error("warm-up failed (bad pipeline config): %r", e)
+        # unknown step/model class, or a bad HF repo id/revision — retrying
+        # cannot help; exit 13 so the warm-up Job's own backoffLimit stops
+        # retrying it. Everything else (network, disk-full, HF Hub 5xx, a
+        # model merely missing from a not-yet-warm cache) is retryable.
+        permanent = isinstance(e, PERMANENT_ERRORS) and not isinstance(
+            e, TRANSIENT_FIRST
+        )
+        log.error(
+            "warm-up failed%s: %s",
+            " (bad pipeline config)" if permanent else "",
+            e if permanent else f"{e}\n{traceback.format_exc()}",
+        )
         # Task 28: warm-up termination message. There is no warm-up log (the
         # Job mounts no S3 secret), so this is the only place the bad model
         # id or unknown step reaches the campaign card.
-        _terminate(env, {"stage": "warmup", "permanent": True, "error": str(e)})
-        return EXIT_PERMANENT
-    except Exception as e:
-        # Network, disk-full, HF Hub 5xx: retryable — the warm-up Job's own
-        # backoffLimit handles it.
-        log.error("warm-up failed: %s\n%s", e, traceback.format_exc())
-        _terminate(env, {"stage": "warmup", "permanent": False, "error": str(e)})
-        return EXIT_TRANSIENT
+        _terminate(env, {"stage": "warmup", "permanent": permanent, "error": str(e)})
+        return EXIT_PERMANENT if permanent else EXIT_TRANSIENT
     log.info(
         "warm-up complete: models for %s cached in %s",
         pipeline_path,
