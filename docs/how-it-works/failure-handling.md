@@ -203,11 +203,17 @@ file — a completed campaign Job's indexes do not get re-run in place.
 
 A pipeline's `htr-warmup-<id>` Job (`backoffLimit: 2`, 1 h deadline, the
 same `podFailurePolicy` shape on its `warmup` container) fails independently
-of any campaign. A transient failure is logged to `status/warmup/<id>.log`
-by the pod itself and the Job is retried by Kubernetes up to its own
+of any campaign. There is no warm-up log: the pod mounts no S3 secret (it is
+the one pod the cache PVC is mounted read-write on, and the only one the
+NetworkPolicy lets reach HF Hub), so a transient failure is only visible on
+the campaign card's warm-up chip and is retried by Kubernetes up to its own
 `backoffLimit`; a permanent one (exit 13: bad model id, unknown step,
 invalid YAML) leaves the pipeline's warm-up Job failed and every campaign
-using that pipeline stuck at its init container
-(`warmup-wait`) until the Job is fixed and re-applied. There is no
+using that pipeline stuck at its init container (`warmup-wait`) until the
+Job is fixed and re-applied. The chip's tooltip (and, with the card open,
+the line under it) is the wrapper's own termination message —
+`{stage: "warmup", permanent, error}`, the same shape a volume's `reason`
+carries — read off the warm-up Job's pod
+([Campaigns](campaigns.md#the-web-front-and-status-page)). There is no
 delete-recreate loop or attempt cap shared with volumes any more — it is
 just another Kubernetes Job.

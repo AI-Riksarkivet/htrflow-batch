@@ -312,7 +312,11 @@ pipeline ConfigMap, CPU-only, outside the Kueue queue — which simply calls
 exactly the files a Job will load land in the cache, with no second parser of
 the pipeline YAML. It exits 13 for a pipeline that is wrong (invalid YAML,
 pydantic validation, unknown step or model class) and 1 for one that is
-unlucky (network, disk). Who runs it:
+unlucky (network, disk), writing the same `{stage: "warmup", permanent,
+error}` termination message a volume's wrapper does — the warm-up Job mounts
+no S3 secret, so this message, read by the campaign card's warm-up chip
+([Campaigns](campaigns.md#the-web-front-and-status-page)), is the only place
+the failure reaches a person. Who runs it:
 
 - The converter renders one `htr-warmup-<id>` Job per pipeline whenever that
   pipeline appears in `pipelines/`, alongside its `htr-pipeline-<id>`

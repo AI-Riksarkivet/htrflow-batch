@@ -149,6 +149,13 @@ script). A CSP header from the server must not be stricter than the meta tag
   `JobDetail.pipelineYaml` in an inline `<pre>` (`aria-expanded` /
   `aria-controls`). Both fields come from the `htr-pipeline-<id>` ConfigMap;
   when it is gone the chip stays a static label with nothing to toggle.
+- **Warm-up chip.** Beside the pipeline chip whenever `JobSummary.warmup`
+  isn't `succeeded`: "warm-up pending/running/failed" or "no warm-up"
+  (`missing`). `failed` and `missing` also push the card's left accent to
+  the failed colour — the campaign's pods cannot start on their own either
+  way. A `failed` match's `title` (and, with the card open, a line under the
+  chip) is `describeReason(warmup.reason)`; there is no warm-up log to link
+  instead.
 - **Folded by default.** A card starts collapsed and remembers the reader's
   choice in `localStorage` under `htrflow.card.<namespace>/<name>` — every
   access wrapped, since a browser may refuse storage; the card then simply
