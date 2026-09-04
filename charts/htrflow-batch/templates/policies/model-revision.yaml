@@ -11,6 +11,15 @@
 # label but a `volumes.txt` and no pipeline. `context` + `deny` rather than
 # `foreach` for the reason spelled out in images-pinned.yaml: the message
 # names the model.
+#
+# A model is pinned two different ways depending on who loads it (B63 Task
+# 22 fix round 2): YOLO's Ultralytics wrapper takes `model_settings.revision`
+# top-level, while htrflow's Hugging Face-backed models (TrOCR, Donut, DiT)
+# take it as `model_settings.model_kwargs.revision`, forwarded straight to
+# `from_pretrained` — see htrflow's own trocr.py docstring. A model counts
+# as pinned when either path matches the 40-hex pattern; a step pinned the
+# wrong way for its own model loader is refused by this same rule, since it
+# is not pinned in the place its loader reads.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -35,12 +44,15 @@ spec:
             jmesPath: >-
               parse_yaml(request.object.data."pipeline.yaml" || 'steps: []').steps
               | [?settings.model_settings.model]
-              | [?!regex_match('^[0-9a-f]{40}$', settings.model_settings.revision || '')].settings.model_settings.model
+              | [?!(regex_match('^[0-9a-f]{40}$', settings.model_settings.revision || '')
+              || regex_match('^[0-9a-f]{40}$', settings.model_settings.model_kwargs.revision || ''))].settings.model_settings.model
             default: []
       validate:
         message: >-
           models not pinned to a revision: {{ `{{ join(', ', unpinned) }}` }}
-          — add revision: <40-character commit hash> to each model_settings
+          — add revision: <40-character commit hash> under model_settings
+          (YOLO) or model_settings.model_kwargs (TrOCR and other Hugging
+          Face models)
         deny:
           conditions:
             all:
