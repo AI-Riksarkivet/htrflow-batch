@@ -93,8 +93,8 @@ def test_security_names_only_keys_the_generator_emits():
     values = _load(CHART / "values.yaml")
     emitted = {
         k
-        for _, _, _, m in SURFACES
-        for k, _ in (_model_rows(m) if m else _chart_rows(values))
+        for _, _, _, m, doc in SURFACES
+        for k, _ in (_model_rows(m, doc) if m else _chart_rows(values))
     }
     assert set(SECURITY) <= emitted
 

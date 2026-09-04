@@ -52,11 +52,22 @@ SECURITY = {
     "network.web.ingressCidrs": "the only gate on the read API — cluster",
 }
 
+#: What `WebConfig.from_env` (or `app.py`) actually falls back to, for a
+#: field whose class-level default is only what an unset field parses to,
+#: never what a deployed pod runs with. Kept next to the model it annotates,
+#: like SECURITY, rather than as a Field kwarg: it costs nothing against
+#: packages/web's LOC budget here.
+WEB_DEFAULT_DOC = {
+    "HTRFLOW_PUBLIC_RESULTS_BASE": "required unless `HTRFLOW_WEB_SITE_ONLY`",
+    "HTRFLOW_NAMESPACES": "the pod's own namespace, else `htr-batch`",
+    "HTRFLOW_WEB_STATIC": "`/app/static`",
+}
+
 SURFACES = [
-    ("wrapper", "the batch Job's container", "env", WrapperConfig),
-    ("web", "the read API and campaign browser", "env", WebConfig),
-    ("converter", "a campaigns repo", "`converter.yaml`", ConverterConfig),
-    ("chart", "`charts/htrflow-batch`", "`values.yaml`", None),
+    ("wrapper", "the batch Job's container", "env", WrapperConfig, None),
+    ("web", "the read API and campaign browser", "env", WebConfig, WEB_DEFAULT_DOC),
+    ("converter", "a campaigns repo", "`converter.yaml`", ConverterConfig, None),
+    ("chart", "`charts/htrflow-batch`", "`values.yaml`", None, None),
 ]
 
 #: Env the wrapper reads outside `Config` — not campaign settings, so no
@@ -95,20 +106,15 @@ def _security(surface: str, key: str) -> str:
     return SECURITY.get(key, PUBLIC if key == RESULTS_BASE.get(surface) else NONE)
 
 
-def _model_rows(model: type[BaseModel]) -> list[tuple[str, str]]:
+def _model_rows(
+    model: type[BaseModel], doc: dict[str, str] | None = None
+) -> list[tuple[str, str]]:
     rows = []
     for name, f in model.model_fields.items():
-        # A field's class-level default can be a value nothing ever runs
-        # with -- from_env may fall back to something computed instead.
-        # `default_doc` in json_schema_extra, when set, is what to print.
-        extra = f.json_schema_extra
-        doc = extra.get("default_doc") if isinstance(extra, dict) else None
-        if doc:
-            shown = doc
-        else:
-            value = f.get_default(call_default_factory=True)
-            shown = "**required**" if f.is_required() else _show(value)
-        rows.append((f.alias or name, shown))
+        alias = f.alias or name
+        value = f.get_default(call_default_factory=True)
+        default = "**required**" if f.is_required() else _show(value)
+        rows.append((alias, (doc or {}).get(alias, default)))
     return rows
 
 
@@ -126,8 +132,8 @@ def render() -> str:
     prose = Path(__file__).with_suffix(".md").read_text(encoding="utf-8")
     head, foot = prose.split("<!-- TABLES -->\n")
     out = [head]
-    for surface, where, source, model in SURFACES:
-        rows = _model_rows(model) if model else _chart_rows(values)
+    for surface, where, source, model, doc in SURFACES:
+        rows = _model_rows(model, doc) if model else _chart_rows(values)
         out.append(f"\n## {surface} — {where}\n\n| Key | Source | Default | ")
         out.append("Must agree with | Security |\n|---|---|---|---|---|\n")
         out += [
