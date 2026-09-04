@@ -15,9 +15,12 @@ between a merged commit and a running pod is Kyverno's: the chart ships
 applies to every Job, Pod and pipeline ConfigMap in the namespace, whoever
 wrote it — and the campaigns repo's CI runs the same policies over its
 rendered output with the Kyverno CLI, so an author fails in the pull
-request instead of at apply time. Treat the repo like CI config —
-protected `main`, required review — and turn on the controls it and the
-chart offer:
+request instead of at apply time. That reach is uniform for the two image
+rules (every Job and Pod, unconditionally), narrower for the revision rule
+(only ConfigMaps carrying the converter's own `managed-by=converter` label,
+and only their pipeline's top-level `steps:` — see the table below). Treat
+the repo like CI config — protected `main`, required review — and turn on
+the controls it and the chart offer:
 
 | Control | Where | What it closes |
 |---|---|---|
