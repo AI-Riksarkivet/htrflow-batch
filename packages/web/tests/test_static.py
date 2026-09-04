@@ -23,6 +23,9 @@ class EmptyReader:
     def list_jobs(self) -> list[dict]:
         return []
 
+    def list_warmups(self) -> list[dict]:
+        return []
+
     def get_job(self, namespace: str, name: str) -> dict | None:
         return None
 

@@ -25,6 +25,8 @@ from kubernetes import client, config
 #: ``campaign`` (packages/converter/src/htrflow_converter/render.py).
 LABEL_SELECTOR = "app=htrflow-batch,htrflow.riksarkivet.se/managed-by=converter"
 
+_WARMUP_SELECTOR = "app=htrflow-warmup,htrflow.riksarkivet.se/managed-by=converter"
+
 _NAMESPACE_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 _DEFAULT_NAMESPACE = "htr-batch"
 
@@ -80,14 +82,18 @@ class Reader:
         self.batch = client.BatchV1Api()
         self.core = client.CoreV1Api()
 
-    def list_jobs(self) -> list[dict]:
+    def _list_jobs(self, selector: str) -> list[dict]:
         jobs: list[dict] = []
         for ns in self.cfg.namespaces:
-            body = _read(
-                self.batch, "list_namespaced_job", ns, label_selector=LABEL_SELECTOR
-            )
+            body = _read(self.batch, "list_namespaced_job", ns, label_selector=selector)
             jobs.extend((body or {}).get("items", []))
         return jobs
+
+    def list_jobs(self) -> list[dict]:
+        return self._list_jobs(LABEL_SELECTOR)
+
+    def list_warmups(self) -> list[dict]:
+        return self._list_jobs(_WARMUP_SELECTOR)
 
     def get_job(self, namespace: str, name: str) -> dict | None:
         return _read(self.batch, "read_namespaced_job", name, namespace)

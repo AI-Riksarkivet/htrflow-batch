@@ -66,6 +66,9 @@ class FakeReader:
     def list_jobs(self) -> list[dict]:
         return [JOB]
 
+    def list_warmups(self) -> list[dict]:
+        return []
+
     def get_job(self, namespace: str, name: str) -> dict | None:
         if (
             namespace == JOB["metadata"]["namespace"]
@@ -109,6 +112,7 @@ def test_list_jobs_shape(client: TestClient):
             "suspended": False,
             "createdAt": "2026-01-01T00:00:00Z",
             "resultsBase": "https://results.example.org/htr-test/demo-v1",
+            "warmup": {"phase": "missing"},
         }
     ]
 
@@ -154,6 +158,89 @@ def test_unknown_job_404(client: TestClient):
 def test_post_not_allowed(client: TestClient):
     resp = client.post("/api/v1/jobs", json={})
     assert resp.status_code == 405
+
+
+WARMUP_JOB_FAILED = {
+    "metadata": {
+        "name": "htr-warmup-demo-v1",
+        "namespace": "htr-test",
+        "labels": {
+            "app": "htrflow-warmup",
+            "htrflow.riksarkivet.se/managed-by": "converter",
+            "htrflow.riksarkivet.se/pipeline": "demo-v1",
+        },
+    },
+    "status": {"active": 0, "conditions": [{"type": "Failed", "status": "True"}]},
+}
+
+WARMUP_JOB_SUCCEEDED = {
+    **WARMUP_JOB_FAILED,
+    "status": {"active": 0, "conditions": [{"type": "Complete", "status": "True"}]},
+}
+
+WARMUP_POD = {
+    "metadata": {"name": "htr-warmup-demo-v1-0", "namespace": "htr-test"},
+    "status": {
+        "containerStatuses": [
+            {
+                "name": "warmup",
+                "state": {
+                    "terminated": {
+                        "exitCode": 13,
+                        "message": (
+                            '{"stage": "warmup", "permanent": true,'
+                            ' "error": "unknown model class Yolo9"}'
+                        ),
+                    }
+                },
+            }
+        ]
+    },
+}
+
+
+class FailedWarmupReader(FakeReader):
+    def list_warmups(self) -> list[dict]:
+        return [WARMUP_JOB_FAILED]
+
+    def list_pods(self, namespace: str, job_name: str) -> list[dict]:
+        return [WARMUP_POD] if job_name == "htr-warmup-demo-v1" else []
+
+
+class SucceededWarmupReader(FakeReader):
+    def list_warmups(self) -> list[dict]:
+        return [WARMUP_JOB_SUCCEEDED]
+
+
+def test_list_jobs_carries_a_failed_warmups_reason():
+    """No warm-up log exists (Task 28) -- the reason is the only way a bad
+    model id reaches a reader, so the list row must carry it, not just the
+    phase."""
+    client = TestClient(create_app(FailedWarmupReader()))
+    body = client.get("/api/v1/jobs").json()
+    assert body[0]["warmup"] == {
+        "phase": "failed",
+        "reason": {
+            "stage": "warmup",
+            "permanent": True,
+            "error": "unknown model class Yolo9",
+        },
+    }
+
+
+def test_list_jobs_carries_a_succeeded_warmup_with_no_reason():
+    client = TestClient(create_app(SucceededWarmupReader()))
+    body = client.get("/api/v1/jobs").json()
+    assert body[0]["warmup"] == {"phase": "succeeded"}
+
+
+def test_job_detail_carries_the_warmup_field_too():
+    """Task 28: the detail response inherits `warmup` from the same
+    matching the list row does -- not just a `missing` default."""
+    client = TestClient(create_app(FailedWarmupReader()))
+    body = client.get("/api/v1/jobs/htr-test/kyrk").json()
+    assert body["warmup"]["phase"] == "failed"
+    assert body["warmup"]["reason"]["error"] == "unknown model class Yolo9"
 
 
 def test_no_create_patch_delete_calls():

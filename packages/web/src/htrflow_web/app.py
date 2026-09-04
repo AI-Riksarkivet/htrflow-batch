@@ -89,7 +89,7 @@ class NoCluster:
             detail="site-only mode (HTRFLOW_WEB_SITE_ONLY): no cluster to read",
         )
 
-    list_jobs = get_job = get_configmap = list_pods = _no_cluster
+    list_jobs = list_warmups = get_job = get_configmap = list_pods = _no_cluster
 
 
 def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
@@ -112,7 +112,11 @@ def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
             key=lambda j: (j.get("metadata") or {}).get("creationTimestamp", ""),
             reverse=True,
         )
-        return [projection.summarize(job, reader.cfg) for job in jobs]
+        warmup_jobs = reader.list_warmups()
+        return [
+            projection.summarize(job, reader.cfg, _warmup_status(job, warmup_jobs))
+            for job in jobs
+        ]
 
     @app.api_route("/api/v1/jobs/{namespace}/{name}", methods=GET_HEAD)
     def get_job(
@@ -129,9 +133,22 @@ def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
         pipe_name = projection.configmap_ref(job, "pipeline")
         pipeline_cm = reader.get_configmap(namespace, pipe_name) if pipe_name else None
         pods = reader.list_pods(namespace, name)
+        warmup = _warmup_status(job, reader.list_warmups())
         return projection.detail(
-            job, configmap, pods, reader.cfg, offset, limit, pipeline_cm
+            job, configmap, pods, reader.cfg, offset, limit, pipeline_cm, warmup
         )
+
+    def _warmup_status(job: dict, warmup_jobs: list[dict]) -> dict:
+        warmup_job = projection.match_warmup(job, warmup_jobs)
+        if warmup_job is None:
+            return {"phase": "missing"}
+        phase = projection.warmup_phase(warmup_job)
+        if phase != "failed":
+            return {"phase": phase}
+        namespace = (job.get("metadata") or {}).get("namespace", "")
+        name = (warmup_job.get("metadata") or {}).get("name", "")
+        reason = projection.warmup_reason(reader.list_pods(namespace, name))
+        return {"phase": phase, "reason": reason} if reason else {"phase": phase}
 
     # Last, so the routes above win over any file of the same name. Absent
     # outside the image (a local `uv run htrflow-web` builds no site), which
