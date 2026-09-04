@@ -7,6 +7,9 @@ from types import SimpleNamespace
 from htrflow_web import projection
 
 CFG = SimpleNamespace(public_results_base="https://results.example.org")
+#: `warmup` is required (Task 28 fix round item 4) -- this is what every
+#: pre-existing test that does not care about it passes explicitly.
+MISSING_WARMUP = {"phase": "missing"}
 
 
 def _job(
@@ -131,7 +134,7 @@ class TestParseIndexRanges:
 class TestSummarize:
     def test_counts_and_resultsbase(self):
         job = _job()
-        summary = projection.summarize(job, CFG)
+        summary = projection.summarize(job, CFG, MISSING_WARMUP)
         assert summary["counts"] == {"total": 7, "active": 1, "done": 4, "failed": 1}
         assert summary["phase"] == "Running"
         assert summary["namespace"] == "htr-test"
@@ -145,30 +148,32 @@ class TestSummarize:
         """The namespaced layout is the only layout (B63 task 15): the
         namespace is in every `resultsBase`, whatever the namespace is."""
         job = _job(namespace="htr-batch")
-        summary = projection.summarize(job, CFG)
+        summary = projection.summarize(job, CFG, MISSING_WARMUP)
         assert summary["resultsBase"] == "https://results.example.org/htr-batch/demo-v1"
 
     def test_phase_queued(self):
         job = _job(suspend=True, completed="", failed="")
-        assert projection.summarize(job, CFG)["phase"] == "Queued"
+        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Queued"
 
     def test_phase_paused(self):
         job = _job(suspend=True, completed="0", failed="")
-        assert projection.summarize(job, CFG)["phase"] == "Paused"
+        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Paused"
 
     def test_phase_succeeded(self):
         job = _job(conditions=[{"type": "Complete", "status": "True"}])
-        assert projection.summarize(job, CFG)["phase"] == "Succeeded"
+        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Succeeded"
 
     def test_phase_failed(self):
         """Nothing completed: the campaign produced nothing."""
         job = _job(completed="", conditions=[{"type": "Failed", "status": "True"}])
-        assert projection.summarize(job, CFG)["phase"] == "Failed"
+        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Failed"
 
     def test_phase_partially_failed(self):
         """The Job gave up, but four indexes had already published."""
         job = _job(conditions=[{"type": "Failed", "status": "True"}])
-        assert projection.summarize(job, CFG)["phase"] == "PartiallyFailed"
+        assert (
+            projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "PartiallyFailed"
+        )
 
     def test_phase_succeeded_wins_over_failed(self):
         job = _job(
@@ -177,7 +182,7 @@ class TestSummarize:
                 {"type": "Failed", "status": "True"},
             ]
         )
-        assert projection.summarize(job, CFG)["phase"] == "Succeeded"
+        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Succeeded"
 
 
 class TestDetail:
@@ -193,7 +198,9 @@ class TestDetail:
                 ),
             ),
         ]
-        d = projection.detail(job, configmap, pods, CFG, offset=0, limit=200)
+        d = projection.detail(
+            job, configmap, pods, CFG, offset=0, limit=200, warmup=MISSING_WARMUP
+        )
         states = {v["index"]: v["state"] for v in d["volumes"]}
         assert states == {
             0: "done",
@@ -232,7 +239,7 @@ class TestDetail:
         )
 
     def test_source_url_is_the_manifest_half_of_the_line(self):
-        d = projection.detail(_job(), _configmap(), [], CFG)
+        d = projection.detail(_job(), _configmap(), [], CFG, warmup=MISSING_WARMUP)
         assert d["volumes"][0]["sourceUrl"] == (
             "https://iiif.example.org/vol0/manifest"
         )
@@ -242,7 +249,7 @@ class TestDetail:
             "metadata": {"name": "campaign-kyrk", "namespace": "htr-test"},
             "data": {"volumes.txt": "vol0\timages:https://a/1.jpg,https://a/2.jpg\n"},
         }
-        d = projection.detail(_job(), cm, [], CFG)
+        d = projection.detail(_job(), cm, [], CFG, warmup=MISSING_WARMUP)
         assert d["volumes"][0]["sourceUrl"] is None
 
     def test_a_line_without_a_source_has_no_source_url(self):
@@ -250,7 +257,7 @@ class TestDetail:
             "metadata": {"name": "campaign-kyrk", "namespace": "htr-test"},
             "data": {"volumes.txt": "vol0\n"},
         }
-        d = projection.detail(_job(), cm, [], CFG)
+        d = projection.detail(_job(), cm, [], CFG, warmup=MISSING_WARMUP)
         assert d["volumes"][0]["sourceUrl"] is None
 
     def test_failures_capped_and_newest_index_first(self):
@@ -264,19 +271,25 @@ class TestDetail:
                 ),
             ),
         ]
-        d = projection.detail(job, configmap, pods, CFG, offset=0, limit=200)
+        d = projection.detail(
+            job, configmap, pods, CFG, offset=0, limit=200, warmup=MISSING_WARMUP
+        )
         assert [f["index"] for f in d["failures"]] == [3]
 
     def test_failures_excludes_failed_index_without_reason(self):
         job = _job()
         configmap = _configmap()
-        d = projection.detail(job, configmap, [], CFG, offset=0, limit=200)
+        d = projection.detail(
+            job, configmap, [], CFG, offset=0, limit=200, warmup=MISSING_WARMUP
+        )
         assert d["failures"] == []
 
     def test_paging(self):
         job = _job()
         configmap = _configmap()
-        d = projection.detail(job, configmap, [], CFG, offset=5, limit=2)
+        d = projection.detail(
+            job, configmap, [], CFG, offset=5, limit=2, warmup=MISSING_WARMUP
+        )
         assert [v["index"] for v in d["volumes"]] == [5, 6]
 
     def test_newest_pod_wins_reason(self):
@@ -296,7 +309,9 @@ class TestDetail:
                 created="2026-01-01T00:05:00Z",
             ),
         ]
-        d = projection.detail(job, configmap, pods, CFG, offset=0, limit=200)
+        d = projection.detail(
+            job, configmap, pods, CFG, offset=0, limit=200, warmup=MISSING_WARMUP
+        )
         row3 = next(v for v in d["volumes"] if v["index"] == 3)
         assert row3["reason"]["error"] == "manifest unsupported"
 
@@ -305,7 +320,7 @@ class TestDetail:
         truncated write: the client still gets the three fields, with the
         text it cannot parse in `error` rather than a missing key."""
         pods = [_pod(3, terminated_message="Killed\n")]
-        d = projection.detail(_job(), _configmap(), pods, CFG)
+        d = projection.detail(_job(), _configmap(), pods, CFG, warmup=MISSING_WARMUP)
         row3 = next(v for v in d["volumes"] if v["index"] == 3)
         assert row3["reason"] == {
             "stage": None,
@@ -322,17 +337,21 @@ class TestDetail:
                 ),
             )
         ]
-        d = projection.detail(_job(), _configmap(), pods, CFG)
+        d = projection.detail(_job(), _configmap(), pods, CFG, warmup=MISSING_WARMUP)
         row3 = next(v for v in d["volumes"] if v["index"] == 3)
         assert row3["reason"] == {"stage": None, "permanent": None, "error": "boom"}
 
     def test_no_configmap_does_not_crash(self):
-        d = projection.detail(_job(), None, [], CFG, offset=0, limit=200)
+        d = projection.detail(
+            _job(), None, [], CFG, offset=0, limit=200, warmup=MISSING_WARMUP
+        )
         assert d["volumes"] == []
         assert d["failures"] == []
 
     def test_configmap_fewer_lines_than_completions(self):
-        d = projection.detail(_job(), _configmap(n=3), [], CFG, offset=0, limit=200)
+        d = projection.detail(
+            _job(), _configmap(n=3), [], CFG, offset=0, limit=200, warmup=MISSING_WARMUP
+        )
         assert [v["index"] for v in d["volumes"]] == [0, 1, 2]
 
     def test_pod_deadline_is_named_in_the_reason(self):
@@ -342,7 +361,9 @@ class TestDetail:
         status.reason separates the two, so the row must carry it."""
         pod = _pod(3, terminated_message='{"stage": "stream", "error": "SIGTERM"}')
         pod["status"]["reason"] = "DeadlineExceeded"
-        d = projection.detail(_job(), _configmap(), [pod], CFG, offset=0, limit=200)
+        d = projection.detail(
+            _job(), _configmap(), [pod], CFG, offset=0, limit=200, warmup=MISSING_WARMUP
+        )
         row3 = next(v for v in d["volumes"] if v["index"] == 3)
         assert row3["reason"] == {
             "stage": "stream",
@@ -353,14 +374,18 @@ class TestDetail:
     def test_a_drain_sigterm_keeps_its_reason(self):
         """No status.reason: a drain, not a deadline — leave it alone."""
         pod = _pod(3, terminated_message='{"stage": "stream", "error": "SIGTERM"}')
-        d = projection.detail(_job(), _configmap(), [pod], CFG, offset=0, limit=200)
+        d = projection.detail(
+            _job(), _configmap(), [pod], CFG, offset=0, limit=200, warmup=MISSING_WARMUP
+        )
         row3 = next(v for v in d["volumes"] if v["index"] == 3)
         assert row3["reason"]["error"] == "SIGTERM"
 
     def test_deadline_leaves_a_non_json_message_alone(self):
         pod = _pod(3, terminated_message="killed")
         pod["status"]["reason"] = "DeadlineExceeded"
-        d = projection.detail(_job(), _configmap(), [pod], CFG, offset=0, limit=200)
+        d = projection.detail(
+            _job(), _configmap(), [pod], CFG, offset=0, limit=200, warmup=MISSING_WARMUP
+        )
         row3 = next(v for v in d["volumes"] if v["index"] == 3)
         assert row3["reason"] == {"stage": None, "permanent": None, "error": "killed"}
 
@@ -373,7 +398,9 @@ class TestDetail:
                 "message": '{"stage": "load", "permanent": false, "error": "OOM"}',
             }
         }
-        d = projection.detail(_job(), _configmap(), [pod], CFG, offset=0, limit=200)
+        d = projection.detail(
+            _job(), _configmap(), [pod], CFG, offset=0, limit=200, warmup=MISSING_WARMUP
+        )
         row3 = next(v for v in d["volumes"] if v["index"] == 3)
         assert row3["reason"] == {
             "stage": "load",
@@ -387,29 +414,41 @@ class TestLatest:
     right for a campaign whose in-flight index is past the first page."""
 
     def test_active_wins_over_done(self):
-        d = projection.detail(_job(), _configmap(), [_pod(4, active=True)], CFG)
+        d = projection.detail(
+            _job(), _configmap(), [_pod(4, active=True)], CFG, warmup=MISSING_WARMUP
+        )
         assert d["latest"]["id"] == "vol4"  # 0-2 and 5 are done
 
     def test_newest_done_when_nothing_is_active(self):
-        d = projection.detail(_job(), _configmap(), [], CFG)
+        d = projection.detail(_job(), _configmap(), [], CFG, warmup=MISSING_WARMUP)
         assert d["latest"]["id"] == "vol5"  # completedIndexes "0-2,5"
 
     def test_none_when_nothing_has_started(self):
         job = _job(completed="", failed="", active=0)
-        d = projection.detail(job, _configmap(), [], CFG)
+        d = projection.detail(job, _configmap(), [], CFG, warmup=MISSING_WARMUP)
         assert d["latest"] is None
 
     def test_ignores_the_offset_limit_window(self):
         """The strip must not be a function of what the card has paged in."""
         job = _job(completions=300, completed="0-250", failed="")
-        d = projection.detail(job, _configmap(n=300), [], CFG, offset=0, limit=200)
+        d = projection.detail(
+            job, _configmap(n=300), [], CFG, offset=0, limit=200, warmup=MISSING_WARMUP
+        )
         assert [v["index"] for v in d["volumes"]] == list(range(200))
         assert d["latest"]["id"] == "vol250"
 
     def test_an_active_volume_past_the_first_page_still_wins(self):
         job = _job(completions=300, completed="0-250", failed="")
         pods = [_pod(260, active=True)]
-        d = projection.detail(job, _configmap(n=300), pods, CFG, offset=0, limit=200)
+        d = projection.detail(
+            job,
+            _configmap(n=300),
+            pods,
+            CFG,
+            offset=0,
+            limit=200,
+            warmup=MISSING_WARMUP,
+        )
         assert d["latest"]["id"] == "vol260"
         assert d["latest"]["state"] == "active"
 
@@ -417,13 +456,18 @@ class TestLatest:
 class TestPipeline:
     def test_steps_and_yaml_come_off_the_pipeline_configmap(self):
         d = projection.detail(
-            _job(), _configmap(), [], CFG, pipeline_configmap=_pipeline_configmap()
+            _job(),
+            _configmap(),
+            [],
+            CFG,
+            pipeline_configmap=_pipeline_configmap(),
+            warmup=MISSING_WARMUP,
         )
         assert d["pipelineSteps"] == ["Segmentation", "TextRecognition"]
         assert d["pipelineYaml"] == PIPELINE_YAML
 
     def test_missing_configmap_is_no_steps_not_an_error(self):
-        d = projection.detail(_job(), _configmap(), [], CFG)
+        d = projection.detail(_job(), _configmap(), [], CFG, warmup=MISSING_WARMUP)
         assert d["pipelineSteps"] == []
         assert d["pipelineYaml"] == ""
 
@@ -434,6 +478,7 @@ class TestPipeline:
             [],
             CFG,
             pipeline_configmap=_pipeline_configmap("model: yolo\n"),
+            warmup=MISSING_WARMUP,
         )
         assert d["pipelineSteps"] == []
         assert d["pipelineYaml"] == "model: yolo\n"
@@ -445,6 +490,7 @@ class TestPipeline:
             [],
             CFG,
             pipeline_configmap=_pipeline_configmap("steps: [oh: no: yes\n"),
+            warmup=MISSING_WARMUP,
         )
         assert d["pipelineSteps"] == []
 
@@ -458,6 +504,7 @@ class TestPipeline:
             pipeline_configmap=_pipeline_configmap(
                 "steps:\n- step: 3\n- step: Export\n"
             ),
+            warmup=MISSING_WARMUP,
         )
         assert d["pipelineSteps"] == ["Export"]
 
@@ -470,6 +517,7 @@ class TestPipeline:
             pipeline_configmap=_pipeline_configmap(
                 "steps:\n- settings: {}\n- step: Export\n"
             ),
+            warmup=MISSING_WARMUP,
         )
         assert d["pipelineSteps"] == ["Export"]
 
@@ -566,8 +614,10 @@ class TestWarmupReason:
 
 
 class TestSummarizeWarmup:
-    def test_default_is_missing(self):
-        assert projection.summarize(_job(), CFG)["warmup"] == {"phase": "missing"}
+    def test_missing_warmup(self):
+        assert projection.summarize(_job(), CFG, MISSING_WARMUP)["warmup"] == {
+            "phase": "missing"
+        }
 
     def test_carries_the_given_warmup_through(self):
         warmup = {

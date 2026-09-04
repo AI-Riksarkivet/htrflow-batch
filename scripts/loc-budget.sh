@@ -99,8 +99,10 @@ check converter "$(count packages/converter/src -name '*.py')" 1283
 # 650 -> 660 in Task 28 fix round item 3: _warmup_status now memoizes the
 # failed-match reason by warm-up Job name for the request, so two campaigns
 # sharing one failed warm-up cost one list_pods call, not one per campaign.
-# (B63)
-check web       "$(count packages/web/src -name '*.py')" 660
+# 660 -> 661 in item 4: `warmup` is now a required (keyword-only on
+# `detail`) argument of `summarize`/`detail` instead of defaulting to
+# `missing` -- one line for the `*,` that makes it keyword-only. (B63)
+check web       "$(count packages/web/src -name '*.py')" 661
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

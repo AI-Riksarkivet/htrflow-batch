@@ -86,9 +86,9 @@ def _results_base(namespace: str, pipeline: str, cfg) -> str:
     return f"{cfg.public_results_base}/{namespace}/{pipeline}"
 
 
-def summarize(job: dict, cfg, warmup: dict | None = None) -> dict:
+def summarize(job: dict, cfg, warmup: dict) -> dict:
     """``JobSummary``: one row for ``GET /api/v1/jobs``. ``warmup`` is the
-    caller's pre-matched ``{phase, reason?}`` (Task 28); default ``missing``."""
+    caller's pre-matched ``{phase, reason?}`` (Task 28)."""
     meta = job.get("metadata") or {}
     namespace = meta.get("namespace", "")
     pipeline = _labels(job).get(_PIPELINE_LABEL, "")
@@ -101,7 +101,7 @@ def summarize(job: dict, cfg, warmup: dict | None = None) -> dict:
         "suspended": bool((job.get("spec") or {}).get("suspend")),
         "createdAt": meta.get("creationTimestamp"),
         "resultsBase": _results_base(namespace, pipeline, cfg),
-        "warmup": warmup if warmup is not None else {"phase": "missing"},
+        "warmup": warmup,
     }
 
 
@@ -286,7 +286,8 @@ def detail(
     offset: int = 0,
     limit: int = 200,
     pipeline_configmap: dict | None = None,
-    warmup: dict | None = None,
+    *,
+    warmup: dict,
 ) -> dict:
     """``JobDetail``: ``JobSummary`` plus per-index rows and top failures for
     ``GET /api/v1/jobs/{ns}/{name}``, paged by index. ``warmup`` passes
