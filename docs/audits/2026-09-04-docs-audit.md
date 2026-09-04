@@ -138,7 +138,7 @@ still correct.
 | `reconciler` | `zensical.toml` nav entries for `B06-…-reconciler.md`, `B29-…-reconciler.md`, `B45-reconciler-image.md` | story filenames under `docs/features/**`, which the brief keeps as history; the nav must name the files that exist |
 | `gitDaemon`, `htrflow-api`, `htr-api`, `uv4-viewer`, `RECONCILER_*` | `charts/htrflow-batch/README.md`, *Upgrading* and *Changelog* | both sections open with "Everything below this line is history: each entry names the objects and value keys **as they were at that version**". The `uv4-viewer` line is a `kubectl delete svc` command an operator on 0.3.0 must actually run |
 | `status/warmup` | `charts/htrflow-devstack/README.md`, changelog 0.1.1 | the entry records that the key was *dropped*; nothing writes it |
-| `attempts.json` | `docs/roadmap/evolution.md` — **removed**, no longer present | — |
+| `reconciler`, `attempts.json` | `charts/htrflow-devstack/templates/_helpers.tpl`, `charts/htrflow-devstack/README.md` (0.3.0 entry), `scripts/compose_init.py` | the three sentences that say which keys were dropped from the bucket policy in this pass and why; naming them is the point |
 | `airiksarkivet/` | `.docker/htrflow-batch.dockerfile`, `.dagger/build.go`, `.github/actions/build-htrflow-base-arm64/action.yml`, `renovate.json`, `docs/development/deployment.md`, `docs/development/local-k3s.md` | `airiksarkivet/htrflow` is the **current** upstream base image on Docker Hub — the grep was aimed at the retired `airiksarkivet/htrflow-batch` naming, which is gone |
 | `htrflow-api` | `zensical.toml`, `B25-htrflow-api-pin-test.md` | "htrflow API" there is the htrflow *library* API the level-0 pin test guards, not the removed package |
 | `MAX_SECONDS` | `docs/how-it-works/failure-handling.md` message table; `frontend/src/lib/reasons.ts` + `reasons.test.ts` | deliberate back-compatibility: a pod written by a pre-Task-25 wrapper still says `MAX_SECONDS`, and the card must name that failure correctly. Both sentences say "from a wrapper older than Task 25" |
@@ -147,4 +147,71 @@ still correct.
 
 ## Verification
 
-<!-- VERIFICATION -->
+Run on `b63-indexed` after the last page commit, from the repo root.
+
+**`uvx zensical build --clean`** — clean:
+
+```
+Build started
+No issues found
+Build finished in 2.13s
+```
+
+**Acceptance greps** (`reconciler`, `status\.json`, `STATUS_URL`, `git-daemon`,
+`gitDaemon`, `TranscriptionJob`, `attempts\.json`, `htr-reconciler`,
+`airiksarkivet/`, `htrflow-api`, `uv4-viewer`, `--kubectl`, `status/warmup`,
+`MAX_SECONDS`, `allowed_image_repos`, `require_model_revision`,
+`packages/api`), over tracked files, excluding `.superpowers/`,
+`docs/audits/`, `docs/superpowers/`, `docs/features/`,
+`docs/development/test-log.md`, `docs/development/e2e-indexed-jobs.md` and
+`docs/how-it-works/decision-log.md`:
+
+| Pattern | Hits |
+|---|---|
+| `status\.json` | **0** |
+| `STATUS_URL` | **0** |
+| `git-daemon` | **0** |
+| `TranscriptionJob` | **0** |
+| `htr-reconciler` | **0** |
+| `--kubectl` | **0** |
+| `packages/api` | **0** |
+| `reconciler` | 10 — all in the justified table above |
+| `gitDaemon` | 3 — chart README upgrade notes + changelog |
+| `attempts.json` | 3 — the prune's own explanation, in the three files that used to carry the keys |
+| `airiksarkivet/` | 8 — the current upstream base image |
+| `htrflow-api` | 7 — chart README history + the `B25-htrflow-api-pin-test.md` nav entry |
+| `uv4-viewer` | 1 — the `kubectl delete svc` an operator on 0.3.0 must run |
+| `status/warmup` | 1 — devstack changelog 0.1.1, recording its removal |
+| `MAX_SECONDS` | 8 — the pre-Task-25 back-compatibility branch, its test, two tests asserting absence, and two budget/message comments |
+| `allowed_image_repos` / `require_model_revision` | 10 / 11 — `_MOVED_TO_THE_CHART` and its tests and fixtures, plus the matching migration notes |
+
+**`make -n` for every target the docs name** — all 29 resolve
+(`build-htrflow-base-arm64`, `build-web`, `build-wrapper`, `campaigns-apply`,
+`check`, `ci`, `compose-{up,down,test,smoke}`, `config-reference`,
+`docs-build`, `docs-serve`, `e2e`, `format`, `frontend-install`, `helm-lint`,
+`helm-template`, `install`, `install-devstack`, `install-kyverno`, `lint`,
+`poc-push`, `poc-push-arm64`, `psa-labels`, `scan-web`, `test`,
+`test-driver-real`, `typecheck`). The three targets that do **not** exist —
+`make warmup`, `make viewer-image`, `make scan-reconciler` — are named only
+from `docs/superpowers/`, `docs/features/` and the E2E run log, all history.
+
+**`make ci`** (`typecheck` + `dagger call checks` + `dagger call test`) —
+green; 460 passed, 2 skipped. `uv run --all-packages pytest -q` locally: 461
+passed, 1 skipped. `cd frontend && bun run lint && bun run check` — clean.
+
+**`scripts/loc-budget.sh`** — unchanged, every package exactly at its cap:
+
+```
+wrapper      2035 / 2035
+converter    1283 / 1283
+web           667 / 667
+frontend     3063 / 3063
+chart         738 / 738
+```
+
+**`make helm-template`** — green (both charts, defaults and
+`ci/full-values.yaml`, kubeconform on all four renders, and the
+`devStack.insecureDefaults` guard still refusing RustFS without credentials).
+The pruned bucket policy was rendered in both polarities and compared field
+by field against `scripts/compose_init.py`'s output: identical.
+
