@@ -29,7 +29,11 @@ fail=0
 # back out via TRANSIENT_FIRST -- the import, the two tuples and their
 # rationale comments, and the collapsed except block that classifies both.
 # (B63)
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2028
+# 2028 -> 2038 in Task 28 fix round item 2: the offline-Hub and missing/
+# unreadable PIPELINE_PATH guards were the only two warm-up failure paths
+# that wrote no termination message; a `_fail` helper gives both the same
+# {stage, permanent, error} shape the try/except writes. (B63)
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2038
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

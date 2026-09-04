@@ -61,6 +61,16 @@ def _load(pipeline_path: str) -> None:
     build_pipeline(pipeline_path)
 
 
+def _fail(env: Mapping[str, str], msg: str) -> int:
+    """Both early-return guards below: a mis-wired deployment (offline warm-up,
+    an unreadable ``PIPELINE_PATH``), not a campaign author's mistake, but
+    still worth the same termination message the try/except writes -- else
+    the campaign card shows "warm-up failed" with no reason at all."""
+    log.error(msg)
+    _terminate(env, {"stage": "warmup", "permanent": True, "error": msg})
+    return EXIT_PERMANENT
+
+
 def main(
     env: Optional[Mapping[str, str]] = None,
     load: Callable[[str], object] = _load,
@@ -72,12 +82,12 @@ def main(
     if env.get("HF_HUB_OFFLINE", "") not in ("", "0", "false"):
         # Offline warm-up downloads nothing; "succeeding" would open the gate
         # for a pipeline whose cache is still empty.
-        log.error("HF_HUB_OFFLINE is set: a warm-up must be able to reach HF Hub")
-        return EXIT_PERMANENT
+        return _fail(
+            env, "HF_HUB_OFFLINE is set: a warm-up must be able to reach HF Hub"
+        )
     pipeline_path = env.get("PIPELINE_PATH", "")
     if not pipeline_path or not Path(pipeline_path).is_file():
-        log.error("PIPELINE_PATH missing or not a file: %r", pipeline_path)
-        return EXIT_PERMANENT
+        return _fail(env, f"PIPELINE_PATH missing or not a file: {pipeline_path!r}")
     try:
         load(pipeline_path)
     except Exception as e:
