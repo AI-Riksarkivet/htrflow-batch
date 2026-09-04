@@ -1,3 +1,0 @@
-image: ghcr.io/riksarkivet-evil/x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-steps:
-  - step: Segmentation

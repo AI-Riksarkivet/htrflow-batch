@@ -88,10 +88,10 @@ EXPECTED = {
         'converter.yaml: "bogus_field" is not a setting this file has — '
         "remove it, or fix the spelling",
     ],
-    "image-repo-sibling": [
-        "pipelines/demo-v1.yaml: the image is not from an allowed repository "
-        '("ghcr.io/riksarkivet-evil/x@sha256:' + "a" * 64 + '") — '
-        "converter.yaml allows only: ghcr.io/riksarkivet",
+    "moved-allowed-image-repos": [
+        "converter.yaml: allowed_image_repos moved to the htrflow-batch chart "
+        "(security.allowedImageRepos, enforced by Kyverno) — remove it from "
+        "converter.yaml",
     ],
     "multi-error": [
         'campaigns/broken.yaml: volume "R1" is listed twice — remove the duplicate',
@@ -105,10 +105,10 @@ EXPECTED = {
         "most 63 of them",
         'campaigns/b.yaml: volume "R1" is listed twice — remove the duplicate',
     ],
-    "require-model-revision": [
-        'pipelines/demo-v1.yaml: the model "Riksarkivet/yolov9-regions-1" is '
-        "not pinned to a revision — converter.yaml sets "
-        "require_model_revision, so add revision: <40-character commit hash>",
+    "moved-require-model-revision": [
+        "converter.yaml: require_model_revision moved to the htrflow-batch "
+        "chart (security.requireModelRevision, enforced by Kyverno) — remove "
+        "it from converter.yaml",
     ],
     "window": [
         'campaigns/a.yaml: "window" must be a whole number of 1 or more (got '
@@ -175,14 +175,9 @@ def test_summary_counts_problems_and_files(case, summary):
         ("window: {a: 1}", '"window" must be a whole number (got a block of settings)'),
         ("window: [1]", '"window" must be a whole number (got a list)'),
         ("namespace: [1]", '"namespace" must be text (got a list)'),
-        (
-            "require_model_revision: maybe",
-            '"require_model_revision" must be true or false (got "maybe")',
-        ),
-        (
-            "require_model_revision: [1]",
-            '"require_model_revision" must be true or false (got a list)',
-        ),
+        # `bool_type`/`bool_parsing` are not reachable from converter.yaml
+        # since its only bool (`require_model_revision`) moved to the chart;
+        # the `bad-suspend` fixture pins those two sentences instead.
         ("tolerations: 3", '"tolerations" must be a list of entries (got 3)'),
         (
             "tolerations: [3]",
@@ -252,21 +247,30 @@ def test_bad_window_reports_message_and_does_not_abort_other_files():
     assert any("is listed twice" in p for p in problems), problems
 
 
-def test_allowed_image_repos_rejects_sibling_prefix():
-    """Fix round 1 #2: ghcr.io/riksarkivet-evil must not be admitted by an
-    allow-list entry of ghcr.io/riksarkivet (path-boundary match)."""
-    root = FIXTURES / "bad" / "image-repo-sibling"
+@pytest.mark.parametrize(
+    "key,chart_key",
+    [
+        ("allowed_image_repos:\n  - ghcr.io/riksarkivet", "security.allowedImageRepos"),
+        ("require_model_revision: true", "security.requireModelRevision"),
+    ],
+)
+def test_a_policy_key_left_in_converter_yaml_points_at_the_chart(
+    tmp_path, key, chart_key
+):
+    """Task 22: both rules are Kyverno ClusterPolicies the chart ships, so
+    converter.yaml no longer has these keys. `extra="forbid"` would reject
+    them as a spelling mistake ("is not a setting this file has"), which
+    would send their author looking for the typo instead of at the chart."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + f"\n{key}\n")
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
-    problems = exc_info.value.problems
-    assert any("is not from an allowed repository" in p for p in problems), problems
-
-
-def test_allowed_image_repos_accepts_legitimate_repo():
-    root = GOOD / "allowed-repo"
-    campaigns, pipelines, cfg = _load(root)
-    assert cfg.allowed_image_repos == ["ghcr.io/riksarkivet"]
-    assert pipelines["demo-v1"].image.startswith("ghcr.io/riksarkivet/")
+    assert exc_info.value.problems == [
+        f"converter.yaml: {key.split(':')[0]} moved to the htrflow-batch chart "
+        f"({chart_key}, enforced by Kyverno) — remove it from converter.yaml"
+    ]
 
 
 def test_converter_yaml_errors_are_one_problem_per_field():
@@ -284,22 +288,14 @@ def test_converter_yaml_errors_are_one_problem_per_field():
     assert any("bogus_field" in p for p in converter_problems)
 
 
-def test_require_model_revision_true_flags_step_missing_revision():
-    """Ruling: require_model_revision walks every step's model_settings,
-    not a single top-level Pipeline.model_revision."""
-    root = FIXTURES / "bad" / "require-model-revision"
-    with pytest.raises(ValidationError) as exc_info:
-        _load(root)
-    problems = exc_info.value.problems
-    assert any("is not pinned to a revision" in p for p in problems), problems
-
-
-def test_require_model_revision_false_does_not_flag_missing_revision():
-    # the good fixture's demo-v1.yaml has a step with model_settings.model
-    # set and no revision; require_model_revision defaults to False there.
-    campaigns, pipelines, cfg = _load(GOOD)
-    assert cfg.require_model_revision is False
-    assert pipelines["demo-v1"].model_revision == ""
+def test_a_model_without_a_revision_is_no_longer_the_converters_problem():
+    """The good fixture's demo-v1.yaml has a step whose model_settings names
+    a model with no revision. That is now Kyverno's rule (the chart's
+    `security.requireModelRevision`), enforced on the pipeline ConfigMap at
+    admission, so `validate` says nothing about it."""
+    _, pipelines, _ = _load(GOOD)
+    steps = pipelines["demo-v1"].steps
+    assert any(s.get("settings", {}).get("model_settings") for s in steps)
 
 
 def test_volume_source_line_manifest_shape():

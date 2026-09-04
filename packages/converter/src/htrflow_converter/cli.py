@@ -263,7 +263,17 @@ def main(argv: list[str] | None = None) -> int:
     init_p.add_argument(
         "--force", action="store_true", help="overwrite a non-empty directory"
     )
-    validate_p = sub.add_parser("validate", help="validate campaigns/ and pipelines/")
+    validate_p = sub.add_parser(
+        "validate",
+        help="validate campaigns/ and pipelines/",
+        description="Checks the shape of converter.yaml, campaigns/ and "
+        "pipelines/ — including that every pipeline image is digest-pinned, "
+        "which the renderer needs. NOT the cluster's policy: which "
+        "registries an image may come from, and whether every model carries "
+        "a revision, are Kyverno ClusterPolicies the htrflow-batch chart "
+        "ships (security.allowedImageRepos, security.requireModelRevision). "
+        "The Kyverno CLI runs them over rendered/ in this repo's CI.",
+    )
     validate_p.add_argument("repo_dir")
     render_p = sub.add_parser("render", help="render ConfigMaps and Jobs")
     render_p.add_argument("repo_dir")
