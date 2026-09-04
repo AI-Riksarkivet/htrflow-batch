@@ -7,7 +7,7 @@ NetworkPolicies. The PoC-only support infrastructure (RustFS, an in-cluster
 registry, the NVIDIA device plugin) lives in the separate
 `charts/htrflow-devstack` chart. Campaigns themselves are not rendered by
 either chart: they are Indexed Jobs rendered by `packages/converter` from a
-campaigns repo and applied with `kubectl` or Argo CD.
+campaigns repo and applied by `htrflow-campaigns apply` or Argo CD.
 Source: [`charts/htrflow-batch/values.yaml`](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/charts/htrflow-batch/values.yaml);
 every key is declared in `values.schema.json` (unknown keys and wrong types
 are rejected at install time). This page is the prose; the generated table of

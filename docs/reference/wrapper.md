@@ -8,7 +8,7 @@ semantics in [Failure Handling](../how-it-works/failure-handling.md).
 
 ## Environment contract
 
-Source: [`packages/wrapper/src/htrflow_batch/config.py`](https://github.com/carpelan/test/blob/main/packages/wrapper/src/htrflow_batch/config.py)
+Source: [`packages/wrapper/src/htrflow_batch/config.py`](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/packages/wrapper/src/htrflow_batch/config.py)
 
 `Config.from_env` fails fast (exit 13) with the full list of missing required
 vars. `Config` is a frozen pydantic model whose fields carry their own env
@@ -106,7 +106,7 @@ is set; 1 for anything else.
 
 ## Modules
 
-Source root: [`packages/wrapper/src/htrflow_batch/`](https://github.com/carpelan/test/tree/main/packages/wrapper/src/htrflow_batch)
+Source root: [`packages/wrapper/src/htrflow_batch/`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/packages/wrapper/src/htrflow_batch)
 
 | Module | Description |
 |--------|-------------|

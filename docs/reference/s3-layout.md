@@ -38,8 +38,9 @@ Writers: the **wrapper** is the only writer in the whole tree — its own
 `<namespace>/sources/…`, not `sources/<namespace>/…`; `status/` alone is
 namespace-free, since the browser resolves run-log links against the bucket
 root. Nothing else in this system writes to S3 at all: the read API is
-entirely Kubernetes-API-backed and never touches the bucket. Anonymous read (devStack policy): everything except `status/logs/*`
-when `devStack.rustfs.publicLogs=false`. Listing is always denied.
+entirely Kubernetes-API-backed and never touches the bucket. Anonymous read
+(devstack policy): everything except `status/logs/*` when the devstack
+chart's `rustfs.publicLogs` is `false`. Listing is always denied.
 
 ## `manifest.json` (completion marker)
 
@@ -72,21 +73,30 @@ at the top of this page) — every response is computed live from the
 Job/Pod/ConfigMap state, never cached or persisted:
 
 - **Campaign summary**: `namespace`, `name`, `pipeline`, `phase`
-  (`Queued`/`Paused`/`Running`/`Succeeded`/`Failed`, derived from the Job's
-  `suspend` flag and its `Complete`/`Failed` conditions), `counts` (`total`
-  = `completions`, `active`, `done` = `|completedIndexes|`, `failed` =
-  `|failedIndexes|`), `suspended`, `createdAt`, `resultsBase`.
+  (`Queued`/`Paused`/`Running`/`Succeeded`/`PartiallyFailed`/`Failed`,
+  derived from the Job's `suspend` flag and its `Complete`/`Failed`
+  conditions — `PartiallyFailed` is the `Failed` condition with a non-empty
+  `completedIndexes`), `counts` (`total` = `completions`, `active`, `done` =
+  `|completedIndexes|`, `failed` = `|failedIndexes|`), `suspended`,
+  `createdAt`, `resultsBase`, and `warmup` (`{phase, reason?}` — the
+  pipeline's warm-up Job, matched by namespace + pipeline label).
 - **Per-volume detail** (paged by index, `offset`/`limit`): one row per line
   of the campaign's `volumes.txt` ConfigMap — `index`, `id`, `state`
   (`done`/`failed`/`active`/`pending`), `manifestUrl`/`iiifUrl`/`altoPrefix`
-  (built from `resultsBase`), `logUrl` — an absolute URL
+  (built from `resultsBase`), `sourceUrl` (the URL half of the `volumes.txt`
+  line; absent for an `images:` volume, which has no manifest), `logUrl` —
+  an absolute URL
   (`<public_results_base>/status/logs/<pipeline>/<id>.txt`, unconditional;
   bucket-root, no namespace/S3_PREFIX prefix, since the browser has no
-  bucket base URL to resolve a bare key against) — and `reason` — the failed
-  pod's own termination message — present only while a pod for that index
-  still exists.
+  bucket base URL to resolve a bare key against) — and `reason`, the failed
+  pod's own termination message parsed into `{stage, permanent, error}`,
+  present only while a pod for that index still exists.
 - **Failures**: up to 50 of the most recent failed-with-a-reason rows,
   included in the detail response.
+- **Detail-only, computed over every volume** (not just the requested page):
+  `latest` — the volume a folded card shows, the newest `active` row else
+  the newest `done` one — and `pipelineSteps` / `pipelineYaml`, read from
+  the campaign's `htr-pipeline-<id>` ConfigMap.
 
 Full field derivation: [`packages/web/src/htrflow_web/projection.py`](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/packages/web/src/htrflow_web/projection.py).
 The frontend consumes this shape directly — see [Campaign Browser](frontend.md).

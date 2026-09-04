@@ -75,8 +75,8 @@ script). A CSP header from the server must not be stricter than the meta tag
   `ApiUnreachable` covers a network error and a non-2xx status alike; the
   page shows one banner over the last good list. There is
   no age-based staleness check — every response is computed live from the
-  Kubernetes API, so there is nothing that can go stale the way a
-  reconciler-written document could.
+  Kubernetes API, so there is nothing that can go stale the way a stored
+  status document would.
 - **States.** A `VolumeView.state` is `pending`, `active`, `done`, or
   `failed` — computed by the API from the Job's index sets, not stored
   anywhere; a `failed` row's `reason` is `{stage, permanent, error}` parsed
@@ -113,7 +113,8 @@ script). A CSP header from the server must not be stricter than the meta tag
   a bare key against, so the API builds the full URL — see
   [Live Run Log](../how-it-works/live-run-log.md).
 - **ALTO column (§ reading-a-pages-alto).** `RunManifest.viewer_url`
-  (publish.py: `<public_results_base>/<volume>/iiif.json`) is now typed in
+  (publish.py: `<public_results_base>/<S3_PREFIX><pipeline>/<volume>/iiif.json`,
+  i.e. `Config.volume_prefix`) is now typed in
   `runManifestSchema`, not just passed through; `pageStats`/`summarizeRun`
   derive each page's ALTO URL alongside it —
   `altoUrl(viewer_url, pageId)` swaps `iiif.json` for
