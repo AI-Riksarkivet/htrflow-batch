@@ -17,9 +17,9 @@
 # top-level, while htrflow's Hugging Face-backed models (TrOCR, Donut, DiT)
 # take it as `model_settings.model_kwargs.revision`, forwarded straight to
 # `from_pretrained` — see htrflow's own trocr.py docstring. A model counts
-# as pinned when either path matches the 40-hex pattern; a step pinned the
-# wrong way for its own model loader is refused by this same rule, since it
-# is not pinned in the place its loader reads.
+# as pinned when either path matches the 40-hex pattern. Admission does not
+# know which loader a step uses, so a pin in the wrong place for its own
+# loader is admitted here and fails later, at load time in the warm-up.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:

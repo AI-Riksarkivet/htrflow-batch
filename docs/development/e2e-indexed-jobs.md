@@ -1800,9 +1800,12 @@ htr-warmup-e2e-t22-v3   Complete   1/1           10s
 
 The one volume needed three retries before it completed — each failed
 attempt was `torch.AcceleratorError: CUDA error: out of memory` in the
-YOLO segmentation step, transient GPU memory contention on this shared PoC
-node, unrelated to the policy or to either revision placement; the fourth
-pod succeeded.
+YOLO segmentation step; the fourth pod succeeded. Cause not investigated:
+the warm-up Job is not the competitor (it runs CPU-only —
+`CUDA_VISIBLE_DEVICES=""`, no GPU request), nothing else was running in
+`htr-batch`, and `nvidia-smi` was not checked at the time; the node is
+shared with workloads outside this namespace. Unrelated to the policy or
+to either revision placement.
 
 ```console
 $ curl -s http://localhost:30900/htr-results/htr-batch/e2e-t22-v3/e2e-t22v3run-01/manifest.json
@@ -1873,4 +1876,6 @@ Two changes on top of the above, both from an explicit values file
 (`htrflow-batch-images-allowed-htr-batch`,
 `htrflow-batch-images-pinned-htr-batch`) —
 `htrflow-batch-model-revision-htr-batch` is not rendered while
-`requireModelRevision` is `false`.
+`requireModelRevision` is `false`. Also left in `htr-batch` from (f):
+`htr-warmup-e2e-t22-v3` (Complete) and `configmap/htr-pipeline-e2e-t22-v3`;
+the `e2e-t22v3run` campaign and its ConfigMap were pruned.

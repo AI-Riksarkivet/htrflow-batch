@@ -123,6 +123,7 @@ validation error and blocks rendering for every campaign that uses it:
 | `image:` contains `@sha256:` | Digest pin — provenance is recorded per volume in `manifest.json` |
 | `max_seconds:`, when set, is a positive integer | It becomes `spec.template.spec.activeDeadlineSeconds` — the *pod's* deadline, so only the overrunning attempt is killed — for every campaign on this pipeline; unset falls back to `converter.yaml`. A sixty-page spread recipe and a single-page one do not want the same budget, and a budget the volume cannot meet costs `backoffLimitPerIndex` retries before the index is capped |
 | `steps:` is present | Only the `steps:` document goes into the ConfigMap; no `Export` steps (the wrapper appends them — a pipeline with one fails the warm-up) |
+| No key the pipeline file does not have (`model_revision:` included — it was removed in Task 22, the pin lives in `steps` now) | A stray key is a typo or a leftover, and both are cheaper to hear about at `validate` than to wonder about later |
 
 Two rules the converter used to apply here are the **cluster's**, enforced
 by Kyverno at admission and by the Kyverno CLI in this repo's CI, not by
@@ -169,7 +170,7 @@ campaigns/broken.yaml: volume "R1" is listed twice — remove the duplicate
 | `suspend: maybe` (or any other non-boolean) | `"suspend" must be true or false (got "maybe")` |
 | A setting given a list or a block where one value belongs | `"window" must be a whole number (got a list)` — the value is described, never dumped as a Python repr |
 | A bad value inside a nested setting | `"node_selector.a" must be text (got 1)`, `"tolerations" entry 1 must be settings written as "key: value" lines (got 3)` — a list position is counted from 1, never shown as `tolerations.0` |
-| A key `converter.yaml` does not have | `"bogus_field" is not a setting this file has — remove it, or fix the spelling` |
+| A key the file (`converter.yaml` or a pipeline) does not have | `"bogus_field" is not a setting this file has — remove it, or fix the spelling` |
 | A required key left out | `"image" is missing — add "image:" to this file` |
 | Broken indentation or quoting | `this file is not valid YAML — <the line and column PyYAML names>` |
 | A file that is a list, or free text | `this file must be campaign settings written as "key: value" lines — a bare list or a piece of text is not one` |
