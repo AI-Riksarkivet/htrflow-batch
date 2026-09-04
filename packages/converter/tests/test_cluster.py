@@ -150,6 +150,34 @@ def test_prune_delete_forbidden_is_one_sentence(cluster, monkeypatch):
     )
 
 
+def test_the_other_api_error_sentences():
+    """The two branches the wire tests do not reach: a missing Kueue, and
+    the generic branch that carries the server's own message -- which is
+    how an admission webhook's (Kyverno's) rejection arrives."""
+    from htrflow_converter.cluster import _api_error
+
+    missing = _api_error("list", "Workload", "", "htr-batch", ApiException(status=404))
+    assert str(missing).startswith("Kueue is not installed in this cluster")
+    # a 404 on the patch means the Workload went away, not that Kueue did
+    gone = _api_error(
+        "patch", "Workload", "wl-x", "htr-batch", ApiException(status=404)
+    )
+    assert str(gone) == "patch Workload/wl-x: 404 None"
+    denied = ApiException(status=422, reason="Unprocessable Entity")
+    denied.body = json.dumps(
+        {"message": "admission webhook denied: image must be pinned"}
+    )
+    assert str(_api_error("apply", "Job", "kyrk", "htr-batch", denied)) == (
+        "apply Job/kyrk: 422 Unprocessable Entity admission webhook denied: "
+        "image must be pinned"
+    )
+    plain = ApiException(status=500, reason="Internal Server Error")
+    plain.body = "<html>"
+    assert str(_api_error("apply", "Job", "kyrk", "htr-batch", plain)) == (
+        "apply Job/kyrk: 500 Internal Server Error"
+    )
+
+
 def test_forbidden_is_one_sentence(cluster, monkeypatch):
     """``ApiException`` 401/403 names the verb, the object and the fix --
     turning on the chart's RBAC -- rather than a raw HTTP status."""
