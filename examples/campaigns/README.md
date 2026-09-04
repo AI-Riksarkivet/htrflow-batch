@@ -53,7 +53,8 @@ campaign **is** one Kubernetes Indexed Job:
 ## Adding a campaign
 
 1. Add (or reuse) a pipeline in `pipelines/<id>.yaml` — a digest-pinned
-   wrapper image and the htrflow `steps:` document. A pipeline id is a
+   wrapper image (from a registry the cluster's
+   `security.allowedImageRepos` admits) and the htrflow `steps:` document. A pipeline id is a
    **permanent name for a recipe**: once any campaign has run against it,
    treat the file as immutable — to change the recipe, mint a new id
    (`demo-v2.yaml`) instead of editing this one. This is a review
@@ -61,7 +62,16 @@ campaign **is** one Kubernetes Indexed Job:
    `main` and require review on this repo.
 2. Add a new file under `campaigns/<name>.yaml` naming that pipeline and
    the volumes to run.
-3. Open a PR. CI runs `htrflow-campaigns validate` on it.
+3. Open a PR. CI runs `htrflow-campaigns validate` on it, then the
+   **Policy** job: the same Kyverno `ClusterPolicy` objects the cluster
+   admits against (`helm template` of the htrflow-batch chart's
+   `templates/policies/*`), run with the Kyverno CLI over the manifests
+   this PR renders. Digest pins, the image allow-list and — when the
+   release requires it — a 40-hex `revision:` on every model are cluster
+   policy, not converter rules: `validate` says nothing about them, and a
+   PR that would be refused at apply time is refused here first, with the
+   same sentence. Keep the job's `POLICY_*` env in step with the release's
+   `security.*` values.
 4. Merge. CI on `main` runs `htrflow-campaigns render` and commits the
    result under `rendered/` (see `.github/workflows/render.yml`). Whatever
    applies `rendered/` to a cluster — Argo CD watching this repo, or
