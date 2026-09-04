@@ -132,8 +132,8 @@ steps:
 The converter renders the Job's container image from `image` and passes it
 as `IMAGE_DIGEST`, which the wrapper stamps into every published
 `manifest.json` — closing the provenance chain from git recipe to Job to
-results. Tags are rejected: only `@sha256:` pins are accepted, and with
-`allowed_image_repos` set (`converter.yaml`) only pins under those
+results. Tags are rejected — the renderer needs the digest — and with the release's
+`security.allowedImageRepos` set, Kyverno admits only pins under those
 repositories ([Security → Trust boundary](../development/security.md#trust-boundary)).
 
 Only the `steps:` document goes into the `htr-pipeline-<id>` ConfigMap (it is
@@ -144,8 +144,8 @@ wrapper's own recorded `pipeline_sha256` can be compared against by hand.
 !!! warning "Pinning our code is not pinning the world"
 
     Model weights are pulled from Hugging Face at runtime by the warm-up.
-    Unless each step pins a model `revision` (enforceable with
-    `converter.yaml`'s `require_model_revision`), an upstream model update
+    Unless each step pins a model `revision` (enforceable with the chart's
+    `security.requireModelRevision`), an upstream model update
     can still change output under the same pipeline id (the read-only
     cache, filled once per pipeline, makes this stable in practice, not in
     principle). GPU nondeterminism means bit-identical reruns are out of

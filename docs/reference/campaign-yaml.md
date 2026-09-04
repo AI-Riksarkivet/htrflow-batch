@@ -29,9 +29,17 @@ source_template: "https://lbiiif.riksarkivet.se/arkis!{ref}/manifest"
 max_seconds: 21600                # each pod's activeDeadlineSeconds; a pipeline's own `max_seconds:` overrides it
 manifest_max_bytes: 16777216      # 16 MiB
 fetch_max_bytes: 67108864         # 64 MiB
-allowed_image_repos: []           # empty = any registry; see Security → Trust boundary
-require_model_revision: false
 ```
+
+!!! note "`allowed_image_repos` / `require_model_revision` are gone"
+
+    Both were converter settings until B63 Task 22 and are now Kyverno
+    `ClusterPolicy` objects the htrflow-batch chart ships
+    (`security.allowedImageRepos`, `security.requireModelRevision`, behind
+    `security.policies.enabled`) — see [Security](../development/security.md).
+    A `converter.yaml` that still carries either is a validation error
+    saying so. The campaigns repo's CI runs the same policies over
+    `rendered/` with the Kyverno CLI, so a pull request still fails early.
 
 ## Campaign file — `campaigns/<name>.yaml`
 
@@ -91,8 +99,9 @@ steps:                     # htrflow pipeline steps, passed through verbatim
       model: yolo
       model_settings:
         model: Riksarkivet/yolov9-regions-1
-        revision: 0123456789abcdef0123456789abcdef01234567   # required when
-                                                             # require_model_revision
+        revision: 0123456789abcdef0123456789abcdef01234567   # required when the
+                                                             # cluster sets
+                                                             # requireModelRevision
   - step: TextRecognition
     settings:
       model: TrOCR
@@ -108,10 +117,16 @@ validation error and blocks rendering for every campaign that uses it:
 |------|-----|
 | Pipeline id is a DNS-1123 label (lowercase, `[a-z0-9.-]` interior, ≤63 chars) | It becomes the ConfigMap name `htr-pipeline-<id>` |
 | `image:` contains `@sha256:` | Digest pin — provenance is recorded per volume in `manifest.json` |
-| When `converter.yaml`'s `allowed_image_repos` is set: the repository (the part before `@`) equals one entry or starts with `<entry>/` | The campaigns repo is a code-execution boundary; the allow-list is what keeps it to images you built |
-| When `converter.yaml`'s `require_model_revision` is true: every `model_settings.model` carries a 40-hex `revision:` | HF Hub weights are pickles and an unpinned repo is mutable |
 | `max_seconds:`, when set, is a positive integer | It becomes `spec.template.spec.activeDeadlineSeconds` — the *pod's* deadline, so only the overrunning attempt is killed — for every campaign on this pipeline; unset falls back to `converter.yaml`. A sixty-page spread recipe and a single-page one do not want the same budget, and a budget the volume cannot meet costs `backoffLimitPerIndex` retries before the index is capped |
 | `steps:` is present | Only the `steps:` document goes into the ConfigMap; no `Export` steps (the wrapper appends them — a pipeline with one fails the warm-up) |
+
+Two rules the converter used to apply here are the **cluster's**, enforced
+by Kyverno at admission and by the Kyverno CLI in this repo's CI, not by
+`validate`: the image's repository must be one the release's
+`security.allowedImageRepos` names, and — when `security.requireModelRevision`
+is on — every `model_settings.model` must carry a 40-hex `revision:`. They
+are checked against everything the namespace admits, not only against what
+this repo rendered.
 
 ## When something is wrong
 
@@ -137,8 +152,7 @@ campaigns/broken.yaml: volume "R1" is listed twice — remove the duplicate
 | A list entry that is neither a bare id nor a mapping with `id:` | `volume 3 has no id — write the entry as "- R1", or as "- id: R1" with manifest: or images:` |
 | `pipeline:` naming a file that is not in `pipelines/` | `pipeline "kyrk-v3" has no file in pipelines/ — add pipelines/kyrk-v3.yaml, or point pipeline: at one that is there` |
 | A tag instead of a digest in `image:` | `"image" is not pinned to a digest (got "repo/img:v5") — write image: <registry>/<repo>@sha256:<64 hex digits>` |
-| An image outside `allowed_image_repos` | `the image is not from an allowed repository ("ghcr.io/other/x@sha256:…") — converter.yaml allows only: ghcr.io/riksarkivet` |
-| A model with no `revision:` while `require_model_revision` is on | `the model "Riksarkivet/yolov9-regions-1" is not pinned to a revision — converter.yaml sets require_model_revision, so add revision: <40-character commit hash>` |
+| `allowed_image_repos:` or `require_model_revision:` still in `converter.yaml` | `allowed_image_repos moved to the htrflow-batch chart (security.allowedImageRepos, enforced by Kyverno) — remove it from converter.yaml` |
 | `steps:` that is not a list | `"steps" must be a list of steps — write steps: and then "- step: <Name>" entries under it` |
 | `window: "5"` (quoted, so YAML makes it text), `window: 0`, `window: true` | `"window" must be a whole number of 1 or more (got "5" — quotes make it text)` — the "quotes" half is added only when the value really is a number, so `suspend: maybe` is not told about quotes it does not have |
 | `max_seconds:` likewise | `"max_seconds" must be a whole number of seconds, 1 or more (got 0)` |

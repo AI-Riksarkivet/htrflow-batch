@@ -50,8 +50,9 @@ The formats are in [Campaign & Pipeline YAML](../reference/campaign-yaml.md).
     pipeline file names the image that runs on the GPU with the bucket's
     write credentials, and the Hugging Face model repos the warm-up pod
     loads. **Enable branch protection on `main` with required review,
-    immediately.** Then set `converter.yaml`'s `allowed_image_repos` so
-    only images from your registry can be named at all
+    immediately.** Then set the htrflow-batch release's
+    `security.allowedImageRepos` (with `security.policies.enabled`) so only
+    images from your registry can start in the namespace at all
     ([Security → Trust boundary](../development/security.md#trust-boundary)).
 
 ## 1. Pin an image digest
@@ -72,9 +73,11 @@ steps:
     ...
 ```
 
-With `allowed_image_repos` set, `<registry>/` must be one of the
-listed prefixes; with `require_model_revision`, every model needs a
-40-hex `revision:`.
+`<registry>/` must be one of the prefixes in the release's
+`security.allowedImageRepos`, and with `security.requireModelRevision`
+every model needs a 40-hex `revision:` — both enforced by Kyverno at
+admission, and by the Kyverno CLI in the campaigns repo's CI, not by
+`htrflow-campaigns validate`.
 
 !!! warning "User action: publish to a real registry before any non-PoC campaign"
 

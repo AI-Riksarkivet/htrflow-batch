@@ -33,5 +33,6 @@ long enough, to produce a trustworthy aggregate
 the campaigns repo and render + apply the campaign
 ([Running a Campaign](../getting-started/campaigns.md)); aggregating the
 figure is a script over the bucket's `manifest.json`s (no `htrq report`
-exists). Before that run: a durable bucket (D6), `allowed_image_repos` set
-in `converter.yaml`, and `main` protected on the campaigns repo.
+exists). Before that run: a durable bucket (D6), `security.allowedImageRepos` set
+with `security.policies.enabled` on the release (Kyverno installed), and
+`main` protected on the campaigns repo.
