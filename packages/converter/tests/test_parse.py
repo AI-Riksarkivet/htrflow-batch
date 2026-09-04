@@ -117,6 +117,7 @@ EXPECTED = {
     ],
     "bad-suspend": [
         'campaigns/broken.yaml: "suspend" must be true or false (got "maybe")',
+        'campaigns/broken2.yaml: "suspend" must be true or false (got a list)',
     ],
 }
 
@@ -177,7 +178,9 @@ def test_summary_counts_problems_and_files(case, summary):
         ("namespace: [1]", '"namespace" must be text (got a list)'),
         # `bool_type`/`bool_parsing` are not reachable from converter.yaml
         # since its only bool (`require_model_revision`) moved to the chart;
-        # the `bad-suspend` fixture pins those two sentences instead.
+        # the `bad-suspend` fixture pins those two sentences instead --
+        # broken.yaml ("maybe") for `bool_parsing`, broken2.yaml (`[1]`)
+        # for `bool_type`.
         ("tolerations: 3", '"tolerations" must be a list of entries (got 3)'),
         (
             "tolerations: [3]",
