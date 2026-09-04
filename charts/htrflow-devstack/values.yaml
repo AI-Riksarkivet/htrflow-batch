@@ -9,6 +9,17 @@
 # fetched in-cluster by a CronJob controller — so it had no consumer and
 # was removed rather than kept as dead weight.
 
+# RustFS's root credentials are also the S3 credentials every batch Job and
+# the results bucket get, so this chart refuses to render RustFS on a
+# credential nobody chose: an empty `rustfs.accessKey`/`secretKey` (generated
+# fresh on every `helm template`, so the manifest you reviewed is not the one
+# you install, and a template|apply flow rotates the keys out from under every
+# running pod) or a value published in this repo, which is no secret at all.
+# Set real credentials, or say here that this stack is a toy and you accept
+# generated/known ones — which is what the PoC and the CI renders do.
+devStack:
+  insecureDefaults: false
+
 # Must match charts/htrflow-batch's `s3.bucket` / `s3.existingSecret`
 # defaults (both default to the same names) so the Secret and bucket this
 # chart creates are the ones the platform's pods already expect.

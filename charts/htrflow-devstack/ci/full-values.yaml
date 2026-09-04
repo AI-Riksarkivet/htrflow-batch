@@ -1,5 +1,10 @@
 # Every optional feature on, for `helm lint -f` / `helm template -f` /
 # kubeconform in CI. No cluster is needed.
+# The credentials below are published in this repo, so the render refuses
+# them without this (charts/htrflow-devstack/values.yaml, devStack).
+devStack:
+  insecureDefaults: true
+
 s3:
   bucket: htr-results
   secretName: htr-batch-s3

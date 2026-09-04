@@ -37,6 +37,19 @@ review). If you need an in-cluster clone of a campaigns repo again for some
 other reason, reintroduce it deliberately with an actual consumer in mind,
 not by reverting this chart.
 
+## 0.2.0: credentials nobody chose are refused
+
+`devStack.insecureDefaults` (new, required, default `false`). RustFS's root
+credentials are the S3 credentials every batch Job and the results bucket
+get, so the render now refuses an empty `rustfs.accessKey`/`secretKey` — Helm
+generates those afresh on every render with no cluster to `lookup`, so the
+manifest you reviewed is not the one you install and a `template | apply`
+flow rotates the keys out from under every running pod — or a value
+published in this repo. Set credentials of your own, or set
+`devStack.insecureDefaults: true` to say this stack is a toy. `make
+install-devstack`, `ci/full-values.yaml` and the PoC command below all set it
+explicitly.
+
 ## Installing
 
 Install into the **same namespace** as the htrflow-batch release — the two
@@ -56,7 +69,8 @@ only by naming convention:
 ```bash
 helm install htr-devstack charts/htrflow-devstack -n htr-batch --create-namespace \
   --set rustfs.enabled=true --set registry.enabled=true \
-  --set nvidiaDevicePlugin.enabled=true
+  --set nvidiaDevicePlugin.enabled=true \
+  --set devStack.insecureDefaults=true   # accepts generated RustFS credentials
 ```
 
 `make install-devstack` wraps this with the repo-root `.env` constants
@@ -98,7 +112,10 @@ kubectl -n kube-system label daemonset nvidia-device-plugin app.kubernetes.io/ma
 - **Credentials** — `rustfs.{accessKey,secretKey}`, or generated once (32
   random chars) and re-read from the existing Secret (`s3.secretName`) on
   every upgrade (Helm `lookup`); `helm template` has no cluster to look up
-  and renders fresh random values each time. Read them back with
+  and renders fresh random values each time. Leaving them empty, or using a
+  value published in this repo, therefore needs `devStack.insecureDefaults:
+  true` — the render refuses credentials nobody chose, because these are also
+  the S3 credentials every batch Job gets. Read them back with
   `kubectl -n htr-batch get secret htr-batch-s3 -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d`.
 - **Console** — off by default (`RUSTFS_CONSOLE_ENABLE=false`, no NodePort);
   `rustfs.console.enabled=true` exposes it on `rustfs.console.nodePort`.
