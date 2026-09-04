@@ -7,8 +7,8 @@ instead of exit codes -- and a prune we own, rather than ``kubectl apply
 --prune``'s client-side sweep, whose semantics have been "deprecated,
 replaced by an alpha flag" for several releases now.
 
-``_preload_content=False`` everywhere, so what comes back is the plain JSON
-the API server sent -- the shape the rendered manifests are in.
+``_preload_content=False`` on the typed APIs, so what comes back is the
+plain JSON the API server sent -- the shape the rendered manifests are in.
 
 Every cluster problem this module knows how to explain crosses its boundary
 as a ``ClusterError``: one sentence, not a ``kubernetes``/``urllib3``
