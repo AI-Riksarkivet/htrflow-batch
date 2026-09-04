@@ -32,16 +32,14 @@ PAGES = [
     "R0003364_00005.jpg",
 ]
 
-# Reconciler-private state under status/ (audit X14/S6). Everything else —
-# <pipeline>/<volume>/*, sources/* — is what the viewer fetches anonymously.
-# Mirrors the devstack chart's bucket-policy helper
-# (charts/htrflow-devstack/templates/_helpers.tpl): keep the two in step.
-PRIVATE_STATUS_KEYS = [
-    "status/attempts.json",
-    "status/validation.json",
-    "status/volumes.json",
-    "status/failures/*",
-]
+# Private state under status/ (audit X14/S6) — empty: `status/logs/*` is the
+# only key anything writes there (packages/wrapper's ResultStore.run_log_key),
+# and PUBLIC_LOGS decides that one below. The reconciler-era entries
+# (attempts.json, validation.json, volumes.json, failures/*) were dropped in
+# B63: nothing has written them since. Mirrors the devstack chart's
+# bucket-policy helper (charts/htrflow-devstack/templates/_helpers.tpl):
+# keep the two in step.
+PRIVATE_STATUS_KEYS: list[str] = []
 
 
 def anonymous_read_policy(bucket: str, private_keys: list[str]) -> dict:
