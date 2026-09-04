@@ -39,9 +39,8 @@ spec:
             default: []
       validate:
         message: >-
-          the model {{ `{{ join(', ', unpinned) }}` }} is not pinned to a
-          revision — add revision: <40-character commit hash> to its
-          model_settings
+          models not pinned to a revision: {{ `{{ join(', ', unpinned) }}` }}
+          — add revision: <40-character commit hash> to each model_settings
         deny:
           conditions:
             all:
