@@ -13,8 +13,9 @@
 //      API serves).
 //
 // Poll cadences are build-time only (VITE_RELOAD_MS, VITE_LIVE_MS); the
-// defaults match the wrapper's log-ship period (there is no reconciler tick
-// any more — the read API computes everything live on each request).
+// defaults match the wrapper's log-ship period, which is the only thing on
+// the other side with a cadence -- the read API computes everything live on
+// each request.
 
 const env = import.meta.env as Record<string, string | undefined>;
 
