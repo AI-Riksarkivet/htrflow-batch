@@ -256,12 +256,17 @@ class ConverterConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _reject_moved_settings(cls, data: Any) -> Any:
-        for key, chart_key in _MOVED_TO_THE_CHART.items():
-            if isinstance(data, dict) and key in data:
-                raise ValueError(
-                    f"{key} moved to the htrflow-batch chart ({chart_key}, "
-                    "enforced by Kyverno) — remove it from converter.yaml"
-                )
+        if not isinstance(data, dict):
+            return data
+        moved = [key for key in _MOVED_TO_THE_CHART if key in data]
+        if moved:
+            said = "; ".join(
+                f"{key} moved to the htrflow-batch chart "
+                f"({_MOVED_TO_THE_CHART[key]}, enforced by Kyverno)"
+                for key in moved
+            )
+            it = "them" if len(moved) > 1 else "it"
+            raise ValueError(f"{said} — remove {it} from converter.yaml")
         return data
 
     namespace: str = "htr-batch"

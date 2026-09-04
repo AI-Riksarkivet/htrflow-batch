@@ -273,6 +273,30 @@ def test_a_policy_key_left_in_converter_yaml_points_at_the_chart(
     ]
 
 
+def test_both_moved_policy_keys_left_in_converter_yaml_are_one_problem(tmp_path):
+    """Fix round 2 #3: both obsolete keys in the same converter.yaml must not
+    cost two rounds — `_reject_moved_settings` used to raise on the first
+    hit it found, so a second offender only surfaced after the first was
+    fixed and the file re-run."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(
+        cfg.read_text()
+        + "\nallowed_image_repos:\n  - ghcr.io/riksarkivet\n"
+        + "require_model_revision: true\n"
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [
+        "converter.yaml: allowed_image_repos moved to the htrflow-batch "
+        "chart (security.allowedImageRepos, enforced by Kyverno); "
+        "require_model_revision moved to the htrflow-batch chart "
+        "(security.requireModelRevision, enforced by Kyverno) — "
+        "remove them from converter.yaml"
+    ]
+
+
 def test_converter_yaml_errors_are_one_problem_per_field():
     """Fix round 1 #3: two bad fields in converter.yaml must surface as two
     separate problems, not one multi-line pydantic error string."""
