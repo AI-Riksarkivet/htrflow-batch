@@ -1,9 +1,16 @@
 """Domain types for campaign/pipeline YAML, with validation (spec §3).
 
-Config-dependent rules (``allowed_image_repos``, ``require_model_revision``,
-``source_template``) reach the models through ``ValidationInfo.context`` --
-see ``parse.py``, which builds that context once from ``ConverterConfig`` and
-passes it to both ``Campaign.model_validate`` and ``Pipeline.model_validate``.
+What is NOT here (B63 Task 22): the image allow-list and the model-revision
+requirement. Both are cluster policy, and a rule this package applies is a
+rule that only ever sees what this package rendered -- so they are Kyverno
+ClusterPolicies the htrflow-batch chart ships, enforced by the API server on
+everything the namespace admits and re-run against ``rendered/`` by the
+Kyverno CLI in a campaigns repo's CI. The digest-pin *shape* check on
+``image`` stays: the renderer builds stable ids out of that digest.
+
+The one config-dependent rule left (``source_template``) reaches the models
+through ``ValidationInfo.context`` -- see ``parse.py``, which builds that
+context once from ``ConverterConfig``.
 """
 
 from __future__ import annotations
@@ -62,15 +69,6 @@ def _positive_int(v: object) -> bool:
 def _http_url(value: str) -> bool:
     u = urlsplit(value)
     return u.scheme in ("http", "https") and bool(u.netloc)
-
-
-def _repo_allowed(image: str, allowed: list[str]) -> bool:
-    repo = image.split("@", 1)[0]
-    return any(
-        repo == e or repo.startswith(e + "/")
-        for e in (a.strip().rstrip("/") for a in allowed)
-        if e
-    )
 
 
 class Volume(BaseModel):
@@ -231,39 +229,6 @@ class Pipeline(BaseModel):
             )
         return v
 
-    @model_validator(mode="after")
-    def _check_repo_allowed(self, info: ValidationInfo) -> "Pipeline":
-        allowed = (info.context or {}).get("allowed_image_repos") or []
-        if allowed and not _repo_allowed(self.image, allowed):
-            raise ValueError(
-                f'the image is not from an allowed repository ("{self.image}")'
-                f" — converter.yaml allows only: {', '.join(allowed)}"
-            )
-        return self
-
-    @model_validator(mode="after")
-    def _check_step_revisions(self, info: ValidationInfo) -> "Pipeline":
-        if not (info.context or {}).get("require_model_revision"):
-            return self
-        problems: list[str] = []
-        for step in self.steps:
-            if not isinstance(step, dict):
-                continue
-            settings = step.get("settings") or {}
-            ms = settings.get("model_settings") if isinstance(settings, dict) else None
-            model = ms.get("model") if isinstance(ms, dict) else None
-            if not isinstance(ms, dict) or not model:
-                continue
-            if not _REVISION_RE.match(str(ms.get("revision") or "")):
-                problems.append(
-                    f'the model "{model}" is not pinned to a revision — '
-                    "converter.yaml sets require_model_revision, so add "
-                    "revision: <40-character commit hash>"
-                )
-        if problems:
-            raise ValueError("; ".join(problems))
-        return self
-
     def pipeline_yaml(self) -> str:
         return yaml.safe_dump({"steps": self.steps}, sort_keys=False)
 
@@ -272,10 +237,32 @@ class Pipeline(BaseModel):
         return hashlib.sha256(self.pipeline_yaml().encode()).hexdigest()
 
 
+#: Settings that were converter policy and are now Kyverno ClusterPolicies
+#: the htrflow-batch chart ships (B63 Task 22) -> the chart value that
+#: replaces each. ``extra="forbid"`` would reject them as a misspelt
+#: setting, which sends their author hunting for a typo instead of at the
+#: chart; the sentence below says where the rule went.
+_MOVED_TO_THE_CHART = {
+    "allowed_image_repos": "security.allowedImageRepos",
+    "require_model_revision": "security.requireModelRevision",
+}
+
+
 class ConverterConfig(BaseModel):
     """``converter.yaml`` in the campaigns repo; unknown keys rejected."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_moved_settings(cls, data: Any) -> Any:
+        for key, chart_key in _MOVED_TO_THE_CHART.items():
+            if isinstance(data, dict) and key in data:
+                raise ValueError(
+                    f"{key} moved to the htrflow-batch chart ({chart_key}, "
+                    "enforced by Kyverno) — remove it from converter.yaml"
+                )
+        return data
 
     namespace: str = "htr-batch"
     queue: str = "htr-batch"
@@ -290,5 +277,3 @@ class ConverterConfig(BaseModel):
     max_seconds: int = Field(default=21600, ge=1)
     manifest_max_bytes: int = 16 * _MiB
     fetch_max_bytes: int = 64 * _MiB
-    allowed_image_repos: list[str] = Field(default_factory=list)
-    require_model_revision: bool = False

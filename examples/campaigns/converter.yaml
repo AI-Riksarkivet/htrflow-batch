@@ -20,10 +20,9 @@ runtime_class: nvidia
 # real one before applying anywhere but the PoC.
 public_results_base: "http://localhost:30900/htr-results"
 
-# Only images under this pipeline pins its digest against. Swap for your
-# own registry (and keep it in sync with the htrflow-batch chart's
-# security.allowedImageRepos documentation value).
-allowed_image_repos:
-  - "docker.io/riksarkivet/"
-
-require_model_revision: false
+# Which registries a pipeline may pin, and whether every model needs a
+# 40-hex revision, are NOT settings of this file: they are Kyverno
+# ClusterPolicies the htrflow-batch chart ships
+# (security.allowedImageRepos, security.requireModelRevision), enforced on
+# everything the namespace admits — and re-run against rendered/ by the
+# Kyverno CLI in this repo's CI, so a pull request still fails early.

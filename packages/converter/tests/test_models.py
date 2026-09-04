@@ -28,22 +28,6 @@ def test_campaign_window_rejected_with_window_in_message(bad_window):
     )
 
 
-def test_pipeline_image_outside_allowed_repos_rejected_via_context():
-    with pytest.raises(ValidationError) as exc_info:
-        Pipeline.model_validate(
-            {
-                "id": "p",
-                "image": "ghcr.io/evil/x@sha256:" + "a" * 64,
-                "steps": [{"step": "Segmentation"}],
-            },
-            context={"allowed_image_repos": ["ghcr.io/riksarkivet"]},
-        )
-    assert any(
-        "is not from an allowed repository" in str(e["msg"])
-        for e in exc_info.value.errors()
-    )
-
-
 def test_pipeline_missing_image_key_is_a_plain_field_required_error():
     with pytest.raises(ValidationError) as exc_info:
         Pipeline.model_validate({"id": "p", "steps": [{"step": "Segmentation"}]})

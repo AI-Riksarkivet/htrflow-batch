@@ -189,11 +189,7 @@ def load(
 ) -> tuple[list[Campaign], dict[str, Pipeline], ConverterConfig]:
     problems: list[str] = []
     cfg = _load_config(Path(config_path), problems)
-    context = {
-        "source_template": cfg.source_template,
-        "allowed_image_repos": cfg.allowed_image_repos,
-        "require_model_revision": cfg.require_model_revision,
-    }
+    context = {"source_template": cfg.source_template}
 
     pipelines: dict[str, Pipeline] = {}
     broken: set[str] = set()  # a file that is there but did not load
