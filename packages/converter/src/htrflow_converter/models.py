@@ -35,7 +35,6 @@ _MiB = 1024 * 1024
 _VOLUME_ID_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?\Z")
 _NAME_RE = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?\Z")
 _IMAGE_RE = re.compile(r"[a-z0-9./:-]+@sha256:[0-9a-f]{64}\Z")
-_REVISION_RE = re.compile(r"[0-9a-f]{40}\Z")
 
 #: `name`/`id` are taken from the file name (parse.py overrides whatever the
 #: YAML says), so the only way to fix either is to rename the file.
@@ -174,12 +173,14 @@ class Campaign(BaseModel):
 
 
 class Pipeline(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    #: Unknown keys rejected: a stale `model_revision:` (removed B63 Task 22
+    #: fix round 2 -- nothing read it) gets the same one-line sentence as any
+    #: other typo, rather than being silently ignored.
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str
     image: str
     steps: list[dict]
-    model_revision: str = ""
     #: Per-volume wall-clock budget; overrides converter.yaml's max_seconds.
     max_seconds: int | None = None
 
@@ -207,16 +208,6 @@ class Pipeline(BaseModel):
             raise ValueError(
                 'must be a list of steps — write steps: and then "- step: '
                 '<Name>" entries under it'
-            )
-        return v
-
-    @field_validator("model_revision")
-    @classmethod
-    def _check_model_revision(cls, v: str) -> str:
-        if v and not _REVISION_RE.match(v):
-            raise ValueError(
-                f"must be a 40-character commit hash (got {shown(v)}) — copy "
-                "it from the model's page on Hugging Face"
             )
         return v
 
