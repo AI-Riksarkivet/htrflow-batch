@@ -83,7 +83,7 @@ def _http_client() -> httpx.Client:
     return httpx.Client(max_redirects=5)
 
 
-def _terminate(env: Mapping[str, str], reason: dict) -> None:
+def terminate(env: Mapping[str, str], reason: dict) -> None:
     """Write the structured failure reason to the termination log. Exactly one
     call per run: the exit paths below are mutually exclusive, and SIGTERM --
     now the only asynchronous one -- is raised in the main thread."""
@@ -141,7 +141,7 @@ def main(
         # regex (frontend runlog.ts) is the contract that stops live polling.
         advice = _advice(False, "SIGTERM")
         log.error("transient failure in %s: SIGTERM — %s", state.stage, advice)
-        _terminate(env, {"stage": state.stage, "permanent": False, "error": "SIGTERM"})
+        terminate(env, {"stage": state.stage, "permanent": False, "error": "SIGTERM"})
         capture.finish()
         _hard_exit(EXIT_SIGTERM)
         return EXIT_SIGTERM  # reached only when _hard_exit is stubbed (tests)
@@ -206,7 +206,7 @@ def _main(
         stop.set()
         stage = state.stage
         log.error("permanent failure in %s: %s — %s", stage, e, _advice(True, str(e)))
-        _terminate(env, {"stage": stage, "permanent": True, "error": str(e)})
+        terminate(env, {"stage": stage, "permanent": True, "error": str(e)})
         return EXIT_PERMANENT
     except Exception as e:
         return _transient(env, state, stop, e)
@@ -233,7 +233,7 @@ def _transient(
     stop.set()
     advice, trace = _advice(False, str(e)), traceback.format_exc()
     log.error("transient failure in %s: %s — %s\n%s", state.stage, e, advice, trace)
-    _terminate(env, {"stage": state.stage, "permanent": False, "error": str(e)})
+    terminate(env, {"stage": state.stage, "permanent": False, "error": str(e)})
     return EXIT_TRANSIENT
 
 
@@ -330,7 +330,7 @@ def _verify(
     missing = sorted({p.name for p in pages} - uploaded)
     failed = sorted(n for n, r in stats.results.items() if r.status == "failed")
     if missing or failed:
-        # Counts and the cause FIRST, the name lists last: _terminate clips
+        # Counts and the cause FIRST, the name lists last: terminate clips
         # the error field at 3500 chars and a few hundred missing page names
         # fill that on their own — what gets dropped must be the names, never
         # the reason the operator is reading the message for.
@@ -343,7 +343,7 @@ def _verify(
 
 
 #: How much of the failed pages' errors goes in the verify message: enough to
-#: name the cause, little enough to stay inside _terminate's 3500-char field
+#: name the cause, little enough to stay inside terminate's 3500-char field
 #: cap (and the 4 KiB the kubelet keeps of a termination message).
 FAILED_DETAIL_PAGES = 10
 FAILED_DETAIL_CHARS = 200

@@ -24,7 +24,7 @@ from huggingface_hub.errors import (
     RevisionNotFoundError,
 )
 
-from .main import EXIT_OK, EXIT_PERMANENT, EXIT_TRANSIENT, _terminate
+from .main import EXIT_OK, EXIT_PERMANENT, EXIT_TRANSIENT, terminate
 
 log = logging.getLogger("htrflow_batch.warmup")
 
@@ -67,7 +67,7 @@ def _fail(env: Mapping[str, str], msg: str) -> int:
     still worth the same termination message the try/except writes -- else
     the campaign card shows "warm-up failed" with no reason at all."""
     log.error(msg)
-    _terminate(env, {"stage": "warmup", "permanent": True, "error": msg})
+    terminate(env, {"stage": "warmup", "permanent": True, "error": msg})
     return EXIT_PERMANENT
 
 
@@ -107,7 +107,7 @@ def main(
         # Task 28: warm-up termination message. There is no warm-up log (the
         # Job mounts no S3 secret), so this is the only place the bad model
         # id or unknown step reaches the campaign card.
-        _terminate(env, {"stage": "warmup", "permanent": permanent, "error": str(e)})
+        terminate(env, {"stage": "warmup", "permanent": permanent, "error": str(e)})
         return EXIT_PERMANENT if permanent else EXIT_TRANSIENT
     log.info(
         "warm-up complete: models for %s cached in %s",

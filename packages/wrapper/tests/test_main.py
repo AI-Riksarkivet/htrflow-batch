@@ -330,7 +330,7 @@ def test_verify_failure_reports_why_each_page_failed(env, cfg, s3):
 
 def test_verify_failure_detail_is_bounded():
     """Every failed page's error in one field would blow past the 3500-char
-    cap _terminate truncates at (and the 4 KiB the kubelet keeps): at most 10
+    cap terminate truncates at (and the 4 KiB the kubelet keeps): at most 10
     pages, each error clipped, the rest counted."""
     names = [f"{i:04d}" for i in range(1, 51)]
     stats = StreamStats(
@@ -343,7 +343,7 @@ def test_verify_failure_detail_is_bounded():
 
 
 def test_verify_detail_survives_the_termination_log_truncation(tmp_path):
-    """_terminate clips the error field at 3500 chars, and a page name costs
+    """terminate clips the error field at 3500 chars, and a page name costs
     ~8 of them, so a volume with 500 missing pages overflows it on the names
     alone. The cause has to be written before them — otherwise the operator
     gets a truncated name list and no reason."""
@@ -365,7 +365,7 @@ def test_verify_detail_survives_the_termination_log_truncation(tmp_path):
     assert len(str(ei.value)) > 3500  # the names really do overflow the cap
 
     log_path = tmp_path / "term.log"
-    main_mod._terminate(
+    main_mod.terminate(
         {"TERMINATION_LOG_PATH": str(log_path)},
         {"stage": "verify", "permanent": False, "error": str(ei.value)},
     )
@@ -616,7 +616,7 @@ def test_terminate_with_long_error_writes_valid_json(tmp_path):
     long_error = f"verify failed: missing={huge_missing} failed=[]"
     assert len(json.dumps({"error": long_error})) > 4096  # actually exercises the bug
 
-    main_mod._terminate(
+    main_mod.terminate(
         {"TERMINATION_LOG_PATH": str(log_path)},
         {"stage": "verify", "permanent": False, "error": long_error},
     )
@@ -844,7 +844,7 @@ def test_failure_path_stops_the_downloader(env, cfg, s3, monkeypatch):
 def test_terminate_redacts_urls_in_the_error(tmp_path):
     """S6: the termination message and run log are world-readable."""
     log_path = tmp_path / "term.log"
-    main_mod._terminate(
+    main_mod.terminate(
         {"TERMINATION_LOG_PATH": str(log_path)},
         {
             "stage": "stream",
