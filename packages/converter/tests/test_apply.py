@@ -239,6 +239,29 @@ def test_dry_run_renders_but_reaches_no_cluster(tmp_path, monkeypatch, capsys):
     assert f"would prune: every {CAMPAIGN_SELECTOR}" in printed
 
 
+def test_a_cluster_error_prints_the_sentence_and_exits_1(tmp_path, cluster, capsys):
+    """``cli._apply`` must turn a ``ClusterError`` into a one-sentence stderr
+    line and exit 1 -- not let it explode into a traceback."""
+    sentence = (
+        "not allowed to apply Job/kyrk in htr-test: Forbidden — the "
+        "htrflow-batch chart renders the needed ServiceAccount behind "
+        "apply.rbac.enabled"
+    )
+
+    def boom(kind, verb):
+        if verb == "patch":
+            raise cluster_mod.ClusterError(sentence)
+        return FakeCluster._method(cluster, kind, verb)
+
+    cluster._method = boom
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    rc = cli.main(["apply", str(repo), "--out", str(out)])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.err.strip() == sentence
+    assert captured.out.count("Traceback") == 0
+
+
 def test_a_render_error_never_reaches_the_cluster(tmp_path, cluster, capsys):
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     (repo / "pipelines" / "demo-v1.yaml").write_text("image: nodigest\nsteps: []\n")

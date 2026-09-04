@@ -19,8 +19,10 @@ import json
 
 import pytest
 from kubernetes import client, config
+from kubernetes.client.exceptions import ApiException
+from urllib3.exceptions import MaxRetryError
 
-from htrflow_converter.cluster import APPLY_PATCH, FIELD_MANAGER, Cluster
+from htrflow_converter.cluster import APPLY_PATCH, FIELD_MANAGER, Cluster, ClusterError
 
 
 class _Response:
@@ -114,6 +116,60 @@ def test_prune_lists_by_the_renderers_label_and_deletes_jobs_in_background(clust
         "/api/v1/namespaces/htr-batch/configmaps/gone",
     ]
     assert deletes[0]["query"]["propagationPolicy"] == "Background"
+
+
+def test_forbidden_is_one_sentence(cluster, monkeypatch):
+    """``ApiException`` 401/403 names the verb, the object and the fix --
+    turning on the chart's RBAC -- rather than a raw HTTP status."""
+
+    def call_api(self, *a, **kw):
+        raise ApiException(status=403, reason="Forbidden")
+
+    monkeypatch.setattr(client.ApiClient, "call_api", call_api)
+    with pytest.raises(ClusterError) as exc:
+        cluster.apply(JOB)
+    assert str(exc.value) == (
+        "not allowed to apply Job/kyrk in htr-batch: Forbidden — the "
+        "htrflow-batch chart renders the needed ServiceAccount behind "
+        "apply.rbac.enabled"
+    )
+
+
+def test_unreachable_api_server_is_one_sentence(cluster, monkeypatch):
+    """``MaxRetryError`` is not wrapped in ``ApiException`` -- it is what a
+    bad or unreachable ``KUBECONFIG`` server actually raises."""
+
+    def call_api(self, *a, **kw):
+        raise MaxRetryError(pool=None, url="/", reason=OSError("Connection refused"))
+
+    monkeypatch.setattr(client.ApiClient, "call_api", call_api)
+    with pytest.raises(ClusterError) as exc:
+        cluster.apply(JOB)
+    message = str(exc.value)
+    assert message.startswith("cannot reach the Kubernetes API server at ")
+    assert "Connection refused" in message
+    assert "\n" not in message
+
+
+def test_no_incluster_and_no_kubeconfig_is_one_sentence(monkeypatch):
+    """Neither loader working -- no pod token, no usable kubeconfig -- must
+    not surface as a bare ``ConfigException`` from outside any ``try``."""
+    monkeypatch.setattr(
+        config,
+        "load_incluster_config",
+        lambda: (_ for _ in ()).throw(config.ConfigException("not in a pod")),
+    )
+    monkeypatch.setattr(
+        config,
+        "load_kube_config",
+        lambda: (_ for _ in ()).throw(config.ConfigException("no current context")),
+    )
+    with pytest.raises(ClusterError) as exc:
+        Cluster("htr-batch")
+    assert str(exc.value) == (
+        "no Kubernetes credentials: not running in a pod and no usable "
+        "kubeconfig (set KUBECONFIG, or run kubectl config use-context)"
+    )
 
 
 def test_the_workload_is_found_by_the_jobs_uid(cluster):

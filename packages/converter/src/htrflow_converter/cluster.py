@@ -9,15 +9,22 @@ replaced by an alpha flag" for several releases now.
 
 ``_preload_content=False`` everywhere, so what comes back is the plain JSON
 the API server sent -- the shape the rendered manifests are in.
+
+Every cluster problem this module knows how to explain crosses its boundary
+as a ``ClusterError``: one sentence, not a ``kubernetes``/``urllib3``
+traceback. ``cli._apply`` prints it and exits 1.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 from typing import Any
 
 from kubernetes import client, config
+from kubernetes.client.exceptions import ApiException
+from urllib3.exceptions import HTTPError
 
 from .render import CAMPAIGN_SELECTOR
 
@@ -35,8 +42,62 @@ _JOB_UID_LABEL = "kueue.x-k8s.io/job-uid"
 _KINDS = {"Job": ("batch", "job"), "ConfigMap": ("core", "config_map")}
 
 
-def _raw(fn: Any, *args: Any, **kwargs: Any) -> dict:
-    return json.loads(fn(*args, _preload_content=False, **kwargs).data)
+class ClusterError(Exception):
+    """A cluster problem this module already has a one-sentence answer for."""
+
+
+def _api_error(
+    verb: str, kind: str, name: str, namespace: str, e: ApiException
+) -> ClusterError:
+    target = f"{kind}/{name}" if name else kind
+    if e.status in (401, 403):
+        return ClusterError(
+            f"not allowed to {verb} {target} in {namespace}: {e.reason} — the "
+            "htrflow-batch chart renders the needed ServiceAccount behind "
+            "apply.rbac.enabled"
+        )
+    if e.status == 404 and kind == "Workload":
+        return ClusterError(
+            "Kueue is not installed in this cluster (no workloads.kueue.x-k8s.io) "
+            "— htrflow-campaigns apply needs it to honour suspend:"
+        )
+    message = ""
+    if e.body:
+        with contextlib.suppress(json.JSONDecodeError, TypeError, KeyError):
+            message = f" {json.loads(e.body)['message']}"
+    return ClusterError(f"{verb} {target}: {e.status} {e.reason}{message}")
+
+
+def _unreachable(api: Any, e: HTTPError) -> ClusterError:
+    """``MaxRetryError`` -- a bad or unreachable ``KUBECONFIG`` server -- is
+    a ``urllib3.exceptions.HTTPError``, not an ``ApiException``: catching
+    only the latter misses the commonest failure of all. ``api`` (a typed
+    API instance, or ``CustomObjectsApi``) carries its own ``Configuration``,
+    so the host comes from there rather than being parsed out of ``e``."""
+    host = api.api_client.configuration.host
+    reason = str(getattr(e, "reason", None) or e).splitlines()[0]
+    return ClusterError(f"cannot reach the Kubernetes API server at {host}: {reason}")
+
+
+@contextlib.contextmanager
+def _errors(verb: str, kind: str, name: str, namespace: str, api: Any):
+    try:
+        yield
+    except ApiException as e:
+        raise _api_error(verb, kind, name, namespace, e) from e
+    except HTTPError as e:
+        raise _unreachable(api, e) from e
+
+
+def _raw(
+    verb: str, kind: str, name: str, namespace: str, fn: Any, *args: Any, **kwargs: Any
+) -> dict:
+    try:
+        return json.loads(fn(*args, _preload_content=False, **kwargs).data)
+    except ApiException as e:
+        raise _api_error(verb, kind, name, namespace, e) from e
+    except HTTPError as e:
+        raise _unreachable(fn.__self__, e) from e
 
 
 class Cluster:
@@ -46,7 +107,14 @@ class Cluster:
         try:
             config.load_incluster_config()
         except config.ConfigException:
-            config.load_kube_config()
+            try:
+                config.load_kube_config()
+            except config.ConfigException as e:
+                raise ClusterError(
+                    "no Kubernetes credentials: not running in a pod and no "
+                    "usable kubeconfig (set KUBECONFIG, or run kubectl config "
+                    "use-context)"
+                ) from e
         self.namespace = namespace
         self.batch = client.BatchV1Api()
         self.core = client.CoreV1Api()
@@ -63,10 +131,16 @@ class Cluster:
         -- a Job applied by `kubectl` before this change, a hand edit --
         which is the "git is the truth" rule the campaigns repo runs on.
         """
+        kind, name = obj["kind"], obj["metadata"]["name"]
+        namespace = obj["metadata"].get("namespace", self.namespace)
         return _raw(
-            self._method(obj["kind"], "patch"),
-            obj["metadata"]["name"],
-            obj["metadata"].get("namespace", self.namespace),
+            "apply",
+            kind,
+            name,
+            namespace,
+            self._method(kind, "patch"),
+            name,
+            namespace,
             obj,
             field_manager=FIELD_MANAGER,
             force=True,
@@ -82,6 +156,10 @@ class Cluster:
         """
         for kind in _KINDS:
             listed = _raw(
+                "list",
+                kind,
+                "",
+                self.namespace,
                 self._method(kind, "list"),
                 self.namespace,
                 label_selector=CAMPAIGN_SELECTOR,
@@ -97,12 +175,13 @@ class Cluster:
     def _workload(self, uid: str) -> dict | None:
         """The Kueue Workload of the Job with ``uid``. Kueue labels it with
         that uid, the only link that survives a delete/recreate of the Job."""
-        listed = self.custom.list_namespaced_custom_object(
-            *_KUEUE,
-            self.namespace,
-            _WORKLOADS,
-            label_selector=f"{_JOB_UID_LABEL}={uid}",
-        )
+        with _errors("list", "Workload", "", self.namespace, self.custom):
+            listed = self.custom.list_namespaced_custom_object(
+                *_KUEUE,
+                self.namespace,
+                _WORKLOADS,
+                label_selector=f"{_JOB_UID_LABEL}={uid}",
+            )
         items = listed.get("items", [])
         return items[0] if items else None
 
@@ -141,12 +220,13 @@ class Cluster:
             return 0
         wl_name = wl["metadata"]["name"]
         print(f"{name}: workload/{wl_name} active={str(want).lower()}")
-        self.custom.patch_namespaced_custom_object(
-            *_KUEUE,
-            self.namespace,
-            _WORKLOADS,
-            wl_name,
-            {"spec": {"active": want}},
-            _content_type=MERGE_PATCH,
-        )
+        with _errors("patch", "Workload", wl_name, self.namespace, self.custom):
+            self.custom.patch_namespaced_custom_object(
+                *_KUEUE,
+                self.namespace,
+                _WORKLOADS,
+                wl_name,
+                {"spec": {"active": want}},
+                _content_type=MERGE_PATCH,
+            )
         return 0

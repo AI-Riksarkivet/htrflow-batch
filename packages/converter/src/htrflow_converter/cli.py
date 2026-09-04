@@ -222,27 +222,37 @@ def _apply(
         # all, which is exactly when --prune has work to do. (_render just
         # loaded this, so it cannot fail here.)
         cfg = load(repo / "campaigns", repo / "pipelines", repo / "converter.yaml")[2]
-        cluster = _cluster(cfg.namespace)
-        # (live object, declared pause) per campaign Job: the live one has the
-        # uid Kueue labels the Workload with, the rendered one has what git
-        # says. Warm-up Jobs are not campaigns and get no pause sync.
-        jobs: list[tuple[dict, bool]] = []
-        for objects, is_campaign in ((pipelines, False), (campaigns, True)):
-            for obj in objects:
-                live = cluster.apply(obj)
-                print(f"applied: {obj['kind']}/{obj['metadata']['name']}")
-                if is_campaign and obj["kind"] == "Job":
-                    jobs.append((live, obj["spec"].get("suspend", False)))
-        if prune:
-            # What makes deleting a campaign file cancel the campaign. Both
-            # directories: see Cluster.prune.
-            cluster.prune(
-                {(o["kind"], o["metadata"]["name"]) for o in pipelines + campaigns}
-            )
-        failed = 0
-        for live, suspended in jobs:
-            failed |= cluster.sync_pause(live, suspended, pause_wait)
-        return failed
+        # Imported here, not at module level, for the same reason `_cluster`
+        # imports `.cluster` lazily: `validate`/`render` must never pay for
+        # importing `kubernetes`.
+        from .cluster import ClusterError
+
+        try:
+            cluster = _cluster(cfg.namespace)
+            # (live object, declared pause) per campaign Job: the live one
+            # has the uid Kueue labels the Workload with, the rendered one
+            # has what git says. Warm-up Jobs are not campaigns and get no
+            # pause sync.
+            jobs: list[tuple[dict, bool]] = []
+            for objects, is_campaign in ((pipelines, False), (campaigns, True)):
+                for obj in objects:
+                    live = cluster.apply(obj)
+                    print(f"applied: {obj['kind']}/{obj['metadata']['name']}")
+                    if is_campaign and obj["kind"] == "Job":
+                        jobs.append((live, obj["spec"].get("suspend", False)))
+            if prune:
+                # What makes deleting a campaign file cancel the campaign.
+                # Both directories: see Cluster.prune.
+                cluster.prune(
+                    {(o["kind"], o["metadata"]["name"]) for o in pipelines + campaigns}
+                )
+            failed = 0
+            for live, suspended in jobs:
+                failed |= cluster.sync_pause(live, suspended, pause_wait)
+            return failed
+        except ClusterError as e:
+            print(e, file=sys.stderr)
+            return 1
 
 
 def main(argv: list[str] | None = None) -> int:
