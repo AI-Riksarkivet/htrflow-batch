@@ -45,25 +45,9 @@ class Config(BaseModel):
     service, where the wrapper's are bare, an in-pod contract the Job writes."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
-    # default_doc: what from_env actually falls back to, for
-    # scripts/config_reference.py's _model_rows -- the class-level default
-    # below is only the value an unset field parses to, not what a deployed
-    # pod ends up running with (docs: configuration.md).
-    public_results_base: str = Field(
-        "",
-        alias="HTRFLOW_PUBLIC_RESULTS_BASE",
-        json_schema_extra={"default_doc": "required unless `HTRFLOW_WEB_SITE_ONLY`"},
-    )
-    namespaces: tuple[str, ...] = Field(
-        (),
-        alias="HTRFLOW_NAMESPACES",
-        json_schema_extra={"default_doc": "the pod's own namespace, else `htr-batch`"},
-    )
-    static_dir: str = Field(
-        "",
-        alias="HTRFLOW_WEB_STATIC",
-        json_schema_extra={"default_doc": "`/app/static`"},
-    )
+    public_results_base: str = Field("", alias="HTRFLOW_PUBLIC_RESULTS_BASE")
+    namespaces: tuple[str, ...] = Field((), alias="HTRFLOW_NAMESPACES")
+    static_dir: str = Field("", alias="HTRFLOW_WEB_STATIC")
     site_only: bool = Field(False, alias="HTRFLOW_WEB_SITE_ONLY")
 
     @classmethod
