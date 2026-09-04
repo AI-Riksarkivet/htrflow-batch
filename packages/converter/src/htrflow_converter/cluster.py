@@ -57,7 +57,7 @@ def _api_error(
             "htrflow-batch chart renders the needed ServiceAccount behind "
             "apply.rbac.enabled"
         )
-    if e.status == 404 and kind == "Workload":
+    if e.status == 404 and kind == "Workload" and verb == "list":
         return ClusterError(
             "Kueue is not installed in this cluster (no workloads.kueue.x-k8s.io) "
             "— htrflow-campaigns apply needs it to honour suspend:"

@@ -36,7 +36,8 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2010
 # sentences. (B63)
 # 1150 -> 1200 in Task 21, which moved `apply` off `kubectl` as a subprocess
 # and onto the Kubernetes client: cluster.py (server-side apply, the prune,
-# the Kueue pause patch) is ~150 lines where the argv-building it replaces
+# the Kueue pause patch) is ~150 lines -- ~235 with the error boundary
+# the review asked for -- where the argv-building it replaces
 # was ~80. The difference is work kubectl used to do and this repo now owns
 # -- the prune is a list-by-label and a delete instead of one deprecated
 # `--prune` flag, and each object is applied (and printed) individually
