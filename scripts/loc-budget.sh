@@ -124,7 +124,12 @@ check web       "$(count packages/web/src -name '*.py')" 661
 # reason schema moved up to sit above them), reasons.ts's warmup stage
 # phrase, and CampaignCard.svelte's chip (health, label, tooltip, the
 # open-card reason line, four CSS rules). (B63)
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3068
+# 3068 -> 3063 in Task 28 fix round items 5+9: the four warmup chip CSS
+# rules folded into the existing phase rules they duplicated (-7), and the
+# health derivation grew one guard clause and a longer comment (+2) --
+# `missing` only paints a finished campaign red when it is not Succeeded.
+# (B63)
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3063
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
