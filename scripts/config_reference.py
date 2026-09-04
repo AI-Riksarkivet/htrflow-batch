@@ -98,8 +98,16 @@ def _security(surface: str, key: str) -> str:
 def _model_rows(model: type[BaseModel]) -> list[tuple[str, str]]:
     rows = []
     for name, f in model.model_fields.items():
-        value = f.get_default(call_default_factory=True)
-        shown = "**required**" if f.is_required() else _show(value)
+        # A field's class-level default can be a value nothing ever runs
+        # with -- from_env may fall back to something computed instead.
+        # `default_doc` in json_schema_extra, when set, is what to print.
+        extra = f.json_schema_extra
+        doc = extra.get("default_doc") if isinstance(extra, dict) else None
+        if doc:
+            shown = doc
+        else:
+            value = f.get_default(call_default_factory=True)
+            shown = "**required**" if f.is_required() else _show(value)
         rows.append((f.alias or name, shown))
     return rows
 

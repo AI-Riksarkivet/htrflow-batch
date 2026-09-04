@@ -13,11 +13,15 @@ which stays as history.
 `extra="forbid"` whose fields carry their own source name — `Field(alias=…)`
 for an env var, the field name for a `converter.yaml` key — and one
 `from_env`/`from_yaml` classmethod. The class-level default is the only
-default. The wrapper's `Config` is not the whole of what its package reads
-from the environment, though: `publish.py` and `main.py` read two names of
-plumbing the Job skeleton sets, and `warmup.py` — a separate entrypoint, with
-its own contract — reads four more. Both are listed, not folded into
-`Config`, in "Also read from the environment" under the wrapper table below.
+default pydantic parses an unset field into; where `from_env` then falls
+back to something computed rather than that parsed value (the web front's
+`HTRFLOW_NAMESPACES`, `HTRFLOW_WEB_STATIC`), the field says so itself and
+the Default column below shows that instead. The wrapper's `Config` is not
+the whole of what its package reads from the environment, though:
+`publish.py` and `main.py` read two names of plumbing the Job skeleton
+sets, and `warmup.py` — a separate entrypoint, with its own contract —
+reads four more. Both are listed, not folded into `Config`, in "Also read
+from the environment" under the wrapper table below.
 
 **Prefixes.** The web front's env is `HTRFLOW_`-prefixed: an operator's
 settings for a long-lived service. The wrapper's are bare — the in-pod
