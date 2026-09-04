@@ -58,7 +58,7 @@ ServiceAccount behind `apply.rbac.enabled`.
 
 | File | Parsed by | Rendered as |
 |---|---|---|
-| `converter.yaml` | `ConverterConfig` (unknown keys rejected, all fields optional) | Namespace, queue, window cap, S3 Secret, model-cache PVC, runtime class, wrapper byte caps, the default pod deadline (`max_seconds` → `activeDeadlineSeconds`), image allow-list |
+| `converter.yaml` | `ConverterConfig` (unknown keys rejected, all fields optional) | Namespace, queue, window cap, S3 Secret, model-cache PVC, runtime class, node selector and tolerations, the IIIF source template, wrapper byte caps, and the default pod deadline (`max_seconds` → `activeDeadlineSeconds`). Not the image allow-list or the model-revision rule: both are chart values enforced by Kyverno since B63 Task 22, and a `converter.yaml` still carrying either key is a validation error saying so |
 | `pipelines/<id>.yaml` | `Pipeline` (digest-pinned `image`, htrflow `steps`, optional `max_seconds`; unknown keys rejected) | ConfigMap `htr-pipeline-<id>` with the pipeline YAML and its sha256; Job `htr-warmup-<id>` |
 | `campaigns/<name>.yaml` | `Campaign` (`pipeline`, `volumes`, optional `priority`, `window`, `suspend`) | ConfigMap `campaign-<name>` with `volumes.txt`; Indexed Job `<name>` with `completions = len(volumes)` |
 
@@ -74,7 +74,8 @@ the whole list.
 | `cli.py` | `init`, `validate`, `render` and `apply` subcommands, the append-only check, pruning, the unsafe `--out` guard |
 | `parse.py` | YAML files to domain types via `Model.model_validate`; flattens `pydantic.ValidationError` into one-line problems; `ValidationError`; the cross-file unknown-pipeline check |
 | `models.py` | `Volume`, `Campaign`, `Pipeline`, `ConverterConfig` (frozen pydantic models) with all validation rules as field/model validators; `Pipeline.sha256` |
-| `render.py` | Patch the packaged skeletons into concrete objects; labels, Kueue queue and priority, env for the wrapper, the 10 000-volume split |
+| `render.py` | Patch the packaged skeletons into concrete objects; labels, Kueue queue and priority, env for the wrapper, the 10 000-volume split; `CAMPAIGN_SELECTOR`, the one definition of the label a prune deletes by |
+| `cluster.py` | The only module that talks to a cluster: server-side apply, the prune, the Kueue pause patch, and the mapping from an API error to a one-sentence `ClusterError` |
 | `manifests/` | The four YAML skeletons: `configmap.yaml`, `campaign-job.yaml`, `pipeline-configmap.yaml`, `warmup-job.yaml` |
 | `template/` | The campaigns repo `init` copies out, byte-identical to [`examples/campaigns/`](../../examples/campaigns/README.md) |
 

@@ -1,13 +1,13 @@
 [project]
 site_name = "htrflow-batch"
 site_description = "Kueue-gated batch HTR around the htrflow image — streaming per-page results to S3 with IIIF viewer output."
-site_author = "carpelan"
-site_url = "https://carpelan.github.io/test/"
+site_author = "Riksarkivet"
+site_url = "https://ai-riksarkivet.github.io/htrflow-batch/"
 copyright = """
-Copyright &copy; 2026 carpelan
+Copyright &copy; 2026 Riksarkivet
 """
-repo_url = "https://github.com/carpelan/test"
-repo_name = "carpelan/test"
+repo_url = "https://github.com/AI-Riksarkivet/htrflow-batch"
+repo_name = "AI-Riksarkivet/htrflow-batch"
 edit_uri = "edit/main/docs/"
 
 nav = [
@@ -231,7 +231,7 @@ repo = "fontawesome/brands/github"
 
 [[project.extra.social]]
 icon = "fontawesome/brands/github"
-link = "https://github.com/carpelan/test"
+link = "https://github.com/AI-Riksarkivet/htrflow-batch"
 
 # Declaring ANY markdown_extensions replaces zensical's default set wholesale,
 # so every extension the docs rely on has to be named here. `!!! note` blocks

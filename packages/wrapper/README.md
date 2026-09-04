@@ -83,6 +83,7 @@ page has the full table with semantics.
 | `stream.py` | Consumer loop: process each page as it lands, upload, rolling-delete |
 | `driver.py` | htrflow integration: pipeline from YAML, `process_page`, version pin |
 | `store.py` | `ResultStore`: deterministic S3 keys, content types, `done_pages()` for resume, run-log key |
+| `publish.py` | The publish stage: viewer dimensions from the ALTO, the `manifest.json` body, and the `iiif.json` → `pipeline.yaml` → `manifest.json` upload order |
 | `viewer.py` | `iiif.json` with ALTO annotation links; ALTO dimension parsing |
 | `logship.py` | `LogCapture`: tee stdout/stderr, redact URLs, ship to S3 on an interval |
 | `warmup.py` | Warm-up entrypoint (see above) |
