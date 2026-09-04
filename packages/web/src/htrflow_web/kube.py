@@ -16,9 +16,9 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
 
 from kubernetes import client, config
+from pydantic import BaseModel, ConfigDict, Field
 
 #: Selects campaign progress Jobs only — excludes the per-pipeline warm-up
 #: Jobs, which carry ``managed-by=converter`` too but not ``app`` or
@@ -39,22 +39,30 @@ def _own_namespace() -> str:
         return _DEFAULT_NAMESPACE
 
 
-@dataclass(frozen=True)
-class Config:
-    public_results_base: str
-    namespaces: tuple[str, ...] = ()
+class Config(BaseModel):
+    """The web front's whole env contract — `app.py` and `__main__.py` read no
+    environment of their own. `HTRFLOW_`-prefixed: an operator's settings for a
+    service, where the wrapper's are bare, an in-pod contract the Job writes."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    public_results_base: str = Field("", alias="HTRFLOW_PUBLIC_RESULTS_BASE")
+    namespaces: tuple[str, ...] = Field((), alias="HTRFLOW_NAMESPACES")
+    static_dir: str = Field("", alias="HTRFLOW_WEB_STATIC")
+    site_only: bool = Field(False, alias="HTRFLOW_WEB_SITE_ONLY")
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Config:
-        env = os.environ if env is None else env
-        base = env.get("HTRFLOW_PUBLIC_RESULTS_BASE")
-        if not base:
+        get = os.environ.get if env is None else env.get
+        base = (get("HTRFLOW_PUBLIC_RESULTS_BASE") or "").rstrip("/")
+        site_only = bool(get("HTRFLOW_WEB_SITE_ONLY"))  # any non-empty value
+        if not base and not site_only:  # site-only builds no result URL
             raise RuntimeError("HTRFLOW_PUBLIC_RESULTS_BASE is required")
-        raw = (env.get("HTRFLOW_NAMESPACES") or "").strip()
-        namespaces = tuple(n.strip() for n in raw.split(",") if n.strip())
+        names = [n.strip() for n in (get("HTRFLOW_NAMESPACES") or "").split(",")]
         return cls(
-            public_results_base=base.rstrip("/"),
-            namespaces=namespaces or (_own_namespace(),),
+            HTRFLOW_PUBLIC_RESULTS_BASE=base,
+            HTRFLOW_NAMESPACES=tuple(filter(None, names)) or (_own_namespace(),),
+            HTRFLOW_WEB_STATIC=get("HTRFLOW_WEB_STATIC") or "",
+            HTRFLOW_WEB_SITE_ONLY=site_only,
         )
 
 

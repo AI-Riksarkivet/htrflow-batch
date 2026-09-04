@@ -11,6 +11,9 @@ dependencies = [
     # Already in the tree as a kubernetes dependency; named here because this
     # package imports it directly.
     "pyyaml>=6",
+    # kube.Config. Already in the tree as a fastapi dependency; named here
+    # because this package imports it directly.
+    "pydantic>=2",
 ]
 
 [project.scripts]

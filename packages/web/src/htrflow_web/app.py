@@ -15,7 +15,6 @@ whole job.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -42,11 +41,6 @@ DEFAULT_STATIC_DIR = "/app/static"
 #: and an unhandled HEAD would fall through to the static mount below and
 #: 404. Every route here is safe under HEAD (the body is simply dropped).
 GET_HEAD = ["GET", "HEAD"]
-
-
-def static_dir_from_env() -> Path:
-    """The built site's directory: ``HTRFLOW_WEB_STATIC``, else the image's."""
-    return Path(os.environ.get("HTRFLOW_WEB_STATIC") or DEFAULT_STATIC_DIR)
 
 
 class BuiltSite(StaticFiles):
@@ -167,7 +161,7 @@ def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
     # Last, so the routes above win over any file of the same name. Absent
     # outside the image (a local `uv run htrflow-web` builds no site), which
     # is not an error: the API is then all there is.
-    static = Path(static_dir) if static_dir is not None else static_dir_from_env()
+    static = Path(static_dir or DEFAULT_STATIC_DIR)
     if static.is_dir():
         app.mount("/", BuiltSite(directory=static, html=True), name="site")
 
