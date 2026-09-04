@@ -138,7 +138,7 @@ def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
         pods = reader.list_pods(namespace, name)
         warmup = _warmup_status(job, reader.list_warmups(), {})
         return projection.detail(
-            job, configmap, pods, reader.cfg, offset, limit, pipeline_cm, warmup
+            job, configmap, pods, reader.cfg, offset, limit, pipeline_cm, warmup=warmup
         )
 
     def _warmup_status(
