@@ -103,6 +103,18 @@ same process serves both (see [Campaign Browser](frontend.md)).
     campaigns repo's CI runs these same policies over `rendered/` with the
     Kyverno CLI.
 
+!!! note "The image policies match `Job`/`Pod` directly, not their controllers"
+
+    The two image `ClusterPolicy` objects carry
+    `pod-policies.kyverno.io/autogen-controllers: none`, so Kyverno does not
+    generate matching rules for a `Deployment` or `StatefulSet` — only the
+    literal `Job`/`Pod` kinds are checked. `web.image` is a `Deployment`: a
+    bad image there is admitted by `helm upgrade` (the `Deployment` itself
+    is never matched) and only refused when its `ReplicaSet` tries to create
+    a `Pod` from it. The rejection message lands on that `Pod`'s events, not
+    on the `helm upgrade` that shipped the bad image — `kubectl describe
+    pod` (or `kubectl get events`) in the namespace is where to look.
+
 ## NetworkPolicies (`network.*`)
 
 `templates/network.yaml` + the read API's own policy in `templates/web.yaml`;
