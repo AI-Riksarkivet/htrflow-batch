@@ -11,6 +11,10 @@ queue: htr-batch
 # rendering more and letting Kueue's partial admission shrink it makes the
 # rendered file un-appliable afterwards (docs: reference/campaign-yaml.md).
 window: 20
+# These three name objects charts/htrflow-batch creates (`queue.name`,
+# `s3.existingSecret`, `modelCache.name`): the two charts and this file agree
+# by convention, and packages/converter/tests/test_chart_agreement.py fails
+# when a rename lands on one side only.
 s3_secret: htr-batch-s3
 data_pvc: htr-test-data
 runtime_class: nvidia
