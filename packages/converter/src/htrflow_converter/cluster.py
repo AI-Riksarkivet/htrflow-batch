@@ -138,15 +138,14 @@ class Cluster:
         which is the "git is the truth" rule the campaigns repo runs on.
         """
         kind, name = obj["kind"], obj["metadata"]["name"]
-        namespace = obj["metadata"].get("namespace", self.namespace)
         return _raw(
             "apply",
             kind,
             name,
-            namespace,
+            self.namespace,
             self._method(kind, "patch", name),
             name,
-            namespace,
+            self.namespace,
             obj,
             field_manager=FIELD_MANAGER,
             force=True,
