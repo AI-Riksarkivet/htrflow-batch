@@ -29,7 +29,7 @@ fail=0
 # back out via TRANSIENT_FIRST -- the import, the two tuples and their
 # rationale comments, and the collapsed except block that classifies both.
 # (B63)
-# 2028 -> 2038 in Task 28 fix round item 2: the offline-Hub and missing/
+# 2028 -> 2035 in Task 28 fix round item 2: the offline-Hub and missing/
 # unreadable PIPELINE_PATH guards were the only two warm-up failure paths
 # that wrote no termination message; a `_fail` helper gives both the same
 # {stage, permanent, error} shape the try/except writes. (B63)
@@ -96,7 +96,7 @@ check converter "$(count packages/converter/src -name '*.py')" 1283
 # warmup field; app.py's _warmup_status wires them together, matching by
 # namespace + pipeline label and reading the warm-up Job's own pods only for
 # a failed match, one list_pods per failed warm-up per request. (B63)
-# 650 -> 668 in the Task 28 fix round: the failed-warm-up reason is
+# 650 -> 667 in the Task 28 fix round: the failed-warm-up reason is
 # memoized per (namespace, warm-up Job) for the request, `warmup` is a
 # required argument of summarize/detail, match_warmup refuses an empty
 # pipeline label, and app.py calls wrapper_reason/newest directly. (B63)
