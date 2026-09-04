@@ -10,9 +10,10 @@ converter renders, and for hand-run experiments with the wrapper directly
 
 A whole **campaign** is one Kubernetes `batch/v1` Job with
 `completionMode: Indexed` — one index per volume, `$JOB_COMPLETION_INDEX`
-selecting a line of the campaign's `volumes.txt`. The Job starts
-`suspend: true` and carries the Kueue queue label; Kueue unsuspends it (up to
-`parallelism`) as quota frees:
+selecting a line of the campaign's `volumes.txt`. It carries the Kueue queue
+label, and Kueue's webhook suspends it on creation and unsuspends it (up to
+`parallelism`) as quota frees — the rendered file itself has no `suspend`
+field unless the campaign declares `suspend: true`:
 
 ```yaml
 kind: Job
@@ -20,7 +21,6 @@ metadata:
   labels:
     kueue.x-k8s.io/queue-name: htr-batch
 spec:
-  suspend: true
   completionMode: Indexed
   completions: 200                  # = number of volumes in the campaign
   parallelism: 20                   # converter.yaml's window, or the campaign's own

@@ -105,8 +105,10 @@ uv run htrflow-campaigns apply $(DIR) --out $(DIR)/rendered
 — one command that renders, applies `rendered/pipelines` and then
 `rendered/campaigns` (pipelines first: a campaign's Job references its
 pipeline's ConfigMap), and finally puts each campaign's `suspend:` on its
-Kueue Workload. Add `--dry-run` to see the `kubectl` commands without running
-them; every command it does run is echoed to stderr.
+Kueue Workload. It talks to the API server through the official Kubernetes
+client — there is no `kubectl` binary in the loop — and prints one
+`applied: <Kind>/<name>` line per object. `--dry-run` prints the same list
+as `would apply: …` and opens no connection at all.
 Beyond the PoC, `examples/campaigns/.github/workflows/render.yml` renders and
 commits `rendered/` on every push to `main`, and Argo CD's Application points
 its source at `rendered/` in that repo — nothing applies to the cluster
