@@ -79,8 +79,9 @@ same process serves both (see [Campaign Browser](frontend.md)).
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `security.allowedImageRepos` | `[]` | Documentation/consistency only in this chart — the enforced allow-list lives in the campaigns repo's `converter.yaml` (`allowed_image_repos`); `htrflow-campaigns validate` warns, not the chart |
-| `security.requireModelRevision` | `false` | Same: mirrors `converter.yaml`'s `require_model_revision` for documentation purposes |
+| `security.allowedImageRepos` | `[]` | Repository prefixes a Job or Pod in the namespace may pin, matched on a path boundary before `@sha256:`. Enforced by the `htrflow-batch-images-allowed-<ns>` ClusterPolicy when `security.policies.enabled`; empty = the policy is not rendered. Also the default for `verifyImages.imageReferences` |
+| `security.requireModelRevision` | `false` | Every `model_settings.model` in a converter-rendered pipeline ConfigMap carries a 40-hex `revision:`. Enforced by the `htrflow-batch-model-revision-<ns>` ClusterPolicy when `security.policies.enabled` |
+| `security.policies.enabled` | `false` | Render the three `templates/policies/` ClusterPolicies (digest pin, allow-list, model revision), all `Enforce`. **Kyverno must be installed** (`make install-kyverno`; ai-dev story I04) — without it these are objects nothing reads, and nothing enforces the allow-list or the revision rule at all |
 | `security.psaEnforce` | `baseline` | Pod Security level `make psa-labels` enforces on the namespace (warn/audit are always `restricted`). Every pod in both charts is restricted-clean as of 0.3.0 — `restricted` is worth trying |
 | `security.allowTagImages` | `false` | Accept a `:tag` reference for `web.image` instead of an `@sha256:` pin. Tag images get `imagePullPolicy: Always` so a re-pushed `:dev` lands on the next rollout |
 | `security.verifyImages.enabled` | `false` | Renders a Kyverno `ClusterPolicy` (Kyverno ≥ 1.10 must be installed) that refuses any Pod in the namespace whose image is not cosign keyless-signed |
@@ -88,13 +89,19 @@ same process serves both (see [Campaign Browser](frontend.md)).
 | `security.verifyImages.imageReferences` | `[]` | Defaults to `allowedImageRepos` with `*` appended, or `"*"` when that is empty |
 | `security.verifyImages.rekorUrl` | `https://rekor.sigstore.dev` | |
 
-!!! note "`allowedImageRepos`/`requireModelRevision` moved to the campaigns repo"
+!!! note "Where these two rules have lived"
 
-    Through 0.2.0 these chart values gated what the old CronJob controller
-    would submit. As of 0.3.0 the converter runs entirely outside the cluster (in the
-    campaigns repo's own CI), so the enforcement point moved with it:
-    set `allowed_image_repos` / `require_model_revision` in that repo's
-    `converter.yaml` ([Campaign & Pipeline YAML](campaign-yaml.md)).
+    Through 0.2.0 they gated what the old CronJob controller would submit.
+    From 0.3.0 they were the campaigns repo's `converter.yaml` keys
+    `allowed_image_repos` / `require_model_revision`, and this chart's
+    values were documentation. As of **0.6.0** the converter has dropped
+    them and these values are the real inputs: a rule the converter applies
+    only ever sees what the converter rendered, while the ClusterPolicies
+    apply to every Job, Pod and pipeline ConfigMap the namespace admits.
+    A `converter.yaml` still carrying either key is now a validation error
+    pointing here ([Campaign & Pipeline YAML](campaign-yaml.md)); a
+    campaigns repo's CI runs these same policies over `rendered/` with the
+    Kyverno CLI.
 
 ## NetworkPolicies (`network.*`)
 

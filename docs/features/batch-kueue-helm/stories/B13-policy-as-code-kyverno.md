@@ -63,3 +63,22 @@ on our infrastructure.
       identity when the workflow moves.
 
 - [ ] The Security → Trust boundary table gains a row for the Kyverno policy (what it refuses, where) and the "user action" warning about the allow-list is replaced by a link to the configured value.
+
+## Delivered so far
+
+**B63 Task 22 delivers the policy half** (chart 0.6.0, 2026-09-04). The
+image allow-list and the model-revision rule stopped being converter code
+and became `ClusterPolicy` objects the chart ships under
+`templates/policies/`, behind `security.policies.enabled`, alongside a
+digest-pin policy and the existing `verifyImages` one:
+`htrflow-batch-images-pinned-<ns>`, `htrflow-batch-images-allowed-<ns>`,
+`htrflow-batch-model-revision-<ns>`, all `Enforce`. `make install-kyverno`
+installs Kyverno (chart 3.9.0 / app v1.19.0), and a campaigns repo's CI
+runs the same policies over its rendered manifests with the Kyverno CLI.
+Proven on the PoC — a foreign registry, a hand-edited tag and an unpinned
+model are each refused at admission with a message naming the offending
+value; run log in `docs/development/e2e-indexed-jobs.md`, "Task 22".
+
+What this story still wants beyond that: **cosign signatures**
+(`security.verifyImages` with the real CI identity, which needs B09), the
+signed arm64 wrapper, and the audit-mode-first rollout note.

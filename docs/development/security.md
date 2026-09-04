@@ -9,22 +9,45 @@ Two questions this page answers: what a pod on this platform *can* do
 file names a container image that runs on the GPU with the results bucket's
 write credentials and the model cache, and a Hugging Face model repo whose
 weights are pickles loaded in the warm-up pod (which has internet egress).
-There is no admission step between a merged commit and a running pod beyond
-what `htrflow-campaigns validate` checks in that repo's own CI — the
-converter itself never runs in the cluster. Treat the repo like CI config —
+The converter itself never runs in the cluster, so the admission step
+between a merged commit and a running pod is Kyverno's: the chart ships
+`ClusterPolicy` objects (`security.policies.enabled`) that the API server
+applies to every Job, Pod and pipeline ConfigMap in the namespace, whoever
+wrote it — and the campaigns repo's CI runs the same policies over its
+rendered output with the Kyverno CLI, so an author fails in the pull
+request instead of at apply time. Treat the repo like CI config —
 protected `main`, required review — and turn on the controls it and the
 chart offer:
 
 | Control | Where | What it closes |
 |---|---|---|
-| **Image allow-list** — `converter.yaml`'s `allowed_image_repos` | the converter's `parse_pipeline`, before any manifest is rendered | any digest-pinned image from any registry. Empty = anything runs, and `validate` only warns |
-| **Digest pin** on `image:` (always) | `parse_pipeline` | a mutable tag changing what an id means |
-| **Model revision** — `converter.yaml`'s `require_model_revision` | `parse_pipeline` | an unpinned HF repo swapping its weights under the same pipeline id |
+| **Digest pin** — `security.policies.enabled` | Kyverno `ClusterPolicy` `htrflow-batch-images-pinned-<ns>`: admission, every Job and Pod in the namespace, plus the Kyverno CLI in the campaigns repo's CI. Message: `image must be pinned by digest: <image>` | a mutable tag changing what an id means. `htrflow-campaigns validate` also refuses a pipeline whose `image:` is not `@sha256:`-pinned — the renderer needs that digest — but only for what it renders |
+| **Image allow-list** — `security.allowedImageRepos` (+ `policies.enabled`) | Kyverno `ClusterPolicy` `htrflow-batch-images-allowed-<ns>`, same two places. Message: `image is not from an allowed repository: <image> — allowed: <list>` | any image from any registry. Empty list = the policy is not rendered and nothing is checked |
+| **Model revision** — `security.requireModelRevision` (+ `policies.enabled`) | Kyverno `ClusterPolicy` `htrflow-batch-model-revision-<ns>`: admission of the pipeline ConfigMap, same CLI. Message: `models not pinned to a revision: <models> — add revision: <40-character commit hash> to each model_settings` | an unpinned HF repo swapping its weights under the same pipeline id |
 | **Signed images** — `security.verifyImages.*` (Kyverno `ClusterPolicy`, cosign keyless) | admission, per Pod in the namespace | an image that was not built by the CI identity you name. Needs Kyverno installed and `publish.yml` signing ([CI](ci.md#workflows)); off by default |
 | **Control-plane digest gate** — `web.image` must be `@sha256:` unless `security.allowTagImages` | chart template | anyone with registry push replacing the web front in place |
 | **http(s)-only sources, byte caps, redirect caps** | `parse_pipeline`/`parse_campaign`, the wrapper (`MANIFEST_MAX_BYTES`, `FETCH_MAX_BYTES`, 5 redirects, raster-only acceptance) | SSRF/DoS driven by campaign data |
 | **Transport to the campaigns repo** — ordinary `git`/HTTPS, review-gated CI | the campaigns repo's own CI, outside this system entirely | there is no in-cluster clone or credential for it any more — nothing here reaches the campaigns repo at runtime |
 | **URL redaction** | wrapper logs, termination log, `page_sources` | a tokenised private IIIF URL landing in the world-readable log |
+
+!!! warning "With `security.policies.enabled` off — or no Kyverno — nothing enforces these"
+
+    The three policies above are the only enforcement point for the image
+    allow-list and the model-revision rule: the converter dropped both in
+    B63 Task 22 (a rule the converter applies only ever sees what the
+    converter rendered, and a hand-made Job walks past it). Leaving
+    `security.policies.enabled` at `false`, or enabling it in a cluster
+    with no Kyverno, means any registry and any unpinned model is admitted.
+    What survives without Kyverno is the *shape* check on a pipeline's
+    `image:`, which `htrflow-campaigns validate` still makes because the
+    renderer builds ids out of that digest.
+
+    `make install-kyverno` installs it on the PoC (chart 3.9.0, app
+    v1.19.0, its own `kyverno` namespace). On ai-dev this is story I04.
+    Note that Kyverno v1.19 marks the `kyverno.io` `ClusterPolicy` kind
+    deprecated in favour of the CEL-based `policies.kyverno.io`
+    `ValidatingPolicy`; the chart still ships `ClusterPolicy`, which is what
+    v1.19 runs, and the migration is a later task.
 
 What the pod can then do is bounded by the posture and the policies below —
 non-root, no capabilities, read-only rootfs, a read-only model cache, egress

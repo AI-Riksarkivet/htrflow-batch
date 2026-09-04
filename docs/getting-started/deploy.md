@@ -20,7 +20,8 @@ helm install htr charts/htrflow-batch -n htr-batch --create-namespace \
   --set web.image=<registry>/htrflow-web@sha256:<digest> \
   --set network.s3Cidrs='{<s3 endpoint cidr>}' \
   --set network.apiServer.cidr=<kube-apiserver cidr, e.g. 10.16.51.56/32> \
-  --set security.allowedImageRepos='{<registry>/}'
+  --set security.allowedImageRepos='{<registry>/}' \
+  --set security.policies.enabled=true
 make psa-labels
 ```
 
@@ -84,10 +85,12 @@ renders a pipeline ConfigMap or a Job any more.
   egress to the kube-apiserver (auto-detected via Helm `lookup` at install
   time; set it explicitly for `helm template` or a kubeconfig without
   list-nodes permission).
-- **Trust boundary** (`security.*`): set `security.allowedImageRepos` in
-  `converter.yaml` on the campaigns-repo side — an empty list lets any
-  digest-pinned image there run on the GPU (`htrflow-campaigns validate`
-  only warns) — and consider `require_model_revision: true` and the Kyverno
+- **Trust boundary** (`security.*`): set `security.allowedImageRepos` and
+  turn on `security.policies.enabled` — the Kyverno ClusterPolicies are the
+  only thing enforcing the allow-list and the model-revision rule since the
+  converter dropped both, and an empty list lets any image run on the GPU.
+  Kyverno must be installed first (`make install-kyverno`; ai-dev story
+  I04). Consider `security.requireModelRevision: true` and the
   `verifyImages` policy once images are cosign-signed
   ([Security → Trust boundary](../development/security.md#trust-boundary)).
 - **Model cache**: campaign and warm-up Jobs run offline on a read-only /
@@ -132,7 +135,8 @@ helm upgrade --install htr charts/htrflow-batch -n htr-batch \
   --set publicResultsBase=http://localhost:30900/htr-results \
   --set network.apiServer.cidr=<node-ip>/32 \
   --set web.image=127.0.0.1:30500/htrflow-web@sha256:<web digest> \
-  --set security.allowedImageRepos='{127.0.0.1:30500/}'
+  --set security.allowedImageRepos='{127.0.0.1:30500/}' \
+  --set security.policies.enabled=true    # needs `make install-kyverno`
 make psa-labels
 make campaigns-apply DIR=examples/campaigns   # or your own campaigns repo checkout
 k9s -n htr-batch   # watch
