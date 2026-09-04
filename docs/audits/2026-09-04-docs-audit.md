@@ -182,7 +182,7 @@ Build finished in 2.13s
 | `htrflow-api` | 7 — chart README history + the `B25-htrflow-api-pin-test.md` nav entry |
 | `uv4-viewer` | 1 — the `kubectl delete svc` an operator on 0.3.0 must run |
 | `status/warmup` | 1 — devstack changelog 0.1.1, recording its removal |
-| `MAX_SECONDS` | 8 — the pre-Task-25 back-compatibility branch, its test, two tests asserting absence, and two budget/message comments |
+| `MAX_SECONDS` | 9 — the pre-Task-25 back-compatibility branch and its test, two tests asserting absence, and the budget and message-table comments |
 | `allowed_image_repos` / `require_model_revision` | 10 / 11 — `_MOVED_TO_THE_CHART` and its tests and fixtures, plus the matching migration notes |
 
 **`make -n` for every target the docs name** — all 29 resolve
@@ -214,4 +214,8 @@ chart         738 / 738
 `devStack.insecureDefaults` guard still refusing RustFS without credentials).
 The pruned bucket policy was rendered in both polarities and compared field
 by field against `scripts/compose_init.py`'s output: identical.
+
+Re-run unchanged after the last page fix (`docs/index.md`), which landed
+after this section was first written: same grep counts, same budgets, same
+clean build.
 
