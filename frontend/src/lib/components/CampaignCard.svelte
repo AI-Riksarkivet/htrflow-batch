@@ -65,14 +65,17 @@
 
   // The card's left accent: worst-first, same intent as the old
   // volume-derived campaignHealth but read straight off the Job phase now
-  // that the API computes it server-side. A failed or missing warm-up (Task
-  // 28) is worst-first too: the campaign cannot start on its own either way.
+  // that the API computes it server-side. A failed warm-up (Task 28) is
+  // worst-first too: the campaign cannot start on its own either way. A
+  // missing warm-up only counts once the campaign is not already done —
+  // an old pipeline that never had a warm-up Job must not paint a finished
+  // campaign red; the chip still shows either way.
   const health = $derived(
     job.phase === "Failed" ||
       job.phase === "PartiallyFailed" ||
       job.counts.failed > 0 ||
       job.warmup.phase === "failed" ||
-      job.warmup.phase === "missing"
+      (job.warmup.phase === "missing" && job.phase !== "Succeeded")
       ? "failed"
       : job.phase === "Running"
         ? "active"
@@ -489,23 +492,15 @@
 
   .chip.phase.queued,
   .chip.phase.paused,
+  .chip.warmup.pending,
+  .chip.warmup.running,
   /* Warning, not error: some of the campaign did publish. */
   .chip.phase.partiallyfailed {
     background: var(--warning-soft);
     color: var(--warning);
   }
 
-  .chip.phase.failed {
-    background: var(--destructive);
-    color: var(--on-strong);
-  }
-
-  .chip.warmup.pending,
-  .chip.warmup.running {
-    background: var(--warning-soft);
-    color: var(--warning);
-  }
-
+  .chip.phase.failed,
   .chip.warmup.failed,
   .chip.warmup.missing {
     background: var(--destructive);

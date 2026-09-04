@@ -610,6 +610,23 @@ describe("CampaignCard", () => {
       );
     });
 
+    test("missing on an already-succeeded campaign: the chip shows, but health is not failed", async () => {
+      const missing: JobSummary = {
+        ...job,
+        phase: "Succeeded",
+        counts: { ...job.counts, failed: 0 },
+        warmup: { phase: "missing" },
+      };
+      stubDetail(missing);
+      const { container } = render(CampaignCard, { job: missing });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screen.getByText("no warm-up")).toHaveClass("missing");
+      expect(container.querySelector(".campaign")).toHaveAttribute(
+        "data-health",
+        "done",
+      );
+    });
+
     test("failed: the chip's tooltip, and a line under it once the card is open", async () => {
       const reason = {
         stage: "warmup",
