@@ -54,7 +54,8 @@ campaign **is** one Kubernetes Indexed Job:
 
 1. Add (or reuse) a pipeline in `pipelines/<id>.yaml` — a digest-pinned
    wrapper image (from a registry the cluster's
-   `security.allowedImageRepos` admits) and the htrflow `steps:` document. A pipeline id is a
+   `security.allowedImageRepos` admits) and the htrflow `steps:` document.
+   A pipeline id is a
    **permanent name for a recipe**: once any campaign has run against it,
    treat the file as immutable — to change the recipe, mint a new id
    (`demo-v2.yaml`) instead of editing this one. This is a review
