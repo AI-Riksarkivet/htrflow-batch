@@ -106,6 +106,10 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3000
 # only ever saw what the converter rendered). ~195 lines for three policies,
 # a third of it the comments that say why each is written with `context` +
 # `deny` rather than `foreach` -- a rule whose message cannot name the
-# offending image is a rule its reader has to guess at. (B63)
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 730
+# offending image is a rule its reader has to guess at.
+# 730 -> 738 Task 22 fix (B63): the model-revision policy learned TrOCR's
+# real placement (model_settings.model_kwargs.revision, not top-level like
+# YOLO) -- one more JMESPath OR clause, a longer message, and the comment
+# that explains why two placements exist at all.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 738
 exit $fail
