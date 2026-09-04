@@ -1847,3 +1847,30 @@ the three ClusterPolicies Ready and `Enforce`; `htr` at chart 0.6.0 with
 In `htr-batch`: `e2e-t22run` (Complete 2/2) and `htr-warmup-e2e-t22-v2`
 (Complete) with their two ConfigMaps — everything from Task 21 pruned.
 Campaigns repo `~/htr-test` branch `task-22`, still never pushed.
+
+#### Fix round 2 — final state
+
+Two changes on top of the above, both from an explicit values file
+(`helm get values htr -n htr-batch -o yaml`, edited, never
+`--reuse-values`):
+
+1. `security.allowedImageRepos` gained `docker.io/amazon/aws-cli` —
+   `charts/htrflow-devstack`'s `rustfs-init` hook Job pulls that image on
+   every install/upgrade, in the same namespace the allow-list governs
+   (finding 1, quickstart devstack breakage).
+2. `security.requireModelRevision` went back to `false`. The blocking
+   finding above was wrong — the policy was fixed to recognise TrOCR's
+   `model_kwargs.revision` placement, and `e2e-t22-v3` proved a real
+   (segmenting *and* transcribing) pipeline is admitted and completes with
+   the rule on. `false` stays the PoC's live value regardless: every other
+   pipeline already in `~/htr-test` (`e2e-t22-v2`, and whatever future E2E
+   work adds before it is repinned) is unpinned, and turning the rule back
+   on would refuse those on their next admission. **Production posture is
+   `true`** — the rule works correctly now; only this PoC's existing
+   unpinned pipelines are the reason its live value stays `false`.
+
+`kubectl get clusterpolicy` after the upgrade: two policies
+(`htrflow-batch-images-allowed-htr-batch`,
+`htrflow-batch-images-pinned-htr-batch`) —
+`htrflow-batch-model-revision-htr-batch` is not rendered while
+`requireModelRevision` is `false`.
