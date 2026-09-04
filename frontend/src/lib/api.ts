@@ -1,10 +1,9 @@
-// The read API boundary (packages/api, GET /api/v1/jobs — docs:
-// task-4-brief / task-7-brief). Unlike the old reconciler-written status
-// document, this is our own API: a malformed response is a bug on our side,
-// not an untrusted document, so parsing fails hard (Zod .parse, not
-// .safeParse) instead of degrading row by row. Also carries the small pure
-// view helpers every route needs (isHttpUrl, shortDate), now that the old
-// status/derive modules are gone.
+// The read API boundary (packages/web, GET /api/v1/jobs — docs:
+// reference/frontend.md). This is our own API, not a document we found: a
+// malformed response is a bug on our side, so parsing fails hard (Zod
+// .parse, not .safeParse) instead of degrading row by row. Also carries the
+// small pure view helpers every route needs (isHttpUrl, shortDate), since
+// there is no derivation layer left to keep them in.
 import { z } from "zod";
 import { resolveApiBase } from "./config.js";
 

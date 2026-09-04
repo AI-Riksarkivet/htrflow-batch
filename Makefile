@@ -132,7 +132,7 @@ campaigns-apply:
 # validate the campaigns repo, render + apply it, then block until every
 # campaign Job reaches a terminal condition, printing completedIndexes as it
 # goes. DIR is the campaigns repo; CAMPAIGN_TIMEOUT caps the wait (seconds).
-# The failure-path steps (a 404 manifest, MAX_SECONDS, pause/resume, prune)
+# The failure-path steps (a 404 manifest, the pod deadline, pause/resume, prune)
 # are campaigns and kubectl in the run log, not this target.
 CAMPAIGN_TIMEOUT ?= 3600
 e2e:
