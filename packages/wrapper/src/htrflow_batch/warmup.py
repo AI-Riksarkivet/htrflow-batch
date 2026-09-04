@@ -19,7 +19,7 @@ from typing import Callable, Mapping, Optional
 
 import yaml
 
-from .main import EXIT_OK, EXIT_PERMANENT, EXIT_TRANSIENT
+from .main import EXIT_OK, EXIT_PERMANENT, EXIT_TRANSIENT, _terminate
 
 log = logging.getLogger("htrflow_batch.warmup")
 
@@ -70,11 +70,16 @@ def main(
         # (NotImplementedError). Retrying cannot help; exit 13 so the
         # warm-up Job's own backoffLimit stops retrying it.
         log.error("warm-up failed (bad pipeline config): %r", e)
+        # Task 28: warm-up termination message. There is no warm-up log (the
+        # Job mounts no S3 secret), so this is the only place the bad model
+        # id or unknown step reaches the campaign card.
+        _terminate(env, {"stage": "warmup", "permanent": True, "error": str(e)})
         return EXIT_PERMANENT
     except Exception as e:
         # Network, disk-full, HF Hub 5xx: retryable — the warm-up Job's own
         # backoffLimit handles it.
         log.error("warm-up failed: %s\n%s", e, traceback.format_exc())
+        _terminate(env, {"stage": "warmup", "permanent": False, "error": str(e)})
         return EXIT_TRANSIENT
     log.info(
         "warm-up complete: models for %s cached in %s",

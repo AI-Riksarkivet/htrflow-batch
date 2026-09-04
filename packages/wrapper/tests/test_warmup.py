@@ -1,5 +1,6 @@
 """The warm-up entrypoint: fill HF_HOME for one pipeline and exit."""
 
+import json
 from pathlib import Path
 
 from htrflow_batch.warmup import EXIT_OK, EXIT_PERMANENT, EXIT_TRANSIENT, main
@@ -62,6 +63,40 @@ def test_warmup_download_failure_is_transient(tmp_path):
         raise OSError("connection reset")
 
     assert main(_env(tmp_path), load=boom) == EXIT_TRANSIENT
+
+
+def test_warmup_permanent_failure_writes_termination_message(tmp_path):
+    """No warm-up log exists (the Job mounts no S3 secret) — the termination
+    message is the only place the bad model id reaches the campaign card."""
+    term_path = tmp_path / "termination-log"
+    env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
+
+    def boom(_):
+        raise NotImplementedError("Model Yolo9 is not supported")
+
+    rc = main(env, load=boom)
+    assert rc == EXIT_PERMANENT
+    assert json.loads(term_path.read_text()) == {
+        "stage": "warmup",
+        "permanent": True,
+        "error": "Model Yolo9 is not supported",
+    }
+
+
+def test_warmup_transient_failure_writes_termination_message(tmp_path):
+    term_path = tmp_path / "termination-log"
+    env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
+
+    def boom(_):
+        raise OSError("connection reset")
+
+    rc = main(env, load=boom)
+    assert rc == EXIT_TRANSIENT
+    assert json.loads(term_path.read_text()) == {
+        "stage": "warmup",
+        "permanent": False,
+        "error": "connection reset",
+    }
 
 
 def test_warmup_bad_config_is_permanent(tmp_path):
