@@ -159,6 +159,7 @@ nav = [
   ]},
   { "Reference" = [
     {"Overview" = "reference/index.md"},
+    {"Configuration" = "reference/configuration.md"},
     {"Campaign & Pipeline YAML" = "reference/campaign-yaml.md"},
     {"Wrapper" = "reference/wrapper.md"},
     {"Chart Values" = "reference/chart.md"},

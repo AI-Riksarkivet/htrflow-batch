@@ -10,7 +10,25 @@ semantics in [Failure Handling](../how-it-works/failure-handling.md).
 
 Source: [`packages/wrapper/src/htrflow_batch/config.py`](https://github.com/carpelan/test/blob/main/packages/wrapper/src/htrflow_batch/config.py)
 
-`Config.from_env` fails fast (exit 13) with the full list of missing required vars.
+`Config.from_env` fails fast (exit 13) with the full list of missing required
+vars. `Config` is a frozen pydantic model whose fields carry their own env
+name (`Field(alias=…)`) — there is no second table of names to keep in step,
+and the class-level default is the only default. The generated
+[Configuration](configuration.md) page lists these keys next to the other
+three surfaces'.
+
+**No wrapper setting is ever a secret.** S3 credentials reach the pod as a
+mounted Secret file (`AWS_SHARED_CREDENTIALS_FILE=/secrets/s3/credentials`),
+never as an env var: an env var is readable in `kubectl describe`, in a crash
+dump and in every child process. `test_config.py` fails if any name below ever
+matches `KEY|TOKEN|PASSWORD|SECRET_ACCESS`.
+
+**Why these names are bare** and the web front's are `HTRFLOW_`-prefixed: this
+is an in-pod contract, written by the Job the converter renders
+(`packages/converter/src/htrflow_converter/manifests/campaign-job.yaml`) into
+a pod environment nothing else writes, and renaming one would break every
+campaign Job in flight. The web front is a long-lived service an operator
+configures, so its settings are namespaced.
 
 **Required:**
 

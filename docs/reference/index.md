@@ -9,6 +9,7 @@ docstrings remain the authoritative signature reference.
 
 | Page | Description |
 |------|-------------|
+| [Configuration](configuration.md) | Every setting of every surface, generated from the three config models and the chart values |
 | [Campaign & Pipeline YAML](campaign-yaml.md) | The files in the campaigns repo — what the converter parses, renders and rejects |
 | [Wrapper](wrapper.md) | `htrflow-batch` package — the env contract and the modules behind a batch pod |
 | [Chart Values](chart.md) | `charts/htrflow-batch` — every `values.yaml` key and the objects it renders |

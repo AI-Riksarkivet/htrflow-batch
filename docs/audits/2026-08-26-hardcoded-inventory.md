@@ -1,5 +1,8 @@
 # Hard-coded configuration inventory — htrflow-batch @ 652a5eb (feat/campaign-browser-visibility)
 
+> **History.** This describes the reconciler-era repo. The current, generated
+> list of every setting is [Reference → Configuration](../reference/configuration.md).
+
 Scope searched (every file read in full): `packages/reconciler/src`, `packages/wrapper/src`, `frontend/src`, `charts/htrflow-batch` (values + all templates), `scripts/`, `Makefile`, `.docker/`, `.dagger/`, `.github/workflows`; `docs/getting-started` + `docs/reference` grepped only to record where a value is documented. `.claude/worktrees/` ignored.
 
 Path abbreviations used in the *where* column:

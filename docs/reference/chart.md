@@ -10,7 +10,9 @@ either chart: they are Indexed Jobs rendered by `packages/converter` from a
 campaigns repo and applied with `kubectl` or Argo CD.
 Source: [`charts/htrflow-batch/values.yaml`](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/charts/htrflow-batch/values.yaml);
 every key is declared in `values.schema.json` (unknown keys and wrong types
-are rejected at install time).
+are rejected at install time). This page is the prose; the generated table of
+every key, its default, what it must agree with elsewhere and what it exposes
+is [Configuration](configuration.md).
 
 !!! warning "Upgrading: `--reset-then-reuse-values`"
 
