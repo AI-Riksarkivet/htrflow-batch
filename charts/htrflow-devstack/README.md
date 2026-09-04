@@ -107,8 +107,8 @@ kubectl -n kube-system label daemonset nvidia-device-plugin app.kubernetes.io/ma
   idempotently.
 - **Anonymous read is split** (audit X14): `<pipeline>/<volume>/*` and
   `sources/*` are always anonymous (the browser fetches them directly);
-  `status/attempts.json`, `status/validation.json`, `status/volumes.json`,
-  `status/failures/*` and `status/warmup/*` always need credentials;
+  `status/attempts.json`, `status/validation.json`, `status/volumes.json`
+  and `status/failures/*` always need credentials;
   `status/logs/*` is anonymous only while `rustfs.publicLogs=true` (default
   — the campaign browser links run logs; they can carry a tokenised private
   IIIF URL on failure, so set it false behind an authenticated proxy). The
@@ -125,3 +125,17 @@ kubectl -n kube-system label daemonset nvidia-device-plugin app.kubernetes.io/ma
 - Registry: 60Gi ≈ 5 GPU wrapper images (~10 GB each). No GC of its own:
   delete tags over the API, then run
   `registry garbage-collect /etc/distribution/config.yml` in the pod.
+
+## Changelog
+
+Everything below this line is history: each entry names the objects and
+value keys as they were at that version.
+
+### 0.1.1 — 2026-09-04 (B63 Task 28 fix round)
+
+Fixed: `status/warmup/*` dropped from the bucket policy's private-key list
+(`htrflow-devstack.bucketPolicy`) and from the paragraph above describing
+it. Nothing has ever written that path — a warm-up pod mounts no S3
+secret, so its failure reaches the campaign card as a termination message
+instead, never a log under `status/` (`docs/how-it-works/
+failure-handling.md`). No other behaviour changes.

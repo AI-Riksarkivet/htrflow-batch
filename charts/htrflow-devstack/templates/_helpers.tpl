@@ -76,8 +76,7 @@ Condition is ignored — hence this shape. Keep in step with scripts/compose_ini
       (printf "arn:aws:s3:::%s/status/attempts.json" $b)
       (printf "arn:aws:s3:::%s/status/validation.json" $b)
       (printf "arn:aws:s3:::%s/status/volumes.json" $b)
-      (printf "arn:aws:s3:::%s/status/failures/*" $b)
-      (printf "arn:aws:s3:::%s/status/warmup/*" $b) }}
+      (printf "arn:aws:s3:::%s/status/failures/*" $b) }}
 {{- if not .Values.rustfs.publicLogs }}
 {{- $private = append $private (printf "arn:aws:s3:::%s/status/logs/*" $b) }}
 {{- end }}
