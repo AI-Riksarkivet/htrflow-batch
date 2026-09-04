@@ -86,8 +86,9 @@ def _results_base(namespace: str, pipeline: str, cfg) -> str:
     return f"{cfg.public_results_base}/{namespace}/{pipeline}"
 
 
-def summarize(job: dict, cfg) -> dict:
-    """``JobSummary``: one row per campaign Job for ``GET /api/v1/jobs``."""
+def summarize(job: dict, cfg, warmup: dict | None = None) -> dict:
+    """``JobSummary``: one row for ``GET /api/v1/jobs``. ``warmup`` is the
+    caller's pre-matched ``{phase, reason?}`` (Task 28); default ``missing``."""
     meta = job.get("metadata") or {}
     namespace = meta.get("namespace", "")
     pipeline = _labels(job).get(_PIPELINE_LABEL, "")
@@ -100,7 +101,37 @@ def summarize(job: dict, cfg) -> dict:
         "suspended": bool((job.get("spec") or {}).get("suspend")),
         "createdAt": meta.get("creationTimestamp"),
         "resultsBase": _results_base(namespace, pipeline, cfg),
+        "warmup": warmup if warmup is not None else {"phase": "missing"},
     }
+
+
+def match_warmup(job: dict, warmup_jobs: list[dict]) -> dict | None:
+    """This campaign Job's warm-up Job, by namespace + pipeline label."""
+    ns = (job.get("metadata") or {}).get("namespace")
+    pipeline = _labels(job).get(_PIPELINE_LABEL)
+    for w in warmup_jobs:
+        wm = w.get("metadata") or {}
+        if wm.get("namespace") == ns and _labels(w).get(_PIPELINE_LABEL) == pipeline:
+            return w
+    return None
+
+
+def warmup_phase(job: dict) -> str:
+    """pending/running/succeeded/failed for one warm-up Job."""
+    status = job.get("status") or {}
+    conditions = status.get("conditions") or []
+    if any(
+        c.get("type") == "Complete" and c.get("status") == "True" for c in conditions
+    ):
+        return "succeeded"
+    if any(c.get("type") == "Failed" and c.get("status") == "True" for c in conditions):
+        return "failed"
+    return "running" if (status.get("active") or 0) > 0 else "pending"
+
+
+def warmup_reason(pods: list[dict] | None) -> dict | None:
+    """No warm-up log exists (Task 28) -- this is the only way to explain."""
+    return _wrapper_reason(_newest(pods), "warmup") if pods else None
 
 
 def _volume_lines(configmap: dict | None) -> list[str]:
@@ -117,19 +148,14 @@ def _source_url(line: str) -> str | None:
     return source if source.startswith(("http://", "https://")) else None
 
 
-def _wrapper_reason(pod: dict) -> dict | None:
-    """The wrapper's termination message as this API's structured ``reason``:
-    ``state.terminated`` if the container is currently terminated, else
-    ``lastState.terminated`` after a restart (D6/task-3).
-
-    Structured, not the raw text, because the raw text is JSON the wrapper
-    writes for machines -- a card that renders it shows a person a JSON blob.
-    Parsing it once here means every reader (this page's cards, a future
-    client) gets the same three fields instead of each re-deriving them.
-    """
+def _wrapper_reason(pod: dict, container: str = "wrapper") -> dict | None:
+    """``container``'s termination message (``state.terminated``, else
+    ``lastState.terminated`` after a restart, D6/task-3), parsed once into
+    this API's structured ``reason`` rather than a raw JSON blob. Defaults
+    to the campaign wrapper; a warm-up Job's is ``warmup`` (Task 28)."""
     status = pod.get("status") or {}
     for cs in status.get("containerStatuses") or []:
-        if cs.get("name") != "wrapper":
+        if cs.get("name") != container:
             continue
         term = (cs.get("state") or {}).get("terminated")
         if term is None:
@@ -260,10 +286,12 @@ def detail(
     offset: int = 0,
     limit: int = 200,
     pipeline_configmap: dict | None = None,
+    warmup: dict | None = None,
 ) -> dict:
     """``JobDetail``: ``JobSummary`` plus per-index rows and top failures for
-    ``GET /api/v1/jobs/{ns}/{name}``, paged by index."""
-    summary = summarize(job, cfg)
+    ``GET /api/v1/jobs/{ns}/{name}``, paged by index. ``warmup`` passes
+    through to ``summarize`` unchanged (Task 28)."""
+    summary = summarize(job, cfg, warmup)
     status = job.get("status") or {}
     completed = parse_index_ranges(status.get("completedIndexes"))
     failed = parse_index_ranges(status.get("failedIndexes"))

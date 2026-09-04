@@ -80,7 +80,13 @@ check converter "$(count packages/converter/src -name '*.py')" 1283
 # went away: JobDetail.pipelineSteps/pipelineYaml (the chip's tooltip and its
 # YAML toggle) and VolumeView.sourceUrl (the "source" link). Restored
 # functionality, not growth. (B63)
-check web       "$(count packages/web/src -name '*.py')" 600
+# 600 -> 650 for Task 28: warm-up status on the campaign card. kube.Reader
+# gained list_warmups (one more list call, sharing _list_jobs with list_jobs);
+# projection gained match_warmup/warmup_phase/warmup_reason and summarize's
+# warmup field; app.py's _warmup_status wires them together, matching by
+# namespace + pipeline label and reading the warm-up Job's own pods only for
+# a failed match (ruling 2's one extra list_pods; nothing cached). (B63)
+check web       "$(count packages/web/src -name '*.py')" 650
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

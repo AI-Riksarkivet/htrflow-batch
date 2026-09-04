@@ -86,9 +86,14 @@ def _pipeline_configmap(text=PIPELINE_YAML, name="htr-pipeline-demo-v1") -> dict
 
 
 def _pod(
-    index: int, *, active=False, terminated_message=None, created="2026-01-01T00:00:01Z"
+    index: int,
+    *,
+    active=False,
+    terminated_message=None,
+    created="2026-01-01T00:00:01Z",
+    container="wrapper",
 ) -> dict:
-    container_status = {"name": "wrapper", "state": {}}
+    container_status = {"name": container, "state": {}}
     if active:
         container_status["state"] = {"running": {"startedAt": created}}
     elif terminated_message is not None:
@@ -479,3 +484,100 @@ class TestConfigmapRef:
     def test_missing_campaign_volume(self):
         job = {"spec": {"template": {"spec": {"volumes": []}}}}
         assert projection.configmap_ref(job) is None
+
+
+def _warmup_job(
+    *,
+    namespace="htr-test",
+    pipeline="demo-v1",
+    name="htr-warmup-demo-v1",
+    active=0,
+    conditions=None,
+) -> dict:
+    return {
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+            "labels": {
+                "app": "htrflow-warmup",
+                "htrflow.riksarkivet.se/managed-by": "converter",
+                "htrflow.riksarkivet.se/pipeline": pipeline,
+            },
+        },
+        "status": {"active": active, "conditions": conditions or []},
+    }
+
+
+class TestMatchWarmup:
+    def test_matches_by_namespace_and_pipeline_label(self):
+        job = _warmup_job()
+        other = _warmup_job(namespace="other-ns")
+        assert projection.match_warmup(_job(), [other, job]) is job
+
+    def test_no_match_is_none(self):
+        job = _warmup_job(pipeline="other-v1")
+        assert projection.match_warmup(_job(), [job]) is None
+
+    def test_two_campaigns_share_one_warmup(self):
+        """The match is by pipeline, not by campaign name -- two campaign
+        rows on the same pipeline resolve to the same warm-up Job."""
+        job = _warmup_job()
+        assert projection.match_warmup(_job(name="a"), [job]) is job
+        assert projection.match_warmup(_job(name="b"), [job]) is job
+
+
+class TestWarmupPhase:
+    def test_pending_before_any_pod(self):
+        assert projection.warmup_phase(_warmup_job()) == "pending"
+
+    def test_running_while_active(self):
+        assert projection.warmup_phase(_warmup_job(active=1)) == "running"
+
+    def test_succeeded_on_complete_condition(self):
+        job = _warmup_job(conditions=[{"type": "Complete", "status": "True"}])
+        assert projection.warmup_phase(job) == "succeeded"
+
+    def test_failed_on_failed_condition(self):
+        job = _warmup_job(conditions=[{"type": "Failed", "status": "True"}])
+        assert projection.warmup_phase(job) == "failed"
+
+
+class TestWarmupReason:
+    def test_reason_from_the_warmup_container(self):
+        pods = [
+            _pod(
+                0,
+                terminated_message=(
+                    '{"stage": "warmup", "permanent": true,'
+                    ' "error": "unknown model class Yolo9"}'
+                ),
+                container="warmup",
+            )
+        ]
+        assert projection.warmup_reason(pods) == {
+            "stage": "warmup",
+            "permanent": True,
+            "error": "unknown model class Yolo9",
+        }
+
+    def test_no_pods_is_none(self):
+        assert projection.warmup_reason([]) is None
+        assert projection.warmup_reason(None) is None
+
+
+class TestSummarizeWarmup:
+    def test_default_is_missing(self):
+        assert projection.summarize(_job(), CFG)["warmup"] == {"phase": "missing"}
+
+    def test_carries_the_given_warmup_through(self):
+        warmup = {
+            "phase": "failed",
+            "reason": {"stage": "warmup", "permanent": True, "error": "x"},
+        }
+        assert projection.summarize(_job(), CFG, warmup)["warmup"] == warmup
+
+    def test_detail_inherits_it_from_the_summary(self):
+        d = projection.detail(
+            _job(), _configmap(), [], CFG, warmup={"phase": "running"}
+        )
+        assert d["warmup"] == {"phase": "running"}
