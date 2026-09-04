@@ -44,7 +44,7 @@ names.
 |---|---|
 | `GET /healthz` | `{"ok": true}` |
 | `GET /`, `/log`, `/uv.html`, `/config.js`, … | The built site from `HTRFLOW_WEB_STATIC` (mounted last, so no file can shadow an API route). Extensionless paths resolve to adapter-static's `<route>.html`, which is how `/log` works on a refresh |
-| `GET /api/v1/jobs` | One `JobSummary` per campaign Job, newest first: namespace, name, pipeline, phase, counts, suspended, createdAt, resultsBase |
+| `GET /api/v1/jobs` | One `JobSummary` per campaign Job, newest first: namespace, name, pipeline, phase, counts, suspended, createdAt, resultsBase, warmup |
 | `GET /api/v1/jobs/{namespace}/{name}?offset=0&limit=200` | `JobDetail`: the summary plus `volumes` (one row per index, paged, `limit` at most 1000) and `failures` (the 50 highest failed indexes that have a reason) |
 
 Phase is derived from the Job: `Succeeded` or `Failed` from its conditions,
@@ -52,7 +52,10 @@ otherwise `Queued` or `Paused` when suspended (no index done yet, or some),
 else `Running`. Each volume row carries `manifestUrl`, `iiifUrl`,
 `altoPrefix` under the results base and `logUrl` under the shared
 `status/logs/` tree. Only Jobs labelled `app=htrflow-batch` and
-`managed-by=converter` are listed, which excludes the warm-up Jobs.
+`managed-by=converter` are listed, which excludes the warm-up Jobs — those
+are read separately (`app=htrflow-warmup`) and matched onto each row's
+`warmup` field by namespace + pipeline label (Task 28); a failed match costs
+one extra `list_pods`, for the wrapper's termination message as `reason`.
 
 ## Configuration
 
