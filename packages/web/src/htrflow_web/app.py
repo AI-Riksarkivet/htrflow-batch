@@ -113,7 +113,7 @@ def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
             reverse=True,
         )
         warmup_jobs = reader.list_warmups()
-        reasons: dict[str, dict | None] = {}  # list_pods once per warm-up Job
+        reasons: dict[tuple[str, str], dict | None] = {}
         return [
             projection.summarize(
                 job, reader.cfg, _warmup_status(job, warmup_jobs, reasons)
@@ -142,7 +142,7 @@ def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
         )
 
     def _warmup_status(
-        job: dict, warmup_jobs: list[dict], reasons: dict[str, dict | None]
+        job: dict, warmup_jobs: list[dict], reasons: dict[tuple[str, str], dict | None]
     ) -> dict:
         warmup_job = projection.match_warmup(job, warmup_jobs)
         if warmup_job is None:
@@ -152,17 +152,16 @@ def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
             return {"phase": phase}
         namespace = (job.get("metadata") or {}).get("namespace", "")
         name = (warmup_job.get("metadata") or {}).get("name", "")
-        # Memoized by warm-up Job name: several campaigns can share one
-        # failed warm-up (same namespace + pipeline label), and list_jobs
-        # must not call list_pods once per campaign for the same reason.
-        if name not in reasons:
+        # Several campaigns can share one failed warm-up: list its pods once
+        # per request. Keyed with the namespace -- warm-up names carry none.
+        if (namespace, name) not in reasons:
             pods = reader.list_pods(namespace, name)
-            reasons[name] = (
+            reasons[namespace, name] = (
                 projection.wrapper_reason(projection.newest(pods), "warmup")
                 if pods
                 else None
             )
-        reason = reasons[name]
+        reason = reasons[namespace, name]
         return {"phase": phase, "reason": reason} if reason else {"phase": phase}
 
     # Last, so the routes above win over any file of the same name. Absent

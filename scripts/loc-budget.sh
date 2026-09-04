@@ -33,7 +33,7 @@ fail=0
 # unreadable PIPELINE_PATH guards were the only two warm-up failure paths
 # that wrote no termination message; a `_fail` helper gives both the same
 # {stage, permanent, error} shape the try/except writes. (B63)
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2038
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2035
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
@@ -95,20 +95,12 @@ check converter "$(count packages/converter/src -name '*.py')" 1283
 # projection gained match_warmup/warmup_phase/warmup_reason and summarize's
 # warmup field; app.py's _warmup_status wires them together, matching by
 # namespace + pipeline label and reading the warm-up Job's own pods only for
-# a failed match (ruling 2's one extra list_pods; nothing cached). (B63)
-# 650 -> 660 in Task 28 fix round item 3: _warmup_status now memoizes the
-# failed-match reason by warm-up Job name for the request, so two campaigns
-# sharing one failed warm-up cost one list_pods call, not one per campaign.
-# 660 -> 661 in item 4: `warmup` is now a required (keyword-only on
-# `detail`) argument of `summarize`/`detail` instead of defaulting to
-# `missing` -- one line for the `*,` that makes it keyword-only.
-# 661 -> 668 in items 7+8: match_warmup returns None early on an empty
-# pipeline label instead of risking a None == None match; warmup_reason (a
-# two-line re-export) is deleted and app.py calls the now-public
-# wrapper_reason/newest directly with its own empty-pods guard, which costs
-# more lines in app.py than the deleted re-export saved in projection.py.
-# (B63)
-check web       "$(count packages/web/src -name '*.py')" 668
+# a failed match, one list_pods per failed warm-up per request. (B63)
+# 650 -> 668 in the Task 28 fix round: the failed-warm-up reason is
+# memoized per (namespace, warm-up Job) for the request, `warmup` is a
+# required argument of summarize/detail, match_warmup refuses an empty
+# pipeline label, and app.py calls wrapper_reason/newest directly. (B63)
+check web       "$(count packages/web/src -name '*.py')" 667
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
