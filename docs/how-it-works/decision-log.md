@@ -24,6 +24,14 @@
 | D19 | Viewer = **Riksarkivet universalviewer4 fork** (already renders ALTO via canvas `seeAlso`); wrapper emits a per-volume IIIF P3 manifest `iiif.json` at publish; canvas dims = width-capped processing dims; results store serves CORS + correct content-types ([output contract](wrapper.md#output-store-and-completion-contract)) | **validated on k3s PoC** (2026-07-28, [test log](../development/test-log.md)) — fork gotchas in [The Wrapper](wrapper.md#output-store-and-completion-contract) |
 | D20 | **Campaigns are GitOps**: desired state in a git repo, a reconciler CronJob derives observed state from S3 + the cluster every tick and publishes `status.json`; a read-only browser renders it. No database ([Campaigns (GitOps)](campaigns.md), [spec](../superpowers/specs/2026-07-29-campaign-gitops-design.md)) | settled (2026-07-29), built, running on the k3s PoC |
 
+**Superseded by B63 (2026-09-01):** every row above that speaks of the GitOps
+reconciler CronJob, its pre-validation, its drift guards or the `status.json`
+it published (D7, D10, D13, D14, D15, D17, D18, D20) describes a component
+that no longer exists — a campaign is one Indexed Job, and progress is read
+live off the cluster by `packages/web` ([Campaigns (Indexed
+Jobs)](campaigns.md)). The rows are left as written: they are the record of
+what was decided when.
+
 This table is the index into everything else in this section: each settled
 decision links to the page that details it; the open rows (D4b, D13, D15)
 link to where they're tracked.
