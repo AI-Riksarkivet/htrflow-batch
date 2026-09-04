@@ -54,8 +54,15 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2010
 # "not a setting this file has" and goes looking for a typo. 1284 -> 1287
 # in the same task: an admission webhook's rejection arrives as a paragraph
 # with blank lines in it, and _api_error now reflows it, since every other
-# problem this package prints is one sentence. (B63)
-check converter "$(count packages/converter/src -name '*.py')" 1287
+# problem this package prints is one sentence. 1287 -> 1283 in Task 22 fix
+# round 2: the moved-key check now collects every offending key and raises
+# once instead of stopping at the first (a few lines longer), but that is
+# more than paid back by deleting `Pipeline.model_revision` -- a field
+# nothing read, whose only consumer was its own validator and whose only
+# test this task had already removed. `Pipeline` now forbids unknown keys,
+# so a stale `model_revision:` gets the same one-line sentence as any other
+# typo. (B63)
+check converter "$(count packages/converter/src -name '*.py')" 1283
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

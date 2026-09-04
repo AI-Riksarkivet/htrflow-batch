@@ -297,6 +297,24 @@ def test_both_moved_policy_keys_left_in_converter_yaml_are_one_problem(tmp_path)
     ]
 
 
+def test_a_stale_pipeline_model_revision_is_one_line(tmp_path):
+    """Fix round 2 #4: `Pipeline.model_revision` was deleted (nothing read
+    it — B63 Task 22 moved the revision rule to Kyverno's own field path).
+    `Pipeline` now forbids unknown keys, so a pipeline file that still
+    carries `model_revision:` gets the same one-line sentence as any other
+    typo instead of being silently ignored."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    pipeline = root / "pipelines" / "demo-v1.yaml"
+    pipeline.write_text(pipeline.read_text() + "\nmodel_revision: deadbeef\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [
+        'pipelines/demo-v1.yaml: "model_revision" is not a setting this '
+        "file has — remove it, or fix the spelling"
+    ]
+
+
 def test_converter_yaml_errors_are_one_problem_per_field():
     """Fix round 1 #3: two bad fields in converter.yaml must surface as two
     separate problems, not one multi-line pydantic error string."""
