@@ -13,7 +13,7 @@ holds at most the lookahead window (uploader rolling-deletes processed images).
 | outputs awaiting upload (XML) | noise |
 | run-log buffer | ≤ 4 MiB (capped in `logship.py`) |
 | tmpfs `sizeLimit` | 2 Gi (generous) |
-| pod memory **request** | 8 Gi (`jobspec.py`; what Kueue's quota must cover) |
+| pod memory **request** | 8 Gi (`manifests/campaign-job.yaml`; what Kueue's quota must cover) |
 | pod memory **limit** | 16 Gi (what tmpfs and the OOM killer see) |
 
 - Width capping is **mandatory, enforced by the wrapper** for canvases with
