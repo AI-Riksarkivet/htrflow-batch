@@ -156,7 +156,12 @@ def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
         # failed warm-up (same namespace + pipeline label), and list_jobs
         # must not call list_pods once per campaign for the same reason.
         if name not in reasons:
-            reasons[name] = projection.warmup_reason(reader.list_pods(namespace, name))
+            pods = reader.list_pods(namespace, name)
+            reasons[name] = (
+                projection.wrapper_reason(projection.newest(pods), "warmup")
+                if pods
+                else None
+            )
         reason = reasons[name]
         return {"phase": phase, "reason": reason} if reason else {"phase": phase}
 

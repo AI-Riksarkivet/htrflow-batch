@@ -106,9 +106,13 @@ def summarize(job: dict, cfg, warmup: dict) -> dict:
 
 
 def match_warmup(job: dict, warmup_jobs: list[dict]) -> dict | None:
-    """This campaign Job's warm-up Job, by namespace + pipeline label."""
+    """This campaign Job's warm-up Job, by namespace + pipeline label. A job
+    without a pipeline label never matches -- else it could pair up with a
+    warm-up Job that also lacks one, on ``None == None``."""
     ns = (job.get("metadata") or {}).get("namespace")
-    pipeline = _labels(job).get(_PIPELINE_LABEL)
+    pipeline = _labels(job).get(_PIPELINE_LABEL, "")
+    if not pipeline:
+        return None
     for w in warmup_jobs:
         wm = w.get("metadata") or {}
         if wm.get("namespace") == ns and _labels(w).get(_PIPELINE_LABEL) == pipeline:
@@ -129,11 +133,6 @@ def warmup_phase(job: dict) -> str:
     return "running" if (status.get("active") or 0) > 0 else "pending"
 
 
-def warmup_reason(pods: list[dict] | None) -> dict | None:
-    """No warm-up log exists (Task 28) -- this is the only way to explain."""
-    return _wrapper_reason(_newest(pods), "warmup") if pods else None
-
-
 def _volume_lines(configmap: dict | None) -> list[str]:
     data = (configmap or {}).get("data") or {}
     return [line for line in data.get("volumes.txt", "").splitlines() if line]
@@ -148,11 +147,12 @@ def _source_url(line: str) -> str | None:
     return source if source.startswith(("http://", "https://")) else None
 
 
-def _wrapper_reason(pod: dict, container: str = "wrapper") -> dict | None:
+def wrapper_reason(pod: dict, container: str = "wrapper") -> dict | None:
     """``container``'s termination message (``state.terminated``, else
     ``lastState.terminated`` after a restart, D6/task-3), parsed once into
     this API's structured ``reason`` rather than a raw JSON blob. Defaults
-    to the campaign wrapper; a warm-up Job's is ``warmup`` (Task 28)."""
+    to the campaign wrapper; ``app.py`` passes ``"warmup"`` for a warm-up
+    Job's pod (Task 28) -- there is no warm-up log to read instead."""
     status = pod.get("status") or {}
     for cs in status.get("containerStatuses") or []:
         if cs.get("name") != container:
@@ -212,7 +212,9 @@ def _pods_by_index(pods: list[dict] | None) -> dict[int, list[dict]]:
     return by_index
 
 
-def _newest(pods: list[dict]) -> dict:
+def newest(pods: list[dict]) -> dict:
+    """The most recently created of a set of pods (a completion index's
+    retries, or a warm-up Job's, Task 28) -- ``pods`` must be non-empty."""
     return max(
         pods, key=lambda p: (p.get("metadata") or {}).get("creationTimestamp", "")
     )
@@ -316,8 +318,8 @@ def detail(
             "sourceUrl": _source_url(line),
         }
         if idx in pods_by_index:
-            newest = _newest(pods_by_index[idx])
-            reason = _wrapper_reason(newest)
+            newest_pod = newest(pods_by_index[idx])
+            reason = wrapper_reason(newest_pod)
             if reason is not None:
                 row["reason"] = reason
         volumes.append(row)

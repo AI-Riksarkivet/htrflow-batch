@@ -101,8 +101,14 @@ check converter "$(count packages/converter/src -name '*.py')" 1283
 # sharing one failed warm-up cost one list_pods call, not one per campaign.
 # 660 -> 661 in item 4: `warmup` is now a required (keyword-only on
 # `detail`) argument of `summarize`/`detail` instead of defaulting to
-# `missing` -- one line for the `*,` that makes it keyword-only. (B63)
-check web       "$(count packages/web/src -name '*.py')" 661
+# `missing` -- one line for the `*,` that makes it keyword-only.
+# 661 -> 668 in items 7+8: match_warmup returns None early on an empty
+# pipeline label instead of risking a None == None match; warmup_reason (a
+# two-line re-export) is deleted and app.py calls the now-public
+# wrapper_reason/newest directly with its own empty-pods guard, which costs
+# more lines in app.py than the deleted re-export saved in projection.py.
+# (B63)
+check web       "$(count packages/web/src -name '*.py')" 668
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

@@ -573,6 +573,15 @@ class TestMatchWarmup:
         assert projection.match_warmup(_job(name="a"), [job]) is job
         assert projection.match_warmup(_job(name="b"), [job]) is job
 
+    def test_no_pipeline_label_never_matches(self):
+        """A campaign Job without a pipeline label must not pair up with a
+        warm-up Job that also lacks one on None == None."""
+        job = _job()
+        del job["metadata"]["labels"]["htrflow.riksarkivet.se/pipeline"]
+        no_pipeline_warmup = _warmup_job()
+        del no_pipeline_warmup["metadata"]["labels"]["htrflow.riksarkivet.se/pipeline"]
+        assert projection.match_warmup(job, [no_pipeline_warmup]) is None
+
 
 class TestWarmupPhase:
     def test_pending_before_any_pod(self):
@@ -590,8 +599,11 @@ class TestWarmupPhase:
         assert projection.warmup_phase(job) == "failed"
 
 
-class TestWarmupReason:
+class TestWrapperReasonOnAWarmupPod:
     def test_reason_from_the_warmup_container(self):
+        """No warm-up log exists (Task 28) -- app.py reads the reason off
+        the newest pod's `warmup` container the same way it reads a batch
+        pod's `wrapper` container, just with a different container name."""
         pods = [
             _pod(
                 0,
@@ -602,15 +614,11 @@ class TestWarmupReason:
                 container="warmup",
             )
         ]
-        assert projection.warmup_reason(pods) == {
+        assert projection.wrapper_reason(projection.newest(pods), "warmup") == {
             "stage": "warmup",
             "permanent": True,
             "error": "unknown model class Yolo9",
         }
-
-    def test_no_pods_is_none(self):
-        assert projection.warmup_reason([]) is None
-        assert projection.warmup_reason(None) is None
 
 
 class TestSummarizeWarmup:
