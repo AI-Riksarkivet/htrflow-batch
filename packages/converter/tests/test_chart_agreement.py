@@ -29,7 +29,15 @@ JOB_SKELETON = CONVERTER_SRC / "manifests" / "campaign-job.yaml"
 # The (converter field, chart values path) table is written once, in the
 # generator that also prints it into docs/reference/configuration.md.
 sys.path.insert(0, str(ROOT / "scripts"))
-from config_reference import AGREEMENTS, PAGE, render  # noqa: E402
+from config_reference import (  # noqa: E402
+    AGREEMENTS,
+    PAGE,
+    SECURITY,
+    SURFACES,
+    _chart_rows,
+    _model_rows,
+    render,
+)
 
 
 def _load(path: Path) -> dict:
@@ -74,6 +82,19 @@ def test_the_results_base_reaches_both_of_its_consumers():
     assert "PUBLIC_RESULTS_BASE" in [e["name"] for e in job_env]
     render = (CONVERTER_SRC / "render.py").read_text(encoding="utf-8")
     assert '"PUBLIC_RESULTS_BASE": cfg.public_results_base' in render
+
+
+def test_security_names_only_keys_the_generator_emits():
+    """SECURITY is keyed by hand, next to the models it annotates -- a rename
+    on either side must fail here, not just silently drop out of the page's
+    Security column."""
+    values = _load(CHART / "values.yaml")
+    emitted = {
+        k
+        for _, _, _, m in SURFACES
+        for k, _ in (_model_rows(m) if m else _chart_rows(values))
+    }
+    assert set(SECURITY) <= emitted
 
 
 def test_the_configuration_page_is_what_the_generator_prints():
