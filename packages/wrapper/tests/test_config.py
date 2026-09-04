@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 
 import pytest
 
@@ -7,6 +8,26 @@ from htrflow_batch.config import Config, ConfigError
 #: A name that would mean a credential is travelling as an environment
 #: variable rather than as the mounted Secret file.
 _SECRETISH = r"KEY|TOKEN|PASSWORD|SECRET_ACCESS"
+
+#: Every literal env read in the wrapper's source, not just `Config`'s own
+#: fields — `publish.py`, `main.py` and `warmup.py` read six names of their
+#: own (docs: configuration.md, "Also read from the environment").
+_ENV_READ = re.compile(
+    r'(?:env|environ)\.get\(\s*["\'](\w+)["\']'
+    r'|(?:env|environ)\[\s*["\'](\w+)["\']'
+    r'|getenv\(\s*["\'](\w+)["\']'
+)
+
+
+def _literal_env_reads() -> list[str]:
+    src = Path(__file__).parents[1] / "src"
+    names = [
+        m.group(1) or m.group(2) or m.group(3)
+        for path in src.rglob("*.py")
+        for m in _ENV_READ.finditer(path.read_text(encoding="utf-8"))
+    ]
+    return names
+
 
 REQUIRED = {
     "VOLUME_REF": "SE-RA-1234",
@@ -123,8 +144,10 @@ def test_no_setting_may_carry_a_secret():
     (``AWS_SHARED_CREDENTIALS_FILE=/secrets/s3/credentials``), never an env
     var: env is readable in ``kubectl describe``, in a crash dump and in
     every child process. A new setting that looks like a credential fails
-    here rather than in a review."""
-    carriers = [n for n in Config.env_names() if re.search(_SECRETISH, n)]
+    here rather than in a review -- and so does a new literal env read
+    anywhere in the package, not just a new ``Config`` field."""
+    names = Config.env_names() + _literal_env_reads()
+    carriers = sorted({n for n in names if re.search(_SECRETISH, n)})
     assert carriers == [], (
         f"{carriers}: secrets reach the wrapper as a mounted file, never as env"
     )

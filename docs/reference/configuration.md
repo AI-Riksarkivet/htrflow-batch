@@ -13,7 +13,11 @@ which stays as history.
 `extra="forbid"` whose fields carry their own source name — `Field(alias=…)`
 for an env var, the field name for a `converter.yaml` key — and one
 `from_env`/`from_yaml` classmethod. The class-level default is the only
-default, and no package reads its environment anywhere else.
+default. The wrapper's `Config` is not the whole of what its package reads
+from the environment, though: `publish.py` and `main.py` read two names of
+plumbing the Job skeleton sets, and `warmup.py` — a separate entrypoint, with
+its own contract — reads four more. Both are listed, not folded into
+`Config`, in "Also read from the environment" under the wrapper table below.
 
 **Prefixes.** The web front's env is `HTRFLOW_`-prefixed: an operator's
 settings for a long-lived service. The wrapper's are bare — the in-pod
@@ -26,8 +30,9 @@ in a pod environment nothing else writes.
 - **No credential is ever an environment variable**: S3 credentials reach a
   pod as a mounted Secret file (`AWS_SHARED_CREDENTIALS_FILE`,
   `/secrets/s3/credentials`), and `packages/wrapper/tests/test_config.py`
-  fails if a setting is ever named like one. The PoC's own S3 store refuses
-  to render on credentials nobody chose (`devStack.insecureDefaults`).
+  fails if any field of these models, or any literal env read in the
+  wrapper, is ever named like one. The PoC's own S3 store refuses to render
+  on credentials nobody chose (`devStack.insecureDefaults`).
 - **The read API is unauthenticated**: `GET /api/v1/jobs[/…]` and the
   campaign browser are open to anyone who can reach the port —
   `network.web.ingressCidrs` is the only gate.
@@ -62,6 +67,21 @@ template` refuses it, **nobody** = convention only.
 | `LOG_SHIP_SECONDS` | env | `15.0` | — | no secret — nobody |
 | `MANIFEST_MAX_BYTES` | env | `16777216` | — | no secret — nobody |
 | `FETCH_MAX_BYTES` | env | `67108864` | — | no secret — nobody |
+
+`Config` is not the whole wrapper env: these six names
+are read directly, by the warm-up entrypoint or by the Job
+skeleton, never as a campaign setting.
+
+### Also read from the environment
+
+| Key | Read by | Why not `Config` |
+|---|---|---|
+| `IMAGE_DIGEST` | `publish.py` | provenance the Job skeleton stamps |
+| `TERMINATION_LOG_PATH` | `main.py` | the path Kubernetes sets, not chosen here |
+| `HF_HUB_OFFLINE` | `warmup.py` | the warm-up entrypoint's own contract |
+| `HF_HOME` | `warmup.py` | the warm-up entrypoint's own contract |
+| `PIPELINE_ID` | `warmup.py` | the warm-up entrypoint's own contract |
+| `PIPELINE_PATH` | `warmup.py` | the warm-up entrypoint's own contract |
 
 ## web — the read API and campaign browser
 
