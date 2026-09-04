@@ -42,7 +42,7 @@ env:
   # Keep them in step: CI can only run the policies it is told about, and
   # the cluster is the gate that actually holds.
   POLICY_NAMESPACE: htr-batch
-  POLICY_ALLOWED_IMAGE_REPOS: "{ghcr.io/riksarkivet/}"
+  POLICY_ALLOWED_IMAGE_REPOS: "{docker.io/riksarkivet/}"
   POLICY_REQUIRE_MODEL_REVISION: "false"
 
 jobs:
