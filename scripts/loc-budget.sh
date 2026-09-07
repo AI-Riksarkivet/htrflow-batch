@@ -55,7 +55,9 @@ fail=0
 # stops making 2 000 sequential S3 GETs of full ALTO bodies; the dead
 # local-file branch in alto_dims pays part of it back. stream +3: keep_images
 # says what it keeps.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2194
+# 2194 -> 2197 (2026-09-07, B73 re-review nit): the failure-path cleanup is
+# guarded so an OSError there cannot replace the exception being raised.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2197
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

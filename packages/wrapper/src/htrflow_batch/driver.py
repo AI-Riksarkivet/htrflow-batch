@@ -130,8 +130,11 @@ def process_page(pipeline, image_path: Path, out_dir: Path) -> dict[str, Path]:
         # X2: consume's rolling delete reaches only the files we RETURN, so a
         # page that fails after one Export landed must take that file with it
         # -- the memory-backed workdir would keep it for the whole volume.
-        for path in _outputs(out_dir, stem).values():
-            discard(path)
+        try:  # the cleanup must never replace the exception being raised
+            for path in _outputs(out_dir, stem).values():
+                discard(path)
+        except OSError:
+            pass
         raise
     finally:
         # A failed page registered documents too, so this belongs on every
