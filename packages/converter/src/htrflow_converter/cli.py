@@ -110,9 +110,9 @@ def _part_number(path: Path) -> int:
 def _existing_campaign_text(campaigns_out: Path, c: Campaign) -> str | None:
     """The volume list an earlier render of this campaign left in ``out``.
     A campaign that splits renders under a name cut short of its own (see
-    ``render.campaign_names``), so the ``-partN`` files are looked up under
-    that name, not under the campaign's."""
-    stem = render.campaign_names(c, render.split(c.volumes))[0].removesuffix("-part1")
+    ``render.split_stem``), so the ``-partN`` files are looked up under that
+    stem, not under the campaign's own name."""
+    stem = render.split_stem(c.name)
     paths = sorted(campaigns_out.glob(f"{c.name}.yaml"))
     paths += sorted(campaigns_out.glob(f"{stem}-part*.yaml"), key=_part_number)
     if not paths:

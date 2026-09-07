@@ -211,7 +211,7 @@ def test_split_campaign_names_never_collide_even_when_close_to_63_chars():
     c = Campaign(name=name, pipeline="demo-v1", volumes=volumes)
     cm1, job1, cm2, job2 = render.campaign_objects(c, demo, cfg)
 
-    stem = "a" * 52  # 63 - len("-part2") - len("-9999"), the highest pod index
+    stem = "a" * 50  # 63 - len("-part999") - len("-9999"), the reserved maxima
     assert job1["metadata"]["name"] != job2["metadata"]["name"]
     assert job1["metadata"]["name"] == f"{stem}-part1"
     assert job2["metadata"]["name"] == f"{stem}-part2"
@@ -425,3 +425,26 @@ def test_200_images_volumes_split_into_configmaps_under_one_mebibyte():
     rendered = "".join(cm["data"]["volumes.txt"] for cm in configmaps)
     assert rendered == "".join(v.source_line() + "\n" for v in c.volumes)
     assert sum(job["spec"]["completions"] for job in objects[1::2]) == 200
+
+
+def test_the_split_stem_is_the_same_at_nine_parts_and_at_ten():
+    """The stem a split renders under depends on the campaign's NAME, never
+    on how many parts this render happens to make. Measured off the part
+    count, a campaign crossing 9 -> 10 parts would lose a character, every
+    part would be renamed, and the append-only rule would have no earlier
+    render to compare against -- an applied campaign would silently be
+    deleted and started over."""
+    c = Campaign(
+        name="a" * 58,
+        pipeline="demo-v1",
+        volumes=[Volume(id="v1", manifest="https://x/y")],
+    )
+    part = [[Volume(id=f"v{i}", manifest="https://x/y") for i in range(10_000)]]
+    nine = render.campaign_names(c, part * 9)
+    ten = render.campaign_names(c, part * 10)
+
+    stems = {name.rsplit("-part", 1)[0] for name in nine + ten}
+    assert stems == {render.split_stem(c.name)}
+    assert len(render.split_stem(c.name)) == 50
+    # The worst case the reservation is for: 999 parts of 10 000 volumes.
+    assert len(f"{render.split_stem(c.name)}-part999-9999") == 63
