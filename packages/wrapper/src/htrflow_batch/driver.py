@@ -90,8 +90,10 @@ def process_page(pipeline, image_path: Path, out_dir: Path) -> dict[str, Path]:
     from htrflow.pipeline.steps import auto_import  # ty: ignore[unresolved-import]
 
     for document in auto_import([str(image_path)]):
-        # run() hands back what its last step produced, and progress.done()
-        # registers THAT: normally the same object, but release both.
+        # Both objects, not one: a step returns a NEW Document, so
+        # progress.step keys _steps on the one we hand in and progress.done
+        # keys _tasks/_exports on the one run() gives back -- measured, two
+        # _tasks entries and two rich tasks per page.
         release_document(document, pipeline.run(document))
     stem = image_path.stem
     files: dict[str, Path] = {}
