@@ -95,6 +95,21 @@ def _set(obj: dict, path: str, value: object) -> None:
         obj[last] = value
 
 
+def _scheduling(job: dict, cfg: ConverterConfig) -> None:
+    """Where this Job's pod may run: the GPU RuntimeClass, the node labels
+    and the taints it tolerates. The warm-up Job needs all three as much as
+    the campaign Job does -- it is the one pod that mounts the model cache
+    read-write, so a warm-up scheduled past a taint onto some other node
+    fills a *different* ReadWriteOnce volume and the marker never appears
+    where the batch pods are waiting for it."""
+    if cfg.runtime_class:
+        _set(job, "spec.template.spec.runtimeClassName", cfg.runtime_class)
+    if cfg.node_selector:
+        _set(job, "spec.template.spec.nodeSelector", dict(cfg.node_selector))
+    if cfg.tolerations:
+        _set(job, "spec.template.spec.tolerations", [dict(t) for t in cfg.tolerations])
+
+
 def _pipeline_configmap(p: Pipeline, cfg: ConverterConfig) -> dict:
     cm = _load("pipeline-configmap.yaml")
     _set(cm, "metadata.name", f"htr-pipeline-{p.id}")
@@ -120,6 +135,7 @@ def _warmup_job(p: Pipeline, cfg: ConverterConfig) -> dict:
         "spec.template.spec.volumes[1].persistentVolumeClaim.claimName",
         cfg.data_pvc,
     )
+    _scheduling(job, cfg)
     return job
 
 
@@ -241,16 +257,7 @@ def _campaign_job(
         ),
     )
 
-    if cfg.runtime_class:
-        _set(job, "spec.template.spec.runtimeClassName", cfg.runtime_class)
-    if cfg.node_selector:
-        _set(job, "spec.template.spec.nodeSelector", dict(cfg.node_selector))
-    if cfg.tolerations:
-        _set(
-            job,
-            "spec.template.spec.tolerations",
-            [dict(t) for t in cfg.tolerations],
-        )
+    _scheduling(job, cfg)
     return job
 
 

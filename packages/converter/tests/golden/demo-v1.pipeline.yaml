@@ -111,3 +111,4 @@ spec:
       - name: work
         emptyDir:
           sizeLimit: 4Gi
+      runtimeClassName: nvidia
