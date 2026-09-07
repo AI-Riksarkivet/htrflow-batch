@@ -103,6 +103,17 @@ tables below.
 
 | Id | Story |
 |---|---|
+| [B72](stories/B72-split-by-bytes.md) | Kampanjsplitten producerar alltid något klustret accepterar |
+| [B73](stories/B73-wrapper-memory-flat.md) | Wrapperns minne växer inte med antalet sidor |
+| [B74](stories/B74-warmup-wait-bounded.md) | Ett trasigt warm-up håller inte GPU-kvoten i timmar |
+| [B75](stories/B75-warmup-fails-visibly.md) | Ett warm-up som inte fungerade misslyckas synligt |
+| [B77](stories/B77-pipeline-edit-caught-in-validate.md) | Ändrad pipeline stoppas i validate, inte som "field is immutable" |
+| [B78](stories/B78-rendered-is-exactly-the-render.md) | rendered/ är exakt det convertern producerade — och PR-CI bevisar det |
+| [B79](stories/B79-kyverno-pod-shape-policy.md) | Kyverno-policy för pod-form — kommando, volymer och secrets |
+| [B80](stories/B80-secure-defaults-prod-profile.md) | Säkra defaults — prod-values-profil och PSA som del av installationen |
+| [B81](stories/B81-ci-gates-every-push.md) | CI gatar varje push, inte bara efter merge |
+| [B82](stories/B82-loc-budget-in-make-ci.md) | LOC-budgeten körs i make ci och varje budget får headroom |
+| [B84](stories/B84-apply-warns-window-over-quota.md) | htrflow-campaigns apply varnar när window inte ryms i kvoten |
 | [B10](stories/B10-durable-results-bucket.md) | Store results on the HCP |
 | [B11](stories/B11-campaigns-repo-governance.md) | Govern the campaigns repo — protected main, reviewed pull requests |
 | [B12](stories/B12-dev-cluster.md) | Deploy to the DEV cluster with Argo CD |
@@ -139,6 +150,10 @@ tables below.
 | [B69](stories/B69-kyverno-validatingpolicy.md) | Policyerna skrivs som Kyverno ValidatingPolicy (CEL) i stället för ClusterPolicy |
 | [B70](stories/B70-alto-provenance-identifiers.md) | Varje ALTO-fil säger vilken kampanj, volym och källbild den kommer från |
 | [B71](stories/B71-page-xml-provenance.md) | PAGE XML bär samma proveniens som ALTO |
+| [B76](stories/B76-ttl-reaped-job-not-rerun.md) | En slutförd kampanj återuppstår inte när TTL städat bort Jobbet |
+| [B83](stories/B83-resume-on-pipeline-change.md) | Resume räknar om sidor när pipeline_sha256 eller image_digest ändrats |
+| [B85](stories/B85-spec-plan-decision-log-current.md) | Spec, plan, story B63 och decision-loggen beskriver det som byggdes |
+| [B86](stories/B86-reject-unreasonable-values-name-the-line.md) | Convertern och wrappern avvisar orimliga värden och säger vilken rad |
 
 ### Not started — after production
 
