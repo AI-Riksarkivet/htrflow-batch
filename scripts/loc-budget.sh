@@ -36,7 +36,15 @@ fail=0
 # 2035 -> 2117 (2026-09-07): provenance.py stamps an htrflow-batch
 # <Processing> block (image digest, htrflow base revision, wrapper version)
 # into every ALTO; IMAGE_DIGEST/HTRFLOW_BASE_REVISION became Config fields.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2117
+# 2117 -> 2155 (2026-09-07, B73/audit X2): the memory fixes. stream._discard
+# is the rolling delete the workdir always needed -- the image AND both output
+# files, since the workdir is a memory-backed emptyDir and the outputs were
+# ~300 KB per page (+11 net, after the inlined try/except it replaces).
+# driver.release_document (+27) drops a finished page from htrflow's
+# module-global progress registries, which nothing else pops; most of it is
+# the comment that says why a wrapper reaches into another package's
+# underscore names at all, and why it releases two Document objects per page.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2155
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
