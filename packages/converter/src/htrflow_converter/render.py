@@ -151,10 +151,12 @@ _WAIT_STEP = 10
 #: pipeline's warm-up did not write its marker. Exit 13 is the code the Job's
 #: `podFailurePolicy` turns into `FailIndex`: no retry buys a marker that is
 #: not coming. The message names the path, because the marker is the only
-#: thing an operator can go and look at.
+#: thing an operator can go and look at. The comparison is `-le`, not `-lt`:
+#: the check runs before each sleep, so `-lt` would give up one step early
+#: while printing the limit it did not reach.
 _WARMUP_WAIT = (
     "n=0; until [ -f {marker} ]; do n=$((n+{step}));"
-    ' [ "$n" -lt {limit} ] || {{ echo "no warm-up marker at {marker} after'
+    ' [ "$n" -le {limit} ] || {{ echo "no warm-up marker at {marker} after'
     " {limit}s: the pipeline's warm-up Job has not finished\" >&2; exit 13; }};"
     " sleep {step}; done"
 )
