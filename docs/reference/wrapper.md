@@ -106,8 +106,11 @@ writes the same `{stage: "warmup", permanent, error}` termination message:
 step) and `NotImplementedError` (unknown model class), when `HF_HUB_OFFLINE`
 is set, when `PIPELINE_PATH` is missing or unreadable, and when the
 `<pipeline_id>.done` marker cannot be written (the message names the file);
-143 for SIGTERM — its Job's 1 h `activeDeadlineSeconds` is terminal, so this
-is the only record of a download killed part-way; 1 for anything else.
+143 for SIGTERM — a node drain, a preemption, or a *pod*-level
+`activeDeadlineSeconds`, and the only record of a download killed part-way
+(the warm-up Job's own 1 h deadline is still Job-level, which deletes the pod
+before anything can read the message; B74 moves it to the pod); 1 for anything
+else.
 
 ## Modules
 
