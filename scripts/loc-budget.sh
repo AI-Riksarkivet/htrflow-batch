@@ -63,7 +63,13 @@ fail=0
 # `_fail` before the success log -- a warm-up that exits 0 with no marker is a
 # green Job whose campaigns then hold a GPU in their init container until the
 # deadline, with nothing anywhere saying why.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2207
+# 2207 -> 2238 (2026-09-07, B75/audit X4): the warm-up gets the batch
+# wrapper's SIGTERM handler -- the Job's 1 h activeDeadlineSeconds is terminal,
+# so a slow first download was ending in an empty termination message. `main`
+# installs it and `_warmup` is the body it wraps (the split, the handler, the
+# except/finally and the widened `.main` import, which ruff wraps one name per
+# line).
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2238
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

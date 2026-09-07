@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import signal
 import sys
 import traceback
 from pathlib import Path
@@ -24,7 +25,16 @@ from huggingface_hub.errors import (
     RevisionNotFoundError,
 )
 
-from .main import EXIT_OK, EXIT_PERMANENT, EXIT_TRANSIENT, terminate
+from .main import (
+    EXIT_OK,
+    EXIT_PERMANENT,
+    EXIT_SIGTERM,
+    EXIT_TRANSIENT,
+    Terminated,
+    _hard_exit,
+    _set_signal,
+    terminate,
+)
 
 log = logging.getLogger("htrflow_batch.warmup")
 
@@ -50,7 +60,7 @@ PERMANENT_ERRORS: tuple[type[BaseException], ...] = (
 #: pipeline -- so it must not fall into ``PERMANENT_ERRORS`` by inheritance.
 TRANSIENT_FIRST: tuple[type[BaseException], ...] = (LocalEntryNotFoundError,)
 
-__all__ = ["EXIT_OK", "EXIT_PERMANENT", "EXIT_TRANSIENT", "main"]
+__all__ = ["EXIT_OK", "EXIT_PERMANENT", "EXIT_SIGTERM", "EXIT_TRANSIENT", "main"]
 
 
 def _load(pipeline_path: str) -> None:
@@ -80,6 +90,27 @@ def main(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
     env = dict(env if env is not None else os.environ)
+
+    def on_sigterm(signum, frame):
+        raise Terminated()
+
+    previous = _set_signal(signal.SIGTERM, on_sigterm)
+    try:
+        return _warmup(env, load)
+    except Terminated:
+        # The Job's own activeDeadlineSeconds (1 h, terminal) or a node drain.
+        # A first download can be slow; without this the kill leaves an empty
+        # termination message and the card says "failed" with no reason.
+        log.error("warm-up killed by SIGTERM (deadline or drain)")
+        terminate(env, {"stage": "warmup", "permanent": False, "error": "SIGTERM"})
+        _hard_exit(EXIT_SIGTERM)
+        return EXIT_SIGTERM  # reached only when _hard_exit is stubbed (tests)
+    finally:
+        if previous is not None:
+            _set_signal(signal.SIGTERM, previous)
+
+
+def _warmup(env: Mapping[str, str], load: Callable[[str], object]) -> int:
     if env.get("HF_HUB_OFFLINE", "") not in ("", "0", "false"):
         # Offline warm-up downloads nothing; "succeeding" would open the gate
         # for a pipeline whose cache is still empty.
