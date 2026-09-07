@@ -1,6 +1,7 @@
 """The warm-up entrypoint: fill HF_HOME for one pipeline and exit."""
 
 import json
+import logging
 import os
 import signal
 from pathlib import Path
@@ -187,6 +188,10 @@ def test_warmup_bad_config_is_permanent(tmp_path):
 def test_warmup_unwritable_marker_dir_is_permanent(tmp_path, caplog):
     """B75/X4: a warm-up that cannot write its marker used to log a warning and
     exit 0 — a green Job whose campaigns then wait out their init container."""
+    # basicConfig in main() is a no-op under pytest's root handler, so without
+    # this the success line is never captured and the ordering assert below
+    # passes on an empty caplog.
+    caplog.set_level(logging.INFO, logger="htrflow_batch.warmup")
     blocked = tmp_path / "blocked"
     blocked.write_text("not a directory")
     term_path = tmp_path / "termination-log"
