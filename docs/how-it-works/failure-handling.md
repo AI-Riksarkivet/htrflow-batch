@@ -201,9 +201,15 @@ file — a completed campaign Job's indexes do not get re-run in place.
 
 ## Warm-ups fail the same way
 
-A pipeline's `htr-warmup-<id>` Job (`backoffLimit: 2`, 1 h deadline, the
+A pipeline's `htr-warmup-<id>` Job (`backoffLimit: 2`, a 1 h deadline, the
 same `podFailurePolicy` shape on its `warmup` container) fails independently
-of any campaign. There is no warm-up log: the pod mounts no S3 secret (it is
+of any campaign. The deadline is the **pod's**, not the Job's, for the same
+reason a volume's is: the Job controller deletes a pod it kills on a
+Job-level deadline, and the termination message goes with it — on the pod
+template the kubelet kills it instead, `status.reason` reads
+`DeadlineExceeded`, the message survives to be read, and the attempt counts
+against `backoffLimit: 2`, so a warm-up that ran out of time on a slow first
+download is retried rather than terminally failed. There is no warm-up log: the pod mounts no S3 secret (it is
 the one pod the cache PVC is mounted read-write on, and the only one the
 NetworkPolicy lets reach HF Hub), so a transient failure is only visible on
 the campaign card's warm-up chip and is retried by Kubernetes up to its own

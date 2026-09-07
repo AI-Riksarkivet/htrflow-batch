@@ -164,6 +164,22 @@ def test_the_warmup_wait_is_bounded_and_fails_the_index():
     }
 
 
+def test_the_warmup_deadline_is_the_pods_and_not_the_jobs():
+    """A Job-level `activeDeadlineSeconds` makes the JOB controller delete the
+    pod, and the termination message the warm-up writes on SIGTERM goes with
+    it -- the campaign card's warm-up chip has nowhere else to read it from.
+    On the pod template the kubelet does the killing instead: the pod is left
+    behind with `status.reason: DeadlineExceeded`, exit 143 and its message
+    intact, and the attempt is counted, so `backoffLimit: 2` still applies --
+    a warm-up killed by a slow first download is retried rather than being
+    terminally failed on the first try."""
+    _, demo, cfg = _kyrk()
+    job = render.pipeline_objects(demo, cfg)[1]
+    assert "activeDeadlineSeconds" not in job["spec"]
+    assert job["spec"]["template"]["spec"]["activeDeadlineSeconds"] == 3600
+    assert job["spec"]["backoffLimit"] == 2
+
+
 def test_the_warmup_job_schedules_where_the_campaign_job_does():
     """A warm-up Job without the campaign's `runtimeClassName`, `nodeSelector`
     and `tolerations` lands on whatever node will take it, fills a *different*
