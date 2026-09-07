@@ -49,6 +49,18 @@ def _failed(stats: "StreamStats", name: str, error: str | None) -> None:
     stats.results[name] = PageOutcome(status="failed", error=error)
 
 
+def _discard(path: Path) -> None:
+    """Rolling cleanup of the memory-backed workdir (X2): a page's image AND
+    its ALTO/PAGE output go as soon as its outcome is recorded, so tmpfs holds
+    the pages in flight rather than growing with the volume. Publishing reads
+    a stored ALTO back from S3 when the local one is gone (publish.alto_dims),
+    and resume/verify list S3, never the workdir."""
+    try:
+        path.unlink(missing_ok=True)
+    except Exception:
+        pass  # the outcome is already recorded; a failed delete changes nothing
+
+
 class UploadOutage(RuntimeError):
     """The result store failed for N pages in a row: transient, abort now
     rather than drain the whole volume through a dead bucket."""
@@ -164,6 +176,7 @@ def consume(
         if item is None:
             return stats
         name = item.page.name
+        files: dict[str, Path] = {}
         try:
             if item.path is None:
                 _failed(stats, name, item.error)
@@ -194,9 +207,7 @@ def consume(
                 status="ok", seconds=time.monotonic() - t0
             )
         finally:
-            # Clean up image (outcome recorded, so deletion failure doesn't affect it)
             if item.path is not None and not keep_images:
-                try:
-                    item.path.unlink(missing_ok=True)
-                except Exception:
-                    pass  # Ignore deletion errors; outcome is already recorded
+                _discard(item.path)
+            for path in files.values():
+                _discard(path)
