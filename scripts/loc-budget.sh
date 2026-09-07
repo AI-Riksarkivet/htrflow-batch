@@ -44,7 +44,18 @@ fail=0
 # module-global progress registries, which nothing else pops; most of it is
 # the comment that says why a wrapper reaches into another package's
 # underscore names at all, and why it releases two Document objects per page.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2155
+# 2155 -> 2194 (2026-09-07, B73 review round): driver +24 -- _outputs is
+# lifted out of process_page so the except branch can discard what a FAILED
+# page wrote (consume's rolling delete reaches only the files a page
+# RETURNS), and release_documents empties htrflow's registries outright
+# rather than naming Document objects it cannot enumerate, since only
+# ProcessImages steps return a new one and a pipeline may have several.
+# store +11 / viewer +3 / publish -2: the ALTO WIDTH/HEIGHT are kept from
+# the parse upload_page already does, so publishing a 2 000-page volume
+# stops making 2 000 sequential S3 GETs of full ALTO bodies; the dead
+# local-file branch in alto_dims pays part of it back. stream +3: keep_images
+# says what it keeps.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2194
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
