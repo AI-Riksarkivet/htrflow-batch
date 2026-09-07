@@ -186,6 +186,12 @@ spec:
         - /bin/sh
         - -c
         - WARMUP_WAIT_COMMAND
+        # The default (`File`) reads /dev/termination-log, which a shell
+        # script never writes -- the pod would fail with an EMPTY termination
+        # message and the campaign card would show no reason at all. This
+        # puts the container's own last lines there instead, and only when it
+        # exits non-zero: the one sentence the gate prints before exit 13.
+        terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
         - name: data
           mountPath: /data

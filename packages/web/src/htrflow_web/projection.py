@@ -147,22 +147,45 @@ def _source_url(line: str) -> str | None:
     return source if source.startswith(("http://", "https://")) else None
 
 
-def wrapper_reason(pod: dict, container: str = "wrapper") -> dict | None:
-    """``container``'s termination message (``state.terminated``, else
-    ``lastState.terminated`` after a restart, D6/task-3), parsed once into
-    this API's structured ``reason`` rather than a raw JSON blob. Defaults
-    to the campaign wrapper; ``app.py`` passes ``"warmup"`` for a warm-up
-    Job's pod (Task 28) -- there is no warm-up log to read instead."""
-    status = pod.get("status") or {}
-    for cs in status.get("containerStatuses") or []:
-        if cs.get("name") != container:
+def _terminated_message(statuses: list[dict], name: str | None) -> str | None:
+    """The termination message left by ``name``'s container
+    (``state.terminated``, else ``lastState.terminated`` after a restart,
+    D6/task-3). ``name`` of ``None`` takes any container that terminated
+    NON-ZERO instead -- how the init containers are read, where the name is
+    not known in advance and a successful one explains nothing."""
+    for cs in statuses:
+        if name is not None and cs.get("name") != name:
             continue
-        term = (cs.get("state") or {}).get("terminated")
-        if term is None:
-            term = (cs.get("lastState") or {}).get("terminated")
-        if term is not None and (message := term.get("message")) is not None:
-            return _name_the_deadline(_reason(message), status.get("reason"))
+        term = (cs.get("state") or {}).get("terminated") or (
+            cs.get("lastState") or {}
+        ).get("terminated")
+        if term is None or (name is None and not term.get("exitCode")):
+            continue
+        if (message := term.get("message")) is not None:
+            return message
     return None
+
+
+def wrapper_reason(pod: dict, container: str = "wrapper") -> dict | None:
+    """``container``'s termination message, parsed once into this API's
+    structured ``reason`` rather than a raw JSON blob. Defaults to the
+    campaign wrapper; ``app.py`` passes ``"warmup"`` for a warm-up Job's pod
+    (Task 28) -- there is no warm-up log to read instead.
+
+    A pod can fail before ``container`` ever starts, and then an init
+    container's message is all it has to say -- `warmup-wait` giving up on
+    the warm-up marker and exiting 13 is exactly that, and without this
+    fall-through the index is `failed` with no ``reason`` at all, the silence
+    the bounded gate exists to break (B74). That message is stderr
+    (`terminationMessagePolicy: FallbackToLogsOnError`), a sentence rather
+    than JSON, which ``_reason`` already carries through as ``error``."""
+    status = pod.get("status") or {}
+    message = _terminated_message(status.get("containerStatuses") or [], container)
+    if message is None:
+        message = _terminated_message(status.get("initContainerStatuses") or [], None)
+    if message is None:
+        return None
+    return _name_the_deadline(_reason(message), status.get("reason"))
 
 
 def _reason(message: str) -> dict:

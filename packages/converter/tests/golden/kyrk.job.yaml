@@ -159,6 +159,7 @@ spec:
           900 ] || { echo "no warm-up marker at /data/warmup/demo-v1.done after 900s:
           the pipeline''s warm-up Job has not finished" >&2; exit 13; }; sleep 10;
           done'
+        terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
         - name: data
           mountPath: /data
