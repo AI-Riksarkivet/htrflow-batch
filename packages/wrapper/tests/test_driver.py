@@ -5,7 +5,7 @@ Uses monkeypatch.setitem(sys.modules, ...) to fake htrflow modules."""
 from __future__ import annotations
 
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -362,3 +362,77 @@ def test_load_pipeline_unknown_step_or_model_is_permanent(tmp_path, monkeypatch,
 
     with pytest.raises(ValueError, match="bad pipeline config"):
         load_pipeline(str(pipeline_yaml), tmp_path / "out")
+
+
+class _FakeProgress(ModuleType):
+    """htrflow's ``progress`` module in miniature: three module-global dicts
+    keyed by ``Document`` plus the rich progress singleton that hands out the
+    task ids. Nothing in htrflow ever pops them."""
+
+    def __init__(self):
+        super().__init__("htrflow.progress")
+        self._tasks, self._exports, self._steps = {}, {}, {}
+        self.removed = []
+        self._progress = SimpleNamespace(remove_task=self.removed.append)
+
+    def register(self, document) -> None:
+        """What Pipeline.run + Export do to a document on its way through."""
+        self._tasks[document] = f"task-{len(self._tasks)}"
+        self._steps[document] = ["Binarization", "Export"]
+        self._exports[document] = ["outputs/alto/0001.xml"]
+
+
+def _inject_progress_fake(monkeypatch) -> _FakeProgress:
+    fake = _FakeProgress()
+    monkeypatch.setitem(sys.modules, "htrflow.progress", fake)
+    monkeypatch.setattr(sys.modules["htrflow"], "progress", fake, raising=False)
+    return fake
+
+
+def test_process_page_releases_the_document_from_htrflows_progress(
+    tmp_path, monkeypatch
+):
+    """B-3/X2: htrflow's progress registries are module-global and never
+    popped. Its CLI runs one process per volume; the wrapper runs one
+    long-lived Pipeline over thousands of pages, so every page's Region tree
+    would stay reachable until the process exits (~0.5 GB at 10 000 pages)."""
+    _inject_process_fakes(monkeypatch)
+    progress = _inject_progress_fake(monkeypatch)
+
+    class _RegisteringPipeline:
+        def run(self, document):
+            progress.register(document)
+            return document
+
+    out_dir = tmp_path / "outputs"
+    for fmt in ("alto", "page"):
+        (out_dir / fmt).mkdir(parents=True)
+        (out_dir / fmt / "0001.xml").write_text("<x/>")
+    image = tmp_path / "0001.jpg"
+    image.write_bytes(b"jpg")
+
+    from htrflow_batch.driver import process_page
+
+    files = process_page(_RegisteringPipeline(), image, out_dir)
+
+    assert set(files) == {"alto", "page"}
+    assert (progress._tasks, progress._steps, progress._exports) == ({}, {}, {})
+    assert progress.removed == ["task-0"]  # the rich task goes too
+
+
+def test_process_page_tolerates_an_htrflow_without_the_progress_module(
+    tmp_path, monkeypatch
+):
+    """The release is best-effort: an htrflow that never had those registries
+    (or renames them) must still process pages."""
+    _inject_process_fakes(monkeypatch)  # fake htrflow, no `progress` submodule
+    out_dir = tmp_path / "outputs"
+    for fmt in ("alto", "page"):
+        (out_dir / fmt).mkdir(parents=True)
+        (out_dir / fmt / "0001.xml").write_text("<x/>")
+    image = tmp_path / "0001.jpg"
+    image.write_bytes(b"jpg")
+
+    from htrflow_batch.driver import process_page
+
+    assert set(process_page(_NoopPipeline(), image, out_dir)) == {"alto", "page"}
