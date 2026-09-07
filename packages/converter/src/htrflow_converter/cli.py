@@ -117,6 +117,26 @@ def _existing_parts(campaigns_out: Path, c: Campaign) -> list[Path]:
     return paths + sorted(campaigns_out.glob(f"{stem}-part*.yaml"), key=_part_number)
 
 
+def _colliding_names(campaigns: list[Campaign]) -> str | None:
+    """Two campaigns that are the same up to the stem a split cuts them to
+    render into the same files. Looked for across every campaign BEFORE any
+    of them is held against an earlier render: the second one would
+    otherwise find the first one's parts sitting in ``rendered/`` and be
+    reported as append-only -- a change its author never made."""
+    owners: dict[str, str] = {}
+    for c in campaigns:
+        for name in render.campaign_names(c, render.split(c.volumes)):
+            other = owners.setdefault(name, c.name)
+            if other != c.name:
+                return (
+                    f"campaigns/{other}.yaml and campaigns/{c.name}.yaml both "
+                    f"render as {name}.yaml: a split cuts a campaign name to "
+                    f"its first {len(render.split_stem(c.name))} characters, "
+                    "and these two are the same up to there — rename one of them"
+                )
+    return None
+
+
 def _shape(paths: list[Path]) -> str:
     """``kyrk.yaml``, or ``8 parts, kyrk-part1.yaml … kyrk-part8.yaml``."""
     if len(paths) == 1:
@@ -158,9 +178,12 @@ def _render(repo_dir: str, out_dir: str) -> int:
     if unsafe is not None:
         print(unsafe, file=sys.stderr)
         return 1
+    clash = _colliding_names(campaigns)
+    if clash is not None:
+        print(clash)
+        return 1
     pipelines_out, campaigns_out = out / "pipelines", out / "campaigns"
     written: set[Path] = set()
-    owners: dict[Path, str] = {}  # rendered campaign file -> the campaign in it
     for p in pipelines.values():
         path = pipelines_out / f"{p.id}.yaml"
         _write(path, render.pipeline_objects(p, cfg))
@@ -193,16 +216,6 @@ def _render(repo_dir: str, out_dir: str) -> int:
                 )
                 return 1
         for path, i in zip(paths, range(0, len(objects), 2)):
-            if path in owners:
-                stem = len(render.split_stem(c.name))
-                print(
-                    f"campaigns/{owners[path]}.yaml and campaigns/{c.name}.yaml "
-                    f"both render as {path.name}: a split cuts a campaign name "
-                    f"to its first {stem} characters, and these two are the "
-                    "same up to there — rename one of them"
-                )
-                return 1
-            owners[path] = c.name
             _write(path, objects[i : i + 2])
             written.add(path)
     _prune(pipelines_out, written)
