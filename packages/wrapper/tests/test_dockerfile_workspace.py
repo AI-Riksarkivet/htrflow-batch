@@ -105,3 +105,15 @@ def test_nothing_in_the_build_path_asks_for_a_foreign_platform() -> None:
             assert not _EMULATION.search(line), (
                 f"{path.name}:{n} cross-builds: {line.strip()}"
             )
+
+
+def test_both_base_stages_export_the_htrflow_base_revision():
+    """`HTRFLOW_BASE_REVISION` is an OCI label the wrapper cannot read from
+    inside the container, so each base stage also exports it as ENV, which
+    the runtime stage inherits and `provenance.py` stamps into every ALTO."""
+    text = WRAPPER_DOCKERFILE.read_text(encoding="utf-8")
+    stages = re.split(r"^FROM ", text, flags=re.M)
+    base = [s for s in stages if re.match(r".* AS base-(amd64|arm64)\n", s)]
+    assert len(base) == 2
+    for stage in base:
+        assert "ENV HTRFLOW_BASE_REVISION=${HTRFLOW_BASE_REVISION}" in stage
