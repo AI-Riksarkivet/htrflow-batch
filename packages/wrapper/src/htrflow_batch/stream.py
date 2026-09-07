@@ -49,10 +49,11 @@ def _failed(stats: "StreamStats", name: str, error: str | None) -> None:
     stats.results[name] = PageOutcome(status="failed", error=error)
 
 
-def _discard(path: Path) -> None:
+def discard(path: Path) -> None:
     """Rolling cleanup of the memory-backed workdir (X2): a page's image AND
     its ALTO/PAGE output go as soon as its outcome is recorded, so tmpfs holds
-    the pages in flight rather than growing with the volume. Publishing reads
+    the pages in flight rather than growing with the volume. Also driver's,
+    for a page that failed before it could return its files. Publishing reads
     a stored ALTO back from S3 when the local one is gone (publish.alto_dims),
     and resume/verify list S3, never the workdir."""
     try:
@@ -208,6 +209,6 @@ def consume(
             )
         finally:
             if item.path is not None and not keep_images:
-                _discard(item.path)
+                discard(item.path)
             for path in files.values():
-                _discard(path)
+                discard(path)

@@ -7,6 +7,8 @@ from pathlib import Path
 
 import yaml
 
+from .stream import discard
+
 #: Every format the wrapper appends an Export step for; process_page requires
 #: all of them and store.upload_page uploads them page-first.
 EXPECTED_FORMATS = ("alto", "page")
@@ -86,18 +88,9 @@ def release_document(*documents) -> None:
         pass  # never fail a page over its bookkeeping
 
 
-def process_page(pipeline, image_path: Path, out_dir: Path) -> dict[str, Path]:
-    from htrflow.pipeline.steps import auto_import  # ty: ignore[unresolved-import]
-
-    for document in auto_import([str(image_path)]):
-        # Both objects, not one: a step returns a NEW Document, so
-        # progress.step keys _steps on the one we hand in and progress.done
-        # keys _tasks/_exports on the one run() gives back -- measured, two
-        # _tasks entries and two rich tasks per page.
-        release_document(document, pipeline.run(document))
-    stem = image_path.stem
-    files: dict[str, Path] = {}
-    missing: list[str] = []
+def _outputs(out_dir: Path, stem: str) -> dict[str, Path]:
+    """The files this page's Export steps actually wrote, by format."""
+    found: dict[str, Path] = {}
     for fmt in EXPECTED_FORMATS:
         matches = (
             sorted((out_dir / fmt).glob(f"**/{stem}*.xml"))
@@ -105,14 +98,35 @@ def process_page(pipeline, image_path: Path, out_dir: Path) -> dict[str, Path]:
             else []
         )
         if matches:
-            files[fmt] = matches[0]
-        else:
-            missing.append(fmt)
-    if missing:
-        # W2: a half-written page must fail here, not be uploaded with one
-        # format and later counted as done.
-        raise RuntimeError(f"page {stem}: no {', '.join(missing)} output written")
-    return files
+            found[fmt] = matches[0]
+    return found
+
+
+def process_page(pipeline, image_path: Path, out_dir: Path) -> dict[str, Path]:
+    from htrflow.pipeline.steps import auto_import  # ty: ignore[unresolved-import]
+
+    stem = image_path.stem
+    try:
+        for document in auto_import([str(image_path)]):
+            # Both objects, not one: a step returns a NEW Document, so
+            # progress.step keys _steps on the one we hand in and progress.done
+            # keys _tasks/_exports on the one run() gives back -- measured, two
+            # _tasks entries and two rich tasks per page.
+            release_document(document, pipeline.run(document))
+        files = _outputs(out_dir, stem)
+        missing = [fmt for fmt in EXPECTED_FORMATS if fmt not in files]
+        if missing:
+            # W2: a half-written page must fail here, not be uploaded with one
+            # format and later counted as done.
+            raise RuntimeError(f"page {stem}: no {', '.join(missing)} output written")
+        return files
+    except BaseException:
+        # X2: consume's rolling delete reaches only the files we RETURN, so a
+        # page that fails after one Export landed must take that file with it
+        # -- the memory-backed workdir would keep it for the whole volume.
+        for path in _outputs(out_dir, stem).values():
+            discard(path)
+        raise
 
 
 def htrflow_version() -> str:

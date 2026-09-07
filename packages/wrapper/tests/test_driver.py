@@ -436,3 +436,60 @@ def test_process_page_tolerates_an_htrflow_without_the_progress_module(
     from htrflow_batch.driver import process_page
 
     assert set(process_page(_NoopPipeline(), image, out_dir)) == {"alto", "page"}
+
+
+class _HalfWritingPipeline:
+    """A pipeline whose ALTO Export lands and whose PAGE Export does not."""
+
+    def __init__(self, out_dir, fail=None):
+        self.out_dir, self.fail = out_dir, fail
+        self.stem = None
+
+    def run(self, document):
+        alto = self.out_dir / "alto" / f"{self.stem}.xml"
+        alto.parent.mkdir(parents=True, exist_ok=True)
+        alto.write_text("<x/>")
+        if self.fail is not None:
+            raise self.fail
+        return document
+
+
+def test_process_page_removes_what_a_failed_page_wrote(tmp_path, monkeypatch):
+    """X2: the workdir is memory-backed, and consume's rolling delete can only
+    reach the files process_page RETURNS. A page that raises must take its
+    half-written outputs with it, or every failed page leaks for the whole
+    volume."""
+    _inject_process_fakes(monkeypatch)
+    out_dir = tmp_path / "outputs"
+    pipeline = _HalfWritingPipeline(out_dir)
+    image = tmp_path / "x.jpg"
+    image.write_bytes(b"jpg")
+
+    from htrflow_batch.driver import process_page
+
+    for i in range(20):
+        pipeline.stem = f"{i:04d}"
+        image = tmp_path / f"{i:04d}.jpg"
+        image.write_bytes(b"jpg")
+        with pytest.raises(RuntimeError, match="no page output written"):
+            process_page(pipeline, image, out_dir)
+        # nothing but the (unrelated) input images the test itself wrote
+        assert [p.name for p in out_dir.rglob("*") if p.is_file()] == []
+
+
+def test_process_page_removes_what_a_raising_pipeline_wrote(tmp_path, monkeypatch):
+    """Same for a pipeline that dies between its two Export steps: the
+    original exception propagates, but the ALTO it managed to write does not
+    stay in tmpfs."""
+    _inject_process_fakes(monkeypatch)
+    out_dir = tmp_path / "outputs"
+    pipeline = _HalfWritingPipeline(out_dir, fail=RuntimeError("CUDA out of memory"))
+    pipeline.stem = "0001"
+    image = tmp_path / "0001.jpg"
+    image.write_bytes(b"jpg")
+
+    from htrflow_batch.driver import process_page
+
+    with pytest.raises(RuntimeError, match="CUDA out of memory"):
+        process_page(pipeline, image, out_dir)
+    assert [p for p in out_dir.rglob("*") if p.is_file()] == []
