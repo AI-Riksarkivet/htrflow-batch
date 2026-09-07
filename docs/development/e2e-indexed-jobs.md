@@ -2002,3 +2002,80 @@ pruned: ConfigMap/htr-pipeline-e2e-t28
 cluster's Kyverno policies was touched. `htrflow-batch:task28` was left in
 the PoC's local registry (a throwaway tag, harmless there) rather than
 deleted; nothing references it after the prune above.
+
+## ALTO provenance (2026-09-07, branch `alto-provenance`)
+
+Same cluster; campaigns repo `~/htr-test`, branch `alto-prov` off `task-28`
+(never pushed). The wrapper was built from this branch's HEAD and pushed as
+a throwaway tag, then pinned by digest in a copy of the transcribing recipe:
+
+```console
+$ make build-wrapper IMAGE_TAG=prov && docker push 127.0.0.1:30500/htrflow-batch:prov
+prov: digest: sha256:175269ee511f7d83a1e2cd333f6efc30b94a96b2aa6197df5a1c66cadb68ed28
+```
+
+`pipelines/e2e-prov.yaml` = `e2e-t22-v3`'s three pinned steps on that
+digest; `campaigns/e2e-prov.yaml` = one volume (`e2e-prov-01`), one image,
+`window: 1`. `validate` exit 0; `apply` rendered and applied
+`ConfigMap/htr-pipeline-e2e-prov`, `Job/htr-warmup-e2e-prov`,
+`ConfigMap/campaign-e2e-prov`, `Job/e2e-prov`. Warm-up completed in 12 s
+(models already cached on the PVC), the campaign Job in 37 s.
+
+Inside the running wrapper pod, both provenance values were present, and
+the base revision matched the image's OCI label (the arm64 base is built
+from the local htrflow checkout, hence `git describe` rather than a tag):
+
+```console
+$ kubectl exec -n htr-batch e2e-prov-0-bsr49 -- sh -c 'env | grep -E "^(HTRFLOW_BASE_REVISION|IMAGE_DIGEST)="'
+HTRFLOW_BASE_REVISION=v0.2.6-79-g0ede4da
+IMAGE_DIGEST=127.0.0.1:30500/htrflow-batch@sha256:175269ee511f7d83a1e2cd333f6efc30b94a96b2aa6197df5a1c66cadb68ed28
+$ docker inspect --format '{{index .Config.Labels "se.riksarkivet.htrflow.base.revision"}}' 127.0.0.1:30500/htrflow-batch:prov
+v0.2.6-79-g0ede4da
+```
+
+The published ALTO, read back from the bucket
+(`htr-batch/e2e-prov/e2e-prov-01/alto/0001.xml`), carries htrflow's block
+as written and the new one right after it:
+
+```xml
+    <Description>
+        <MeasurementUnit>pixel</MeasurementUnit>
+        <sourceImageInformation>
+            <fileName>0001</fileName>
+        </sourceImageInformation>
+        <Processing ID="processing">
+            <processingDateTime>2026-09-07T07:57:15.485540+00:00</processingDateTime>
+            <processingStepDescription>Segmentation(model_class=YOLO, model=Riksarkivet/yolov9-regions-1, model_version=6fb01d22…)</processingStepDescription>
+            <processingStepDescription>Segmentation(model_class=YOLO, model=Riksarkivet/yolov9-lines-within-regions-1, model_version=f62260d9…)</processingStepDescription>
+            <processingStepDescription>TextRecognition(model_class=TrOCR, model=Riksarkivet/trocr-base-handwritten-hist-swe-2, model_version=aa79fcb1…)</processingStepDescription>
+            <processingSoftware>
+                <softwareCreator>ai@riksarkivet.se</softwareCreator>
+                <softwareName>htrflow</softwareName>
+                <softwareVersion>0.2.6</softwareVersion>
+                <applicationDescription>htrflow is developed at Riksarkivet's AI-lab as an open-source package to simplify HTR</applicationDescription>
+            </processingSoftware>
+        </Processing>
+        <Processing ID="htrflow-batch">
+            <processingDateTime>2026-09-07T07:57:15.538114+00:00</processingDateTime>
+            <processingStepDescription>image=127.0.0.1:30500/htrflow-batch@sha256:175269ee511f7d83a1e2cd333f6efc30b94a96b2aa6197df5a1c66cadb68ed28</processingStepDescription>
+            <processingStepDescription>htrflow-base=v0.2.6-79-g0ede4da</processingStepDescription>
+            <processingSoftware>
+                <softwareCreator>Riksarkivet AI-labbet</softwareCreator>
+                <softwareName>htrflow-batch-wrapper</softwareName>
+                <softwareVersion>0.2.0</softwareVersion>
+                <applicationDescription>Runs htrflow over IIIF volumes in Kubernetes and publishes ALTO and PAGE XML to S3</applicationDescription>
+            </processingSoftware>
+        </Processing>
+    </Description>
+```
+
+Validated against htrflow's own `alto-4-4.xsd` with `xmlschema` (the
+declaration and default namespace survive the rewrite; no prefixes were
+introduced): `VALID against alto-4-4.xsd: 0001.xml (18132 bytes)`. The
+volume's `manifest.json` reports the same `image_digest`, and `iiif.json`
+still renders (1 canvas) — the viewer reads `WIDTH`/`HEIGHT` from the
+`Layout`, which the stamp does not touch.
+
+Cluster state left behind: `Job/e2e-prov` (Complete) and
+`Job/htr-warmup-e2e-prov` alongside the Task 22 objects; the `prov` tag
+stays in the node-local registry.
