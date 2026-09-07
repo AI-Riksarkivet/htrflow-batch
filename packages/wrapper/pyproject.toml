@@ -1,7 +1,8 @@
 [project]
 name = "htrflow-batch-wrapper"
 version = "0.2.0"
-description = "D16 streaming wrapper: IIIF -> htrflow -> S3 (docs: how-it-works/wrapper)"
+description = "Runs htrflow over IIIF volumes in Kubernetes and publishes ALTO and PAGE XML to S3"
+authors = [{ name = "Riksarkivet AI-labbet" }]
 requires-python = ">=3.10"
 dependencies = [
     "httpx>=0.27",

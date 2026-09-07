@@ -33,7 +33,10 @@ fail=0
 # unreadable PIPELINE_PATH guards were the only two warm-up failure paths
 # that wrote no termination message; a `_fail` helper gives both the same
 # {stage, permanent, error} shape the try/except writes. (B63)
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2035
+# 2035 -> 2106 (2026-09-07): provenance.py stamps an htrflow-batch
+# <Processing> block (image digest, htrflow base revision, wrapper version)
+# into every ALTO; IMAGE_DIGEST/HTRFLOW_BASE_REVISION became Config fields.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2106
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
