@@ -241,3 +241,62 @@ def test_append_only_still_finds_the_parts_of_a_cut_down_campaign_name(
     capsys.readouterr()
     assert main(["render", str(repo), "--out", str(out)]) == 1
     assert f"campaign {name} is append-only" in capsys.readouterr().out
+
+
+def _images_volumes(count: int, pages: int = 300) -> list[dict]:
+    url = (
+        "https://lbiiif.riksarkivet.se/arkis!R00012345/jp2/00000000000000000{:03d}.jpg"
+    )
+    return [
+        {"id": f"vol{v:04d}", "images": [url.format(p) for p in range(pages)]}
+        for v in range(count)
+    ]
+
+
+def test_render_refuses_to_re_split_a_campaign_that_is_already_rendered(
+    tmp_path, capsys
+):
+    """A campaign between the byte budget and the 1 MiB limit rendered as one
+    file before this rule existed and was applied that way. Re-rendering it
+    unchanged must not quietly rename it into parts: `apply --prune` would
+    delete the Job that has already run every volume and start over."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    volumes = _images_volumes(41)
+    text = "\n".join(f"{v['id']}\timages:{','.join(v['images'])}" for v in volumes)
+    assert 900 * 1024 < len(text.encode()) < 1024 * 1024  # one file before, two now
+    (repo / "campaigns" / "wide.yaml").write_text(
+        yaml.safe_dump({"pipeline": "demo-v1", "volumes": volumes})
+    )
+    out = tmp_path / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    # what the previous rule left behind: one file, one Job, one ConfigMap
+    single = out / "campaigns" / "wide.yaml"
+    for path in (out / "campaigns").glob("wide-part*.yaml"):
+        path.unlink()
+    single.write_text(
+        yaml.safe_dump_all(
+            [
+                {
+                    "apiVersion": "v1",
+                    "kind": "ConfigMap",
+                    "metadata": {"name": "campaign-wide", "namespace": "htr-test"},
+                    "data": {"volumes.txt": text + "\n"},
+                },
+                {
+                    "apiVersion": "batch/v1",
+                    "kind": "Job",
+                    "metadata": {"name": "wide", "namespace": "htr-test"},
+                },
+            ],
+            sort_keys=False,
+        )
+    )
+    capsys.readouterr()
+
+    assert main(["render", str(repo), "--out", str(out)]) == 1
+    printed = capsys.readouterr().out
+    assert "campaign wide was rendered as wide.yaml" in printed, printed
+    assert "create a new campaign" in printed
+    assert single.exists()  # nothing removed, nothing renamed
+    assert not list((out / "campaigns").glob("wide-part*.yaml"))
