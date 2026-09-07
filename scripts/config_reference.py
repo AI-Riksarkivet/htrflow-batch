@@ -143,8 +143,8 @@ def render() -> str:
         ]
         if surface == "wrapper":
             out.append(
-                "\n`Config` is not the whole wrapper env: these six names\n"
-                "are read directly, by the warm-up entrypoint or by the Job\n"
+                f"\n`Config` is not the whole wrapper env: these {len(ALSO_READ)}\n"
+                "names are read directly, by the warm-up entrypoint or by the Job\n"
                 "skeleton, never as a campaign setting.\n\n"
                 "### Also read from the environment\n\n"
                 "| Key | Read by | Why not `Config` |\n|---|---|---|\n"

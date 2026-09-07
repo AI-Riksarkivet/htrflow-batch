@@ -79,8 +79,8 @@ template` refuses it, **nobody** = convention only.
 | `IMAGE_DIGEST` | env | `unknown` | — | no secret — nobody |
 | `HTRFLOW_BASE_REVISION` | env | `unknown` | — | no secret — nobody |
 
-`Config` is not the whole wrapper env: these six names
-are read directly, by the warm-up entrypoint or by the Job
+`Config` is not the whole wrapper env: these 5
+names are read directly, by the warm-up entrypoint or by the Job
 skeleton, never as a campaign setting.
 
 ### Also read from the environment
