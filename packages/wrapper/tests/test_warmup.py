@@ -1,9 +1,18 @@
 """The warm-up entrypoint: fill HF_HOME for one pipeline and exit."""
 
 import json
+import os
+import signal
 from pathlib import Path
 
-from htrflow_batch.warmup import EXIT_OK, EXIT_PERMANENT, EXIT_TRANSIENT, main
+from htrflow_batch import warmup as warmup_mod
+from htrflow_batch.warmup import (
+    EXIT_OK,
+    EXIT_PERMANENT,
+    EXIT_SIGTERM,
+    EXIT_TRANSIENT,
+    main,
+)
 
 
 def _env(tmp_path: Path) -> dict:
@@ -203,3 +212,29 @@ def test_warmup_without_pipeline_id_is_permanent(tmp_path):
     assert main(env, load=lambda _: None) == EXIT_PERMANENT
     term = json.loads(term_path.read_text())
     assert term["permanent"] is True and "PIPELINE_ID" in term["error"]
+
+
+def test_warmup_sigterm_writes_a_termination_message_and_exits_143(
+    tmp_path, monkeypatch
+):
+    """The Job's activeDeadlineSeconds (1 h) kills a slow first download; the
+    campaign card must show why, not an empty message."""
+    exits: list[int] = []
+    monkeypatch.setattr(warmup_mod, "_hard_exit", lambda code: exits.append(code))
+    before = signal.getsignal(signal.SIGTERM)
+    term_path = tmp_path / "termination-log"
+    env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
+
+    def killed(_):
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    rc = main(env, load=killed)
+    assert rc == EXIT_SIGTERM == 143
+    assert exits == [EXIT_SIGTERM]
+    assert json.loads(term_path.read_text()) == {
+        "stage": "warmup",
+        "permanent": False,
+        "error": "SIGTERM",
+    }
+    assert not (tmp_path / "warmup" / "demo-v1.done").exists()
+    assert signal.getsignal(signal.SIGTERM) is before  # handler restored
