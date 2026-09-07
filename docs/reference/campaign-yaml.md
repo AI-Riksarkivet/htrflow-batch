@@ -82,8 +82,9 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | More than 10 000 volumes, or more than 900 KiB of `volumes.txt` (an `images:` volume is ONE line of comma-joined URLs) | Split into `<name>-part1`, `-part2`, … — one Job and one ConfigMap each. The API server refuses a ConfigMap over 1 MiB |
 | A campaign that splits and whose name is long | The name is cut short in the part names: a Job's name is also a label value and its pods' name prefix (`<job>-<index>`), and a DNS label stops at 63 characters. `rendered/` holds `<shortened>-partN.yaml` |
 
-The campaign file stem becomes the Job name and the `htrflow.riksarkivet.se/campaign`
-label.
+The campaign file stem becomes the `htrflow.riksarkivet.se/campaign` label and,
+for a campaign that does not split, the Job name; a campaign that splits is
+`<stem cut to 50 characters>-partN` instead, one Job per part.
 
 ## Pipeline file — `pipelines/<id>.yaml`
 
