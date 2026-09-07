@@ -122,14 +122,15 @@ def test_htrflow_version_is_known():
 REGISTRIES = ("_tasks", "_exports", "_steps")
 
 
-def test_progress_registries_do_not_grow_with_the_pages(
+def test_progress_registries_are_empty_after_every_page(
     tmp_path, page, pipeline_yaml, monkeypatch
 ):
     """X2: htrflow's ``progress`` keeps module-global dicts keyed by Document
     and pops none of them, so a long-lived Pipeline over a whole volume
-    retains every page's Region tree. driver.release_document empties them
-    per page; this pins the names it reaches for against the real module and
-    proves the footprint is flat across pages, not merely smaller."""
+    retains every page's Region tree. driver.release_documents empties them
+    once a page is done; this pins the names it reaches for against the real
+    module and proves the footprint is flat across pages, not merely
+    smaller."""
     from htrflow import progress
 
     assert set(REGISTRIES) <= set(vars(progress))
@@ -142,9 +143,8 @@ def test_progress_registries_do_not_grow_with_the_pages(
             len(progress._progress.tasks)
         ]
 
-    before = held()
     for i in range(3):
         image = tmp_path / f"{i:04d}.jpg"
         image.write_bytes(page.read_bytes())
         assert set(process_page(pipeline, image, out_dir)) == set(EXPECTED_FORMATS)
-        assert held() == before, "the progress registries kept the page"
+        assert held() == [0, 0, 0, 0], "the progress registries kept the page"

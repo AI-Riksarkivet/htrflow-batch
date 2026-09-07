@@ -65,27 +65,37 @@ def load_pipeline(pipeline_path: str, out_dir: Path):
     return Pipeline(list(pipeline.steps) + exports)
 
 
-def release_document(*documents) -> None:
-    """Drop a finished page from htrflow's ``progress`` registries. They are
-    module-global and never emptied: htrflow's CLI runs one process per
-    volume, so it never notices, but the wrapper runs one long-lived Pipeline
-    over a whole volume and every page's Region tree would stay reachable
-    until the process exits (~0.5 GB at 10 000 pages, audit X2). Best-effort:
-    an htrflow build without those registries must still process pages."""
+def release_documents() -> None:
+    """Empty htrflow's ``progress`` registries: module-global dicts keyed by
+    ``Document``, filled by Pipeline.run and Export and popped by nothing
+    (the rich progress singleton keeps a task per entry too). htrflow's CLI
+    runs one process per volume and never notices; the wrapper runs one
+    long-lived Pipeline over a whole volume, so every page's Region tree
+    would stay reachable until the process exits (~0.5 GB at 10 000 pages,
+    audit X2).
+
+    Emptying them wholesale is right here and only here: this process has one
+    caller of htrflow and one page in flight at a time, so when a page is done
+    nothing in them is still wanted -- and naming the Document objects instead
+    would miss the ones we never see, since every ProcessImages-type step
+    returns a new one. Best-effort throughout: an htrflow without those
+    registries, or a task the singleton has already dropped, must not cost a
+    page."""
     try:
         from htrflow import progress  # ty: ignore[unresolved-import]
-
-        for document in documents:
-            # _tasks/_exports/_steps are dicts keyed by Document, filled by
-            # Pipeline.run and Export; _tasks' value is the rich task, which
-            # the progress singleton holds on to until it is removed.
-            task = getattr(progress, "_tasks", {}).pop(document, None)
-            for name in ("_exports", "_steps"):
-                getattr(progress, name, {}).pop(document, None)
-            if task is not None:
-                progress._progress.remove_task(task)
     except Exception:
-        pass  # never fail a page over its bookkeeping
+        return
+    tasks = getattr(progress, "_tasks", {})
+    for document in list(tasks):
+        try:
+            progress._progress.remove_task(tasks.pop(document))
+        except Exception:
+            pass  # one page's bookkeeping must not cost the next one's
+    for name in ("_exports", "_steps"):
+        try:
+            getattr(progress, name, {}).clear()
+        except Exception:
+            pass
 
 
 def _outputs(out_dir: Path, stem: str) -> dict[str, Path]:
@@ -108,11 +118,7 @@ def process_page(pipeline, image_path: Path, out_dir: Path) -> dict[str, Path]:
     stem = image_path.stem
     try:
         for document in auto_import([str(image_path)]):
-            # Both objects, not one: a step returns a NEW Document, so
-            # progress.step keys _steps on the one we hand in and progress.done
-            # keys _tasks/_exports on the one run() gives back -- measured, two
-            # _tasks entries and two rich tasks per page.
-            release_document(document, pipeline.run(document))
+            pipeline.run(document)
         files = _outputs(out_dir, stem)
         missing = [fmt for fmt in EXPECTED_FORMATS if fmt not in files]
         if missing:
@@ -127,6 +133,10 @@ def process_page(pipeline, image_path: Path, out_dir: Path) -> dict[str, Path]:
         for path in _outputs(out_dir, stem).values():
             discard(path)
         raise
+    finally:
+        # A failed page registered documents too, so this belongs on every
+        # path out, not only the successful one.
+        release_documents()
 
 
 def htrflow_version() -> str:

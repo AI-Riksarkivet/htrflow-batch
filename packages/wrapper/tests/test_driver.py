@@ -493,3 +493,56 @@ def test_process_page_removes_what_a_raising_pipeline_wrote(tmp_path, monkeypatc
     with pytest.raises(RuntimeError, match="CUDA out of memory"):
         process_page(pipeline, image, out_dir)
     assert [p for p in out_dir.rglob("*") if p.is_file()] == []
+
+
+def test_process_page_releases_intermediate_documents_too(tmp_path, monkeypatch):
+    """Every ProcessImages-type step (Binarization, Blurring...) returns a NEW
+    Document, so a pipeline with two of them registers three: the one handed
+    in, the middle one, and the one run() gives back. Naming the two ends
+    leaves the middle one in the registries forever."""
+    _inject_process_fakes(monkeypatch)
+    progress = _inject_progress_fake(monkeypatch)
+
+    class _TwoStagePipeline:
+        def run(self, document):
+            progress.register(document)  # step 1 sees what we handed in
+            middle = object()
+            progress.register(middle)  # step 2 sees step 1's new Document
+            final = object()
+            progress.register(final)  # progress.done() sees step 2's
+            return final
+
+    out_dir = tmp_path / "outputs"
+    for fmt in ("alto", "page"):
+        (out_dir / fmt).mkdir(parents=True)
+        (out_dir / fmt / "0001.xml").write_text("<x/>")
+    image = tmp_path / "0001.jpg"
+    image.write_bytes(b"jpg")
+
+    from htrflow_batch.driver import process_page
+
+    process_page(_TwoStagePipeline(), image, out_dir)
+
+    assert (progress._tasks, progress._steps, progress._exports) == ({}, {}, {})
+    assert progress.removed == ["task-0", "task-1", "task-2"]
+
+
+def test_process_page_releases_a_failed_page_from_the_registries(tmp_path, monkeypatch):
+    """A page that raises registered documents too; if only the success path
+    released them, a volume whose pages all fail leaks exactly as before."""
+    _inject_process_fakes(monkeypatch)
+    progress = _inject_progress_fake(monkeypatch)
+
+    class _FailingPipeline:
+        def run(self, document):
+            progress.register(document)
+            raise RuntimeError("CUDA out of memory")
+
+    image = tmp_path / "0001.jpg"
+    image.write_bytes(b"jpg")
+
+    from htrflow_batch.driver import process_page
+
+    with pytest.raises(RuntimeError, match="CUDA out of memory"):
+        process_page(_FailingPipeline(), image, tmp_path / "outputs")
+    assert (progress._tasks, progress._steps, progress._exports) == ({}, {}, {})
