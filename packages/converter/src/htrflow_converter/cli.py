@@ -13,6 +13,7 @@ from pathlib import Path
 import yaml
 
 from . import render
+from .models import Campaign
 from .parse import ValidationError, load
 
 _PART_RE = re.compile(r"-part(\d+)\.yaml\Z")
@@ -106,9 +107,14 @@ def _part_number(path: Path) -> int:
     return int(m.group(1)) if m else 0
 
 
-def _existing_campaign_text(campaigns_out: Path, name: str) -> str | None:
-    paths = sorted(campaigns_out.glob(f"{name}.yaml"))
-    paths += sorted(campaigns_out.glob(f"{name}-part*.yaml"), key=_part_number)
+def _existing_campaign_text(campaigns_out: Path, c: Campaign) -> str | None:
+    """The volume list an earlier render of this campaign left in ``out``.
+    A campaign that splits renders under a name cut short of its own (see
+    ``render.campaign_names``), so the ``-partN`` files are looked up under
+    that name, not under the campaign's."""
+    stem = render.campaign_names(c, render.split(c.volumes))[0].removesuffix("-part1")
+    paths = sorted(campaigns_out.glob(f"{c.name}.yaml"))
+    paths += sorted(campaigns_out.glob(f"{stem}-part*.yaml"), key=_part_number)
     if not paths:
         return None
     return "\n".join(_volumes_txt(p) for p in paths)
@@ -157,7 +163,7 @@ def _render(repo_dir: str, out_dir: str) -> int:
     for c in campaigns:
         new_text = "\n".join(v.source_line() for v in c.volumes)
         try:
-            existing = _existing_campaign_text(campaigns_out, c.name)
+            existing = _existing_campaign_text(campaigns_out, c)
         except _CorruptRenderedFile as e:
             print(str(e))
             return 1

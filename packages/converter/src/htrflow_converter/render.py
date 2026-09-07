@@ -153,9 +153,12 @@ def _campaign_job(
     parallelism = min(c.window or cfg.window, cfg.window)
 
     # ``name`` is the Job's own metadata.name (and the campaign ConfigMap's
-    # name suffix): a K8s object name is a DNS-1123 *subdomain* (<=253 chars,
-    # no per-63-char label truncation), unlike the label VALUES below, which
-    # go through label_value().
+    # name suffix). A K8s object name is a DNS-1123 *subdomain* (<=253
+    # chars) -- but a JOB name is not free to use them: the Job controller
+    # copies it into the ``batch.kubernetes.io/job-name`` label VALUE, and
+    # names this Job's pods ``<name>-<index>``, which has to stay a
+    # 63-character DNS label. Both are capped in ``campaign_names`` (the
+    # label values below go through label_value() as well).
     _set(job, "metadata.name", name)
     _set(job, "metadata.namespace", cfg.namespace)
     labels = job["metadata"]["labels"]
@@ -231,12 +234,29 @@ def _campaign_job(
     return job
 
 
+#: A DNS-1123 label, the cap on both things a Job name has to survive: the
+#: ``batch.kubernetes.io/job-name`` label VALUE the Job controller copies it
+#: into, and the ``<name>-<index>`` pod names an Indexed Job generates.
+_MAX_JOB_NAME = 63
+
+
+def campaign_names(c: Campaign, parts: list[list[Volume]]) -> list[str]:
+    """What this campaign's Jobs (and ConfigMaps) are called. A split cuts
+    the name short enough that every part's own name, plus the highest pod
+    index that part will reach, still fits a 63-character DNS label -- the
+    API server refuses the Job otherwise ("will not able to create pod with
+    invalid DNS label"). ``cli`` finds an earlier render by these names."""
+    if len(parts) == 1:
+        return [c.name]
+    index = max(len(vols) for vols in parts) - 1
+    room = _MAX_JOB_NAME - len(f"-part{len(parts)}") - len(f"-{index}")
+    return [f"{c.name[:room]}-part{i}" for i in range(1, len(parts) + 1)]
+
+
 def campaign_objects(c: Campaign, p: Pipeline, cfg: ConverterConfig) -> list[dict]:
     parts = split(c.volumes)
-    multi = len(parts) > 1
     objects: list[dict] = []
-    for i, vols in enumerate(parts, start=1):
-        name = f"{c.name}-part{i}" if multi else c.name
+    for name, vols in zip(campaign_names(c, parts), parts):
         objects.append(_campaign_configmap(name, c, p, vols, cfg))
         objects.append(_campaign_job(name, c, p, vols, cfg))
     return objects

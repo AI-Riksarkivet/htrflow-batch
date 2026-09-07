@@ -205,3 +205,39 @@ def test_the_pause_sync_script_is_gone():
     """`htrflow-campaigns apply` owns the Workload sync now; a stale copy of
     the shell script would be a second, silently diverging implementation."""
     assert not (REPO_ROOT / "scripts" / "kueue-pause-sync.sh").exists()
+
+
+def test_append_only_still_finds_the_parts_of_a_cut_down_campaign_name(
+    tmp_path, capsys
+):
+    """A campaign that splits renders under a shortened name, so `rendered/`
+    holds `<shortened>-partN.yaml`. The append-only check has to look for
+    those: hunting for files under the campaign's own full name would find
+    none and wave a changed volume list through."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    name = "a" * 58
+    url = (
+        "https://lbiiif.riksarkivet.se/arkis!R00012345/jp2/00000000000000000{:03d}.jpg"
+    )
+    volumes = [
+        {"id": f"vol{v:04d}", "images": [url.format(p) for p in range(300)]}
+        for v in range(45)
+    ]
+    path = repo / "campaigns" / f"{name}.yaml"
+    path.write_text(yaml.safe_dump({"pipeline": "demo-v1", "volumes": volumes}))
+    out = tmp_path / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+
+    parts = sorted((out / "campaigns").glob("a*-part*.yaml"))
+    assert len(parts) == 2
+    assert not (out / "campaigns" / f"{name}-part1.yaml").exists()
+    for i, part in enumerate(parts, start=1):
+        assert len(part.stem) <= 63
+        assert name.startswith(part.stem.removesuffix(f"-part{i}"))
+
+    volumes.append({"id": "vol9999", "images": [url.format(0)]})
+    path.write_text(yaml.safe_dump({"pipeline": "demo-v1", "volumes": volumes}))
+    capsys.readouterr()
+    assert main(["render", str(repo), "--out", str(out)]) == 1
+    assert f"campaign {name} is append-only" in capsys.readouterr().out

@@ -196,6 +196,13 @@ def test_priority_adds_the_kueue_priority_class_label():
 
 
 def test_split_campaign_names_never_collide_even_when_close_to_63_chars():
+    """A 58-character name plus `-part1` is 64, and the API server refuses it
+    twice over: the Job controller copies `metadata.name` into the
+    `batch.kubernetes.io/job-name` label VALUE (63 bytes), and an Indexed
+    Job's pod is named `<job>-<index>`, which has to stay a 63-character DNS
+    label ("will not able to create pod with invalid DNS label", measured
+    against the PoC API server). So the name is cut at split time, and the
+    parts stay distinct."""
     _, demo, cfg = _kyrk()
     name = "a" * 58
     volumes = [
@@ -204,11 +211,21 @@ def test_split_campaign_names_never_collide_even_when_close_to_63_chars():
     c = Campaign(name=name, pipeline="demo-v1", volumes=volumes)
     cm1, job1, cm2, job2 = render.campaign_objects(c, demo, cfg)
 
+    stem = "a" * 52  # 63 - len("-part2") - len("-9999"), the highest pod index
     assert job1["metadata"]["name"] != job2["metadata"]["name"]
-    assert job1["metadata"]["name"] == f"{name}-part1"
-    assert job2["metadata"]["name"] == f"{name}-part2"
-    assert cm1["metadata"]["name"] == f"campaign-{name}-part1"
-    assert cm2["metadata"]["name"] == f"campaign-{name}-part2"
+    assert job1["metadata"]["name"] == f"{stem}-part1"
+    assert job2["metadata"]["name"] == f"{stem}-part2"
+    assert cm1["metadata"]["name"] == f"campaign-{stem}-part1"
+    assert cm2["metadata"]["name"] == f"campaign-{stem}-part2"
+
+    for cm, job in ((cm1, job1), (cm2, job2)):
+        index = job["spec"]["completions"] - 1
+        assert len(f"{job['metadata']['name']}-{index}") <= 63
+        labels = {**job["metadata"]["labels"], **cm["metadata"]["labels"]}
+        assert all(len(value) <= 63 for value in labels.values())
+        # A ConfigMap name is a DNS-1123 SUBDOMAIN, not a label: 73 characters
+        # is fine (the PoC API server accepts `campaign-<58 chars>-part1`).
+        assert len(cm["metadata"]["name"]) <= 253
 
     def campaign_volume(job):
         volumes = job["spec"]["template"]["spec"]["volumes"]
@@ -380,7 +397,9 @@ def _images_campaign(volumes: int, pages: int) -> Campaign:
     """The shape that breaks a count-only split: an `images:` volume is ONE
     line of comma-joined URLs, so 300 pages of a 90-character URL is 23 kB on
     that line (`Volume.source_line`)."""
-    url = "https://lbiiif.riksarkivet.se/arkis!R00012345/jp2/00000000000000000{:03d}.jpg"
+    url = (
+        "https://lbiiif.riksarkivet.se/arkis!R00012345/jp2/00000000000000000{:03d}.jpg"
+    )
     return Campaign(
         name="kyrk",
         pipeline="demo-v1",
