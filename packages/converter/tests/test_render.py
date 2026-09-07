@@ -145,7 +145,9 @@ def test_the_warmup_wait_is_bounded_and_fails_the_index():
     marker = f"/data/warmup/{demo.id}.done"
 
     assert f"[ -f {marker} ]" in script
-    assert "120" in script
+    # `-le`, not `-lt`: the check runs BEFORE each sleep, so `-lt` gives up
+    # one step early -- at 110 s here, while printing "after 120s".
+    assert '[ "$n" -le 120 ]' in script
     assert "exit 13" in script
     message = script.split("echo ", 1)[1].split(" >&2", 1)[0]
     assert marker in message

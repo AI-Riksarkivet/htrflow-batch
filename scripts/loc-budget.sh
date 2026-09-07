@@ -141,7 +141,10 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2238
 # it is a net +3 lines of code over the block it replaces, the rest being
 # the paragraph on what a warm-up on the wrong node does to a ReadWriteOnce
 # cache PV. Plus `warmup_wait_seconds` in ConverterConfig.
-check converter "$(count packages/converter/src -name '*.py')" 1425
+# 1425 -> 1427 (2026-09-07, B74 fix round): the gate compares with `-le`,
+# not `-lt` -- the check runs before each sleep, so `-lt` gave up one step
+# early while printing the limit it had not reached. Two lines saying so.
+check converter "$(count packages/converter/src -name '*.py')" 1427
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

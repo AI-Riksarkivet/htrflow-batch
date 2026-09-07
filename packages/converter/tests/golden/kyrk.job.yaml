@@ -155,7 +155,7 @@ spec:
         command:
         - /bin/sh
         - -c
-        - 'n=0; until [ -f /data/warmup/demo-v1.done ]; do n=$((n+10)); [ "$n" -lt
+        - 'n=0; until [ -f /data/warmup/demo-v1.done ]; do n=$((n+10)); [ "$n" -le
           900 ] || { echo "no warm-up marker at /data/warmup/demo-v1.done after 900s:
           the pipeline''s warm-up Job has not finished" >&2; exit 13; }; sleep 10;
           done'
