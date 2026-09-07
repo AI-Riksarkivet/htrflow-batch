@@ -59,7 +59,7 @@ B_impl = [
 ]
 C_impl = ["B05", "B22", "B32"]
 C_open = [
-    f"C{i:02d}" for i in range(4, 13)
+    f"C{i:02d}" for i in range(4, 15)
 ]  # C01–C03 retired: not a tool for archivists
 B_prod = [
     "B10",

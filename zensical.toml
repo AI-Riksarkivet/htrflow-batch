@@ -117,6 +117,8 @@ nav = [
       {"C10 Status page data-flow diagram" = "features/campaign-status-page/stories/C10-status-page-dataflow-diagram.md"},
       {"C11 Kampanjtabellen — volym-id öppnar viewern, en…" = "features/campaign-status-page/stories/C11-campaign-table-volume-pages-log.md"},
       {"C12 Viewerns felmeddelanden för ALTO säger vad ma…" = "features/campaign-status-page/stories/C12-alto-error-next-step.md"},
+      {"C13 Status-sidan säger exakt var i cykeln en kamp…" = "features/campaign-status-page/stories/C13-precise-lifecycle-stage.md"},
+      {"C14 Varje fel på status-sidan säger vad som hände…" = "features/campaign-status-page/stories/C14-actionable-errors.md"},
     ]},
     {"Search — Solr" = [
       {"Feature #2811" = "features/search-solr/feature.md"},

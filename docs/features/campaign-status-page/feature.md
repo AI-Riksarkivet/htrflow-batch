@@ -64,6 +64,8 @@ how it behaves at archive scale, and how it is tested.
 | [C10](stories/C10-status-page-dataflow-diagram.md) | Status page data-flow diagram |
 | [C11](stories/C11-campaign-table-volume-pages-log.md) | Kampanjtabellen — volym-id öppnar viewern, en kolumn för sidor, en logg-länk |
 | [C12](stories/C12-alto-error-next-step.md) | Viewerns felmeddelanden för ALTO säger vad man gör härnäst |
+| [C13](stories/C13-precise-lifecycle-stage.md) | Status-sidan säger exakt var i cykeln en kampanj och varje volym befinner sig |
+| [C14](stories/C14-actionable-errors.md) | Varje fel på status-sidan säger vad som hände, var, och vad användaren gör åt det |
 
 B05, B22 and B32 were created under the Batch feature and moved here; they
 keep their ids (ids are stable, never renumbered). Related stories
