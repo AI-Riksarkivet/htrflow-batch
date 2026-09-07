@@ -1,6 +1,6 @@
 ---
 type: Product Backlog Item
-id:
+id: 3004
 parent: 2923
 title: Varje fel på status-sidan säger vad som hände, var, och vad användaren gör åt det
 ---

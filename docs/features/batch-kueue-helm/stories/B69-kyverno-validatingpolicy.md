@@ -1,6 +1,6 @@
 ---
 type: Product Backlog Item
-id:
+id: 2998
 parent: 2800
 title: Policyerna skrivs som Kyverno ValidatingPolicy (CEL) i stället för ClusterPolicy
 ---
