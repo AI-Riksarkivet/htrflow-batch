@@ -208,9 +208,16 @@ the one pod the cache PVC is mounted read-write on, and the only one the
 NetworkPolicy lets reach HF Hub), so a transient failure is only visible on
 the campaign card's warm-up chip and is retried by Kubernetes up to its own
 `backoffLimit`; a permanent one (exit 13: bad model id, unknown step,
-invalid YAML) leaves the pipeline's warm-up Job failed and every campaign
-using that pipeline stuck at its init container (`warmup-wait`) until the
-Job is fixed and re-applied. The chip's tooltip (and, with the card open,
+invalid YAML, or a `<pipeline_id>.done` marker that could not be written)
+leaves the pipeline's warm-up Job failed and every campaign using that
+pipeline stuck at its init container (`warmup-wait`) until the Job is fixed
+and re-applied. The marker is written **before** the success log and is fatal
+when it fails: a warm-up that exits `0` without one is a green Job whose
+campaigns then hold their GPU in `warmup-wait` until the deadline. That 1 h
+deadline is the warm-up Job's own and terminal (no retry) — the warm-up runs
+the batch wrapper's SIGTERM handler, so being killed by it leaves
+`{stage: "warmup", permanent: false, error: "SIGTERM"}` rather than an empty
+message. The chip's tooltip (and, with the card open,
 the line under it) is the wrapper's own termination message —
 `{stage: "warmup", permanent, error}`, the same shape a volume's `reason`
 carries — read off the warm-up Job's pod
