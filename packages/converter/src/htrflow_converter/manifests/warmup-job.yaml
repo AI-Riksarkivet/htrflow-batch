@@ -20,13 +20,25 @@ spec:
         operator: In
         values:
         - 13
-  activeDeadlineSeconds: 3600
   template:
     metadata:
       labels:
         app: htrflow-warmup
     spec:
       restartPolicy: Never
+      # The download budget, on the POD and not on the Job. A Job-level
+      # activeDeadlineSeconds is enforced by the Job controller, which
+      # deletes the pod it kills -- taking the `{stage: "warmup", permanent,
+      # error}` termination message with it, and that message is the only
+      # place a warm-up failure reaches a person (the Job mounts no S3
+      # secret, so there is no run log). On the pod template the kubelet
+      # kills it instead: the pod survives with status.reason=
+      # DeadlineExceeded and exit 143, the message is readable, and the
+      # attempt is counted -- so a warm-up that ran out of time on a slow
+      # first download is retried under `backoffLimit: 2` rather than
+      # terminally failed on the first try. Same rule, same reasoning as
+      # campaign-job.yaml.
+      activeDeadlineSeconds: 3600
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true

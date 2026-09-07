@@ -35,13 +35,13 @@ spec:
         operator: In
         values:
         - 13
-  activeDeadlineSeconds: 3600
   template:
     metadata:
       labels:
         app: htrflow-warmup
     spec:
       restartPolicy: Never
+      activeDeadlineSeconds: 3600
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
