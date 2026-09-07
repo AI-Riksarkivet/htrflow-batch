@@ -410,12 +410,16 @@ nav = (
   ]},
 """
 )
+# The stories are the product view for the backlog (Azure DevOps), not for the
+# published site (Morgan, 2026-09-07): the nav gets no "Features & Stories"
+# block, and zensical.toml excludes docs/features/ from the build.
 p = W + "zensical.toml"
 s = open(p).read()
-a = s.index('  { "Features & Stories" = [')
-b = s.index('  { "How it Works" = [')
-s = s[:a] + nav + s[b:]
-open(p, "w").write(s)
+if '  { "Features & Stories" = [' in s:
+    a = s.index('  { "Features & Stories" = [')
+    b = s.index('  { "How it Works" = [')
+    s = s[:a] + s[b:]
+    open(p, "w").write(s)
 
 # U06 cross-ref to S08
 p = F + "uv4-linux/stories/U06-search-inside-a-volume.md"
