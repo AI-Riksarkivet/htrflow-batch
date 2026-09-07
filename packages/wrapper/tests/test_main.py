@@ -71,6 +71,38 @@ def fake_factory(cfg):
     return process
 
 
+def test_default_factory_stamps_provenance_into_each_alto(cfg, monkeypatch):
+    """The real factory (htrflow behind it) stamps the ALTO after Export and
+    before the caller uploads it; PAGE XML is left alone."""
+    from htrflow_batch import driver
+
+    monkeypatch.setattr(driver, "load_pipeline", lambda path, out_dir: "pipeline")
+    alto = (
+        '<alto xmlns="http://www.loc.gov/standards/alto/ns-v4#"><Description>'
+        "<MeasurementUnit>pixel</MeasurementUnit></Description>"
+        '<Layout><Page WIDTH="2500" HEIGHT="3538"/></Layout></alto>'
+    )
+    monkeypatch.setattr(
+        driver,
+        "process_page",
+        lambda pipeline, image_path, out_dir: _write_outputs(
+            cfg, image_path.stem, alto=alto
+        ),
+    )
+    cfg = cfg.model_copy(
+        update={
+            "image_digest": "docker.io/x@sha256:abc",
+            "htrflow_base_revision": "v0.2.6-35f48a7",
+        }
+    )
+    files = main_mod._default_factory(cfg)(Path("/img/0001.jpg"))
+    alto = files["alto"].read_text()
+    assert 'ID="htrflow-batch"' in alto
+    assert "image=docker.io/x@sha256:abc" in alto
+    assert "htrflow-base=v0.2.6-35f48a7" in alto
+    assert "htrflow-batch" not in files["page"].read_text()
+
+
 def _put_done(s3, cfg, name: str, formats=("alto", "page")):
     for fmt in formats:
         s3.put_object(

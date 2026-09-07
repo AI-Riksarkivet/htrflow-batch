@@ -15,7 +15,7 @@ from typing import Callable, Mapping, Optional
 
 import httpx
 
-from . import publish
+from . import provenance, publish
 from .config import Config, ConfigError
 from .iiif import (
     ManifestError,
@@ -110,7 +110,13 @@ def _default_factory(cfg: Config):
     pipeline = driver.load_pipeline(cfg.pipeline_path, out_dir)
 
     def process(image_path: Path):
-        return driver.process_page(pipeline, image_path, out_dir)
+        files = driver.process_page(pipeline, image_path, out_dir)
+        provenance.stamp_alto(
+            files["alto"],
+            image=cfg.image_digest,
+            base_revision=cfg.htrflow_base_revision,
+        )
+        return files
 
     return process
 
@@ -186,7 +192,7 @@ def _main(
         uploaded = _verify(store, pages, stats, state)
         state.stage = "publish"
         publish.run(
-            cfg, env, store, source, source_url, pages, stats, uploaded, t_start, nbytes
+            cfg, store, source, source_url, pages, stats, uploaded, t_start, nbytes
         )
 
         # No workdir cleanup: it is a memory-backed emptyDir that dies with the
