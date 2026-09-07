@@ -10,6 +10,7 @@ import boto3
 from botocore.config import Config as BotoConfig
 
 from .config import Config
+from .viewer import parse_alto_dims
 
 #: Per-page outputs, in upload order. ALTO is what the viewer manifest and
 #: every reader key on, so it lands LAST: a crash between the two PUTs can
@@ -26,6 +27,11 @@ class ResultStore:
         self.cfg = cfg
         self.bucket = cfg.s3_bucket
         self.prefix = cfg.volume_prefix
+        #: Page dimensions taken off the ALTO upload_page parses anyway, for
+        #: publish's viewer manifest: the local file is deleted as soon as the
+        #: page is uploaded (X2), and reading each one back would be one
+        #: sequential S3 GET of a full ALTO body per page.
+        self.page_dims: dict[str, tuple[int, int]] = {}
         # W6: default boto timeouts (60 s connect/read, legacy retries) let an
         # S3 outage pin every PUT for minutes and the run for hours. Bounded
         # here; stream.consume aborts after N consecutive upload failures.
@@ -89,10 +95,11 @@ class ResultStore:
         # W3: parse before the first PUT. An unparseable file that reached S3
         # would fail publish once and then count as done on the retry.
         bodies: dict[str, bytes] = {}
+        roots: dict[str, ET.Element] = {}
         for fmt in PAGE_FORMATS:
             data = files[fmt].read_bytes()
             try:
-                ET.fromstring(data)
+                roots[fmt] = ET.fromstring(data)
             except ET.ParseError as e:
                 raise ValueError(
                     f"page {name}: {fmt} XML is not well-formed: {e}"
@@ -100,6 +107,10 @@ class ResultStore:
             bodies[fmt] = data
         for fmt in PAGE_FORMATS:
             self._put(self._key(f"{fmt}/{name}.xml"), bodies[fmt], "application/xml")
+        try:
+            self.page_dims[name] = parse_alto_dims(roots["alto"])
+        except ValueError:
+            pass  # publish leaves a page with no dims out, it does not fail
 
     def put_json(self, rel_key: str, obj: dict) -> None:
         self._put(self._key(rel_key), _json_bytes(obj), "application/json")
