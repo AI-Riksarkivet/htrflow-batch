@@ -21,12 +21,13 @@ queue: htr-batch                  # Kueue LocalQueue name
 window: 20                        # Job parallelism, and the CAP a campaign's own `window:` is clamped to
 s3_secret: htr-batch-s3           # Secret carrying S3 credentials
 data_pvc: htr-test-data           # PVC mounted as the model cache
-runtime_class: nvidia             # RuntimeClass for GPU pods
+runtime_class: nvidia             # RuntimeClass for GPU pods — on the warm-up Job too
 node_selector: {}
 tolerations: []
 public_results_base: ""           # public URL prefix results are served from (required for the read API)
 source_template: "https://lbiiif.riksarkivet.se/arkis!{ref}/manifest"
 max_seconds: 21600                # each pod's activeDeadlineSeconds; a pipeline's own `max_seconds:` overrides it
+warmup_wait_seconds: 900          # how long a pod waits for its pipeline's warm-up marker before failing the index (it holds a GPU while it waits)
 manifest_max_bytes: 16777216      # 16 MiB
 fetch_max_bytes: 67108864         # 64 MiB
 ```

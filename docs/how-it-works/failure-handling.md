@@ -210,20 +210,59 @@ the campaign card's warm-up chip and is retried by Kubernetes up to its own
 `backoffLimit`; a permanent one (exit 13: bad model id, unknown step,
 invalid YAML, or a `<pipeline_id>.done` marker that could not be written)
 leaves the pipeline's warm-up Job failed and every campaign using that
-pipeline stuck at its init container (`warmup-wait`) until the Job is fixed
+pipeline waiting at its init container (`warmup-wait`) until the Job is fixed
 and re-applied. The marker is written **before** the success log and is fatal
-when it fails: a warm-up that exits `0` without one is a green Job whose
-campaigns then hold their GPU in `warmup-wait` until the deadline. The warm-up
-also runs the batch wrapper's SIGTERM handler, so a kill — a node drain, a
-preemption, or a *pod*-level `activeDeadlineSeconds` — leaves
-`{stage: "warmup", permanent: false, error: "SIGTERM"}` rather than an empty
-message. The 1 h deadline is still on the Job (`warmup-job.yaml`), where the
-Job controller deletes the pod and takes the message with it; B74 moves it to
-`spec.template.spec` as the campaign Job already has it, so the deadline case
-shows on the card too. The chip's tooltip (and, with the card open,
+when it fails: a warm-up that exits `0` without one would be a green Job whose
+campaigns then wait in `warmup-wait`. The warm-up also runs the batch
+wrapper's SIGTERM handler, so a kill — a node drain, a preemption, or the
+pod-level `activeDeadlineSeconds` (1 h, on `spec.template.spec` as the
+campaign Job has it) — leaves `{stage: "warmup", permanent: false, error:
+"SIGTERM"}` rather than an empty message, and the deadline case shows on the
+card. That wait is bounded too: the gate gives up after `converter.yaml`'s
+`warmup_wait_seconds` (default 900), prints one line naming the marker it
+waited for, and exits 13 — which the campaign Job's `podFailurePolicy` turns
+into `FailIndex`, so the index fails once instead of being retried. It has to
+be bounded, because a batch pod reserves `nvidia.com/gpu: 1` for its whole
+lifetime, init containers included, and Kueue holds the quota through them:
+an endless wait cost one GPU for the pod's entire `activeDeadlineSeconds`
+(6 h), once per retry, and said nothing anywhere. The chip's tooltip (and, with the card open,
 the line under it) is the wrapper's own termination message —
 `{stage: "warmup", permanent, error}`, the same shape a volume's `reason`
 carries — read off the warm-up Job's pod
 ([Campaigns](campaigns.md#the-web-front-and-status-page)). There is no
 delete-recreate loop or attempt cap shared with volumes any more — it is
 just another Kubernetes Job.
+
+### Why is the marker missing?
+
+Three places, in this order: the index that gave up says *which* marker it
+waited for, the warm-up Job says *why* it never wrote one, and the cache PVC
+says what is actually on disk.
+
+```bash
+# 1. The failed index's own pod, and the init container's one line.
+kubectl -n htr-batch get pods -l batch.kubernetes.io/job-name=<campaign> \
+  -L batch.kubernetes.io/job-completion-index
+kubectl -n htr-batch logs <pod> -c warmup-wait
+# no warm-up marker at /data/warmup/<pipeline>.done after 900s: …
+
+# 2. The warm-up Job for that pipeline: did it run, and what did it say?
+kubectl -n htr-batch get job htr-warmup-<pipeline>
+kubectl -n htr-batch logs job/htr-warmup-<pipeline> --tail=50
+kubectl -n htr-batch get pods -l batch.kubernetes.io/job-name=htr-warmup-<pipeline> \
+  -o jsonpath='{.items[*].status.containerStatuses[*].state.terminated.message}'
+# {"stage": "warmup", "permanent": true, "error": "…"}  — the chip's tooltip
+
+# 3. The marker directory itself, from any pod that already mounts the cache
+#    PVC (the batch pods mount /data read-only, which is enough to look).
+kubectl -n htr-batch exec <a running pod> -- ls -l /data/warmup
+```
+
+A `Complete` warm-up Job with no marker on the PVC means the two are not
+looking at the same volume — check that the warm-up Job carries the same
+`runtimeClassName`, `nodeSelector` and `tolerations` as the campaign Job
+(`converter.yaml`; the converter renders both from it) so a `ReadWriteOnce`
+cache cannot be filled on one node and read on another. Fix the cause, then
+`kubectl delete job htr-warmup-<pipeline>` and re-apply the campaigns repo
+to re-run the warm-up — the Job has no TTL and is not re-created while it
+still exists.

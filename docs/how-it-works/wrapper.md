@@ -201,7 +201,9 @@ reading a line of the campaign's `volumes.txt` ConfigMap.
 - Single container `wrapper` per pod, `restartPolicy: Never`, image = the
   pipeline's digest pin, passed again as `IMAGE_DIGEST` for provenance. An
   init container `warmup-wait` blocks on the pipeline's warm-up marker file
-  before the wrapper starts.
+  before the wrapper starts, for at most `converter.yaml`'s
+  `warmup_wait_seconds` (default 900) — it holds the pod's GPU while it
+  waits, so it gives up rather than wait out the pod's deadline.
 - Resources: requests cpu 4 / memory **8 Gi** / 1 GPU, limits cpu 4 /
   memory **16 Gi** / 1 GPU (tmpfs counts against the limit — see
   [Memory Budget](memory-budget.md)). `runtimeClassName`, `nodeSelector` and
@@ -211,7 +213,9 @@ reading a line of the campaign's `volumes.txt` ConfigMap.
   `window:` of its own gets the cap); `backoffLimitPerIndex: 3`;
   `maxFailedIndexes` = completions;
   `podFailurePolicy`: `Ignore` on `DisruptionTarget` (a drain does not burn
-  a retry), `FailIndex` on wrapper exit 13.
+  a retry), `FailIndex` on wrapper exit 13, `FailIndex` on `warmup-wait`
+  exit 13 (the marker never arrived — a retry only holds the GPU again).
+  Rules are evaluated in order, so the `Ignore` stays first.
 - `ttlSecondsAfterFinished: 86400` (24 h — inspectable, then self-cleans;
   the evidence is in S3 before that).
 - Labels `app=htrflow-batch`, `htrflow.riksarkivet.se/managed-by=converter`,
@@ -345,6 +349,9 @@ the failure reaches a person. Who runs it:
   `/data/warmup/<pipeline>.done` in an init container, so no volume runs
   before its pipeline's cache is filled
   ([Failure Handling](failure-handling.md#warm-ups-fail-the-same-way)). The
+  It carries the campaign Job's `runtimeClassName`, `nodeSelector` and
+  `tolerations` (the same `converter.yaml` keys): a `ReadWriteOnce` cache
+  filled on one node is a marker the batch pods on another never see. The
   Job has no TTL — it is never reaped — so after replacing the cache PVC,
   delete `htr-warmup-*` by hand to re-warm. The chart itself renders no
   warm-up Job; it lives entirely with the campaigns repo now.
