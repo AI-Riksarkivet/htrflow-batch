@@ -177,8 +177,11 @@ def test_the_warmup_wait_never_outlasts_the_pods_own_deadline():
     would have its pod killed by the kubelet -- exit 143, matched by no
     `FailIndex` rule -- before the gate could ever give up, so the index
     would be retried three times, holding a GPU through every wait. That is
-    the failure the bound exists to stop, so the rendered wait is the
-    smaller of the two."""
+    the failure the bound exists to stop, so the rendered wait stays STRICTLY
+    below the deadline -- by one sleep step, since the two clocks do not
+    start together (the pod's runs from pod start, the gate's from the init
+    container's first line) and only the gate turns the failure into exit 13,
+    a `FailIndex` and a sentence. A tie would hand it back to the kubelet."""
     _, demo, cfg = _kyrk()
     cfg = cfg.model_copy(update={"warmup_wait_seconds": 900})
     short = demo.model_copy(update={"max_seconds": 600})
@@ -191,8 +194,14 @@ def test_the_warmup_wait_never_outlasts_the_pods_own_deadline():
     script = spec["initContainers"][0]["command"][-1]
 
     assert spec["activeDeadlineSeconds"] == 600
-    assert '[ "$n" -le 600 ]' in script
-    assert "after 600s" in script
+    assert '[ "$n" -le 590 ]' in script
+    assert "after 590s" in script
+
+    # A deadline under one step still has to render a runnable script: the
+    # gate cannot win that race, but it must not render `-le -5` either.
+    tiny = demo.model_copy(update={"max_seconds": 5})
+    spec = render.campaign_objects(c, tiny, cfg)[1]["spec"]["template"]["spec"]
+    assert '[ "$n" -le 10 ]' in spec["initContainers"][0]["command"][-1]
 
     # The other way round, the pipeline's deadline is none of the gate's
     # business: 900 s of waiting inside a 6 h budget is what it is for.
