@@ -69,11 +69,16 @@ script). A CSP header from the server must not be stricter than the meta tag
 
 ## Derivation rules
 
-- **Fail-hard parsing.** The read API is ours, not an untrusted document:
-  `src/lib/api.ts` parses every response with Zod's `.parse` (not
-  `.safeParse`), so a malformed shape throws instead of degrading a row.
-  `ApiUnreachable` covers a network error and a non-2xx status alike; the
-  page shows one banner over the last good list. There is
+- **Fail-hard shape, fail-soft rows.** The read API is ours, not an
+  untrusted document: `src/lib/api.ts` parses every response with Zod, and
+  a response of the wrong shape throws. One campaign row the page cannot
+  read is still a bug, but not a reason to hide the rest (B32): `fetchJobs`
+  leaves that row out, counts it, logs the first issue to the console for
+  the operator, and the page says how many campaigns are hidden in a
+  banner over the list it could read; a list whose every row is unreadable
+  throws like a wrong shape. `ApiUnreachable` covers a network error and a
+  non-2xx status alike; the page shows one banner over the last good list.
+  There is
   no age-based staleness check — every response is computed live from the
   Kubernetes API, so there is nothing that can go stale the way a stored
   status document would.
