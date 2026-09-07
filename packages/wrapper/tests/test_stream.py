@@ -381,3 +381,38 @@ def test_page_validation_errors_do_not_count_as_outage(tmp_path):
     )
     assert len(stats.results) == 7
     assert all(r.status == "failed" for r in stats.results.values())
+
+
+def test_workdir_holds_only_the_page_in_flight(tmp_path):
+    """X2: the workdir is a memory-backed emptyDir, and the page outputs used
+    to stay in it for the whole volume (~300 KB/page, 2 Gi near 7 000 pages).
+    Both formats must go with the image once the outcome is recorded, so 50
+    pages cost exactly what one does."""
+    workdir = tmp_path / "work"
+    inputs = workdir / "input"
+    inputs.mkdir(parents=True)
+
+    def process(path: Path):
+        files = {}
+        for fmt in ("alto", "page"):
+            out = workdir / "outputs" / fmt / f"{path.stem}.xml"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text("<x/>")
+            files[fmt] = out
+        return files
+
+    in_flight = []
+
+    def upload(name, files):
+        # the outputs are still there while the page is being uploaded
+        in_flight.append(sorted(p.name for p in workdir.rglob("*") if p.is_file()))
+
+    # lazily, one page at a time: PageStream bounds the images in flight by
+    # its lookahead window (tested above), so what is left to bound is the
+    # outputs, and this keeps the count exact.
+    consume(_items(_fr(inputs, i) for i in range(1, 51)), process, upload)
+
+    assert in_flight == [
+        [f"{i:04d}.jpg", f"{i:04d}.xml", f"{i:04d}.xml"] for i in range(1, 51)
+    ]
+    assert [p for p in workdir.rglob("*") if p.is_file()] == []
