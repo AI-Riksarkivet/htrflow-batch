@@ -153,12 +153,10 @@ def _campaign_job(
     parallelism = min(c.window or cfg.window, cfg.window)
 
     # ``name`` is the Job's own metadata.name (and the campaign ConfigMap's
-    # name suffix). A K8s object name is a DNS-1123 *subdomain* (<=253
-    # chars) -- but a JOB name is not free to use them: the Job controller
-    # copies it into the ``batch.kubernetes.io/job-name`` label VALUE, and
-    # names this Job's pods ``<name>-<index>``, which has to stay a
-    # 63-character DNS label. Both are capped in ``campaign_names`` (the
-    # label values below go through label_value() as well).
+    # name suffix). An object name is a DNS-1123 *subdomain* (<=253 chars),
+    # but a JOB name does not get all of it: it becomes a label value and a
+    # pod-name prefix, both DNS labels -- ``campaign_names`` caps it. The
+    # label VALUES below go through label_value() for the same reason.
     _set(job, "metadata.name", name)
     _set(job, "metadata.namespace", cfg.namespace)
     labels = job["metadata"]["labels"]
@@ -234,22 +232,21 @@ def _campaign_job(
     return job
 
 
-#: A DNS-1123 label, the cap on both things a Job name has to survive: the
-#: ``batch.kubernetes.io/job-name`` label VALUE the Job controller copies it
-#: into, and the ``<name>-<index>`` pod names an Indexed Job generates.
-_MAX_JOB_NAME = 63
+_DNS_LABEL = 63  # the cap on a label value, and on a pod's name
 
 
 def campaign_names(c: Campaign, parts: list[list[Volume]]) -> list[str]:
     """What this campaign's Jobs (and ConfigMaps) are called. A split cuts
-    the name short enough that every part's own name, plus the highest pod
-    index that part will reach, still fits a 63-character DNS label -- the
-    API server refuses the Job otherwise ("will not able to create pod with
-    invalid DNS label"). ``cli`` finds an earlier render by these names."""
+    the name short enough that every part's name, plus the highest pod index
+    that part reaches, still fits a DNS label -- the API server refuses the
+    Job otherwise ("will not able to create pod with invalid DNS label", and
+    "spec.template.labels: must be no more than 63 bytes" for the job-name
+    label the controller copies it into). ``cli`` finds an earlier render by
+    these names."""
     if len(parts) == 1:
         return [c.name]
     index = max(len(vols) for vols in parts) - 1
-    room = _MAX_JOB_NAME - len(f"-part{len(parts)}") - len(f"-{index}")
+    room = _DNS_LABEL - len(f"-part{len(parts)}") - len(f"-{index}")
     return [f"{c.name[:room]}-part{i}" for i in range(1, len(parts) + 1)]
 
 
