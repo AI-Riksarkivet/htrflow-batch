@@ -30,11 +30,17 @@ lämna GPU:n. Precisionen finns i systemet, den når inte sidan.
 
 - Wrappern skriver sitt aktuella steg och sin sidräkning (`klara/totalt`,
   senaste sidan, tid sedan förra sidan) till en liten statusfil per volym
-  i bucketen, uppdaterad i samma takt som run-loggen (`LOG_SHIP_SECONDS`),
-  och till poddens termination-meddelande när den slutar.
-- Läs-API:t (`/api/v1/jobs`) ger varje volym ett `stage` med de orden
-  och sidräkningen, och kampanjen ett `waiting_on` när den är Queued:
-  kvot i Kueue (`htr-batch-cq`), warm-up, eller paus.
+  under bucketens **privata** `status/`-prefix (samma skydd som
+  run-loggen), uppdaterad i samma takt som run-loggen
+  (`LOG_SHIP_SECONDS`), och till poddens termination-meddelande när den
+  slutar. Inget nytt skrivs till det publika resultatträdet.
+- Läs-API:t (`/api/v1/jobs`) är den enda vägen till statusen: det läser
+  statusfilerna med egna S3-läsrättigheter, cachar dem några sekunder
+  och ger varje volym ett `stage` med de orden och sidräkningen, och
+  kampanjen ett `waiting_on` när den är Queued: kvot i Kueue
+  (`htr-batch-cq`), warm-up, eller paus. Webbläsaren gör ett anrop per
+  sida, inte ett per volym, så kostnaden växer med antalet kampanjer som
+  visas, inte med arkivets storlek (C08).
 - Kampanjkortet och volymtabellen visar steget i klartext ("bearbetar
   sida 37 av 480, senaste för 12 s sedan") och en stillastående-markering
   när ingen sida blivit klar på längre än en konfigurerad tid.
