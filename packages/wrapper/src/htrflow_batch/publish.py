@@ -21,23 +21,21 @@ log = logging.getLogger("htrflow_batch")
 def alto_dims(
     cfg: Config, store: ResultStore, pages: list[PageRef], uploaded: set[str]
 ) -> dict:
-    """Page dimensions as actually processed, read back from the ALTO — the
-    local file this run wrote, or the stored one for a page a previous run
-    published, so a resumed volume's viewer manifest stays complete. A page
-    whose ALTO will not parse is left out rather than failing the publish."""
-    dims: dict[str, tuple[int, int]] = {}
-    alto_dir = Path(cfg.workdir) / "outputs" / "alto"
+    """Page dimensions as actually processed: from the ALTO this run uploaded
+    (store.upload_page parsed it there, so this costs no round-trip), or read
+    back from S3 for a page a previous run published, so a resumed volume's
+    viewer manifest stays complete. A page whose ALTO will not parse is left
+    out rather than failing the publish."""
+    dims: dict[str, tuple[int, int]] = {
+        p.name: store.page_dims[p.name] for p in pages if p.name in store.page_dims
+    }
     for p in pages:
-        local = sorted(alto_dir.glob(f"**/{p.name}*.xml")) if alto_dir.exists() else []
-        if local:
-            data = local[0].read_bytes()
-        elif p.name in uploaded:
-            try:
-                data = store.get_bytes(f"alto/{p.name}.xml")
-            except Exception:
-                log.warning("could not read stored ALTO for %s", p.name)
-                continue
-        else:
+        if p.name in dims or p.name not in uploaded:
+            continue
+        try:
+            data = store.get_bytes(f"alto/{p.name}.xml")
+        except Exception:
+            log.warning("could not read stored ALTO for %s", p.name)
             continue
         try:
             dims[p.name] = parse_alto_dims_bytes(data)

@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from htrflow_batch import publish
 from htrflow_batch.config import Config
 from htrflow_batch.iiif import PageRef
@@ -119,6 +117,7 @@ class _SlowStore:
     def __init__(self, clock):
         self.clock = clock
         self.puts = {}
+        self.page_dims = {"0002": (2500, 3538)}  # this run uploaded page 2
 
     def get_bytes(self, key):  # a resumed page's stored ALTO
         self.clock["now"] += 1.0
@@ -140,9 +139,6 @@ def test_wall_seconds_spans_the_publish_uploads(tmp_path, monkeypatch):
     clock = {"now": 100.0}
     monkeypatch.setattr(publish.time, "monotonic", lambda: clock["now"])
     cfg = _cfg(tmp_path)
-    alto_dir = Path(cfg.workdir) / "outputs" / "alto"
-    alto_dir.mkdir(parents=True)
-    (alto_dir / "0002.xml").write_text(ALTO)  # this run wrote page 2
     store = _SlowStore(clock)
 
     publish.run(
@@ -165,10 +161,10 @@ def test_wall_seconds_spans_the_publish_uploads(tmp_path, monkeypatch):
 
 
 class _StoredAlto:
-    """A store that only has what was uploaded — no local workdir at all."""
+    """A store with no dims of its own: every page was published earlier."""
 
     def __init__(self):
-        self.reads, self.puts = [], {}
+        self.reads, self.puts, self.page_dims = [], {}, {}
 
     def get_bytes(self, key):
         self.reads.append(key)
@@ -182,11 +178,10 @@ class _StoredAlto:
 
 
 def test_alto_dims_reads_every_page_back_from_the_store(tmp_path):
-    """X2: consume now deletes each page's ALTO from the workdir as soon as it
-    is uploaded, so at publish time NO page has a local file — the viewer
-    manifest must still cover them all, from the stored copies."""
+    """A fully resumed volume: this run uploaded nothing, so it recorded no
+    dims, and the viewer manifest must still cover every page from the copies
+    the previous run published."""
     cfg = _cfg(tmp_path)
-    assert not (Path(cfg.workdir) / "outputs" / "alto").exists()
     store = _StoredAlto()
 
     dims = publish.alto_dims(cfg, store, _pages(), {"0001", "0002"})

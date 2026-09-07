@@ -999,3 +999,50 @@ def test_images_rejects_a_non_http_url(images_env, cfg, s3):
     assert rc == EXIT_PERMANENT
     term = json.loads(Path(images_env["TERMINATION_LOG_PATH"]).read_text())
     assert term["stage"] == "setup" and "http(s)" in term["error"]
+
+
+def _count_alto_reads(monkeypatch) -> list[str]:
+    """Every ALTO body publish reads back out of S3."""
+    reads: list[str] = []
+    original = ResultStore.get_bytes
+
+    def counting(self, rel_key: str):
+        if rel_key.startswith("alto/"):
+            reads.append(rel_key)
+        return original(self, rel_key)
+
+    monkeypatch.setattr(ResultStore, "get_bytes", counting)
+    return reads
+
+
+def test_publish_reads_no_alto_back_for_the_pages_this_run_uploaded(
+    env, cfg, s3, monkeypatch
+):
+    """The rolling delete leaves no local ALTO, so publish would otherwise GET
+    every page back for its WIDTH/HEIGHT -- 2 000 sequential round-trips on a
+    2 000-page volume, fetching full ALTO bodies for two numbers upload_page
+    had already parsed."""
+    reads = _count_alto_reads(monkeypatch)
+
+    assert main(env, process_page_factory=fake_factory) == EXIT_OK
+
+    assert reads == []
+    iiif = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/iiif.json")[
+            "Body"
+        ].read()
+    )
+    assert len(iiif["items"]) == 3  # every page still in the viewer manifest
+    assert iiif["items"][0]["width"] == 2500
+
+
+def test_publish_still_reads_back_only_the_pages_a_previous_run_did(
+    env, cfg, s3, monkeypatch
+):
+    """The fallback stays for exactly the pages this run skipped."""
+    _put_done(s3, cfg, "0001")
+    reads = _count_alto_reads(monkeypatch)
+
+    assert main(env, process_page_factory=fake_factory) == EXIT_OK
+
+    assert reads == ["alto/0001.xml"]

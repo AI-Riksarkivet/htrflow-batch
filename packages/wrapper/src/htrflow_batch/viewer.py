@@ -9,7 +9,10 @@ from .iiif import PageRef, painting_body
 
 
 def parse_alto_dims_bytes(data: bytes) -> tuple[int, int]:
-    root = ET.fromstring(data)
+    return parse_alto_dims(ET.fromstring(data))
+
+
+def parse_alto_dims(root: ET.Element) -> tuple[int, int]:
     candidates = []
     for elem in root.iter():
         w, h = elem.get("WIDTH"), elem.get("HEIGHT")
