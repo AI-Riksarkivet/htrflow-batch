@@ -213,11 +213,14 @@ leaves the pipeline's warm-up Job failed and every campaign using that
 pipeline stuck at its init container (`warmup-wait`) until the Job is fixed
 and re-applied. The marker is written **before** the success log and is fatal
 when it fails: a warm-up that exits `0` without one is a green Job whose
-campaigns then hold their GPU in `warmup-wait` until the deadline. That 1 h
-deadline is the warm-up Job's own and terminal (no retry) — the warm-up runs
-the batch wrapper's SIGTERM handler, so being killed by it leaves
+campaigns then hold their GPU in `warmup-wait` until the deadline. The warm-up
+also runs the batch wrapper's SIGTERM handler, so a kill — a node drain, a
+preemption, or a *pod*-level `activeDeadlineSeconds` — leaves
 `{stage: "warmup", permanent: false, error: "SIGTERM"}` rather than an empty
-message. The chip's tooltip (and, with the card open,
+message. The 1 h deadline is still on the Job (`warmup-job.yaml`), where the
+Job controller deletes the pod and takes the message with it; B74 moves it to
+`spec.template.spec` as the campaign Job already has it, so the deadline case
+shows on the card too. The chip's tooltip (and, with the card open,
 the line under it) is the wrapper's own termination message —
 `{stage: "warmup", permanent, error}`, the same shape a volume's `reason`
 carries — read off the warm-up Job's pod

@@ -98,9 +98,9 @@ def main(
     try:
         return _warmup(env, load)
     except Terminated:
-        # The Job's own activeDeadlineSeconds (1 h, terminal) or a node drain.
-        # A first download can be slow; without this the kill leaves an empty
-        # termination message and the card says "failed" with no reason.
+        # A drain, a preemption, or a pod-level activeDeadlineSeconds (the
+        # warm-up Job's 1 h deadline is Job-level until B74 moves it, and that
+        # one deletes the pod). Else the kill leaves an empty message.
         log.error("warm-up killed by SIGTERM (deadline or drain)")
         terminate(env, {"stage": "warmup", "permanent": False, "error": "SIGTERM"})
         _hard_exit(EXIT_SIGTERM)
