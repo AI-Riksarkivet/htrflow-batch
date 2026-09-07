@@ -282,5 +282,9 @@ class ConverterConfig(BaseModel):
     public_results_base: str = ""
     source_template: str = "https://lbiiif.riksarkivet.se/arkis!{ref}/manifest"
     max_seconds: int = Field(default=21600, ge=1)
+    #: How long a batch pod's `warmup-wait` init container waits for its
+    #: pipeline's marker before giving up. It holds the pod's GPU while it
+    #: waits, so this is a GPU-hours budget, not a patience setting.
+    warmup_wait_seconds: int = Field(default=900, ge=1)
     manifest_max_bytes: int = 16 * _MiB
     fetch_max_bytes: int = 64 * _MiB

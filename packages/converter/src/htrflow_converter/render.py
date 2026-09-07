@@ -127,6 +127,23 @@ def pipeline_objects(p: Pipeline, cfg: ConverterConfig) -> list[dict]:
     return [_pipeline_configmap(p, cfg), _warmup_job(p, cfg)]
 
 
+_WAIT_STEP = 10
+#: The `warmup-wait` gate, bounded. A batch pod reserves `nvidia.com/gpu: 1`
+#: for its whole lifetime -- init containers included, and Kueue holds the
+#: quota through it -- so an unbounded `until [ -f ... ]` costs one GPU for
+#: the pod's entire `activeDeadlineSeconds`, once per retry, every time a
+#: pipeline's warm-up did not write its marker. Exit 13 is the code the Job's
+#: `podFailurePolicy` turns into `FailIndex`: no retry buys a marker that is
+#: not coming. The message names the path, because the marker is the only
+#: thing an operator can go and look at.
+_WARMUP_WAIT = (
+    "n=0; until [ -f {marker} ]; do n=$((n+{step}));"
+    ' [ "$n" -lt {limit} ] || {{ echo "no warm-up marker at {marker} after'
+    " {limit}s: the pipeline's warm-up Job has not finished\" >&2; exit 13; }};"
+    " sleep {step}; done"
+)
+
+
 def _campaign_configmap(
     name: str, c: Campaign, p: Pipeline, volumes: list[Volume], cfg: ConverterConfig
 ) -> dict:
@@ -219,7 +236,9 @@ def _campaign_job(
     _set(
         job,
         "spec.template.spec.initContainers[0].command[2]",
-        f"until [ -f {marker} ]; do sleep 10; done",
+        _WARMUP_WAIT.format(
+            marker=marker, step=_WAIT_STEP, limit=cfg.warmup_wait_seconds
+        ),
     )
 
     if cfg.runtime_class:

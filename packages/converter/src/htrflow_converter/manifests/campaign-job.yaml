@@ -16,6 +16,10 @@ spec:
   parallelism: 1
   backoffLimitPerIndex: 3
   maxFailedIndexes: 1
+  # Rules are evaluated in order and the first match wins, so the disruption
+  # Ignore stays at the top: a preempted or drained pod is not a failure of
+  # this index. The two exit-13 rules below are per container and cannot both
+  # match one pod.
   podFailurePolicy:
     rules:
     - action: Ignore
@@ -24,6 +28,15 @@ spec:
     - action: FailIndex
       onExitCodes:
         containerName: wrapper
+        operator: In
+        values:
+        - 13
+    # The init container gave up waiting for the pipeline's warm-up marker
+    # (render.py's `_WARMUP_WAIT`). Retrying is another `warmup_wait_seconds`
+    # of held GPU for a marker that is not coming, so the index fails now.
+    - action: FailIndex
+      onExitCodes:
+        containerName: warmup-wait
         operator: In
         values:
         - 13
