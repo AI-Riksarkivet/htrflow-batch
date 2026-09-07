@@ -28,7 +28,7 @@ shows every campaign and volume live. No CRD, no controller, no database.
 | `charts/htrflow-batch` | The Helm chart: Kueue queues, RBAC, NetworkPolicies, Kyverno policies, the status page |
 | `charts/htrflow-devstack` | S3 (RustFS), registry and fixtures for a single-node PoC |
 | `examples/campaigns` | The shape of a campaigns repository, with the CI that renders, policy-checks and commits `rendered/` |
-| `docs/` | The documentation site: getting started, how it works, reference, features and stories, audits |
+| `docs/` | The documentation site (getting started, how it works, reference, audits) plus `docs/features/`, the product view: one story per deliverable, mirrored to Azure DevOps, kept out of the site |
 | `scripts/` | The exact LOC budgets, the generated configuration reference, the stories ↔ Azure DevOps sync |
 
 ## Quickstart
