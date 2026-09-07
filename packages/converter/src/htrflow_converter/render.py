@@ -251,14 +251,18 @@ def _campaign_job(
     _set(
         job,
         "spec.template.spec.initContainers[0].command[2]",
-        # Never longer than the pod it runs in: past `activeDeadlineSeconds`
-        # the kubelet kills the pod with 143, which no `FailIndex` rule
-        # matches, so a pipeline whose `max_seconds:` is the shorter of the
-        # two would go straight back to retrying and holding its GPU.
+        # Strictly shorter than the pod it runs in, by one sleep step. Past
+        # `activeDeadlineSeconds` the kubelet kills the pod with 143, which
+        # no `FailIndex` rule matches -- so the index would be retried,
+        # holding its GPU again, with no sentence anywhere. Only the gate
+        # produces exit 13, and the two clocks do not start together (the
+        # pod's runs from pod start, the gate's from the init container's
+        # first line), so a tie goes to the kubelet: the gate has to expire
+        # first. The floor keeps a deadline under one step renderable.
         _WARMUP_WAIT.format(
             marker=marker,
             step=_WAIT_STEP,
-            limit=min(cfg.warmup_wait_seconds, deadline),
+            limit=min(cfg.warmup_wait_seconds, max(deadline - _WAIT_STEP, _WAIT_STEP)),
         ),
     )
 
