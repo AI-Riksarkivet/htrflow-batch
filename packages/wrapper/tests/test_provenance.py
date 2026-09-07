@@ -115,3 +115,15 @@ def test_stamp_rejects_an_alto_without_a_description(tmp_path):
     path.write_text(f'<alto xmlns="{NS}"><Layout/></alto>', encoding="utf-8")
     with pytest.raises(ValueError, match=r"0001\.xml has no Description element"):
         provenance.stamp_alto(path, image=IMAGE, base_revision="x")
+
+
+def test_stamp_twice_leaves_one_htrflow_batch_block(tmp_path):
+    """`ID` is an xsd:ID: a second block with the same ID would make the
+    file schema-invalid, so a re-stamp is a no-op."""
+    path = tmp_path / "0001.xml"
+    path.write_text(ALTO, encoding="utf-8")
+    provenance.stamp_alto(path, image=IMAGE, base_revision="x")
+    once = path.read_text(encoding="utf-8")
+    provenance.stamp_alto(path, image=IMAGE, base_revision="x")
+    assert path.read_text(encoding="utf-8") == once
+    assert once.count('ID="htrflow-batch"') == 1
