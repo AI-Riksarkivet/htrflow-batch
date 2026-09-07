@@ -353,8 +353,13 @@ open(p, "w").write(s)
 
 # nav
 def navrows(ids, folder):
+    # A title is a TOML basic string: escape the quote a story may carry.
+    def title(i):
+        t = files[i][1] if len(files[i][1]) <= 48 else files[i][1][:45] + "…"
+        return f"{i} {t}".replace('"', '\\"')
+
     return "".join(
-        f'      {{"{i} {files[i][1] if len(files[i][1]) <= 48 else files[i][1][:45] + "…"}" = "features/{folder}/stories/{os.path.basename(files[i][0])}"}},\n'
+        f'      {{"{title(i)}" = "features/{folder}/stories/{os.path.basename(files[i][0])}"}},\n'
         for i in ids
     )
 
@@ -365,17 +370,17 @@ nav = (
     {"Batch using Kueue+Helm chart" = [
       {"Feature #2800" = "features/batch-kueue-helm/feature.md"},
 """
-    + navrows(B_impl + B_prod + B_after, "batch-kueue-helm")
+    + navrows(B_impl + B_partly + B_obsolete + B_prod + B_after, "batch-kueue-helm")
     + """    ]},
     {"UV4 linux" = [
       {"Feature #2801" = "features/uv4-linux/feature.md"},
 """
-    + navrows(U_impl + U_open, "uv4-linux")
+    + navrows(U_impl + U_partly + U_open, "uv4-linux")
     + """    ]},
     {"Campaigns status page" = [
       {"Feature #2923" = "features/campaign-status-page/feature.md"},
 """
-    + navrows(C_impl + C_open, "campaign-status-page")
+    + navrows(C_impl + C_partly + C_open, "campaign-status-page")
     + """    ]},
     {"Search — Solr" = [
       {"Feature #2811" = "features/search-solr/feature.md"},
