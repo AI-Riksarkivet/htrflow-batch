@@ -140,6 +140,18 @@ export function describeReason(reason: VolumeReason): string {
  * `showingLast` says whether the caller still has an older answer on screen,
  * which is the difference between "nothing is here" and "this is stale".
  */
+/** Rows the list could not read (api.fetchJobs): hidden, counted, one next step. */
+export function describeUnreadable(n: number): string {
+  const what =
+    n === 1
+      ? "1 campaign could not be read and is not shown"
+      : `${n} campaigns could not be read and are not shown`;
+  return (
+    `${what}. Reload the page; if it keeps happening, the page and the ` +
+    "service are running different versions."
+  );
+}
+
 export function describeApiError(e: unknown, showingLast: boolean): string {
   if (!(e instanceof ApiUnreachable)) {
     // A Zod parse failure: the service answered, but not in the shape this

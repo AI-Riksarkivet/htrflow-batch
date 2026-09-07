@@ -130,7 +130,11 @@ check web       "$(count packages/web/src -name '*.py')" 667
 # health derivation grew one guard clause and a longer comment (+2) --
 # `missing` only paints a finished campaign red when it is not Succeeded.
 # (B63)
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3063
+# 3063 -> 3100 (2026-09-07, B32 regression): fetchJobs reads the list row
+# by row -- one campaign the page cannot read is left out, counted and
+# logged once, instead of hiding every other campaign; the page shows the
+# count in a banner (describeUnreadable). A wrong shape still fails hard.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3100
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
