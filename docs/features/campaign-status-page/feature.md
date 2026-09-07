@@ -71,6 +71,9 @@ how it behaves at archive scale, and how it is tested.
 | [C12](stories/C12-alto-error-next-step.md) | Viewerns felmeddelanden för ALTO säger vad man gör härnäst |
 | [C13](stories/C13-precise-lifecycle-stage.md) | Status-sidan säger exakt var i cykeln en kampanj och varje volym befinner sig |
 | [C14](stories/C14-actionable-errors.md) | Varje fel på status-sidan säger vad som hände, var, och vad användaren gör åt det |
+| [C15](stories/C15-api-errors-sentence-and-headers.md) | Läs-API:t svarar med en mening och rätt headers även när något går sönder |
+| [C16](stories/C16-pods-fieldselector-paging-cache.md) | Hämta bara de Pods som behövs — fieldSelector, paging och kort cache |
+| [C17](stories/C17-cache-control-headers.md) | Cache-Control på HTML, config.js och API-svaren |
 
 B05, B22 and B32 were created under the Batch feature and moved here; they
 keep their ids (ids are stable, never renumbered). Related stories

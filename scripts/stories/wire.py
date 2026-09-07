@@ -56,9 +56,20 @@ B_impl = [
 C_impl = ["B05", "B32", "C10"]
 C_partly = ["B22", "C08"]
 C_open = [
-    f"C{i:02d}" for i in range(4, 15) if i not in (8, 10)
+    f"C{i:02d}" for i in range(4, 18) if i not in (8, 10)
 ]  # C01–C03 retired: not a tool for archivists
 B_prod = [
+    "B72",
+    "B73",
+    "B74",
+    "B75",
+    "B77",
+    "B78",
+    "B79",
+    "B80",
+    "B81",
+    "B82",
+    "B84",
     "B10",
     "B11",
     "B12",
@@ -95,6 +106,10 @@ B_prod = [
     "B69",
     "B70",
     "B71",
+    "B76",
+    "B83",
+    "B85",
+    "B86",
 ]
 B_partly = [
     "B02",
