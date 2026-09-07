@@ -90,6 +90,7 @@ nav = [
     {"Campaigns status page" = [
       {"Feature #2923" = "features/campaign-status-page/feature.md"},
       {"B05 See progress and live logs in the browser" = "features/campaign-status-page/stories/B05-campaign-browser.md"},
+      {"B32 Audit fixes — the status page degrades gracef…" = "features/campaign-status-page/stories/B32-audit-fixes-frontend.md"},
       {"C10 Status page data-flow diagram" = "features/campaign-status-page/stories/C10-status-page-dataflow-diagram.md"},
       {"C04 Campaign detail page" = "features/campaign-status-page/stories/C04-campaign-detail-page.md"},
       {"C05 Volume detail page" = "features/campaign-status-page/stories/C05-volume-detail-page.md"},

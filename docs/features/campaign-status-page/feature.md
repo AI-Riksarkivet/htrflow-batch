@@ -48,6 +48,7 @@ how it behaves at archive scale, and how it is tested.
 | Id | Story |
 |---|---|
 | [B05](stories/B05-campaign-browser.md) | See progress and live logs in the browser |
+| [B32](stories/B32-audit-fixes-frontend.md) | Audit fixes — the status page degrades gracefully and is safe to link from |
 | [C10](stories/C10-status-page-dataflow-diagram.md) | Status page data-flow diagram |
 
 ### Partly implemented — named items still open
@@ -55,7 +56,6 @@ how it behaves at archive scale, and how it is tested.
 | Id | Story |
 |---|---|
 | [B22](stories/B22-frontend-tests-and-checks.md) | Frontend tests and checks |
-| [B32](stories/B32-audit-fixes-frontend.md) | Audit fixes — the status page degrades gracefully and is safe to link from |
 | [C08](stories/C08-status-at-archive-scale.md) | Status at archive scale |
 
 ### Not started
