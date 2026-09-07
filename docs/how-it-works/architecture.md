@@ -77,7 +77,7 @@ sequenceDiagram
     participant S3 as S3 results
 
     G->>G: htrflow-campaigns render -> rendered/ (committed)
-    Ar->>K8s: apply Job <campaign> (completionMode: Indexed,<br/>completions=N, queue-name label)
+    Ar->>K8s: apply the campaign Job (completionMode: Indexed,<br/>completions=N, queue-name label)
     Q->>Q: webhook suspends the Job; workload queued (FIFO)
     Q->>K8s: quota free → unsuspend Job (up to `parallelism`)
     K8s->>P: schedule pod for index i (1 GPU, tmpfs workdir, read-only model cache)
