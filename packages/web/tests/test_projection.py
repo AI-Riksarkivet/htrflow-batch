@@ -389,6 +389,52 @@ class TestDetail:
         row3 = next(v for v in d["volumes"] if v["index"] == 3)
         assert row3["reason"] == {"stage": None, "permanent": None, "error": "killed"}
 
+    def test_reason_falls_back_to_the_init_container(self):
+        """A `warmup-wait` that gave up is the whole failure: the wrapper
+        never started, so it has no `containerStatuses` entry to read and the
+        index used to be `failed` with no `reason` at all -- the one case the
+        bounded gate was built to make visible. The kubelet puts the init
+        container's stderr in its termination message
+        (`terminationMessagePolicy: FallbackToLogsOnError`), which is plain
+        text, not the wrapper's JSON."""
+        sentence = (
+            "no warm-up marker at /data/warmup/demo-v1.done after 900s: "
+            "the pipeline's warm-up Job has not finished"
+        )
+        pod = _pod(3)
+        pod["status"]["containerStatuses"] = [{"name": "wrapper", "state": {}}]
+        pod["status"]["initContainerStatuses"] = [
+            {
+                "name": "warmup-wait",
+                "state": {"terminated": {"exitCode": 13, "message": sentence}},
+            }
+        ]
+        d = projection.detail(
+            _job(), _configmap(), [pod], CFG, offset=0, limit=200, warmup=MISSING_WARMUP
+        )
+        row3 = next(v for v in d["volumes"] if v["index"] == 3)
+        assert row3["reason"] == {
+            "stage": None,
+            "permanent": None,
+            "error": sentence,
+        }
+
+    def test_a_succeeded_init_container_is_not_a_reason(self):
+        """Every init container terminates -- with exit 0 on the happy path.
+        Only a failed one explains the pod."""
+        pod = _pod(3, terminated_message='{"error": "verify failed"}')
+        pod["status"]["initContainerStatuses"] = [
+            {
+                "name": "warmup-wait",
+                "state": {"terminated": {"exitCode": 0, "message": "fine"}},
+            }
+        ]
+        d = projection.detail(
+            _job(), _configmap(), [pod], CFG, offset=0, limit=200, warmup=MISSING_WARMUP
+        )
+        row3 = next(v for v in d["volumes"] if v["index"] == 3)
+        assert row3["reason"]["error"] == "verify failed"
+
     def test_laststate_terminated_reason_fallback(self):
         pod = _pod(3)
         pod["status"]["containerStatuses"][0]["state"] = {"running": {}}

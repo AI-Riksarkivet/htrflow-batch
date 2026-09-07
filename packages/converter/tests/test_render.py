@@ -141,7 +141,8 @@ def test_the_warmup_wait_is_bounded_and_fails_the_index():
     kyrk, demo, cfg = _kyrk()
     cfg = cfg.model_copy(update={"warmup_wait_seconds": 120})
     job = render.campaign_objects(kyrk, demo, cfg)[1]
-    script = job["spec"]["template"]["spec"]["initContainers"][0]["command"][-1]
+    init = job["spec"]["template"]["spec"]["initContainers"][0]
+    script = init["command"][-1]
     marker = f"/data/warmup/{demo.id}.done"
 
     assert f"[ -f {marker} ]" in script
@@ -151,6 +152,11 @@ def test_the_warmup_wait_is_bounded_and_fails_the_index():
     assert "exit 13" in script
     message = script.split("echo ", 1)[1].split(" >&2", 1)[0]
     assert marker in message
+
+    # The default policy (`File`) reads /dev/termination-log, which a shell
+    # script never writes: without this the index fails with an EMPTY
+    # termination message and the campaign card shows no reason at all.
+    assert init["terminationMessagePolicy"] == "FallbackToLogsOnError"
 
     rules = job["spec"]["podFailurePolicy"]["rules"]
     # The order is semantics: Kubernetes takes the FIRST matching rule, so

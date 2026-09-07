@@ -178,7 +178,15 @@ check converter "$(count packages/converter/src -name '*.py')" 1430
 # memoized per (namespace, warm-up Job) for the request, `warmup` is a
 # required argument of summarize/detail, match_warmup refuses an empty
 # pipeline label, and app.py calls wrapper_reason/newest directly. (B63)
-check web       "$(count packages/web/src -name '*.py')" 667
+# 667 -> 690 (2026-09-07, B74 fix round): a pod that failed in an INIT
+# container was read as having no reason at all -- `wrapper_reason` looked
+# only at `containerStatuses`, and a sentence on the card is the whole point
+# of B74's bounded warm-up gate. The per-container lookup becomes
+# `_terminated_message`, called twice (the named main container, then any
+# init container that exited non-zero), and most of the 23 lines is the two
+# docstrings: why a SUCCEEDED init container explains nothing, and why the
+# message that arrives is plain stderr rather than the wrapper's JSON.
+check web       "$(count packages/web/src -name '*.py')" 690
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
