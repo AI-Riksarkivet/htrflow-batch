@@ -113,7 +113,12 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2197
 # constants so a campaign crossing 9 parts to 10 keeps the name its Jobs
 # already carry. The rest is the 1 MiB rule written down as the API server
 # actually applies it -- it sums data values, and the margin is a margin.
-check converter "$(count packages/converter/src -name '*.py')" 1382
+# 1382 -> 1395 (2026-09-07, B72 re-review): the colliding-stem check moved
+# ahead of the earlier-render comparison and became `_colliding_names` over
+# every campaign -- two campaigns sharing a stem but not their volume lists
+# were being told the first one's parts made them append-only. A pre-pass
+# costs one `split` per campaign and saves the wrong sentence.
+check converter "$(count packages/converter/src -name '*.py')" 1395
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
