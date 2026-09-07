@@ -208,6 +208,8 @@ def consume(
                 status="ok", seconds=time.monotonic() - t0
             )
         finally:
+            # keep_images keeps the IMAGE, as its name says: a debugging flag
+            # must not turn the outputs' rolling delete off and reintroduce X2.
             if item.path is not None and not keep_images:
                 discard(item.path)
             for path in files.values():

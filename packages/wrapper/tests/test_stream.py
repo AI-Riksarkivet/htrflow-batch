@@ -302,18 +302,23 @@ def test_stall_accounting(tmp_path, monkeypatch):
     assert stats.stall_seconds == pytest.approx(0.4)
 
 
-def test_keep_images_preserves_file(tmp_path):
+def test_keep_images_preserves_the_image_only(tmp_path):
+    """The flag is named for what it keeps: the outputs are rolling-deleted
+    either way, so debugging a run cannot fill the memory-backed workdir."""
+    out = {}
+
     def process(path: Path):
-        out = tmp_path / "alto" / f"{path.stem}.xml"
-        out.parent.mkdir(exist_ok=True)
-        out.write_text("<alto/>")
-        return {"alto": out}
+        out["alto"] = tmp_path / "alto" / f"{path.stem}.xml"
+        out["alto"].parent.mkdir(exist_ok=True)
+        out["alto"].write_text("<alto/>")
+        return dict(out)
 
     stats = consume(
         _items([_fr(tmp_path, 1)]), process, lambda n, f: None, keep_images=True
     )
     assert stats.results["0001"].status == "ok"
     assert (tmp_path / "0001.jpg").exists()  # image preserved
+    assert not out["alto"].exists()  # outputs are not
 
 
 def _ok_process(tmp_path):
