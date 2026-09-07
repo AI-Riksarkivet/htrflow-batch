@@ -131,6 +131,39 @@ def test_init_container_present_with_pipeline_marker_path():
     assert "nvidia.com/gpu" not in init[0]["resources"]["requests"]
 
 
+def test_the_warmup_wait_is_bounded_and_fails_the_index():
+    """An unbounded `until [ -f … ]` holds `nvidia.com/gpu: 1` for the pod's
+    whole deadline, once per retry, whenever a pipeline's warm-up never wrote
+    its marker (audit X3). The init container now gives up after
+    `warmup_wait_seconds`, says on stderr which marker it waited for, and
+    exits 13 -- which the Job's podFailurePolicy turns into a failed index
+    instead of three more six-hour waits."""
+    kyrk, demo, cfg = _kyrk()
+    cfg = cfg.model_copy(update={"warmup_wait_seconds": 120})
+    job = render.campaign_objects(kyrk, demo, cfg)[1]
+    script = job["spec"]["template"]["spec"]["initContainers"][0]["command"][-1]
+    marker = f"/data/warmup/{demo.id}.done"
+
+    assert f"[ -f {marker} ]" in script
+    assert "120" in script
+    assert "exit 13" in script
+    message = script.split("echo ", 1)[1].split(" >&2", 1)[0]
+    assert marker in message
+
+    rules = job["spec"]["podFailurePolicy"]["rules"]
+    # The order is semantics: Kubernetes takes the FIRST matching rule, so
+    # the disruption `Ignore` stays ahead of every exit-code rule.
+    assert rules[0]["action"] == "Ignore"
+    assert rules[-1] == {
+        "action": "FailIndex",
+        "onExitCodes": {
+            "containerName": "warmup-wait",
+            "operator": "In",
+            "values": [13],
+        },
+    }
+
+
 def test_campaign_volume_mounted_from_the_campaign_configmap():
     kyrk, demo, cfg = _kyrk()
     job = render.campaign_objects(kyrk, demo, cfg)[1]
