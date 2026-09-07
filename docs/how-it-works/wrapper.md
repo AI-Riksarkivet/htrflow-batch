@@ -92,6 +92,22 @@ to the termination log, ships the final run log, and `os._exit(143)`s —
 `sys.exit` would wait for downloads stuck in their 120 s timeout and run
 into the SIGKILL.
 
+### Provenance in every ALTO
+
+htrflow's own `<Processing>` block in the ALTO names htrflow, its version,
+the pipeline steps and each model's commit hash. What htrflow cannot know
+is the layer above it, so after its Export writes the file and before the
+upload, the wrapper appends a second block, `<Processing ID="htrflow-batch">`
+(`provenance.py`): the time, `image=<the pipeline's digest pin>`
+(`IMAGE_DIGEST`, which the Job skeleton sets), `htrflow-base=<revision>`
+(`HTRFLOW_BASE_REVISION`, an ENV the image itself carries next to its OCI
+label), and `processingSoftware` with the wrapper package's name, version
+and author. ALTO 4.4 allows any number of `Processing` blocks in that
+position, so the file stays schema-valid and htrflow's block is left as
+written. An ALTO the stamp cannot parse fails the page, the same as a page
+with a missing format. PAGE XML is not stamped; the same facts sit in the
+volume's `manifest.json`.
+
 ### Exit codes
 
 | Code | Meaning | Job / Kubernetes reaction |
@@ -363,8 +379,10 @@ travel from authoring to a result:
 4. **Run:** the wrapper calls `Pipeline.from_config($PIPELINE_PATH)` — to
    htrflow it's just a file.
 5. **Provenance:** the wrapper embeds the YAML content + its sha256 and the
-   image digest in `manifest.json` and uploads the YAML next to the results —
-   every result stays explainable independent of cluster state.
+   image digest in `manifest.json`, uploads the YAML next to the results, and
+   stamps the image digest and htrflow base revision into every ALTO
+   ([Provenance in every ALTO](#provenance-in-every-alto)) — every result
+   stays explainable independent of cluster state.
 
 **Validation before the GPU:** the warm-up Job (above) is the deploy-time
 `Pipeline.from_config()` dry run — broken YAML or unresolvable models fail
