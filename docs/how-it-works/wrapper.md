@@ -106,7 +106,10 @@ and author. ALTO 4.4 allows any number of `Processing` blocks in that
 position, so the file stays schema-valid and htrflow's block is left as
 written. An ALTO the stamp cannot parse fails the page, the same as a page
 with a missing format. PAGE XML is not stamped; the same facts sit in the
-volume's `manifest.json`.
+volume's `manifest.json`. One consequence of resume: a volume resumed on a
+newer image keeps the pages already done, so their ALTOs name the image
+that made them while `manifest.json` names the image that finished the
+volume — each file is still right about itself.
 
 ### Exit codes
 

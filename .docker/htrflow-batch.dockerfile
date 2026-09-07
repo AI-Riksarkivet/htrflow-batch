@@ -1,5 +1,5 @@
-# htrflow-batch: the D16 streaming wrapper (DESIGN.md §5.1) on top of the
-# stock htrflow image, for BOTH architectures. Build context = repo root.
+# htrflow-batch: the streaming wrapper (docs: how-it-works/wrapper) on top
+# of the stock htrflow image, for BOTH architectures. Build context = repo root.
 #
 # One file, two bases, no emulation. `uv` segfaults under `qemu-x86_64` and
 # the GPU never crosses the emulation boundary anyway (a 2-page volume:
