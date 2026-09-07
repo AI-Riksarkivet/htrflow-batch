@@ -1,6 +1,6 @@
 ---
 type: Product Backlog Item
-id: 2863
+id:
 parent: 2800
 title: Reconciler image — CI build, SLSA provenance, SBOM and Trivy scan
 ---
