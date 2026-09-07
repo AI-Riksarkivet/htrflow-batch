@@ -43,6 +43,7 @@ prerequisite that blocks the dev cluster (B12) and the archive-scale run
       marker semantics (`manifest.json` visible only after all pages).
 - A known volume replayed into the HCP and opened in the viewer.
 - The RustFS dev stack kept for local development only, documented as such.
+- Gallring och storleksvakt för resultat, körloggar och modellcache; körloggsnyckeln får namespace/kampanj-prefix; `logship` slutar re-PUT:a hela bufferten var 15 s. (revision 2026-09-07, X22)
 
 ## Done when
 

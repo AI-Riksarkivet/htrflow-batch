@@ -23,6 +23,7 @@ the work is exposing that as one word in the campaign file.
   chart.
 - A `priority:` field on a campaign (default bulk) that the reconciler
   maps onto the job.
+- Utan `WorkloadPriorityClass`-objekt och preemption i ClusterQueue är `priority:` avvisad av Kueues webhook — de hör till den här storyn. (revision 2026-09-07, X17)
 
 ## Done when
 

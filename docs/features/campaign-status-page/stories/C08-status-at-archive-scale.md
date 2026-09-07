@@ -17,6 +17,8 @@ One `status.json` for everything is simple and will not scale: the reconciler re
 
 - A status layout with an index file (campaigns, counts, freshness) plus one status file per campaign, written only when that campaign changed; the page loads the index, then campaigns on demand; the exporter (B40) reads the same layout.
 - The reconciler/frontend contract test (B21) extended to the new layout; a migration for existing status files; documented in the S3 Layout page.
+- Skriv om i Indexed-Job-termer och behåll ett kampanjnivå-facit över `failedIndexes` som överlever Jobbets TTL. (revision 2026-09-07, X19)
+- Läs-API:t amorterar polling med en kort cache i stället för en list per request och kort. (revision 2026-09-07, X38)
 
 ## Done when
 

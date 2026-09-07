@@ -33,13 +33,13 @@ cannot be forged by anyone with write access to our own repository, which
 is the residual risk Level 2 leaves open.
 
 ## What this delivers
-
 - The publish build moved into a reusable workflow that emits Level-3
   provenance (`slsa-github-generator` or GitHub's Level-3 attestations).
 - The Kyverno policy extended with an `attestations` check on the SLSA
   provenance predicate: source repository, workflow, and branch/tag.
 - Optionally, an SBOM check at admission (no CRITICAL findings at publish
   time recorded in the attestation).
+- Exempelvärdenas cosign-subject matchar hur publish faktiskt körs (branch-ref, inte tag-ref). (revision 2026-09-07, E9)
 
 ## Done when
 

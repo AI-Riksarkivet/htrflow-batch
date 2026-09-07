@@ -27,7 +27,6 @@ listor gör kampanjregeln skarp och plattformsregeln till chartets eget
 ansvar.
 
 ## Vad som levereras
-
 - Chart-värdena `security.allowedImageRepos` (pipelines) och ett nytt
   `security.platformImageRepos` (plattformens egna imagar, med chartets
   defaults ifyllda), och policyn renderad så att kampanjernas Jobs prövas
@@ -36,6 +35,7 @@ ansvar.
   med enbart pipeline-listan.
 - Dokumentation: `docs/how-it-works/campaigns.md` (policy-avsnittet), `docs/reference/chart.md`,
   `docs/reference/configuration.md` (genererad), quickstart-värdena.
+- PoC-quickstartens `allowedImageRepos` täcker varje image devstacken installerar (registry, device plugin). (revision 2026-09-07, X36)
 
 ## Klart när
 

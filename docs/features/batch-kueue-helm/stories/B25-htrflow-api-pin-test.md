@@ -28,6 +28,7 @@ fast and torch-free.
 - Opt-in in CI (`dagger call test-driver`) and locally
   (`make test-driver-real`) because it needs the model weights; the
   ordinary suite stays fast.
+- Pin-testet körs automatiskt i CI (`dagger call test-driver` i `scan-wrapper` på main-push), inte bara för hand. (revision 2026-09-07, X16)
 
 ## Done when
 

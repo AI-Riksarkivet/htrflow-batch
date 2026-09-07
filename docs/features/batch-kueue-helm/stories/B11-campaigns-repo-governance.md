@@ -26,7 +26,6 @@ cheapest control in the whole system and must be in place before the dev
 cluster (B12) points at a real repo.
 
 ## What this delivers
-
 - **A hosted campaigns repository** on the organisation's git host
   (GitHub or Azure DevOps Repos) with the documented layout, replacing the
   PoC's in-cluster daemon.
@@ -43,6 +42,7 @@ cluster (B12) points at a real repo.
 - **A read-only token** for the reconciler, stored as a Kubernetes secret,
   scoped to that one repo, with an expiry and an owner.
 - The repo link in the status page header pointing at the hosted repo.
+- Kampanj-repots CI läser policyvärdena från releasen i stället för att kopiera dem, och pinnar `CONVERTER_REF` och sina actions. (revision 2026-09-07, X33)
 
 ## Done when
 
