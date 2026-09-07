@@ -57,7 +57,13 @@ fail=0
 # says what it keeps.
 # 2194 -> 2197 (2026-09-07, B73 re-review nit): the failure-path cleanup is
 # guarded so an OSError there cannot replace the exception being raised.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2197
+# 2197 -> 2207 (2026-09-07, B75/audit X4): the warm-up marker stopped being
+# best-effort. `_write_marker` returns the sentence that names the file it
+# could not write instead of logging a warning, and `main` routes it through
+# `_fail` before the success log -- a warm-up that exits 0 with no marker is a
+# green Job whose campaigns then hold a GPU in their init container until the
+# deadline, with nothing anywhere saying why.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2207
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

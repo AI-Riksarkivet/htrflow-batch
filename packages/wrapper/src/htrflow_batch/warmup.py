@@ -62,10 +62,11 @@ def _load(pipeline_path: str) -> None:
 
 
 def _fail(env: Mapping[str, str], msg: str) -> int:
-    """Both early-return guards below: a mis-wired deployment (offline warm-up,
-    an unreadable ``PIPELINE_PATH``), not a campaign author's mistake, but
-    still worth the same termination message the try/except writes -- else
-    the campaign card shows "warm-up failed" with no reason at all."""
+    """The guards around the download: a mis-wired deployment (offline warm-up,
+    an unreadable ``PIPELINE_PATH``, a marker that cannot be written), not a
+    campaign author's mistake, but still worth the same termination message
+    the try/except writes -- else the campaign card shows "warm-up failed"
+    with no reason at all."""
     log.error(msg)
     terminate(env, {"stage": "warmup", "permanent": True, "error": msg})
     return EXIT_PERMANENT
@@ -106,32 +107,41 @@ def main(
         # id or unknown step reaches the campaign card.
         terminate(env, {"stage": "warmup", "permanent": permanent, "error": str(e)})
         return EXIT_PERMANENT if permanent else EXIT_TRANSIENT
+    # B75/X4: before the success log, and fatal. A warm-up that exits 0 with no
+    # marker is a green Job whose campaigns then sit in their init container
+    # holding a GPU until the deadline, with nothing anywhere saying why.
+    problem = _write_marker(env)
+    if problem is not None:
+        return _fail(env, problem)
     log.info(
         "warm-up complete: models for %s cached in %s",
         pipeline_path,
         env.get("HF_HOME"),
     )
-    _write_marker(env)
     return EXIT_OK
 
 
-def _write_marker(env: Mapping[str, str]) -> None:
+def _write_marker(env: Mapping[str, str]) -> Optional[str]:
     """Drop ``<data>/warmup/<pipeline_id>.done`` so a batch pod's init
     container can gate on it (docs: wrapper). ``<data>`` is ``HF_HOME``'s
     parent (``/data/hf`` -> ``/data``) so tests can redirect it via env.
-    Best-effort: a missing PIPELINE_ID or unwritable dir must not turn a
-    successful warm-up into a failure.
+    Returns the sentence naming what could not be written and where, or
+    ``None`` when the marker is there.
     """
     pipeline_id = env.get("PIPELINE_ID", "")
     hf_home = env.get("HF_HOME", "")
     if not pipeline_id or not hf_home:
-        return
+        return (
+            "cannot write the warm-up marker: PIPELINE_ID and HF_HOME must both "
+            f"be set (PIPELINE_ID={pipeline_id!r}, HF_HOME={hf_home!r})"
+        )
+    marker = Path(hf_home).parent / "warmup" / f"{pipeline_id}.done"
     try:
-        marker_dir = Path(hf_home).parent / "warmup"
-        marker_dir.mkdir(parents=True, exist_ok=True)
-        (marker_dir / f"{pipeline_id}.done").touch()
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
     except OSError as e:
-        log.warning("could not write warm-up marker: %r", e)
+        return f"could not write the warm-up marker {marker}: {e}"
+    return None
 
 
 if __name__ == "__main__":

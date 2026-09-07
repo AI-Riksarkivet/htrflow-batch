@@ -173,3 +173,33 @@ def test_warmup_bad_config_is_permanent(tmp_path):
             raise exc
 
         assert main(_env(tmp_path), load=boom) == EXIT_PERMANENT, exc
+
+
+def test_warmup_unwritable_marker_dir_is_permanent(tmp_path, caplog):
+    """B75/X4: a warm-up that cannot write its marker used to log a warning and
+    exit 0 — a green Job whose campaigns then wait out their init container."""
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory")
+    term_path = tmp_path / "termination-log"
+    env = {
+        **_env(tmp_path),
+        "HF_HOME": str(blocked / "hf"),
+        "TERMINATION_LOG_PATH": str(term_path),
+    }
+    rc = main(env, load=lambda _: None)
+    assert rc == EXIT_PERMANENT
+    term = json.loads(term_path.read_text())
+    assert term["stage"] == "warmup" and term["permanent"] is True
+    assert str(blocked / "warmup" / "demo-v1.done") in term["error"]
+    assert "warm-up complete" not in caplog.text  # marker comes first
+
+
+def test_warmup_without_pipeline_id_is_permanent(tmp_path):
+    """No PIPELINE_ID means no marker can ever be named — a mis-wired Job, not
+    a warm-up to call successful."""
+    term_path = tmp_path / "termination-log"
+    env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
+    del env["PIPELINE_ID"]
+    assert main(env, load=lambda _: None) == EXIT_PERMANENT
+    term = json.loads(term_path.read_text())
+    assert term["permanent"] is True and "PIPELINE_ID" in term["error"]
