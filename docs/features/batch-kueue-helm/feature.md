@@ -134,7 +134,7 @@ tables below.
 | [B64](stories/B64-images-to-ghcr.md) | Imagerna publiceras till GHCR med workflow-identitet i stället för Docker Hub-token |
 | [B65](stories/B65-no-head-of-line-blocking.md) | En sida som gör retry ska inte stoppa GPU:n för sidorna bakom den (completion order i wrappern) |
 | [B66](stories/B66-pause-via-kueue.md) | Paus av en kampanj uttrycks i Kueue, inte genom att vi patchar dess Workload |
-| [B67](stories/B67-read-api-auth-and-public-logs.md) | Åtkomstkontroll för läs-API:t och ett beslut om vad som är publikt |
+| [B67](stories/B67-read-api-auth-and-public-logs.md) | Allt bakom en inloggning — status-sidan, API:t, viewern och resultaten |
 | [B68](stories/B68-split-image-allowlist.md) | Plattformens egna imagar och pipelinernas imagar har varsin allow-list |
 | [B69](stories/B69-kyverno-validatingpolicy.md) | Policyerna skrivs som Kyverno ValidatingPolicy (CEL) i stället för ClusterPolicy |
 | [B70](stories/B70-alto-provenance-identifiers.md) | Varje ALTO-fil säger vilken kampanj, volym och källbild den kommer från |

@@ -1,6 +1,6 @@
 ---
 type: Product Backlog Item
-id:
+id: 3001
 parent: 2923
 title: Kampanjtabellen — volym-id öppnar viewern, en kolumn för sidor, en logg-länk
 ---
