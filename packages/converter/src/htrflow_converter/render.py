@@ -233,21 +233,31 @@ def _campaign_job(
 
 
 _DNS_LABEL = 63  # the cap on a label value, and on a pod's name
+#: What is left of a DNS label once the WIDEST part suffix and the widest pod
+#: index are reserved: ``-9999`` because an Indexed Job's highest index is
+#: ``MAX_VOLUMES_PER_JOB - 1``, and ``-part999`` because 999 parts is 878 MiB
+#: of ``volumes.txt`` -- a campaign file no git repo is going to carry. The
+#: reservation is constant on purpose: measuring THIS render instead would
+#: make a campaign's stem move when it grows from 9 parts to 10, renaming
+#: every part out from under the Jobs already applied under them.
+_SPLIT_STEM = _DNS_LABEL - len("-part999") - len("-9999")
+
+
+def split_stem(name: str) -> str:
+    """The name a split campaign's parts are built from: ``<stem>-partN``,
+    which with its pod index (``<name>-<index>``) has to stay inside a DNS
+    label -- the API server refuses the Job otherwise ("will not able to
+    create pod with invalid DNS label", and "spec.template.labels: must be
+    no more than 63 bytes" for the job-name label the controller copies the
+    name into). ``cli`` finds an earlier render by this stem."""
+    return name[:_SPLIT_STEM]
 
 
 def campaign_names(c: Campaign, parts: list[list[Volume]]) -> list[str]:
-    """What this campaign's Jobs (and ConfigMaps) are called. A split cuts
-    the name short enough that every part's name, plus the highest pod index
-    that part reaches, still fits a DNS label -- the API server refuses the
-    Job otherwise ("will not able to create pod with invalid DNS label", and
-    "spec.template.labels: must be no more than 63 bytes" for the job-name
-    label the controller copies it into). ``cli`` finds an earlier render by
-    these names."""
+    """What this campaign's Jobs (and ConfigMaps) are called."""
     if len(parts) == 1:
         return [c.name]
-    index = max(len(vols) for vols in parts) - 1
-    room = _DNS_LABEL - len(f"-part{len(parts)}") - len(f"-{index}")
-    return [f"{c.name[:room]}-part{i}" for i in range(1, len(parts) + 1)]
+    return [f"{split_stem(c.name)}-part{i}" for i in range(1, len(parts) + 1)]
 
 
 def campaign_objects(c: Campaign, p: Pipeline, cfg: ConverterConfig) -> list[dict]:
