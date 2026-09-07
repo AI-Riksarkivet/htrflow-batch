@@ -15,6 +15,14 @@ from .models import Campaign, ConverterConfig, Pipeline, Volume
 _LABEL_JUNK = re.compile(r"[^A-Za-z0-9_.-]")
 _PATH_RE = re.compile(r"[^.\[\]]+|\[\d+\]")
 MAX_VOLUMES_PER_JOB = 10_000
+#: Bytes of ``volumes.txt`` one part may carry. The API server refuses a
+#: ConfigMap whose data exceeds 1 MiB (``Too long: may not be more than
+#: 1048576 bytes``); the 148 KiB below that is headroom for the key, the
+#: metadata and the managed fields a server-side apply adds. Counting only
+#: volumes is not enough: an ``images:`` volume is ONE line of comma-joined
+#: URLs (``Volume.source_line``), so 300 pages of a 90-character URL is 23 kB
+#: on that line and 45 such volumes already exceed 1 MiB.
+MAX_BYTES_PER_JOB = 900 * 1024
 
 # Label/annotation keys below are set by direct dict indexing, never through
 # ``_set``: they contain literal ``.`` characters (a real Kubernetes label
@@ -36,10 +44,25 @@ def label_value(text: str) -> str:
     return _LABEL_JUNK.sub("-", text)[:63].strip("-_.")
 
 
-def split(volumes: list[Volume], size: int = MAX_VOLUMES_PER_JOB) -> list[list[Volume]]:
-    if not volumes:
-        return [[]]
-    return [volumes[i : i + size] for i in range(0, len(volumes), size)]
+def split(
+    volumes: list[Volume],
+    size: int = MAX_VOLUMES_PER_JOB,
+    max_bytes: int = MAX_BYTES_PER_JOB,
+) -> list[list[Volume]]:
+    """The volume list cut into parts that fit one Job's ConfigMap: by count
+    and by the bytes those volumes take up in ``volumes.txt``. A volume whose
+    own line is over the budget still gets a part to itself -- a line is the
+    smallest thing there is to cut."""
+    parts: list[list[Volume]] = [[]]
+    used = 0
+    for v in volumes:
+        size_of = len(v.source_line().encode()) + 1  # + the newline it ends on
+        if parts[-1] and (len(parts[-1]) >= size or used + size_of > max_bytes):
+            parts.append([])
+            used = 0
+        parts[-1].append(v)
+        used += size_of
+    return parts
 
 
 @functools.lru_cache(maxsize=None)

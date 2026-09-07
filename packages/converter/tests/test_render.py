@@ -374,3 +374,35 @@ def test_every_rendered_object_carries_the_prune_selector():
         labels = o["metadata"]["labels"]
         assert labels[key] == value, o["kind"]
         assert labels["htrflow.riksarkivet.se/pipeline"] == "demo-v1"
+
+
+def _images_campaign(volumes: int, pages: int) -> Campaign:
+    """The shape that breaks a count-only split: an `images:` volume is ONE
+    line of comma-joined URLs, so 300 pages of a 90-character URL is 23 kB on
+    that line (`Volume.source_line`)."""
+    url = "https://lbiiif.riksarkivet.se/arkis!R00012345/jp2/00000000000000000{:03d}.jpg"
+    return Campaign(
+        name="kyrk",
+        pipeline="demo-v1",
+        volumes=[
+            Volume(id=f"vol{v:04d}", images=[url.format(p) for p in range(pages)])
+            for v in range(volumes)
+        ],
+    )
+
+
+def test_200_images_volumes_split_into_configmaps_under_one_mebibyte():
+    """The API server caps a ConfigMap's data at 1 MiB. 200 such volumes are
+    4.4 MiB in one part when only the count is measured."""
+    _, demo, cfg = _kyrk()
+    c = _images_campaign(volumes=200, pages=300)
+    objects = render.campaign_objects(c, demo, cfg)
+    configmaps = objects[::2]
+
+    assert len(configmaps) > 1
+    for cm in configmaps:
+        assert 0 < len(cm["data"]["volumes.txt"].encode()) <= 1024 * 1024
+
+    rendered = "".join(cm["data"]["volumes.txt"] for cm in configmaps)
+    assert rendered == "".join(v.source_line() + "\n" for v in c.volumes)
+    assert sum(job["spec"]["completions"] for job in objects[1::2]) == 200
