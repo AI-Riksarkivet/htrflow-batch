@@ -130,7 +130,18 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2238
 # every campaign -- two campaigns sharing a stem but not their volume lists
 # were being told the first one's parts made them append-only. A pre-pass
 # costs one `split` per campaign and saves the wrong sentence.
-check converter "$(count packages/converter/src -name '*.py')" 1395
+# 1395 -> 1425 (2026-09-07, B74/audit X3+X5): the warm-up gate stopped being
+# a wait with no end. `_WARMUP_WAIT` is the bounded loop the init container
+# runs -- a counter, the sentence it prints on stderr and the exit 13 the
+# Job's podFailurePolicy turns into FailIndex -- and most of its lines are
+# the comment saying why a wait costs GPU-hours at all (the pod reserves its
+# GPU through its init containers, and Kueue holds the quota through them).
+# `_scheduling` lifts runtimeClassName/nodeSelector/tolerations out of
+# `_campaign_job` so the warm-up Job gets the same three from the same cfg;
+# it is a net +3 lines of code over the block it replaces, the rest being
+# the paragraph on what a warm-up on the wrong node does to a ReadWriteOnce
+# cache PV. Plus `warmup_wait_seconds` in ConverterConfig.
+check converter "$(count packages/converter/src -name '*.py')" 1425
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
