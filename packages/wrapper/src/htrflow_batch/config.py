@@ -56,6 +56,11 @@ class Config(BaseModel):
     # S5 byte caps on fetches driven by campaign data (docs: wrapper)
     manifest_max_bytes: int = Field(16 * 1024 * 1024, alias="MANIFEST_MAX_BYTES")
     fetch_max_bytes: int = Field(64 * 1024 * 1024, alias="FETCH_MAX_BYTES")
+    #: Provenance the Job skeleton stamps: the pipeline's digest-pinned image
+    #: and, from the image's own ENV, the htrflow it was built on. Both go
+    #: into every ALTO (provenance.py) and the run manifest (publish.py).
+    image_digest: str = Field("unknown", alias="IMAGE_DIGEST")
+    htrflow_base_revision: str = Field("unknown", alias="HTRFLOW_BASE_REVISION")
 
     @field_validator("s3_prefix")
     @classmethod

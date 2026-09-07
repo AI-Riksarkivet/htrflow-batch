@@ -8,7 +8,6 @@ import logging
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Mapping
 
 from .config import Config
 from .iiif import PageRef, redact_url, redact_urls
@@ -83,7 +82,6 @@ def _htrflow_version() -> str:
 
 def run_manifest(
     cfg: Config,
-    env: Mapping[str, str],
     pages: list[PageRef],
     stats: StreamStats,
     source_manifest_url: str,
@@ -100,7 +98,7 @@ def run_manifest(
         "pipeline_sha256": hashlib.sha256(pipeline_text.encode()).hexdigest(),
         "pipeline_yaml": pipeline_text,
         "htrflow_version": _htrflow_version(),
-        "image_digest": env.get("IMAGE_DIGEST", "unknown"),
+        "image_digest": cfg.image_digest,
         "pages": len(pages),
         "results": _results_json(stats),
         "source_manifest": source_manifest_url,
@@ -122,7 +120,6 @@ def run_manifest(
 
 def run(
     cfg: Config,
-    env: Mapping[str, str],
     store: ResultStore,
     source_manifest: dict,
     source_manifest_url: str,
@@ -145,7 +142,7 @@ def run(
     # and pages_per_second have always covered it).
     wall = time.monotonic() - t_start
     body = run_manifest(
-        cfg, env, pages, stats, source_manifest_url, pipeline_text, wall, bytes_fetched
+        cfg, pages, stats, source_manifest_url, pipeline_text, wall, bytes_fetched
     )
     store.put_json("manifest.json", body)
     log.info(
