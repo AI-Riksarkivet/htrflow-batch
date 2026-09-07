@@ -105,7 +105,15 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2197
 # of the 57 lines is the three API-server rules written down where the next
 # reader will look for them -- the exact messages the server answers with,
 # so nobody has to rediscover them from a failed apply.
-check converter "$(count packages/converter/src -name '*.py')" 1340
+# 1340 -> 1382 in B72's review round (2026-09-07): the split had two ways to
+# rename a campaign that is already applied, and a rename is a delete plus a
+# restart of every volume once `apply --prune` sees it. `render` now refuses
+# same-volumes-different-object-names (naming both shapes) and two campaigns
+# whose cut names collide (naming both files), and the stem is reserved from
+# constants so a campaign crossing 9 parts to 10 keeps the name its Jobs
+# already carry. The rest is the 1 MiB rule written down as the API server
+# actually applies it -- it sums data values, and the margin is a margin.
+check converter "$(count packages/converter/src -name '*.py')" 1382
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
