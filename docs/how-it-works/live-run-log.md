@@ -79,7 +79,7 @@ running volume) — add a lifecycle rule or set `LOG_SHIP_SECONDS=0`.
   (the wrapper's own termination message) is the failure summary as long as
   the failed pod itself still exists.
 - Anonymous read on `status/logs/*` is governed by
-  `devStack.rustfs.publicLogs` (default on) — see
+  `rustfs.publicLogs` (the devstack chart, default on) — see
   [Security](../development/security.md#the-bucket-policy).
 
 ## Browser side (`/log`)
