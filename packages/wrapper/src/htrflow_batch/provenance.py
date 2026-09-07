@@ -57,6 +57,8 @@ def stamp_alto(path: Path, *, image: str, base_revision: str) -> None:
         raise ValueError(
             f"{path.name} has no Description element to record provenance in."
         )
+    if description.find(f"{{{ALTO_NS}}}Processing[@ID='htrflow-batch']") is not None:
+        return  # already stamped; ID is an xsd:ID, a twin would break the schema
     if len(description):
         description[-1].tail = "\n        "
     description.append(processing_block(image, base_revision))
