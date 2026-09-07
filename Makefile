@@ -224,11 +224,13 @@ install-devstack:
 	  --set nvidiaDevicePlugin.enabled=$(NVIDIA_DEVICE_PLUGIN) \
 	  --set devStack.insecureDefaults=true
 
+# Both go through scripts/docs-site.sh: the site is built from docs/ minus
+# docs/features/ (the stories are the backlog's view, not site content).
 docs-serve:
-	uvx zensical serve
+	scripts/docs-site.sh serve
 
 docs-build: config-reference
-	uvx zensical build --clean
+	scripts/docs-site.sh build --clean
 
 # docs/reference/configuration.md is generated from the three config models
 # and the chart's values (B63 Task 27). The committed page must equal this
