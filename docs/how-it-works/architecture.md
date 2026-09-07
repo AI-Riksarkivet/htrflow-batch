@@ -1,7 +1,9 @@
 # Architecture
 
 ```mermaid
-flowchart LR
+%% Top-to-bottom so the site renders it readable at page width; the
+%% streaming driver keeps its left-to-right row inside its own box.
+flowchart TB
     subgraph git["campaigns repo (git)"]
         CAMP["campaigns/*.yaml<br/>pipelines/*.yaml<br/>converter.yaml"]
     end
@@ -16,6 +18,7 @@ flowchart LR
         end
 
         subgraph job["Indexed Job — one per campaign, one index per volume: streaming driver (D16)"]
+            direction LR
             DLP["downloader pool<br/>threads, bounded lookahead"]
             PQ[("page queue<br/>on tmpfs")]
             CONS["consumer thread<br/>pipeline.run(page)<br/>models loaded ONCE"]
