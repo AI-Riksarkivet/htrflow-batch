@@ -60,23 +60,43 @@ tables below.
 | Id | Story |
 |---|---|
 | [B01](stories/B01-streaming-wrapper.md) | Transcribe a volume page-by-page, streaming results to S3 |
-| [B02](stories/B02-kueue-job-contract.md) | Queue volumes fairly on the GPUs and fail safely |
 | [B03](stories/B03-helm-chart.md) | Install the whole system with one Helm command, hardened by default |
-| [B04](stories/B04-gitops-campaigns.md) | Declare campaigns in git and let the system run them (GitOps) |
 | [B06](stories/B06-unit-tests-wrapper-reconciler.md) | Unit tests for the wrapper and the reconciler |
 | [B07](stories/B07-local-dev-and-poc.md) | Run the whole thing locally and on the GPU proof-of-concept node |
 | [B08](stories/B08-documentation-site.md) | Documentation an operator can deploy and run from |
 | [B09](stories/B09-signed-releases-slsa.md) | Signed releases with SLSA provenance and a software bill of materials |
-| [B21](stories/B21-contract-tests.md) | Contract tests between the wrapper, the reconciler and the browser |
 | [B23](stories/B23-chart-validation.md) | The Helm chart is validated on every change |
 | [B24](stories/B24-lint-format-typecheck.md) | Lint, formatting and type checks from locked tool versions |
 | [B25](stories/B25-htrflow-api-pin-test.md) | A canary test for htrflow version bumps |
 | [B27](stories/B27-one-pipeline-local-and-ci.md) | The same checks run locally and in CI |
 | [B28](stories/B28-repository-audit.md) | Independent repository audit (2026-08-26) |
-| [B29](stories/B29-audit-fixes-reconciler.md) | Audit fixes — the reconciler remembers, scales and retries correctly |
 | [B30](stories/B30-audit-fixes-wrapper.md) | Audit fixes — the wrapper never loses a page or misjudges a failure |
 | [B31](stories/B31-audit-fixes-chart-ops.md) | Audit fixes — the chart is safe to install and the bucket exposes only results |
+| [B41](stories/B41-gpu-wrapper-image-in-ci.md) | GPU wrapper image (arm64) built in CI with SLSA provenance and a Trivy scan |
+| [B63](stories/B63-campaigns-as-indexed-jobs.md) | Kampanjer körs som Kubernetes Indexed Jobs — reconcilern och dess statusfiler tas bort |
+
+### Partly implemented — named items still open (see the PBI's commit note)
+
+| Id | Story |
+|---|---|
+| [B02](stories/B02-kueue-job-contract.md) | Queue volumes fairly on the GPUs and fail safely |
+| [B04](stories/B04-gitops-campaigns.md) | Declare campaigns in git and let the system run them (GitOps) |
+| [B13](stories/B13-policy-as-code-kyverno.md) | Only images we built may run — policy as code with Kyverno |
+| [B18](stories/B18-priority-lanes.md) | Let urgent volumes jump the queue |
+| [B21](stories/B21-contract-tests.md) | Contract tests between the wrapper, the reconciler and the browser |
+| [B26](stories/B26-dependency-updates.md) | Automatic dependency updates with Dependabot |
+| [B29](stories/B29-audit-fixes-reconciler.md) | Audit fixes — the reconciler remembers, scales and retries correctly |
+| [B42](stories/B42-htrflow-arm64-base-image.md) | `htrflow` base image for arm64 published and pinned by digest |
 | [B44](stories/B44-wrapper-cpu-image.md) | Wrapper (CPU) image — CI build, SLSA provenance, SBOM and Trivy scan |
+| [B47](stories/B47-runtime-containers-diagram.md) | Runtime containers diagram refreshed (C4 level 2) |
+| [B53](stories/B53-campaign-state-machine-diagram.md) | Campaign lifecycle state diagram |
+| [B58](stories/B58-docs-ci-gate.md) | Docs CI gate — broken links, missing nav entries and undocumented chart values fail the build |
+
+### Superseded by B63 — the reconciler they name no longer exists
+
+| Id | Story |
+|---|---|
+| [B17](stories/B17-two-s3-principals.md) | Give jobs and the reconciler separate, minimal S3 credentials |
 | [B45](stories/B45-reconciler-image.md) | Reconciler image — CI build, SLSA provenance, SBOM and Trivy scan |
 
 ### Not started — productionalisation, in order
@@ -86,23 +106,10 @@ tables below.
 | [B10](stories/B10-durable-results-bucket.md) | Store results on the HCP |
 | [B11](stories/B11-campaigns-repo-governance.md) | Govern the campaigns repo — protected main, reviewed pull requests |
 | [B12](stories/B12-dev-cluster.md) | Deploy to the DEV cluster with Argo CD |
-| [B13](stories/B13-policy-as-code-kyverno.md) | Only images we built may run — policy as code with Kyverno |
 | [B14](stories/B14-slsa-level-and-provenance-verification.md) | Raise the SLSA level and verify provenance, not just signatures |
-| [B26](stories/B26-dependency-updates.md) | Automatic dependency updates with Dependabot |
 | [B37](stories/B37-every-image-reproducible-slsa-trivy.md) | Image inventory — no image runs that CI did not build |
-| [B42](stories/B42-htrflow-arm64-base-image.md) | `htrflow` base image for arm64 published and pinned by digest |
 | [B61](stories/B61-htrflow-image-org-namespace.md) | htrflow-imagen publiceras under riksarkivet/ på Docker Hub, inte airiksarkivet/ |
 | [B62](stories/B62-eupl-license.md) | htrflow-batch licensieras under EUPL-1.2, samma som htrflow |
-| [B63](stories/B63-campaigns-as-indexed-jobs.md) | Kampanjer körs som Kubernetes Indexed Jobs — reconcilern och dess statusfiler tas bort |
-| [B64](stories/B64-images-to-ghcr.md) | Imagerna publiceras till GHCR med workflow-identitet i stället för Docker Hub-token |
-| [B65](stories/B65-no-head-of-line-blocking.md) | En sida som gör retry ska inte stoppa GPU:n för sidorna bakom den (completion order i wrappern) |
-| [B66](stories/B66-pause-via-kueue.md) | Paus av en kampanj uttrycks i Kueue, inte genom att vi patchar dess Workload |
-| [B67](stories/B67-read-api-auth-and-public-logs.md) | Åtkomstkontroll för läs-API:t och ett beslut om vad som är publikt |
-| [B68](stories/B68-split-image-allowlist.md) | Plattformens egna imagar och pipelinernas imagar har varsin allow-list |
-| [B69](stories/B69-kyverno-validatingpolicy.md) | Policyerna skrivs som Kyverno ValidatingPolicy (CEL) i stället för ClusterPolicy |
-| [B70](stories/B70-alto-provenance-identifiers.md) | Varje ALTO-fil säger vilken kampanj, volym och källbild den kommer från |
-| [B71](stories/B71-page-xml-provenance.md) | PAGE XML bär samma proveniens som ALTO |
-| [B41](stories/B41-gpu-wrapper-image-in-ci.md) | GPU wrapper image (arm64) built in CI with SLSA provenance and a Trivy scan |
 | [B43](stories/B43-model-packaging-job-image.md) | Model-packaging job image built in CI with SLSA provenance and a Trivy scan |
 | [B36](stories/B36-registry-pull-through-cache.md) | A local registry as the single, cached source of images |
 | [B35](stories/B35-models-as-signed-oci-artifacts.md) | Models as signed OCI artifacts in our registry (ModelPack) |
@@ -112,28 +119,31 @@ tables below.
 | [B60](stories/B60-alert-rules-as-code.md) | Alert rules as code |
 | [B38](stories/B38-architecture-diagrams.md) | Diagram conventions — how every architecture picture is drawn and kept |
 | [B46](stories/B46-system-context-diagram.md) | System context diagram (C4 level 1) |
-| [B47](stories/B47-runtime-containers-diagram.md) | Runtime containers diagram refreshed (C4 level 2) |
 | [B48](stories/B48-two-gitops-loops-diagram.md) | The two GitOps loops diagram |
 | [B49](stories/B49-environments-and-promotion-diagram.md) | Environments and promotion diagram |
 | [B50](stories/B50-supply-chain-trust-boundary-diagram.md) | Supply chain and trust boundary diagram |
 | [B51](stories/B51-network-diagram.md) | Network diagram |
 | [B52](stories/B52-storage-layout-diagram.md) | Storage layout diagram |
-| [B53](stories/B53-campaign-state-machine-diagram.md) | Campaign lifecycle state diagram |
 | [B54](stories/B54-deployment-and-promotion-page.md) | Deployment & Promotion page |
 | [B55](stories/B55-registry-and-models-page.md) | Registry & Models page |
 | [B56](stories/B56-governance-page.md) | Governance page |
 | [B57](stories/B57-operations-runbook-index.md) | Operations runbook index |
-| [B58](stories/B58-docs-ci-gate.md) | Docs CI gate — broken links, missing nav entries and undocumented chart values fail the build |
 | [B33](stories/B33-second-audit-before-production.md) | Second independent audit before production |
 | [B15](stories/B15-production-cluster.md) | Production stage — first promotion and tuning |
 | [B16](stories/B16-archive-scale-campaign.md) | Run an archive-scale campaign and measure it |
+| [B64](stories/B64-images-to-ghcr.md) | Imagerna publiceras till GHCR med workflow-identitet i stället för Docker Hub-token |
+| [B65](stories/B65-no-head-of-line-blocking.md) | En sida som gör retry ska inte stoppa GPU:n för sidorna bakom den (completion order i wrappern) |
+| [B66](stories/B66-pause-via-kueue.md) | Paus av en kampanj uttrycks i Kueue, inte genom att vi patchar dess Workload |
+| [B67](stories/B67-read-api-auth-and-public-logs.md) | Åtkomstkontroll för läs-API:t och ett beslut om vad som är publikt |
+| [B68](stories/B68-split-image-allowlist.md) | Plattformens egna imagar och pipelinernas imagar har varsin allow-list |
+| [B69](stories/B69-kyverno-validatingpolicy.md) | Policyerna skrivs som Kyverno ValidatingPolicy (CEL) i stället för ClusterPolicy |
+| [B70](stories/B70-alto-provenance-identifiers.md) | Varje ALTO-fil säger vilken kampanj, volym och källbild den kommer från |
+| [B71](stories/B71-page-xml-provenance.md) | PAGE XML bär samma proveniens som ALTO |
 
 ### Not started — after production
 
 | Id | Story |
 |---|---|
-| [B17](stories/B17-two-s3-principals.md) | Give jobs and the reconciler separate, minimal S3 credentials |
-| [B18](stories/B18-priority-lanes.md) | Let urgent volumes jump the queue |
 | [B19](stories/B19-iiif-cache-decision.md) | Decide whether an image cache is needed |
 | [B20](stories/B20-quality-prediction-in-batch.md) | Use the quality-prediction step in batch pipelines |
 

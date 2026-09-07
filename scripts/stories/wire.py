@@ -38,50 +38,32 @@ def rows(ids, base):
 
 B_impl = [
     "B01",
-    "B02",
     "B03",
-    "B04",
     "B06",
     "B07",
     "B08",
     "B09",
-    "B21",
     "B23",
     "B24",
     "B25",
     "B27",
     "B28",
-    "B29",
     "B30",
     "B31",
-    "B44",
-    "B45",
+    "B41",
+    "B63",
 ]
-C_impl = ["B05", "B22", "B32"]
-C_open = [
-    f"C{i:02d}" for i in range(4, 15)
-]  # C01–C03 retired: not a tool for archivists
+C_impl = ["B05", "C10"]
+C_partly = ["B22", "B32", "C08"]
+C_open = [f"C{i:02d}" for i in range(4, 15) if i not in (8, 10)]  # C01–C03 retired: not a tool for archivists
 B_prod = [
     "B10",
     "B11",
     "B12",
-    "B13",
     "B14",
-    "B26",
     "B37",
-    "B42",
     "B61",
     "B62",
-    "B63",
-    "B64",
-    "B65",
-    "B66",
-    "B67",
-    "B68",
-    "B69",
-    "B70",
-    "B71",
-    "B41",
     "B43",
     "B36",
     "B35",
@@ -91,29 +73,54 @@ B_prod = [
     "B60",
     "B38",
     "B46",
-    "B47",
     "B48",
     "B49",
     "B50",
     "B51",
     "B52",
-    "B53",
     "B54",
     "B55",
     "B56",
     "B57",
-    "B58",
     "B33",
     "B15",
     "B16",
+    "B64",
+    "B65",
+    "B66",
+    "B67",
+    "B68",
+    "B69",
+    "B70",
+    "B71",
 ]
-B_after = ["B17", "B18", "B19", "B20"]
+B_partly = [
+    "B02",
+    "B04",
+    "B13",
+    "B18",
+    "B21",
+    "B26",
+    "B29",
+    "B42",
+    "B44",
+    "B47",
+    "B53",
+    "B58",
+]
+B_obsolete = ["B17", "B45"]  # superseded by B63: the reconciler they name is gone
+B_after = [
+    "B19",
+    "B20",
+]
 U_impl = ["U01", "U02", "U03", "U08"]
-U_open = ["U04", "U05", "U06", "U07", "U09"]
+U_partly = ["U05", "U06"]
+U_open = ["U04", "U07", "U09"]
 S_all = [f"S{i:02d}" for i in range(2, 15)]
 T_all = [f"T{i:02d}" for i in range(1, 19)]
 allids = set(
-    B_impl + B_prod + B_after + U_impl + U_open + S_all + T_all + C_impl + C_open
+    B_impl + B_partly + B_obsolete + B_prod + B_after + U_impl + U_partly + U_open
+    + S_all + T_all + C_impl + C_partly + C_open
 )
 missing = set(files) - allids
 extra = allids - set(files)
@@ -146,6 +153,14 @@ tables below.
 
 {rows(B_impl, "")}
 
+### Partly implemented — named items still open (see the PBI's commit note)
+
+{rows(B_partly, "")}
+
+### Superseded by B63 — the reconciler they name no longer exists
+
+{rows(B_obsolete, "")}
+
 ### Not started — productionalisation, in order
 
 {rows(B_prod, "")}
@@ -171,6 +186,10 @@ s = (
 
 {rows(U_impl, "")}
 
+### Partly implemented — named items still open
+
+{rows(U_partly, "")}
+
 ### Not started
 
 {rows(U_open, "")}
@@ -193,6 +212,10 @@ s = (
 ### Implemented in the repository — awaiting acceptance
 
 {rows(C_impl, "")}
+
+### Partly implemented — named items still open
+
+{rows(C_partly, "")}
 
 ### Not started
 
@@ -229,21 +252,21 @@ desc = {
         "batch-kueue-helm",
         "#2800",
         "Transcribe whole archive volumes unattended on the GPU cluster, with results appearing in S3 as they are produced and a web page that shows progress",
-        f"{len(B_impl) + len(B_prod) + len(B_after)} ({len(B_impl)} built, {len(B_prod) + len(B_after)} not started)",
+        f"{len(B_impl) + len(B_partly) + len(B_obsolete) + len(B_prod) + len(B_after)} ({len(B_impl)} built, {len(B_partly)} partly, {len(B_obsolete)} superseded, {len(B_prod) + len(B_after)} not started)",
     ),
     "status": (
         "Campaigns status page",
         "campaign-status-page",
         "#2923",
         "The read-only status page for the data scientists running campaigns — every campaign and volume, live logs, links into the viewer, at archive scale",
-        f"{len(C_impl) + len(C_open)} ({len(C_impl)} built, {len(C_open)} not started)",
+        f"{len(C_impl) + len(C_partly) + len(C_open)} ({len(C_impl)} built, {len(C_partly)} partly, {len(C_open)} not started)",
     ),
     "uv4": (
         "UV4 linux",
         "uv4-linux",
         "#2801",
         "The Riksarkivet Universal Viewer built and run on Linux so anyone can open a transcribed volume from S3 in the browser, with the text next to the page image",
-        f"{len(U_impl) + len(U_open)} ({len(U_impl)} built, {len(U_open)} not started)",
+        f"{len(U_impl) + len(U_partly) + len(U_open)} ({len(U_impl)} built, {len(U_partly)} partly, {len(U_open)} not started)",
     ),
     "search": (
         "Search — Solr",
