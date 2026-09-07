@@ -58,12 +58,18 @@ FROM airiksarkivet/htrflow:v0.2.6-35f48a7@sha256:e56a87f7ad2b9d4fd87dcbed32bfa56
 ARG HTRFLOW_BASE_REVISION=v0.2.6-35f48a7
 LABEL org.opencontainers.image.base.name="docker.io/airiksarkivet/htrflow:v0.2.6-35f48a7" \
       se.riksarkivet.htrflow.base.revision="${HTRFLOW_BASE_REVISION}"
+# Also as ENV: a label is invisible from inside the container, and the
+# wrapper stamps this into every ALTO (provenance.py).
+ENV HTRFLOW_BASE_REVISION=${HTRFLOW_BASE_REVISION}
 
 FROM ${HTRFLOW_ARM64_BASE} AS base-arm64
 ARG HTRFLOW_ARM64_BASE
 ARG HTRFLOW_BASE_REVISION=unknown
 LABEL org.opencontainers.image.base.name="${HTRFLOW_ARM64_BASE}" \
       se.riksarkivet.htrflow.base.revision="${HTRFLOW_BASE_REVISION}"
+# Also as ENV: a label is invisible from inside the container, and the
+# wrapper stamps this into every ALTO (provenance.py).
+ENV HTRFLOW_BASE_REVISION=${HTRFLOW_BASE_REVISION}
 
 FROM base-${TARGETARCH} AS runtime
 ARG TARGETARCH
