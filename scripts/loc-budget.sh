@@ -96,7 +96,16 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2197
 # test this task had already removed. `Pipeline` now forbids unknown keys,
 # so a stale `model_revision:` gets the same one-line sentence as any other
 # typo. (B63)
-check converter "$(count packages/converter/src -name '*.py')" 1283
+# 1283 -> 1340 (2026-09-07, B72): the campaign split stopped being a volume
+# count. `split` carries a byte budget as well (an `images:` volume is one
+# line of joined URLs, so 45 of them can pass the count and still blow the
+# 1 MiB ConfigMap limit), `campaign_names` cuts the campaign name to what an
+# Indexed Job's own name may be, `cli` looks an earlier render up under that
+# cut name, and `validate` refuses a campaign file named like a part. Half
+# of the 57 lines is the three API-server rules written down where the next
+# reader will look for them -- the exact messages the server answers with,
+# so nobody has to rediscover them from a failed apply.
+check converter "$(count packages/converter/src -name '*.py')" 1340
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
