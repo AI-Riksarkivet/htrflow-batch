@@ -144,7 +144,13 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2238
 # 1425 -> 1427 (2026-09-07, B74 fix round): the gate compares with `-le`,
 # not `-lt` -- the check runs before each sleep, so `-lt` gave up one step
 # early while printing the limit it had not reached. Two lines saying so.
-check converter "$(count packages/converter/src -name '*.py')" 1427
+# 1427 -> 1430 (2026-09-07, B74 fix round): the bound is clamped to the
+# pod's own activeDeadlineSeconds. A pipeline with a `max_seconds:` under
+# `warmup_wait_seconds` was killed by the kubelet at 143 -- which no
+# FailIndex rule matches -- before the gate could give up, so it went
+# straight back to retrying with a held GPU. `deadline` becomes a local
+# (-4) and the min() plus the four lines saying why cost 7.
+check converter "$(count packages/converter/src -name '*.py')" 1430
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

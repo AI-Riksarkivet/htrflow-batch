@@ -234,11 +234,8 @@ def _campaign_job(
 
     # The per-volume budget is the pod's own deadline, not a wrapper env var
     # (docs: how-it-works/failure-handling).
-    _set(
-        job,
-        "spec.template.spec.activeDeadlineSeconds",
-        p.max_seconds or cfg.max_seconds,
-    )
+    deadline = p.max_seconds or cfg.max_seconds
+    _set(job, "spec.template.spec.activeDeadlineSeconds", deadline)
 
     _set(job, "spec.template.spec.volumes[0].configMap.name", f"campaign-{name}")
     _set(job, "spec.template.spec.volumes[1].configMap.name", f"htr-pipeline-{p.id}")
@@ -254,8 +251,14 @@ def _campaign_job(
     _set(
         job,
         "spec.template.spec.initContainers[0].command[2]",
+        # Never longer than the pod it runs in: past `activeDeadlineSeconds`
+        # the kubelet kills the pod with 143, which no `FailIndex` rule
+        # matches, so a pipeline whose `max_seconds:` is the shorter of the
+        # two would go straight back to retrying and holding its GPU.
         _WARMUP_WAIT.format(
-            marker=marker, step=_WAIT_STEP, limit=cfg.warmup_wait_seconds
+            marker=marker,
+            step=_WAIT_STEP,
+            limit=min(cfg.warmup_wait_seconds, deadline),
         ),
     )
 

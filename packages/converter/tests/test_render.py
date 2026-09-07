@@ -166,6 +166,35 @@ def test_the_warmup_wait_is_bounded_and_fails_the_index():
     }
 
 
+def test_the_warmup_wait_never_outlasts_the_pods_own_deadline():
+    """A pipeline whose `max_seconds:` is shorter than `warmup_wait_seconds`
+    would have its pod killed by the kubelet -- exit 143, matched by no
+    `FailIndex` rule -- before the gate could ever give up, so the index
+    would be retried three times, holding a GPU through every wait. That is
+    the failure the bound exists to stop, so the rendered wait is the
+    smaller of the two."""
+    _, demo, cfg = _kyrk()
+    cfg = cfg.model_copy(update={"warmup_wait_seconds": 900})
+    short = demo.model_copy(update={"max_seconds": 600})
+    c = Campaign(
+        name="kyrk",
+        pipeline="demo-v1",
+        volumes=[Volume(id="v1", manifest="https://x/y")],
+    )
+    spec = render.campaign_objects(c, short, cfg)[1]["spec"]["template"]["spec"]
+    script = spec["initContainers"][0]["command"][-1]
+
+    assert spec["activeDeadlineSeconds"] == 600
+    assert '[ "$n" -le 600 ]' in script
+    assert "after 600s" in script
+
+    # The other way round, the pipeline's deadline is none of the gate's
+    # business: 900 s of waiting inside a 6 h budget is what it is for.
+    spec = render.campaign_objects(c, demo, cfg)[1]["spec"]["template"]["spec"]
+    assert spec["activeDeadlineSeconds"] == 21600
+    assert '[ "$n" -le 900 ]' in spec["initContainers"][0]["command"][-1]
+
+
 def test_the_warmup_deadline_is_the_pods_and_not_the_jobs():
     """A Job-level `activeDeadlineSeconds` makes the JOB controller delete the
     pod, and the termination message the warm-up writes on SIGTERM goes with
