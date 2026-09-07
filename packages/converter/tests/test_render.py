@@ -164,6 +164,29 @@ def test_the_warmup_wait_is_bounded_and_fails_the_index():
     }
 
 
+def test_the_warmup_job_schedules_where_the_campaign_job_does():
+    """A warm-up Job without the campaign's `runtimeClassName`, `nodeSelector`
+    and `tolerations` lands on whatever node will take it, fills a *different*
+    ReadWriteOnce cache PV, and the marker never appears where the batch pods
+    wait -- the same held GPU, on a correctly tainted cluster (audit X5)."""
+    kyrk, demo, cfg = _kyrk()
+    cfg = cfg.model_copy(
+        update={
+            "runtime_class": "nvidia",
+            "node_selector": {"gpu": "true"},
+            "tolerations": [
+                {"key": "gpu", "operator": "Exists", "effect": "NoSchedule"}
+            ],
+        }
+    )
+    warmup = render.pipeline_objects(demo, cfg)[1]["spec"]["template"]["spec"]
+    campaign = render.campaign_objects(kyrk, demo, cfg)[1]["spec"]["template"]["spec"]
+
+    fields = ("runtimeClassName", "nodeSelector", "tolerations")
+    assert {f: warmup[f] for f in fields} == {f: campaign[f] for f in fields}
+    assert warmup["runtimeClassName"] == "nvidia"
+
+
 def test_campaign_volume_mounted_from_the_campaign_configmap():
     kyrk, demo, cfg = _kyrk()
     job = render.campaign_objects(kyrk, demo, cfg)[1]
