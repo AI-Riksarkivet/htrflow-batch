@@ -35,6 +35,12 @@ _MiB = 1024 * 1024
 _VOLUME_ID_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?\Z")
 _NAME_RE = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?\Z")
 _IMAGE_RE = re.compile(r"[a-z0-9./:-]+@sha256:[0-9a-f]{64}\Z")
+#: The converter names the parts of a campaign it splits ``<name>-part1``,
+#: ``-part2``, ... (``render.campaign_names``). A campaign file with that
+#: ending would share its rendered file, Job and ConfigMap with a part of the
+#: campaign it is named after -- and be reported as "append-only" instead,
+#: which sends its author looking for a change they never made.
+_PART_RE = re.compile(r"-part\d+\Z")
 
 #: `name`/`id` are taken from the file name (parse.py overrides whatever the
 #: YAML says), so the only way to fix either is to rename the file.
@@ -153,6 +159,11 @@ class Campaign(BaseModel):
     def _check_name(cls, v: str) -> str:
         if not _NAME_RE.match(v):
             raise ValueError(_RENAME_THE_FILE)
+        if _PART_RE.search(v):
+            raise ValueError(
+                'ends in "-part<number>", which is what the converter calls '
+                "the parts of a campaign it splits — rename the file"
+            )
         return v
 
     @field_validator("pipeline")
