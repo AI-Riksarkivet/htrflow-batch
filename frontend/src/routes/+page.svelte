@@ -5,11 +5,12 @@
   // cadence, both documented in $lib/config / $lib/api.
   import { fetchJobs, type JobSummary } from "$lib/api.js";
   import { RELOAD_MS } from "$lib/config.js";
-  import { describeApiError } from "$lib/reasons.js";
+  import { describeApiError, describeUnreadable } from "$lib/reasons.js";
 
   // The last good list stays on screen through a failed poll; `error` is a
   // banner on top of it, never a replacement for it.
   let jobs = $state<JobSummary[] | null>(null);
+  let unreadable = $state(0);
   let error = $state<string | null>(null);
 
   // One request in flight at a time: a slow poll is abandoned when the next
@@ -23,7 +24,8 @@
     try {
       const result = await fetchJobs();
       if (controller.signal.aborted) return;
-      jobs = result;
+      jobs = result.jobs;
+      unreadable = result.unreadable;
       error = null;
     } catch (e) {
       if (controller.signal.aborted) return;
@@ -55,6 +57,8 @@
   </header>
   {#if error !== null}
     <p class="banner error" role="alert">{error}</p>
+  {:else if unreadable > 0}
+    <p class="banner error" role="alert">{describeUnreadable(unreadable)}</p>
   {/if}
   {#if jobs === null}
     {#if error === null}<p>Loading…</p>{/if}

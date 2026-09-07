@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { ApiUnreachable, type VolumeReason } from "./api.js";
-import { describeApiError, describeReason } from "./reasons.js";
+import {
+  describeApiError,
+  describeReason,
+  describeUnreadable,
+} from "./reasons.js";
 
 /**
  * The wording of every sentence a reader can meet is pinned here, verbatim.
@@ -234,5 +238,19 @@ describe("describeApiError", () => {
         "the service are running different versions.",
     );
     expect(sentence).not.toContain("invalid_type");
+  });
+});
+
+describe("describeUnreadable", () => {
+  test("one hidden campaign, with the next step", () => {
+    expect(describeUnreadable(1)).toBe(
+      "1 campaign could not be read and is not shown. Reload the page; if it " +
+        "keeps happening, the page and the service are running different versions.",
+    );
+  });
+  test("plural", () => {
+    expect(describeUnreadable(3)).toMatch(
+      /^3 campaigns could not be read and are not shown\./,
+    );
   });
 });
