@@ -1,8 +1,9 @@
 name: Documentation
-# Manual-only while the repo is private: GitHub Pages isn't available for
-# private repos on the free plan, so a push trigger would fail every run.
-# Restore the push trigger if the repo goes public.
+# The repo is public and Pages is enabled (2026-09-07), so every merge to
+# main publishes the site; the dispatch stays for a manual rebuild.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
