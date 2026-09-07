@@ -435,6 +435,23 @@ class TestDetail:
         row3 = next(v for v in d["volumes"] if v["index"] == 3)
         assert row3["reason"]["error"] == "verify failed"
 
+    def test_a_terminated_main_container_outranks_a_failed_init_container(self):
+        """Both terminated: the wrapper ran, so its own message is the
+        reason; the init container's is only read when the wrapper never
+        started."""
+        pod = _pod(3, terminated_message='{"error": "verify failed"}')
+        pod["status"]["initContainerStatuses"] = [
+            {
+                "name": "warmup-wait",
+                "state": {"terminated": {"exitCode": 13, "message": "gave up"}},
+            }
+        ]
+        d = projection.detail(
+            _job(), _configmap(), [pod], CFG, offset=0, limit=200, warmup=MISSING_WARMUP
+        )
+        row3 = next(v for v in d["volumes"] if v["index"] == 3)
+        assert row3["reason"]["error"] == "verify failed"
+
     def test_laststate_terminated_reason_fallback(self):
         pod = _pod(3)
         pod["status"]["containerStatuses"][0]["state"] = {"running": {}}
