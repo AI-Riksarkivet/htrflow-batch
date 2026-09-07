@@ -80,9 +80,9 @@ are the ones delivered by this repository:
 
 | Feature | Azure | What it is, in one sentence | Stories |
 |---|---|---|---|
-| [Batch using Kueue+Helm chart](batch-kueue-helm/feature.md) | #2800 | Transcribe whole archive volumes unattended on the GPU cluster, with results appearing in S3 as they are produced and a web page that shows progress | 67 (19 built, 48 not started) |
-| [Campaigns status page](campaign-status-page/feature.md) | #2923 | The read-only status page for the data scientists running campaigns — every campaign and volume, live logs, links into the viewer, at archive scale | 14 (3 built, 11 not started) |
-| [UV4 linux](uv4-linux/feature.md) | #2801 | The Riksarkivet Universal Viewer built and run on Linux so anyone can open a transcribed volume from S3 in the browser, with the text next to the page image | 9 (4 built, 5 not started) |
+| [Batch using Kueue+Helm chart](batch-kueue-helm/feature.md) | #2800 | Transcribe whole archive volumes unattended on the GPU cluster, with results appearing in S3 as they are produced and a web page that shows progress | 67 (15 built, 12 partly, 2 superseded, 38 not started) |
+| [Campaigns status page](campaign-status-page/feature.md) | #2923 | The read-only status page for the data scientists running campaigns — every campaign and volume, live logs, links into the viewer, at archive scale | 14 (2 built, 3 partly, 9 not started) |
+| [UV4 linux](uv4-linux/feature.md) | #2801 | The Riksarkivet Universal Viewer built and run on Linux so anyone can open a transcribed volume from S3 in the browser, with the text next to the page image | 9 (4 built, 2 partly, 3 not started) |
 | [Search — Solr](search-solr/feature.md) | #2811 | Make every transcribed line findable across all volumes: a Solr index fed automatically from the results bucket, a search service, and a search page that opens the hit in the viewer with the line highlighted | 13 draft, unreviewed — not in Azure yet |
 | [ATR as a Service (ATRaaS)](atr-as-a-service/feature.md) | #2831 | The batch system as a free, registration-based service for public sector and universities: organisations, a public API, uploads, quotas, retention and a thin web UI on top of htrflow-batch | 18 (0 built, 18 not started) |
 

@@ -47,13 +47,18 @@ than an ssh tunnel, and testing it automatically.
 | [U03](stories/U03-view-results-from-s3.md) | Open any batch-transcribed volume from S3 in the viewer |
 | [U08](stories/U08-viewer-image-slsa-trivy.md) | Viewer image (UV4 + campaign browser) — CI build, SLSA provenance, SBOM and Trivy scan |
 
+### Partly implemented — named items still open
+
+| Id | Story |
+|---|---|
+| [U05](stories/U05-viewer-behind-ingress.md) | Give the viewer a real web address |
+| [U06](stories/U06-search-inside-a-volume.md) | Search inside a volume from the viewer |
+
 ### Not started
 
 | Id | Story |
 |---|---|
 | [U04](stories/U04-upstream-the-patch.md) | Get our viewer changes into the Riksarkivet fork |
-| [U05](stories/U05-viewer-behind-ingress.md) | Give the viewer a real web address |
-| [U06](stories/U06-search-inside-a-volume.md) | Search inside a volume from the viewer |
 | [U07](stories/U07-viewer-smoke-test.md) | Automatically check that the viewer still works after every change |
 | [U09](stories/U09-viewer-flow-diagram.md) | Viewer flow diagram |
 

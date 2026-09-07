@@ -48,8 +48,15 @@ how it behaves at archive scale, and how it is tested.
 | Id | Story |
 |---|---|
 | [B05](stories/B05-campaign-browser.md) | See progress and live logs in the browser |
+| [C10](stories/C10-status-page-dataflow-diagram.md) | Status page data-flow diagram |
+
+### Partly implemented — named items still open
+
+| Id | Story |
+|---|---|
 | [B22](stories/B22-frontend-tests-and-checks.md) | Frontend tests and checks |
 | [B32](stories/B32-audit-fixes-frontend.md) | Audit fixes — the status page degrades gracefully and is safe to link from |
+| [C08](stories/C08-status-at-archive-scale.md) | Status at archive scale |
 
 ### Not started
 
@@ -59,9 +66,7 @@ how it behaves at archive scale, and how it is tested.
 | [C05](stories/C05-volume-detail-page.md) | Volume detail page |
 | [C06](stories/C06-download-results.md) | Download a volume's results |
 | [C07](stories/C07-filter-sort-find.md) | Filter, sort and find across campaigns |
-| [C08](stories/C08-status-at-archive-scale.md) | Status at archive scale |
 | [C09](stories/C09-notify-requester.md) | Notify the requester when a campaign finishes |
-| [C10](stories/C10-status-page-dataflow-diagram.md) | Status page data-flow diagram |
 | [C11](stories/C11-campaign-table-volume-pages-log.md) | Kampanjtabellen — volym-id öppnar viewern, en kolumn för sidor, en logg-länk |
 | [C12](stories/C12-alto-error-next-step.md) | Viewerns felmeddelanden för ALTO säger vad man gör härnäst |
 | [C13](stories/C13-precise-lifecycle-stage.md) | Status-sidan säger exakt var i cykeln en kampanj och varje volym befinner sig |
