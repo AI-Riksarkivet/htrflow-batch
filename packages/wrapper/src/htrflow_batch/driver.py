@@ -63,11 +63,36 @@ def load_pipeline(pipeline_path: str, out_dir: Path):
     return Pipeline(list(pipeline.steps) + exports)
 
 
+def release_document(*documents) -> None:
+    """Drop a finished page from htrflow's ``progress`` registries. They are
+    module-global and never emptied: htrflow's CLI runs one process per
+    volume, so it never notices, but the wrapper runs one long-lived Pipeline
+    over a whole volume and every page's Region tree would stay reachable
+    until the process exits (~0.5 GB at 10 000 pages, audit X2). Best-effort:
+    an htrflow build without those registries must still process pages."""
+    try:
+        from htrflow import progress  # ty: ignore[unresolved-import]
+
+        for document in documents:
+            # _tasks/_exports/_steps are dicts keyed by Document, filled by
+            # Pipeline.run and Export; _tasks' value is the rich task, which
+            # the progress singleton holds on to until it is removed.
+            task = getattr(progress, "_tasks", {}).pop(document, None)
+            for name in ("_exports", "_steps"):
+                getattr(progress, name, {}).pop(document, None)
+            if task is not None:
+                progress._progress.remove_task(task)
+    except Exception:
+        pass  # never fail a page over its bookkeeping
+
+
 def process_page(pipeline, image_path: Path, out_dir: Path) -> dict[str, Path]:
     from htrflow.pipeline.steps import auto_import  # ty: ignore[unresolved-import]
 
     for document in auto_import([str(image_path)]):
-        pipeline.run(document)
+        # run() hands back what its last step produced, and progress.done()
+        # registers THAT: normally the same object, but release both.
+        release_document(document, pipeline.run(document))
     stem = image_path.stem
     files: dict[str, Path] = {}
     missing: list[str] = []
