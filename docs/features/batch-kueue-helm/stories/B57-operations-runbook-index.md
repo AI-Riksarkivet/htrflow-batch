@@ -14,9 +14,9 @@ title: Operations runbook index
 Failure Handling explains the mechanism; on-call needs the shortest path from alert to action.
 
 ## What this delivers
-
 - A new page under the relevant track covering one page that maps each failure class (stale status, needs-attention volume, warm-up stuck, HCP write errors, policy rejection, promotion failed) to the page and the command that resolves it, linked from the nav and from the stories that need it.
 - Commands shown are the real ones, tested once by following the page.
+- Runbooken får kommandon för de fyra lägen den beskriver: wedged `warmup-wait`, oadmitterbar Workload, full modellcache, bumpad pipeline-image. (revision 2026-09-07)
 
 ## Done when
 

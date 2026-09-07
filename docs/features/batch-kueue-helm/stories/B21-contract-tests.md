@@ -29,6 +29,8 @@ are where the audit found the real bugs.
   accept.
 - Kube adapter tests against real client models with honest label
   selectors, so a Job the reconciler creates is one it can find again.
+- Policyerna testas som ett kontraktstest: `helm template --show-only` + `kyverno apply` mot ett godkänt och ett avvisat fixture-par. (revision 2026-09-07, X21)
+- `kube.Reader` testas mot en fejkad Kubernetes-klient som kontrollerar selectors, namespace-fan-out och 404-vägen. (revision 2026-09-07, X31)
 
 ## Done when
 

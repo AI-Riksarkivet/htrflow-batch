@@ -24,7 +24,6 @@ only human-facing surface of the batch system is one people can trust.
   layout.
 
 ## What was done
-
 - Fail-soft schemas: a bad field renders as `unknown` with a banner; poll
   errors are counted and capped, never blanking a rendered page.
 - The wrapper now writes a first-page `thumb.jpg`; the reconciler
@@ -36,6 +35,8 @@ only human-facing surface of the batch system is one people can trust.
   tables and log lines; one clock for the live poll; run viewer proven on
   a 480-page volume.
 - Component and route tests for all of the above (B22).
+- Hela CSP:n skickas som header även för `/uv.html`, inte bara via SvelteKits prerender-meta. (revision 2026-09-07, X26)
+- Volymraderna nycklas på `index`, inte `id`, volym-id URL-kodas i länkarna, och `AbortController` skickas in i `fetchJobs`. (revision 2026-09-07, C-7)
 
 ## Done when
 

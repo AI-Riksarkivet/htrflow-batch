@@ -27,7 +27,6 @@ kampanj kan vänta på kvot, på warm-up eller på att en annan kampanj ska
 lämna GPU:n. Precisionen finns i systemet, den når inte sidan.
 
 ## Vad som levereras
-
 - Wrappern skriver sitt aktuella steg och sin sidräkning (`klara/totalt`,
   senaste sidan, tid sedan förra sidan) till en liten statusfil per volym
   under bucketens **privata** `status/`-prefix (samma skydd som
@@ -47,6 +46,7 @@ lämna GPU:n. Precisionen finns i systemet, den når inte sidan.
 - Tester i wrapper, web och frontend; dokumentation:
   `docs/reference/frontend.md`, `docs/reference/s3-layout.md`,
   `docs/how-it-works/wrapper.md`.
+- `newest(pods)` bryter lika tidsstämplar deterministiskt i stället för att visa den pod API-servern råkade lista först. (revision 2026-09-07, C-7)
 
 ## Klart när
 

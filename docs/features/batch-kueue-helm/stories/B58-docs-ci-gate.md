@@ -14,11 +14,12 @@ title: Docs CI gate — broken links, missing nav entries and undocumented chart
 A docs check that runs on every pull request is the only thing that keeps documentation current after the people who wrote it move on.
 
 ## What this delivers
-
 - Docs built with the strict flag in the CI checks (B27): unknown pages and bad nav entries fail.
 - An internal link and anchor check across `docs/`, the feature and story pages included.
 - A chart-values ↔ reference-page check: every value in `values.yaml` / `values.schema.json` appears on the Chart Values page and vice versa.
 - The docs site published automatically on merge to `main` (today the publish workflow is manual).
+- 2026-09-02-handoffarna får en statusrad och plats i navet; `reference/frontend.md` nämner `reasons.ts` och `make viewer-image` byts mot `build-web`. (revision 2026-09-07, G10)
+- `docs.yml` deployar på merge — skälet "medan repot är privat" gäller inte längre. (revision 2026-09-07)
 
 ## Done when
 

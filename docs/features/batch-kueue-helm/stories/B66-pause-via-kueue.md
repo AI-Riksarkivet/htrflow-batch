@@ -40,6 +40,7 @@ renderar, som Kueue läser.
   övergångslösning i `docs/how-it-works/campaigns.md`.
 - Dokumentation: `docs/how-it-works/campaigns.md`, `docs/reference/`
   (RBAC-tabellen).
+- Migrera `Cluster` till Kueue `v1beta2` i samma vända och låt "Kueue is not installed" nämna API-versionen. (revision 2026-09-07, X24)
 
 ## Klart när
 

@@ -28,7 +28,6 @@ måste vara på plats innan B12 (DEV-klustret) gör tjänsten nåbar från
 arbetsnätet.
 
 ## Vad som levereras
-
 - Beslutet nedskrivet i `docs/how-it-works/decision-log.md`: allt kräver
   inloggning — status-sidan, `/api/v1/*`, viewern, ALTO/PAGE, `iiif.json`,
   `manifest.json` och run-loggar — och konton som räknas är medlemmar i
@@ -59,6 +58,7 @@ arbetsnätet.
   utveckling).
 - Dokumentation: `docs/reference/frontend.md`, `docs/getting-started/viewing.md`,
   `docs/reference/configuration.md` (genererad).
+- `HTRFLOW_NAMESPACES` och RBAC:en stämmer överens (eller listan tas bort), och `get_job` kontrollerar namespace mot konfigurationen. (revision 2026-09-07, X30)
 
 ## Klart när
 

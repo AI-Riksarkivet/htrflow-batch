@@ -13,7 +13,6 @@ and its formatting enforced, so that a status-page regression is caught
 before a product owner sees a blank card.
 
 ## What this delivers
-
 - **Component and route tests** (vitest on jsdom): every volume state
   renders distinctly, the run-log viewer groups and summarises correctly,
   keyboard navigation works, the volume-scale controls behave.
@@ -21,6 +20,7 @@ before a product owner sees a blank card.
   to a warning, never a blank page; unexpected URLs are refused.
 - **`svelte-check`** in strict TypeScript mode and **prettier** as a check,
   both in CI.
+- `bun run lint` (prettier) körs i `CheckFrontend`. (revision 2026-09-07)
 
 ## Done when
 

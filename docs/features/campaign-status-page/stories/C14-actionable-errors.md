@@ -26,7 +26,6 @@ applicera igen) och tillfälligt (systemet försöker igen, vänta) finns i
 termination-meddelandet men är inte det första en läsare ser.
 
 ## Vad som levereras
-
 - En katalog över varje fel som kan nå sidan — per steg (config, setup,
   resume, load, stream, verify, publish, warm-up) och per orsak (modell
   saknas, revision fel, IIIF-server svarar inte, bild för stor, kvot,
@@ -43,6 +42,7 @@ termination-meddelandet men är inte det första en läsare ser.
   har ett test per normaliserad orsak.
 - Dokumentation: katalogen som sida under `docs/reference/`,
   `docs/how-it-works/failure-handling.md`.
+- En saknad kampanj-ConfigMap säger det i en mening i stället för en tom tabell med ett `load more (0/N)` som inte gör något. (revision 2026-09-07, X29)
 
 ## Klart när
 

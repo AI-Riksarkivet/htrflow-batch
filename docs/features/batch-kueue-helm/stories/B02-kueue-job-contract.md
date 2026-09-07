@@ -21,7 +21,6 @@ needs a policy: retry the transient (network hiccup), don't retry the
 permanent (bad manifest), and stop retrying at some point.
 
 ## What this delivers
-
 - **One volume = one Kubernetes Job**, created *suspended* and released by
   **Kueue** when GPU quota is free. Queue order is first-in-first-out; the
   quota (how many GPUs the batch system may use) is one number in the chart.
@@ -35,6 +34,7 @@ permanent (bad manifest), and stop retrying at some point.
   when the node evicted it is *not* charged against that budget.
 - **Graceful shutdown.** On eviction the job finishes the page in flight,
   ships its log, and exits with a code the retry logic understands.
+- Sista run-log-uploaden har en hård tidsbudget så att `finish()` ryms i `terminationGracePeriodSeconds`. (revision 2026-09-07, X39)
 
 ## Done when
 

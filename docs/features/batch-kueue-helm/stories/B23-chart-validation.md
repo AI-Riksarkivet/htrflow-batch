@@ -13,7 +13,6 @@ against the Kubernetes API schema, so that a typo in a template is caught
 in CI rather than by a failed `helm upgrade` on the cluster.
 
 ## What this delivers
-
 - `helm lint` on the chart.
 - A **values schema** (`values.schema.json`) so an unknown or mistyped
   value fails at install time.
@@ -22,6 +21,7 @@ in CI rather than by a failed `helm upgrade` on the cluster.
   templates such as the Kyverno policy and network rules.
 - **`kubeconform -strict`** on the rendered manifests against the
   Kubernetes schemas.
+- `helm lint` ensam räcker inte (`fail`/`required` är osynliga för den), och en andra release i ett annat namespace krockar inte på `ResourceFlavor`/`ClusterQueue`. (revision 2026-09-07, D9, D10)
 
 ## Done when
 

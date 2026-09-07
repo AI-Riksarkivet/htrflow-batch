@@ -14,8 +14,8 @@ title: Wrapper (CPU) image — CI build, SLSA provenance, SBOM and Trivy scan
 This is one of the three images the publish workflow already covers (B09); the story exists so the inventory (B37) has one row per image with its own acceptance, and so that a future change to this image has a place to be tracked.
 
 ## What this delivers
-
 - Built by `publish.yml` from pinned base image, `uv` and torch versions; immutable tag; cosign keyless signature; SLSA build-provenance attestation; SPDX SBOM; Trivy blocking on CRITICAL.
+- En bevisad publish-körning gör `compose-test` grön; därefter kopplas den in på main-push och compose-imagerna pinnas på digest. (revision 2026-09-07, X32)
 
 ## Done when
 

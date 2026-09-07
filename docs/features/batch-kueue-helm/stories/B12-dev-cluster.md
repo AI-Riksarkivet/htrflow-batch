@@ -55,6 +55,7 @@ rejects while a mistake still costs nothing.
 - Access to the HCP bucket (B10) from DEV; a small real campaign run
   through the reconciler, visible in the status page and viewer at DEV's
   address.
+- ServiceAccount:en för in-cluster apply får också en NetworkPolicy till API-servern, annars är `apply.rbac.enabled` död under `network.defaultDeny`. (revision 2026-09-07, X23)
 
 ## Done when
 
