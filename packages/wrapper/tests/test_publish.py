@@ -42,8 +42,7 @@ def test_run_manifest_is_the_completion_marker_field_for_field(cfg, monkeypatch)
     )
 
     body = publish.run_manifest(
-        cfg,
-        {"IMAGE_DIGEST": "sha256:abc"},
+        cfg.model_copy(update={"image_digest": "sha256:abc"}),
         _pages(),
         stats,
         "https://iiif.example/mock-vol/manifest.json",
@@ -85,12 +84,11 @@ def test_run_manifest_is_the_completion_marker_field_for_field(cfg, monkeypatch)
         "viewer_url": "http://public/htr-results/demo-v1/SE-RA-1234/iiif.json",
     }
     assert "S3CRET" not in str(body)  # S6: the bucket is world-readable
-    assert "IMAGE_DIGEST" not in body  # unknown when the Job does not set it
 
 
 def test_run_manifest_without_an_image_digest_or_a_wall_clock(cfg):
     body = publish.run_manifest(
-        cfg, {}, _pages(), StreamStats(), "https://x/manifest.json", PIPELINE, 0.0, 0
+        cfg, _pages(), StreamStats(), "https://x/manifest.json", PIPELINE, 0.0, 0
     )
     assert body["image_digest"] == "unknown"
     assert body["pages_per_second"] == 0  # no division by a zero wall clock
@@ -149,7 +147,6 @@ def test_wall_seconds_spans_the_publish_uploads(tmp_path, monkeypatch):
 
     publish.run(
         cfg,
-        {},
         store,
         {"label": {"none": ["vol"]}, "items": []},
         "https://iiif.example/mock-vol/manifest.json",

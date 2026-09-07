@@ -151,3 +151,18 @@ def test_no_setting_may_carry_a_secret():
     assert carriers == [], (
         f"{carriers}: secrets reach the wrapper as a mounted file, never as env"
     )
+
+
+def test_provenance_fields_default_to_unknown_and_read_their_env():
+    cfg = Config.from_env(REQUIRED)
+    assert cfg.image_digest == "unknown"
+    assert cfg.htrflow_base_revision == "unknown"
+    cfg = Config.from_env(
+        dict(
+            REQUIRED,
+            IMAGE_DIGEST="docker.io/x@sha256:abc",
+            HTRFLOW_BASE_REVISION="v0.2.6-35f48a7",
+        )
+    )
+    assert cfg.image_digest == "docker.io/x@sha256:abc"
+    assert cfg.htrflow_base_revision == "v0.2.6-35f48a7"

@@ -76,6 +76,8 @@ template` refuses it, **nobody** = convention only.
 | `LOG_SHIP_SECONDS` | env | `15.0` | — | no secret — nobody |
 | `MANIFEST_MAX_BYTES` | env | `16777216` | — | no secret — nobody |
 | `FETCH_MAX_BYTES` | env | `67108864` | — | no secret — nobody |
+| `IMAGE_DIGEST` | env | `unknown` | — | no secret — nobody |
+| `HTRFLOW_BASE_REVISION` | env | `unknown` | — | no secret — nobody |
 
 `Config` is not the whole wrapper env: these six names
 are read directly, by the warm-up entrypoint or by the Job
@@ -85,7 +87,6 @@ skeleton, never as a campaign setting.
 
 | Key | Read by | Why not `Config` |
 |---|---|---|
-| `IMAGE_DIGEST` | `publish.py` | provenance the Job skeleton stamps |
 | `TERMINATION_LOG_PATH` | `main.py` | the path Kubernetes sets, not chosen here |
 | `HF_HUB_OFFLINE` | `warmup.py` | the warm-up entrypoint's own contract |
 | `HF_HOME` | `warmup.py` | the warm-up entrypoint's own contract |

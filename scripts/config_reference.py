@@ -78,7 +78,6 @@ SURFACES = [
 #: reads.
 _WARMUP = "the warm-up entrypoint's own contract"
 ALSO_READ = [
-    ("IMAGE_DIGEST", "publish.py", "provenance the Job skeleton stamps"),
     ("TERMINATION_LOG_PATH", "main.py", "the path Kubernetes sets, not chosen here"),
     ("HF_HUB_OFFLINE", "warmup.py", _WARMUP),
     ("HF_HOME", "warmup.py", _WARMUP),

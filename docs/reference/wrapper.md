@@ -56,7 +56,8 @@ configures, so its settings are namespaced.
 | `DOWNLOAD_CONCURRENCY` | `12` | Parallel page downloads |
 | `MANIFEST_MAX_BYTES` | `16777216` | Byte cap on the manifest body (over it: exit 13) |
 | `FETCH_MAX_BYTES` | `67108864` | Byte cap on one image body (over it: the page fails without retry) |
-| `IMAGE_DIGEST` | `unknown` | Provenance only — recorded verbatim in `manifest.json` |
+| `IMAGE_DIGEST` | `unknown` | Provenance only — recorded verbatim in `manifest.json` and in every ALTO's `htrflow-batch` Processing block |
+| `HTRFLOW_BASE_REVISION` | `unknown` | Provenance only — set by the image itself (ENV next to its OCI label), stamped into every ALTO |
 | `LOG_SHIP_SECONDS` | `15` | How often the run's own stdout/stderr is uploaded to `status/logs/<pipeline>/<volume>.txt` while it runs (`0` = final upload only) |
 | `TERMINATION_LOG_PATH` | `/dev/termination-log` | Where the exit reason is written |
 | `HOME`, `TMPDIR`, `YOLO_CONFIG_DIR` | *(unset)* | The Job points them into the tmpfs workdir because the root filesystem is read-only, and its `sh -c` prologue creates them before exec'ing the wrapper |
