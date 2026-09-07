@@ -94,6 +94,14 @@ tables below.
 | [B61](stories/B61-htrflow-image-org-namespace.md) | htrflow-imagen publiceras under riksarkivet/ på Docker Hub, inte airiksarkivet/ |
 | [B62](stories/B62-eupl-license.md) | htrflow-batch licensieras under EUPL-1.2, samma som htrflow |
 | [B63](stories/B63-campaigns-as-indexed-jobs.md) | Kampanjer körs som Kubernetes Indexed Jobs — reconcilern och dess statusfiler tas bort |
+| [B64](stories/B64-images-to-ghcr.md) | Imagerna publiceras till GHCR med workflow-identitet i stället för Docker Hub-token |
+| [B65](stories/B65-no-head-of-line-blocking.md) | En sida som gör retry ska inte stoppa GPU:n för sidorna bakom den (completion order i wrappern) |
+| [B66](stories/B66-pause-via-kueue.md) | Paus av en kampanj uttrycks i Kueue, inte genom att vi patchar dess Workload |
+| [B67](stories/B67-read-api-auth-and-public-logs.md) | Åtkomstkontroll för läs-API:t och ett beslut om vad som är publikt |
+| [B68](stories/B68-split-image-allowlist.md) | Plattformens egna imagar och pipelinernas imagar har varsin allow-list |
+| [B69](stories/B69-kyverno-validatingpolicy.md) | Policyerna skrivs som Kyverno ValidatingPolicy (CEL) i stället för ClusterPolicy |
+| [B70](stories/B70-alto-provenance-identifiers.md) | Varje ALTO-fil säger vilken kampanj, volym och källbild den kommer från |
+| [B71](stories/B71-page-xml-provenance.md) | PAGE XML bär samma proveniens som ALTO |
 | [B41](stories/B41-gpu-wrapper-image-in-ci.md) | GPU wrapper image (arm64) built in CI with SLSA provenance and a Trivy scan |
 | [B43](stories/B43-model-packaging-job-image.md) | Model-packaging job image built in CI with SLSA provenance and a Trivy scan |
 | [B36](stories/B36-registry-pull-through-cache.md) | A local registry as the single, cached source of images |
