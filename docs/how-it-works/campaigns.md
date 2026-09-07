@@ -198,8 +198,16 @@ Per campaign `campaigns/<name>.yaml`:
 Labels on everything: `htrflow.riksarkivet.se/{campaign,pipeline,managed-by=converter}`,
 `app: htrflow-batch` (NetworkPolicies select on it).
 
-More than 10 000 volumes in one campaign file is split by the converter into
-`-part1.yaml`, `-part2.yaml`, … — each its own Job.
+A campaign file too big for one Job is split by the converter into
+`-part1.yaml`, `-part2.yaml`, … — each its own Job. Too big is either more
+than 10 000 volumes or more than 900 KiB of `volumes.txt`, whichever comes
+first: the API server refuses a ConfigMap over 1 MiB, and an `images:` volume
+is a single line of comma-joined URLs, so 45 volumes of 300 pages already
+exceed it. A split also shortens the campaign's name, because a Job's name
+becomes both the `batch.kubernetes.io/job-name` label value and the prefix of
+its pods' names (`<job>-<index>`), and neither may pass 63 characters —
+`rendered/` then holds `<shortened>-partN.yaml`. A campaign file may not
+itself be named `-part<number>`; `validate` says so.
 
 ## Retries and failure, natively
 
