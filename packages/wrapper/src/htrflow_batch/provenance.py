@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
+from functools import lru_cache
 from importlib import metadata
 from pathlib import Path
 
@@ -27,19 +28,27 @@ def _sub(parent: ET.Element, tag: str, text: str | None = None) -> ET.Element:
     return e
 
 
-def processing_block(image: str, base_revision: str) -> ET.Element:
-    """The block itself; the software fields are the installed package's own
-    metadata, the same way htrflow fills in its block."""
+@lru_cache(maxsize=1)
+def _software() -> dict[str, str]:
+    """The installed package's own metadata, the same way htrflow fills in
+    its block; read once, not per page."""
     meta = metadata.metadata("htrflow-batch-wrapper")
+    return {
+        "softwareCreator": meta["Author" if "Author" in meta else "Author-email"],
+        "softwareName": meta["Name"],
+        "softwareVersion": meta["Version"],
+        "applicationDescription": meta["Summary"],
+    }
+
+
+def processing_block(image: str, base_revision: str) -> ET.Element:
     block = ET.Element(f"{{{ALTO_NS}}}Processing", ID="htrflow-batch")
     _sub(block, "processingDateTime", datetime.now(timezone.utc).isoformat())
     _sub(block, "processingStepDescription", f"image={image}")
     _sub(block, "processingStepDescription", f"htrflow-base={base_revision}")
     software = _sub(block, "processingSoftware")
-    _sub(software, "softwareCreator", meta["Author"])
-    _sub(software, "softwareName", meta["Name"])
-    _sub(software, "softwareVersion", meta["Version"])
-    _sub(software, "applicationDescription", meta["Summary"])
+    for tag, text in _software().items():
+        _sub(software, tag, text)
     ET.indent(block, space="    ", level=2)
     block.tail = "\n    "
     return block
