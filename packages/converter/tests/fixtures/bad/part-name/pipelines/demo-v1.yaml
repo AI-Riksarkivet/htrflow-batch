@@ -1,0 +1,10 @@
+image: ghcr.io/riksarkivet/htrflow-batch@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+steps:
+  - step: Segmentation
+    settings:
+      model: yolo
+      model_settings:
+        model: Riksarkivet/yolov9-regions-1
+  - step: TextRecognition
+    settings:
+      model: TrOCR
