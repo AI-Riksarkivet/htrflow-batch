@@ -100,10 +100,14 @@ with 0.5 s × 2ⁿ backoff and a 120 s timeout each; textual Content-Types
 signature (JPEG/PNG/GIF/TIFF/BMP/WebP/JP2); empty bodies refused; a body
 over `FETCH_MAX_BYTES` is not retried; a partial file is always unlinked.
 
-The warm-up entrypoint (`htrflow_batch.warmup`) uses the same codes: 13 for
-`ValueError` (incl. pydantic), `yaml.YAMLError`, `KeyError` (unknown step)
-and `NotImplementedError` (unknown model class), or when `HF_HUB_OFFLINE`
-is set; 1 for anything else.
+The warm-up entrypoint (`htrflow_batch.warmup`) uses the same codes and
+writes the same `{stage: "warmup", permanent, error}` termination message:
+13 for `ValueError` (incl. pydantic), `yaml.YAMLError`, `KeyError` (unknown
+step) and `NotImplementedError` (unknown model class), when `HF_HUB_OFFLINE`
+is set, when `PIPELINE_PATH` is missing or unreadable, and when the
+`<pipeline_id>.done` marker cannot be written (the message names the file);
+143 for SIGTERM — its Job's 1 h `activeDeadlineSeconds` is terminal, so this
+is the only record of a download killed part-way; 1 for anything else.
 
 ## Modules
 
@@ -123,7 +127,7 @@ Source root: [`packages/wrapper/src/htrflow_batch/`](https://github.com/AI-Riksa
 | `logship.py` | `LogCapture` — tees stdout/stderr, redacts every URL appended to the buffer (`_append`) and every URL in the wrapper's own log records (`RedactingFormatter`), ships the buffer to S3 on an interval ([Live run log](../how-it-works/live-run-log.md)) |
 | `publish.py` | The publish stage: `alto_dims` (viewer dimensions from the ALTO), `run_manifest` (the `manifest.json` body), `run` (`iiif.json`, `pipeline.yaml`, `manifest.json` last) |
 | `main.py` | The stage machine (`_setup`/`_resume`/`_stream`/`_verify`, then `publish.run`), the SIGTERM handler, `IMAGES` wiring, `_changed_sources` |
-| `warmup.py` | The warm-up entrypoint: `Pipeline.from_config()` fills `HF_HOME`, then drops the `<pipeline_id>.done` marker |
+| `warmup.py` | The warm-up entrypoint: `Pipeline.from_config()` fills `HF_HOME`, then drops the `<pipeline_id>.done` marker — before the success log, and a failure to write it exits 13. Same SIGTERM handler as `main.py` |
 
 ## Completion contract
 
