@@ -83,6 +83,7 @@ page has the full table with semantics.
 | `fetch.py` | Bounded-lookahead downloader: sized requests, raster acceptance, retry and backoff |
 | `stream.py` | Consumer loop: process each page as it lands, upload, rolling-delete |
 | `driver.py` | htrflow integration: pipeline from YAML, `process_page`, version pin |
+| `provenance.py` | `stamp_alto`: the `htrflow-batch` `<Processing>` block (image digest, htrflow base revision, wrapper version) in every ALTO |
 | `store.py` | `ResultStore`: deterministic S3 keys, content types, `done_pages()` for resume, run-log key |
 | `publish.py` | The publish stage: viewer dimensions from the ALTO, the `manifest.json` body, and the `iiif.json` → `pipeline.yaml` → `manifest.json` upload order |
 | `viewer.py` | `iiif.json` with ALTO annotation links; ALTO dimension parsing |
