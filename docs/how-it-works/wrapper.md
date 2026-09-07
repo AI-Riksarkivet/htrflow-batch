@@ -348,13 +348,13 @@ the failure reaches a person. Who runs it:
   or by Argo CD from `rendered/`). A campaign's batch pods wait on
   `/data/warmup/<pipeline>.done` in an init container, so no volume runs
   before its pipeline's cache is filled
-  ([Failure Handling](failure-handling.md#warm-ups-fail-the-same-way)). The
-  It carries the campaign Job's `runtimeClassName`, `nodeSelector` and
-  `tolerations` (the same `converter.yaml` keys): a `ReadWriteOnce` cache
-  filled on one node is a marker the batch pods on another never see. The
-  Job has no TTL — it is never reaped — so after replacing the cache PVC,
-  delete `htr-warmup-*` by hand to re-warm. The chart itself renders no
-  warm-up Job; it lives entirely with the campaigns repo now.
+  ([Failure Handling](failure-handling.md#warm-ups-fail-the-same-way)). It
+  carries the campaign Job's `runtimeClassName`, `nodeSelector` and
+  `tolerations` (the same `converter.yaml` keys), so warm-up and batch pods
+  land in the same GPU node pool. The Job has no TTL — it is never reaped —
+  so after replacing the cache PVC, delete `htr-warmup-*` by hand to re-warm.
+  The chart itself renders no warm-up Job; it lives entirely with the
+  campaigns repo now.
 
 Alternatives kept on record: no cache (v1 — every Job re-downloads while
 holding the GPU, needs `HF_TOKEN` + HF egress in every Job) and baking the

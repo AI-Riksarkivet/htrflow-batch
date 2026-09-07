@@ -27,7 +27,7 @@ tolerations: []
 public_results_base: ""           # public URL prefix results are served from (required for the read API)
 source_template: "https://lbiiif.riksarkivet.se/arkis!{ref}/manifest"
 max_seconds: 21600                # each pod's activeDeadlineSeconds; a pipeline's own `max_seconds:` overrides it
-warmup_wait_seconds: 900          # how long a pod waits for its pipeline's warm-up marker before failing the index (it holds a GPU while it waits)
+warmup_wait_seconds: 900          # how long a pod waits for its pipeline's warm-up marker before failing the index; capped by that pod's own deadline
 manifest_max_bytes: 16777216      # 16 MiB
 fetch_max_bytes: 67108864         # 64 MiB
 ```
