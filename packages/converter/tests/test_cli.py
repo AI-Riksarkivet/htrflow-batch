@@ -300,3 +300,25 @@ def test_render_refuses_to_re_split_a_campaign_that_is_already_rendered(
     assert "create a new campaign" in printed
     assert single.exists()  # nothing removed, nothing renamed
     assert not list((out / "campaigns").glob("wide-part*.yaml"))
+
+
+def test_render_refuses_two_campaigns_whose_split_names_collide(tmp_path, capsys):
+    """Cutting a long name to a stem can make two campaigns share it. Both
+    would render into the same files, the second one silently overwriting the
+    first."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    body = "pipeline: demo-v1\nvolumes:\n" + "".join(
+        f"  - id: v{i}\n    manifest: https://example.org/{i}\n" for i in range(10_001)
+    )
+    shared = "k" * 50
+    for tail in ("alpha", "beta"):
+        (repo / "campaigns" / f"{shared}-{tail}.yaml").write_text(body)
+    out = tmp_path / "rendered"
+
+    assert main(["render", str(repo), "--out", str(out)]) == 1
+    printed = capsys.readouterr().out
+    assert f"campaigns/{shared}-alpha.yaml" in printed, printed
+    assert f"campaigns/{shared}-beta.yaml" in printed
+    assert f"{shared}-part1.yaml" in printed
+    assert "rename one" in printed

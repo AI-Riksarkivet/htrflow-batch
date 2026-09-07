@@ -160,6 +160,7 @@ def _render(repo_dir: str, out_dir: str) -> int:
         return 1
     pipelines_out, campaigns_out = out / "pipelines", out / "campaigns"
     written: set[Path] = set()
+    owners: dict[Path, str] = {}  # rendered campaign file -> the campaign in it
     for p in pipelines.values():
         path = pipelines_out / f"{p.id}.yaml"
         _write(path, render.pipeline_objects(p, cfg))
@@ -192,6 +193,16 @@ def _render(repo_dir: str, out_dir: str) -> int:
                 )
                 return 1
         for path, i in zip(paths, range(0, len(objects), 2)):
+            if path in owners:
+                stem = len(render.split_stem(c.name))
+                print(
+                    f"campaigns/{owners[path]}.yaml and campaigns/{c.name}.yaml "
+                    f"both render as {path.name}: a split cuts a campaign name "
+                    f"to its first {stem} characters, and these two are the "
+                    "same up to there — rename one of them"
+                )
+                return 1
+            owners[path] = c.name
             _write(path, objects[i : i + 2])
             written.add(path)
     _prune(pipelines_out, written)
