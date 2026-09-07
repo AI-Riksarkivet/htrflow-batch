@@ -15,13 +15,16 @@ from .models import Campaign, ConverterConfig, Pipeline, Volume
 _LABEL_JUNK = re.compile(r"[^A-Za-z0-9_.-]")
 _PATH_RE = re.compile(r"[^.\[\]]+|\[\d+\]")
 MAX_VOLUMES_PER_JOB = 10_000
-#: Bytes of ``volumes.txt`` one part may carry. The API server refuses a
-#: ConfigMap whose data exceeds 1 MiB (``Too long: may not be more than
-#: 1048576 bytes``); the 148 KiB below that is headroom for the key, the
-#: metadata and the managed fields a server-side apply adds. Counting only
-#: volumes is not enough: an ``images:`` volume is ONE line of comma-joined
-#: URLs (``Volume.source_line``), so 300 pages of a 90-character URL is 23 kB
-#: on that line and 45 such volumes already exceed 1 MiB.
+#: Bytes of ``volumes.txt`` one part may carry. The API server sums the
+#: values under ``data`` and ``binaryData`` -- nothing else, not the keys,
+#: the metadata or the managed fields -- and refuses a ConfigMap over 1 MiB
+#: (``Too long: may not be more than 1048576 bytes``). The 148 KiB left below
+#: that is margin, not accounting: the same request also carries the object
+#: around the value and the campaign's Job (a 3 MiB request cap), and a
+#: budget set at the hard limit would leave a line-format change nowhere to
+#: go. Counting volumes alone is not enough: an ``images:`` volume is ONE
+#: line of comma-joined URLs (``Volume.source_line``), so 300 pages of a
+#: 74-character URL is 22.5 kB on that line and 47 such volumes exceed 1 MiB.
 MAX_BYTES_PER_JOB = 900 * 1024
 
 # Label/annotation keys below are set by direct dict indexing, never through
