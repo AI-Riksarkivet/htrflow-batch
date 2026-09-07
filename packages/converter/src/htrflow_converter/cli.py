@@ -107,17 +107,21 @@ def _part_number(path: Path) -> int:
     return int(m.group(1)) if m else 0
 
 
-def _existing_campaign_text(campaigns_out: Path, c: Campaign) -> str | None:
-    """The volume list an earlier render of this campaign left in ``out``.
-    A campaign that splits renders under a name cut short of its own (see
-    ``render.split_stem``), so the ``-partN`` files are looked up under that
-    stem, not under the campaign's own name."""
+def _existing_parts(campaigns_out: Path, c: Campaign) -> list[Path]:
+    """Every file an earlier render of this campaign left in ``out``, in the
+    order it wrote them. A campaign that splits renders under a name cut
+    short of its own (see ``render.split_stem``), so the ``-partN`` files are
+    looked up under that stem, not under the campaign's own name."""
     stem = render.split_stem(c.name)
     paths = sorted(campaigns_out.glob(f"{c.name}.yaml"))
-    paths += sorted(campaigns_out.glob(f"{stem}-part*.yaml"), key=_part_number)
-    if not paths:
-        return None
-    return "\n".join(_volumes_txt(p) for p in paths)
+    return paths + sorted(campaigns_out.glob(f"{stem}-part*.yaml"), key=_part_number)
+
+
+def _shape(paths: list[Path]) -> str:
+    """``kyrk.yaml``, or ``8 parts, kyrk-part1.yaml … kyrk-part8.yaml``."""
+    if len(paths) == 1:
+        return paths[0].name
+    return f"{len(paths)} parts, {paths[0].name} … {paths[-1].name}"
 
 
 def _prune(out: Path, written: set[Path]) -> None:
@@ -162,18 +166,32 @@ def _render(repo_dir: str, out_dir: str) -> int:
         written.add(path)
     for c in campaigns:
         new_text = "\n".join(v.source_line() for v in c.volumes)
-        try:
-            existing = _existing_campaign_text(campaigns_out, c)
-        except _CorruptRenderedFile as e:
-            print(str(e))
-            return 1
-        if existing is not None and existing != new_text:
-            print(f"campaign {c.name} is append-only: create a new campaign")
-            return 1
+        existing = _existing_parts(campaigns_out, c)
         objects = render.campaign_objects(c, pipelines[c.pipeline], cfg)
-        for i in range(0, len(objects), 2):
-            job = objects[i + 1]
-            path = campaigns_out / f"{job['metadata']['name']}.yaml"
+        paths = [campaigns_out / f"{o['metadata']['name']}.yaml" for o in objects[1::2]]
+        if existing:
+            try:
+                rendered_text = "\n".join(_volumes_txt(p) for p in existing)
+            except _CorruptRenderedFile as e:
+                print(str(e))
+                return 1
+            if rendered_text != new_text:
+                print(f"campaign {c.name} is append-only: create a new campaign")
+                return 1
+            # Same volumes, different object names: the split rule itself
+            # moved (a byte budget where there was only a count, one part
+            # more, a shorter stem). Renaming them is not a re-render, it is
+            # a delete and a restart -- `apply --prune` takes the Jobs that
+            # already ran these volumes with it.
+            if existing != paths:
+                print(
+                    f"campaign {c.name} was rendered as {_shape(existing)} and "
+                    f"now renders as {_shape(paths)}: applying that would delete "
+                    "the Jobs that have already run it and start every volume "
+                    "over — create a new campaign instead"
+                )
+                return 1
+        for path, i in zip(paths, range(0, len(objects), 2)):
             _write(path, objects[i : i + 2])
             written.add(path)
     _prune(pipelines_out, written)
