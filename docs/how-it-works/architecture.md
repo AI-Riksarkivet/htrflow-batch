@@ -19,7 +19,7 @@ flowchart LR
             DLP["downloader pool<br/>threads, bounded lookahead"]
             PQ[("page queue<br/>on tmpfs")]
             CONS["consumer thread<br/>pipeline.run(page)<br/>models loaded ONCE"]
-            UPL["uploader<br/>ships PAGE then ALTO as written,<br/>rolling-deletes source image"]
+            UPL["uploader<br/>ships PAGE then ALTO as written,<br/>rolling-deletes image + outputs"]
             DLP --> PQ --> CONS --> UPL
         end
 
@@ -86,7 +86,7 @@ sequenceDiagram
         P->>P: pipeline.run(page N) the moment page N is downloaded
         P->>S3: upload page N−1's PAGE then ALTO the moment htrflow wrote them
         P->>S3: ship the run log (every 15 s)
-        P->>P: delete page N−1's image from tmpfs (rolling cleanup)
+        P->>P: delete page N−1's image and XML from tmpfs (rolling cleanup)
     end
     P->>P: VERIFY page/ + alto/ == page list (D8)
     P->>S3: upload iiif.json, pipeline.yaml, then manifest.json LAST (completion marker, incl. timings)
