@@ -55,7 +55,9 @@ B_impl = [
 ]
 C_impl = ["B05", "B32", "C10"]
 C_partly = ["B22", "C08"]
-C_open = [f"C{i:02d}" for i in range(4, 15) if i not in (8, 10)]  # C01–C03 retired: not a tool for archivists
+C_open = [
+    f"C{i:02d}" for i in range(4, 15) if i not in (8, 10)
+]  # C01–C03 retired: not a tool for archivists
 B_prod = [
     "B10",
     "B11",
@@ -119,8 +121,19 @@ U_open = ["U04", "U07", "U09"]
 S_all = [f"S{i:02d}" for i in range(2, 15)]
 T_all = [f"T{i:02d}" for i in range(1, 19)]
 allids = set(
-    B_impl + B_partly + B_obsolete + B_prod + B_after + U_impl + U_partly + U_open
-    + S_all + T_all + C_impl + C_partly + C_open
+    B_impl
+    + B_partly
+    + B_obsolete
+    + B_prod
+    + B_after
+    + U_impl
+    + U_partly
+    + U_open
+    + S_all
+    + T_all
+    + C_impl
+    + C_partly
+    + C_open
 )
 missing = set(files) - allids
 extra = allids - set(files)
