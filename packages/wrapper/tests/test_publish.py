@@ -162,3 +162,34 @@ def test_wall_seconds_spans_the_publish_uploads(tmp_path, monkeypatch):
     assert store.puts["manifest.json"]["wall_seconds"] == 7.0
     assert store.puts["manifest.json"]["pages_per_second"] == round(1 / 7.0, 3)
     assert list(store.puts) == ["iiif.json", "pipeline.yaml", "manifest.json"]
+
+
+class _StoredAlto:
+    """A store that only has what was uploaded — no local workdir at all."""
+
+    def __init__(self):
+        self.reads, self.puts = [], {}
+
+    def get_bytes(self, key):
+        self.reads.append(key)
+        return ALTO.encode()
+
+    def put_json(self, key, obj):
+        self.puts[key] = obj
+
+    def put_text(self, key, text, content_type):
+        self.puts[key] = text
+
+
+def test_alto_dims_reads_every_page_back_from_the_store(tmp_path):
+    """X2: consume now deletes each page's ALTO from the workdir as soon as it
+    is uploaded, so at publish time NO page has a local file — the viewer
+    manifest must still cover them all, from the stored copies."""
+    cfg = _cfg(tmp_path)
+    assert not (Path(cfg.workdir) / "outputs" / "alto").exists()
+    store = _StoredAlto()
+
+    dims = publish.alto_dims(cfg, store, _pages(), {"0001", "0002"})
+
+    assert dims == {"0001": (2500, 3538), "0002": (2500, 3538)}
+    assert store.reads == ["alto/0001.xml", "alto/0002.xml"]
