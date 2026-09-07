@@ -1,7 +1,9 @@
 // The read API boundary (packages/web, GET /api/v1/jobs — docs:
 // reference/frontend.md). This is our own API, not a document we found: a
-// malformed response is a bug on our side, so parsing fails hard (Zod
-// .parse, not .safeParse) instead of degrading row by row. Also carries the
+// response of the wrong shape is a bug on our side and parsing fails hard
+// (Zod .parse). One campaign row the page cannot read is still a bug, but
+// not a reason to hide every other campaign (B32): that row is left out,
+// counted for the banner and logged once for the operator. Also carries the
 // small pure view helpers every route needs (isHttpUrl, shortDate), since
 // there is no derivation layer left to keep them in.
 import { z } from "zod";
@@ -173,10 +175,29 @@ async function getJson(url: string): Promise<unknown> {
   return res.json();
 }
 
+/** The campaign list as the page shows it: rows it could read, and how many it could not. */
+export type JobList = { jobs: JobSummary[]; unreadable: number };
+
 /** GET /api/v1/jobs — every campaign Job, newest first (server-sorted). */
-export async function fetchJobs(): Promise<JobSummary[]> {
-  const raw = await getJson(`${resolveApiBase()}/jobs`);
-  return z.array(jobSummarySchema).parse(raw);
+export async function fetchJobs(): Promise<JobList> {
+  const rows = z
+    .array(z.unknown())
+    .parse(await getJson(`${resolveApiBase()}/jobs`));
+  const jobs: JobSummary[] = [];
+  let unreadable = 0;
+  for (const row of rows) {
+    const parsed = jobSummarySchema.safeParse(row);
+    if (parsed.success) jobs.push(parsed.data);
+    else if (++unreadable === 1)
+      console.error(
+        "campaign row the page cannot read:",
+        parsed.error.issues[0],
+      );
+  }
+  // Every row unreadable is the whole list unreadable: fail like a wrong shape.
+  if (unreadable > 0 && jobs.length === 0)
+    z.array(jobSummarySchema).parse(rows);
+  return { jobs, unreadable };
 }
 
 /** GET /api/v1/jobs/{namespace}/{name}?offset&limit — volumes paged by index. */

@@ -56,8 +56,8 @@ describe("fetchJobs", () => {
   test("parses the list and hits the resolved API base with no-store", async () => {
     const fetchMock = vi.fn(async () => jsonResponse([summary]));
     vi.stubGlobal("fetch", fetchMock);
-    const jobs = await fetchJobs();
-    expect(jobs).toEqual([summary]);
+    const list = await fetchJobs();
+    expect(list).toEqual({ jobs: [summary], unreadable: 0 });
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/jobs",
       expect.objectContaining({ cache: "no-store" }),
@@ -95,13 +95,38 @@ describe("fetchJobs", () => {
     await expect(fetchJobs()).rejects.toThrow("Failed to fetch");
   });
 
-  test("a malformed body fails hard, not silently — and is not ApiUnreachable", async () => {
+  test("a body that is not a list fails hard, not silently — and is not ApiUnreachable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ jobs: [summary] })),
+    );
+    await expect(fetchJobs()).rejects.toThrow();
+    await expect(fetchJobs()).rejects.not.toBeInstanceOf(ApiUnreachable);
+  });
+
+  test("one malformed row is left out and counted; the others still render (B32)", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse([summary, { ...summary, name: "broken", phase: "Bogus" }]),
+      ),
+    );
+    expect(await fetchJobs()).toEqual({ jobs: [summary], unreadable: 1 });
+    expect(consoleError).toHaveBeenCalledTimes(1); // the bug stays visible to the operator
+    consoleError.mockRestore();
+  });
+
+  test("a list whose every row is malformed still fails hard", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => jsonResponse([{ ...summary, phase: "Bogus" }])),
     );
     await expect(fetchJobs()).rejects.toThrow();
-    await expect(fetchJobs()).rejects.not.toBeInstanceOf(ApiUnreachable);
+    vi.restoreAllMocks();
   });
 });
 
