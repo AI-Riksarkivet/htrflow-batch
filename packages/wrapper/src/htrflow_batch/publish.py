@@ -131,9 +131,14 @@ def run(
     uploaded: set[str],
     t_start: float,
     bytes_fetched: int,
-) -> None:
-    """iiif.json (when any dims resolved), pipeline.yaml, manifest.json last."""
+) -> bool:
+    """iiif.json (when any dims resolved), pipeline.yaml, manifest.json last.
+    Returns whether iiif.json was written, so main.py can tell progress.json's
+    ``viewer_published`` the final publish covered it too -- a volume small
+    enough that it never crossed the interim cadence (progress.py) still ends
+    up saying so once it is actually done."""
     dims = alto_dims(cfg, store, pages, uploaded)
+    wrote_iiif = bool(dims)
     if dims:
         store.put_json(
             "iiif.json", build_viewer_manifest(cfg, source_manifest, pages, dims)
@@ -156,3 +161,4 @@ def run(
         wall,
         body["viewer_url"],
     )
+    return wrote_iiif

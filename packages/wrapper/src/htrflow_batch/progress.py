@@ -57,7 +57,7 @@ class Progress:
     ) -> None:
         self.cfg = cfg
         self.store = store
-        #: Where the WARNING count comes from; absent in unit tests, which
+        #: Where the ERROR count comes from; absent in unit tests, which
         #: install no logging of their own.
         self.capture = capture
         self.stage = "setup"
@@ -67,6 +67,13 @@ class Progress:
         self.last_page: str | None = None
         self.started_at = _now()
         self._published = 0
+        #: True once an iiif.json PUT has actually succeeded -- interim
+        #: (below) or final (main.py, after publish.run). The frontend keys
+        #: "open in the viewer" off this, never off a page count: at
+        #: PUBLISH_EVERY_PAGES=10, a volume of 9 pages or fewer never crosses
+        #: the old count-based threshold before it finishes, and pages 1-9 of
+        #: a bigger one would have linked to a manifest that is not there yet.
+        self.viewer_published = False
 
     def _counts(self) -> tuple[int, int]:
         """Done and failed. A skipped page is one an earlier run finished and
@@ -103,7 +110,8 @@ class Progress:
             # 2026-09-08): a run with an exception in its log should say so
             # on the front page.
             "last_error": self._last_error(),
-            "warnings": self.capture.warnings if self.capture is not None else 0,
+            "errors": self.capture.errors if self.capture is not None else 0,
+            "viewer_published": self.viewer_published,
             "started_at": self.started_at,
             "updated_at": _now(),
         }
@@ -122,25 +130,38 @@ class Progress:
 
     def after_page(self, name: str) -> None:
         self.last_page = name
-        self.write()
         done, _ = self._counts()
+        # Before the write: _publish_viewer can flip viewer_published, and
+        # that belongs in THIS page's progress.json, not the next one's.
         if done - self._published >= PUBLISH_EVERY_PAGES:
             self._published = done
-            self._publish_viewer()
+            self._publish_viewer(done)
+        self.write()
 
-    def _publish_viewer(self) -> None:
+    def _publish_viewer(self, done: int) -> None:
         """``iiif.json`` for the pages this run has finished. Only the dims
         already in memory (``store.page_dims``, off the ALTO the upload
         parsed anyway) — reading a resumed run's earlier ALTOs back would be
         one S3 GET per page in the middle of the page loop. The final publish
-        does read them, so the published manifest always ends up complete."""
+        does read them, so the published manifest always ends up complete.
+
+        ``done`` counts resumed pages too (``_counts``), but ``store.page_dims``
+        only ever holds THIS run's own pages -- a run resumed at page 600 of
+        638 has no dims for the 600 it skipped. Publishing here with only the
+        10 or so this run has actually processed would overwrite a complete
+        638-canvas iiif.json with a 10-canvas one, so this is skipped whenever
+        the dims in hand cover fewer pages than ``done`` says are finished;
+        the final publish (which DOES read a resumed page's ALTO back) still
+        writes the complete manifest, so a resumed run is never worse off
+        than today's "no interim iiif.json at all" (docs: s3-layout)."""
         dims = known_dims(self.store, self.pages)
-        if not dims:
+        if not dims or len(dims) < done:
             return
         try:
             self.store.put_json(
                 "iiif.json",
                 build_viewer_manifest(self.cfg, self.source, self.pages, dims),
             )
+            self.viewer_published = True
         except Exception as e:
             log.warning("could not publish the interim viewer manifest: %r", e)

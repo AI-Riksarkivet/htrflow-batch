@@ -113,7 +113,28 @@ fail=0
 # truncated in the middle and grepping it back would count a warning twice or
 # not at all -- most of those lines say exactly that. main +1 hands the
 # capture to the tracker.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2604
+# 2604 -> 2661 (2026-09-08, page-progress review round, items 2/3/4/6):
+# logship's WarningCounter becomes ErrorCounter at logging.ERROR -- the
+# wrapper's own benign WARNINGs (a pipeline rebuild, "manifest covers n/m
+# pages") were lighting the chip on every healthy run -- and progress.json's
+# field is `errors`, not `warnings`, everywhere it is named (+8, mostly the
+# docstring saying why ERROR and not WARNING, and that an uncaught thread
+# exception is not a log record at all -- B88 turns that into last_error
+# instead). progress.py +19: `viewer_published`, true only once an iiif.json
+# PUT has actually succeeded (interim or final) -- the frontend's "open" link
+# switches on this now, never on a page count, so a volume under
+# PUBLISH_EVERY_PAGES pages does not link to a manifest that is not there
+# yet; the interim publish is also skipped whenever the dims this run holds
+# cover fewer pages than `done` says are finished, since store.page_dims only
+# ever holds this run's own pages and a resume would otherwise overwrite a
+# complete iiif.json with one naming only the pages since resume. publish.py
+# +4: `run` returns whether it wrote iiif.json, so main.py can tell the
+# tracker the final publish covered it too. main.py +19: `RunState.tracker`
+# and `main`'s finally write one terminal "failed" stage on every exit path
+# that is not the successful one -- before this the file stayed at whatever
+# stage the run was doing when it stopped, "stream" forever, on a volume
+# that had in fact failed or been SIGTERMed.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2661
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
