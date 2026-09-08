@@ -54,7 +54,7 @@ It lands in `/work/input/`, on the memory-backed `emptyDir` (`sizeLimit:
 
 Every `Inference` step runs its model on the document's **leaf** nodes and
 attaches the results there, which is why order is the whole recipe. The
-pipeline the PoC runs:
+pipeline the PoC runs (`.docker/pipeline-demo-v1.yaml`):
 
 | Step | Runs on | Leaves behind |
 |---|---|---|
@@ -65,7 +65,8 @@ pipeline the PoC runs:
 Two levels of segmentation are not decoration: htrflow's ALTO template walks
 `document.regions` and then `region.regions` to emit `TextBlock` and
 `TextLine`, so a pipeline that recognises text straight off the regions —
-like the two-step starter in `examples/campaigns/pipelines/demo-v1.yaml` —
+like the two-step starter of the same name,
+`examples/campaigns/pipelines/demo-v1.yaml` —
 gives `TextBlock`s with no `TextLine` in them, and the serializer "will
 always produce a file, but the file may be empty". The wrapper appends the
 two `Export` steps itself; a pipeline file containing one is rejected.
@@ -74,7 +75,9 @@ two `Export` steps itself; a pipeline file containing one is rejected.
 
 ALTO 4.4 — a `Description` (measurement unit, source file name, htrflow's
 `Processing` block and then ours), a `ReadingOrder`, and a `Layout` whose
-`Page` carries the **width-capped** dimensions actually processed:
+`Page` carries the dimensions of the image **actually processed** — the
+width-capped fetch, or native size when the canvas has no image service, as
+in the `images:` volume below:
 
 ```xml
 <Page WIDTH="2864" HEIGHT="2288" PHYSICAL_IMG_NR="0" ID="_0001">
