@@ -154,6 +154,7 @@ tables below.
 | [B83](stories/B83-resume-on-pipeline-change.md) | Resume räknar om sidor när pipeline_sha256 eller image_digest ändrats |
 | [B85](stories/B85-spec-plan-decision-log-current.md) | Spec, plan, story B63 och decision-loggen beskriver det som byggdes |
 | [B86](stories/B86-reject-unreasonable-values-name-the-line.md) | Convertern och wrappern avvisar orimliga värden och säger vilken rad |
+| [B87](stories/B87-prune-retired-warmup-jobs.md) | apply städar bort warm-up-Jobbet och ConfigMappen för en pipeline som inte längre finns |
 
 ### Not started — after production
 
