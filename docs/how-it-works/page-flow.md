@@ -34,10 +34,11 @@ For a canvas with an IIIF image service the URL is
 deliberate fallbacks: **`w,` not `!w,h`** (lbiiif answers 501 to the
 latter); **`max` when the canvas is already narrower than the cap** (Level 1
 servers refuse upscaling with a 400); and **a 400 anyway retries once with
-`/full/max/`** before the page fails. Live, on volume R0001203 (638 pages):
-637 requests at `/full/2500,/` and one at `/full/max/`. A canvas with **no**
-image service cannot be resized server-side at all — native size, bounded
-only by `FETCH_MAX_BYTES`.
+`/full/max/`** before the page fails. Live, on volume R0001203: 638 pages in
+the manifest; of the 107 fetched before the run stalled, 106 at
+`/full/2500,/` and one at `/full/max/` (canvas `_00002`, already narrower
+than the cap). A canvas with **no** image service cannot be resized
+server-side at all — native size, bounded only by `FETCH_MAX_BYTES`.
 
 The body is checked before it is kept: a textual `Content-Type` is refused,
 the first chunk must start with a known raster signature, and an empty or
@@ -132,8 +133,9 @@ last page: `iiif.json` (skipped entirely if no page's dimensions resolved),
   `yolo.py:87` then raises `TypeError: 'NoneType' object is not iterable`.
   It happens inside `Inference._process`'s daemon thread, which dies
   silently, so `pipeline.run()` blocks forever and the pod holds the GPU
-  until its deadline. Seen on R0001203, pages 0044–0046; the fix belongs
-  upstream, B88 is the wrapper-side workaround.
+  until its deadline. Seen on R0001203: the last export was `0043.xml`, and
+  page 0044 never came back. The fix belongs upstream; B88 is the
+  wrapper-side workaround.
 - **B73** — *The wrapper's memory does not grow with the page count.* Landed
   2026-09-07 (the rolling delete above, plus emptying htrflow's `progress`
   registries per page); its last acceptance box is a live 2 000-page volume
