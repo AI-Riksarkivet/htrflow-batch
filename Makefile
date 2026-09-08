@@ -1,8 +1,8 @@
-.PHONY: install format lint check test typecheck test-driver-real ci build scan publish \
+.PHONY: install format lint check test typecheck test-driver-real ci build scan publish \ install-kueue
         compose-up compose-test compose-smoke compose-down helm-lint helm-template \
         install-devstack install-kyverno \
         docs-serve docs-build config-reference \
-        poc-push poc-push-arm64 build-wrapper build-htrflow-base-arm64 build-web scan-web clean \
+        poc-push poc-push-arm64 build-wrapper build-htrflow-base-arm64 build-web scan-web clean install-kueue \
         campaigns-apply psa-labels e2e \
         frontend-install frontend-test frontend-check frontend-build frontend-dev
 
@@ -208,6 +208,14 @@ NVIDIA_DEVICE_PLUGIN ?= true
 # subchart would tie every `helm upgrade` of the PoC to it.
 KYVERNO ?= true
 KYVERNO_CHART_VERSION ?= 3.9.0
+# Kueue is a prerequisite the chart does not install (it renders the queue
+# objects Kueue reconciles). The upstream release manifests, applied
+# server-side so re-running is idempotent. v0.18.1 is what the PoC runs.
+KUEUE_VERSION ?= v0.18.1
+
+install-kueue:
+	kubectl apply --server-side -f https://github.com/kubernetes-sigs/kueue/releases/download/$(KUEUE_VERSION)/manifests.yaml
+	kubectl -n kueue-system rollout status deployment/kueue-controller-manager --timeout=180s
 
 install-kyverno:
 	helm upgrade --install kyverno oci://ghcr.io/kyverno/charts/kyverno \
