@@ -24,6 +24,7 @@ nav = [
     {"Decision Log" = "how-it-works/decision-log.md"},
     {"The Wrapper" = "how-it-works/wrapper.md"},
     {"Queueing (Kueue)" = "how-it-works/queueing.md"},
+    {"Kueue in depth" = "how-it-works/kueue.md"},
     {"Events and Signals" = "how-it-works/signals.md"},
     {"From Image to Transcription" = "how-it-works/page-flow.md"},
     {"Campaigns (Indexed Jobs)" = "how-it-works/campaigns.md"},
