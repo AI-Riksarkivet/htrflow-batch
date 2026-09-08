@@ -82,8 +82,8 @@ for it to exit, then brings the web service up and curls
 The compose `web` service is deliberately image-only: `dagger call
 compose-test` drives the same stack but mounts only `.docker/` as the
 compose project, where a `build:` context of `..` cannot resolve — so it
-needs `riksarkivet/htrflow-web:latest` to be registry-pullable, and that
-image is not published yet. Use `compose-smoke` on this branch.
+pulls the published `riksarkivet/htrflow-web` by digest (v0.2.0, the compose
+file pins it). `compose-smoke` builds the web image locally instead.
 
 The web service runs site-only in both (`HTRFLOW_WEB_SITE_ONLY=1`): a
 compose stack has no apiserver, so `/api/v1/…` answers 503 by design and the

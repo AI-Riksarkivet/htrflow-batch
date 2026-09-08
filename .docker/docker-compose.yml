@@ -113,7 +113,7 @@ services:
     # the wrapper above gets away with a build only because compose-test
     # never starts it. So this service is image-only: registry-pullable, or
     # tagged locally first — which is what `make compose-smoke` does.
-    image: riksarkivet/htrflow-web:latest
+    image: riksarkivet/htrflow-web@sha256:af5979224a933bebf1edc39586b7f159fe7a2692fc66101adcc9fe273e956999  # v0.2.0, the first published web image
     # Site only: a compose stack has no apiserver, so the read API would have
     # nothing to read and the console script would exit on a missing
     # kubeconfig. In this mode /, /log and /uv.html are served and /api/v1/…
