@@ -74,6 +74,11 @@ Every stage name can appear in the termination log.
 4. **stream** — downloader ∥ consumer ∥ uploader as above; per-page failures
    (download after retries, an exception from `pipeline.run`, malformed XML)
    are recorded, not fatal mid-loop — the loop drains what it can first.
+   `pipeline.run` runs behind a liveness guard: a step whose htrflow worker
+   thread has died would otherwise block the page forever, so it fails the
+   page — naming the step and its model — and the pipeline is rebuilt before
+   the next one ([A dead htrflow worker
+   thread](failure-handling.md#a-dead-htrflow-worker-thread)).
    Five consecutive S3 upload failures abort the run (`UploadOutage`, exit 1).
 5. **verify (D8)** — every page accounted for: `page/` AND `alto/` uploaded,
    no page marked failed. Any gap → exit 1 (Kubernetes retries the index;

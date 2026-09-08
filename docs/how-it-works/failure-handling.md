@@ -95,6 +95,36 @@ the manifest, page fetch or transcription failures surfacing at verify, a
 model-load `OSError`, five consecutive upload failures (`UploadOutage`).
 Full table: [Wrapper reference](../reference/wrapper.md#exit-codes).
 
+## A dead htrflow worker thread
+
+htrflow's `Inference` steps (Segmentation, TextRecognition) hand each batch
+to a daemon thread and wait on a `Future`. An exception inside that thread
+kills it, and `pipeline.run` then waits for a future nobody will ever
+complete — on 2026-09-08 volume R0001203 stopped after 43 pages when YOLO
+raised `TypeError: 'NoneType' object is not iterable` on a detection without
+a polygon (`models/ultralytics/yolo.py:87`), and the pod stood still with its
+GPU reserved until the 6 h deadline, then redid the same page twice more: a
+GPU-day for one image.
+
+The wrapper does not wait for that. `driver` runs each page's
+`pipeline.run` in a helper thread and checks every step's worker thread —
+before the run, once a second while it waits, and after it returns. A step
+whose thread is gone raises `PipelineDead`, which is a **page** failure like
+any other:
+
+```
+WARNING page 0044 failed: PipelineDead("page 0044: htrflow's Segmentation (model Riksarkivet/yolov9-regions-1) worker thread died; the page is marked failed and the pipeline is rebuilt")
+WARNING rebuilding the htrflow pipeline after a dead worker thread
+```
+
+The next page is processed by a pipeline built from scratch (the models come
+back from the cache PVC, not the Hub), the rest of the volume runs, and the
+verify gate reports the one failed page — exit 1, so Kubernetes retries the
+index and resume redoes only that page. The helper thread of the stuck run
+is a daemon and is never joined: it stays parked on the dead queue, holding
+that one page's document, for the life of the process.
+
+
 ## What a person is told
 
 The machine-readable forms above — exit codes, the termination JSON, the
