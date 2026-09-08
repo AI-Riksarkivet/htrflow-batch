@@ -1,6 +1,6 @@
 # Campaign browser table redesign — design
 
-2026-08-25, follow-up to the visibility spec. Morgan: the card grid is
+2026-08-25, follow-up to the visibility spec. Product owner: the card grid is
 underdeveloped; volumes should read as a table; take visual inspiration
 from AI-Riksarkivet/rask. Layout, polish level, and row content chosen via
 Q&A (table-per-campaign; rask-inspired design pass; failure info + source
