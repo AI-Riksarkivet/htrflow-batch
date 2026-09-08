@@ -98,7 +98,11 @@ Between htrflow's Export and the upload, the wrapper appends a second
 `Processing` block to the ALTO naming the image digest, the htrflow base
 revision and the wrapper package
 ([Provenance in every ALTO](wrapper.md#provenance-in-every-alto)). An ALTO it
-cannot parse fails the page.
+cannot parse fails the page. The models htrflow's own block names are the
+same ones the campaign card lists, each linking to that Hugging Face repo at
+the revision the pipeline pinned
+([Campaign Browser](../reference/frontend.md#derivation-rules)) — so the
+recipe on the page and the recipe in the file are one click apart.
 
 ## Upload, then delete
 

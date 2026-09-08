@@ -27,6 +27,10 @@ bort en färdig kampanjfil (X6).
 - `apply` hoppar över — eller varnar tydligt om — en kampanj vars renderade Job
   saknas medan `volumes.txt` är oförändrad.
 - `docs/how-it-works/campaigns.md`: en färdig kampanj tas bort ur `campaigns/`.
+- Kampanjens ConfigMap är den beständiga posten (beslut 2026-09-08): den har ingen TTL och rensas bara när kampanjfilen lämnar git. `apply` stämplar den med proveniens — pipeline-id, image-digest, campaigns-repots commit, submitter, tidpunkt.
+- Läs-API:t skriver en liten status-ConfigMap per kampanj (`campaign-<id>-status`: fas, klara/misslyckade, misslyckade volymer med orsak, start/slut, var resultaten ligger) utifrån det den observerar — en ny RBAC-rättighet: `patch` på ConfigMaps i sina namespaces. Per-sida-detaljen stannar i volymens `manifest.json`.
+- `apply` läser status-ConfigMappen bredvid append-only-kontrollen: en kampanj som är registrerad som klar med oförändrad volymlista lämnas orörd, med en mening som säger det. Det stänger återkörningen efter TTL utan ny state.
+- Att ta bort kampanjfilen ur git rensar båda ConfigMapparna; resultaten i bucketen tas bort i ett separat, avsiktligt steg (B10:s gallring), och posten säger vad som ska tas bort.
 
 ## Klart när
 

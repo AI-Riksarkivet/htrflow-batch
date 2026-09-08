@@ -257,6 +257,17 @@ check converter "$(count packages/converter/src -name '*.py')" 1434
 # init container that exited non-zero), and most of the 23 lines is the two
 # docstrings: why a SUCCEEDED init container explains nothing, and why the
 # message that arrives is plain stderr rather than the wrapper's JSON.
+# 690 -> 705 (2026-09-08): GET /api/v1/version, so the page's header can say
+# which build is answering it. importlib.metadata on this package's own
+# distribution, read once at import; most of the 15 lines is the comment
+# saying what that version is NOT -- not the release tag, not the wrapper
+# image a campaign runs, neither of which this process can see.
+# 705 -> 722 (2026-09-08): the version the header shows became the deployed
+# image's tag. `HTRFLOW_BATCH_VERSION` is a kube.Config field like every other
+# env this service reads, `__main__` hands it to `create_app` (site-only mode
+# has no cfg on its reader to take it from, and app.py reads no environment of
+# its own), and the route answers with it alongside the web package's own
+# version -- which is reported beside the tag, never instead of it.
 # 690 -> 855 (2026-09-08, C13/C11): "how many pages has it done?" -- the one
 # question the Kubernetes API cannot answer, since the count lives in the pod.
 # progress.py (+125) is the whole read side of the wrapper's progress.json:
@@ -303,7 +314,11 @@ check converter "$(count packages/converter/src -name '*.py')" 1434
 # 989 -> 992 (2026-09-08, page-progress re-review nit): a naive `updated_at`
 # is read as UTC rather than the API pod's local zone -- unreachable today
 # (the wrapper writes tz-aware) but a wrong age is worse than no age.
-check web       "$(count packages/web/src -name '*.py')" 992
+# 992 -> 1025 (2026-09-08, page-progress merged with main): the two chains
+# above met -- card-links' 690 -> 722 (+32) on top of page-progress, plus one
+# line for create_app's signature now carrying both batch_version and
+# progress.
+check web       "$(count packages/web/src -name '*.py')" 1025
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
@@ -334,6 +349,29 @@ check web       "$(count packages/web/src -name '*.py')" 992
 # by row -- one campaign the page cannot read is left out, counted and
 # logged once, instead of hiding every other campaign; the page shows the
 # count in a banner (describeUnreadable). A wrong shape still fails hard.
+# 3100 -> 3179 (2026-09-08): lib/pipeline.ts -- the models a campaign's
+# pipeline names, read off JobDetail.pipelineYaml for the card's Models line.
+# No YAML library for a document we render ourselves and want two keys from;
+# over half the file is the paragraph saying so and naming the two revision
+# placements it reads (the same two the Kyverno model-revision policy
+# accepts), so the next reader does not have to rediscover them from a
+# rejected apply.
+# 3179 -> 3229 (2026-09-08): the card's Models line -- one link per model
+# under the pipeline chip, `<name> @<short sha>` to the repo's tree at that
+# commit (or `unpinned`, linking to main), so the weights that produced a
+# campaign's results are one click away from the campaign. CampaignCard +47
+# (the derived list, the wrapping line and its four CSS rules); pipeline.ts
+# +3 for the strict-TypeScript regex idiom runlog.splitLogLine already uses.
+# 3229 -> 3310 (2026-09-08): the status page's header says where the code is
+# and which build is answering. +62 in +page.svelte, most of it the GitHub
+# mark inlined as SVG (the page's CSP loads nothing from a third origin) and
+# the four rules that keep it and the version legible in both themes; +16 in
+# api.ts for fetchVersion and its schema, +3 for config.REPO_URL. The version
+# is read once, and a version nobody could fetch is simply absent -- it is a
+# footnote in the header, never a reason for an alert over the campaign list.
+# 3310 -> 3311 (2026-09-08): the header shows the deployed tag rather than
+# the web package's number -- `webVersion` is kept for the tooltip, and the
+# span fits on one line again.
 # 3100 -> 3187 (2026-09-08, C13/C11): the volume rows say how far they have
 # got. api.ts's volumeProgressSchema (+ the two campaign totals on the detail),
 # reasons.ts's describeProgress and its `ago` helper -- "137 / 638 pages ·
@@ -362,7 +400,9 @@ check web       "$(count packages/web/src -name '*.py')" 992
 # callout no longer repeats a failed row the open table already shows --
 # `unseenFailures` (folded: all of them, open: only those off the loaded
 # page) and a heading that says so, plus two tests.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3338
+# 3338 -> 3549 (2026-09-08, page-progress merged with main): card-links'
+# 3100 -> 3311 (+211) on top of page-progress -- the two chains above met.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3549
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

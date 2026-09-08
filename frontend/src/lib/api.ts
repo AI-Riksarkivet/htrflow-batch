@@ -240,6 +240,24 @@ async function getJson(url: string): Promise<unknown> {
 /** The campaign list as the page shows it: rows it could read, and how many it could not. */
 export type JobList = { jobs: JobSummary[]; unreadable: number };
 
+/**
+ * GET /api/v1/version — what is deployed: `version` is the tag both images
+ * are published under, baked into the image at build time (`dev` for a local
+ * build), and `web` is the read API package's own version beside it. The tag
+ * is what an operator chose and what the header shows; the package versions
+ * move independently of it.
+ */
+export const versionSchema = z.object({
+  version: z.string(),
+  web: z.string(),
+});
+
+export type Version = z.infer<typeof versionSchema>;
+
+export async function fetchVersion(): Promise<Version> {
+  return versionSchema.parse(await getJson(`${resolveApiBase()}/version`));
+}
+
 /** GET /api/v1/jobs — every campaign Job, newest first (server-sorted). */
 export async function fetchJobs(): Promise<JobList> {
   const rows = z

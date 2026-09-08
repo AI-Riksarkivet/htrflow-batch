@@ -41,6 +41,20 @@ def test_static_dir_passes_through():
     assert cfg.static_dir == "/site"
 
 
+def test_batch_version_defaults_to_the_dockerfile_default():
+    """The image bakes HTRFLOW_BATCH_VERSION; a process started without one
+    (a laptop, a source checkout) says the same thing the image would."""
+    cfg = Config.from_env({"HTRFLOW_PUBLIC_RESULTS_BASE": "http://x"})
+    assert cfg.batch_version == "dev"
+
+
+def test_batch_version_is_the_deployed_tag():
+    cfg = Config.from_env(
+        {"HTRFLOW_PUBLIC_RESULTS_BASE": "http://x", "HTRFLOW_BATCH_VERSION": "v0.2.0"}
+    )
+    assert cfg.batch_version == "v0.2.0"
+
+
 def test_internal_results_base_defaults_to_the_public_one():
     """The API pod's own ProgressReader must reach the bucket even when
     nobody set HTRFLOW_INTERNAL_RESULTS_BASE -- true on real AWS, where the

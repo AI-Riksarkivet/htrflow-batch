@@ -296,30 +296,151 @@ unlucky (network, disk), writing the same `{stage: "warmup", permanent,
 error}` termination message a volume's wrapper does — the warm-up Job mounts
 no S3 secret, so this message, read by the campaign card's warm-up chip
 ([Campaigns](campaigns.md#the-web-front-and-status-page)), is the only place
-the failure reaches a person. Who runs it:
-
-- The converter renders one `htr-warmup-<id>` Job per pipeline whenever that
-  pipeline appears in `pipelines/`, alongside its `htr-pipeline-<id>`
-  ConfigMap (`htrflow-campaigns render`, applied with `make campaigns-apply`
-  or by Argo CD from `rendered/`). A campaign's batch pods wait on
-  `/data/warmup/<pipeline>.done` in an init container, so no volume runs
-  before its pipeline's cache is filled
-  ([Failure Handling](failure-handling.md#warm-ups-fail-the-same-way)). It
-  carries the campaign Job's `runtimeClassName`, `nodeSelector` and
-  `tolerations` (the same `converter.yaml` keys), so warm-up and batch pods
-  land in the same GPU node pool. The Job has no TTL — it is never reaped —
-  so after replacing the cache PVC, delete `htr-warmup-*` by hand to re-warm.
-  The chart itself renders no warm-up Job; it lives entirely with the
-  campaigns repo now.
+the failure reaches a person.
 
 Alternatives kept on record: no cache (v1 — every Job re-downloads while
 holding the GPU, needs `HF_TOKEN` + HF egress in every Job) and baking the
-weights into the image (hermetic, but multi-GB images per pipeline). The
-model-registry variant — weights as signed OCI artifacts pulled from an
-in-cluster registry into the cache — is the natural next step and keeps this
-mount-point contract unchanged.
+weights into the image (hermetic, but multi-GB images per pipeline — the
+standing ruling stays: models are never baked into the image, only reached
+through this cache). The model-registry variant — weights as signed OCI
+artifacts pulled from an in-cluster registry into the cache — is the natural
+next step and keeps this mount-point contract unchanged.
 
 Wrapper only ever sees `HF_HOME`; the cache choice is a mount-point swap.
+
+## The model cache
+
+```mermaid
+flowchart TB
+    PL["pipelines/pipeline-id.yaml<br/>appears in the campaigns repo"]
+    W["Warm-up Job<br/>htr-warmup-pipeline-id<br/>Pipeline.from_config fills the cache"]
+    PVC[("Model cache PVC<br/>HF_HOME=/data/hf<br/>markers under /data/warmup")]
+    G["warmup-wait init container<br/>polls for the marker file"]
+    P["Campaign pod<br/>wrapper container<br/>HF_HUB_OFFLINE=1, cache mounted read-only"]
+
+    PL --> W
+    W -->|"read-write: writes snapshots, then the marker"| PVC
+    PVC -->|"read-only"| G
+    G -->|"marker found, exit 0"| P
+    PVC -->|"read-only"| P
+```
+
+**What is cached.** Two kinds of file, both under one PVC:
+
+- Hugging Face Hub snapshots, at the library's own default layout —
+  `huggingface_hub` puts them under `$HF_HOME/hub` unless overridden (verified:
+  `huggingface_hub.constants.HUGGINGFACE_HUB_CACHE` = `os.path.join(HF_HOME,
+  "hub")`; nothing in this repo sets `HF_HUB_CACHE`), so with `HF_HOME=/data/hf`
+  a model lands at `/data/hf/hub/models--<org>--<name>/snapshots/<revision>/…`.
+  Roughly 2–4 GB per pipeline (see [Model handling](#model-handling) above).
+- Warm-up completion markers, one empty file per pipeline id at
+  `/data/warmup/<pipeline-id>.done` (`warmup.py`'s `_write_marker`,
+  `Path(HF_HOME).parent / "warmup" / f"{pipeline_id}.done"`) — the only thing
+  a batch pod's `warmup-wait` init container checks; it never looks at what
+  is actually in `hub/`.
+
+**The PVC.** One PersistentVolumeClaim, named by `modelCache.name` in the
+chart (`converter.yaml`'s `data_pvc` must name the same object — the two
+configs agree by convention, checked by
+`packages/converter/tests/test_chart_agreement.py`) and rendered by
+`charts/htrflow-batch/templates/modelcache.yaml`. Mount mode differs by role
+— verified directly in the manifest skeletons: the warm-up Job's
+`volumeMounts` entry for `data` carries no `readOnly` key
+(`manifests/warmup-job.yaml`), while the campaign Job's does
+(`readOnly: true`, `manifests/campaign-job.yaml`) — and confirmed on the live
+PoC cluster (`kubectl get pvc htr-test-data -n htr-batch`): `accessModes:
+[ReadWriteOnce]`, `storage: 30Gi`, `storageClass: local-path`. **RWO, one
+node, today** — every pod that mounts it, warm-up or batch, is pinned to
+whichever node the volume is bound to.
+
+**Who fills it, and when.** The warm-up Job, once per pipeline id, at apply
+time: the converter renders one `htr-warmup-<id>` Job the first time that
+pipeline id appears in `pipelines/`, alongside its `htr-pipeline-<id>`
+ConfigMap (`htrflow-campaigns render`, applied by `make campaigns-apply` or
+by Argo CD from `rendered/`). It carries the campaign Job's
+`runtimeClassName`, `nodeSelector` and `tolerations` (the same
+`converter.yaml` keys), so warm-up and batch pods land in the same GPU node
+pool — and, on the PoC's single-node RWO volume, the *same* node. The Job has
+no TTL — it is never reaped — so after replacing the cache PVC, delete
+`htr-warmup-*` by hand to re-warm (below). The chart itself renders no
+warm-up Job; it lives entirely with the campaigns repo now. Campaign pods
+never fill the cache themselves: `HF_HUB_OFFLINE=1` in their env makes any
+attempted download a hard local error rather than a network call, and of the
+two NetworkPolicies (`charts/htrflow-batch/templates/network.yaml`) only
+`htr-warmup` gets broad public egress on port 443 (a CDN like HF Hub needs no
+narrower rule); `htr-batch-job` gets DNS, S3, and only the specific IIIF host
+CIDRs `network.iiifCidrs` lists (`192.121.221.27/32` by default) — Hugging
+Face's own IPs are not among them, so a batch pod has no path to HF Hub even
+with `HF_HUB_OFFLINE` unset.
+
+**How a campaign pod waits for it.** The `warmup-wait` init container polls
+for `/data/warmup/<pipeline-id>.done` every 10 s, for at most the smaller of
+`converter.yaml`'s `warmup_wait_seconds` (default 900) and the pod's own
+`activeDeadlineSeconds` minus one poll step — bounded because the pod holds
+its GPU (and Kueue's quota for it) for as long as the init container runs.
+Past that bound it prints the marker path to stderr and exits 13,
+which the Job's `podFailurePolicy` turns into `FailIndex` for that index —
+retrying would only hold the GPU again for a marker that is not coming (see
+[Failure Handling](failure-handling.md#warm-ups-fail-the-same-way) and the
+worked example's [warm-up wait
+walkthrough](rendering-example.md#the-indexed-job)).
+
+**A cache miss during a run.** If a model the pipeline needs is not actually
+present under `/data/hf` when a batch pod tries to load it — a cache wiped
+without a re-warm, an incomplete download, or an id trimmed off by
+regenerating the PVC — `huggingface_hub` raises `LocalEntryNotFoundError`
+under `HF_HUB_OFFLINE=1`. That class subclasses both `OSError` and
+`ValueError` (verified in the pinned `huggingface_hub`), and `main.py`
+catches `OSError` before it catches `ValueError`, so the wrapper classifies
+it **transient**, exit 1: Kubernetes retries the index up to
+`backoffLimitPerIndex`, resuming from whatever pages already published. A
+retry only actually succeeds once the cache is fixed — the transient
+classification exists so a real gap doesn't wrongly `FailIndex` a volume
+that a re-warm could still save, not because the retry alone repairs
+anything.
+
+**What is not in the cache.** Nothing in the wrapper image. The standing
+ruling (2026-09-07, [Decision Log](decision-log.md)) is that weights are
+never baked into the image — every model a pipeline uses reaches a GPU only
+through this cache, filled by the warm-up Job.
+
+**Growth and cleanup.** Nothing prunes the cache today. A retired pipeline's
+snapshots and its `.done` marker stay on the PVC after its warm-up Job (and,
+once story B87 ships, the Job and ConfigMap themselves) are gone — B87
+explicitly does not remove the marker file, because that needs PVC access
+`apply` does not have. Retention and a size guard for the model cache
+(alongside results and run logs) is future work tracked on story B10. To see
+how full it is today: the warm-up pod itself exits as soon as its
+download finishes, so `kubectl exec -n htr-batch <warm-up-pod> -- du -sh
+/data/hf` only catches it in the narrow window while one is still `Running`;
+the reliable way is a one-off debug pod that mounts the same PVC and lands on
+the node holding it (the RWO volume forces that — pin it with `nodeName` if
+the scheduler would otherwise place it elsewhere), for example `kubectl run
+htr-cache-debug -n htr-batch --rm -it --restart=Never --image=busybox
+--overrides='{"spec":{"containers":[{"name":"debug","image":"busybox","command":["sh"],"volumeMounts":[{"name":"data","mountPath":"/data"}]}],"volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"htr-test-data"}}]}}'
+-- sh`, then `du -sh /data/hf` and `ls /data/warmup` inside it.
+
+**Multi-node consequences.** The PoC's PVC is `ReadWriteOnce` — fine on one
+GPU node, but it pins every warm-up and every batch pod to that node, which
+does not scale to a second node let alone a second tenant. The [multi-tenant
+design](../superpowers/specs/2026-09-08-multi-tenant-design.md#2-decisions)'s
+D14 settles this for the next step: the model cache becomes **one
+ReadWriteMany volume on a shared filesystem class** (NFS or CephFS), with a
+PVC per tenant namespace bound to the same export by a statically
+provisioned PV — warm-up and the read-only mount stay exactly as described
+above, only the storage class changes. Confirmed RWX storage on the target
+clusters is an open risk in that spec (R7); its fallback, if RWX does not
+materialize, is per-node caches instead of one shared one.
+
+**The operator's commands.** All of these run from inside a pod that mounts
+the PVC (a warm-up pod while it is `Running`, or a debug pod as above) —
+there is no read API for the cache, only the filesystem:
+
+| Task | Command |
+|---|---|
+| List cached model snapshots | `find /data/hf/hub -maxdepth 1 -name 'models--*'` |
+| List warm-up markers (which pipeline ids are warmed) | `ls /data/warmup` |
+| Force a pipeline to re-warm | delete its marker (`rm /data/warmup/<pipeline-id>.done`, needs a pod with write access — i.e. while a warm-up pod for it is running, or by hand on the node) **and** delete the completed `htr-warmup-<pipeline-id>` Job (`kubectl delete job -n htr-batch htr-warmup-<pipeline-id>`) so the next `apply` renders and runs it again — the Job has no TTL, so leaving it in place means `apply` never re-creates it |
 
 ## Pipeline configs (D17)
 

@@ -130,6 +130,16 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
            "sentencepiece==0.2.2" "transformers==4.57.6"; \
     fi
 
+# The release this image is published under: the publish workflow passes its
+# run tag, `make build-*` passes IMAGE_TAG, and a build that passes nothing
+# says "dev". Kept as an env var because the process itself reports it (the
+# status page's header shows what the operator deployed, which is this tag
+# and not any package's own version), and as the OCI label so an image on a
+# registry can be asked the same question without running it.
+ARG HTRFLOW_BATCH_VERSION=dev
+ENV HTRFLOW_BATCH_VERSION=${HTRFLOW_BATCH_VERSION}
+LABEL org.opencontainers.image.version="${HTRFLOW_BATCH_VERSION}"
+
 # Pod Security restricted (D14): run as an unprivileged user. The Job spec
 # pins runAsUser 1000 as well — both, so neither side can regress alone.
 # Writable paths (HOME, TMPDIR, YOLO_CONFIG_DIR) are set by the Job spec

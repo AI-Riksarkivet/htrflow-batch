@@ -2,7 +2,7 @@
         compose-up compose-test compose-smoke compose-down helm-lint helm-template \
         install-devstack install-kyverno \
         docs-serve docs-build config-reference \
-        poc-push poc-push-arm64 build-wrapper build-htrflow-base-arm64 build-web scan-web clean \
+        poc-push poc-push-arm64 build-wrapper build-htrflow-base-arm64 build-web scan-web clean install-kueue \
         campaigns-apply psa-labels e2e \
         frontend-install frontend-test frontend-check frontend-build frontend-dev
 
@@ -208,6 +208,14 @@ NVIDIA_DEVICE_PLUGIN ?= true
 # subchart would tie every `helm upgrade` of the PoC to it.
 KYVERNO ?= true
 KYVERNO_CHART_VERSION ?= 3.9.0
+# Kueue is a prerequisite the chart does not install (it renders the queue
+# objects Kueue reconciles). The upstream release manifests, applied
+# server-side so re-running is idempotent. v0.18.1 is what the PoC runs.
+KUEUE_VERSION ?= v0.18.1
+
+install-kueue:
+	kubectl apply --server-side -f https://github.com/kubernetes-sigs/kueue/releases/download/$(KUEUE_VERSION)/manifests.yaml
+	kubectl -n kueue-system rollout status deployment/kueue-controller-manager --timeout=180s
 
 install-kyverno:
 	helm upgrade --install kyverno oci://ghcr.io/kyverno/charts/kyverno \
@@ -265,8 +273,12 @@ else
 WRAPPER_BUILD_ARGS =
 endif
 
+# IMAGE_TAG is what the image will be called, so it is also what it reports
+# as its version (the status page's header, the OCI label).
+VERSION_BUILD_ARG = --build-arg HTRFLOW_BATCH_VERSION=$(IMAGE_TAG)
+
 build-wrapper:
-	docker build -f $(WRAPPER_DOCKERFILE) $(WRAPPER_BUILD_ARGS) -t $(WRAPPER_IMAGE) .
+	docker build -f $(WRAPPER_DOCKERFILE) $(WRAPPER_BUILD_ARGS) $(VERSION_BUILD_ARG) -t $(WRAPPER_IMAGE) .
 
 # The arm64 base the wrapper builds on. Built from the HTRFLOW_DIR checkout,
 # which this repo treats as read-only: htrflow's lockfile is gitignored
@@ -285,7 +297,7 @@ build-htrflow-base-arm64:
 # git clone and the npm/bun installs need it).
 DOCKER_SECRET_CA := $(shell test -f $(CA_BUNDLE) && echo --secret id=ca,src=$(CA_BUNDLE))
 build-web:
-	docker build -f .docker/htrflow-web.dockerfile $(DOCKER_SECRET_CA) -t $(WEB_IMAGE) .
+	docker build -f .docker/htrflow-web.dockerfile $(DOCKER_SECRET_CA) $(VERSION_BUILD_ARG) -t $(WEB_IMAGE) .
 
 poc-push: build-wrapper build-web
 	docker push $(WRAPPER_IMAGE)

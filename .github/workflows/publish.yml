@@ -194,6 +194,7 @@ jobs:
           docker build -f .docker/htrflow-batch.dockerfile \
             --build-arg "HTRFLOW_ARM64_BASE=${HTRFLOW_ARM64_BASE}" \
             --build-arg "HTRFLOW_BASE_REVISION=${{ steps.base.outputs.revision }}" \
+            --build-arg "HTRFLOW_BATCH_VERSION=${{ inputs.tag }}" \
             -t "$ref" .
           docker push "$ref"
 
