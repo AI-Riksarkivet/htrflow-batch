@@ -1,6 +1,7 @@
 [project]
 name = "htrflow-batch-wrapper"
 version = "0.2.0"
+license = "EUPL-1.2"
 description = "Runs htrflow over IIIF volumes in Kubernetes and publishes ALTO and PAGE XML to S3"
 authors = [{ name = "Riksarkivet AI-labbet" }]
 requires-python = ">=3.10"

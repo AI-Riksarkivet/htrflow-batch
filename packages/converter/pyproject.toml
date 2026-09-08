@@ -1,6 +1,7 @@
 [project]
 name = "htrflow-converter"
 version = "0.1.0"
+license = "EUPL-1.2"
 description = "Campaign/pipeline YAML -> manifests (docs: docs/superpowers/specs/2026-09-01-indexed-jobs-design.md)"
 requires-python = ">=3.10"
 dependencies = [

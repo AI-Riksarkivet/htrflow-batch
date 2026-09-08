@@ -35,5 +35,6 @@
     "typescript": "^5.5.0",
     "vite": "^6.4.3",
     "vitest": "^3.2.6"
-  }
+  },
+  "license": "EUPL-1.2"
 }
