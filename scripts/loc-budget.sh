@@ -69,7 +69,17 @@ fail=0
 # installs it and `_warmup` is the body it wraps (the split, the handler, the
 # except/finally and the widened `.main` import, which ruff wraps one name per
 # line).
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2238
+# 2238 -> 2327 (2026-09-08, B88): the dead-inference-thread guard. htrflow's
+# Inference steps wait on a future their daemon thread completes, so an
+# exception in that thread leaves `pipeline.run` blocked forever and the pod
+# holding its GPU to the deadline (R0001203, 43 pages in). driver gains
+# PipelineDead, `_dead_step`/`_dead` (the sentence naming step and model) and
+# `_run_guarded`, which runs the page in a helper thread and checks liveness
+# before, during and after -- +79, over half of it the paragraph saying why a
+# wrapper runs another package's `run` in a thread of its own and what the
+# stuck daemon costs. main +10: the factory drops the dead pipeline and
+# rebuilds it before the next page.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2327
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

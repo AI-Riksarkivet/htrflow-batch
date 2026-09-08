@@ -5,6 +5,7 @@ Uses monkeypatch.setitem(sys.modules, ...) to fake htrflow modules."""
 from __future__ import annotations
 
 import sys
+import threading
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -546,3 +547,135 @@ def test_process_page_releases_a_failed_page_from_the_registries(tmp_path, monke
     with pytest.raises(RuntimeError, match="CUDA out of memory"):
         process_page(_FailingPipeline(), image, tmp_path / "outputs")
     assert (progress._tasks, progress._steps, progress._exports) == ({}, {}, {})
+
+
+class _FakeThread:
+    """An htrflow worker thread, as the guard sees it: alive until it isn't."""
+
+    def __init__(self) -> None:
+        self.alive = True
+
+    def is_alive(self) -> bool:
+        return self.alive
+
+
+class _FakeStep:
+    """An Inference step: a worker thread plus the StepMetadata htrflow fills
+    in from the model (steps.py: ``StepMetadata(str(self), model.metadata)``)."""
+
+    def __init__(self, name="Segmentation", model="Riksarkivet/yolov9-regions-1"):
+        self._name = name
+        self._thread = _FakeThread()
+        self.metadata = SimpleNamespace(
+            description=name, settings={"model_class": "YOLO", "model": model}
+        )
+
+    def __str__(self) -> str:
+        return self._name
+
+
+DEAD_SENTENCE = (
+    "page 0044: htrflow's Segmentation (model Riksarkivet/yolov9-regions-1) "
+    "worker thread died; the page is marked failed and the pipeline is rebuilt"
+)
+
+
+def _image(tmp_path, stem="0044"):
+    path = tmp_path / f"{stem}.jpg"
+    path.write_bytes(b"jpg")
+    return path
+
+
+def test_process_page_fails_the_page_when_a_step_thread_dies_mid_run(
+    tmp_path, monkeypatch
+):
+    """B88 (2026-09-08): htrflow's YOLO step raised inside its daemon thread,
+    the thread died and `pipeline.run` blocked forever on a future nobody
+    would complete -- the pod held its GPU until the 6 h deadline. The guard
+    must turn that deadlock into one failed page."""
+    _inject_process_fakes(monkeypatch)
+    from htrflow_batch import driver
+
+    monkeypatch.setattr(driver, "THREAD_POLL_SECONDS", 0.01)
+    blocked = threading.Event()
+    step = _FakeStep()
+
+    class _DyingPipeline:
+        steps = [step]
+
+        def run(self, document):
+            step._thread.alive = False
+            blocked.wait()  # htrflow: waiting on the dead thread's queue
+
+    try:
+        with pytest.raises(driver.PipelineDead) as excinfo:
+            driver.process_page(_DyingPipeline(), _image(tmp_path), tmp_path / "out")
+        assert str(excinfo.value) == DEAD_SENTENCE
+    finally:
+        blocked.set()  # release the daemon helper thread
+
+
+def test_process_page_checks_the_threads_before_it_starts_the_run(
+    tmp_path, monkeypatch
+):
+    """A pipeline handed in already dead must fail the page without enqueueing
+    it -- putting work on a dead queue is what blocks forever."""
+    _inject_process_fakes(monkeypatch)
+    from htrflow_batch import driver
+
+    step = _FakeStep()
+    step._thread.alive = False
+    runs = []
+
+    class _DeadPipeline:
+        steps = [step]
+
+        def run(self, document):
+            runs.append(document)
+
+    with pytest.raises(driver.PipelineDead, match="worker thread died"):
+        driver.process_page(_DeadPipeline(), _image(tmp_path), tmp_path / "out")
+    assert runs == []
+
+
+def test_process_page_runs_normally_while_the_step_threads_are_alive(
+    tmp_path, monkeypatch
+):
+    """The guard is transparent: a healthy pipeline still returns both
+    formats, and the helper thread it runs in does not swallow the outputs."""
+    _inject_process_fakes(monkeypatch)
+    from htrflow_batch import driver
+
+    out_dir = tmp_path / "outputs"
+
+    class _WritingPipeline:
+        steps = [_FakeStep()]
+
+        def run(self, document):
+            for fmt in ("alto", "page"):
+                (out_dir / fmt).mkdir(parents=True, exist_ok=True)
+                (out_dir / fmt / "0044.xml").write_text("<x/>")
+
+    assert set(driver.process_page(_WritingPipeline(), _image(tmp_path), out_dir)) == {
+        "alto",
+        "page",
+    }
+
+
+def test_process_page_reraises_the_pipelines_own_exception_from_the_helper(
+    tmp_path, monkeypatch
+):
+    """A step that raises in OUR thread (htrflow's non-threaded steps, and any
+    Inference error the future carries back) must reach the caller unchanged,
+    not be lost in the helper thread."""
+    _inject_process_fakes(monkeypatch)
+    from htrflow_batch import driver
+
+    class _RaisingPipeline:
+        steps = [_FakeStep()]
+
+        def run(self, document):
+            raise RuntimeError("CUDA out of memory")
+
+    with pytest.raises(RuntimeError, match="CUDA out of memory"):
+        driver.process_page(_RaisingPipeline(), _image(tmp_path), tmp_path / "out")
