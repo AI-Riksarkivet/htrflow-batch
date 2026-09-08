@@ -36,6 +36,19 @@ This table is the index into everything else in this section: each settled
 decision links to the page that details it; the open rows (D4b, D13, D15)
 link to where they're tracked.
 
+## Rulings since B63
+
+Decisions taken after the table above was written, each recorded the day it
+was made:
+
+| Date | Ruling |
+|---|---|
+| 2026-09-01 | **No CRD and no controller** (B63): a campaign is one Indexed Job rendered from git and applied; the reconciler CronJob, its pre-validation, its drift guards and the `status.json` it published are all deleted ([Campaigns](campaigns.md)) |
+| 2026-09-04 | **Policy is Kyverno's, not the converter's** (Task 22): the image allow-list, the digest pin and the model-revision rule became `ClusterPolicy` objects enforced at admission — and re-run over `rendered/` by the Kyverno CLI in the campaigns repo's CI — instead of render-time checks in the converter ([Security](../development/security.md)) |
+| 2026-09-07 | **Models are never baked into the image**: weights reach a GPU only through the per-pipeline warm-up Job and the read-only model-cache PVC, never through a multi-GB image per pipeline ([Model handling](wrapper.md#model-handling)) |
+| 2026-09-07 | **Everyone logs in** (B67): the status page, `/api/v1/*`, the viewer, ALTO/PAGE, `iiif.json`, `manifest.json` and the run logs all go behind one login — Dex in front of GitHub and Hugging Face organisation membership, oauth2-proxy in front of the service — and the results bucket stops being anonymous-read |
+| 2026-09-07 | **The stories live in the repo, not on the site**: `docs/features/` is the source of truth for the backlog and its Azure mapping, and is excluded from the published documentation site |
+
 ## Context: what the htrflow image gives us
 
 Analysis of `AI-Riksarkivet/htrflow` (v0.2.6):
