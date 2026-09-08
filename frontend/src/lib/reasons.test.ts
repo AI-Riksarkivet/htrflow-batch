@@ -3,6 +3,7 @@ import { ApiUnreachable, type VolumeReason } from "./api.js";
 import {
   describeApiError,
   describeReason,
+  describeProgress,
   describeUnreadable,
 } from "./reasons.js";
 
@@ -251,6 +252,60 @@ describe("describeUnreadable", () => {
   test("plural", () => {
     expect(describeUnreadable(3)).toMatch(
       /^3 campaigns could not be read and are not shown\./,
+    );
+  });
+});
+
+describe("describeProgress", () => {
+  const at = Date.parse("2026-09-08T09:31:12+00:00");
+  const progress = {
+    done: 137,
+    total: 638,
+    failed: 0,
+    lastPage: "0137",
+    stage: "stream",
+    updatedAt: "2026-09-08T09:31:00+00:00",
+  };
+
+  test("pages, what it is doing, and how long ago", () => {
+    expect(describeProgress(progress, at)).toBe(
+      "137 / 638 pages · processing pages · updated 12 s ago",
+    );
+  });
+
+  test("minutes and hours once seconds stop meaning anything", () => {
+    expect(
+      describeProgress(progress, Date.parse("2026-09-08T09:36:00+00:00")),
+    ).toContain("updated 5 min ago");
+    expect(
+      describeProgress(progress, Date.parse("2026-09-08T11:31:00+00:00")),
+    ).toContain("updated 2 h ago");
+  });
+
+  test("failed pages are named, since the count alone hides them", () => {
+    expect(describeProgress({ ...progress, failed: 2 }, at)).toContain(
+      "2 failed",
+    );
+  });
+
+  test("a stage with no word of its own is still shown, not dropped", () => {
+    expect(describeProgress({ ...progress, stage: "done" }, at)).toContain(
+      "· done ·",
+    );
+  });
+
+  test("no timestamp, no stage: just the pages", () => {
+    expect(
+      describeProgress(
+        { ...progress, stage: null, updatedAt: null, lastPage: null },
+        at,
+      ),
+    ).toBe("137 / 638 pages");
+  });
+
+  test("an unparseable timestamp is left out rather than shown as NaN", () => {
+    expect(describeProgress({ ...progress, updatedAt: "not a date" }, at)).toBe(
+      "137 / 638 pages · processing pages",
     );
   });
 });

@@ -26,6 +26,7 @@ const volumeDone = {
   altoPrefix: "https://pub/htr-test/demo-v1/vol0/alto/",
   logUrl: "https://pub/status/logs/demo-v1/vol0.txt",
   sourceUrl: "https://iiif.example.org/vol0/manifest",
+  progress: null,
 };
 
 const volumeFailed = {
@@ -38,13 +39,20 @@ const volumeFailed = {
   logUrl: "https://pub/status/logs/demo-v1/vol1.txt",
   sourceUrl: "https://iiif.example.org/vol1/manifest",
   reason: { stage: "load", permanent: true, error: "model not found" },
+  progress: null,
 };
 
 // Every detail response carries these; a fixture without them would only
 // exercise the Zod failure path. `latest` is what the folded strip shows —
 // the API computes it over every volume, so null here means "nothing has
 // started", not "nothing is loaded".
-const detailBase = { pipelineSteps: [], pipelineYaml: "", latest: null };
+const detailBase = {
+  pipelineSteps: [],
+  pipelineYaml: "",
+  latest: null,
+  pagesDone: 0,
+  pagesTotal: 0,
+};
 const detail0 = { ...job, ...detailBase };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -159,6 +167,107 @@ describe("CampaignCard", () => {
     expect(images.queryByRole("link", { name: "open" })).toBeNull();
     expect(images.queryByRole("link", { name: "source" })).toBeNull();
     expect(images.getByRole("link", { name: "log" })).toBeInTheDocument();
+  });
+
+  test("a running volume says how many pages it has done, and of how many", async () => {
+    const running = {
+      ...volumeDone,
+      index: 2,
+      id: "vol2",
+      state: "active",
+      progress: {
+        done: 137,
+        total: 638,
+        failed: 0,
+        lastPage: "0137",
+        stage: "stream",
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          pagesDone: 137,
+          pagesTotal: 638,
+          failures: [],
+          volumes: [running, volumeDone],
+        }),
+      ),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    // The campaign's own line is visible folded — that is the question the
+    // card is asked most often.
+    expect(screen.getByText(/137\s*\/\s*638 pages/)).toBeInTheDocument();
+    await expand();
+
+    const row = within(screen.getAllByRole("row").slice(1)[0] as HTMLElement);
+    expect(
+      row.getByText(/137 \/ 638 pages · processing pages · updated/),
+    ).toBeInTheDocument();
+    // A volume with nothing to report shows the state chip and no line.
+    const done = within(screen.getAllByRole("row").slice(1)[1] as HTMLElement);
+    expect(done.queryByText(/pages ·/)).toBeNull();
+  });
+
+  test("the viewer opens a volume as soon as it has a page, not only when it is finished", async () => {
+    const started = {
+      ...volumeFailed,
+      state: "active",
+      progress: {
+        done: 10,
+        total: 638,
+        failed: 0,
+        lastPage: "0010",
+        stage: "stream",
+        updatedAt: null,
+      },
+    };
+    const untouched = {
+      ...volumeFailed,
+      index: 3,
+      id: "vol3",
+      state: "active",
+      progress: {
+        done: 0,
+        total: 638,
+        failed: 0,
+        lastPage: null,
+        stage: "load",
+        updatedAt: null,
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          failures: [],
+          volumes: [started, untouched],
+        }),
+      ),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+
+    const rows = screen.getAllByRole("row").slice(1);
+    // The wrapper rewrites iiif.json every few pages, so it is there to open.
+    expect(
+      within(rows[0] as HTMLElement).getByRole("link", { name: "open" }),
+    ).toHaveAttribute(
+      "href",
+      "uv.html#?manifest=https://pub/htr-test/demo-v1/vol1/iiif.json",
+    );
+    // Nothing published yet: still the source manifest, as before.
+    expect(
+      within(rows[1] as HTMLElement).getByRole("link", { name: "open" }),
+    ).toHaveAttribute(
+      "href",
+      "uv.html#?manifest=https://iiif.example.org/vol1/manifest",
+    );
   });
 
   test("a sourceUrl that is not an http(s) URL never becomes a link", async () => {

@@ -22,6 +22,8 @@ const detail = {
   latest: null,
   failures: [],
   volumes: [],
+  pagesDone: 0,
+  pagesTotal: 0,
 };
 
 function jsonResponse(body: unknown, status = 200): Response {

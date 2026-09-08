@@ -269,7 +269,14 @@ check web       "$(count packages/web/src -name '*.py')" 855
 # by row -- one campaign the page cannot read is left out, counted and
 # logged once, instead of hiding every other campaign; the page shows the
 # count in a banner (describeUnreadable). A wrong shape still fails hard.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3100
+# 3100 -> 3187 (2026-09-08, C13/C11): the volume rows say how far they have
+# got. api.ts's volumeProgressSchema (+ the two campaign totals on the detail),
+# reasons.ts's describeProgress and its `ago` helper -- "137 / 638 pages ·
+# processing pages · updated 12 s ago" is a sentence a person reads, so it is
+# written where every other one is -- and CampaignCard's line under each state
+# chip, the header's summed pages, and the open link that now goes live at the
+# first published page instead of at the last.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3187
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
