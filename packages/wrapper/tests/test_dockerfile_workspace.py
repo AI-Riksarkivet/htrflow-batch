@@ -77,6 +77,18 @@ def test_no_stale_copy_of_a_removed_member(name: str) -> None:
     assert set(copied) <= _members()
 
 
+@pytest.mark.parametrize("name", DOCKERFILES)
+def test_the_publish_tag_is_baked_into_both_images(name: str) -> None:
+    """The status page's header names what the operator deployed, which is the
+    publish tag -- not any package's own version. Both images take it as a
+    build arg, keep it as an env var the process can read and stamp it as the
+    OCI version label, so an image can always be asked what it is."""
+    text = (REPO / ".docker" / name).read_text()
+    assert "ARG HTRFLOW_BATCH_VERSION=dev" in text
+    assert "ENV HTRFLOW_BATCH_VERSION=${HTRFLOW_BATCH_VERSION}" in text
+    assert 'org.opencontainers.image.version="${HTRFLOW_BATCH_VERSION}"' in text
+
+
 def test_one_wrapper_dockerfile_for_both_arches() -> None:
     """One file, two base stages, the runtime stage picked by TARGETARCH."""
     assert not (REPO / ".docker" / "htrflow-batch-gpu-arm64.dockerfile").exists()

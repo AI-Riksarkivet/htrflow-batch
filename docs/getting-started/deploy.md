@@ -134,6 +134,7 @@ standalone raw manifests. Cluster constants come from the repo-root `.env`
 
 ```bash
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+make install-kueue                  # once per cluster
 make poc-push                       # builds + pushes the wrapper and web images, prints their digests
 helm upgrade --install htr-devstack charts/htrflow-devstack -n htr-batch --create-namespace \
   --set rustfs.enabled=true --set registry.enabled=true \

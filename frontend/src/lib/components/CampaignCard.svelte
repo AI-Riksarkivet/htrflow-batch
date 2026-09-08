@@ -13,6 +13,7 @@
     type VolumeView,
   } from "$lib/api.js";
   import { RELOAD_MS } from "$lib/config.js";
+  import { modelLabel, modelUrl, pipelineModels } from "$lib/pipeline.js";
   import {
     describeApiError,
     describeNotice,
@@ -121,6 +122,10 @@
         ? "no warm-up"
         : `warm-up ${job.warmup.phase}`,
   );
+
+  // The models the pipeline loads, in step order — the campaign's provenance
+  // in one line, matching the model block every ALTO it publishes carries.
+  const models = $derived(pipelineModels(pipelineYaml));
 
   const hasMore = $derived(volumes.length < job.counts.total);
 
@@ -339,6 +344,21 @@
       {/if}
     </span>
   </div>
+  {#if models.length > 0}
+    <p class="models">
+      <span class="models-label">Models</span>
+      {#each models as model, i (i)}
+        {@const href = modelUrl(model)}
+        {#if href === null}
+          <span title={model.id}>{modelLabel(model)}</span>
+        {:else}
+          <a {href} target="_blank" rel="noopener" title={model.id}
+            >{modelLabel(model)}</a
+          >
+        {/if}
+      {/each}
+    </p>
+  {/if}
   {#if yamlOpen && pipelineYaml !== ""}
     <pre class="pipeline-yaml" id={yamlId}>{pipelineYaml}</pre>
   {/if}
@@ -558,6 +578,33 @@
     font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
     font-size: 12px;
     white-space: pre-wrap;
+  }
+
+  /* One line under the pipeline chip: which weights produced these results.
+     Wraps rather than scrolls — a pipeline can name three or four models. */
+  .models {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.15rem 0.6rem;
+    margin: 0.15rem 0 0;
+    font-size: 12px;
+    color: var(--muted-foreground);
+  }
+
+  .models-label {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+
+  .models a {
+    color: var(--primary);
+    text-decoration: none;
+  }
+
+  .models a:hover {
+    text-decoration: underline;
   }
 
   .chip.phase.succeeded {

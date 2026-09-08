@@ -41,6 +41,91 @@ htr-batch`). No preemption, no cohorts in Phase 1. The complete spec the
 converter renders — resources, mounts, labels, hardening — is in
 [The Wrapper → Job template](../how-it-works/wrapper.md#job-template-one-campaign-one-indexed-job).
 
+## Where a volume comes from: volumes.txt
+
+Every volume in a campaign becomes exactly one line of a `ConfigMap` —
+`campaign-<name>`'s `volumes.txt` — written by the converter from the
+campaign file's `volumes:` list, in file order. A two-volume render (one
+bare Riksarkivet reference, one `images:` volume) produces this real
+`volumes.txt` (from
+[the worked example](../how-it-works/rendering-example.md#the-campaign-configmap)):
+
+```title="volumes.txt"
+R0001203	https://lbiiif.riksarkivet.se/arkis!R0001203/manifest
+loose-scans	images:https://example.org/scan1.jpg,https://example.org/scan2.jpg
+```
+
+**Line format** (`Volume.source_line()` in
+[`models.py`](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/packages/converter/src/htrflow_converter/models.py)):
+`<id>` and the source, separated by a **tab** — the shell prologue below
+splits on it, so a plain space in a query string or an id would be
+ambiguous with the field separator itself. The source half is one of two
+shapes:
+
+- a plain IIIF manifest URL — `<id>\t<manifest-url>` — for a bare reference
+  (expanded through `converter.yaml`'s `source_template`) or an explicit
+  `manifest:` volume;
+- `images:` followed by every URL under that volume's `images:` list,
+  comma-joined with no spaces — `<id>\timages:<url1>,<url2>,…` — for an
+  `images:` volume. There is no manifest at all for these; the wrapper
+  builds and publishes a synthetic one itself.
+
+**How index *i* reads line *i*.** The campaign Job's container command
+(`manifests/campaign-job.yaml`) does the whole job in one shell line before
+`exec`ing the wrapper:
+
+```sh
+line=$(sed -n "$((JOB_COMPLETION_INDEX + 1))p" /campaign/volumes.txt)
+[ -n "$line" ] || { echo "no volume for index $JOB_COMPLETION_INDEX" >&2; exit 13; }
+id=${line%%	*}; src=${line#*	}
+export VOLUME_REF="$id"
+case "$src" in images:*) export IMAGES="${src#images:}" ;; *) export IIIF_MANIFEST_URL="$src" ;; esac
+```
+
+`sed` is 1-indexed, `$JOB_COMPLETION_INDEX` is 0-indexed, so index 0 reads
+line 1 (`+ 1`), and so on — index 0 above gets `VOLUME_REF=R0001203` and
+`IIIF_MANIFEST_URL=https://lbiiif.riksarkivet.se/arkis!R0001203/manifest`;
+index 1 gets `VOLUME_REF=loose-scans` and
+`IMAGES=https://example.org/scan1.jpg,https://example.org/scan2.jpg`. An
+index past the end of the file (should never happen — `completions` is set
+from the same volume list) gets an empty `line` and exits 13, `FailIndex`,
+rather than running the wrapper with nothing to work on.
+
+**Size limits.** Two different caps bite two different ways:
+
+- **The ConfigMap itself** (B72): the API server refuses any ConfigMap over
+  1 MiB, and an `images:` volume's entire URL list is one line — 300 pages
+  at 74 characters per URL is already 22.5 kB on that single line, so 47
+  such volumes exceed 1 MiB on their own. `render` splits a campaign into
+  `-part1`, `-part2`, … before that happens: by volume count (10 000) and by
+  accumulated `volumes.txt` bytes (900 KiB per part — margin under the 1 MiB
+  hard limit, not the limit itself), whichever comes first. Each part is its
+  own Job and ConfigMap.
+- **A single shell argument** (B86): `IMAGES` is exported as one environment
+  value that becomes part of the wrapper process's argument/environment
+  space, and Linux caps that at 128 KiB total (`ARG_MAX`). 2 000 URLs at 100
+  characters each is already 200 KB — over the limit on one volume alone,
+  regardless of the ConfigMap byte budget above. As of this writing
+  `validate` does not catch this case
+  ahead of time: the pod dies with `Argument list too long` before the
+  wrapper ever starts, rather than being rejected at `validate` with a
+  sentence naming the volume — B86 records this as a live-run finding not
+  yet closed. Splitting an oversized `images:` volume into several smaller
+  ones, or giving it a real IIIF manifest instead, avoids it today.
+
+**Reading the file yourself.** No need to run the wrapper or write a
+campaign file — the ConfigMap is a normal cluster object:
+
+```console
+$ kubectl get configmap campaign-trolldomskommissionen -n htr-batch \
+    -o jsonpath='{.data.volumes\.txt}'
+R0001203	https://lbiiif.riksarkivet.se/arkis!R0001203/manifest
+loose-scans	images:https://example.org/scan1.jpg,https://example.org/scan2.jpg
+```
+
+(the `\.` escapes the literal dot in the key name `volumes.txt`, which
+`jsonpath` would otherwise read as a nested field lookup).
+
 ## Wrapper env vars
 
 The contract lives in one place: the

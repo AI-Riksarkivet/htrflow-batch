@@ -15,6 +15,7 @@ whole job.
 
 from __future__ import annotations
 
+from importlib import metadata
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -34,6 +35,20 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Content-Security-Policy": "frame-ancestors 'none'",
 }
+
+#: This package's own version, read off the installed distribution. Reported
+#: beside the deployed tag, never instead of it: the workspace members are
+#: versioned separately, and what an operator deployed is the image's tag.
+#: A source tree with nothing installed still has to answer something.
+PACKAGE = "htrflow-web"
+try:
+    WEB_VERSION = metadata.version(PACKAGE)
+except metadata.PackageNotFoundError:  # pragma: no cover - installed in CI
+    WEB_VERSION = "unknown"
+
+#: What ``HTRFLOW_BATCH_VERSION`` says outside an image (kube.Config's default
+#: and the dockerfiles'): a build nobody tagged.
+DEV_VERSION = "dev"
 
 #: Where the image puts the built site (.docker/htrflow-web.dockerfile).
 DEFAULT_STATIC_DIR = "/app/static"
@@ -87,8 +102,17 @@ class NoCluster:
     list_jobs = list_warmups = get_job = get_configmap = list_pods = _no_cluster
 
 
-def create_app(reader, static_dir: Path | str | None = None, progress=None) -> FastAPI:
-    """``progress`` is the reader of the volumes' progress files in the
+def create_app(
+    reader,
+    static_dir: Path | str | None = None,
+    batch_version: str = DEV_VERSION,
+    progress=None,
+) -> FastAPI:
+    """``batch_version`` is the deployed image's tag, passed in by
+    ``__main__`` from ``kube.Config`` -- this module reads no environment of
+    its own, and site-only mode has no ``cfg`` on its reader to take it from.
+
+    ``progress`` is the reader of the volumes' progress files in the
     results bucket — one per app, so its HTTP client and its few-second cache
     are shared by every request. Injectable so tests need no bucket.
 
@@ -110,6 +134,10 @@ def create_app(reader, static_dir: Path | str | None = None, progress=None) -> F
     @app.api_route("/healthz", methods=GET_HEAD)
     def healthz() -> dict:
         return {"ok": True}
+
+    @app.api_route("/api/v1/version", methods=GET_HEAD)
+    def version() -> dict:
+        return {"version": batch_version, "web": WEB_VERSION}
 
     @app.api_route("/api/v1/jobs", methods=GET_HEAD)
     def list_jobs() -> list[dict]:

@@ -140,6 +140,7 @@ truncation), each line linking to the same log href as its table row.
 | `src/lib/api.ts`                           | Read-API Zod schemas, `fetchJobs`/`fetchJob`, `ApiUnreachable`, `isHttpUrl`/`shortDate` |
 | `src/lib/run.ts`, `runlog.ts`              | `manifest.json` schema + summary math (incl. each page's `alto` URL); run-log grouping  |
 | `src/lib/alto.ts`                          | `parseAlto` (ALTO XML → text lines + confidence), `altoUrl`, `prettyXml`                |
+| `src/lib/pipeline.ts`                      | the models a pipeline YAML names, and the Hugging Face link for each                    |
 | `src/lib/reasons.ts`                       | the one place a `reason` or a fetch failure becomes a sentence a person reads           |
 | `src/lib/theme.svelte.ts`                  | the one theme store (`ThemeToggle.svelte` on every route)                               |
 | `src/lib/components/`                      | `CampaignCard`, `RunSummaryCard`, `PageGrid`, `PagesTable`, `ThemeToggle`               |

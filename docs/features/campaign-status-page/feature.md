@@ -74,6 +74,7 @@ how it behaves at archive scale, and how it is tested.
 | [C15](stories/C15-api-errors-sentence-and-headers.md) | Läs-API:t svarar med en mening och rätt headers även när något går sönder |
 | [C16](stories/C16-pods-fieldselector-paging-cache.md) | Hämta bara de Pods som behövs — fieldSelector, paging och kort cache |
 | [C17](stories/C17-cache-control-headers.md) | Cache-Control på HTML, config.js och API-svaren |
+| [C18](stories/C18-run-log-banner-links.md) | Run-loggen berättar vad som kördes och länkar till varje färdig sida |
 
 B05, B22 and B32 were created under the Batch feature and moved here; they
 keep their ids (ids are stable, never renumbered). Related stories

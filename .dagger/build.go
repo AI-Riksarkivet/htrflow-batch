@@ -5,13 +5,21 @@ import (
 	"dagger/htrflow-batch/internal/dagger"
 )
 
-// buildArgs renders the HTRFLOW_BASE_REVISION build arg when given; empty
-// keeps the dockerfile's default (the upstream tag's own revision suffix).
-func buildArgs(baseRevision string) []dagger.BuildArg {
-	if baseRevision == "" {
-		return nil
+// buildArgs renders the build args both image builds take:
+// HTRFLOW_BASE_REVISION (the wrapper's base provenance) and
+// HTRFLOW_BATCH_VERSION (the tag the image is published under, which it then
+// reports as its own version). An empty value is omitted, keeping the
+// dockerfile's default -- "dev" for the version, the upstream tag's own
+// revision suffix for the base.
+func buildArgs(baseRevision, version string) []dagger.BuildArg {
+	var args []dagger.BuildArg
+	if baseRevision != "" {
+		args = append(args, dagger.BuildArg{Name: "HTRFLOW_BASE_REVISION", Value: baseRevision})
 	}
-	return []dagger.BuildArg{{Name: "HTRFLOW_BASE_REVISION", Value: baseRevision}}
+	if version != "" {
+		args = append(args, dagger.BuildArg{Name: "HTRFLOW_BATCH_VERSION", Value: version})
+	}
+	return args
 }
 
 // BuildWrapper creates the wrapper production image from
@@ -40,10 +48,14 @@ func (m *HtrflowBatch) BuildWrapper(
 	// emulation. See the note above before setting it.
 	// +optional
 	platform dagger.Platform,
+	// The tag this image is published under, baked in as its version
+	// (PublishDocker passes the resolved tag). Empty leaves "dev".
+	// +optional
+	version string,
 ) (*dagger.Container, error) {
 	return source.DockerBuild(dagger.DirectoryDockerBuildOpts{
 		Dockerfile: ".docker/htrflow-batch.dockerfile",
-		BuildArgs:  buildArgs(baseRevision),
+		BuildArgs:  buildArgs(baseRevision, version),
 		Platform:   platform,
 	}), nil
 }
@@ -68,8 +80,15 @@ func (m *HtrflowBatch) BuildWeb(
 	// dockerfile mounts; without it the images' stock CA set is used.
 	// +optional
 	caBundle *dagger.File,
+	// The tag this image is published under, baked in as its version -- the
+	// status page's header shows it. Empty leaves "dev".
+	// +optional
+	version string,
 ) (*dagger.Container, error) {
-	opts := dagger.DirectoryDockerBuildOpts{Dockerfile: ".docker/htrflow-web.dockerfile"}
+	opts := dagger.DirectoryDockerBuildOpts{
+		Dockerfile: ".docker/htrflow-web.dockerfile",
+		BuildArgs:  buildArgs("", version),
+	}
 	if caBundle != nil {
 		contents, err := caBundle.Contents(ctx)
 		if err != nil {

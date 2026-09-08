@@ -86,6 +86,16 @@ COPY --from=spa /app/dist/ /app/static/
 ENV PATH="/app/.venv/bin:$PATH" \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     HTRFLOW_WEB_STATIC=/app/static
+# The release this image is published under: the publish workflow passes its
+# run tag, `make build-*` passes IMAGE_TAG, and a build that passes nothing
+# says "dev". Kept as an env var because the process itself reports it (the
+# status page's header shows what the operator deployed, which is this tag
+# and not any package's own version), and as the OCI label so an image on a
+# registry can be asked the same question without running it.
+ARG HTRFLOW_BATCH_VERSION=dev
+ENV HTRFLOW_BATCH_VERSION=${HTRFLOW_BATCH_VERSION}
+LABEL org.opencontainers.image.version="${HTRFLOW_BATCH_VERSION}"
+
 # Pod Security restricted (D14): unprivileged user.
 RUN useradd --uid 1000 --user-group --no-create-home --shell /usr/sbin/nologin htrflow-web
 USER 1000:1000

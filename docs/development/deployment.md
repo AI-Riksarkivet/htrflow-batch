@@ -91,6 +91,11 @@ runs the test suite first and aborts on failure — it will not push an image
 the tests don't pass. Tag resolution: an explicit `--tag` is validated
 against `packages/wrapper/pyproject.toml`'s version unless
 `--skip-validation` is set; an empty tag defaults to `"v" + <that version>`.
+That resolved tag is also **baked into both images** as the
+`HTRFLOW_BATCH_VERSION` build arg — kept as an env var and as the
+`org.opencontainers.image.version` label — so the status page's header names
+what the operator deployed rather than any package's own version (`make
+build-*` bakes `IMAGE_TAG`, an unstamped build says `dev`).
 
 **Registry defaults:**
 
