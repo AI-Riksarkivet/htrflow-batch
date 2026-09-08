@@ -84,7 +84,7 @@ flowchart TB
 | # | Decision | Why, and what was rejected |
 |---|---|---|
 | D1 | **The tenancy unit differs per tier.** A **team tenant** is one namespace: one campaigns repo, one LocalQueue, one ClusterQueue with its own nominal quota, own RBAC, NetworkPolicies, S3 credentials and prefix, own apply identity. **The pool** is one namespace `htr-pool` with one LocalQueue, one ClusterQueue and **no Kubernetes object per user** — a submitter exists only as a label value on a Job and a prefix in the bucket (D10 and D11 say what those are). | Kueue's guidance that "a namespace is typically assigned to a tenant"[^lq] is right for teams and absurd for a hundred people with fifteen pages each. *Rejected:* a namespace per user — a LocalQueue, Role, RoleBinding, NetworkPolicy, Secret and ClusterQueue each, and a cohort whose member count is the user count. Also rejected: pool-only, since an archive-scale campaign (B16) needs its own repo, review gate (B11) and credentials (B17). |
-| D2 | **One cohort, one ClusterQueue per tenant.** Every ClusterQueue sets `cohortName: htr` (the v1beta2 field name, verified against the live CRD); queues in one cohort borrow each other's unused quota.[^cq][^quotas] `nominalQuota` per queue is the guarantee and the sum is the cluster's capacity; team queues get a `borrowingLimit`, the pool gets none. `preemption.reclaimWithinCohort: Any`, `withinClusterQueue: LowerPriority`, `borrowWithinCohort.policy: Never`, and `queueingStrategy` left alone — `BestEffortFIFO` is Kueue's default[^cq] and `templates/kueue.yaml` does not set it. **Today's single queue becomes the pool queue**: `htr-batch-cq` renamed `htr-pool-cq` into the platform release, Riksarkivet's own work moving to a team tenant (D16). | Reclaim is what turns nominal quota into a guarantee: a pending Workload whose queue is *under* its nominal quota may evict Workloads elsewhere in the cohort that are *over* theirs.[^preempt] `borrowWithinCohort` may only be configured with classic preemption, never with fair sharing (live CRD text), and D3 keeps that option open. *Why quotas over partitions:* a flavor per node group leaves one team's GPU idle while another queue starves, and on a small cluster the partitions are too coarse to divide at all. *Rejected:* one ClusterQueue for everything with per-LocalQueue fairness — Kueue's usage-based ordering is *per LocalQueue*,[^afs] so it would order teams and see nothing inside the pool, which has one. |
+| D2 | **One cohort, one ClusterQueue per tenant.** Every ClusterQueue sets `cohortName: htr` (the v1beta2 field name, verified against the live CRD); queues in one cohort borrow each other's unused quota.[^cq][^quotas] `nominalQuota` per queue is the guarantee and the sum is the cluster's capacity; team queues get a `borrowingLimit`, the pool gets none. `preemption.reclaimWithinCohort: Any`, `withinClusterQueue: LowerPriority`, `borrowWithinCohort.policy: Never`, and `queueingStrategy` left alone — `BestEffortFIFO` is Kueue's default[^cq] and `templates/kueue.yaml` does not set it. **Today's single queue becomes the pool queue**: Riksarkivet's own work moves to a team tenant first, and only the emptied `htr-batch-cq` is renamed `htr-pool-cq` and retargeted at `htr-pool` (D16). | Reclaim is what turns nominal quota into a guarantee: a pending Workload whose queue is *under* its nominal quota may evict Workloads elsewhere in the cohort that are *over* theirs.[^preempt] `borrowWithinCohort` may only be configured with classic preemption, never with fair sharing (live CRD text), and D3 keeps that option open. *Why quotas over partitions:* a flavor per node group leaves one team's GPU idle while another queue starves, and on a small cluster the partitions are too coarse to divide at all. *Rejected:* one ClusterQueue for everything with per-LocalQueue fairness — Kueue's usage-based ordering is *per LocalQueue*,[^afs] so it would order teams and see nothing inside the pool, which has one. |
 | D3 | **Fair sharing is a platform switch, not a chart feature.** Preemption-based Fair Sharing is enabled in the **Kueue Configuration** (`fairSharing:` with `preemptionStrategies`) in `kueue-system`.[^fair][^config] Our queues carry `spec.fairSharing.weight` from a per-tenant value (default `1`), inert while the feature is off. Rule: turn it on when the cohort has more than two team tenants. | The PoC's `kueue-manager-config` has no `fairSharing` block (read live), so classic priority preemption is what runs today, and the switch belongs to whoever installs Kueue — not to us. *Rejected:* Admission Fair Sharing (`admissionScope.admissionMode: UsageBasedAdmissionFairSharing`) as the pool's fairness mechanism: it orders by the source LocalQueue's historical usage,[^afs] and the pool has exactly one. |
 | D4 | **Priority classes are rendered and validated.** The platform release renders three cluster-scoped `WorkloadPriorityClass` objects[^wpc] — `htr-interactive` 1000, `htr-bulk` 100 (default), `htr-idle` 10 — and `validate` checks that a campaign's `priority:` names one of them. A pool campaign is always `htr-bulk`: a `priority:` in the partners' repo is refused. | Closes **B18** / audit **X17**: the converter already writes the `kueue.x-k8s.io/priority-class` label (`render.py:42,205`), no class exists, no preemption is configured, so the Job is refused by Kueue's webhook. On the partner path the person who could grant urgency is the reviewer, not the author. *Rejected:* per-tenant class names — priority is one cluster-wide number line and a per-tenant name would only hide that. |
 | D5 | **A Job is capped at N volumes; a campaign is as many Jobs as it takes.** `converter.yaml` gains `max_volumes_per_job` (default **200**), a third bound beside `render.split`'s 10 000 volumes and ~900 KiB of `volumes.txt` (`render.py:17,28`, **B72**). | Kueue admits a **Job**, once, for its whole life,[^concepts] so the campaign at the front owns its GPU to its last index (`docs/how-it-works/kueue.md`). A 10 000-volume Job is a week-long lock; at 200 it is 50 interleavable Workloads and reclaim acts within hours. *Consequences:* append-only is unchanged — a changed volume list is still refused (`campaigns.md:104`), the cap only changes how many parts a *fixed* list renders to; the status page needs no new grouping key, since every part already carries the un-suffixed campaign name (`render.py:201`), so one card is a group-by with counts summed and the phase of the weakest part; `-part999` is already reserved inside the 63-byte DNS label (`render.py:281`). *Rejected:* partial admission (`job-min-parallelism`) — Kueue rewrites `spec.parallelism` on the live Job and its own webhook then refuses every later apply of the unchanged file;[^jobs] and one Job per volume, since Kueue's cost is per Workload. |
@@ -110,21 +110,31 @@ flowchart TB
 3. **Add the cohort, preemption and the priority classes.** `cohortName`,
    `preemption`, `fairSharing.weight` and `nominalQuota` are all mutable on a
    live ClusterQueue (verified against the CRD) — no drain needed.
-4. **Rename the queue** (`htr-batch-cq` → `htr-pool-cq`, LocalQueue `htr-batch`
-   → `htr`). This one breaks running work: the ClusterQueue is a new object under
-   a new name, and a Job's `kueue.x-k8s.io/queue-name` label is effectively
-   immutable once admitted — removing it on the PoC released no quota and blocked
-   resuming (**B66**). Drain, rename, re-render, re-apply.
-5. **Create `htr-team-arkis`** and move Riksarkivet's campaigns repo into it. The
-   pod template changes (`S3_PREFIX`, queue label, cache mount) and a Job's pod
-   template is immutable: an apply against a live Job answers `422 field is
-   immutable`, and today one such failure aborts the whole apply loop (**B77**,
-   live 2026-09-08). Finished campaigns leave `campaigns/` first (**B76**);
-   unfinished ones are drained or accepted as re-runs under the new prefix.
+4. **Create `htr-team-arkis` and move the work first.** The tenant release
+   brings its own `htr-team-arkis-cq` (selecting only that namespace) and
+   LocalQueue `htr`; Riksarkivet's campaigns repo re-renders against it. The pod
+   template changes (`S3_PREFIX`, queue label, cache mount) and a Job's pod
+   template is immutable, so this is a re-render into a new namespace, never a
+   patch of a live Job: an apply against one answers `422 field is immutable`,
+   and today a single such failure aborts the whole apply loop (**B77**, live
+   2026-09-08). Finished campaigns leave `campaigns/` first (**B76**);
+   unfinished ones either drain in `htr-batch` or are accepted as re-runs under
+   the new prefix.
+5. **Rename the emptied queue.** Only once step 4 has drained `htr-batch` is
+   `htr-batch-cq` renamed `htr-pool-cq` (a delete and a create — a ClusterQueue
+   cannot be renamed in place) and LocalQueue `htr-batch` renamed `htr`. Doing
+   it in this order needs **no drain of running work**, which is the whole
+   point of the swap: a Job's `kueue.x-k8s.io/queue-name` label is effectively
+   immutable once admitted — removing it on the PoC released no quota and
+   blocked resuming (**B66**) — so renaming a queue that still holds Workloads
+   would strand them.
 6. **Create `htr-pool` and the partners' repo** — empty, so nothing migrates,
-   and with B79 in `Enforce` before the first external pull request. The
-   submitter label and prefix apply from the first campaign, which is why the
-   pool must not be seeded from an existing repo.
+   and with B79 in `Enforce` before the first external pull request. In the same
+   step `htr-pool-cq`'s `namespaceSelector` is retargeted from
+   `kubernetes.io/metadata.name: htr-batch` to `htr-pool`
+   (`templates/kueue.yaml`), and the emptied `htr-batch` namespace is removed.
+   The submitter label and prefix apply from the first campaign, which is why
+   the pool must not be seeded from an existing repo.
 7. S3 results are untouched: a team's prefix stays `<namespace>/` as long as its
    namespace name does.
 
