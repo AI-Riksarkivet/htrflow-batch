@@ -30,6 +30,7 @@ färdiga, under samma pipeline-id och S3-prefix (X7).
   warm-up.
 - `apply` rapporterar fel per objekt; `ClusterError` får en mening för 422
   immutable-field som nämner pipeline-id-regeln.
+- Samma sak när det är convertern som ändrats: en ny version som renderar warm-up-Jobbet annorlunda (B74 flyttade deadline och lade till runtimeClassName) får 422 "field is immutable" mot befintliga warm-up-Jobs, och `apply` avbryter före kampanj-Jobben med rå JSON i felet; `apply` ska ersätta ett warm-up-Job vars template ändrats (delete + create — markören finns kvar på PVC:n) och `ClusterError` ska ha en mening för 422. (live-körning 2026-09-08)
 
 ## Klart när
 

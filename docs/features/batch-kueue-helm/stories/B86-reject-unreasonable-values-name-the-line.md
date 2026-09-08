@@ -30,6 +30,7 @@ fil eller rad, och `cli.py:25` pekar på `allowed_image_repos` som chartet äger
 - Append-only-meningen namnger filen och raden som skiljer; `init`-texten säger
   inte längre att allow-listan bor i `converter.yaml`.
 - Avvisningarna namnger filen och den rad som skiljer, och `init`-texten säger inte längre att allow-listan bor i `converter.yaml`. (revision 2026-09-07, G7, A9)
+- En `images:`-volym vars URL-lista inte ryms i en enda miljövariabel (Linux tillåter 128 KiB per argument; 2 000 URL:er à 100 tecken är 200 KB) avvisas i `validate` med en mening som namnger volymen och vägen ut (dela volymen eller använd ett IIIF-manifest) — i dag dör podden med "Argument list too long" innan wrappern startar. (live-körning 2026-09-08)
 
 ## Klart när
 
