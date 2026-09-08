@@ -40,6 +40,9 @@ export function resolveApiBase(
     : DEFAULT_API_BASE;
 }
 
+/** The source repository, linked from the status page's header. */
+export const REPO_URL = "https://github.com/AI-Riksarkivet/htrflow-batch";
+
 /** Campaign list re-fetch period (default 60 s). */
 export const RELOAD_MS = envInt(env.VITE_RELOAD_MS, 60_000);
 

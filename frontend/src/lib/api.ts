@@ -178,6 +178,23 @@ async function getJson(url: string): Promise<unknown> {
 /** The campaign list as the page shows it: rows it could read, and how many it could not. */
 export type JobList = { jobs: JobSummary[]; unreadable: number };
 
+/**
+ * GET /api/v1/version — the build answering this page: the read API's own
+ * package and version (packages/web), which is what serves the page. It is
+ * not the release tag and not the wrapper image a campaign runs; those are
+ * versioned separately and this process cannot see either.
+ */
+export const versionSchema = z.object({
+  name: z.string(),
+  version: z.string(),
+});
+
+export type Version = z.infer<typeof versionSchema>;
+
+export async function fetchVersion(): Promise<Version> {
+  return versionSchema.parse(await getJson(`${resolveApiBase()}/version`));
+}
+
 /** GET /api/v1/jobs — every campaign Job, newest first (server-sorted). */
 export async function fetchJobs(): Promise<JobList> {
   const rows = z

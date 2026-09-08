@@ -260,7 +260,14 @@ check web       "$(count packages/web/src -name '*.py')" 705
 # campaign's results are one click away from the campaign. CampaignCard +47
 # (the derived list, the wrapping line and its four CSS rules); pipeline.ts
 # +3 for the strict-TypeScript regex idiom runlog.splitLogLine already uses.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3229
+# 3229 -> 3310 (2026-09-08): the status page's header says where the code is
+# and which build is answering. +62 in +page.svelte, most of it the GitHub
+# mark inlined as SVG (the page's CSP loads nothing from a third origin) and
+# the four rules that keep it and the version legible in both themes; +16 in
+# api.ts for fetchVersion and its schema, +3 for config.REPO_URL. The version
+# is read once, and a version nobody could fetch is simply absent -- it is a
+# footnote in the header, never a reason for an alert over the campaign list.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3310
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
