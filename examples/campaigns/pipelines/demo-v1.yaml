@@ -3,7 +3,7 @@
 # it — mint demo-v2.yaml instead (see the append-only / immutability
 # sections of ../README.md and htrflow-batch's
 # docs/reference/campaign-yaml.md#immutability).
-image: docker.io/riksarkivet/htrflow-batch@sha256:e7ec8f17401c513a7e41725c337d3f7759b4d9af4e61a09f97cc65a251092bdf
+image: docker.io/riksarkivet/htrflow-batch@sha256:cb30d020a943326bc484830362ee817c9a6734d6149915ca99571a0355bdcf89
 steps:
   - step: Segmentation
     settings:
