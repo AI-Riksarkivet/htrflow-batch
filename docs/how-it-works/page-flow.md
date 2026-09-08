@@ -114,6 +114,20 @@ the page's outcome is recorded — nothing downstream needs them. After the
 last page: `iiif.json` (skipped entirely if no page's dimensions resolved),
 `pipeline.yaml`, and `manifest.json` last.
 
+## What the page's outcome publishes
+
+The same moment the outcome is recorded, the wrapper rewrites
+`progress.json` beside the results — stage, `pages_done`/`pages_total`, the
+last page, the most recent failure and the run's warning count
+([S3 layout](../reference/s3-layout.md#progressjson-live-and-never-a-completion-marker))
+— and every tenth page it republishes `iiif.json` with the pages finished so
+far. That is the whole reason a 638-page volume can be watched, and opened in
+the viewer, before its last page: nothing else the pod does leaves the pod
+until publish. Both writes are best-effort and neither can fail a page: a
+status write that raises is logged and forgotten, and the order that matters
+— PAGE, then ALTO, then eventually `manifest.json` last — is untouched by
+either.
+
 ## Where a later run touches this page again
 
 - **Resume** lists `page/` and `alto/` and treats the page as done only if
@@ -123,7 +137,8 @@ last page: `iiif.json` (skipped entirely if no page's dimensions resolved),
 - **Verify** lists S3 once more after the loop: a page missing from either
   format, or marked failed, is exit 1 and a retry.
 - **The viewer** opens `uv.html#?manifest=…` with this volume's `iiif.json`
-  once it is done (the source manifest before that). The canvas dimensions
+  as soon as one page has been published into it (the source manifest before
+  that — the campaign page switches on `progress.done > 0`). The canvas dimensions
   are the ALTO's, so line overlays need no coordinate rewriting, and each
   canvas's `seeAlso` points at `alto/0001.xml`.
 

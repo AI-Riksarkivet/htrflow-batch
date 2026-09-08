@@ -6,9 +6,11 @@ reading the read API (`packages/web`) that serves it. Source:
 the `frontend/README.md` there is the developer-facing version of this page.
 
 - `/` — every campaign (one card per Indexed Job) with its **volume table**
-  (id, state chip, links), the pipeline chip, phase and counts in the
-  header, and — on a failed poll — a banner in plain words over the last
-  list it received. Each card fetches its own volumes, paged.
+  (id, state chip and how far that volume has got, links), the pipeline chip,
+  phase, counts and summed pages in the header, a **notice chip** when
+  anything has failed or warned, and — on a failed poll — a banner in plain
+  words over the last list it received. Each card fetches its own volumes,
+  paged.
 - `/log?log=<url>&manifest=<url>[&live=1]` — the **run viewer**: the
   wrapper's run log grouped by stage, plus a summary card from
   `manifest.json` (ok/failed/skipped counts, total + wall, median/p95/max,
@@ -34,7 +36,7 @@ jsdom), Prettier, Bun as the package runner (`engines`: Node ≥ 22, Bun ≥ 1.1
 | File                                                 | Description                                                                                                                                                 |
 | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/lib/config.ts`                                  | API base and cadence resolution (table below)                                                                                                               |
-| `src/lib/api.ts`                                     | Read-API Zod schemas (`JobSummary`, `JobDetail`, `VolumeView`), `fetchJobs`/`fetchJob`, `ApiUnreachable`, and the pure view helpers `isHttpUrl`/`shortDate` |
+| `src/lib/api.ts`                                     | Read-API Zod schemas (`JobSummary`, `JobDetail`, `VolumeView`, `VolumeProgress`), `fetchJobs`/`fetchJob`, `ApiUnreachable`, and the pure view helpers `isHttpUrl`/`shortDate` |
 | `src/lib/run.ts`, `runlog.ts`                        | `manifest.json` schema + summary math (incl. `scale()`, the page grid's bar height; each page's `alto` URL); run-log grouping and the terminal-line check   |
 | `src/lib/alto.ts`                                    | `parseAlto` (ALTO XML → text lines + confidence), `altoUrl`, `prettyXml` (the raw-XML toggle)                                                              |
 | `src/lib/theme.svelte.ts`                            | the one theme store (`ThemeToggle.svelte` on every route)                                                                                                   |
@@ -88,6 +90,21 @@ script). A CSP header from the server must not be stricter than the meta tag
   by the API out of the wrapper's termination message (`stage`/`permanent`
   `null` when it was not the wrapper's JSON), present only while a pod for
   that index still exists.
+- **Progress.** A row's `progress` (`{done, total, failed, lastPage, stage,
+  updatedAt, lastError, warnings}`, or `null`) is what the API read out of
+  that volume's `progress.json` in the bucket — the one thing the Kubernetes
+  API cannot answer. `describeProgress` renders it under the state chip as
+  "137 / 638 pages · processing pages · updated 12 s ago": the stage word
+  comes from the same map a failure sentence uses, and a stage this build does
+  not know is shown as it came rather than dropped. `null` renders nothing at
+  all. The campaign header adds the API's summed `pagesDone`/`pagesTotal`.
+- **The notice chip.** `describeNotice` turns the campaign's `pagesFailed`,
+  `warnings` and `lastError` into one line — "1 page failed · 2 warnings ·
+  page 0044: htrflow's Segmentation worker thread died" — shown folded or
+  open, clipped with the whole sentence in the tooltip, and linking to the
+  run log of the volume the error came from (the API sends that volume's
+  `logUrl`, since the row it happened in is usually outside the page being
+  shown). Both counts zero means no chip.
 - **Sentences, not fields.** No reader ever sees `reason`'s fields, a
   `ZodError` or a transport string: `src/lib/reasons.ts` turns a `reason`
   into one sentence (`describeReason`) and a failed fetch into one sentence
@@ -136,6 +153,11 @@ script). A CSP header from the server must not be stricter than the meta tag
   (high/medium/low/unknown, a legend line names the cutoffs), with a raw-XML
   toggle (`prettyXml`) and three plain-sentence errors: unreachable, not
   valid XML, and valid XML with no text lines.
+- **Open, before it is finished.** The **open** slot points at the volume's
+  `iiifUrl` as soon as `state` is `done` **or** `progress.done > 0`: the
+  wrapper republishes `iiif.json` every ten pages, so a running volume is
+  readable in the viewer long before it publishes. Only a volume with nothing
+  published yet falls back to its source manifest.
 - **Three link slots.** Every volume row — and the folded card's latest
   strip — renders the same three fixed slots, **open · source · log**, from
   one snippet, so a missing link leaves a gap instead of shifting its
