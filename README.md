@@ -18,6 +18,56 @@ moment a page is done, stamps every ALTO with what produced it, and publishes
 an IIIF manifest so the result opens in the viewer. A read-only status page
 shows every campaign and volume live. No CRD, no controller, no database.
 
+## How it fits together
+
+```mermaid
+%% One campaign, from a YAML file in git to results in the viewer.
+flowchart TB
+    repo["campaigns repo in git<br/>campaigns/*.yaml · pipelines/*.yaml"]
+    conv["htrflow-campaigns<br/>validate · render · apply"]
+    subgraph cluster["Kubernetes cluster"]
+        kyverno["Kyverno policies<br/>signed, digest-pinned images · pinned models"]
+        kueue["Kueue<br/>queue, GPU quota, admission"]
+        warm["warm-up Job (CPU)<br/>fills the model cache"]
+        job["Indexed Job, one index per volume<br/>wrapper streams pages through htrflow on the GPU"]
+        web["read API + status page"]
+    end
+    iiif["IIIF image server"]
+    s3["S3 results bucket<br/>ALTO · PAGE · manifest.json · iiif.json · run log"]
+    viewer["viewer"]
+
+    repo --> conv --> kyverno --> kueue --> job
+    conv --> warm
+    job -->|pages in| iiif
+    job -->|results out, page by page| s3
+    web -->|Jobs, Pods| job
+    viewer --> s3
+```
+
+- [Architecture](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/architecture/) — the map, and the components and their boundaries
+- [Campaigns](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/campaigns/) — the campaigns repo, the converter and what it renders
+- [Queueing](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/queueing/) and [Kueue in depth](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/kueue/) — how a campaign is admitted, paused and shared
+- [Events and signals](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/signals/) — what the system emits and who reads it
+- [Failure handling](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/failure-handling/) — retries, exit codes, what a person is told
+
+```mermaid
+%% One page, inside the wrapper.
+flowchart TB
+    fetch["fetch the page from IIIF<br/>width-capped, bounded lookahead"]
+    tmp["tmpfs workdir"]
+    seg["htrflow: segmentation<br/>regions, then lines"]
+    rec["htrflow: text recognition<br/>one line at a time"]
+    xml["ALTO + PAGE XML<br/>with provenance: models, image, htrflow-batch"]
+    up["upload the page the moment it is done<br/>then delete it from tmpfs"]
+    pub["at the end: verify every page, publish<br/>iiif.json, pipeline.yaml, manifest.json last"]
+
+    fetch --> tmp --> seg --> rec --> xml --> up --> pub
+```
+
+- [From image to transcription](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/page-flow/) — this path in detail
+- [The wrapper](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/wrapper/) — stages, provenance, exit codes
+- [Memory budget](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/memory-budget/) — why a long volume costs the same as a short one
+
 ## What is in the repository
 
 | Path | What it is |
@@ -71,7 +121,8 @@ first volume; `docs/development/local-k3s.md` is the single-node GPU PoC loop
 
 ## Documentation
 
-Everything is in `docs/` and builds as a site:
+The site is at <https://ai-riksarkivet.github.io/htrflow-batch/>, built from
+`docs/` on every merge to main. Locally:
 
 ```bash
 make docs-serve
