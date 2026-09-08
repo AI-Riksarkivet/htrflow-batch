@@ -8,6 +8,8 @@ when the bucket refuses it, and that manifest.json is still written last.
 
 import json
 import logging
+import os
+import signal
 from pathlib import Path
 
 import httpx
@@ -162,6 +164,73 @@ def test_the_viewer_manifest_is_published_mid_run(env, cfg, s3, monkeypatch):
     assert len(final["items"]) == 3
 
 
+def test_viewer_published_becomes_true_after_the_first_interim_publish(
+    env, cfg, s3, monkeypatch
+):
+    """The frontend's "open" link must switch on this, never on a page count
+    (finding 2): before the first interim publish it stays false."""
+    monkeypatch.setattr(progress_mod, "PUBLISH_EVERY_PAGES", 1)
+    seen = []
+
+    def watch(stem):
+        seen.append(_get(s3, cfg, "progress.json")["viewer_published"])
+
+    assert main(env, process_page_factory=_factory_watching(cfg, watch)) == EXIT_OK
+    # Watched before each page's own processing: page 1 has not published
+    # yet, pages 2 and 3 see page 1's interim publish.
+    assert seen == [False, True, True]
+
+
+def test_viewer_published_stays_false_until_done_for_a_small_volume(env, cfg, s3):
+    """A volume with fewer pages than PUBLISH_EVERY_PAGES (10) never crosses
+    the interim cadence mid-run -- it must not claim a viewer link that would
+    404, and it must still end up true once the run's own final publish
+    writes iiif.json."""
+    seen = []
+
+    def watch(stem):
+        seen.append(_get(s3, cfg, "progress.json")["viewer_published"])
+
+    assert main(env, process_page_factory=_factory_watching(cfg, watch)) == EXIT_OK
+    assert seen == [False, False, False]
+    assert _get(s3, cfg, "progress.json")["viewer_published"] is True
+
+
+def test_interim_publish_is_skipped_when_resumed_dims_lag_done(
+    env, cfg, s3, monkeypatch
+):
+    """A volume resumed at page 600 of 638 must not overwrite a complete
+    iiif.json with one covering only the pages since resume (finding 3)."""
+    monkeypatch.setattr(progress_mod, "PUBLISH_EVERY_PAGES", 1)
+    for stem in ("0001", "0002"):
+        for fmt, text in (("alto", ALTO_OK), ("page", PAGE_OK)):
+            s3.put_object(
+                Bucket=cfg.s3_bucket,
+                Key=f"{PREFIX}/{fmt}/{stem}.xml",
+                Body=text.encode(),
+            )
+    complete_iiif = {"items": [{"id": "a"}, {"id": "b"}]}
+    s3.put_object(
+        Bucket=cfg.s3_bucket,
+        Key=f"{PREFIX}/iiif.json",
+        Body=json.dumps(complete_iiif).encode(),
+        ContentType="application/json",
+    )
+    seen = []
+
+    def watch(stem):
+        seen.append(_get(s3, cfg, "iiif.json"))
+
+    assert main(env, process_page_factory=_factory_watching(cfg, watch)) == EXIT_OK
+    # Page 0003 is the only one this run actually processed: the dims it
+    # holds (1) cover fewer pages than `done` (3, two resumed + this one), so
+    # the interim publish must not touch the placeholder.
+    assert seen == [complete_iiif]
+    # The final publish (alto_dims, which reads the resumed pages' ALTO back)
+    # still ends up with the complete, correct manifest.
+    assert len(_get(s3, cfg, "iiif.json")["items"]) == 3
+
+
 def test_a_failing_progress_write_never_fails_the_run(env, cfg, s3, monkeypatch):
     def boom(self, body):
         raise RuntimeError("bucket said no")
@@ -214,8 +283,32 @@ def test_progress_carries_the_most_recent_page_failure(env, cfg, s3):
     assert body["pages_failed"] == 1
     assert body["last_error"]["page"] == "0002"
     assert "Segmentation worker thread died" in body["last_error"]["error"]
-    # log.warning is called for every failed page, so the run has at least one.
-    assert body["warnings"] >= 1
+    # the eventual verify failure logs at ERROR (main._transient), so the
+    # final write -- after finding 6's terminal-stage write -- counts it.
+    assert body["errors"] >= 1
+
+
+def test_a_failed_run_leaves_a_terminal_stage_not_stuck_at_stream(env, cfg, s3):
+    """Before this fix the file stayed at whatever stage the run was doing
+    when it stopped -- "stream" forever -- because nothing wrote a last word
+    on the failure exit path. main's finally now does."""
+    main(env, process_page_factory=_failing_factory(cfg, "0002"))
+    assert _get(s3, cfg, "progress.json")["stage"] == "failed"
+
+
+def test_a_sigterm_run_also_leaves_a_terminal_stage(env, cfg, s3, monkeypatch):
+    monkeypatch.setattr(main_mod, "_hard_exit", lambda code: None)
+
+    def factory(c):
+        def process(path: Path):
+            if path.stem == "0002":
+                os.kill(os.getpid(), signal.SIGTERM)
+            return _write_outputs(cfg, path.stem)
+
+        return process
+
+    assert main(env, process_page_factory=factory) == main_mod.EXIT_SIGTERM
+    assert _get(s3, cfg, "progress.json")["stage"] == "failed"
 
 
 def test_the_last_error_is_redacted_and_bounded(cfg, s3):
@@ -239,18 +332,21 @@ def test_no_failure_is_no_last_error(cfg, s3):
     tracker = Progress(cfg, ResultStore(cfg))
     tracker.stats = StreamStats(results={"0001": PageOutcome(status="ok")})
     assert tracker.body()["last_error"] is None
-    assert tracker.body()["warnings"] == 0
+    assert tracker.body()["errors"] == 0
 
 
-def test_warnings_are_counted_as_they_are_logged(cfg, s3):
+def test_errors_are_counted_as_they_are_logged(cfg, s3):
+    """WARNING does not light the chip -- only ERROR and worse: the wrapper's
+    own benign WARNINGs (a pipeline rebuild, "manifest covers n/m") must not
+    make every healthy run look like something went wrong."""
     capture = LogCapture.install()
     try:
         capture.attach_logging()
         tracker = Progress(cfg, ResultStore(cfg), capture)
-        assert tracker.body()["warnings"] == 0
+        assert tracker.body()["errors"] == 0
         logging.getLogger("htrflow_batch").warning("a page looked odd")
         logging.getLogger("htrflow_batch").info("business as usual")
         logging.getLogger("htrflow_batch").error("worse")
-        assert tracker.body()["warnings"] == 2
+        assert tracker.body()["errors"] == 1
     finally:
         capture.finish()

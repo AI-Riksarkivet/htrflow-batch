@@ -33,18 +33,29 @@ TRUNCATION_MARKER = (
 )
 
 
-class WarningCounter(logging.Handler):
-    """Counts WARNING-and-worse records as they are emitted.
+class ErrorCounter(logging.Handler):
+    """Counts ERROR-and-worse records as they are emitted.
 
     The count goes into the volume's progress file, so the campaign page can
     say "something went wrong in here" without anyone opening the run log.
     Counted at the logging call, never by reading the shipped log back: that
     would cost a download, and the log is truncated in the middle when it
-    grows, so the same warning could be counted twice or not at all.
+    grows, so the same record could be counted twice or not at all.
+
+    WARNING, not ERROR, would also catch the wrapper's own benign
+    WARNINGs -- the pipeline rebuild after a dead worker thread (main.py),
+    "viewer manifest covers n/m pages" (publish.py) -- and light this chip on
+    every healthy run. Only ERROR is a run actually going wrong.
+
+    One thing this cannot see: an uncaught exception in a thread htrflow
+    starts of its own (a dead Inference worker) is not a log record at all --
+    nothing here calls ``logging`` for it. B88's guard turns that case into
+    progress.json's own ``last_error`` instead, which this counter does not
+    need to duplicate.
     """
 
     def __init__(self) -> None:
-        super().__init__(level=logging.WARNING)
+        super().__init__(level=logging.ERROR)
         self.count = 0
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -119,12 +130,12 @@ class LogCapture:
         self._originals: Optional[tuple[TextIO, TextIO]] = None
         self._rebound: list[tuple[logging.StreamHandler, TextIO]] = []
         self._added_handler: Optional[logging.Handler] = None
-        self._counter = WarningCounter()
+        self._counter = ErrorCounter()
         self._warned = False
 
     @property
-    def warnings(self) -> int:
-        """WARNING-and-worse records since ``attach_logging``."""
+    def errors(self) -> int:
+        """ERROR-and-worse records since ``attach_logging``."""
         return self._counter.count
 
     @classmethod
