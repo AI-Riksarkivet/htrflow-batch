@@ -258,7 +258,6 @@ describe("describeUnreadable", () => {
 });
 
 describe("describeProgress", () => {
-  const at = Date.parse("2026-09-08T09:31:12+00:00");
   const progress = {
     done: 137,
     total: 638,
@@ -266,50 +265,56 @@ describe("describeProgress", () => {
     lastPage: "0137",
     stage: "stream",
     updatedAt: "2026-09-08T09:31:00+00:00",
+    ageSeconds: 12,
     lastError: null,
-    warnings: 0,
+    errors: 0,
+    viewerPublished: true,
   };
 
   test("pages, what it is doing, and how long ago", () => {
-    expect(describeProgress(progress, at)).toBe(
+    expect(describeProgress(progress)).toBe(
       "137 / 638 pages · processing pages · updated 12 s ago",
     );
   });
 
   test("minutes and hours once seconds stop meaning anything", () => {
-    expect(
-      describeProgress(progress, Date.parse("2026-09-08T09:36:00+00:00")),
-    ).toContain("updated 5 min ago");
-    expect(
-      describeProgress(progress, Date.parse("2026-09-08T11:31:00+00:00")),
-    ).toContain("updated 2 h ago");
-  });
-
-  test("failed pages are named, since the count alone hides them", () => {
-    expect(describeProgress({ ...progress, failed: 2 }, at)).toContain(
-      "2 failed",
+    expect(describeProgress({ ...progress, ageSeconds: 300 })).toContain(
+      "updated 5 min ago",
+    );
+    expect(describeProgress({ ...progress, ageSeconds: 7200 })).toContain(
+      "updated 2 h ago",
     );
   });
 
+  test("failed pages are named, since the count alone hides them", () => {
+    expect(describeProgress({ ...progress, failed: 2 })).toContain("2 failed");
+  });
+
   test("a stage with no word of its own is still shown, not dropped", () => {
-    expect(describeProgress({ ...progress, stage: "done" }, at)).toContain(
+    expect(describeProgress({ ...progress, stage: "done" })).toContain(
       "· done ·",
     );
   });
 
   test("no timestamp, no stage: just the pages", () => {
     expect(
-      describeProgress(
-        { ...progress, stage: null, updatedAt: null, lastPage: null },
-        at,
-      ),
+      describeProgress({
+        ...progress,
+        stage: null,
+        updatedAt: null,
+        ageSeconds: null,
+        lastPage: null,
+      }),
     ).toBe("137 / 638 pages");
   });
 
-  test("an unparseable timestamp is left out rather than shown as NaN", () => {
-    expect(describeProgress({ ...progress, updatedAt: "not a date" }, at)).toBe(
-      "137 / 638 pages · processing pages",
-    );
+  test("the age comes from the API's own clock, never Date.now()", () => {
+    // ageSeconds is what renders; a null updatedAt with a non-null
+    // ageSeconds would be a shape the API never sends, but the point is
+    // that this function never reads a clock of its own to compute it.
+    expect(
+      describeProgress({ ...progress, updatedAt: null, ageSeconds: 12 }),
+    ).toContain("updated 12 s ago");
   });
 });
 
@@ -323,34 +328,34 @@ describe("describeNotice", () => {
 
   test("nothing wrong, no notice at all", () => {
     expect(
-      describeNotice({ pagesFailed: 0, warnings: 0, lastError: null }),
+      describeNotice({ pagesFailed: 0, errors: 0, lastError: null }),
     ).toBeNull();
   });
 
   test("the count and the sentence behind it", () => {
-    expect(describeNotice({ pagesFailed: 1, warnings: 2, lastError })).toBe(
-      "1 page failed · 2 warnings · page 0044: htrflow's Segmentation " +
+    expect(describeNotice({ pagesFailed: 1, errors: 2, lastError })).toBe(
+      "1 page failed · 2 errors · page 0044: htrflow's Segmentation " +
         "worker thread died",
     );
   });
 
   test("plurals", () => {
-    expect(
-      describeNotice({ pagesFailed: 3, warnings: 1, lastError: null }),
-    ).toBe("3 pages failed · 1 warning");
+    expect(describeNotice({ pagesFailed: 3, errors: 1, lastError: null })).toBe(
+      "3 pages failed · 1 error",
+    );
   });
 
-  test("warnings alone are still worth saying", () => {
-    expect(
-      describeNotice({ pagesFailed: 0, warnings: 4, lastError: null }),
-    ).toBe("4 warnings");
+  test("errors alone are still worth saying", () => {
+    expect(describeNotice({ pagesFailed: 0, errors: 4, lastError: null })).toBe(
+      "4 errors",
+    );
   });
 
   test("an error with no page name still reads as a sentence", () => {
     expect(
       describeNotice({
         pagesFailed: 1,
-        warnings: 0,
+        errors: 0,
         lastError: { ...lastError, page: null },
       }),
     ).toBe("1 page failed · htrflow's Segmentation worker thread died");

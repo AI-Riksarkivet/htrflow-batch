@@ -116,13 +116,26 @@ export const volumeProgressSchema = z.object({
   lastPage: z.string().nullable(),
   stage: z.string().nullable(),
   updatedAt: z.string().nullable(),
-  // The most recent page failure and the WARNING count, so a run with an
-  // exception in its log says so on the campaign page instead of only in a
-  // log someone has to open. Rendering is $lib/reasons, like `reason`.
+  // Seconds since updatedAt, computed by the API from its own clock at fetch
+  // time -- never derived here from updatedAt and the browser's Date.now(),
+  // since a reader's clock skew would then make "updated Ns ago" wrong (a
+  // stale row could even read "0 s ago").
+  ageSeconds: z.number().nullable(),
+  // The most recent page failure and the ERROR-and-worse count (never
+  // WARNING: the wrapper's own benign ones, a pipeline rebuild, "manifest
+  // covers n/m pages", must not read as something wrong on a healthy run),
+  // so a run with an exception in its log says so on the campaign page
+  // instead of only in a log someone has to open. Rendering is $lib/reasons,
+  // like `reason`.
   lastError: z
     .object({ page: z.string().nullable(), error: z.string() })
     .nullable(),
-  warnings: z.number(),
+  errors: z.number(),
+  // True only once the wrapper's own iiif.json PUT has actually succeeded
+  // (interim or final) -- what the "open in the viewer" link switches on,
+  // never a page count (a volume under PUBLISH_EVERY_PAGES pages would
+  // otherwise link to a manifest that is not there yet).
+  viewerPublished: z.boolean(),
 });
 
 export const volumeStateSchema = z.enum([
@@ -164,14 +177,15 @@ export const jobDetailSchema = jobSummarySchema.extend({
   volumes: z.array(volumeViewSchema),
   // Summed over the volumes THIS response carries (the page, plus `latest`
   // and the failures) — the API reads one progress file per row it answers
-  // with, never one per volume in the campaign. Both 0 when none is known.
+  // with, up to PROGRESS_FETCH_CAP, never one per volume in the campaign.
+  // Both 0 when none is known.
   pagesDone: z.number(),
   pagesTotal: z.number(),
-  // The same three, campaign-wide: the failures and warnings summed, and the
-  // most recent error with the volume it happened in and that volume's run
-  // log — the row it came from is usually outside the page being shown.
+  // The same three, campaign-wide: the failed pages and errors summed, and
+  // the most recent error with the volume it happened in and that volume's
+  // run log — the row it came from is usually outside the page being shown.
   pagesFailed: z.number(),
-  warnings: z.number(),
+  errors: z.number(),
   lastError: z
     .object({
       page: z.string().nullable(),
@@ -192,7 +206,7 @@ export type VolumeReason = z.infer<typeof volumeReasonSchema>;
 export type VolumeProgress = z.infer<typeof volumeProgressSchema>;
 export type CampaignNotice = Pick<
   JobDetail,
-  "pagesFailed" | "warnings" | "lastError"
+  "pagesFailed" | "errors" | "lastError"
 >;
 export type VolumeView = z.infer<typeof volumeViewSchema>;
 export type JobDetail = z.infer<typeof jobDetailSchema>;

@@ -54,12 +54,12 @@
   // The pages of the volumes this response covered, summed by the API. Not
   // in JobSummary: the list endpoint reads no volumes at all.
   let pages = $state<{ done: number; total: number }>({ done: 0, total: 0 });
-  // What went wrong anywhere in the campaign: failed pages, warnings, and the
+  // What went wrong anywhere in the campaign: failed pages, errors, and the
   // most recent error with the run log it came from (the product owner,
   // 2026-09-08 — an exception in a log should show on the front page).
   let notice = $state<CampaignNotice>({
     pagesFailed: 0,
-    warnings: 0,
+    errors: 0,
     lastError: null,
   });
   const noticeText = $derived(describeNotice(notice));
@@ -150,7 +150,7 @@
       pages = { done: detail.pagesDone, total: detail.pagesTotal };
       notice = {
         pagesFailed: detail.pagesFailed,
-        warnings: detail.warnings,
+        errors: detail.errors,
         lastError: detail.lastError,
       };
       pipelineSteps = detail.pipelineSteps;
@@ -190,11 +190,14 @@
 
   // The published result once there is one, the source manifest before that
   // (the old derive.viewerHref) — so "open" is a live link from the first
-  // tick, not only after the volume publishes. One page done is enough: the
-  // wrapper rewrites iiif.json every few pages, so the volume is readable in
-  // the viewer long before it is finished (C11).
+  // tick, not only after the volume publishes. Switches on viewerPublished,
+  // never on a page count (C11 fix round): the wrapper republishes iiif.json
+  // every ten pages, but a count crossing zero does not mean that publish has
+  // actually happened yet, and a volume smaller than that cadence would
+  // otherwise link to a manifest that is not there.
   function openHref(v: VolumeView): string | null {
-    const published = v.state === "done" || (v.progress?.done ?? 0) > 0;
+    const published =
+      v.state === "done" || (v.progress?.viewerPublished ?? false);
     const manifest = published ? v.iiifUrl : sourceOf(v);
     return manifest === null ? null : `uv.html#?manifest=${manifest}`;
   }
@@ -297,13 +300,19 @@
           class="chip notice"
           class:bad={notice.pagesFailed > 0}
           href={noticeHref}
-          title={noticeText}>{noticeText}</a
+          title={noticeText}
+          ><span aria-hidden="true">{noticeText}</span><span class="sr-only"
+            >{noticeText}</span
+          ></a
         >
       {:else}
         <span
           class="chip notice"
           class:bad={notice.pagesFailed > 0}
-          title={noticeText}>{noticeText}</span
+          title={noticeText}
+          ><span aria-hidden="true">{noticeText}</span><span class="sr-only"
+            >{noticeText}</span
+          ></span
         >
       {/if}
     {/if}

@@ -347,7 +347,15 @@ check web       "$(count packages/web/src -name '*.py')" 989
 # API sent a run log for the volume it happened in, a plain chip otherwise),
 # the derived href, and the clipping rules that keep a long sentence from
 # rewrapping the whole header.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3300
+# 3300 -> 3326 (2026-09-08, page-progress review round, items 2/4/7/9):
+# api.ts's `ageSeconds`/`errors`/`viewerPublished` replace `warnings`;
+# reasons.ts's `formatAge` takes a count of seconds from the API instead of
+# computing one from `updatedAt` and the browser's Date.now() (`describeProgress`
+# drops its `now` param entirely); CampaignCard's openHref switches on
+# `progress.viewerPublished`, never a page count, and the notice chip carries
+# its full sentence in a `.sr-only` node (not only `title`), reachable by
+# keyboard and assistive tech even while the visible copy is CSS-clipped.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3326
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
