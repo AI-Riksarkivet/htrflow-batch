@@ -249,7 +249,13 @@ check web       "$(count packages/web/src -name '*.py')" 690
 # placements it reads (the same two the Kyverno model-revision policy
 # accepts), so the next reader does not have to rediscover them from a
 # rejected apply.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3179
+# 3179 -> 3229 (2026-09-08): the card's Models line -- one link per model
+# under the pipeline chip, `<name> @<short sha>` to the repo's tree at that
+# commit (or `unpinned`, linking to main), so the weights that produced a
+# campaign's results are one click away from the campaign. CampaignCard +47
+# (the derived list, the wrapping line and its four CSS rules); pipeline.ts
+# +3 for the strict-TypeScript regex idiom runlog.splitLogLine already uses.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3229
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

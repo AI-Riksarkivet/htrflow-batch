@@ -545,6 +545,69 @@ describe("CampaignCard", () => {
     expect(screen.getByText(/- step: Segmentation/)).toBeInTheDocument();
   });
 
+  test("the models the pipeline runs are links to their Hugging Face tree", async () => {
+    const detail = {
+      ...detail0,
+      pipelineSteps: ["Segmentation", "TextRecognition"],
+      pipelineYaml: `steps:
+- step: Segmentation
+  settings:
+    model_settings:
+      model: Riksarkivet/yolov9-regions-1
+      revision: 6fb01d2e6b4ff1d0e1e30b5b5c1c1a2b3c4d5e6f
+- step: TextRecognition
+  settings:
+    model_settings:
+      model: Riksarkivet/trocr-base-handwritten-hist-swe-2
+`,
+      failures: [],
+      volumes: [],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(detail)),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const pinned = screen.getByRole("link", {
+      name: "yolov9-regions-1 @6fb01d2",
+    });
+    expect(pinned).toHaveAttribute(
+      "href",
+      "https://huggingface.co/Riksarkivet/yolov9-regions-1/tree/" +
+        "6fb01d2e6b4ff1d0e1e30b5b5c1c1a2b3c4d5e6f",
+    );
+    expect(pinned).toHaveAttribute("rel", "noopener");
+    expect(pinned).toHaveAttribute("target", "_blank");
+    // An unpinned model says so, and its link is the repo's default branch.
+    expect(
+      screen.getByRole("link", {
+        name: "trocr-base-handwritten-hist-swe-2 unpinned",
+      }),
+    ).toHaveAttribute(
+      "href",
+      "https://huggingface.co/Riksarkivet/trocr-base-handwritten-hist-swe-2/tree/main",
+    );
+  });
+
+  test("a pipeline with no models renders no Models line", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          pipelineYaml: "steps:\n- step: Export\n",
+          failures: [],
+          volumes: [],
+        }),
+      ),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.queryByText("Models")).toBeNull();
+  });
+
   test("no pipeline YAML: the chip is a static label, not a button", async () => {
     vi.stubGlobal(
       "fetch",

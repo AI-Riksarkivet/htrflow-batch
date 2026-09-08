@@ -22,19 +22,21 @@ export type PipelineModel = {
 
 type Entry = { indent: number; key: string; value: string };
 
+const KEY_RE = /^(\s*)([\w.-]+):\s*(.*)$/;
+
 /** Every `key: value` line, with its indent; comments and blanks dropped. */
 function entries(yaml: string): Entry[] {
   const out: Entry[] = [];
   for (const raw of yaml.split("\n")) {
     // A list marker indents the mapping it opens exactly as two spaces would.
-    const match = /^(\s*)([\w.-]+):\s*(.*)$/.exec(
-      raw.replace(/^(\s*)-\s/, "$1  "),
-    );
+    const match = KEY_RE.exec(raw.replace(/^(\s*)-\s/, "$1  "));
+    // Groups are non-optional in KEY_RE, so a match has all three (the same
+    // RegExpExecArray blind spot runlog.splitLogLine works around).
     if (match !== null)
       out.push({
-        indent: match[1].length,
-        key: match[2],
-        value: match[3].trim().replace(/^["']|["']$/g, ""),
+        indent: (match[1] as string).length,
+        key: match[2] as string,
+        value: (match[3] as string).trim().replace(/^["']|["']$/g, ""),
       });
   }
   return out;
@@ -46,9 +48,10 @@ export function pipelineModels(yaml: string): PipelineModel[] {
   const models: PipelineModel[] = [];
   rows.forEach((row, i) => {
     if (row.key !== "model_settings") return;
-    const block: Entry[] = [];
-    for (let j = i + 1; j < rows.length && rows[j].indent > row.indent; j++)
-      block.push(rows[j]);
+    // The block is every following line indented deeper than the key itself.
+    const rest = rows.slice(i + 1);
+    const ends = rest.findIndex((e) => e.indent <= row.indent);
+    const block = ends === -1 ? rest : rest.slice(0, ends);
     const id = block.find((e) => e.key === "model" && e.value !== "");
     // Either placement: nothing else inside a model_settings block carries a
     // `revision`, so the first one found is the model's, wherever it sits.
