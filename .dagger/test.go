@@ -47,7 +47,7 @@ func (m *HtrflowBatch) TestDriver(
 	// +optional
 	caBundle *dagger.File,
 ) (string, error) {
-	image, err := m.BuildWrapper(ctx, source, baseRevision, "")
+	image, err := m.BuildWrapper(ctx, source, baseRevision, "", "")
 	if err != nil {
 		return "", fmt.Errorf("wrapper build failed before the driver test: %w", err)
 	}
