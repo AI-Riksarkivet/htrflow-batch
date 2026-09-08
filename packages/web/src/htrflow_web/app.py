@@ -35,15 +35,19 @@ SECURITY_HEADERS = {
     "Content-Security-Policy": "frame-ancestors 'none'",
 }
 
-#: What the page's header shows: the version of THIS package, read off the
-#: installed distribution -- the process that is answering, not the release
-#: tag or the wrapper image a campaign runs, which this process never sees.
+#: This package's own version, read off the installed distribution. Reported
+#: beside the deployed tag, never instead of it: the workspace members are
+#: versioned separately, and what an operator deployed is the image's tag.
 #: A source tree with nothing installed still has to answer something.
 PACKAGE = "htrflow-web"
 try:
-    VERSION = metadata.version(PACKAGE)
+    WEB_VERSION = metadata.version(PACKAGE)
 except metadata.PackageNotFoundError:  # pragma: no cover - installed in CI
-    VERSION = "unknown"
+    WEB_VERSION = "unknown"
+
+#: What ``HTRFLOW_BATCH_VERSION`` says outside an image (kube.Config's default
+#: and the dockerfiles'): a build nobody tagged.
+DEV_VERSION = "dev"
 
 #: Where the image puts the built site (.docker/htrflow-web.dockerfile).
 DEFAULT_STATIC_DIR = "/app/static"
@@ -97,7 +101,15 @@ class NoCluster:
     list_jobs = list_warmups = get_job = get_configmap = list_pods = _no_cluster
 
 
-def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
+def create_app(
+    reader,
+    static_dir: Path | str | None = None,
+    batch_version: str = DEV_VERSION,
+) -> FastAPI:
+    """``batch_version`` is the deployed image's tag, passed in by
+    ``__main__`` from ``kube.Config`` -- this module reads no environment of
+    its own, and site-only mode has no ``cfg`` on its reader to take it from.
+    """
     app = FastAPI()
 
     @app.middleware("http")
@@ -112,7 +124,7 @@ def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
 
     @app.api_route("/api/v1/version", methods=GET_HEAD)
     def version() -> dict:
-        return {"name": PACKAGE, "version": VERSION}
+        return {"version": batch_version, "web": WEB_VERSION}
 
     @app.api_route("/api/v1/jobs", methods=GET_HEAD)
     def list_jobs() -> list[dict]:

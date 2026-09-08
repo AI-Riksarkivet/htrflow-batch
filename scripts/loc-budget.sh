@@ -216,7 +216,13 @@ check converter "$(count packages/converter/src -name '*.py')" 1434
 # distribution, read once at import; most of the 15 lines is the comment
 # saying what that version is NOT -- not the release tag, not the wrapper
 # image a campaign runs, neither of which this process can see.
-check web       "$(count packages/web/src -name '*.py')" 705
+# 705 -> 722 (2026-09-08): the version the header shows became the deployed
+# image's tag. `HTRFLOW_BATCH_VERSION` is a kube.Config field like every other
+# env this service reads, `__main__` hands it to `create_app` (site-only mode
+# has no cfg on its reader to take it from, and app.py reads no environment of
+# its own), and the route answers with it alongside the web package's own
+# version -- which is reported beside the tag, never instead of it.
+check web       "$(count packages/web/src -name '*.py')" 722
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

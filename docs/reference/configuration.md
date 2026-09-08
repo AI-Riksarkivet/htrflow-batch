@@ -101,6 +101,7 @@ skeleton, never as a campaign setting.
 | `HTRFLOW_NAMESPACES` | env | the pod's own namespace, else `htr-batch` | — | no secret — nobody |
 | `HTRFLOW_WEB_STATIC` | env | `/app/static` | — | no secret — nobody |
 | `HTRFLOW_WEB_SITE_ONLY` | env | `false` | — | no secret — nobody |
+| `HTRFLOW_BATCH_VERSION` | env | `dev` | — | no secret — nobody |
 
 ## converter — a campaigns repo
 
