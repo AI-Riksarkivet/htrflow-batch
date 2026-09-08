@@ -176,6 +176,13 @@ in the chart READMEs.
 
 ## Gotchas collected on this node
 
+- **A shared k3s host needs a few host-level settings first** — raised
+  inotify limits (kubelet silently fails to register the node when the
+  default `max_user_instances` is exhausted by other services), an explicit
+  IPv4 `node-ip` when the hostname resolves IPv6-only, and absolute rather
+  than percentage-based kubelet eviction thresholds on a large shared disk.
+  The values are the host's business and live with the host's
+  configuration, not in this repository.
 - **`helm template` needs `network.apiServer.cidr`** (and `nodeCidrs`): the
   read API's NetworkPolicy is built from a `lookup` that only works against
   a cluster.

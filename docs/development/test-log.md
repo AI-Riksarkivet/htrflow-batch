@@ -119,10 +119,9 @@ behavior under >1 concurrent Job on GPU (single-Job smoke only), the
 `htrq` CLI, priority lanes (D13), NetworkPolicy (D14) — remain §10 opens.
 
 **Host gotchas fixed en route** (persisted; also in memory notes):
-`fs.inotify.max_user_instances=128` was exhausted by root's services → kubelet
-silently never registered the node (`/etc/sysctl.d/99-k3s-inotify.conf` now
-sets 1024/1048576); `dmlpai01` resolves IPv6-only → `node-ip: 10.16.51.53`
-pinned in `/etc/rancher/k3s/config.yaml`.
+the inotify instance limit was exhausted by other services → kubelet silently
+never registered the node (limits raised in the host's sysctl); the host's
+name resolves IPv6-only → an IPv4 `node-ip` pinned in the k3s config.
 
 ## 14. PoC test log — 2026-07-28: viewer deployment + cluster incident
 
