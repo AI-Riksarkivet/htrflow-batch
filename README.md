@@ -76,3 +76,10 @@ Everything is in `docs/` and builds as a site:
 ```bash
 make docs-serve
 ```
+
+## License
+
+htrflow-batch is licensed under the European Union Public Licence v1.2
+(EUPL-1.2), the same licence as htrflow. See [`LICENSE`](LICENSE). The
+third-party components the images ship are listed with their licences in
+`docs/development/licenses.md`.

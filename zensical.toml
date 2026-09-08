@@ -57,7 +57,8 @@ nav = [
     {"Audit 2026-08-26" = "audits/2026-08-26-repo-audit.md"},
     {"Hard-coded config inventory" = "audits/2026-08-26-hardcoded-inventory.md"},
     {"Docs audit 2026-09-04" = "audits/2026-09-04-docs-audit.md"},
-  ]},
+        {"Third-party licences" = "development/licenses.md"},
+]},
 ]
 
 [project.theme]
