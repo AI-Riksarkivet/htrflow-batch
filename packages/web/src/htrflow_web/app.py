@@ -15,6 +15,7 @@ whole job.
 
 from __future__ import annotations
 
+from importlib import metadata
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -33,6 +34,16 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Content-Security-Policy": "frame-ancestors 'none'",
 }
+
+#: What the page's header shows: the version of THIS package, read off the
+#: installed distribution -- the process that is answering, not the release
+#: tag or the wrapper image a campaign runs, which this process never sees.
+#: A source tree with nothing installed still has to answer something.
+PACKAGE = "htrflow-web"
+try:
+    VERSION = metadata.version(PACKAGE)
+except metadata.PackageNotFoundError:  # pragma: no cover - installed in CI
+    VERSION = "unknown"
 
 #: Where the image puts the built site (.docker/htrflow-web.dockerfile).
 DEFAULT_STATIC_DIR = "/app/static"
@@ -98,6 +109,10 @@ def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
     @app.api_route("/healthz", methods=GET_HEAD)
     def healthz() -> dict:
         return {"ok": True}
+
+    @app.api_route("/api/v1/version", methods=GET_HEAD)
+    def version() -> dict:
+        return {"name": PACKAGE, "version": VERSION}
 
     @app.api_route("/api/v1/jobs", methods=GET_HEAD)
     def list_jobs() -> list[dict]:

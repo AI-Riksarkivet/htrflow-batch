@@ -96,7 +96,9 @@ def test_no_static_dir_still_serves_the_api(tmp_path: Path):
     assert client.get("/").status_code == 404
 
 
-@pytest.mark.parametrize("path", ["/healthz", "/api/v1/jobs", "/api/v1/jobs/ns/name"])
+@pytest.mark.parametrize(
+    "path", ["/healthz", "/api/v1/version", "/api/v1/jobs", "/api/v1/jobs/ns/name"]
+)
 def test_head_is_answered_by_the_route_not_the_static_mount(
     client: TestClient, path: str
 ):
@@ -140,3 +142,8 @@ class TestSiteOnly:
 
     def test_healthz_still_ok(self, client: TestClient):
         assert client.get("/healthz").json() == {"ok": True}
+
+    def test_version_still_answers(self, client: TestClient):
+        """The header shows a version on the compose stack too: it is this
+        process's own package, nothing a cluster could tell it."""
+        assert client.get("/api/v1/version").json()["name"] == "htrflow-web"

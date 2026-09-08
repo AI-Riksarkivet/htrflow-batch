@@ -211,7 +211,12 @@ check converter "$(count packages/converter/src -name '*.py')" 1434
 # init container that exited non-zero), and most of the 23 lines is the two
 # docstrings: why a SUCCEEDED init container explains nothing, and why the
 # message that arrives is plain stderr rather than the wrapper's JSON.
-check web       "$(count packages/web/src -name '*.py')" 690
+# 690 -> 705 (2026-09-08): GET /api/v1/version, so the page's header can say
+# which build is answering it. importlib.metadata on this package's own
+# distribution, read once at import; most of the 15 lines is the comment
+# saying what that version is NOT -- not the release tag, not the wrapper
+# image a campaign runs, neither of which this process can see.
+check web       "$(count packages/web/src -name '*.py')" 705
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

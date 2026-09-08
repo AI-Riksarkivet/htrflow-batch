@@ -98,6 +98,16 @@ def test_healthz(client: TestClient):
     assert resp.json() == {"ok": True}
 
 
+def test_version(client: TestClient):
+    """The version of the process serving the page -- its own package's."""
+    resp = client.get("/api/v1/version")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) == {"name", "version"}
+    assert body["name"] == "htrflow-web"
+    assert re.fullmatch(r"\d+\.\d+\.\d+.*", body["version"])
+
+
 def test_list_jobs_shape(client: TestClient):
     resp = client.get("/api/v1/jobs")
     assert resp.status_code == 200
