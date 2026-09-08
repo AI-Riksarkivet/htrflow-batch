@@ -1,4 +1,4 @@
-.PHONY: install format lint check test typecheck test-driver-real ci build scan publish \ install-kueue
+.PHONY: install format lint check test typecheck test-driver-real ci build scan publish \
         compose-up compose-test compose-smoke compose-down helm-lint helm-template \
         install-devstack install-kyverno \
         docs-serve docs-build config-reference \
