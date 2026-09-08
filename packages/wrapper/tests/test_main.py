@@ -1,6 +1,8 @@
 import json
 import os
 import signal
+import sys
+import threading
 from pathlib import Path
 
 import httpx
@@ -1046,3 +1048,90 @@ def test_publish_still_reads_back_only_the_pages_a_previous_run_did(
     assert main(env, process_page_factory=fake_factory) == EXIT_OK
 
     assert reads == ["alto/0001.xml"]
+
+
+ALTO_STAMPABLE = (
+    '<alto xmlns="http://www.loc.gov/standards/alto/ns-v4#"><Description>'
+    "<MeasurementUnit>pixel</MeasurementUnit></Description>"
+    '<Layout><Page WIDTH="2500" HEIGHT="3538"/></Layout></alto>'
+)
+
+
+def test_default_factory_rebuilds_the_pipeline_after_a_dead_worker_thread(
+    cfg, tmp_path, monkeypatch
+):
+    """B88: the page whose model killed htrflow's worker thread is recorded
+    failed with the sentence that names step and model, and the NEXT page is
+    processed by a pipeline built from scratch -- the run goes on instead of
+    the pod standing still with a reserved GPU until its deadline."""
+    from types import ModuleType, SimpleNamespace
+
+    from htrflow_batch import driver
+    from htrflow_batch.fetch import FetchResult
+    from htrflow_batch.iiif import PageRef
+    from htrflow_batch.stream import consume
+
+    fake_steps = ModuleType("htrflow.pipeline.steps")
+    fake_steps.auto_import = lambda paths: list(paths)  # the page's own path
+    monkeypatch.setitem(sys.modules, "htrflow", ModuleType("htrflow"))
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline", ModuleType("htrflow.pipeline"))
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline.steps", fake_steps)
+    monkeypatch.setattr(driver, "THREAD_POLL_SECONDS", 0.01)
+    blocked = threading.Event()
+
+    class _Pipeline:
+        """One Inference step whose worker thread dies on page 0002 and whose
+        run() then never returns, exactly as htrflow's does."""
+
+        class Segmentation:  # __str__ is the class name, as htrflow's is
+            def __init__(self, thread):
+                self._thread = thread
+                self.metadata = SimpleNamespace(settings={"model": "yolov9-regions-1"})
+
+            def __str__(self):
+                return type(self).__name__
+
+        def __init__(self):
+            self.thread = SimpleNamespace(alive=True)
+            self.thread.is_alive = lambda: self.thread.alive
+            self.steps = [self.Segmentation(self.thread)]
+
+        def run(self, document):
+            if Path(document).stem == "0002":
+                self.thread.alive = False
+                blocked.wait()
+            _write_outputs(cfg, Path(document).stem, alto=ALTO_STAMPABLE)
+
+    built = []
+
+    def load_pipeline(path, out_dir):
+        built.append(_Pipeline())
+        return built[-1]
+
+    monkeypatch.setattr(driver, "load_pipeline", load_pipeline)
+
+    images = []
+    for i in (1, 2, 3):
+        image = tmp_path / f"{i:04d}.jpg"
+        image.write_bytes(b"jpg")
+        images.append(
+            FetchResult(
+                page=PageRef(index=i, name=f"{i:04d}", image_url="x", canvas={}),
+                path=image,
+                error=None,
+            )
+        )
+    try:
+        stats = consume(
+            images, main_mod._default_factory(cfg), lambda name, files: None
+        )
+    finally:
+        blocked.set()
+
+    assert [r.status for r in stats.results.values()] == ["ok", "failed", "ok"]
+    assert stats.results["0002"].error == (
+        "PipelineDead(\"page 0002: htrflow's Segmentation (model "
+        "yolov9-regions-1) worker thread died; the page is marked failed and "
+        'the pipeline is rebuilt")'
+    )
+    assert len(built) == 2  # page 0003 ran on a pipeline built from scratch
