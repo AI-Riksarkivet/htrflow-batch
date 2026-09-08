@@ -318,6 +318,22 @@ Könamnet och Job-templaten ändras, vilket ger `422 field is immutable` och en
 kö-label som inte går att ändra på ett admitterat Job — storyn är
 draineringsordningen, adoptionen av befintliga objekt och verifieringen på PoC:n.
 
+## 7. Implementation plans
+
+This design is too large for one plan and splits into three, in this order. Each
+is independently shippable and leaves the system working.
+
+| Plan | Contains | Why it is one plan |
+|---|---|---|
+| **(a) Queueing and the chart split** | **B89** platform/tenant chart split · **B90** cohort, nominal quotas, borrowing, reclaim · **B91** the priority classes and `withinClusterQueue` · **B92** the two volume bounds | One release boundary and one Kueue topology change, verifiable with `helm template`, `kubeconform` and a two-queue borrow/reclaim test on the PoC. Nothing here needs an identity. |
+| **(b) Identity and the partner path** | **B94** the converter's submitter stamping and prefix substitution · **B95** the partners' repo · **B96** apply's per-submitter limit · **B97** the read API and viewer filtering · **B98** the group-to-tenant mapping | All of it hangs off one decision — who the submitter is — and off **B67**, which must land first. Shipping any part alone leaves either a stamp nobody reads or a filter with nothing to filter on. |
+| **(c) Storage, metrics and the move** | **B93** the RWX model cache · **B99** per-tenant metrics · **B100** the migration, with **B10** (HCP) and **B36** (registry) as its prerequisites | These are the platform-team-facing pieces: storage classes, a registry, a Prometheus scrape config and a maintenance window. They gate the move to DEV rather than the code. |
+
+Plan (a) can start now; only R2 (the quota split) blocks its last step. Plan (b)
+starts when B67 is merged and R5 — which identities the front door accepts — is
+answered. Plan (c) starts when the platform team has answered R6 (the Kueue
+install) and R7 (an RWX storage class).
+
 [^concepts]: Kueue docs — [Concepts](https://kueue.sigs.k8s.io/docs/concepts/) (Workload, admission, quota reservation).
 [^cq]: Kueue docs — [ClusterQueue](https://kueue.sigs.k8s.io/docs/concepts/cluster_queue/) (`cohortName`, `borrowingLimit`, `lendingLimit`, `queueingStrategy`, `namespaceSelector`).
 [^lq]: Kueue docs — [LocalQueue](https://kueue.sigs.k8s.io/docs/concepts/local_queue/).
