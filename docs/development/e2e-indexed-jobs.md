@@ -148,7 +148,7 @@ network:
 ```
 
 `network.apiServer.cidr` was left empty on purpose: the chart's `lookup` of
-`Endpoints default/kubernetes` resolved it (10.16.51.56/32) and the read API's
+`Endpoints default/kubernetes` resolved it (the API server address/32) and the read API's
 NetworkPolicy came out right — the API answers, so its egress to the
 apiserver works.
 

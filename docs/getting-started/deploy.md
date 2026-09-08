@@ -19,7 +19,7 @@ helm install htr charts/htrflow-batch -n htr-batch --create-namespace \
   --set publicResultsBase=<browser-reachable results base URL> \
   --set web.image=<registry>/htrflow-web@sha256:<digest> \
   --set network.s3Cidrs='{<s3 endpoint cidr>}' \
-  --set network.apiServer.cidr=<kube-apiserver cidr, e.g. 10.16.51.56/32> \
+  --set network.apiServer.cidr=<kube-apiserver cidr, the node's API server address/32> \
   --set security.allowedImageRepos='{<registry>/}' \
   --set security.policies.enabled=true
 make psa-labels
@@ -161,8 +161,9 @@ install/upgrade — no manual `aws-cli` pod any more. The RustFS credentials
 are generated on first install; read them back with
 `kubectl -n htr-batch get secret htr-batch-s3 -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d`.
 
-Host prerequisites (persisted on the PoC node) are in
-[Prerequisites](index.md#bare-k3s-poc-path-host-gotchas).
+Host-level settings a shared k3s node may need are the host's business; the
+[local k3s page](../development/local-k3s.md#gotchas-collected-on-this-node)
+names them.
 
 ## Local compose smoke stack
 

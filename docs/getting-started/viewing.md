@@ -54,10 +54,10 @@ tunnelling straight to the hostname doesn't work either. Tunnel both ports
 to the node's pinned IPv4 address instead:
 
 ```bash
-ssh -L 30800:10.16.51.53:30800 -L 30900:10.16.51.53:30900 <ssh-host>
+ssh -L 30800:<node-ip>:30800 -L 30900:<node-ip>:30900 <ssh-host>
 ```
 
-`<ssh-host>` is any machine you can ssh to that reaches 10.16.51.53 (e.g.
+`<ssh-host>` is any machine you can ssh to that reaches the node (e.g.
 your coder host); the `-L` targets resolve on the far side. Both ports are
 required — the page and the read API come from 30800 but the manifest,
 images and ALTO come from 30900.

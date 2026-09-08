@@ -226,4 +226,4 @@ in the chart READMEs.
   this node (`rustfs-data`, 5 Gi by default, kept on uninstall). Fine for
   iteration; not an archive.
 - Host prerequisites from the first PoC (inotify limits, `node-ip` pin,
-  absolute eviction thresholds) are in [Prerequisites](../getting-started/index.md#bare-k3s-poc-path-host-gotchas).
+  absolute eviction thresholds) live with the host, see the first gotcha above.
