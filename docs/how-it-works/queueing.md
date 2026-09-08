@@ -1,5 +1,10 @@
 # Queueing (Kueue)
 
+> The mechanics — Kueue's own objects, webhooks and reconcilers, the
+> admission cycle field by field, pause, preemption — are on
+> [Kueue in depth](kueue.md). This page is the htrflow-batch view: what our
+> chart renders, what the converter puts on a Job, and what an operator sees.
+
 Kueue is the only thing in this system that decides **when** a campaign may
 run. It owns admission and GPU quota; it knows nothing about HTR, IIIF or
 S3. A campaign is one Indexed Job and — the fact everything else on this
@@ -70,35 +75,25 @@ flowchart TB
     P -->|"suspend removed"| Q
 ```
 
-1. The apply creates the Job. Kueue's mutating webhook **suspends it on
-   creation** and creates one `Workload`, named `job-<campaign>-<hash>`,
-   owned by the Job and labelled `kueue.x-k8s.io/job-uid=<the Job's uid>` —
-   the only link that survives a delete/recreate of the Job.
-2. The Workload carries **one podSet**, `main`, whose `count` is the Job's
-   `spec.parallelism` — not its `completions`. Verified live: campaign
-   `e2e-t22run`, `completions: 2 / parallelism: 1`, reserved
-   `cpu 4, memory 8Gi, nvidia.com/gpu 1` for a podSet of one.
-3. When that much quota is free, Kueue writes `QuotaReserved` then
-   `Admitted` and unsuspends the Job; the Job gets `Suspended=False` with
-   reason `JobResumed`, and the namespace shows a `Suspended` event followed
-   by a `Resumed` one.
-4. The admission lasts for the **whole Job**: Kubernetes runs indexes up to
-   `parallelism` and replaces each finished pod with the next index without
-   asking Kueue again.
+The step-by-step — which controller writes which field, and when — is
+[Kueue in depth](kueue.md#the-admission-cycle-step-by-step). The one fact
+worth repeating here, because everything above follows from it: the Workload
+carries **one podSet**, `main`, whose `count` is the Job's `spec.parallelism`
+— not its `completions`. Verified live: campaign `e2e-t22run`,
+`completions: 2 / parallelism: 1`, reserved
+`cpu 4, memory 8Gi, nvidia.com/gpu 1` for a podSet of one. So admission
+lasts for the **whole Job**: Kubernetes runs indexes up to `parallelism` and
+replaces each finished pod with the next without asking Kueue again.
 
 ## Pausing
 
 `suspend: true` in the campaign file renders `spec.suspend: true`, but that
 field is not the lever: **Kueue owns `spec.suspend` for a Workload it has
-admitted** and flips it back within seconds. So the last step of
-`htrflow-campaigns apply` patches the Workload's `spec.active` instead
-(`cluster.py`'s `sync_pause`, a merge patch, skipped when the Workload
-already agrees). Deactivating evicts the pods, keeps every completed index
-and leaves `kubectl get job` reporting `suspend: true`; reactivating
-continues at the next index. A brand-new paused campaign has no Workload for
-a moment, which is exactly the window Kueue would start it in — so the apply
-waits for it and exits non-zero if it never appears
-([Campaign & Pipeline YAML → Pausing](../reference/campaign-yaml.md#pausing)).
+admitted** and flips it back within seconds. The last step of
+`htrflow-campaigns apply` patches the Workload's `spec.active` instead —
+mechanism, RBAC and the wait for a brand-new Workload in
+[Kueue in depth](kueue.md#pause); the campaign-file side in
+[Campaign & Pipeline YAML → Pausing](../reference/campaign-yaml.md#pausing).
 
 ## What "Queued" means on a campaign card
 
@@ -138,26 +133,13 @@ kubectl get clusterqueue htr-batch-cq -o yaml   # pendingWorkloads, flavorsUsage
 An admitted Workload's conditions are `QuotaReserved` + `Admitted`, and
 `Finished` (reason `Succeeded`) once the Job completes — all three verified
 on the PoC. A waiting Workload has none of them: it shows `ADMITTED` empty
-and is counted in the ClusterQueue's `status.pendingWorkloads`, with Kueue's
-reason on the object itself. If Workloads sit queued while the GPU is idle,
-**check the Kueue controller first** — a dead Kueue looks exactly like a busy
-GPU.
+and is counted in the ClusterQueue's `status.pendingWorkloads`. The full set
+of conditions, the events and the metrics are in
+[Kueue in depth](kueue.md#the-operators-reading).
 
 ## Known limits and open stories
 
-- **B18** — *Let urgent volumes jump the queue.* No `WorkloadPriorityClass`
-  is rendered and preemption is `Never`, so a campaign's `priority:` label
-  names a class that does not exist and Kueue's webhook rejects the Job.
-  Priority lanes need the classes, preemption, and a story for what "admitted
-  next" means when one campaign already holds the quota (audit X17).
-- **B66** — *A pause is expressed in Kueue, not by us patching its
-  Workload.* `sync_pause` is our own lever, and it talks to the deprecated
-  `v1beta1` Workload API while the chart renders `v1beta2` (audit X24).
-- **B84** — *`htrflow-campaigns apply` warns when `window` does not fit the
-  quota.* The shipped defaults cannot admit anything: converter `window` 20
-  against a 1-GPU quota renders `parallelism: 20`, inadmissible forever and
-  shown only as "Queued" (audit X18).
-- **B76** — *A finished campaign does not come back when the TTL has reaped
-  its Job.* `ttlSecondsAfterFinished: 86400` removes the Job a day after it
-  finishes; the next apply re-creates it and every index runs again
-  (audit X6).
+**B18** (priority lanes), **B66** (a pause Kueue owns), **B84** (`window`
+against the quota) and **B76** (a TTL-reaped Job re-run from zero), each with
+what stands in the way, close
+[Kueue in depth](kueue.md#known-limits-and-open-stories).
