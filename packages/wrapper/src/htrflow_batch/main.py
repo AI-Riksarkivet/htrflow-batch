@@ -110,7 +110,19 @@ def _default_factory(cfg: Config):
     pipeline = driver.load_pipeline(cfg.pipeline_path, out_dir)
 
     def process(image_path: Path):
-        files = driver.process_page(pipeline, image_path, out_dir)
+        nonlocal pipeline
+        if pipeline is None:
+            # B88: the previous page killed an htrflow worker thread, so that
+            # pipeline is unusable. Rebuild here rather than in the handler
+            # below, so the failed page keeps its own error -- the models come
+            # back from the cache PVC, not the Hub.
+            log.warning("rebuilding the htrflow pipeline after a dead worker thread")
+            pipeline = driver.load_pipeline(cfg.pipeline_path, out_dir)
+        try:
+            files = driver.process_page(pipeline, image_path, out_dir)
+        except driver.PipelineDead:
+            pipeline = None  # every later page would wait on the dead queue
+            raise
         provenance.stamp_alto(
             files["alto"],
             image=cfg.image_digest,
