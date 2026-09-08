@@ -86,6 +86,17 @@ def _results_base(namespace: str, pipeline: str, cfg) -> str:
     return f"{cfg.public_results_base}/{namespace}/{pipeline}"
 
 
+def _internal_results_base(namespace: str, pipeline: str, cfg) -> str:
+    """Where THIS POD reaches the results bucket -- ``cfg.internal_results_base``
+    when set, else the same public one (real AWS, and every lightweight `cfg`
+    double in this package's own tests, which carry no such field at all).
+    Used only for ``ProgressReader.fetch`` below: every URL a browser follows
+    (manifestUrl, iiifUrl, logUrl, ``resultsBase`` itself) stays built from
+    ``_results_base``, the public one."""
+    base = getattr(cfg, "internal_results_base", "") or cfg.public_results_base
+    return f"{base}/{namespace}/{pipeline}"
+
+
 def summarize(job: dict, cfg, warmup: dict) -> dict:
     """``JobSummary``: one row for ``GET /api/v1/jobs``. ``warmup`` is the
     caller's pre-matched ``{phase, reason?}`` (Task 28)."""
@@ -373,7 +384,10 @@ def detail(
     ``GET /api/v1/jobs/{ns}/{name}``, paged by index. ``warmup`` passes
     through to ``summarize`` unchanged (Task 28); ``fetch_progress`` is
     ``(results_base, volume id, state) -> progress | None``
-    (``app.py`` wires ``progress.ProgressReader.fetch``)."""
+    (``app.py`` wires ``progress.ProgressReader.fetch``) -- called with the
+    INTERNAL results base (this pod's own way to the bucket), never the
+    public one every URL below is built from: on the PoC they are not the
+    same address (docs: development/local-k3s)."""
     summary = summarize(job, cfg, warmup)
     status = job.get("status") or {}
     completed = parse_index_ranges(status.get("completedIndexes"))
@@ -381,6 +395,7 @@ def detail(
     pods_by_index = _pods_by_index(pods)
     results_base = summary["resultsBase"]
     pipeline = summary["pipeline"]
+    internal_base = _internal_results_base(summary["namespace"], pipeline, cfg)
 
     # Annotated because the rows are heterogeneous (int index, str URLs,
     # nullable sourceUrl) and the sort below needs a comparable key type.
@@ -413,7 +428,7 @@ def detail(
     page = volumes[offset : offset + limit]
     known = _attach_progress(
         [*page, *failures, *([latest] if (latest := _latest(volumes)) else [])],
-        results_base,
+        internal_base,
         fetch_progress or (lambda *_args: None),
     )
 

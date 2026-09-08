@@ -39,3 +39,28 @@ def test_static_dir_passes_through():
         {"HTRFLOW_PUBLIC_RESULTS_BASE": "http://x", "HTRFLOW_WEB_STATIC": "/site"}
     )
     assert cfg.static_dir == "/site"
+
+
+def test_internal_results_base_defaults_to_the_public_one():
+    """The API pod's own ProgressReader must reach the bucket even when
+    nobody set HTRFLOW_INTERNAL_RESULTS_BASE -- true on real AWS, where the
+    same URL really does work from inside the cluster."""
+    cfg = Config.from_env({"HTRFLOW_PUBLIC_RESULTS_BASE": "http://x/results"})
+    assert cfg.internal_results_base == "http://x/results"
+
+
+def test_internal_results_base_can_differ_from_the_public_one():
+    """The PoC: publicResultsBase is a localhost URL reached through an SSH
+    forward, which the pod itself cannot resolve to anything but itself."""
+    cfg = Config.from_env(
+        {
+            "HTRFLOW_PUBLIC_RESULTS_BASE": "http://localhost:30900/htr-results",
+            "HTRFLOW_INTERNAL_RESULTS_BASE": (
+                "http://rustfs.htr-batch.svc.cluster.local:9000/htr-results/"
+            ),
+        }
+    )
+    assert (
+        cfg.internal_results_base
+        == "http://rustfs.htr-batch.svc.cluster.local:9000/htr-results"
+    )

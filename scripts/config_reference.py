@@ -60,6 +60,7 @@ SECURITY = {
 #: packages/web's LOC budget here.
 WEB_DEFAULT_DOC = {
     "HTRFLOW_PUBLIC_RESULTS_BASE": "required unless `HTRFLOW_WEB_SITE_ONLY`",
+    "HTRFLOW_INTERNAL_RESULTS_BASE": "`HTRFLOW_PUBLIC_RESULTS_BASE`",
     "HTRFLOW_NAMESPACES": "the pod's own namespace, else `htr-batch`",
     "HTRFLOW_WEB_STATIC": "`/app/static`",
 }

@@ -46,6 +46,16 @@ class Config(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     public_results_base: str = Field("", alias="HTRFLOW_PUBLIC_RESULTS_BASE")
+    #: Where THIS POD reaches the results bucket -- not necessarily the same
+    #: address a browser can resolve. On the PoC `public_results_base` is a
+    #: `localhost` URL reached through an SSH forward (docs:
+    #: development/local-k3s "Two S3 endpoints"): the API pod's own
+    #: ProgressReader would resolve that `localhost` to itself and never
+    #: reach RustFS. Defaults to `public_results_base` (real AWS, or any
+    #: deployment where the same URL really does work from inside the
+    #: cluster); the chart sets it explicitly for the PoC
+    #: (`web.internalResultsBase`).
+    internal_results_base: str = Field("", alias="HTRFLOW_INTERNAL_RESULTS_BASE")
     namespaces: tuple[str, ...] = Field((), alias="HTRFLOW_NAMESPACES")
     static_dir: str = Field("", alias="HTRFLOW_WEB_STATIC")
     site_only: bool = Field(False, alias="HTRFLOW_WEB_SITE_ONLY")
@@ -54,12 +64,14 @@ class Config(BaseModel):
     def from_env(cls, env: Mapping[str, str] | None = None) -> Config:
         get = os.environ.get if env is None else env.get
         base = (get("HTRFLOW_PUBLIC_RESULTS_BASE") or "").rstrip("/")
+        internal_base = (get("HTRFLOW_INTERNAL_RESULTS_BASE") or "").rstrip("/") or base
         site_only = bool(get("HTRFLOW_WEB_SITE_ONLY"))  # any non-empty value
         if not base and not site_only:  # site-only builds no result URL
             raise RuntimeError("HTRFLOW_PUBLIC_RESULTS_BASE is required")
         names = [n.strip() for n in (get("HTRFLOW_NAMESPACES") or "").split(",")]
         return cls(
             HTRFLOW_PUBLIC_RESULTS_BASE=base,
+            HTRFLOW_INTERNAL_RESULTS_BASE=internal_base,
             HTRFLOW_NAMESPACES=tuple(filter(None, names)) or (_own_namespace(),),
             HTRFLOW_WEB_STATIC=get("HTRFLOW_WEB_STATIC") or "",
             HTRFLOW_WEB_SITE_ONLY=site_only,

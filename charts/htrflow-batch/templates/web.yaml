@@ -83,6 +83,14 @@ spec:
               value: /tmp
             - name: HTRFLOW_PUBLIC_RESULTS_BASE
               value: {{ .Values.publicResultsBase | required "publicResultsBase is required (the read API serves S3 links built from it)" | quote }}
+            # Where THIS POD reaches the bucket for progress.json -- not
+            # necessarily the same address as the one above: on the PoC,
+            # publicResultsBase is a `localhost` URL reached through an SSH
+            # forward, which the pod itself cannot resolve to anything but
+            # itself (docs: development/local-k3s, "Two S3 endpoints").
+            # Defaults to publicResultsBase, which is correct on real AWS.
+            - name: HTRFLOW_INTERNAL_RESULTS_BASE
+              value: {{ .Values.web.internalResultsBase | default .Values.publicResultsBase | quote }}
             # The API acts on its own namespace; the downward API keeps it
             # correct whatever --namespace the release uses. Deliberately
             # single-valued today (one namespace, this release's) — the
@@ -139,10 +147,24 @@ router matches egress against AFTER service DNAT.
     {{- with (index .subsets 0) }}{{ $api = printf "%s/32" (index .addresses 0).ip }}{{ end }}
   {{- end }}
 {{- end }}
+{{- /*
+Same S3 egress as the batch Job's own policy (network.yaml's `$s3` -- a
+separate template file, so it cannot share that file's local variable):
+this pod's ProgressReader (HTRFLOW_INTERNAL_RESULTS_BASE below) has to reach
+the bucket too, on the PoC's in-namespace `app: rustfs` pod or a real
+endpoint from network.s3Cidrs.
+*/}}
+{{- $s3 := list (dict "to" (list (dict "podSelector" (dict "matchLabels" (dict "app" "rustfs")))) "ports" (list (dict "port" 9000))) }}
+{{- if .Values.network.s3Cidrs }}
+  {{- $blocks := list }}
+  {{- range .Values.network.s3Cidrs }}{{ $blocks = append $blocks (dict "ipBlock" (dict "cidr" .)) }}{{ end }}
+  {{- $s3 = append $s3 (dict "to" $blocks) }}
+{{- end }}
 # Web front: browsers in (NodePort traffic arrives SNAT'd from the node, so
-# the node range must be in network.web.ingressCidrs); egress to DNS and the
-# apiserver only — it never touches S3 or anything else in-cluster, and the
-# results it links to are fetched by the browser, not by this pod.
+# the node range must be in network.web.ingressCidrs); egress to DNS, the
+# apiserver, and S3 -- this pod's own ProgressReader reads progress.json out
+# of the results bucket (docs: s3-layout); everything else it links to is
+# fetched by the browser, not by this pod.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -174,5 +196,8 @@ spec:
         - { port: {{ .Values.network.apiServer.port }} }
     {{- else }}
     {{- fail "network.apiServer.cidr is required when the kube-apiserver endpoint cannot be looked up (helm template / no RBAC)" }}
+    {{- end }}
+    {{- range $s3 }}
+    - {{ toJson . }}
     {{- end }}
 {{- end }}

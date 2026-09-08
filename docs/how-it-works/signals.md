@@ -8,6 +8,16 @@ cannot answer — how far inside a volume a running pod has got — which the
 wrapper answers itself, in `progress.json` beside that volume's results.
 This page is the whole list, and who reads each one.
 
+Answering that question makes the read API a bucket **reader**, not only a
+Kubernetes API client: it fetches `progress.json` itself (`ProgressReader`,
+packages/web), so the web pod must be able to reach the results bucket, at
+whatever address it resolves from *inside* the cluster
+(`HTRFLOW_INTERNAL_RESULTS_BASE` — docs: [Chart Values](../reference/chart.md#web-front-web),
+[Local k3s development](../development/local-k3s.md)). Where that address is
+not the same as the browser-facing `resultsBase` every link on the campaign
+page is built from (the PoC, notably), getting the two confused means every
+row silently shows no progress at all.
+
 ## One index, in order
 
 ```mermaid
@@ -27,6 +37,7 @@ sequenceDiagram
         W->>S3: page XML, then ALTO XML (ALTO carries the provenance block)
         W->>S3: progress.json (every page), iiif.json (every 10th)
     end
+    Note over S3: the read API polls progress.json here too, from its own<br/>path to the bucket (HTRFLOW_INTERNAL_RESULTS_BASE) -- not the browser's
     W->>S3: iiif.json, pipeline.yaml, manifest.json LAST
     W->>K: exit 0
     K->>J: container exit code
@@ -51,7 +62,7 @@ sequenceDiagram
 | Warm-up marker `/data/warmup/<pipeline-id>.done` | the warm-up Job, before it logs success | every batch pod's init container | **yes** — it lives on the cache PVC |
 | Run log `status/logs/<pipeline>/<volume>.txt` | wrapper, every 15 s and once on every exit path | run viewer, operator | **yes** |
 | `page/NNNN.xml` + `alto/NNNN.xml` | wrapper uploader, PAGE first | resume (both must exist), verify, the viewer | **yes** |
-| `progress.json` | wrapper, after every page outcome and at every stage change | the read API (one GET per volume row it answers with, memoized a few seconds), and so the campaign page's page counts and its failure/warning notice | **yes** |
+| `progress.json` | wrapper, after every page outcome and at every stage change | the read API, from its own path to the bucket (`HTRFLOW_INTERNAL_RESULTS_BASE`) — at most `PROGRESS_FETCH_CAP` (32) GETs per request, running rows first, memoized a few seconds — and so the campaign page's page counts and its failure/error notice | **yes** |
 | `iiif.json`, `pipeline.yaml` | publish, after a clean verify — `iiif.json` also every 10 pages *during* the run, covering the pages done so far | Universal Viewer; a human reading the recipe back | **yes** |
 | `manifest.json` | publish, **last** | the completion marker; resume compares its `page_sources`; the Phase 2 gate reads its timings | **yes** |
 | ALTO `Processing ID="htrflow-batch"` block | `provenance.stamp_alto`, before the upload | anyone holding the file, with no cluster at all | **yes** |
@@ -92,7 +103,11 @@ a page never loses its work to a status file) and read best-effort (a bucket
 that does not answer means no progress on the page, never an error). Its
 `updated_at` is therefore part of what the page shows — "updated 12 s ago" is
 the difference between a volume that is working and one that has stopped —
-and it never means "done": `manifest.json`, written last, still does.
+and it never means "done": `manifest.json`, written last, still does. The API
+turns `updated_at` into `ageSeconds` itself, from its own clock at fetch
+time, rather than hand the browser a timestamp to compare against its own:
+a reader's clock running fast or slow must not turn "12 s ago" into "0 s
+ago" or a negative number.
 
 ## Known limits and open stories
 

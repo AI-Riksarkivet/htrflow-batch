@@ -62,13 +62,19 @@ campaign browser at `/`, Universal Viewer at `/uv.html` and the read API at
 `/api/v1/…`; it is the one pod in this chart that keeps its ServiceAccount
 token, because it is the Kubernetes API client the browser reads through,
 computing everything live — there is no status document written by anything
-in this system any more. Always rendered — there is no `enabled` flag.
+in this system any more. It also reads the results bucket directly, for one
+thing the Kubernetes API cannot answer: a running volume's `progress.json`
+(`ProgressReader`, docs: [Signals](../how-it-works/signals.md)) — so this
+pod must reach the results bucket, not only the apiserver, and its
+NetworkPolicy carries an S3 egress rule (the same shape as a batch Job's) for
+exactly that. Always rendered — there is no `enabled` flag.
 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `web.image` | `docker.io/riksarkivet/htrflow-web@sha256:000…` | **Must be digest-pinned** unless `security.allowTagImages`. The all-zero default renders but cannot pull: set the digest of the image you built (`make poc-push` prints it) |
 | `web.nodePort` | `30800` | NodePort; the container listens on 8081 |
 | `web.resources` | requests cpu 50m / 128Mi, limits cpu 500m / 256Mi | |
+| `web.internalResultsBase` | `""` | Where THIS POD reaches the results bucket, for `ProgressReader` — `""` (default) means the same address as `publicResultsBase`, correct whenever that URL also resolves from inside the cluster (real AWS). Set this whenever it does not: the PoC's `publicResultsBase` is a browser-facing `localhost` URL reached through an SSH tunnel, which the pod itself would resolve straight back to itself, so it must be the in-cluster RustFS address instead (`http://rustfs.<namespace>.svc.cluster.local:9000/<bucket>`; see [Local k3s development](../development/local-k3s.md)) |
 
 The app sends `X-Content-Type-Options: nosniff`, `Referrer-Policy:
 strict-origin-when-cross-origin` and `Content-Security-Policy:

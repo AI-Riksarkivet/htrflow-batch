@@ -735,6 +735,30 @@ class TestVolumeProgress:
 
         return fetch, asked
 
+    def test_progress_is_fetched_from_the_internal_base_not_the_public_one(self):
+        """The API pod's own way to the bucket can differ from the one it
+        hands the browser (the PoC's localhost publicResultsBase, docs:
+        development/local-k3s) -- ProgressReader.fetch must never be asked to
+        resolve the public one itself."""
+        bases = []
+
+        def fetch(results_base: str, volume_id: str, state: str):
+            bases.append(results_base)
+            return None
+
+        cfg = SimpleNamespace(
+            public_results_base="http://localhost:30900/htr-results",
+            internal_results_base=(
+                "http://rustfs.htr-batch.svc.cluster.local:9000/htr-results"
+            ),
+        )
+        d = projection.detail(
+            _job(), _configmap(), [], cfg, warmup=MISSING_WARMUP, fetch_progress=fetch
+        )
+        assert bases and all(b.startswith(cfg.internal_results_base) for b in bases)
+        # The browser-facing URLs are unaffected -- still the public base.
+        assert d["volumes"][0]["manifestUrl"].startswith(cfg.public_results_base)
+
     def test_each_returned_row_carries_its_progress_or_null(self):
         fetch, _ = self._fetch({"vol0": _progress(done=3, total=4)})
         d = projection.detail(

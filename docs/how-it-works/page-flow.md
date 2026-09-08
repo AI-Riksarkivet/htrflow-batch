@@ -118,15 +118,21 @@ last page: `iiif.json` (skipped entirely if no page's dimensions resolved),
 
 The same moment the outcome is recorded, the wrapper rewrites
 `progress.json` beside the results — stage, `pages_done`/`pages_total`, the
-last page, the most recent failure and the run's warning count
+last page, the most recent failure and the run's error count (ERROR and
+worse only — a benign WARNING, a pipeline rebuild after a dead worker
+thread, must not light the campaign page's notice chip on a healthy run)
 ([S3 layout](../reference/s3-layout.md#progressjson-live-and-never-a-completion-marker))
 — and every tenth page it republishes `iiif.json` with the pages finished so
-far. That is the whole reason a 638-page volume can be watched, and opened in
-the viewer, before its last page: nothing else the pod does leaves the pod
-until publish. Both writes are best-effort and neither can fail a page: a
-status write that raises is logged and forgotten, and the order that matters
-— PAGE, then ALTO, then eventually `manifest.json` last — is untouched by
-either.
+far and sets `viewer_published: true`, once that PUT has actually succeeded.
+That is the whole reason a 638-page volume can be watched, and opened in the
+viewer, before its last page: nothing else the pod does leaves the pod until
+publish. On a resumed run the interim publish is skipped instead, while the
+dimensions this process holds in memory cover fewer pages than `pages_done`
+— else it would overwrite a complete `iiif.json` with one naming only the
+pages since resume. Both writes are best-effort and neither can fail a
+page: a status write that raises is logged and forgotten, and the order
+that matters — PAGE, then ALTO, then eventually `manifest.json` last — is
+untouched by either.
 
 ## Where a later run touches this page again
 
@@ -137,10 +143,13 @@ either.
 - **Verify** lists S3 once more after the loop: a page missing from either
   format, or marked failed, is exit 1 and a retry.
 - **The viewer** opens `uv.html#?manifest=…` with this volume's `iiif.json`
-  as soon as one page has been published into it (the source manifest before
-  that — the campaign page switches on `progress.done > 0`). The canvas dimensions
-  are the ALTO's, so line overlays need no coordinate rewriting, and each
-  canvas's `seeAlso` points at `alto/0001.xml`.
+  as soon as one has actually been published (the source manifest before
+  that — the campaign page switches on `progress.viewerPublished`, never on
+  a page count: a count crossing zero does not mean the interim publish at
+  `PUBLISH_EVERY_PAGES` has happened yet, and a volume smaller than that
+  cadence would otherwise link to a manifest that is not there). The canvas
+  dimensions are the ALTO's, so line overlays need no coordinate rewriting,
+  and each canvas's `seeAlso` points at `alto/0001.xml`.
 
 ## Known limits and open stories
 

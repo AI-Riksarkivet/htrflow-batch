@@ -91,20 +91,29 @@ script). A CSP header from the server must not be stricter than the meta tag
   `null` when it was not the wrapper's JSON), present only while a pod for
   that index still exists.
 - **Progress.** A row's `progress` (`{done, total, failed, lastPage, stage,
-  updatedAt, lastError, warnings}`, or `null`) is what the API read out of
-  that volume's `progress.json` in the bucket — the one thing the Kubernetes
-  API cannot answer. `describeProgress` renders it under the state chip as
-  "137 / 638 pages · processing pages · updated 12 s ago": the stage word
-  comes from the same map a failure sentence uses, and a stage this build does
-  not know is shown as it came rather than dropped. `null` renders nothing at
-  all. The campaign header adds the API's summed `pagesDone`/`pagesTotal`.
+  updatedAt, ageSeconds, lastError, errors, viewerPublished}`, or `null`) is
+  what the API read out of that volume's `progress.json` in the bucket — the
+  one thing the Kubernetes API cannot answer. `describeProgress` renders it
+  under the state chip as "137 / 638 pages · processing pages · updated
+  12 s ago": the stage word comes from the same map a failure sentence uses,
+  a stage this build does not know is shown as it came rather than dropped,
+  and "updated Ns ago" comes straight from `ageSeconds` — computed by the API
+  from its own clock at fetch time, never from comparing `updatedAt` against
+  the browser's, so a reader's clock skew cannot show "0 s ago" for a row
+  that has not actually just updated. `null` renders nothing at all. The
+  campaign header adds the API's summed `pagesDone`/`pagesTotal`.
 - **The notice chip.** `describeNotice` turns the campaign's `pagesFailed`,
-  `warnings` and `lastError` into one line — "1 page failed · 2 warnings ·
+  `errors` and `lastError` into one line — "1 page failed · 2 errors ·
   page 0044: htrflow's Segmentation worker thread died" — shown folded or
-  open, clipped with the whole sentence in the tooltip, and linking to the
-  run log of the volume the error came from (the API sends that volume's
-  `logUrl`, since the row it happened in is usually outside the page being
-  shown). Both counts zero means no chip.
+  open, clipped visually with the full sentence still reachable by keyboard
+  and assistive tech (a visually-hidden span carries it, not only the
+  `title` attribute — a tooltip alone is not keyboard-reachable), and
+  linking to the run log of the volume the error came from (the API sends
+  that volume's `logUrl`, since the row it happened in is usually outside
+  the page being shown). Both counts zero means no chip. `errors` counts
+  ERROR-and-worse only (the wrapper's own benign WARNINGs, a pipeline
+  rebuild, "manifest covers n/m pages", must not light this chip on a
+  healthy run).
 - **Sentences, not fields.** No reader ever sees `reason`'s fields, a
   `ZodError` or a transport string: `src/lib/reasons.ts` turns a `reason`
   into one sentence (`describeReason`) and a failed fetch into one sentence
@@ -154,17 +163,22 @@ script). A CSP header from the server must not be stricter than the meta tag
   toggle (`prettyXml`) and three plain-sentence errors: unreachable, not
   valid XML, and valid XML with no text lines.
 - **Open, before it is finished.** The **open** slot points at the volume's
-  `iiifUrl` as soon as `state` is `done` **or** `progress.done > 0`: the
-  wrapper republishes `iiif.json` every ten pages, so a running volume is
-  readable in the viewer long before it publishes. Only a volume with nothing
-  published yet falls back to its source manifest.
+  `iiifUrl` as soon as `state` is `done` **or** `progress.viewerPublished` is
+  true: the wrapper republishes `iiif.json` every ten pages, so a running
+  volume is readable in the viewer long before it publishes — but only once
+  that PUT has actually succeeded, never merely because a page count crossed
+  zero (a volume smaller than the ten-page cadence, or one just past a page
+  but before its own interim publish, would otherwise link to a manifest that
+  is not there yet). Only a volume with nothing published yet falls back to
+  its source manifest.
 - **Three link slots.** Every volume row — and the folded card's latest
   strip — renders the same three fixed slots, **open · source · log**, from
   one snippet, so a missing link leaves a gap instead of shifting its
   neighbours and the eye can scan a column of "source" straight down.
   - **open** — `uv.html#?manifest=<url>`: the published `iiifUrl` once the
-    volume is `done`, the volume's own `sourceUrl` before that, so the
-    viewer is reachable from the first tick. Empty when there is neither.
+    volume is `done` or `progress.viewerPublished`, the volume's own
+    `sourceUrl` before that, so the viewer is reachable from the first tick.
+    Empty when there is neither.
   - **source** — `VolumeView.sourceUrl`, the URL half of the volume's
     `volumes.txt` line, straight to the source manifest. Empty for an
     `images:` volume, which lists bare image URLs and has no manifest, and

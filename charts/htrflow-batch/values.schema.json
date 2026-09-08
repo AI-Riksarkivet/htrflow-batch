@@ -191,6 +191,9 @@
         },
         "resources": {
           "$ref": "#/definitions/resources"
+        },
+        "internalResultsBase": {
+          "type": "string"
         }
       }
     },
