@@ -620,6 +620,51 @@ describe("CampaignCard", () => {
     ).toBeInTheDocument();
   });
 
+  test("a failure already visible as a row in the open table is not listed twice", async () => {
+    const offPage = { ...volumeFailed, index: 7, id: "vol7" };
+    const detail = {
+      ...detail0,
+      failures: [volumeFailed, offPage],
+      volumes: [volumeDone, volumeFailed],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(detail)),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    // Folded: the table is out of sight, so every failure belongs in the callout.
+    expect(screen.getByText("failures (2)")).toBeInTheDocument();
+    expect(screen.getAllByText("vol1")).toHaveLength(1);
+
+    await expand();
+    // Open: vol1 is a row below, with its reason; only vol7 (not on the
+    // loaded page) still needs the callout.
+    expect(screen.queryByText("failures (2)")).toBeNull();
+    expect(
+      screen.getByText("failures not shown below (1)"),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("vol1")).toHaveLength(1);
+    expect(screen.getByText("vol7")).toBeInTheDocument();
+  });
+
+  test("no callout at all when every failure is a row in the open table", async () => {
+    const detail = {
+      ...detail0,
+      failures: [volumeFailed],
+      volumes: [volumeDone, volumeFailed],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(detail)),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+    expect(screen.queryByText(/^failures/)).toBeNull();
+    expect(screen.getAllByText("vol1")).toHaveLength(1);
+  });
+
   test("a raw termination message renders as a sentence, never as JSON", async () => {
     const raw = {
       ...volumeFailed,

@@ -358,7 +358,11 @@ check web       "$(count packages/web/src -name '*.py')" 992
 # `progress.viewerPublished`, never a page count, and the notice chip carries
 # its full sentence in a `.sr-only` node (not only `title`), reachable by
 # keyboard and assistive tech even while the visible copy is CSS-clipped.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3326
+# 3326 -> 3338 (2026-09-08, product owner on the PoC card): the failures
+# callout no longer repeats a failed row the open table already shows --
+# `unseenFailures` (folded: all of them, open: only those off the loaded
+# page) and a heading that says so, plus two tests.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3338
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
