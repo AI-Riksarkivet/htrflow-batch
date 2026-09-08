@@ -68,9 +68,9 @@ queue:
 # same security headers the retired nginx did (audit S4, now in the app).
 web:
   # Digest-pinned (…@sha256:…) unless security.allowTagImages is true. The
-  # all-zero digest is a placeholder that renders but cannot pull: set the
-  # digest of the image you built (`make poc-push` prints it).
-  image: docker.io/riksarkivet/htrflow-web@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  # default is the published v0.2.0 web image; for a locally built one set
+  # the digest `make poc-push` prints.
+  image: docker.io/riksarkivet/htrflow-web@sha256:af5979224a933bebf1edc39586b7f159fe7a2692fc66101adcc9fe273e956999
   nodePort: 30800
   resources:
     requests: { cpu: 50m, memory: 128Mi }
