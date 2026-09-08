@@ -32,6 +32,10 @@ rader som syns.
   till run-loggens sammanfattning.
 - Frontend-tester för de tre ändringarna; dokumentation:
   `docs/reference/frontend.md`, `docs/getting-started/viewing.md`.
+- Levererat 2026-09-08: en *Models*-rad på kampanjkortet (varje modell länkad
+  till sitt Hugging Face-repo på den revision pipelinen pinnat), en
+  GitHub-länk i sidhuvudet och den körande versionen där
+  (`GET /api/v1/version` = webbpaketets egen version).
 
 ## Klart när
 
