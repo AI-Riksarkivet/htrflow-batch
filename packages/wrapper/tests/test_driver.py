@@ -566,6 +566,7 @@ class _FakeStep:
     def __init__(self, name="Segmentation", model="Riksarkivet/yolov9-regions-1"):
         self._name = name
         self._thread = _FakeThread()
+        self.model = object()
         self.metadata = SimpleNamespace(
             description=name, settings={"model_class": "YOLO", "model": model}
         )
@@ -679,3 +680,26 @@ def test_process_page_reraises_the_pipelines_own_exception_from_the_helper(
 
     with pytest.raises(RuntimeError, match="CUDA out of memory"):
         driver.process_page(_RaisingPipeline(), _image(tmp_path), tmp_path / "out")
+
+
+def test_release_pipeline_drops_the_models_of_a_dead_pipeline(monkeypatch):
+    """The helper thread parked in ``run`` holds the STEP, so dropping the
+    pipeline reference frees nothing: without this the rebuild would load a
+    second full set of weights onto the same GPU."""
+    from htrflow_batch import driver
+
+    steps = [_FakeStep(), _FakeStep()]
+    pipeline = SimpleNamespace(steps=steps)
+    driver.release_pipeline(pipeline)
+    assert [step.model for step in steps] == [None, None]
+
+
+def test_release_pipeline_survives_a_step_that_keeps_no_model(monkeypatch):
+    """Export steps (and an htrflow that renames the attribute) must not turn
+    freeing the GPU into the error the page is reported with."""
+    from htrflow_batch import driver
+
+    class _NoModel:
+        __slots__ = ()
+
+    driver.release_pipeline(SimpleNamespace(steps=[_NoModel()]))

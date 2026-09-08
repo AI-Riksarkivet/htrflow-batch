@@ -1086,6 +1086,7 @@ def test_default_factory_rebuilds_the_pipeline_after_a_dead_worker_thread(
         class Segmentation:  # __str__ is the class name, as htrflow's is
             def __init__(self, thread):
                 self._thread = thread
+                self.model = object()  # the weights on the GPU
                 self.metadata = SimpleNamespace(settings={"model": "yolov9-regions-1"})
 
             def __str__(self):
@@ -1104,7 +1105,12 @@ def test_default_factory_rebuilds_the_pipeline_after_a_dead_worker_thread(
 
     built = []
 
+    held = []
+
     def load_pipeline(path, out_dir):
+        # what the dead pipeline still holds when the new one is built: the
+        # models must be gone BEFORE a second set is loaded onto the same GPU
+        held.append(built[0].steps[0].model if built else "first build")
         built.append(_Pipeline())
         return built[-1]
 
@@ -1135,3 +1141,4 @@ def test_default_factory_rebuilds_the_pipeline_after_a_dead_worker_thread(
         'the pipeline is rebuilt")'
     )
     assert len(built) == 2  # page 0003 ran on a pipeline built from scratch
+    assert held == ["first build", None]  # its weights were dropped first

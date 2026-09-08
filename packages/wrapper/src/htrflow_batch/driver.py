@@ -3,6 +3,7 @@ wrapper package imports cleanly on hosts without torch (docs: wrapper)."""
 
 from __future__ import annotations
 
+import gc
 import threading
 from pathlib import Path
 
@@ -130,6 +131,31 @@ def _dead(step, stem: str) -> PipelineDead:
         f"page {stem}: htrflow's {step} (model {model}) worker thread died; "
         "the page is marked failed and the pipeline is rebuilt"
     )
+
+
+def release_pipeline(pipeline) -> None:
+    """Drop a dead pipeline's model weights, before its replacement loads its
+    own onto the same GPU.
+
+    Dropping the pipeline reference frees nothing: the helper thread parked
+    in ``run`` holds the step (its frame does), and the step holds the model
+    -- so a recurring model bug would load one more full set of weights per
+    rebuild until the GPU is out of memory. Nothing will ever run this step
+    again, so the models go now and the parked thread keeps only itself and
+    that page's Document.
+    """
+    try:
+        for step in getattr(pipeline, "steps", ()):
+            step.model = None
+    except Exception:
+        pass  # freeing the GPU must never replace the page's own error
+    gc.collect()  # the step frees the model only once nothing refers to it
+    try:
+        import torch  # ty: ignore[unresolved-import]
+
+        torch.cuda.empty_cache()  # give the freed blocks back to the driver
+    except Exception:
+        pass  # no torch, or a CPU-only run: nothing cached to give back
 
 
 def _run_guarded(pipeline, document, stem: str) -> None:
