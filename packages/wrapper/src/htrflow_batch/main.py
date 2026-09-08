@@ -121,7 +121,11 @@ def _default_factory(cfg: Config):
         try:
             files = driver.process_page(pipeline, image_path, out_dir)
         except driver.PipelineDead:
-            pipeline = None  # every later page would wait on the dead queue
+            # Every later page would wait on the dead queue, so this pipeline
+            # goes -- weights first: the thread parked in its run() keeps the
+            # steps alive, and the rebuild loads a second set onto the same GPU.
+            dead, pipeline = pipeline, None
+            driver.release_pipeline(dead)
             raise
         provenance.stamp_alto(
             files["alto"],
