@@ -120,9 +120,12 @@ WARNING rebuilding the htrflow pipeline after a dead worker thread
 The next page is processed by a pipeline built from scratch (the models come
 back from the cache PVC, not the Hub), the rest of the volume runs, and the
 verify gate reports the one failed page — exit 1, so Kubernetes retries the
-index and resume redoes only that page. The helper thread of the stuck run
-is a daemon and is never joined: it stays parked on the dead queue, holding
-that one page's document, for the life of the process.
+index and resume redoes only that page. Before the rebuild the dead
+pipeline's models are dropped and the CUDA cache is emptied: the helper
+thread of the stuck run is a daemon that is never joined, and its frame
+holds the steps, so without that the new pipeline would load a second set of
+weights onto the same GPU. What stays parked for the life of the process is
+the thread itself and that one page's document — not the models.
 
 
 ## What a person is told
