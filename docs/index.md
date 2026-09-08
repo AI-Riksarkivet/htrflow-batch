@@ -68,3 +68,10 @@ campaign remain open ([Open Items](roadmap/open-items.md)).
   local k3s loop.
 - [Roadmap](roadmap/evolution.md) — the evidence-gated Phase 2 cache
   layer and what's still open.
+
+## License
+
+htrflow-batch is licensed under the European Union Public Licence v1.2
+(EUPL-1.2), the same licence as htrflow — the `LICENSE` file at the root of
+the repository. The third-party components the images ship, with their
+licences, are in [Third-party licences](development/licenses.md).
