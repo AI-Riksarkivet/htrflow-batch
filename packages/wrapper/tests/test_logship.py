@@ -126,7 +126,8 @@ def test_attach_logging_adds_a_handler_on_the_tee_and_removes_it(capsys):
     capture = LogCapture.install()
     try:
         capture.attach_logging()
-        assert len(root.handlers) == len(before) + 1
+        # the stream handler, plus the WarningCounter attach_logging installs
+        assert len(root.handlers) == len(before) + 2
         logging.getLogger("test_logship").info("attached line")
     finally:
         capture.finish()
@@ -145,7 +146,8 @@ def test_attach_logging_reuses_a_handler_already_on_the_tee():
         root.addHandler(own)
         try:
             capture.attach_logging()
-            assert len(root.handlers) == len(before) + 1  # nothing added
+            # `own` plus the WarningCounter: no second stream handler
+            assert len(root.handlers) == len(before) + 2
         finally:
             root.removeHandler(own)
     finally:

@@ -33,6 +33,24 @@ TRUNCATION_MARKER = (
 )
 
 
+class WarningCounter(logging.Handler):
+    """Counts WARNING-and-worse records as they are emitted.
+
+    The count goes into the volume's progress file, so the campaign page can
+    say "something went wrong in here" without anyone opening the run log.
+    Counted at the logging call, never by reading the shipped log back: that
+    would cost a download, and the log is truncated in the middle when it
+    grows, so the same warning could be counted twice or not at all.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.count = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.count += 1
+
+
 class RedactingFormatter(logging.Formatter):
     """S6: the shipped run log is world-readable; strip userinfo and query
     strings from every URL in a formatted record (message and traceback)."""
@@ -101,7 +119,13 @@ class LogCapture:
         self._originals: Optional[tuple[TextIO, TextIO]] = None
         self._rebound: list[tuple[logging.StreamHandler, TextIO]] = []
         self._added_handler: Optional[logging.Handler] = None
+        self._counter = WarningCounter()
         self._warned = False
+
+    @property
+    def warnings(self) -> int:
+        """WARNING-and-worse records since ``attach_logging``."""
+        return self._counter.count
 
     @classmethod
     def install(cls, **kwargs) -> "LogCapture":
@@ -139,6 +163,8 @@ class LogCapture:
         """
         root = logging.getLogger()
         root.setLevel(level)
+        if self._counter not in root.handlers:
+            root.addHandler(self._counter)  # removed by finish(), like the below
         tee = sys.stderr
         for handler in root.handlers:
             if isinstance(handler, logging.StreamHandler) and handler.stream is tee:
@@ -233,6 +259,7 @@ class LogCapture:
         if self._thread is not None:
             self._thread.join(timeout=30)
         self.ship()
+        logging.getLogger().removeHandler(self._counter)
         if self._added_handler is not None:
             logging.getLogger().removeHandler(self._added_handler)
             self._added_handler = None

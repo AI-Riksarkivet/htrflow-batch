@@ -217,7 +217,7 @@ def _main(
         # From here on every stage change and every page outcome is published
         # to progress.json, so "where is this volume" is answerable from the
         # bucket while the pod is still running (C13).
-        tracker = Progress(cfg, store)
+        tracker = Progress(cfg, store, capture)
         state.on_change = tracker.stage_changed
         client = _http_client()
 

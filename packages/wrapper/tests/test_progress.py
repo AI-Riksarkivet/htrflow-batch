@@ -7,6 +7,7 @@ when the bucket refuses it, and that manifest.json is still written last.
 """
 
 import json
+import logging
 from pathlib import Path
 
 import httpx
@@ -14,8 +15,9 @@ import pytest
 
 from htrflow_batch import main as main_mod
 from htrflow_batch import progress as progress_mod
+from htrflow_batch.logship import LogCapture
 from htrflow_batch.main import EXIT_OK, main
-from htrflow_batch.progress import Progress
+from htrflow_batch.progress import LAST_ERROR_CHARS, Progress
 from htrflow_batch.store import ResultStore
 from htrflow_batch.stream import PageOutcome, StreamStats
 
@@ -190,3 +192,65 @@ def test_progress_json_is_json_at_the_volume_prefix(cfg, s3):
     obj = s3.get_object(Bucket=cfg.s3_bucket, Key=f"{PREFIX}/progress.json")
     assert obj["ContentType"] == "application/json"
     assert json.loads(obj["Body"].read()) == {"stage": "stream"}
+
+
+def _failing_factory(cfg, bad: str):
+    def factory(c):
+        def process(path: Path):
+            if path.stem == bad:
+                raise RuntimeError("htrflow's Segmentation worker thread died")
+            return _write_outputs(cfg, path.stem)
+
+        return process
+
+    return factory
+
+
+def test_progress_carries_the_most_recent_page_failure(env, cfg, s3):
+    """ "When we have an exception in the log it would be nice to see some
+    notice on the front page": the sentence has to leave the pod."""
+    main(env, process_page_factory=_failing_factory(cfg, "0002"))
+    body = _get(s3, cfg, "progress.json")
+    assert body["pages_failed"] == 1
+    assert body["last_error"]["page"] == "0002"
+    assert "Segmentation worker thread died" in body["last_error"]["error"]
+    # log.warning is called for every failed page, so the run has at least one.
+    assert body["warnings"] >= 1
+
+
+def test_the_last_error_is_redacted_and_bounded(cfg, s3):
+    tracker = Progress(cfg, ResultStore(cfg))
+    tracker.stats = StreamStats(
+        results={
+            "0001": PageOutcome(status="failed", error="early"),
+            "0002": PageOutcome(
+                status="failed",
+                error="fetch https://iiif.example/p?token=SECRET failed " + "x" * 900,
+            ),
+        }
+    )
+    error = tracker.body()["last_error"]
+    assert error["page"] == "0002"  # the most recent, not the first
+    assert "SECRET" not in error["error"]
+    assert len(error["error"]) <= LAST_ERROR_CHARS + 3
+
+
+def test_no_failure_is_no_last_error(cfg, s3):
+    tracker = Progress(cfg, ResultStore(cfg))
+    tracker.stats = StreamStats(results={"0001": PageOutcome(status="ok")})
+    assert tracker.body()["last_error"] is None
+    assert tracker.body()["warnings"] == 0
+
+
+def test_warnings_are_counted_as_they_are_logged(cfg, s3):
+    capture = LogCapture.install()
+    try:
+        capture.attach_logging()
+        tracker = Progress(cfg, ResultStore(cfg), capture)
+        assert tracker.body()["warnings"] == 0
+        logging.getLogger("htrflow_batch").warning("a page looked odd")
+        logging.getLogger("htrflow_batch").info("business as usual")
+        logging.getLogger("htrflow_batch").error("worse")
+        assert tracker.body()["warnings"] == 2
+    finally:
+        capture.finish()
