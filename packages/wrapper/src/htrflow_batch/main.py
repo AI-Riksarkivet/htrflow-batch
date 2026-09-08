@@ -27,6 +27,7 @@ from .iiif import (
     redact_urls,
 )
 from .logship import LogCapture
+from .progress import Progress
 from .store import ResultStore
 from .stream import PageOutcome, PageStream, StreamStats, consume
 from .synthetic import build_manifest
@@ -51,10 +52,25 @@ class Terminated(BaseException):
 
 
 class RunState:
-    """The stage the run is in, for the failure messages and the run log."""
+    """The stage the run is in, for the failure messages and the run log.
+
+    A property rather than a plain attribute so that the one place a stage is
+    published from (progress.py, which writes it to the bucket) does not have
+    to be called at each of the eight assignments below -- and cannot be
+    forgotten at the ninth."""
 
     def __init__(self) -> None:
-        self.stage = "setup"
+        self._stage = "setup"
+        self.on_change: Callable[[str], None] = lambda _stage: None
+
+    @property
+    def stage(self) -> str:
+        return self._stage
+
+    @stage.setter
+    def stage(self, value: str) -> None:
+        self._stage = value
+        self.on_change(value)
 
 
 def _set_signal(signum: int, handler):
@@ -198,18 +214,27 @@ def _main(
         state.stage = "setup"
         store = ResultStore(cfg)
         capture.start_shipping(store.put_run_log, cfg.log_ship_seconds)
+        # From here on every stage change and every page outcome is published
+        # to progress.json, so "where is this volume" is answerable from the
+        # bucket while the pod is still running (C13).
+        tracker = Progress(cfg, store)
+        state.on_change = tracker.stage_changed
         client = _http_client()
 
         source, source_url, pages = _setup(cfg, client, store, state)
+        tracker.pages, tracker.source = pages, source
         todo, done = _resume(cfg, store, pages, state)
         stats, nbytes = _stream(
-            cfg, client, store, todo, done, process_page_factory, state, stop
+            cfg, client, store, todo, done, process_page_factory, state, stop, tracker
         )
         uploaded = _verify(store, pages, stats, state)
         state.stage = "publish"
         publish.run(
             cfg, store, source, source_url, pages, stats, uploaded, t_start, nbytes
         )
+        # After manifest.json, which stays the last thing written and the sole
+        # completion marker: this only tells a reader the run is over.
+        state.stage = "done"
 
         # No workdir cleanup: it is a memory-backed emptyDir that dies with the
         # pod either way, and a terminated container's tmpfs cannot be
@@ -312,10 +337,16 @@ def _stream(
     factory: Optional[Callable],
     state: RunState,
     stop: threading.Event,
+    tracker: Progress,
 ) -> tuple[StreamStats, int]:
     """Download ∥ process ∥ upload, never more than LOOKAHEAD_PAGES ahead:
     the per-page outcomes and the bytes fetched."""
     state.stage = "stream"
+    # Seeded with the pages resume skipped BEFORE the loop, not patched up
+    # after it: they are in the bucket, so every reader of these counts --
+    # progress.json included -- should see them from the first page on.
+    stats = StreamStats(results={name: PageOutcome(status="skipped") for name in done})
+    tracker.stats = stats
     stream = PageStream(
         todo,
         Path(cfg.workdir) / "input",
@@ -332,11 +363,15 @@ def _stream(
         process = (factory or _default_factory)(cfg)
 
         state.stage = "stream"
-        stats = consume(stream, process, store.upload_page)
+        consume(
+            stream,
+            process,
+            store.upload_page,
+            stats=stats,
+            on_page=tracker.after_page,
+        )
     finally:
         stream.close()  # never blocks; cancels what is still queued
-    for name in done:
-        stats.results[name] = PageOutcome(status="skipped")
     return stats, stream.bytes_fetched
 
 

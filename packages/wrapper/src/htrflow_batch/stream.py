@@ -166,8 +166,14 @@ def consume(
     upload: UploadFn,
     keep_images: bool = False,
     max_upload_failures: int = MAX_UPLOAD_FAILURES,
+    stats: StreamStats | None = None,
+    on_page: Callable[[str], None] | None = None,
 ) -> StreamStats:
-    stats = StreamStats()
+    """``stats`` may be passed in already carrying the pages a resume
+    skipped, so a reader of it mid-run sees the whole volume rather than only
+    what this process has done; ``on_page`` is called with each page's name
+    once its outcome is recorded (progress.py), and must not raise."""
+    stats = stats if stats is not None else StreamStats()
     upload_failures = 0
     pages = iter(items)
     while True:
@@ -214,3 +220,7 @@ def consume(
                 discard(item.path)
             for path in files.values():
                 discard(path)
+            # In the finally, so every outcome -- ok, failed, skipped-because-
+            # unfetchable -- reaches the progress file, not only the ok ones.
+            if on_page is not None:
+                on_page(name)
