@@ -714,8 +714,10 @@ def _progress(**kwargs) -> dict:
         "lastPage": None,
         "stage": "stream",
         "updatedAt": None,
+        "ageSeconds": None,
         "lastError": None,
-        "warnings": 0,
+        "errors": 0,
+        "viewerPublished": False,
         **kwargs,
     }
 
@@ -757,6 +759,44 @@ class TestVolumeProgress:
             fetch_progress=fetch,
         )
         assert [v for v, _ in asked] == ["vol0", "vol1", "vol5"]
+
+    def test_at_most_the_cap_is_fetched_even_when_the_page_is_bigger(self):
+        """A `limit=1000` page must not turn into a thousand sequential GETs
+        through one client (finding 5)."""
+        n = 40
+        fetch, asked = self._fetch({})
+        pods = [_pod(i, active=True) for i in range(n)]
+        projection.detail(
+            _job(completions=n, active=n, completed="", failed=""),
+            _configmap(n=n),
+            pods,
+            CFG,
+            offset=0,
+            limit=n,
+            warmup=MISSING_WARMUP,
+            fetch_progress=fetch,
+        )
+        assert len(asked) == projection.PROGRESS_FETCH_CAP
+
+    def test_running_rows_are_not_crowded_out_by_a_page_full_of_done_ones(self):
+        """Most of a big campaign is done; a few volumes are still running.
+        The running ones must not lose the cap to done rows ahead of them."""
+        n = 40
+        fetch, asked = self._fetch({})
+        pods = [_pod(i, active=True) for i in range(n - 3, n)]  # last 3 running
+        projection.detail(
+            _job(completions=n, active=3, completed="0-35", failed=""),
+            _configmap(n=n),
+            pods,
+            CFG,
+            offset=0,
+            limit=n,
+            warmup=MISSING_WARMUP,
+            fetch_progress=fetch,
+        )
+        asked_ids = {v for v, _ in asked}
+        assert {"vol37", "vol38", "vol39"} <= asked_ids
+        assert len(asked) == projection.PROGRESS_FETCH_CAP
 
     def test_the_campaign_sums_the_pages_it_knows_about(self):
         fetch, _ = self._fetch(
@@ -812,14 +852,14 @@ class TestCampaignNotice:
             **kwargs,
         )
 
-    def test_failed_pages_and_warnings_are_summed(self):
+    def test_failed_pages_and_errors_are_summed(self):
         d = self._detail(
             {
-                "vol0": _progress(failed=2, warnings=1),
-                "vol1": _progress(failed=1, warnings=4),
+                "vol0": _progress(failed=2, errors=1),
+                "vol1": _progress(failed=1, errors=4),
             }
         )
-        assert (d["pagesFailed"], d["warnings"]) == (3, 5)
+        assert (d["pagesFailed"], d["errors"]) == (3, 5)
 
     def test_the_most_recent_failure_carries_its_volume_and_its_log(self):
         older = {"page": "0002", "error": "first"}
@@ -844,4 +884,4 @@ class TestCampaignNotice:
     def test_nothing_wrong_is_no_notice(self):
         d = self._detail({"vol0": _progress()})
         assert d["lastError"] is None
-        assert (d["pagesFailed"], d["warnings"]) == (0, 0)
+        assert (d["pagesFailed"], d["errors"]) == (0, 0)

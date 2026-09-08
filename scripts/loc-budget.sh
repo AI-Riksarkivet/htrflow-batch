@@ -278,7 +278,17 @@ check converter "$(count packages/converter/src -name '*.py')" 1434
 # pages and warnings, and the most recent failure with the volume it happened
 # in and that volume's run log, since the row it came from is usually outside
 # the page the reader is on.
-check web       "$(count packages/web/src -name '*.py')" 893
+# 893 -> 955 (2026-09-08, page-progress review round, items 2/4/5/9):
+# progress.py's field is `errors`, matching the wrapper's rename, plus
+# `viewerPublished` (passed through from progress.json, true for the
+# manifest.json fallback since a finished volume's iiif.json is written
+# before it) and `ageSeconds` -- computed from the API's own clock
+# (time.time() at fetch time) so a browser's clock skew cannot make a row
+# read "0 s ago". projection.py's PROGRESS_FETCH_CAP (32) bounds
+# _attach_progress to that many sequential GETs regardless of `limit`,
+# running rows first, so a big page cannot turn into a thousand fetches
+# through one client.
+check web       "$(count packages/web/src -name '*.py')" 955
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

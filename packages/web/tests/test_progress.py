@@ -9,9 +9,15 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from htrflow_web import progress as progress_mod
 from htrflow_web.progress import ProgressReader
 
 BASE = "https://results.example.org/htr-test/demo-v1"
+
+#: The reader computes ageSeconds from its own clock (time.time()), never
+#: from the browser's -- fetch() is called with this frozen so the tests
+#: stay exact. 12 s after PROGRESS's updated_at.
+NOW = 1788859872.0  # 2026-09-08T09:31:12+00:00
 
 PROGRESS = {
     "stage": "stream",
@@ -22,7 +28,8 @@ PROGRESS = {
     "started_at": "2026-09-08T09:00:00+00:00",
     "updated_at": "2026-09-08T09:31:00+00:00",
     "last_error": {"page": "0044", "error": "the worker thread died"},
-    "warnings": 3,
+    "errors": 3,
+    "viewer_published": True,
 }
 
 MANIFEST = {
@@ -33,6 +40,11 @@ MANIFEST = {
         "0003": {"status": "failed"},
     },
 }
+
+
+@pytest.fixture(autouse=True)
+def _frozen_clock(monkeypatch):
+    monkeypatch.setattr(progress_mod.time, "time", lambda: NOW)
 
 
 def reader(routes: dict[str, httpx.Response]) -> tuple[ProgressReader, list[str]]:
@@ -58,8 +70,10 @@ def test_a_running_volume_reads_progress_json():
         "lastPage": "0137",
         "stage": "stream",
         "updatedAt": "2026-09-08T09:31:00+00:00",
+        "ageSeconds": 12,
         "lastError": {"page": "0044", "error": "the worker thread died"},
-        "warnings": 3,
+        "errors": 3,
+        "viewerPublished": True,
     }
     assert asked == [f"{BASE}/vol0/progress.json"]
 
@@ -83,8 +97,10 @@ def test_a_volume_finished_by_an_older_wrapper_falls_back_to_the_manifest():
         "lastPage": None,
         "stage": "done",
         "updatedAt": None,
+        "ageSeconds": None,
         "lastError": None,
-        "warnings": 0,
+        "errors": 0,
+        "viewerPublished": True,
     }
     assert asked[-1].endswith("manifest.json")
 
@@ -141,9 +157,34 @@ def test_a_last_error_that_is_not_the_shape_we_write_is_dropped():
     r, _ = reader(
         {
             f"{BASE}/vol0/progress.json": httpx.Response(
-                200, json={**PROGRESS, "last_error": "boom", "warnings": "many"}
+                200, json={**PROGRESS, "last_error": "boom", "errors": "many"}
             )
         }
     )
     found = r.fetch(BASE, "vol0", "active")
-    assert found["lastError"] is None and found["warnings"] == 0
+    assert found["lastError"] is None and found["errors"] == 0
+
+
+def test_an_unparseable_timestamp_is_no_age_rather_than_a_crash():
+    r, _ = reader(
+        {
+            f"{BASE}/vol0/progress.json": httpx.Response(
+                200, json={**PROGRESS, "updated_at": "not a date"}
+            )
+        }
+    )
+    found = r.fetch(BASE, "vol0", "active")
+    assert found["updatedAt"] == "not a date" and found["ageSeconds"] is None
+
+
+def test_age_is_never_negative_even_when_the_clock_disagrees():
+    """A clock skewed the other way (the wrapper's clock briefly ahead of the
+    API's) must not read as a negative age."""
+    r, _ = reader(
+        {
+            f"{BASE}/vol0/progress.json": httpx.Response(
+                200, json={**PROGRESS, "updated_at": "2026-09-08T09:31:20+00:00"}
+            )
+        }
+    )
+    assert r.fetch(BASE, "vol0", "active")["ageSeconds"] == 0

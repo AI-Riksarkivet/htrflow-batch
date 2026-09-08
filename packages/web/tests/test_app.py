@@ -153,7 +153,8 @@ def test_job_detail_carries_each_volume_progress_and_the_campaign_total():
                 "stage": "stream",
                 "updatedAt": "2026-09-08T09:31:00+00:00",
                 "lastError": {"page": "0044", "error": "the worker thread died"},
-                "warnings": 2,
+                "errors": 2,
+                "viewerPublished": True,
             }
         }
     )
@@ -162,7 +163,7 @@ def test_job_detail_carries_each_volume_progress_and_the_campaign_total():
     assert body["volumes"][0]["progress"]["done"] == 137
     assert body["volumes"][1]["progress"] is None
     assert (body["pagesDone"], body["pagesTotal"]) == (137, 638)
-    assert (body["pagesFailed"], body["warnings"]) == (1, 2)
+    assert (body["pagesFailed"], body["errors"]) == (1, 2)
     assert body["lastError"]["volume"] == "vol0"
     assert body["lastError"]["logUrl"].endswith("/status/logs/demo-v1/vol0.txt")
 
