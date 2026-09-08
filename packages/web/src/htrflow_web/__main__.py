@@ -17,7 +17,8 @@ from .kube import Config, Reader
 def main() -> None:
     cfg = Config.from_env()
     reader = NoCluster() if cfg.site_only else Reader(cfg)
-    uvicorn.run(create_app(reader, cfg.static_dir), host="0.0.0.0", port=8081)
+    app = create_app(reader, cfg.static_dir, cfg.batch_version)
+    uvicorn.run(app, host="0.0.0.0", port=8081)
 
 
 if __name__ == "__main__":

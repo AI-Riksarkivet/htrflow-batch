@@ -49,6 +49,9 @@ class Config(BaseModel):
     namespaces: tuple[str, ...] = Field((), alias="HTRFLOW_NAMESPACES")
     static_dir: str = Field("", alias="HTRFLOW_WEB_STATIC")
     site_only: bool = Field(False, alias="HTRFLOW_WEB_SITE_ONLY")
+    #: The tag the image was published under, baked in by the dockerfile
+    #: (.docker/htrflow-web.dockerfile). "dev" outside an image.
+    batch_version: str = Field("dev", alias="HTRFLOW_BATCH_VERSION")
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Config:
@@ -63,6 +66,7 @@ class Config(BaseModel):
             HTRFLOW_NAMESPACES=tuple(filter(None, names)) or (_own_namespace(),),
             HTRFLOW_WEB_STATIC=get("HTRFLOW_WEB_STATIC") or "",
             HTRFLOW_WEB_SITE_ONLY=site_only,
+            HTRFLOW_BATCH_VERSION=get("HTRFLOW_BATCH_VERSION") or "dev",
         )
 
 

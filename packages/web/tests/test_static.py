@@ -146,4 +146,4 @@ class TestSiteOnly:
     def test_version_still_answers(self, client: TestClient):
         """The header shows a version on the compose stack too: it is this
         process's own package, nothing a cluster could tell it."""
-        assert client.get("/api/v1/version").json()["name"] == "htrflow-web"
+        assert client.get("/api/v1/version").json()["version"] == "dev"

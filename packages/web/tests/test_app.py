@@ -99,13 +99,20 @@ def test_healthz(client: TestClient):
 
 
 def test_version(client: TestClient):
-    """The version of the process serving the page -- its own package's."""
+    """What the operator deployed (the image's tag, which the page's header
+    shows) and, beside it, the package that is actually answering. The
+    fixture app is given no tag, so it reports the dockerfile's default."""
     resp = client.get("/api/v1/version")
     assert resp.status_code == 200
     body = resp.json()
-    assert set(body) == {"name", "version"}
-    assert body["name"] == "htrflow-web"
-    assert re.fullmatch(r"\d+\.\d+\.\d+.*", body["version"])
+    assert set(body) == {"version", "web"}
+    assert body["version"] == "dev"
+    assert re.fullmatch(r"\d+\.\d+\.\d+.*", body["web"])
+
+
+def test_version_reports_the_deployed_tag():
+    app = create_app(FakeReader(), batch_version="v0.2.0")
+    assert TestClient(app).get("/api/v1/version").json()["version"] == "v0.2.0"
 
 
 def test_list_jobs_shape(client: TestClient):
