@@ -115,6 +115,19 @@ class ResultStore:
     def put_json(self, rel_key: str, obj: dict) -> None:
         self._put(self._key(rel_key), _json_bytes(obj), "application/json")
 
+    def put_progress(self, body: dict) -> None:
+        """``progress.json`` beside the results (docs: s3-layout): a few
+        hundred bytes, rewritten after every page. It goes through the run
+        log's short-timeout client, not the results one — a status write must
+        never pin the page loop for the minutes a result PUT is allowed to
+        spend retrying."""
+        self._put(
+            self._key("progress.json"),
+            _json_bytes(body),
+            "application/json",
+            self._log_client,
+        )
+
     def put_json_at(self, key: str, obj: dict) -> None:
         """Write JSON at a bucket key outside the per-volume prefix, honoring
         S3_PREFIX like everything else — used for the IMAGES synthetic

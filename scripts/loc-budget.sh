@@ -88,7 +88,21 @@ fail=0
 # identically while `step._thread` is still alive (+11), main +5 for the
 # release call, and the post-run liveness check goes: a thread dies before it
 # completes the batch's futures, so a run that returned kept complete outputs.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2368
+# 2368 -> 2546 (2026-09-08, C13/C11): the volume says how far it has got
+# while it is still running. progress.py (+112) owns both writes -- progress.json
+# after every page outcome and at every stage change, and the incremental
+# iiif.json every PUBLISH_EVERY_PAGES pages, so a 638-page volume opens in the
+# viewer at page 10 instead of at page 638; over half of it is the paragraphs
+# saying why a status write is best-effort, why a skipped page counts as done,
+# and why the cadence is pages rather than the log-ship clock. main +26:
+# RunState.stage becomes a property whose setter publishes the stage (eight
+# assignments, one hook), the resumed pages seed StreamStats BEFORE the loop
+# instead of being patched in after it, and a `done` stage is set after
+# publish. store +14 put_progress (the run log's short-timeout client: a
+# status write must not pin the page loop), stream +14 the `stats`/`on_page`
+# hooks the loop had no way to expose, publish +6 known_dims -- the one line
+# both manifests start from, lifted out of alto_dims rather than copied.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2546
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

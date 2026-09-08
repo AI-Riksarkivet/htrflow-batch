@@ -18,6 +18,13 @@ from .viewer import build_viewer_manifest, parse_alto_dims_bytes
 log = logging.getLogger("htrflow_batch")
 
 
+def known_dims(store: ResultStore, pages: list[PageRef]) -> dict:
+    """Dimensions this run already holds, off the ALTO ``store.upload_page``
+    parsed on its way past — no round-trip. Both the interim viewer manifest
+    (progress.py) and the final one start here."""
+    return {p.name: store.page_dims[p.name] for p in pages if p.name in store.page_dims}
+
+
 def alto_dims(
     cfg: Config, store: ResultStore, pages: list[PageRef], uploaded: set[str]
 ) -> dict:
@@ -26,9 +33,7 @@ def alto_dims(
     back from S3 for a page a previous run published, so a resumed volume's
     viewer manifest stays complete. A page whose ALTO will not parse is left
     out rather than failing the publish."""
-    dims: dict[str, tuple[int, int]] = {
-        p.name: store.page_dims[p.name] for p in pages if p.name in store.page_dims
-    }
+    dims = known_dims(store, pages)
     for p in pages:
         if p.name in dims or p.name not in uploaded:
             continue
