@@ -18,14 +18,18 @@ Namespace `htr-batch`. Three objects, all rendered by the chart's
 | `LocalQueue` | `queue.name` (default `htr-batch`), in the release namespace | points at the ClusterQueue; this is the name Jobs label themselves with |
 
 Default quota is **cpu 4 / memory 8 Gi / `nvidia.com/gpu` 1** — exactly one
-wrapper pod. Every resource a pod *requests* must be covered by the
-ClusterQueue or Kueue marks the Workload inadmissible, so the covered list
-and the pod's requests move together. The PoC cluster runs cpu 8 / 32 Gi /
-1 GPU.
+wrapper pod; the PoC cluster runs cpu 8 / 32 Gi / 1 GPU. Every resource a
+pod *requests* must be covered by the ClusterQueue or Kueue marks the
+Workload inadmissible, so the covered list and the pod's requests move
+together.
 
 Everything else on the ClusterQueue is Kueue's own default, not ours — live
 on the PoC: `queueingStrategy: BestEffortFIFO`, `preemption.withinClusterQueue:
 Never`, `stopPolicy: None`.
+
+A cluster with more than one GPU generation would give each flavour its own
+`nodeLabels` and cover them separately — HTR on one group, another tenant's
+models on another. That is a values change, not a chart change.
 
 ## What the converter puts on a Job
 
@@ -118,6 +122,9 @@ behind it. There is no preemption (`withinClusterQueue: Never`), so nothing
 jumps the line — and because admission covers the entire Job, **the campaign
 at the front owns the single GPU until its last index finishes**, whether
 that is minutes or weeks.
+
+No preemption and no cohorts is the Phase 1 position, not a conclusion: they
+are the first knobs to turn when this queue is shared with another tenant.
 
 ## The operator's view
 
