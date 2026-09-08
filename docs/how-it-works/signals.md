@@ -1,9 +1,12 @@
 # Events and signals
 
-Nothing in this system publishes a status document. Every question about a
-campaign is answered by reading a signal something else already emits —
-Kubernetes' own bookkeeping while the Job exists, and objects in the bucket
-after it is gone. This page is the whole list, and who reads each one.
+Nothing in this system publishes a *campaign* status document. Every question
+about a campaign is answered by reading a signal something else already emits
+— Kubernetes' own bookkeeping while the Job exists, and objects in the bucket
+after it is gone. The one exception is the question the cluster genuinely
+cannot answer — how far inside a volume a running pod has got — which the
+wrapper answers itself, in `progress.json` beside that volume's results.
+This page is the whole list, and who reads each one.
 
 ## One index, in order
 
@@ -22,6 +25,7 @@ sequenceDiagram
     W->>S3: run log claimed at start, then re-shipped every 15 s
     loop each page
         W->>S3: page XML, then ALTO XML (ALTO carries the provenance block)
+        W->>S3: progress.json (every page), iiif.json (every 10th)
     end
     W->>S3: iiif.json, pipeline.yaml, manifest.json LAST
     W->>K: exit 0
@@ -47,7 +51,8 @@ sequenceDiagram
 | Warm-up marker `/data/warmup/<pipeline-id>.done` | the warm-up Job, before it logs success | every batch pod's init container | **yes** — it lives on the cache PVC |
 | Run log `status/logs/<pipeline>/<volume>.txt` | wrapper, every 15 s and once on every exit path | run viewer, operator | **yes** |
 | `page/NNNN.xml` + `alto/NNNN.xml` | wrapper uploader, PAGE first | resume (both must exist), verify, the viewer | **yes** |
-| `iiif.json`, `pipeline.yaml` | publish, after a clean verify | Universal Viewer; a human reading the recipe back | **yes** |
+| `progress.json` | wrapper, after every page outcome and at every stage change | the read API (one GET per volume row it answers with, memoized a few seconds), and so the campaign page's page counts and its failure/warning notice | **yes** |
+| `iiif.json`, `pipeline.yaml` | publish, after a clean verify — `iiif.json` also every 10 pages *during* the run, covering the pages done so far | Universal Viewer; a human reading the recipe back | **yes** |
 | `manifest.json` | publish, **last** | the completion marker; resume compares its `page_sources`; the Phase 2 gate reads its timings | **yes** |
 | ALTO `Processing ID="htrflow-batch"` block | `provenance.stamp_alto`, before the upload | anyone holding the file, with no cluster at all | **yes** |
 
@@ -81,11 +86,22 @@ Live example of the last one, from the PoC bucket
 </Processing>
 ```
 
+`progress.json` is the one signal here a reader may find *stale* rather than
+absent: it is written best-effort (a failed write is logged and forgotten, so
+a page never loses its work to a status file) and read best-effort (a bucket
+that does not answer means no progress on the page, never an error). Its
+`updated_at` is therefore part of what the page shows — "updated 12 s ago" is
+the difference between a volume that is working and one that has stopped —
+and it never means "done": `manifest.json`, written last, still does.
+
 ## Known limits and open stories
 
 - **C13** — *The status page says exactly where in the cycle a campaign and
-  each volume are.* The phases derive from the Job alone, so "waiting for the
-  warm-up", "downloading", "on the GPU" and "publishing" all read `active`.
+  each volume are.* The volume half landed 2026-09-08: `progress.json` carries
+  the wrapper's stage and page counts, and the campaign page shows them per
+  row. What is left is the campaign half — `waiting_on` for a `Queued`
+  campaign (quota, warm-up or pause) and the stalled marker for a volume whose
+  last page is older than a threshold.
 - **C14** — *Every error says what happened, where, and what the user does
   about it.* Some paths still surface nothing: a campaign whose `volumes.txt`
   ConfigMap is missing shows an empty table and a "load more" that never
