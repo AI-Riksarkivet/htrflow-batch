@@ -3,6 +3,7 @@ wrapper package imports cleanly on hosts without torch (docs: wrapper)."""
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import yaml
@@ -98,6 +99,82 @@ def release_documents() -> None:
             pass
 
 
+class PipelineDead(RuntimeError):
+    """An htrflow step's worker thread is gone, so this pipeline can never
+    finish another page. A page failure, not a volume failure: main rebuilds
+    the pipeline and the run goes on (docs: failure-handling)."""
+
+
+#: How often the guard looks at the step threads while a page is running.
+#: A page takes ~13 s, so a second costs nothing and bounds the stall.
+THREAD_POLL_SECONDS = 1.0
+
+
+def _dead_step(pipeline):
+    """The first step whose worker thread has died, if any. htrflow's
+    Inference steps each run one daemon thread (steps.py); every other kind
+    of step has none, so a step without ``_thread`` is never dead."""
+    for step in getattr(pipeline, "steps", ()):
+        thread = getattr(step, "_thread", None)
+        if thread is not None and not thread.is_alive():
+            return step
+    return None
+
+
+def _dead(step, stem: str) -> PipelineDead:
+    """One sentence naming the step and the model it was running: htrflow
+    keeps the model id in the step's StepMetadata.settings."""
+    settings = getattr(getattr(step, "metadata", None), "settings", None) or {}
+    model = settings.get("model") or settings.get("model_class") or "unknown"
+    return PipelineDead(
+        f"page {stem}: htrflow's {step} (model {model}) worker thread died; "
+        "the page is marked failed and the pipeline is rebuilt"
+    )
+
+
+def _run_guarded(pipeline, document, stem: str) -> None:
+    """``pipeline.run`` with a watch on the steps' worker threads.
+
+    An Inference step hands its batch to a daemon thread and waits on a
+    Future (htrflow steps.py). An exception in that thread -- 2026-09-08: a
+    YOLO detection without a polygon -- kills the thread, and ``run`` then
+    waits forever for a future nobody will complete: the pod stood still
+    with its GPU reserved until the 6 h deadline and was retried onto the
+    same page three times. So the run goes into a helper thread and the
+    liveness check runs before it starts, every second while it waits, and
+    once more after it returns.
+
+    The helper is a daemon and is never joined: when a run IS stuck it stays
+    parked on the dead queue for the life of the process, holding that one
+    page's document. Nothing waits on it, and the pod's activeDeadlineSeconds
+    is still the backstop for the process as a whole.
+    """
+
+    def check() -> None:
+        step = _dead_step(pipeline)
+        if step is not None:
+            raise _dead(step, stem)
+
+    check()  # never enqueue onto a dead queue: that is what blocks forever
+    failure: list[BaseException] = []
+    done = threading.Event()
+
+    def run() -> None:
+        try:
+            pipeline.run(document)
+        except BaseException as e:  # re-raised below, in the page's own thread
+            failure.append(e)
+        finally:
+            done.set()
+
+    threading.Thread(target=run, name=f"htrflow-page-{stem}", daemon=True).start()
+    while not done.wait(THREAD_POLL_SECONDS):
+        check()
+    if failure:
+        raise failure[0]
+    check()  # a thread that died as the page finished must not take the next one
+
+
 def _outputs(out_dir: Path, stem: str) -> dict[str, Path]:
     """The files this page's Export steps actually wrote, by format."""
     found: dict[str, Path] = {}
@@ -118,7 +195,7 @@ def process_page(pipeline, image_path: Path, out_dir: Path) -> dict[str, Path]:
     stem = image_path.stem
     try:
         for document in auto_import([str(image_path)]):
-            pipeline.run(document)
+            _run_guarded(pipeline, document, stem)
         files = _outputs(out_dir, stem)
         missing = [fmt for fmt in EXPECTED_FORMATS if fmt not in files]
         if missing:
