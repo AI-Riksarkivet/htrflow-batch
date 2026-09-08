@@ -79,7 +79,7 @@ fail=0
 # wrapper runs another package's `run` in a thread of its own and what the
 # stuck daemon costs. main +10: the factory drops the dead pipeline and
 # rebuilds it before the next page.
-# 2327 -> 2369 (2026-09-08, B88 review round): two holes in the guard.
+# 2327 -> 2368 (2026-09-08, B88 review round): two holes in the guard.
 # `release_pipeline` drops the dead pipeline's weights before its replacement
 # loads its own -- the thread parked in run() holds the steps, so dropping the
 # pipeline reference freed nothing and a recurring model bug would have OOMed
@@ -88,7 +88,7 @@ fail=0
 # identically while `step._thread` is still alive (+11), main +5 for the
 # release call, and the post-run liveness check goes: a thread dies before it
 # completes the batch's futures, so a run that returned kept complete outputs.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2369
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2368
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
