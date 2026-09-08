@@ -39,12 +39,24 @@ const volume = {
   altoPrefix: "https://results.example.org/htr-test/demo-v1/vol0/alto/",
   logUrl: "https://results.example.org/status/logs/demo-v1/vol0.txt",
   sourceUrl: "https://iiif.example.org/vol0/manifest",
+  progress: null,
 };
 
 const pipeline = {
   pipelineSteps: ["Segmentation"],
   pipelineYaml: "steps:\n",
   latest: null,
+  pagesDone: 0,
+  pagesTotal: 0,
+};
+
+const progress = {
+  done: 137,
+  total: 638,
+  failed: 0,
+  lastPage: "0137",
+  stage: "stream",
+  updatedAt: "2026-09-08T09:31:00+00:00",
 };
 
 describe("fetchJobs", () => {
@@ -274,6 +286,41 @@ describe("schemas", () => {
         volumes: [{ ...volume, reason: "exit 1" }],
       }),
     ).toThrow();
+  });
+
+  test("a volume row carries its progress, or null when nothing is known", () => {
+    expect(
+      jobDetailSchema.parse({
+        ...summary,
+        ...pipeline,
+        failures: [],
+        volumes: [{ ...volume, progress }],
+      }),
+    ).toMatchObject({ volumes: [{ progress }] });
+  });
+
+  test("a volume row without the progress field is refused", () => {
+    const { progress: _dropped, ...noProgress } = volume;
+    expect(() =>
+      jobDetailSchema.parse({
+        ...summary,
+        ...pipeline,
+        failures: [],
+        volumes: [noProgress],
+      }),
+    ).toThrow();
+  });
+
+  test("the detail carries the campaign's summed pages", () => {
+    const parsed = jobDetailSchema.parse({
+      ...summary,
+      ...pipeline,
+      pagesDone: 137,
+      pagesTotal: 638,
+      failures: [],
+      volumes: [],
+    });
+    expect([parsed.pagesDone, parsed.pagesTotal]).toEqual([137, 638]);
   });
 
   test("warmup is required on a job row, missing has no reason", () => {

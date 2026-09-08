@@ -101,6 +101,23 @@ export const jobSummarySchema = z.object({
   warmup: warmupSchema,
 });
 
+/**
+ * How far a volume has got, read by the API out of the wrapper's
+ * progress.json in the results bucket (it is not in the Kubernetes API at
+ * all). `null` when there is nothing to read yet: a volume with no pod, a
+ * bucket that did not answer, a run that predates the file. `stage` is the
+ * wrapper's own (`setup`/`resume`/`load`/`stream`/`verify`/`publish`/`done`);
+ * rendering is $lib/reasons, like every other field a person reads.
+ */
+export const volumeProgressSchema = z.object({
+  done: z.number(),
+  total: z.number(),
+  failed: z.number(),
+  lastPage: z.string().nullable(),
+  stage: z.string().nullable(),
+  updatedAt: z.string().nullable(),
+});
+
 export const volumeStateSchema = z.enum([
   "pending",
   "active",
@@ -121,6 +138,7 @@ export const volumeViewSchema = z.object({
   // for an `images:` volume, which has no manifest to open.
   sourceUrl: z.string().nullable(),
   reason: volumeReasonSchema.optional(),
+  progress: volumeProgressSchema.nullable(),
 });
 
 // GET /api/v1/jobs/{namespace}/{name}: JobSummary + paged volumes/failures,
@@ -137,6 +155,11 @@ export const jobDetailSchema = jobSummarySchema.extend({
   latest: volumeViewSchema.nullable(),
   failures: z.array(volumeViewSchema),
   volumes: z.array(volumeViewSchema),
+  // Summed over the volumes THIS response carries (the page, plus `latest`
+  // and the failures) — the API reads one progress file per row it answers
+  // with, never one per volume in the campaign. Both 0 when none is known.
+  pagesDone: z.number(),
+  pagesTotal: z.number(),
 });
 
 export type JobPhase = z.infer<typeof jobPhaseSchema>;
@@ -146,6 +169,7 @@ export type Warmup = z.infer<typeof warmupSchema>;
 export type JobSummary = z.infer<typeof jobSummarySchema>;
 export type VolumeState = z.infer<typeof volumeStateSchema>;
 export type VolumeReason = z.infer<typeof volumeReasonSchema>;
+export type VolumeProgress = z.infer<typeof volumeProgressSchema>;
 export type VolumeView = z.infer<typeof volumeViewSchema>;
 export type JobDetail = z.infer<typeof jobDetailSchema>;
 

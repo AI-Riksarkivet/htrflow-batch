@@ -4,7 +4,11 @@
 // termination JSON, exit codes) — the humanising happens here, at the edge
 // that talks to people, so there is exactly one place to read to know what a
 // campaign page can say (B63 Task 20G).
-import { ApiUnreachable, type VolumeReason } from "./api.js";
+import {
+  ApiUnreachable,
+  type VolumeProgress,
+  type VolumeReason,
+} from "./api.js";
 import { RELOAD_MS } from "./config.js";
 
 /** A stage name from the wrapper, as the thing it was doing. */
@@ -133,6 +137,37 @@ export function describeReason(reason: VolumeReason): string {
   return permanent
     ? `${head} This volume will not be retried — fix the cause, then put the volume in a new campaign.`
     : `${head} It will be retried automatically.`;
+}
+
+/** "12 s ago" / "5 min ago" / "2 h ago"; null for a time we cannot read. */
+function ago(iso: string, now: number): string | null {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return null;
+  const seconds = Math.max(0, Math.round((now - then) / 1000));
+  if (seconds < 60) return `${seconds} s ago`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
+  return `${Math.round(seconds / 3600)} h ago`;
+}
+
+/**
+ * How far a volume has got, in one line: "137 / 638 pages · processing
+ * pages · updated 12 s ago". The stage is the wrapper's own word turned into
+ * what it was doing (the same map a failure sentence uses, so the two never
+ * describe the same stage differently); a stage this build does not know is
+ * shown as it came rather than dropped, since a reader is better off with an
+ * unfamiliar word than with a gap. `now` is injectable for the tests.
+ */
+export function describeProgress(
+  progress: VolumeProgress,
+  now: number = Date.now(),
+): string {
+  const { done, total, failed, stage, updatedAt } = progress;
+  const parts = [`${done} / ${total} pages`];
+  if (stage !== null) parts.push(STAGE_WORDS[stage] ?? stage);
+  if (failed > 0) parts.push(`${failed} failed`);
+  const since = updatedAt === null ? null : ago(updatedAt, now);
+  if (since !== null) parts.push(`updated ${since}`);
+  return parts.join(" · ");
 }
 
 /**

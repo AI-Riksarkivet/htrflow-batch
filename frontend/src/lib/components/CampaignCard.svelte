@@ -12,7 +12,11 @@
     type VolumeView,
   } from "$lib/api.js";
   import { RELOAD_MS } from "$lib/config.js";
-  import { describeApiError, describeReason } from "$lib/reasons.js";
+  import {
+    describeApiError,
+    describeProgress,
+    describeReason,
+  } from "$lib/reasons.js";
   import { untrack } from "svelte";
 
   let { job }: { job: JobSummary } = $props();
@@ -45,6 +49,9 @@
   let volumes = $state<VolumeView[]>([]);
   let failures = $state<VolumeView[]>([]);
   let latest = $state<VolumeView | null>(null);
+  // The pages of the volumes this response covered, summed by the API. Not
+  // in JobSummary: the list endpoint reads no volumes at all.
+  let pages = $state<{ done: number; total: number }>({ done: 0, total: 0 });
   let pipelineSteps = $state<string[]>([]);
   let pipelineYaml = $state("");
   let detailError = $state<string | null>(null);
@@ -129,6 +136,7 @@
       // Also computed over every volume, so it is right for a campaign whose
       // in-flight index is far past the loaded page.
       latest = detail.latest;
+      pages = { done: detail.pagesDone, total: detail.pagesTotal };
       pipelineSteps = detail.pipelineSteps;
       pipelineYaml = detail.pipelineYaml;
       detailError = null;
@@ -164,11 +172,14 @@
     return v.sourceUrl !== null && isHttpUrl(v.sourceUrl) ? v.sourceUrl : null;
   }
 
-  // The finished result once there is one, the source manifest before that
+  // The published result once there is one, the source manifest before that
   // (the old derive.viewerHref) — so "open" is a live link from the first
-  // tick, not only after the volume publishes.
+  // tick, not only after the volume publishes. One page done is enough: the
+  // wrapper rewrites iiif.json every few pages, so the volume is readable in
+  // the viewer long before it is finished (C11).
   function openHref(v: VolumeView): string | null {
-    const manifest = v.state === "done" ? v.iiifUrl : sourceOf(v);
+    const published = v.state === "done" || (v.progress?.done ?? 0) > 0;
+    const manifest = published ? v.iiifUrl : sourceOf(v);
     return manifest === null ? null : `uv.html#?manifest=${manifest}`;
   }
 
@@ -262,6 +273,9 @@
       {#if job.counts.active > 0}
         <span> · {job.counts.active} active</span>
       {/if}
+      {#if pages.total > 0}
+        <span> · {pages.done}/{pages.total} pages</span>
+      {/if}
     </span>
   </div>
   {#if yamlOpen && pipelineYaml !== ""}
@@ -339,6 +353,9 @@
                   <span class="dot"></span>
                   {v.state}
                 </span>
+                {#if v.progress !== null}
+                  <span class="vprogress">{describeProgress(v.progress)}</span>
+                {/if}
               </td>
               <td class="links">{@render links(v)}</td>
             </tr>
@@ -589,8 +606,10 @@
     -webkit-overflow-scrolling: touch;
   }
 
+  /* Wide enough for "137 / 638 pages · processing pages · updated 12 s ago"
+     to wrap to two lines rather than five. */
   col.c-status {
-    width: 8rem;
+    width: 13rem;
   }
 
   /* Three slots at 3.3rem, as before Task 7 dropped "source". */
@@ -604,7 +623,7 @@
      third slot). */
   @media (max-width: 48rem) {
     col.c-status {
-      width: 5rem;
+      width: 7rem;
     }
 
     col.c-links {
@@ -659,6 +678,15 @@
     color: var(--destructive);
     overflow-wrap: anywhere;
     white-space: normal;
+  }
+
+  /* Under the state chip, not beside it: the state is what the eye scans
+     down the column, the numbers are what it stops for. */
+  .vprogress {
+    display: block;
+    font-size: 11.5px;
+    color: var(--muted-foreground);
+    overflow-wrap: anywhere;
   }
 
   .status {
