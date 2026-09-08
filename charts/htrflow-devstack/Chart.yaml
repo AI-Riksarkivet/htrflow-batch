@@ -5,3 +5,5 @@ type: application
 # Bump on every template/values change.
 version: 0.3.0
 appVersion: "0.1.0"
+annotations:
+  artifacthub.io/license: EUPL-1.2
