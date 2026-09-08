@@ -84,7 +84,14 @@ renders a pipeline ConfigMap or a Job any more.
   using devStack RustFS, and `network.apiServer.cidr` for the read API's
   egress to the kube-apiserver (auto-detected via Helm `lookup` at install
   time; set it explicitly for `helm template` or a kubeconfig without
-  list-nodes permission).
+  list-nodes permission). The read API pod also needs S3 egress itself now
+  (it reads a running volume's `progress.json` directly, docs:
+  [Signals](../how-it-works/signals.md)) — the chart adds that rule from the
+  same `network.s3Cidrs` automatically, but set **`web.internalResultsBase`**
+  whenever `publicResultsBase` does not resolve from *inside* the cluster
+  (the PoC's `localhost` URL, notably): unset, the pod would resolve
+  `publicResultsBase` straight back to itself and silently show no progress
+  for any campaign, ever.
 - **Trust boundary** (`security.*`): set `security.allowedImageRepos` and
   turn on `security.policies.enabled` — the Kyverno ClusterPolicies are the
   only thing enforcing the allow-list and the model-revision rule since the
@@ -134,6 +141,7 @@ helm upgrade --install htr-devstack charts/htrflow-devstack -n htr-batch --creat
   --set devStack.insecureDefaults=true    # PoC: accept generated RustFS credentials
 helm upgrade --install htr charts/htrflow-batch -n htr-batch \
   --set publicResultsBase=http://localhost:30900/htr-results \
+  --set web.internalResultsBase=http://rustfs.htr-batch.svc.cluster.local:9000/htr-results \
   --set network.apiServer.cidr=<node-ip>/32 \
   --set web.image=127.0.0.1:30500/htrflow-web@sha256:<web digest> \
   --set security.allowedImageRepos='{127.0.0.1:30500/,rustfs/,docker.io/amazon/aws-cli}' \
