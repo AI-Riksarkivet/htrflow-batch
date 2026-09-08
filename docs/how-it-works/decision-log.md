@@ -84,3 +84,15 @@ The D16 library driver additionally fixes this **at the source**: the wrapper
 calls `pipeline.run(document)` itself and holds each page's result/exception
 directly instead of trusting a process exit code. The verification gate stays
 anyway (belt and braces — it also catches upload gaps).
+
+**Second flaw, found on the 2026-09-08 live run (upstream Bug 3023).** In
+`models/ultralytics/yolo.py`, `_simplify_polygons` puts `None` in its result
+for a mask of fewer than four points ("to use the bounding box instead"),
+but the `map(Polygon, …)` consumed at line 87 then raises
+`TypeError: 'NoneType' object is not iterable` in `utils/geometry.py:205`.
+It is raised inside `Inference._process`'s daemon thread, which dies
+silently, so `pipeline.run()` never returns: the wrapper stalls with the GPU
+reserved until the pod's `activeDeadlineSeconds`, emitting no signal at all.
+Seen on volume R0001203, pages 0044–0046. The wrapper's answer is **B88** —
+bound the wait on a page so a dead model thread fails that page instead of
+the run; the fix itself belongs upstream.
