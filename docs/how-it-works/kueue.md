@@ -48,10 +48,11 @@ flowchart TB
 | `ResourceFlavor` | chart, `queue.flavor` | `spec: {}` — no `nodeLabels`/`nodeTaints`, so Kueue injects no `nodeSelector` at admission[^flavor] |
 | `ClusterQueue` | chart, `<queue.name>-cq` | `coveredResources: [cpu, memory, nvidia.com/gpu]`, `nominalQuota` 8 / 32Gi / 1, `namespaceSelector` on `kubernetes.io/metadata.name` |
 | `LocalQueue` | chart, `queue.name` | `spec.clusterQueue: htr-batch-cq` — the name Jobs label themselves with |
-| `Job` | converter, applied by `cluster.py` | the label `kueue.x-k8s.io/queue-name` (`render._QUEUE_LABEL`) and nothing else Kueue-shaped[^jobs] |
+| `Job` | converter, applied by `cluster.py` | the label `kueue.x-k8s.io/queue-name` (`render._QUEUE_LABEL`),[^jobs] plus `kueue.x-k8s.io/priority-class` (`render._PRIORITY_LABEL`) when the campaign file sets `priority:` — no annotations |
 | `Workload` | **Kueue**, one per Job | below |
 
-**What a Workload holds** — from the live `job-e2e-mem3-59a56`:
+**What a Workload holds.** Kueue names it `job-<campaign>-<hash>`; from the
+live `job-e2e-mem3-59a56`:
 `ownerReferences` naming the Job (`controller: true`,
 `blockOwnerDeletion: true`); the label `kueue.x-k8s.io/job-uid`, the only
 link that survives a delete/recreate of the Job and the one
@@ -165,6 +166,16 @@ smaller to slip through, so it is a plain queue. A campaign whose
 `parallelism × per-pod request` exceeds `nominalQuota` is inadmissible
 **forever** and reads only as `Queued` (**B84**).
 
+The warm-up Job is outside all of this: `manifests/warmup-job.yaml` carries
+no `kueue.x-k8s.io/queue-name` label, so Kueue never sees it — and it
+requests `cpu: 2 / memory: 4Gi` and **no `nvidia.com/gpu`**, so the quota it
+is not counted against is not one it would consume anyway. It runs alongside
+an admitted campaign pod, which is what the live namespace shows: the
+`e2e-mem3` pod and `htr-warmup-e2e-mem3` were scheduled to the same node in
+the same second. (It still gets `runtimeClassName: nvidia` from
+`render._scheduling`, because it must land on the node that holds the model
+cache PVC.)
+
 ## Pause
 
 `suspend: true` in the campaign file is intent. Kueue owns `spec.suspend` on
@@ -266,12 +277,16 @@ kubectl get workloads -n htr-batch -l "kueue.x-k8s.io/job-uid=$JOB_UID"
 The last two lines are Kueue's own recipe for finding a Job's Workload.[^ts]
 Conditions worth knowing: `QuotaReserved`, `Admitted`, `PodsReady` (only
 under `waitForPodsReady`, not configured here), `Finished`, and `Evicted`
-with reason `Preempted`, `PodsReadyTimeout`, `Deactivated` (what our pause
-produces) or `RequeuingLimitExceeded`.[^workload] Metrics from
-`kueue-controller-manager`, all labelled by `cluster_queue`:
-`kueue_pending_workloads`, `kueue_admitted_active_workloads`,
-`kueue_admission_wait_time_seconds`, `kueue_evicted_workloads_total`,
-`kueue_cluster_queue_resource_usage`, `kueue_cluster_queue_nominal_quota`.[^metrics]
+with reason `Preempted`, `PodsReadyTimeout` or `Deactivated` (what our pause
+produces; `underlyingCause: RequeuingLimitExceeded` when requeuing gave
+up).[^workload] Metrics from `kueue-controller-manager`, all labelled by
+`cluster_queue`: `kueue_pending_workloads`,
+`kueue_admitted_active_workloads`, `kueue_admission_wait_time_seconds` and
+`kueue_evicted_workloads_total`.[^metrics] The per-resource pair
+`kueue_cluster_queue_resource_usage` / `kueue_cluster_queue_nominal_quota`
+is **optional**, gated on `metrics.enableClusterQueueResources`, which the
+PoC's `kueue-manager-config` does not set — its `metrics:` block is a
+`bindAddress` and nothing else, so those two are not exported here.
 One rule above the rest: **if Workloads sit pending while the GPU is idle,
 check the Kueue controller before the GPU** — a dead Kueue and a busy GPU
 look identical from outside.
