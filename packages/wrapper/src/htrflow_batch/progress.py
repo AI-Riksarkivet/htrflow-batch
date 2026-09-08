@@ -18,7 +18,8 @@ import logging
 from datetime import datetime, timezone
 
 from .config import Config
-from .iiif import PageRef
+from .iiif import PageRef, redact_urls
+from .logship import LogCapture
 from .publish import known_dims
 from .store import ResultStore
 from .stream import StreamStats
@@ -33,6 +34,11 @@ log = logging.getLogger("htrflow_batch")
 #: about, while the page loop is a clock this code is already standing in.
 PUBLISH_EVERY_PAGES = 10
 
+#: How much of a failed page's error goes in the progress file. It is a chip
+#: on a campaign page, not the run log: enough to recognise the failure, not
+#: a traceback.
+LAST_ERROR_CHARS = 300
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -46,9 +52,14 @@ class Progress:
     published at the end.
     """
 
-    def __init__(self, cfg: Config, store: ResultStore) -> None:
+    def __init__(
+        self, cfg: Config, store: ResultStore, capture: LogCapture | None = None
+    ) -> None:
         self.cfg = cfg
         self.store = store
+        #: Where the WARNING count comes from; absent in unit tests, which
+        #: install no logging of their own.
+        self.capture = capture
         self.stage = "setup"
         self.pages: list[PageRef] = []
         self.source: dict = {}
@@ -65,6 +76,21 @@ class Progress:
         done = sum(1 for r in results if r.status in ("ok", "skipped"))
         return done, sum(1 for r in results if r.status == "failed")
 
+    def _last_error(self) -> dict | None:
+        """The most recent failed page and the sentence the wrapper recorded
+        for it. Without it the campaign page can say "1 page failed" and
+        nothing else, and the reason is a log download away. Redacted like
+        every other error that reaches the public bucket (S6), and bounded:
+        this is a chip, not a traceback."""
+        results = list(self.stats.results.items()) if self.stats else []
+        for name, result in reversed(results):
+            if result.status == "failed":
+                error = redact_urls(result.error or "")
+                if len(error) > LAST_ERROR_CHARS:
+                    error = error[:LAST_ERROR_CHARS] + "..."
+                return {"page": name, "error": error}
+        return None
+
     def body(self) -> dict:
         done, failed = self._counts()
         return {
@@ -73,6 +99,11 @@ class Progress:
             "pages_done": done,
             "pages_failed": failed,
             "last_page": self.last_page,
+            # Why the page count is not the whole story (the product owner,
+            # 2026-09-08): a run with an exception in its log should say so
+            # on the front page.
+            "last_error": self._last_error(),
+            "warnings": self.capture.warnings if self.capture is not None else 0,
             "started_at": self.started_at,
             "updated_at": _now(),
         }

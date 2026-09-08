@@ -102,7 +102,18 @@ fail=0
 # status write must not pin the page loop), stream +14 the `stats`/`on_page`
 # hooks the loop had no way to expose, publish +6 known_dims -- the one line
 # both manifests start from, lifted out of alto_dims rather than copied.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2546
+# 2546 -> 2604 (2026-09-08, the product owner's addition to C13): "when we
+# have an exception in the log it would be nice to see some notice on the
+# front page". progress.py +32: `last_error` -- the most recent failed page
+# and the sentence the wrapper already recorded for it, redacted like every
+# other error that reaches the public bucket and capped at LAST_ERROR_CHARS
+# (a chip, not a traceback) -- and the WARNING count beside it. logship +25:
+# WarningCounter, a logging.Handler installed and removed with the rest of the
+# run's logging; counted at the logging call because the shipped log is
+# truncated in the middle and grepping it back would count a warning twice or
+# not at all -- most of those lines say exactly that. main +1 hands the
+# capture to the tracker.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2604
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
