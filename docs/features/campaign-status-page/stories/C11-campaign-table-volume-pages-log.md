@@ -35,7 +35,8 @@ rader som syns.
 - Levererat 2026-09-08: en *Models*-rad på kampanjkortet (varje modell länkad
   till sitt Hugging Face-repo på den revision pipelinen pinnat), en
   GitHub-länk i sidhuvudet och den körande versionen där
-  (`GET /api/v1/version` = webbpaketets egen version).
+  (`GET /api/v1/version` = den tag som image:n publicerats under, inbakad som
+  `HTRFLOW_BATCH_VERSION`).
 
 ## Klart när
 

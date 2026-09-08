@@ -10,7 +10,7 @@ the `frontend/README.md` there is the developer-facing version of this page.
   counts in the header, and — on a failed poll — a banner in plain words over
   the last list it received. Each card fetches its own volumes, paged. The
   page header carries the Riksarkivet mark and title on the left, and on the
-  right the running build (`GET /api/v1/version`), a link to the
+  right the deployed release (`GET /api/v1/version`), a link to the
   [source repository](https://github.com/AI-Riksarkivet/htrflow-batch) as the
   GitHub mark (inline SVG, labelled, keyboard reachable) and the theme
   toggle.
@@ -175,12 +175,16 @@ script). A CSP header from the server must not be stricter than the meta tag
   nothing, and a pipeline with no models renders no line. These are the
   models htrflow's own `Processing` block names in every ALTO the campaign
   publishes ([From image to transcription](../how-it-works/page-flow.md)).
-- **Running build.** `GET /api/v1/version` is the read API's own package and
-  version (`packages/web`, `importlib.metadata`) — the process answering this
-  page, **not** the release tag and not the wrapper image a campaign runs,
-  neither of which that process can see. Read once per page load, since
-  nothing can change it while the page is open; a version the page could not
-  fetch is simply absent from the header, never an alert over the list.
+- **Running build.** `GET /api/v1/version` answers
+  `{version, web}`: `version` is the tag both images are published under,
+  baked in at build time as `HTRFLOW_BATCH_VERSION` (`dev` for an unstamped
+  build) and read by the service from its own environment like every other
+  setting (`kube.Config`); `web` is the `packages/web` package version, which
+  moves independently of the release. The header shows
+  `htrflow-batch <version>` — what the operator deployed — with `web` in the
+  tooltip. Read once per page load, since nothing can change it while the
+  page is open; a version the page could not fetch is simply absent from the
+  header, never an alert over the list.
 - **Warm-up chip.** Beside the pipeline chip whenever `JobSummary.warmup`
   isn't `succeeded`: "warm-up pending/running/failed" or "no warm-up"
   (`missing`). `failed` and `missing` also push the card's left accent to
