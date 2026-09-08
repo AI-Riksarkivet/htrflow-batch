@@ -1,6 +1,6 @@
 # Live run log — design
 
-**Date:** 2026-08-26 · **Status:** approved (Morgan: "1 is fine")
+**Date:** 2026-08-26 · **Status:** approved (product owner: "1 is fine")
 
 ## Problem
 

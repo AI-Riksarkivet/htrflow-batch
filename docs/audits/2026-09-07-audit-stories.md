@@ -1,7 +1,7 @@
 # Föreslagna stories ur revisionen 2026-09-07
 
 Underlag: [repository audit 2026-09-07](2026-09-07-repo-audit.md), commit
-`b515bce`. **Ingenting är fixat** — det här är förslag för Morgans genomgång
+`b515bce`. **Ingenting är fixat** — det här är förslag för produktägarens genomgång
 innan något går till Azure DevOps. `id:` är blank i varje story; `parent: 2800`
 = Feature "Batch, Kueue, Helm", `parent: 2923` = Feature "Kampanjstatus-sidan".
 Numreringen fortsätter efter B71 och C14.

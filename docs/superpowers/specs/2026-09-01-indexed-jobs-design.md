@@ -1,6 +1,6 @@
 # Campaigns as Indexed Jobs — design (B63, #2978)
 
-Status: reviewed with Morgan 2026-09-01 · supersedes
+Status: reviewed with the product owner 2026-09-01 · supersedes
 `2026-08-31-transcriptionjob-controller-design.md` (CRD + Go controller,
 abandoned after Task 7; branch `b63-controller` kept as reference).
 

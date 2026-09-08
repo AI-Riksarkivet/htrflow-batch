@@ -1,7 +1,7 @@
 # ra-mcp structure port for htrflow-batch — design
 
 Date: 2026-07-28
-Status: approved (Morgan), pending implementation plan
+Status: approved (product owner), pending implementation plan
 Reference repos: `~/ra-mcp` (canonical), `~/ape-mcp` (cleanest recent port, 2026-07-27)
 
 ## Goal

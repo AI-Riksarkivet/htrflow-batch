@@ -692,7 +692,7 @@ entries for local-v2-gpu), volume `htr-demo-examples` has `pages_total: 2`.
 
 - [ ] **Step 5: Verify the page in a real browser**
 
-Morgan browses `http://localhost:30800/` (SSH forward). Expected: repo URL in
+The product owner browses `http://localhost:30800/` (SSH forward). Expected: repo URL in
 header, `0/1 volumes · 0/2 pages` (or `1/1 · 2/2` if the GPU job finished),
 campaign expanded without a click, pending cards dashed + labeled `planned`,
 steps line under the campaign name.

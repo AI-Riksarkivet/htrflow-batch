@@ -21,7 +21,7 @@ genom en SSH-tunnel, så det har inte spelat någon roll. Resultatbucketen
 är i dag anonymt läsbar (viewern läser ALTO och `iiif.json` direkt
 därifrån) och run-loggarna ligger under ett privat prefix — två regler,
 en bucket-policy att underhålla, och en fråga per ny fil: "är den här
-publik?". Morgans beslut (2026-09-07): **alla loggar in**, en regel.
+publik?". Produktägarens beslut (2026-09-07): **alla loggar in**, en regel.
 Priset är att viewern inte längre kan läsa bucketen direkt: dess
 ALTO- och IIIF-anrop går genom samma inloggade origin som sidan. Det
 måste vara på plats innan B12 (DEV-klustret) gör tjänsten nåbar från
