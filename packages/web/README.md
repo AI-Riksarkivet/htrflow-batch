@@ -43,7 +43,7 @@ names.
 | Route | Returns |
 |---|---|
 | `GET /healthz` | `{"ok": true}` |
-| `GET /api/v1/version` | `{"name": "htrflow-web", "version": "…"}` — this package's own version, read off the installed distribution. It is what the page's header shows: the build that is answering, not the release tag and not the wrapper image a campaign runs. Answers in site-only mode too |
+| `GET /api/v1/version` | `{"version": "v0.2.0", "web": "0.1.0"}` — the tag the image was published under (`HTRFLOW_BATCH_VERSION`, baked in by the dockerfile; `dev` outside an image), which is what the page's header shows, and beside it this package's own version. Answers in site-only mode too |
 | `GET /`, `/log`, `/alto`, `/uv.html`, `/config.js`, … | The built site from `HTRFLOW_WEB_STATIC` (mounted last, so no file can shadow an API route). Extensionless paths resolve to adapter-static's `<route>.html`, which is how `/log` and `/alto` work on a refresh |
 | `GET /api/v1/jobs` | One `JobSummary` per campaign Job, newest first: namespace, name, pipeline, phase, counts, suspended, createdAt, resultsBase, warmup |
 | `GET /api/v1/jobs/{namespace}/{name}?offset=0&limit=200` | `JobDetail`: the summary plus `volumes` (one row per index, paged, `limit` at most 1000), `failures` (the 50 highest failed indexes that have a reason), `latest` (the newest active volume, else the newest done one) and `pipelineSteps`/`pipelineYaml` from the `htr-pipeline-<id>` ConfigMap. The last three are computed over every volume, not just the requested page |
@@ -69,15 +69,16 @@ one extra `list_pods`, for the wrapper's termination message as `reason`.
 | `HTRFLOW_NAMESPACES` | own namespace in-cluster, else `htr-batch` | Comma-separated namespaces to list; the chart leaves it unset |
 | `HTRFLOW_WEB_STATIC` | `/app/static` | The built site. Missing directory = API only, which is what a local run gets |
 | `HTRFLOW_WEB_SITE_ONLY` | unset | Any non-empty value: serve the site without a cluster — `/api/v1/…` answers `503`, nothing tries to load a kubeconfig. The local compose stack runs this way |
+| `HTRFLOW_BATCH_VERSION` | `dev` | The release this image is: baked in from the publish tag by `.docker/htrflow-web.dockerfile`, reported by `/api/v1/version` and shown in the page header. Set by the image, never by an operator |
 
-All four are read in one place — `kube.Config`, a frozen pydantic model whose
+All five are read in one place — `kube.Config`, a frozen pydantic model whose
 fields carry their own env name (`Field(alias=...)`), the same idiom the
 wrapper and the converter use (B63 Task 27). `app.py` and `__main__.py` read
 no environment of their own. The chart sets the first from `publicResultsBase`;
 `HTRFLOW_WEB_STATIC` empty means the directory the image bakes in.
 
-**Why the `HTRFLOW_` prefix here and bare names in the wrapper.** These four
-are an operator's settings for a long-lived service that shares a pod
+**Why the `HTRFLOW_` prefix here and bare names in the wrapper.** The first
+four are an operator's settings for a long-lived service that shares a pod
 environment with whatever the platform sets, so they are namespaced. The
 wrapper's (`PUBLIC_RESULTS_BASE`, `S3_BUCKET`, …) are an in-pod contract
 written by the rendered Job itself
