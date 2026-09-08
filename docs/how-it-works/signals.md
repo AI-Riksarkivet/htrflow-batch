@@ -37,13 +37,13 @@ sequenceDiagram
 | Job condition `Suspended` (reason `JobResumed` when it clears) | Kueue's webhook, then the Job controller | status page (`Queued` / `Paused`), operator | no |
 | Job conditions `SuccessCriteriaMet` → `Complete`, `FailureTarget` → `Failed` | Job controller | status page phase, operator | no |
 | `status.completedIndexes` / `failedIndexes` (range strings, e.g. `0-2,5`) | Job controller | status page per-volume state, operator | no |
-| Pod phase and `status.reason` (`DeadlineExceeded` after the pod's own deadline) | kubelet | status page — it rewrites the wrapper's `SIGTERM` to `DeadlineExceeded` on the strength of this field alone | no |
+| Pod phase and `status.reason` (`DeadlineExceeded` after the pod's own deadline) | kubelet | status page — it rewrites the wrapper's `SIGTERM` to `DeadlineExceeded`, but only when the pod's `status.reason` is `DeadlineExceeded` **and** the termination message's `error` is exactly `SIGTERM`; every other pairing passes through untouched | no |
 | Container exit code — 0, 13, 1, 143 | wrapper → kubelet | `podFailurePolicy` (13 → `FailIndex`), operator | no |
 | `wrapper` termination message, `{"stage", "permanent", "error"}` (policy `File`) | wrapper | status page `reason`, operator | no — and only while the pod itself exists |
 | `warmup-wait` termination message: one sentence naming the marker (policy `FallbackToLogsOnError`, so the container's own stderr becomes the message) | the init gate | status page — `wrapper_reason` falls through to any non-zero init container | no |
 | warm-up Job's `{"stage": "warmup", …}` message | `htrflow_batch.warmup` | the campaign card's warm-up chip | n/a — warm-up Jobs have no TTL at all (**B87**) |
 | Workload conditions `QuotaReserved`, `Admitted`, `Finished`, `Evicted` | Kueue | operator ([Queueing](queueing.md#the-operators-view)) | no — the Workload is owned by the Job |
-| Events: `Suspended`, `Resumed`, `SuccessfulCreate`, `Killing`, `FailedIndexes` | Kueue, Job controller, kubelet | operator (`kubectl get events`) | no — and gone from etcd within the hour |
+| Events: `Suspended`, `Resumed`, `SuccessfulCreate`, `Killing`, `FailedIndexes` | Kueue, Job controller, kubelet | operator (`kubectl get events`) | no — and dropped within the API server's event TTL (an hour by default) |
 | Warm-up marker `/data/warmup/<pipeline-id>.done` | the warm-up Job, before it logs success | every batch pod's init container | **yes** — it lives on the cache PVC |
 | Run log `status/logs/<pipeline>/<volume>.txt` | wrapper, every 15 s and once on every exit path | run viewer, operator | **yes** |
 | `page/NNNN.xml` + `alto/NNNN.xml` | wrapper uploader, PAGE first | resume (both must exist), verify, the viewer | **yes** |
