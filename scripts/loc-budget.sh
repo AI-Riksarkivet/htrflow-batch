@@ -288,7 +288,11 @@ check converter "$(count packages/converter/src -name '*.py')" 1434
 # _attach_progress to that many sequential GETs regardless of `limit`,
 # running rows first, so a big page cannot turn into a thousand fetches
 # through one client.
-check web       "$(count packages/web/src -name '*.py')" 955
+# 955 -> 962 (2026-09-08, page-progress review round, item 8): app.py builds
+# no ProgressReader at all in site-only mode (reader.cfg is None) -- every
+# /api/v1/... route 503s before ever reaching progress.fetch, so the HTTP
+# client a ProgressReader opens would have had nothing to ask.
+check web       "$(count packages/web/src -name '*.py')" 962
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

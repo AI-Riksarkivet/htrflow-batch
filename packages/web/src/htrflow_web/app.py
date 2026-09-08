@@ -90,9 +90,16 @@ class NoCluster:
 def create_app(reader, static_dir: Path | str | None = None, progress=None) -> FastAPI:
     """``progress`` is the reader of the volumes' progress files in the
     results bucket — one per app, so its HTTP client and its few-second cache
-    are shared by every request. Injectable so tests need no bucket."""
+    are shared by every request. Injectable so tests need no bucket.
+
+    Not built at all in site-only mode (``reader.cfg is None``, ``NoCluster``
+    below): every route that would use it 503s before reaching
+    ``progress.fetch`` (``reader.get_job`` raises first), so the HTTP client
+    it would open has nothing to ever ask."""
     app = FastAPI()
-    progress = progress if progress is not None else ProgressReader()
+    site_only = reader.cfg is None
+    if progress is None and not site_only:
+        progress = ProgressReader()
 
     @app.middleware("http")
     async def security_headers(request, call_next):
@@ -145,7 +152,7 @@ def create_app(reader, static_dir: Path | str | None = None, progress=None) -> F
             limit,
             pipeline_cm,
             warmup=warmup,
-            fetch_progress=progress.fetch,
+            fetch_progress=progress.fetch if progress is not None else None,
         )
 
     def _warmup_status(
