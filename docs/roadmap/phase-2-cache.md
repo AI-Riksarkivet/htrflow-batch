@@ -146,10 +146,10 @@ sequenceDiagram
     participant P as GPU pod (via FUSE)
     participant S3 as S3 results
 
-    U->>K8s: apply Job htr-<slug>-<hash> (suspend: true)
+    U->>K8s: apply Job htr-SLUG-HASH (suspend: true)
     W->>K8s: list queued workloads in admission order
     W->>K8s: create DataLoad for next-K volumes only
-    A->>SH: GET /<vol>/w2500/ (HTML index)
+    A->>SH: GET /VOL/w2500/ (HTML index)
     SH->>I: fetch IIIF manifest (cached in shim)
     A->>SH: GET each page → stream bytes
     SH->>I: width-capped image GETs
