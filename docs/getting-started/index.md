@@ -2,7 +2,9 @@
 
 ## Kubernetes cluster
 
-You need a Kubernetes cluster with **Kueue CRDs already installed** —
+You need a Kubernetes cluster with **Kueue installed** (`make install-kueue`
+applies the upstream v0.18.1 release manifests server-side; the version is
+`KUEUE_VERSION` in the `Makefile`) —
 the [helm chart](deploy.md) renders `ResourceFlavor` / `ClusterQueue` /
 `LocalQueue` objects but does not install the Kueue controller or its CRDs
 itself. A GPU node pool with the NVIDIA device plugin (and, for the stock

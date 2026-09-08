@@ -81,7 +81,47 @@ flowchart TB
 | `docs/` | The documentation site (getting started, how it works, reference, audits) plus `docs/features/`, the product view: one story per deliverable, mirrored to Azure DevOps, kept out of the site |
 | `scripts/` | The exact LOC budgets, the generated configuration reference, the stories ↔ Azure DevOps sync |
 
-## Quickstart
+## From nothing to a first transcription
+
+One GPU node is enough. The commands are in the order they must run; every
+one exists in this repository's `Makefile`, and the images they pull are the
+published, signed v0.2.0 ones, so nothing has to be built.
+
+```bash
+# 0. A Kubernetes cluster with an NVIDIA GPU node. On one machine, k3s is one line:
+curl -sfL https://get.k3s.io | sh -
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+
+# 1. Clone, install the tooling, and add the two prerequisites the chart does not carry:
+git clone https://github.com/AI-Riksarkivet/htrflow-batch && cd htrflow-batch
+make install            # uv workspace: the converter CLI and the test suites
+make install-kueue      # Kueue: the queue and GPU quota
+make install-devstack   # Kyverno, an S3 bucket (RustFS), an in-cluster registry, the NVIDIA device plugin
+
+# 2. Install htrflow-batch itself:
+helm upgrade --install htr charts/htrflow-batch -n htr-batch \
+  --set publicResultsBase=http://<node-ip>:30900/htr-results \
+  --set network.apiServer.cidr=<node-ip>/32
+make psa-labels
+
+# 3. Describe what to transcribe — a campaigns repo is a folder of YAML:
+uv run htrflow-campaigns init my-campaigns
+#    edit my-campaigns/campaigns/demo.yaml: one volume, an IIIF manifest URL or a
+#    list of image URLs; the demo pipeline already points at the published wrapper
+make campaigns-apply DIR=my-campaigns
+
+# 4. Watch it, and open the result:
+#    http://<node-ip>:30800        the status page: every campaign, volume and page
+#    the volume's "open" link      the viewer, with the text next to the page image
+```
+
+`<node-ip>` is the address the node is reachable at from your browser. The
+S3 credentials the devstack generated are readable with `kubectl -n htr-batch
+get secret htr-batch-s3`. This path runs with the security controls off, the
+right default for a first look; [Deploy](docs/getting-started/deploy.md) is
+the production-shaped install, with the policies on and your own S3.
+
+## Developing
 
 ```bash
 make install && make test              # uv workspace sync + wrapper, converter and web tests
