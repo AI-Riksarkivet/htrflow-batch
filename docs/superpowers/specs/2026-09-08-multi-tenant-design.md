@@ -1,6 +1,6 @@
 # Multi-tenant htrflow-batch — design (many nodes, many users)
 
-Status: premise taken by Morgan 2026-09-08, pool mechanism settled the same day
+Status: premise taken by the product owner 2026-09-08, pool mechanism settled the same day
 (the job API, later; partner submission via git, now) · **extends** `2026-09-01-indexed-jobs-design.md`
 (campaigns are Indexed Jobs), it does not supersede it. What that spec decided
 about the Job, the ConfigMap, the converter and the wrapper stands; this one
@@ -61,12 +61,12 @@ flowchart TB
     end
     subgraph queues["ClusterQueues in cohort htr"]
         CQP["htr-pool-cq<br/>nominalQuota is the light-user guarantee<br/>reclaimWithinCohort Any"]
-        CQA["htr-team-arkis-cq<br/>nominalQuota plus borrowingLimit"]
+        CQA["htr-team-a-cq<br/>nominalQuota plus borrowingLimit"]
         CQB["htr-team-lab-cq<br/>nominalQuota plus borrowingLimit"]
     end
     subgraph tenants["tenant releases — one per namespace"]
         LQP["htr-pool · LocalQueue htr<br/>partners repo now, job API later"]
-        LQA["htr-team-arkis · LocalQueue htr · repo A"]
+        LQA["htr-team-a · LocalQueue htr · repo A"]
         LQB["htr-team-lab · LocalQueue htr · repo B"]
     end
     LQP --> CQP
@@ -110,9 +110,9 @@ flowchart TB
 3. **Add the cohort, preemption and the priority classes.** `cohortName`,
    `preemption`, `fairSharing.weight` and `nominalQuota` are all mutable on a
    live ClusterQueue (verified against the CRD) — no drain needed.
-4. **Create `htr-team-arkis` and move the work first.** The tenant release
-   brings its own `htr-team-arkis-cq` (selecting only that namespace) and
-   LocalQueue `htr`; Riksarkivet's campaigns repo re-renders against it. The pod
+4. **Create the first team tenant and move the work first.** The tenant
+   release brings its own ClusterQueue (selecting only that namespace) and
+   LocalQueue `htr`; the existing campaigns repo re-renders against it. The pod
    template changes (`S3_PREFIX`, queue label, cache mount) and a Job's pod
    template is immutable, so this is a re-render into a new namespace, never a
    patch of a live Job: an apply against one answers `422 field is immutable`,
@@ -218,16 +218,16 @@ flowchart TB
 
 | # | Risk / question | Decision needed | By whom |
 |---|---|---|---|
-| R1 | Preemption kills a volume mid-transcription. The wrapper resumes from published pages, so the loss is bounded by page — but a long volume can lose an hour. | Is `reclaimWithinCohort: Any` acceptable, or must reclaim wait for the running index? (Kueue cannot express the latter.) | Morgan |
-| R2 | Every quota number here is `[N]`: nominal per tenant, borrowing limit per team, the pool's guaranteed share. | The split of the cluster's GPUs, written in the platform values. | Morgan + platform team |
+| R1 | Preemption kills a volume mid-transcription. The wrapper resumes from published pages, so the loss is bounded by page — but a long volume can lose an hour. | Is `reclaimWithinCohort: Any` acceptable, or must reclaim wait for the running index? (Kueue cannot express the latter.) | the product owner |
+| R2 | Every quota number here is `[N]`: nominal per tenant, borrowing limit per team, the pool's guaranteed share. | The split of the cluster's GPUs, written in the platform values. | the product owner + platform team |
 | R3 | The partner path's limits: campaign size and active campaigns per submitter. | The two numbers, and who may raise them. | Product owner |
-| R4 | Merging a pull request from an account outside the org runs that person's URL list on our GPUs and our egress, and adds hosts to `network.iiifCidrs`. | Is the auto-merge allow-list opt-in per person, who maintains it, and who approves a new image host? | Morgan + security |
-| R5 | **Which identities the public front door accepts** — GitHub for partners and developers, Entra ID for Riksarkivet staff, and what else, if anything, for the wider public. This design deliberately does not decide it. | The accepted identity providers, and whether a partner needs a named agreement before an account is allow-listed. | Morgan / the lab |
+| R4 | Merging a pull request from an account outside the org runs that person's URL list on our GPUs and our egress, and adds hosts to `network.iiifCidrs`. | Is the auto-merge allow-list opt-in per person, who maintains it, and who approves a new image host? | the product owner + security |
+| R5 | **Which identities the public front door accepts** — GitHub for partners and developers, Entra ID for Riksarkivet staff, and what else, if anything, for the wider public. This design deliberately does not decide it. | The accepted identity providers, and whether a partner needs a named agreement before an account is allow-listed. | the product owner |
 | R6 | Fair Sharing and `enableClusterQueueResources` are `kueue-system` settings we do not own. | Who owns the Kueue install on DEV and prod, and will they enable them? | Platform team |
 | R7 | RWX storage on DEV and prod is unconfirmed; without it D14 collapses into per-node caches. | Which storage class, or per-node caches as the fallback. | Platform team |
-| R8 | Pipeline ids must be cluster-unique once the cache is shared (D14), but each team owns its own repo. | Where the per-tenant id prefix is enforced — `validate` cannot see other repos. | Morgan |
+| R8 | Pipeline ids must be cluster-unique once the cache is shared (D14), but each team owns its own repo. | Where the per-tenant id prefix is enforced — `validate` cannot see other repos. | the product owner |
 | R9 | 200 volumes per Job is a guess: too small and Kueue and the API server carry 50× the objects, too large and reclaim is slow. | Measure on DEV before fixing the default. | Whoever runs B16 |
-| R10 | A GitHub login can be renamed, and the label and S3 prefix are built from it. D10's `submitter-id` annotation makes a rename detectable, but not automatically reconciled. | Rename policy for what already exists: leave old results under the old prefix and re-point the login, or copy them. | Morgan |
+| R10 | A GitHub login can be renamed, and the label and S3 prefix are built from it. D10's `submitter-id` annotation makes a rename detectable, but not automatically reconciled. | Rename policy for what already exists: leave old results under the old prefix and re-point the login, or copy them. | the product owner |
 | R11 | One cohort assumes one cluster; many *clusters* would need MultiKueue, which this design does not use. | Confirm one cluster per environment. | Platform team |
 
 ## 6. Stories
