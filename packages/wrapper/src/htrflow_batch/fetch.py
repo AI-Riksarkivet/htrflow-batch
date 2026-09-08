@@ -105,6 +105,28 @@ def _save(resp: httpx.Response, path: Path, max_bytes: int) -> int:
     return size
 
 
+def describe(e: BaseException) -> str:
+    """The sentence a failed page records -- and, through progress.json,
+    the one the status page's notice shows. This package's own exceptions
+    are sentences already (PipelineDead, the store's ValueError -- our class,
+    or raised from our code), so they are shown as they are; one from
+    elsewhere (htrflow, torch) keeps its type in front, since "'NoneType'
+    object is not iterable" alone does not say what threw it. Never repr():
+    PipelineDead("page 0044: ...") reached the notice chip verbatim on the
+    first live run (2026-09-08)."""
+    tb = e.__traceback__
+    while tb is not None and tb.tb_next is not None:
+        tb = tb.tb_next
+    raised_in = tb.tb_frame.f_globals.get("__name__", "") if tb else ""
+    ours = raised_in.startswith("htrflow_batch") or type(e).__module__.startswith(
+        "htrflow_batch"
+    )
+    text = str(e)
+    if ours and text:
+        return text
+    return f"{type(e).__name__}: {text}" if text else type(e).__name__
+
+
 def fetch_page(
     page: PageRef,
     dest_dir: Path,
@@ -138,7 +160,7 @@ def fetch_page(
             if not e.retry:
                 break
         except Exception as e:
-            last = repr(e)
+            last = describe(e)
         # Skip sleep after final attempt
         if attempt < retries - 1:
             time.sleep(backoff * (2**attempt))

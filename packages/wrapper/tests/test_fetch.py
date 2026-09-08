@@ -74,7 +74,9 @@ def test_non_httpx_exception_caught(tmp_path):
     for name in ("0001", "0003"):
         assert results[name].path is not None and results[name].error is None
     assert results["0002"].path is None
-    assert "OSError" in results["0002"].error
+    # A sentence with the type in front, never repr(): this text reaches
+    # the status page's notice chip through progress.json.
+    assert results["0002"].error == "OSError: Disk full"
 
 
 def test_upscale_400_falls_back_to_max(tmp_path):

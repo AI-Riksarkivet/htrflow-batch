@@ -256,6 +256,42 @@ def test_process_failure_recorded_and_loop_continues(tmp_path):
     assert closed == [True]  # both pages consumed, stream not left half-iterated
 
 
+def test_a_page_failure_is_a_sentence_not_a_repr(tmp_path):
+    """What a failed page records is what the notice chip shows. The
+    wrapper's own exceptions are sentences already (PipelineDead); a foreign
+    one keeps its type, since "'NoneType' object is not iterable" alone says
+    nothing about what threw it. Never repr(): PipelineDead("page 0044: ...")
+    reached the status page verbatim on the first live run (2026-09-08)."""
+    from htrflow_batch.driver import PipelineDead, _dead
+
+    class Step:
+        metadata = None
+
+        def __str__(self):
+            return "Segmentation"
+
+    def process(path: Path):
+        if path.stem == "0001":
+            raise _dead(Step(), "0001")
+        if path.stem == "0002":
+            raise TypeError("'NoneType' object is not iterable")
+        raise PipelineDead("")
+
+    stats = consume(
+        _items([_fr(tmp_path, 1), _fr(tmp_path, 2), _fr(tmp_path, 3)], []),
+        process,
+        lambda n, f: None,
+    )
+    assert stats.results["0001"].error == (
+        "page 0001: htrflow's Segmentation (model unknown) worker thread died; "
+        "the page is marked failed and the pipeline is rebuilt"
+    )
+    assert stats.results["0002"].error == (
+        "TypeError: 'NoneType' object is not iterable"
+    )
+    assert stats.results["0003"].error == "PipelineDead"
+
+
 def test_fetch_failure_recorded(tmp_path):
     closed = []
     stats = consume(
