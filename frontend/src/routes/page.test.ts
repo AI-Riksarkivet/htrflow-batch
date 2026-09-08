@@ -36,7 +36,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 function routedFetch(list: unknown, listStatus = 200): typeof fetch {
   return vi.fn(async (url: string) => {
     if (url.toString().endsWith("/version"))
-      return jsonResponse({ name: "htrflow-web", version: "0.1.0" });
+      return jsonResponse({ version: "v0.2.0", web: "0.1.0" });
     if (url.toString().includes("/jobs/")) return jsonResponse(detail);
     return jsonResponse(list, listStatus);
   }) as unknown as typeof fetch;
@@ -82,7 +82,7 @@ describe("/ campaign page", () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (url.toString().endsWith("/version")) {
         versionCalls += 1;
-        return jsonResponse({ name: "htrflow-web", version: "0.1.0" });
+        return jsonResponse({ version: "v0.2.0", web: "0.1.0" });
       }
       if (url.toString().includes("/jobs/")) return jsonResponse(detail);
       return jsonResponse([job]);
@@ -90,7 +90,8 @@ describe("/ campaign page", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(CampaignsPage);
     await vi.advanceTimersByTimeAsync(0);
-    expect(screen.getByText("htrflow-web v0.1.0")).toBeInTheDocument();
+    // The deployed tag, not the web package's own version (0.1.0 here).
+    expect(screen.getByText("htrflow-batch v0.2.0")).toBeInTheDocument();
 
     // The build cannot change under a running page: the list polls, this
     // does not.
@@ -109,7 +110,7 @@ describe("/ campaign page", () => {
     );
     render(CampaignsPage);
     await vi.advanceTimersByTimeAsync(0);
-    expect(screen.queryByText(/htrflow-web/)).toBeNull();
+    expect(screen.queryByText(/htrflow-batch/)).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 

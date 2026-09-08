@@ -273,7 +273,10 @@ check web       "$(count packages/web/src -name '*.py')" 722
 # api.ts for fetchVersion and its schema, +3 for config.REPO_URL. The version
 # is read once, and a version nobody could fetch is simply absent -- it is a
 # footnote in the header, never a reason for an alert over the campaign list.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3310
+# 3310 -> 3311 (2026-09-08): the header shows the deployed tag rather than
+# the web package's number -- `webVersion` is kept for the tooltip, and the
+# span fits on one line again.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3311
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
