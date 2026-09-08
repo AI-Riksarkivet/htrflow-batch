@@ -43,6 +43,7 @@ names.
 | Route | Returns |
 |---|---|
 | `GET /healthz` | `{"ok": true}` |
+| `GET /api/v1/version` | `{"name": "htrflow-web", "version": "…"}` — this package's own version, read off the installed distribution. It is what the page's header shows: the build that is answering, not the release tag and not the wrapper image a campaign runs. Answers in site-only mode too |
 | `GET /`, `/log`, `/alto`, `/uv.html`, `/config.js`, … | The built site from `HTRFLOW_WEB_STATIC` (mounted last, so no file can shadow an API route). Extensionless paths resolve to adapter-static's `<route>.html`, which is how `/log` and `/alto` work on a refresh |
 | `GET /api/v1/jobs` | One `JobSummary` per campaign Job, newest first: namespace, name, pipeline, phase, counts, suspended, createdAt, resultsBase, warmup |
 | `GET /api/v1/jobs/{namespace}/{name}?offset=0&limit=200` | `JobDetail`: the summary plus `volumes` (one row per index, paged, `limit` at most 1000), `failures` (the 50 highest failed indexes that have a reason), `latest` (the newest active volume, else the newest done one) and `pipelineSteps`/`pipelineYaml` from the `htr-pipeline-<id>` ConfigMap. The last three are computed over every volume, not just the requested page |
@@ -89,7 +90,7 @@ every campaign Job in flight. Neither surface ever carries a secret — see
 
 | Module | Role |
 |---|---|
-| `app.py` | `create_app(reader, static_dir=None)` (`__main__` passes `cfg.static_dir`): the three routes over a duck-typed reader (so tests wire a fake), the three security headers the old nginx sent, then the static mount. `NoCluster` is the site-only reader |
+| `app.py` | `create_app(reader, static_dir=None)` (`__main__` passes `cfg.static_dir`): the four routes over a duck-typed reader (so tests wire a fake), the three security headers the old nginx sent, then the static mount. `NoCluster` is the site-only reader |
 | `kube.py` | `Config` (the whole env contract) and `Reader`: raw-JSON get/list against Jobs, ConfigMaps and Pods, in-cluster or kubeconfig |
 | `projection.py` | Pure functions from API-server dicts to `JobSummary` and `JobDetail`; `parse_index_ranges` for `completedIndexes` |
 | `__main__.py` | The `htrflow-web` console script: uvicorn on `0.0.0.0:8081`; picks the reader (`kube.Reader`, or `NoCluster` under `HTRFLOW_WEB_SITE_ONLY`) |

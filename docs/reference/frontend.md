@@ -6,9 +6,14 @@ reading the read API (`packages/web`) that serves it. Source:
 the `frontend/README.md` there is the developer-facing version of this page.
 
 - `/` — every campaign (one card per Indexed Job) with its **volume table**
-  (id, state chip, links), the pipeline chip, phase and counts in the
-  header, and — on a failed poll — a banner in plain words over the last
-  list it received. Each card fetches its own volumes, paged.
+  (id, state chip, links), the pipeline chip, its **Models** line, phase and
+  counts in the header, and — on a failed poll — a banner in plain words over
+  the last list it received. Each card fetches its own volumes, paged. The
+  page header carries the Riksarkivet mark and title on the left, and on the
+  right the running build (`GET /api/v1/version`), a link to the
+  [source repository](https://github.com/AI-Riksarkivet/htrflow-batch) as the
+  GitHub mark (inline SVG, labelled, keyboard reachable) and the theme
+  toggle.
 - `/log?log=<url>&manifest=<url>[&live=1]` — the **run viewer**: the
   wrapper's run log grouped by stage, plus a summary card from
   `manifest.json` (ok/failed/skipped counts, total + wall, median/p95/max,
@@ -37,6 +42,7 @@ jsdom), Prettier, Bun as the package runner (`engines`: Node ≥ 22, Bun ≥ 1.1
 | `src/lib/api.ts`                                     | Read-API Zod schemas (`JobSummary`, `JobDetail`, `VolumeView`), `fetchJobs`/`fetchJob`, `ApiUnreachable`, and the pure view helpers `isHttpUrl`/`shortDate` |
 | `src/lib/run.ts`, `runlog.ts`                        | `manifest.json` schema + summary math (incl. `scale()`, the page grid's bar height; each page's `alto` URL); run-log grouping and the terminal-line check   |
 | `src/lib/alto.ts`                                    | `parseAlto` (ALTO XML → text lines + confidence), `altoUrl`, `prettyXml` (the raw-XML toggle)                                                              |
+| `src/lib/pipeline.ts`                                | `pipelineModels` (the models a pipeline YAML names, and what pins them), `modelLabel`, `modelUrl`                                                            |
 | `src/lib/theme.svelte.ts`                            | the one theme store (`ThemeToggle.svelte` on every route)                                                                                                   |
 | `src/lib/components/`                                | `CampaignCard`, `RunSummaryCard`, `PageGrid`, `PagesTable`, `ThemeToggle`                                                                                   |
 | `src/routes/+page.svelte`, `routes/log/`, `routes/alto/` | the three routes                                                                                                                                        |
@@ -155,6 +161,26 @@ script). A CSP header from the server must not be stricter than the meta tag
   `JobDetail.pipelineYaml` in an inline `<pre>` (`aria-expanded` /
   `aria-controls`). Both fields come from the `htr-pipeline-<id>` ConfigMap;
   when it is gone the chip stays a static label with nothing to toggle.
+- **Models line.** Under the pipeline chip, one link per model the pipeline
+  loads, in step order — `<repo name> @<short revision>`, or
+  `<repo name> unpinned` when nothing pins it, linking to
+  `https://huggingface.co/<id>/tree/<revision>` (`/tree/main` unpinned) and
+  guarded by `isHttpUrl` like every other href here. `src/lib/pipeline.ts`
+  reads `JobDetail.pipelineYaml` line by line rather than with a YAML
+  library: the document is one we render, and only two keys are wanted from
+  it — `model_settings.model`, and the revision from either
+  `model_settings.revision` (YOLO) or `model_settings.model_kwargs.revision`
+  (TrOCR, Donut, DiT), the same two placements the cluster's Kyverno
+  model-revision policy accepts. A step with no model (`Export`) contributes
+  nothing, and a pipeline with no models renders no line. These are the
+  models htrflow's own `Processing` block names in every ALTO the campaign
+  publishes ([From image to transcription](../how-it-works/page-flow.md)).
+- **Running build.** `GET /api/v1/version` is the read API's own package and
+  version (`packages/web`, `importlib.metadata`) — the process answering this
+  page, **not** the release tag and not the wrapper image a campaign runs,
+  neither of which that process can see. Read once per page load, since
+  nothing can change it while the page is open; a version the page could not
+  fetch is simply absent from the header, never an alert over the list.
 - **Warm-up chip.** Beside the pipeline chip whenever `JobSummary.warmup`
   isn't `succeeded`: "warm-up pending/running/failed" or "no warm-up"
   (`missing`). `failed` and `missing` also push the card's left accent to
