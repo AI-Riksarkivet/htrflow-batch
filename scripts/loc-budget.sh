@@ -300,7 +300,10 @@ check converter "$(count packages/converter/src -name '*.py')" 1434
 # and returning no progress ever, on every campaign. projection.py +9:
 # `_internal_results_base`, used ONLY for the progress fetch -- every
 # browser-facing URL still comes from the public one.
-check web       "$(count packages/web/src -name '*.py')" 989
+# 989 -> 992 (2026-09-08, page-progress re-review nit): a naive `updated_at`
+# is read as UTC rather than the API pod's local zone -- unreachable today
+# (the wrapper writes tz-aware) but a wrong age is worse than no age.
+check web       "$(count packages/web/src -name '*.py')" 992
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

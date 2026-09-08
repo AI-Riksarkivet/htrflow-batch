@@ -156,7 +156,8 @@ persisted):
   `latest` — the volume a folded card shows, the newest `active` row else
   the newest `done` one — and `pipelineSteps` / `pipelineYaml`, read from
   the campaign's `htr-pipeline-<id>` ConfigMap.
-- **Detail-only, summed over the volumes the response carries**: `pagesDone`,
+- **Detail-only, summed over the volumes whose `progress.json` was fetched**
+  (the capped set above, so at most 32 rows): `pagesDone`,
   `pagesTotal`, `pagesFailed`, `errors`, and `lastError` — the most recent
   page failure among them, with the `volume` it happened in and that volume's
   `logUrl`, so the campaign card can link to a run log for a row that is not

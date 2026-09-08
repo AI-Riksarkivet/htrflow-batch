@@ -20,7 +20,7 @@ to keep working when the bucket does not.
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable
 
 import httpx
@@ -68,7 +68,10 @@ def _age_seconds(updated_at: str | None, now: float) -> int | None:
     if updated_at is None:
         return None
     try:
-        then = datetime.fromisoformat(updated_at).timestamp()
+        then = datetime.fromisoformat(updated_at)
+        if then.tzinfo is None:
+            then = then.replace(tzinfo=timezone.utc)
+        then = then.timestamp()
     except ValueError:
         return None
     return max(0, round(now - then))
