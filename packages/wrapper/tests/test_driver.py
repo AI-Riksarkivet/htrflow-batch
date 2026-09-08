@@ -607,7 +607,7 @@ def test_process_page_fails_the_page_when_a_step_thread_dies_mid_run(
 
         def run(self, document):
             step._thread.alive = False
-            blocked.wait()  # htrflow: waiting on the dead thread's queue
+            blocked.wait(30)  # htrflow: waiting on the dead thread's queue
 
     try:
         with pytest.raises(driver.PipelineDead) as excinfo:

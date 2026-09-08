@@ -1100,7 +1100,7 @@ def test_default_factory_rebuilds_the_pipeline_after_a_dead_worker_thread(
         def run(self, document):
             if Path(document).stem == "0002":
                 self.thread.alive = False
-                blocked.wait()
+                blocked.wait(30)
             _write_outputs(cfg, Path(document).stem, alto=ALTO_STAMPABLE)
 
     built = []
