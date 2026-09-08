@@ -24,6 +24,7 @@ nav = [
     {"Decision Log" = "how-it-works/decision-log.md"},
     {"The Wrapper" = "how-it-works/wrapper.md"},
     {"Queueing (Kueue)" = "how-it-works/queueing.md"},
+    {"Events and Signals" = "how-it-works/signals.md"},
     {"Campaigns (Indexed Jobs)" = "how-it-works/campaigns.md"},
     {"Memory Budget" = "how-it-works/memory-budget.md"},
     {"Failure Handling" = "how-it-works/failure-handling.md"},
