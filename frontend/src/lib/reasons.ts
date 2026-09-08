@@ -140,11 +140,15 @@ export function describeReason(reason: VolumeReason): string {
     : `${head} It will be retried automatically.`;
 }
 
-/** "12 s ago" / "5 min ago" / "2 h ago"; null for a time we cannot read. */
-function ago(iso: string, now: number): string | null {
-  const then = Date.parse(iso);
-  if (Number.isNaN(then)) return null;
-  const seconds = Math.max(0, Math.round((now - then) / 1000));
+/**
+ * "12 s ago" / "5 min ago" / "2 h ago" from a count of seconds. The API
+ * computes that count itself, from its own clock at fetch time
+ * (`VolumeProgress.ageSeconds`) — never here from `updatedAt` compared
+ * against the browser's `Date.now()`, since a reader's clock running fast or
+ * slow could then show "0 s ago" (or a negative number) for a row that has
+ * not just updated at all.
+ */
+function formatAge(seconds: number): string {
   if (seconds < 60) return `${seconds} s ago`;
   if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
   return `${Math.round(seconds / 3600)} h ago`;
@@ -156,18 +160,14 @@ function ago(iso: string, now: number): string | null {
  * what it was doing (the same map a failure sentence uses, so the two never
  * describe the same stage differently); a stage this build does not know is
  * shown as it came rather than dropped, since a reader is better off with an
- * unfamiliar word than with a gap. `now` is injectable for the tests.
+ * unfamiliar word than with a gap.
  */
-export function describeProgress(
-  progress: VolumeProgress,
-  now: number = Date.now(),
-): string {
-  const { done, total, failed, stage, updatedAt } = progress;
+export function describeProgress(progress: VolumeProgress): string {
+  const { done, total, failed, stage, ageSeconds } = progress;
   const parts = [`${done} / ${total} pages`];
   if (stage !== null) parts.push(STAGE_WORDS[stage] ?? stage);
   if (failed > 0) parts.push(`${failed} failed`);
-  const since = updatedAt === null ? null : ago(updatedAt, now);
-  if (since !== null) parts.push(`updated ${since}`);
+  if (ageSeconds !== null) parts.push(`updated ${formatAge(ageSeconds)}`);
   return parts.join(" · ");
 }
 
@@ -177,17 +177,20 @@ function count(n: number, noun: string, verb = ""): string[] {
 
 /**
  * What went wrong in a campaign, in one line, or null when nothing did:
- * "1 page failed · 2 warnings · page 0044: htrflow's Segmentation worker
+ * "1 page failed · 2 errors · page 0044: htrflow's Segmentation worker
  * thread died". The counts come first because they are the same shape for
  * every campaign and the eye can scan them; the wrapper's own sentence
- * follows, and the card shows the whole of it in the tooltip.
+ * follows, and the card shows the whole of it in the tooltip. `errors`
+ * counts ERROR-and-worse only — the wrapper's own benign WARNINGs (a
+ * pipeline rebuild, "manifest covers n/m pages") must not read as something
+ * wrong on a healthy run.
  */
 export function describeNotice(notice: CampaignNotice): string | null {
-  const { pagesFailed, warnings, lastError } = notice;
-  if (pagesFailed === 0 && warnings === 0) return null;
+  const { pagesFailed, errors, lastError } = notice;
+  if (pagesFailed === 0 && errors === 0) return null;
   const parts = [
     ...count(pagesFailed, "page", " failed"),
-    ...count(warnings, "warning"),
+    ...count(errors, "error"),
   ];
   if (lastError !== null) {
     const where = lastError.page === null ? "" : `page ${lastError.page}: `;

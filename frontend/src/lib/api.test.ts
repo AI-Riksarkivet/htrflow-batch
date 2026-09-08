@@ -49,7 +49,7 @@ const pipeline = {
   pagesDone: 0,
   pagesTotal: 0,
   pagesFailed: 0,
-  warnings: 0,
+  errors: 0,
   lastError: null,
 };
 
@@ -60,8 +60,10 @@ const progress = {
   lastPage: "0137",
   stage: "stream",
   updatedAt: "2026-09-08T09:31:00+00:00",
+  ageSeconds: 12,
   lastError: { page: "0044", error: "the worker thread died" },
-  warnings: 2,
+  errors: 2,
+  viewerPublished: true,
 };
 
 describe("fetchJobs", () => {
@@ -339,12 +341,12 @@ describe("schemas", () => {
       ...summary,
       ...pipeline,
       pagesFailed: 3,
-      warnings: 5,
+      errors: 5,
       lastError,
       failures: [],
       volumes: [],
     });
-    expect([parsed.pagesFailed, parsed.warnings]).toEqual([3, 5]);
+    expect([parsed.pagesFailed, parsed.errors]).toEqual([3, 5]);
     expect(parsed.lastError).toEqual(lastError);
   });
 

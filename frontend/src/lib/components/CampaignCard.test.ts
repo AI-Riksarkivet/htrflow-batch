@@ -53,7 +53,7 @@ const detailBase = {
   pagesDone: 0,
   pagesTotal: 0,
   pagesFailed: 0,
-  warnings: 0,
+  errors: 0,
   lastError: null,
 };
 const detail0 = { ...job, ...detailBase };
@@ -185,8 +185,10 @@ describe("CampaignCard", () => {
         lastPage: "0137",
         stage: "stream",
         updatedAt: new Date().toISOString(),
+        ageSeconds: 12,
         lastError: null,
-        warnings: 0,
+        errors: 0,
+        viewerPublished: true,
       },
     };
     vi.stubGlobal(
@@ -228,8 +230,11 @@ describe("CampaignCard", () => {
         lastPage: "0010",
         stage: "stream",
         updatedAt: null,
+        ageSeconds: null,
         lastError: null,
-        warnings: 0,
+        errors: 0,
+        // The interim publish (every ten pages) has actually happened here.
+        viewerPublished: true,
       },
     };
     const untouched = {
@@ -244,8 +249,10 @@ describe("CampaignCard", () => {
         lastPage: null,
         stage: "load",
         updatedAt: null,
+        ageSeconds: null,
         lastError: null,
-        warnings: 0,
+        errors: 0,
+        viewerPublished: false,
       },
     };
     vi.stubGlobal(
@@ -819,12 +826,12 @@ describe("CampaignCard's failure notice", () => {
   }
 
   test("a failed page shows on the folded card, and links to that volume's log", async () => {
-    renderWith({ pagesFailed: 1, warnings: 2, lastError });
+    renderWith({ pagesFailed: 1, errors: 2, lastError });
     await vi.advanceTimersByTimeAsync(0);
 
     const chip = screen.getByRole("link", { name: /1 page failed/ });
     expect(chip).toHaveTextContent(
-      "1 page failed · 2 warnings · page 0044: htrflow's Segmentation " +
+      "1 page failed · 2 errors · page 0044: htrflow's Segmentation " +
         "worker thread died",
     );
     // The whole sentence stays readable even when the chip clips it.
@@ -835,11 +842,34 @@ describe("CampaignCard's failure notice", () => {
     );
   });
 
-  test("warnings alone still get a notice, without a log link", async () => {
-    renderWith({ pagesFailed: 0, warnings: 3, lastError: null });
+  test("errors alone still get a notice, without a log link", async () => {
+    renderWith({ pagesFailed: 0, errors: 3, lastError: null });
     await vi.advanceTimersByTimeAsync(0);
-    expect(screen.getByText("3 warnings")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /warning/ })).toBeNull();
+    // Two nodes carry the sentence on purpose (finding 7): a visible one
+    // clipped by CSS and a visually-hidden one that keeps it reachable by
+    // keyboard/assistive tech even when the visible copy is truncated.
+    expect(screen.getAllByText("3 errors")).toHaveLength(2);
+    expect(screen.queryByRole("link", { name: /error/ })).toBeNull();
+  });
+
+  test("the notice's full sentence is reachable without a mouse, not title-only", async () => {
+    const lastError = {
+      page: "0044",
+      error: "htrflow's Segmentation worker thread died",
+      volume: "vol1",
+      logUrl: "https://pub/status/logs/demo-v1/vol1.txt",
+    };
+    renderWith({ pagesFailed: 1, errors: 0, lastError });
+    await vi.advanceTimersByTimeAsync(0);
+    const chip = screen.getByRole("link", { name: /1 page failed/ });
+    // The full sentence sits in a `.sr-only` node inside the chip -- not
+    // only in its `title`, which a keyboard-only (non-mouse) user never
+    // sees.
+    const hidden = within(chip).getByText(
+      /1 page failed.*Segmentation worker thread died/,
+      { selector: ".sr-only" },
+    );
+    expect(hidden).toBeInTheDocument();
   });
 
   test("a clean campaign has no notice at all", async () => {
