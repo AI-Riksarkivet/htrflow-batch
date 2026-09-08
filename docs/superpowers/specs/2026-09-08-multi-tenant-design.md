@@ -244,7 +244,7 @@ flowchart TB
 | **B67** login | Dex gains Entra ID for Riksarkivet staff beside GitHub for partners and developers; the GitHub login is both the submit and the view identity, and the read API filters Jobs and result files by it, answering 404 for anyone else's work. |
 | **B72** split by bytes | The split gains a third bound, `max_volumes_per_job`, so a campaign becomes many interleavable Workloads. |
 | **B76** TTL-reaped Job not re-run | Applies per part, and the campaign record that survives the TTL carries the submitter. |
-| **B79** pod-shape policy | A precondition, not a nice-to-have: live in `Enforce` before the first external pull request is merged. |
+| **B79** pod-shape policy | A precondition, not a nice-to-have: live in `Enforce` before the first external pull request is merged (B95). |
 | **B84** apply warns when `window` exceeds the quota | The warning reads the *tenant's* ClusterQueue, alongside the new per-submitter check in the same apply. |
 | **T03/T04/T05/T10** ATRaaS API, uploads, quotas, retention | **Unchanged, marked later**: they are the pool's own mechanism, and the partner git path does not replace them — it serves the users who can write YAML while they are unbuilt. |
 | **T13** tenant isolation | The isolation unit is the namespace for teams and the submitter label plus prefix for the pool; this design says which control does what. |
@@ -267,8 +267,9 @@ slås på; `validate` avvisar en `priority:` som inte är någon av dem, och all
 poolens repo.
 
 **B92 · Ett Job är högst N volymer, så en kampanj blir avbrytbara enheter**
-`converter.yaml` får `max_volumes_per_job` (default 200) och `render.split` delar
-på det; statussidan grupperar delarna till ett kort på
+`converter.yaml` får `max_volumes_per_job` (default 200), som `render.split` delar
+på, och `max_volumes_per_campaign`, som `validate` avvisar en för stor kampanjfil
+mot; statussidan grupperar delarna till ett kort på
 `htrflow.riksarkivet.se/campaign` och summerar räknarna.
 
 **B93 · Modellcachen är en RWX-volym som warm-up fyller en gång**
@@ -276,33 +277,43 @@ på det; statussidan grupperar delarna till ett kort på
 batch-poddar monterar read-only, och pipeline-id:n måste bli kluster-unika
 eftersom warm-up-markören nu delas.
 
-**B94 · Partnerinlämning via git: PR i ett gemensamt partners-repo**
-Ett delat GitHub-repo där en partner lägger `campaigns/*.yaml` i en pull request
-— `CODEOWNERS` och sökvägsregler håller `pipelines/` internt, B79 är i `Enforce`
-före första externa PR:en, CI kör validate/render/Kyverno och merge är
-inlämningen (auto-merge för allow-listade konton). CI skickar
-`--submitter <login>` till convertern, som sätter
-`htrflow.riksarkivet.se/submitter` på Job och ConfigMap, `SUBMITTER` i poddens
-env och prefixet `htr-pool/users/<login>/`; `apply` avvisar en inlämnare som
-redan har N aktiva kampanjer. Kända begränsningar: YAML och URL-nåbara bilder,
-inga uppladdningar.
+**B94 · Convertern stämplar inlämnaren, och prefixet följer med**
+`htrflow-campaigns render --submitter <login>` sätter
+`htrflow.riksarkivet.se/submitter` (gemener) och `htrflow.riksarkivet.se/submitter-id`
+på Job och ConfigMap, `SUBMITTER` i poddens env, och substituerar `{submitter}` i
+`converter.yaml`:s `s3_prefix` — det substituerade prefixet stämplas som
+annotation så att läs-API:t slipper räkna ut det själv. `validate` avvisar en
+ändrad stämpel.
 
-**B95 · Läs-API:t och viewern filtrerar på identitet, inte på namespace**
+**B95 · Ett gemensamt partners-repo där en PR är inlämningen**
+Delat GitHub-repo där en partner lägger `campaigns/*.yaml` i en pull request:
+`CODEOWNERS` och sökvägsregler håller `pipelines/` internt, CI kör
+validate/render/Kyverno, och merge är inlämningen (auto-merge för allow-listade
+konton, första PR:en granskad av en människa). **Förutsättning:** B79 i `Enforce`
+före första externa PR:en. Kända begränsningar: YAML och URL-nåbara bilder, inga
+uppladdningar.
+
+**B96 · `apply` avvisar en inlämnare som redan har N aktiva kampanjer**
+Innan Jobs skapas listas Jobs i namespacet med inlämnarens label och utan
+`Complete`-villkor; överskottet avvisas med en mening som namnger gränsen och de
+kampanjer som håller den — samma API-serveranrop som B84:s kvotvarning.
+
+**B97 · Läs-API:t och viewern filtrerar på identitet, inte på namespace**
 Web-fronten binds till en ClusterRole per namespace via tenant release:n så att
 `HTRFLOW_NAMESPACES` och RBAC:en stämmer; en förfrågan om någon annans kampanj
 eller resultatfil svarar 404, inte 403.
 
-**B96 · Identitet mappas till tenant på grupp, med poolen som default**
+**B98 · Identitet mappas till tenant på grupp, med poolen som default**
 Dex med GitHub för partners och utvecklare och Entra ID för Riksarkivets
 personal; gruppen `htr-team-<namn>` ger namespace `htr-team-<namn>`,
 `htr-operators` ger allt, övriga ser sitt eget i poolen — mappningen är ett värde.
 
-**B97 · Mätvärden per tenant: cohort, kvot och väntetid i Grafana**
+**B99 · Mätvärden per tenant: cohort, kvot och väntetid i Grafana**
 `kueue_*`-serierna per `cluster_queue`, `enableClusterQueueResources` påslaget och
 kube-state-metrics konfigurerad att exportera kampanj- och inlämnarlabeln, med en
 operatörsvy över hela cohorten.
 
-**B98 · Migrering till två tiers, i ordning, utan att döda pågående arbete**
+**B100 · Migrering till två tiers, i ordning, utan att döda pågående arbete**
 Könamnet och Job-templaten ändras, vilket ger `422 field is immutable` och en
 kö-label som inte går att ändra på ett admitterat Job — storyn är
 draineringsordningen, adoptionen av befintliga objekt och verifieringen på PoC:n.
