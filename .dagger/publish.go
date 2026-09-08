@@ -84,14 +84,16 @@ func (m *HtrflowBatch) PublishDocker(
 		if imageRepository == "" {
 			imageRepository = "riksarkivet/htrflow-batch"
 		}
-		container, err = m.BuildWrapper(ctx, source, baseRevision, "")
+		container, err = m.BuildWrapper(ctx, source, baseRevision, "", resolvedTag)
 	case "web":
 		if imageRepository == "" {
 			imageRepository = "riksarkivet/htrflow-web"
 		}
 		// Tagged off the wrapper version: the repo releases its images as one
-		// set, not per workspace member.
-		container, err = m.BuildWeb(ctx, source, caBundle)
+		// set, not per workspace member -- which is why that tag, not the web
+		// package's own version, is what the image reports and the status
+		// page's header shows.
+		container, err = m.BuildWeb(ctx, source, caBundle, resolvedTag)
 	default:
 		return "", fmt.Errorf("unknown component %q (wrapper|web)", component)
 	}

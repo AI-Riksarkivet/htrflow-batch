@@ -273,8 +273,12 @@ else
 WRAPPER_BUILD_ARGS =
 endif
 
+# IMAGE_TAG is what the image will be called, so it is also what it reports
+# as its version (the status page's header, the OCI label).
+VERSION_BUILD_ARG = --build-arg HTRFLOW_BATCH_VERSION=$(IMAGE_TAG)
+
 build-wrapper:
-	docker build -f $(WRAPPER_DOCKERFILE) $(WRAPPER_BUILD_ARGS) -t $(WRAPPER_IMAGE) .
+	docker build -f $(WRAPPER_DOCKERFILE) $(WRAPPER_BUILD_ARGS) $(VERSION_BUILD_ARG) -t $(WRAPPER_IMAGE) .
 
 # The arm64 base the wrapper builds on. Built from the HTRFLOW_DIR checkout,
 # which this repo treats as read-only: htrflow's lockfile is gitignored
@@ -293,7 +297,7 @@ build-htrflow-base-arm64:
 # git clone and the npm/bun installs need it).
 DOCKER_SECRET_CA := $(shell test -f $(CA_BUNDLE) && echo --secret id=ca,src=$(CA_BUNDLE))
 build-web:
-	docker build -f .docker/htrflow-web.dockerfile $(DOCKER_SECRET_CA) -t $(WEB_IMAGE) .
+	docker build -f .docker/htrflow-web.dockerfile $(DOCKER_SECRET_CA) $(VERSION_BUILD_ARG) -t $(WEB_IMAGE) .
 
 poc-push: build-wrapper build-web
 	docker push $(WRAPPER_IMAGE)
