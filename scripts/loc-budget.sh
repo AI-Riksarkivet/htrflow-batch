@@ -242,7 +242,14 @@ check web       "$(count packages/web/src -name '*.py')" 690
 # by row -- one campaign the page cannot read is left out, counted and
 # logged once, instead of hiding every other campaign; the page shows the
 # count in a banner (describeUnreadable). A wrong shape still fails hard.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3100
+# 3100 -> 3179 (2026-09-08): lib/pipeline.ts -- the models a campaign's
+# pipeline names, read off JobDetail.pipelineYaml for the card's Models line.
+# No YAML library for a document we render ourselves and want two keys from;
+# over half the file is the paragraph saying so and naming the two revision
+# placements it reads (the same two the Kyverno model-revision policy
+# accepts), so the next reader does not have to rediscover them from a
+# rejected apply.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3179
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
