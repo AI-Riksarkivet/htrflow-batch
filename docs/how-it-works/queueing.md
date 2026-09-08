@@ -54,8 +54,8 @@ file. Instead `parallelism` is clamped at render time to
 ```mermaid
 flowchart TB
     R["rendered/<br/>campaign Job manifest in git"]
-    A["applied<br/>Kueue's webhook sets spec.suspend=true;<br/>one Workload per campaign"]
-    Q["queued<br/>Workload has no Admitted condition;<br/>counted in ClusterQueue.pendingWorkloads"]
+    A["applied<br/>Kueue's webhook sets spec.suspend=true,<br/>one Workload per campaign"]
+    Q["queued<br/>no Admitted condition —<br/>counted in ClusterQueue.pendingWorkloads"]
     R2["admitted / running<br/>QuotaReserved + Admitted,<br/>Job unsuspended up to parallelism"]
     D["done<br/>Job Complete, Workload Finished,<br/>quota released"]
     P["paused<br/>workload spec.active=false,<br/>pods evicted, finished indexes kept"]
