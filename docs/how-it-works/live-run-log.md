@@ -13,7 +13,7 @@ the spec are listed at the end.
 ```mermaid
 sequenceDiagram
     participant P as wrapper pod
-    participant S3 as S3 status/logs/<pipeline>/<volume>.txt
+    participant S3 as S3 status/logs/PIPELINE/VOLUME.txt
     participant API as read API
     participant B as browser (/log?live=1)
 
