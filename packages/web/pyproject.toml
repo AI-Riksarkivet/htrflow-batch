@@ -15,6 +15,9 @@ dependencies = [
     # kube.Config. Already in the tree as a fastapi dependency; named here
     # because this package imports it directly.
     "pydantic>=2",
+    # progress.py reads each volume's progress.json out of the results bucket
+    # -- the one outbound HTTP call this service makes.
+    "httpx>=0.27",
 ]
 
 [project.scripts]

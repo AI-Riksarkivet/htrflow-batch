@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import projection
+from .progress import ProgressReader
 
 #: Exactly what the retired nginx config sent (chart 0.3.0's viewer template).
 #: Script/style/connect sources are governed by the SvelteKit build's own
@@ -86,8 +87,12 @@ class NoCluster:
     list_jobs = list_warmups = get_job = get_configmap = list_pods = _no_cluster
 
 
-def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
+def create_app(reader, static_dir: Path | str | None = None, progress=None) -> FastAPI:
+    """``progress`` is the reader of the volumes' progress files in the
+    results bucket — one per app, so its HTTP client and its few-second cache
+    are shared by every request. Injectable so tests need no bucket."""
     app = FastAPI()
+    progress = progress if progress is not None else ProgressReader()
 
     @app.middleware("http")
     async def security_headers(request, call_next):
@@ -132,7 +137,15 @@ def create_app(reader, static_dir: Path | str | None = None) -> FastAPI:
         pods = reader.list_pods(namespace, name)
         warmup = _warmup_status(job, reader.list_warmups(), {})
         return projection.detail(
-            job, configmap, pods, reader.cfg, offset, limit, pipeline_cm, warmup=warmup
+            job,
+            configmap,
+            pods,
+            reader.cfg,
+            offset,
+            limit,
+            pipeline_cm,
+            warmup=warmup,
+            fetch_progress=progress.fetch,
         )
 
     def _warmup_status(
