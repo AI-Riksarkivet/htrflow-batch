@@ -51,6 +51,28 @@ describe("pipelineModels", () => {
     ]);
   });
 
+  test("a revision under model_kwargs never leaks to the step before it", () => {
+    const two = `steps:
+- step: Segmentation
+  settings:
+    model: yolo
+    model_settings:
+      model: Riksarkivet/yolov9-regions-1
+- step: TextRecognition
+  settings:
+    model: TrOCR
+    model_settings:
+      model: Riksarkivet/trocr-base-handwritten-hist-swe-2
+      model_kwargs:
+        revision: aaaabbbbccccddddeeeeffff0000111122223333
+`;
+    const models = pipelineModels(two);
+    expect(models.map((m) => m.revision)).toEqual([
+      null,
+      "aaaabbbbccccddddeeeeffff0000111122223333",
+    ]);
+  });
+
   test("no pipeline YAML is no models", () => {
     expect(pipelineModels("")).toEqual([]);
   });

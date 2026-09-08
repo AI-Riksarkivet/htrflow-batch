@@ -82,7 +82,7 @@ def test_unknown_page_is_404_not_the_spa(client: TestClient):
     assert client.get("/nope").status_code == 404
 
 
-@pytest.mark.parametrize("path", ["/", "/api/v1/jobs", "/uv.html"])
+@pytest.mark.parametrize("path", ["/", "/api/v1/jobs", "/api/v1/version", "/uv.html"])
 def test_security_headers_on_every_response(client: TestClient, path: str):
     headers = client.get(path).headers
     for name, value in SECURITY_HEADERS.items():
