@@ -52,6 +52,9 @@ const detailBase = {
   latest: null,
   pagesDone: 0,
   pagesTotal: 0,
+  pagesFailed: 0,
+  warnings: 0,
+  lastError: null,
 };
 const detail0 = { ...job, ...detailBase };
 
@@ -182,6 +185,8 @@ describe("CampaignCard", () => {
         lastPage: "0137",
         stage: "stream",
         updatedAt: new Date().toISOString(),
+        lastError: null,
+        warnings: 0,
       },
     };
     vi.stubGlobal(
@@ -223,6 +228,8 @@ describe("CampaignCard", () => {
         lastPage: "0010",
         stage: "stream",
         updatedAt: null,
+        lastError: null,
+        warnings: 0,
       },
     };
     const untouched = {
@@ -237,6 +244,8 @@ describe("CampaignCard", () => {
         lastPage: null,
         stage: "load",
         updatedAt: null,
+        lastError: null,
+        warnings: 0,
       },
     };
     vi.stubGlobal(
@@ -779,5 +788,63 @@ describe("CampaignCard", () => {
     expect(screen.getByText("Running")).toBeInTheDocument();
     expect(screen.getByText(/1\/3 volumes/)).toBeInTheDocument();
     expect(screen.getByText(/1 failed/)).toBeInTheDocument();
+  });
+});
+
+describe("CampaignCard's failure notice", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    storage = stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const lastError = {
+    page: "0044",
+    error: "htrflow's Segmentation worker thread died",
+    volume: "vol1",
+    logUrl: "https://pub/status/logs/demo-v1/vol1.txt",
+  };
+
+  function renderWith(notice: Record<string, unknown>) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, ...notice, failures: [], volumes: [] }),
+      ),
+    );
+    render(CampaignCard, { job });
+  }
+
+  test("a failed page shows on the folded card, and links to that volume's log", async () => {
+    renderWith({ pagesFailed: 1, warnings: 2, lastError });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const chip = screen.getByRole("link", { name: /1 page failed/ });
+    expect(chip).toHaveTextContent(
+      "1 page failed · 2 warnings · page 0044: htrflow's Segmentation " +
+        "worker thread died",
+    );
+    // The whole sentence stays readable even when the chip clips it.
+    expect(chip).toHaveAttribute("title", expect.stringContaining("0044"));
+    expect(chip).toHaveAttribute(
+      "href",
+      "log?log=https%3A%2F%2Fpub%2Fstatus%2Flogs%2Fdemo-v1%2Fvol1.txt&live=1",
+    );
+  });
+
+  test("warnings alone still get a notice, without a log link", async () => {
+    renderWith({ pagesFailed: 0, warnings: 3, lastError: null });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByText("3 warnings")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /warning/ })).toBeNull();
+  });
+
+  test("a clean campaign has no notice at all", async () => {
+    renderWith({});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.queryByText(/failed ·|warning/)).toBeNull();
   });
 });

@@ -295,7 +295,16 @@ check web       "$(count packages/web/src -name '*.py')" 893
 # written where every other one is -- and CampaignCard's line under each state
 # chip, the header's summed pages, and the open link that now goes live at the
 # first published page instead of at the last.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3187
+# 3187 -> 3300 (2026-09-08, the product owner's addition to C13): the notice
+# chip. api.ts's two extra progress fields and the campaign's three
+# (+ CampaignNotice, the slice of JobDetail the chip needs), reasons.ts's
+# describeNotice -- "1 page failed · 2 warnings · page 0044: htrflow's
+# Segmentation worker thread died", counts first because they scan the same
+# for every campaign -- and CampaignCard's chip: two branches (a link when the
+# API sent a run log for the volume it happened in, a plain chip otherwise),
+# the derived href, and the clipping rules that keep a long sentence from
+# rewrapping the whole header.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3300
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

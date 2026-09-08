@@ -6,6 +6,7 @@
 // campaign page can say (B63 Task 20G).
 import {
   ApiUnreachable,
+  type CampaignNotice,
   type VolumeProgress,
   type VolumeReason,
 } from "./api.js";
@@ -167,6 +168,31 @@ export function describeProgress(
   if (failed > 0) parts.push(`${failed} failed`);
   const since = updatedAt === null ? null : ago(updatedAt, now);
   if (since !== null) parts.push(`updated ${since}`);
+  return parts.join(" · ");
+}
+
+function count(n: number, noun: string, verb = ""): string[] {
+  return n > 0 ? [`${n} ${noun}${n === 1 ? "" : "s"}${verb}`] : [];
+}
+
+/**
+ * What went wrong in a campaign, in one line, or null when nothing did:
+ * "1 page failed · 2 warnings · page 0044: htrflow's Segmentation worker
+ * thread died". The counts come first because they are the same shape for
+ * every campaign and the eye can scan them; the wrapper's own sentence
+ * follows, and the card shows the whole of it in the tooltip.
+ */
+export function describeNotice(notice: CampaignNotice): string | null {
+  const { pagesFailed, warnings, lastError } = notice;
+  if (pagesFailed === 0 && warnings === 0) return null;
+  const parts = [
+    ...count(pagesFailed, "page", " failed"),
+    ...count(warnings, "warning"),
+  ];
+  if (lastError !== null) {
+    const where = lastError.page === null ? "" : `page ${lastError.page}: `;
+    parts.push(`${where}${lastError.error}`);
+  }
   return parts.join(" · ");
 }
 
