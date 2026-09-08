@@ -25,17 +25,20 @@ Recorded verbatim:
 > preemption when not, so the pool's nominal quota guarantees light users are
 > never starved.
 
-Settled the same day, after a second look: the pool's own mechanism is the
-**upload/job API** — T03, T04, T05, T10 — and it is **later**. Until it exists
-the pool takes no work from non-git users. What this design builds now is a
-third, lightweight submission path beside it:
+Settled the same day, after a second look: **the pool has two front doors**,
+and both lead into the same namespace, the same queue, the same submitter label
+and the same per-submitter prefix.
 
-> **Partner submission via git.** A partner with technical staff — another
-> archive, a university lab, a project partner — submits campaigns as pull
-> requests to a shared **partners' campaigns repo** on GitHub. CI validates,
-> renders and policy-checks; a maintainer merges (auto-merge for allow-listed
-> partners); the submitter is recorded by CI, stamped on the Job and filtered on
-> after login.
+> **Partner submission via git — built now.** A partner with technical staff —
+> another archive, a university lab, a project partner — submits campaigns as
+> pull requests to a shared **partners' campaigns repo** on GitHub. CI
+> validates, renders and policy-checks; a maintainer merges (auto-merge for
+> allow-listed partners); the submitter is recorded by CI, stamped on the Job
+> and filtered on after login.
+>
+> **The upload/job API — later.** T03, T04, T05 and T10 are the pool's other
+> front door, for people who cannot write YAML. This design does not build
+> them, and **until they exist the pool takes no work from non-git users**.
 
 Also from the first decision: GPU sharing is **nominal quotas with borrowing and
 preemption**, not strict partitions; the model cache is **one shared
