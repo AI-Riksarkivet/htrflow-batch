@@ -93,6 +93,7 @@ but the `map(Polygon, …)` consumed at line 87 then raises
 It is raised inside `Inference._process`'s daemon thread, which dies
 silently, so `pipeline.run()` never returns: the wrapper stalls with the GPU
 reserved until the pod's `activeDeadlineSeconds`, emitting no signal at all.
-Seen on volume R0001203, pages 0044–0046. The wrapper's answer is **B88** —
+Seen on volume R0001203: the last export was `0043.xml`, and page 0044 never
+came back. The wrapper's answer is **B88** —
 bound the wait on a page so a dead model thread fails that page instead of
 the run; the fix itself belongs upstream.
