@@ -303,15 +303,33 @@ def _latest(volumes: list[dict]) -> dict | None:
     return None
 
 
+#: Cost cap (finding 5): ProgressReader.fetch is one sequential GET, and a
+#: request's rows can otherwise run to `limit` (up to 1000) plus `failures`
+#: (up to 50) plus `latest`. Rows still running are asked first -- theirs is
+#: the progress actually changing -- and the rest (mostly done volumes,
+#: whose progress.json never changes again) fill whatever budget is left.
+PROGRESS_FETCH_CAP = 32
+
+
 def _attach_progress(rows: list[dict], results_base: str, fetch) -> list[dict]:
     """Give every row the response actually carries its ``progress`` — the
     page of volumes, plus ``latest`` and the failures, which are returned
     from outside that page. Passed in rather than read here (progress.py does
     the HTTP) so this module stays pure and testable without a bucket. One
-    row is fetched once even when it appears in two of the three lists."""
-    shown = {id(row): row for row in rows}.values()
+    row is fetched once even when it appears in two of the three lists, and
+    at most PROGRESS_FETCH_CAP rows are ever fetched at all (docs:
+    s3-layout), so a `limit=1000` request cannot turn into a thousand
+    sequential GETs -- ``pending`` rows cost nothing (fetch short-circuits
+    them) and are not worth budget either way."""
+    shown = list({id(row): row for row in rows}.values())
+    fetchable = [row for row in shown if row["state"] != "pending"]
+    running = [row for row in fetchable if row["state"] == "active"]
+    rest = [row for row in fetchable if row["state"] != "active"]
+    asked = {id(row) for row in (running + rest)[:PROGRESS_FETCH_CAP]}
     for row in shown:
-        row["progress"] = fetch(results_base, row["id"], row["state"])
+        row["progress"] = (
+            fetch(results_base, row["id"], row["state"]) if id(row) in asked else None
+        )
     return [row for row in shown if row["progress"]]
 
 
@@ -322,7 +340,7 @@ def _campaign_pages(rows: list[dict]) -> dict:
     carrying the volume it happened in and that volume's run log: the row it
     came from is often outside the page the reader is looking at."""
     known = [row["progress"] for row in rows]
-    errors = [
+    last_errors = [
         (
             p["updatedAt"] or "",
             {**p["lastError"], "volume": row["id"], "logUrl": row["logUrl"]},
@@ -334,8 +352,8 @@ def _campaign_pages(rows: list[dict]) -> dict:
         "pagesDone": sum(p["done"] for p in known),
         "pagesTotal": sum(p["total"] for p in known),
         "pagesFailed": sum(p["failed"] for p in known),
-        "warnings": sum(p["warnings"] for p in known),
-        "lastError": max(errors, key=lambda e: e[0])[1] if errors else None,
+        "errors": sum(p["errors"] for p in known),
+        "lastError": max(last_errors, key=lambda e: e[0])[1] if last_errors else None,
     }
 
 
