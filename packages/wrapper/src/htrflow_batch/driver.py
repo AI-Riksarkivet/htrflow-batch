@@ -82,7 +82,9 @@ def release_documents() -> None:
     would miss the ones we never see, since every ProcessImages-type step
     returns a new one. Best-effort throughout: an htrflow without those
     registries, or a task the singleton has already dropped, must not cost a
-    page."""
+    page. A helper thread still parked in a dead pipeline's ``run`` (B88) may
+    call ``progress.update`` for a document popped here; that is benign --
+    htrflow re-registers a document it does not find."""
     try:
         from htrflow import progress  # ty: ignore[unresolved-import]
     except Exception:
@@ -174,8 +176,11 @@ def _run_guarded(pipeline, document, stem: str) -> None:
     waits forever for a future nobody will complete: the pod stood still
     with its GPU reserved until the 6 h deadline and was retried onto the
     same page three times. So the run goes into a helper thread and the
-    liveness check runs before it starts, every second while it waits, and
-    once more after it returns.
+    liveness check runs before it starts and every second while it waits.
+    There is no check afterwards: a worker thread dies before it can
+    complete the batch's futures, so a run that HAS returned got its results
+    -- failing that page would throw away complete outputs, and the next
+    page's check before the run catches the dead pipeline anyway.
 
     The helper is a daemon and is never joined: when a run IS stuck it stays
     parked on the dead queue for the life of the process, holding that one
@@ -205,7 +210,6 @@ def _run_guarded(pipeline, document, stem: str) -> None:
         check()
     if failure:
         raise failure[0]
-    check()  # a thread that died as the page finished must not take the next one
 
 
 def _outputs(out_dir: Path, stem: str) -> dict[str, Path]:
