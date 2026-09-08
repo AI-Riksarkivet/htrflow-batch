@@ -78,7 +78,7 @@ sequenceDiagram
 
     G->>G: htrflow-campaigns render -> rendered/ (committed)
     Ar->>K8s: apply the campaign Job (completionMode: Indexed,<br/>completions=N, queue-name label)
-    Q->>Q: webhook suspends the Job; workload queued (FIFO)
+    Q->>Q: webhook suspends the Job, workload queued (FIFO)
     Q->>K8s: quota free → unsuspend Job (up to `parallelism`)
     K8s->>P: schedule pod for index i (1 GPU, tmpfs workdir, read-only model cache)
     P->>I: fetch IIIF manifest for volumes.txt line i
