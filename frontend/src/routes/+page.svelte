@@ -13,15 +13,17 @@
   let unreadable = $state(0);
   let error = $state<string | null>(null);
 
-  // The build serving this page, read once — nothing can change it while the
-  // page is open, and a version nobody could fetch is simply not shown: it
-  // is a footnote in the header, never a reason for an alert over the list.
+  // What is deployed, read once — nothing can change it while the page is
+  // open, and a version nobody could fetch is simply not shown: it is a
+  // footnote in the header, never a reason for an alert over the list.
   let version = $state<string | null>(null);
+  let webVersion = $state("");
 
   async function loadVersion(): Promise<void> {
     try {
       const answer = await fetchVersion();
-      version = `${answer.name} v${answer.version}`;
+      version = `htrflow-batch ${answer.version}`;
+      webVersion = answer.web;
     } catch {
       // Nothing to name the build with; the header just has no version.
     }
@@ -70,9 +72,7 @@
     </div>
     <div class="header-right">
       {#if version !== null}
-        <span class="version" title="the build serving this page"
-          >{version}</span
-        >
+        <span class="version" title="read API {webVersion}">{version}</span>
       {/if}
       <!-- The GitHub mark, inline: the page loads nothing from a third
            origin (its CSP would not allow it anyway). -->

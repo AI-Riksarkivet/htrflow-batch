@@ -179,14 +179,15 @@ async function getJson(url: string): Promise<unknown> {
 export type JobList = { jobs: JobSummary[]; unreadable: number };
 
 /**
- * GET /api/v1/version — the build answering this page: the read API's own
- * package and version (packages/web), which is what serves the page. It is
- * not the release tag and not the wrapper image a campaign runs; those are
- * versioned separately and this process cannot see either.
+ * GET /api/v1/version — what is deployed: `version` is the tag both images
+ * are published under, baked into the image at build time (`dev` for a local
+ * build), and `web` is the read API package's own version beside it. The tag
+ * is what an operator chose and what the header shows; the package versions
+ * move independently of it.
  */
 export const versionSchema = z.object({
-  name: z.string(),
   version: z.string(),
+  web: z.string(),
 });
 
 export type Version = z.infer<typeof versionSchema>;
