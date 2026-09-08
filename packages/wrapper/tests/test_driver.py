@@ -732,4 +732,6 @@ def test_release_pipeline_survives_a_step_that_keeps_no_model(monkeypatch):
     class _NoModel:
         __slots__ = ()
 
-    driver.release_pipeline(SimpleNamespace(steps=[_NoModel()]))
+    after = SimpleNamespace(model="weights")
+    driver.release_pipeline(SimpleNamespace(steps=[_NoModel(), after]))
+    assert after.model is None  # the refusing step must not shield the rest

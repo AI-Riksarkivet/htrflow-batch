@@ -153,11 +153,11 @@ def release_pipeline(pipeline) -> None:
     again, so the models go now and the parked thread keeps only itself and
     that page's Document.
     """
-    try:
-        for step in getattr(pipeline, "steps", ()):
+    for step in getattr(pipeline, "steps", ()):
+        try:
             step.model = None
-    except Exception:
-        pass  # freeing the GPU must never replace the page's own error
+        except Exception:
+            pass  # freeing the GPU must never replace the page's own error
     gc.collect()  # the step frees the model only once nothing refers to it
     try:
         import torch  # ty: ignore[unresolved-import]
