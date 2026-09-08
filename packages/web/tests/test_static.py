@@ -140,3 +140,16 @@ class TestSiteOnly:
 
     def test_healthz_still_ok(self, client: TestClient):
         assert client.get("/healthz").json() == {"ok": True}
+
+    def test_no_progress_reader_is_built(self, static_dir: Path, monkeypatch):
+        """A site-only process has no bucket and every /api/v1/... route
+        503s before it would ever call progress.fetch -- the HTTP client a
+        ProgressReader opens would have nothing to ask."""
+        from htrflow_web import app as app_mod
+
+        built = []
+        monkeypatch.setattr(
+            app_mod, "ProgressReader", lambda *a, **k: built.append(1) or object()
+        )
+        create_app(NoCluster(), static_dir=static_dir)
+        assert built == []
