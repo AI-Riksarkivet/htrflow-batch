@@ -1,5 +1,8 @@
 # Architecture
 
+This page is the map: the two pictures of the system, the one-line job
+description of each piece, and where to read the detail.
+
 ```mermaid
 %% Top-to-bottom so the site renders it readable at page width. The
 %% streaming driver keeps its left-to-right row inside its own box.
@@ -57,10 +60,9 @@ Five pieces, each boring on purpose:
 | **wrapper (streaming driver)** | I/O (IIIF in, S3 out), page queue, resume, **output verification**, provenance, the live log; drives htrflow in-process | HTR logic |
 | **htrflow** | HTR | everything else — unmodified package, driven as a library |
 
-The web front (`packages/web`) is a sixth, passive piece: read-only RBAC on
-Jobs/Pods/ConfigMaps, no state of its own, answering `GET /api/v1/jobs` and
-serving the status page and Universal Viewer as static files — it derives
-everything from the live Job, nothing is cached
+The web front (`packages/web`) is a sixth, passive piece: a read-only
+projection of live Job/Pod/ConfigMap state that also serves the status page
+and Universal Viewer, with no state of its own
 ([Campaigns](campaigns.md#the-web-front-and-status-page)).
 
 ## Job lifecycle
@@ -96,8 +98,16 @@ sequenceDiagram
     P->>K8s: exit 0 → index i in completedIndexes
 ```
 
-See [The Wrapper](wrapper.md) for the streaming driver's downloader/consumer/
-uploader roles and the `gpu_stall_seconds` instrumentation this diagram's
-loop produces, [Campaigns (Indexed Jobs)](campaigns.md) for the render →
-apply flow, and [Failure Handling](failure-handling.md) for what happens off
-the happy path.
+## Read next
+
+| Page | Answers |
+|---|---|
+| [Queueing (Kueue)](queueing.md) | When does a campaign actually run? What the chart renders, how admission works, why one campaign owns a one-GPU queue to the end |
+| [The Wrapper](wrapper.md) | The streaming driver, the Job template, the model cache and the pipeline configs |
+| [From image to transcription](page-flow.md) | One page: the IIIF GET, the htrflow steps, the two XML files, the upload order |
+| [Campaigns (Indexed Jobs)](campaigns.md) | The campaigns repo, what the converter renders, the bucket layout, the accepted trade-offs |
+| [Events and signals](signals.md) | Everything the system emits, who reads it, and what survives the Job's TTL |
+| [Failure Handling](failure-handling.md) | Exit codes, retries, the pod deadline, and what a person is told |
+| [Memory Budget](memory-budget.md) | Why tmpfs is the limit that matters and what is bounded by what |
+| [Live Run Log](live-run-log.md) | How the browser follows a running volume with nothing writing status |
+| [Decision Log](decision-log.md) | Every decision, dated, with what superseded it |
