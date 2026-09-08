@@ -8,12 +8,14 @@
     fetchJob,
     isHttpUrl,
     shortDate,
+    type CampaignNotice,
     type JobSummary,
     type VolumeView,
   } from "$lib/api.js";
   import { RELOAD_MS } from "$lib/config.js";
   import {
     describeApiError,
+    describeNotice,
     describeProgress,
     describeReason,
   } from "$lib/reasons.js";
@@ -52,6 +54,15 @@
   // The pages of the volumes this response covered, summed by the API. Not
   // in JobSummary: the list endpoint reads no volumes at all.
   let pages = $state<{ done: number; total: number }>({ done: 0, total: 0 });
+  // What went wrong anywhere in the campaign: failed pages, warnings, and the
+  // most recent error with the run log it came from (the product owner,
+  // 2026-09-08 — an exception in a log should show on the front page).
+  let notice = $state<CampaignNotice>({
+    pagesFailed: 0,
+    warnings: 0,
+    lastError: null,
+  });
+  const noticeText = $derived(describeNotice(notice));
   let pipelineSteps = $state<string[]>([]);
   let pipelineYaml = $state("");
   let detailError = $state<string | null>(null);
@@ -137,6 +148,11 @@
       // in-flight index is far past the loaded page.
       latest = detail.latest;
       pages = { done: detail.pagesDone, total: detail.pagesTotal };
+      notice = {
+        pagesFailed: detail.pagesFailed,
+        warnings: detail.warnings,
+        lastError: detail.lastError,
+      };
       pipelineSteps = detail.pipelineSteps;
       pipelineYaml = detail.pipelineYaml;
       detailError = null;
@@ -195,6 +211,16 @@
       (v.state !== "done" ? "&live=1" : "")
     );
   }
+
+  // The notice's own link: the log of the volume the error came from, which
+  // is usually not one of the rows loaded here, so it is built from the URL
+  // the API sent rather than from a row. Live, because a campaign showing a
+  // notice is nearly always still running.
+  const noticeHref = $derived(
+    notice.lastError === null || !isHttpUrl(notice.lastError.logUrl)
+      ? null
+      : `log?log=${encodeURIComponent(notice.lastError.logUrl)}&live=1`,
+  );
 </script>
 
 <!-- Three fixed slots (open · source · log) so a missing link leaves a gap
@@ -265,6 +291,22 @@
       >
     {/if}
     <span class="chip phase {job.phase.toLowerCase()}">{phaseLabel}</span>
+    {#if noticeText !== null}
+      {#if noticeHref !== null}
+        <a
+          class="chip notice"
+          class:bad={notice.pagesFailed > 0}
+          href={noticeHref}
+          title={noticeText}>{noticeText}</a
+        >
+      {:else}
+        <span
+          class="chip notice"
+          class:bad={notice.pagesFailed > 0}
+          title={noticeText}>{noticeText}</span
+        >
+      {/if}
+    {/if}
     <span class="counts">
       {job.counts.done}/{job.counts.total} volumes
       {#if job.counts.failed > 0}
@@ -515,6 +557,27 @@
   .chip.phase.partiallyfailed {
     background: var(--warning-soft);
     color: var(--warning);
+  }
+
+  /* Clipped, never wrapped: the wrapper's sentence can run long and the
+     header is a single row of chips. The title carries the whole of it. */
+  .chip.notice {
+    max-width: 26rem;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    background: var(--warning-soft);
+    color: var(--warning);
+    text-decoration: none;
+  }
+
+  .chip.notice.bad {
+    background: var(--destructive-soft);
+    color: var(--destructive);
+  }
+
+  a.chip.notice:hover {
+    text-decoration: underline;
   }
 
   .chip.phase.failed,

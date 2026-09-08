@@ -48,15 +48,20 @@ const pipeline = {
   latest: null,
   pagesDone: 0,
   pagesTotal: 0,
+  pagesFailed: 0,
+  warnings: 0,
+  lastError: null,
 };
 
 const progress = {
   done: 137,
   total: 638,
-  failed: 0,
+  failed: 1,
   lastPage: "0137",
   stage: "stream",
   updatedAt: "2026-09-08T09:31:00+00:00",
+  lastError: { page: "0044", error: "the worker thread died" },
+  warnings: 2,
 };
 
 describe("fetchJobs", () => {
@@ -321,6 +326,26 @@ describe("schemas", () => {
       volumes: [],
     });
     expect([parsed.pagesDone, parsed.pagesTotal]).toEqual([137, 638]);
+  });
+
+  test("the campaign's notice fields survive the parse", () => {
+    const lastError = {
+      page: "0044",
+      error: "the worker thread died",
+      volume: "vol1",
+      logUrl: "https://results.example.org/status/logs/demo-v1/vol1.txt",
+    };
+    const parsed = jobDetailSchema.parse({
+      ...summary,
+      ...pipeline,
+      pagesFailed: 3,
+      warnings: 5,
+      lastError,
+      failures: [],
+      volumes: [],
+    });
+    expect([parsed.pagesFailed, parsed.warnings]).toEqual([3, 5]);
+    expect(parsed.lastError).toEqual(lastError);
   });
 
   test("warmup is required on a job row, missing has no reason", () => {

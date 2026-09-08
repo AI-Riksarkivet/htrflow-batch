@@ -3,6 +3,7 @@ import { ApiUnreachable, type VolumeReason } from "./api.js";
 import {
   describeApiError,
   describeReason,
+  describeNotice,
   describeProgress,
   describeUnreadable,
 } from "./reasons.js";
@@ -265,6 +266,8 @@ describe("describeProgress", () => {
     lastPage: "0137",
     stage: "stream",
     updatedAt: "2026-09-08T09:31:00+00:00",
+    lastError: null,
+    warnings: 0,
   };
 
   test("pages, what it is doing, and how long ago", () => {
@@ -307,5 +310,49 @@ describe("describeProgress", () => {
     expect(describeProgress({ ...progress, updatedAt: "not a date" }, at)).toBe(
       "137 / 638 pages · processing pages",
     );
+  });
+});
+
+describe("describeNotice", () => {
+  const lastError = {
+    page: "0044",
+    error: "htrflow's Segmentation worker thread died",
+    volume: "vol1",
+    logUrl: "https://pub/status/logs/demo-v1/vol1.txt",
+  };
+
+  test("nothing wrong, no notice at all", () => {
+    expect(
+      describeNotice({ pagesFailed: 0, warnings: 0, lastError: null }),
+    ).toBeNull();
+  });
+
+  test("the count and the sentence behind it", () => {
+    expect(describeNotice({ pagesFailed: 1, warnings: 2, lastError })).toBe(
+      "1 page failed · 2 warnings · page 0044: htrflow's Segmentation " +
+        "worker thread died",
+    );
+  });
+
+  test("plurals", () => {
+    expect(
+      describeNotice({ pagesFailed: 3, warnings: 1, lastError: null }),
+    ).toBe("3 pages failed · 1 warning");
+  });
+
+  test("warnings alone are still worth saying", () => {
+    expect(
+      describeNotice({ pagesFailed: 0, warnings: 4, lastError: null }),
+    ).toBe("4 warnings");
+  });
+
+  test("an error with no page name still reads as a sentence", () => {
+    expect(
+      describeNotice({
+        pagesFailed: 1,
+        warnings: 0,
+        lastError: { ...lastError, page: null },
+      }),
+    ).toBe("1 page failed · htrflow's Segmentation worker thread died");
   });
 });

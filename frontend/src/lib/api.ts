@@ -116,6 +116,13 @@ export const volumeProgressSchema = z.object({
   lastPage: z.string().nullable(),
   stage: z.string().nullable(),
   updatedAt: z.string().nullable(),
+  // The most recent page failure and the WARNING count, so a run with an
+  // exception in its log says so on the campaign page instead of only in a
+  // log someone has to open. Rendering is $lib/reasons, like `reason`.
+  lastError: z
+    .object({ page: z.string().nullable(), error: z.string() })
+    .nullable(),
+  warnings: z.number(),
 });
 
 export const volumeStateSchema = z.enum([
@@ -160,6 +167,19 @@ export const jobDetailSchema = jobSummarySchema.extend({
   // with, never one per volume in the campaign. Both 0 when none is known.
   pagesDone: z.number(),
   pagesTotal: z.number(),
+  // The same three, campaign-wide: the failures and warnings summed, and the
+  // most recent error with the volume it happened in and that volume's run
+  // log — the row it came from is usually outside the page being shown.
+  pagesFailed: z.number(),
+  warnings: z.number(),
+  lastError: z
+    .object({
+      page: z.string().nullable(),
+      error: z.string(),
+      volume: z.string(),
+      logUrl: z.string(),
+    })
+    .nullable(),
 });
 
 export type JobPhase = z.infer<typeof jobPhaseSchema>;
@@ -170,6 +190,10 @@ export type JobSummary = z.infer<typeof jobSummarySchema>;
 export type VolumeState = z.infer<typeof volumeStateSchema>;
 export type VolumeReason = z.infer<typeof volumeReasonSchema>;
 export type VolumeProgress = z.infer<typeof volumeProgressSchema>;
+export type CampaignNotice = Pick<
+  JobDetail,
+  "pagesFailed" | "warnings" | "lastError"
+>;
 export type VolumeView = z.infer<typeof volumeViewSchema>;
 export type JobDetail = z.infer<typeof jobDetailSchema>;
 

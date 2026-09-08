@@ -24,6 +24,9 @@ const detail = {
   volumes: [],
   pagesDone: 0,
   pagesTotal: 0,
+  pagesFailed: 0,
+  warnings: 0,
+  lastError: null,
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
