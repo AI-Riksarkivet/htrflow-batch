@@ -108,21 +108,43 @@ is no polling loop watching it for you. See [Campaign & Pipeline
 YAML](../reference/campaign-yaml.md) for the append-only rule this hits if
 you try to edit an already-rendered campaign's volume list in place.
 
-## Two S3 endpoints, one results base
+## Two S3 endpoints, two results bases
 
 `publicResultsBase=http://localhost:30900/htr-results` is what a browser on
-your laptop reaches through the SSH forward — but the wrapper pod itself
-never resolves `localhost`, so its own S3 writes go through `S3_ENDPOINT`
-(the in-cluster RustFS Service address, from the S3 Secret), while
-`PUBLIC_RESULTS_BASE` is only ever embedded as browser-facing text
-(`viewer_url` in `manifest.json`, the `id` inside a published `iiif.json`
-or synthetic manifest) — there is no separate "internal results base" to
-keep in sync any more, and nothing rewrites URLs after the fact, because
-nothing in this system stores a derived copy of them. On real AWS
-(`S3_ENDPOINT` empty)
-this distinction disappears entirely. Anything *you* put in a campaign
-file — a fixture manifest on the RustFS bucket, say — must use the
-in-cluster form (`http://rustfs.htr-batch.svc.cluster.local:9000/…`),
+your laptop reaches through the SSH forward — but neither pod that touches
+S3 itself ever resolves `localhost`:
+
+- The **wrapper**'s own writes go through `S3_ENDPOINT` (the in-cluster
+  RustFS Service address, from the S3 Secret); `PUBLIC_RESULTS_BASE` is only
+  ever embedded as browser-facing text (`viewer_url` in `manifest.json`, the
+  `id` inside a published `iiif.json` or synthetic manifest) — nothing
+  rewrites URLs after the fact, because nothing in this system stores a
+  derived copy of them.
+- The **web front**'s read API also reads S3 directly now — `progress.json`,
+  for a running volume's page counts (`ProgressReader`, docs:
+  [Signals](../how-it-works/signals.md)) — and it has the same problem the
+  wrapper does not: `HTRFLOW_PUBLIC_RESULTS_BASE` is the one every browser
+  link is built from, so it stays the `localhost` URL, and the pod would
+  resolve that straight back to itself and read no progress at all, ever,
+  for any campaign. `web.internalResultsBase` in the chart values sets
+  `HTRFLOW_INTERNAL_RESULTS_BASE` to the same in-cluster address the wrapper
+  uses:
+
+  ```yaml
+  web:
+    internalResultsBase: http://rustfs.htr-batch.svc.cluster.local:9000/htr-results
+  ```
+
+  (`rustfs.<namespace>.svc.cluster.local:9000`, bucket `htr-results` — the
+  RustFS Service `charts/htrflow-devstack` renders; swap the namespace if
+  your release is not `htr-batch`.) Leaving it unset silently defaults to
+  `publicResultsBase`, which is correct on real AWS (`S3_ENDPOINT` empty,
+  where this whole distinction disappears) and wrong here — there is no
+  error, only a campaign page that never shows a running volume's progress.
+
+Anything *you* put in a campaign file — a fixture manifest on the RustFS
+bucket, say — must use the in-cluster form
+(`http://rustfs.htr-batch.svc.cluster.local:9000/…`),
 because the pod, not your browser, fetches it.
 
 ## Reaching it from a laptop

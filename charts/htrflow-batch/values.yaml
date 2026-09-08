@@ -75,6 +75,13 @@ web:
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 500m, memory: 256Mi }
+  # Where the API pod itself reaches the results bucket, for its own
+  # ProgressReader -- "" (default) means the same address as
+  # publicResultsBase, correct on real AWS. Set this whenever that is not
+  # true, e.g. the PoC, where publicResultsBase is a browser-facing
+  # `localhost` URL the pod cannot resolve to anything but itself:
+  # http://rustfs.<namespace>.svc.cluster.local:9000/<bucket>
+  internalResultsBase: ""
 
 # `htrflow-campaigns apply` (packages/converter) run INSIDE the cluster — an
 # Argo CD PostSync hook, a CI Job — needs an identity with write access to

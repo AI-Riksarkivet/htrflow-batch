@@ -292,7 +292,15 @@ check converter "$(count packages/converter/src -name '*.py')" 1434
 # no ProgressReader at all in site-only mode (reader.cfg is None) -- every
 # /api/v1/... route 503s before ever reaching progress.fetch, so the HTTP
 # client a ProgressReader opens would have had nothing to ask.
-check web       "$(count packages/web/src -name '*.py')" 962
+# 962 -> 989 (2026-09-08, page-progress review round, item 1 -- BLOCKING):
+# HTRFLOW_INTERNAL_RESULTS_BASE (kube.Config, +5), the address THIS POD
+# reaches the results bucket at, separate from HTRFLOW_PUBLIC_RESULTS_BASE
+# (the browser-facing one) -- on the PoC the two are not the same URL, and
+# the API pod's ProgressReader was silently resolving `localhost` to itself
+# and returning no progress ever, on every campaign. projection.py +9:
+# `_internal_results_base`, used ONLY for the progress fetch -- every
+# browser-facing URL still comes from the public one.
+check web       "$(count packages/web/src -name '*.py')" 989
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
@@ -352,5 +360,11 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3300
 # real placement (model_settings.model_kwargs.revision, not top-level like
 # YOLO) -- one more JMESPath OR clause, a longer message, and the comment
 # that explains why two placements exist at all.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 738
+# 738 -> 763 (2026-09-08, page-progress review round, item 1 -- BLOCKING):
+# htr-web's NetworkPolicy gains an S3 egress rule -- the same shape as the
+# batch Job's own (network.yaml's `$s3`, recomputed here since it is a
+# separate template file), for HTRFLOW_INTERNAL_RESULTS_BASE's
+# ProgressReader -- plus the env var itself, defaulted from
+# web.internalResultsBase.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 763
 exit $fail

@@ -43,7 +43,13 @@ Writers: the **wrapper** is the only writer in the whole tree — its own
 namespace-free, since the browser resolves run-log links against the bucket
 root. Nothing else in this system writes to S3 at all — the read API only
 *reads*, and only `progress.json`/`manifest.json`, for the volume rows it is
-about to answer with (§ Live status). Anonymous read
+about to answer with (§ Live status). The API pod does this itself, not the
+browser: it needs its own path to the bucket (`HTRFLOW_INTERNAL_RESULTS_BASE`
+— docs: [Chart Values](chart.md#web-front-web), [Local k3s
+development](../development/local-k3s.md)), separate from
+`HTRFLOW_PUBLIC_RESULTS_BASE`, the address it hands the browser; on a
+deployment where those differ (the PoC), the two must not be confused, or
+the API pod silently reads no progress at all. Anonymous read
 (devstack policy): everything except `status/logs/*` when the devstack
 chart's `rustfs.publicLogs` is `false`. Listing is always denied.
 
@@ -88,7 +94,8 @@ that, and is still written last.
 | `pages_failed` | pages this run recorded as failed |
 | `last_page` | the page whose outcome was recorded last |
 | `last_error` | `{"page", "error"}` for the most recent failed page — the wrapper's own sentence, URL-redacted (S6) and capped at 300 characters — or `null` |
-| `warnings` | WARNING-and-worse log records so far, counted as they are emitted |
+| `errors` | ERROR-and-worse log records so far, counted as they are emitted. Not WARNING: the wrapper logs its own benign warnings (a pipeline rebuild after a dead worker thread, "viewer manifest covers n/m pages") that must not light a "something went wrong" chip on a healthy run |
+| `viewer_published` | `true` once an `iiif.json` PUT has actually succeeded — interim or final. What the frontend's "open in the viewer" link switches on, never a page count |
 | `started_at`, `updated_at` | ISO 8601 UTC |
 
 The **incremental `iiif.json`** is the other half of the same idea: every 10
@@ -96,9 +103,12 @@ pages (`progress.PUBLISH_EVERY_PAGES`) the wrapper republishes the viewer
 manifest with the pages finished so far, so a 638-page volume is readable in
 the viewer at page 10 instead of at page 638. Only the dimensions this run
 holds in memory go into it — reading a resumed run's earlier ALTOs back would
-be one S3 GET per page in the middle of the page loop — so the interim
-manifest can cover fewer pages than the bucket holds; the final publish reads
-those back and always writes the complete one.
+be one S3 GET per page in the middle of the page loop — so on a resumed run
+(whose `pages_done` counts pages this process never touched) the interim
+publish is skipped outright whenever those in-memory dimensions cover fewer
+pages than `pages_done` says are finished, rather than overwrite a complete
+`iiif.json` with one naming only the pages since resume; the final publish
+reads the resumed pages' ALTO back and always writes the complete one.
 
 ## Live status: the read API, not a file
 
@@ -129,11 +139,17 @@ persisted):
   pod's own termination message parsed into `{stage, permanent, error}`,
   present only while a pod for that index still exists.
 - **Per-volume progress**: `progress` is `{done, total, failed, lastPage,
-  stage, updatedAt, lastError, warnings}`, or `null` when nothing is known —
-  read by the API from that volume's `progress.json` (from `manifest.json`
-  for a volume finished before that file existed), one GET per row the
-  response carries, memoized a few seconds. A `pending` volume is never
-  fetched, and a bucket that does not answer is `null`, never a 500.
+  stage, updatedAt, ageSeconds, lastError, errors, viewerPublished}`, or
+  `null` when nothing is known — read by the API from that volume's
+  `progress.json` (from `manifest.json` for a volume finished before that
+  file existed). `ageSeconds` is computed by the API from its own clock at
+  fetch time, not left for the browser to derive from `updatedAt`, so a
+  reader's clock skew cannot make a row read "0 s ago". A `pending` volume is
+  never fetched, and a bucket that does not answer is `null`, never a 500.
+  Fetched at most `PROGRESS_FETCH_CAP` (32) rows per request, `active` ones
+  first, so a large `limit` cannot turn into hundreds of sequential GETs
+  through the API's one HTTP client — a row past the cap simply carries no
+  `progress`.
 - **Failures**: up to 50 of the most recent failed-with-a-reason rows,
   included in the detail response.
 - **Detail-only, computed over every volume** (not just the requested page):
@@ -141,7 +157,7 @@ persisted):
   the newest `done` one — and `pipelineSteps` / `pipelineYaml`, read from
   the campaign's `htr-pipeline-<id>` ConfigMap.
 - **Detail-only, summed over the volumes the response carries**: `pagesDone`,
-  `pagesTotal`, `pagesFailed`, `warnings`, and `lastError` — the most recent
+  `pagesTotal`, `pagesFailed`, `errors`, and `lastError` — the most recent
   page failure among them, with the `volume` it happened in and that volume's
   `logUrl`, so the campaign card can link to a run log for a row that is not
   on the page being shown.

@@ -98,6 +98,7 @@ skeleton, never as a campaign setting.
 | Key | Source | Default | Must agree with | Security |
 |---|---|---|---|---|
 | `HTRFLOW_PUBLIC_RESULTS_BASE` | env | required unless `HTRFLOW_WEB_SITE_ONLY` | chart `publicResultsBase`, converter `public_results_base`, wrapper `PUBLIC_RESULTS_BASE` | the public-read results base — nobody |
+| `HTRFLOW_INTERNAL_RESULTS_BASE` | env | `HTRFLOW_PUBLIC_RESULTS_BASE` | — | no secret — nobody |
 | `HTRFLOW_NAMESPACES` | env | the pod's own namespace, else `htr-batch` | — | no secret — nobody |
 | `HTRFLOW_WEB_STATIC` | env | `/app/static` | — | no secret — nobody |
 | `HTRFLOW_WEB_SITE_ONLY` | env | `false` | — | no secret — nobody |
@@ -142,6 +143,7 @@ skeleton, never as a campaign setting.
 | `web.resources.requests.memory` | `values.yaml` | `128Mi` | — | no secret — nobody |
 | `web.resources.limits.cpu` | `values.yaml` | `500m` | — | no secret — nobody |
 | `web.resources.limits.memory` | `values.yaml` | `256Mi` | — | no secret — nobody |
+| `web.internalResultsBase` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `apply.rbac.enabled` | `values.yaml` | `false` | — | no secret — nobody |
 | `security.allowedImageRepos` | `values.yaml` | *(empty)* | — | enforced by a Kyverno ClusterPolicy — cluster |
 | `security.requireModelRevision` | `values.yaml` | `false` | — | enforced by a Kyverno ClusterPolicy — cluster |
