@@ -51,6 +51,16 @@
   let volumes = $state<VolumeView[]>([]);
   let failures = $state<VolumeView[]>([]);
   let latest = $state<VolumeView | null>(null);
+  // Failures the reader cannot already see. With the table open, a failed
+  // row on the loaded page is right there with its reason, so the callout
+  // must not say it again (the product owner, 2026-09-08: "we don't need to
+  // list a failure twice"). Folded, the table is out of sight and every
+  // failure belongs in the callout.
+  let unseenFailures = $derived(
+    collapsed
+      ? failures
+      : failures.filter((f) => !volumes.some((v) => v.id === f.id)),
+  );
   // The pages of the volumes this response covered, summed by the API. Not
   // in JobSummary: the list endpoint reads no volumes at all.
   let pages = $state<{ done: number; total: number }>({ done: 0, total: 0 });
@@ -355,11 +365,13 @@
       <span class="links">{@render links(latest)}</span>
     </p>
   {/if}
-  {#if failures.length > 0}
+  {#if unseenFailures.length > 0}
     <div class="failures">
-      <p class="failures-heading">failures ({failures.length})</p>
+      <p class="failures-heading">
+        {collapsed ? "failures" : "failures not shown below"} ({unseenFailures.length})
+      </p>
       <ul class="failures-list">
-        {#each failures as f (f.id)}
+        {#each unseenFailures as f (f.id)}
           <li>
             <a class="failure-link" href={logHref(f)}>
               <span class="fid">{f.id}</span> —
@@ -611,8 +623,8 @@
     color: var(--destructive);
   }
 
-  /* Compact, always-visible callout (independent of the collapsed volume
-     table): the newest ≤50 failed-with-a-reason rows the API returns. */
+  /* Compact callout: the newest ≤50 failed-with-a-reason rows the API
+     returns, minus those the open table already shows as rows. */
   .failures {
     margin-top: 0.4rem;
     padding: 0.4rem 0.6rem;
