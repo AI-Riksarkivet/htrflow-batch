@@ -31,10 +31,12 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-// Routes every request by the URL it was given: /jobs (list) vs
-// /jobs/<ns>/<name> (a card's own detail fetch).
+// Routes every request by the URL it was given: /version (the header), /jobs
+// (list) and /jobs/<ns>/<name> (a card's own detail fetch).
 function routedFetch(list: unknown, listStatus = 200): typeof fetch {
   return vi.fn(async (url: string) => {
+    if (url.toString().endsWith("/version"))
+      return jsonResponse({ name: "htrflow-web", version: "0.1.0" });
     if (url.toString().includes("/jobs/")) return jsonResponse(detail);
     return jsonResponse(list, listStatus);
   }) as unknown as typeof fetch;
@@ -58,6 +60,56 @@ describe("/ campaign page", () => {
       expect.objectContaining({ cache: "no-store" }),
     );
     expect(screen.getByText("htr-test/kyrk")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  test("the header links to the source repository", async () => {
+    vi.stubGlobal("fetch", routedFetch([job]));
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const link = screen.getByRole("link", { name: "htrflow-batch on GitHub" });
+    expect(link).toHaveAttribute(
+      "href",
+      "https://github.com/AI-Riksarkivet/htrflow-batch",
+    );
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener");
+  });
+
+  test("the header names the build answering the page, read once", async () => {
+    let versionCalls = 0;
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.toString().endsWith("/version")) {
+        versionCalls += 1;
+        return jsonResponse({ name: "htrflow-web", version: "0.1.0" });
+      }
+      if (url.toString().includes("/jobs/")) return jsonResponse(detail);
+      return jsonResponse([job]);
+    }) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByText("htrflow-web v0.1.0")).toBeInTheDocument();
+
+    // The build cannot change under a running page: the list polls, this
+    // does not.
+    await vi.advanceTimersByTimeAsync(RELOAD_MS);
+    expect(versionCalls).toBe(1);
+  });
+
+  test("no version answer: the header shows no version, and no alert", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.toString().endsWith("/version")
+          ? jsonResponse("gone", 503)
+          : jsonResponse([]),
+      ) as unknown as typeof fetch,
+    );
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.queryByText(/htrflow-web/)).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
