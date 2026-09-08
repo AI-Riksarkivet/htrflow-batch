@@ -7,7 +7,7 @@ below to match the current repo layout; see [Getting Started](../getting-started
 and [Deploy](../getting-started/deploy.md) for the current layout
 (`charts/htrflow-batch`, `.docker/`).
 
-## 13. PoC test log — 2026-07-27, bare k3s on dmlpai01
+## 13. PoC test log — 2026-07-27, bare k3s on the PoC node
 
 Smoke test of the Phase 1 skeleton with a **miniature wrapper** (real page
 downloads, simulated 20 s/page HTR, real S3). Manifests in `k8s/`
@@ -88,7 +88,7 @@ bucket, no live lbiiif dependency — see `k8s/README.md`), Job
   in ~40s wall-clock (image already resident, no pull wait). Log:
   `4 pages in manifest` → `resume: 0 done, 4 to process` → YOLO
   regions/lines + TrOCR all on `cuda:0` → `COMPLETE 4 pages (4 processed)
-  in 31.8s, viewer: http://10.16.51.53:30900/htr-results/demo-v1/mock-vol/iiif.json`.
+  in 31.8s, viewer: http://<node-ip>:30900/htr-results/demo-v1/mock-vol/iiif.json`.
   `manifest.json`: all 4 results `"status": "ok"` (per-page 2.45–14.4 s,
   the first page paying model-load cost), **`wall_seconds: 31.8`,
   `gpu_stall_seconds: 0.0`, `pages_per_second: 0.126`**,

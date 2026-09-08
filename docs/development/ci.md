@@ -65,7 +65,7 @@ CA_BUNDLE ?= /etc/ssl/certs/ca-certificates.crt
 DAGGER_CA := $(shell test -f $(CA_BUNDLE) && echo --ca-bundle $(CA_BUNDLE))
 ```
 
-**Not needed on dmlpai01** — probed directly: dagger's outbound calls
+**Not needed on the PoC node** — probed directly: dagger's outbound calls
 (PyPI/npm/HF Hub/Docker Hub/Trivy DB) resolve fine there without the bundle.
 The wiring stays in place because it's cheap and other RA hosts do sit behind
 TLS-intercepting proxies where it is required (see the UV-build
