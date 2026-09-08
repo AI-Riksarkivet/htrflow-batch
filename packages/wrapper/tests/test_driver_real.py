@@ -148,3 +148,36 @@ def test_progress_registries_are_empty_after_every_page(
         image.write_bytes(page.read_bytes())
         assert set(process_page(pipeline, image, out_dir)) == set(EXPECTED_FORMATS)
         assert held() == [0, 0, 0, 0], "the progress registries kept the page"
+
+
+class _BrokenModel:
+    """A model that raises the way ultralytics/yolo.py did on 2026-09-08
+    (a detection with no polygon: ``TypeError: 'NoneType' object is not
+    iterable``). Its metadata is what StepMetadata carries the model id in."""
+
+    metadata = {"model": "broken-test-model"}
+
+    def __call__(self, images, **kwargs):
+        raise TypeError("'NoneType' object is not iterable")
+
+
+def test_a_step_whose_worker_thread_dies_fails_the_page_instead_of_hanging(
+    tmp_path, page
+):
+    """B88, against the real threading: htrflow's Inference hands its batch to
+    a daemon thread and waits on a Future, so a model exception kills the
+    thread and ``Pipeline.run`` waits for a future nobody will complete. Only
+    driver's guard ends this -- without it the assertion below never runs and
+    the pod holds its GPU to the deadline."""
+    from htrflow.pipeline.pipeline import Pipeline
+    from htrflow.pipeline.steps import Segmentation
+
+    from htrflow_batch.driver import PipelineDead
+
+    pipeline = Pipeline([Segmentation(_BrokenModel())])
+    with pytest.raises(PipelineDead) as excinfo:
+        process_page(pipeline, page, tmp_path / "outputs")
+    assert str(excinfo.value) == (
+        f"page {page.stem}: htrflow's Segmentation (model broken-test-model) "
+        "worker thread died; the page is marked failed and the pipeline is rebuilt"
+    )
