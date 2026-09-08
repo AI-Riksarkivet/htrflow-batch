@@ -87,9 +87,20 @@ class FakeReader:
         return []
 
 
+class FakeProgress:
+    """Stands in for the bucket: create_app's real one would make an HTTP
+    call per volume row, and these tests have no bucket to answer it."""
+
+    def __init__(self, known: dict | None = None) -> None:
+        self.known = known or {}
+
+    def fetch(self, results_base: str, volume_id: str, state: str) -> dict | None:
+        return self.known.get(volume_id)
+
+
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(create_app(FakeReader()))
+    return TestClient(create_app(FakeReader(), progress=FakeProgress()))
 
 
 def test_healthz(client: TestClient):
@@ -128,6 +139,27 @@ def test_job_detail_shape(client: TestClient):
     assert body["volumes"][0]["id"] == "vol0"
     assert body["volumes"][0]["state"] == "done"
     assert body["failures"] == []
+
+
+def test_job_detail_carries_each_volume_progress_and_the_campaign_total():
+    """C13/C11: the row says 137 of 638, the card sums what it knows."""
+    progress = FakeProgress(
+        {
+            "vol0": {
+                "done": 137,
+                "total": 638,
+                "failed": 0,
+                "lastPage": "0137",
+                "stage": "stream",
+                "updatedAt": "2026-09-08T09:31:00+00:00",
+            }
+        }
+    )
+    client = TestClient(create_app(FakeReader(), progress=progress))
+    body = client.get("/api/v1/jobs/htr-test/kyrk").json()
+    assert body["volumes"][0]["progress"]["done"] == 137
+    assert body["volumes"][1]["progress"] is None
+    assert (body["pagesDone"], body["pagesTotal"]) == (137, 638)
 
 
 def test_job_detail_carries_the_pipeline_steps_and_yaml(client: TestClient):

@@ -303,6 +303,18 @@ def _latest(volumes: list[dict]) -> dict | None:
     return None
 
 
+def _attach_progress(rows: list[dict], results_base: str, fetch) -> list[dict]:
+    """Give every row the response actually carries its ``progress`` — the
+    page of volumes, plus ``latest`` and the failures, which are returned
+    from outside that page. Passed in rather than read here (progress.py does
+    the HTTP) so this module stays pure and testable without a bucket. One
+    row is fetched once even when it appears in two of the three lists."""
+    shown = {id(row): row for row in rows}.values()
+    for row in shown:
+        row["progress"] = fetch(results_base, row["id"], row["state"])
+    return [row["progress"] for row in shown if row["progress"]]
+
+
 def detail(
     job: dict,
     configmap: dict | None,
@@ -313,10 +325,13 @@ def detail(
     pipeline_configmap: dict | None = None,
     *,
     warmup: dict,
+    fetch_progress=None,
 ) -> dict:
     """``JobDetail``: ``JobSummary`` plus per-index rows and top failures for
     ``GET /api/v1/jobs/{ns}/{name}``, paged by index. ``warmup`` passes
-    through to ``summarize`` unchanged (Task 28)."""
+    through to ``summarize`` unchanged (Task 28); ``fetch_progress`` is
+    ``(results_base, volume id, state) -> progress | None``
+    (``app.py`` wires ``progress.ProgressReader.fetch``)."""
     summary = summarize(job, cfg, warmup)
     status = job.get("status") or {}
     completed = parse_index_ranges(status.get("completedIndexes"))
@@ -353,9 +368,21 @@ def detail(
         reverse=True,
     )[:_MAX_FAILURES]
 
+    page = volumes[offset : offset + limit]
+    known = _attach_progress(
+        [*page, *failures, *([latest] if (latest := _latest(volumes)) else [])],
+        results_base,
+        fetch_progress or (lambda *_args: None),
+    )
+
     pipeline_yaml = _pipeline_yaml(pipeline_configmap)
     return {
         **summary,
+        # Summed over the volumes in THIS response, which is all the campaign
+        # knows: the page total lives in each volume's own progress file, and
+        # reading every volume's would cost one GET per volume in the archive.
+        "pagesDone": sum(p["done"] for p in known),
+        "pagesTotal": sum(p["total"] for p in known),
         # Detail only, never the list: one pipeline YAML per campaign row
         # would be most of the list response's bytes for a chip nobody has
         # clicked yet.
@@ -363,7 +390,7 @@ def detail(
         "pipelineYaml": pipeline_yaml,
         # Like `failures`, computed over every volume and unaffected by
         # offset/limit.
-        "latest": _latest(volumes),
+        "latest": latest,
         "failures": failures,
-        "volumes": volumes[offset : offset + limit],
+        "volumes": page,
     }

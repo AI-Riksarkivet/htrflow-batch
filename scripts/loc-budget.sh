@@ -225,7 +225,20 @@ check converter "$(count packages/converter/src -name '*.py')" 1434
 # init container that exited non-zero), and most of the 23 lines is the two
 # docstrings: why a SUCCEEDED init container explains nothing, and why the
 # message that arrives is plain stderr rather than the wrapper's JSON.
-check web       "$(count packages/web/src -name '*.py')" 690
+# 690 -> 855 (2026-09-08, C13/C11): "how many pages has it done?" -- the one
+# question the Kubernetes API cannot answer, since the count lives in the pod.
+# progress.py (+125) is the whole read side of the wrapper's progress.json:
+# the two mappings onto this API's shape (the progress file, and manifest.json
+# for a volume finished before that file existed), the few-second memo, and
+# the rule that anything unreadable is no progress rather than a 500. Most of
+# it is the paragraph on why this reader exists at all and why its cost is
+# bounded by the response rather than by the archive. projection +25:
+# `_attach_progress` over the rows the answer carries (the page, plus `latest`
+# and the failures, which come from outside it) and the campaign's summed
+# pagesDone/pagesTotal -- the fetch is injected, so the module stays pure.
+# app +15: one reader per app (its client and cache are shared by every
+# request), injectable so tests need no bucket.
+check web       "$(count packages/web/src -name '*.py')" 855
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

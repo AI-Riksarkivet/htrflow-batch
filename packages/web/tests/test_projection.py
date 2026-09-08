@@ -702,3 +702,84 @@ class TestSummarizeWarmup:
             _job(), _configmap(), [], CFG, warmup={"phase": "running"}
         )
         assert d["warmup"] == {"phase": "running"}
+
+
+class TestVolumeProgress:
+    """`fetch_progress` is injected, so these stay pure: no bucket, no HTTP."""
+
+    @staticmethod
+    def _fetch(known: dict):
+        asked = []
+
+        def fetch(results_base: str, volume_id: str, state: str):
+            asked.append((volume_id, state))
+            return known.get(volume_id)
+
+        return fetch, asked
+
+    def test_each_returned_row_carries_its_progress_or_null(self):
+        fetch, _ = self._fetch(
+            {"vol0": {"done": 3, "total": 4, "failed": 0, "stage": "stream"}}
+        )
+        d = projection.detail(
+            _job(), _configmap(), [], CFG, warmup=MISSING_WARMUP, fetch_progress=fetch
+        )
+        assert d["volumes"][0]["progress"]["done"] == 3
+        assert d["volumes"][1]["progress"] is None
+
+    def test_only_the_rows_in_the_answer_are_fetched(self):
+        """One GET per row shown, never one per volume in the campaign: the
+        cost has to grow with the window, not with the archive (C08). The
+        seven-volume campaign answers with two rows plus `latest` (vol5)."""
+        fetch, asked = self._fetch({})
+        projection.detail(
+            _job(),
+            _configmap(),
+            [],
+            CFG,
+            offset=0,
+            limit=2,
+            warmup=MISSING_WARMUP,
+            fetch_progress=fetch,
+        )
+        assert [v for v, _ in asked] == ["vol0", "vol1", "vol5"]
+
+    def test_the_campaign_sums_the_pages_it_knows_about(self):
+        fetch, _ = self._fetch(
+            {
+                "vol0": {"done": 3, "total": 4, "failed": 0, "stage": "done"},
+                "vol1": {"done": 1, "total": 9, "failed": 0, "stage": "stream"},
+            }
+        )
+        d = projection.detail(
+            _job(), _configmap(), [], CFG, warmup=MISSING_WARMUP, fetch_progress=fetch
+        )
+        assert (d["pagesDone"], d["pagesTotal"]) == (4, 13)
+
+    def test_no_progress_anywhere_sums_to_zero(self):
+        d = projection.detail(_job(), _configmap(), [], CFG, warmup=MISSING_WARMUP)
+        assert (d["pagesDone"], d["pagesTotal"]) == (0, 0)
+        assert d["volumes"][0]["progress"] is None
+
+    def test_the_latest_row_and_a_failure_row_carry_progress_too(self):
+        """Both are returned outside the page, so both need the field the
+        frontend's schema requires."""
+        fetch, _ = self._fetch(
+            {"vol4": {"done": 7, "total": 9, "failed": 0, "stage": "stream"}}
+        )
+        pods = [
+            _pod(3, terminated_message='{"error": "boom"}'),
+            _pod(4, active=True),
+        ]
+        d = projection.detail(
+            _job(),
+            _configmap(),
+            pods,
+            CFG,
+            offset=6,
+            limit=1,
+            warmup=MISSING_WARMUP,
+            fetch_progress=fetch,
+        )
+        assert d["latest"]["progress"]["done"] == 7
+        assert d["failures"][0]["progress"] is None
