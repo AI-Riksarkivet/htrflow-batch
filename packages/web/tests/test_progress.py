@@ -188,3 +188,16 @@ def test_age_is_never_negative_even_when_the_clock_disagrees():
         }
     )
     assert r.fetch(BASE, "vol0", "active")["ageSeconds"] == 0
+
+
+def test_a_naive_timestamp_is_read_as_utc_not_local_time():
+    """The wrapper always writes tz-aware, but a naive stamp must not be
+    shifted by the API pod's zone: it is UTC, like everything else on S3."""
+    r, _ = reader(
+        {
+            f"{BASE}/vol0/progress.json": httpx.Response(
+                200, json={**PROGRESS, "updated_at": "2026-09-08T09:31:00"}
+            )
+        }
+    )
+    assert r.fetch(BASE, "vol0", "active")["ageSeconds"] == 12
