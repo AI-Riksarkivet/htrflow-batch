@@ -198,6 +198,10 @@ Per campaign `campaigns/<name>.yaml`:
 Labels on everything: `htrflow.riksarkivet.se/{campaign,pipeline,managed-by=converter}`,
 `app: htrflow-batch` (NetworkPolicies select on it).
 
+A full worked example — a real two-volume campaign rendered end to end,
+every object shown and every field explained: [A worked example: rendering
+an Indexed Job](rendering-example.md).
+
 A campaign file too big for one Job is split by the converter into
 `-part1.yaml`, `-part2.yaml`, … — each its own Job. Too big is either more
 than 10 000 volumes or more than 900 KiB of `volumes.txt`, whichever comes
