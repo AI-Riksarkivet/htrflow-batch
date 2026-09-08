@@ -105,6 +105,7 @@ tables below.
 |---|---|
 | [B72](stories/B72-split-by-bytes.md) | Kampanjsplitten producerar alltid något klustret accepterar |
 | [B73](stories/B73-wrapper-memory-flat.md) | Wrapperns minne växer inte med antalet sidor |
+| [B88](stories/B88-dead-inference-thread.md) | En död inferens-tråd i htrflow stoppar inte volymen — sidan misslyckas, pipelinen byggs om, körningen fortsätter |
 | [B74](stories/B74-warmup-wait-bounded.md) | Ett trasigt warm-up håller inte GPU-kvoten i timmar |
 | [B75](stories/B75-warmup-fails-visibly.md) | Ett warm-up som inte fungerade misslyckas synligt |
 | [B77](stories/B77-pipeline-edit-caught-in-validate.md) | Ändrad pipeline stoppas i validate, inte som "field is immutable" |
