@@ -134,7 +134,11 @@ fail=0
 # that is not the successful one -- before this the file stayed at whatever
 # stage the run was doing when it stopped, "stream" forever, on a volume
 # that had in fact failed or been SIGTERMed.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2661
+# 2661 -> 2683 (2026-09-08, first live run of page-progress): fetch.describe --
+# a failed page records a sentence, never repr(e). PipelineDead("page 0044:
+# ...") had reached the notice chip verbatim; the wrapper's own exceptions
+# are shown as they are, a foreign one keeps its type in front.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2683
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

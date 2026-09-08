@@ -1136,9 +1136,8 @@ def test_default_factory_rebuilds_the_pipeline_after_a_dead_worker_thread(
 
     assert [r.status for r in stats.results.values()] == ["ok", "failed", "ok"]
     assert stats.results["0002"].error == (
-        "PipelineDead(\"page 0002: htrflow's Segmentation (model "
-        "yolov9-regions-1) worker thread died; the page is marked failed and "
-        'the pipeline is rebuilt")'
+        "page 0002: htrflow's Segmentation (model yolov9-regions-1) worker "
+        "thread died; the page is marked failed and the pipeline is rebuilt"
     )
     assert len(built) == 2  # page 0003 ran on a pipeline built from scratch
     assert held == ["first build", None]  # its weights were dropped first
