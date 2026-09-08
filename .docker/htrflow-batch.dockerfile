@@ -72,6 +72,7 @@ LABEL org.opencontainers.image.base.name="${HTRFLOW_ARM64_BASE}" \
 ENV HTRFLOW_BASE_REVISION=${HTRFLOW_BASE_REVISION}
 
 FROM base-${TARGETARCH} AS runtime
+LABEL org.opencontainers.image.licenses="EUPL-1.2"
 ARG TARGETARCH
 
 # uv 0.12.6 (multi-arch index digest)

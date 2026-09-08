@@ -58,6 +58,7 @@ RUN --mount=type=secret,id=ca,target=/etc/ssl/certs/corp-ca.crt \
 # `apt-get upgrade` pulls the base's pending security fixes (Trivy CRITICAL
 # gate in ci.yml).
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim@sha256:531f855bda2c73cd6ef67d56b733b357cea384185b3022bd09f05e002cd144ca
+LABEL org.opencontainers.image.licenses="EUPL-1.2"
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 ENV UV_LINK_MODE=copy \
