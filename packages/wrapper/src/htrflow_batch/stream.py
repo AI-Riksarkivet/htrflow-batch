@@ -16,7 +16,7 @@ from typing import Callable, Iterable, Iterator
 import httpx
 from pydantic import BaseModel, Field
 
-from .fetch import FETCH_MAX_BYTES, FetchResult, fetch_page
+from .fetch import FETCH_MAX_BYTES, FetchResult, describe, fetch_page
 from .iiif import PageRef
 
 log = logging.getLogger("htrflow_batch")
@@ -147,7 +147,7 @@ class PageStream:
                 try:
                     result = fut.result()  # in submission order, head first
                 except Exception as e:  # fetch_page catches its own errors
-                    result = FetchResult(page=page, path=None, error=repr(e))
+                    result = FetchResult(page=page, path=None, error=describe(e))
                 self.bytes_fetched += result.size
                 yield result
                 # Back from the consumer: page done, image deleted —
@@ -192,17 +192,17 @@ def consume(
             try:
                 files = process(item.path)
             except Exception as e:  # drain-what-you-can; verify gate decides later
-                _failed(stats, name, repr(e))
+                _failed(stats, name, describe(e))
                 continue
             try:
                 upload(name, files)
             except ValueError as e:
                 # the page's own outputs are bad (missing format, malformed
                 # XML — store.upload_page): a page failure, not an outage
-                _failed(stats, name, repr(e))
+                _failed(stats, name, describe(e))
                 continue
             except Exception as e:
-                _failed(stats, name, repr(e))
+                _failed(stats, name, describe(e))
                 upload_failures += 1
                 if upload_failures >= max_upload_failures:
                     raise UploadOutage(
