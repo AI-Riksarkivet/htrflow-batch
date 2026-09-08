@@ -21,6 +21,8 @@ PROGRESS = {
     "last_page": "0137",
     "started_at": "2026-09-08T09:00:00+00:00",
     "updated_at": "2026-09-08T09:31:00+00:00",
+    "last_error": {"page": "0044", "error": "the worker thread died"},
+    "warnings": 3,
 }
 
 MANIFEST = {
@@ -56,6 +58,8 @@ def test_a_running_volume_reads_progress_json():
         "lastPage": "0137",
         "stage": "stream",
         "updatedAt": "2026-09-08T09:31:00+00:00",
+        "lastError": {"page": "0044", "error": "the worker thread died"},
+        "warnings": 3,
     }
     assert asked == [f"{BASE}/vol0/progress.json"]
 
@@ -79,6 +83,8 @@ def test_a_volume_finished_by_an_older_wrapper_falls_back_to_the_manifest():
         "lastPage": None,
         "stage": "done",
         "updatedAt": None,
+        "lastError": None,
+        "warnings": 0,
     }
     assert asked[-1].endswith("manifest.json")
 
@@ -126,3 +132,18 @@ def test_one_get_per_volume_per_window():
     for _ in range(5):
         r.fetch(BASE, "vol0", "active")
     assert len(asked) == 1
+
+
+def test_a_last_error_that_is_not_the_shape_we_write_is_dropped():
+    """The file is ours, but it is fetched over the network like any other:
+    a half-written or hand-edited one must not reach the page as a field the
+    frontend's schema then refuses."""
+    r, _ = reader(
+        {
+            f"{BASE}/vol0/progress.json": httpx.Response(
+                200, json={**PROGRESS, "last_error": "boom", "warnings": "many"}
+            )
+        }
+    )
+    found = r.fetch(BASE, "vol0", "active")
+    assert found["lastError"] is None and found["warnings"] == 0

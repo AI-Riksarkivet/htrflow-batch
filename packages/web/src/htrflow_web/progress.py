@@ -43,6 +43,18 @@ def _str_or_none(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _last_error(value: object) -> dict | None:
+    """The wrapper's ``{page, error}``, or nothing. The file is ours, but it
+    arrives over the network like any other document: a half-written or
+    hand-edited one must not reach the page as a field of the wrong shape."""
+    if not isinstance(value, dict):
+        return None
+    error = value.get("error")
+    if not isinstance(error, str):
+        return None
+    return {"page": _str_or_none(value.get("page")), "error": error}
+
+
 def _from_progress(doc: dict) -> dict | None:
     """The wrapper's ``progress.json``. A document without a page total is
     not one of ours (or is half-written): no progress rather than zeroes."""
@@ -55,6 +67,8 @@ def _from_progress(doc: dict) -> dict | None:
         "lastPage": _str_or_none(doc.get("last_page")),
         "stage": _str_or_none(doc.get("stage")),
         "updatedAt": _str_or_none(doc.get("updated_at")),
+        "lastError": _last_error(doc.get("last_error")),
+        "warnings": _int(doc.get("warnings")),
     }
 
 
@@ -75,6 +89,10 @@ def _from_manifest(doc: dict) -> dict | None:
         "lastPage": None,
         "stage": "done",
         "updatedAt": None,
+        # A volume only publishes manifest.json after a clean verify, so a
+        # run this old has no failed page to name and no warning count kept.
+        "lastError": None,
+        "warnings": 0,
     }
 
 

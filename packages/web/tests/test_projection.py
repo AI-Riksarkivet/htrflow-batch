@@ -704,6 +704,22 @@ class TestSummarizeWarmup:
         assert d["warmup"] == {"phase": "running"}
 
 
+def _progress(**kwargs) -> dict:
+    """What progress.ProgressReader.fetch answers with, for the tests that
+    inject it: every field, since the projection reads all of them."""
+    return {
+        "done": 0,
+        "total": 0,
+        "failed": 0,
+        "lastPage": None,
+        "stage": "stream",
+        "updatedAt": None,
+        "lastError": None,
+        "warnings": 0,
+        **kwargs,
+    }
+
+
 class TestVolumeProgress:
     """`fetch_progress` is injected, so these stay pure: no bucket, no HTTP."""
 
@@ -718,9 +734,7 @@ class TestVolumeProgress:
         return fetch, asked
 
     def test_each_returned_row_carries_its_progress_or_null(self):
-        fetch, _ = self._fetch(
-            {"vol0": {"done": 3, "total": 4, "failed": 0, "stage": "stream"}}
-        )
+        fetch, _ = self._fetch({"vol0": _progress(done=3, total=4)})
         d = projection.detail(
             _job(), _configmap(), [], CFG, warmup=MISSING_WARMUP, fetch_progress=fetch
         )
@@ -747,8 +761,8 @@ class TestVolumeProgress:
     def test_the_campaign_sums_the_pages_it_knows_about(self):
         fetch, _ = self._fetch(
             {
-                "vol0": {"done": 3, "total": 4, "failed": 0, "stage": "done"},
-                "vol1": {"done": 1, "total": 9, "failed": 0, "stage": "stream"},
+                "vol0": _progress(done=3, total=4, stage="done"),
+                "vol1": _progress(done=1, total=9),
             }
         )
         d = projection.detail(
@@ -764,9 +778,7 @@ class TestVolumeProgress:
     def test_the_latest_row_and_a_failure_row_carry_progress_too(self):
         """Both are returned outside the page, so both need the field the
         frontend's schema requires."""
-        fetch, _ = self._fetch(
-            {"vol4": {"done": 7, "total": 9, "failed": 0, "stage": "stream"}}
-        )
+        fetch, _ = self._fetch({"vol4": _progress(done=7, total=9)})
         pods = [
             _pod(3, terminated_message='{"error": "boom"}'),
             _pod(4, active=True),
@@ -783,3 +795,53 @@ class TestVolumeProgress:
         )
         assert d["latest"]["progress"]["done"] == 7
         assert d["failures"][0]["progress"] is None
+
+
+class TestCampaignNotice:
+    """The product owner, 2026-09-08: an exception in the log should show on
+    the front page, not only in a log someone downloads."""
+
+    def _detail(self, known: dict, **kwargs):
+        return projection.detail(
+            _job(),
+            _configmap(),
+            [],
+            CFG,
+            warmup=MISSING_WARMUP,
+            fetch_progress=lambda base, vol, state: known.get(vol),
+            **kwargs,
+        )
+
+    def test_failed_pages_and_warnings_are_summed(self):
+        d = self._detail(
+            {
+                "vol0": _progress(failed=2, warnings=1),
+                "vol1": _progress(failed=1, warnings=4),
+            }
+        )
+        assert (d["pagesFailed"], d["warnings"]) == (3, 5)
+
+    def test_the_most_recent_failure_carries_its_volume_and_its_log(self):
+        older = {"page": "0002", "error": "first"}
+        newer = {"page": "0044", "error": "the worker thread died"}
+        d = self._detail(
+            {
+                "vol0": _progress(
+                    lastError=older, updatedAt="2026-09-08T09:00:00+00:00"
+                ),
+                "vol1": _progress(
+                    lastError=newer, updatedAt="2026-09-08T09:31:00+00:00"
+                ),
+            }
+        )
+        assert d["lastError"] == {
+            "page": "0044",
+            "error": "the worker thread died",
+            "volume": "vol1",
+            "logUrl": "https://results.example.org/status/logs/demo-v1/vol1.txt",
+        }
+
+    def test_nothing_wrong_is_no_notice(self):
+        d = self._detail({"vol0": _progress()})
+        assert d["lastError"] is None
+        assert (d["pagesFailed"], d["warnings"]) == (0, 0)

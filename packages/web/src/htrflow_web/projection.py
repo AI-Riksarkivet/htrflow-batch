@@ -312,7 +312,31 @@ def _attach_progress(rows: list[dict], results_base: str, fetch) -> list[dict]:
     shown = {id(row): row for row in rows}.values()
     for row in shown:
         row["progress"] = fetch(results_base, row["id"], row["state"])
-    return [row["progress"] for row in shown if row["progress"]]
+    return [row for row in shown if row["progress"]]
+
+
+def _campaign_pages(rows: list[dict]) -> dict:
+    """What the card says above its table, summed over the volumes THIS
+    response covered -- all the campaign can know without one GET per volume
+    in the archive. ``lastError`` is the most recent page failure among them,
+    carrying the volume it happened in and that volume's run log: the row it
+    came from is often outside the page the reader is looking at."""
+    known = [row["progress"] for row in rows]
+    errors = [
+        (
+            p["updatedAt"] or "",
+            {**p["lastError"], "volume": row["id"], "logUrl": row["logUrl"]},
+        )
+        for row in rows
+        if (p := row["progress"])["lastError"]
+    ]
+    return {
+        "pagesDone": sum(p["done"] for p in known),
+        "pagesTotal": sum(p["total"] for p in known),
+        "pagesFailed": sum(p["failed"] for p in known),
+        "warnings": sum(p["warnings"] for p in known),
+        "lastError": max(errors, key=lambda e: e[0])[1] if errors else None,
+    }
 
 
 def detail(
@@ -378,11 +402,7 @@ def detail(
     pipeline_yaml = _pipeline_yaml(pipeline_configmap)
     return {
         **summary,
-        # Summed over the volumes in THIS response, which is all the campaign
-        # knows: the page total lives in each volume's own progress file, and
-        # reading every volume's would cost one GET per volume in the archive.
-        "pagesDone": sum(p["done"] for p in known),
-        "pagesTotal": sum(p["total"] for p in known),
+        **_campaign_pages(known),
         # Detail only, never the list: one pipeline YAML per campaign row
         # would be most of the list response's bytes for a chip nobody has
         # clicked yet.

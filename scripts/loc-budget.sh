@@ -249,7 +249,15 @@ check converter "$(count packages/converter/src -name '*.py')" 1434
 # pagesDone/pagesTotal -- the fetch is injected, so the module stays pure.
 # app +15: one reader per app (its client and cache are shared by every
 # request), injectable so tests need no bucket.
-check web       "$(count packages/web/src -name '*.py')" 855
+# 855 -> 893 (2026-09-08, the product owner's addition to C13): the three
+# notice fields. progress.py +21 maps `last_error`/`warnings` through and
+# drops a last_error that is not the shape we write (the file is ours, but it
+# arrives over the network like any other document); projection +17 turns the
+# per-volume fields into what a campaign card can show -- the summed failed
+# pages and warnings, and the most recent failure with the volume it happened
+# in and that volume's run log, since the row it came from is usually outside
+# the page the reader is on.
+check web       "$(count packages/web/src -name '*.py')" 893
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
