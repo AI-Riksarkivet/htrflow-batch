@@ -1,7 +1,7 @@
 # Architecture
 
 ```mermaid
-%% Top-to-bottom so the site renders it readable at page width; the
+%% Top-to-bottom so the site renders it readable at page width. The
 %% streaming driver keeps its left-to-right row inside its own box.
 flowchart TB
     subgraph git["campaigns repo (git)"]
