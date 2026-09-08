@@ -566,6 +566,7 @@ class _FakeStep:
     def __init__(self, name="Segmentation", model="Riksarkivet/yolov9-regions-1"):
         self._name = name
         self._thread = _FakeThread()
+        self._queue = SimpleNamespace(_thread=_FakeThread())  # BatchedQueue's own
         self.model = object()
         self.metadata = SimpleNamespace(
             description=name, settings={"model_class": "YOLO", "model": model}
@@ -680,6 +681,35 @@ def test_process_page_reraises_the_pipelines_own_exception_from_the_helper(
 
     with pytest.raises(RuntimeError, match="CUDA out of memory"):
         driver.process_page(_RaisingPipeline(), _image(tmp_path), tmp_path / "out")
+
+
+def test_process_page_watches_the_batched_queues_thread_too(tmp_path, monkeypatch):
+    """An Inference step runs TWO daemon threads: its own ``_process`` and
+    the ``BatchedQueue``'s, which turns single puts into batches. If the
+    queue's dies, ``put`` returns a future nobody will ever batch and the run
+    hangs exactly the same way -- with ``step._thread`` still alive."""
+    _inject_process_fakes(monkeypatch)
+    from htrflow_batch import driver
+
+    monkeypatch.setattr(driver, "THREAD_POLL_SECONDS", 0.01)
+    blocked = threading.Event()
+    step = _FakeStep()
+
+    class _DyingQueuePipeline:
+        steps = [step]
+
+        def run(self, document):
+            step._queue._thread.alive = False
+            blocked.wait(30)
+
+    try:
+        with pytest.raises(driver.PipelineDead) as excinfo:
+            driver.process_page(
+                _DyingQueuePipeline(), _image(tmp_path), tmp_path / "out"
+            )
+        assert str(excinfo.value) == DEAD_SENTENCE
+    finally:
+        blocked.set()
 
 
 def test_release_pipeline_drops_the_models_of_a_dead_pipeline(monkeypatch):

@@ -112,13 +112,20 @@ THREAD_POLL_SECONDS = 1.0
 
 
 def _dead_step(pipeline):
-    """The first step whose worker thread has died, if any. htrflow's
-    Inference steps each run one daemon thread (steps.py); every other kind
-    of step has none, so a step without ``_thread`` is never dead."""
+    """The first step whose worker thread has died, if any.
+
+    An Inference step runs TWO daemon threads: its own ``_process`` and the
+    ``BatchedQueue``'s, which collects single puts into batches
+    (batched_queue.py). Either one dying hangs the run the same way -- with
+    the queue's gone, ``put`` returns a future nobody will ever batch -- so
+    both are watched. Every other kind of step has neither, and a step
+    without them is never dead.
+    """
     for step in getattr(pipeline, "steps", ()):
-        thread = getattr(step, "_thread", None)
-        if thread is not None and not thread.is_alive():
-            return step
+        queue = getattr(step, "_queue", None)
+        for thread in (getattr(step, "_thread", None), getattr(queue, "_thread", None)):
+            if thread is not None and not thread.is_alive():
+                return step
     return None
 
 
