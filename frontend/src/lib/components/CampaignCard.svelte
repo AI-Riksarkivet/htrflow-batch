@@ -142,6 +142,14 @@
         : `warm-up ${job.warmup.phase}`,
   );
 
+  // The dot means work is actually happening. `Running` is the projection's
+  // fallback phase, so a campaign whose warm-up is still pending -- or was
+  // never created -- reads as Running while nothing runs at all; the warm-up
+  // chip beside it is the story there, and a beating dot would contradict it.
+  const beating = $derived(
+    job.phase === "Running" && job.warmup.phase === "succeeded",
+  );
+
   // The models the pipeline loads, in step order — the campaign's provenance
   // in one line, matching the model block every ALTO it publishes carries.
   const models = $derived(pipelineModels(pipelineYaml));
@@ -351,7 +359,7 @@
       >
     {/if}
     <span class="chip phase {job.phase.toLowerCase()}">
-      {#if job.phase === "Running"}<span class="dot pulse" aria-hidden="true"
+      {#if beating}<span class="dot pulse" aria-hidden="true"
         ></span>{/if}{phaseLabel}</span
     >
     {#if noticeText !== null}
