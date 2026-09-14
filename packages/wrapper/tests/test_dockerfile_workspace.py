@@ -146,8 +146,14 @@ def test_the_transformers_line_is_one_build_arg_every_build_path_can_set() -> No
         "the only transformers pin in the image is the build arg: a second, "
         f"literal one is a line nobody can change from outside — found {pins}"
     )
-    # A line whose dependencies do not fit this venv must fail the build.
-    assert "uv pip check --python /app/.venv/bin/python" in text
+    # A transformers line whose dependencies do not fit the WRAPPER's own
+    # requirements must fail the build, not a warm-up pod. Deliberately not
+    # `uv pip check`: a base venv carries inconsistencies of its own that have
+    # nothing to do with this image, and they must not block its builds -- the
+    # dockerfile's comment may say so, but no step may run it.
+    assert not re.search(r"^\s*RUN.*uv pip check", text, re.M)
+    assert 'requires("htrflow-batch-wrapper")' in text
+    assert "req.specifier.contains(have" in text
 
     makefile = (REPO / "Makefile").read_text()
     assert "--build-arg TRANSFORMERS_VERSION=$(TRANSFORMERS_VERSION)" in makefile

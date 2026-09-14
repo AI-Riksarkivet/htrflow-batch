@@ -181,12 +181,39 @@ RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
 # protobuf present the warm-up says what actually failed.
 RUN uv pip install --python /app/.venv/bin/python --no-cache "protobuf==7.36.1"
 
-# The venv must be self-consistent after every install above. The transformers
-# line is the one that moves other pins -- the newer line requires a newer
-# huggingface_hub than the older one accepts -- so a build on a line whose
-# dependencies do not fit this venv fails HERE, at build time, instead of in a
-# warm-up pod. Nothing in CI builds this image, so this is the only gate.
-RUN uv pip check --python /app/.venv/bin/python
+# What this image must guarantee, after the transformers line has had its say:
+# the WRAPPER's own declared requirements are satisfied by what is installed.
+# The newer transformers line requires a newer huggingface_hub than the wrapper
+# used to accept, and that mismatch belongs at build time, not in a warm-up pod
+# -- nothing in CI builds this image, so this is the only gate.
+#
+# Not `uv pip check`, which validates every distribution in the venv: one base
+# venv is already inconsistent for a reason that has nothing to do with this
+# image (its torch pin drags in an nvidia wheel built for another platform),
+# so the broad check blocks every build on that architecture, including the
+# default line. This one reads the wrapper's own metadata and nothing else.
+RUN /app/.venv/bin/python <<'CHECK'
+import sys
+from importlib.metadata import PackageNotFoundError, requires, version
+
+from packaging.requirements import Requirement
+
+bad = []
+for spec in requires("htrflow-batch-wrapper") or []:
+    req = Requirement(spec)
+    if req.marker and not req.marker.evaluate({"extra": ""}):
+        continue
+    try:
+        have = version(req.name)
+    except PackageNotFoundError:
+        bad.append(f"{spec}: not installed")
+        continue
+    if not req.specifier.contains(have, prereleases=True):
+        bad.append(f"{spec}: installed {have}")
+if bad:
+    sys.exit("the wrapper's requirements are not satisfied:\n  " + "\n  ".join(bad))
+print("wrapper requirements satisfied")
+CHECK
 
 # The release this image is published under: the publish workflow passes its
 # run tag, `make build-*` passes IMAGE_TAG, and a build that passes nothing
