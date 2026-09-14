@@ -35,12 +35,13 @@ jobs:
           # unknown: could not be checked — reported rather than dropped, because
           # "we could not verify it" is not the same as "it is not a secret".
           #
-          # The exclude file names exact paths, never directories. Today it holds
-          # the two files of the reconciler package deleted in B63, whose history
-          # carries dummy user:password URLs (fake hosts such as `gh`, `host`
-          # and port 1 on localhost) from its credential-redaction tests. Never
-          # quote such a URL literally in a comment: this scan flags it, as it
-          # did the first version of this comment. A pushed branch
-          # has no `before` commit, so its run scans the whole history and those
-          # fixtures failed it. Anything added anywhere else is still scanned.
+          # The exclude file names exact paths, never directories: files whose
+          # history carries dummy user:password URLs (fake hosts) that
+          # credential-redaction tests need. Today that is the reconciler package
+          # deleted in B63 (two files) and the converter's model tests. A pushed
+          # branch has no `before` commit, so its run scans the whole history,
+          # where those fixtures stay even after a file changes. Never quote such
+          # a URL literally in a comment: this scan flags it. Anything added
+          # anywhere else is still scanned, and GitHub's own secret scanning
+          # still watches the excluded files.
           extra_args: --results=verified,unknown --exclude-paths=.github/trufflehog-exclude-paths.txt
