@@ -17,6 +17,7 @@ is asserted in ``test_cluster.py`` against the real client.
 
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -72,6 +73,7 @@ class FakeCluster(Cluster):
     def __init__(self) -> None:
         self.namespace = ""
         self.live: list[dict] = []
+        self.applied: dict[str, dict] = {}
         self.workloads: dict[str, dict] = {}
         self.calls: list[tuple] = []
 
@@ -82,6 +84,7 @@ class FakeCluster(Cluster):
     def _method(self, kind: str, verb: str, name: str = ""):
         def patch(name, ns, obj, **kw):
             self.calls.append(("apply", kind, name))
+            self.applied[name] = obj
             return _Body({"metadata": {"name": name, "uid": f"uid-{name}"}})
 
         def list_(ns, label_selector="", **kw):
@@ -170,6 +173,9 @@ def test_prune_deletes_only_unrendered_labelled_objects(tmp_path, cluster, capsy
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     cluster.live = [
         _object("Job", "kyrk"),  # rendered: kept
+        # The record of a campaign still in git: kept, and it has no TTL,
+        # so it is what is left once the Job is reaped (B76).
+        _object("ConfigMap", "campaign-kyrk"),
         _object("Job", "htr-warmup-demo-v1"),  # a pipeline object: kept
         _object("Job", "cancelled"),  # gone from git: pruned
         _object("ConfigMap", "campaign-cancelled"),  # its volumes.txt: pruned
@@ -268,3 +274,66 @@ def test_a_render_error_never_reaches_the_cluster(tmp_path, cluster, capsys):
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 1
     assert cluster.calls == []
     assert "digest" in capsys.readouterr().out
+
+
+# --- the campaign ConfigMap is the record (B76) -------------------------
+
+
+def _annotations(cluster, name: str) -> dict:
+    return cluster.applied[name]["metadata"]["annotations"]
+
+
+def test_the_campaign_configmap_records_who_applied_what_and_when(
+    tmp_path, cluster, monkeypatch
+):
+    """The ConfigMap has no TTL and is pruned only when the campaign file
+    leaves git, so it outlives the Job -- which makes it the place the
+    provenance belongs (B76)."""
+    monkeypatch.setenv("HTRFLOW_SUBMITTER", "Nagon.Annan")
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.email=t@e",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "x",
+        ],
+        check=True,
+    )
+    head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    ann = _annotations(cluster, "campaign-kyrk")
+    assert ann["htrflow.riksarkivet.se/campaigns-commit"] == head
+    assert ann["htrflow.riksarkivet.se/submitter"] == "nagon.annan"
+    assert ann["htrflow.riksarkivet.se/applied-at"].endswith("Z")
+    # Rendered, not stamped here: it is a pure function of the repo.
+    assert ann["htrflow.riksarkivet.se/image-digest"].startswith("ghcr.io/")
+
+
+def test_a_campaigns_directory_outside_git_records_an_unknown_commit(tmp_path, cluster):
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    ann = _annotations(cluster, "campaign-kyrk")
+    assert ann["htrflow.riksarkivet.se/campaigns-commit"] == "unknown"
+
+
+def test_the_provenance_is_not_written_into_the_rendered_files(tmp_path, cluster):
+    """`rendered/` must stay a pure function of the repo (B78): who applied
+    it and when are not, so they are stamped on the way to the API server."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    text = (out / "campaigns" / "kyrk.yaml").read_text()
+    assert "applied-at" not in text and "submitter" not in text

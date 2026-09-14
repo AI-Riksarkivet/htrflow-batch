@@ -7,5 +7,10 @@ metadata:
     htrflow.riksarkivet.se/managed-by: converter
     htrflow.riksarkivet.se/campaign: CAMPAIGN
     htrflow.riksarkivet.se/pipeline: PIPELINE
+  annotations:
+    # What actually processed these volumes. The ConfigMap has no TTL, so it
+    # is still here to answer that once the Job -- and its `image:` -- is
+    # reaped (B76).
+    htrflow.riksarkivet.se/image-digest: IMAGE
 data:
   volumes.txt: ""
