@@ -141,6 +141,7 @@ skeleton, never as a campaign setting.
 | `max_seconds` | `converter.yaml` | `21600` | — | no secret — nobody |
 | `warmup_wait_seconds` | `converter.yaml` | `900` | — | no secret — nobody |
 | `ttl_seconds_after_finished` | `converter.yaml` | `604800` | — | no secret — nobody |
+| `hf_token_secret` | `converter.yaml` | *(empty)* | — | names the Secret the warm-up reads `HF_TOKEN` from — cluster |
 | `manifest_max_bytes` | `converter.yaml` | `16777216` | — | no secret — nobody |
 | `fetch_max_bytes` | `converter.yaml` | `67108864` | — | no secret — nobody |
 
