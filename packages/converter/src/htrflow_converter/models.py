@@ -194,6 +194,9 @@ class Pipeline(BaseModel):
     steps: list[dict]
     #: Per-volume wall-clock budget; overrides converter.yaml's max_seconds.
     max_seconds: int | None = None
+    #: How long this pipeline's finished campaign Jobs stay before the Job
+    #: controller deletes them; overrides converter.yaml's value.
+    ttl_seconds_after_finished: int | None = None
 
     @field_validator("id")
     @classmethod
@@ -222,9 +225,9 @@ class Pipeline(BaseModel):
             )
         return v
 
-    @field_validator("max_seconds", mode="before")
+    @field_validator("max_seconds", "ttl_seconds_after_finished", mode="before")
     @classmethod
-    def _check_max_seconds(cls, v: object) -> object:
+    def _check_seconds(cls, v: object) -> object:
         if v is not None and not _positive_int(v):
             raise ValueError(
                 f"must be a whole number of seconds, 1 or more (got {shown(v)})"
@@ -286,5 +289,12 @@ class ConverterConfig(BaseModel):
     #: pipeline's marker before giving up. It holds the pod's GPU while it
     #: waits, so this is a GPU-hours budget, not a patience setting.
     warmup_wait_seconds: int = Field(default=900, ge=1)
+    #: How long a finished campaign Job stays before the Job controller
+    #: deletes it. An inspection window, not retention: the campaign's own
+    #: ConfigMap is the durable record (B76), and the results are in the
+    #: bucket. A day was short enough that a campaign finished on a Friday
+    #: was gone before anyone looked at it -- and, until `apply` learnt to
+    #: read the record, re-run from the top by the next apply.
+    ttl_seconds_after_finished: int = Field(default=7 * 24 * 3600, ge=1)
     manifest_max_bytes: int = 16 * _MiB
     fetch_max_bytes: int = 64 * _MiB

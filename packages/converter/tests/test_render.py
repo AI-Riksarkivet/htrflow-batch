@@ -54,7 +54,7 @@ def test_campaign_job_fields_per_global_constraints():
     assert spec["parallelism"] == cfg.window
     assert spec["backoffLimitPerIndex"] == 3
     assert spec["maxFailedIndexes"] == 3
-    assert spec["ttlSecondsAfterFinished"] == 86400
+    assert spec["ttlSecondsAfterFinished"] == cfg.ttl_seconds_after_finished
     assert spec["template"]["spec"]["restartPolicy"] == "Never"
     # The wrapper's SIGTERM cleanup (log-ship join + final bounded S3 PUT)
     # does not fit in the default 30 s.
@@ -566,3 +566,21 @@ def test_the_split_stem_is_the_same_at_nine_parts_and_at_ten():
     assert len(render.split_stem(c.name)) == 50
     # The worst case the reservation is for: 999 parts of 10 000 volumes.
     assert len(f"{render.split_stem(c.name)}-part999-9999") == 63
+
+
+def test_ttl_defaults_to_a_week_and_is_a_converter_yaml_value():
+    """The Job is an inspection window over a campaign, not the record of it
+    (B76): a day was short enough that a finished campaign was reaped between
+    two applies and re-run from the top."""
+    kyrk, demo, cfg = _kyrk()
+    assert ConverterConfig().ttl_seconds_after_finished == 7 * 24 * 3600
+    cfg = cfg.model_copy(update={"ttl_seconds_after_finished": 600})
+    job = render.campaign_objects(kyrk, demo, cfg)[1]
+    assert job["spec"]["ttlSecondsAfterFinished"] == 600
+
+
+def test_a_pipeline_may_keep_its_campaigns_jobs_longer():
+    kyrk, demo, cfg = _kyrk()
+    demo = demo.model_copy(update={"ttl_seconds_after_finished": 99})
+    job = render.campaign_objects(kyrk, demo, cfg)[1]
+    assert job["spec"]["ttlSecondsAfterFinished"] == 99

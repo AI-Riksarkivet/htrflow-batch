@@ -125,7 +125,7 @@ spec:
         operator: In
         values:
         - 13
-  ttlSecondsAfterFinished: 86400
+  ttlSecondsAfterFinished: 604800
   template:
     spec:
       restartPolicy: Never

@@ -61,9 +61,11 @@ a reason (the product owner, 2026-09-14 — see
 [the ruling](../how-it-works/decision-log.md)). A volume can therefore be
 done and still have lost pages, which is what `pages_ok` and `pages_failed`
 are for. Its presence *is* "done" for that pipeline id — the
-canonical way to check status past a Job's `ttlSecondsAfterFinished` (24 h)
-is listing `manifest.json` keys directly, since the read API can only see
-Jobs that still exist.
+canonical way to check status past a Job's `ttlSecondsAfterFinished` is
+listing `manifest.json` keys directly. The read API still shows a campaign
+whose Job has been reaped, from the campaign's ConfigMap and the status
+ConfigMap beside it ([campaigns](../how-it-works/campaigns.md#the-record-a-campaign-leaves)),
+but per-volume detail past the TTL comes from the bucket.
 
 | Field | Meaning |
 |---|---|

@@ -180,8 +180,9 @@ reading a line of the campaign's `volumes.txt` ConfigMap.
   a retry), `FailIndex` on wrapper exit 13, `FailIndex` on `warmup-wait`
   exit 13 (the marker never arrived — a retry only holds the GPU again).
   Rules are evaluated in order, so the `Ignore` stays first.
-- `ttlSecondsAfterFinished: 86400` (24 h — inspectable, then self-cleans;
-  the evidence is in S3 before that).
+- `ttlSecondsAfterFinished` (`converter.yaml`'s
+  `ttl_seconds_after_finished`, a week by default, or the pipeline's own —
+  inspectable, then self-cleans; the evidence is in S3 before that).
 - Labels `app=htrflow-batch`, `htrflow.riksarkivet.se/managed-by=converter`,
   `htrflow.riksarkivet.se/pipeline`, `htrflow.riksarkivet.se/campaign`,
   `kueue.x-k8s.io/queue-name` (+ `kueue.x-k8s.io/priority-class` when the
