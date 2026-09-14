@@ -297,7 +297,13 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2721
 # skip decision as one step (the decision reads the record the same step just
 # wrote), wrapped per campaign: one sentence on stderr, and that campaign
 # applied as any other.
-check converter "$(count packages/converter/src -name '*.py')" 1706
+# 1706 -> 1715 (2026-09-14, B76 re-review): a refused record WRITE is not a
+# refused decision. Skipping `_finished` over it re-applied a campaign the
+# stored record already said was finished -- the whole GPU bill again, over a
+# permission the decision never needed. The write is caught where it happens,
+# the stored record still consulted, and only a refused READ falls through to
+# applying the campaign as any other.
+check converter "$(count packages/converter/src -name '*.py')" 1715
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
