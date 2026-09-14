@@ -63,8 +63,8 @@ sequenceDiagram
 | Run log `status/logs/<pipeline>/<volume>.txt` | wrapper, every 15 s and once on every exit path | run viewer, operator | **yes** |
 | `page/NNNN.xml` + `alto/NNNN.xml` | wrapper uploader, PAGE first | resume (both must exist), verify, the viewer | **yes** |
 | `progress.json` | wrapper, after every page outcome and at every stage change | the read API, from its own path to the bucket (`HTRFLOW_INTERNAL_RESULTS_BASE`) — at most `PROGRESS_FETCH_CAP` (32) GETs per request, running rows first, memoized a few seconds — and so the campaign page's page counts and its failure/error notice | **yes** |
-| `iiif.json`, `pipeline.yaml` | publish, after a clean verify — `iiif.json` also every 10 pages *during* the run, covering the pages done so far | Universal Viewer; a human reading the recipe back | **yes** |
-| `manifest.json` | publish, **last** | the completion marker; resume compares its `page_sources`; the Phase 2 gate reads its timings | **yes** |
+| `iiif.json`, `pipeline.yaml` | publish, after verify — `iiif.json` covers the pages that came out, so a volume with a failed page is one canvas short, and also every 10 pages *during* the run, covering the pages done so far | Universal Viewer; a human reading the recipe back | **yes** |
+| `manifest.json` | publish, **last** | the completion marker — `pages_ok`/`pages_failed` say whether the volume lost pages on the way; resume compares its `page_sources`; the Phase 2 gate reads its timings | **yes** |
 | ALTO `Processing ID="htrflow-batch"` block | `provenance.stamp_alto`, before the upload | anyone holding the file, with no cluster at all | **yes** |
 
 The pattern is the same everywhere: **everything Kubernetes emits is
