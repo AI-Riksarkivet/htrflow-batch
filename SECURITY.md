@@ -62,7 +62,7 @@ gh attestation verify oci://docker.io/riksarkivet/htrflow-batch:<tag> \
   -R AI-Riksarkivet/htrflow-batch
 
 # SBOM, on a per-architecture image
-gh attestation verify oci://docker.io/riksarkivet/htrflow-batch:<tag>-amd64 \
+gh attestation verify oci://docker.io/riksarkivet/htrflow-batch:<tag>-<arch> \
   -R AI-Riksarkivet/htrflow-batch --predicate-type https://spdx.dev/Document/v2.3
 ```
 
