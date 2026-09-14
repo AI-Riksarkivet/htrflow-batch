@@ -1,121 +1,126 @@
-# Campaigns (Indexed Jobs)
+# Campaigns
 
-A **campaign** is one Kubernetes `batch/v1` Job with `completionMode: Indexed`
-— one index per volume. Kubernetes and [Kueue](https://kueue.sigs.k8s.io/)
-own scheduling, retries, progress and pause; this repo owns only the
-wrapper (unchanged core), a pure converter from campaign YAML to manifests
-(plus the one command that applies them), and a thin read API for the status
-page. There is no CronJob, no controller, no state files in the bucket.
+A **campaign** is one Kubernetes `batch/v1` Job with
+`completionMode: Indexed`, with one index per volume. Kubernetes and
+[Kueue](queueing.md) own scheduling, retries, progress and pause.
+htrflow-batch itself provides only three things:
 
-Two rules hold the design together, and belong on the front page of every
-campaigns repo:
+- the wrapper
+- a pure converter from campaign YAML to manifests, plus the one command that
+  applies them
+- a thin read API for the status page
 
-> **Pausing a campaign is a Git change** (`suspend: true` on the campaign
-> file). It is *declared* in Git and *enforced by the apply step*: Kueue owns
-> `spec.suspend` for a Workload it has admitted and undoes it within seconds,
-> so the last step of `htrflow-campaigns apply` (which is what
-> `make campaigns-apply` and an Argo CD `PostSync` hook both run) puts the
-> same intent on the Workload's `spec.active`.
->
-> **Deleting a campaign's file cancels it** — the next `render` drops its
-> manifest from `rendered/`, and the apply that follows prunes its Job and
-> ConfigMap — but **only if that apply is asked to prune**: Argo CD requires
-> `syncPolicy.automated.prune: true` (or a manual sync with `--prune`), and
-> by hand it is `make campaigns-apply PRUNE=1`, which deletes every Job and
-> ConfigMap labelled `htrflow.riksarkivet.se/managed-by=converter` that the
-> render did not produce. Without it the deleted campaign's
-> Job simply stays. **Results already in S3 are never touched by anything
-> here.**
+There is no CronJob, no controller, and no state file in the bucket.
 
-Everything else follows from those two rules plus ordinary Kubernetes
-semantics: nothing here "ticks", nothing here has to be alive for a campaign
-to keep running once it is submitted.
+Two rules hold the design together:
 
-Full design rationale, alternatives and the trade-offs behind each of these:
-[the Indexed Jobs design](../superpowers/specs/2026-09-01-indexed-jobs-design.md).
+- **Pausing a campaign is a Git change** (`suspend: true` in the campaign
+  file). The pause is declared in Git and enforced by the apply step. Kueue
+  owns `spec.suspend` on a Job it has admitted and undoes any change within
+  seconds. So the last step of `htrflow-campaigns apply` puts the same intent
+  on the Workload's `spec.active`. `make campaigns-apply` and an Argo CD
+  `PostSync` hook both run that command
+  ([Queueing](queueing.md#pause)).
+- **Deleting a campaign's file cancels the campaign**, but only if the apply
+  is asked to prune. The next `render` drops the campaign from `rendered/`,
+  and a pruning apply then deletes its Job and ConfigMap. In Argo CD, pruning
+  needs `syncPolicy.automated.prune: true` or a manual sync with `--prune`.
+  By hand it is `make campaigns-apply PRUNE=1`. A prune deletes every Job and
+  ConfigMap carrying the converter's `managed-by: converter` label that the
+  render did not produce. Without pruning, the deleted campaign's Job simply
+  stays. **Nothing here ever touches results already in S3.**
+
+Everything else follows from those two rules and ordinary Kubernetes
+semantics. Nothing here runs on a timer, and nothing here has to stay alive
+for a submitted campaign to keep running.
 
 ## Architecture
 
 ```mermaid
-flowchart LR
-    G["campaigns repo<br/>campaigns/*.yaml + pipelines/*.yaml + converter.yaml"]
-    C["converter (CI)<br/>htrflow-campaigns render"]
+flowchart TB
+    G["campaigns repo<br/>campaigns/*.yaml, pipelines/*.yaml, converter.yaml"]
+    C["converter in CI<br/>htrflow-campaigns render"]
     R["rendered/<br/>committed to git"]
-    A["Argo CD / htrflow-campaigns apply"]
+    A["Argo CD or htrflow-campaigns apply"]
     K["Kueue"]
-    W["wrapper pods<br/>(one per volume, one index each)"]
+    W["wrapper pods<br/>one per volume, one index each"]
     S[("S3 results bucket")]
-    API["htrflow-web :8081<br/>GET /api/v1/jobs<br/>campaign browser + UV4"]
+    API["htrflow-web<br/>GET /api/v1/jobs<br/>campaign browser and Universal Viewer"]
     B["browser"]
 
     G -->|"PR: validate"| C
     C -->|"main: render, commit"| R
     R --> A -->|apply| K --> W
-    W -->|"page/, alto/, iiif.json, manifest.json,<br/>status/logs/… every 15 s"| S
-    API -->|"list/get Jobs, Pods, ConfigMaps"| K
-    B -->|"page, /uv.html, /api/v1/jobs"| API
-    B -->|"fetch iiif.json, logs, manifest.json"| S
+    W -->|"page/, alto/, progress.json, iiif.json,<br/>manifest.json, run log"| S
+    API -->|"list and get Jobs, Pods, ConfigMaps"| K
+    API -->|"progress.json"| S
+    B -->|"page, uv.html, /api/v1/jobs"| API
+    B -->|"iiif.json, ALTO, run log, manifest.json"| S
 ```
 
 ## The campaigns repo
 
-A separate repo from `htrflow-batch`: operations and code change at
-different rhythms, and PR review stays legible ("new campaign" vs "new
-feature"). Its CI runs `htrflow-campaigns validate` on every PR and, on
-`main`, `htrflow-campaigns render` and commits the result under `rendered/`
-— see [`examples/campaigns/`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/examples/campaigns)
-for the exact shape (`.github/workflows/render.yml`, with an Azure Pipelines
-equivalent as a commented block).
+The campaigns repo is separate from `htrflow-batch`. Operations and code
+change at different rhythms, and separate repos keep pull-request review
+legible: "new campaign" is a different kind of change from "new feature".
+Its CI runs `htrflow-campaigns validate` on every pull request. On `main` it
+runs `htrflow-campaigns render` and commits the result under `rendered/`.
+[`examples/campaigns/`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/examples/campaigns)
+shows the exact shape, in `.github/workflows/render.yml` with an Azure
+Pipelines equivalent as a commented block. Who may write to this repo, and
+what that grants, is covered under
+[Security → Trust boundary](security.md#trust-boundary).
 
 ```
 converter.yaml
 campaigns/
-  trolldomskommissionen.yaml
+  example.yaml
 pipelines/
   demo-v1.yaml
 rendered/                # committed by CI on main, never hand-edited
   pipelines/demo-v1.yaml
-  campaigns/trolldomskommissionen.yaml
+  campaigns/example.yaml
 ```
 
-Full field-by-field rules: [Campaign & Pipeline YAML](../reference/campaign-yaml.md).
+Every field's rules are in [Campaign & Pipeline YAML](../reference/campaign-yaml.md).
 
 ### Campaign file
 
-```yaml title="campaigns/trolldomskommissionen.yaml"
+```yaml title="campaigns/example.yaml"
 pipeline: demo-v1        # exactly one pipeline per campaign
-priority: ""             # optional: a Kueue PriorityClass name
-window: 20                # optional: override converter.yaml's window (parallelism) for this campaign
+priority: ""             # optional: a Kueue WorkloadPriorityClass name
+window: 20               # optional: this campaign's parallelism, capped by converter.yaml's window
 volumes:
-  - R0001203                       # shorthand: Riksarkivet ref ->
-                                   #   https://lbiiif.riksarkivet.se/arkis!<ref>/manifest
-  - id: dodsbok-1698               # any IIIF manifest on the web (P2 or P3), http(s) only
-    manifest: https://iiif.example.org/xyz/manifest
-  - id: loose-scans                # bare image URLs -> the wrapper generates
-    images:                        #   a synthetic P3 manifest itself, in S3
+  - <ref>                          # shorthand: expanded through converter.yaml's source_template
+  - id: volume-2                   # any IIIF manifest (Presentation 2 or 3), http(s) only
+    manifest: https://iiif.example.org/volume-2/manifest
+  - id: loose-scans                # bare image URLs: the wrapper builds
+    images:                        #   a Presentation 3 manifest itself, in S3
       - https://example.org/scan1.jpg
       - https://example.org/scan2.jpg
 ```
 
-- A volume `id` (or the ref itself, for the shorthand form) becomes the S3
-  prefix `<pipeline>/<id>/` and part of the volume's line in the campaign's
-  `volumes.txt` ConfigMap, so it must be label-safe (`[A-Za-z0-9._-]`,
-  alphanumeric at both ends, ≤ 63 chars) and unique within the campaign.
-- **A campaign is append-only.** A Job's `completions` count is set once, at
-  creation, from the volume list — Kubernetes cannot change it on a running
-  Job. `htrflow-campaigns render` refuses to re-render a campaign whose
-  volume list changed from what is already in `rendered/`: split the new
-  volumes into a new campaign file (`trolldomskommissionen-2.yaml`) instead.
-  Old results stay untouched and comparable side by side.
-- No per-volume pipeline overrides. A volume needing different treatment
+- **Volume ids.** A volume's `id` becomes the S3 prefix `<pipeline>/<id>/`.
+  For the shorthand form, the id is the ref itself. The id also starts the
+  volume's line in the campaign's `volumes.txt` ConfigMap. It must therefore
+  be label-safe (`[A-Za-z0-9._-]`, alphanumeric at both ends, at most 63
+  characters) and unique within the campaign.
+- **A campaign is append-only.** A Job's `completions` is set once, at
+  creation, from the volume list, and Kubernetes cannot change it afterwards.
+  `htrflow-campaigns render` refuses to re-render a campaign whose volume list
+  differs from what is already in `rendered/`. Put new volumes in a new
+  campaign file (`example-2.yaml`). The old results stay untouched and
+  comparable side by side.
+- **One pipeline per campaign.** A volume that needs different treatment
   goes in its own campaign file.
-- `window:` is clamped to `converter.yaml`'s `window`, the per-cluster cap:
-  set that to what the ClusterQueue's GPU quota can actually admit.
-- `suspend: true` pauses the campaign — see
-  [Campaign & Pipeline YAML → Pausing](../reference/campaign-yaml.md#pausing).
-- Re-running with a changed recipe means a **new pipeline id** and a new
-  campaign file — `demo-v1` and `demo-v2` results sit side by side under
-  different S3 prefixes.
+- **`window:`** is capped by `converter.yaml`'s `window`, the per-cluster
+  limit. Set that limit to what the ClusterQueue's quota can admit
+  ([Queueing → The window](queueing.md#the-window)).
+- **`suspend: true`** pauses the campaign
+  ([Campaign & Pipeline YAML](../reference/campaign-yaml.md)).
+- **A changed recipe needs a new pipeline id** and a new campaign file.
+  Results from `demo-v1` and `demo-v2` sit side by side under different S3
+  prefixes.
 
 ### Pipeline file
 
@@ -123,184 +128,573 @@ A pipeline id names the **full recipe**: the htrflow steps *and* the exact
 wrapper image that runs them.
 
 ```yaml title="pipelines/demo-v1.yaml"
-image: ghcr.io/riksarkivet/htrflow-batch@sha256:5d5c60...   # digest, REQUIRED
+image: <registry>/htrflow-batch@sha256:<digest>   # digest, REQUIRED
 steps:
   - step: Segmentation
     ...
 ```
 
-The converter renders the Job's container image from `image` and passes it
-as `IMAGE_DIGEST`, which the wrapper stamps into every published
-`manifest.json` — closing the provenance chain from git recipe to Job to
-results. Tags are rejected — the renderer needs the digest — and with the release's
-`security.allowedImageRepos` set, Kyverno admits only pins under those
-repositories ([Security → Trust boundary](../development/security.md#trust-boundary)).
+The converter uses `image` for the Job's containers and also passes it as
+`IMAGE_DIGEST`. The wrapper stamps that value into every published
+`manifest.json` and ALTO file, which links each result back through the Job
+to the recipe in git. Tags are rejected, because the renderer needs the
+digest. Which repositories an image may come from is enforced at admission
+([Security → Trust boundary](security.md#trust-boundary)).
 
-Only the `steps:` document goes into the `htr-pipeline-<id>` ConfigMap (it is
-what htrflow parses); its sha256 is recorded as the
-`htrflow.riksarkivet.se/pipeline-sha256` annotation, the ground truth the
-wrapper's own recorded `pipeline_sha256` can be compared against by hand.
+Only the `steps:` document goes into the `htr-pipeline-<id>` ConfigMap,
+because that is what htrflow parses. Its sha256 is recorded as the
+`pipeline-sha256` annotation. You can compare that value by hand with the
+`pipeline_sha256` the wrapper records.
 
-!!! warning "Pinning our code is not pinning the world"
+**A digest pins the code, not the model weights.** The warm-up pulls weights
+from Hugging Face. If a step does not pin a model `revision` (enforceable
+with the chart's `security.requireModelRevision`), an upstream model update
+can still change output under the same pipeline id. The read-only cache,
+filled once per pipeline, makes output stable in practice, not by guarantee.
+GPU nondeterminism also rules out bit-identical reruns.
 
-    Model weights are pulled from Hugging Face at runtime by the warm-up.
-    Unless each step pins a model `revision` (enforceable with the chart's
-    `security.requireModelRevision`), an upstream model update
-    can still change output under the same pipeline id (the read-only
-    cache, filled once per pipeline, makes this stable in practice, not in
-    principle). GPU nondeterminism means bit-identical reruns are out of
-    scope regardless.
-
-A pipeline's first appearance also renders its **warm-up Job**
-(`htr-warmup-<id>`, CPU-only, outside Kueue): the batch pods wait on the
-cache PVC for its completion marker in an init check before they run
-([Model handling](wrapper.md#model-handling),
+Every pipeline file also renders a **warm-up Job** (`htr-warmup-<id>`).
+Re-applying an unchanged Job changes nothing, so a completed warm-up runs
+once per pipeline id. It runs on CPU, outside Kueue. Batch pods wait in
+an init container for its completion marker on the cache PVC before they run
+([The model cache](wrapper.md#the-model-cache),
 [Failure Handling](failure-handling.md#warm-ups-fail-the-same-way)).
 
 ## Immutability
 
-Results are keyed by pipeline id, so `pipelines/<id>.yaml` should be treated
-as immutable once any result exists under that id: minting a new id
-(`demo-v2`) is the supported way to change a recipe. There is no runtime
-drift guard any more — the converter renders whatever is in git, every
-time — so this is a **convention enforced by review**, not code: protect
-`main` and require review on pipeline files the same way you would on CI
-config.
+Results are keyed by pipeline id. Treat `pipelines/<id>.yaml` as immutable
+once any result exists under that id, and mint a new id (`demo-v2`) to change
+a recipe. No runtime guard catches drift: the converter renders whatever is
+in git, every time. So this is **a convention enforced by review**, not by
+code.
 
 ## What the converter renders
 
-Per pipeline `pipelines/<id>.yaml`:
+For each pipeline, `pipelines/<id>.yaml`:
 
-- `ConfigMap htr-pipeline-<id>` — `pipeline.yaml: {steps: …}`.
-- `Job htr-warmup-<id>` — fills the model cache once per pipeline.
+- `ConfigMap htr-pipeline-<id>`, holding `pipeline.yaml: {steps: …}`.
+- `Job htr-warmup-<id>`, which fills the model cache once per pipeline.
 
-Per campaign `campaigns/<name>.yaml`:
+For each campaign, `campaigns/<name>.yaml`:
 
-- `ConfigMap campaign-<name>` — `volumes.txt`, one line per index:
-  `<id>\t<manifest-url>` or `<id>\timages:<url1>,<url2>,…`.
-- `Job <name>` — `completionMode: Indexed`, `completions` = number of
-  volumes, `parallelism` = `min(campaign window, converter window)`,
-  `backoffLimitPerIndex: 3`,
-  `maxFailedIndexes` = completions, a `podFailurePolicy` (exit 13 →
-  `FailIndex`; `DisruptionTarget` → `Ignore`), `ttlSecondsAfterFinished:
-  86400`, Kueue labels (`kueue.x-k8s.io/queue-name`, plus a
-  `priority-class` label when `priority:` is set). **No
-  `kueue.x-k8s.io/job-min-parallelism`**: partial admission rewrites
-  `spec.parallelism` on the live Job, and Kueue's own webhook then rejects
-  every later apply of the unchanged rendered file. `parallelism` is instead
-  clamped at render time to `converter.yaml`'s `window`, which is the
-  per-cluster cap. Each pod runs
-  `/bin/sh -c` args that read line `$JOB_COMPLETION_INDEX+1` of
-  `/campaign/volumes.txt`, export `VOLUME_REF` and either
-  `IIIF_MANIFEST_URL` or `IMAGES`, then `exec python -m htrflow_batch`; an
-  init container waits for `/data/warmup/<pipeline>.done`.
+- `ConfigMap campaign-<name>`, holding `volumes.txt` with one line per index:
+  `<id>\t<manifest-url>` or `<id>\timages:<url1> <url2> …`.
+- `Job <name>`, with these settings:
+  - `completionMode: Indexed`
+  - `completions`: the number of volumes
+  - `parallelism`: `min(campaign window, converter window)`
+  - `backoffLimitPerIndex: 3`
+  - `maxFailedIndexes`: equal to `completions`
+  - a `podFailurePolicy`: exit 13 becomes `FailIndex`, and a
+    `DisruptionTarget` condition is ignored
+  - `ttlSecondsAfterFinished: 86400`
+  - the Kueue labels ([Queueing](queueing.md#what-the-converter-puts-on-a-job))
 
-Labels on everything: `htrflow.riksarkivet.se/{campaign,pipeline,managed-by=converter}`,
-`app: htrflow-batch` (NetworkPolicies select on it).
+Every object carries the converter's `campaign`, `pipeline` and
+`managed-by: converter` labels. Campaign pods also carry `app: htrflow-batch`,
+and the NetworkPolicies select on it.
 
-A full worked example — a real two-volume campaign rendered end to end,
-every object shown and every field explained: [A worked example: rendering
-an Indexed Job](rendering-example.md).
+A campaign file too big for one Job is split into `<name>-part1`,
+`<name>-part2`, and so on, each its own Job. A part is too big once it has
+more than 10 000 volumes or more than 900 KiB of `volumes.txt`, whichever
+comes first. The API server refuses a ConfigMap over 1 MiB. An `images:`
+volume is a single line of space-joined URLs, so a few dozen long image
+volumes can reach that limit on their own. A split also shortens the
+campaign's name. A Job's name becomes both the `batch.kubernetes.io/job-name`
+label value and the prefix of its pods' names (`<job>-<index>`), and neither
+may exceed 63 characters. A campaign file may not itself be named
+`-part<number>`, and `validate` says so.
 
-A campaign file too big for one Job is split by the converter into
-`-part1.yaml`, `-part2.yaml`, … — each its own Job. Too big is either more
-than 10 000 volumes or more than 900 KiB of `volumes.txt`, whichever comes
-first: the API server refuses a ConfigMap over 1 MiB, and an `images:` volume
-is a single line of space-joined URLs — 300 pages of a 74-character URL is
-22.5 kB on one line, so 47 such volumes already exceed it. A split also
-shortens the campaign's name, because a Job's name becomes both the
-`batch.kubernetes.io/job-name` label value and the prefix of its pods' names
-(`<job>-<index>`), and neither may pass 63 characters — `rendered/` then
-holds `<shortened>-partN.yaml`. A campaign file may not
-itself be named `-part<number>`; `validate` says so.
+## A worked example
 
-## Retries and failure, natively
+This section runs `htrflow-campaigns render` on a small two-volume campaign
+and walks through the output field by field. The blocks are abridged from a
+real render. Three kinds of value are replaced with placeholders: the image
+digest, the manifest URL and the results base. `<label-domain>` stands for
+the converter's label domain (`_MANAGED_BY_LABEL` in `render.py`).
 
-There is no reconciling loop deciding what to resubmit. A pod exiting 13
-(the wrapper's "do not retry" signal, e.g. an unsupported manifest) marks
-its index `FailIndex` — no retry. Any other non-zero exit or a killed pod
-(SIGTERM — from a drain, or from the pod's own `activeDeadlineSeconds`) is
-retried by Kubernetes up to `backoffLimitPerIndex: 3` for that index; the
-wrapper resumes from whatever pages it already published (measured on the
-PoC: a 60-page volume under a 60 s deadline finished on its third attempt).
-That deadline comes from the pipeline's own `max_seconds:` when it sets one,
-otherwise `converter.yaml`'s. A `DisruptionTarget` condition (node
-preemption, eviction) is ignored and does not spend a retry. Once an index
-exhausts its retries it counts toward `maxFailedIndexes`; the Job's own
-`failedIndexes` and `completedIndexes` fields are the full state — see
-[Failure Handling](failure-handling.md) for the exit-code table and
-[Model handling](wrapper.md#model-handling) for the warm-up gate.
+### The inputs
+
+These are the files from
+[`examples/campaigns/`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/examples/campaigns),
+except for this campaign file:
+
+```yaml title="campaigns/example.yaml"
+pipeline: demo-v1
+volumes:
+  - id: volume-1
+    manifest: <iiif-manifest-url>
+
+  - id: loose-scans
+    images:
+      - https://example.org/scan1.jpg
+      - https://example.org/scan2.jpg
+```
+
+```yaml title="pipelines/demo-v1.yaml"
+image: <registry>/htrflow-batch@sha256:<digest>
+steps:
+  - step: Segmentation
+    settings:
+      model: yolo
+      model_settings:
+        model: Riksarkivet/yolov9-regions-1
+  - step: TextRecognition
+    settings:
+      model: TrOCR
+      model_settings:
+        model: Riksarkivet/trocr-base-handwritten-hist-swe-2
+```
+
+These values from `converter.yaml` show up below:
+
+- `namespace: htr-batch`
+- `queue: htr-batch`
+- `window: 20`
+- `s3_secret: htr-batch-s3`
+- `data_pvc: htr-test-data`
+- `runtime_class: nvidia`
+- `public_results_base: <results-base-url>`
+
+It sets nothing else, so the rest are the defaults:
+
+- `max_seconds: 21600`
+- `warmup_wait_seconds: 900`
+- `manifest_max_bytes` and `fetch_max_bytes` at 16 and 64 MiB
+
+The full file and what each field means are in
+[Campaign & Pipeline YAML](../reference/campaign-yaml.md).
+
+### The command
+
+```console
+$ uv run --no-sync htrflow-campaigns render <campaigns-repo> --out <campaigns-repo>/rendered
+```
+
+`render` exits 0 and writes one output file per source file:
+
+- `rendered/campaigns/example.yaml`: the campaign's ConfigMap and Job.
+- `rendered/pipelines/demo-v1.yaml`: the pipeline's ConfigMap and warm-up
+  Job.
+
+Running the same render again produces byte-identical output. The converter
+is a pure function of its input files.
+
+### The campaign ConfigMap
+
+```yaml title="rendered/campaigns/example.yaml (part 1 of 2)"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: campaign-example
+  namespace: htr-batch
+  labels:
+    <label-domain>/managed-by: converter
+    <label-domain>/campaign: example
+    <label-domain>/pipeline: demo-v1
+data:
+  volumes.txt: |
+    volume-1	<iiif-manifest-url>
+    loose-scans	images:https://example.org/scan1.jpg,https://example.org/scan2.jpg
+```
+
+There are two lines, one per volume, in campaign-file order. That order fixes
+which line `$JOB_COMPLETION_INDEX` reads: index 0 gets `volume-1` and index 1
+gets `loose-scans`. The exact format is in the
+[Wrapper reference](../reference/wrapper.md).
+
+- **A shorthand ref** would appear here already expanded into a full manifest
+  URL through `converter.yaml`'s `source_template`.
+- **The `images:` volume** becomes one line: `images:` followed by its URLs,
+  comma-joined, with no manifest anywhere.
+- **`managed-by: converter`** is how `apply --prune`, and Argo CD's own
+  prune, find this object again once its campaign file is deleted.
+- **`campaign` and `pipeline`** record where the object came from.
+
+### The Indexed Job
+
+```yaml title="rendered/campaigns/example.yaml (part 2 of 2, trimmed)"
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: example
+  namespace: htr-batch
+  labels:
+    app: htrflow-batch
+    <label-domain>/managed-by: converter
+    <label-domain>/campaign: example
+    <label-domain>/pipeline: demo-v1
+    kueue.x-k8s.io/queue-name: htr-batch
+spec:
+  completionMode: Indexed
+  completions: 2
+  parallelism: 20
+  backoffLimitPerIndex: 3
+  maxFailedIndexes: 2
+  podFailurePolicy:
+    rules:
+    - action: Ignore
+      onPodConditions:
+      - type: DisruptionTarget
+    - action: FailIndex
+      onExitCodes:
+        containerName: wrapper
+        operator: In
+        values:
+        - 13
+    - action: FailIndex
+      onExitCodes:
+        containerName: warmup-wait
+        operator: In
+        values:
+        - 13
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      activeDeadlineSeconds: 21600
+      terminationGracePeriodSeconds: 120
+      automountServiceAccountToken: false
+      containers:
+      - name: wrapper
+        image: <registry>/htrflow-batch@sha256:<digest>
+        command: [/bin/sh, -c]
+        args:
+        - |
+          set -eu
+          mkdir -p "$HOME" "$TMPDIR" "$YOLO_CONFIG_DIR"
+          line=$(sed -n "$((JOB_COMPLETION_INDEX + 1))p" /campaign/volumes.txt)
+          [ -n "$line" ] || { echo "no volume for index $JOB_COMPLETION_INDEX" >&2; exit 13; }
+          id=${line%%	*}; src=${line#*	}
+          export VOLUME_REF="$id"
+          case "$src" in images:*) export IMAGES="${src#images:}" ;; *) export IIIF_MANIFEST_URL="$src" ;; esac
+          exec python -m htrflow_batch
+        env:
+        - name: PIPELINE_PATH
+          value: /config/pipeline.yaml
+        - name: PIPELINE_ID
+          value: demo-v1
+        - name: S3_PREFIX
+          value: htr-batch/
+        - name: PUBLIC_RESULTS_BASE
+          value: <results-base-url>
+        - name: IMAGE_DIGEST
+          value: <registry>/htrflow-batch@sha256:<digest>
+        - name: HF_HUB_OFFLINE
+          value: '1'
+        - name: HF_HOME
+          value: /data/hf
+        - name: HOME
+          value: /work/home
+        - name: TMPDIR
+          value: /work/tmp
+        volumeMounts:
+        - name: campaign
+          mountPath: /campaign
+          readOnly: true
+        - name: pipeline
+          mountPath: /config
+        - name: data
+          mountPath: /data
+          readOnly: true
+        - name: work
+          mountPath: /work
+        - name: s3
+          mountPath: /secrets/s3
+          readOnly: true
+        resources:
+          requests: {cpu: "4", memory: 8Gi, nvidia.com/gpu: "1"}
+          limits: {cpu: "4", memory: 16Gi, nvidia.com/gpu: "1"}
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: htr-test-data
+      - name: work
+        emptyDir:
+          medium: Memory
+          sizeLimit: 2Gi
+      initContainers:
+      - name: warmup-wait
+        image: <registry>/htrflow-batch@sha256:<digest>
+        command:
+        - /bin/sh
+        - -c
+        - 'n=0; until [ -f /data/warmup/demo-v1.done ]; do n=$((n+10)); [ "$n" -le
+          900 ] || { echo "no warm-up marker at /data/warmup/demo-v1.done after 900s:
+          the pipeline''s warm-up Job has not finished" >&2; exit 13; }; sleep 10;
+          done'
+        terminationMessagePolicy: FallbackToLogsOnError
+      runtimeClassName: nvidia
+```
+
+What each field is for, and where its value comes from:
+
+- **`completionMode: Indexed`, `completions: 2`.** One index per volume, set
+  once from the campaign's volume count. Kubernetes cannot change
+  `completions` on an existing Job, which is why a campaign is append-only.
+- **`parallelism: 20`.** This is `min(campaign window, converter.yaml window)`.
+  The campaign sets no `window:` of its own, so it gets `converter.yaml`'s
+  cap directly. With only two volumes, at most two pods run at once anyway.
+  Against the default one-GPU quota, this campaign could never be admitted
+  ([Queueing → The window](queueing.md#the-window)).
+- **`backoffLimitPerIndex: 3`, `maxFailedIndexes: 2`.** Each index gets up to
+  3 retries, a converter constant. `maxFailedIndexes` always equals
+  `completions`, so the campaign keeps going until every index has its own
+  verdict.
+- **`podFailurePolicy` rules, in order.**
+  1. A `DisruptionTarget` condition (node drain, preemption) is ignored and
+     costs no retry.
+  2. A `wrapper` exit 13 is the wrapper's "do not retry" signal, for
+     example a bad manifest or a bad pipeline config.
+  3. A `warmup-wait` exit 13 means the init container gave up waiting for
+     the marker. A retry would only hold the GPU again for a marker that is
+     not coming.
+
+  Order matters: `Ignore` must stay first, or a drained pod would be
+  charged as a failed attempt.
+- **`kueue.x-k8s.io/queue-name: htr-batch`.** Comes from `converter.yaml`'s
+  `queue:`. Kueue's webhook suspends a Job with this label at creation, and
+  Kueue admits it when quota frees.
+- **The `warmup-wait` init container.** Waits for
+  `/data/warmup/demo-v1.done` (`<pipeline id>.done`), polling every 10 s for
+  at most `min(warmup_wait_seconds, activeDeadlineSeconds - 10)`. Here that is
+  `min(900, 21590)` = 900 s. The clamp makes the gate always expire before
+  the kubelet would kill the pod. Past that bound, the gate prints the marker
+  path and exits 13, which the rule above turns into `FailIndex`.
+  `FallbackToLogsOnError` makes that line the pod's termination message.
+- **The wrapper's env.**
+  - `PIPELINE_ID` and `S3_PREFIX` (`<namespace>/`, here `htr-batch/`) place
+    the S3 keys.
+  - `IMAGE_DIGEST` is the pipeline's own `image:` pin, stamped into every
+    ALTO's provenance block.
+  - `HF_HUB_OFFLINE=1` and `HF_HOME=/data/hf` let the wrapper find the
+    pre-warmed cache without ever contacting Hugging Face
+    ([The model cache](wrapper.md#the-model-cache)).
+- **The shell prologue.** Reads line `$JOB_COMPLETION_INDEX + 1` of
+  `/campaign/volumes.txt` (`sed` counts from 1, Kubernetes indexes from 0),
+  splits it on the tab into `id` and `src`, and exports `VOLUME_REF`. It then
+  exports `IMAGES` if `src` starts with `images:`, and `IIIF_MANIFEST_URL`
+  otherwise.
+- **`activeDeadlineSeconds: 21600`.** The pod's per-volume wall-clock
+  budget, from `converter.yaml`'s `max_seconds`, because this pipeline sets
+  none. The kubelet enforces it, not the wrapper.
+- **The `work` emptyDir (`medium: Memory`, `2Gi`).** The tmpfs workdir.
+  `HOME`, `TMPDIR` and `YOLO_CONFIG_DIR` all point into it. The wrapper
+  downloads its lookahead window of pages here, and apart from the tmpfs this
+  read-only-rootfs container can write nowhere
+  ([The Wrapper → Memory bounds](wrapper.md#memory-bounds)).
+- **The `data` mount, `readOnly: true`.** The model cache PVC
+  (`converter.yaml`'s `data_pvc`), mounted read-only on every batch pod. The
+  warm-up Job is the only writer.
+
+### The pipeline ConfigMap
+
+```yaml title="rendered/pipelines/demo-v1.yaml (part 1 of 2)"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: htr-pipeline-demo-v1
+  namespace: htr-batch
+  labels:
+    <label-domain>/managed-by: converter
+    <label-domain>/pipeline: demo-v1
+  annotations:
+    <label-domain>/pipeline-sha256: <sha256 of pipeline.yaml>
+data:
+  pipeline.yaml: |
+    steps:
+    - step: Segmentation
+      settings:
+        model: yolo
+        model_settings:
+          model: Riksarkivet/yolov9-regions-1
+    - step: TextRecognition
+      settings:
+        model: TrOCR
+        model_settings:
+          model: Riksarkivet/trocr-base-handwritten-hist-swe-2
+```
+
+Only the `steps:` document goes in, not `image:`. `steps:` is what htrflow
+parses (`Pipeline.from_config`), and the image lives in the Job specs. The
+sha256 annotation is computed from exactly this YAML dump. It changes only
+when `steps:` changes, which should never happen under the id `demo-v1` once
+anything has run.
+
+### The warm-up Job
+
+```yaml title="rendered/pipelines/demo-v1.yaml (part 2 of 2, trimmed)"
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: htr-warmup-demo-v1
+  namespace: htr-batch
+  labels:
+    app: htrflow-warmup
+    <label-domain>/managed-by: converter
+    <label-domain>/pipeline: demo-v1
+spec:
+  backoffLimit: 2
+  podFailurePolicy:
+    rules:
+    - action: Ignore
+      onPodConditions:
+      - type: DisruptionTarget
+    - action: FailJob
+      onExitCodes:
+        containerName: warmup
+        operator: In
+        values:
+        - 13
+  template:
+    spec:
+      restartPolicy: Never
+      activeDeadlineSeconds: 3600
+      containers:
+      - name: warmup
+        image: <registry>/htrflow-batch@sha256:<digest>
+        args:
+        - |
+          set -eu
+          mkdir -p "$HOME" "$TMPDIR" "$YOLO_CONFIG_DIR" "$HF_HOME"
+          exec python -m htrflow_batch.warmup
+        env:
+        - name: PIPELINE_ID
+          value: demo-v1
+        - name: CUDA_VISIBLE_DEVICES
+          value: ""
+        - name: HF_HOME
+          value: /data/hf
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        resources:
+          requests: {cpu: "2", memory: 4Gi}
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: htr-test-data
+      runtimeClassName: nvidia
+```
+
+There is one warm-up Job per pipeline id. The campaign file did not ask for
+it: it exists because `pipelines/demo-v1.yaml` exists. A pruning apply
+deletes it, together with the pipeline ConfigMap, once that file is gone. How
+it differs from the campaign Job:
+
+- **No Kueue queue label.** It runs outside Kueue, on CPU
+  (`CUDA_VISIBLE_DEVICES: ""`, no GPU request).
+- **Not an Indexed Job.** It is a plain Job with a single completion.
+- **Its `data` mount has no `readOnly: true`.** It is the one pod allowed to
+  write into the model cache.
+- **A smaller retry budget.** `backoffLimit: 2`, with a `podFailurePolicy`
+  that fails the whole Job on exit 13.
+- **The same `runtimeClassName`, `nodeSelector` and `tolerations`** as the
+  campaign Job, so it lands where the cache PVC is mounted.
+
+## Retries and failure
+
+No reconciling loop decides what to resubmit.
+
+- **Exit 13.** A pod exiting 13, the wrapper's "do not retry" signal (for
+  example, an unsupported manifest), marks its index `FailIndex`, with no
+  retry.
+- **Other failures.** Kubernetes retries any other non-zero exit, and a
+  killed pod (SIGTERM from a drain, or from the pod's own
+  `activeDeadlineSeconds`), up to `backoffLimitPerIndex: 3` for that index.
+  Each retry resumes from the pages the wrapper already published, so a long
+  volume finishes across attempts even under a tight deadline.
+- **The deadline.** It comes from the pipeline's `max_seconds:` when set, and
+  from `converter.yaml`'s otherwise.
+- **Disruptions.** A `DisruptionTarget` condition (node preemption,
+  eviction) is ignored and costs no retry.
+- **Exhausted indexes.** An index that runs out of retries counts toward
+  `maxFailedIndexes`. The Job's own `failedIndexes` and `completedIndexes` are
+  the full state.
+
+The exit-code table is in [Failure Handling](failure-handling.md), and the
+warm-up gate in [The model cache](wrapper.md#the-model-cache).
 
 ## The web front and status page
 
-`packages/web` (`GET /api/v1/jobs`, `GET /api/v1/jobs/{namespace}/{name}`)
-is a thin, read-only projection of live Job/Pod/ConfigMap state — no state
-of its own, nothing cached, nothing written. A campaign's `phase` is derived
-straight from the Job: `Queued` (suspended, nothing done yet), `Paused`
-(suspended, some indexes done), `Running`, `Succeeded`, `PartiallyFailed`
-(the `Failed` condition with a non-empty `completedIndexes` — the campaign
-gave up, but what those indexes published is there) or `Failed` (the same
-condition with nothing completed). Per-volume rows come from the
-campaign's `volumes.txt` ConfigMap crossed with `completedIndexes` /
-`failedIndexes` and any pod still present for that index (its termination
-message becomes `reason` on a failed row); the URL half of each line becomes
-that row's `sourceUrl`. The detail response also reads the Job's
-`htr-pipeline-<id>` ConfigMap, so the card can list the pipeline's steps and
-show its YAML — a missing ConfigMap is no steps, not an error.
+`packages/web` serves `GET /api/v1/jobs` and
+`GET /api/v1/jobs/{namespace}/{name}`. It is a thin, read-only projection of
+live Job, Pod and ConfigMap state, and it writes nothing. A campaign's
+`phase` comes straight from the Job:
 
-Every row also carries `warmup: {phase, reason?}` — the pipeline's warm-up
-Job (the [warm-up gate](wrapper.md#model-handling)), matched by namespace +
-pipeline label: `missing` (no such Job — the campaign's pods will sit
-blocked on it forever), `pending`, `running`, `succeeded` or `failed` (with
-the same structured `reason` a volume carries; there is no warm-up log to
-link instead). This is what tells a reader why a campaign's pods are stuck
-in `Init:0/1` when the campaign's own `phase` still says `Running`.
+- `Queued`: suspended, nothing done yet
+- `Paused`: suspended, some indexes done
+- `Running`
+- `Succeeded`
+- `PartiallyFailed`: the `Failed` condition with a non-empty
+  `completedIndexes`. The campaign gave up, but what those indexes published
+  is there
+- `Failed`: the same condition with nothing completed
 
-The status page is a Svelte SPA served by that same process, on the same
-origin as `/api/v1` and Universal Viewer at `/uv.html` — one image, no
-proxy. It never writes anywhere and needs no cluster credentials of its
-own. Full reference: [Campaign Browser](../reference/frontend.md).
+Per-volume rows come from the campaign's `volumes.txt` ConfigMap, crossed with
+`completedIndexes`, `failedIndexes`, and any pod still present for that index.
+A failed pod's termination message becomes the row's `reason`. The URL half
+of each `volumes.txt` line becomes the row's `sourceUrl`. The detail response
+also reads the Job's `htr-pipeline-<id>` ConfigMap, so the card can list the
+pipeline's steps and show its YAML. A missing ConfigMap means no steps, not
+an error. For running volumes, the API also reads each volume's
+`progress.json` out of the bucket ([Events and signals](signals.md)).
+
+Every row also carries `warmup: {phase, reason?}`, taken from the pipeline's
+warm-up Job, matched by namespace and pipeline label. The phase is one of:
+
+- `missing`: no such Job exists, so the campaign's pods wait until their
+  gate gives up
+- `pending`
+- `running`
+- `succeeded`
+- `failed`, with the same structured `reason` a volume carries
+
+This is what tells a reader why a campaign's pods are stuck in `Init:0/1`
+while the campaign's own `phase` still says `Running`.
+
+The status page is a Svelte single-page app served by the same process, on
+the same origin as `/api/v1` and the Universal Viewer at `/uv.html`: one
+image, no proxy. It writes nothing and holds no cluster credentials of its
+own. The full reference is [Campaign Browser](../reference/frontend.md).
 
 ## Bucket layout
 
 The full tree is in [S3 Layout](../reference/s3-layout.md). The wrapper is
-now the only writer under a pipeline's prefix — nothing reconciles or
-post-processes it:
+the only writer under a pipeline's prefix. Nothing reconciles or
+post-processes it.
 
 | Key | Meaning |
 |---|---|
-| `<pipeline>/<volume>/page/*.xml`, `alto/*.xml` | per-page results, streamed (PAGE first, ALTO second) |
-| `<pipeline>/<volume>/iiif.json` | viewer manifest with text overlay |
-| `<pipeline>/<volume>/manifest.json` | **completion marker** + provenance, written last |
-| `sources/<pipeline>/<volume>/manifest.json` | synthetic P3 manifest the wrapper builds itself for `images:` volumes |
-| `status/logs/<pipeline>/<volume>.txt` | the run's own log, shipped live ([Live run log](live-run-log.md)) |
+| `<pipeline>/<volume>/page/*.xml`, `alto/*.xml` | Per-page results, streamed (PAGE first, ALTO second) |
+| `<pipeline>/<volume>/progress.json` | How far the running volume has got. Never a completion marker |
+| `<pipeline>/<volume>/iiif.json` | Viewer manifest with text overlay |
+| `<pipeline>/<volume>/manifest.json` | **Completion marker** and provenance, written last |
+| `sources/<pipeline>/<volume>/manifest.json` | The Presentation 3 manifest the wrapper builds for `images:` volumes |
+| `status/logs/<pipeline>/<volume>.txt` | The run's own log, shipped live ([Events and signals](signals.md#the-run-log)) |
 
-## Known issues and accepted trade-offs
+## Trade-offs
 
-1. **Campaigns repo write access ≈ cluster operator.** Pipeline YAML selects
-   the image that runs on the GPU with the bucket's write credentials and
-   the Hugging Face model repos whose weights (pickles) the warm-up pod
-   loads. The controls — image allow-list, mandatory digest, model
-   revisions, optional cosign verification, the pod posture and the
-   NetworkPolicies — are in [Security → Trust boundary](../development/security.md#trust-boundary).
-   Treat the repo like CI config: protected `main`, required review.
-2. **Results are a single unreplicated PVC on one node** on the PoC. Git is
-   durably hosted; the bucket is not backed up. Losing that disk means
-   recomputing every campaign. Acceptable for the PoC, and must be restated
-   before anyone treats the bucket as an archive.
-3. **Wild-web volumes fail in ways we cannot tune** — hotlink blocks, auth
-   walls, per-host flakiness. There is no pre-validation step any more
-   (the old CronJob controller had one); a bad manifest URL now shows up as
-   a failed index with the wrapper's own error as its `reason`.
-4. **The RA firewall blocks most external IIIF hosts** from the cluster,
-   including every Swedish-content source (Alvin, manuscripta.se, KB,
-   Finna). Reachable today: `loc.gov` / `tile.loc.gov`,
-   `iiif.bodleian.ox.ac.uk`.
-5. **Run logs are public** while the devstack chart's `rustfs.publicLogs`
-   is `true` (the default) — the
-   browser needs them, and a log can carry the redacted host/path of a
-   private IIIF source. Set it false behind an authenticated proxy.
-6. **A permanently-failed volume has no declarative "skip".** The remedy is
-   deleting it from the campaign file (git history records it) and, if it
-   should run again, adding it back under a new campaign file — a capped
-   index does not get a fresh retry budget on its own.
+1. **Write access to the campaigns repo is a trust decision.** See
+   [Security → Trust boundary](security.md#trust-boundary).
+2. **The results bucket is the only durable record of results.** Git holds
+   the desired state, and the cluster holds a Job for a day after it
+   finishes. Nothing in htrflow-batch copies results anywhere else. How
+   durable the results are therefore depends entirely on the bucket: its
+   replication, versioning and backups. Losing the bucket means recomputing
+   every campaign.
+3. **Volumes from arbitrary web hosts fail in ways the platform cannot
+   tune**: hotlink blocks, auth walls, flaky hosts. There is no pre-validation
+   step. A bad manifest URL shows up as a failed index, with the wrapper's own
+   error as its `reason`.
+4. **Campaign pods reach only the IIIF origins listed in `network.iiifCidrs`**
+   ([Security → NetworkPolicy](security.md#networkpolicy)), and whatever
+   your own network's egress rules allow. A source outside both fails the
+   volume at setup.
+5. **Run logs may be world-readable.** The browser needs them, and a log can
+   carry the redacted host and path of a private IIIF source
+   ([Security → The bucket policy](security.md#the-bucket-policy)).
+6. **A permanently failed volume has no declarative "skip".** Delete it from
+   the campaign file (git history records the change). If it should run again,
+   add it back under a new campaign file. A capped index does not get a fresh
+   retry budget on its own.
