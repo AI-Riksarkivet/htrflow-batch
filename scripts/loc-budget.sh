@@ -267,7 +267,9 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2742
 # why a campaign file's own credentials must not reach a CI log), the
 # whitespace and non-http sentences wrap over two lines each, and parse.py
 # flattens tab and CR as well as newline so one problem stays one line (+3).
-check converter "$(count packages/converter/src -name '*.py')" 1515
+# 1515 -> 1517 (2026-09-14, images separator re-review): the transition
+# rule's docstring names its one known limit (a query carrying a second URL).
+check converter "$(count packages/converter/src -name '*.py')" 1517
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
