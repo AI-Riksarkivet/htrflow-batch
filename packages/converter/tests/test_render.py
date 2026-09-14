@@ -688,6 +688,8 @@ def test_the_apply_and_the_read_api_write_the_same_field_names():
         projection.summarize(job, cfg, {"phase": "succeeded"})
     )
     assert set(render.status_configmap(job, cfg)["data"]) == set(theirs)
+
+
 IIIF_SIZE = (
     "https://lbiiif.riksarkivet.se/arkis!R0001203_{:05d}/full/2500,/0/default.jpg"
 )
