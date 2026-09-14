@@ -236,7 +236,7 @@ another tenant's idle quota be borrowed. Both belong to **B18**, with the
 |---|---|---|
 | `job.spec.suspend` | **Kueue** | `true` by the webhook at CREATE, `false` by the reconciler at admission |
 | `job` label `kueue.x-k8s.io/queue-name` | converter | effectively immutable once admitted — removing it on the PoC released no quota and blocked resuming (B66) |
-| `completions`, `parallelism`, `backoffLimitPerIndex`, `maxFailedIndexes`, `podFailurePolicy`, `ttlSecondsAfterFinished` | converter | Kueue reads `parallelism` into the podSet and ignores the rest |
+| `completions`, `parallelism`, `backoffLimitPerIndex`, `maxFailedIndexes`, `podFailurePolicy`, `ttlSecondsAfterFinished` (`ttl_seconds_after_finished`) | converter | Kueue reads `parallelism` into the podSet and ignores the rest |
 | `pod.spec.containers[*].resources.requests` | converter | the numbers quota is counted in |
 | `job.status.completedIndexes`, `failedIndexes`, conditions | Kubernetes | the only progress signal the status page reads |
 | `workload.spec.active` | ours, by patch | the pause lever (B66) |
@@ -258,10 +258,11 @@ Kueue watches Job completion and failure, nothing finer.
   (`spec.template.spec`, 21600 s live), so the kubelet kills the pod at the
   deadline and the Job retries the index. It is not Kueue's
   `maximumExecutionTimeSeconds`, which we do not set.
-- **TTL.** `ttlSecondsAfterFinished: 86400` deletes the Job a day after it
-  finishes and the Workload, an owned `blockOwnerDeletion` child, goes with
-  it. The next apply recreates the Job, Kueue makes a fresh Workload, and
-  every index runs again — **B76**.
+- **TTL.** `ttlSecondsAfterFinished` (`converter.yaml`'s
+  `ttl_seconds_after_finished`, a week by default) deletes the finished Job
+  and the Workload, an owned `blockOwnerDeletion` child, goes with it. The
+  Job is an inspection window, not the campaign's record: that is the
+  campaign's ConfigMap, which has no TTL (B76).
 
 ## The operator's reading
 

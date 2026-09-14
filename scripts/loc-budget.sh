@@ -240,7 +240,13 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2721
 # pod's clock starts at pod start, the gate's when the init container runs)
 # -- which gives 143, no FailIndex and no sentence. Four lines are the
 # comment saying which clock wins and why that matters.
-check converter "$(count packages/converter/src -name '*.py')" 1434
+# 1434 -> 1446 (2026-09-14, B76): the Job's `ttlSecondsAfterFinished` became a
+# value. A day was short enough that a campaign finished on a Friday was reaped
+# before anyone looked at it, and the next apply re-ran every volume.
+# ConverterConfig gains the default (a week) and Pipeline the per-pipeline
+# override, with the paragraph saying why the window is not the record; render
+# sets the field the skeleton now leaves at 0.
+check converter "$(count packages/converter/src -name '*.py')" 1446
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

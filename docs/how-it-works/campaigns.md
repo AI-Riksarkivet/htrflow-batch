@@ -182,8 +182,9 @@ Per campaign `campaigns/<name>.yaml`:
   volumes, `parallelism` = `min(campaign window, converter window)`,
   `backoffLimitPerIndex: 3`,
   `maxFailedIndexes` = completions, a `podFailurePolicy` (exit 13 →
-  `FailIndex`; `DisruptionTarget` → `Ignore`), `ttlSecondsAfterFinished:
-  86400`, Kueue labels (`kueue.x-k8s.io/queue-name`, plus a
+  `FailIndex`; `DisruptionTarget` → `Ignore`), `ttlSecondsAfterFinished`
+  (`converter.yaml`'s `ttl_seconds_after_finished`, a week by default, or
+  the pipeline's own), Kueue labels (`kueue.x-k8s.io/queue-name`, plus a
   `priority-class` label when `priority:` is set). **No
   `kueue.x-k8s.io/job-min-parallelism`**: partial admission rewrites
   `spec.parallelism` on the live Job, and Kueue's own webhook then rejects

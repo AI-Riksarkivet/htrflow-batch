@@ -236,6 +236,8 @@ def _campaign_job(
     # (docs: how-it-works/failure-handling).
     deadline = p.max_seconds or cfg.max_seconds
     _set(job, "spec.template.spec.activeDeadlineSeconds", deadline)
+    ttl = p.ttl_seconds_after_finished or cfg.ttl_seconds_after_finished
+    _set(job, "spec.ttlSecondsAfterFinished", ttl)
 
     _set(job, "spec.template.spec.volumes[0].configMap.name", f"campaign-{name}")
     _set(job, "spec.template.spec.volumes[1].configMap.name", f"htr-pipeline-{p.id}")

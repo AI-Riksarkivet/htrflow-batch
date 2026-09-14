@@ -120,6 +120,7 @@ skeleton, never as a campaign setting.
 | `source_template` | `converter.yaml` | `https://lbiiif.riksarkivet.se/arkis!{ref}/manifest` | — | no secret — nobody |
 | `max_seconds` | `converter.yaml` | `21600` | — | no secret — nobody |
 | `warmup_wait_seconds` | `converter.yaml` | `900` | — | no secret — nobody |
+| `ttl_seconds_after_finished` | `converter.yaml` | `604800` | — | no secret — nobody |
 | `manifest_max_bytes` | `converter.yaml` | `16777216` | — | no secret — nobody |
 | `fetch_max_bytes` | `converter.yaml` | `67108864` | — | no secret — nobody |
 

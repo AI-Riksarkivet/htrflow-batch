@@ -40,7 +40,11 @@ spec:
         operator: In
         values:
         - 13
-  ttlSecondsAfterFinished: 86400
+  # How long the finished Job stays, rendered from the pipeline's
+  # `ttl_seconds_after_finished:` or converter.yaml's default. A window for
+  # looking at `completedIndexes`, not the campaign's record: that is the
+  # campaign's ConfigMap, which has no TTL at all (B76).
+  ttlSecondsAfterFinished: 0
   template:
     metadata:
       labels:
