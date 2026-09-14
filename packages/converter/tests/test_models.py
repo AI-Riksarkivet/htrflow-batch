@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from htrflow_converter import parse
+from htrflow_converter import models, parse
 from htrflow_converter.models import Campaign, Pipeline, Volume
 
 
@@ -154,3 +154,26 @@ def test_the_whitespace_problem_names_the_volume_and_the_entry(tmp_path):
     (problem,) = exc_info.value.problems
     assert problem.startswith("campaigns/kyrk.yaml: volume 3 ")
     assert "image 1" in problem and "percent-encode it as %20" in problem
+
+
+IMAGES_CASES = [
+    "https://x/1.jpg https://x/2.jpg",
+    "  https://x/1.jpg \t https://x/2.jpg\n",
+    "https://x/1.jpg,https://x/2.jpg",
+    "https://x/full/2500,/0/default.jpg",
+    "https://x/full/2500,/0/default.jpg https://x/2.jpg",
+    "https://x/1.jpg",
+    "",
+]
+
+
+@pytest.mark.parametrize("value", IMAGES_CASES)
+def test_the_converter_and_the_wrapper_split_images_identically(value):
+    """The two packages share no code -- the wrapper's image must not carry
+    the converter's Kubernetes client -- so the one rule they both implement
+    is pinned here instead. A drift is a volume that renders one way and runs
+    another."""
+    config = pytest.importorskip("htrflow_batch.config")
+    assert models.split_image_urls(value) == (
+        config.Config.model_construct(images=value).image_urls
+    )

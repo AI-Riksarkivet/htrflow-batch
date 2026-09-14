@@ -159,7 +159,11 @@ fail=0
 # (+27) is the split, the transition branch that still reads a comma-joined
 # line from a pre-fix `rendered/` directory, and the paragraph saying when
 # that branch may be deleted; main.py loses the one-line comma split.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2748
+# 2748 -> 2742 (2026-09-14, review): the transition rule is documented where
+# it is defined -- the converter's `models.split_image_urls` -- so this copy
+# of it says only why a copy exists (the GPU image must not carry the
+# converter's Kubernetes client) and points at the tests that pin the two.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2742
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
@@ -252,7 +256,13 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2748
 # which the models now refuse by name and position (+20), and `source_line`
 # says which separator it writes and that both readers split on the first tab
 # (+4) -- the contract the Job's shell and the wrapper are written against.
-check converter "$(count packages/converter/src -name '*.py')" 1458
+# 1458 -> 1498 (2026-09-14, review blocking 1): the append-only check
+# compared volumes.txt byte for byte, so the separator change reported every
+# already-rendered `images:` campaign as append-only and left no way to
+# re-render it. `models.split_image_urls` + `parse_source_line` (+33) read a
+# line back as what it MEANS, comma or space, and cli compares those (+7);
+# the docstrings carry the transition rule the wrapper now only points at.
+check converter "$(count packages/converter/src -name '*.py')" 1498
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

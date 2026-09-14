@@ -336,3 +336,63 @@ def test_render_refuses_two_campaigns_whose_split_names_collide(
     assert f"{shared}-part1.yaml" in printed
     assert "rename one" in printed
     assert "append-only" not in printed
+
+
+def _rewrite_volumes_txt(path: Path, old: str, new: str) -> str:
+    """Edit a rendered campaign file's volumes.txt through the YAML, not its
+    bytes: the value is one long double-quoted scalar and where the emitter
+    folds it is its own business."""
+    docs = list(yaml.safe_load_all(path.read_text()))
+    cm = next(d for d in docs if d["kind"] == "ConfigMap")
+    text = cm["data"]["volumes.txt"]
+    assert old in text
+    cm["data"]["volumes.txt"] = text.replace(old, new)
+    path.write_text(yaml.safe_dump_all(docs, sort_keys=False))
+    return cm["data"]["volumes.txt"]
+
+
+def _volumes_txt_of(path: Path) -> str:
+    docs = list(yaml.safe_load_all(path.read_text()))
+    return next(d for d in docs if d["kind"] == "ConfigMap")["data"]["volumes.txt"]
+
+
+SCANS_SPACED = "images:https://example.org/scan1.jpg https://example.org/scan2.jpg"
+SCANS_COMMAED = "images:https://example.org/scan1.jpg,https://example.org/scan2.jpg"
+
+
+def test_a_comma_rendered_campaign_is_unchanged_and_is_rewritten_with_spaces(
+    tmp_path, capsys
+):
+    """Every campaign in every campaigns repo was rendered with commas
+    between an `images:` volume's URLs. The append-only check compares what
+    the line MEANS, not its bytes, or the separator change would report each
+    of them as append-only and there would be no way to re-render any of
+    them."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    out = tmp_path / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    rendered = out / "campaigns" / "kyrk.yaml"
+    _rewrite_volumes_txt(rendered, SCANS_SPACED, SCANS_COMMAED)
+    capsys.readouterr()
+
+    assert main(["render", str(repo), "--out", str(out)]) == 0, capsys.readouterr().out
+    assert "append-only" not in capsys.readouterr().out
+    assert SCANS_SPACED in _volumes_txt_of(rendered)
+
+
+def test_a_comma_rendered_campaign_whose_volumes_changed_is_still_refused(
+    tmp_path, capsys
+):
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    out = tmp_path / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    _rewrite_volumes_txt(
+        out / "campaigns" / "kyrk.yaml",
+        SCANS_SPACED,
+        "images:https://example.org/scan1.jpg,https://example.org/scan3.jpg",
+    )
+    capsys.readouterr()
+    assert main(["render", str(repo), "--out", str(out)]) == 1
+    assert "campaign kyrk is append-only" in capsys.readouterr().out
