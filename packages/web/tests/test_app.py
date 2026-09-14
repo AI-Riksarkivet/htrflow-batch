@@ -9,7 +9,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from htrflow_web.app import RECORD_WRITES_PER_REQUEST, create_app
+from htrflow_web.app import RECORD_WRITES_PER_REQUEST, SECURITY_HEADERS, create_app
+from htrflow_web.kube import ClusterUnavailable
 
 JOB = {
     "metadata": {
@@ -608,3 +609,44 @@ def test_no_request_writes_more_records_than_its_cap():
     body = client.get("/api/v1/jobs").json()
     assert len(body) == RECORD_WRITES_PER_REQUEST + 5, "every row still answers"
     assert len(reader.written) == RECORD_WRITES_PER_REQUEST
+
+
+# --- the cluster not answering is a 502, not a bare 500 (F1) --------------
+
+
+class _Unavailable(FakeReader):
+    """Everything the API server could say that is not a 404: a 403 after an
+    RBAC change, a 429, a connection that timed out."""
+
+    def list_jobs(self) -> list[dict]:
+        raise ClusterUnavailable("jobs: 403 Forbidden")
+
+    def get_job(self, namespace: str, name: str) -> dict | None:
+        raise ClusterUnavailable("jobs/kyrk: timed out")
+
+
+@pytest.mark.parametrize("path", ["/api/v1/jobs", "/api/v1/jobs/htr-test/kyrk"])
+def test_a_cluster_that_does_not_answer_is_a_502_with_the_headers(path: str):
+    """A bare exception leaves Starlette's own plain-text 500, which never
+    passes through the header middleware: the browser gets a page with no
+    nosniff, no Referrer-Policy and no frame-ancestors at all."""
+    client = TestClient(
+        create_app(_Unavailable(), progress=FakeProgress()),
+        raise_server_exceptions=False,
+    )
+    resp = client.get(path)
+    assert resp.status_code == 502
+    assert resp.headers["content-type"].startswith("application/json")
+    assert resp.json()["detail"].count(".") <= 1, "one sentence for the reader"
+    for name, value in SECURITY_HEADERS.items():
+        assert resp.headers[name] == value
+
+
+def test_the_502_never_quotes_the_client_error():
+    """The API server's own message names namespaces, verbs and identities;
+    the page says what the reader can do instead."""
+    client = TestClient(
+        create_app(_Unavailable(), progress=FakeProgress()),
+        raise_server_exceptions=False,
+    )
+    assert "403" not in client.get("/api/v1/jobs").text

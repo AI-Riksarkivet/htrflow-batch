@@ -518,7 +518,15 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # which is what guarantees a terminal record exists at all); `refused`
 # remembers the namespaces whose last write was denied, so an RBAC grant that
 # was never renewed says so once instead of once per campaign per poll.
-check web       "$(count packages/web/src -name '*.py')" 1434
+# 1434 -> 1474 (2026-09-14, audit) F1: a client error that is not a 404 --
+# a 403 after an RBAC change, a 429, a connection that timed out -- escaped
+# as a bare exception, and Starlette answers those OUTSIDE the header
+# middleware: a plain-text 500 with no nosniff and no frame-ancestors on it.
+# kube.py now raises one `ClusterUnavailable` for all of them and app.py
+# answers it with a one-sentence 502 that carries the headers, and a pod
+# whose completion-index label is not a number is skipped rather than taking
+# the page down with it.
+check web       "$(count packages/web/src -name '*.py')" 1474
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

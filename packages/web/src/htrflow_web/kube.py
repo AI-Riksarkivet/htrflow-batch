@@ -21,6 +21,7 @@ from collections.abc import Mapping
 
 from kubernetes import client, config
 from pydantic import BaseModel, ConfigDict, Field
+from urllib3.exceptions import HTTPError
 
 #: Selects campaign progress Jobs only — excludes the per-pipeline warm-up
 #: Jobs, which carry ``managed-by=converter`` too but not ``app`` or
@@ -98,6 +99,14 @@ class Config(BaseModel):
         )
 
 
+class ClusterUnavailable(Exception):
+    """The API server did not answer this read. Every way that can happen --
+    a 403 after an RBAC change, a 429, a connection that timed out -- arrives
+    here as one exception, so ``app.py`` has one thing to answer with (a 502)
+    instead of letting a client error escape as a bare 500 (2026-09-14
+    audit). 404 is not one of these: a missing object is ``None``."""
+
+
 def _read(api: object, method: str, *args: object, **kwargs: object) -> dict | None:
     """Call a get/list method with ``_preload_content=False`` and decode the
     raw server JSON, so callers get the same camelCase dicts the API server
@@ -108,7 +117,9 @@ def _read(api: object, method: str, *args: object, **kwargs: object) -> dict | N
     except client.ApiException as e:
         if e.status == 404:
             return None
-        raise
+        raise ClusterUnavailable(f"{method}: {e.status}") from e
+    except HTTPError as e:  # urllib3: refused, timed out, TLS
+        raise ClusterUnavailable(f"{method}: {type(e).__name__}") from e
     return json.loads(resp.data)
 
 

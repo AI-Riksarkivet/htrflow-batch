@@ -470,8 +470,14 @@ def _name_the_deadline(reason: dict, pod_reason: str | None) -> dict:
 
 
 def _pod_completion_index(pod: dict) -> int | None:
+    """The pod's index, or ``None`` when it has no readable one. The label is
+    the Job controller's, but a hand-made pod can carry anything, and one
+    such pod used to take the whole campaign page down (2026-09-14 audit)."""
     raw = _labels(pod).get(_INDEX_LABEL)
-    return int(raw) if raw is not None else None
+    try:
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _pods_by_index(pods: list[dict] | None) -> dict[int, list[dict]]:
