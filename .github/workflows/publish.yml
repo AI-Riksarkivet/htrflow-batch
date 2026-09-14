@@ -9,13 +9,14 @@ name: Publish
 # registry. Bump packages/wrapper/pyproject.toml and use a new tag instead of
 # re-pushing (the wrapper's version must equal the tag — see resolveTag).
 #
-# The wrapper ships for two architectures and is built NATIVELY for each: the
-# amd64 image on ubuntu-24.04, the arm64 image on ubuntu-24.04-arm (free for
-# public repositories). Never one runner with qemu — uv segfaults under
-# qemu-x86_64, and a cross-built GPU image cannot be smoke-tested anywhere.
-# Each job pushes its own `<tag>-<arch>` and signs/attests it; a final job
-# joins them into the manifest list `<tag>` that the chart and campaign
-# pipelines actually reference, and signs that too.
+# BOTH images ship for two architectures and are built NATIVELY for each: on
+# ubuntu-24.04 for amd64, on ubuntu-24.04-arm for arm64 (free for public
+# repositories). Never one runner with qemu — uv segfaults under qemu-x86_64,
+# and a cross-built GPU image cannot be smoke-tested anywhere. Each job
+# pushes its own `<tag>-<arch>` and signs/attests it; a final job joins each
+# image's pair into the manifest list `<tag>` that the chart and campaign
+# pipelines actually reference, and signs that too. The web image was
+# amd64-only until then, which is an ImagePullBackOff on an arm64 node.
 #
 # The arm64 job also builds the wrapper's BASE image, because there is no
 # published arm64 htrflow: it clones AI-Riksarkivet/htrflow at the pinned
@@ -49,10 +50,16 @@ env:
   HTRFLOW_ARM64_BASE: htrflow:v0.2.6-arm64
 
 jobs:
-  # amd64 wrapper + the web image: dagger builds and pushes, as it always has.
+  # Everything dagger can build by itself: the amd64 wrapper, and the web
+  # image for both architectures. The web image is a plain Node/Python build
+  # with no base of its own to prepare, so one matrix entry per architecture
+  # on a runner of that architecture is the whole change — same job body,
+  # same `<tag>-<arch>` scheme, same sign-and-attest step as the wrapper.
+  # Never one runner with qemu: cross-building is what
+  # test_publish_workflow.py and test_dockerfile_workspace.py forbid.
   publish:
     name: Publish ${{ matrix.component }}${{ matrix.tag_suffix }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       id-token: write # cosign keyless signing + provenance
@@ -65,9 +72,15 @@ jobs:
           - component: wrapper
             repository: riksarkivet/htrflow-batch
             tag_suffix: "-amd64"
+            runner: ubuntu-24.04
           - component: web
             repository: riksarkivet/htrflow-web
-            tag_suffix: ""
+            tag_suffix: "-amd64"
+            runner: ubuntu-24.04
+          - component: web
+            repository: riksarkivet/htrflow-web
+            tag_suffix: "-arm64"
+            runner: ubuntu-24.04-arm
     env:
       REGISTRY: docker.io
       IMAGE: docker.io/${{ matrix.repository }}
@@ -213,23 +226,33 @@ jobs:
           registry-username: ${{ secrets.DOCKERHUB_USERNAME }}
           registry-password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-  # The tag everything else references: one manifest list over the two
-  # per-arch images, so `docker pull riksarkivet/htrflow-batch:<tag>` and a
-  # chart digest resolve to the right architecture by themselves. Signed and
-  # provenance-attested like its members; no SBOM of its own — the per-arch
-  # images carry the package lists, and an SBOM of an index would only be an
-  # SBOM of whichever arch the runner happens to be.
+  # The tags everything else references: one manifest list per image over its
+  # two per-arch images, so `docker pull riksarkivet/htrflow-batch:<tag>` (or
+  # htrflow-web) and a chart digest resolve to the right architecture by
+  # themselves. Signed and provenance-attested like its members; no SBOM of
+  # its own — the per-arch images carry the package lists, and an SBOM of an
+  # index would only be an SBOM of whichever arch the runner happens to be.
+  # Both entries wait for both publish jobs: `needs` is per job, not per
+  # matrix entry, and one job here is cheaper than a second copy of it.
   manifest:
-    name: Manifest list (wrapper)
+    name: Manifest list (${{ matrix.component }})
     needs: [publish, publish-wrapper-arm64]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       id-token: write
       attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: wrapper
+            repository: riksarkivet/htrflow-batch
+          - component: web
+            repository: riksarkivet/htrflow-web
     env:
       REGISTRY: docker.io
-      IMAGE: docker.io/riksarkivet/htrflow-batch
+      IMAGE: docker.io/${{ matrix.repository }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
