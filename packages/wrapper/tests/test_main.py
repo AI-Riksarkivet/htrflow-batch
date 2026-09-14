@@ -363,6 +363,13 @@ def test_a_failed_page_completes_the_volume(env, cfg, s3):
     keys = _keys(s3, cfg)
     assert "demo-v1/SE-RA-1234/manifest.json" in keys
     assert "demo-v1/SE-RA-1234/iiif.json" in keys
+    # The viewer manifest covers the pages that came out: one canvas short.
+    iiif = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/iiif.json")[
+            "Body"
+        ].read()
+    )
+    assert len(iiif["items"]) == 2
     body = json.loads(
         s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
             "Body"

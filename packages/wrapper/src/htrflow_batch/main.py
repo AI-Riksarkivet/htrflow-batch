@@ -454,9 +454,9 @@ FAILED_DETAIL_CHARS = 200
 
 
 def _failure_detail(stats: StreamStats, failed: list[str]) -> str:
-    """Why those pages failed. Without it the operator reads
-    "verify failed: failed=['0042']" and has nothing else: a run with failed
-    pages never publishes manifest.json, where the errors would have gone."""
+    """Why those pages failed, for the run log's WARNING line: the operator
+    reading the log live should not have to wait for manifest.json (which
+    carries the same reasons once the volume completes) to learn the cause."""
     if not failed:
         return ""
     shown = "; ".join(
