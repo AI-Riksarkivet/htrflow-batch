@@ -19,9 +19,27 @@ func (m *HtrflowBatch) scanImage(
 	ignoreUnfixed bool,
 	caBundle *dagger.File,
 ) (string, error) {
-	tarFile := container.AsTarball()
-	trivy := dag.Container().From(trivyImage)
-	trivy = m.withCaBundle(trivy, caBundle)
+	output, err := m.trivy(container, caBundle).
+		WithExec(trivyArgs(severity, format, exitCode, ignoreUnfixed)).
+		Stdout(ctx)
+	if err != nil {
+		if output == "" {
+			return "", fmt.Errorf("trivy scan failed: %w", err)
+		}
+		return output, fmt.Errorf("vulnerabilities found: %w", err)
+	}
+	return output, nil
+}
+
+// trivy is the digest-pinned Trivy container with the image under scan
+// mounted as a tarball at /image.tar.
+func (m *HtrflowBatch) trivy(container *dagger.Container, caBundle *dagger.File) *dagger.Container {
+	return m.withCaBundle(dag.Container().From(trivyImage), caBundle).
+		WithMountedFile("/image.tar", container.AsTarball())
+}
+
+// trivyArgs is the one Trivy command line the gates and the report share.
+func trivyArgs(severity string, format string, exitCode int, ignoreUnfixed bool) []string {
 	args := []string{
 		"trivy", "image", "--input", "/image.tar",
 		"--severity", severity, "--format", format,
@@ -31,17 +49,45 @@ func (m *HtrflowBatch) scanImage(
 	if ignoreUnfixed {
 		args = append(args, "--ignore-unfixed")
 	}
-	output, err := trivy.
-		WithMountedFile("/image.tar", tarFile).
-		WithExec(args).
-		Stdout(ctx)
-	if err != nil {
-		if output == "" {
-			return "", fmt.Errorf("trivy scan failed: %w", err)
-		}
-		return output, fmt.Errorf("vulnerabilities found: %w", err)
+	return args
+}
+
+// ScanSarif writes Trivy's findings for one image as SARIF, for the GitHub
+// Security tab (security.yml). It is a report, not a gate: it never fails on
+// findings, and it keeps the unfixed ones the gates skip, because a CVE with
+// no fix yet is still worth seeing. The gates stay Scan and ScanWeb.
+func (m *HtrflowBatch) ScanSarif(
+	ctx context.Context,
+	// +defaultPath="/"
+	// +optional
+	source *dagger.Directory,
+	// Which image to scan: "wrapper" or "web"
+	image string,
+	// +default="CRITICAL,HIGH"
+	severity string,
+	// CA bundle for TLS-intercepting networks (Trivy DB download)
+	// +optional
+	caBundle *dagger.File,
+) (*dagger.File, error) {
+	var container *dagger.Container
+	var err error
+	switch image {
+	case "wrapper":
+		container, err = m.BuildWrapper(ctx, source, "", "", "")
+	case "web":
+		container, err = m.BuildWeb(ctx, source, caBundle, "")
+	default:
+		return nil, fmt.Errorf("image must be \"wrapper\" or \"web\", got %q", image)
 	}
-	return output, nil
+	if err != nil {
+		return nil, fmt.Errorf("%s build failed before scanning: %w", image, err)
+	}
+	args := append(trivyArgs(severity, "sarif", 0, false), "--output", "/trivy.sarif")
+	scanned, err := m.trivy(container, caBundle).WithExec(args).Sync(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("trivy scan failed: %w", err)
+	}
+	return scanned.File("/trivy.sarif"), nil
 }
 
 // Scan runs Trivy against the wrapper image. The CUDA/ubuntu base will never be

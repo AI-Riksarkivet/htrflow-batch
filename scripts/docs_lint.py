@@ -22,8 +22,8 @@ RULES: list[tuple[str, re.Pattern[str]]] = [
     (
         "ids",
         re.compile(
-            r"\b[BDTUCXGI][0-9]{1,3}\b|\bS[0-9]{2}\b|\bTask [0-9]+"
-            r"|\bPhase [12]\b|\bPoC\b"
+            r"\b[BDTUCXGI][0-9]{1,3}\b|\bS[0-9]{2}\b|"
+            r"\bTask [0-9]+|\bPhase [12]\b|\bPoC\b"
         ),
     ),
     ("dates", re.compile(r"\b20[0-9]{2}-[01][0-9]-[0-3][0-9]\b")),

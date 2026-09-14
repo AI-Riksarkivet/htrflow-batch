@@ -1,0 +1,54 @@
+name: Scorecard supply-chain security
+
+# OpenSSF Scorecard grades this repository's supply-chain posture out of 10 —
+# pinned dependencies, signed releases, branch protection, token permissions
+# and so on. `publish_results: true` is what makes the score public and what
+# the README badge reads. The scorecard action refuses to publish from a
+# workflow with anything but a small allow-list of steps, so keep this file
+# to checkout, the analysis and the two uploads.
+on:
+  # The Branch-Protection check only ever looks at the default branch.
+  branch_protection_rule:
+  # Keeps the Maintained check fresh even in a quiet week.
+  schedule:
+    - cron: "30 1 * * 6" # Saturdays, 01:30 UTC
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # upload the SARIF to the Security tab
+      id-token: write # publish the result, which is what the badge reads
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Branch-Protection is the one check that needs a PAT with repo
+          # scope even on a public repository, so it scores 0 until one is
+          # configured. Nothing else here depends on it:
+          #   repo_token: ${{ secrets.SCORECARD_TOKEN }}
+          publish_results: true
+
+      - name: Upload the SARIF as an artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scorecard-sarif
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to the Security tab
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: results.sarif
