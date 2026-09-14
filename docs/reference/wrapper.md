@@ -35,7 +35,7 @@ configures, so its settings are namespaced.
 | Env var | Description |
 |---------|-------------|
 | `VOLUME_REF` | Volume id — last segment of the S3 result prefix |
-| `IIIF_MANIFEST_URL` or `IMAGES` | Exactly one of the two: a source manifest (Presentation v2 or v3, must be `http(s)`) or a comma-separated list of `http(s)` image URLs. `IMAGES` volumes get a synthetic P3 manifest built by the wrapper and published to `sources/<pipeline>/<volume>/manifest.json` before processing |
+| `IIIF_MANIFEST_URL` or `IMAGES` | Exactly one of the two: a source manifest (Presentation v2 or v3, must be `http(s)`) or a **space**-separated list of `http(s)` image URLs. `IMAGES` volumes get a synthetic P3 manifest built by the wrapper and published to `sources/<pipeline>/<volume>/manifest.json` before processing. Whitespace is the separator because it is the one character a URL cannot carry — a comma can (`/full/2500,/0/default.jpg` is a IIIF size request). Transition: a comma-joined value is still read the old way when it carries no whitespace **and** every comma-split piece is itself an `http(s)` URL, so a `rendered/` directory produced before 2026-09-14 keeps working; that branch goes once every campaigns repo has been re-rendered |
 | `PIPELINE_PATH` | Path to the mounted pipeline YAML (Jobs: `/config/pipeline.yaml`) |
 | `PIPELINE_ID` | Pipeline id — first segment of the S3 result prefix |
 | `S3_BUCKET` | Results bucket |

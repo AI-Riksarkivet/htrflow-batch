@@ -52,7 +52,7 @@ bare Riksarkivet reference, one `images:` volume) produces this real
 
 ```title="volumes.txt"
 R0001203	https://lbiiif.riksarkivet.se/arkis!R0001203/manifest
-loose-scans	images:https://example.org/scan1.jpg,https://example.org/scan2.jpg
+loose-scans	images:https://example.org/scan1.jpg https://example.org/scan2.jpg
 ```
 
 **Line format** (`Volume.source_line()` in
@@ -66,9 +66,15 @@ shapes:
   (expanded through `converter.yaml`'s `source_template`) or an explicit
   `manifest:` volume;
 - `images:` followed by every URL under that volume's `images:` list,
-  comma-joined with no spaces — `<id>\timages:<url1>,<url2>,…` — for an
+  joined with a single **space** — `<id>\timages:<url1> <url2> …` — for an
   `images:` volume. There is no manifest at all for these; the wrapper
-  builds and publishes a synthetic one itself.
+  builds and publishes a synthetic one itself. A comma cannot separate them:
+  a IIIF Image API size request writes the size into the path
+  (`/full/2500,/0/default.jpg`), and splitting on that comma tore such a URL
+  in half. Whitespace is the one character a URL can never carry, so
+  `validate` refuses an `images:` entry (or a `manifest:`) that contains a
+  space, tab or newline and names the volume and the image — percent-encode
+  it as `%20`.
 
 **How index *i* reads line *i*.** The campaign Job's container command
 (`manifests/campaign-job.yaml`) does the whole job in one shell line before
@@ -120,7 +126,7 @@ campaign file — the ConfigMap is a normal cluster object:
 $ kubectl get configmap campaign-trolldomskommissionen -n htr-batch \
     -o jsonpath='{.data.volumes\.txt}'
 R0001203	https://lbiiif.riksarkivet.se/arkis!R0001203/manifest
-loose-scans	images:https://example.org/scan1.jpg,https://example.org/scan2.jpg
+loose-scans	images:https://example.org/scan1.jpg https://example.org/scan2.jpg
 ```
 
 (the `\.` escapes the literal dot in the key name `volumes.txt`, which
