@@ -151,6 +151,22 @@ class Cluster:
             _content_type=APPLY_PATCH,
         )
 
+    def get(self, kind: str, name: str) -> dict | None:
+        """The live object, or ``None`` when there is none. What lets an
+        apply tell a campaign nobody has run from one whose Job the TTL
+        reaped: the second still has its ConfigMaps (B76)."""
+        try:
+            body = self._method(kind, "read", name)(
+                name, self.namespace, _preload_content=False
+            )
+        except ApiException as e:
+            if e.status == 404:
+                return None
+            raise _api_error("get", kind, name, self.namespace, e) from e
+        except HTTPError as e:
+            raise _unreachable(e) from e
+        return json.loads(body.data)
+
     def prune(self, rendered: set[tuple[str, str]]) -> None:
         """Delete every labelled Job/ConfigMap not in ``rendered``.
 

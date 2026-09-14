@@ -21,6 +21,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from kubernetes.client.exceptions import ApiException
 
 from htrflow_converter import cli
 from htrflow_converter import cluster as cluster_mod
@@ -98,7 +99,13 @@ class FakeCluster(Cluster):
         def delete(name, ns, **kw):
             self.calls.append(("delete", kind, name))
 
-        return {"patch": patch, "list": list_, "delete": delete}[verb]
+        def read(name, ns, **kw):
+            for o in self.live:
+                if o["kind"] == kind and o["metadata"]["name"] == name:
+                    return _Body(o)
+            raise ApiException(status=404, reason="Not Found")
+
+        return {"patch": patch, "list": list_, "delete": delete, "read": read}[verb]
 
     @property
     def custom(self):
@@ -342,3 +349,85 @@ def test_the_provenance_is_not_written_into_the_rendered_files(tmp_path, cluster
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     text = (out / "campaigns" / "kyrk.yaml").read_text()
     assert "applied-at" not in text and "submitter" not in text
+
+
+# --- a finished campaign is not re-run once its Job is reaped (B76) ------
+
+VOLUMES = (
+    "R0001203\thttps://lbiiif.riksarkivet.se/arkis!R0001203/manifest\n"
+    "dodsbok-1698\thttps://iiif.example.org/xyz/manifest\n"
+    "loose-scans\timages:https://example.org/scan1.jpg,https://example.org/scan2.jpg\n"
+)
+
+
+def _record(name: str, volumes: str = VOLUMES) -> dict:
+    cm = _object("ConfigMap", f"campaign-{name}")
+    cm["data"] = {"volumes.txt": volumes}
+    return cm
+
+
+def _status(name: str, phase: str, **data) -> dict:
+    cm = _object("ConfigMap", f"campaign-{name}-status")
+    cm["data"] = {
+        "phase": phase,
+        "volumesTotal": "3",
+        "volumesDone": "3",
+        "volumesFailed": "0",
+        "finishedAt": "2026-09-08T10:00:00Z",
+        **data,
+    }
+    return cm
+
+
+def test_a_finished_campaign_whose_job_was_reaped_is_left_alone(
+    tmp_path, cluster, capsys
+):
+    """The whole point of B76: the Job is gone (TTL), so an apply would
+    recreate it and re-run every volume. The record says it is done and the
+    volume list has not moved, so nothing is sent for it."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    cluster.live = [_record("kyrk"), _status("kyrk", "Succeeded")]
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    applied = [c[2] for c in cluster.of("apply")]
+    assert "kyrk" not in applied and "campaign-kyrk" not in applied
+    assert "loc" in applied, "the other campaign is applied as usual"
+    assert "campaign kyrk finished 2026-09-08, unchanged, left alone" in (
+        capsys.readouterr().out
+    )
+
+
+def test_a_campaign_that_failed_is_also_finished(tmp_path, cluster):
+    """A campaign that gave up is over too: re-running it is the same GPU
+    bill for the same failures."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    cluster.live = [_record("kyrk"), _status("kyrk", "PartiallyFailed")]
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert "kyrk" not in [c[2] for c in cluster.of("apply")]
+
+
+def test_a_running_campaign_is_applied_as_before(tmp_path, cluster):
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    cluster.live = [_record("kyrk"), _status("kyrk", "Running")]
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert "kyrk" in [c[2] for c in cluster.of("apply")]
+
+
+def test_a_campaign_with_no_record_at_all_is_applied(tmp_path, cluster):
+    """A campaign nobody has ever applied has no status ConfigMap."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert "kyrk" in [c[2] for c in cluster.of("apply")]
+
+
+def test_a_finished_campaign_whose_volumes_moved_is_still_applied(tmp_path, cluster):
+    """`rendered/` is what the append-only rule compares against, and this
+    repo's rendered/ was written by this very run -- so a live record whose
+    volumes.txt disagrees is a campaign that was changed outside it. Left to
+    the apply (and to the append-only rule the next render runs)."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    cluster.live = [
+        _record("kyrk", "other\thttps://x/manifest\n"),
+        _status("kyrk", "Succeeded"),
+    ]
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert "kyrk" in [c[2] for c in cluster.of("apply")]

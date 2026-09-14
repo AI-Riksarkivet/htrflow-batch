@@ -275,6 +275,46 @@ def _provenance(repo: Path) -> dict[str, str]:
     }
 
 
+#: A campaign in one of these phases is over -- the read API will write
+#: nothing more about it (packages/web ``projection.FINISHED_PHASES``).
+_FINISHED_PHASES = ("Succeeded", "Failed", "PartiallyFailed")
+
+
+def _finished(cluster, name: str, volumes: str) -> str | None:
+    """One sentence when this campaign is over and unchanged, else ``None``.
+
+    The record outlives the Job (B76): past ``ttlSecondsAfterFinished``
+    there is no Job left to compare against, and an apply that simply
+    recreated it would re-run every volume and pay the whole GPU bill
+    again -- resume makes that cheap, not right. The status ConfigMap the
+    read API wrote says how the campaign ended and the campaign ConfigMap
+    says on which volumes; a volume list that has MOVED is not this
+    function's business, it is the append-only rule's, which ``_render``
+    already ran. There is deliberately no override flag: a campaign that
+    should run again is a new campaign.
+    """
+    status = cluster.get("ConfigMap", f"campaign-{name}{render.STATUS_SUFFIX}")
+    data = (status or {}).get("data") or {}
+    if data.get("phase") not in _FINISHED_PHASES:
+        return None
+    record = cluster.get("ConfigMap", f"campaign-{name}")
+    if ((record or {}).get("data") or {}).get("volumes.txt") != volumes:
+        return None
+    when = (data.get("finishedAt") or "")[:10] or "earlier"
+    done, total = data.get("volumesDone", "?"), data.get("volumesTotal", "?")
+    return (
+        f"campaign {name} finished {when}, unchanged, left alone "
+        f"({done}/{total} volumes)"
+    )
+
+
+def _campaign_of(obj: dict) -> str:
+    """Which campaign a rendered object belongs to: its Job is named after
+    the campaign, its ConfigMap is that name with ``campaign-`` in front."""
+    name = obj["metadata"]["name"]
+    return name.removeprefix("campaign-") if obj["kind"] == "ConfigMap" else name
+
+
 def _cluster(namespace: str):
     """The API-server adapter, behind a function: `validate` and `render`
     never touch a cluster (nor pay the client's import), and a test swaps
@@ -335,8 +375,21 @@ def _apply(
             # pause sync.
             jobs: list[tuple[dict, bool]] = []
             prov = _provenance(repo)
+            # Asked before anything is sent, so a finished campaign's
+            # ConfigMap is not re-stamped with a new apply time either.
+            done: set[str] = set()
+            for obj in campaigns:
+                if obj["kind"] != "ConfigMap":
+                    continue
+                name = _campaign_of(obj)
+                said = _finished(cluster, name, obj["data"]["volumes.txt"])
+                if said is not None:
+                    done.add(name)
+                    print(said)
             for objects, is_campaign in ((pipelines, False), (campaigns, True)):
                 for obj in objects:
+                    if is_campaign and _campaign_of(obj) in done:
+                        continue
                     if is_campaign and obj["kind"] == "ConfigMap":
                         obj["metadata"].setdefault("annotations", {}).update(prov)
                     live = cluster.apply(obj)
