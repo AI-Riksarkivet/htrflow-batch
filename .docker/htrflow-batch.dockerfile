@@ -124,14 +124,15 @@ COPY packages/wrapper /opt/wrapper
 RUN uv pip install --python /app/.venv/bin/python --no-cache --no-deps /opt/wrapper
 
 # arm64 only, and after the wrapper install so these versions are the ones
-# that survive. Three extras the locally built base does not carry:
+# that survive. Two extras the locally built base does not carry:
 #   * triton JIT-compiles its CUDA utils (a CPython extension) at runtime —
 #     it needs a C compiler and Python headers or TrOCR generation dies with
 #     "Failed to find C compiler" on the GPU path;
 #   * microsoft/trocr-base-handwritten ships only a slow tokenizer;
-#     transformers needs sentencepiece to convert it;
-#   * transformers 5.x dropped that slow->fast conversion, which models
-#     without tokenizer.json rely on; upstream htrflow targets the 4.x line.
+#     transformers needs sentencepiece to convert it — and 5.x dropped that
+#     conversion, one more reason the line below is a deliberate choice.
+# transformers itself is NOT here: it is installed for both architectures
+# from TRANSFORMERS_VERSION, in the step that follows.
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
       apt-get update && apt-get install -y --no-install-recommends \
         gcc libc6-dev python3.10-dev \
@@ -158,8 +159,8 @@ RUN uv pip install --python /app/.venv/bin/python --no-cache \
 # predates: pillow and Brotli. The `wrapper-image` group in uv.lock pins them
 # (pinned, hashed), and they go in last so they are the versions that survive.
 # Both are leaves (--no-deps). Not here: py7zr, which pagexml-tools caps below
-# 0.21, and transformers, whose fixes are 5.x only (see the arm64 step above);
-# those wait for htrflow.
+# 0.21, and transformers, which has a step and a build argument of its own
+# above; py7zr waits for htrflow.
 RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
     --mount=type=bind,source=pyproject.toml,target=/opt/workspace/pyproject.toml \
     --mount=type=bind,source=packages/wrapper/pyproject.toml,target=/opt/workspace/packages/wrapper/pyproject.toml \
