@@ -73,7 +73,7 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | `pipeline:` is required and must name a file in `pipelines/` | Reported as a validation error; nothing renders |
 | Every volume needs `manifest:` or a non-empty `images:` (unless it is a bare string) | Validation error |
 | `manifest:` and every `images:` entry are absolute `http://` or `https://` URLs | Validation error (`must be an http(s) URL`) |
-| `manifest:` and every `images:` entry are free of whitespace | Validation error naming the volume and which image it is (`percent-encode it as %20`). `volumes.txt` separates an `images:` volume's URLs with a space, and a URL may never contain one — a comma cannot do that job, because a IIIF Image API size request writes the size into the path (`/full/2500,/0/default.jpg`) |
+| `manifest:` and every `images:` entry are free of whitespace | Validation error naming the volume and which image it is (`percent-encode a space as %20`). `volumes.txt` separates an `images:` volume's URLs with a space, and a URL may never contain one — a comma cannot do that job, because a IIIF Image API size request writes the size into the path (`/full/2500,/0/default.jpg`) |
 | Volume ids match `[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?` — alphanumeric at both ends, ≤63 chars | Validation error (`unsafe volume id`). This is the Kubernetes **label-value** alphabet, not a DNS-1123 label: uppercase is allowed |
 | Volume ids are unique within a campaign | Validation error (`duplicate volume id`) |
 | `window:`, when set, is a positive integer | Validation error |

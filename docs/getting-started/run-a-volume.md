@@ -74,7 +74,7 @@ shapes:
   in half. Whitespace is the one character a URL can never carry, so
   `validate` refuses an `images:` entry (or a `manifest:`) that contains a
   space, tab or newline and names the volume and the image — percent-encode
-  it as `%20`.
+  a space as `%20`.
 
 **How index *i* reads line *i*.** The campaign Job's container command
 (`manifests/campaign-job.yaml`) does the whole job in one shell line before
@@ -92,7 +92,7 @@ case "$src" in images:*) export IMAGES="${src#images:}" ;; *) export IIIF_MANIFE
 line 1 (`+ 1`), and so on — index 0 above gets `VOLUME_REF=R0001203` and
 `IIIF_MANIFEST_URL=https://lbiiif.riksarkivet.se/arkis!R0001203/manifest`;
 index 1 gets `VOLUME_REF=loose-scans` and
-`IMAGES=https://example.org/scan1.jpg,https://example.org/scan2.jpg`. An
+`IMAGES=https://example.org/scan1.jpg https://example.org/scan2.jpg`. An
 index past the end of the file (should never happen — `completions` is set
 from the same volume list) gets an empty `line` and exits 13, `FailIndex`,
 rather than running the wrapper with nothing to work on.
