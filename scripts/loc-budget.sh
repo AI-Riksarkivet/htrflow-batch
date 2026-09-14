@@ -163,7 +163,10 @@ fail=0
 # it is defined -- the converter's `models.split_image_urls` -- so this copy
 # of it says only why a copy exists (the GPU image must not carry the
 # converter's Kubernetes client) and points at the tests that pin the two.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2742
+# 2742 -> 2750 (2026-09-14, hf token): the warm-up's one line saying a Hub
+# token is present, and the comment fixing what that line may never say --
+# the value, its length, or whose it is.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

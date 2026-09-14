@@ -243,3 +243,24 @@ def test_warmup_sigterm_writes_a_termination_message_and_exits_143(
     }
     assert not (tmp_path / "warmup" / "demo-v1.done").exists()
     assert signal.getsignal(signal.SIGTERM) is before  # handler restored
+
+
+def test_warmup_says_a_token_is_present_without_saying_what_it_is(tmp_path, caplog):
+    """A private model that resolved, or a 404 on one that did not, is read
+    back from the warm-up pod's log; one line saying the token was there is
+    the difference between the two. The value never goes in the log, and
+    neither does its length -- that is a hint at which token it is."""
+    secret = "hf_ThisIsNotARealToken"
+    env = {**_env(tmp_path), "HF_TOKEN": secret}
+    with caplog.at_level(logging.INFO, logger="htrflow_batch.warmup"):
+        assert main(env, load=lambda _: None) == EXIT_OK
+    said = [m for m in caplog.messages if "HF_TOKEN" in m]
+    assert len(said) == 1, caplog.messages
+    assert secret not in caplog.text
+    assert str(len(secret)) not in said[0]
+
+
+def test_warmup_says_nothing_about_a_token_when_there_is_none(tmp_path, caplog):
+    with caplog.at_level(logging.INFO, logger="htrflow_batch.warmup"):
+        assert main(_env(tmp_path), load=lambda _: None) == EXIT_OK
+    assert [m for m in caplog.messages if "HF_TOKEN" in m] == []

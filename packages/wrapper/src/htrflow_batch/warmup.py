@@ -117,6 +117,14 @@ def _warmup(env: Mapping[str, str], load: Callable[[str], object]) -> int:
         return _fail(
             env, "HF_HUB_OFFLINE is set: a warm-up must be able to reach HF Hub"
         )
+    if env.get("HF_TOKEN"):
+        # Presence, and nothing else: not the value, not its length (which
+        # says which kind of token it is), not the user it belongs to. The
+        # warm-up pod mounts no S3 Secret, so it ships no run log -- this
+        # line lives in `kubectl logs`, and it is the only place a reader
+        # can see whether the private model resolved because a token was
+        # there, or 404'd because the Secret never reached the pod.
+        log.info("HF_TOKEN is set: downloading as an authenticated Hub user")
     pipeline_path = env.get("PIPELINE_PATH", "")
     if not pipeline_path or not Path(pipeline_path).is_file():
         return _fail(env, f"PIPELINE_PATH missing or not a file: {pipeline_path!r}")

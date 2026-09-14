@@ -99,7 +99,7 @@ template` refuses it, **nobody** = convention only.
 | `IMAGE_DIGEST` | env | `unknown` | — | no secret — nobody |
 | `HTRFLOW_BASE_REVISION` | env | `unknown` | — | no secret — nobody |
 
-`Config` is not the whole wrapper env: these 5
+`Config` is not the whole wrapper env: these 6
 names are read directly, by the warm-up entrypoint or by the Job
 skeleton, never as a campaign setting.
 
@@ -109,6 +109,7 @@ skeleton, never as a campaign setting.
 |---|---|---|
 | `TERMINATION_LOG_PATH` | `main.py` | the path Kubernetes sets, not chosen here |
 | `HF_HUB_OFFLINE` | `warmup.py` | the warm-up entrypoint's own contract |
+| `HF_TOKEN` | `warmup.py` | from `hf_token_secret`; read only to log it is set |
 | `HF_HOME` | `warmup.py` | the warm-up entrypoint's own contract |
 | `PIPELINE_ID` | `warmup.py` | the warm-up entrypoint's own contract |
 | `PIPELINE_PATH` | `warmup.py` | the warm-up entrypoint's own contract |

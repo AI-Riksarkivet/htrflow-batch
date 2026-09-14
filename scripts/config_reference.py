@@ -82,6 +82,7 @@ _WARMUP = "the warm-up entrypoint's own contract"
 ALSO_READ = [
     ("TERMINATION_LOG_PATH", "main.py", "the path Kubernetes sets, not chosen here"),
     ("HF_HUB_OFFLINE", "warmup.py", _WARMUP),
+    ("HF_TOKEN", "warmup.py", "from `hf_token_secret`; read only to log it is set"),
     ("HF_HOME", "warmup.py", _WARMUP),
     ("PIPELINE_ID", "warmup.py", _WARMUP),
     ("PIPELINE_PATH", "warmup.py", _WARMUP),
