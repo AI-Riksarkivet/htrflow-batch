@@ -122,7 +122,7 @@ rather than running the wrapper with nothing to work on.
   own Job and ConfigMap.
 - **A single environment string**: `IMAGES` is exported as one environment
   value, and Linux caps any single argument or environment string at
-  128 KiB (`MAX_ARG_STRLEN`). 2 000 URLs at 100 characters each is already
+  128 KiB (`MAX_ARG_STRLEN`, inside the `ARG_MAX` budget). 2 000 URLs at 100 characters each is already
   200 kB — over the limit on one volume alone, regardless of the ConfigMap
   byte budget above. `validate` does not check this: the `exec` fails with
   `Argument list too long` before the wrapper starts. Split an oversized
@@ -185,7 +185,7 @@ so its settings are namespaced.
 | `AWS_SHARED_CREDENTIALS_FILE` | *(boto3 default)* | Read by boto3, not `Config`. Jobs set `/secrets/s3/credentials` — the mounted Secret file; credentials are never env |
 | `S3_PREFIX` | `""` | Extra prefix before `<pipeline>/<volume>/` (and before `sources/`); leading and trailing `/` are stripped. The converter always sets it to `<namespace>/`; empty only when the wrapper is run by hand |
 | `MAX_IMAGE_WIDTH` | `2500` | Downscale request sent to the IIIF Image API (`/full/{w},/`; `max` for narrower canvases; a 400 falls back to `max`). Service-less canvases are fetched at native size |
-| `RESUME` | `true` | Skip pages that already have **both** PAGE and ALTO in S3 and whose `page_sources` URL is unchanged |
+| `RESUME` | `true` | Skip pages that already have **both** PAGE and ALTO in S3 and whose `page_sources` URL is unchanged. The run log says `[<volume>] resume: <n> done, <m> to process` |
 | `LOOKAHEAD_PAGES` | `64` | Prefetch depth of the download pipeline |
 | `MAX_PAGES` | `0` | Truncate the volume (0 = all pages) — the knob for a fast end-to-end check of one or a handful of pages |
 | `WORKDIR_PATH` | `/work` | Scratch dir (Jobs mount a 2 Gi memory-backed emptyDir) |
@@ -205,6 +205,14 @@ renders it as the pod's `activeDeadlineSeconds` (`converter.yaml`'s
 the wrapper, which takes the `143` path below.
 
 Results land at `{S3_PREFIX}/{PIPELINE_ID}/{VOLUME_REF}/…` (`Config.volume_prefix`).
+
+**Hand runs.** Run by hand, outside a rendered Job, the wrapper needs the six
+required vars and a credentials source; the knobs worth touching are
+`MAX_PAGES` (cap it to 1 or a handful of pages, check the output, then run
+the real volume with `MAX_PAGES=0`), `MAX_IMAGE_WIDTH`, `RESUME`,
+`MANIFEST_MAX_BYTES`/`FETCH_MAX_BYTES` and `LOG_SHIP_SECONDS`. The compose
+stack does exactly this without a cluster — see
+[Try it](../getting-started/try-it.md#without-a-cluster-docker-compose).
 
 **Workdir bound.** The images in flight are what sits in `WORKDIR_PATH`:
 `LOOKAHEAD_PAGES` × `FETCH_MAX_BYTES` — 64 × 64 MiB = 4 GiB worst case
