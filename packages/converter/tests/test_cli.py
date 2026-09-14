@@ -493,3 +493,36 @@ def test_a_converter_yaml_setting_is_not_a_changed_recipe(tmp_path, capsys):
     cfg.write_text(cfg.read_text() + "hf_token_secret: hf-token\n")
     assert main(["render", str(repo), "--out", str(out)]) == 0, capsys.readouterr().out
     assert "HF_TOKEN" in (out / "pipelines" / "demo-v1.yaml").read_text()
+
+
+def test_reordering_the_keys_of_a_step_is_not_a_changed_recipe(tmp_path, capsys):
+    """The recipe is compared parsed, never as bytes: `settings:` written
+    above `step:` is the same pipeline, and a PyYAML that spells a mapping
+    differently one release from now must not flag every untouched file."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    out = repo / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    path = repo / "pipelines" / "demo-v1.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["steps"] = [dict(reversed(list(s.items()))) for s in doc["steps"]]
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    capsys.readouterr()
+
+    assert main(["render", str(repo), "--out", str(out)]) == 0, capsys.readouterr().out
+
+
+def test_a_changed_model_id_is_a_changed_recipe(tmp_path, capsys):
+    """The other half: a step that says something else IS a new recipe."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    out = repo / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    path = repo / "pipelines" / "demo-v1.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["steps"][0]["settings"]["model_settings"]["model"] = "Riksarkivet/other-1"
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    capsys.readouterr()
+
+    assert main(["render", str(repo), "--out", str(out)]) == 1
+    assert "pipeline demo-v1 changed (steps)" in capsys.readouterr().out
