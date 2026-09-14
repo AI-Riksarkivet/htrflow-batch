@@ -50,3 +50,7 @@ dev = [
 docs = [
     "zensical==0.0.62",
 ]
+wrapper-image = [
+    "brotli>=1.2.0",
+    "pillow>=12.3.0",
+]

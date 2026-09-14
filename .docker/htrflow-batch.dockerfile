@@ -78,6 +78,16 @@ ARG TARGETARCH
 # uv 0.12.6 (multi-arch index digest)
 COPY --from=ghcr.io/astral-sh/uv:0.12.6@sha256:88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d /uv /bin/uv
 
+# The base's Ubuntu packages lag behind jammy-security (gnupg and openssl
+# carry Trivy HIGH findings that Ubuntu has already fixed). Upgrade from the
+# Ubuntu archive only: SourceParts=/dev/null hides /etc/apt/sources.list.d,
+# where the NVIDIA CUDA repository lives, so no CUDA, driver or cuDNN
+# package can move with it.
+RUN export DEBIAN_FRONTEND=noninteractive \
+    && apt-get update -o Dir::Etc::SourceParts=/dev/null \
+    && apt-get upgrade -y -o Dir::Etc::SourceParts=/dev/null \
+    && rm -rf /var/lib/apt/lists/*
+
 # torch: amd64 swaps in cu128 builds (Blackwell sm_120 kernels); arm64 pins
 # what the base's own lock already resolved from PyPI (CUDA 13 aarch64).
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
@@ -129,6 +139,24 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
       && uv pip install --python /app/.venv/bin/python --no-cache \
            "sentencepiece==0.2.2" "transformers==4.57.6"; \
     fi
+
+# Packages of the base's venv with published fixes that htrflow's own lock
+# predates: pillow and Brotli. The `wrapper-image` group in uv.lock pins them
+# (pinned, hashed), and they go in last so they are the versions that survive.
+# Both are leaves (--no-deps). Not here: py7zr, which pagexml-tools caps below
+# 0.21, and transformers, whose fixes are 5.x only (see the arm64 step above);
+# those wait for htrflow.
+RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=/opt/workspace/pyproject.toml \
+    --mount=type=bind,source=packages/wrapper/pyproject.toml,target=/opt/workspace/packages/wrapper/pyproject.toml \
+    --mount=type=bind,source=packages/converter/pyproject.toml,target=/opt/workspace/packages/converter/pyproject.toml \
+    --mount=type=bind,source=packages/web/pyproject.toml,target=/opt/workspace/packages/web/pyproject.toml \
+    cd /opt/workspace \
+    && uv export --locked --only-group wrapper-image --no-emit-project \
+         -o /tmp/image-requirements.txt \
+    && uv pip install --python /app/.venv/bin/python --no-cache --no-deps --require-hashes \
+         -r /tmp/image-requirements.txt \
+    && rm /tmp/image-requirements.txt
 
 # The release this image is published under: the publish workflow passes its
 # run tag, `make build-*` passes IMAGE_TAG, and a build that passes nothing
