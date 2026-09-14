@@ -764,7 +764,7 @@ describe("CampaignCard", () => {
     );
   });
 
-  test("a pipeline with no models renders no Models line", async () => {
+  test("a pipeline with no models renders no models in the quiet line", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -776,9 +776,53 @@ describe("CampaignCard", () => {
         }),
       ),
     );
-    render(CampaignCard, { job });
+    const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    expect(screen.queryByText("Models")).toBeNull();
+    expect(container.querySelector(".models")).toBeNull();
+    // The quiet line stays -- it still carries the dates.
+    expect(container.querySelector(".card-meta")).not.toBeNull();
+  });
+
+  // The product owner, 2026-09-14, on the live status page: "can we put the
+  // create date somewhere else? the layout is a bit bad; also the list of
+  // used models is a bit dominant." Both now sit in one small muted line
+  // under the header row, which is left reading name -> status -> counts.
+  test("the created date and the models share one quiet line below the header", async () => {
+    const detail = {
+      ...detail0,
+      pipelineYaml: `steps:
+- step: Segmentation
+  settings:
+    model_settings:
+      model: Riksarkivet/yolov9-regions-1
+`,
+      failures: [],
+      volumes: [],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(detail)),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const meta = container.querySelector(".card-meta") as HTMLElement;
+    const created = within(meta).getByTitle("2026-01-01T00:00:00Z");
+    expect(created.tagName).toBe("TIME");
+    expect(created).toHaveAttribute("datetime", "2026-01-01T00:00:00Z");
+    // Same line, no chip styling on it, and the link is still a link.
+    const link = within(meta).getByRole("link", {
+      name: "yolov9-regions-1 unpinned",
+    });
+    expect(link.className).not.toContain("chip");
+    expect(meta.querySelector(".models")).toHaveAttribute(
+      "title",
+      "Models: yolov9-regions-1 unpinned",
+    );
+    // ...and neither of them is in the header row any more.
+    const header = container.querySelector(".camp") as HTMLElement;
+    expect(header.textContent).not.toContain("created");
+    expect(header.textContent).not.toContain("Models");
   });
 
   test("no pipeline YAML: the chip is a static label, not a button", async () => {
