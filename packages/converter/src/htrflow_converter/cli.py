@@ -644,7 +644,11 @@ def _apply(
                 # Refused everything is not "some objects were refused", it
                 # is the total failure the old code always reported: a Role
                 # without apply, a webhook rejecting the lot. Same exit 1.
-                code = REFUSED if applied else 1
+                # A pause that is not enforced is exit 1 too, and it outranks
+                # a refused object: a campaign git says is paused that is
+                # running anyway is burning GPU right now, while a refused
+                # object is a change still to make.
+                code = REFUSED if applied and not failed else 1
                 print(
                     _REFUSED_SUMMARY.format(
                         n=len(refused),
