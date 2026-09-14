@@ -359,7 +359,7 @@ def test_volume_source_line_images_shape():
     )
     assert (
         v.source_line()
-        == "R1\timages:https://example.org/a.jpg,https://example.org/b.jpg"
+        == "R1\timages:https://example.org/a.jpg https://example.org/b.jpg"
     )
 
 
