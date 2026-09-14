@@ -259,9 +259,12 @@ export function describeApiError(e: unknown, showingLast: boolean): string {
     );
   }
   if (e.message === "HTTP 404") {
+    // Not an aged-out Job: a campaign whose Job its TTL reaped is still
+    // served from the record its ConfigMaps keep. Only deleting the
+    // campaign file from the repo removes those, so a 404 is that.
     return (
-      "This campaign no longer exists (finished campaigns are removed " +
-      "after 24 hours)."
+      "This campaign is gone: its campaign file has been removed from the " +
+      "campaigns repo."
     );
   }
   // An HTTP status is worth showing an operator; a raw fetch error string

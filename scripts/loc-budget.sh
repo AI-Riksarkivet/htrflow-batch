@@ -590,7 +590,12 @@ check web       "$(count packages/web/src -name '*.py')" 1434
 # The motion work and the reaped-campaign chip both grew CampaignCard, and
 # both survive: a card can pulse while it runs and say "job removed" once its
 # Job is gone, and the phase chip carries one of the two at a time.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3820
+# 3820 -> 3823 (2026-09-14, merge follow-up): the 404 sentence stopped saying
+# a finished campaign is removed after 24 hours -- wrong twice, since the TTL
+# is configurable and a reaped campaign is still served from its record. It
+# names the one thing a 404 now means, with the comment saying why the Job's
+# TTL is not it.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3823
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

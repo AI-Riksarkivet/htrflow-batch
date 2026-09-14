@@ -238,8 +238,8 @@ describe("describeApiError", () => {
 
   test("a 404 is a campaign that is gone, not an outage", () => {
     expect(describeApiError(new ApiUnreachable("HTTP 404"), true)).toBe(
-      "This campaign no longer exists (finished campaigns are removed after " +
-        "24 hours).",
+      "This campaign is gone: its campaign file has been removed from the " +
+        "campaigns repo.",
     );
   });
 

@@ -430,9 +430,10 @@ describe("CampaignCard", () => {
     expect(screen.getAllByRole("row")).toHaveLength(251); // still both pages
   });
 
-  test("a 404 says the campaign has aged out, not that the service is down", async () => {
-    // ttlSecondsAfterFinished reaps a finished campaign after 24 h, so a
-    // card left open on a screen overnight is the ordinary way to meet this.
+  test("a 404 says the campaign is gone, not that the service is down", async () => {
+    // Not the Job's TTL: a reaped campaign is still served from the record
+    // its ConfigMaps keep. A 404 means the campaign file left the repo, and
+    // a card left open on a screen is the ordinary way to meet that.
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => jsonResponse("job not found", 404)),
@@ -441,8 +442,8 @@ describe("CampaignCard", () => {
     await vi.advanceTimersByTimeAsync(0);
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent(
-      "This campaign no longer exists (finished campaigns are removed after " +
-        "24 hours).",
+      "This campaign is gone: its campaign file has been removed from the " +
+        "campaigns repo.",
     );
     expect(alert).not.toHaveTextContent(/404|not found/);
   });
