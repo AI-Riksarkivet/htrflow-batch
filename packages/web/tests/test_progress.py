@@ -34,6 +34,8 @@ PROGRESS = {
 
 MANIFEST = {
     "pages": 3,
+    "pages_ok": 1,
+    "pages_failed": 1,
     "results": {
         "0001": {"status": "ok"},
         "0002": {"status": "skipped"},
@@ -103,6 +105,16 @@ def test_a_volume_finished_by_an_older_wrapper_falls_back_to_the_manifest():
         "viewerPublished": True,
     }
     assert asked[-1].endswith("manifest.json")
+
+
+def test_a_volume_that_completed_with_failed_pages_still_reads_done():
+    """A volume completes with its failed pages recorded (the product owner,
+    2026-09-14), so manifest.json exists for a volume that lost a page: the
+    row is done AND says how many pages it lost, never one without the
+    other."""
+    r, _ = reader({f"{BASE}/vol0/manifest.json": httpx.Response(200, json=MANIFEST)})
+    row = r.fetch(BASE, "vol0", "done")
+    assert (row["stage"], row["done"], row["total"], row["failed"]) == ("done", 2, 3, 1)
 
 
 def test_a_done_volume_prefers_its_progress_file():
