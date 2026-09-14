@@ -735,3 +735,92 @@ def test_release_pipeline_survives_a_step_that_keeps_no_model(monkeypatch):
     after = SimpleNamespace(model="weights")
     driver.release_pipeline(SimpleNamespace(steps=[_NoModel(), after]))
     assert after.model is None  # the refusing step must not shield the rest
+
+
+def _inject_step_building_fake(monkeypatch) -> list:
+    """A fake htrflow whose ``Pipeline.from_config`` builds its steps the way
+    the real one does (pipeline.py): one module-level ``init_step`` call per
+    YAML step, collected into a list ``from_config`` keeps to itself. Returns
+    the steps it actually built, in order."""
+    import yaml
+
+    built = []
+
+    class _Step:
+        def __init__(self, name):
+            self.name = name
+            self.model = f"weights-{name}"
+
+    fake_pipeline_pipeline = ModuleType("htrflow.pipeline.pipeline")
+
+    def init_step(name):
+        if name == "boom":
+            raise NotImplementedError("Model X is not supported")
+        step = _Step(name)
+        built.append(step)
+        return step
+
+    class MockPipeline:
+        def __init__(self, steps=None):
+            self.steps = steps or []
+
+        @staticmethod
+        def from_config(path):
+            config = yaml.safe_load(open(path))
+            # resolved from the module global on every call, as htrflow's own
+            # `from htrflow.pipeline.steps import init_step` name is
+            return MockPipeline(
+                [fake_pipeline_pipeline.init_step(s) for s in config["steps"]]
+            )
+
+    fake_pipeline_pipeline.Pipeline = MockPipeline
+    fake_pipeline_pipeline.init_step = init_step
+    fake_steps = ModuleType("htrflow.pipeline.steps")
+    fake_steps.Export = type("Export", (), {})
+    monkeypatch.setitem(sys.modules, "htrflow", ModuleType("htrflow"))
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline", ModuleType("htrflow.pipeline"))
+    monkeypatch.setitem(
+        sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline
+    )
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline.steps", fake_steps)
+    return built
+
+
+def test_build_pipeline_releases_the_steps_it_built_before_a_failure(
+    tmp_path, monkeypatch
+):
+    """W1: htrflow's Inference.__init__ starts a daemon thread bound to the
+    step, so a construction that raises half-way leaves every finished step
+    -- and its model weights -- reachable forever. A rebuild that keeps
+    failing would take the GPU out with it."""
+    from htrflow_batch import driver
+
+    built = _inject_step_building_fake(monkeypatch)
+    pipeline_yaml = tmp_path / "pipeline.yaml"
+    pipeline_yaml.write_text("steps: [ok, boom]")
+
+    with pytest.raises(ValueError, match="bad pipeline config"):
+        driver.build_pipeline(str(pipeline_yaml))
+
+    assert [step.name for step in built] == ["ok"]
+    assert built[0].model is None
+
+
+def test_build_pipeline_keeps_the_steps_of_a_pipeline_that_built(tmp_path, monkeypatch):
+    """The teardown must reach only a failed construction: a pipeline that
+    built is returned with its weights, and htrflow's own ``init_step`` is
+    back where it was."""
+    from htrflow_batch import driver
+
+    built = _inject_step_building_fake(monkeypatch)
+    from htrflow.pipeline import pipeline as mod  # the fake injected above
+
+    original = mod.init_step
+    pipeline_yaml = tmp_path / "pipeline.yaml"
+    pipeline_yaml.write_text("steps: [ok, fine]")
+
+    pipeline = driver.build_pipeline(str(pipeline_yaml))
+
+    assert [step.model for step in built] == ["weights-ok", "weights-fine"]
+    assert len(pipeline.steps) == 2
+    assert mod.init_step is original  # swapped only for the construction

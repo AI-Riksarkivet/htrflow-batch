@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import gc
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
@@ -14,6 +15,34 @@ from .stream import discard
 #: Every format the wrapper appends an Export step for; process_page requires
 #: all of them and store.upload_page uploads them page-first.
 EXPECTED_FORMATS = ("alto", "page")
+
+
+@contextmanager
+def _tracked_steps(built: list):
+    """Record every step htrflow builds, so a failed construction can be torn
+    down (W1). ``Pipeline.from_config`` owns the loop that calls ``init_step``
+    and keeps its results in a local list, so the only way to reach the steps
+    made before the failure is to see them go past: the name is swapped for
+    the duration of the construction and put back whatever happens. Only the
+    main thread builds pipelines, and an htrflow that does not expose the name
+    is simply not tracked."""
+    from htrflow.pipeline import pipeline as module  # ty: ignore[unresolved-import]
+
+    original = getattr(module, "init_step", None)
+    if original is None:
+        yield
+        return
+
+    def tracking(step_config):
+        step = original(step_config)
+        built.append(step)
+        return step
+
+    module.init_step = tracking
+    try:
+        yield
+    finally:
+        module.init_step = original
 
 
 def build_pipeline(pipeline_path: str):
@@ -36,17 +65,29 @@ def build_pipeline(pipeline_path: str):
     except (yaml.YAMLError, OSError) as e:
         raise ValueError(f"bad pipeline config: {e}") from e
 
+    built: list = []
     try:
-        try:
-            return Pipeline.from_config(str(pipeline_path))
-        except TypeError:
-            # older htrflow builds: from_config takes a parsed config dict
-            return Pipeline.from_config(config)
-    except (KeyError, NotImplementedError) as e:
+        with _tracked_steps(built):
+            try:
+                return Pipeline.from_config(str(pipeline_path))
+            except TypeError:
+                # older htrflow builds: from_config takes a parsed config dict
+                return Pipeline.from_config(config)
+    except BaseException as e:
+        # W1 (2026-09-14, audit): a construction that raises part-way has
+        # already built every step before the failing one, and each Inference
+        # among them started a daemon thread bound to itself -- so nothing
+        # collects them and their weights sit on the GPU for the life of the
+        # process. A rebuild that keeps failing (main.py) would repeat that
+        # per page until the GPU is out of memory, so the partial pipeline is
+        # torn down here, where it is still reachable.
+        release_steps(built)
         # htrflow: KeyError from STEPS[name] for an unknown step, and
         # NotImplementedError from get_model_by_name for an unknown model
         # class. Config mistakes -> PERMANENT, like malformed YAML above.
-        raise ValueError(f"bad pipeline config: unknown step or model: {e}") from e
+        if isinstance(e, (KeyError, NotImplementedError)):
+            raise ValueError(f"bad pipeline config: unknown step or model: {e}") from e
+        raise
 
 
 def load_pipeline(pipeline_path: str, out_dir: Path):
@@ -54,17 +95,21 @@ def load_pipeline(pipeline_path: str, out_dir: Path):
     from htrflow.pipeline.steps import Export  # ty: ignore[unresolved-import]
 
     pipeline = build_pipeline(pipeline_path)
-    for step in pipeline.steps:
-        if isinstance(step, Export):
-            raise ValueError(
-                "pipeline YAML must not contain Export steps; "
-                "the wrapper appends them (docs: wrapper)"
-            )
-    exports = [Export(str(out_dir / fmt), fmt) for fmt in EXPECTED_FORMATS]
-    # rebuild so Pipeline.__init__ wires the new steps the same way as the
-    # originals (older htrflow sets parent_pipeline there; append leaves the
-    # Export orphaned and its metadata None)
-    return Pipeline(list(pipeline.steps) + exports)
+    try:
+        for step in pipeline.steps:
+            if isinstance(step, Export):
+                raise ValueError(
+                    "pipeline YAML must not contain Export steps; "
+                    "the wrapper appends them (docs: wrapper)"
+                )
+        exports = [Export(str(out_dir / fmt), fmt) for fmt in EXPECTED_FORMATS]
+        # rebuild so Pipeline.__init__ wires the new steps the same way as the
+        # originals (older htrflow sets parent_pipeline there; append leaves the
+        # Export orphaned and its metadata None)
+        return Pipeline(list(pipeline.steps) + exports)
+    except BaseException:
+        release_pipeline(pipeline)  # W1: the same leak, one construction later
+        raise
 
 
 def release_documents() -> None:
@@ -153,7 +198,13 @@ def release_pipeline(pipeline) -> None:
     again, so the models go now and the parked thread keeps only itself and
     that page's Document.
     """
-    for step in getattr(pipeline, "steps", ()):
+    release_steps(getattr(pipeline, "steps", ()))
+
+
+def release_steps(steps) -> None:
+    """The same for a bare list of steps: what a pipeline that never finished
+    being constructed leaves behind (W1)."""
+    for step in steps:
         try:
             step.model = None
         except Exception:

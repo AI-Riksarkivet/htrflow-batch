@@ -166,7 +166,14 @@ fail=0
 # 2742 -> 2750 (2026-09-14, hf token): the warm-up's one line saying a Hub
 # token is present, and the comment fixing what that line may never say --
 # the value, its length, or whose it is.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
+# 2750 -> 2801 (2026-09-14, audit W1): a pipeline construction that raises
+# part-way is torn down. htrflow's Inference.__init__ starts a daemon thread
+# bound to the step, so every step built before the failure keeps its model
+# weights on the GPU forever, and a rebuild that keeps failing repeats that
+# per page. Most of the lines are the tracking context manager and the
+# paragraph saying why the wrapper swaps a name in another package's module
+# at all: from_config owns the loop and keeps the partial list to itself.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2801
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
