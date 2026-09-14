@@ -48,6 +48,53 @@ class ClusterError(Exception):
     """A cluster problem this module already has a one-sentence answer for."""
 
 
+class ImmutableField(ClusterError):
+    """An apply the API server refused because it would change a field that
+    cannot change once the object exists.
+
+    A class of its own rather than one more sentence, because ``cli._apply``
+    ACTS on it and the right action differs by object: a warm-up Job is
+    idempotent and holds nothing (its marker sits on the cache PVC), so a
+    changed one is deleted and created again; a campaign Job's completed
+    indexes and results ARE the campaign, so that one is reported and left
+    exactly where it is.
+    """
+
+    #: The field a Job refuses most: its pod template is fixed at create.
+    POD_TEMPLATE = "spec.template"
+
+    def __init__(self, kind: str, name: str, fields: tuple[str, ...]) -> None:
+        self.kind, self.name, self.fields = kind, name, fields
+        if self.POD_TEMPLATE in fields:
+            what = "the pod template changed and a Job's pod template is immutable"
+        else:
+            what = f"{', '.join(fields)} changed and is immutable"
+        super().__init__(
+            f"{kind} {name}: {what} once the Job exists — a pipeline id is a "
+            "permanent name for a recipe, so a changed recipe is a new "
+            "pipeline file, and a Job that has to change is deleted and "
+            "created again"
+        )
+
+
+def _immutable_fields(e: ApiException) -> tuple[str, ...]:
+    """The fields an ``is invalid`` refusal says cannot change.
+
+    Read out of ``details.causes``, never out of ``message``: the message
+    quotes the whole rejected value back, and for a pod template that is a
+    page of Go struct dump (``core.PodTemplateSpec{ObjectMeta:v1.ObjectMeta
+    {…}}``) with the three words that matter at the end of it.
+    """
+    if e.status != 422 or not e.body:
+        return ()
+    with contextlib.suppress(json.JSONDecodeError, TypeError, KeyError):
+        causes = json.loads(e.body)["details"]["causes"]
+        return tuple(
+            c["field"] for c in causes if "immutable" in (c.get("message") or "")
+        )
+    return ()
+
+
 def _api_error(
     verb: str, kind: str, name: str, namespace: str, e: ApiException
 ) -> ClusterError:
@@ -63,6 +110,9 @@ def _api_error(
             "Kueue is not installed in this cluster (no workloads.kueue.x-k8s.io) "
             "— htrflow-campaigns apply needs it to honour suspend:"
         )
+    fields = _immutable_fields(e)
+    if fields:
+        return ImmutableField(kind, name, fields)
     message = ""
     if e.body:
         with contextlib.suppress(json.JSONDecodeError, TypeError, KeyError):

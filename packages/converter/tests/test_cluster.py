@@ -267,3 +267,67 @@ def test_the_workload_is_found_by_the_jobs_uid(cluster):
         "/apis/kueue.x-k8s.io/v1beta1/namespaces/htr-batch/workloads"
     )
     assert call["query"]["labelSelector"] == "kueue.x-k8s.io/job-uid=u9"
+
+
+def _immutable_refusal(field: str = "spec.template") -> ApiException:
+    """What the API server answers an apply that would change a Job's pod
+    template: 422 Invalid, the whole rejected template quoted back in the
+    message, and the field named in ``details.causes``."""
+    e = ApiException(status=422, reason="Unprocessable Entity")
+    e.body = json.dumps(
+        {
+            "kind": "Status",
+            "reason": "Invalid",
+            "message": (
+                'Job.batch "htr-warmup-e2e-vd" is invalid: spec.template: '
+                "Invalid value: core.PodTemplateSpec{ObjectMeta:v1.ObjectMeta"
+                '{Name:"", GenerateName:"", …}}: field is immutable'
+            ),
+            "details": {
+                "name": "htr-warmup-e2e-vd",
+                "group": "batch",
+                "kind": "Job",
+                "causes": [
+                    {
+                        "reason": "FieldValueInvalid",
+                        "message": "Invalid value: core.PodTemplateSpec{…}: "
+                        "field is immutable",
+                        "field": field,
+                    }
+                ],
+            },
+            "code": 422,
+        }
+    )
+    return e
+
+
+def test_a_refused_immutable_field_is_one_sentence_not_a_struct_dump():
+    """The live failure this exists for printed the whole rejected pod
+    template back as a page of Go struct dump. What a reader needs is the
+    object, the field, and the rule."""
+    from htrflow_converter.cluster import ImmutableField, _api_error
+
+    e = _api_error(
+        "apply", "Job", "htr-warmup-e2e-vd", "htr-batch", _immutable_refusal()
+    )
+    assert isinstance(e, ImmutableField)
+    assert e.fields == ("spec.template",)
+    assert str(e) == (
+        "Job htr-warmup-e2e-vd: the pod template changed and a Job's pod "
+        "template is immutable once the Job exists — a pipeline id is a "
+        "permanent name for a recipe, so a changed recipe is a new pipeline "
+        "file, and a Job that has to change is deleted and created again"
+    )
+    assert "PodTemplateSpec" not in str(e)
+
+
+def test_another_immutable_field_is_named_as_itself():
+    """Not only the pod template: moving a campaign between Kueue queues
+    changes an immutable label, and that refusal has to name the label."""
+    from htrflow_converter.cluster import ImmutableField, _api_error
+
+    field = "metadata.labels[kueue.x-k8s.io/queue-name]"
+    e = _api_error("apply", "Job", "kyrk", "htr-batch", _immutable_refusal(field))
+    assert isinstance(e, ImmutableField)
+    assert str(e).startswith(f"Job kyrk: {field} changed and is immutable")
