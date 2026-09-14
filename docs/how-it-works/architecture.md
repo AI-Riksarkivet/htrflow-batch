@@ -14,6 +14,8 @@ flowchart TB
     end
 
     subgraph cluster["Kubernetes cluster"]
+        KYV["Kyverno admission policies<br/>every Job, Pod and pipeline ConfigMap"]
+
         subgraph queueing["Kueue"]
             LQ["LocalQueue"] --> CQ["ClusterQueue<br/>quota: N x nvidia.com/gpu"]
         end
@@ -39,8 +41,10 @@ flowchart TB
 
     CAMP -->|"PR: validate"| CONV
     CONV -->|"main: render, commit rendered/"| git
-    git -->|"Argo CD or htrflow-campaigns apply"| LQ
-    CONV -.->|"rendered once per pipeline"| WARM
+    git -->|"Argo CD or htrflow-campaigns apply"| KYV
+    KYV -->|"campaign Job"| LQ
+    KYV -->|"warm-up Job, one per pipeline file, not queued"| WARM
+    WARM -.->|"model cache, read-only in the Job"| job
     DLP -->|"width-capped GETs"| IIIF
     UPL -->|"PAGE and ALTO per page, progress, run log,<br/>manifest.json LAST"| S3
     API -->|"progress.json"| S3
