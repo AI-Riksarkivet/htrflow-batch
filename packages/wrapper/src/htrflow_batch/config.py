@@ -92,6 +92,33 @@ class Config(BaseModel):
         return f"{self.s3_prefix}/{rel}" if self.s3_prefix else rel
 
     @property
+    def image_urls(self) -> list[str]:
+        """The URLs in ``IMAGES``, split on whitespace (any run of spaces,
+        tabs or newlines). Whitespace is the only separator a URL can never
+        contain; the converter joins them with a single space and refuses an
+        ``images:`` entry that carries whitespace of its own.
+
+        A comma cannot separate them, and never could: the IIIF Image API
+        writes the size as ``/full/2500,/0/default.jpg``, so the old comma
+        split tore that URL in half and the volume died in setup with
+        ``IMAGES URL must be an http(s) URL: /0/default.jpg`` (2026-09-14).
+
+        TRANSITION: a ``rendered/`` directory produced before that fix still
+        holds comma-joined lines, and an operator may apply one for weeks
+        after the converter is upgraded. So a value with no whitespace in it
+        whose every comma-split piece is itself an http(s) URL is read the old
+        way -- which a single URL carrying a comma can never look like, since
+        the piece after the comma has no scheme. Delete this branch (and the
+        two lines under it) once every campaign in every campaigns repo has
+        been re-rendered by a converter that joins on a space."""
+        urls = self.images.split()
+        if len(urls) == 1 and "," in urls[0]:
+            parts = urls[0].split(",")
+            if all(p.startswith(("http://", "https://")) for p in parts):
+                return parts
+        return urls
+
+    @property
     def volume_prefix(self) -> str:
         parts = [p for p in (self.s3_prefix, self.pipeline_id, self.volume_ref) if p]
         return "/".join(parts)

@@ -471,7 +471,7 @@ def _synthetic_source(cfg: Config, store: ResultStore) -> tuple[dict, str]:
     """IMAGES: build and publish the synthetic P3 manifest to
     sources/<pipeline>/<volume>/manifest.json (S3_PREFIX honoured, docs:
     wrapper), then hand it back as if it had been fetched."""
-    urls = [u for u in cfg.images.split(",") if u]
+    urls = cfg.image_urls
     for u in urls:
         check_http_url(u, "IMAGES URL")
     key = f"sources/{cfg.pipeline_id}/{cfg.volume_ref}/manifest.json"

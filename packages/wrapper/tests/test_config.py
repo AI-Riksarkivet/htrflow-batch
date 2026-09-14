@@ -166,3 +166,43 @@ def test_provenance_fields_default_to_unknown_and_read_their_env():
     )
     assert cfg.image_digest == "docker.io/x@sha256:abc"
     assert cfg.htrflow_base_revision == "v0.2.6-35f48a7"
+
+
+# -- the IMAGES separator (2026-09-14) -------------------------------------
+
+
+def _images(value: str) -> list[str]:
+    env = dict(REQUIRED)
+    del env["IIIF_MANIFEST_URL"]
+    return Config.from_env(dict(env, IMAGES=value)).image_urls
+
+
+def test_images_splits_on_whitespace_and_keeps_a_iiif_size_comma_whole():
+    """`/full/2500,/0/default.jpg` is a legal IIIF Image API size request; a
+    comma split tore it in half and failed setup on "/0/default.jpg"."""
+    a = "https://lbiiif.riksarkivet.se/arkis!R0001203_00044/full/2500,/0/default.jpg"
+    b = "https://lbiiif.riksarkivet.se/arkis!R0001203_00045/full/2500,/0/default.jpg"
+    assert _images(f"{a} {b}") == [a, b]
+    assert _images(a) == [a]
+
+
+def test_images_ignores_runs_of_whitespace_and_a_trailing_newline():
+    assert _images("  https://x/1.jpg \t https://x/2.jpg\n") == [
+        "https://x/1.jpg",
+        "https://x/2.jpg",
+    ]
+
+
+def test_images_still_accepts_a_comma_joined_list_from_an_older_render():
+    assert _images("https://x/1.jpg,https://x/2.jpg") == [
+        "https://x/1.jpg",
+        "https://x/2.jpg",
+    ]
+
+
+def test_the_comma_fallback_never_takes_a_url_that_merely_contains_a_comma():
+    """Every comma-split piece has to be an http(s) URL of its own, or the
+    value is one URL that happens to carry a comma."""
+    url = "https://x/full/2500,/0/default.jpg"
+    assert _images(url) == [url]
+    assert _images(f"{url} https://x/2.jpg") == [url, "https://x/2.jpg"]
