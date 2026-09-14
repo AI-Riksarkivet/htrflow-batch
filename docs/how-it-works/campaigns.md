@@ -306,7 +306,7 @@ gets `loose-scans`. The exact format is in the
 - **A shorthand ref** would appear here already expanded into a full manifest
   URL through `converter.yaml`'s `source_template`.
 - **The `images:` volume** becomes one line: `images:` followed by its URLs,
-  comma-joined, with no manifest anywhere.
+  space-joined, with no manifest anywhere.
 - **`managed-by: converter`** is how `apply --prune`, and Argo CD's own
   prune, find this object again once its campaign file is deleted.
 - **`campaign` and `pipeline`** record where the object came from.
