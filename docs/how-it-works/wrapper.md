@@ -318,9 +318,10 @@ key (`manifests/warmup-job.yaml`), while the campaign Job's does
 `ReadWriteOnce`.
 
 **Who fills it, and when.** The warm-up Job fills it, once per pipeline id,
-at apply time. The converter renders one `htr-warmup-<id>` Job the first time
-that pipeline id appears in `pipelines/`, alongside its `htr-pipeline-<id>`
-ConfigMap.
+at apply time. The converter renders one `htr-warmup-<id>` Job for every file
+in `pipelines/`, alongside its `htr-pipeline-<id>` ConfigMap. Re-applying an
+unchanged Job changes nothing, so a completed warm-up runs once. A pruning
+apply deletes the warm-up Job and ConfigMap of a pipeline file that is gone.
 
 - **Placement.** The warm-up Job carries the campaign Job's
   `runtimeClassName`, `nodeSelector` and `tolerations` (the same
