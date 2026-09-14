@@ -220,7 +220,11 @@ would reach its TTL with no terminal record at all. So `apply`, the one thing
 guaranteed to run, reads each campaign's live Job before it decides anything
 and writes the ending it can see. Both write the same field names; neither
 ever shrinks the record (a value that says nothing never replaces one that
-says something, and `finishedAt` never moves backwards). `-status` is a
+says something, and `finishedAt` never moves backwards). That last rule is
+worth saying plainly: a Job recreated by hand under the same name keeps the
+*earlier* campaign's finish date until the record is removed with the
+campaign file — the record is the campaign's, not the Job's, and a campaign
+is append-only. Recording a second run means a new campaign file. `-status` is a
 reserved campaign-file ending for the same reason `-part<number>` is:
 `validate` refuses a campaign called `x-status`.
 
