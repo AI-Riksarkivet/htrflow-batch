@@ -315,17 +315,30 @@ def _finished(cluster, name: str, volumes: str, observed: dict | None) -> str | 
     )
 
 
+_NO_RECORD = "could not record how campaign {name} ended, continuing without it: "
+
+
 def _record_and_decide(cluster, cfg, name: str, volumes: str) -> str | None:
     """Write how this campaign ended, then say whether to leave it alone.
 
     One step, because the record this apply just wrote is what the decision
-    reads -- and because both halves want the same answer when the cluster
-    refuses them: one sentence, and the campaign applied as any other.
+    reads. A refused WRITE is not a refused decision, though: whatever is
+    already stored still says whether this campaign is over, and re-running
+    a finished campaign costs the whole GPU bill over a permission the
+    decision never needed. So the write is caught here and the stored
+    record consulted anyway; only a refused READ (the caller's except)
+    leaves the campaign to be applied as any other.
     """
+    from .cluster import ClusterError  # lazy, like every other .cluster use
+
     live = cluster.get("Job", name)
     record = render.status_configmap(live, cfg) if live else None
     if record is not None:
-        cluster.apply(record)
+        try:
+            cluster.apply(record)
+        except ClusterError as e:
+            print(f"{_NO_RECORD.format(name=name)}{e}", file=sys.stderr)
+            record = None
     return _finished(cluster, name, volumes, record)
 
 
@@ -422,11 +435,7 @@ def _apply(
                 try:
                     said = _record_and_decide(cluster, cfg, name, volumes_of[name])
                 except ClusterError as e:
-                    print(
-                        f"could not record how campaign {name} ended, "
-                        f"continuing without it: {e}",
-                        file=sys.stderr,
-                    )
+                    print(f"{_NO_RECORD.format(name=name)}{e}", file=sys.stderr)
                     continue
                 if said is not None:
                     done.add(name)

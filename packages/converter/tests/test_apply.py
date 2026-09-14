@@ -560,3 +560,32 @@ def test_the_applys_record_cannot_erase_the_failed_volumes_the_api_wrote(
     assert "failedVolumes" not in written["data"]
     assert cluster.managers["campaign-kyrk-status"] == cluster_mod.FIELD_MANAGER
     assert cluster_mod.FIELD_MANAGER != WEB_MANAGER
+
+
+def test_a_refused_record_write_still_lets_the_stored_record_decide(
+    tmp_path, cluster, capsys
+):
+    """Losing the write must not lose the decision. What is already stored
+    still says this campaign is finished, and re-running it would cost the
+    whole GPU bill over a permission the record did not need (B76)."""
+    live_job = _object("Job", "kyrk")
+    live_job["metadata"]["namespace"] = NS
+    live_job["spec"] = {"completions": 3}
+    live_job["status"] = {
+        "conditions": [{"type": "Complete", "status": "True"}],
+        "succeeded": 3,
+    }
+    cluster.live = [live_job, _record("kyrk"), _status("kyrk", "Succeeded")]
+
+    def forbidden(kind, verb, name=""):
+        if verb == "patch" and name.endswith("-status"):
+            raise cluster_mod.ClusterError(f"not allowed to patch {name}: Forbidden")
+        return FakeCluster._method(cluster, kind, verb, name)
+
+    cluster._method = forbidden
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert "kyrk" not in [c[2] for c in cluster.of("apply") if c[1] == "Job"]
+    captured = capsys.readouterr()
+    assert "could not record how campaign kyrk ended" in captured.err
+    assert "campaign kyrk finished 2026-09-08, unchanged, left alone" in captured.out
