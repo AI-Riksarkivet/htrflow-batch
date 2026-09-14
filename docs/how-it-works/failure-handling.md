@@ -12,7 +12,7 @@ The only thing that ever means "done" is `manifest.json` in S3.
 stateDiagram-v2
     [*] --> queued: campaign rendered<br/>(suspend true, window free)
     queued --> running: Kueue admits (quota free)
-    running --> done: verify passes → manifest.json in S3
+    running --> done: verify passes (failed pages recorded)<br/>→ manifest.json in S3
     running --> retry: exit 1 / 143 (incl. pod deadline)<br/>and backoffLimitPerIndex left
     running --> failed_index: exit 13 (FailIndex),<br/>or backoffLimitPerIndex reached
     retry --> queued: pod replaced,<br/>resume skips done pages
@@ -40,9 +40,16 @@ as `reason` for as long as the pod that produced it still exists.
   run skips pages that already have both files (and whose source image URL
   has not changed, per `manifest.json.page_sources`), so a retry of a long
   volume costs minutes, not hours.
-- **A page that cannot be fetched or transcribed fails the whole volume** —
-  archival completeness over partial results. The verify gate reports the
-  missing/failed page list in the termination message.
+- **A page that cannot be fetched or transcribed is recorded, not hidden**
+  (the product owner, 2026-09-14). The volume completes with that page listed
+  as `failed` in `manifest.json`, counted in `pages_failed`, and named on the
+  campaign page — because a page that fails deterministically fails the same
+  way on every retry, and failing the volume for it left the bucket with the
+  good pages and no marker to open them. What still fails the volume is a
+  page **missing** from the results (neither uploaded nor recorded as failed:
+  an inconsistency a retry converges on) and a run in which pages were
+  processed and none succeeded (a broken model or a dead GPU). Both report
+  their page lists in the termination message.
 - **A campaign is append-only.** `completions` is fixed at creation from the
   volume list; nothing in this design can add volumes to a running campaign
   — a new campaign file is the only way (see
@@ -81,7 +88,7 @@ Resources, mounts and the pod hardening are in
 
 | Wrapper exit | Written to `/dev/termination-log` | Index outcome |
 |---|---|---|
-| `0` | — | `Complete` — visible in `completedIndexes` once `manifest.json` exists |
+| `0` | — | `Complete` — visible in `completedIndexes` once `manifest.json` exists. A volume that lost pages still exits 0: they are recorded, and `pages_failed` says how many |
 | `13` permanent | `{"stage", "permanent": true, "error"}` | `FailIndex` — `failedIndexes`, never retried |
 | `1` transient | `{"stage", "permanent": false, "error"}` | retried up to `backoffLimitPerIndex` (3), resuming from published pages; at the cap, `failedIndexes` |
 | `143` SIGTERM (a drain that reached the container, or the pod deadline) | `{"stage", "permanent": false, "error": "SIGTERM"}`, then the final log ship | retried the same as exit 1 — progress already published is not redone |
@@ -119,8 +126,13 @@ WARNING rebuilding the htrflow pipeline after a dead worker thread
 
 The next page is processed by a pipeline built from scratch (the models come
 back from the cache PVC, not the Hub), the rest of the volume runs, and the
-verify gate reports the one failed page — exit 1, so Kubernetes retries the
-index and resume redoes only that page. Before the rebuild the dead
+volume **completes** with that one page recorded as failed: `manifest.json`
+names it and its reason, `progress.json` carries the count and the sentence,
+the campaign row reads "637 / 638 pages · 1 failed", and the viewer opens on
+the 637 pages that came out. It is not exit 1: the polygon that killed the
+thread is in the image, so the page would die the same way on all four
+attempts and the volume would end as a failed index with no marker at all.
+Before the rebuild the dead
 pipeline's models are dropped and the CUDA cache is emptied: the helper
 thread of the stuck run is a daemon that is never joined, and its frame
 holds the steps, so without that the new pipeline would load a second set of
@@ -156,7 +168,8 @@ one sentence per case and never the fields themselves.
 | `SIGTERM` | "The pod was stopped by the cluster (a node drain or a pause); the volume will be retried." | Nothing; the index is retried |
 | Stage `config` (the wrapper sets it around `Config.from_env`) | "The volume's settings are incomplete or wrong: `<error>`. This is a deployment problem, not a manifest problem — check the campaign's converter.yaml and the chart values." | Fix `converter.yaml` or the chart values and re-render; nothing in the campaign file is wrong |
 | A manifest or canvas error at stage `setup`, `permanent: true` | "The IIIF manifest could not be read: `<error>`. Fix the manifest URL in the campaign file — this volume will not be retried." | Fix the URL in `campaigns/<name>.yaml`, then put the volume in a new campaign |
-| `verify failed: … missing=[…] failed=[…]` | "3 pages could not be processed (p012, p045, p101); the volume is retried automatically and only those pages are redone." | Read the run log for the per-page causes; act only if the retries also fail |
+| `verify failed: N missing, M failed … missing=[…]` | "2 pages are missing from the results (p012, p045); the volume is retried automatically and only those pages are redone." | Nothing, unless the retries also fail: a missing page is an upload that never landed, and resume redoes only it. The `failed=[…]` pages beside it are *not* named here — they are accounted for and are not coming back |
+| `verify failed: all N processed pages failed …` | "None of the 3 pages processed in this attempt produced a result; the volume is retried automatically — check the model and the GPU." | Look at the node and at the pipeline before the retries run out: nothing came out of this pod at all |
 | Anything else, with a stage | "Failed while processing pages: `<error>`." + "It will be retried automatically." / "This volume will not be retried — fix the cause, then put the volume in a new campaign." | Depends on the error; the run log is one click away on the same row |
 | A termination message the API could not parse (raw JSON in `error`) | "The pod stopped without a message this page can read; open the run log to see what happened." | Open the run log |
 
@@ -192,7 +205,8 @@ ERROR transient failure in stream: SIGTERM — stopped by the cluster (drain, pa
 
 | Failure | The sentence |
 |---|---|
-| `verify failed: …` | "some pages produced no result; the retry redoes only those" |
+| `verify failed: all …` | "no page produced a result — check the model and the GPU" |
+| `verify failed: …` (a page missing from the results) | "some pages produced no result; the retry redoes only those" |
 | `SIGTERM` | "stopped by the cluster (drain, pause, or time budget); retried" |
 | Any permanent failure | "a retry changes nothing — fix the campaign or pipeline file" |
 | Any other transient failure | "the index is retried, resuming from the pages already done" |

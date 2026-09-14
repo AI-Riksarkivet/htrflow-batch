@@ -34,18 +34,26 @@ dödläge väntar bakom varje undantag i ett modellanrop, inte bara det här
   slår larm när tråden dör mitt i en sida — och bokför sidan som misslyckad
   med en mening som namnger steget och modellen.
 - Efter en död tråd byggs pipelinen om (`load_pipeline`, modellerna laddas
-  igen från cachen) och nästa sida bearbetas; volymen avslutas med den
-  sidan som `failed` i `manifest.json` och `verify` säger vilken.
-- Felet räknas som sidfel, inte som volymfel: exit 1 först när
-  volymen är klar, som för andra misslyckade sidor.
+  igen från cachen) och nästa sida bearbetas; volymen **blir klar** med den
+  sidan bokförd som `failed` i `manifest.json`, räknad i `pages_failed`, och
+  med sin mening i `progress.json` — inte som en misslyckad volym utan
+  markör.
+- Felet räknas som sidfel, inte som volymfel: wrappern avslutar med 0 och
+  indexet blir `Complete` (produktägaren, 2026-09-14). Exit 1 blir det bara
+  om en sida saknas helt i resultaten, eller om ingen av de sidor körningen
+  bearbetade lyckades.
 - Dokumentation: `docs/how-it-works/failure-handling.md` (nytt fel-läge),
   `docs/how-it-works/wrapper.md`.
 
 ## Klart när
 
-- [ ] Ett test med en fejkad pipeline vars tråd dör på sida 2 ger: sida 2
+- [x] Ett test med en fejkad pipeline vars tråd dör på sida 2 ger: sida 2
       `failed` med meningen, sida 3 bearbetad av en ombyggd pipeline,
       volymen klar.
+- [x] Volymen avslutas som klar med sidan bokförd som misslyckad: wrappern
+      går ut med 0, `manifest.json` och `iiif.json` publiceras, `pages_failed`
+      är 1 och kampanjraden läser "637 / 638 pages · 1 failed" — indexet görs
+      inte om fyra gånger på en sida som ändå misslyckas likadant varje gång.
 - [ ] R0001203 körs igenom på PoC-klustret: 637 sidor ok, sidan med
       polygon-felet `failed` med sin mening, ingen stillastående period
       längre än en sidas bearbetningstid.

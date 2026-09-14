@@ -55,8 +55,12 @@ chart's `rustfs.publicLogs` is `false`. Listing is always denied.
 
 ## `manifest.json` (completion marker)
 
-Written only after the verify gate confirms every expected page has **both**
-PAGE and ALTO in S3. Its presence *is* "done" for that pipeline id — the
+Written only after the verify gate confirms every page is accounted for:
+**both** PAGE and ALTO in S3, skipped by resume, or recorded as failed with
+a reason (the product owner, 2026-09-14 — see
+[the ruling](../how-it-works/decision-log.md)). A volume can therefore be
+done and still have lost pages, which is what `pages_ok` and `pages_failed`
+are for. Its presence *is* "done" for that pipeline id — the
 canonical way to check status past a Job's `ttlSecondsAfterFinished` (24 h)
 is listing `manifest.json` keys directly, since the read API can only see
 Jobs that still exist.
@@ -69,6 +73,7 @@ Jobs that still exist.
 | `image_digest` | the `IMAGE_DIGEST` env (the pipeline's digest pin); `"unknown"` for results that predate pinning |
 | `htrflow_version` | `importlib.metadata.version("htrflow")` in the image |
 | `pages` | canvas count |
+| `pages_ok`, `pages_failed` | how the volume came out: `pages_ok` + `pages_failed` + the pages resume skipped = `pages`. `pages_failed > 0` on a volume that is nonetheless done — every one of those pages is in `results` with its `error` |
 | `results` | `{"0001": {"status": "ok" \| "failed" \| "skipped", "seconds", "error"?}, …}` |
 | `page_sources` | `{"0001": <source image URL, userinfo/query stripped>, …}` — what resume compares |
 | `canvas_ids` | `{"0001": <source canvas id or null>, …}` |

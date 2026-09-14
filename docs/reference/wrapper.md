@@ -91,7 +91,7 @@ what the termination log reports. Details in
 |---|---|---|
 | `0` | success | verify passed, `manifest.json` published |
 | `13` | permanent — `{"permanent": true}` | `ConfigError` (missing env); manifest URL not http(s); manifest HTTP 400/401/403/404/410; body over `MANIFEST_MAX_BYTES`; non-JSON or non-object JSON; no canvases; a canvas without an image, with a malformed shape, or with a non-http(s) image URL; bad pipeline YAML, an unknown step or model class, an `Export` step in the YAML (`ValueError` from `driver.load_pipeline`). An exception that is *also* an `OSError` never lands here — see the `1` row |
-| `1` | transient — `{"permanent": false}` | manifest 5xx/429/other status or a network error (`TransientManifestError`); the verify gate (pages missing or failed after fetch retries, `pipeline.run` exceptions, malformed XML) — the message lists the missing and failed page names and, for the first 10 failed pages, the error behind each (clipped to 200 chars); every page failure is also logged as it happens; any `OSError`, including one that is also a `ValueError` — `huggingface_hub.errors.LocalEntryNotFoundError` (a model missing from the read-only `HF_HOME` cache under `HF_HUB_OFFLINE=1`) subclasses both, and a re-warm fixes it; `UploadOutage` after 5 consecutive S3 upload failures; anything else |
+| `1` | transient — `{"permanent": false}` | manifest 5xx/429/other status or a network error (`TransientManifestError`); the verify gate, for a page **missing** (neither uploaded nor recorded as failed) or for a run in which pages were processed and none succeeded — the message lists the missing and failed page names and, for the first 10 failed pages, the error behind each (clipped to 200 chars); every page failure is also logged as it happens, and a page that merely *failed* no longer fails the run; any `OSError`, including one that is also a `ValueError` — `huggingface_hub.errors.LocalEntryNotFoundError` (a model missing from the read-only `HF_HOME` cache under `HF_HUB_OFFLINE=1`) subclasses both, and a re-warm fixes it; `UploadOutage` after 5 consecutive S3 upload failures; anything else |
 | `143` | SIGTERM — `{"permanent": false, "error": "SIGTERM"}` | the handler: termination log, final run-log ship, `os._exit(143)`. Sent by a node drain, or by the kubelet when the pod's `activeDeadlineSeconds` expires — the pod then also carries `status.reason: DeadlineExceeded`, which the read API surfaces |
 
 Page-fetch acceptance (never a whole-run verdict on its own): 3 attempts
@@ -135,8 +135,10 @@ Source root: [`packages/wrapper/src/htrflow_batch/`](https://github.com/AI-Riksa
 ## Completion contract
 
 `manifest.json` is written **last**, only after the verify gate confirms every
-expected page has PAGE and ALTO in S3 — its presence is the sole "done"
-signal, for anything that lists results directly. It embeds the pipeline YAML and its sha256 (the
+page is accounted for — PAGE and ALTO in S3, skipped by resume, or recorded
+as failed with a reason — and its presence is the sole "done" signal for
+anything that lists results directly. A volume can therefore be done *and*
+have lost pages; `pages_ok` and `pages_failed` say which it was. It embeds the pipeline YAML and its sha256 (the
 drift ground truth), `image_digest`, per-page results, `page_sources` and
 `canvas_ids` (what a resume compares), the run metrics (`wall_seconds`,
 `gpu_stall_seconds`, `pages_per_second`, `bytes_fetched`) and `viewer_url`
