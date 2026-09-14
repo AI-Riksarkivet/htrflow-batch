@@ -88,6 +88,39 @@ _WHITESPACE_RE = re.compile(r"\s")
 _PERCENT_ENCODE = "a URL cannot contain whitespace — percent-encode it as %20"
 
 
+def split_image_urls(value: str) -> list[str]:
+    """The URLs inside an ``images:`` source, split on whitespace.
+
+    THE definition of that split: the wrapper's ``Config.image_urls`` is the
+    same function over ``IMAGES`` (the two packages share no code -- the GPU
+    image must not carry the converter's Kubernetes client -- so
+    ``test_models.py`` pins them to each other case by case).
+
+    TRANSITION: a value with no whitespace whose every comma-split piece is
+    itself an http(s) URL is a line rendered before 2026-09-14, when commas
+    joined them. A single URL carrying a comma can never look like that (the
+    piece after the comma has no scheme), which is what makes the old format
+    safe to keep reading. Delete this branch, in both packages, once every
+    campaigns repo has been re-rendered.
+    """
+    urls = value.split()
+    if len(urls) == 1 and "," in urls[0]:
+        parts = urls[0].split(",")
+        if all(p.startswith(("http://", "https://")) for p in parts):
+            return parts
+    return urls
+
+
+def parse_source_line(line: str) -> tuple[str, tuple[str, ...]]:
+    """A ``volumes.txt`` line read back as ``(id, sources)`` -- what the line
+    MEANS, so that two renders of one campaign can be compared across a
+    change of separator (``cli``'s append-only check)."""
+    vid, _, source = line.partition("\t")  # the FIRST tab, as the Job's shell
+    if source.startswith("images:"):
+        return vid, tuple(split_image_urls(source.removeprefix("images:")))
+    return vid, (source,)
+
+
 class Volume(BaseModel):
     model_config = ConfigDict(frozen=True)
 

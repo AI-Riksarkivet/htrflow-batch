@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 
 from . import render
-from .models import Campaign
+from .models import Campaign, parse_source_line
 from .parse import ValidationError, load
 
 _PART_RE = re.compile(r"-part(\d+)\.yaml\Z")
@@ -189,17 +189,24 @@ def _render(repo_dir: str, out_dir: str) -> int:
         _write(path, render.pipeline_objects(p, cfg))
         written.add(path)
     for c in campaigns:
-        new_text = "\n".join(v.source_line() for v in c.volumes)
+        # Parsed, never byte-for-byte: a rendered file written before the
+        # separator changed says the same thing with commas in it, and an
+        # unchanged campaign must still re-render (models.parse_source_line).
+        new_volumes = [parse_source_line(v.source_line()) for v in c.volumes]
         existing = _existing_parts(campaigns_out, c)
         objects = render.campaign_objects(c, pipelines[c.pipeline], cfg)
         paths = [campaigns_out / f"{o['metadata']['name']}.yaml" for o in objects[1::2]]
         if existing:
             try:
-                rendered_text = "\n".join(_volumes_txt(p) for p in existing)
+                rendered_volumes = [
+                    parse_source_line(line)
+                    for p in existing
+                    for line in _volumes_txt(p).splitlines()
+                ]
             except _CorruptRenderedFile as e:
                 print(str(e))
                 return 1
-            if rendered_text != new_text:
+            if rendered_volumes != new_volumes:
                 print(f"campaign {c.name} is append-only: create a new campaign")
                 return 1
             # Same volumes, different object names: the split rule itself

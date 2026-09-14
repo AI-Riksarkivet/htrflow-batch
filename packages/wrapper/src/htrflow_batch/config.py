@@ -93,24 +93,18 @@ class Config(BaseModel):
 
     @property
     def image_urls(self) -> list[str]:
-        """The URLs in ``IMAGES``, split on whitespace (any run of spaces,
-        tabs or newlines). Whitespace is the only separator a URL can never
-        contain; the converter joins them with a single space and refuses an
-        ``images:`` entry that carries whitespace of its own.
+        """The URLs in ``IMAGES``, split on whitespace -- the one character a
+        URL can never contain. A comma can: the IIIF Image API writes the size
+        into the path (``/full/2500,/0/default.jpg``), so the old comma split
+        tore that URL in half and the volume died in setup with ``IMAGES URL
+        must be an http(s) URL: /0/default.jpg`` (2026-09-14).
 
-        A comma cannot separate them, and never could: the IIIF Image API
-        writes the size as ``/full/2500,/0/default.jpg``, so the old comma
-        split tore that URL in half and the volume died in setup with
-        ``IMAGES URL must be an http(s) URL: /0/default.jpg`` (2026-09-14).
-
-        TRANSITION: a ``rendered/`` directory produced before that fix still
-        holds comma-joined lines, and an operator may apply one for weeks
-        after the converter is upgraded. So a value with no whitespace in it
-        whose every comma-split piece is itself an http(s) URL is read the old
-        way -- which a single URL carrying a comma can never look like, since
-        the piece after the comma has no scheme. Delete this branch (and the
-        two lines under it) once every campaign in every campaigns repo has
-        been re-rendered by a converter that joins on a space."""
+        The converter joins them with a single space and refuses an ``images:``
+        entry carrying whitespace of its own. Its ``models.split_image_urls``
+        is this same function, including the comma branch below, which reads a
+        line rendered before that fix; that package documents the rule and
+        when to delete the branch, and its tests pin the two together, because
+        this image must not carry the converter's Kubernetes client."""
         urls = self.images.split()
         if len(urls) == 1 and "," in urls[0]:
             parts = urls[0].split(",")
