@@ -10,6 +10,11 @@
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 [![Built on htrflow](https://img.shields.io/badge/built%20on-htrflow-8A2BE2.svg)](https://github.com/AI-Riksarkivet/htrflow)
 
+[![Security](https://github.com/AI-Riksarkivet/htrflow-batch/actions/workflows/security.yml/badge.svg)](https://github.com/AI-Riksarkivet/htrflow-batch/actions/workflows/security.yml)
+[![CodeQL](https://github.com/AI-Riksarkivet/htrflow-batch/actions/workflows/codeql.yml/badge.svg)](https://github.com/AI-Riksarkivet/htrflow-batch/actions/workflows/codeql.yml)
+[![Secret Leaks](https://github.com/AI-Riksarkivet/htrflow-batch/actions/workflows/trufflehog.yml/badge.svg)](https://github.com/AI-Riksarkivet/htrflow-batch/actions/workflows/trufflehog.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/AI-Riksarkivet/htrflow-batch/badge)](https://scorecard.dev/viewer/?uri=github.com/AI-Riksarkivet/htrflow-batch)
+
 [![Signed with Sigstore](https://img.shields.io/badge/Sigstore-signed-purple.svg)](.github/actions/sign-attest/action.yml)
 [![SLSA provenance](https://img.shields.io/badge/SLSA-provenance-blue.svg)](.github/actions/sign-attest/action.yml)
 [![SBOM SPDX](https://img.shields.io/badge/SBOM-SPDX-green.svg)](.github/actions/sign-attest/action.yml)
