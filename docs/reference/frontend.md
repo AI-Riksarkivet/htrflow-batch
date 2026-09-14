@@ -108,6 +108,15 @@ script). A CSP header from the server must not be stricter than the meta tag
   the browser's, so a reader's clock skew cannot show "0 s ago" for a row
   that has not actually just updated. `null` renders nothing at all. The
   campaign header adds the API's summed `pagesDone`/`pagesTotal`.
+- **Running motion.** Only what is running moves, so that a campaign still
+  working cannot be mistaken for a finished one between polls: the state and
+  phase chips carry a pulsing dot (`aria-hidden` — the chip's word is the
+  state), an active row and a Running header carry a 3px `role="progressbar"`
+  bar whose fill eases to `done`/`total` over 600 ms with a slow sheen
+  crossing it, and the progress line whose `done` actually changed since the
+  last poll fades a second of the running blue out from behind its text.
+  Under `prefers-reduced-motion: reduce` there is no pulse, no sheen and no
+  fade — the bar still shows the same fraction, it just jumps to it.
 - **The notice chip.** `describeNotice` turns the campaign's `pagesFailed`,
   `errors` and `lastError` into one line — "1 page failed · 2 errors ·
   page 0044: htrflow's Segmentation worker thread died" — shown folded or
