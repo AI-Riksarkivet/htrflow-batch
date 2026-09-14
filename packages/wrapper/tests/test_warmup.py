@@ -267,3 +267,18 @@ def test_warmup_says_nothing_about_a_token_when_there_is_none(tmp_path, caplog):
     with caplog.at_level(logging.INFO, logger="htrflow_batch.warmup"):
         assert main(_env(tmp_path), load=lambda _: None) == EXIT_OK
     assert [m for m in caplog.messages if "HF_TOKEN" in m] == []
+
+
+def test_warmup_mistyped_pipeline_setting_is_permanent(tmp_path):
+    """W2: a TypeError from building the pipeline is a mistyped setting in the
+    YAML, not a network hiccup -- exit 13, so the warm-up Job's backoffLimit
+    stops retrying a pipeline that cannot get better."""
+    term_path = tmp_path / "termination-log"
+    env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
+
+    def boom(_):
+        raise TypeError("__init__() got an unexpected keyword argument 'batch_sz'")
+
+    rc = main(env, load=boom)
+    assert rc == EXIT_PERMANENT
+    assert json.loads(term_path.read_text())["permanent"] is True

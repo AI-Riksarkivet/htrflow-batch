@@ -17,6 +17,25 @@ from .stream import discard
 EXPECTED_FORMATS = ("alto", "page")
 
 
+def _refused_the_path(Pipeline, e: BaseException) -> bool:
+    """Whether ``from_config`` refused the ARGUMENT -- an older htrflow whose
+    ``from_config`` takes a parsed dict, handed a path -- rather than a step
+    or model constructor deeper in raising a TypeError of its own (W2).
+
+    Told apart by where the TypeError was raised: in ``from_config``'s own
+    code object, or below it. The distinction matters because the pinned
+    htrflow's ``from_config`` does ``open(path)``, so retrying a constructor's
+    TypeError with the dict only raises a second one from ``open(dict)`` --
+    and a bare TypeError is not permanent, so a mistyped pipeline setting
+    exited 1 and burned every retry instead of failing at once.
+    """
+    tb = e.__traceback__
+    while tb is not None and tb.tb_next is not None:
+        tb = tb.tb_next
+    function = getattr(Pipeline.from_config, "__func__", Pipeline.from_config)
+    return tb is not None and tb.tb_frame.f_code is getattr(function, "__code__", None)
+
+
 @contextmanager
 def _tracked_steps(built: list):
     """Record every step htrflow builds, so a failed construction can be torn
@@ -70,7 +89,9 @@ def build_pipeline(pipeline_path: str):
         with _tracked_steps(built):
             try:
                 return Pipeline.from_config(str(pipeline_path))
-            except TypeError:
+            except TypeError as e:
+                if not _refused_the_path(Pipeline, e):
+                    raise
                 # older htrflow builds: from_config takes a parsed config dict
                 return Pipeline.from_config(config)
     except BaseException as e:
@@ -82,10 +103,12 @@ def build_pipeline(pipeline_path: str):
         # per page until the GPU is out of memory, so the partial pipeline is
         # torn down here, where it is still reachable.
         release_steps(built)
-        # htrflow: KeyError from STEPS[name] for an unknown step, and
+        # htrflow: KeyError from STEPS[name] for an unknown step,
         # NotImplementedError from get_model_by_name for an unknown model
-        # class. Config mistakes -> PERMANENT, like malformed YAML above.
-        if isinstance(e, (KeyError, NotImplementedError)):
+        # class, and TypeError from a step or model constructor, which htrflow
+        # hands the YAML's `settings:` as keyword arguments (W2). Config
+        # mistakes -> PERMANENT, like malformed YAML above.
+        if isinstance(e, (KeyError, NotImplementedError, TypeError)):
             raise ValueError(f"bad pipeline config: unknown step or model: {e}") from e
         raise
 

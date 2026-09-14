@@ -824,3 +824,45 @@ def test_build_pipeline_keeps_the_steps_of_a_pipeline_that_built(tmp_path, monke
     assert [step.model for step in built] == ["weights-ok", "weights-fine"]
     assert len(pipeline.steps) == 2
     assert mod.init_step is original  # swapped only for the construction
+
+
+def test_load_pipeline_mistyped_setting_is_permanent(tmp_path, monkeypatch):
+    """W2: htrflow hands a step's ``settings:`` to its constructor as keyword
+    arguments, so a misspelt one raises TypeError from inside the step -- not
+    from ``from_config`` refusing its argument. The dict fallback must not be
+    tried (the pinned ``from_config`` does ``open(path)``, so the dict only
+    raises a second TypeError, which is not permanent): it is a config
+    mistake, exit 13 at once instead of 1 and three retries."""
+    from htrflow_batch import driver
+
+    called_with = []
+
+    def init_step(_name):
+        raise TypeError("__init__() got an unexpected keyword argument 'batch_sz'")
+
+    class MockPipeline:
+        def __init__(self, steps=None):
+            self.steps = steps or []
+
+        @staticmethod
+        def from_config(config):
+            called_with.append(config)
+            return MockPipeline([init_step("segmentation")])
+
+    fake_pipeline_pipeline = ModuleType("htrflow.pipeline.pipeline")
+    fake_pipeline_pipeline.Pipeline = MockPipeline
+    fake_steps = ModuleType("htrflow.pipeline.steps")
+    fake_steps.Export = type("Export", (), {})
+    monkeypatch.setitem(sys.modules, "htrflow", ModuleType("htrflow"))
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline", ModuleType("htrflow.pipeline"))
+    monkeypatch.setitem(
+        sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline
+    )
+    monkeypatch.setitem(sys.modules, "htrflow.pipeline.steps", fake_steps)
+    pipeline_yaml = tmp_path / "pipeline.yaml"
+    pipeline_yaml.write_text("steps: [segmentation]")
+
+    with pytest.raises(ValueError, match="bad pipeline config"):
+        driver.load_pipeline(str(pipeline_yaml), tmp_path / "out")
+
+    assert called_with == [str(pipeline_yaml)]  # the dict branch is not taken

@@ -173,7 +173,14 @@ fail=0
 # per page. Most of the lines are the tracking context manager and the
 # paragraph saying why the wrapper swaps a name in another package's module
 # at all: from_config owns the loop and keeps the partial list to itself.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2801
+# 2801 -> 2825 (2026-09-14, audit W2): the older-htrflow dict fallback is
+# taken only when from_config refused the PATH, not when a step constructor
+# below it raised a TypeError of its own -- the pinned from_config does
+# open(path), so the dict retry only raised a second TypeError, and a bare
+# TypeError is not permanent, so a mistyped `settings:` key exited 1 and burned
+# every retry. The lines are the frame check and the paragraph saying how the
+# two TypeErrors are told apart.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2825
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
