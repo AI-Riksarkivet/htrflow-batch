@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from htrflow_web.app import create_app
+from htrflow_web.app import RECORD_WRITES_PER_REQUEST, create_app
 
 JOB = {
     "metadata": {
@@ -459,11 +459,7 @@ def test_the_list_record_never_wipes_the_failed_volumes_the_detail_wrote():
 
 
 def test_a_failed_write_is_logged_and_the_request_still_answers(caplog):
-    class Refusing(RecordingReader):
-        def apply_configmap(self, body: dict) -> None:
-            raise RuntimeError("Forbidden")
-
-    client = TestClient(create_app(Refusing(), progress=FakeProgress()))
+    client = TestClient(create_app(_Refusing(), progress=FakeProgress()))
     assert client.get("/api/v1/jobs").status_code == 200
     assert "campaign-kyrk-status" in caplog.text
 
@@ -565,3 +561,50 @@ def test_a_later_detail_request_does_not_erase_the_failed_volumes():
     client = TestClient(create_app(reader, progress=FakeProgress()))
     assert client.get("/api/v1/jobs/htr-test/kyrk").status_code == 200
     assert _status_of(reader)["data"]["failedVolumes"] == kept
+
+
+class _Refusing(RecordingReader):
+    """Every write refused, the way an unrenewed RBAC grant refuses them."""
+
+    def __init__(self, live=None) -> None:
+        super().__init__(live)
+        self.attempts = 0
+
+    def apply_configmap(self, body: dict) -> None:
+        self.attempts += 1
+        raise RuntimeError("configmaps is forbidden")
+
+
+class ManyReader(RecordingReader):
+    """More campaigns in one namespace than one request may write for."""
+
+    def list_jobs(self) -> list[dict]:
+        return [
+            {
+                **JOB,
+                "metadata": {**JOB["metadata"], "name": f"kyrk{i}"},
+            }
+            for i in range(RECORD_WRITES_PER_REQUEST + 5)
+        ]
+
+
+def test_a_refused_write_is_logged_once_per_namespace(caplog):
+    """A 403 fires for every campaign on every poll: that is a log nobody
+    can read and a page nobody can debug. Said once, then remembered."""
+    reader = _Refusing()
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    for _ in range(3):
+        assert client.get("/api/v1/jobs").status_code == 200
+    assert reader.attempts == 3, "the write is still attempted every time"
+    assert caplog.text.count("forbidden") == 1
+
+
+def test_no_request_writes_more_records_than_its_cap():
+    """The write is on the request's critical path -- one SSA round trip per
+    campaign. A namespace of hundreds must not turn one page load into
+    hundreds of sequential writes; the rest are written by the next poll."""
+    reader = ManyReader()
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    body = client.get("/api/v1/jobs").json()
+    assert len(body) == RECORD_WRITES_PER_REQUEST + 5, "every row still answers"
+    assert len(reader.written) == RECORD_WRITES_PER_REQUEST

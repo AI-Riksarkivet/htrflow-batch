@@ -53,6 +53,14 @@ except metadata.PackageNotFoundError:  # pragma: no cover - installed in CI
 #: and the dockerfiles'): a build nobody tagged.
 DEV_VERSION = "dev"
 
+#: How many campaign records one request may write. Each is a server-side
+#: apply on the request's critical path, so a namespace of hundreds would
+#: otherwise turn one page load into hundreds of sequential round trips.
+#: What is left over is written by the next poll, and by the apply itself
+#: (packages/converter ``render.status_configmap``), which is what actually
+#: guarantees a terminal record exists.
+RECORD_WRITES_PER_REQUEST = 20
+
 #: Where the image puts the built site (.docker/htrflow-web.dockerfile).
 DEFAULT_STATIC_DIR = "/app/static"
 
@@ -146,7 +154,12 @@ def create_app(
     def version() -> dict:
         return {"version": batch_version, "web": WEB_VERSION}
 
-    def _record(row: dict, live: dict | None, failures: list[dict] | None) -> None:
+    # Namespaces whose last write was refused. A denied RBAC grant fails
+    # for every campaign on every poll, which is a log nobody can read: say
+    # it once and remember it. (Per app, so a restart says it again.)
+    refused: set[str] = set()
+
+    def _record(row: dict, live: dict | None, failures: list[dict] | None) -> bool:
         """Write the campaign's status ConfigMap when this request saw
         something the stored one does not already say (B76).
 
@@ -159,16 +172,22 @@ def create_app(
         record the API could not write is a record a few minutes old, while
         a 500 is a status page nobody can read."""
         if not hasattr(reader, "apply_configmap"):
-            return  # site-only: no cluster
+            return False  # site-only: no cluster
         stored = (live or {}).get("data") or {}
         data = projection.merge_record(stored, projection.status_record(row, failures))
         if data == stored:
-            return
+            return False
         cm = projection.status_configmap(row, data)
+        namespace = row["namespace"]
         try:
             reader.apply_configmap(cm)
         except Exception as e:  # noqa: BLE001 - any client error, same answer
-            _LOG.warning("could not write %s: %s", cm["metadata"]["name"], e)
+            if namespace not in refused:
+                refused.add(namespace)
+                _LOG.warning("could not write %s: %s", cm["metadata"]["name"], e)
+            return True
+        refused.discard(namespace)
+        return True
 
     def _campaign_configmaps() -> tuple[dict, dict]:
         """A campaign's two ConfigMaps, each by (namespace, campaign name):
@@ -207,8 +226,11 @@ def create_app(
             for job in jobs
         ]
         records, statuses = _campaign_configmaps()
+        budget = RECORD_WRITES_PER_REQUEST
         for row in rows:
-            _record(row, statuses.get((row["namespace"], row["name"])), None)
+            if budget <= 0:
+                break
+            budget -= _record(row, statuses.get((row["namespace"], row["name"])), None)
         # A campaign whose Job the TTL reaped is still a campaign: its two
         # ConfigMaps have no TTL, and this list is where an operator looks
         # for it (B76). Additive -- a live Job always wins over its record.
