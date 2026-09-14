@@ -194,6 +194,11 @@
     return () => clearInterval(timer);
   });
 
+  /** The fill's width; callers only ask for one when `total` is known. */
+  function pct(done: number, total: number): string {
+    return `${((done / total) * 100).toFixed(1)}%`;
+  }
+
   // Defence in depth. `sourceUrl` is the API's copy of a line from a
   // campaign's volumes.txt, which is a file humans edit in a git repo — so
   // it is checked here too, at the last step before it becomes an href, the
@@ -260,6 +265,23 @@
   </span>
   <span class="slot">
     <a href={logHref(v)}>log</a>
+  </span>
+{/snippet}
+
+<!-- One track, two callers (a running volume's row and the campaign header),
+     so the two bars can never disagree about what a fraction looks like.
+     `aria-label` names the thing being measured, since the bar itself has no
+     text and the numbers beside it belong to a different element. -->
+{#snippet bar(label: string, done: number, total: number)}
+  <span
+    class="bar"
+    role="progressbar"
+    aria-label="Pages done in {label}"
+    aria-valuenow={done}
+    aria-valuemin={0}
+    aria-valuemax={total}
+  >
+    <span class="fill" style="width: {pct(done, total)}"></span>
   </span>
 {/snippet}
 
@@ -347,6 +369,12 @@
       {/if}
     </span>
   </div>
+  <!-- Only while the Job runs, and only once the API has read enough
+       progress files to know a total: a bar of nothing over nothing is
+       worse than no bar. -->
+  {#if job.phase === "Running" && pages.total > 0}
+    {@render bar(`campaign ${job.name}`, pages.done, pages.total)}
+  {/if}
   {#if models.length > 0}
     <p class="models">
       <span class="models-label">Models</span>
@@ -445,6 +473,9 @@
                 </span>
                 {#if v.progress !== null}
                   <span class="vprogress">{describeProgress(v.progress)}</span>
+                  {#if v.state === "active" && v.progress.total > 0}
+                    {@render bar(v.id, v.progress.done, v.progress.total)}
+                  {/if}
                 {/if}
               </td>
               <td class="links">{@render links(v)}</td>
@@ -830,6 +861,56 @@
     overflow-wrap: anywhere;
   }
 
+  /* The one thing on this card that moves of its own accord. The fill eases
+     to its new width when a poll lands, so a reader watching sees it fill
+     rather than find it moved; the sheen crossing it says the volume is
+     still working through the minute in between. A done volume gets no bar
+     at all -- a bar that cannot move is just a green line, and it would
+     dilute the only signal this is here to carry. */
+  .bar {
+    display: block;
+    height: 3px;
+    margin-top: 0.2rem;
+    border-radius: 999px;
+    background: var(--muted);
+    overflow: hidden;
+  }
+
+  .fill {
+    display: block;
+    position: relative;
+    height: 100%;
+    border-radius: inherit;
+    overflow: hidden;
+    background: var(--primary);
+    transition: width 600ms ease-out;
+  }
+
+  /* --background, not white: it reads as a light band on the light theme's
+     dark blue and a dark one on the dark theme's pale blue, from one rule. */
+  .fill::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    opacity: 0.45;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--background),
+      transparent
+    );
+    animation: sheen 2.5s linear infinite;
+  }
+
+  @keyframes sheen {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(100%);
+    }
+  }
+
   .status {
     display: inline-flex;
     align-items: center;
@@ -967,6 +1048,16 @@
   @media (prefers-reduced-motion: reduce) {
     .dot.pulse {
       animation: none;
+    }
+
+    /* Not `animation: none` -- an unanimated sheen would simply be parked
+       across the fill. The bar still fills; it jumps there. */
+    .fill::after {
+      display: none;
+    }
+
+    .fill {
+      transition: none;
     }
   }
 </style>
