@@ -7,7 +7,8 @@ the `frontend/README.md` there is the developer-facing version of this page.
 
 - `/` — every campaign (one card per Indexed Job) with its **volume table**
   (id, state chip and how far that volume has got, links), the pipeline chip,
-  its **Models** line, phase, counts and summed pages in the header, a
+  phase, counts and summed pages in the header, a **quiet meta line** under
+  that header carrying the models and the campaign's dates, a
   **notice chip** when anything has failed or errored, and — on a failed
   poll — a banner in plain words over the last list it received. Each card
   fetches its own volumes, paged. The page header carries the logo
@@ -223,8 +224,11 @@ script). A CSP header from the server must not be stricter than the meta tag
   `JobDetail.pipelineYaml` in an inline `<pre>` (`aria-expanded` /
   `aria-controls`). Both fields come from the `htr-pipeline-<id>` ConfigMap;
   when it is gone the chip stays a static label with nothing to toggle.
-- **Models line.** Under the pipeline chip, one link per model the pipeline
-  loads, in step order — `<repo name> @<short revision>`, or
+- **Models line.** The left half of the card's quiet meta line, the small
+  muted row at the foot of the header block it shares with the created and
+  finished dates: one link per model the pipeline loads, in step order,
+  separated by `·` and clipped with a title of the whole list when the card
+  is too narrow for it — `<repo name> @<short revision>`, or
   `<repo name> unpinned` when nothing pins it, linking to
   `https://huggingface.co/<id>/tree/<revision>` (`/tree/main` unpinned) and
   guarded by `isHttpUrl` like every other href here. `src/lib/pipeline.ts`
