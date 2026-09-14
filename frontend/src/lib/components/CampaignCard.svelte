@@ -420,19 +420,54 @@
   {#if job.phase === "Running" && pages.total > 0}
     {@render bar(`campaign ${job.name}`, pages.done, pages.total)}
   {/if}
-  {#if models.length > 0}
-    <p class="models">
-      <span class="models-label">Models</span>
-      {#each models as model, i (i)}
-        {@const href = modelUrl(model)}
-        {#if href === null}
-          <span title={model.id}>{modelLabel(model)}</span>
-        {:else}
-          <a {href} target="_blank" rel="noopener" title={model.id}
-            >{modelLabel(model)}</a
-          >
-        {/if}
-      {/each}
+  <!-- The card's quiet line: which weights produced these results, and when
+       the campaign ran. Both shouted before -- the models were a full-width
+       row of links right under the pipeline chip, and the dates had a line
+       of their own further down the card (the product owner, 2026-09-14:
+       "can we put the create date somewhere else? the layout is a bit bad;
+       also the list of used models is a bit dominant"). One small muted row
+       at the foot of the header block instead, so the row above it reads
+       name -> status -> counts with no date wedged into it. No expander
+       behind a count: a real pipeline names two or three models
+       (examples/campaigns/pipelines/demo-v1.yaml), so the whole line fits a
+       normal card and clips, with its own title, on a narrow one. -->
+  {#if models.length > 0 || job.createdAt !== null || job.finishedAt !== null}
+    <p class="card-meta">
+      {#if models.length > 0}
+        <span
+          class="models"
+          title="Models: {models.map(modelLabel).join(' · ')}"
+        >
+          Models:
+          {#each models as model, i (i)}
+            {@const href = modelUrl(model)}
+            {i > 0 ? " · " : ""}
+            {#if href === null}
+              <span title={model.id}>{modelLabel(model)}</span>
+            {:else}
+              <a {href} target="_blank" rel="noopener" title={model.id}
+                >{modelLabel(model)}</a
+              >
+            {/if}
+          {/each}
+        </span>
+      {/if}
+      {#if job.createdAt !== null || job.finishedAt !== null}
+        <span class="dates">
+          {#if job.createdAt !== null}
+            created <time datetime={job.createdAt} title={job.createdAt}
+              >{shortDate(job.createdAt) ?? job.createdAt}</time
+            >
+          {/if}
+          {#if job.finishedAt !== null}
+            {#if job.createdAt !== null}·{/if}
+            finished
+            <time datetime={job.finishedAt} title={job.finishedAt}
+              >{shortDate(job.finishedAt) ?? job.finishedAt}</time
+            >
+          {/if}
+        </span>
+      {/if}
     </p>
   {/if}
   {#if yamlOpen && pipelineYaml !== ""}
@@ -443,22 +478,6 @@
        link instead (Task 28). -->
   {#if !collapsed && job.warmup.reason}
     <p class="notice error-row">{describeReason(job.warmup.reason)}</p>
-  {/if}
-  {#if job.createdAt !== null || job.finishedAt !== null}
-    <p class="meta">
-      {#if job.createdAt !== null}
-        created <time datetime={job.createdAt} title={job.createdAt}
-          >{shortDate(job.createdAt) ?? job.createdAt}</time
-        >
-      {/if}
-      {#if job.finishedAt !== null}
-        {#if job.createdAt !== null}·{/if}
-        finished
-        <time datetime={job.finishedAt} title={job.finishedAt}
-          >{shortDate(job.finishedAt) ?? job.finishedAt}</time
-        >
-      {/if}
-    </p>
   {/if}
   {#if detailError !== null}
     <p class="notice error-row" role="alert">{detailError}</p>
@@ -685,31 +704,42 @@
     white-space: pre-wrap;
   }
 
-  /* One line under the pipeline chip: which weights produced these results.
-     Wraps rather than scrolls — a pipeline can name three or four models. */
-  .models {
+  /* One quiet row at the foot of the header block: provenance on the left,
+     dates on the right, nothing in it heavier than the counts above it. The
+     models half is the half that gives up width first -- it clips, and its
+     title carries the list the clip cut. */
+  .card-meta {
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0.15rem 0.6rem;
-    margin: 0.15rem 0 0;
+    justify-content: space-between;
+    gap: 0.15rem 0.75rem;
+    margin: 0.3rem 0 0;
     font-size: 12px;
     color: var(--muted-foreground);
   }
 
-  .models-label {
-    font-size: 10.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
+  .models {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
+  .dates {
+    white-space: nowrap;
+  }
+
+  /* Links, but in the line's own colour: underlined so they are findable
+     without it, and only hover and focus spend the accent. */
   .models a {
-    color: var(--primary);
-    text-decoration: none;
+    color: inherit;
+    text-decoration-color: var(--border);
   }
 
-  .models a:hover {
-    text-decoration: underline;
+  .models a:hover,
+  .models a:focus-visible {
+    color: var(--primary);
+    text-decoration-color: currentColor;
   }
 
   .chip.phase.succeeded {
@@ -763,12 +793,6 @@
   .chip.warmup.missing {
     background: var(--destructive);
     color: var(--on-strong);
-  }
-
-  .meta {
-    color: var(--muted-foreground);
-    font-size: 0.8rem;
-    margin: 0.25rem 0 0;
   }
 
   .notice {
