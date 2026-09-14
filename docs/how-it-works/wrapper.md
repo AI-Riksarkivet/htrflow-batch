@@ -277,6 +277,22 @@ token and Hub egress. The wrapper only ever sees `HF_HOME`, so changing where
 the cache comes from is a mount-point swap. One example is weights published
 as signed OCI artifacts and pulled into the cache from a registry.
 
+**Two transformers lines.** A model's files are written by the library
+version that saved it, and the two current major lines of the transformers
+library do not read each other's. A model saved by the newer line carries
+tokenizer settings the older one cannot parse — and, once that is worked
+around by hand, the older line still decodes its byte-level tokenizer
+wrongly, so the text comes out subtly wrong rather than failing. Models
+saved by the older line — which is the line upstream htrflow is tested on,
+and the one the image carries by default — fail to load under the newer one
+instead, on a buffer the newer loader leaves uninitialised. So which line an
+image carries is a build argument
+([Releasing](../development/releasing.md#publishing)), and a pipeline pins
+the image digest it runs: one campaigns repo can carry pipelines on both
+lines at once, and no campaign has to move because a model was re-saved. The
+two lines become one again when every model in use is saved by the newer
+one.
+
 ## The model cache
 
 ```mermaid
