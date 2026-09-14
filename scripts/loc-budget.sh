@@ -138,7 +138,13 @@ fail=0
 # a failed page records a sentence, never repr(e). PipelineDead("page 0044:
 # ...") had reached the notice chip verbatim; the wrapper's own exceptions
 # are shown as they are, a foreign one keeps its type in front.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2683
+# 2683 -> 2706 (2026-09-14, verify accounts for failed pages): _verify now
+# splits "missing" (an upload that never landed -- transient) from "failed"
+# (a page accounted for, with a reason), logs the failed pages' causes where
+# the termination message used to be the only copy, and keeps one guard for
+# the run where every processed page failed. The lines are the rationale for
+# a rule an operator will meet on a live volume.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2706
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

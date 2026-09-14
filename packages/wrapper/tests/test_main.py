@@ -318,8 +318,9 @@ def test_verify_requires_page_xml_too(env, cfg, s3, monkeypatch):
 
 
 def test_malformed_alto_fails_the_page_at_upload(env, cfg, s3):
-    """W3: the page fails in the stream (never uploaded) so the verify gate
-    reports it; a later retry reprocesses it instead of accepting the junk."""
+    """W3: the page fails in the stream and nothing of it is uploaded -- junk
+    is never accepted. The volume still completes, with the page recorded as
+    failed in manifest.json (the product owner, 2026-09-14)."""
 
     def factory(c):
         def process(path):
@@ -330,28 +331,114 @@ def test_malformed_alto_fails_the_page_at_upload(env, cfg, s3):
         return process
 
     rc = main(env, process_page_factory=factory)
-    assert rc == EXIT_TRANSIENT
+    assert rc == EXIT_OK
     keys = _keys(s3, cfg)
     assert "demo-v1/SE-RA-1234/alto/0002.xml" not in keys
     assert "demo-v1/SE-RA-1234/page/0002.xml" not in keys
-    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
-    assert term["stage"] == "verify" and "0002" in term["error"]
+    body = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert body["results"]["0002"]["status"] == "failed"
     # B63/D7: no failure-evidence object is published any more
     assert "demo-v1/SE-RA-1234/metrics-failed-latest.json" not in keys
 
 
-def test_verify_failure_reports_why_each_page_failed(env, cfg, s3):
-    """A run with failed pages never publishes manifest.json, so the
+def test_a_failed_page_completes_the_volume(env, cfg, s3):
+    """The product owner, 2026-09-14: a volume is complete when every page is
+    accounted for. A page that fails deterministically is accounted for --
+    recorded as failed -- so the run publishes and exits 0 instead of burning
+    the index's four retries on a page that fails identically every time."""
+
+    def factory(c):
+        def process(path):
+            if path.stem == "0002":
+                raise RuntimeError("htrflow's Segmentation worker thread died")
+            return _write_outputs(c, path.stem)
+
+        return process
+
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    keys = _keys(s3, cfg)
+    assert "demo-v1/SE-RA-1234/manifest.json" in keys
+    assert "demo-v1/SE-RA-1234/iiif.json" in keys
+    body = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert body["results"]["0002"]["status"] == "failed"
+    assert "worker thread died" in body["results"]["0002"]["error"]
+    assert not Path(env["TERMINATION_LOG_PATH"]).exists()
+
+
+def test_a_failed_page_is_named_with_its_cause_in_the_run_log(env, cfg, s3, caplog):
+    """Verify no longer raises for a failed page, so its sentence has to reach
+    the run log instead -- it is now the operator's record of the cause."""
+
+    def factory(c):
+        def process(path):
+            if path.stem == "0002":
+                raise RuntimeError("dead thread")
+            return _write_outputs(c, path.stem)
+
+        return process
+
+    with caplog.at_level("WARNING"):
+        assert main(env, process_page_factory=factory) == EXIT_OK
+    verify = [
+        r.getMessage() for r in caplog.records if "recorded as failed" in r.getMessage()
+    ]
+    assert verify and "0002: " in verify[0] and "dead thread" in verify[0]
+
+
+def test_every_processed_page_failing_is_still_a_volume_failure(env, cfg, s3):
+    """The guard: a broken model or a dead GPU must not produce an "all pages
+    failed, done" volume, so a run that processed pages and got nothing out of
+    any of them is transient -- exit 1, retried."""
+
+    def factory(c):
+        def process(path):
+            raise RuntimeError("CUDA error: no kernel image is available")
+
+        return process
+
+    assert main(env, process_page_factory=factory) == EXIT_TRANSIENT
+    assert "demo-v1/SE-RA-1234/manifest.json" not in _keys(s3, cfg)
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "verify"
+    assert term["error"].startswith("verify failed: all 3 processed pages failed")
+
+
+def test_a_missing_page_is_still_a_verify_failure(env, cfg, s3, monkeypatch):
+    """A page that is neither in the bucket nor recorded as failed is an
+    inconsistency, not an outcome: that stays transient."""
+    real = ResultStore.upload_page
+
+    def drop_0002(self, name, files):
+        if name != "0002":
+            return real(self, name, files)
+
+    monkeypatch.setattr(ResultStore, "upload_page", drop_0002)
+    assert main(env, process_page_factory=fake_factory) == EXIT_TRANSIENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "verify"
+    assert (
+        "1 missing, 0 failed" in term["error"] and "missing=['0002']" in term["error"]
+    )
+
+
+def test_the_all_failed_message_reports_why_each_page_failed(env, cfg, s3):
+    """A run where every page failed never publishes manifest.json, so the
     termination message is the operator's only record of the cause. It used
     to carry page names alone. URLs inside it are redacted (S6)."""
 
     def factory(c):
         def process(path):
-            if path.stem == "0002":
-                raise RuntimeError(
-                    "fetch of https://iiif.example/p2?token=SECRET went wrong"
-                )
-            return _write_outputs(c, path.stem)
+            raise RuntimeError(
+                "fetch of https://iiif.example/p2?token=SECRET went wrong"
+            )
 
         return process
 
@@ -405,7 +492,8 @@ def test_verify_detail_survives_the_termination_log_truncation(tmp_path):
     )
     term = json.loads(log_path.read_text())
     assert term["error"].endswith("...(truncated)")
-    assert "500 missing, 1 failed" in term["error"]
+    # 0001 is recorded as failed, so it is accounted for and not missing
+    assert "499 missing, 1 failed" in term["error"]
     assert "0001: boom: disk full" in term["error"]
 
 
@@ -472,6 +560,11 @@ def test_bad_manifest_is_permanent(env, cfg, s3, monkeypatch):
             False,
             "verify failed: 2 missing, 0 failed missing=['0002']",
             "some pages produced no result; the retry redoes only those",
+        ),
+        (
+            False,
+            "verify failed: all 3 processed pages failed failed=['0001']",
+            "no page produced a result — check the model and the GPU",
         ),
         (
             False,
@@ -571,28 +664,6 @@ def test_manifest_over_cap_is_permanent(env, cfg, s3):
     assert rc == EXIT_PERMANENT
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
     assert "too large" in term["error"]
-
-
-def test_page_failure_is_transient_and_blocks_completion(env, cfg, s3):
-    def factory(c):
-        inner = fake_factory(c)
-
-        def process(path):
-            if path.stem == "0002":
-                raise RuntimeError("cuda hiccup")
-            return inner(path)
-
-        return process
-
-    rc = main(env, process_page_factory=factory)
-    assert rc == EXIT_TRANSIENT
-    keys = _keys(s3, cfg)
-    assert "demo-v1/SE-RA-1234/manifest.json" not in keys  # no false complete
-    assert "demo-v1/SE-RA-1234/alto/0001.xml" in keys  # partials kept
-    # B63/D7: no failure-evidence object is published any more
-    assert "demo-v1/SE-RA-1234/metrics-failed-latest.json" not in keys
-    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
-    assert term["stage"] == "verify" and "0002" in str(term)
 
 
 def test_max_pages_caps(env, cfg, s3):

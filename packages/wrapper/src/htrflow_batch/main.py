@@ -283,6 +283,8 @@ def _advice(permanent: bool, error: str) -> str:
     volume and what the operator does next. Both machine-readable halves --
     the prefix the run viewer's terminal-line rule keys on (frontend
     runlog.ts) and the termination JSON -- are untouched."""
+    if error.startswith("verify failed: all "):
+        return "no page produced a result — check the model and the GPU"
     if error.startswith("verify failed"):
         return "some pages produced no result; the retry redoes only those"
     if error.startswith("SIGTERM"):
@@ -397,15 +399,30 @@ def _stream(
 def _verify(
     store: ResultStore, pages: list[PageRef], stats: StreamStats, state: RunState
 ) -> set[str]:
-    """D8: every page has PAGE and ALTO in S3 and none is marked failed. A gap
-    is transient — Kubernetes retries the index and resume converges — and the
-    missing/failed lists go in the termination message. Returns what is stored,
-    which publish reads back for the pages this run skipped."""
+    """D8: every page is accounted for — in S3 with its PAGE and ALTO, skipped
+    by resume, or recorded as failed with a reason (the product owner,
+    2026-09-14). A page that is *neither* is missing: an inconsistency (an
+    upload that never landed), transient, since Kubernetes retries the index
+    and resume converges. Failed pages do not fail the volume — a page that
+    fails deterministically would fail identically on all four retries and
+    leave the bucket without manifest.json — except when every page this run
+    processed failed, which is a broken model or a dead GPU, not a volume.
+    Returns what is stored, which publish reads back for the pages this run
+    skipped."""
     state.stage = "verify"
     uploaded = store.uploaded_pages()
-    missing = sorted({p.name for p in pages} - uploaded)
     failed = sorted(n for n, r in stats.results.items() if r.status == "failed")
-    if missing or failed:
+    missing = sorted({p.name for p in pages} - uploaded - set(failed))
+    if failed:
+        # The run log is now the only place this sentence appears while the
+        # run still succeeds; manifest.json keeps the per-page copy.
+        log.warning(
+            "%d page(s) recorded as failed:%s failed=%s",
+            len(failed),
+            _failure_detail(stats, failed),
+            failed,
+        )
+    if missing:
         # Counts and the cause FIRST, the name lists last: terminate clips
         # the error field at 3500 chars and a few hundred missing page names
         # fill that on their own — what gets dropped must be the names, never
@@ -414,6 +431,12 @@ def _verify(
             f"verify failed: {len(missing)} missing, {len(failed)} failed"
             f"{_failure_detail(stats, failed)}"
             f" missing={missing} failed={failed}"
+        )
+    processed = [r.status for r in stats.results.values() if r.status != "skipped"]
+    if processed and "ok" not in processed:
+        raise RuntimeError(
+            f"verify failed: all {len(processed)} processed pages failed"
+            f"{_failure_detail(stats, failed)} failed={failed}"
         )
     return uploaded
 

@@ -263,10 +263,10 @@ def test_progress_json_is_json_at_the_volume_prefix(cfg, s3):
     assert json.loads(obj["Body"].read()) == {"stage": "stream"}
 
 
-def _failing_factory(cfg, bad: str):
+def _failing_factory(cfg, *bad: str):
     def factory(c):
         def process(path: Path):
-            if path.stem == bad:
+            if path.stem in bad:
                 raise RuntimeError("htrflow's Segmentation worker thread died")
             return _write_outputs(cfg, path.stem)
 
@@ -283,16 +283,22 @@ def test_progress_carries_the_most_recent_page_failure(env, cfg, s3):
     assert body["pages_failed"] == 1
     assert body["last_error"]["page"] == "0002"
     assert "Segmentation worker thread died" in body["last_error"]["error"]
-    # the eventual verify failure logs at ERROR (main._transient), so the
-    # final write -- after finding 6's terminal-stage write -- counts it.
-    assert body["errors"] >= 1
+
+
+def test_a_run_with_a_failed_page_still_ends_at_done(env, cfg, s3):
+    """The product owner, 2026-09-14: the page is accounted for, so the volume
+    is complete -- the campaign must read "done, 1 failed", not "failed"."""
+    assert main(env, process_page_factory=_failing_factory(cfg, "0002")) == 0
+    body = _get(s3, cfg, "progress.json")
+    assert (body["stage"], body["pages_failed"]) == ("done", 1)
 
 
 def test_a_failed_run_leaves_a_terminal_stage_not_stuck_at_stream(env, cfg, s3):
     """Before this fix the file stayed at whatever stage the run was doing
     when it stopped -- "stream" forever -- because nothing wrote a last word
-    on the failure exit path. main's finally now does."""
-    main(env, process_page_factory=_failing_factory(cfg, "0002"))
+    on the failure exit path. main's finally now does. Every page has to fail
+    for the run to fail at all now -- one failed page completes the volume."""
+    main(env, process_page_factory=_failing_factory(cfg, "0001", "0002", "0003"))
     assert _get(s3, cfg, "progress.json")["stage"] == "failed"
 
 
