@@ -371,7 +371,17 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # decides. Most of the count is those paragraphs: each of the three is a rule
 # whose OPPOSITE looks reasonable at the call site, so the reason lives next
 # to the code rather than in a story nobody opens again.
-check converter "$(count packages/converter/src -name '*.py')" 2125
+# 2125 -> 2157 (2026-09-14, B77 review): four fixes, each of them the
+# paragraph that keeps the next reader from undoing it. The recipe is
+# compared PARSED, so reordering the keys of a step -- or a PyYAML that
+# spells a mapping differently one release from now -- is not a changed
+# recipe. `_render` takes the record directory apart from `--out`, because
+# an apply with no `--out` renders into a temp directory that records
+# nothing while the repo's committed `rendered/` is still the record. An
+# unenforced pause outranks a refused object at the exit code. And a server
+# message this package repeats is cut at MAX_MESSAGE: a 422 with no
+# `details.causes` still carries the whole rejected pod template.
+check converter "$(count packages/converter/src -name '*.py')" 2157
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

@@ -140,6 +140,14 @@ It talks to the API server through the official Kubernetes client, with no
 object. `--dry-run` prints the same list as `would apply: …` and opens no
 connection at all.
 
+One object the API server will not take does not stop the others: it is
+named on stderr, the rest are applied, and the command exits **3** with a
+summary line naming what was left unchanged. Exit `0` is everything applied
+and exit `1` is nothing applied — or a paused campaign whose pause could not
+be enforced, which outranks a refusal. See
+[refused objects](../reference/campaign-yaml.md#when-the-api-server-refuses-an-object)
+for what `apply` does about a Job whose pod template changed.
+
 ## 4. Add work: it is a commit
 
 ```yaml title="campaigns/<campaign>.yaml"

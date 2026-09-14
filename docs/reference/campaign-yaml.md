@@ -351,6 +351,12 @@ the image — the converter carries its own Kubernetes client, so there is no
 `kubectl` to install. Add `--prune` to make a deleted campaign file cancel
 its campaign; leave it off and Argo CD's own prune does the same job.
 
+The hook fails the sync on any non-zero exit, so treat exit `3` — some
+objects refused, everything else applied — as what it is: the sync did
+change the cluster, and the summary line in the hook's log names what is
+still to fix. Exit `1` means nothing was applied, or a pause is not being
+enforced. See [refused objects](#when-the-api-server-refuses-an-object).
+
 ## When the API server refuses an object
 
 `apply` sends each rendered object on its own, and **one refusal is one
