@@ -1,76 +1,87 @@
-# Viewing Results
+# View results
 
-Results are served through the Riksarkivet `universalviewer4` fork, which
-renders IIIF Presentation 3 manifests with ALTO text overlays (canvas
+The web front serves the Universal Viewer at `/uv.html`. It is the
+`universalviewer4` fork of Universal Viewer, cloned and patched into the web
+image when the image is built (`UV4_REPO` in `.docker/htrflow-web.dockerfile`).
+It renders IIIF Presentation 3 manifests with ALTO text overlays (canvas
 `seeAlso`), including clickable per-line outlines on the page image.
 
 ## URL scheme
 
-The viewer takes its manifest as a URL fragment, on the web front's port
-(the same origin that serves the campaign browser and the read API):
+The viewer takes its manifest as a URL fragment. It is served from the same
+origin as the campaign browser and the read API:
 
 ```
-http://<web-host>/uv.html#?manifest=<url to iiif.json>
+<web-front-url>/uv.html#?manifest=<results-base-url>/<namespace>/<pipeline>/<volume>/iiif.json
 ```
 
-For example, the PoC's mock volume:
+`<results-base-url>` is the release's `publicResultsBase`. A volume's
+`manifest.json` carries the same `iiif.json` URL as `viewer_url`. The wrapper
+rewrites `iiif.json` every 10 pages while it runs, so a volume opens in the
+viewer before it is finished.
 
-```
-http://localhost:30800/uv.html#?manifest=http://localhost:30900/htr-results/demo-v1/mock-vol/iiif.json
-```
-
-Requesting `/` serves the [campaign browser](campaigns.md#4-watch-it), which
-links into the viewer per volume. (Through chart 0.3.0 a `defaultManifest`
-value could 302 `/` into UV instead; it was deprecated and is gone in 0.4.0
-— bookmark the `uv.html#?manifest=…` URL instead.)
+Requesting `/` serves the [campaign browser](campaigns.md#5-watch-it), which
+links into the viewer for each volume.
 
 ## Reading a page's ALTO
 
-Every page's ALTO XML is public alongside the manifest
-(`<public_results_base>/<volume>/alto/<page>.xml`), and the run viewer's
-per-page table (`/log?…`) links straight to it, once expanded, in an
-**alto** column:
+Every page's ALTO XML is public alongside the manifest, at
+`<results-base-url>/<namespace>/<pipeline>/<volume>/alto/<page>.xml`. Once a
+volume is expanded, the run viewer's per-page table (`/log?…`) links to it in
+an **alto** column:
 
-- **view** opens `/alto?src=<url to the page's ALTO XML>` — a text render of
-  the page's lines, in reading order, each tinted by its `WC` (word
-  confidence) in four bands (a legend line above the text names the
-  cutoffs). A **raw XML** button next to the theme toggle swaps the text for
-  the pretty-printed source, for a look at markup the text view leaves out
-  (`ID`s, bounding boxes, `HYP`/`SUBS_CONTENT` hyphenation detail); a **raw**
-  link opens the untouched file. A page whose ALTO can't be read, isn't XML,
-  or has no text at all says so in one sentence.
-- **download** fetches the same XML and saves it as `<page>.xml` — the
-  results bucket is a different origin from the campaign browser, and a
-  plain `<a download>` is silently ignored across origins, so this goes
-  through `fetch` + `Blob` + a same-origin object URL instead. A failed
+- **view** opens `/alto?src=<url of the page's ALTO XML>`. It is a text render
+  of the page's lines in reading order, each tinted by its `WC` (word
+  confidence) in four bands; a legend line above the text names the cutoffs.
+  - A **raw XML** button next to the theme toggle swaps the text for the
+    pretty-printed source, to show markup the text view leaves out: `ID`s,
+    bounding boxes, and `HYP`/`SUBS_CONTENT` hyphenation detail.
+  - A **raw** link opens the untouched file.
+  - If a page's ALTO cannot be read, is not XML, or has no text at all, the
+    view says so in one sentence.
+- **download** fetches the same XML and saves it as `<page>.xml`. The results
+  bucket is a different origin from the campaign browser, and browsers
+  silently ignore a plain `<a download>` across origins, so the download goes
+  through `fetch`, a `Blob` and a same-origin object URL instead. A failed
   download says so in one sentence rather than doing nothing.
 
-## Reaching the web front over ssh (PoC / bare-k3s)
+## Exposing the web front
 
-On the bare-k3s PoC host, the web front and RustFS are exposed as NodePorts
-(30800 and 30900) that aren't routable from a laptop directly, and the
-node's own hostname resolves IPv6-only (see [Prerequisites](index.md)) so
-tunnelling straight to the hostname doesn't work either. Tunnel both ports
-to the node's pinned IPv4 address instead:
+A browser needs two addresses:
 
-```bash
-ssh -L 30800:<node-ip>:30800 -L 30900:<node-ip>:30900 <ssh-host>
-```
+- **The web front**, for the campaign browser, the viewer, the run viewer
+  and `/api/v1/…`. The chart exposes it as Service `htrflow-web` (port 8081)
+  of type NodePort on `web.nodePort`, default 30800. An ingress or load
+  balancer in front of that Service works the same way.
+  `network.web.ingressCidrs` limits who may connect. The web front has no
+  authentication of its own, so put an authenticating proxy in front of it
+  if the campaign list should not be public.
+- **The results base URL** (`publicResultsBase`), for manifests, page
+  images, ALTO and run logs, which the browser fetches straight from the
+  bucket. The bucket's CORS rule must allow the web front's origin
+  ([Deploy](deploy.md#s3-secret-bucket-policy-and-cors)).
 
-`<ssh-host>` is any machine you can ssh to that reaches the node (e.g.
-your coder host); the `-L` targets resolve on the far side. Both ports are
-required — the page and the read API come from 30800 but the manifest,
-images and ALTO come from 30900.
+How the three sides use these URLs:
 
-Then open `http://localhost:30800/` in a browser on your laptop.
-
-## The localhost-URL caveat
-
-Because the tunnel maps both NodePorts to `localhost` on your laptop, the
-demo `iiif.json` must itself be built with `http://localhost:30900` URLs
-(not the node's real IP) — a
-manifest built with the node's IP would be unreachable from inside the
-tunnel. This is a **PoC-only artifact** of ssh port-forwarding: production
-deployments need a real, browser-reachable `PUBLIC_RESULTS_BASE` behind an
-ingress rather than a tunnel, so this rewriting doesn't apply once you're
-past the bare-k3s replay path (see [Deploy](deploy.md#production-shaped-install)).
+- **Published files keep the URL they were written with.** `publicResultsBase`
+  is written into every `iiif.json` and `manifest.json` as the volume runs,
+  and nothing rewrites those URLs afterwards. Choose a stable address that
+  browsers can reach before running real campaigns.
+- **Forwarded ports: the base is what the browser sees.** When you reach the
+  cluster through port forwarding (`ssh -L`, `kubectl port-forward`),
+  `publicResultsBase` must be the forwarded address as the browser sees it.
+  Forward the web front's port and the bucket's port together.
+- **Pods never resolve `publicResultsBase` themselves.** The wrapper writes
+  through `S3_ENDPOINT` from the S3 Secret. The read API, however, reads each
+  running volume's `progress.json` from the bucket itself. Set
+  **`web.internalResultsBase`** to an address that reaches the bucket from
+  inside the cluster whenever `publicResultsBase` does not. For example,
+  `publicResultsBase` might only resolve on the browser's machine, or sit
+  behind an ingress the pod cannot reach. Unset, it defaults to
+  `publicResultsBase`, which is correct when the two are the same address.
+  When they are not, the only symptom is a campaign browser that never shows
+  a running volume's progress.
+- **Campaign files are fetched from inside the cluster.** Any URL you put in
+  a campaign file, such as a manifest, is fetched by the campaign pod, not by
+  your browser. It must resolve from inside the cluster, and its address
+  must be in `network.iiifCidrs`.
