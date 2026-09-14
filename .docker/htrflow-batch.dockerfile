@@ -180,6 +180,13 @@ RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
 # protobuf present the warm-up says what actually failed.
 RUN uv pip install --python /app/.venv/bin/python --no-cache "protobuf==7.36.1"
 
+# The venv must be self-consistent after every install above. The transformers
+# line is the one that moves other pins -- the newer line requires a newer
+# huggingface_hub than the older one accepts -- so a build on a line whose
+# dependencies do not fit this venv fails HERE, at build time, instead of in a
+# warm-up pod. Nothing in CI builds this image, so this is the only gate.
+RUN uv pip check --python /app/.venv/bin/python
+
 # The release this image is published under: the publish workflow passes its
 # run tag, `make build-*` passes IMAGE_TAG, and a build that passes nothing
 # says "dev". Kept as an env var because the process itself reports it (the
