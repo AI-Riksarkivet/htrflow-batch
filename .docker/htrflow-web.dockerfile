@@ -48,22 +48,26 @@ RUN --mount=type=secret,id=ca,target=/etc/ssl/certs/corp-ca.crt \
     && git fetch -q --depth 1 origin "$UV4_REF" \
     && git checkout -q FETCH_HEAD \
     && git apply /tmp/uv4.patch \
-    && npm install --no-audit --no-fund \
+    && npm ci --no-audit --no-fund \
     && npm run build
 
-# ---- Stage 3: the service (read API + the two builds above as its site) ----
+# ---- Stage 3: the service's virtualenv, for the runtime's own Python ----
+# The runtime below is distroless: no shell, no package manager. So the venv
+# is built here, on Debian 13 slim with Debian's python3.13, the same Debian
+# package the distroless python3-debian13 image carries, and copied across.
+# Its interpreter link (/usr/bin/python3.13) resolves in both images.
 # Workspace two-step sync per ra-skills dockerfile/references/python-uv.md:
 # --frozen with only pyprojects bind-mounted (member sources absent), then
 # --locked after COPY. Bind-mount EVERY workspace member's pyproject.toml.
-# `apt-get upgrade` pulls the base's pending security fixes (Trivy CRITICAL
-# gate in ci.yml).
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim@sha256:531f855bda2c73cd6ef67d56b733b357cea384185b3022bd09f05e002cd144ca
-LABEL org.opencontainers.image.licenses="EUPL-1.2"
-RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends ca-certificates \
+FROM debian:13-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS venv
+RUN apt-get update && apt-get install -y --no-install-recommends python3.13 \
     && rm -rf /var/lib/apt/lists/*
+# uv 0.12.6 (multi-arch index digest), the binary the wrapper image uses too
+COPY --from=ghcr.io/astral-sh/uv:0.12.6@sha256:88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d /uv /bin/uv
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
-    UV_PYTHON_DOWNLOADS=never
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PYTHON=/usr/bin/python3.13
 WORKDIR /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
@@ -78,13 +82,22 @@ COPY packages/converter/pyproject.toml packages/converter/pyproject.toml
 COPY packages/web packages/web
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --package htrflow-web --no-editable
+
+# ---- Stage 4: the service (read API + the two builds above as its site) ----
+# Distroless Debian 13 carries the Python runtime, glibc, OpenSSL and the CA
+# certificates, and nothing else. The OS packages a slim base brings along and
+# Trivy keeps flagging (perl, util-linux, ncurses, sqlite, …) are not in it.
+# Nothing execs into this container: the chart probes /healthz over HTTP.
+FROM gcr.io/distroless/python3-debian13:nonroot@sha256:8ee214843129f43e2ebf5e0ca9f2e4e6d8292143d1b8a6787f169b5898578884
+LABEL org.opencontainers.image.licenses="EUPL-1.2"
+COPY --from=venv /app/.venv /app/.venv
 # UV first, the SPA on top: the SPA's index.html deliberately replaces UV's
 # demo one, so / is the campaign browser and UV keeps /uv.html. Same layering
 # the nginx image used.
 COPY --from=uv4 /src/dist/ /app/static/
 COPY --from=spa /app/dist/ /app/static/
+# SSL_CERT_FILE comes from the base image, pointing at its CA bundle.
 ENV PATH="/app/.venv/bin:$PATH" \
-    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     HTRFLOW_WEB_STATIC=/app/static
 # The release this image is published under: the publish workflow passes its
 # run tag, `make build-*` passes IMAGE_TAG, and a build that passes nothing
@@ -96,8 +109,10 @@ ARG HTRFLOW_BATCH_VERSION=dev
 ENV HTRFLOW_BATCH_VERSION=${HTRFLOW_BATCH_VERSION}
 LABEL org.opencontainers.image.version="${HTRFLOW_BATCH_VERSION}"
 
-# Pod Security restricted (D14): unprivileged user.
-RUN useradd --uid 1000 --user-group --no-create-home --shell /usr/sbin/nologin htrflow-web
+# Pod Security restricted (D14): unprivileged user. Numeric, so it needs no
+# passwd entry; distroless has no useradd, and no shell to run one.
 USER 1000:1000
 EXPOSE 8081
-CMD ["htrflow-web"]
+# The base's ENTRYPOINT is the bare interpreter; the service replaces it.
+ENTRYPOINT ["/app/.venv/bin/htrflow-web"]
+CMD []
