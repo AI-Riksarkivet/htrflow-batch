@@ -1,5 +1,19 @@
 # htrflow-batch
 
+[![Tests](https://github.com/AI-Riksarkivet/htrflow-batch/actions/workflows/ci.yml/badge.svg)](https://github.com/AI-Riksarkivet/htrflow-batch/actions/workflows/ci.yml)
+[![Documentation](https://github.com/AI-Riksarkivet/htrflow-batch/actions/workflows/docs.yml/badge.svg)](https://ai-riksarkivet.github.io/htrflow-batch/)
+[![Publish](https://github.com/AI-Riksarkivet/htrflow-batch/actions/workflows/publish.yml/badge.svg)](https://github.com/AI-Riksarkivet/htrflow-batch/actions/workflows/publish.yml)
+[![Docker](https://img.shields.io/docker/v/riksarkivet/htrflow-batch?sort=semver&label=docker)](https://hub.docker.com/r/riksarkivet/htrflow-batch)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+[![License EUPL-1.2](https://img.shields.io/badge/license-EUPL--1.2-blue.svg)](LICENSE)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
+[![Built on htrflow](https://img.shields.io/badge/built%20on-htrflow-8A2BE2.svg)](https://github.com/AI-Riksarkivet/htrflow)
+
+[![Signed with Sigstore](https://img.shields.io/badge/Sigstore-signed-purple.svg)](.github/actions/sign-attest/action.yml)
+[![SLSA provenance](https://img.shields.io/badge/SLSA-provenance-blue.svg)](.github/actions/sign-attest/action.yml)
+[![SBOM SPDX](https://img.shields.io/badge/SBOM-SPDX-green.svg)](.github/actions/sign-attest/action.yml)
+
 > **Not for use yet.** This repository is under active development at
 > Riksarkivet's AI lab and is not ready for others to run: interfaces,
 > chart values and the campaigns format still change without notice, and
