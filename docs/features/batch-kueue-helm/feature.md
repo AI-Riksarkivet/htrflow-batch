@@ -157,6 +157,8 @@ tables below.
 | [B85](stories/B85-spec-plan-decision-log-current.md) | Spec, plan, story B63 och decision-loggen beskriver det som byggdes |
 | [B86](stories/B86-reject-unreasonable-values-name-the-line.md) | Convertern och wrappern avvisar orimliga värden och säger vilken rad |
 | [B87](stories/B87-prune-retired-warmup-jobs.md) | apply städar bort warm-up-Jobbet och ConfigMappen för en pipeline som inte längre finns |
+| [B102](stories/B102-base-models-resaved-transformers-5.md) | Basmodellerna sparas om under transformers 5 så att en enda image räcker |
+| [B103](stories/B103-warmup-log-on-status-page.md) | Warm-up-loggen går att läsa från status-sidan |
 
 ### Not started — after production
 
