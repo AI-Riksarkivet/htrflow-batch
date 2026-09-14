@@ -305,8 +305,9 @@ Kueue watches a Job's completion and failure, and nothing finer.
 - **`activeDeadlineSeconds`** sits on the **pod template**, so the kubelet
   kills the pod at the deadline and the Job retries the index. It is not
   Kueue's `maximumExecutionTimeSeconds`, which is not set.
-- **TTL.** `ttlSecondsAfterFinished` deletes the Job a day after it
-  finishes, and the Workload, as an owned child, goes with it.
+- **TTL.** `ttlSecondsAfterFinished` deletes the Job a week after it
+  finishes — `converter.yaml`'s default, which a pipeline may set for
+  itself — and the Workload, as an owned child, goes with it.
 
 The whole failure model is in [Failure Handling](failure-handling.md).
 
@@ -367,9 +368,12 @@ one whose `window` the quota cannot cover, and it reads "Queued" forever.
 
 - **The pause patches Kueue's Workload directly.** `sync_pause` needs
   `patch` on `workloads`. It relies on eviction by `spec.active`, which Kueue
-  does not promise to keep. It also talks to the Workload API version named
-  in `cluster.py` (`_KUEUE`), which can differ from the version the chart
-  renders. It works for as long as Kueue still serves that version.
+  does not promise to keep. It also talks to a Workload API version the
+  chart does not render: `cluster.py` (`_KUEUE`) asks for the older beta
+  version, while the chart's own ClusterQueue, LocalQueue and ResourceFlavor
+  are written against the newer one. Kueue serves both today, so the pause
+  works; it stops working on the release that drops the older version, and
+  the symptom is a campaign git says is paused that keeps running.
 - **There are no priority lanes.** No `WorkloadPriorityClass` is rendered
   and `withinClusterQueue` is `Never`. A campaign's `priority:` therefore names
   a class that does not exist, and the validating webhook rejects the Job.
@@ -379,9 +383,15 @@ one whose `window` the quota cannot cover, and it reads "Queued" forever.
   the whole podSet must fit. The shipped defaults (converter `window` 20
   against a one-GPU quota) render `parallelism: 20`, which is inadmissible
   forever and reads only as "Queued".
-- **A campaign reaped by its TTL runs again.** The Workload is deleted with
-  the Job, so nothing remembers that the campaign already ran. The next apply
-  recreates the Job, Kueue makes a fresh Workload, and every index runs again.
-  The wrapper's resume skips every page already in the bucket, so a finished
-  volume is not transcribed again. Each volume still takes a GPU slot and a
-  model load, and rewrites its viewer manifest and `manifest.json`.
+- **A reaped campaign is remembered by a ConfigMap, not by Kueue.** The
+  Workload is deleted with the Job, so the queue itself remembers nothing.
+  What stops the next apply from running every index again is the campaign's
+  status ConfigMap: `apply` writes how the Job ended before it applies
+  anything, and then leaves a campaign alone when that record says it
+  finished and its volume list has not moved
+  ([The record a campaign leaves](campaigns.md#the-record-a-campaign-leaves)).
+  Append a volume and it is a changed campaign, which is applied: past the
+  TTL that is a new Job over the whole list, and re-running the volumes that
+  already finished is what resume makes cheap rather than free — each still
+  takes a GPU slot and a model load, and rewrites its viewer manifest and
+  `manifest.json`.
