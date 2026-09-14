@@ -130,20 +130,31 @@ data volume.
 - **Capabilities.** `capabilities.drop: [ALL]`,
   `allowPrivilegeEscalation: false`, `seccompProfile: RuntimeDefault`.
 - **Read-only root filesystem.** Writable paths are explicit. In campaign
-  and warm-up pods, the tmpfs workdir (`/work`) holds `HOME`, `TMPDIR` and
+  and warm-up pods the workdir `/work` holds `HOME`, `TMPDIR` and
   `YOLO_CONFIG_DIR`, which is where ultralytics settings, triton/inductor JIT
-  caches and temp files land. Both Jobs' `sh -c` prologue creates those
-  directories before it execs the wrapper. The web front gets an emptyDir at
-  `/tmp`.
+  caches and temp files land. It is a **tmpfs** (`emptyDir` with
+  `medium: Memory`, counted against the pod's memory limit) in a campaign
+  pod, and a **plain, size-limited `emptyDir` on the node's disk** in a
+  warm-up pod, which downloads model weights and has no reason to spend RAM
+  on them. Both Jobs' `sh -c` prologue creates those directories before it
+  execs. The web front gets an emptyDir at `/tmp`.
 - **Service account tokens.** `automountServiceAccountToken: false` is set
   on every pod except the **web front**. It is the one pod that needs an API
-  credential: a namespace-scoped Role with get/list/watch on `jobs`, `pods`
-  and `configmaps`, and nothing cluster-wide. The web front is also the pod
-  browsers reach, and it has no authentication of its own. Remote code
-  execution in that process would therefore read the token. That is why the
-  Role stays read-only and scoped to one namespace, and why the web front
-  belongs behind an authenticated proxy before anyone outside a trusted
-  network can reach it.
+  credential: a namespace-scoped Role with `get`/`list`/`watch` on `jobs`,
+  `pods` and `configmaps`, plus `create` and `patch` on `configmaps` — that
+  is read-only but for the single record it writes, the campaign's
+  `campaign-<name>-status` ConfigMap
+  ([The record a campaign leaves](campaigns.md#the-record-a-campaign-leaves)).
+  Nothing cluster-wide, no `delete`, and nothing at all on Jobs or Pods
+  beyond reading them. Be clear-eyed about what the write costs: RBAC cannot
+  restrict those two verbs to a name pattern, so an attacker holding this
+  token could create or overwrite **any** ConfigMap in the namespace,
+  including a pipeline's. The web front is also the pod browsers reach, and
+  it has no authentication of its own. Remote code execution in that process
+  would read the token. That is why the Role is otherwise read-only and
+  scoped to one namespace, and why the web front belongs behind an
+  authenticated proxy before anyone outside a trusted network can reach
+  it.
 - **Secrets are files, not environment variables.** The S3 Secret's
   `credentials` key (AWS ini format) is mounted at `/secrets/s3` (mode `0440`)
   and reaches boto3 through `AWS_SHARED_CREDENTIALS_FILE`. Only the non-secret
@@ -200,7 +211,7 @@ service ranges, because the warm-up pod's public egress excludes them.
 | Pod | Ingress | Egress (besides kube-dns) | Cannot reach |
 |---|---|---|---|
 | campaign pod (`app=htrflow-batch`) | none | S3 (the in-namespace `app=rustfs` pod, or `network.s3Cidrs`); the IIIF origins in `network.iiifCidrs` on 443/80 | Hugging Face Hub, the API server, the registry, anything else in-cluster, the rest of the internet |
-| warm-up pod (`app=htrflow-warmup`) | none | the public internet on 443, minus the pod, service and node ranges (Hugging Face Hub is a CDN, so there is no CIDR to pin) | S3, the API server, anything in-cluster |
+| warm-up pod (`app=htrflow-warmup`) | none | the public internet on 443, minus the pod, service and node ranges (Hugging Face Hub is a CDN, so there is no CIDR to pin) | the API server, and anything in-cluster — including an in-cluster S3. An S3 endpoint on the public internet is *not* blocked by this rule; what keeps the warm-up out of the results bucket is that it mounts no S3 Secret and holds no credential |
 | web front (`app=htrflow-web`) | `network.web.ingressCidrs` on 8081 (NodePort traffic arrives SNAT'd from the node, so include the node range) | the API server (`network.apiServer.cidr`); S3 (same targets as the campaign pod) for its `progress.json` reader | the IIIF origin, Hugging Face Hub, anything else in-cluster |
 | RustFS (`app=rustfs`, devstack) | 9000 from anywhere (and 9001 when the console is on) | none | — |
 | rustfs-init hook (`app=rustfs-init`, devstack) | none | RustFS on 9000 | — |

@@ -59,14 +59,25 @@ models stay until the PVC is dropped.
 
 ## Web front (`web.*`)
 
-Renders a ServiceAccount, a Role (get/list/watch on `jobs`, `pods`,
-`configmaps` — this namespace only, never cluster-wide) and RoleBinding, and
-the `htrflow-web` Deployment + Service (NodePort). One container serves the
-campaign browser at `/`, Universal Viewer at `/uv.html` and the read API at
-`/api/v1/…`; it is the one pod in this chart that keeps its ServiceAccount
-token, because it is the Kubernetes API client the browser reads through,
-computing everything live — no status document is written by anything in
-this system. It also reads the results bucket directly, for one thing the
+Renders a ServiceAccount, a Role and RoleBinding, and the `htrflow-web`
+Deployment + Service (NodePort). The Role is this namespace only, never
+cluster-wide: `get`/`list`/`watch` on `jobs`, `pods` and `configmaps`, and on
+`configmaps` also **`create` and `patch`**. Those two are one privilege, not
+two — a server-side apply of an object that does not exist yet is a create —
+and they exist for the one write this service makes: the campaign's
+`campaign-<name>-status` ConfigMap
+([The record a campaign leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)).
+RBAC's `resourceNames` cannot express a name *pattern*, and does not apply to
+`create` at all, so the grant covers every ConfigMap in the namespace; what
+keeps the service to the one object is the service, and a test that greps its
+source for any other write. Nothing here may delete anything, or write a Job
+or a Pod.
+
+One container serves the campaign browser at `/`, Universal Viewer at
+`/uv.html` and the read API at `/api/v1/…`; it is the one pod in this chart
+that keeps its ServiceAccount token, because it is the Kubernetes API client
+the browser reads through, computing every answer live from Jobs, Pods and
+ConfigMaps. It also reads the results bucket directly, for one thing the
 Kubernetes API cannot answer: a running volume's `progress.json`
 (`ProgressReader`, see [Events and signals](../how-it-works/signals.md)) — so
 this pod must reach the results bucket, not only the API server, and its
