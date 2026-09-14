@@ -430,7 +430,14 @@ check web       "$(count packages/web/src -name '*.py')" 1031
 # in which every page processed failed -- and each gets its own sentence,
 # naming only the pages the retry will actually redo. The `done` stage leaves
 # the progress line so a finished volume reads as its pages and its failures.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3581
+# 3581 -> 3777 (2026-09-14, running motion): the product owner, watching a
+# live run, could not tell a running campaign from a finished one -- nothing
+# on the card moved. Three gestures, running only: a pulsing dot in the state
+# and phase chips, a progress bar that eases to its new width on each poll
+# (with a sheen crossing it between polls), and a one-second highlight on the
+# progress line whose page count actually changed. Markup, aria and the
+# reduced-motion rules are what cost lines; the keyframes are kept small.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3777
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

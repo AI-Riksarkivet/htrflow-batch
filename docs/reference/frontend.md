@@ -10,9 +10,9 @@ the `frontend/README.md` there is the developer-facing version of this page.
   its **Models** line, phase, counts and summed pages in the header, a
   **notice chip** when anything has failed or errored, and — on a failed
   poll — a banner in plain words over the last list it received. Each card
-  fetches its own volumes, paged. The page header carries the Riksarkivet
-  mark and title on the left, and on the right the deployed release
-  (`GET /api/v1/version`), a link to the
+  fetches its own volumes, paged. The page header carries the logo
+  (`static/ra.svg`) and title on the left, and on the right the deployed
+  release (`GET /api/v1/version`), a link to the
   [source repository](https://github.com/AI-Riksarkivet/htrflow-batch) as the
   GitHub mark (inline SVG, labelled, keyboard reachable) and the theme
   toggle.
@@ -29,14 +29,15 @@ the `frontend/README.md` there is the developer-facing version of this page.
 - `/alto?src=<url>` — the **ALTO viewer**: one page's ALTO XML as text, in
   reading order, each line tinted by its `WC` confidence, with a raw-XML
   toggle. Reached from the run viewer's alto column; see
-  [Viewing Results](../getting-started/viewing.md#reading-a-pages-alto).
+  [Viewing Results](../getting-started/viewing.md).
 
 ## Stack
 
-Svelte 5 (runes) + SvelteKit 2 with `adapter-static` (`prerender = true`,
+Svelte (runes) + SvelteKit with `adapter-static` (`prerender = true`,
 `ssr = false` — a pure static shell, data fetched in the browser), strict
 TypeScript, Zod at the boundary, Vitest (+ @testing-library/svelte on
-jsdom), Prettier, Bun as the package runner (`engines`: Node ≥ 22, Bun ≥ 1.1).
+jsdom), Prettier, Bun as the package runner. The supported Node and Bun
+versions are the `engines` field of `frontend/package.json`.
 
 | File                                                 | Description                                                                                                                                                 |
 | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -45,6 +46,7 @@ jsdom), Prettier, Bun as the package runner (`engines`: Node ≥ 22, Bun ≥ 1.1
 | `src/lib/run.ts`, `runlog.ts`                        | `manifest.json` schema + summary math (incl. `scale()`, the page grid's bar height; each page's `alto` URL); run-log grouping and the terminal-line check   |
 | `src/lib/alto.ts`                                    | `parseAlto` (ALTO XML → text lines + confidence), `altoUrl`, `prettyXml` (the raw-XML toggle)                                                              |
 | `src/lib/pipeline.ts`                                | `pipelineModels` (the models a pipeline YAML names, and what pins them), `modelLabel`, `modelUrl`                                                            |
+| `src/lib/reasons.ts`                                 | `describeReason`, `describeApiError` and the other sentence builders — the one place a message a person reads is written                                    |
 | `src/lib/theme.svelte.ts`                            | the one theme store (`ThemeToggle.svelte` on every route)                                                                                                   |
 | `src/lib/components/`                                | `CampaignCard`, `RunSummaryCard`, `PageGrid`, `PagesTable`, `ThemeToggle`                                                                                   |
 | `src/routes/+page.svelte`, `routes/log/`, `routes/alto/` | the three routes                                                                                                                                        |
@@ -80,16 +82,15 @@ script). A CSP header from the server must not be stricter than the meta tag
 - **Fail-hard shape, fail-soft rows.** The read API is ours, not an
   untrusted document: `src/lib/api.ts` parses every response with Zod, and
   a response of the wrong shape throws. One campaign row the page cannot
-  read is still a bug, but not a reason to hide the rest (B32): `fetchJobs`
+  read is still a bug, but not a reason to hide the rest: `fetchJobs`
   leaves that row out, counts it, logs the first issue to the console for
   the operator, and the page says how many campaigns are hidden in a
   banner over the list it could read; a list whose every row is unreadable
   throws like a wrong shape. `ApiUnreachable` covers a network error and a
   non-2xx status alike; the page shows one banner over the last good list.
-  There is
-  no age-based staleness check — every response is computed live from the
-  Kubernetes API, so there is nothing that can go stale the way a stored
-  status document would.
+  There is no age-based staleness check — every response is computed live
+  from the Kubernetes API, so there is nothing that can go stale the way a
+  stored status document would.
 - **States.** A `VolumeView.state` is `pending`, `active`, `done`, or
   `failed` — computed by the API from the Job's index sets, not stored
   anywhere; a `failed` row's `reason` is `{stage, permanent, error}` parsed
@@ -108,6 +109,17 @@ script). A CSP header from the server must not be stricter than the meta tag
   the browser's, so a reader's clock skew cannot show "0 s ago" for a row
   that has not actually just updated. `null` renders nothing at all. The
   campaign header adds the API's summed `pagesDone`/`pagesTotal`.
+- **Running motion.** Only what is running moves, so that a campaign still
+  working cannot be mistaken for a finished one between polls: the state and
+  phase chips carry a pulsing dot (`aria-hidden` — the chip's word is the
+  state; the header's needs a succeeded warm-up too, since `Running` is also
+  what a campaign reads as while its warm-up is pending), an active row and a
+  Running header whose summed `pagesTotal` is above zero carry a 3px
+  `role="progressbar"` bar whose fill eases to `done`/`total` over 600 ms
+  with a slow sheen crossing it, and the progress line whose `done` actually changed since the
+  last poll fades a second of the running blue out from behind its text.
+  Under `prefers-reduced-motion: reduce` there is no pulse, no sheen and no
+  fade — the bar still shows the same fraction, it just jumps to it.
 - **The notice chip.** `describeNotice` turns the campaign's `pagesFailed`,
   `errors` and `lastError` into one line — "1 page failed · 2 errors ·
   page 0044: htrflow's Segmentation worker thread died" — shown folded or
@@ -128,11 +140,10 @@ script). A CSP header from the server must not be stricter than the meta tag
   matching on the error text: a bad env and an unreadable manifest send their
   reader to different files, and the wrapper's `stage` (`config` vs `setup`)
   is what tells them apart. It is the single place where a message a person
-  reads is written —
-  the wording is pinned verbatim in `reasons.test.ts`, and the table is in
-  [Failure handling](../how-it-works/failure-handling.md). A `reason` the
-  API could not parse renders as "the pod stopped without a message this
-  page can read", never as the raw JSON.
+  reads is written — the wording is pinned verbatim in `reasons.test.ts`, and
+  the table is in [Failure handling](../how-it-works/failure-handling.md). A
+  `reason` the API could not parse renders as "the pod stopped without a
+  message this page can read", never as the raw JSON.
 - **Phase.** A campaign's `JobSummary.phase` (`Queued`/`Paused`/`Running`/
   `Succeeded`/`PartiallyFailed`/`Failed`) drives the card's left accent: red
   if `Failed`, `PartiallyFailed` or any volume is `failed`, blue if
@@ -146,18 +157,17 @@ script). A CSP header from the server must not be stricter than the meta tag
   off the same `VolumeView` row: `manifestUrl` is what feeds `/log`'s
   `RunSummaryCard`, and `logUrl` is absolute and bucket-rooted
   (`<public_results_base>/status/logs/<pipeline>/<id>.txt`, no
-  namespace/S3_PREFIX prefix): the browser has no bucket base URL to resolve
-  a bare key against, so the API builds the full URL — see
-  [Live Run Log](../how-it-works/live-run-log.md).
-- **ALTO column (§ reading-a-pages-alto).** `RunManifest.viewer_url`
+  namespace/`S3_PREFIX` prefix): the browser has no bucket base URL to
+  resolve a bare key against, so the API builds the full URL — see
+  [Events and signals](../how-it-works/signals.md).
+- **ALTO column.** `RunManifest.viewer_url`
   (publish.py: `<public_results_base>/<S3_PREFIX><pipeline>/<volume>/iiif.json`,
-  i.e. `Config.volume_prefix`) is now typed in
-  `runManifestSchema`, not just passed through; `pageStats`/`summarizeRun`
-  derive each page's ALTO URL alongside it —
-  `altoUrl(viewer_url, pageId)` swaps `iiif.json` for
+  i.e. `Config.volume_prefix`) is typed in `runManifestSchema`, not just
+  passed through; `pageStats`/`summarizeRun` derive each page's ALTO URL
+  alongside it — `altoUrl(viewer_url, pageId)` swaps `iiif.json` for
   `alto/<pageId>.xml`, the sibling directory `viewer.py`'s `seeAlso` already
   points at — and attach it as `PageStat.alto` when `viewer_url` is a valid
-  http(s) URL (an older manifest without one just has no alto column).
+  http(s) URL (a manifest without one has no alto column).
   `PagesTable`'s **alto** cell renders `view` (`/alto?src=<encodeURIComponent(url)>`)
   and `download` (fetch + `Blob` + a same-origin object URL — `<a download>`
   is ignored cross-origin, and the results bucket is a different origin from
@@ -257,16 +267,15 @@ script). A CSP header from the server must not be stricter than the meta tag
 - **Accessibility** — campaign header is a disclosure button, carrying
   `aria-controls` only while the volume table is rendered (a folded card has
   no table, and a dangling IDREF is invalid ARIA — `aria-expanded` carries
-  the state on its own); AA contrast in
-  both themes; `prefers-reduced-motion` honoured; no horizontal overflow at
-  390 px.
+  the state on its own); AA contrast in both themes;
+  `prefers-reduced-motion` honoured; no horizontal overflow at 390 px.
 
 ## Commands
 
 ```bash
 cd frontend
 bun install
-bun run dev        # http://localhost:5173; static/ is served at /
+bun run dev        # Vite dev server; static/ is served at /
 bun run test       # vitest (pure + component tests, jsdom)
 bun run coverage   # vitest with @vitest/coverage-v8
 bun run check      # svelte-check, strict TypeScript
