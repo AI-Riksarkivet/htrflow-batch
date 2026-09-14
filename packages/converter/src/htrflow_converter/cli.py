@@ -372,6 +372,18 @@ def _campaign_of(obj: dict) -> str:
     return name.removeprefix("campaign-") if obj["kind"] == "ConfigMap" else name
 
 
+#: `apply` exited 1 for everything, so a CI job could not tell "nothing
+#: reached the cluster" (no credentials, an unreachable API server, a render
+#: that did not pass) from "all but one object is applied and the one is
+#: named". They want different answers -- the first is a stop, the second a
+#: change to make -- so the second has a code of its own.
+REFUSED = 3
+_REFUSED_SUMMARY = (
+    "{n} of {total} objects were refused by the API server and are "
+    "unchanged: {names} — the other {ok} were applied (exit {code})"
+)
+
+
 def _cluster(namespace: str):
     """The API-server adapter, behind a function: `validate` and `render`
     never touch a cluster (nor pay the client's import), and a test swaps
@@ -463,14 +475,27 @@ def _apply(
                 if said is not None:
                     done.add(name)
                     print(said)
+            refused: list[str] = []
+            applied = 0
             for objects, is_campaign in ((pipelines, False), (campaigns, True)):
                 for obj in objects:
                     if is_campaign and _campaign_of(obj) in done:
                         continue
                     if is_campaign and obj["kind"] == "ConfigMap":
                         obj["metadata"].setdefault("annotations", {}).update(prov)
-                    live = cluster.apply(obj)
-                    print(f"applied: {obj['kind']}/{obj['metadata']['name']}")
+                    name = f"{obj['kind']}/{obj['metadata']['name']}"
+                    # Per object, not per apply. One object the API server
+                    # will not take used to abort the loop here, and every
+                    # campaign behind it in the order was never applied at
+                    # all -- a repo-wide outage over one changed Job.
+                    try:
+                        live = cluster.apply(obj)
+                    except ClusterError as e:
+                        print(e, file=sys.stderr)
+                        refused.append(name)
+                        continue
+                    applied += 1
+                    print(f"applied: {name}")
                     if is_campaign and obj["kind"] == "Job":
                         jobs.append((live, obj["spec"].get("suspend", False)))
             if prune:
@@ -482,6 +507,22 @@ def _apply(
             failed = 0
             for live, suspended in jobs:
                 failed |= cluster.sync_pause(live, suspended, pause_wait)
+            if refused:
+                # Refused everything is not "some objects were refused", it
+                # is the total failure the old code always reported: a Role
+                # without apply, a webhook rejecting the lot. Same exit 1.
+                code = REFUSED if applied else 1
+                print(
+                    _REFUSED_SUMMARY.format(
+                        n=len(refused),
+                        total=applied + len(refused),
+                        names=", ".join(refused),
+                        ok=applied,
+                        code=code,
+                    ),
+                    file=sys.stderr,
+                )
+                return code
             return failed
         except ClusterError as e:
             print(e, file=sys.stderr)
