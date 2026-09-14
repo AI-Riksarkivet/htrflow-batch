@@ -86,7 +86,7 @@ tables below.
 | [B21](stories/B21-contract-tests.md) | Contract tests between the wrapper, the reconciler and the browser |
 | [B26](stories/B26-dependency-updates.md) | Automatic dependency updates with Dependabot |
 | [B29](stories/B29-audit-fixes-reconciler.md) | Audit fixes — the reconciler remembers, scales and retries correctly |
-| [B42](stories/B42-htrflow-arm64-base-image.md) | `htrflow` base image for arm64 published and pinned by digest |
+| [B42](stories/B42-htrflow-arm64-base-image.md) | "`htrflow` base image for arm64 published and pinned by digest" |
 | [B44](stories/B44-wrapper-cpu-image.md) | Wrapper (CPU) image — CI build, SLSA provenance, SBOM and Trivy scan |
 | [B47](stories/B47-runtime-containers-diagram.md) | Runtime containers diagram refreshed (C4 level 2) |
 | [B53](stories/B53-campaign-state-machine-diagram.md) | Campaign lifecycle state diagram |
