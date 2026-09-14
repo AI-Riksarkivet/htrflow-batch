@@ -21,7 +21,8 @@ from pathlib import Path
 RULES: list[tuple[str, re.Pattern[str]]] = [
     ("ids", re.compile(r"\b[BDTUCXGI][0-9]{1,3}\b|\bS[0-9]{2}\b|\bTask [0-9]+|\bPhase [12]\b|\bPoC\b")),
     ("dates", re.compile(r"\b20[0-9]{2}-[01][0-9]-[0-3][0-9]\b")),
-    ("versions", re.compile(r"\bv?[0-9]+\.[0-9]+\.[0-9]+\b|\bv[0-9]+\.[0-9]+\b")),
+    # Dotted numbers inside an IP address or CIDR (0.0.0.0/0) are not versions.
+    ("versions", re.compile(r"(?<![0-9.])v?[0-9]+\.[0-9]+\.[0-9]+(?![0-9.])|\bv[0-9]+\.[0-9]+\b")),
     (
         "hardware",
         re.compile(
@@ -46,7 +47,8 @@ def load_allow() -> list[tuple[str, re.Pattern[str]]]:
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        suffix, _, pattern = line.partition("\t")
+        suffix, _, pattern = raw.partition("\t")
+        pattern = pattern.strip()
         if not pattern:
             sys.exit(f"{ALLOW_FILE}: expected 'path-suffix<TAB>regex': {raw!r}")
         allow.append((suffix, re.compile(pattern)))
