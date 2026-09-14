@@ -22,6 +22,12 @@ from .parse import ValidationError, load
 
 _PART_RE = re.compile(r"-part(\d+)\.yaml\Z")
 
+#: Where a campaigns repo keeps its committed render. The one source of
+#: truth for the RECORD a re-render is held against: `render --out` says
+#: where this render goes, and the repo's own `rendered/` is what the
+#: previous one left (docs: reference/campaign-yaml.md).
+RENDERED = "rendered"
+
 _NEXT_STEPS = """\
 Your campaigns repo is ready at {dir}.
 
@@ -86,7 +92,7 @@ def _validate(repo_dir: str) -> int:
         return _report(e, "")
     # `rendered/` is committed, so a pull request has the previous render
     # right there to be held against -- no cluster, and no render of its own.
-    edited = _edited_pipeline(campaigns, pipelines, cfg, repo / "rendered")
+    edited = _edited_pipeline(campaigns, pipelines, cfg, repo / RENDERED)
     if edited is not None:
         print(edited)
         return 1
@@ -230,7 +236,14 @@ def _unsafe_out(repo: Path, out: Path) -> str | None:
     return None
 
 
-def _render(repo_dir: str, out_dir: str) -> int:
+def _render(repo_dir: str, out_dir: str, record_dir: str | None = None) -> int:
+    """Render ``repo_dir`` into ``out_dir``.
+
+    ``record_dir`` is where the PREVIOUS render is, when that is not
+    ``out_dir``: an ``apply`` with no ``--out`` renders into a temp directory
+    that records nothing, and the repo's committed ``rendered/`` is still the
+    record its pipelines and campaigns have to agree with.
+    """
     repo = Path(repo_dir)
     try:
         campaigns, pipelines, cfg = load(
@@ -247,7 +260,8 @@ def _render(repo_dir: str, out_dir: str) -> int:
     if clash is not None:
         print(clash)
         return 1
-    edited = _edited_pipeline(campaigns, pipelines, cfg, out)
+    record = Path(record_dir) if record_dir else out
+    edited = _edited_pipeline(campaigns, pipelines, cfg, record)
     if edited is not None:
         print(edited)
         return 1
@@ -522,9 +536,11 @@ def _apply(
     repo_dir: str, out_dir: str | None, prune: bool, pause_wait: int, dry_run: bool
 ) -> int:
     with contextlib.ExitStack() as stack:
+        record_dir = None
         if out_dir is None:
             out_dir = stack.enter_context(tempfile.TemporaryDirectory("-htr-render"))
-        rc = _render(repo_dir, out_dir)
+            record_dir = str(Path(repo_dir) / RENDERED)
+        rc = _render(repo_dir, out_dir, record_dir)
         if rc:
             return rc
         repo, out = Path(repo_dir), Path(out_dir)

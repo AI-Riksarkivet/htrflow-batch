@@ -21,6 +21,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 from kubernetes.client.exceptions import ApiException
 
 from htrflow_converter import cli, render
@@ -753,3 +754,23 @@ def test_a_campaign_job_is_never_deleted_to_change_its_template(tmp_path, cluste
     _refuses(cluster, "kyrk", _immutable_template("kyrk"))
     assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
     assert cluster.of("delete") == []
+
+
+def test_apply_without_out_holds_pipelines_against_the_committed_render(
+    tmp_path, cluster, capsys
+):
+    """`apply` with no `--out` renders into a temp directory, which records
+    nothing. The repo's committed `rendered/` is the record either way --
+    otherwise the one command that reaches a cluster is the one command the
+    pipeline guard does not run for."""
+    repo = _repo(tmp_path)
+    assert cli.main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    path = repo / "pipelines" / "demo-v1.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["image"] = "ghcr.io/riksarkivet/htrflow-batch@sha256:" + "b" * 64
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    capsys.readouterr()
+
+    assert cli.main(["apply", str(repo)]) == 1
+    assert "pipeline demo-v1 changed (image)" in capsys.readouterr().out
+    assert cluster.of("apply") == [], "nothing reached the cluster"
