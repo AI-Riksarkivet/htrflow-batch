@@ -1,77 +1,82 @@
 # htrflow-batch
 
 !!! warning "Not for use yet"
-    This project is under active development at Riksarkivet's AI lab and is
-    not ready for others to run: interfaces, chart values and the campaigns
-    format still change without notice, and the published images are for our
-    own dev cluster. This notice goes when there is a version we stand behind.
+    This project is under active development and is not ready for others to
+    run: interfaces, chart values and the campaigns format still change
+    without notice. This notice goes when there is a release to stand behind.
 
-Kueue-gated batch HTR platform around the htrflow image — streaming
-per-page results to S3 with IIIF viewer output, driven from a campaigns
-git repo.
+Batch handwritten-text recognition for whole archive volumes on Kubernetes,
+built around the stock [htrflow](https://github.com/AI-Riksarkivet/htrflow)
+image. Results stream to an S3 bucket page by page and open in a IIIF viewer;
+what to transcribe is declared in a campaigns git repository.
 
-## What this is
+## What it does
 
-- Run HTRflow batch transcription of archival volumes on Kubernetes, using
-  the **stock upstream htrflow image** as the base — upstream stays
-  unmodified.
-- **Kueue** owns queueing and GPU quota. No custom scheduler.
-- **Git is the desired state, Kubernetes and S3 are the observed state.** A
-  campaign is a YAML file, rendered by a pure converter into one Indexed
-  Job (one index per volume); Kubernetes and Kueue own scheduling and
-  retries natively, and a read-only status API plus browser render progress
-  live off the cluster. **No CRD, no controller, no database.**
-- Phase 1 measures its own overhead (fetch time vs GPU time) so Phase 2 is a
-  data-driven decision, not an architectural enthusiasm.
+- **Runs htrflow unmodified.** The wrapper image builds on the stock htrflow
+  image and drives it page by page, so a long volume costs the same memory
+  as a short one.
+- **Kueue owns queueing and GPU quota.** There is no custom scheduler.
+- **Git is the desired state; Kubernetes and S3 are the observed state.** A
+  campaign is a YAML file. A pure converter renders it into one Kubernetes
+  Indexed Job (one index per volume) plus a warm-up Job that caches the
+  pipeline's models. Kubernetes and Kueue own scheduling and retries, and a
+  read-only status API with a campaign browser shows progress live. There is
+  no CRD, no controller and no database.
+- **Kyverno decides what may run.** Chart-shipped policies admit only
+  digest-pinned images from allowed registries and, optionally, only
+  revision-pinned models.
+- **Every page is traceable.** Each ALTO file records the models, image and
+  htrflow-batch build that produced it, and a volume is done only when every
+  page is accounted for.
+- **It measures itself.** Every volume's `manifest.json` records how long
+  the GPU sat waiting for page fetches (`gpu_stall_seconds`) against wall
+  time. Those numbers decide whether a cache layer in front of the IIIF
+  source is worth building ([Roadmap](roadmap/index.md)).
 
-The design is split into two phases. **Phase 1 (the PoC): the simple
-design** — Kueue + Indexed Jobs + a wrapper that fetches directly from IIIF,
-plus a pure YAML→manifests converter and a thin read API. **Phase 2
-(optimization, evidence-gated): the cache/data layer** — built only if
-Phase 1's measurements justify it.
+## How it fits together
 
-Non-goals for Phase 1: no cache/data layer, no submitter API, no
-intra-volume sharding, no preemption/cohorts, no Prometheus metrics, no
-rask integration.
+```mermaid
+%% One campaign, from a YAML file in git to results in the viewer.
+flowchart TB
+    repo["campaigns repo in git<br/>campaigns/*.yaml · pipelines/*.yaml"]
+    conv["htrflow-campaigns<br/>validate · render · apply"]
+    subgraph cluster["Kubernetes cluster"]
+        kyverno["Kyverno policies<br/>digest-pinned images · pinned models"]
+        kueue["Kueue<br/>queue, GPU quota, admission"]
+        warm["warm-up Job (CPU)<br/>fills the model cache"]
+        job["Indexed Job, one index per volume<br/>wrapper streams pages through htrflow on the GPU"]
+        web["web front<br/>campaign browser · viewer · read API"]
+    end
+    iiif["IIIF image server"]
+    s3["S3 results bucket<br/>ALTO · PAGE · manifest.json · iiif.json · run log"]
+    browser["browser"]
 
-## Current status
+    repo --> conv --> kyverno --> kueue --> job
+    conv --> warm
+    job -->|pages in| iiif
+    job -->|results out, page by page| s3
+    web -->|Jobs, Pods| job
+    browser --> web
+    browser --> s3
+```
 
-The Phase 1 PoC was validated end to end on bare k3s (2026-07-27/28):
-Kueue gating, volume-per-Job lifecycle, streaming per-page upload, resume
-after kill, the verify-gate completion contract, and the GPU path (41×
-over CPU) all passed, and the UV4 viewer serves ALTO/text overlays live in
-a real browser. The campaign browser with a live run log and the D14 pod
-hardening were built and ran on the GB10 arm64 k3s node (2026-08-25/26). A
-repository audit on 2026-08-26 was remediated in the same branch
-([audit report](audits/2026-08-26-repo-audit.md)). B63 (2026-09-01) then
-replaced the original GitOps CronJob controller with campaigns as
-Kubernetes Indexed Jobs — no CRD, no controller — behind a pure converter
-and a thin read API, and carried the campaign browser over onto it: the
-whole front end (browser, Universal Viewer and the read API) is now one
-`htrflow-web` process, cluster policy is enforced by Kyverno rather than by
-the converter, and the per-volume time budget is the pod's own
-`activeDeadlineSeconds`. Kueue contention under more than one concurrent
-GPU Job, priority lanes, a durable results bucket and an archive-scale
-campaign remain open ([Open Items](roadmap/open-items.md)).
+## Where to start
 
-## Where to go next
-
-- [Getting Started](getting-started/index.md) — prerequisites, how to
-  deploy, and how to run a campaign.
-- [How it Works](how-it-works/architecture.md) — architecture, the
-  streaming wrapper, failure handling, and the decision log.
-- [Campaigns (Indexed Jobs)](how-it-works/campaigns.md) — declare volumes
-  in git, render and apply them, watch progress on the campaign browser.
-- [Reference](reference/index.md) — env contracts, YAML schemas, chart
-  values, and the S3 layout.
-- [Development](development/index.md) — setup, tests, CI, security, the
-  local k3s loop.
-- [Roadmap](roadmap/evolution.md) — the evidence-gated Phase 2 cache
-  layer and what's still open.
+- [Try it](getting-started/try-it.md) — the wrapper and viewer on your own
+  machine with Docker Compose, then a dev cluster.
+- [Getting Started](getting-started/index.md) — prerequisites, deploying the
+  chart, running a campaign and viewing results.
+- [How it Works](how-it-works/architecture.md) — the architecture, campaigns,
+  queueing, the streaming wrapper, failure handling and security.
+- [Reference](reference/index.md) — configuration, campaign and pipeline
+  YAML, the wrapper contract, chart values and the S3 layout.
+- [Development](development/index.md) — workspace setup, tests, CI,
+  releasing and a dev cluster.
+- [Roadmap](roadmap/index.md) — what is open and what could come next.
 
 ## License
 
-htrflow-batch is licensed under the European Union Public Licence v1.2
-(EUPL-1.2), the same licence as htrflow — the `LICENSE` file at the root of
-the repository. The third-party components the images ship, with their
-licences, are in [Third-party licences](development/licenses.md).
+htrflow-batch is licensed under the European Union Public Licence (EUPL-1.2),
+the same licence as htrflow — the `LICENSE` file at the root of the
+repository. The third-party components the images ship, with their licences,
+are in [Third-party licences](development/licenses.md).
