@@ -413,7 +413,13 @@ check converter "$(count packages/converter/src -name '*.py')" 1685
 # nothing is running, and a `Running` that can never change is the one answer
 # that is certainly wrong; the comment says which Job deletions leave this
 # behind now that apply writes the terminal record itself.
-check web       "$(count packages/web/src -name '*.py')" 1384
+# 1384 -> 1412 (2026-09-14, B76 review): `merge_record` -- the record only
+# ever gains. A campaign's pods are collected long before its record is, so a
+# detail request an hour later sees no reasons at all, and writing that back
+# erased the only place those sentences survive. A value that says nothing
+# ("", "[]") never replaces one that says something, and `finishedAt` never
+# moves backwards -- two writers, two clocks.
+check web       "$(count packages/web/src -name '*.py')" 1412
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
