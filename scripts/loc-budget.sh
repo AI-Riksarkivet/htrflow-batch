@@ -595,7 +595,16 @@ check web       "$(count packages/web/src -name '*.py')" 1434
 # is configurable and a reaped campaign is still served from its record. It
 # names the one thing a 404 now means, with the comment saying why the Job's
 # TTL is not it.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3823
+# 3823 -> 3847 (2026-09-14, card layout): the campaign card's created date
+# and its Models line were each a row of their own -- the date wedged between
+# the models and the volume table, the models a full-width row of links that
+# read louder than the header above them. They become one small muted line at
+# the foot of the header block. The markup costs more lines than the two it
+# replaces (the line is one <p> with two spans, and either half can be
+# absent) and so does the paragraph saying why there is no "Models (5)"
+# expander: a real pipeline names two or three models, so the line fits and
+# clipping it with a title is the whole of the narrow-screen case.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3847
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
