@@ -1,8 +1,10 @@
 #!/usr/bin/env sh
 # Build or serve the documentation site from a staged copy of docs/ WITHOUT
-# docs/features/: the stories are the backlog's product view (mirrored to
-# Azure DevOps), not site content (Morgan, 2026-09-07). The generator has no
-# exclude option, so the staging is the exclusion. Output lands in ./site.
+# the project's history: the stories (the backlog's product view, mirrored to
+# Azure DevOps), specs and plans, audits, the decision log and the run logs.
+# They stay in git at their paths, which code, READMEs and stories link to,
+# but the site documents the system as it is. The generator has no exclude
+# option, so the staging is the exclusion. Output lands in ./site.
 set -eu
 cmd=${1:-build}
 [ $# -gt 0 ] && shift
@@ -10,8 +12,14 @@ stage=.docs-site
 rm -rf "$stage" site
 mkdir -p "$stage"
 cp -R docs "$stage/docs"
-rm -rf "$stage/docs/features"
+for history in features superpowers audits \
+  how-it-works/decision-log.md development/e2e-indexed-jobs.md development/test-log.md; do
+  rm -rf "$stage/docs/$history"
+done
 cp zensical.toml "$stage/zensical.toml"
+# The site documents the system in general: no project ids, dates, versions,
+# hardware or one site's hosts (scripts/docs_lint.py, scripts/docs-lint.allow).
+python3 scripts/docs_lint.py "$stage/docs" README.md
 cd "$stage"
 ${ZENSICAL:-uvx zensical} "$cmd" "$@"
 [ "$cmd" = build ] && mv site ../site

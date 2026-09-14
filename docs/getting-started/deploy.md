@@ -1,61 +1,84 @@
 # Deploy
 
-Everything runtime-facing ships as two Helm charts. `charts/htrflow-batch`
-(0.6.0) deploys the queueing (Kueue objects), the model-cache PVC, the web
-front (campaign browser, Universal Viewer and the read-only status API in
-one Deployment), the Kyverno policies and the NetworkPolicies.
-`charts/htrflow-devstack` is the separate, PoC-only chart for in-cluster
-RustFS/registry/NVIDIA-device-plugin stand-ins ([Local k3s
-development](../development/local-k3s.md)). Campaigns themselves are not
-part of either chart — they are Indexed Jobs rendered by `packages/converter`
-from a campaigns repo and applied by `htrflow-campaigns apply` or Argo CD
-(see [Running a Campaign](campaigns.md)). Every chart value is in
-[Chart Values](../reference/chart.md).
+`charts/htrflow-batch` deploys everything the platform runs besides the
+campaigns: the Kueue queue objects, the model-cache PVC, the web front (the
+campaign browser, Universal Viewer and the read-only status API in one
+Deployment), the Kyverno policies and the NetworkPolicies. Campaigns are not
+part of the chart. The converter renders them from a campaigns repo, and
+`htrflow-campaigns apply` or a GitOps tool applies them
+([Run a campaign](campaigns.md)). Every chart value is in
+[Chart values](../reference/chart.md).
 
-## Production-shaped install
+This page is the production-shaped install, with your own S3 and the
+policies on. For a disposable dev cluster where one extra chart provides S3,
+a registry and the device plugin, see [Try it](try-it.md).
+
+## Install
+
+Check the [prerequisites](index.md) first: Kueue, Kyverno, GPU nodes with the
+device plugin, a bucket and its Secret. Then:
 
 ```bash
-helm install htr charts/htrflow-batch -n htr-batch --create-namespace \
-  --set publicResultsBase=<browser-reachable results base URL> \
+helm install htr charts/htrflow-batch -n <namespace> --create-namespace \
+  --set publicResultsBase=<results-base-url> \
   --set web.image=<registry>/htrflow-web@sha256:<digest> \
-  --set network.s3Cidrs='{<s3 endpoint cidr>}' \
-  --set network.apiServer.cidr=<kube-apiserver cidr, the node's API server address/32> \
+  --set network.iiifCidrs='{<iiif-source-cidr>}' \
+  --set network.s3Cidrs='{<s3-endpoint-cidr>}' \
+  --set network.clusterCidrs='{<pod-cidr>,<service-cidr>}' \
+  --set network.apiServer.cidr=<apiserver-address>/32 \
   --set security.allowedImageRepos='{<registry>/}' \
   --set security.policies.enabled=true
 make psa-labels
 ```
 
-Kueue CRDs must already be installed on the cluster — see
-[Prerequisites](index.md). The chart does not install the Kueue controller.
-`s3.existingSecret` (default `htr-batch-s3`) must already exist with a
-`credentials` key in AWS ini format — pods read it as a mounted file, never
-as env ([Security](../development/security.md)) — plus `S3_BUCKET` and, for
-anything but real AWS, `S3_ENDPOINT`:
+The chart is installed from a checkout of this repository. `make psa-labels`
+and the other cluster targets take the release name and namespace from
+`HTR_RELEASE` and `HTR_NAMESPACE` in the repo-root `.env` (defaults `htr` and
+`htr-batch`), so set those to match.
 
-```ini
-[default]
-aws_access_key_id = …
-aws_secret_access_key = …
-```
+The campaigns repo's `converter.yaml` names three objects this chart creates,
+and the names must agree:
 
-The bucket needs anonymous `GetObject` on `<namespace>/<pipeline>/<volume>/*`,
-`sources/*` and `status/logs/*` plus CORS (GET/HEAD from the web front's origin)
-— the browser fetches manifests, ALTO and the live run log directly, and
-`GET /api/v1/jobs` for everything else. The devStack `rustfs-init` hook
-applies exactly that policy to RustFS (`templates/_helpers.tpl`,
-`bucketPolicy`); a real bucket needs the equivalent
-([Security → The bucket policy](../development/security.md#the-bucket-policy)).
+| `converter.yaml` | Chart value | Default |
+|---|---|---|
+| `queue` | `queue.name` | `htr-batch` |
+| `s3_secret` | `s3.existingSecret` | `htr-batch-s3` |
+| `data_pvc` | `modelCache.name` | `htr-test-data` |
 
-`web.image` must be a digest (the chart refuses tags outside the PoC —
-`security.allowTagImages`); build it with `make build-web` / `dagger call
-build-web`, publish it with `dagger call publish-docker --component web`.
-One image carries the read API, the campaign browser and the Universal
-Viewer, and it takes the NodePort (`web.nodePort`, default 30800).
+Its `namespace` is the release namespace, and its `public_results_base` is
+the same URL as `publicResultsBase`.
 
-Queue quota is a plain list of covered resources under `queue.resources`.
-The default admits exactly one campaign index as the converter renders it
-(requests cpu 4 / 8 Gi / 1 GPU); raise the quotas to run more volumes in
-parallel:
+To render without a cluster, run `helm template` with the same flags, plus
+`network.nodeCidrs` and `network.apiServer.cidr`. Without a cluster, the
+chart cannot look these up.
+
+## Required values
+
+| Value | What to set it to |
+|---|---|
+| `publicResultsBase` | The URL base browsers use to reach the results bucket. Every result URL in a published manifest is built from it, so it must be set. |
+| `web.image` | The web front image, pinned by digest. The default is the published image. The chart refuses a tag unless `security.allowTagImages` is true, because anyone who can push to the registry could otherwise replace the web front in place. Tag images are pulled on every rollout. |
+| `network.apiServer.cidr` | The kube-apiserver address as a pod reaches it after service DNAT (port `network.apiServer.port`, default 6443). The read API's NetworkPolicy needs it. It is looked up at install time when the kubeconfig may list nodes. Set it explicitly otherwise, and always for `helm template`. |
+| `network.iiifCidrs` | The address ranges of your IIIF source, and of any host that `images:` volumes point at. Campaign pods may reach these on ports 80 and 443. A catch-all range covering every IPv4 address is accepted and still excludes the cluster, node and API server ranges. The default names one specific IIIF host, so always set this. |
+| `network.s3Cidrs` | The S3 endpoint's address ranges. Campaign pods and the web front's read API both reach S3 through this. |
+| `network.clusterCidrs` | Your cluster's pod and service CIDRs. Warm-up pods get public egress except to these ranges and the node addresses. The default is one distribution's defaults, so set yours. |
+| `network.nodeCidrs` | Node addresses. Looked up at install time, like the API server address. |
+| `web.internalResultsBase` | Where the read API pod itself reaches the bucket, whenever `publicResultsBase` does not resolve to the bucket from inside the cluster. See [Exposing the web front](viewing.md#exposing-the-web-front). |
+| `security.allowedImageRepos`, `security.policies.enabled` | Your registry prefixes, and the Kyverno policies on. See [Hardening](#hardening-the-chart-cannot-do-alone). |
+
+The web image carries the read API, the campaign browser and the Universal
+Viewer. Build it with `make build-web` or `dagger call build-web`, and
+publish it with `dagger call publish-docker --component web`
+([Releasing](../development/releasing.md)). It runs unprivileged and listens
+on port 8081. The Service is a NodePort on `web.nodePort` (default 30800).
+
+### Queue quota
+
+`queue.resources` is a plain list of covered resources for the ClusterQueue.
+Every resource a Job requests must be covered, or Kueue marks the Job
+inadmissible. The default admits exactly one campaign index as the converter
+renders it (requests: cpu 4, memory 8 Gi, 1 GPU). Raise the quotas to run
+more volumes in parallel:
 
 ```yaml
 queue:
@@ -68,113 +91,109 @@ queue:
       quota: 2
 ```
 
-The model cache PVC (`modelCache.*`, default 30 Gi RWO, kept on uninstall)
-is rendered by the chart; the converter's rendered warm-up Jobs and campaign
-Jobs are what actually write to and read from it — nothing in the chart
-renders a pipeline ConfigMap or a Job any more.
+Keep the campaigns repo's `window` at what this quota can actually admit
+([Queueing](../how-it-works/queueing.md)).
 
-## Hardening steps the chart cannot do alone
+### Model cache
 
-- **Namespace labels** (once): `make psa-labels` — Pod Security Admission
-  `enforce=<security.psaEnforce>` (`baseline` by default; nothing left in
-  either chart actually needs it — `restricted` is worth trying now),
-  `warn=restricted`, `audit=restricted`.
-- **NetworkPolicy inputs** (`network.*` values): the IIIF origin CIDR(s)
-  (`network.iiifCidrs`), a real S3 endpoint (`network.s3Cidrs`) when not
-  using devStack RustFS, and `network.apiServer.cidr` for the read API's
-  egress to the kube-apiserver (auto-detected via Helm `lookup` at install
-  time; set it explicitly for `helm template` or a kubeconfig without
-  list-nodes permission). The read API pod also needs S3 egress itself now
-  (it reads a running volume's `progress.json` directly, docs:
-  [Signals](../how-it-works/signals.md)) — the chart adds that rule from the
-  same `network.s3Cidrs` automatically, but set **`web.internalResultsBase`**
-  whenever `publicResultsBase` does not resolve from *inside* the cluster
-  (the PoC's `localhost` URL, notably): unset, the pod would resolve
-  `publicResultsBase` straight back to itself and silently show no progress
-  for any campaign, ever.
-- **Trust boundary** (`security.*`): set `security.allowedImageRepos` and
-  turn on `security.policies.enabled` — the Kyverno ClusterPolicies are the
-  only thing enforcing the allow-list and the model-revision rule since the
-  converter dropped both, and an empty list lets any image run on the GPU.
-  Kyverno must be installed first (`make install-kyverno`; ai-dev story
-  I04). Consider `security.requireModelRevision: true` and the
-  `verifyImages` policy once images are cosign-signed
-  ([Security → Trust boundary](../development/security.md#trust-boundary)).
-- **Model cache**: campaign and warm-up Jobs run offline on a read-only /
-  writable-by-warm-up-only cache respectively. A cache PVC that predates the
-  non-root pods needs a one-time `chown -R 1000:1000`
-  ([Security](../development/security.md#cache-pvc-migration)).
-- **Campaigns repo**: protected `main`, required review — write access to it
-  is code execution on the GPU node ([Running a Campaign](campaigns.md)).
+The chart renders the model-cache PVC (`modelCache.*`, default 30 Gi,
+`ReadWriteOnce`, kept on uninstall). The chart itself never writes to it.
+The converter's warm-up Jobs fill it, and campaign Jobs mount it read-only.
+The cache is never evicted: a pipeline's models stay until the PVC is
+dropped. If the cluster already has a PVC of that name, either set
+`modelCache.create=false` or adopt it into the release. The commands are
+under "Adopting hand-applied resources" in the
+[chart README](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/charts/htrflow-batch/README.md).
+
+## S3 Secret, bucket policy and CORS
+
+The chart never creates the S3 Secret. The converter's Jobs expect a Secret
+named `s3.existingSecret` in the release namespace with three keys:
+
+- `credentials`: an AWS ini file. Pods mount it as a file and never read
+  credentials from the environment.
+- `S3_BUCKET`: the bucket name.
+- `S3_ENDPOINT`: the endpoint URL, for anything but AWS itself.
+
+```ini
+[default]
+aws_access_key_id = …
+aws_secret_access_key = …
+```
+
+```bash
+kubectl -n <namespace> create secret generic htr-batch-s3 \
+  --from-file=credentials=<credentials-file> \
+  --from-literal=S3_BUCKET=<bucket> \
+  --from-literal=S3_ENDPOINT=<s3-endpoint-url>
+```
+
+The browser fetches manifests, ALTO, source manifests and run logs straight
+from the bucket, and gets everything else from `GET /api/v1/jobs` on the web
+front. The bucket therefore needs anonymous `s3:GetObject` on these keys,
+with listing denied:
+
+| Keys | Anonymous read |
+|---|---|
+| `<namespace>/<pipeline>/<volume>/*`: results, `iiif.json`, `progress.json`, `manifest.json` | always |
+| `<namespace>/sources/*`: synthetic manifests for `images:` volumes | always |
+| `status/logs/*`: per-volume run logs | only if the campaign browser should link them. A run log can carry the redacted form of a private IIIF URL and whatever htrflow prints, so keep it private and serve logs through an authenticated proxy instead |
+
+CORS must allow `GET` and `HEAD` from the web front's origin:
+
+```json
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": ["<web-front-origin>"],
+      "AllowedMethods": ["GET", "HEAD"],
+      "AllowedHeaders": ["*"],
+      "MaxAgeSeconds": 3600
+    }
+  ]
+}
+```
+
+The dev cluster's `rustfs-init` hook applies the same shape
+(`charts/htrflow-devstack/templates/_helpers.tpl`, `bucketPolicy`). The
+[S3 layout](../reference/s3-layout.md) lists every key. The
+[Security](../how-it-works/security.md) page explains why it is this split.
+
+## Hardening the chart cannot do alone
+
+- **Namespace labels.** Helm cannot label a namespace it did not create, so
+  run `make psa-labels` once after each install or upgrade. It sets Pod
+  Security Admission `enforce` to the release's `security.psaEnforce`
+  (`baseline` by default), and `warn` and `audit` to `restricted`. The
+  platform's pods are restricted-clean, so `restricted` is worth enforcing.
+  `PSA_ENFORCE=…` overrides the level before the first install.
+- **Trust boundary.** Set `security.allowedImageRepos` and turn on
+  `security.policies.enabled`. The Kyverno policies are the only thing that
+  enforces the allow-list and the model-revision rule, and an empty list
+  lets any image run on the GPU. Consider `security.requireModelRevision:
+  true`, and `security.verifyImages.*` (issuer and subject of the signing CI
+  identity) once your images are cosign-signed
+  ([Security → Trust boundary](../how-it-works/security.md#trust-boundary)).
+- **Model-cache ownership.** Platform pods run as uid 1000. A cache volume
+  first written by a root-running pod, on a volume plugin that ignores
+  `fsGroup`, needs a one-time `chown -R 1000:1000` from a throwaway pod
+  before the first warm-up. Starting with a fresh PVC also works.
+- **Run logs.** Keep `status/logs/*` private if run logs may carry anything
+  sensitive (see the table above).
+- **Web front ingress.** `network.web.ingressCidrs` limits who can reach
+  the web front's port. The default allows every address. NodePort traffic arrives
+  SNAT'd from the node, so include the node range.
 
 ## Upgrading
 
 ```bash
-helm upgrade htr charts/htrflow-batch -n htr-batch --reset-then-reuse-values [--set …]
+helm upgrade htr charts/htrflow-batch -n <namespace> --reset-then-reuse-values [--set …]
 make psa-labels
 ```
 
-Always `--reset-then-reuse-values` (or a full values file): plain
-`--reuse-values` keeps the old chart's defaults and once rendered every
-NetworkPolicy away. Chart history (digest gate, PVC adoption, the 0.3.0
-removal of the old CronJob controller/pipelines/exampleJob, the read API's
-arrival, the `devStack.*` split into `charts/htrflow-devstack`) is tabulated
-in the
-[chart README](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/charts/htrflow-batch/README.md#upgrading).
-
-## PoC replay (bare k3s, in-cluster devStack)
-
-This reproduces the smoke test on a single k3s node using
-`charts/htrflow-devstack` (RustFS S3 with its bucket-init hook, an
-in-cluster registry, the NVIDIA device plugin and RuntimeClass) instead of
-standalone raw manifests. Cluster constants come from the repo-root `.env`
-(`.env.example` has the defaults used here); the day-to-day loop around this
-— building the arm64 GPU image, SSH forwards — is
-[Local k3s development](../development/local-k3s.md).
-
-```bash
-export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-make install-kueue                  # once per cluster
-make poc-push                       # builds + pushes the wrapper and web images, prints their digests
-helm upgrade --install htr-devstack charts/htrflow-devstack -n htr-batch --create-namespace \
-  --set rustfs.enabled=true --set registry.enabled=true \
-  --set nvidiaDevicePlugin.enabled=true \
-  --set devStack.insecureDefaults=true    # PoC: accept generated RustFS credentials
-helm upgrade --install htr charts/htrflow-batch -n htr-batch \
-  --set publicResultsBase=http://localhost:30900/htr-results \
-  --set web.internalResultsBase=http://rustfs.htr-batch.svc.cluster.local:9000/htr-results \
-  --set network.apiServer.cidr=<node-ip>/32 \
-  --set web.image=127.0.0.1:30500/htrflow-web@sha256:<web digest> \
-  --set security.allowedImageRepos='{127.0.0.1:30500/,rustfs/,docker.io/amazon/aws-cli}' \
-  --set security.policies.enabled=true    # needs `make install-kyverno`
-make psa-labels
-make campaigns-apply DIR=examples/campaigns   # or your own campaigns repo checkout
-k9s -n htr-batch   # watch
-```
-
-`--set security.allowTagImages=true` lets you use a `:dev` tag for
-`web.image` instead of a digest while iterating (it is then pulled on every
-rollout). Swap `helm upgrade --install` for `helm
-template` (same flags, plus `network.nodeCidrs`) to render without a
-cluster. Kill-and-resume test: wait until ~2 ALTOs exist under
-`<namespace>/demo-v1/mock-vol/alto/`, force-delete the running pod, watch
-the retry pod's log `resume: N pages already done` and converge to
-`Complete`.
-
-On a cluster that already carries a hand-made model-cache PVC, RuntimeClass
-or device plugin, adopt it first or turn the corresponding value off (chart
-README, "Adopting hand-applied resources").
-
-Bucket policy and CORS are applied by the `rustfs-init` hook on every
-install/upgrade — no manual `aws-cli` pod any more. The RustFS credentials
-are generated on first install; read them back with
-`kubectl -n htr-batch get secret htr-batch-s3 -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d`.
-
-Host-level settings a shared k3s node may need are the host's business; the
-[local k3s page](../development/local-k3s.md#gotchas-collected-on-this-node)
-names them.
-
-## Local compose smoke stack
-
-No Kubernetes cluster needed — see [Run a Volume](run-a-volume.md#local-compose-alternative)
-for the `make compose-up` / `make compose-smoke` path.
+Always use `--reset-then-reuse-values`, or pass a full values file. Plain
+`--reuse-values` keeps the old chart's defaults, so new values such as the
+`network.*` block never arrive, and the chart fails when `network` is
+missing. Breaking changes between chart releases, and what to do about each,
+are listed under "Upgrading" in the
+[chart README](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/charts/htrflow-batch/README.md).
