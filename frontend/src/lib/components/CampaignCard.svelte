@@ -443,11 +443,9 @@
             {@const href = modelUrl(model)}
             {i > 0 ? " · " : ""}
             {#if href === null}
-              <span title={model.id}>{modelLabel(model)}</span>
+              {modelLabel(model)}
             {:else}
-              <a {href} target="_blank" rel="noopener" title={model.id}
-                >{modelLabel(model)}</a
-              >
+              <a {href} target="_blank" rel="noopener">{modelLabel(model)}</a>
             {/if}
           {/each}
         </span>
