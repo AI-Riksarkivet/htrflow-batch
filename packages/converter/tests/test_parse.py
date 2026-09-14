@@ -120,6 +120,11 @@ EXPECTED = {
         'name) ends in "-part<number>", which is what the converter calls the '
         "parts of a campaign it splits — rename the file",
     ],
+    "status-name": [
+        "campaigns/kyrk-status.yaml: the campaign name (taken from the file "
+        'name) ends in "-status", which is what the read API calls the '
+        "ConfigMap it writes beside the record of a campaign — rename the file",
+    ],
     "bad-suspend": [
         'campaigns/broken.yaml: "suspend" must be true or false (got "maybe")',
         'campaigns/broken2.yaml: "suspend" must be true or false (got a list)',

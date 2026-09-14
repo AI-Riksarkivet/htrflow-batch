@@ -274,7 +274,13 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2721
 # authenticated forge login; an apply knows only the account it ran under,
 # and the added lines are the paragraph saying why the two are not the
 # same claim.
-check converter "$(count packages/converter/src -name '*.py')" 1591
+# 1591 -> 1601 (2026-09-14, B76 review): "-status" joins "-part<number>" as a
+# reserved campaign-file ending. A campaign called `x-status` renders a record
+# ConfigMap named `campaign-x-status` -- the very name the read API writes the
+# status of campaign `x` to, and which the prune then keeps or deletes on the
+# wrong campaign's behalf. STATUS_SUFFIX moves to models.py, where the rule
+# that reserves it lives and where render and cluster can both import it.
+check converter "$(count packages/converter/src -name '*.py')" 1601
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
