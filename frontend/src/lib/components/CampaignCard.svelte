@@ -79,6 +79,25 @@
   let detailError = $state<string | null>(null);
   let loadingMore = $state(false);
 
+  // Which rows' page counts moved on the last poll, so only those flash.
+  // First paint is not news: a volume is only in here once it has been seen
+  // with a different `done`, which is why the counts are remembered rather
+  // than compared against the rendered text.
+  const seen = new Map<string, number>();
+  let moved = $state(new Set<string>());
+
+  function markMoved(rows: VolumeView[]): void {
+    const now = new Set<string>();
+    for (const v of rows) {
+      const done = v.progress?.done;
+      if (done === undefined) continue;
+      const before = seen.get(v.id);
+      if (before !== undefined && before !== done) now.add(v.id);
+      seen.set(v.id, done);
+    }
+    moved = now;
+  }
+
   const PAGE = 200;
   // The API refuses a larger limit (packages/web app.py, `le=1000`), so a
   // card with more than five pages open refreshes the first five and keeps
@@ -156,6 +175,7 @@
           ? [...detail.volumes, ...volumes.slice(limit)]
           : detail.volumes;
       volumes = reset ? refreshed : [...volumes, ...detail.volumes];
+      markMoved(volumes);
       // Not paged by the API (up to 50 newest failed-with-a-reason rows,
       // independent of offset/limit) — refreshed on every call.
       failures = detail.failures;
@@ -472,7 +492,14 @@
                   {v.state}
                 </span>
                 {#if v.progress !== null}
-                  <span class="vprogress">{describeProgress(v.progress)}</span>
+                  <!-- Keyed on the count itself: the node is rebuilt only
+                       when the number changes, which is what restarts the
+                       highlight; `moved` is what decides it runs at all. -->
+                  {#key v.progress.done}
+                    <span class="vprogress" class:bump={moved.has(v.id)}
+                      >{describeProgress(v.progress)}</span
+                    >
+                  {/key}
                   {#if v.state === "active" && v.progress.total > 0}
                     {@render bar(v.id, v.progress.done, v.progress.total)}
                   {/if}
@@ -856,6 +883,7 @@
      down the column, the numbers are what it stops for. */
   .vprogress {
     display: block;
+    position: relative;
     font-size: 11.5px;
     color: var(--muted-foreground);
     overflow-wrap: anywhere;
@@ -908,6 +936,27 @@
     }
     to {
       transform: translateX(100%);
+    }
+  }
+
+  /* Third gesture: one second of the running blue behind the line whose
+     page count just moved, so a poll landing is something a reader catches
+     rather than infers. Behind the text (z-index -1 under an unstacked
+     parent), and on a pseudo-element so the fade is an opacity -- animating
+     a background colour to `transparent` greys on the way out. */
+  .vprogress.bump::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: -1px -0.25rem;
+    border-radius: 3px;
+    background: var(--primary-soft);
+    animation: settle 1s ease-out forwards;
+  }
+
+  @keyframes settle {
+    to {
+      opacity: 0;
     }
   }
 
@@ -1050,9 +1099,10 @@
       animation: none;
     }
 
-    /* Not `animation: none` -- an unanimated sheen would simply be parked
-       across the fill. The bar still fills; it jumps there. */
-    .fill::after {
+    /* Not `animation: none` -- an unanimated sheen or highlight would
+       simply be parked on screen. The bar still fills; it jumps there. */
+    .fill::after,
+    .vprogress.bump::before {
       display: none;
     }
 
