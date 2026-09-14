@@ -95,6 +95,7 @@ def run_manifest(
     """The manifest.json body: what the volume is, what produced it, what came
     out, and what a resume or the Phase 2 gate reads back (docs: s3-layout)."""
     ok_pages = [n for n, r in stats.results.items() if r.status == "ok"]
+    failed_pages = [n for n, r in stats.results.items() if r.status == "failed"]
     return {
         "volume": cfg.volume_ref,
         "pipeline_id": cfg.pipeline_id,
@@ -103,6 +104,14 @@ def run_manifest(
         "htrflow_version": _htrflow_version(),
         "image_digest": cfg.image_digest,
         "pages": len(pages),
+        # A volume completes with failed pages recorded (the product owner,
+        # 2026-09-14), so the completion marker itself has to say whether
+        # every page came out. Two counts rather than a `complete` flag: a
+        # reader that only wants "did it all work" compares them, and one
+        # that wants the pages still has `results`, which they are derived
+        # from and so can never disagree with.
+        "pages_ok": len(ok_pages),
+        "pages_failed": len(failed_pages),
         "results": _results_json(stats),
         "source_manifest": source_manifest_url,
         # W7: which source image each page came from, so a resume after an
@@ -154,10 +163,11 @@ def run(
     )
     store.put_json("manifest.json", body)
     log.info(
-        "[%s] COMPLETE %d pages (%d processed) in %.1fs, viewer: %s",
+        "[%s] COMPLETE %d pages (%d processed, %d failed) in %.1fs, viewer: %s",
         cfg.volume_ref,
         len(pages),
-        sum(1 for r in stats.results.values() if r.status == "ok"),
+        body["pages_ok"],
+        body["pages_failed"],
         wall,
         body["viewer_url"],
     )

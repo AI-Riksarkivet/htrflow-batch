@@ -144,7 +144,11 @@ fail=0
 # the termination message used to be the only copy, and keeps one guard for
 # the run where every processed page failed. The lines are the rationale for
 # a rule an operator will meet on a live volume.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2706
+# 2706 -> 2716 (2026-09-14, manifest.json says how the volume came out):
+# pages_ok / pages_failed next to `pages`, so a reader of the completion
+# marker can tell a clean volume from one completed with failed pages
+# without walking `results`.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2716
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

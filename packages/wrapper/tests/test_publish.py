@@ -57,6 +57,11 @@ def test_run_manifest_is_the_completion_marker_field_for_field(cfg, monkeypatch)
         "htrflow_version": "0.2.3",
         "image_digest": "sha256:abc",
         "pages": 2,
+        # A volume now completes with failed pages recorded (the product
+        # owner, 2026-09-14), so manifest.json has to say at a glance whether
+        # every page came out -- without walking `results`.
+        "pages_ok": 1,
+        "pages_failed": 1,
         "results": {
             "0001": {"status": "ok", "seconds": 1.23},
             "0002": {
@@ -91,6 +96,7 @@ def test_run_manifest_without_an_image_digest_or_a_wall_clock(cfg):
     assert body["image_digest"] == "unknown"
     assert body["pages_per_second"] == 0  # no division by a zero wall clock
     assert body["results"] == {}
+    assert (body["pages_ok"], body["pages_failed"]) == (0, 0)
 
 
 ALTO = '<alto><Layout><Page WIDTH="2500" HEIGHT="3538"/></Layout></alto>'
