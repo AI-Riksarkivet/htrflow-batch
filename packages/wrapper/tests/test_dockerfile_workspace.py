@@ -12,8 +12,8 @@ the gate.
 Since B63 Task 18 the wrapper has ONE dockerfile for both architectures
 (`base-amd64` / `base-arm64`, selected by `FROM base-${TARGETARCH}`), so the
 same bind-mount block serves both arches by construction — what needs
-guarding instead is that the arm64 branch keeps the three hard-won extras
-the GB10 needs, and that nothing in the build path ever asks for a foreign
+guarding instead is that the arm64 branch keeps the hard-won extras the GB10
+needs, and that nothing in the build path ever asks for a foreign
 platform: `uv` segfaults under `qemu-x86_64`, so both images are built on a
 runner of their own architecture and never emulated.
 """
@@ -141,14 +141,22 @@ def test_the_transformers_line_is_one_build_arg_every_build_path_can_set() -> No
     assert re.search(r"^ARG TRANSFORMERS_VERSION=\d", text, re.M), (
         "the dockerfile must default the transformers line, not require the arg"
     )
-    installs = re.findall(r'"transformers==\$\{TRANSFORMERS_VERSION\}"', text)
-    assert len(installs) == 1, "one install, both architectures"
+    pins = re.findall(r"transformers==([^\"'\s]+)", text)
+    assert pins == ["${TRANSFORMERS_VERSION}"], (
+        "the only transformers pin in the image is the build arg: a second, "
+        f"literal one is a line nobody can change from outside — found {pins}"
+    )
+    # A line whose dependencies do not fit this venv must fail the build.
+    assert "uv pip check --python /app/.venv/bin/python" in text
 
     makefile = (REPO / "Makefile").read_text()
     assert "--build-arg TRANSFORMERS_VERSION=$(TRANSFORMERS_VERSION)" in makefile
 
     dagger = (REPO / ".dagger" / "build.go").read_text()
     assert 'Name: "TRANSFORMERS_VERSION"' in dagger
+    publish_go = (REPO / ".dagger" / "publish.go").read_text()
+    assert "transformersVersion string" in publish_go  # the function's own arg
+    assert "resolvedTag, transformersVersion)" in publish_go  # reaches the build
 
     publish = (REPO / ".github" / "workflows" / "publish.yml").read_text()
     assert "transformers_version:" in publish  # the dispatch input
