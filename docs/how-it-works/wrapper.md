@@ -88,9 +88,10 @@ Every stage name can appear in the termination log.
    not fail the volume (the product owner, 2026-09-14): it fails identically
    on every attempt, so the old rule spent the index's four retries and then
    left the bucket holding 637 good pages with no `manifest.json` to open
-   them. One exception stays: a run in which pages were processed and **none**
-   succeeded is a broken model or a dead GPU, not a finished volume — exit 1
-   again.
+   them. One exception stays: a run where every page it processed failed
+   and nothing was resumed is a broken model or a dead GPU, not a finished
+   volume — exit 1 again. A resumed run is never that: pages already in the
+   bucket mean the volume is coming out.
 6. **publish** (`publish.py`) — after verify: `iiif.json` (viewer
    manifest, D19),
    `pipeline.yaml`, then `manifest.json` **last** (the sole completion
@@ -129,7 +130,7 @@ volume — each file is still right about itself.
 |---|---|---|
 | 0 | success (verified — every page accounted for, failed ones included) | index `Complete` |
 | 13 | permanent (config, bad manifest URL / 4xx / non-JSON / empty / over cap, bad pipeline YAML, unknown step or model) | `podFailurePolicy` `FailIndex` — index failed, never retried |
-| 1 | transient (network, 5xx/429 on the manifest, CUDA hiccup, a page missing from the results, a run in which no processed page succeeded, S3 outage) | retried by Kubernetes up to `backoffLimitPerIndex` (3), with resume |
+| 1 | transient (network, 5xx/429 on the manifest, CUDA hiccup, a page missing from the results, a run where every page it processed failed and nothing was resumed, S3 outage) | retried by Kubernetes up to `backoffLimitPerIndex` (3), with resume |
 | 143 | SIGTERM with termination log + final log ship | retried the same as exit 1 — a resumed run skips pages already published |
 
 Failures write a structured reason to `/dev/termination-log`

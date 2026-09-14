@@ -47,9 +47,9 @@ as `reason` for as long as the pod that produced it still exists.
   way on every retry, and failing the volume for it left the bucket with the
   good pages and no marker to open them. What still fails the volume is a
   page **missing** from the results (neither uploaded nor recorded as failed:
-  an inconsistency a retry converges on) and a run in which pages were
-  processed and none succeeded (a broken model or a dead GPU). Both report
-  their page lists in the termination message.
+  an inconsistency a retry converges on) and a run where every page it
+  processed failed and nothing was resumed (a broken model or a dead GPU).
+  Both report their page lists in the termination message.
 - **A campaign is append-only.** `completions` is fixed at creation from the
   volume list; nothing in this design can add volumes to a running campaign
   — a new campaign file is the only way (see

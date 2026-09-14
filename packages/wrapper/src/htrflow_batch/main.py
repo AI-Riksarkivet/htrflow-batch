@@ -406,7 +406,8 @@ def _verify(
     and resume converges. Failed pages do not fail the volume — a page that
     fails deterministically would fail identically on all four retries and
     leave the bucket without manifest.json — except when every page this run
-    processed failed, which is a broken model or a dead GPU, not a volume.
+    processed failed and nothing was resumed, which is a broken model or a
+    dead GPU, not a volume.
     Returns what is stored, which publish reads back for the pages this run
     skipped."""
     state.stage = "verify"
@@ -432,10 +433,14 @@ def _verify(
             f"{_failure_detail(stats, failed)}"
             f" missing={missing} failed={failed}"
         )
-    processed = [r.status for r in stats.results.values() if r.status != "skipped"]
-    if processed and "ok" not in processed:
+    statuses = [r.status for r in stats.results.values()]
+    # "skipped" not in statuses too: a resume is not a broken model. A volume
+    # SIGTERMed at page 637 of 638 whose one remaining page is the dead one
+    # would otherwise exit 1, retry, and end FailIndex -- the outcome this
+    # whole rule exists to remove.
+    if failed and "ok" not in statuses and "skipped" not in statuses:
         raise RuntimeError(
-            f"verify failed: all {len(processed)} processed pages failed"
+            f"verify failed: all {len(statuses)} processed pages failed"
             f"{_failure_detail(stats, failed)} failed={failed}"
         )
     return uploaded

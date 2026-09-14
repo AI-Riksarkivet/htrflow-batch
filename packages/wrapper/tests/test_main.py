@@ -411,6 +411,30 @@ def test_every_processed_page_failing_is_still_a_volume_failure(env, cfg, s3):
     assert term["error"].startswith("verify failed: all 3 processed pages failed")
 
 
+def test_the_all_failed_guard_does_not_fire_on_a_resumed_run(env, cfg, s3):
+    """The guard is for a broken model or a dead GPU, and a resume is neither:
+    a volume SIGTERMed at page 637 of 638 whose one remaining page is the dead
+    one would otherwise exit 1, retry, and end FailIndex -- the very outcome
+    this change removes. Something resumed means the volume is coming out."""
+    _put_done(s3, cfg, "0001")
+    _put_done(s3, cfg, "0002")
+
+    def factory(c):
+        def process(path):
+            raise RuntimeError("htrflow's Segmentation worker thread died")
+
+        return process
+
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    body = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert (body["pages_ok"], body["pages_failed"]) == (0, 1)
+    assert body["results"]["0001"]["status"] == "skipped"
+
+
 def test_a_missing_page_is_still_a_verify_failure(env, cfg, s3, monkeypatch):
     """A page that is neither in the bucket nor recorded as failed is an
     inconsistency, not an outcome: that stays transient."""
