@@ -134,11 +134,14 @@ def test_list_jobs_shape(client: TestClient):
         {
             "namespace": "htr-test",
             "name": "kyrk",
+            "campaign": "kyrk",
             "pipeline": "demo-v1",
             "phase": "Running",
             "counts": {"total": 2, "active": 1, "done": 1, "failed": 0},
             "suspended": False,
             "createdAt": "2026-01-01T00:00:00Z",
+            "startedAt": None,
+            "finishedAt": None,
             "resultsBase": "https://results.example.org/htr-test/demo-v1",
             "warmup": {"phase": "missing"},
         }
@@ -363,14 +366,110 @@ def test_job_detail_carries_the_warmup_field_too():
     assert body["warmup"]["reason"]["error"] == "unknown model class Yolo9"
 
 
-def test_no_create_patch_delete_calls():
-    """RBAC is read-only get/list/watch on jobs/pods/configmaps; the package
-    must never call a mutating kubernetes-client method."""
+def test_the_only_mutating_call_is_the_campaign_record():
+    """RBAC is get/list/watch on jobs and pods, and create/patch on
+    ConfigMaps for the one write there is: the per-campaign status ConfigMap
+    (B76). Nothing here may ever delete, or write a Job or a Pod."""
     src = Path(__file__).parent.parent / "src" / "htrflow_web"
     offenders = []
-    pattern = re.compile(r"\.(create_|patch_|delete_)\w*\(")
+    pattern = re.compile(r"\.(create_|patch_|delete_|replace_)\w*\(")
     for path in src.rglob("*.py"):
         for lineno, line in enumerate(path.read_text().splitlines(), start=1):
-            if pattern.search(line):
+            if pattern.search(line) and "patch_namespaced_config_map" not in line:
                 offenders.append(f"{path}:{lineno}: {line.strip()}")
     assert offenders == []
+
+
+# --- the read API writes the status ConfigMap (B76) ----------------------
+
+
+class RecordingReader(FakeReader):
+    """FakeReader that also answers the two ConfigMap calls the record
+    needs, and keeps what was written to it."""
+
+    def __init__(self, live: list[dict] | None = None) -> None:
+        self.live = live or []
+        self.written: list[dict] = []
+
+    def list_configmaps(self) -> list[dict]:
+        return self.live
+
+    def get_configmap(self, namespace: str, name: str) -> dict | None:
+        for cm in self.live:
+            if cm["metadata"]["name"] == name:
+                return cm
+        return super().get_configmap(namespace, name)
+
+    def apply_configmap(self, body: dict) -> None:
+        self.written.append(body)
+
+
+def _status_of(reader: RecordingReader) -> dict:
+    assert len(reader.written) == 1
+    return reader.written[0]
+
+
+def test_listing_campaigns_writes_what_it_observed(capsys):
+    reader = RecordingReader()
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    assert client.get("/api/v1/jobs").status_code == 200
+    cm = _status_of(reader)
+    assert cm["metadata"]["name"] == "campaign-kyrk-status"
+    assert cm["data"]["phase"] == "Running"
+    assert cm["data"]["volumesDone"] == "1"
+    assert "failedVolumes" not in cm["data"]
+
+
+def test_a_record_that_already_says_this_is_not_written_again():
+    """One PATCH per request per campaign would be a write on every poll of
+    an idle status page. Only a changed body is sent."""
+    reader = RecordingReader()
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    client.get("/api/v1/jobs")
+    reader.live = [_status_of(reader)]
+    reader.written.clear()
+    client.get("/api/v1/jobs")
+    assert reader.written == []
+
+
+def test_the_detail_endpoint_records_the_failed_volumes():
+    reader = RecordingReader()
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    assert client.get("/api/v1/jobs/htr-test/kyrk").status_code == 200
+    assert _status_of(reader)["data"]["failedVolumes"] == "[]"
+
+
+def test_the_list_record_never_wipes_the_failed_volumes_the_detail_wrote():
+    reader = RecordingReader(
+        [
+            {
+                "metadata": {
+                    "name": "campaign-kyrk-status",
+                    "namespace": "htr-test",
+                },
+                "data": {"failedVolumes": '[{"id":"vol1","reason":"boom"}]'},
+            }
+        ]
+    )
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    client.get("/api/v1/jobs")
+    kept = '[{"id":"vol1","reason":"boom"}]'
+    assert _status_of(reader)["data"]["failedVolumes"] == kept
+
+
+def test_a_failed_write_is_logged_and_the_request_still_answers(caplog):
+    class Refusing(RecordingReader):
+        def apply_configmap(self, body: dict) -> None:
+            raise RuntimeError("Forbidden")
+
+    client = TestClient(create_app(Refusing(), progress=FakeProgress()))
+    assert client.get("/api/v1/jobs").status_code == 200
+    assert "campaign-kyrk-status" in caplog.text
+
+
+def test_site_only_mode_writes_nothing():
+    """No cluster to write to — and NoCluster's 503 must not be raised from
+    inside the record path either."""
+    from htrflow_web.app import NoCluster
+
+    assert not hasattr(NoCluster, "apply_configmap")

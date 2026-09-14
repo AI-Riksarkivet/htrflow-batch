@@ -27,7 +27,7 @@ from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 from urllib3.exceptions import HTTPError
 
-from .render import CAMPAIGN_SELECTOR
+from .render import CAMPAIGN_SELECTOR, STATUS_SUFFIX
 
 #: Field manager for every apply: what lets a field this tool stopped
 #: rendering be removed from a live object -- the role `kubectl`'s
@@ -170,12 +170,22 @@ class Cluster:
             )
             for item in listed.get("items", []):
                 name = item["metadata"]["name"]
-                if (kind, name) in rendered:
+                if (kind, name) in rendered or self._kept_status(kind, name, rendered):
                     continue
                 extra = {"propagation_policy": "Background"} if kind == "Job" else {}
                 with _errors("delete", kind, name, self.namespace):
                     self._method(kind, "delete")(name, self.namespace, **extra)
                 print(f"pruned: {kind}/{name}")
+
+    @staticmethod
+    def _kept_status(kind: str, name: str, rendered: set[tuple[str, str]]) -> bool:
+        """A campaign's status ConfigMap (B76) is written by the read API
+        and never rendered, so a prune would delete it on sight. It belongs
+        to the campaign ConfigMap it is named after: kept while that one is
+        rendered, pruned with it when the campaign file leaves git."""
+        if kind != "ConfigMap" or not name.endswith(STATUS_SUFFIX):
+            return False
+        return (kind, name.removesuffix(STATUS_SUFFIX)) in rendered
 
     def _workload(self, uid: str) -> dict | None:
         """The Kueue Workload of the Job with ``uid``. Kueue labels it with

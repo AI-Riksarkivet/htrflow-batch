@@ -1,10 +1,12 @@
 """kubernetes.client adapter for the read API.
 
-Read-only: every method here is a get/list against Jobs, ConfigMaps or Pods.
-Nothing in this module creates, updates or removes a cluster object — the
-RBAC granted to the service is get/list/watch only (charts/htrflow-batch
-templates/api.yaml), and a test greps this package's source to keep it that
-way.
+Read-only but for one write: every method here is a get/list against Jobs,
+ConfigMaps or Pods, except ``apply_configmap``, which server-side applies
+the per-campaign status ConfigMap this service is the only observer of
+(B76). Nothing here ever deletes, and nothing touches a Job or a Pod — the
+RBAC granted to the service is get/list/watch plus create/patch on
+ConfigMaps (charts/htrflow-batch/templates/web.yaml), and a test greps this
+package's source to keep it that way.
 
 ``Reader`` returns the plain dicts the Kubernetes API server itself sends
 back (camelCase field names), which is exactly the shape ``projection.py``'s
@@ -26,6 +28,20 @@ from pydantic import BaseModel, ConfigDict, Field
 LABEL_SELECTOR = "app=htrflow-batch,htrflow.riksarkivet.se/managed-by=converter"
 
 _WARMUP_SELECTOR = "app=htrflow-warmup,htrflow.riksarkivet.se/managed-by=converter"
+
+#: Both ConfigMaps a campaign has: the converter's record (``volumes.txt``,
+#: provenance) and the status one this service writes beside it. Neither the
+#: pipeline ConfigMaps nor anything else in the namespace carries a campaign
+#: label, so the existence check is the whole filter.
+CAMPAIGN_CONFIGMAPS = (
+    "htrflow.riksarkivet.se/managed-by=converter,htrflow.riksarkivet.se/campaign"
+)
+
+#: Server-side apply, like `htrflow-campaigns apply`: one request that
+#: creates the status ConfigMap or updates exactly the fields this manager
+#: owns, with no read-modify-write race against a concurrent request.
+_APPLY_PATCH = "application/apply-patch+yaml"
+FIELD_MANAGER = "htrflow-web"
 
 _NAMESPACE_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 _DEFAULT_NAMESPACE = "htr-batch"
@@ -124,6 +140,34 @@ class Reader:
 
     def get_configmap(self, namespace: str, name: str) -> dict | None:
         return _read(self.core, "read_namespaced_config_map", name, namespace)
+
+    def list_configmaps(self) -> list[dict]:
+        cms: list[dict] = []
+        for ns in self.cfg.namespaces:
+            body = _read(
+                self.core,
+                "list_namespaced_config_map",
+                ns,
+                label_selector=CAMPAIGN_CONFIGMAPS,
+            )
+            cms.extend((body or {}).get("items", []))
+        return cms
+
+    def apply_configmap(self, body: dict) -> None:
+        """The one write this service makes. Raises like any other client
+        call — ``app.py`` logs it and answers the request anyway, because a
+        status page that 500s when it cannot write a record is worse than
+        one whose record is a few minutes old."""
+        meta = body["metadata"]
+        self.core.patch_namespaced_config_map(
+            meta["name"],
+            meta["namespace"],
+            body,
+            field_manager=FIELD_MANAGER,
+            force=True,
+            _content_type=_APPLY_PATCH,
+            _preload_content=False,
+        )
 
     def list_pods(self, namespace: str, job_name: str) -> list[dict]:
         body = _read(

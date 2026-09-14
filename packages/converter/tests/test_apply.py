@@ -176,6 +176,10 @@ def test_prune_deletes_only_unrendered_labelled_objects(tmp_path, cluster, capsy
         # The record of a campaign still in git: kept, and it has no TTL,
         # so it is what is left once the Job is reaped (B76).
         _object("ConfigMap", "campaign-kyrk"),
+        # Written by the read API, never rendered -- kept while its campaign
+        # is in git, pruned with it when it is not (B76).
+        _object("ConfigMap", "campaign-kyrk-status"),
+        _object("ConfigMap", "campaign-cancelled-status"),
         _object("Job", "htr-warmup-demo-v1"),  # a pipeline object: kept
         _object("Job", "cancelled"),  # gone from git: pruned
         _object("ConfigMap", "campaign-cancelled"),  # its volumes.txt: pruned
@@ -184,6 +188,7 @@ def test_prune_deletes_only_unrendered_labelled_objects(tmp_path, cluster, capsy
     assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == 0
     assert cluster.of("delete") == [
         ("delete", "Job", "cancelled"),
+        ("delete", "ConfigMap", "campaign-cancelled-status"),
         ("delete", "ConfigMap", "campaign-cancelled"),
     ]
     assert "pruned: Job/cancelled" in capsys.readouterr().out

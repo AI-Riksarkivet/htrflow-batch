@@ -13,8 +13,22 @@ import json
 import yaml
 
 _PIPELINE_LABEL = "htrflow.riksarkivet.se/pipeline"
+_CAMPAIGN_LABEL = "htrflow.riksarkivet.se/campaign"
+_MANAGED_BY_LABEL = "htrflow.riksarkivet.se/managed-by"
+#: Marks the ConfigMap this module writes apart from the campaign ConfigMap
+#: the converter renders. Both carry `managed-by=converter`, which is what
+#: `htrflow-campaigns apply --prune` deletes a cancelled campaign by, so the
+#: record and its status go together when the campaign file leaves git.
+_KIND_LABEL = "htrflow.riksarkivet.se/kind"
+STATUS_KIND = "status"
+#: ``campaign-<name>`` + this is the status ConfigMap of that campaign --
+#: the one name both the read API and `apply` build (B76).
+STATUS_SUFFIX = "-status"
 _INDEX_LABEL = "batch.kubernetes.io/job-completion-index"
 _MAX_FAILURES = 50
+#: A campaign in one of these is over: nothing more will be written about
+#: it, and `apply` leaves it alone rather than recreating a reaped Job.
+FINISHED_PHASES = ("Succeeded", "Failed", "PartiallyFailed")
 
 
 def parse_index_ranges(spec: str | None) -> set[int]:
@@ -97,6 +111,19 @@ def _internal_results_base(namespace: str, pipeline: str, cfg) -> str:
     return f"{base}/{namespace}/{pipeline}"
 
 
+def _finished_at(job: dict) -> str | None:
+    """When the campaign stopped. ``completionTime`` for a Job that
+    succeeded; a Job that FAILED has none at all, and its condition's
+    transition is then the only clock there is."""
+    status = job.get("status") or {}
+    if status.get("completionTime"):
+        return status["completionTime"]
+    for c in status.get("conditions") or []:
+        if c.get("type") in ("Complete", "Failed") and c.get("status") == "True":
+            return c.get("lastTransitionTime")
+    return None
+
+
 def summarize(job: dict, cfg, warmup: dict) -> dict:
     """``JobSummary``: one row for ``GET /api/v1/jobs``. ``warmup`` is the
     caller's pre-matched ``{phase, reason?}`` (Task 28)."""
@@ -106,13 +133,73 @@ def summarize(job: dict, cfg, warmup: dict) -> dict:
     return {
         "namespace": namespace,
         "name": meta.get("name", ""),
+        # The campaign FILE's name. Not the same as `name` for a campaign
+        # split into parts (`kyrk` vs `kyrk-part1`), and it is the file that
+        # leaving git prunes the record.
+        "campaign": _labels(job).get(_CAMPAIGN_LABEL, "") or meta.get("name", ""),
         "pipeline": pipeline,
         "phase": _phase(job),
         "counts": _counts(job),
         "suspended": bool((job.get("spec") or {}).get("suspend")),
         "createdAt": meta.get("creationTimestamp"),
+        # The dates the record keeps: past the Job's TTL these are all the
+        # campaign page has left to say when it ran (B76).
+        "startedAt": (job.get("status") or {}).get("startTime"),
+        "finishedAt": _finished_at(job),
         "resultsBase": _results_base(namespace, pipeline, cfg),
         "warmup": warmup,
+    }
+
+
+def status_record(row: dict, failures: list[dict] | None = None) -> dict[str, str]:
+    """The status ConfigMap's ``data``, from a summary this request already
+    computed. The field names are a contract: `htrflow-campaigns apply`
+    parses them back to decide whether a finished campaign whose Job has
+    been reaped should be left alone (B76).
+
+    ``failures`` is passed only by the detail endpoint, which is the one
+    that reads pods -- a list response has no per-volume reasons, and
+    writing an empty ``failedVolumes`` there would wipe what the detail
+    endpoint observed, so the field is absent instead of empty.
+    """
+    counts = row["counts"]
+    data = {
+        "phase": row["phase"],
+        "volumesTotal": str(counts["total"]),
+        "volumesDone": str(counts["done"]),
+        "volumesFailed": str(counts["failed"]),
+        "startedAt": row["startedAt"] or "",
+        "finishedAt": row["finishedAt"] or "",
+        "resultsBase": row["resultsBase"],
+    }
+    if failures is not None:
+        data["failedVolumes"] = json.dumps(
+            [
+                {"id": v["id"], "reason": (v.get("reason") or {}).get("error", "")}
+                for v in failures[:_MAX_FAILURES]
+            ],
+            separators=(",", ":"),
+        )
+    return data
+
+
+def status_configmap(row: dict, data: dict[str, str]) -> dict:
+    """The whole object the read API applies. Named after the campaign
+    ConfigMap beside it and labelled like it, so a prune takes both."""
+    return {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": f"campaign-{row['name']}{STATUS_SUFFIX}",
+            "namespace": row["namespace"],
+            "labels": {
+                _MANAGED_BY_LABEL: "converter",
+                _CAMPAIGN_LABEL: row["campaign"],
+                _PIPELINE_LABEL: row["pipeline"],
+                _KIND_LABEL: STATUS_KIND,
+            },
+        },
+        "data": data,
     }
 
 
