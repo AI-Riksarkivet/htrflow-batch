@@ -334,6 +334,7 @@ It sets nothing else, so the rest are the defaults:
 
 - `max_seconds: 21600`
 - `warmup_wait_seconds: 900`
+- `ttl_seconds_after_finished: 604800`
 - `manifest_max_bytes` and `fetch_max_bytes` at 16 and 64 MiB
 
 The full file and what each field means are in
@@ -422,7 +423,7 @@ spec:
         operator: In
         values:
         - 13
-  ttlSecondsAfterFinished: 86400
+  ttlSecondsAfterFinished: 604800
   template:
     spec:
       restartPolicy: Never
