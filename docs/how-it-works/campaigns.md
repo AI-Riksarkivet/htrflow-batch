@@ -153,8 +153,9 @@ can still change output under the same pipeline id. The read-only cache,
 filled once per pipeline, makes output stable in practice, not by guarantee.
 GPU nondeterminism also rules out bit-identical reruns.
 
-The first time a pipeline appears, the converter also renders its **warm-up
-Job** (`htr-warmup-<id>`). It runs on CPU, outside Kueue. Batch pods wait in
+Every pipeline file also renders a **warm-up Job** (`htr-warmup-<id>`).
+Re-applying an unchanged Job changes nothing, so a completed warm-up runs
+once per pipeline id. It runs on CPU, outside Kueue. Batch pods wait in
 an init container for its completion marker on the cache PVC before they run
 ([The model cache](wrapper.md#the-model-cache),
 [Failure Handling](failure-handling.md#warm-ups-fail-the-same-way)).
@@ -577,8 +578,9 @@ spec:
 ```
 
 There is one warm-up Job per pipeline id. The campaign file did not ask for
-it: it exists because the campaign names `pipeline: demo-v1`. How it differs
-from the campaign Job:
+it: it exists because `pipelines/demo-v1.yaml` exists. A pruning apply
+deletes it, together with the pipeline ConfigMap, once that file is gone. How
+it differs from the campaign Job:
 
 - **No Kueue queue label.** It runs outside Kueue, on CPU
   (`CUDA_VISIBLE_DEVICES: ""`, no GPU request).
