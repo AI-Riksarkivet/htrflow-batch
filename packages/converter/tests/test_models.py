@@ -125,7 +125,8 @@ def test_an_image_url_with_whitespace_is_refused_and_says_to_percent_encode_it(w
     with pytest.raises(ValidationError) as exc_info:
         Volume.model_validate({"id": "v1", "images": [f"https://x/a{ws}b.jpg"]})
     assert any(
-        "percent-encode it as %20" in str(e["msg"]) for e in exc_info.value.errors()
+        "percent-encode a space as %20" in str(e["msg"])
+        for e in exc_info.value.errors()
     )
 
 
@@ -133,7 +134,8 @@ def test_a_manifest_url_with_whitespace_is_refused_the_same_way():
     with pytest.raises(ValidationError) as exc_info:
         Volume.model_validate({"id": "v1", "manifest": "https://x/a b/manifest"})
     assert any(
-        "percent-encode it as %20" in str(e["msg"]) for e in exc_info.value.errors()
+        "percent-encode a space as %20" in str(e["msg"])
+        for e in exc_info.value.errors()
     )
 
 
@@ -153,7 +155,7 @@ def test_the_whitespace_problem_names_the_volume_and_the_entry(tmp_path):
         )
     (problem,) = exc_info.value.problems
     assert problem.startswith("campaigns/kyrk.yaml: volume 3 ")
-    assert "image 1" in problem and "percent-encode it as %20" in problem
+    assert "image 1" in problem and "percent-encode a space as %20" in problem
 
 
 IMAGES_CASES = [
@@ -177,3 +179,43 @@ def test_the_converter_and_the_wrapper_split_images_identically(value):
     assert models.split_image_urls(value) == (
         config.Config.model_construct(images=value).image_urls
     )
+
+
+@pytest.mark.parametrize(
+    "volume",
+    [
+        {"id": "v1", "images": ["https://user:sekret@example.org/x y.jpg"]},
+        {"id": "v1", "images": ["ftp://user:sekret@example.org/x.jpg"]},
+        {"id": "v1", "manifest": "https://user:sekret@example.org/a b/manifest"},
+        {"id": "v1", "manifest": "ftp://user:sekret@example.org/manifest"},
+    ],
+)
+def test_a_url_with_credentials_in_it_is_never_echoed_back(volume):
+    """A campaign file should carry no credentials, but a problem line is
+    printed in CI logs and pasted into chat, so a URL that does carry them
+    loses them here rather than everywhere downstream."""
+    with pytest.raises(ValidationError) as exc_info:
+        Volume.model_validate(volume)
+    (msg,) = [str(e["msg"]) for e in exc_info.value.errors()]
+    assert "sekret" not in msg and "user" not in msg
+    assert "***@example.org" in msg
+
+
+def test_a_problem_line_never_carries_a_raw_tab_or_carriage_return(tmp_path):
+    """One problem is one line: a control character out of the author's own
+    YAML would otherwise split it in a CI log (and a tab is what volumes.txt
+    separates the id from the source with)."""
+    (tmp_path / "campaigns").mkdir()
+    (tmp_path / "pipelines").mkdir()
+    (tmp_path / "campaigns" / "kyrk.yaml").write_text(
+        'pipeline: demo-v1\nvolumes:\n  - id: R1\n    manifest: "https://x/a\\tb\\r\\nc"\n'
+    )
+    (tmp_path / "pipelines" / "demo-v1.yaml").write_text(
+        "image: ghcr.io/x/y@sha256:" + "a" * 64 + "\nsteps:\n  - step: Segmentation\n"
+    )
+    with pytest.raises(parse.ValidationError) as exc_info:
+        parse.load(
+            tmp_path / "campaigns", tmp_path / "pipelines", tmp_path / "converter.yaml"
+        )
+    (problem,) = exc_info.value.problems
+    assert not set(problem) & set("\t\r\n"), repr(problem)

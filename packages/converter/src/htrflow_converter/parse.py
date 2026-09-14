@@ -97,6 +97,9 @@ _TYPE_SENTENCES = {
 }
 
 
+_ONE_LINE = {ord(c): " " for c in "\t\r\n"}
+
+
 def _what(loc: tuple, value: object) -> str:
     """Who a problem is about, in the author's terms: a volume by its place in
     the list (and by its id, which is how its author knows it), or the quoted
@@ -129,7 +132,9 @@ def _problems(rel: str, exc: _PydanticValidationError) -> list[str]:
         loc = tuple(err["loc"])
         template = _TYPE_SENTENCES.get(err["type"])
         if template is None:
-            msg = err["msg"].removeprefix("Value error, ").replace("\n", " ")
+            # One problem is one line: a tab, CR or LF out of the author's
+            # own YAML would otherwise split it in a CI log.
+            msg = err["msg"].removeprefix("Value error, ").translate(_ONE_LINE)
         else:
             key = loc[-1] if loc else ""
             msg = template.format(
