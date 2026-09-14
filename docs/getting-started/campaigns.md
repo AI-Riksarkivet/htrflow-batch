@@ -1,28 +1,31 @@
-# Running a Campaign
+# Run a campaign
 
-How to go from "the chart is installed" to "a campaign is transcribing itself
-and I can watch it". The mechanics behind each step are in
-[Campaigns (Indexed Jobs)](../how-it-works/campaigns.md).
+This page takes you from an installed chart to a campaign that transcribes
+itself while you watch. [Campaigns](../how-it-works/campaigns.md) explains
+the mechanics behind each step.
 
-Prerequisites: the chart deployed ([Deploy](deploy.md)), the S3 secret in
-place, a browser-reachable `publicResultsBase`, `kubectl` access to the
-cluster, and `uv` on your machine (or CI runner) to run the converter.
+Before you start, you need:
 
-## 0. Create the campaigns repo
+- the chart deployed with its S3 Secret ([Deploy](deploy.md));
+- a `publicResultsBase` that browsers can reach;
+- `kubectl` access to the cluster;
+- `uv` wherever the converter runs, which is your machine or the campaigns
+  repo's CI.
 
-Desired state lives in its own git repo. The converter is a plain Python
-package, not a container image — it never runs in the cluster; run it as a
-`uvx` tool straight from this repo to create a new campaigns repo in one
-command:
+## 1. Create the campaigns repo
+
+Desired state lives in a git repository of its own. The converter is a plain
+Python package, not a container image, and it never runs as part of the
+platform. Run it as a `uvx` tool straight from this repository to create a
+campaigns repo:
 
 ```bash
-uvx --from "git+https://github.com/AI-Riksarkivet/htrflow-batch@<tag>#subdirectory=packages/converter" \
+uvx --from "git+https://github.com/AI-Riksarkivet/htrflow-batch@<ref>#subdirectory=packages/converter" \
   htrflow-campaigns init my-campaigns
 ```
 
-(`<tag>`: a released htrflow-batch tag, or a commit SHA; `@main` works too
-while no release exists yet.) If `uvx --from` with a subdirectory URL does
-not resolve on your host, install the CLI once instead:
+`<ref>` is a release tag, a commit SHA or a branch. If `uvx --from` does not
+resolve a subdirectory URL on your machine, install the CLI once instead:
 
 ```bash
 git clone https://github.com/AI-Riksarkivet/htrflow-batch
@@ -30,159 +33,169 @@ uv tool install ./htrflow-batch/packages/converter
 htrflow-campaigns init my-campaigns
 ```
 
-Either way, `my-campaigns/` comes out in this shape — see it live at
-[`examples/campaigns/`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/examples/campaigns),
-which is exactly what the command above writes:
+Either way, `my-campaigns/` has the shape of
+[`examples/campaigns/`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/examples/campaigns):
 
 ```
-converter.yaml                 # namespace, queue, window, S3 secret, PVC, …
+converter.yaml                 # namespace, queue, window, S3 secret, PVC, runtime class, results base
 campaigns/<campaign>.yaml      # pipeline: <id> + volumes:
 pipelines/<id>.yaml            # image: <digest> + steps:
-.github/workflows/render.yml   # validate on PR; render + commit rendered/ on main
-README.md                      # states the two GitOps rules in bold
+.github/workflows/render.yml   # validate and policy-check on PR; render + commit rendered/ on main
+README.md                      # the repo's two rules: append-only campaigns, pause and cancel as Git changes
 ```
 
-The formats are in [Campaign & Pipeline YAML](../reference/campaign-yaml.md).
+Set `converter.yaml` to agree with the chart: `namespace`, `queue`,
+`s3_secret`, `data_pvc` and `public_results_base`
+([Deploy](deploy.md#install)). All the file formats are in
+[Campaign & Pipeline YAML](../reference/campaign-yaml.md).
 
-!!! danger "User action: protect `main` before anything applies from it"
+Write access to this repository decides which image and which models run
+with the bucket's write credentials. Treat it that way
+([Security → Trust boundary](../how-it-works/security.md#trust-boundary)).
 
-    Write access to this repo is effectively **cluster operator**: a
-    pipeline file names the image that runs on the GPU with the bucket's
-    write credentials, and the Hugging Face model repos the warm-up pod
-    loads. **Enable branch protection on `main` with required review,
-    immediately.** Then set the htrflow-batch release's
-    `security.allowedImageRepos` (with `security.policies.enabled`) so only
-    images from your registry can start in the namespace at all
-    ([Security → Trust boundary](../development/security.md#trust-boundary)).
+## 2. Pin an image digest
 
-## 1. Pin an image digest
-
-Every pipeline file must name the wrapper image by digest; tags are rejected.
-After pushing the image, read the digest back (`make poc-push` prints it, or):
+Every pipeline file names the wrapper image by digest, and the converter
+rejects tags. The published images are on Docker Hub. For an image you
+pushed yourself, read the digest back:
 
 ```bash
 docker inspect --format '{{index .RepoDigests 0}}' <registry>/htrflow-batch:<tag>
 ```
 
-and paste it into `pipelines/<id>.yaml`:
+Then put it in `pipelines/<id>.yaml`:
 
-```yaml title="pipelines/demo-v1.yaml"
-image: <registry>/htrflow-batch@sha256:34d462b8de7dccda...
+```yaml title="pipelines/<id>.yaml"
+image: <registry>/htrflow-batch@sha256:<digest>
 steps:
   - step: Segmentation
     ...
 ```
 
-`<registry>/` must be one of the prefixes in the release's
-`security.allowedImageRepos`, and with `security.requireModelRevision`
-every model needs a 40-hex `revision:` — both enforced by Kyverno at
-admission, and by the Kyverno CLI in the campaigns repo's CI, not by
-`htrflow-campaigns validate`.
+Two Kyverno rules check pipelines. Both run at admission, and again in the
+campaigns repo's CI through the Kyverno CLI. `htrflow-campaigns validate`
+does not check either of them.
 
-!!! warning "User action: publish to a real registry before any non-PoC campaign"
+- `<registry>/` must be one of the prefixes in the release's
+  `security.allowedImageRepos`.
+- With `security.requireModelRevision` on, every model needs a 40-character
+  commit hash as `revision:`. It goes under `model_settings` for YOLO, or
+  under `model_settings.model_kwargs` for TrOCR and other Hugging Face
+  models.
 
-    The PoC pins digests in the in-cluster registry (`127.0.0.1:30500/…`),
-    which only resolves from the PoC node. Anything beyond the PoC needs the
-    image pushed to a real registry (GHCR, Harbor) and re-pinned. Treat an
-    existing pipeline id as immutable once results exist under it: re-pinning
-    means a **new pipeline id and a new campaign file**, not an edit
-    ([Immutability](../reference/campaign-yaml.md#immutability)).
+A pipeline id names the image and the steps together. Once results exist
+under an id, never change it in place. A new digest means a **new pipeline
+id and a new campaign file**, not an edit
+([Campaign & Pipeline YAML](../reference/campaign-yaml.md)).
 
-## 2. Render and apply
+## 3. Render and apply
 
-On the PoC, render and apply directly with `make campaigns-apply`:
+### Through CI and GitOps
+
+This is the normal path. `.github/workflows/render.yml` in the campaigns
+repo does the following:
+
+- On a pull request, it runs `htrflow-campaigns validate`, renders the repo,
+  and runs the chart's Kyverno policies over the result with the Kyverno
+  CLI.
+- On every push to `main`, it renders and commits `rendered/`.
+
+Set the workflow's `CONVERTER_REF`, `POLICY_NAMESPACE`,
+`POLICY_ALLOWED_IMAGE_REPOS` and `POLICY_REQUIRE_MODEL_REVISION` to match
+your release.
+
+To apply what CI committed, point a GitOps tool at `rendered/`. For Argo CD,
+that is an `Application` whose source is `rendered/`, with
+`syncPolicy.automated.prune: true` so that deleting a campaign file cancels
+the campaign. Nothing reaches the cluster except what CI committed.
+
+When `htrflow-campaigns apply` itself runs inside the cluster (a CI Job, or
+an Argo CD `PostSync` hook), it needs an identity that may write campaign
+Jobs. Set `apply.rbac.enabled` in the chart to create one.
+
+### From a kubeconfig
+
+To render and apply directly:
 
 ```bash
-make campaigns-apply DIR=/path/to/your-campaigns-repo
+make campaigns-apply DIR=<campaigns-repo-dir>
 ```
 
-which is exactly:
+This is exactly:
 
 ```bash
-uv run htrflow-campaigns apply $(DIR) --out $(DIR)/rendered
+uv run htrflow-campaigns apply <campaigns-repo-dir> --out <campaigns-repo-dir>/rendered
 ```
 
-— one command that renders, applies `rendered/pipelines` and then
-`rendered/campaigns` (pipelines first: a campaign's Job references its
-pipeline's ConfigMap), and finally puts each campaign's `suspend:` on its
-Kueue Workload. It talks to the API server through the official Kubernetes
-client — there is no `kubectl` binary in the loop — and prints one
-`applied: <Kind>/<name>` line per object. `--dry-run` prints the same list
-as `would apply: …` and opens no connection at all.
-Beyond the PoC, `examples/campaigns/.github/workflows/render.yml` renders and
-commits `rendered/` on every push to `main`, and Argo CD's Application points
-its source at `rendered/` in that repo — nothing applies to the cluster
-outside of what CI committed.
+This one command does four things, in order:
 
-## 3. Add work — it is a commit
+1. Renders the repo.
+2. Applies `rendered/pipelines`. Pipelines go first because a campaign's Job
+   references its pipeline's ConfigMap.
+3. Applies `rendered/campaigns`.
+4. Sets each campaign's `suspend:` on its Kueue Workload.
 
-```yaml title="campaigns/trolldomskommissionen.yaml"
-pipeline: demo-v1
+It talks to the API server through the official Kubernetes client, with no
+`kubectl` in the loop, and prints one `applied: <Kind>/<name>` line per
+object. `--dry-run` prints the same list as `would apply: …` and opens no
+connection at all.
+
+## 4. Add work: it is a commit
+
+```yaml title="campaigns/<campaign>.yaml"
+pipeline: <id>
 volumes:
-  - R0001203
-  - id: dodsbok-1698
-    manifest: https://iiif.example.org/xyz/manifest
+  - <reference>                    # expanded through converter.yaml's source_template
+  - id: <volume-id>
+    manifest: <iiif-manifest-url>
 ```
 
-Open a PR (CI runs `htrflow-campaigns validate`), get it reviewed, merge.
-Once `rendered/` is applied, Kueue admits the campaign's Indexed Job up to
-`window` and Kubernetes runs one pod per volume — no separate "enable" step,
-nothing to poll.
+Open a pull request, where CI validates and policy-checks it. Get it
+reviewed, then merge. Once `rendered/` is applied, Kueue admits the
+campaign's Indexed Job up to its `window`, and Kubernetes runs one pod per
+volume. There is no separate "enable" step and nothing to poll.
 
-Removing a volume from a campaign file only affects future campaign files —
-per the append-only rule below, an already-rendered campaign's volume list
-cannot be edited in place; results already in S3 are never touched.
+- **Campaigns are append-only.** An already-rendered campaign's volume list
+  cannot be edited in place. New work goes in a new campaign file.
+- **Pausing is a Git change.** Put `suspend: true` in the campaign file, and
+  the apply step puts the same intent on the Kueue Workload.
+- **Deleting a campaign's file cancels it.** Its Job and ConfigMap are
+  removed by an apply that is asked to prune: Argo CD with
+  `syncPolicy.automated.prune: true`, or `make campaigns-apply PRUNE=1`.
+  Pruning deletes every converter-labelled object that is not in this apply,
+  so never run it against a partial checkout.
 
-**Pausing a campaign is a Git change** — `suspend: true` on the campaign
-file; the apply step puts the same intent on the Kueue Workload (see
-[Pausing](../reference/campaign-yaml.md#pausing)). **Deleting a campaign's
-file cancels it** — its Job and ConfigMap are pruned by an apply that is
-*asked* to prune (Argo CD with `syncPolicy.automated.prune: true`, or
-`make campaigns-apply PRUNE=1`; `kubectl delete -f` by hand on the PoC).
-**Results already in S3 are never touched by anything here.**
+Results already in S3 are never touched by any of these.
 
-## 4. Watch it
+## 5. Watch it
 
-The campaign browser is the platform's front door:
+The campaign browser is the platform's front door, at the web front's root:
 
 ```
-http://<node>:30800/
+<web-front-url>/
 ```
 
-The same container serves the Universal Viewer at `/uv.html` — a volume's
-`open` link goes there with the published `iiif.json` (text overlay) for a
-done volume, `source` with the source manifest (images only) for everything
-else — and the run viewer at `/log`, which follows a running volume's log
-live and shows the per-page summary once it finishes. The browser talks to
-the read API (`GET /api/v1/jobs`) for progress — no cluster credentials of
-its own, nothing to poll for staleness: a campaign's `phase`, counts and
-per-volume state are read straight off the live Job every time the page asks.
+- A volume's **open** link goes to the Universal Viewer at `/uv.html`. Once
+  the wrapper has published the volume's `iiif.json`, it opens that, with the
+  text overlay. Before then it opens the source manifest, which shows images
+  only.
+- **source** links the volume's source manifest as the campaign file gives
+  it. An `images:` volume has no source manifest, so it has no **source**
+  link.
+- **log** opens the run viewer at `/log`. It follows a running volume's log
+  live, and shows the per-page summary once the volume finishes.
 
-!!! note "Reaching it from a laptop"
+The browser gets progress from the read API (`GET /api/v1/jobs`). It holds no
+cluster credentials of its own. A campaign's phase, counts and per-volume
+state are read straight off the live Job every time the page asks.
 
-    On the bare-k3s PoC both NodePorts must be tunnelled — the page comes from
-    30800, results and logs from 30900. See
-    [Viewing Results](viewing.md#reaching-the-web-front-over-ssh-poc-bare-k3s).
+The browser must reach both the web front and the results base URL. See
+[Exposing the web front](viewing.md#exposing-the-web-front).
 
-Or skip the browser and ask the cluster directly:
+To skip the browser and ask the cluster directly:
 
 ```bash
-kubectl -n htr-batch get job trolldomskommissionen \
+kubectl -n <namespace> get job <campaign> \
   -o jsonpath='{.status.completedIndexes} done / {.status.failedIndexes} failed{"\n"}'
-curl -s http://<node>:30800/api/v1/jobs | jq .
+curl -s <web-front-url>/api/v1/jobs | jq .
 ```
-
-## Rebuilding the web image
-
-The SPA and UV4 are baked into the web image next to the read API, so any UI
-change needs a rebuild:
-
-```bash
-make build-web                   # local: bun-builds the SPA, clones + patches UV, tags 127.0.0.1:30500/htrflow-web:dev
-docker push 127.0.0.1:30500/htrflow-web:dev   # prints the digest to pin as web.image
-dagger call build-web            # the same dockerfile, through the dagger engine
-```
-
-The image runs unprivileged and listens on **8081** (the chart's
-`containerPort` and Service `targetPort` follow; NodePort 30800 is
-unchanged).
