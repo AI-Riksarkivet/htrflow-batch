@@ -148,7 +148,12 @@ fail=0
 # pages_ok / pages_failed next to `pages`, so a reader of the completion
 # marker can tell a clean volume from one completed with failed pages
 # without walking `results`.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2716
+# 2716 -> 2721 (2026-09-14, the all-failed guard spares a resume): a run
+# that resumed pages is a volume coming out, never a broken model, so the
+# guard now also requires that nothing was skipped -- the four lines say why,
+# since the case it saves (a SIGTERM at page 637 of 638 whose last page is
+# the dead one) is the one this whole rule exists to remove.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2721
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

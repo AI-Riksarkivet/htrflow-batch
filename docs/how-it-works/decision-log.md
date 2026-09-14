@@ -48,7 +48,7 @@ was made:
 | 2026-09-07 | **Models are never baked into the image**: weights reach a GPU only through the per-pipeline warm-up Job and the read-only model-cache PVC, never through a multi-GB image per pipeline ([Model handling](wrapper.md#model-handling)) |
 | 2026-09-07 | **Everyone logs in** (B67): the status page, `/api/v1/*`, the viewer, ALTO/PAGE, `iiif.json`, `manifest.json` and the run logs all go behind one login — Dex in front of GitHub and Hugging Face organisation membership, oauth2-proxy in front of the service — and the results bucket stops being anonymous-read |
 | 2026-09-07 | **The stories live in the repo, not on the site**: `docs/features/` is the source of truth for the backlog and its Azure mapping, and is excluded from the published documentation site |
-| 2026-09-14 | **A volume completes with its failed pages recorded**: a volume is done when every page is accounted for — uploaded, skipped by resume, or failed with a reason in `manifest.json` — so only a page *missing* from the results, or a run in which pages were processed and none succeeded, fails the index ([verify](wrapper.md#stages-around-the-streaming-loop), [Failure Handling](failure-handling.md)) |
+| 2026-09-14 | **A volume completes with its failed pages recorded**: a volume is done when every page is accounted for — uploaded, skipped by resume, or failed with a reason in `manifest.json` — so only a page *missing* from the results, or a run where every page it processed failed and nothing was resumed, fails the index ([verify](wrapper.md#stages-around-the-streaming-loop), [Failure Handling](failure-handling.md)) |
 
 ## Context: what the htrflow image gives us
 
