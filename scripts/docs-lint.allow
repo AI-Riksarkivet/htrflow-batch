@@ -10,3 +10,6 @@ getting-started/try-it.md	localhost
 # entries when the defaults are made neutral in code.
 reference/configuration.md	arkis!\{ref\}|192\.121\.221\.27/32
 reference/chart.md	192\.121\.221\.27/32
+
+# The S3 bucket-policy language version is a fixed string, not a date.
+.md	"Version": "2012-10-17"
