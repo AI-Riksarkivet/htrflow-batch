@@ -55,3 +55,10 @@ termination-meddelandet men är inte det första en läsare ser.
 - [ ] Ett tillfälligt fel säger att systemet försöker igen och när; ett
       permanent säger vad som ska rättas och att kampanjen måste
       appliceras igen.
+- [ ] (fynd 2026-09-14, fyra-volymers testkampanj) Meningen för en volym vars
+      manifest inte gick att hämta återger hela URL:en ("manifest fetch failed:
+      https://…/manifest: HTTP 400") — säg i stället vilken volym och att URL:en
+      står i kampanjfilen, utan att skriva ut den.
+- [ ] (fynd 2026-09-14) En volym vars index gett upp efter alla försök visar
+      fortfarande "the volume is retried automatically" — när raden är failed
+      ska meningen säga att den försökts N gånger och gett upp, och vad man gör.
