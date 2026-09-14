@@ -52,10 +52,21 @@ func (m *HtrflowBatch) BuildWrapper(
 	// (PublishDocker passes the resolved tag). Empty leaves "dev".
 	// +optional
 	version string,
+	// The transformers line the image carries, as the TRANSFORMERS_VERSION
+	// build arg. Empty (the default) keeps the dockerfile's own pin, which is
+	// the line upstream htrflow is tested on; the other line exists for models
+	// saved by the newer major, which the pinned one cannot read. One image is
+	// published per run, so a build on the other line is an explicit ask.
+	// +optional
+	transformersVersion string,
 ) (*dagger.Container, error) {
+	args := buildArgs(baseRevision, version)
+	if transformersVersion != "" {
+		args = append(args, dagger.BuildArg{Name: "TRANSFORMERS_VERSION", Value: transformersVersion})
+	}
 	return source.DockerBuild(dagger.DirectoryDockerBuildOpts{
 		Dockerfile: ".docker/htrflow-batch.dockerfile",
-		BuildArgs:  buildArgs(baseRevision, version),
+		BuildArgs:  args,
 		Platform:   platform,
 	}), nil
 }
