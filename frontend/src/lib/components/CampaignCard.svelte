@@ -308,7 +308,10 @@
           : undefined}>{warmupChip}</span
       >
     {/if}
-    <span class="chip phase {job.phase.toLowerCase()}">{phaseLabel}</span>
+    <span class="chip phase {job.phase.toLowerCase()}">
+      {#if job.phase === "Running"}<span class="dot pulse" aria-hidden="true"
+        ></span>{/if}{phaseLabel}</span
+    >
     {#if noticeText !== null}
       {#if noticeHref !== null}
         <a
@@ -433,7 +436,11 @@
               </td>
               <td>
                 <span class="status {v.state}">
-                  <span class="dot"></span>
+                  <span
+                    class="dot"
+                    class:pulse={v.state === "active"}
+                    aria-hidden="true"
+                  ></span>
                   {v.state}
                 </span>
                 {#if v.progress !== null}
@@ -613,6 +620,9 @@
   }
 
   .chip.phase.running {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
     background: var(--primary-soft);
     color: var(--primary);
   }
@@ -829,12 +839,29 @@
     border-radius: 999px;
   }
 
-  .status .dot {
+  /* Shared by the row's state chip and the header's phase chip, so the two
+     dots cannot drift apart. */
+  .dot {
     width: 0.5em;
     height: 0.5em;
     border-radius: 50%;
     background: currentColor;
     flex-shrink: 0;
+  }
+
+  /* A slow heartbeat, and only on what is actually running -- never on a
+     done, failed, queued or paused thing. A page where everything twitches
+     tells a reader nothing; one dot beating tells them where to look. */
+  .dot.pulse {
+    animation: beat 2s ease-in-out infinite;
+  }
+
+  /* One keyframe: the ends are the element's own opacity and scale. */
+  @keyframes beat {
+    50% {
+      opacity: 0.3;
+      transform: scale(0.7);
+    }
   }
 
   .status.done {
@@ -933,5 +960,13 @@
   .load-more:disabled {
     opacity: 0.6;
     cursor: default;
+  }
+
+  /* app.css already shortens every animation to nothing; this says it
+     outright, so the dot cannot be left parked mid-beat. */
+  @media (prefers-reduced-motion: reduce) {
+    .dot.pulse {
+      animation: none;
+    }
   }
 </style>
