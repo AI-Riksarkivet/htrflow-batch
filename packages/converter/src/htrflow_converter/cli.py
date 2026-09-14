@@ -372,6 +372,56 @@ def _campaign_of(obj: dict) -> str:
     return name.removeprefix("campaign-") if obj["kind"] == "ConfigMap" else name
 
 
+_REPLACED = (
+    "replaced: Job/{name} — its pod template changed, and a Job's template is "
+    "fixed once it exists, so the Job was deleted and created again; the "
+    "marker on the cache PVC survives, so the re-run is a file check"
+)
+
+
+def _apply_object(cluster, obj: dict, warmup: bool) -> dict:
+    """Apply one rendered object, replacing a **warm-up** Job the API server
+    refuses because its pod template changed.
+
+    A Job's pod template is fixed when the Job is created. That is
+    Kubernetes, not this tool, and it is met whenever the rendered template
+    moves for a reason that is not the recipe: a converter release (B74 put
+    the deadline on the pod and added ``runtimeClassName``), or a
+    converter.yaml setting that reaches every warm-up at once (the Hub
+    token's env var).
+
+    For a warm-up Job that refusal is not a problem to report but one to
+    solve. The Job is idempotent -- its completion marker sits on the cache
+    PVC, so a re-run is a file check -- and it holds no state of its own, so
+    deleting it and creating it again IS the same Job with the new template.
+    A campaign Job is the opposite: its completed indexes and its results
+    are the campaign, and deleting it would start every volume over. That
+    one is reported and left exactly where it is, and a pipeline edit under
+    a live campaign is refused earlier, by ``_render``.
+
+    A warm-up that is running right now is left alone too: the delete would
+    take the pod that is downloading with it, and every campaign waiting on
+    its marker with it.
+    """
+    from .cluster import ClusterError, ImmutableField
+
+    try:
+        return cluster.apply(obj)
+    except ImmutableField as e:
+        if not warmup or ImmutableField.POD_TEMPLATE not in e.fields:
+            raise
+        name = obj["metadata"]["name"]
+        live = cluster.get("Job", name)
+        if ((live or {}).get("status") or {}).get("active"):
+            raise ClusterError(
+                f"{e} — this warm-up is running right now, so it was left "
+                "alone; re-run the apply once it has finished"
+            ) from e
+        replaced = cluster.replace_job(obj)
+        print(_REPLACED.format(name=name))
+        return replaced
+
+
 #: `apply` exited 1 for everything, so a CI job could not tell "nothing
 #: reached the cluster" (no credentials, an unreachable API server, a render
 #: that did not pass) from "all but one object is applied and the one is
@@ -489,7 +539,9 @@ def _apply(
                     # campaign behind it in the order was never applied at
                     # all -- a repo-wide outage over one changed Job.
                     try:
-                        live = cluster.apply(obj)
+                        live = _apply_object(
+                            cluster, obj, not is_campaign and obj["kind"] == "Job"
+                        )
                     except ClusterError as e:
                         print(e, file=sys.stderr)
                         refused.append(name)
