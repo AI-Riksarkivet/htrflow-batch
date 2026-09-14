@@ -20,4 +20,5 @@ This is one of the three images the publish workflow already covers (B09); the s
 ## Done when
 
 - [ ] `cosign verify` and `gh attestation verify` succeed against the workflow identity for the latest published tag.
+- [x] Web-imagen byggs för båda arkitekturerna och publiceras som en manifest list under den rena taggen, precis som wrappern: en matrix-entry per arkitektur på en runner av samma arkitektur (ingen qemu), per-arch-taggarna `<tag>-amd64` / `<tag>-arm64` med cosign-signatur, SLSA build provenance och SPDX SBOM var för sig, och manifest-listan signerad utan egen SBOM. (revision 2026-09-14: v0.2.0:s web-image var amd64-only och gav ImagePullBackOff på arm64-noden; den digest som chartens `web.image` pinnar ska därför vara manifest-listans, satt i release-commiten.)
 - [ ] The image passes Kyverno `Enforce` on DEV.
