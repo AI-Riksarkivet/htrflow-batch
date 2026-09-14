@@ -6,11 +6,9 @@
 
 Every setting of the wrapper, the web front, the converter and the
 `htrflow-batch` chart, generated from the three config models and the
-chart's `values.yaml`. It replaces the reconciler-era
-[hardcoded-value inventory](../audits/2026-08-26-hardcoded-inventory.md),
-which stays as history. The PoC-only `htrflow-devstack` chart (RustFS, the
-in-cluster registry, `devStack.insecureDefaults`,
-`rustfs.accessKey`/`secretKey`) is a separate surface, documented in its own
+chart's `values.yaml`. The `htrflow-devstack` chart — the development support
+stack (RustFS, an in-cluster registry, `devStack.insecureDefaults`,
+`rustfs.accessKey`/`secretKey`) — is a separate surface, documented in its own
 [README](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/charts/htrflow-devstack/README.md).
 
 **One idiom.** Each package's settings are one frozen pydantic model with
@@ -20,24 +18,27 @@ for an env var, the field name for a `converter.yaml` key — and one
 default pydantic parses an unset field into; where `from_env` (or, for
 `HTRFLOW_WEB_STATIC`, `app.py`) then falls back to something computed
 rather than that parsed value — the web front's `HTRFLOW_PUBLIC_RESULTS_BASE`,
-`HTRFLOW_NAMESPACES` and `HTRFLOW_WEB_STATIC` — `WEB_DEFAULT_DOC` in this
-script says so, and the Default column below shows that instead. The
-wrapper's `Config` is not the whole of what its package reads from the
-environment, though: `publish.py` and `main.py` read two names of plumbing
-the Job skeleton sets, and `warmup.py` — a separate entrypoint, with its
-own contract — reads four more. Both are listed, not folded into `Config`,
-in "Also read from the environment" under the wrapper table below.
+`HTRFLOW_INTERNAL_RESULTS_BASE`, `HTRFLOW_NAMESPACES` and
+`HTRFLOW_WEB_STATIC` — `WEB_DEFAULT_DOC` in the generator says so, and the
+Default column below shows that instead. The wrapper's `Config` is not the
+whole of what its package reads from the environment: `main.py` reads the
+termination-log path, and `warmup.py` — a separate entrypoint, with its own
+contract — reads four more names. They are listed, not folded into `Config`,
+in "Also read from the environment" under the wrapper table below, and
+described in [Wrapper](wrapper.md).
 
 **Read outside these models.** `htrflow-campaigns apply` reads one
-environment variable of its own, `HTRFLOW_APPLIED_BY`: the name stamped on
-every campaign ConfigMap it applies (`htrflow.riksarkivet.se/applied-by`,
-lower-cased), which CI sets from whoever triggered the run. Unset, the apply
-uses its own OS user. It is not a `converter.yaml` key — it says who is
-running this apply, not how the cluster is configured — so it is not in the
-converter table below. It is deliberately **not**
-`htrflow.riksarkivet.se/submitter`: that key is reserved for the
-authenticated forge login CI stamps as a label at render time, which is
-evidence, where this is only the account the command ran under.
+environment variable of its own, `HTRFLOW_APPLIED_BY`. It is lower-cased and
+stamped as the `applied-by` annotation on every campaign ConfigMap the
+command applies ([The record a campaign
+leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)), and CI
+sets it from whoever triggered the run; unset, the apply uses its own OS
+user. It is not a `converter.yaml` key — it says who is running this apply,
+not how the cluster is configured — so it is not in the converter table
+below. It is deliberately not the `submitter` annotation either: that key is
+reserved for the authenticated forge login CI stamps as a label at render
+time, which is evidence, where this is only the account the command ran
+under.
 
 **Prefixes.** The web front's env is `HTRFLOW_`-prefixed: an operator's
 settings for a long-lived service. The wrapper's are bare — the in-pod
@@ -51,8 +52,8 @@ in a pod environment nothing else writes.
   pod as a mounted Secret file (`AWS_SHARED_CREDENTIALS_FILE`,
   `/secrets/s3/credentials`), and `packages/wrapper/tests/test_config.py`
   fails if any field of these models, or any literal env read in the
-  wrapper, is ever named like one. The PoC's own S3 store refuses to render
-  on credentials nobody chose (`devStack.insecureDefaults`).
+  wrapper, is ever named like one. The devstack's own S3 store refuses to
+  render on credentials nobody chose (`devStack.insecureDefaults`).
 - **The read API is unauthenticated**: `GET /api/v1/jobs[/…]` and the
   campaign browser are open to anyone who can reach the port —
   `network.web.ingressCidrs` is the only gate.
@@ -64,9 +65,10 @@ in a pod environment nothing else writes.
   Job or a Pod — `packages/web/tests/test_app.py` greps the package's source
   to keep the one write the only one.
 - **The results bucket is public-read**: everything under
-  `publicResultsBase`, except `status/logs/*` when `rustfs.publicLogs` is
-  off. There is nothing else to exclude — the run log is the only key
-  anything writes under `status/`.
+  `publicResultsBase` — with the devstack's store, except `status/logs/*`
+  when `rustfs.publicLogs` is off. The run log is the only key anything
+  writes under `status/`, so there is nothing else to exclude. See
+  [the bucket policy](../how-it-works/security.md#the-bucket-policy).
 
 The *Security* column below reads *what the key exposes — who enforces it*:
 **cluster** = the API server or an admission policy, **render** = `helm

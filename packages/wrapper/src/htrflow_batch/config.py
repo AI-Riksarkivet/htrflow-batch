@@ -92,6 +92,27 @@ class Config(BaseModel):
         return f"{self.s3_prefix}/{rel}" if self.s3_prefix else rel
 
     @property
+    def image_urls(self) -> list[str]:
+        """The URLs in ``IMAGES``, split on whitespace -- the one character a
+        URL can never contain. A comma can: the IIIF Image API writes the size
+        into the path (``/full/2500,/0/default.jpg``), so the old comma split
+        tore that URL in half and the volume died in setup with ``IMAGES URL
+        must be an http(s) URL: /0/default.jpg`` (2026-09-14).
+
+        The converter joins them with a single space and refuses an ``images:``
+        entry carrying whitespace of its own. Its ``models.split_image_urls``
+        is this same function, including the comma branch below, which reads a
+        line rendered before that fix; that package documents the rule and
+        when to delete the branch, and its tests pin the two together, because
+        this image must not carry the converter's Kubernetes client."""
+        urls = self.images.split()
+        if len(urls) == 1 and "," in urls[0]:
+            parts = urls[0].split(",")
+            if all(p.startswith(("http://", "https://")) for p in parts):
+                return parts
+        return urls
+
+    @property
     def volume_prefix(self) -> str:
         parts = [p for p in (self.s3_prefix, self.pipeline_id, self.volume_ref) if p]
         return "/".join(parts)

@@ -248,7 +248,7 @@ class TestDetail:
     def test_an_images_line_has_no_source_url(self):
         cm = {
             "metadata": {"name": "campaign-kyrk", "namespace": "htr-test"},
-            "data": {"volumes.txt": "vol0\timages:https://a/1.jpg,https://a/2.jpg\n"},
+            "data": {"volumes.txt": "vol0\timages:https://a/1.jpg https://a/2.jpg\n"},
         }
         d = projection.detail(_job(), cm, [], CFG, warmup=MISSING_WARMUP)
         assert d["volumes"][0]["sourceUrl"] is None

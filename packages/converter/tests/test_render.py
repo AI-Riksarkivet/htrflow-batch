@@ -513,7 +513,7 @@ def test_every_rendered_object_carries_the_prune_selector():
 
 def _images_campaign(volumes: int, pages: int) -> Campaign:
     """The shape that breaks a count-only split: an `images:` volume is ONE
-    line of comma-joined URLs, so 300 pages of a 90-character URL is 23 kB on
+    line of space-joined URLs, so 300 pages of a 90-character URL is 23 kB on
     that line (`Volume.source_line`)."""
     url = (
         "https://lbiiif.riksarkivet.se/arkis!R00012345/jp2/00000000000000000{:03d}.jpg"
@@ -688,3 +688,52 @@ def test_the_apply_and_the_read_api_write_the_same_field_names():
         projection.summarize(job, cfg, {"phase": "succeeded"})
     )
     assert set(render.status_configmap(job, cfg)["data"]) == set(theirs)
+IIIF_SIZE = (
+    "https://lbiiif.riksarkivet.se/arkis!R0001203_{:05d}/full/2500,/0/default.jpg"
+)
+
+
+def test_a_iiif_size_url_survives_converter_shell_and_wrapper(tmp_path):
+    """The whole path a URL travels, with the comma that broke it live on
+    2026-09-14: `Volume.source_line` -> the ConfigMap's volumes.txt -> the
+    Job's own shell (run here, not paraphrased) -> `IMAGES` -> the wrapper's
+    split. `/full/2500,/0/default.jpg` is a IIIF Image API size request, so
+    the three URLs have to come out as three, whole."""
+    config = pytest.importorskip("htrflow_batch.config")
+    urls = [IIIF_SIZE.format(p) for p in (44, 45, 46)]
+    _, demo, cfg = _kyrk()
+    c = Campaign(
+        name="kyrk",
+        pipeline="demo-v1",
+        volumes=[Volume(id="R0001203", images=urls)],
+    )
+    configmap, job = render.campaign_objects(c, demo, cfg)
+
+    volumes_txt = tmp_path / "volumes.txt"
+    volumes_txt.write_text(configmap["data"]["volumes.txt"])
+    # The one stand-in: the container's own `python`, which prints what the
+    # shell exported instead of running the wrapper. The script is otherwise
+    # the rendered one, read straight off the Job.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "python").write_text('#!/bin/sh\nprintf %s "$IMAGES"\n')
+    (bin_dir / "python").chmod(0o755)
+    script = job["spec"]["template"]["spec"]["containers"][0]["args"][0].replace(
+        "/campaign/volumes.txt", str(volumes_txt)
+    )
+    result = subprocess.run(
+        ["sh", "-c", script],
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "JOB_COMPLETION_INDEX": "0",
+            "HOME": str(tmp_path / "home"),
+            "TMPDIR": str(tmp_path / "tmp"),
+            "YOLO_CONFIG_DIR": str(tmp_path / "yolo"),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+
+    images = config.Config.model_construct(images=result.stdout)
+    assert images.image_urls == urls

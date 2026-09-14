@@ -79,6 +79,25 @@
   let detailError = $state<string | null>(null);
   let loadingMore = $state(false);
 
+  // Which rows' page counts moved on the last poll, so only those flash.
+  // First paint is not news: a volume is only in here once it has been seen
+  // with a different `done`, which is why the counts are remembered rather
+  // than compared against the rendered text.
+  const seen = new Map<string, number>();
+  let moved = $state(new Set<string>());
+
+  function markMoved(rows: VolumeView[]): void {
+    const now = new Set<string>();
+    for (const v of rows) {
+      const done = v.progress?.done;
+      if (done === undefined) continue;
+      const before = seen.get(v.id);
+      if (before !== undefined && before !== done) now.add(v.id);
+      seen.set(v.id, done);
+    }
+    moved = now;
+  }
+
   const PAGE = 200;
   // The API refuses a larger limit (packages/web app.py, `le=1000`), so a
   // card with more than five pages open refreshes the first five and keeps
@@ -123,6 +142,14 @@
         : `warm-up ${job.warmup.phase}`,
   );
 
+  // The dot means work is actually happening. `Running` is the projection's
+  // fallback phase, so a campaign whose warm-up is still pending -- or was
+  // never created -- reads as Running while nothing runs at all; the warm-up
+  // chip beside it is the story there, and a beating dot would contradict it.
+  const beating = $derived(
+    job.phase === "Running" && job.warmup.phase === "succeeded",
+  );
+
   // The models the pipeline loads, in step order — the campaign's provenance
   // in one line, matching the model block every ALTO it publishes carries.
   const models = $derived(pipelineModels(pipelineYaml));
@@ -160,6 +187,11 @@
           ? [...detail.volumes, ...volumes.slice(limit)]
           : detail.volumes;
       volumes = reset ? refreshed : [...volumes, ...detail.volumes];
+      // Polls only. "Load more" appends rows without new counts for the ones
+      // already on screen, so marking there would clear a highlight
+      // mid-fade; the appended rows are seeded by the next poll instead, and
+      // a row nobody has seen before cannot have moved anyway.
+      if (reset) markMoved(volumes);
       // Not paged by the API (up to 50 newest failed-with-a-reason rows,
       // independent of offset/limit) — refreshed on every call.
       failures = detail.failures;
@@ -197,6 +229,11 @@
     const timer = setInterval(() => void load(true), RELOAD_MS);
     return () => clearInterval(timer);
   });
+
+  /** The fill's width; callers only ask for one when `total` is known. */
+  function pct(done: number, total: number): string {
+    return `${((done / total) * 100).toFixed(1)}%`;
+  }
 
   // Defence in depth. `sourceUrl` is the API's copy of a line from a
   // campaign's volumes.txt, which is a file humans edit in a git repo — so
@@ -267,6 +304,23 @@
   </span>
 {/snippet}
 
+<!-- One track, two callers (a running volume's row and the campaign header),
+     so the two bars can never disagree about what a fraction looks like.
+     `aria-label` names the thing being measured, since the bar itself has no
+     text and the numbers beside it belong to a different element. -->
+{#snippet bar(label: string, done: number, total: number)}
+  <span
+    class="bar"
+    role="progressbar"
+    aria-label="Pages done in {label}"
+    aria-valuenow={done}
+    aria-valuemin={0}
+    aria-valuemax={total}
+  >
+    <span class="fill" style="width: {pct(done, total)}"></span>
+  </span>
+{/snippet}
+
 <section class="campaign" data-health={health}>
   <div class="camp">
     <!-- aria-controls only while the table exists: it must be an IDREF that
@@ -312,7 +366,10 @@
           : undefined}>{warmupChip}</span
       >
     {/if}
-    <span class="chip phase {job.phase.toLowerCase()}">{phaseLabel}</span>
+    <span class="chip phase {job.phase.toLowerCase()}">
+      {#if beating}<span class="dot pulse" aria-hidden="true"
+        ></span>{/if}{phaseLabel}</span
+    >
     {#if job.jobGone}
       <!-- Not a failure: the Job did its work and Kubernetes removed it at
            its TTL. The chip says why there is no volume table below. -->
@@ -357,6 +414,12 @@
       {/if}
     </span>
   </div>
+  <!-- Only while the Job runs, and only once the API has read enough
+       progress files to know a total: a bar of nothing over nothing is
+       worse than no bar. -->
+  {#if job.phase === "Running" && pages.total > 0}
+    {@render bar(`campaign ${job.name}`, pages.done, pages.total)}
+  {/if}
   {#if models.length > 0}
     <p class="models">
       <span class="models-label">Models</span>
@@ -455,11 +518,25 @@
               </td>
               <td>
                 <span class="status {v.state}">
-                  <span class="dot"></span>
+                  <span
+                    class="dot"
+                    class:pulse={v.state === "active"}
+                    aria-hidden="true"
+                  ></span>
                   {v.state}
                 </span>
                 {#if v.progress !== null}
-                  <span class="vprogress">{describeProgress(v.progress)}</span>
+                  <!-- Keyed on the count itself: the node is rebuilt only
+                       when the number changes, which is what restarts the
+                       highlight; `moved` is what decides it runs at all. -->
+                  {#key v.progress.done}
+                    <span class="vprogress" class:bump={moved.has(v.id)}
+                      >{describeProgress(v.progress)}</span
+                    >
+                  {/key}
+                  {#if v.state === "active" && v.progress.total > 0}
+                    {@render bar(v.id, v.progress.done, v.progress.total)}
+                  {/if}
                 {/if}
               </td>
               <td class="links">{@render links(v)}</td>
@@ -641,6 +718,9 @@
   }
 
   .chip.phase.running {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
     background: var(--primary-soft);
     color: var(--primary);
   }
@@ -850,6 +930,82 @@
     overflow-wrap: anywhere;
   }
 
+  /* The one thing on this card that moves of its own accord. The fill eases
+     to its new width when a poll lands, so a reader watching sees it fill
+     rather than find it moved; the sheen crossing it says the volume is
+     still working through the minute in between. A done volume gets no bar
+     at all -- a bar that cannot move is just a green line, and it would
+     dilute the only signal this is here to carry. */
+  .bar {
+    display: block;
+    height: 3px;
+    margin-top: 0.2rem;
+    border-radius: 999px;
+    background: var(--muted);
+    overflow: hidden;
+  }
+
+  .fill {
+    display: block;
+    position: relative;
+    height: 100%;
+    border-radius: inherit;
+    overflow: hidden;
+    background: var(--primary);
+    transition: width 600ms ease-out;
+  }
+
+  /* --background, not white: it reads as a light band on the light theme's
+     dark blue and a dark one on the dark theme's pale blue, from one rule. */
+  .fill::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    opacity: 0.45;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--background),
+      transparent
+    );
+    animation: sheen 2.5s linear infinite;
+  }
+
+  @keyframes sheen {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(100%);
+    }
+  }
+
+  /* Third gesture: one second of the running blue behind the line whose page
+     count just moved, so a poll landing is something a reader catches rather
+     than infers. The colour is the line's own background for the length of
+     the animation and nothing before or after it -- no pseudo-element, so
+     there is no paint order to get wrong. It fades to a zero-alpha
+     `--primary-soft` rather than to `transparent`, which is black at alpha 0
+     and would grey on the way out. */
+  .vprogress.bump {
+    border-radius: 3px;
+    animation: settle 1s ease-out;
+  }
+
+  @keyframes settle {
+    from {
+      background-color: var(--primary-soft);
+    }
+
+    to {
+      background-color: color-mix(
+        in oklab,
+        var(--primary-soft) 0%,
+        transparent
+      );
+    }
+  }
+
   .status {
     display: inline-flex;
     align-items: center;
@@ -859,12 +1015,29 @@
     border-radius: 999px;
   }
 
-  .status .dot {
+  /* Shared by the row's state chip and the header's phase chip, so the two
+     dots cannot drift apart. */
+  .dot {
     width: 0.5em;
     height: 0.5em;
     border-radius: 50%;
     background: currentColor;
     flex-shrink: 0;
+  }
+
+  /* A slow heartbeat, and only on what is actually running -- never on a
+     done, failed, queued or paused thing. A page where everything twitches
+     tells a reader nothing; one dot beating tells them where to look. */
+  .dot.pulse {
+    animation: beat 2s ease-in-out infinite;
+  }
+
+  /* One keyframe: the ends are the element's own opacity and scale. */
+  @keyframes beat {
+    50% {
+      opacity: 0.3;
+      transform: scale(0.7);
+    }
   }
 
   .status.done {
@@ -963,5 +1136,28 @@
   .load-more:disabled {
     opacity: 0.6;
     cursor: default;
+  }
+
+  /* app.css already shortens every animation to nothing; this says it
+     outright, so the dot cannot be left parked mid-beat. */
+  @media (prefers-reduced-motion: reduce) {
+    .dot.pulse {
+      animation: none;
+    }
+
+    /* The highlight lives entirely inside its keyframes, so turning the
+       animation off leaves no colour behind. The sheen is a real element and
+       has to be hidden, not merely stilled, or it parks across the fill. */
+    .vprogress.bump {
+      animation: none;
+    }
+
+    .fill::after {
+      display: none;
+    }
+
+    .fill {
+      transition: none;
+    }
   }
 </style>

@@ -83,6 +83,63 @@ def _http_url(value: str) -> bool:
     return u.scheme in ("http", "https") and bool(u.netloc)
 
 
+#: A ``volumes.txt`` line separates an ``images:`` volume's URLs with a space
+#: (``Volume.source_line``), which only works because no URL may contain one.
+#: Comma cannot do that job: a IIIF Image API size segment is a legal comma in
+#: the path (``/full/2500,/0/default.jpg``), and splitting on it tore such a
+#: URL in half in production (2026-09-14). Whitespace has no such excuse --
+#: RFC 3986 has no place for a literal space, tab, newline or CR -- so the
+#: rule is enforced here, where the author can still fix it.
+_WHITESPACE_RE = re.compile(r"\s")
+
+_PERCENT_ENCODE = "percent-encode a space as %20"
+
+#: Userinfo, stripped out of any URL a problem echoes back: a campaign file
+#: should carry no credentials, but a problem line is printed in CI logs and
+#: pasted into chat, so one that does must lose them here. The class excludes
+#: ``?#`` so a bare ``@`` in a query before the first ``/`` is left alone.
+_USERINFO_RE = re.compile(r"(?<=//)[^/@?#]*@")
+
+
+def _shown_url(value: str) -> str:
+    return _USERINFO_RE.sub("***@", value)
+
+
+def split_image_urls(value: str) -> list[str]:
+    """The URLs inside an ``images:`` source, split on whitespace.
+
+    THE definition of that split: the wrapper's ``Config.image_urls`` is the
+    same function over ``IMAGES`` (the two packages share no code -- the GPU
+    image must not carry the converter's Kubernetes client -- so
+    ``test_models.py`` pins them to each other case by case).
+
+    TRANSITION: a value with no whitespace whose every comma-split piece is
+    itself an http(s) URL is a line rendered before 2026-09-14, when commas
+    joined them. A single URL carrying a comma can never look like that (the
+    piece after the comma has no scheme), which is what makes the old format
+    safe to keep reading. Known limit: one URL whose query carries another
+    http(s) URL after a comma (``?src=https://a,https://b``) is split in two.
+    Delete this branch, in both packages, once every campaigns repo has been
+    re-rendered.
+    """
+    urls = value.split()
+    if len(urls) == 1 and "," in urls[0]:
+        parts = urls[0].split(",")
+        if all(p.startswith(("http://", "https://")) for p in parts):
+            return parts
+    return urls
+
+
+def parse_source_line(line: str) -> tuple[str, tuple[str, ...]]:
+    """A ``volumes.txt`` line read back as ``(id, sources)`` -- what the line
+    MEANS, so that two renders of one campaign can be compared across a
+    change of separator (``cli``'s append-only check)."""
+    vid, _, source = line.partition("\t")  # the FIRST tab, as the Job's shell
+    if source.startswith("images:"):
+        return vid, tuple(split_image_urls(source.removeprefix("images:")))
+    return vid, (source,)
+
+
 class Volume(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -116,21 +173,31 @@ class Volume(BaseModel):
     @field_validator("manifest")
     @classmethod
     def _check_manifest(cls, v: str | None) -> str | None:
+        if v is not None and _WHITESPACE_RE.search(v):
+            raise ValueError(
+                f"has a manifest with whitespace in it "
+                f'("{_shown_url(v)}") — {_PERCENT_ENCODE}'
+            )
         if v is not None and not _http_url(v):
             raise ValueError(
-                f'has a manifest that is not an http(s) URL ("{v}") — write '
-                "the whole URL, starting with https://"
+                f'has a manifest that is not an http(s) URL ("{_shown_url(v)}") '
+                "— write the whole URL, starting with https://"
             )
         return v
 
     @field_validator("images")
     @classmethod
     def _check_images(cls, v: list[str]) -> list[str]:
-        for u in v:
+        for n, u in enumerate(v, start=1):
+            if _WHITESPACE_RE.search(u):
+                raise ValueError(
+                    f"has image {n} with whitespace in it "
+                    f'("{_shown_url(u)}") — {_PERCENT_ENCODE}'
+                )
             if not _http_url(u):
                 raise ValueError(
-                    f'lists an image that is not an http(s) URL ("{u}") — '
-                    "every entry under images: is a whole URL"
+                    f"lists an image that is not an http(s) URL "
+                    f'("{_shown_url(u)}") — every entry under images: is a whole URL'
                 )
         return v
 
@@ -144,10 +211,14 @@ class Volume(BaseModel):
         return self
 
     def source_line(self) -> str:
-        """One line of a campaign's ``volumes.txt`` ConfigMap."""
+        """One line of a campaign's ``volumes.txt`` ConfigMap: the id, a TAB,
+        then the source. An ``images:`` volume's URLs are joined with a single
+        space -- never a comma, which is legal inside a URL (_WHITESPACE_RE).
+        Both readers split on the FIRST tab only: the Job's shell
+        (``manifests/campaign-job.yaml``) and ``web.projection._source_url``."""
         if self.manifest is not None:
             return f"{self.id}\t{self.manifest}"
-        return f"{self.id}\timages:{','.join(self.images)}"
+        return f"{self.id}\timages:{' '.join(self.images)}"
 
 
 class Campaign(BaseModel):

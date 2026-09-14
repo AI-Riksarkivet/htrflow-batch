@@ -1025,3 +1025,154 @@ describe("a campaign whose Job has been removed", () => {
     expect(screen.queryByText("job removed")).toBeNull();
   });
 });
+
+// The product owner, 2026-09-14, watching a live run: "is it possible to add
+// some form of animation for running things, it's a bit stale and you kind of
+// miss it now". Three gestures, and only for what is running — the keyframes
+// themselves are not testable, so what is pinned here is the markup that
+// carries them: which nodes get the classes, and what assistive tech reads.
+describe("CampaignCard's running motion", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    storage = stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const progress = {
+    done: 137,
+    total: 638,
+    failed: 0,
+    lastPage: "0137",
+    stage: "stream",
+    updatedAt: "2026-01-01T00:00:00Z",
+    ageSeconds: 12,
+    lastError: null,
+    errors: 0,
+    viewerPublished: true,
+  };
+  const running = {
+    ...volumeDone,
+    index: 2,
+    id: "vol2",
+    state: "active",
+    progress,
+  };
+
+  /** One detail body per poll, the last one repeating, so a test can move `done`. */
+  function stubPolls(...bodies: Record<string, unknown>[]): void {
+    let call = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        const body = bodies[Math.min(call, bodies.length - 1)];
+        call += 1;
+        return jsonResponse({ ...detail0, failures: [], volumes: [], ...body });
+      }),
+    );
+  }
+
+  test("only what is running pulses: the phase chip and the active row", async () => {
+    stubPolls({ volumes: [running, volumeDone] });
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The chip's word is the accessible name; the dot is decoration beside it.
+    const dot = container.querySelector(".chip.phase.running .dot");
+    expect(dot).toHaveClass("pulse");
+    expect(dot).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByText("Running")).toBeInTheDocument();
+
+    await expand();
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(
+      (rows[0] as HTMLElement).querySelector(".status.active .dot"),
+    ).toHaveClass("pulse");
+    expect(
+      (rows[1] as HTMLElement).querySelector(".status.done .dot"),
+    ).not.toHaveClass("pulse");
+  });
+
+  test("a Running campaign still waiting on its warm-up does not pulse", async () => {
+    // `Running` is the projection's fallback phase, so it is what a campaign
+    // reads as before its warm-up has finished -- when nothing is running at
+    // all. The warm-up chip beside it is the story there, not a beating dot.
+    stubPolls({ volumes: [] });
+    const { container } = render(CampaignCard, {
+      job: { ...job, warmup: { phase: "pending" } },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(screen.getByText("warm-up pending")).toBeInTheDocument();
+    expect(screen.getByText("Running")).toBeInTheDocument();
+    expect(container.querySelector(".chip.phase .dot")).toBeNull();
+  });
+
+  test("an active row carries a bar sized done/total; a finished row none", async () => {
+    stubPolls({ volumes: [running, volumeDone] });
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+
+    const bar = screen.getByRole("progressbar", { name: "Pages done in vol2" });
+    expect(bar).toHaveAttribute("aria-valuenow", "137");
+    expect(bar).toHaveAttribute("aria-valuemin", "0");
+    expect(bar).toHaveAttribute("aria-valuemax", "638");
+    expect(bar.querySelector(".fill")).toHaveStyle({ width: "21.5%" });
+    // vol0 is done: a bar that cannot move says nothing, so it has none.
+    expect(screen.queryByRole("progressbar", { name: /vol0/ })).toBeNull();
+  });
+
+  test("the header sums the campaign's pages into one bar while it runs", async () => {
+    stubPolls({ volumes: [running], pagesDone: 137, pagesTotal: 638 });
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const bar = screen.getByRole("progressbar", {
+      name: "Pages done in campaign kyrk",
+    });
+    expect(bar).toHaveAttribute("aria-valuenow", "137");
+    expect(bar).toHaveAttribute("aria-valuemax", "638");
+  });
+
+  test("a campaign that is not Running has neither bar nor dot", async () => {
+    stubPolls({ volumes: [running], pagesDone: 137, pagesTotal: 638 });
+    const { container } = render(CampaignCard, {
+      job: { ...job, phase: "Succeeded" },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(screen.queryByRole("progressbar", { name: /campaign/ })).toBeNull();
+    expect(container.querySelector(".chip.phase .dot")).toBeNull();
+  });
+
+  test("no header bar while the campaign's page totals are still unknown", async () => {
+    stubPolls({ volumes: [running] }); // pagesTotal 0: nothing to be a fraction of
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.queryByRole("progressbar", { name: /campaign/ })).toBeNull();
+  });
+
+  test("the progress line flashes only once its page count has moved", async () => {
+    const steady = { ...running, index: 3, id: "vol3" };
+    stubPolls(
+      { volumes: [running, steady] },
+      {
+        volumes: [{ ...running, progress: { ...progress, done: 151 } }, steady],
+      },
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+    // First paint is not news: a row nobody has seen before cannot have moved.
+    expect(container.querySelectorAll(".vprogress.bump")).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(RELOAD_MS);
+    expect(screen.getByText(/151 \/ 638 pages/)).toBeInTheDocument();
+    const flashed = container.querySelectorAll(".vprogress.bump");
+    expect(flashed).toHaveLength(1); // vol3 sent the same count back
+    expect(flashed[0]).toHaveTextContent("151 / 638 pages");
+  });
+});

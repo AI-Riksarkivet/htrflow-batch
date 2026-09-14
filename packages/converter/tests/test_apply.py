@@ -23,9 +23,10 @@ from pathlib import Path
 import pytest
 from kubernetes.client.exceptions import ApiException
 
-from htrflow_converter import cli
+from htrflow_converter import cli, render
 from htrflow_converter import cluster as cluster_mod
 from htrflow_converter.cluster import Cluster
+from htrflow_converter.parse import load
 from htrflow_converter.render import CAMPAIGN_SELECTOR
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -361,11 +362,22 @@ def test_the_provenance_is_not_written_into_the_rendered_files(tmp_path, cluster
 
 # --- a finished campaign is not re-run once its Job is reaped (B76) ------
 
-VOLUMES = (
-    "R0001203\thttps://lbiiif.riksarkivet.se/arkis!R0001203/manifest\n"
-    "dodsbok-1698\thttps://iiif.example.org/xyz/manifest\n"
-    "loose-scans\timages:https://example.org/scan1.jpg,https://example.org/scan2.jpg\n"
-)
+
+def _rendered_volumes(name: str = "kyrk") -> str:
+    """What the converter writes into this campaign's ConfigMap, taken from
+    the renderer rather than spelled out here: `apply` leaves a campaign
+    alone only when the stored `volumes.txt` matches the rendered one byte
+    for byte, so a test that hardcoded the line format would go quietly
+    green the day that format changed."""
+    campaigns, pipelines, cfg = load(
+        GOOD / "campaigns", GOOD / "pipelines", GOOD / "converter.yaml"
+    )
+    c = next(campaign for campaign in campaigns if campaign.name == name)
+    objects = render.campaign_objects(c, pipelines[c.pipeline], cfg)
+    return objects[0]["data"]["volumes.txt"]
+
+
+VOLUMES = _rendered_volumes()
 
 
 def _record(name: str, volumes: str = VOLUMES) -> dict:
