@@ -365,3 +365,17 @@ def test_a_job_that_will_not_go_away_is_a_sentence(cluster, monkeypatch):
     with pytest.raises(ClusterError) as exc:
         cluster.replace_job(JOB)
     assert "still there 2s later" in str(exc.value)
+
+
+def test_a_server_message_is_capped_before_it_is_repeated():
+    """A 422 whose `details.causes` are empty still carries the whole
+    rejected value in `message`, and for a pod template that is thousands of
+    characters of Go struct. This line goes to a terminal."""
+    from htrflow_converter.cluster import MAX_MESSAGE, _api_error
+
+    huge = ApiException(status=422, reason="Unprocessable Entity")
+    huge.body = json.dumps({"message": "spec.template: " + "core.Pod{} " * 500})
+    line = str(_api_error("apply", "Job", "kyrk", "htr-batch", huge))
+    assert len(line) < MAX_MESSAGE + 100
+    assert line.startswith("apply Job/kyrk: 422 Unprocessable Entity spec.template: ")
+    assert line.endswith("…")
