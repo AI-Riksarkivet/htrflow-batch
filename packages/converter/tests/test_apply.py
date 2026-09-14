@@ -774,3 +774,16 @@ def test_apply_without_out_holds_pipelines_against_the_committed_render(
     assert cli.main(["apply", str(repo)]) == 1
     assert "pipeline demo-v1 changed (image)" in capsys.readouterr().out
     assert cluster.of("apply") == [], "nothing reached the cluster"
+
+
+def test_an_unenforced_pause_outranks_a_refused_object(tmp_path, cluster, capsys):
+    """Two things went wrong at once. A campaign git says is paused that is
+    running anyway is the graver state -- it is burning GPU right now --
+    so its exit 1 wins over the refused object's 3."""
+    repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
+    _refuses(cluster, "kyrk", cluster_mod.ClusterError("apply Job/kyrk: 409"))
+    rc = cli.main(["apply", str(repo), "--out", str(out), "--pause-wait", "1"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "pausy: paused in git" in err
+    assert "Job/kyrk" in err, "the refusal is still reported"
