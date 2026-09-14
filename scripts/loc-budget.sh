@@ -153,7 +153,13 @@ fail=0
 # guard now also requires that nothing was skipped -- the four lines say why,
 # since the case it saves (a SIGTERM at page 637 of 638 whose last page is
 # the dead one) is the one this whole rule exists to remove.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2721
+# 2721 -> 2748 (2026-09-14, images separator): IMAGES splits on whitespace,
+# because a comma is legal inside a URL -- the IIIF size segment
+# `/full/2500,/0/default.jpg` was split in half live. `Config.image_urls`
+# (+27) is the split, the transition branch that still reads a comma-joined
+# line from a pre-fix `rendered/` directory, and the paragraph saying when
+# that branch may be deleted; main.py loses the one-line comma split.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2748
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
