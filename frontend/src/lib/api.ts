@@ -97,8 +97,16 @@ export const jobSummarySchema = z.object({
   counts: jobCountsSchema,
   suspended: z.boolean(),
   createdAt: z.string().nullable(),
+  // When the campaign stopped, as the API observed it. Additive, and
+  // defaulted: an older API answers without it.
+  finishedAt: z.string().nullable().default(null),
   resultsBase: z.string(),
   warmup: warmupSchema,
+  // The campaign's Job is past its `ttlSecondsAfterFinished` and has been
+  // removed; this row is served from the campaign's ConfigMap and the
+  // status ConfigMap beside it, which have no TTL (B76). The counts and the
+  // dates are what the API last observed, and there are no per-volume rows.
+  jobGone: z.boolean().default(false),
 });
 
 /**

@@ -309,6 +309,15 @@
       >
     {/if}
     <span class="chip phase {job.phase.toLowerCase()}">{phaseLabel}</span>
+    {#if job.jobGone}
+      <!-- Not a failure: the Job did its work and Kubernetes removed it at
+           its TTL. The chip says why there is no volume table below. -->
+      <span
+        class="chip gone"
+        title="the campaign's Job has passed its ttlSecondsAfterFinished and been removed — this is the record it left"
+        >job removed</span
+      >
+    {/if}
     {#if noticeText !== null}
       {#if noticeHref !== null}
         <a
@@ -368,11 +377,20 @@
   {#if !collapsed && job.warmup.reason}
     <p class="notice error-row">{describeReason(job.warmup.reason)}</p>
   {/if}
-  {#if job.createdAt !== null}
+  {#if job.createdAt !== null || job.finishedAt !== null}
     <p class="meta">
-      created <time datetime={job.createdAt} title={job.createdAt}
-        >{shortDate(job.createdAt) ?? job.createdAt}</time
-      >
+      {#if job.createdAt !== null}
+        created <time datetime={job.createdAt} title={job.createdAt}
+          >{shortDate(job.createdAt) ?? job.createdAt}</time
+        >
+      {/if}
+      {#if job.finishedAt !== null}
+        {#if job.createdAt !== null}·{/if}
+        finished
+        <time datetime={job.finishedAt} title={job.finishedAt}
+          >{shortDate(job.finishedAt) ?? job.finishedAt}</time
+        >
+      {/if}
     </p>
   {/if}
   {#if detailError !== null}
@@ -561,6 +579,12 @@
 
   .chip.pipeline.static {
     cursor: default;
+  }
+
+  /* Neutral on purpose: the Job's removal is housekeeping, not a verdict on
+     the campaign -- the phase chip beside it already carries that. */
+  .chip.gone {
+    border: 1px solid var(--border);
   }
 
   .chip.pipeline:focus-visible {

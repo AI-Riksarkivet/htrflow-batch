@@ -11,8 +11,10 @@ const job = {
   counts: { total: 7, active: 1, done: 4, failed: 1 },
   suspended: false,
   createdAt: "2026-01-01T00:00:00Z",
+  finishedAt: null,
   resultsBase: "https://results.example.org/htr-test/demo-v1",
   warmup: { phase: "succeeded" },
+  jobGone: false,
 };
 
 const detail = {
@@ -152,6 +154,26 @@ describe("/ campaign page", () => {
         "list we last received. Retrying every 60 seconds.",
     );
     expect(screen.getByText("htr-test/kyrk")).toBeInTheDocument();
+  });
+
+  // A campaign the read API serves from its two ConfigMaps because the Job
+  // is past its ttlSecondsAfterFinished (B76): still a row, still a card.
+  test("a campaign whose Job has been removed is still listed", async () => {
+    const reaped = {
+      ...job,
+      name: "gamla",
+      phase: "Succeeded",
+      counts: { total: 3, active: 0, done: 3, failed: 0 },
+      finishedAt: "2026-09-08T10:00:00Z",
+      jobGone: true,
+    };
+    vi.stubGlobal("fetch", routedFetch([job, reaped]));
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(screen.getByText("htr-test/gamla")).toBeInTheDocument();
+    expect(screen.getByText("job removed")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   test("a malformed 200 body says the versions differ, not 'unreachable'", async () => {

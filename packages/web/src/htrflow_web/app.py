@@ -168,19 +168,26 @@ def create_app(
         except Exception as e:  # noqa: BLE001 - any client error, same answer
             _LOG.warning("could not write %s: %s", cm["metadata"]["name"], e)
 
-    def _status_configmaps() -> dict[tuple[str, str], dict]:
-        """The stored status ConfigMaps, by (namespace, name) -- one list
-        call for the whole page rather than a get per campaign."""
+    def _campaign_configmaps() -> tuple[dict, dict]:
+        """A campaign's two ConfigMaps, each by (namespace, campaign name):
+        the converter's record (``volumes.txt``, provenance) and the status
+        one this service writes beside it. One list call for the whole page
+        rather than a get per campaign."""
+        records: dict[tuple[str, str], dict] = {}
+        statuses: dict[tuple[str, str], dict] = {}
         if not hasattr(reader, "list_configmaps"):
-            return {}
-        listed = reader.list_configmaps()
-        return {
-            (m.get("namespace", ""), m["name"]): cm
-            for cm in listed
-            if (m := cm.get("metadata") or {})
-            .get("name", "")
-            .endswith(projection.STATUS_SUFFIX)
-        }
+            return records, statuses
+        for cm in reader.list_configmaps():
+            meta = cm.get("metadata") or {}
+            name, ns = meta.get("name", ""), meta.get("namespace", "")
+            if not name.startswith("campaign-"):
+                continue
+            stem = name.removeprefix("campaign-")
+            if stem.endswith(projection.STATUS_SUFFIX):
+                statuses[ns, stem.removesuffix(projection.STATUS_SUFFIX)] = cm
+            else:
+                records[ns, stem] = cm
+        return records, statuses
 
     @app.api_route("/api/v1/jobs", methods=GET_HEAD)
     def list_jobs() -> list[dict]:
@@ -197,10 +204,26 @@ def create_app(
             )
             for job in jobs
         ]
-        stored = _status_configmaps()
+        records, statuses = _campaign_configmaps()
         for row in rows:
-            name = f"campaign-{row['name']}{projection.STATUS_SUFFIX}"
-            _record(row, stored.get((row["namespace"], name)), None)
+            _record(row, statuses.get((row["namespace"], row["name"])), None)
+        # A campaign whose Job the TTL reaped is still a campaign: its two
+        # ConfigMaps have no TTL, and this list is where an operator looks
+        # for it (B76). Additive -- a live Job always wins over its record.
+        live = {(row["namespace"], row["name"]) for row in rows}
+        for key, record in records.items():
+            status = statuses.get(key)
+            if key in live or status is None:
+                continue
+            gone = projection.record_summary(
+                record,
+                status,
+                reader.cfg,
+                _warmup_status(record, warmup_jobs, reasons),
+            )
+            if gone is not None:
+                rows.append(gone)
+        rows.sort(key=lambda row: row["createdAt"] or "", reverse=True)
         return rows
 
     @app.api_route("/api/v1/jobs/{namespace}/{name}", methods=GET_HEAD)
@@ -212,7 +235,7 @@ def create_app(
     ) -> dict:
         job = reader.get_job(namespace, name)
         if job is None:
-            raise HTTPException(status_code=404, detail="job not found")
+            return _reaped_detail(namespace, name)
         cm_name = projection.configmap_ref(job)
         configmap = reader.get_configmap(namespace, cm_name) if cm_name else None
         pipe_name = projection.configmap_ref(job, "pipeline")
@@ -233,6 +256,30 @@ def create_app(
         status_name = f"{cm_name or 'campaign-' + name}{projection.STATUS_SUFFIX}"
         _record(body, reader.get_configmap(namespace, status_name), body["failures"])
         return body
+
+    def _reaped_detail(namespace: str, name: str) -> dict:
+        """The campaign page of a campaign whose Job is gone. The pipeline
+        ConfigMap is asked for by name here -- the one place this package
+        rebuilds the converter's ``htr-pipeline-<id>`` convention instead of
+        reading it off a pod spec (``projection.configmap_ref``), because
+        there is no pod spec left to read it off (B76)."""
+        record = reader.get_configmap(namespace, f"campaign-{name}")
+        suffix = projection.STATUS_SUFFIX
+        status = reader.get_configmap(namespace, f"campaign-{name}{suffix}")
+        row = (
+            projection.record_summary(
+                record,
+                status,
+                reader.cfg,
+                _warmup_status(record, reader.list_warmups(), {}),
+            )
+            if record and status
+            else None
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="job not found")
+        pipe = reader.get_configmap(namespace, f"htr-pipeline-{row['pipeline']}")
+        return projection.record_detail(row, status, reader.cfg, pipe)
 
     def _warmup_status(
         job: dict, warmup_jobs: list[dict], reasons: dict[tuple[str, str], dict | None]

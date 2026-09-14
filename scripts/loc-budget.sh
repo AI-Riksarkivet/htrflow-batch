@@ -379,7 +379,15 @@ check converter "$(count packages/converter/src -name '*.py')" 1586
 # request, no read-modify-write race); app gains `_record`/`_status_configmaps`
 # and the wiring in both routes, with the reasoning for writing only a changed
 # body and for never failing a request over a record it could not write.
-check web       "$(count packages/web/src -name '*.py')" 1213
+# 1213 -> 1377 (2026-09-14, B76): a campaign whose Job the TTL reaped still
+# shows. projection gains `record_summary` (the same row shape `summarize`
+# returns, out of the two ConfigMaps, so the page needs no second case
+# beyond the chip), `_record_failures` and `record_detail`; app gains
+# `_reaped_detail` and the merge in the list route, plus `jobGone` on every
+# row. The comments carry the two rules that are not obvious from the code:
+# a live Job always wins over its record, and a campaign ConfigMap with no
+# status ConfigMap beside it gets no row at all.
+check web       "$(count packages/web/src -name '*.py')" 1377
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
@@ -468,7 +476,13 @@ check web       "$(count packages/web/src -name '*.py')" 1213
 # in which every page processed failed -- and each gets its own sentence,
 # naming only the pages the retry will actually redo. The `done` stage leaves
 # the progress line so a finished volume reads as its pages and its failures.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3581
+# 3581 -> 3613 (2026-09-14, B76): the "job removed" chip and the finished
+# date. `jobGone` and `finishedAt` join jobSummarySchema (defaulted, so an
+# older API still parses), the card grows a neutral chip -- the Job's removal
+# is housekeeping, not a verdict, and the phase chip beside it already
+# carries the verdict -- and the meta line says when the campaign finished,
+# which past the TTL is the only date left that means anything.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3613
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

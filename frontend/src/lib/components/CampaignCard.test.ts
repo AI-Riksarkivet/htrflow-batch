@@ -13,8 +13,10 @@ const job: JobSummary = {
   counts: { total: 3, active: 1, done: 1, failed: 1 },
   suspended: false,
   createdAt: "2026-01-01T00:00:00Z",
+  finishedAt: null,
   resultsBase: "https://results.example.org/htr-test/demo-v1",
   warmup: { phase: "succeeded" },
+  jobGone: false,
 };
 
 const volumeDone = {
@@ -984,5 +986,34 @@ describe("CampaignCard's failure notice", () => {
     renderWith({});
     await vi.advanceTimersByTimeAsync(0);
     expect(screen.queryByText(/failed ·|warning/)).toBeNull();
+  });
+});
+
+// A campaign whose Job is past its ttlSecondsAfterFinished: the two
+// ConfigMaps are all that is left, and the card has to say so rather than
+// look like a campaign someone can still open a pod of (B76).
+describe("a campaign whose Job has been removed", () => {
+  const reaped: JobSummary = {
+    ...job,
+    phase: "Succeeded",
+    counts: { total: 3, active: 0, done: 3, failed: 0 },
+    finishedAt: "2026-09-08T10:00:00Z",
+    jobGone: true,
+  };
+
+  test("wears a job removed chip", () => {
+    render(CampaignCard, { job: reaped });
+    expect(screen.getByText("job removed")).toBeTruthy();
+  });
+
+  test("says when it finished", () => {
+    render(CampaignCard, { job: reaped });
+    const when = screen.getByTitle("2026-09-08T10:00:00Z");
+    expect(when.textContent).toBeTruthy();
+  });
+
+  test("a campaign whose Job is still there wears no such chip", () => {
+    render(CampaignCard, { job });
+    expect(screen.queryByText("job removed")).toBeNull();
   });
 });
