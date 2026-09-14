@@ -343,7 +343,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2742
 # changed carries the comma line while this render writes the space line --
 # the same volumes, said twice -- so a finished campaign whose Job the TTL
 # had reaped was applied again and re-ran every volume over a separator.
-check converter "$(count packages/converter/src -name '*.py')" 1814
+# 1814 -> 1842 (2026-09-14, hf token): `hf_token_secret` -- the field, the
+# DNS-1123 subdomain a Secret name has to be (spelled out, because the
+# shorthand character class accepts names the API server refuses), and the
+# comment saying why only the warm-up ever gets the token.
+check converter "$(count packages/converter/src -name '*.py')" 1842
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

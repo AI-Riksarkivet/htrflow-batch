@@ -450,3 +450,27 @@ def test_converter_config_rejects_a_non_positive_window_or_max_seconds(tmp_path,
     assert any(f'converter.yaml: "{key}"' in p for p in exc_info.value.problems), (
         exc_info.value.problems
     )
+
+
+def test_hf_token_secret_defaults_to_unset_and_takes_a_secret_name(tmp_path):
+    """A private (or gated) Hub model is only reachable by the warm-up, and
+    only if the operator made a Secret for it. Unset is the normal case."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    assert _load(root)[2].hf_token_secret == ""
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + "\nhf_token_secret: htr-batch-hf\n")
+    assert _load(root)[2].hf_token_secret == "htr-batch-hf"
+
+
+def test_hf_token_secret_must_be_a_secret_name(tmp_path):
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + "\nhf_token_secret: Not_A_Secret\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert any(
+        'converter.yaml: "hf_token_secret"' in p and "Secret" in p
+        for p in exc_info.value.problems
+    ), exc_info.value.problems

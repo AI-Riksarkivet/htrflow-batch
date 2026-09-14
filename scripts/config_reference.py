@@ -45,6 +45,7 @@ SECURITY = {
     "S3_BUCKET": "from the S3 Secret (`secretKeyRef`) — cluster",
     "S3_ENDPOINT": "from the S3 Secret (`secretKeyRef`) — cluster",
     "s3_secret": "names the Secret mounted at `/secrets/s3` — cluster",
+    "hf_token_secret": "names the Secret the warm-up reads `HF_TOKEN` from — cluster",
     "s3.existingSecret": "names that Secret; no template creates it — nobody",
     "publicResultsBase": "the public-read results base; `required` — render",
     "web.image": "digest-pinned unless `security.allowTagImages` — render",
