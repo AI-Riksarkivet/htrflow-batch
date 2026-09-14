@@ -584,3 +584,14 @@ def test_a_pipeline_may_keep_its_campaigns_jobs_longer():
     demo = demo.model_copy(update={"ttl_seconds_after_finished": 99})
     job = render.campaign_objects(kyrk, demo, cfg)[1]
     assert job["spec"]["ttlSecondsAfterFinished"] == 99
+
+
+def test_the_campaign_configmap_names_the_image_its_volumes_ran_on():
+    """The ConfigMap outlives the Job (no TTL, B76), so the digest that
+    actually processed these volumes has to be on it -- the Job's own
+    `image:` is gone with the Job."""
+    kyrk, demo, cfg = _kyrk()
+    cm = render.campaign_objects(kyrk, demo, cfg)[0]
+    assert cm["metadata"]["annotations"] == {
+        "htrflow.riksarkivet.se/image-digest": demo.image
+    }

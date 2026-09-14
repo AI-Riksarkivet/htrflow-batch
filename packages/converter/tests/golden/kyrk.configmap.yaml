@@ -7,6 +7,8 @@ metadata:
     htrflow.riksarkivet.se/managed-by: converter
     htrflow.riksarkivet.se/campaign: kyrk
     htrflow.riksarkivet.se/pipeline: demo-v1
+  annotations:
+    htrflow.riksarkivet.se/image-digest: ghcr.io/riksarkivet/htrflow-batch@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 data:
   volumes.txt: "R0001203\thttps://lbiiif.riksarkivet.se/arkis!R0001203/manifest\n\
     dodsbok-1698\thttps://iiif.example.org/xyz/manifest\nloose-scans\timages:https://example.org/scan1.jpg,https://example.org/scan2.jpg\n"

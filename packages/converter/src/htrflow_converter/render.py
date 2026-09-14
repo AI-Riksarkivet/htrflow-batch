@@ -41,6 +41,7 @@ _PIPELINE_LABEL = "htrflow.riksarkivet.se/pipeline"
 _QUEUE_LABEL = "kueue.x-k8s.io/queue-name"
 _PRIORITY_LABEL = "kueue.x-k8s.io/priority-class"
 _SHA_ANNOTATION = "htrflow.riksarkivet.se/pipeline-sha256"
+_DIGEST_ANNOTATION = "htrflow.riksarkivet.se/image-digest"
 
 
 def label_value(text: str) -> str:
@@ -175,6 +176,7 @@ def _campaign_configmap(
     _set(cm, "metadata.namespace", cfg.namespace)
     cm["metadata"]["labels"][_CAMPAIGN_LABEL] = label_value(c.name)
     cm["metadata"]["labels"][_PIPELINE_LABEL] = label_value(p.id)
+    cm["metadata"]["annotations"][_DIGEST_ANNOTATION] = p.image
     cm["data"]["volumes.txt"] = text
     return cm
 

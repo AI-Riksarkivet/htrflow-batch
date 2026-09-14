@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import getpass
+import os
 import re
+import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
 
@@ -223,6 +227,54 @@ def _render(repo_dir: str, out_dir: str) -> int:
     return 0
 
 
+#: Provenance keys on the campaign ConfigMap. The ConfigMap has no TTL and
+#: is pruned only when the campaign file leaves git, so it -- not the Job --
+#: is where the record of a campaign lives (B76, the product owner
+#: 2026-09-08: the record is a ConfigMap, not a database).
+_COMMIT_ANNOTATION = "htrflow.riksarkivet.se/campaigns-commit"
+_SUBMITTER_ANNOTATION = "htrflow.riksarkivet.se/submitter"
+_APPLIED_AT_ANNOTATION = "htrflow.riksarkivet.se/applied-at"
+
+
+def _git_head(repo: Path) -> str:
+    """The campaigns repo's commit, or ``unknown`` outside a checkout (a
+    tarball, a test's tmp_path) -- the record says so rather than guessing."""
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    return done.stdout.strip() if done.returncode == 0 else "unknown"
+
+
+def _submitter() -> str:
+    """``HTRFLOW_SUBMITTER`` (what CI sets from the actor that triggered it),
+    else the OS user. Lower-cased: the same person must not appear twice."""
+    name = os.environ.get("HTRFLOW_SUBMITTER", "").strip()
+    if not name:
+        with contextlib.suppress(Exception):
+            name = getpass.getuser()
+    return (name or "unknown").lower()
+
+
+def _provenance(repo: Path) -> dict[str, str]:
+    """What this apply adds to every campaign ConfigMap it writes. Stamped
+    here and not in ``render``: ``rendered/`` has to be a pure function of
+    the repo (B78), and which commit, which person and which minute are
+    not. The image digest, which *is* one, is rendered (``render.py``)."""
+    return {
+        _COMMIT_ANNOTATION: _git_head(repo),
+        _SUBMITTER_ANNOTATION: _submitter(),
+        _APPLIED_AT_ANNOTATION: datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
+    }
+
+
 def _cluster(namespace: str):
     """The API-server adapter, behind a function: `validate` and `render`
     never touch a cluster (nor pay the client's import), and a test swaps
@@ -282,8 +334,11 @@ def _apply(
             # has what git says. Warm-up Jobs are not campaigns and get no
             # pause sync.
             jobs: list[tuple[dict, bool]] = []
+            prov = _provenance(repo)
             for objects, is_campaign in ((pipelines, False), (campaigns, True)):
                 for obj in objects:
+                    if is_campaign and obj["kind"] == "ConfigMap":
+                        obj["metadata"].setdefault("annotations", {}).update(prov)
                     live = cluster.apply(obj)
                     print(f"applied: {obj['kind']}/{obj['metadata']['name']}")
                     if is_campaign and obj["kind"] == "Job":

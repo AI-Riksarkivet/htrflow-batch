@@ -246,7 +246,15 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2721
 # ConverterConfig gains the default (a week) and Pipeline the per-pipeline
 # override, with the paragraph saying why the window is not the record; render
 # sets the field the skeleton now leaves at 0.
-check converter "$(count packages/converter/src -name '*.py')" 1446
+# 1446 -> 1503 (2026-09-14, B76): the campaign ConfigMap became the durable
+# record of a campaign (the product owner, 2026-09-08: a ConfigMap, not a
+# database). render stamps the image digest, the one provenance field that is
+# a pure function of the repo; cli._provenance adds the campaigns commit, the
+# submitter and the time on the way to the API server, because `rendered/` has
+# to stay byte-identical between two renders of the same repo (B78). Most of
+# it is `_git_head`/`_submitter`/`_provenance` and the paragraph saying which
+# half is rendered and why.
+check converter "$(count packages/converter/src -name '*.py')" 1503
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
