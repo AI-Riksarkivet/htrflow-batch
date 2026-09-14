@@ -1056,6 +1056,21 @@ describe("CampaignCard's running motion", () => {
     ).not.toHaveClass("pulse");
   });
 
+  test("a Running campaign still waiting on its warm-up does not pulse", async () => {
+    // `Running` is the projection's fallback phase, so it is what a campaign
+    // reads as before its warm-up has finished -- when nothing is running at
+    // all. The warm-up chip beside it is the story there, not a beating dot.
+    stubPolls({ volumes: [] });
+    const { container } = render(CampaignCard, {
+      job: { ...job, warmup: { phase: "pending" } },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(screen.getByText("warm-up pending")).toBeInTheDocument();
+    expect(screen.getByText("Running")).toBeInTheDocument();
+    expect(container.querySelector(".chip.phase .dot")).toBeNull();
+  });
+
   test("an active row carries a bar sized done/total; a finished row none", async () => {
     stubPolls({ volumes: [running, volumeDone] });
     render(CampaignCard, { job });
