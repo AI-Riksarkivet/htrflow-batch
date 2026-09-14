@@ -199,6 +199,55 @@ Per campaign `campaigns/<name>.yaml`:
 Labels on everything: `htrflow.riksarkivet.se/{campaign,pipeline,managed-by=converter}`,
 `app: htrflow-batch` (NetworkPolicies select on it).
 
+### The record a campaign leaves
+
+The Job is a **window**, not the record. It carries
+`ttlSecondsAfterFinished`, so some time after the last index finishes
+Kubernetes deletes it and its `completedIndexes`/`failedIndexes` go with it.
+What stays is the campaign's own pair of ConfigMaps, which have no TTL at
+all (the product owner, 2026-09-08: the record is a ConfigMap, not a
+database — see the [decision log](decision-log.md)):
+
+| Object | Written by | Holds |
+|---|---|---|
+| `ConfigMap campaign-<name>` | `htrflow-campaigns render` + `apply` | `volumes.txt`, and the provenance annotations below |
+| `ConfigMap campaign-<name>-status` | the read API, from what it observes | `phase`, `volumesTotal`/`volumesDone`/`volumesFailed`, `startedAt`/`finishedAt`, `resultsBase`, `failedVolumes` (up to 50 ids with one sentence each) |
+
+The provenance annotations on the record, all
+`htrflow.riksarkivet.se/`-prefixed: `image-digest` (rendered — it is a pure
+function of the repo, so `rendered/` stays byte-identical between two
+renders), and `campaigns-commit`, `submitter` and `applied-at`, stamped by
+`apply`. The submitter is `HTRFLOW_SUBMITTER` when it is set — CI sets it
+from whoever triggered the run — else the OS user of the apply, lower-cased.
+
+Three things follow.
+
+- **A finished campaign is not run again.** `apply` reads the status
+  ConfigMap beside the append-only check: a campaign the record says is
+  finished (`Succeeded`, `Failed` or `PartiallyFailed`) whose `volumes.txt`
+  has not moved is left alone, with one line saying so — `campaign kyrk
+  finished 2026-09-08, unchanged, left alone (120/120 volumes)`. Before
+  this, an apply a day after the campaign ended found no Job, created one,
+  and re-ran every volume. There is deliberately **no `--force`**: a
+  campaign that should run again is a new campaign file.
+- **A changed volume list is still refused**, by the append-only rule, before
+  any of this is reached.
+- **The status page still shows it.** `GET /api/v1/jobs` merges the Jobs
+  with these ConfigMaps: a pair with no Job is a row carrying `jobGone:
+  true`, the phase and counts the record last observed, and the dates. Its
+  detail response has the failed volumes with their reason but no per-volume
+  rows — those were the Job's. The card shows a "job removed" chip.
+
+### Removing a finished campaign
+
+Delete the campaign file from `campaigns/` when the campaign is over and you
+no longer want it on the status page. That is what prunes both ConfigMaps
+(`apply --prune`, or Argo CD's own prune) — nothing else does, and nothing
+expires them. **The results in the bucket are not touched**: removing those
+is a separate, deliberate step, and the record says what there is to remove.
+Leaving the file in place costs two small ConfigMaps and keeps the campaign
+on the page; there is no wrong answer, only the difference between the two.
+
 A full worked example — a real two-volume campaign rendered end to end,
 every object shown and every field explained: [A worked example: rendering
 an Indexed Job](rendering-example.md).
@@ -235,8 +284,12 @@ exhausts its retries it counts toward `maxFailedIndexes`; the Job's own
 ## The web front and status page
 
 `packages/web` (`GET /api/v1/jobs`, `GET /api/v1/jobs/{namespace}/{name}`)
-is a thin, read-only projection of live Job/Pod/ConfigMap state — no state
-of its own, nothing cached, nothing written. A campaign's `phase` is derived
+is a thin projection of live Job/Pod/ConfigMap state — no state of its own
+and nothing cached. It writes exactly one thing: the per-campaign status
+ConfigMap above, from what it just observed, and only when the stored body
+would change (an idle page polls, and every poll would otherwise be a
+write). A write it cannot make is logged and never fails a request, and
+site-only mode writes nothing at all. A campaign's `phase` is derived
 straight from the Job: `Queued` (suspended, nothing done yet), `Paused`
 (suspended, some indexes done), `Running`, `Succeeded`, `PartiallyFailed`
 (the `Failed` condition with a non-empty `completedIndexes` — the campaign
@@ -248,6 +301,9 @@ message becomes `reason` on a failed row); the URL half of each line becomes
 that row's `sourceUrl`. The detail response also reads the Job's
 `htr-pipeline-<id>` ConfigMap, so the card can list the pipeline's steps and
 show its YAML — a missing ConfigMap is no steps, not an error.
+
+A row whose Job has been reaped carries the same fields with `jobGone: true`
+— see [The record a campaign leaves](#the-record-a-campaign-leaves).
 
 Every row also carries `warmup: {phase, reason?}` — the pipeline's warm-up
 Job (the [warm-up gate](wrapper.md#model-handling)), matched by namespace +

@@ -96,6 +96,18 @@ script). A CSP header from the server must not be stricter than the meta tag
   by the API out of the wrapper's termination message (`stage`/`permanent`
   `null` when it was not the wrapper's JSON), present only while a pod for
   that index still exists.
+- **The "job removed" chip.** A campaign whose Job is past its
+  `ttlSecondsAfterFinished` arrives with `jobGone: true` — the API served
+  that row from the campaign's ConfigMap and the status ConfigMap beside it,
+  which have no TTL
+  ([The record a campaign leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)).
+  The card wears a neutral chip saying so, beside (never instead of) the
+  phase chip: the Job's removal is housekeeping, not a verdict on the
+  campaign, and the campaign's own phase is still the verdict. The meta line
+  adds `finished <date>` whenever the API sends `finishedAt`, which past the
+  TTL is the only date that still means anything. Such a card has no volume
+  table — the per-index states were the Job's — only the failed volumes the
+  record kept, with their one sentence each.
 - **Progress.** A row's `progress` (`{done, total, failed, lastPage, stage,
   updatedAt, ageSeconds, lastError, errors, viewerPublished}`, or `null`) is
   what the API read out of that volume's `progress.json` in the bucket — the
