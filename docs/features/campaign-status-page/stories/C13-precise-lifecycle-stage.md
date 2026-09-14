@@ -58,3 +58,7 @@ lämna GPU:n. Precisionen finns i systemet, den når inte sidan.
 - [ ] En volym vars senaste sida är äldre än gränsen markeras som
       stillastående, och markeringen försvinner när nästa sida blir klar.
 - [ ] LOC-budgetarna för wrapper, web och frontend hålls exakt.
+- [ ] (fynd 2026-09-14) Medan ett index gör om ett försök pendlar kampanjens
+      summerade pagesFailed/errors mellan förra försökets värden och 0 (varje
+      försök skriver om progress.json från stage load) — summan ska inte
+      minska under ett omförsök.
