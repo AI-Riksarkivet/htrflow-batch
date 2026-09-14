@@ -168,7 +168,7 @@ _PIPELINE_CHANGED = (
 )
 
 
-def _recorded_recipe(path: Path) -> dict[str, str]:
+def _recorded_recipe(path: Path) -> dict[str, object]:
     """The recipe the previous render left in ``path``. ``rendered/`` is
     committed, so the previous render IS the record. Nothing when there is
     none to hold this render against -- a file too broken to parse included,
