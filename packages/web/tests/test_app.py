@@ -144,6 +144,7 @@ def test_list_jobs_shape(client: TestClient):
             "finishedAt": None,
             "resultsBase": "https://results.example.org/htr-test/demo-v1",
             "warmup": {"phase": "missing"},
+            "jobGone": False,
         }
     ]
 
@@ -473,3 +474,74 @@ def test_site_only_mode_writes_nothing():
     from htrflow_web.app import NoCluster
 
     assert not hasattr(NoCluster, "apply_configmap")
+
+
+REAPED_RECORD = {
+    "metadata": {
+        "name": "campaign-gamla",
+        "namespace": "htr-test",
+        "creationTimestamp": "2025-12-01T00:00:00Z",
+        "labels": {
+            "htrflow.riksarkivet.se/campaign": "gamla",
+            "htrflow.riksarkivet.se/pipeline": "demo-v1",
+        },
+    },
+    "data": {"volumes.txt": "vol9\thttps://iiif.example.org/vol9/manifest\n"},
+}
+
+REAPED_STATUS = {
+    "metadata": {"name": "campaign-gamla-status", "namespace": "htr-test"},
+    "data": {
+        "phase": "Succeeded",
+        "volumesTotal": "4",
+        "volumesDone": "4",
+        "volumesFailed": "0",
+        "startedAt": "2025-12-01T01:00:00Z",
+        "finishedAt": "2025-12-01T05:00:00Z",
+        "resultsBase": "https://results.example.org/htr-test/demo-v1",
+        "failedVolumes": "[]",
+    },
+}
+
+
+def _reaped_reader() -> RecordingReader:
+    return RecordingReader([REAPED_RECORD, REAPED_STATUS])
+
+
+def test_a_campaign_whose_job_is_gone_still_has_a_row():
+    """The Job was reaped by its TTL; the two ConfigMaps are the campaign
+    now, and the list is where an operator looks for it (B76)."""
+    client = TestClient(create_app(_reaped_reader(), progress=FakeProgress()))
+    body = client.get("/api/v1/jobs").json()
+    by_name = {row["name"]: row for row in body}
+    assert set(by_name) == {"kyrk", "gamla"}
+    assert by_name["kyrk"]["jobGone"] is False
+    gone = by_name["gamla"]
+    assert gone["jobGone"] is True
+    assert gone["phase"] == "Succeeded"
+    assert gone["counts"] == {"total": 4, "active": 0, "done": 4, "failed": 0}
+    assert gone["finishedAt"] == "2025-12-01T05:00:00Z"
+    assert body[0]["name"] == "kyrk", "newest first, reaped rows included"
+
+
+def test_a_campaign_configmap_with_no_record_beside_it_is_not_a_row():
+    """Never observed by this API: it is being applied right now, and the
+    Job will say more than a guess would."""
+    client = TestClient(create_app(RecordingReader([REAPED_RECORD])))
+    assert [row["name"] for row in client.get("/api/v1/jobs").json()] == ["kyrk"]
+
+
+def test_the_detail_of_a_reaped_campaign_is_what_the_record_has():
+    client = TestClient(create_app(_reaped_reader(), progress=FakeProgress()))
+    resp = client.get("/api/v1/jobs/htr-test/gamla")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["jobGone"] is True
+    assert body["volumes"] == []
+    assert body["failures"] == []
+    assert body["latest"] is None
+
+
+def test_a_campaign_with_neither_job_nor_record_is_still_a_404():
+    client = TestClient(create_app(_reaped_reader(), progress=FakeProgress()))
+    assert client.get("/api/v1/jobs/htr-test/nonesuch").status_code == 404

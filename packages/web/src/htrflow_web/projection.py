@@ -148,6 +148,8 @@ def summarize(job: dict, cfg, warmup: dict) -> dict:
         "finishedAt": _finished_at(job),
         "resultsBase": _results_base(namespace, pipeline, cfg),
         "warmup": warmup,
+        # There is a Job behind this row. The record's rows say False (B76).
+        "jobGone": False,
     }
 
 
@@ -181,6 +183,121 @@ def status_record(row: dict, failures: list[dict] | None = None) -> dict[str, st
             separators=(",", ":"),
         )
     return data
+
+
+#: Phases a stored record may carry into a row -- the ones this API itself
+#: writes. A record saying anything else is not a campaign the page can
+#: draw, and is left out rather than guessed at.
+_PHASES = (*FINISHED_PHASES, "Running", "Queued", "Paused")
+
+
+def _int(text: object) -> int:
+    try:
+        return int(str(text))
+    except ValueError:
+        return 0
+
+
+def record_summary(record: dict, status: dict, cfg, warmup: dict) -> dict | None:
+    """One row for a campaign whose Job is gone -- reaped by its
+    ``ttlSecondsAfterFinished`` -- from the two ConfigMaps it left behind
+    (B76). The same shape ``summarize`` returns, so the page draws it with
+    no special case beyond the ``jobGone`` chip.
+
+    A campaign ConfigMap with no status ConfigMap beside it is NOT one of
+    these and has no row here: this API never saw that campaign run (it is
+    being applied right now, say), and the Job, when it appears, says more
+    than a guess would.
+    """
+    meta = record.get("metadata") or {}
+    data = status.get("data") or {}
+    if data.get("phase") not in _PHASES:
+        return None
+    labels = _labels(record)
+    namespace = meta.get("namespace", "")
+    name = meta.get("name", "").removeprefix("campaign-")
+    pipeline = labels.get(_PIPELINE_LABEL, "")
+    return {
+        "namespace": namespace,
+        "name": name,
+        "campaign": labels.get(_CAMPAIGN_LABEL, "") or name,
+        "pipeline": pipeline,
+        "phase": data["phase"],
+        "counts": {
+            "total": _int(data.get("volumesTotal")),
+            "active": 0,  # nothing is running: there is no Job to run it
+            "done": _int(data.get("volumesDone")),
+            "failed": _int(data.get("volumesFailed")),
+        },
+        "suspended": False,
+        "createdAt": meta.get("creationTimestamp"),
+        "startedAt": data.get("startedAt") or None,
+        "finishedAt": data.get("finishedAt") or None,
+        "resultsBase": data.get("resultsBase")
+        or _results_base(namespace, pipeline, cfg),
+        "warmup": warmup,
+        "jobGone": True,
+    }
+
+
+def _record_failures(row: dict, status: dict, cfg) -> list[dict]:
+    """The failed volumes the record kept, as rows the page already knows
+    how to draw. Their ``reason`` is the one sentence the detail endpoint
+    observed while the pods still existed; anything finer is in the volume's
+    own ``manifest.json`` in the bucket (docs: reference/s3-layout)."""
+    try:
+        listed = json.loads((status.get("data") or {}).get("failedVolumes") or "[]")
+    except ValueError:
+        listed = []
+    base, pipeline = row["resultsBase"], row["pipeline"]
+    rows = []
+    for i, entry in enumerate(listed if isinstance(listed, list) else []):
+        if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+            continue
+        vol_id = entry["id"]
+        rows.append(
+            {
+                "index": i,
+                "id": vol_id,
+                "state": "failed",
+                "manifestUrl": f"{base}/{vol_id}/manifest.json",
+                "iiifUrl": f"{base}/{vol_id}/iiif.json",
+                "altoPrefix": f"{base}/{vol_id}/alto/",
+                "logUrl": _log_url(pipeline, vol_id, cfg),
+                "sourceUrl": None,
+                "reason": {
+                    "stage": None,
+                    "permanent": None,
+                    "error": str(entry.get("reason", "")),
+                },
+                "progress": None,
+            }
+        )
+    return rows
+
+
+def record_detail(
+    row: dict, status: dict, cfg, pipeline_configmap: dict | None
+) -> dict:
+    """``JobDetail`` for a campaign whose Job is gone: the record, and the
+    failures it kept. No per-volume rows -- the per-index states were the
+    Job's ``completedIndexes`` and went with it, and the volumes themselves
+    are listed in the bucket (B76 piece 4) -- and no page counts, which are
+    read from progress files a finished run has nothing more to add to."""
+    pipeline_yaml = _pipeline_yaml(pipeline_configmap)
+    return {
+        **row,
+        "pipelineSteps": _pipeline_steps(pipeline_yaml),
+        "pipelineYaml": pipeline_yaml,
+        "latest": None,
+        "failures": _record_failures(row, status, cfg),
+        "volumes": [],
+        "pagesDone": 0,
+        "pagesTotal": 0,
+        "pagesFailed": 0,
+        "errors": 0,
+        "lastError": None,
+    }
 
 
 def status_configmap(row: dict, data: dict[str, str]) -> dict:

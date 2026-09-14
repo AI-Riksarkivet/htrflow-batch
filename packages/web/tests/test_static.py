@@ -29,6 +29,9 @@ class EmptyReader:
     def get_job(self, namespace: str, name: str) -> dict | None:
         return None
 
+    def get_configmap(self, namespace: str, name: str) -> dict | None:
+        return None  # no record either: the campaign really is a 404
+
 
 @pytest.fixture
 def static_dir(tmp_path: Path) -> Path:

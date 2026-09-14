@@ -1013,3 +1013,90 @@ def test_the_status_configmap_is_named_and_labelled_for_the_prune():
     assert labels["htrflow.riksarkivet.se/pipeline"] == "demo-v1"
     assert labels["htrflow.riksarkivet.se/kind"] == "status"
     assert cm["data"] == {"phase": "Failed"}
+
+
+# --- a campaign whose Job the TTL reaped still has a row (B76) -----------
+
+RECORD = {
+    "metadata": {
+        "name": "campaign-kyrk",
+        "namespace": "htr-test",
+        "creationTimestamp": "2026-09-08T07:00:00Z",
+        "labels": {
+            "htrflow.riksarkivet.se/campaign": "kyrk",
+            "htrflow.riksarkivet.se/pipeline": "demo-v1",
+        },
+    },
+    "data": {"volumes.txt": "vol0\thttps://iiif.example.org/vol0/manifest\n"},
+}
+
+
+def _stored(**data) -> dict:
+    return {
+        "metadata": {"name": "campaign-kyrk-status", "namespace": "htr-test"},
+        "data": {
+            "phase": "Succeeded",
+            "volumesTotal": "3",
+            "volumesDone": "3",
+            "volumesFailed": "0",
+            "startedAt": "2026-09-08T08:00:00Z",
+            "finishedAt": "2026-09-08T10:00:00Z",
+            "resultsBase": "https://results.example.org/htr-test/demo-v1",
+            **data,
+        },
+    }
+
+
+def test_a_reaped_campaign_is_a_row_like_any_other():
+    row = projection.record_summary(RECORD, _stored(), CFG, MISSING_WARMUP)
+    assert row["name"] == "kyrk"
+    assert row["namespace"] == "htr-test"
+    assert row["pipeline"] == "demo-v1"
+    assert row["phase"] == "Succeeded"
+    assert row["counts"] == {"total": 3, "active": 0, "done": 3, "failed": 0}
+    assert row["finishedAt"] == "2026-09-08T10:00:00Z"
+    assert row["resultsBase"] == "https://results.example.org/htr-test/demo-v1"
+    assert row["jobGone"] is True
+    assert set(row) == set(
+        projection.summarize(_finished_job(), CFG, MISSING_WARMUP)
+    ), "the row must be the same shape a live campaign's is"
+
+
+def test_a_live_campaign_says_its_job_is_there():
+    assert (
+        projection.summarize(_finished_job(), CFG, MISSING_WARMUP)["jobGone"] is False
+    )
+
+
+def test_a_record_with_a_phase_this_api_never_writes_is_left_out():
+    """Better no row than a guessed one: the page draws what the API says."""
+    assert (
+        projection.record_summary(RECORD, _stored(phase="Weird"), CFG, MISSING_WARMUP)
+        is None
+    )
+
+
+def test_the_reaped_detail_carries_the_failures_the_record_kept():
+    status = _stored(
+        phase="PartiallyFailed",
+        volumesFailed="1",
+        failedVolumes='[{"id":"vol2","reason":"manifest 404"}]',
+    )
+    row = projection.record_summary(RECORD, status, CFG, MISSING_WARMUP)
+    body = projection.record_detail(row, status, CFG, None)
+    assert body["volumes"] == []  # the per-index states went with the Job
+    assert body["latest"] is None
+    assert len(body["failures"]) == 1
+    failure = body["failures"][0]
+    assert failure["id"] == "vol2"
+    assert failure["state"] == "failed"
+    assert failure["reason"]["error"] == "manifest 404"
+    assert failure["iiifUrl"].endswith("/vol2/iiif.json")
+    assert failure["logUrl"].endswith("/status/logs/demo-v1/vol2.txt")
+    assert (body["pagesDone"], body["pagesTotal"]) == (0, 0)
+
+
+def test_a_record_whose_failed_volumes_are_not_json_costs_nothing():
+    status = _stored(failedVolumes="not json at all")
+    row = projection.record_summary(RECORD, status, CFG, MISSING_WARMUP)
+    assert projection.record_detail(row, status, CFG, None)["failures"] == []

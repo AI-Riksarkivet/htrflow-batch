@@ -25,8 +25,12 @@ const summary = {
   counts: { total: 7, active: 1, done: 4, failed: 1 },
   suspended: false,
   createdAt: "2026-01-01T00:00:00Z",
+  // Both defaulted by the schema when an older API leaves them out; the
+  // fixture carries them because the parsed row always does (B76).
+  finishedAt: null,
   resultsBase: "https://results.example.org/htr-test/demo-v1",
   warmup: { phase: "succeeded" },
+  jobGone: false,
 };
 
 const volume = {
