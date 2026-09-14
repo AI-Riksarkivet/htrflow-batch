@@ -15,7 +15,8 @@ commitas till git och sedan avvisas av API-servern.
 
 `render.split` delar på antal volymer (`render.py:17,39-42`) och hela listan
 hamnar i en ConfigMap-nyckel (`:112`); ingenting mäter bytes. En `images:`-volym
-är **en** rad med komma-joinade URL:er (`models.py:133-137`), så 300 sidor à 90
+är **en** rad med komma-joinade URL:er (`models.py:133-137`; separatorn är
+blanksteg sedan 2026-09-14 — lika många bytes per rad, budgeten står kvar), så 300 sidor à 90
 tecken ger 23 115 B per rad: 45 volymer spränger 1 MiB och 200 renderar 4,41 MiB
 i en enda del. `validate` och `render` går igenom, CI commitar, och först `apply`
 faller. Samma kodväg har två till: ett 58 tecken långt namn plus `-part1` blir en

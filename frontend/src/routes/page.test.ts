@@ -121,6 +121,21 @@ describe("/ campaign page", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  // The list is the page someone leaves open while a campaign runs, so the
+  // running motion has to survive the whole render, not only the component
+  // test: a Running campaign arrives with a beating dot in its phase chip.
+  test("a running campaign arrives with a pulsing dot in its phase chip", async () => {
+    vi.stubGlobal("fetch", routedFetch([job]));
+    const { container } = render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const dot = container.querySelector(".chip.phase.running .dot");
+    expect(dot).toHaveClass("pulse");
+    // The chip's own word carries the state; the dot is decoration.
+    expect(dot).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByText("Running")).toBeInTheDocument();
+  });
+
   test("shows an empty state with no campaigns", async () => {
     vi.stubGlobal("fetch", routedFetch([]));
     render(CampaignsPage);

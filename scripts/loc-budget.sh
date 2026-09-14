@@ -153,7 +153,17 @@ fail=0
 # guard now also requires that nothing was skipped -- the four lines say why,
 # since the case it saves (a SIGTERM at page 637 of 638 whose last page is
 # the dead one) is the one this whole rule exists to remove.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2721
+# 2721 -> 2748 (2026-09-14, images separator): IMAGES splits on whitespace,
+# because a comma is legal inside a URL -- the IIIF size segment
+# `/full/2500,/0/default.jpg` was split in half live. `Config.image_urls`
+# (+27) is the split, the transition branch that still reads a comma-joined
+# line from a pre-fix `rendered/` directory, and the paragraph saying when
+# that branch may be deleted; main.py loses the one-line comma split.
+# 2748 -> 2742 (2026-09-14, review): the transition rule is documented where
+# it is defined -- the converter's `models.split_image_urls` -- so this copy
+# of it says only why a copy exists (the GPU image must not carry the
+# converter's Kubernetes client) and points at the tests that pin the two.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2742
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
@@ -240,6 +250,25 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2721
 # pod's clock starts at pod start, the gate's when the init container runs)
 # -- which gives 143, no FailIndex and no sentence. Four lines are the
 # comment saying which clock wins and why that matters.
+# 1434 -> 1458 (2026-09-14, images separator): a comma is legal inside a URL
+# (the IIIF size segment `/full/2500,/0/default.jpg`), so `images:` URLs are
+# joined with a space instead. That only holds if no URL carries whitespace,
+# which the models now refuse by name and position (+20), and `source_line`
+# says which separator it writes and that both readers split on the first tab
+# (+4) -- the contract the Job's shell and the wrapper are written against.
+# 1458 -> 1498 (2026-09-14, review blocking 1): the append-only check
+# compared volumes.txt byte for byte, so the separator change reported every
+# already-rendered `images:` campaign as append-only and left no way to
+# re-render it. `models.split_image_urls` + `parse_source_line` (+33) read a
+# line back as what it MEANS, comma or space, and cli compares those (+7);
+# the docstrings carry the transition rule the wrapper now only points at.
+# 1498 -> 1515 (2026-09-14, review nits): `_shown_url` strips userinfo out
+# of every URL a validation problem echoes back (+11 with the comment saying
+# why a campaign file's own credentials must not reach a CI log), the
+# whitespace and non-http sentences wrap over two lines each, and parse.py
+# flattens tab and CR as well as newline so one problem stays one line (+3).
+# 1515 -> 1517 (2026-09-14, images separator re-review): the transition
+# rule's docstring names its one known limit (a query carrying a second URL).
 # 1434 -> 1446 (2026-09-14, B76): the Job's `ttlSecondsAfterFinished` became a
 # value. A day was short enough that a campaign finished on a Friday was reaped
 # before anyone looked at it, and the next apply re-ran every volume.
@@ -303,7 +332,12 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2721
 # permission the decision never needed. The write is caught where it happens,
 # the stored record still consulted, and only a refused READ falls through to
 # applying the campaign as any other.
-check converter "$(count packages/converter/src -name '*.py')" 1715
+# 1517 + 1715 - 1434 = 1798 (2026-09-14, merge): the two chains above met.
+# They forked at 1434 and touched different files -- the separator work is in
+# models.py and _render's append-only compare, the record work in cli's apply
+# path, render's status_configmap and cluster's get/prune -- so the merged
+# count is both, with nothing double-counted.
+check converter "$(count packages/converter/src -name '*.py')" 1798
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
@@ -529,6 +563,13 @@ check web       "$(count packages/web/src -name '*.py')" 1434
 # in which every page processed failed -- and each gets its own sentence,
 # naming only the pages the retry will actually redo. The `done` stage leaves
 # the progress line so a finished volume reads as its pages and its failures.
+# 3581 -> 3777 (2026-09-14, running motion): the product owner, watching a
+# live run, could not tell a running campaign from a finished one -- nothing
+# on the card moved. Three gestures, running only: a pulsing dot in the state
+# and phase chips, a progress bar that eases to its new width on each poll
+# (with a sheen crossing it between polls), and a one-second highlight on the
+# progress line whose page count actually changed. Markup, aria and the
+# reduced-motion rules are what cost lines; the keyframes are kept small.
 # 3581 -> 3613 (2026-09-14, B76): the "job removed" chip and the finished
 # date. `jobGone` and `finishedAt` join jobSummarySchema (defaulted, so an
 # older API still parses), the card grows a neutral chip -- the Job's removal
@@ -539,7 +580,11 @@ check web       "$(count packages/web/src -name '*.py')" 1434
 # reads "outcome unknown" on the chip, styled with queued/paused rather than
 # with failed -- nobody wrote down how the campaign ended, which is not the
 # same as it having gone wrong.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3624
+# 3777 + 3624 - 3581 = 3820 (2026-09-14, merge): the two chains above met.
+# The motion work and the reaped-campaign chip both grew CampaignCard, and
+# both survive: a card can pulse while it runs and say "job removed" once its
+# Job is gone, and the phase chip carries one of the two at a time.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3820
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

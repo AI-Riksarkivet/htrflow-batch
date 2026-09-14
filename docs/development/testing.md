@@ -2,49 +2,52 @@
 
 ## Acceptance levels in detail
 
-0. **Library-API pin test** — import `Pipeline.from_config` and run a 1-page
-   fixture against the exact htrflow version in the pinned image; the canary
-   that a version bump broke the [D16 driver](../how-it-works/wrapper.md)
-   (fall back to L1/L2 if so). Opt-in, because it needs the model weights:
-   `make test-driver-real` locally, `dagger call test-driver` in CI, both
-   running `packages/wrapper/tests/test_driver.py` inside the built wrapper
-   image. `driver.py` keeps every htrflow import function-local so the
-   ordinary suite (level 1) runs without torch against fakes.
-1. **Unit tests** — wrapper: manifest walking (P2/P3, sized requests, the
-   400 → `max` fallback), fetch acceptance (raster magic, textual
-   content-types, byte caps, partial-file unlink), resume-list diffing incl.
-   `page_sources`, the **streaming loop** (consumer starvation accounting,
-   per-page failure propagation, rolling delete, `UploadOutage`), the
-   **verification gate** (missing output ⇒ no `manifest.json`, transient
-   exit), exit-code mapping incl. SIGTERM, log shipping,
-   warm-up classification, the synthetic-manifest builder. Converter: parse
-   (ids, http(s) only, append-only, and the sentence a `converter.yaml` gets
-   for a key that moved to the chart), render (golden fixture → expected
-   ConfigMap/Job YAML), the 10 000-volume split, and the chart-agreement
-   test that regenerates `docs/reference/configuration.md`. Web front:
-   `projection.py`'s pure functions against hand-built Job/Pod/ConfigMap
-   dicts (phase derivation, index-range parsing, per-volume state,
-   termination messages, warm-up matching) plus the route and static-mount
-   tests — no fixture cluster needed. Frontend: schemas, derivation, the
-   ALTO parser, run-log grouping, and component and route tests on jsdom.
-2. **Container smoke** — the batch image against a real 2-page manifest with
-   a RustFS target; assert PAGE + ALTO files + `manifest.json` land.
+0. **Library-API pin test** — the real `Pipeline.from_config`, `Export`,
+   `auto_import` and `Pipeline.run` on a one-page CPU fixture, against the
+   htrflow inside the built wrapper image; the canary for an htrflow bump
+   that breaks the [driver](../how-it-works/wrapper.md). No model is
+   loaded — a binarization step exercises the step, document and serializer
+   path — so it runs offline in seconds. Opt-in, because it needs the wrapper
+   image: `make test-driver-real` locally, `dagger call test-driver` in CI,
+   both running `packages/wrapper/tests/test_driver_real.py` inside the
+   image. `driver.py` keeps every htrflow import function-local, so the
+   ordinary suite (level 1, `test_driver.py`) runs without torch against
+   fakes.
+1. **Unit tests** — wrapper: manifest walking (IIIF Presentation 2 and 3,
+   sized requests, the 400 → `max` fallback), fetch acceptance (raster
+   magic, textual content types, byte caps, partial-file unlink), resume-list
+   diffing including `page_sources`, the **streaming loop** (consumer
+   starvation accounting, per-page failure propagation, rolling delete,
+   `UploadOutage`), the **verification gate** (missing output ⇒ no
+   `manifest.json`, transient exit), exit-code mapping including SIGTERM,
+   log shipping, warm-up classification, the synthetic-manifest builder.
+   Converter: parse (ids, http(s) only, append-only, the refusal of a
+   chart-owned key in `converter.yaml`), render (golden fixture → expected
+   ConfigMap/Job YAML), the 10 000-volume split, and the chart-agreement test
+   that asserts `docs/reference/configuration.md` equals what
+   `make config-reference` generates. Web front: `projection.py`'s pure
+   functions against hand-built Job/Pod/ConfigMap dicts (phase derivation,
+   index-range parsing, per-volume state, termination messages, warm-up
+   matching) plus the route and static-mount tests — no fixture cluster
+   needed. Frontend: schemas, derivation, the ALTO parser, run-log grouping,
+   and component and route tests on jsdom.
+2. **Container smoke** — the batch image against a real two-page manifest
+   with a RustFS target; assert PAGE and ALTO files and `manifest.json` land.
 3. **Cluster acceptance** —
-   a. 1 small volume end-to-end;
-   b. ~10 volumes: never more than quota running, rest suspended, all
-      eventually Complete, one `manifest.json` each;
-   c. kill a running pod mid-volume: retry resumes, converges, no
-      duplicate/corrupt outputs;
-   d. a campaign rendered and applied: declared in git, `htrflow-campaigns
-      render` + apply, watched on the campaign browser with its live log;
-   e. the fetch-vs-HTR numbers from the published `manifest.json`s
-      ([Phase 2](../roadmap/phase-2-cache.md) gate input).
+   a. one small volume end to end;
+   b. about ten volumes: never more than quota running, the rest suspended,
+      all eventually Complete, one `manifest.json` each;
+   c. kill a running pod mid-volume: the retry resumes and converges, with
+      no duplicate or corrupt outputs;
+   d. a campaign rendered and applied: declared in git,
+      `htrflow-campaigns render` and apply, watched on the campaign browser
+      with its live log;
+   e. the fetch-vs-HTR numbers from the published `manifest.json` files,
+      the evidence the [cache layer](../roadmap/cache-layer.md) proposal
+      waits on.
 
-Level 1 runs in seconds and is enforced on every change; level 2 is the
-local compose stack; level 3 needs a real (or PoC) cluster and is what
-produced the [test log](test-log.md) (pre-B63 runs — the mechanics they
-exercised, Kueue admission and kill-and-resume, are unchanged by B63; the
-submission path they describe is not).
+Level 1 runs in seconds and gates every change; level 2 is the local compose
+stack; level 3 needs a real GPU cluster.
 
 ## How to run each level
 
@@ -54,55 +57,58 @@ submission path they describe is not).
 make test                       # uv run --all-packages pytest -q
 cd frontend && bun run test     # vitest
 # or, reproducibly, the way CI runs it:
-dagger call test                # add --ca-bundle on TLS-intercepting networks
+dagger call test                # add --ca-bundle <file> behind a TLS-inspecting proxy
 ```
 
-`make test` runs all three Python packages (wrapper, converter, web) —
-`uv run --all-packages pytest -q`; `pyproject.toml`'s `testpaths` names
-exactly those three. `dagger call test` runs the Python suite inside a uv
-container with `uv sync --all-packages`, which pins the dependency
-resolution but says nothing about the production images — those are built
-separately by `dagger call build-wrapper` / `build-web`.
-`make typecheck` (`ty`) is a separate gate; run it before pushing (see
-[CI](ci.md)).
+`make test` runs the three Python packages (wrapper, converter, web); the
+root `pyproject.toml`'s `testpaths` names exactly those three. `dagger call
+test` runs the same suite inside a uv container after `uv sync --frozen
+--all-packages`, which pins the dependency resolution but says nothing about
+the production images — those are built separately by `dagger call
+build-wrapper` and `build-web` ([Releasing](releasing.md)). `make typecheck`
+(`ty`) is a separate gate; run it before pushing ([CI](ci.md)).
 
-**Level 2 — container smoke, via the local compose stack:**
+**Level 2 — container smoke, through the local compose stack:**
 
 ```bash
 make compose-up      # background: S3 (RustFS) + fixtures + wrapper + web front
 make compose-smoke   # foreground: runs the wrapper to completion, then
-                      # smoke-checks the web image serves uv.html
+                     # checks that the web image serves /uv.html
 make compose-down
 ```
 
-`make compose-smoke` builds the web image and tags it
-`riksarkivet/htrflow-web:latest`, builds the wrapper image fresh and waits
-for it to exit, then brings the web service up and curls
-`http://localhost:8080/uv.html` — this is the verified default local check.
-The compose `web` service is deliberately image-only: `dagger call
-compose-test` drives the same stack but mounts only `.docker/` as the
-compose project, where a `build:` context of `..` cannot resolve — so it
-pulls the published `riksarkivet/htrflow-web` by digest (v0.2.0, the compose
-file pins it). `compose-smoke` builds the web image locally instead.
+`make compose-smoke` builds the web image from the checkout and tags it
+`riksarkivet/htrflow-web:latest`, builds the wrapper image and waits for it
+to exit, then brings the web service up and fetches its `/uv.html` — the
+default local check. The compose `web` service is deliberately image-only:
+`dagger call compose-test` drives the same stack but mounts only `.docker/`
+as the compose project, where a `build:` context of `..` cannot resolve, so
+it pulls the published web image the compose file pins by digest.
+`compose-smoke` builds that image locally instead. The stack itself is
+described in [Try it](../getting-started/try-it.md).
 
-The web service runs site-only in both (`HTRFLOW_WEB_SITE_ONLY=1`): a
-compose stack has no apiserver, so `/api/v1/…` answers 503 by design and the
-site is what this level checks.
+The web service runs site-only in both (`HTRFLOW_WEB_SITE_ONLY=1`): a compose
+stack has no API server, so `/api/v1/…` answers 503 by design and the site is
+what this level checks.
 
 **Chart:** `make helm-template` lints and renders both charts
 (`charts/htrflow-batch`, `charts/htrflow-devstack`) on their defaults and on
 each chart's `ci/full-values.yaml` (every optional feature on, no cluster
-lookups) and runs `kubeconform -strict` when it is installed.
+lookups), checks that the devstack chart refuses RustFS without chosen
+credentials, and runs `kubeconform -strict` when it is installed.
 
 **Campaigns repo shape:** `htrflow-campaigns validate examples/campaigns`
-must pass — a test in `packages/converter/tests` runs it so the checked-in
-example repo never rots relative to the converter it demonstrates.
+must pass — `packages/converter/tests/test_cli.py` runs it, so the checked-in
+example repo cannot drift from the converter it demonstrates.
 
-**Level 3 — cluster acceptance:** no single make target — this is a real (or
-PoC) Kubernetes cluster with the [helm chart](../getting-started/deploy.md)
-installed, exercised via `kubectl`/`k9s` and the campaign browser as
-described in [Running a Campaign](../getting-started/campaigns.md) and
-[Local k3s development](local-k3s.md). See the [test log](test-log.md)
-for the exact commands and results from the 2026-07-27/28 and 2026-08-25
-runs (pre-B63; submission mechanics have since moved from the old CronJob
-controller to `make campaigns-apply` / Argo CD).
+**Level 3 — cluster acceptance:** no single make target. It needs a
+Kubernetes cluster with GPU nodes and the chart
+[deployed](../getting-started/deploy.md), exercised with `kubectl` or `k9s`
+and the campaign browser as described in
+[Run a campaign](../getting-started/campaigns.md) and
+[Dev cluster](dev-cluster.md). `make e2e DIR=<campaigns-repo>` automates the
+happy path: validate, render and apply, then block until every campaign Job
+reaches a terminal condition. Kill-and-resume (c) is by hand: once a few
+ALTO files exist under a volume's prefix, force-delete the running pod and
+watch the retry pod log `resume: <n> done, <m> to process` and converge to
+`Complete`.
