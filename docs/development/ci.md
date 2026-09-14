@@ -18,9 +18,10 @@ lists what the module exposes on your checkout.
 | `test-driver` | opt-in: `packages/wrapper/tests/test_driver.py` against the real htrflow inside the built wrapper image — the level-0 pin test ([Testing](testing.md)); `make test-driver-real` is the local twin |
 | `build-wrapper` | production wrapper image from `.docker/htrflow-batch.dockerfile` — one file for both architectures, base stage selected by `TARGETARCH`. Builds for the engine's own platform; the optional `--platform` exists for a caller with an engine per platform and is never passed here, because a foreign platform means qemu and `uv` segfaults under it |
 | `build-web` | the web image from `.docker/htrflow-web.dockerfile` (CPU-only, no torch): bun-builds the campaign browser SPA from `frontend/`, clones the Riksarkivet `universalviewer4` fork at the pinned `UV4_REF`, applies `.docker/uv4-uv-html.patch` and builds it with npm (UV's own toolchain), then puts both in the read API's `/app/static` — UV first, the SPA on top, so `/` is the SPA and `/uv.html` is UV. The corp CA goes in as the optional `ca` build secret |
-| `scan` | Trivy scan of the built wrapper image (table output, exits non-zero on findings — not wired into `ci.yml`, since the CUDA/ubuntu base will never be alpine-clean) |
+| `scan` | Trivy scan of the built wrapper image (table output, exits non-zero on findings; `ci.yml` runs it with `--severity CRITICAL --ignore-unfixed`, since the CUDA/ubuntu base will never be HIGH-clean) |
 | `scan-web` | Trivy scan of the built web image (HIGH/CRITICAL, `--ignore-unfixed`) — a slim CPU-only base, so a clean gate is realistic; `make scan-web` is the local twin. It builds the image first, UV clone and npm build included, which is why `ci.yml` gates it the same way as the wrapper scan |
 | `scan-json` | same as `scan` (the wrapper), JSON output, never fails the call |
+| `scan-sarif` | Trivy report of one built image (`--image wrapper\|web`) as a SARIF file, CRITICAL/HIGH with unfixed findings included; never fails on findings. `security.yml` exports it to the Security tab — a report, while `scan` and `scan-web` stay the gates |
 | `publish-docker` | tests, builds, and pushes an image (`--component wrapper\|web`) to a registry; validates the tag against `packages/wrapper/pyproject.toml`'s version unless `--skip-validation`, then appends `--tag-suffix` (how `publish.yml` pushes `<tag>-amd64`) |
 | `compose-up` | starts the `.docker/docker-compose.yml` stack as a dagger Service |
 | `compose-test` | brings up the compose stack and curls the web service's `uv.html`. The module mounts only `.docker/` as the compose project, so the `web` service is image-only (`riksarkivet/htrflow-web:latest` must be pullable); `make compose-smoke` is the local path that builds and tags it from the branch first |
@@ -137,6 +138,28 @@ cluster-local constants they use come from `.env`
   push trigger would fail every run): `pip install zensical` and `zensical
   build --clean`, then deploy to GitHub Pages. Restore the push trigger once
   the repo goes public.
+- **`security.yml`** ("Security") — weekly (Mondays), manual, and on pushes
+  to `main` that change an image's inputs. One job per image: `dagger call
+  scan-sarif` writes the CRITICAL/HIGH Trivy report, unfixed findings
+  included, to the Security tab (categories `trivy-web` and
+  `trivy-wrapper`), then the same CRITICAL gate as `ci.yml` runs so an
+  advisory published between changes fails a scheduled run. On a push the
+  gate is skipped, since `ci.yml` has just run it.
+- **`codeql.yml`** ("CodeQL") — static analysis on push and pull request to
+  `main` and weekly, one matrix entry per language shipped: Python,
+  TypeScript (the campaign browser), Go (the dagger module) and the
+  workflows themselves (`actions`). Findings go to the Security tab.
+- **`trufflehog.yml`** ("Secret Leaks") — every push and pull request:
+  TruffleHog over the full history (`fetch-depth: 0`), reporting verified
+  and unverifiable credentials. It complements GitHub's own secret
+  scanning, which only watches new pushes.
+- **`scorecard.yml`** — OpenSSF Scorecard weekly, on push to `main` and on
+  branch-protection changes, with `publish_results: true` so the README
+  badge has a public score. Its Branch-Protection check scores 0 until a
+  repo-scoped token is configured.
+
+Every new workflow checks out with `persist-credentials: false` and is
+clean under `actionlint` and `zizmor`.
 
 ## Dependency pins
 
