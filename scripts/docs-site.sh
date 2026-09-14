@@ -17,6 +17,9 @@ for history in features superpowers audits \
   rm -rf "$stage/docs/$history"
 done
 cp zensical.toml "$stage/zensical.toml"
+# The site documents the system in general: no project ids, dates, versions,
+# hardware or one site's hosts (scripts/docs_lint.py, scripts/docs-lint.allow).
+python3 scripts/docs_lint.py "$stage/docs" README.md
 cd "$stage"
 ${ZENSICAL:-uvx zensical} "$cmd" "$@"
 [ "$cmd" = build ] && mv site ../site
