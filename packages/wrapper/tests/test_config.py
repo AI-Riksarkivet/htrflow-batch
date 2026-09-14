@@ -10,8 +10,8 @@ from htrflow_batch.config import Config, ConfigError
 _SECRETISH = r"KEY|TOKEN|PASSWORD|SECRET_ACCESS"
 
 #: Every literal env read in the wrapper's source, not just `Config`'s own
-#: fields — `publish.py`, `main.py` and `warmup.py` read six names of their
-#: own (docs: configuration.md, "Also read from the environment").
+#: fields — `publish.py`, `main.py` and `warmup.py` read names of their own
+#: (docs: configuration.md, "Also read from the environment").
 _ENV_READ = re.compile(
     r'(?:env|environ)\.get\(\s*["\'](\w+)["\']'
     r'|(?:env|environ)\[\s*["\'](\w+)["\']'
@@ -19,14 +19,29 @@ _ENV_READ = re.compile(
 )
 
 
-def _literal_env_reads() -> list[str]:
+#: The one credential-shaped name allowed to travel as env, and the file
+#: that may read it. `HF_TOKEN` is `huggingface_hub`'s own contract; the
+#: converter renders it from a `secretKeyRef` into the WARM-UP pod alone,
+#: which mounts no S3 Secret, holds no campaign data and exits when its
+#: download is done. The campaign pod -- the long-lived one, running third-
+#: party model code over fetched images -- still gets nothing: it runs
+#: `HF_HUB_OFFLINE=1` against the filled cache and has no route to the Hub.
+#: A file route exists for the Hub too (`HF_TOKEN_PATH`), but its default
+#: sits inside `HF_HOME`, the cache PVC every campaign pod mounts read-only,
+#: so it would have to be mounted elsewhere and pointed at. The exemption is
+#: therefore scoped, not general: reading `HF_TOKEN` anywhere but
+#: `warmup.py` fails this test.
+_ENV_BY_CONTRACT = {"HF_TOKEN": "warmup.py"}
+
+
+def _literal_env_reads() -> list[tuple[str, str]]:
+    """Every literal env read in the wrapper's source, as (file, name)."""
     src = Path(__file__).parents[1] / "src"
-    names = [
-        m.group(1) or m.group(2) or m.group(3)
+    return [
+        (path.name, m.group(1) or m.group(2) or m.group(3))
         for path in src.rglob("*.py")
         for m in _ENV_READ.finditer(path.read_text(encoding="utf-8"))
     ]
-    return names
 
 
 REQUIRED = {
@@ -146,10 +161,18 @@ def test_no_setting_may_carry_a_secret():
     every child process. A new setting that looks like a credential fails
     here rather than in a review -- and so does a new literal env read
     anywhere in the package, not just a new ``Config`` field."""
-    names = Config.env_names() + _literal_env_reads()
-    carriers = sorted({n for n in names if re.search(_SECRETISH, n)})
+    reads = _literal_env_reads()
+    names = Config.env_names() + [n for _, n in reads]
+    looks_like = {n for n in names if re.search(_SECRETISH, n)}
+    carriers = sorted(looks_like - set(_ENV_BY_CONTRACT))
     assert carriers == [], (
         f"{carriers}: secrets reach the wrapper as a mounted file, never as env"
+    )
+    stray = sorted(
+        (f, n) for f, n in reads if n in _ENV_BY_CONTRACT and f != _ENV_BY_CONTRACT[n]
+    )
+    assert stray == [], (
+        f"{stray}: the env exemption is per file — only the warm-up may read a token"
     )
 
 
