@@ -34,6 +34,15 @@ färdiga, under samma pipeline-id och S3-prefix (X7).
 
 ## Klart när
 
-- [ ] En ändrad pipeline avvisas av `validate` med en mening som namnger filen och
+- [x] En ändrad pipeline avvisas av `validate` med en mening som namnger filen och
       regeln; ett nytt pipeline-id går igenom.
-- [ ] En apply där ett objekt ger 422 rapporterar det objektet och applyar resten.
+- [x] En apply där ett objekt ger 422 rapporterar det objektet och applyar resten.
+
+## Kvar av "Vad som levereras"
+
+- Warm-up-markören bär ännu inte sha:n i sin sökväg (`/data/warmup/<id>.done`).
+  Den punkten sköts av att receptet inte kan ändras under ett id som en
+  kampanj kör: `validate`/`render` avvisar ändringen, och ett nytt recept är
+  ett nytt pipeline-id med en egen markör. En sha i sökvägen skulle dessutom
+  ändra kampanj-Jobbets pod-template vid varje pipelineändring, alltså just
+  det 422 den här storyn tar bort.

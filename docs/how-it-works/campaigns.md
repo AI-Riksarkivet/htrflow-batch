@@ -164,9 +164,32 @@ an init container for its completion marker on the cache PVC before they run
 
 Results are keyed by pipeline id. Treat `pipelines/<id>.yaml` as immutable
 once any result exists under that id, and mint a new id (`demo-v2`) to change
-a recipe. No runtime guard catches drift: the converter renders whatever is
-in git, every time. So this is **a convention enforced by review**, not by
-code.
+a recipe.
+
+While a campaign still references a pipeline, that is enforced. `rendered/`
+is committed, so `validate` and `render` hold each pipeline's image and steps
+against what the previous render recorded, and refuse an edit that a rendered
+campaign still in `campaigns/` would run:
+
+```
+pipeline demo-v1 changed (image) but campaigns kyrk, loc still run it — a pipeline is immutable while campaigns reference it; add a new pipeline file (demo-v1-2) and point new campaigns at it
+```
+
+That is the rule a campaign author would otherwise meet as
+`spec.template: field is immutable` from the API server, halfway through an
+apply and after the pipeline ConfigMap had already changed underneath a
+running campaign — indexes that had not started yet running a different
+recipe from the ones that had. Once no rendered campaign names the pipeline
+any more (a finished campaign's file is
+[removed](#removing-a-finished-campaign)), the guard lets go, and keeping an
+id whose results are published out of reuse is again **a convention enforced
+by review**.
+
+The guard is about the *recipe*, not about the rendered manifest. Upgrading
+the converter, or changing a `converter.yaml` setting, renders every warm-up
+Job's pod template differently without touching a recipe — `apply`
+[replaces a warm-up Job](../reference/campaign-yaml.md#when-the-api-server-refuses-an-object)
+for that, and never a campaign Job.
 
 ## What the converter renders
 

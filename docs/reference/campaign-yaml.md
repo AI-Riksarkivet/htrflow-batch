@@ -100,6 +100,7 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | `window:` above `converter.yaml`'s `window` | Silently clamped to it at render time — `converter.yaml`'s value is the per-cluster cap and should be set to what the ClusterQueue's GPU quota can actually admit. Rendering more would let Kueue's partial admission shrink it on the live Job: Kueue then rewrites `spec.parallelism` and rejects every later apply of the unchanged rendered file (`cannot change when partial admission is enabled and the job is not suspended`) |
 | `suspend: true` | Renders `spec.suspend: true` — see [Pausing](#pausing) |
 | **A campaign whose rendered Job already exists in `rendered/` with a different volume list is rejected** | `render` prints `campaign <name> is append-only: create a new campaign` and exits non-zero — Job `completions` is immutable once created, so adding volumes means a new campaign file |
+| **A pipeline whose image or steps changed while a rendered campaign still names it is rejected** | `validate` and `render` print `pipeline <id> changed (…) but campaigns …` and exit non-zero — see [Immutability](#immutability) |
 | The file stem does not end in `-part<number>` | Validation error — that is what the converter calls the parts of a campaign it splits, so such a file would collide with one |
 | More than 10 000 volumes, or more than 900 KiB of `volumes.txt` (an `images:` volume is ONE line of space-joined URLs) | Split into `<name>-part1`, `-part2`, … — one Job and one ConfigMap each. The API server refuses a ConfigMap over 1 MiB; the rest is margin |
 | A campaign that splits and whose name is long | The name is cut short in the part names: a Job's name is also a label value and its pods' name prefix (`<job>-<index>`), and a DNS label stops at 63 characters. `rendered/` holds `<shortened>-partN.yaml` |
@@ -350,16 +351,76 @@ the image — the converter carries its own Kubernetes client, so there is no
 `kubectl` to install. Add `--prune` to make a deleted campaign file cancel
 its campaign; leave it off and Argo CD's own prune does the same job.
 
+## When the API server refuses an object
+
+`apply` sends each rendered object on its own, and **one refusal is one
+object's problem**: it is named on stderr in a sentence, everything else is
+still applied, and a summary line at the end lists what was left unchanged.
+
+```
+Job htr-warmup-demo: the pod template changed and a Job's pod template is immutable once the Job exists — a pipeline id is a permanent name for a recipe, so a changed recipe is a new pipeline file, and a Job that has to change is deleted and created again
+1 of 6 objects were refused by the API server and are unchanged: Job/kyrk — the other 5 were applied (exit 3)
+```
+
+| Exit | What it means |
+| --- | --- |
+| `0` | everything was applied |
+| `1` | nothing was — no credentials, an unreachable API server, a render that did not pass, a paused campaign whose Workload never appeared, or a server that refused every object |
+| `3` | some objects were refused and are unchanged, everything else was applied; the summary line names them |
+
+A Job's **pod template cannot be edited** once the Job exists — that is
+Kubernetes, not this tool — and two quite different changes move one: an
+edit to the recipe, and an upgrade of the converter or a `converter.yaml`
+setting that reaches every Job at once (the GPU RuntimeClass, the Hub
+token's environment variable). They get different answers:
+
+- **A warm-up Job is replaced.** It is idempotent — its completion marker
+  sits on the model-cache volume, so a re-run is a file check — and it holds
+  no campaign state, so `apply` deletes it (background propagation, then it
+  waits for the deletion), creates it again, and says
+  `replaced: Job/htr-warmup-<id> — its pod template changed …`. A warm-up
+  that is **running** is left alone and reported instead: deleting it would
+  take the pod that is downloading with it, while campaigns wait on its
+  marker.
+- **A campaign Job never is.** Its completed indexes and its results *are*
+  the campaign, and deleting it would start every volume over. It is
+  reported, left exactly as it is, and the apply exits 3. A pipeline edit
+  under a live campaign is caught earlier than this, by `validate` — see
+  [Immutability](#immutability).
+
 ## Immutability
 
 A pipeline id is a **permanent name for a recipe**: changing the steps or the
-image under an existing id is drift once results exist under it. The
-converter is a pure function and renders whatever is in git, so nothing at
-runtime guards against that — it is a convention of the campaigns repo, whose
-write access is part of the
-[trust model](../how-it-works/security.md#trust-boundary). To change a
+image under an existing id is drift once results exist under it. To change a
 recipe, mint a new id (`demo-v2`); old results under `demo-v1` stay untouched
 and comparable side by side.
+
+`validate` and `render` enforce that for a pipeline a campaign is still
+running. `rendered/` is committed, so the previous render is the record:
+they compare the image and the steps of each `pipelines/<id>.yaml` against
+what `rendered/pipelines/<id>.yaml` holds, and refuse the edit when a
+campaign that is still in `campaigns/` was already rendered against it —
+
+```
+pipeline demo-v1 changed (image) but campaigns kyrk, loc still run it — a pipeline is immutable while campaigns reference it; add a new pipeline file (demo-v1-2) and point new campaigns at it
+```
+
+Nothing renders, and the apply that would have met
+`spec.template: field is immutable` halfway through never runs. A pipeline
+no rendered campaign names may still be edited: a campaign whose file has
+been removed (how a finished campaign is
+[retired](../how-it-works/campaigns.md#removing-a-finished-campaign)) holds
+nothing, and neither does one being rendered for the first time. The rest —
+an id no campaign has ever used, and the discipline of not reusing one whose
+results are published — stays a convention of the campaigns repo, whose
+write access is part of the
+[trust model](../how-it-works/security.md#trust-boundary).
+
+Only the *recipe* is held immutable, not the rendered manifest: upgrading
+the converter, or changing a `converter.yaml` setting, renders every warm-up
+Job's pod template differently without changing a recipe by a word, and
+`apply` [replaces the warm-up Job](#when-the-api-server-refuses-an-object)
+for those.
 
 A campaign, separately, is append-only at the volume-list level (see the
 table above) — that one *is* enforced by `render`, because a running Job's

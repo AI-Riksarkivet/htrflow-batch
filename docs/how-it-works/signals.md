@@ -237,7 +237,9 @@ or set `LOG_SHIP_SECONDS=0`.
   128 KiB per argument) kills the pod with `Argument list too long` before the
   wrapper starts. There is no stage and no termination message. Keep such
   volumes small, or give them an IIIF manifest.
-- **A changed warm-up Job shows up as "field is immutable".** When a new
-  converter renders a warm-up Job differently, the apply gets a 422 against
-  the existing Job and stops before the campaign Jobs. The only signal is the
-  API server's raw response. Delete the old warm-up Job and apply again.
+- **A warm-up that is running when its pod template changes waits for the
+  next apply.** A warm-up Job whose rendered pod template moved is deleted and
+  created again, but not while it is downloading: that one is reported and
+  left alone, and it is the operator who has to come back and apply again once
+  it has finished
+  ([refused objects](../reference/campaign-yaml.md#when-the-api-server-refuses-an-object)).
