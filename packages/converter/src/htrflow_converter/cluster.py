@@ -42,6 +42,10 @@ _WORKLOADS = "workloads"
 _JOB_UID_LABEL = "kueue.x-k8s.io/job-uid"
 #: The two kinds this tool renders -> (client attribute, method noun).
 _KINDS = {"Job": ("batch", "job"), "ConfigMap": ("core", "config_map")}
+#: Seconds a replaced Job is waited for. Background propagation returns at
+#: once and the object lingers while its pods go, so this covers a pod's
+#: grace period and no more -- past that the apply says so and stops.
+DELETE_WAIT = 60
 
 
 class ClusterError(Exception):
@@ -200,6 +204,32 @@ class Cluster:
             field_manager=FIELD_MANAGER,
             force=True,
             _content_type=APPLY_PATCH,
+        )
+
+    def replace_job(self, obj: dict) -> dict:
+        """Delete Job ``obj`` and apply it again -- the only way to give a
+        Job a pod template it did not start with.
+
+        Only ever called for a warm-up Job (``cli._apply_object``): the
+        delete takes the Job's pods with it, and a campaign Job's pods are
+        the campaign. The wait is not politeness: an apply against a name
+        the API server still holds patches the OLD Job and is refused all
+        over again, so the create has to follow the deletion, not the
+        delete call.
+        """
+        name = obj["metadata"]["name"]
+        with _errors("delete", "Job", name, self.namespace):
+            self._method("Job", "delete")(
+                name, self.namespace, propagation_policy="Background"
+            )
+        for _ in range(DELETE_WAIT):
+            if self.get("Job", name) is None:
+                return self.apply(obj)
+            time.sleep(1)
+        raise ClusterError(
+            f"Job {name} was deleted so it could be created with its new pod "
+            f"template, but it was still there {DELETE_WAIT}s later — re-run "
+            "the apply"
         )
 
     def get(self, kind: str, name: str) -> dict | None:

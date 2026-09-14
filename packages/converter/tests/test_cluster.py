@@ -331,3 +331,37 @@ def test_another_immutable_field_is_named_as_itself():
     e = _api_error("apply", "Job", "kyrk", "htr-batch", _immutable_refusal(field))
     assert isinstance(e, ImmutableField)
     assert str(e).startswith(f"Job kyrk: {field} changed and is immutable")
+
+
+def test_replace_job_deletes_in_the_background_then_creates_it_again(
+    cluster, monkeypatch
+):
+    """The only way to give a Job a pod template it did not start with. The
+    create has to follow the *deletion*, not the delete call: an apply
+    against a name the API server still holds patches the old Job and is
+    refused all over again."""
+    real = client.ApiClient.call_api
+
+    def call_api(self, resource_path, method, *a, **kw):
+        if method == "GET":  # the Job is gone the moment it is deleted
+            raise ApiException(status=404, reason="Not Found")
+        return real(self, resource_path, method, *a, **kw)
+
+    monkeypatch.setattr(client.ApiClient, "call_api", call_api)
+    cluster.replace_job(JOB)
+    assert [(c["method"], c["path"]) for c in cluster.calls] == [
+        ("DELETE", "/apis/batch/v1/namespaces/htr-batch/jobs/kyrk"),
+        ("PATCH", "/apis/batch/v1/namespaces/htr-batch/jobs/kyrk"),
+    ]
+    assert cluster.calls[0]["query"]["propagationPolicy"] == "Background"
+    assert cluster.calls[1]["content_type"] == APPLY_PATCH
+
+
+def test_a_job_that_will_not_go_away_is_a_sentence(cluster, monkeypatch):
+    """Waiting forever on a deletion that is stuck would hang the apply."""
+    monkeypatch.setattr("htrflow_converter.cluster.time.sleep", lambda _: None)
+    monkeypatch.setattr("htrflow_converter.cluster.DELETE_WAIT", 2)
+    cluster.answer["GET"] = {"metadata": {"name": "kyrk"}}  # still there
+    with pytest.raises(ClusterError) as exc:
+        cluster.replace_job(JOB)
+    assert "still there 2s later" in str(exc.value)

@@ -101,6 +101,11 @@ class FakeCluster(Cluster):
 
         def delete(name, ns, **kw):
             self.calls.append(("delete", kind, name))
+            self.live = [
+                o
+                for o in self.live
+                if not (o["kind"] == kind and o["metadata"]["name"] == name)
+            ]
 
         def read(name, ns, **kw):
             for o in self.live:
@@ -638,9 +643,11 @@ def test_a_volume_list_that_really_moved_is_still_applied(tmp_path, cluster):
     assert "kyrk" in [c[2] for c in cluster.of("apply")]
 
 
-def _refuses(cluster, target: str, error: Exception) -> None:
-    """Make the fake API server refuse exactly one object's apply."""
+def _refuses(cluster, target: str, error: Exception, times: int = 99) -> None:
+    """Make the fake API server refuse one object's apply -- the first
+    ``times`` of them, so a test can let a re-created object through."""
     real = FakeCluster._method
+    left = [times]
 
     def method(kind, verb, name=""):
         inner = real(cluster, kind, verb, name)
@@ -648,13 +655,20 @@ def _refuses(cluster, target: str, error: Exception) -> None:
             return inner
 
         def patch(name, ns, obj, **kw):
-            if name == target:
+            if name == target and left[0] > 0:
+                left[0] -= 1
                 raise error
             return inner(name, ns, obj, **kw)
 
         return patch
 
     cluster._method = method
+
+
+def _immutable_template(name: str) -> Exception:
+    from htrflow_converter.cluster import ImmutableField
+
+    return ImmutableField("Job", name, (ImmutableField.POD_TEMPLATE,))
 
 
 def test_one_refused_object_does_not_stop_the_apply(tmp_path, cluster, capsys):
@@ -689,3 +703,53 @@ def test_a_refused_campaign_job_still_lets_the_rest_prune(tmp_path, cluster):
     _refuses(cluster, "kyrk", cluster_mod.ClusterError("apply Job/kyrk: 409"))
     assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == cli.REFUSED
     assert cluster.of("delete") == [("delete", "Job", "cancelled")]
+
+
+def test_a_warmup_whose_pod_template_changed_is_replaced(tmp_path, cluster, capsys):
+    """A converter release, or a converter.yaml setting such as the Hub
+    token, renders every warm-up Job's pod template differently -- and a
+    Job's template cannot be edited. A warm-up is idempotent (its marker is
+    on the cache PVC) and holds no campaign state, so the answer is to
+    delete it and create it again rather than to report it forever."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    cluster.live = [_object("Job", "htr-warmup-demo-v1")]
+    _refuses(
+        cluster, "htr-warmup-demo-v1", _immutable_template("htr-warmup-demo-v1"), 1
+    )
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert cluster.of("delete") == [("delete", "Job", "htr-warmup-demo-v1")]
+    # The fake refuses before it records the call, so the one apply of the
+    # warm-up in `calls` is the re-create -- and it comes after the delete.
+    warmup = [c for c in cluster.calls if c[2] == "htr-warmup-demo-v1"]
+    assert warmup == [
+        ("delete", "Job", "htr-warmup-demo-v1"),
+        ("apply", "Job", "htr-warmup-demo-v1"),
+    ]
+    printed = capsys.readouterr().out
+    assert "replaced: Job/htr-warmup-demo-v1" in printed
+    assert "the marker on the cache PVC" in printed
+
+
+def test_a_running_warmup_is_reported_and_left_alone(tmp_path, cluster, capsys):
+    """Deleting a warm-up that is downloading right now throws the download
+    away and, worse, takes the pod with it while campaigns wait on its
+    marker. That one is reported and re-run on the next apply."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    running = _object("Job", "htr-warmup-demo-v1")
+    running["status"] = {"active": 1}
+    cluster.live = [running]
+    _refuses(cluster, "htr-warmup-demo-v1", _immutable_template("htr-warmup-demo-v1"))
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
+    assert cluster.of("delete") == []
+    assert "running right now" in capsys.readouterr().err
+
+
+def test_a_campaign_job_is_never_deleted_to_change_its_template(tmp_path, cluster):
+    """A campaign Job's completed indexes and its results ARE the campaign:
+    deleting it to take a new pod template would start every volume over.
+    A changed pipeline under a live campaign is `render`'s to refuse."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    cluster.live = [_object("Job", "kyrk")]
+    _refuses(cluster, "kyrk", _immutable_template("kyrk"))
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
+    assert cluster.of("delete") == []
