@@ -183,7 +183,11 @@
           ? [...detail.volumes, ...volumes.slice(limit)]
           : detail.volumes;
       volumes = reset ? refreshed : [...volumes, ...detail.volumes];
-      markMoved(volumes);
+      // Polls only. "Load more" appends rows without new counts for the ones
+      // already on screen, so marking there would clear a highlight
+      // mid-fade; the appended rows are seeded by the next poll instead, and
+      // a row nobody has seen before cannot have moved anyway.
+      if (reset) markMoved(volumes);
       // Not paged by the API (up to 50 newest failed-with-a-reason rows,
       // independent of offset/limit) — refreshed on every call.
       failures = detail.failures;
