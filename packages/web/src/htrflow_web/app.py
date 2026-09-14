@@ -20,10 +20,12 @@ from importlib import metadata
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import projection
+from .kube import ClusterUnavailable
 from .progress import ProgressReader
 
 _LOG = logging.getLogger(__name__)
@@ -60,6 +62,13 @@ DEV_VERSION = "dev"
 #: (packages/converter ``render.status_configmap``), which is what actually
 #: guarantees a terminal record exists.
 RECORD_WRITES_PER_REQUEST = 20
+
+#: The one sentence a 502 says. The reader can do nothing about an RBAC
+#: change or a busy API server except wait for the next poll, which the page
+#: makes on its own.
+CLUSTER_UNAVAILABLE_DETAIL = (
+    "the Kubernetes API did not answer this request - the page retries on its own"
+)
 
 #: Where the image puts the built site (.docker/htrflow-web.dockerfile).
 DEFAULT_STATIC_DIR = "/app/static"
@@ -145,6 +154,20 @@ def create_app(
         response = await call_next(request)
         response.headers.update(SECURITY_HEADERS)
         return response
+
+    @app.exception_handler(ClusterUnavailable)
+    async def cluster_unavailable(request, exc) -> JSONResponse:
+        """A read the API server refused or never answered. Registered as a
+        handler rather than left to escape, because an escaping exception is
+        answered by Starlette OUTSIDE the middleware above -- a plain-text
+        500 with no nosniff and no frame-ancestors on it (2026-09-14 audit).
+        The client's own message names verbs and identities and is logged,
+        never sent."""
+        _LOG.warning("cluster read failed: %s", exc)
+        return JSONResponse(
+            status_code=502,
+            content={"detail": CLUSTER_UNAVAILABLE_DETAIL},
+        )
 
     @app.api_route("/healthz", methods=GET_HEAD)
     def healthz() -> dict:

@@ -1169,3 +1169,19 @@ def test_everything_else_is_the_freshest_observation():
     stored = {"phase": "Running", "volumesDone": "1"}
     merged = projection.merge_record(stored, {"phase": "Succeeded", "volumesDone": "3"})
     assert merged == {"phase": "Succeeded", "volumesDone": "3"}
+
+
+def test_a_pod_with_a_completion_index_that_is_not_a_number_is_skipped():
+    """The label is written by the Job controller, but a hand-made pod (or a
+    future field) can carry anything. One such pod used to take the whole
+    campaign page down with a bare 500 (F1); it is simply not a row's pod."""
+    pods = [
+        {"metadata": {"labels": {"batch.kubernetes.io/job-completion-index": "x"}}},
+        {"metadata": {"labels": {"batch.kubernetes.io/job-completion-index": "0"}}},
+    ]
+    body = projection.detail(
+        _job(completed="", failed=""), _configmap(), pods, CFG, warmup=MISSING_WARMUP
+    )
+    states = [v["state"] for v in body["volumes"]]
+    assert states[0] == "active", "index 0's pod still counts"
+    assert set(states[1:]) == {"pending"}, "the unreadable label is nobody's index"
