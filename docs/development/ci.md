@@ -127,8 +127,9 @@ The cluster constants these targets use come from `.env`
   pushes, signs and attests both images
   ([Releasing](releasing.md#the-publish-workflow)).
 - **`docs.yml`** ("Documentation") — on push to `main` and by hand:
-  `pip install zensical`, `scripts/docs-site.sh build --clean`, then deploy
-  to GitHub Pages.
+  `uv sync --locked --only-group docs` (zensical pinned and hash-checked in
+  `uv.lock`), `scripts/docs-site.sh build --clean --strict` with that
+  zensical, then deploy to GitHub Pages.
 - **`security.yml`** ("Security") — weekly, by hand, and on pushes to `main`
   that change an image's inputs. One job per image: `scan-sarif` uploads the
   Trivy report to the Security tab, then the same CRITICAL gate as `ci.yml`
