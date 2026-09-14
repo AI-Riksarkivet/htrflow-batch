@@ -76,6 +76,18 @@ def _http_url(value: str) -> bool:
     return u.scheme in ("http", "https") and bool(u.netloc)
 
 
+#: A ``volumes.txt`` line separates an ``images:`` volume's URLs with a space
+#: (``Volume.source_line``), which only works because no URL may contain one.
+#: Comma cannot do that job: a IIIF Image API size segment is a legal comma in
+#: the path (``/full/2500,/0/default.jpg``), and splitting on it tore such a
+#: URL in half in production (2026-09-14). Whitespace has no such excuse --
+#: RFC 3986 has no place for a literal space, tab, newline or CR -- so the
+#: rule is enforced here, where the author can still fix it.
+_WHITESPACE_RE = re.compile(r"\s")
+
+_PERCENT_ENCODE = "a URL cannot contain whitespace — percent-encode it as %20"
+
+
 class Volume(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -109,6 +121,10 @@ class Volume(BaseModel):
     @field_validator("manifest")
     @classmethod
     def _check_manifest(cls, v: str | None) -> str | None:
+        if v is not None and _WHITESPACE_RE.search(v):
+            raise ValueError(
+                f'has a manifest with whitespace in it ("{v}") — {_PERCENT_ENCODE}'
+            )
         if v is not None and not _http_url(v):
             raise ValueError(
                 f'has a manifest that is not an http(s) URL ("{v}") — write '
@@ -119,7 +135,11 @@ class Volume(BaseModel):
     @field_validator("images")
     @classmethod
     def _check_images(cls, v: list[str]) -> list[str]:
-        for u in v:
+        for n, u in enumerate(v, start=1):
+            if _WHITESPACE_RE.search(u):
+                raise ValueError(
+                    f'has image {n} with whitespace in it ("{u}") — {_PERCENT_ENCODE}'
+                )
             if not _http_url(u):
                 raise ValueError(
                     f'lists an image that is not an http(s) URL ("{u}") — '
@@ -137,10 +157,14 @@ class Volume(BaseModel):
         return self
 
     def source_line(self) -> str:
-        """One line of a campaign's ``volumes.txt`` ConfigMap."""
+        """One line of a campaign's ``volumes.txt`` ConfigMap: the id, a TAB,
+        then the source. An ``images:`` volume's URLs are joined with a single
+        space -- never a comma, which is legal inside a URL (_WHITESPACE_RE).
+        Both readers split on the FIRST tab only: the Job's shell
+        (``manifests/campaign-job.yaml``) and ``web.projection._source_url``."""
         if self.manifest is not None:
             return f"{self.id}\t{self.manifest}"
-        return f"{self.id}\timages:{','.join(self.images)}"
+        return f"{self.id}\timages:{' '.join(self.images)}"
 
 
 class Campaign(BaseModel):

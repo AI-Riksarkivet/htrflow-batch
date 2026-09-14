@@ -240,7 +240,13 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2721
 # pod's clock starts at pod start, the gate's when the init container runs)
 # -- which gives 143, no FailIndex and no sentence. Four lines are the
 # comment saying which clock wins and why that matters.
-check converter "$(count packages/converter/src -name '*.py')" 1434
+# 1434 -> 1458 (2026-09-14, images separator): a comma is legal inside a URL
+# (the IIIF size segment `/full/2500,/0/default.jpg`), so `images:` URLs are
+# joined with a space instead. That only holds if no URL carries whitespace,
+# which the models now refuse by name and position (+20), and `source_line`
+# says which separator it writes and that both readers split on the first tab
+# (+4) -- the contract the Job's shell and the wrapper are written against.
+check converter "$(count packages/converter/src -name '*.py')" 1458
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

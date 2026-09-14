@@ -264,7 +264,7 @@ def test_render_refuses_to_re_split_a_campaign_that_is_already_rendered(
     repo = tmp_path / "repo"
     shutil.copytree(GOOD, repo)
     volumes = _images_volumes(41)
-    text = "\n".join(f"{v['id']}\timages:{','.join(v['images'])}" for v in volumes)
+    text = "\n".join(f"{v['id']}\timages:{' '.join(v['images'])}" for v in volumes)
     assert 900 * 1024 < len(text.encode()) < 1024 * 1024  # one file before, two now
     (repo / "campaigns" / "wide.yaml").write_text(
         yaml.safe_dump({"pipeline": "demo-v1", "volumes": volumes})

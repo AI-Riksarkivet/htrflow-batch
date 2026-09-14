@@ -23,7 +23,7 @@ MAX_VOLUMES_PER_JOB = 10_000
 #: around the value and the campaign's Job (a 3 MiB request cap), and a
 #: budget set at the hard limit would leave a line-format change nowhere to
 #: go. Counting volumes alone is not enough: an ``images:`` volume is ONE
-#: line of comma-joined URLs (``Volume.source_line``), so 300 pages of a
+#: line of space-joined URLs (``Volume.source_line``), so 300 pages of a
 #: 74-character URL is 22.5 kB on that line and 47 such volumes exceed 1 MiB.
 MAX_BYTES_PER_JOB = 900 * 1024
 

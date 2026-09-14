@@ -513,7 +513,7 @@ def test_every_rendered_object_carries_the_prune_selector():
 
 def _images_campaign(volumes: int, pages: int) -> Campaign:
     """The shape that breaks a count-only split: an `images:` volume is ONE
-    line of comma-joined URLs, so 300 pages of a 90-character URL is 23 kB on
+    line of space-joined URLs, so 300 pages of a 90-character URL is 23 kB on
     that line (`Volume.source_line`)."""
     url = (
         "https://lbiiif.riksarkivet.se/arkis!R00012345/jp2/00000000000000000{:03d}.jpg"
