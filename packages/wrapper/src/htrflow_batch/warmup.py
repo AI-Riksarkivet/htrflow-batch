@@ -44,8 +44,8 @@ log = logging.getLogger("htrflow_batch.warmup")
 #: listed for a ``load`` callable that does not go through the driver.
 #: ``RepositoryNotFoundError``/``RevisionNotFoundError`` (and, by
 #: inheritance, ``GatedRepoError``): a bad model id or revision in the
-#: pipeline YAML, not a network hiccup — MROs verified in the image's
-#: huggingface_hub 0.36.2 (docs: how-it-works/failure-handling.md).
+#: pipeline YAML, not a network hiccup — MROs verified on both hub lines
+#: the image can carry (docs: how-it-works/failure-handling.md).
 PERMANENT_ERRORS: tuple[type[BaseException], ...] = (
     ValueError,  # incl. pydantic ValidationError; driver's "bad pipeline config"
     yaml.YAMLError,
@@ -55,9 +55,9 @@ PERMANENT_ERRORS: tuple[type[BaseException], ...] = (
     RevisionNotFoundError,
 )
 
-#: ``LocalEntryNotFoundError`` subclasses ``ValueError`` by MRO (0.36.2), but
-#: it means the model is not in the cache yet -- a network miss, not a bad
-#: pipeline -- so it must not fall into ``PERMANENT_ERRORS`` by inheritance.
+#: ``LocalEntryNotFoundError`` is also a ``ValueError`` on hub 0.x and is not
+#: on 1.x; either way it means the model is not in the cache yet -- a network
+#: miss, not a bad pipeline -- so it never inherits its way into PERMANENT.
 TRANSIENT_FIRST: tuple[type[BaseException], ...] = (LocalEntryNotFoundError,)
 
 __all__ = ["EXIT_OK", "EXIT_PERMANENT", "EXIT_SIGTERM", "EXIT_TRANSIENT", "main"]

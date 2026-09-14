@@ -261,12 +261,12 @@ def _main(
         return EXIT_OK
     except OSError as e:
         # An I/O condition is never a config mistake, even when it is also a
-        # ValueError: huggingface_hub's LocalEntryNotFoundError subclasses
-        # FileNotFoundError AND ValueError, and under HF_HUB_OFFLINE=1 it is
-        # what a model missing from the read-only cache raises. A re-warm and
-        # a retry fix that, so it must not FailIndex the volume (this is also
-        # driver.build_pipeline's "an OSError from model construction stays
-        # transient" contract).
+        # ValueError: huggingface_hub's LocalEntryNotFoundError is a
+        # FileNotFoundError on both hub lines and a ValueError on 0.x only,
+        # and under HF_HUB_OFFLINE=1 it is what a model missing from the
+        # read-only cache raises. Catching OSError first classifies it the
+        # same way on either line (this is also driver.build_pipeline's "an
+        # OSError from model construction stays transient" contract).
         return _transient(env, state, stop, e)
     except (ConfigError, ManifestError, SetupError, ValueError) as e:
         stop.set()
