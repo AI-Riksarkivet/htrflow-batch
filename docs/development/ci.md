@@ -1,8 +1,8 @@
 # CI
 
-CI logic lives in a dagger module (`.dagger/`, Go), not inline in YAML — the
-GitHub Actions workflows are thin wrappers that call `dagger call <function>`.
-That means the exact same commands run locally and in CI. `dagger functions`
+CI logic lives in a dagger module (`.dagger/`, Go), not inline in YAML: the
+GitHub Actions workflows are thin wrappers that call `dagger call
+<function>`, so the same commands run locally and in CI. `dagger functions`
 lists what the module exposes on your checkout.
 
 ## Dagger functions
@@ -10,138 +10,149 @@ lists what the module exposes on your checkout.
 | Function | Does |
 |---|---|
 | `checks` | runs `lint`, `typecheck`, `check-frontend` and `check-chart` in that order; what `make ci` runs locally |
-| `lint` | `ruff format --check` + `ruff check` on the workspace, from the locked venv (`uv run --no-sync`, never `uvx`) |
-| `check-chart` | `helm lint` + a render, on the defaults and on each chart's `ci/full-values.yaml` (every optional template on), for both `charts/htrflow-batch` and `charts/htrflow-devstack`, then `kubeconform -strict` on every render; asserts the prod chart renders no `CronJob`, always renders the `htrflow-web` Deployment with a `/healthz` livenessProbe, and leaks no devstack-labelled object |
-| `check-frontend` | `bun install --frozen-lockfile && bun run lint && bun run check && bun run test && bun run build` in an `oven/bun` container (CA bundle wired as for uv) |
-| `typecheck` | `ty check` on the wrapper, converter and web packages from the locked venv, what `make typecheck` runs locally |
-| `test` | workspace pytest suite in a uv container (`uv run --no-sync pytest`, no GPU required) — wrapper, converter, web |
-| `test-driver` | opt-in: `packages/wrapper/tests/test_driver.py` against the real htrflow inside the built wrapper image — the level-0 pin test ([Testing](testing.md)); `make test-driver-real` is the local twin |
-| `build-wrapper` | production wrapper image from `.docker/htrflow-batch.dockerfile` — one file for both architectures, base stage selected by `TARGETARCH`. Builds for the engine's own platform; the optional `--platform` exists for a caller with an engine per platform and is never passed here, because a foreign platform means qemu and `uv` segfaults under it |
-| `build-web` | the web image from `.docker/htrflow-web.dockerfile` (CPU-only, no torch): bun-builds the campaign browser SPA from `frontend/`, clones the Riksarkivet `universalviewer4` fork at the pinned `UV4_REF`, applies `.docker/uv4-uv-html.patch` and builds it with npm (UV's own toolchain), then puts both in the read API's `/app/static` — UV first, the SPA on top, so `/` is the SPA and `/uv.html` is UV. The corp CA goes in as the optional `ca` build secret |
-| `scan` | Trivy scan of the built wrapper image (table output, exits non-zero on findings — not wired into `ci.yml`, since the CUDA/ubuntu base will never be alpine-clean) |
-| `scan-web` | Trivy scan of the built web image (HIGH/CRITICAL, `--ignore-unfixed`) — a slim CPU-only base, so a clean gate is realistic; `make scan-web` is the local twin. It builds the image first, UV clone and npm build included, which is why `ci.yml` gates it the same way as the wrapper scan |
-| `scan-json` | same as `scan` (the wrapper), JSON output, never fails the call |
-| `publish-docker` | tests, builds, and pushes an image (`--component wrapper\|web`) to a registry; validates the tag against `packages/wrapper/pyproject.toml`'s version unless `--skip-validation`, then appends `--tag-suffix` (how `publish.yml` pushes `<tag>-amd64`) |
-| `compose-up` | starts the `.docker/docker-compose.yml` stack as a dagger Service |
-| `compose-test` | brings up the compose stack and curls the web service's `uv.html`. The module mounts only `.docker/` as the compose project, so the `web` service is image-only (`riksarkivet/htrflow-web:latest` must be pullable); `make compose-smoke` is the local path that builds and tags it from the branch first |
+| `lint` | `ruff format --check` and `ruff check` on the workspace, from the locked venv (`uv run --no-sync`, never `uvx`, which resolves the newest release and drifts from `uv.lock`) |
+| `typecheck` | `ty check` on the wrapper, converter and web packages from the locked venv; `make typecheck` is the local twin |
+| `check-frontend` | `bun install --frozen-lockfile`, then `bun run check`, `bun run test` and `bun run build`, in a digest-pinned node container carrying the pinned bun binary (vitest needs a real node runtime) |
+| `check-chart` | `helm lint` and a render of both charts on their defaults and on each chart's `ci/full-values.yaml`, plus a render the devstack chart must refuse (RustFS without chosen credentials); asserts the production chart renders no `CronJob`, always renders the `htrflow-web` Deployment with a `/healthz` livenessProbe, and renders no devstack-labelled object; then `kubeconform -strict` on every render and on the converter's Job and ConfigMap skeletons |
+| `test` | the workspace pytest suite in a uv container (`uv run --no-sync pytest`, no GPU) — wrapper, converter, web |
+| `test-driver` | opt-in: `packages/wrapper/tests/test_driver_real.py` against the real htrflow inside the built wrapper image — the level-0 pin test ([Testing](testing.md)); `make test-driver-real` is the local twin |
+| `build-wrapper` | the wrapper image from `.docker/htrflow-batch.dockerfile`, for the engine's own platform. The optional `--platform` exists for a caller with an engine per platform; nothing here passes it ([Releasing](releasing.md#one-dockerfile-every-architecture)) |
+| `build-web` | the web image from `.docker/htrflow-web.dockerfile` (CPU-only, no torch): the campaign browser SPA, the Universal Viewer fork at the pinned `UV4_REF` with `.docker/uv4-uv-html.patch` applied, and the read API that serves both. A CA bundle goes in as the optional `ca` build secret |
+| `scan` | Trivy over the built wrapper image; table output, fails on findings (default `CRITICAL,HIGH`, unfixed findings ignored) |
+| `scan-web` | the same over the built web image — a slim CPU-only base, so a clean gate is realistic; `make scan-web` is the local twin |
+| `scan-json` | `scan` with JSON output that never fails the call; what `make scan` runs |
+| `publish-docker` | tests, builds and pushes one image (`--component wrapper\|web`) and returns its reference with the digest ([Releasing](releasing.md#publishing)) |
+| `compose-up` | starts the `web` service of the `.docker/docker-compose.yml` project as a dagger Service |
+| `compose-test` | brings up the compose stack and fetches the web service's `/uv.html`. The module mounts only `.docker/` as the compose project, so the `web` service is image-only and must be pullable; `make compose-smoke` builds and tags it from the checkout first |
 
 The converter is not built by any dagger function — it is a pure Python
 package, installed with `uvx --from
 "git+https://github.com/AI-Riksarkivet/htrflow-batch#subdirectory=packages/converter"
-htrflow-campaigns` wherever it runs (a campaigns repo's own CI, or a laptop).
+htrflow-campaigns` wherever it runs (a campaigns repo's own CI, or a
+workstation).
 
 ## What the containers see: exclude, not include
 
-`lint`, `typecheck` and `test` build their container from `buildWithUv` in
-`.dagger/main.go`, which mounts the **whole repository minus `repoExclude`**
-— a package-level exclude list (VCS/worktree plumbing, `.gitignore`'s
-entries, and other packages' dependency/build caches). `check-frontend`
-does the same for the `frontend/` subtree with its own smaller exclude list
-in `checks.go`.
+`lint`, `typecheck` and `test` build their container with `buildWithUv` in
+`.dagger/main.go`, which mounts the **whole repository minus `repoExclude`**:
+VCS and worktree plumbing, `.gitignore`'s entries, and dependency and build
+caches. `check-frontend` does the same for the `frontend/` subtree with its
+own short exclude list.
 
-This used to be the other way around: `buildWithUv` mounted the repo
-through an `Include` allow-list (`pyproject.toml`, `uv.lock`, `packages/`,
-`scripts/`, `.docker/`, `Makefile`, `examples/`). An allow-list is silently
-wrong by default — any new top-level path (a fixture, a doc a test reads, a
-new package) is invisible inside the container until someone remembers to
-add it there too, so a test can pass in CI for the wrong reason: its input
-just wasn't mounted, not because the input was actually checked. That
-happened twice. An exclude-list inverts the failure mode: a new path is
-visible by default, and only the entries in `repoExclude` are hidden, so
-missing one is an over-inclusion (fixable, harmless) rather than a
-silent gap. `packages/converter/tests/test_repo_visible_in_ci.py` pins this
-by reading `docs/reference/campaign-yaml.md` — a path that was never on the
-old allow-list — inside the `test` container.
+An allow-list is silently wrong by default: a new top-level path (a fixture,
+a document a test reads, a new package) is invisible inside the container
+until someone adds it, so a test can pass in CI only because its input was
+never mounted. An exclude list inverts the failure: a new path is visible by
+default, and a missing exclude is a harmless over-inclusion.
+`packages/converter/tests/test_repo_visible_in_ci.py` pins this by reading
+`docs/reference/campaign-yaml.md` inside the `test` container. Keep
+`repoExclude` in step with `.gitignore` by hand; nothing parses one into the
+other.
 
 ## The `--ca-bundle` flag
 
 Every network-touching function accepts an optional `--ca-bundle <file>`
-(wired through `withCaBundle` in `.dagger/main.go`), for TLS-interception on
-locked-down corporate networks. The Makefile passes it automatically when a
-CA bundle file exists:
+(`withCaBundle` in `.dagger/main.go`) for networks behind a TLS-inspecting
+corporate proxy. It mounts the bundle and points `SSL_CERT_FILE` (Python,
+uv) and `NODE_EXTRA_CA_CERTS` (node, npm, bun) at it. The Makefile passes
+it whenever the bundle file exists, which is harmless on an open network:
 
 ```makefile
 CA_BUNDLE ?= /etc/ssl/certs/ca-certificates.crt
 DAGGER_CA := $(shell test -f $(CA_BUNDLE) && echo --ca-bundle $(CA_BUNDLE))
 ```
 
-**Not needed on the PoC node** — probed directly: dagger's outbound calls
-(PyPI/npm/HF Hub/Docker Hub/Trivy DB) resolve fine there without the bundle.
-The wiring stays in place because it's cheap and other RA hosts do sit behind
-TLS-intercepting proxies where it is required (see the UV-build
-`NODE_EXTRA_CA_CERTS` gotcha in the [test log](test-log.md)); the same
-bundle gets bun through the RA proxy for `make frontend-install`.
+The same file reaches the other paths that download: `make build-web` passes
+it as the `ca` build secret, `make test-driver-real` mounts it into the
+container, and `make frontend-install` / `frontend-build` export it as
+`NODE_EXTRA_CA_CERTS`. Node and npm do not read the system certificate
+store, so behind such a proxy the Universal Viewer's `npm install` fails with
+a misleading npm-internal crash rather than a certificate error unless
+`NODE_EXTRA_CA_CERTS` is set — the web dockerfile sets it, and
+`GIT_SSL_CAINFO` for the viewer clone, only when the secret was passed.
 
 ## Makefile targets
 
-`install`, `format`, `lint`, `check` (format + lint), `test`, `typecheck`,
-`ci` (typecheck + dagger `checks` + `test`), `build`,
-`build-wrapper`, `build-web`, `scan`, `scan-web`, `publish` (manual,
-`DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN`), `compose-up`, `compose-test`,
-`compose-smoke` (the verified local path — see [Testing](testing.md)),
-`compose-down`, `helm-lint`, `helm-template` (lint + render both charts on
-defaults and `ci/full-values.yaml` + kubeconform), `install-devstack`,
-`install-kyverno` (the admission controller `security.policies.enabled`
-needs), `docs-serve`, `docs-build` (`uvx zensical`), `config-reference`
-(regenerates `docs/reference/configuration.md`; a test asserts the committed
-page equals it), `poc-push` (build + push the wrapper and web images into
-the in-cluster k3s registry, printing the digests to pin; `poc-push-arm64`
-is a deprecated alias of it), `build-htrflow-base-arm64` (the arm64 base the
-wrapper builds on, from `HTRFLOW_DIR`), `campaigns-apply`
-(`htrflow-campaigns apply`: render a campaigns repo, server-side apply its
-`pipelines/` then `campaigns/` through the Kubernetes client, sync each
-campaign's pause; `PRUNE=1` adds `--prune`), `e2e` (validate, apply, then
-block until every campaign Job reaches a terminal condition),
-`psa-labels`, `frontend-install/test/check/build/dev`, `clean`. The
-cluster-local constants they use come from `.env`
-([Local k3s development](local-k3s.md)).
+- **Workspace:** `install`, `format`, `lint`, `check` (format + lint),
+  `test`, `typecheck`, `test-driver-real`, `ci` (typecheck, then dagger
+  `checks` and `test`), `clean`.
+- **Images:** `build` (`dagger call build-wrapper`), `build-wrapper` and
+  `build-web` (plain `docker build`, tagged `$(HTR_REGISTRY)/…:$(IMAGE_TAG)`),
+  `poc-push` (both builds, pushed to the dev registry, digests printed),
+  the htrflow base built from a checkout
+  ([Dev cluster](dev-cluster.md#the-gpu-wrapper-image)), `scan` (dagger
+  `scan-json`), `scan-web` (Trivy, HIGH/CRITICAL with a fix fails),
+  `publish` (manual, needs `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`).
+- **Compose:** `compose-up`, `compose-test`, `compose-smoke` (the local
+  path — see [Testing](testing.md)), `compose-down`.
+- **Charts:** `helm-lint`, `helm-template` (lint, render both charts on
+  defaults and `ci/full-values.yaml`, kubeconform).
+- **Cluster:** `install-kueue` (the upstream release manifests at
+  `KUEUE_VERSION`, applied server-side), `install-kyverno` (the admission
+  controller `security.policies.enabled` needs, at
+  `KYVERNO_CHART_VERSION`), `install-devstack`, `psa-labels`,
+  `campaigns-apply` (render a campaigns repo, server-side apply its
+  pipelines then its campaigns, sync each campaign's pause; `PRUNE=1` adds
+  `--prune`), `e2e` (validate, apply, then block until every campaign Job
+  reaches a terminal condition).
+- **Documentation:** `docs-serve`, `docs-build` (through
+  `scripts/docs-site.sh`), `config-reference` (regenerates
+  `docs/reference/configuration.md`; a test asserts the committed page
+  equals it).
+- **Frontend:** `frontend-install`, `frontend-test`, `frontend-check`,
+  `frontend-build`, `frontend-dev`.
+
+The cluster constants these targets use come from `.env`
+([Dev cluster](dev-cluster.md#env)).
 
 ## Workflows
 
-- **`ci.yml`** ("Tests") — on push to `main` and on pull requests: `dagger
-  call checks`, `dagger call test`, and the `scripts/loc-budget.sh` line
-  budgets (`scripts/loc-budget.sh`, every package included); `dagger call
-  scan-web` and `dagger call scan` (the
-  wrapper) run on pushes to `main` and manual runs only, one job each so a
-  failure in one still builds the other image. Both scans have to build
-  their image first and both builds are expensive — the wrapper's ~10 GB CUDA base, and the web image's UV clone
-  + npm build + bun build — so the pull-request path runs neither. A PR
+- **`ci.yml`** ("Tests") — on push to `main`, on pull requests and by hand.
+  The `ci` job runs `dagger call checks`, `dagger call test` and the
+  `scripts/loc-budget.sh` line budgets. Two scan jobs, `scan-web` and
+  `scan-wrapper`, run `scan-web` and `scan` with `--severity CRITICAL
+  --ignore-unfixed` on pushes to `main` and manual runs only: each has to
+  build its image first, and both builds are expensive (the wrapper's CUDA
+  base; the web image's viewer clone and npm and bun builds). A pull request
   that changes a dockerfile gets its scan when it lands on `main`, before
-  any image is published from it. A fourth job, `build-arm64`, runs on
-  every trigger including pull requests: on an `ubuntu-24.04-arm` runner it
-  builds the htrflow base from source at `HTRFLOW_ARM64_BASE_REF` and then
-  the wrapper's `base-arm64` branch on top, pushing nothing — the arch the
-  amd64 jobs cannot prove, in under three minutes.
-  The dagger action is SHA-pinned and its engine `version` is pinned to
-  `engineVersion` in `dagger.json`.
-- **`publish.yml`** — manual (`workflow_dispatch`) only, one explicit tag
-  per run. Three jobs: `publish` runs `dagger call publish-docker` (tests,
-  builds, pushes) on `ubuntu-24.04` for the amd64 wrapper (`--tag-suffix
-  -amd64`) and the web image; `publish-wrapper-arm64` builds the htrflow
-  base from source and then the wrapper on an `ubuntu-24.04-arm` runner and
-  pushes `<tag>-arm64`; `manifest` joins the two per-arch images into
-  `riksarkivet/htrflow-batch:<tag>` with `docker buildx imagetools create`.
-  Each job refuses to overwrite a published tag (its own and the manifest
-  tag), and every pushed digest goes through the shared
-  `.github/actions/sign-attest`: cosign (keyless, Sigstore OIDC) plus a
-  SLSA build-provenance attestation, and for the two real images a
-  Trivy-generated SPDX SBOM attestation as well. The cosign signature is
-  what `security.verifyImages` in the chart verifies
-  ([Chart Values](../reference/chart.md#trust-boundary-security)). The
-  arm64 job is plain `docker build` rather than dagger because the dagger
-  engine cannot see a base image that exists only in the runner's docker
-  daemon; it runs `dagger call test` first so the gate is the same. This is
-  stories B41/B42 done.
-- **`docs.yml`** ("Documentation") — manual only while the repo is private
-  (GitHub Pages isn't available for private repos on the free plan, so a
-  push trigger would fail every run): `pip install zensical` and `zensical
-  build --clean`, then deploy to GitHub Pages. Restore the push trigger once
-  the repo goes public.
+  any image is published from it; one job per image so a failure in one
+  still builds the other. A fourth job runs on every trigger, pull requests
+  included, on a native runner of the second architecture the wrapper ships
+  for: it builds the htrflow base from source at the pinned htrflow commit
+  and the wrapper on top of it, pushes nothing, and prints the image's base
+  labels — so both architectures of a dockerfile change are proven before
+  it lands.
+- **`publish.yml`** — manual, one explicit tag per run; tests, builds,
+  pushes, signs and attests both images
+  ([Releasing](releasing.md#the-publish-workflow)).
+- **`docs.yml`** ("Documentation") — on push to `main` and by hand:
+  `pip install zensical`, `scripts/docs-site.sh build --clean`, then deploy
+  to GitHub Pages.
+
+Every dagger step pins the `dagger-for-github` action by SHA and its engine
+`version` to `engineVersion` in `dagger.json`.
 
 ## Dependency pins
 
-Actions are SHA-pinned, `uv sync --locked` builds the images, the
-dockerfiles pin base images and the uv binary by digest and torch by
-version, and both charts pin every devStack image by digest. `renovate.json`
-covers the image digests, actions, both lockfiles and the dagger engine
-version; switching the updater to Dependabot is story B26.
+Every input is pinned, and [Renovate](https://docs.renovatebot.com/) keeps
+the pins current. `renovate.json` holds the whole policy; this is where
+each kind of pin lives and how it moves.
+
+| Pin | Lives in | Updated by |
+|---|---|---|
+| GitHub Actions | `uses:` lines, by commit SHA with the version as a comment | Renovate, one grouped weekly PR |
+| Base and tool images | `FROM` lines in `.docker/*.dockerfile`, image values in both charts' `values.yaml`, `.docker/docker-compose.yml`, the image constants in `.dagger/main.go`, digest-pinned `run:` images in workflows, `TRIVY_IMAGE` in the `Makefile` — each as tag plus digest | Renovate, one grouped weekly PR (regex managers cover the dagger module, workflows and Makefile) |
+| Python dependencies | `uv.lock` (workspace) | Renovate lockfile maintenance weekly; runtime minor and patch grouped, majors and dev tools in their own PRs |
+| Frontend dependencies | `frontend/bun.lock` | Renovate lockfile maintenance weekly; majors separate |
+| Dagger engine | `engineVersion` in `dagger.json` and every workflow's `version:` input, kept equal | Renovate, its own PR |
+| Universal Viewer fork | `UV4_REF` commit in `.docker/htrflow-web.dockerfile` | Renovate, its own PR — `.docker/uv4-uv-html.patch` may need re-deriving |
+| htrflow source for the source-built base | the commit env var in `ci.yml` and `publish.yml`, the same in both | Renovate, its own PR — the base and the wrapper on it must be re-verified |
+| Upstream htrflow base image | the `base-…` stage `FROM` in the wrapper dockerfile | by hand for tag bumps (a deliberate, tested pin); Renovate refreshes the digest only |
+| torch / torchvision | explicit versions per base stage in the wrapper dockerfile | by hand, following the CUDA wheel index named there |
+| Kueue, Kyverno | `KUEUE_VERSION`, `KYVERNO_CHART_VERSION` in the `Makefile` | by hand |
+
+Inside the builds, dagger containers sync with `uv sync --frozen
+--all-packages`, and the wrapper image installs its dependencies from
+`uv export --locked … --require-hashes`, so a stale `uv.lock` fails the
+build instead of resolving freshly. Renovate raises security updates at any
+time, outside the weekly schedule.
