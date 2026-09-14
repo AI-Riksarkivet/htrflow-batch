@@ -354,7 +354,24 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # `secretKeyRef`, and the comment saying why the campaign Job gets nothing --
 # that omission is the design, so it has to be readable at the place a later
 # reader would otherwise "fix" it.
-check converter "$(count packages/converter/src -name '*.py')" 1863
+# 1863 -> 2125 (2026-09-14, B77): the three answers to "field is immutable",
+# which is what a live apply said about EVERY warm-up Job the day a
+# converter.yaml-wide setting was added, and about a running campaign's Job
+# the day a pipeline's image moved. cluster (+79): `ImmutableField` reads the
+# refused fields out of `details.causes` rather than out of a message that
+# quotes a whole Go pod-template struct back, and `replace_job` is the
+# delete-and-create a changed pod template has no other route to, with the
+# paragraph saying why the create must follow the DELETION and not the delete
+# call. cli (+183): the apply loop catches per object, counts what was
+# refused and exits 3 rather than aborting at the first one and leaving every
+# later campaign unapplied; `_apply_object` holds the rule that a warm-up Job
+# is replaced and a campaign Job never is (its indexes are the campaign), and
+# `_edited_pipeline` holds the one that a pipeline id is a permanent name for
+# a recipe. render (+26): `recipe`, the two things a pipeline file alone
+# decides. Most of the count is those paragraphs: each of the three is a rule
+# whose OPPOSITE looks reasonable at the call site, so the reason lives next
+# to the code rather than in a story nobody opens again.
+check converter "$(count packages/converter/src -name '*.py')" 2125
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
