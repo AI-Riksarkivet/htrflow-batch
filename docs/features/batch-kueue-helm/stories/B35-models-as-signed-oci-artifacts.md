@@ -55,10 +55,14 @@ Known limits), so the registry enforces the pin instead:
 - A model's tag is its **source revision** — the pinned Hugging Face
   commit — so a tag names one exact set of weights for as long as the
   registry exists.
-- The **digest is still recorded and checked**, because a tag alone
-  cannot be verified by the consumer: the packaging job records the
-  digest it pushed, pipeline files carry it next to the tag, and the
-  warm-up compares the two before it extracts anything.
+- **The tag is the reference.** Pipeline files name a model by its
+  immutable tag only (product owner, 2026-09-14: "use tag instead"); they
+  carry no expected digest and nothing compares one. Because the tag
+  cannot move, the tag is the pin.
+- **The digest is recorded, not compared.** The packaging job checks that
+  the tag it pushed resolves to the digest it built, and the warm-up
+  records the digest the tag resolved to when it pulled, so provenance
+  still names the exact weights.
 
 ## What this delivers
 
@@ -77,17 +81,18 @@ Known limits), so the registry enforces the pin instead:
   resolves the tag in the registry and fails unless the tag's manifest
   digest equals the digest it built. `modctl`'s exit code alone is not
   enough (see Known limits).
-- **Pipeline files reference a model by immutable tag and expected
-  digest** (`<registry>/models/<name>:<source revision>` plus
-  `sha256:…`), instead of a Hugging Face repo + revision; the reference is
-  validated against the allowed registry prefix like any image.
-- **The warm-up job pulls from the registry**: resolve the tag and fail
-  if its digest differs from the pipeline file's, `cosign verify` the
-  digest against the CI identity, then `modctl pull` by tag and extract
-  into the model cache in the layout `htrflow` already reads — so
-  `htrflow` itself is unchanged and batch jobs stay `HF_HUB_OFFLINE=1`.
-  Because the tag is immutable, the manifest the warm-up checks is the
-  manifest `modctl` pulls.
+- **Pipeline files reference a model by immutable tag**
+  (`<registry>/models/<name>:<source revision>`), instead of a Hugging
+  Face repo + revision; the reference is validated against the allowed
+  registry prefix like any image.
+- **The warm-up job pulls from the registry**: resolve the tag to its
+  digest, `cosign verify` that digest against the CI identity, then
+  `modctl pull` by tag with a pull-only registry robot and extract into
+  the model cache in the layout `htrflow` already reads — so `htrflow`
+  itself is unchanged and batch jobs stay `HF_HUB_OFFLINE=1`. The digest
+  the tag resolved to is recorded for provenance. Because the tag is
+  immutable, the manifest the warm-up verifies is the manifest `modctl`
+  pulls.
 - **Warm-up internet egress removed** from the network policy; the
   warm-up reaches the registry and nothing else.
 - Provenance: the volume's completion marker already records image
@@ -126,8 +131,19 @@ Model CSI Driver 0.1.2), each verified on the dev cluster:
   behind. Hence the packaging step's post-push digest check.
 - Layers are checked against the manifest's digests only after they are
   written to the extraction directory; nothing checks the manifest
-  against a requested digest. The warm-up's tag-to-digest comparison
-  covers that gap.
+  against a requested digest. The immutable tag covers that gap: the
+  manifest behind a tag cannot change, and the warm-up records its digest.
+- **Pulling by immutable tag works end to end in the cluster** (tested
+  2026-09-14): an init container running `modctl pull --extract-from-remote`
+  as a non-root user with a read-only root filesystem, authenticated by a
+  pull-only Harbor project robot (a tag write with its credentials is
+  refused with 401), extracted the model into a shared volume; the
+  wrapper image then loaded it offline, and the recorded digest and file
+  checksums matched the packaged model. A tag that does not exist fails
+  the init container (`not found`) before the transcription container
+  starts. `modctl` needs a user entry for its uid (it looks up its home
+  directory and panics without one), so a `FROM scratch` image carries a
+  minimal `/etc/passwd`.
 - **ModelPack cannot be mounted as a Kubernetes image volume on
   containerd.** The pull succeeds and the volume mounts as an empty
   directory with no event; containerd unpacks only standard image layers
@@ -153,8 +169,10 @@ Model CSI Driver 0.1.2), each verified on the dev cluster:
       the digest it built (tested by pushing different content to an
       existing tag).
 - [ ] A warm-up given an unsigned or tampered model artifact, or a tag
-      whose digest differs from the pipeline file's, fails before
-      extraction, and the campaign page reports it (tested).
+      that does not exist, fails before extraction, and the campaign page
+      reports it (tested).
+- [ ] The warm-up records the digest each model tag resolved to, and a
+      completed volume's provenance names it.
 - [ ] The warm-up job's network policy has no internet egress; a
       campaign runs end to end from registry-hosted models only.
 - [ ] `manifest.json` for a completed volume records the model digests.
