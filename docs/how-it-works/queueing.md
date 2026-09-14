@@ -382,5 +382,6 @@ one whose `window` the quota cannot cover, and it reads "Queued" forever.
 - **A campaign reaped by its TTL runs again.** The Workload is deleted with
   the Job, so nothing remembers that the campaign already ran. The next apply
   recreates the Job, Kueue makes a fresh Workload, and every index runs again.
-  Each of those pods still holds a GPU, but the wrapper's resume skips every
-  page already published, so a finished volume is not transcribed twice.
+  The wrapper's resume skips every page already in the bucket, so a finished
+  volume is not transcribed again. Each volume still takes a GPU slot and a
+  model load, and rewrites its viewer manifest and `manifest.json`.
