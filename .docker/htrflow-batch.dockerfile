@@ -124,28 +124,43 @@ COPY packages/wrapper /opt/wrapper
 RUN uv pip install --python /app/.venv/bin/python --no-cache --no-deps /opt/wrapper
 
 # arm64 only, and after the wrapper install so these versions are the ones
-# that survive. Three extras the locally built base does not carry:
+# that survive. Two extras the locally built base does not carry:
 #   * triton JIT-compiles its CUDA utils (a CPython extension) at runtime —
 #     it needs a C compiler and Python headers or TrOCR generation dies with
 #     "Failed to find C compiler" on the GPU path;
 #   * microsoft/trocr-base-handwritten ships only a slow tokenizer;
-#     transformers needs sentencepiece to convert it;
-#   * transformers 5.x dropped that slow->fast conversion, which models
-#     without tokenizer.json rely on; upstream htrflow targets the 4.x line.
+#     transformers needs sentencepiece to convert it — and 5.x dropped that
+#     conversion, one more reason the line below is a deliberate choice.
+# transformers itself is NOT here: it is installed for both architectures
+# from TRANSFORMERS_VERSION, in the step that follows.
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
       apt-get update && apt-get install -y --no-install-recommends \
         gcc libc6-dev python3.10-dev \
       && rm -rf /var/lib/apt/lists/* \
       && uv pip install --python /app/.venv/bin/python --no-cache \
-           "sentencepiece==0.2.2" "transformers==4.57.6"; \
+           "sentencepiece==0.2.2"; \
     fi
+
+# The transformers line, both architectures, pinned here so the image says
+# which one it runs. Two lines exist because the models do not agree: a
+# model saved by transformers 5 (its tokenizer config carries keys 4.x cannot
+# read, and 4.x decodes its byte-level tokenizer wrongly) needs 5.x, while
+# a model saved by 4.x (the base handwritten models, whose positional
+# embedding buffer 5.x leaves on the meta device) needs 4.x until it is
+# re-saved. A pipeline pins the image digest it runs, so one campaigns repo
+# can carry pipelines on either line. Default: the 4.x line upstream htrflow
+# is tested on; `make build-wrapper TRANSFORMERS_VERSION=5.9.0` builds the
+# other.
+ARG TRANSFORMERS_VERSION=4.57.6
+RUN uv pip install --python /app/.venv/bin/python --no-cache \
+      "transformers==${TRANSFORMERS_VERSION}"
 
 # Packages of the base's venv with published fixes that htrflow's own lock
 # predates: pillow and Brotli. The `wrapper-image` group in uv.lock pins them
 # (pinned, hashed), and they go in last so they are the versions that survive.
 # Both are leaves (--no-deps). Not here: py7zr, which pagexml-tools caps below
-# 0.21, and transformers, whose fixes are 5.x only (see the arm64 step above);
-# those wait for htrflow.
+# 0.21, and transformers, which has a step and a build argument of its own
+# above; py7zr waits for htrflow.
 RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
     --mount=type=bind,source=pyproject.toml,target=/opt/workspace/pyproject.toml \
     --mount=type=bind,source=packages/wrapper/pyproject.toml,target=/opt/workspace/packages/wrapper/pyproject.toml \
@@ -157,6 +172,48 @@ RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
     && uv pip install --python /app/.venv/bin/python --no-cache --no-deps --require-hashes \
          -r /tmp/image-requirements.txt \
     && rm /tmp/image-requirements.txt
+
+# protobuf, both architectures. transformers only imports it on the error
+# path of loading a slow tokenizer -- and when it is missing, that path
+# raises "requires the protobuf library" INSTEAD of the real error. A
+# tokenizer config the pinned transformers cannot read then shows up in the
+# warm-up's log as a missing library, which is not what happened. With
+# protobuf present the warm-up says what actually failed.
+RUN uv pip install --python /app/.venv/bin/python --no-cache "protobuf==7.36.1"
+
+# What this image must guarantee, after the transformers line has had its say:
+# the WRAPPER's own declared requirements are satisfied by what is installed.
+# The newer transformers line requires a newer huggingface_hub than the wrapper
+# used to accept, and that mismatch belongs at build time, not in a warm-up pod
+# -- nothing in CI builds this image, so this is the only gate.
+#
+# Not `uv pip check`, which validates every distribution in the venv: one base
+# venv is already inconsistent for a reason that has nothing to do with this
+# image (its torch pin drags in an nvidia wheel built for another platform),
+# so the broad check blocks every build on that architecture, including the
+# default line. This one reads the wrapper's own metadata and nothing else.
+RUN /app/.venv/bin/python <<'CHECK'
+import sys
+from importlib.metadata import PackageNotFoundError, requires, version
+
+from packaging.requirements import Requirement
+
+bad = []
+for spec in requires("htrflow-batch-wrapper") or []:
+    req = Requirement(spec)
+    if req.marker and not req.marker.evaluate({"extra": ""}):
+        continue
+    try:
+        have = version(req.name)
+    except PackageNotFoundError:
+        bad.append(f"{spec}: not installed")
+        continue
+    if not req.specifier.contains(have, prereleases=True):
+        bad.append(f"{spec}: installed {have}")
+if bad:
+    sys.exit("the wrapper's requirements are not satisfied:\n  " + "\n  ".join(bad))
+print("wrapper requirements satisfied")
+CHECK
 
 # The release this image is published under: the publish workflow passes its
 # run tag, `make build-*` passes IMAGE_TAG, and a build that passes nothing

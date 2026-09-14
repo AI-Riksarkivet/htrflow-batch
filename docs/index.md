@@ -41,7 +41,7 @@ flowchart TB
     repo["campaigns repo in git<br/>campaigns/*.yaml · pipelines/*.yaml"]
     conv["htrflow-campaigns<br/>validate · render · apply"]
     subgraph cluster["Kubernetes cluster"]
-        kyverno["Kyverno policies<br/>digest-pinned images · pinned models"]
+        kyverno["Kyverno admission policies<br/>every Job, Pod and pipeline ConfigMap<br/>allowed, digest-pinned images · pinned models · optional signatures"]
         kueue["Kueue<br/>queue, GPU quota, admission"]
         warm["warm-up Job (CPU)<br/>fills the model cache"]
         job["Indexed Job, one index per volume<br/>wrapper streams pages through htrflow on the GPU"]
@@ -51,8 +51,10 @@ flowchart TB
     s3["S3 results bucket<br/>ALTO · PAGE · manifest.json · iiif.json · run log"]
     browser["browser"]
 
-    repo --> conv --> kyverno --> kueue --> job
-    conv --> warm
+    repo --> conv -->|apply| kyverno
+    kyverno -->|campaign Job| kueue --> job
+    kyverno -->|warm-up Job, not queued| warm
+    warm -.->|model cache| job
     job -->|pages in| iiif
     job -->|results out, page by page| s3
     web -->|Jobs, Pods| job

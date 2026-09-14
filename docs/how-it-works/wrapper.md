@@ -277,6 +277,22 @@ token and Hub egress. The wrapper only ever sees `HF_HOME`, so changing where
 the cache comes from is a mount-point swap. One example is weights published
 as signed OCI artifacts and pulled into the cache from a registry.
 
+**Two transformers lines.** A model's files are written by the library
+version that saved it, and the two current major lines of the transformers
+library do not read each other's. A model saved by the newer line carries
+tokenizer settings the older one cannot parse — and, once that is worked
+around by hand, the older line still decodes its byte-level tokenizer
+wrongly, so the text comes out subtly wrong rather than failing. Models
+saved by the older line — which is the line upstream htrflow is tested on,
+and the one the image carries by default — fail to load under the newer one
+instead, on a buffer the newer loader leaves uninitialised. So which line an
+image carries is a build argument
+([Releasing](../development/releasing.md#publishing)), and a pipeline pins
+the image digest it runs: one campaigns repo can carry pipelines on both
+lines at once, and no campaign has to move because a model was re-saved. The
+two lines become one again when every model in use is saved by the newer
+one.
+
 ## The model cache
 
 ```mermaid
@@ -368,9 +384,10 @@ that is not coming
 missing from `/data/hf` when a batch pod tries to load it: the cache was
 wiped without a re-warm, a download was incomplete, or the PVC was replaced.
 Under `HF_HUB_OFFLINE=1`, `huggingface_hub` then raises
-`LocalEntryNotFoundError`. That class subclasses both `OSError` and
-`ValueError`. `main.py` catches `OSError` before `ValueError`, so the wrapper
-classifies the miss as **transient**, exit 1. Kubernetes retries the index up
+`LocalEntryNotFoundError`. That class is an `OSError` on every version of the
+library, and a `ValueError` as well on the older line. `main.py` catches
+`OSError` before `ValueError`, so the wrapper classifies the miss as
+**transient**, exit 1, whichever line the image carries. Kubernetes retries the index up
 to `backoffLimitPerIndex`, resuming from the pages already published. A retry
 succeeds only once the cache is fixed. The transient classification keeps a
 real gap from failing, with `FailIndex`, a volume that a re-warm can still

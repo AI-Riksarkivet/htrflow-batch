@@ -68,6 +68,12 @@ func (m *HtrflowBatch) PublishDocker(
 	// itself.
 	// +optional
 	tagSuffix string,
+	// TRANSFORMERS_VERSION build arg for the wrapper image (see BuildWrapper);
+	// ignored for the other components. Empty — the default, and what a normal
+	// release passes — keeps the dockerfile's pin, so the published image does
+	// not change unless a run asks for the other line.
+	// +optional
+	transformersVersion string,
 ) (string, error) {
 	resolvedTag, err := m.resolveTag(ctx, source, tag, skipValidation, caBundle)
 	if err != nil {
@@ -84,7 +90,7 @@ func (m *HtrflowBatch) PublishDocker(
 		if imageRepository == "" {
 			imageRepository = "riksarkivet/htrflow-batch"
 		}
-		container, err = m.BuildWrapper(ctx, source, baseRevision, "", resolvedTag)
+		container, err = m.BuildWrapper(ctx, source, baseRevision, "", resolvedTag, transformersVersion)
 	case "web":
 		if imageRepository == "" {
 			imageRepository = "riksarkivet/htrflow-web"
