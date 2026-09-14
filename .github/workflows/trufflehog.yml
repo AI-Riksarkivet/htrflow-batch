@@ -28,6 +28,9 @@ jobs:
       - name: Secret scanning
         uses: trufflesecurity/trufflehog@363923b901c911a9164f50b6c423f47c15372b1c # v3.97.4
         with:
+          # The action runs the scanner as a container image whose tag defaults
+          # to `latest`; pinning the action's SHA does not pin the scanner.
+          version: 3.97.4
           # verified: the credential was checked against its provider and works.
           # unknown: could not be checked — reported rather than dropped, because
           # "we could not verify it" is not the same as "it is not a secret".
