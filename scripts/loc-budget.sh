@@ -347,7 +347,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2742
 # DNS-1123 subdomain a Secret name has to be (spelled out, because the
 # shorthand character class accepts names the API server refuses), and the
 # comment saying why only the warm-up ever gets the token.
-check converter "$(count packages/converter/src -name '*.py')" 1842
+# 1842 -> 1863 (2026-09-14, hf token): the warm-up Job's HF_TOKEN
+# `secretKeyRef`, and the comment saying why the campaign Job gets nothing --
+# that omission is the design, so it has to be readable at the place a later
+# reader would otherwise "fix" it.
+check converter "$(count packages/converter/src -name '*.py')" 1863
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
