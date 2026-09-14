@@ -48,7 +48,7 @@ RUN --mount=type=secret,id=ca,target=/etc/ssl/certs/corp-ca.crt \
     && git fetch -q --depth 1 origin "$UV4_REF" \
     && git checkout -q FETCH_HEAD \
     && git apply /tmp/uv4.patch \
-    && npm install --no-audit --no-fund \
+    && npm ci --no-audit --no-fund \
     && npm run build
 
 # ---- Stage 3: the service (read API + the two builds above as its site) ----
