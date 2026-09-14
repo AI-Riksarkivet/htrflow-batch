@@ -276,7 +276,11 @@ def _render(repo_dir: str, out_dir: str, record_dir: str | None = None) -> int:
         # separator changed says the same thing with commas in it, and an
         # unchanged campaign must still re-render (models.parse_source_line).
         new_volumes = [parse_source_line(v.source_line()) for v in c.volumes]
-        existing = _existing_parts(campaigns_out, c)
+        # Under the RECORD, never under `--out`: an apply with no --out
+        # renders into a temp directory, where an earlier render of this
+        # campaign cannot be, so both rules below found nothing to hold it
+        # against and a swapped volume list went straight to the cluster.
+        existing = _existing_parts(record / "campaigns", c)
         objects = render.campaign_objects(c, pipelines[c.pipeline], cfg)
         paths = [campaigns_out / f"{o['metadata']['name']}.yaml" for o in objects[1::2]]
         if existing:
@@ -297,7 +301,7 @@ def _render(repo_dir: str, out_dir: str, record_dir: str | None = None) -> int:
             # more, a shorter stem). Renaming them is not a re-render, it is
             # a delete and a restart -- `apply --prune` takes the Jobs that
             # already ran these volumes with it.
-            if existing != paths:
+            if [p.name for p in existing] != [p.name for p in paths]:
                 print(
                     f"campaign {c.name} was rendered as {_shape(existing)} and "
                     f"now renders as {_shape(paths)}: applying that would delete "

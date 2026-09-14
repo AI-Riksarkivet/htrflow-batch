@@ -787,3 +787,23 @@ def test_an_unenforced_pause_outranks_a_refused_object(tmp_path, cluster, capsys
     err = capsys.readouterr().err
     assert "pausy: paused in git" in err
     assert "Job/kyrk" in err, "the refusal is still reported"
+
+
+def test_apply_without_out_holds_campaigns_against_the_committed_render(
+    tmp_path, cluster, capsys
+):
+    """The campaign half of the same rule. A temp render directory holds no
+    earlier render, so the append-only check found nothing to compare a
+    swapped volume against and applied it -- the one command that reaches a
+    cluster being the one command the guard did not run for."""
+    repo = _repo(tmp_path)
+    assert cli.main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    path = repo / "campaigns" / "kyrk.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["volumes"][0] = "R9999999"
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    capsys.readouterr()
+
+    assert cli.main(["apply", str(repo)]) == 1
+    assert "campaign kyrk is append-only" in capsys.readouterr().out
+    assert cluster.of("apply") == [], "nothing reached the cluster"

@@ -381,7 +381,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # unenforced pause outranks a refused object at the exit code. And a server
 # message this package repeats is cut at MAX_MESSAGE: a 422 with no
 # `details.causes` still carries the whole rejected pod template.
-check converter "$(count packages/converter/src -name '*.py')" 2157
+# 2157 -> 2161 (2026-09-14, audit C1): `apply` with no --out looks up an
+# earlier render of each campaign under the repo's own rendered/, so the
+# append-only and split-shape rules run for it too -- the comparison is by
+# file NAME now, since the two directories differ.
+check converter "$(count packages/converter/src -name '*.py')" 2161
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
