@@ -154,6 +154,31 @@ CORS must allow `GET` and `HEAD` from the web front's origin:
 }
 ```
 
+## Hugging Face token, for a private model
+
+Only needed when a pipeline pulls a model that is **private or gated** on
+Hugging Face Hub. No chart creates this Secret either. Make one in the
+campaign namespace with a single `token` key, holding a Hub token with
+**read** scope:
+
+```bash
+kubectl -n <namespace> create secret generic htr-batch-hf \
+  --from-literal=token=<hugging-face-read-token>
+```
+
+Then name it in the campaigns repo's `converter.yaml`:
+
+```yaml
+hf_token_secret: htr-batch-hf
+```
+
+The converter renders it as `HF_TOKEN` into that pipeline's **warm-up Job**
+and nowhere else — the warm-up is the only pod the NetworkPolicy lets reach
+the Hub, and it downloads the models once into the cache PVC. Campaign pods
+run `HF_HUB_OFFLINE=1` against that cache and never see the token. Leave the
+key unset for public models
+([The model cache](../how-it-works/wrapper.md#the-model-cache)).
+
 The dev cluster's `rustfs-init` hook applies the same shape
 (`charts/htrflow-devstack/templates/_helpers.tpl`, `bucketPolicy`). The
 [S3 layout](../reference/s3-layout.md) lists every key. The
