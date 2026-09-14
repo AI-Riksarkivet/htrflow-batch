@@ -166,6 +166,9 @@ IMAGES_CASES = [
     "https://x/full/2500,/0/default.jpg https://x/2.jpg",
     "https://x/1.jpg",
     "",
+    # the documented limit of the transition rule: both packages split this
+    # the same (wrong) way, which is what matters until the rule is deleted
+    "https://p/fetch?src=https://a/1.jpg,https://b/2.jpg",
 ]
 
 

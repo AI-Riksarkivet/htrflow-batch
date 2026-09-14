@@ -110,8 +110,10 @@ def split_image_urls(value: str) -> list[str]:
     itself an http(s) URL is a line rendered before 2026-09-14, when commas
     joined them. A single URL carrying a comma can never look like that (the
     piece after the comma has no scheme), which is what makes the old format
-    safe to keep reading. Delete this branch, in both packages, once every
-    campaigns repo has been re-rendered.
+    safe to keep reading. Known limit: one URL whose query carries another
+    http(s) URL after a comma (``?src=https://a,https://b``) is split in two.
+    Delete this branch, in both packages, once every campaigns repo has been
+    re-rendered.
     """
     urls = value.split()
     if len(urls) == 1 and "," in urls[0]:
