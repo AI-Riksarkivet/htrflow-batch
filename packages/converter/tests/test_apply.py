@@ -303,7 +303,7 @@ def test_the_campaign_configmap_records_who_applied_what_and_when(
     provenance belongs (B76)."""
     if shutil.which("git") is None:
         pytest.skip("no git on PATH — the CI image has none; _git_head says unknown")
-    monkeypatch.setenv("HTRFLOW_SUBMITTER", "Nagon.Annan")
+    monkeypatch.setenv("HTRFLOW_APPLIED_BY", "Nagon.Annan")
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
@@ -331,7 +331,11 @@ def test_the_campaign_configmap_records_who_applied_what_and_when(
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     ann = _annotations(cluster, "campaign-kyrk")
     assert ann["htrflow.riksarkivet.se/campaigns-commit"] == head
-    assert ann["htrflow.riksarkivet.se/submitter"] == "nagon.annan"
+    assert ann["htrflow.riksarkivet.se/applied-by"] == "nagon.annan"
+    # `submitter` is the multi-tenant spec's (D10): a LABEL stamped at
+    # render time by CI from an authenticated login. This apply knows only
+    # who ran it, which is a different claim under a different key (B94).
+    assert "htrflow.riksarkivet.se/submitter" not in ann
     assert ann["htrflow.riksarkivet.se/applied-at"].endswith("Z")
     # Rendered, not stamped here: it is a pure function of the repo.
     assert ann["htrflow.riksarkivet.se/image-digest"].startswith("ghcr.io/")
@@ -350,7 +354,7 @@ def test_the_provenance_is_not_written_into_the_rendered_files(tmp_path, cluster
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     text = (out / "campaigns" / "kyrk.yaml").read_text()
-    assert "applied-at" not in text and "submitter" not in text
+    assert "applied-at" not in text and "applied-by" not in text
 
 
 # --- a finished campaign is not re-run once its Job is reaped (B76) ------

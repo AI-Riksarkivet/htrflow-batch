@@ -232,7 +232,12 @@ def _render(repo_dir: str, out_dir: str) -> int:
 #: is where the record of a campaign lives (B76, the product owner
 #: 2026-09-08: the record is a ConfigMap, not a database).
 _COMMIT_ANNOTATION = "htrflow.riksarkivet.se/campaigns-commit"
-_SUBMITTER_ANNOTATION = "htrflow.riksarkivet.se/submitter"
+#: Who ran THIS apply -- not `htrflow.riksarkivet.se/submitter`, which the
+#: multi-tenant design reserves (D10, B94) for a LABEL stamped at render
+#: time by CI from an authenticated forge login. That is evidence; this is
+#: the account the command happened to run under, which pairs with
+#: `applied-at` and claims no more than it can prove.
+_APPLIED_BY_ANNOTATION = "htrflow.riksarkivet.se/applied-by"
 _APPLIED_AT_ANNOTATION = "htrflow.riksarkivet.se/applied-at"
 
 
@@ -251,10 +256,10 @@ def _git_head(repo: Path) -> str:
     return done.stdout.strip() if done.returncode == 0 else "unknown"
 
 
-def _submitter() -> str:
-    """``HTRFLOW_SUBMITTER`` (what CI sets from the actor that triggered it),
-    else the OS user. Lower-cased: the same person must not appear twice."""
-    name = os.environ.get("HTRFLOW_SUBMITTER", "").strip()
+def _applied_by() -> str:
+    """``HTRFLOW_APPLIED_BY`` (what CI sets from the actor that triggered
+    it), else the OS user. Lower-cased: one person, one spelling."""
+    name = os.environ.get("HTRFLOW_APPLIED_BY", "").strip()
     if not name:
         with contextlib.suppress(Exception):
             name = getpass.getuser()
@@ -268,7 +273,7 @@ def _provenance(repo: Path) -> dict[str, str]:
     not. The image digest, which *is* one, is rendered (``render.py``)."""
     return {
         _COMMIT_ANNOTATION: _git_head(repo),
-        _SUBMITTER_ANNOTATION: _submitter(),
+        _APPLIED_BY_ANNOTATION: _applied_by(),
         _APPLIED_AT_ANNOTATION: datetime.now(timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         ),

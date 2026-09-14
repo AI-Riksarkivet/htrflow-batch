@@ -29,12 +29,15 @@ own contract — reads four more. Both are listed, not folded into `Config`,
 in "Also read from the environment" under the wrapper table below.
 
 **Read outside these models.** `htrflow-campaigns apply` reads one
-environment variable of its own, `HTRFLOW_SUBMITTER`: the name stamped on
-every campaign ConfigMap it applies (`htrflow.riksarkivet.se/submitter`,
+environment variable of its own, `HTRFLOW_APPLIED_BY`: the name stamped on
+every campaign ConfigMap it applies (`htrflow.riksarkivet.se/applied-by`,
 lower-cased), which CI sets from whoever triggered the run. Unset, the apply
 uses its own OS user. It is not a `converter.yaml` key — it says who is
 running this apply, not how the cluster is configured — so it is not in the
-converter table below.
+converter table below. It is deliberately **not**
+`htrflow.riksarkivet.se/submitter`: that key is reserved for the
+authenticated forge login CI stamps as a label at render time, which is
+evidence, where this is only the account the command ran under.
 
 **Prefixes.** The web front's env is `HTRFLOW_`-prefixed: an operator's
 settings for a long-lived service. The wrapper's are bare — the in-pod
