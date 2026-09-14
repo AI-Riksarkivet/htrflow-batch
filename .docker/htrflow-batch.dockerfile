@@ -158,6 +158,14 @@ RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
          -r /tmp/image-requirements.txt \
     && rm /tmp/image-requirements.txt
 
+# protobuf, both architectures. transformers only imports it on the error
+# path of loading a slow tokenizer -- and when it is missing, that path
+# raises "requires the protobuf library" INSTEAD of the real error. A
+# tokenizer config the pinned transformers cannot read then shows up in the
+# warm-up's log as a missing library, which is not what happened. With
+# protobuf present the warm-up says what actually failed.
+RUN uv pip install --python /app/.venv/bin/python --no-cache "protobuf==7.36.1"
+
 # The release this image is published under: the publish workflow passes its
 # run tag, `make build-*` passes IMAGE_TAG, and a build that passes nothing
 # says "dev". Kept as an env var because the process itself reports it (the
