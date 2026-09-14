@@ -254,7 +254,12 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2721
 # to stay byte-identical between two renders of the same repo (B78). Most of
 # it is `_git_head`/`_submitter`/`_provenance` and the paragraph saying which
 # half is rendered and why.
-check converter "$(count packages/converter/src -name '*.py')" 1503
+# 1503 -> 1517 (2026-09-14, B76): the read API writes a status ConfigMap the
+# converter never renders, so `apply --prune` -- which deletes every
+# converter-labelled object not in this render -- would delete it on sight.
+# `Cluster._kept_status` keeps the one named after a campaign ConfigMap that
+# IS rendered, and prunes it with that campaign when the file leaves git.
+check converter "$(count packages/converter/src -name '*.py')" 1517
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
@@ -355,7 +360,17 @@ check converter "$(count packages/converter/src -name '*.py')" 1503
 # manifest.json fallback's comments now say why a finished volume may have
 # lost pages and why the reason for them is progress.json's to name, not
 # this document's -- manifest.json records no order among its results.
-check web       "$(count packages/web/src -name '*.py')" 1031
+# 1031 -> 1213 (2026-09-14, B76): the read API stopped being the only thing
+# that knows how a campaign ended. projection gains `startedAt`/`finishedAt`,
+# `campaign` (a split campaign's parts share one campaign FILE), and
+# `status_record`/`status_configmap` -- the field names `htrflow-campaigns
+# apply` parses back, so most of those lines are the paragraph saying they
+# are a contract and why the list endpoint leaves `failedVolumes` alone.
+# kube gains `list_configmaps` and `apply_configmap` (server-side apply, one
+# request, no read-modify-write race); app gains `_record`/`_status_configmaps`
+# and the wiring in both routes, with the reasoning for writing only a changed
+# body and for never failing a request over a record it could not write.
+check web       "$(count packages/web/src -name '*.py')" 1213
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
@@ -463,5 +478,11 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3581
 # separate template file), for HTRFLOW_INTERNAL_RESULTS_BASE's
 # ProgressReader -- plus the env var itself, defaulted from
 # web.internalResultsBase.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 763
+# 763 -> 769 (2026-09-14, B76): the web Role gains create/patch on ConfigMaps
+# -- the read API writes one object now, the per-campaign status ConfigMap
+# that still answers for a campaign once its Job is past the TTL. The added
+# lines are the paragraph saying which object, why `create` is not a second
+# privilege (a server-side apply of a missing object is a create) and what is
+# still forbidden.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 769
 exit $fail

@@ -15,6 +15,7 @@ whole job.
 
 from __future__ import annotations
 
+import logging
 from importlib import metadata
 from pathlib import Path
 
@@ -24,6 +25,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import projection
 from .progress import ProgressReader
+
+_LOG = logging.getLogger(__name__)
 
 #: Exactly what the retired nginx config sent (chart 0.3.0's viewer template).
 #: Script/style/connect sources are governed by the SvelteKit build's own
@@ -100,6 +103,10 @@ class NoCluster:
         )
 
     list_jobs = list_warmups = get_job = get_configmap = list_pods = _no_cluster
+    list_configmaps = _no_cluster
+    # Deliberately no `apply_configmap`: site-only mode has no cluster to
+    # write the campaign record to, and `_record` below asks for the
+    # attribute rather than calling into a 503 on every request (B76).
 
 
 def create_app(
@@ -139,6 +146,42 @@ def create_app(
     def version() -> dict:
         return {"version": batch_version, "web": WEB_VERSION}
 
+    def _record(row: dict, live: dict | None, failures: list[dict] | None) -> None:
+        """Write the campaign's status ConfigMap when this request saw
+        something the stored one does not already say (B76).
+
+        Merged over what is there, never replacing it: each endpoint
+        observes a different part (only the detail one reads pods, so only
+        it knows the failed volumes), and an unchanged body is not sent at
+        all -- an idle status page polls, and every poll would otherwise be
+        a write. Never fatal: a record the API could not write is a record
+        a few minutes old, while a 500 is a status page nobody can read."""
+        if not hasattr(reader, "apply_configmap"):
+            return  # site-only: no cluster
+        stored = (live or {}).get("data") or {}
+        data = {**stored, **projection.status_record(row, failures)}
+        if data == stored:
+            return
+        cm = projection.status_configmap(row, data)
+        try:
+            reader.apply_configmap(cm)
+        except Exception as e:  # noqa: BLE001 - any client error, same answer
+            _LOG.warning("could not write %s: %s", cm["metadata"]["name"], e)
+
+    def _status_configmaps() -> dict[tuple[str, str], dict]:
+        """The stored status ConfigMaps, by (namespace, name) -- one list
+        call for the whole page rather than a get per campaign."""
+        if not hasattr(reader, "list_configmaps"):
+            return {}
+        listed = reader.list_configmaps()
+        return {
+            (m.get("namespace", ""), m["name"]): cm
+            for cm in listed
+            if (m := cm.get("metadata") or {})
+            .get("name", "")
+            .endswith(projection.STATUS_SUFFIX)
+        }
+
     @app.api_route("/api/v1/jobs", methods=GET_HEAD)
     def list_jobs() -> list[dict]:
         jobs = sorted(
@@ -148,12 +191,17 @@ def create_app(
         )
         warmup_jobs = reader.list_warmups()
         reasons: dict[tuple[str, str], dict | None] = {}
-        return [
+        rows = [
             projection.summarize(
                 job, reader.cfg, _warmup_status(job, warmup_jobs, reasons)
             )
             for job in jobs
         ]
+        stored = _status_configmaps()
+        for row in rows:
+            name = f"campaign-{row['name']}{projection.STATUS_SUFFIX}"
+            _record(row, stored.get((row["namespace"], name)), None)
+        return rows
 
     @app.api_route("/api/v1/jobs/{namespace}/{name}", methods=GET_HEAD)
     def get_job(
@@ -171,7 +219,7 @@ def create_app(
         pipeline_cm = reader.get_configmap(namespace, pipe_name) if pipe_name else None
         pods = reader.list_pods(namespace, name)
         warmup = _warmup_status(job, reader.list_warmups(), {})
-        return projection.detail(
+        body = projection.detail(
             job,
             configmap,
             pods,
@@ -182,6 +230,9 @@ def create_app(
             warmup=warmup,
             fetch_progress=progress.fetch if progress is not None else None,
         )
+        status_name = f"{cm_name or 'campaign-' + name}{projection.STATUS_SUFFIX}"
+        _record(body, reader.get_configmap(namespace, status_name), body["failures"])
+        return body
 
     def _warmup_status(
         job: dict, warmup_jobs: list[dict], reasons: dict[tuple[str, str], dict | None]

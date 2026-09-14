@@ -110,3 +110,21 @@ def test_the_configuration_page_is_what_the_generator_prints():
         f"{PAGE.relative_to(ROOT)} is not what scripts/config_reference.py "
         "prints — run `make config-reference`"
     )
+
+
+def test_the_read_api_may_write_the_campaign_record():
+    """The read API writes one object: the per-campaign status ConfigMap
+    (B76). `create` goes with `patch` because a server-side apply of an
+    object that is not there yet is a create; nothing grants a delete."""
+    web = (CHART / "templates" / "web.yaml").read_text(encoding="utf-8")
+    rules = web.split("rules:", 1)[1].split("---", 1)[0]
+    verbs = dict(re.findall(r'resources: \["(\w+)"\]\n    verbs: \[([^\]]*)\]', rules))
+    assert verbs["configmaps"].replace('"', "").split(", ") == [
+        "get",
+        "list",
+        "watch",
+        "create",
+        "patch",
+    ]
+    assert verbs["jobs"] == verbs["pods"] == '"get", "list", "watch"'
+    assert not any("delete" in granted for granted in verbs.values())

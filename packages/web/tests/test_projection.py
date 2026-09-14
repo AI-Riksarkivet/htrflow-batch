@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from htrflow_web import projection
@@ -909,3 +910,106 @@ class TestCampaignNotice:
         d = self._detail({"vol0": _progress()})
         assert d["lastError"] is None
         assert (d["pagesFailed"], d["errors"]) == (0, 0)
+
+
+# --- the status ConfigMap the read API writes (B76) ----------------------
+
+STATUS_FIELDS = {
+    "phase",
+    "volumesTotal",
+    "volumesDone",
+    "volumesFailed",
+    "startedAt",
+    "finishedAt",
+    "resultsBase",
+}
+
+
+def _finished_job(**status) -> dict:
+    job = {
+        "metadata": {
+            "name": "kyrk",
+            "namespace": "htr-test",
+            "labels": {
+                "htrflow.riksarkivet.se/pipeline": "demo-v1",
+                "htrflow.riksarkivet.se/campaign": "kyrk",
+            },
+        },
+        "spec": {"completions": 3},
+        "status": {
+            "completedIndexes": "0-1",
+            "failedIndexes": "2",
+            "startTime": "2026-09-08T08:00:00Z",
+            "conditions": [{"type": "Failed", "status": "True"}],
+            **status,
+        },
+    }
+    return job
+
+
+def test_summarize_carries_the_start_and_finish_times():
+    """The record's dates: once the Job is reaped these are all the campaign
+    page has to say when it ran (B76)."""
+    job = _finished_job(completionTime="2026-09-08T10:00:00Z")
+    row = projection.summarize(job, CFG, {"phase": "succeeded"})
+    assert row["startedAt"] == "2026-09-08T08:00:00Z"
+    assert row["finishedAt"] == "2026-09-08T10:00:00Z"
+
+
+def test_a_failed_job_finishes_at_its_condition_transition():
+    """A Failed Job has no completionTime -- the condition is the only clock."""
+    job = _finished_job()
+    job["status"]["conditions"] = [
+        {
+            "type": "Failed",
+            "status": "True",
+            "lastTransitionTime": "2026-09-08T09:30:00Z",
+        }
+    ]
+    row = projection.summarize(job, CFG, {"phase": "succeeded"})
+    assert row["finishedAt"] == "2026-09-08T09:30:00Z"
+
+
+def test_status_record_field_names_are_the_ones_apply_reads():
+    """`htrflow-campaigns apply` parses these back to decide whether to leave
+    a finished campaign alone, so the names are a contract, not a detail."""
+    job = _finished_job(completionTime="2026-09-08T10:00:00Z")
+    row = projection.summarize(job, CFG, {"phase": "succeeded"})
+    data = projection.status_record(row)
+    assert set(data) == STATUS_FIELDS
+    assert data["phase"] == "PartiallyFailed"
+    assert (data["volumesTotal"], data["volumesDone"]) == ("3", "2")
+    assert data["volumesFailed"] == "1"
+    assert data["finishedAt"] == "2026-09-08T10:00:00Z"
+    assert data["resultsBase"].endswith("/htr-test/demo-v1")
+    assert all(isinstance(v, str) for v in data.values())
+
+
+def test_the_list_endpoints_record_leaves_the_failed_volumes_alone():
+    """A list response has no per-volume reasons. Writing an empty
+    `failedVolumes` would wipe what the detail endpoint observed, so the
+    field is simply absent from what the list writes."""
+    row = projection.summarize(_finished_job(), CFG, {"phase": "succeeded"})
+    assert "failedVolumes" not in projection.status_record(row)
+
+
+def test_the_failed_volumes_carry_one_sentence_each_and_are_capped():
+    row = projection.summarize(_finished_job(), CFG, {"phase": "succeeded"})
+    failures = [{"id": f"vol{i}", "reason": {"error": f"boom {i}"}} for i in range(80)]
+    data = projection.status_record(row, failures)
+    listed = json.loads(data["failedVolumes"])
+    assert len(listed) == 50
+    assert listed[0] == {"id": "vol0", "reason": "boom 0"}
+
+
+def test_the_status_configmap_is_named_and_labelled_for_the_prune():
+    row = projection.summarize(_finished_job(), CFG, {"phase": "succeeded"})
+    cm = projection.status_configmap(row, {"phase": "Failed"})
+    assert cm["metadata"]["name"] == "campaign-kyrk-status"
+    assert cm["metadata"]["namespace"] == "htr-test"
+    labels = cm["metadata"]["labels"]
+    assert labels["htrflow.riksarkivet.se/managed-by"] == "converter"
+    assert labels["htrflow.riksarkivet.se/campaign"] == "kyrk"
+    assert labels["htrflow.riksarkivet.se/pipeline"] == "demo-v1"
+    assert labels["htrflow.riksarkivet.se/kind"] == "status"
+    assert cm["data"] == {"phase": "Failed"}

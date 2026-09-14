@@ -21,8 +21,14 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
 rules:
-  # Read-only, this namespace only (Role, not ClusterRole) — the API never
-  # creates, updates or deletes anything (packages/web/src/htrflow_web/kube.py).
+  # This namespace only (Role, not ClusterRole), and read-only but for one
+  # write: the per-campaign status ConfigMap (`campaign-<name>-status`),
+  # which this service is the only observer of and which is what still
+  # answers for a campaign once its Job is past `ttlSecondsAfterFinished`
+  # (B76, docs: how-it-works/campaigns.md). `create` is not a second
+  # privilege: a server-side apply of an object that does not exist yet is a
+  # create. Nothing here may ever delete, or write a Job or a Pod —
+  # packages/web/tests/test_app.py greps the source to keep it that way.
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "watch"]
@@ -31,7 +37,7 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "create", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
