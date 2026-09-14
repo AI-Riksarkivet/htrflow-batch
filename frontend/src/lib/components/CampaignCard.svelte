@@ -129,9 +129,13 @@
 
   const hasMore = $derived(volumes.length < job.counts.total);
 
-  // Every other phase is already a word; this one is two.
+  // Every other phase is already a word; these two are not.
   const phaseLabel = $derived(
-    job.phase === "PartiallyFailed" ? "partially failed" : job.phase,
+    job.phase === "PartiallyFailed"
+      ? "partially failed"
+      : job.phase === "Unknown"
+        ? "outcome unknown"
+        : job.phase,
   );
 
   // reset=true replaces the table (the poll tick); reset=false appends the
@@ -643,6 +647,8 @@
 
   .chip.phase.queued,
   .chip.phase.paused,
+  /* Not a failure and not a success: nobody wrote down how it ended. */
+  .chip.phase.unknown,
   .chip.warmup.pending,
   .chip.warmup.running,
   /* Warning, not error: some of the campaign did publish. */
