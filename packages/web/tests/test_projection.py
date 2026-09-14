@@ -1127,3 +1127,45 @@ def test_a_terminal_record_keeps_its_own_phase():
             RECORD, _stored(phase=phase), CFG, MISSING_WARMUP
         )
         assert row["phase"] == phase
+
+
+# --- the record only ever gains (B76 review) ----------------------------
+
+
+def test_an_empty_failed_volumes_never_replaces_a_stored_one():
+    """A campaign's pods are garbage-collected long before its record is, so
+    a later detail request legitimately sees no reasons at all -- and the
+    record is the only place those sentences survive."""
+    stored = {"failedVolumes": '[{"id":"vol2","reason":"manifest 404"}]'}
+    merged = projection.merge_record(stored, {"failedVolumes": "[]"})
+    assert merged["failedVolumes"] == stored["failedVolumes"]
+
+
+def test_a_first_empty_failed_volumes_is_still_written():
+    assert projection.merge_record({}, {"failedVolumes": "[]"}) == {
+        "failedVolumes": "[]"
+    }
+
+
+def test_a_longer_failed_volumes_list_does_replace_the_stored_one():
+    stored = {"failedVolumes": '[{"id":"vol2","reason":"manifest 404"}]'}
+    fresh = '[{"id":"vol2","reason":"manifest 404"},{"id":"vol3","reason":"x"}]'
+    assert (
+        projection.merge_record(stored, {"failedVolumes": fresh})["failedVolumes"]
+        == fresh
+    )
+
+
+def test_finished_at_never_moves_backwards_and_is_never_blanked():
+    stored = {"finishedAt": "2026-09-08T10:00:00Z"}
+    assert projection.merge_record(stored, {"finishedAt": ""}) == stored
+    earlier = {"finishedAt": "2026-09-08T09:00:00Z"}
+    assert projection.merge_record(stored, earlier) == stored
+    later = {"finishedAt": "2026-09-08T11:00:00Z"}
+    assert projection.merge_record(stored, later) == later
+
+
+def test_everything_else_is_the_freshest_observation():
+    stored = {"phase": "Running", "volumesDone": "1"}
+    merged = projection.merge_record(stored, {"phase": "Succeeded", "volumesDone": "3"})
+    assert merged == {"phase": "Succeeded", "volumesDone": "3"}

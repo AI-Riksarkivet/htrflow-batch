@@ -545,3 +545,23 @@ def test_the_detail_of_a_reaped_campaign_is_what_the_record_has():
 def test_a_campaign_with_neither_job_nor_record_is_still_a_404():
     client = TestClient(create_app(_reaped_reader(), progress=FakeProgress()))
     assert client.get("/api/v1/jobs/htr-test/nonesuch").status_code == 404
+
+
+def test_a_later_detail_request_does_not_erase_the_failed_volumes():
+    """End to end over the route: the pods are gone, so this response has no
+    reasons -- and the record keeps the ones it already had (B76 review)."""
+    kept = '[{"id":"vol1","reason":"manifest 404"}]'
+    reader = RecordingReader(
+        [
+            {
+                "metadata": {
+                    "name": "campaign-kyrk-status",
+                    "namespace": "htr-test",
+                },
+                "data": {"phase": "Running", "failedVolumes": kept},
+            }
+        ]
+    )
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    assert client.get("/api/v1/jobs/htr-test/kyrk").status_code == 200
+    assert _status_of(reader)["data"]["failedVolumes"] == kept

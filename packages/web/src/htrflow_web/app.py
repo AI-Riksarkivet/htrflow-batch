@@ -150,16 +150,18 @@ def create_app(
         """Write the campaign's status ConfigMap when this request saw
         something the stored one does not already say (B76).
 
-        Merged over what is there, never replacing it: each endpoint
-        observes a different part (only the detail one reads pods, so only
-        it knows the failed volumes), and an unchanged body is not sent at
-        all -- an idle status page polls, and every poll would otherwise be
-        a write. Never fatal: a record the API could not write is a record
-        a few minutes old, while a 500 is a status page nobody can read."""
+        Merged over what is there and never shrinking it
+        (``projection.merge_record``): each endpoint observes a different
+        part (only the detail one reads pods, so only it knows the failed
+        volumes, and even it stops seeing them once the pods are collected),
+        and an unchanged body is not sent at all -- an idle status page
+        polls, and every poll would otherwise be a write. Never fatal: a
+        record the API could not write is a record a few minutes old, while
+        a 500 is a status page nobody can read."""
         if not hasattr(reader, "apply_configmap"):
             return  # site-only: no cluster
         stored = (live or {}).get("data") or {}
-        data = {**stored, **projection.status_record(row, failures)}
+        data = projection.merge_record(stored, projection.status_record(row, failures))
         if data == stored:
             return
         cm = projection.status_configmap(row, data)

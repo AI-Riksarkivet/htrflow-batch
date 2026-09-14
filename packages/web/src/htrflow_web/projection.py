@@ -307,6 +307,32 @@ def record_detail(
     }
 
 
+#: Values that say nothing. `"[]"` is `failedVolumes`' own empty.
+_SAYS_NOTHING = ("", "[]")
+
+
+def merge_record(stored: dict[str, str], fresh: dict[str, str]) -> dict[str, str]:
+    """The stored record updated with a fresh observation, never shrunk.
+
+    A campaign's pods are garbage-collected long before its record is, so a
+    detail request an hour after the failures happened sees no reasons at
+    all -- and this record is the only place those sentences survive. Two
+    rules, both about not losing ground: a value that says nothing never
+    replaces one that says something, and ``finishedAt`` never moves
+    backwards (the read API and `htrflow-campaigns apply` both write it, and
+    they do not see the same clock).
+    """
+    merged = dict(stored)
+    for key, value in fresh.items():
+        old = stored.get(key, "")
+        if value in _SAYS_NOTHING and old not in _SAYS_NOTHING:
+            continue
+        if key == "finishedAt" and old > value:
+            continue
+        merged[key] = value
+    return merged
+
+
 def status_configmap(row: dict, data: dict[str, str]) -> dict:
     """The whole object the read API applies. Named after the campaign
     ConfigMap beside it and labelled like it, so a prune takes both."""
