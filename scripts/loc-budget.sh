@@ -268,7 +268,13 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2721
 # names which campaign a rendered object belongs to. Most of `_finished` is
 # the paragraph saying why there is no override flag: a campaign that should
 # run again is a new campaign.
-check converter "$(count packages/converter/src -name '*.py')" 1586
+# 1586 -> 1591 (2026-09-14, B76 review): the provenance key renamed to
+# `applied-by`. `htrflow.riksarkivet.se/submitter` is reserved by the
+# multi-tenant design (D10/B94) for a LABEL stamped at render time from an
+# authenticated forge login; an apply knows only the account it ran under,
+# and the added lines are the paragraph saying why the two are not the
+# same claim.
+check converter "$(count packages/converter/src -name '*.py')" 1591
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

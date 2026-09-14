@@ -216,9 +216,16 @@ database — see the [decision log](decision-log.md)):
 The provenance annotations on the record, all
 `htrflow.riksarkivet.se/`-prefixed: `image-digest` (rendered — it is a pure
 function of the repo, so `rendered/` stays byte-identical between two
-renders), and `campaigns-commit`, `submitter` and `applied-at`, stamped by
-`apply`. The submitter is `HTRFLOW_SUBMITTER` when it is set — CI sets it
+renders), and `campaigns-commit`, `applied-by` and `applied-at`, stamped by
+`apply`. `applied-by` is `HTRFLOW_APPLIED_BY` when it is set — CI sets it
 from whoever triggered the run — else the OS user of the apply, lower-cased.
+It says who ran the command, which is all an apply can prove;
+`htrflow.riksarkivet.se/submitter` is a different key, reserved for the
+authenticated login CI stamps at render time under the multi-tenant design.
+`applied-at` is the LAST apply of the campaign, so for a campaign that is
+still running it moves every time — it is not the campaign's start time
+(`startedAt` in the status ConfigMap is), and once the campaign is finished
+`apply` leaves it alone and it stops moving.
 
 Three things follow.
 
