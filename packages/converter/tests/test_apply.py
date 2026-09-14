@@ -601,3 +601,34 @@ def test_a_refused_record_write_still_lets_the_stored_record_decide(
     captured = capsys.readouterr()
     assert "could not record how campaign kyrk ended" in captured.err
     assert "campaign kyrk finished 2026-09-08, unchanged, left alone" in captured.out
+
+
+def test_a_stored_comma_line_is_the_same_volume_list_as_a_rendered_space_one(
+    tmp_path, cluster, capsys
+):
+    """`images:` URLs used to be comma-joined. A campaign applied before that
+    changed has the comma line in its ConfigMap, and this render writes the
+    space line -- the same volumes, said twice. Compared byte for byte, the
+    campaign reads as changed, and a finished one whose Job the TTL reaped is
+    applied again: every volume re-run over a separator. The append-only
+    check already reads a line as what it MEANS; so does this."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    comma = VOLUMES.replace(
+        "images:https://example.org/scan1.jpg https://example.org/scan2.jpg",
+        "images:https://example.org/scan1.jpg,https://example.org/scan2.jpg",
+    )
+    assert comma != VOLUMES, "the fixture must carry an images: volume"
+    cluster.live = [_record("kyrk", comma), _status("kyrk", "Succeeded")]
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert "kyrk" not in [c[2] for c in cluster.of("apply")]
+    assert "campaign kyrk finished" in capsys.readouterr().out
+
+
+def test_a_volume_list_that_really_moved_is_still_applied(tmp_path, cluster):
+    """The semantic compare must not swallow a real change: a different URL
+    is a different campaign, whatever the separator."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    moved = VOLUMES.replace("scan2.jpg", "scan9.jpg")
+    cluster.live = [_record("kyrk", moved), _status("kyrk", "Succeeded")]
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert "kyrk" in [c[2] for c in cluster.of("apply")]

@@ -292,6 +292,14 @@ def _provenance(repo: Path) -> dict[str, str]:
 _FINISHED_PHASES = ("Succeeded", "Failed", "PartiallyFailed")
 
 
+def _volume_list(text: str) -> list[tuple]:
+    """A ``volumes.txt`` read as what it means: per line, the volume id and
+    its source, with an ``images:`` line's URLs as a list rather than as one
+    string (``models.parse_source_line``). What makes two spellings of the
+    same volume list compare equal."""
+    return [parse_source_line(line) for line in text.splitlines() if line]
+
+
 def _finished(cluster, name: str, volumes: str, observed: dict | None) -> str | None:
     """One sentence when this campaign is over and unchanged, else ``None``.
 
@@ -306,13 +314,21 @@ def _finished(cluster, name: str, volumes: str, observed: dict | None) -> str | 
     function's business, it is the append-only rule's, which ``_render``
     already ran. There is deliberately no override flag: a campaign that
     should run again is a new campaign.
+
+    The two lists are compared parsed, never byte for byte, for the reason
+    ``_render``'s own check is: a campaign applied before the ``images:``
+    separator changed has the comma line in its ConfigMap while this render
+    writes the space line -- the same volumes, said twice. Byte for byte
+    that reads as a changed campaign, and a finished one would be applied
+    again, re-running every volume over a separator.
     """
     status = observed or cluster.get("ConfigMap", f"campaign-{name}{STATUS_SUFFIX}")
     data = (status or {}).get("data") or {}
     if data.get("phase") not in _FINISHED_PHASES:
         return None
     record = cluster.get("ConfigMap", f"campaign-{name}")
-    if ((record or {}).get("data") or {}).get("volumes.txt") != volumes:
+    stored = ((record or {}).get("data") or {}).get("volumes.txt") or ""
+    if _volume_list(stored) != _volume_list(volumes):
         return None
     when = (data.get("finishedAt") or "")[:10] or "earlier"
     done, total = data.get("volumesDone", "?"), data.get("volumesTotal", "?")

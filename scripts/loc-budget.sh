@@ -337,7 +337,13 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2742
 # models.py and _render's append-only compare, the record work in cli's apply
 # path, render's status_configmap and cluster's get/prune -- so the merged
 # count is both, with nothing double-counted.
-check converter "$(count packages/converter/src -name '*.py')" 1798
+# 1798 -> 1814 (2026-09-14, merge follow-up): the finished-and-unchanged
+# check compares the two volume lists parsed, like the append-only check
+# beside it. Byte for byte, a campaign applied before the `images:` separator
+# changed carries the comma line while this render writes the space line --
+# the same volumes, said twice -- so a finished campaign whose Job the TTL
+# had reaped was applied again and re-ran every volume over a separator.
+check converter "$(count packages/converter/src -name '*.py')" 1814
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
