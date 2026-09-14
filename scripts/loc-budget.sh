@@ -420,7 +420,12 @@ check web       "$(count packages/web/src -name '*.py')" 1031
 # page) and a heading that says so, plus two tests.
 # 3338 -> 3549 (2026-09-08, page-progress merged with main): card-links'
 # 3100 -> 3311 (+211) on top of page-progress -- the two chains above met.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3549
+# 3549 -> 3581 (2026-09-14, a volume completes with failed pages): a verify
+# failure is now one of two things -- pages missing from the results, or a run
+# in which every page processed failed -- and each gets its own sentence,
+# naming only the pages the retry will actually redo. The `done` stage leaves
+# the progress line so a finished volume reads as its pages and its failures.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3581
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

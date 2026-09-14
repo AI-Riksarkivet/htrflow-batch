@@ -34,13 +34,18 @@ function stop(sentence: string): string {
 
 /**
  * The page names inside a verify message's `missing=[...] failed=[...]`
- * lists (Python repr — `main._verify` builds it). Deduplicated and in the
- * order they appear; an empty or unparseable message yields none, and the
- * sentence then just says how it went without naming pages.
+ * lists (Python repr — `main._verify` builds it). With a `key` only that
+ * list's names; without one, every name in the message. Deduplicated and in
+ * the order they appear; an empty or unparseable message yields none, and
+ * the sentence then just says how it went without naming pages.
  */
-function pageNames(error: string): string[] {
+function pageNames(error: string, key?: "missing" | "failed"): string[] {
   const names: string[] = [];
-  for (const list of error.matchAll(/=\[([^\]]*)\]/g)) {
+  const lists =
+    key === undefined
+      ? /=\[([^\]]*)\]/g
+      : new RegExp(`${key}=\\[([^\\]]*)\\]`, "g");
+  for (const list of error.matchAll(lists)) {
     for (const quoted of (list[1] ?? "").matchAll(/'([^']*)'/g)) {
       const name = quoted[1];
       if (name !== undefined && name !== "" && !names.includes(name)) {
@@ -51,19 +56,41 @@ function pageNames(error: string): string[] {
   return names;
 }
 
-function describeVerify(error: string): string {
-  const names = pageNames(error);
+/** "(p012, p045 and 2 more)", or nothing when the message named no page. */
+function naming(names: string[]): string {
   const rest = names.length - PAGES_SHOWN;
-  const shown =
-    names.length === 0
-      ? ""
-      : ` (${names.slice(0, PAGES_SHOWN).join(", ")}${
-          rest > 0 ? ` and ${rest} more` : ""
-        })`;
+  if (names.length === 0) return "";
+  return ` (${names.slice(0, PAGES_SHOWN).join(", ")}${
+    rest > 0 ? ` and ${rest} more` : ""
+  })`;
+}
+
+/**
+ * A verify failure is now one of two things (the product owner, 2026-09-14):
+ * pages MISSING from the results — neither uploaded nor recorded as failed,
+ * which a retry converges on — or a run in which every page processed failed,
+ * which is a broken model or a dead GPU rather than a bad volume. A page that
+ * failed with a reason recorded no longer fails verify at all: the volume
+ * completes and names it in manifest.json, so no sentence here covers it.
+ */
+function describeVerify(error: string): string {
+  if (error.startsWith("verify failed: all ")) {
+    const n = pageNames(error, "failed").length;
+    const count = n === 0 ? "No page" : `None of the ${n} pages`;
+    return (
+      `${count} processed in this attempt produced a result; the volume is ` +
+      "retried automatically — check the model and the GPU."
+    );
+  }
+  // `missing=` first: the message carries a `failed=` list too, and those
+  // pages are accounted for — naming them here would tell the reader they
+  // are coming back when only the missing ones are.
+  const named = pageNames(error, "missing");
+  const names = named.length === 0 ? pageNames(error) : named;
   const count = names.length === 0 ? "Some" : String(names.length);
-  const plural = names.length === 1 ? "page" : "pages";
+  const plural = names.length === 1 ? "page is" : "pages are";
   return (
-    `${count} ${plural} could not be processed${shown}; ` +
+    `${count} ${plural} missing from the results${naming(names)}; ` +
     "the volume is retried automatically and only those pages are redone."
   );
 }
@@ -165,7 +192,12 @@ function formatAge(seconds: number): string {
 export function describeProgress(progress: VolumeProgress): string {
   const { done, total, failed, stage, ageSeconds } = progress;
   const parts = [`${done} / ${total} pages`];
-  if (stage !== null) parts.push(STAGE_WORDS[stage] ?? stage);
+  // `done` is the one stage left out: the state chip beside this line already
+  // says it (CampaignCard), and a volume now finishes WITH failed pages
+  // recorded, so this line has to read as the pages — "637 / 638 pages · 1
+  // failed" — not as the word twice over.
+  if (stage !== null && stage !== "done")
+    parts.push(STAGE_WORDS[stage] ?? stage);
   if (failed > 0) parts.push(`${failed} failed`);
   if (ageSeconds !== null) parts.push(`updated ${formatAge(ageSeconds)}`);
   return parts.join(" · ");
