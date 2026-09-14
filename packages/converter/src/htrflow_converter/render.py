@@ -165,6 +165,30 @@ def pipeline_objects(p: Pipeline, cfg: ConverterConfig) -> list[dict]:
     return [_pipeline_configmap(p, cfg), _warmup_job(p, cfg)]
 
 
+def recipe(objects: list[dict]) -> dict[str, str]:
+    """What a pipeline's rendered pair records about the RECIPE itself: the
+    steps, as the sha256 the ConfigMap is annotated with, and the image the
+    warm-up runs. The two things ``pipelines/<id>.yaml`` alone decides, and
+    what ``cli`` holds a re-render against to keep a pipeline id a permanent
+    name for one recipe.
+
+    Deliberately not the whole rendered file. A converter release or a
+    converter.yaml setting moves the warm-up's pod template too (the GPU
+    RuntimeClass, the Hub token's env var) without changing the recipe by a
+    word -- ``apply`` replaces a warm-up Job for those.
+    """
+    cm = next((o for o in objects if o.get("kind") == "ConfigMap"), {})
+    job = next((o for o in objects if o.get("kind") == "Job"), {})
+    pod = ((job.get("spec") or {}).get("template") or {}).get("spec") or {}
+    containers = pod.get("containers") or [{}]
+    return {
+        "image": containers[0].get("image", ""),
+        "steps": ((cm.get("metadata") or {}).get("annotations") or {}).get(
+            _SHA_ANNOTATION, ""
+        ),
+    }
+
+
 _WAIT_STEP = 10
 #: The `warmup-wait` gate, bounded. A batch pod reserves `nvidia.com/gpu: 1`
 #: for its whole lifetime -- init containers included, and Kueue holds the

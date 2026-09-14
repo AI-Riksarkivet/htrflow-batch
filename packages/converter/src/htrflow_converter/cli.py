@@ -79,9 +79,17 @@ def _report(e: ValidationError, tail: str) -> int:
 def _validate(repo_dir: str) -> int:
     repo = Path(repo_dir)
     try:
-        load(repo / "campaigns", repo / "pipelines", repo / "converter.yaml")
+        campaigns, pipelines, cfg = load(
+            repo / "campaigns", repo / "pipelines", repo / "converter.yaml"
+        )
     except ValidationError as e:
         return _report(e, "")
+    # `rendered/` is committed, so a pull request has the previous render
+    # right there to be held against -- no cluster, and no render of its own.
+    edited = _edited_pipeline(campaigns, pipelines, cfg, repo / "rendered")
+    if edited is not None:
+        print(edited)
+        return 1
     return 0
 
 
@@ -141,6 +149,59 @@ def _colliding_names(campaigns: list[Campaign]) -> str | None:
     return None
 
 
+#: A pipeline id is a permanent name for a recipe (D17): results are keyed
+#: by it, and the Jobs that carry it are immutable once created. Editing a
+#: pipeline a campaign already runs therefore reached the API server as
+#: "field is immutable", halfway through an apply and after the pipeline
+#: ConfigMap had already changed under the running campaign -- indexes that
+#: had not started ran a different recipe from the ones that had.
+_PIPELINE_CHANGED = (
+    "pipeline {id} changed ({what}) but campaigns {campaigns} still run it — "
+    "a pipeline is immutable while campaigns reference it; add a new pipeline "
+    "file ({id}-2) and point new campaigns at it"
+)
+
+
+def _recorded_recipe(path: Path) -> dict[str, str]:
+    """The recipe the previous render left in ``path``. ``rendered/`` is
+    committed, so the previous render IS the record. Nothing when there is
+    none to hold this render against -- a file too broken to parse included,
+    since this render is about to overwrite it anyway."""
+    if not path.is_file():
+        return {}
+    with contextlib.suppress(yaml.YAMLError):
+        return render.recipe(
+            [d for d in yaml.safe_load_all(path.read_text()) if isinstance(d, dict)]
+        )
+    return {}
+
+
+def _edited_pipeline(campaigns, pipelines: dict, cfg, out: Path) -> str | None:
+    """One sentence when a pipeline a live campaign runs has been edited.
+
+    Live is: a campaign still in ``campaigns/`` that an earlier render
+    already wrote to ``rendered/``. That one has been applied, its Job
+    carries this recipe and its results are keyed by this pipeline id. A
+    campaign whose file has been removed -- how a finished one is retired --
+    holds nothing, and neither does one this render is writing for the first
+    time.
+    """
+    for p in pipelines.values():
+        before = _recorded_recipe(out / "pipelines" / f"{p.id}.yaml")
+        after = render.recipe(render.pipeline_objects(p, cfg))
+        moved = [k for k in sorted(after) if before and before.get(k) != after[k]]
+        users = sorted(
+            c.name
+            for c in campaigns
+            if c.pipeline == p.id and _existing_parts(out / "campaigns", c)
+        )
+        if moved and users:
+            return _PIPELINE_CHANGED.format(
+                id=p.id, what=", ".join(moved), campaigns=", ".join(users)
+            )
+    return None
+
+
 def _shape(paths: list[Path]) -> str:
     """``kyrk.yaml``, or ``8 parts, kyrk-part1.yaml … kyrk-part8.yaml``."""
     if len(paths) == 1:
@@ -185,6 +246,10 @@ def _render(repo_dir: str, out_dir: str) -> int:
     clash = _colliding_names(campaigns)
     if clash is not None:
         print(clash)
+        return 1
+    edited = _edited_pipeline(campaigns, pipelines, cfg, out)
+    if edited is not None:
+        print(edited)
         return 1
     pipelines_out, campaigns_out = out / "pipelines", out / "campaigns"
     written: set[Path] = set()

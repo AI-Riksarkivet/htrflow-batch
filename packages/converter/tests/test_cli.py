@@ -396,3 +396,100 @@ def test_a_comma_rendered_campaign_whose_volumes_changed_is_still_refused(
     capsys.readouterr()
     assert main(["render", str(repo), "--out", str(out)]) == 1
     assert "campaign kyrk is append-only" in capsys.readouterr().out
+
+
+def _edit_pipeline(repo: Path, **changes) -> None:
+    path = repo / "pipelines" / "demo-v1.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc.update(changes)
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+
+
+NEW_IMAGE = "ghcr.io/riksarkivet/htrflow-batch@sha256:" + "b" * 64
+
+
+def test_render_refuses_a_pipeline_edit_a_rendered_campaign_still_runs(
+    tmp_path, capsys
+):
+    """A pipeline id is a permanent name for a recipe. Editing one that a
+    campaign already runs used to reach the API server as "field is
+    immutable", halfway through an apply; it is now one sentence here, and
+    nothing was rendered."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    out = repo / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    _edit_pipeline(repo, image=NEW_IMAGE)
+    capsys.readouterr()
+
+    assert main(["render", str(repo), "--out", str(out)]) == 1
+    assert capsys.readouterr().out.strip() == (
+        "pipeline demo-v1 changed (image) but campaigns kyrk, loc still run "
+        "it — a pipeline is immutable while campaigns reference it; add a new "
+        "pipeline file (demo-v1-2) and point new campaigns at it"
+    )
+    assert NEW_IMAGE not in (out / "pipelines" / "demo-v1.yaml").read_text()
+
+
+def test_validate_refuses_the_same_edit_before_anything_is_rendered(tmp_path, capsys):
+    """`validate` is what a pull request runs, and `rendered/` is committed,
+    so the previous render is right there to be held against."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    _edit_pipeline(repo, steps=[{"step": "Segmentation"}])
+    capsys.readouterr()
+
+    assert main(["validate", str(repo)]) == 1
+    assert "pipeline demo-v1 changed (steps)" in capsys.readouterr().out
+
+
+def test_a_new_pipeline_id_goes_through(tmp_path, capsys):
+    """The way out the sentence names: a new file, and new campaigns on it."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    out = repo / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+
+    doc = yaml.safe_load((repo / "pipelines" / "demo-v1.yaml").read_text())
+    doc["image"] = NEW_IMAGE
+    (repo / "pipelines" / "demo-v1-2.yaml").write_text(yaml.safe_dump(doc))
+    (repo / "campaigns" / "brandnew.yaml").write_text(
+        "pipeline: demo-v1-2\nvolumes:\n  - R5555555\n"
+    )
+    assert main(["render", str(repo), "--out", str(out)]) == 0, capsys.readouterr().out
+    assert (out / "pipelines" / "demo-v1-2.yaml").exists()
+
+
+def test_a_pipeline_no_rendered_campaign_runs_may_still_be_edited(tmp_path, capsys):
+    """Nothing is keyed by an id no campaign has run under. A campaign whose
+    file has been removed -- how a finished campaign is retired -- releases
+    the pipeline the same way."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    out = repo / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    for path in (repo / "campaigns").glob("*.yaml"):
+        path.unlink()
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    _edit_pipeline(repo, image=NEW_IMAGE)
+    (repo / "campaigns" / "later.yaml").write_text(
+        "pipeline: demo-v1\nvolumes:\n  - R5555555\n"
+    )
+    assert main(["render", str(repo), "--out", str(out)]) == 0, capsys.readouterr().out
+    assert NEW_IMAGE in (out / "pipelines" / "demo-v1.yaml").read_text()
+
+
+def test_a_converter_yaml_setting_is_not_a_changed_recipe(tmp_path, capsys):
+    """The other half of the rule. A converter.yaml setting reaches every
+    warm-up Job's pod template at once, and so does a converter release --
+    neither is a changed recipe, and `apply` replaces the warm-up for those
+    rather than refusing the render."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    out = repo / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    cfg = repo / "converter.yaml"
+    cfg.write_text(cfg.read_text() + "hf_token_secret: hf-token\n")
+    assert main(["render", str(repo), "--out", str(out)]) == 0, capsys.readouterr().out
+    assert "HF_TOKEN" in (out / "pipelines" / "demo-v1.yaml").read_text()
