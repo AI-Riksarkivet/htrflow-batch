@@ -21,6 +21,7 @@ lists what the module exposes on your checkout.
 | `scan` | Trivy over the built wrapper image; table output, fails on findings (default `CRITICAL,HIGH`, unfixed findings ignored) |
 | `scan-web` | the same over the built web image — a slim CPU-only base, so a clean gate is realistic; `make scan-web` is the local twin |
 | `scan-json` | `scan` with JSON output that never fails the call; what `make scan` runs |
+| `scan-sarif` | Trivy over one built image (`--image wrapper\|web`) as a SARIF report: `CRITICAL,HIGH`, unfixed findings included, never fails on findings; what `security.yml` uploads to the Security tab, while `scan` and `scan-web` stay the gates |
 | `publish-docker` | tests, builds and pushes one image (`--component wrapper\|web`) and returns its reference with the digest ([Releasing](releasing.md#publishing)) |
 | `compose-up` | starts the `web` service of the `.docker/docker-compose.yml` project as a dagger Service |
 | `compose-test` | brings up the compose stack and fetches the web service's `/uv.html`. The module mounts only `.docker/` as the compose project, so the `web` service is image-only and must be pullable; `make compose-smoke` builds and tags it from the checkout first |
@@ -128,6 +129,21 @@ The cluster constants these targets use come from `.env`
 - **`docs.yml`** ("Documentation") — on push to `main` and by hand:
   `pip install zensical`, `scripts/docs-site.sh build --clean`, then deploy
   to GitHub Pages.
+- **`security.yml`** ("Security") — weekly, by hand, and on pushes to `main`
+  that change an image's inputs. One job per image: `scan-sarif` uploads the
+  Trivy report to the Security tab, then the same CRITICAL gate as `ci.yml`
+  runs, so an advisory published between changes fails a scheduled run. On a
+  push the gate is skipped, since `ci.yml` has just run it.
+- **`codeql.yml`** ("CodeQL") — on push and pull request to `main` and weekly:
+  static analysis of the Python packages, the campaign browser, the dagger
+  module and the workflows themselves, with findings in the Security tab.
+- **`trufflehog.yml`** ("Secret Leaks") — on every push and pull request:
+  TruffleHog over the git history, reporting verified and unverifiable
+  credentials. A newly pushed branch is scanned from its first commit.
+  `.github/trufflehog-exclude-paths.txt` names the few exact paths whose
+  history holds dummy credentials from tests.
+- **`scorecard.yml`** — OpenSSF Scorecard weekly, on push to `main` and on
+  branch-protection changes, publishing the score the README badge shows.
 
 Every dagger step pins the `dagger-for-github` action by SHA and its engine
 `version` to `engineVersion` in `dagger.json`.
