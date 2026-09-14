@@ -128,3 +128,15 @@ def test_the_read_api_may_write_the_campaign_record():
     ]
     assert verbs["jobs"] == verbs["pods"] == '"get", "list", "watch"'
     assert not any("delete" in granted for granted in verbs.values())
+
+
+def test_the_apply_identity_may_read_what_it_decides_on():
+    """`htrflow-campaigns apply` reads each campaign's live Job by name to
+    record how it ended, and reads the record back to leave a finished
+    campaign alone (B76). `list` does not authorize a read by name."""
+    rbac = (CHART / "templates" / "apply-rbac.yaml").read_text(encoding="utf-8")
+    verbs = dict(re.findall(r'resources: \["(\w+)"\]\n    verbs: \[([^\]]*)\]', rbac))
+    for resource in ("jobs", "configmaps"):
+        granted = verbs[resource].replace('"', "").split(", ")
+        assert granted[:1] == ["get"], resource
+        assert {"create", "patch"} <= set(granted), resource

@@ -10,7 +10,7 @@ from importlib import resources
 
 import yaml
 
-from .models import Campaign, ConverterConfig, Pipeline, Volume
+from .models import STATUS_SUFFIX, Campaign, ConverterConfig, Pipeline, Volume
 
 _LABEL_JUNK = re.compile(r"[^A-Za-z0-9_.-]")
 _PATH_RE = re.compile(r"[^.\[\]]+|\[\d+\]")
@@ -300,6 +300,71 @@ def campaign_names(c: Campaign, parts: list[list[Volume]]) -> list[str]:
     if len(parts) == 1:
         return [c.name]
     return [f"{split_stem(c.name)}-part{i}" for i in range(1, len(parts) + 1)]
+
+
+#: The status ConfigMap's labels beside the campaign's own, and the one
+#: that tells the two apart (packages/web ``projection.status_configmap``
+#: writes the same object; a test asserts the field names agree).
+_KIND_LABEL = "htrflow.riksarkivet.se/kind"
+_STATUS_KIND = "status"
+
+
+def status_configmap(live: dict, cfg: ConverterConfig) -> dict | None:
+    """How a campaign ENDED, read off its live Job, or ``None`` while that
+    Job is still running.
+
+    The read API writes this record too, and in more detail -- it reads the
+    pods, so it alone can say why a volume failed. But it writes it only
+    while somebody has the status page open, and a campaign that finishes
+    unwatched on a Friday is reaped before anyone looks: no terminal record,
+    and the next apply recreates the Job and runs every volume again. The
+    apply is the one thing guaranteed to run, so it records the ending it
+    can see. Counts come from ``status.succeeded`` against ``completions``,
+    not from the index ranges: for a Job that is over, every index that did
+    not succeed failed, and ``status.failed`` counts pods (retries included),
+    not indexes.
+    """
+    status = live.get("status") or {}
+    conditions = status.get("conditions") or []
+    done = status.get("succeeded") or 0
+    complete = any(
+        c.get("type") == "Complete" and c.get("status") == "True" for c in conditions
+    )
+    failed = any(
+        c.get("type") == "Failed" and c.get("status") == "True" for c in conditions
+    )
+    if not complete and not failed:
+        return None
+    meta = live.get("metadata") or {}
+    labels = meta.get("labels") or {}
+    namespace = meta.get("namespace", "")
+    pipeline = labels.get(_PIPELINE_LABEL, "")
+    total = (live.get("spec") or {}).get("completions") or 0
+    finished = status.get("completionTime") or next(
+        (
+            c.get("lastTransitionTime")
+            for c in conditions
+            if c.get("type") in ("Complete", "Failed") and c.get("status") == "True"
+        ),
+        None,
+    )
+    cm = _load("configmap.yaml")
+    _set(cm, "metadata.name", f"campaign-{meta.get('name', '')}{STATUS_SUFFIX}")
+    _set(cm, "metadata.namespace", namespace)
+    cm["metadata"]["labels"][_CAMPAIGN_LABEL] = labels.get(_CAMPAIGN_LABEL, "")
+    cm["metadata"]["labels"][_PIPELINE_LABEL] = pipeline
+    cm["metadata"]["labels"][_KIND_LABEL] = _STATUS_KIND
+    cm["metadata"].pop("annotations")  # the digest is on the record, not here
+    cm["data"] = {
+        "phase": "Succeeded" if complete else ("PartiallyFailed" if done else "Failed"),
+        "volumesTotal": str(total),
+        "volumesDone": str(done),
+        "volumesFailed": str(max(total - done, 0)),
+        "startedAt": status.get("startTime") or "",
+        "finishedAt": finished or "",
+        "resultsBase": f"{cfg.public_results_base}/{namespace}/{pipeline}",
+    }
+    return cm
 
 
 def campaign_objects(c: Campaign, p: Pipeline, cfg: ConverterConfig) -> list[dict]:

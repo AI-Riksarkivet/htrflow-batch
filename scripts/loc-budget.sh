@@ -280,7 +280,16 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2721
 # status of campaign `x` to, and which the prune then keeps or deletes on the
 # wrong campaign's behalf. STATUS_SUFFIX moves to models.py, where the rule
 # that reserves it lives and where render and cluster can both import it.
-check converter "$(count packages/converter/src -name '*.py')" 1601
+# 1601 -> 1685 (2026-09-14, B76 review): apply records the ending itself.
+# The read API writes the record only while a person has the status page
+# open, so a campaign that finished unwatched reached its TTL with no
+# terminal record and the next apply ran every volume again. `status_configmap`
+# builds the same object the API writes, from the live Job's terminal
+# condition (counts from `status.succeeded` against `completions`: for a Job
+# that is over, every index that did not succeed failed, and `status.failed`
+# counts pods, not indexes), and `_apply` writes it before the skip check
+# and hands it straight to `_finished` rather than reading it back.
+check converter "$(count packages/converter/src -name '*.py')" 1685
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
@@ -519,5 +528,9 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3613
 # lines are the paragraph saying which object, why `create` is not a second
 # privilege (a server-side apply of a missing object is a create) and what is
 # still forbidden.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 769
+# 769 -> 774 (2026-09-14, B76 review): the apply identity's Role gains `get`
+# on jobs and configmaps -- the command now reads each campaign's live Job to
+# record how it ended, and reads the record back to leave a finished campaign
+# alone. `list` does not authorize a read by name.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 774
 exit $fail
