@@ -1,0 +1,2 @@
+^packages/reconciler/tests/test_gitrepo\.py$
+^packages/reconciler/src/htrflow_reconciler/gitrepo\.py$
