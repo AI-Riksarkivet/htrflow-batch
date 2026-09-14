@@ -289,7 +289,15 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2721
 # that is over, every index that did not succeed failed, and `status.failed`
 # counts pods, not indexes), and `_apply` writes it before the skip check
 # and hands it straight to `_finished` rather than reading it back.
-check converter "$(count packages/converter/src -name '*.py')" 1685
+# 1685 -> 1706 (2026-09-14, B76 re-review): recording how a campaign ended is
+# an improvement on the apply, never a precondition for it. `get` on Jobs is a
+# verb nothing needed before, so an identity whose Role predates B76 -- or a
+# human on a restricted kubeconfig -- raised a ClusterError and the apply
+# returned 1 with NOTHING applied. `_record_and_decide` is the observe and the
+# skip decision as one step (the decision reads the record the same step just
+# wrote), wrapped per campaign: one sentence on stderr, and that campaign
+# applied as any other.
+check converter "$(count packages/converter/src -name '*.py')" 1706
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

@@ -315,6 +315,20 @@ def _finished(cluster, name: str, volumes: str, observed: dict | None) -> str | 
     )
 
 
+def _record_and_decide(cluster, cfg, name: str, volumes: str) -> str | None:
+    """Write how this campaign ended, then say whether to leave it alone.
+
+    One step, because the record this apply just wrote is what the decision
+    reads -- and because both halves want the same answer when the cluster
+    refuses them: one sentence, and the campaign applied as any other.
+    """
+    live = cluster.get("Job", name)
+    record = render.status_configmap(live, cfg) if live else None
+    if record is not None:
+        cluster.apply(record)
+    return _finished(cluster, name, volumes, record)
+
+
 def _campaign_of(obj: dict) -> str:
     """Which campaign a rendered object belongs to: its Job is named after
     the campaign, its ConfigMap is that name with ``campaign-`` in front."""
@@ -389,24 +403,31 @@ def _apply(
             # open; a campaign that finished unwatched would otherwise
             # reach its TTL with no terminal record at all, and this apply
             # would recreate the Job and run every volume again.
-            observed: dict[str, dict] = {}
+            volumes_of = {
+                _campaign_of(o): o["data"]["volumes.txt"]
+                for o in campaigns
+                if o["kind"] == "ConfigMap"
+            }
+            done: set[str] = set()
             for obj in campaigns:
                 if obj["kind"] != "Job":
                     continue
                 name = obj["metadata"]["name"]
-                live = cluster.get("Job", name)
-                record = render.status_configmap(live, cfg) if live else None
-                if record is not None:
-                    cluster.apply(record)
-                    observed[name] = record
-            done: set[str] = set()
-            for obj in campaigns:
-                if obj["kind"] != "ConfigMap":
+                # Never a precondition for the apply. An identity whose Role
+                # predates this needs a `get` on Jobs that nothing needed
+                # before, and a human may be on a restricted kubeconfig --
+                # refusing to apply anything over that would take the
+                # campaigns repo offline for a permission it never had. Warn
+                # once, and apply this campaign as any other.
+                try:
+                    said = _record_and_decide(cluster, cfg, name, volumes_of[name])
+                except ClusterError as e:
+                    print(
+                        f"could not record how campaign {name} ended, "
+                        f"continuing without it: {e}",
+                        file=sys.stderr,
+                    )
                     continue
-                name = _campaign_of(obj)
-                said = _finished(
-                    cluster, name, obj["data"]["volumes.txt"], observed.get(name)
-                )
                 if said is not None:
                     done.add(name)
                     print(said)

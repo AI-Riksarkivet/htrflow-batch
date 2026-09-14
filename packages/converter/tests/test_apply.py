@@ -75,6 +75,7 @@ class FakeCluster(Cluster):
         self.namespace = ""
         self.live: list[dict] = []
         self.applied: dict[str, dict] = {}
+        self.managers: dict[str, str | None] = {}
         self.workloads: dict[str, dict] = {}
         self.calls: list[tuple] = []
 
@@ -86,6 +87,7 @@ class FakeCluster(Cluster):
         def patch(name, ns, obj, **kw):
             self.calls.append(("apply", kind, name))
             self.applied[name] = obj
+            self.managers[name] = kw.get("field_manager")
             return _Body({"metadata": {"name": name, "uid": f"uid-{name}"}})
 
         def list_(ns, label_selector="", **kw):
@@ -475,3 +477,86 @@ def test_a_running_job_is_not_recorded_by_the_apply(tmp_path, cluster):
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     assert "campaign-kyrk-status" not in cluster.applied
     assert "kyrk" in [c[2] for c in cluster.of("apply")]
+
+
+def test_a_cluster_that_refuses_the_record_does_not_stop_the_apply(
+    tmp_path, cluster, capsys
+):
+    """Recording how a campaign ended is an improvement on the apply, never
+    a precondition for it. An identity whose Role predates B76 -- or a
+    human's restricted kubeconfig -- has no `get` on Jobs, and refusing to
+    apply anything at all over that would take the campaigns repo offline
+    for a permission it never needed before."""
+
+    def forbidden(kind, verb, name=""):
+        if verb == "read":
+            raise cluster_mod.ClusterError(
+                f"not allowed to get {kind}/{name} in htr-test: Forbidden"
+            )
+        return FakeCluster._method(cluster, kind, verb, name)
+
+    cluster._method = forbidden
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    applied = [c[2] for c in cluster.of("apply")]
+    assert applied == [
+        "htr-pipeline-demo-v1",
+        "htr-warmup-demo-v1",
+        "campaign-kyrk",
+        "kyrk",
+        "campaign-loc",
+        "loc",
+    ]
+    err = capsys.readouterr().err
+    assert err.count("could not record how campaign kyrk ended") == 1
+    assert "Forbidden" in err
+
+
+def test_a_refused_record_write_does_not_stop_the_apply(tmp_path, cluster, capsys):
+    """The same, one step later: the Job reads fine and the record write is
+    what is refused."""
+    live_job = _object("Job", "kyrk")
+    live_job["metadata"]["namespace"] = NS
+    live_job["spec"] = {"completions": 3}
+    live_job["status"] = {
+        "conditions": [{"type": "Complete", "status": "True"}],
+        "succeeded": 3,
+    }
+    cluster.live = [live_job]
+
+    def forbidden(kind, verb, name=""):
+        if verb == "patch" and name.endswith("-status"):
+            raise cluster_mod.ClusterError(f"not allowed to patch {name}: Forbidden")
+        return FakeCluster._method(cluster, kind, verb, name)
+
+    cluster._method = forbidden
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert "kyrk" in [c[2] for c in cluster.of("apply")]
+    assert "could not record how campaign kyrk ended" in capsys.readouterr().err
+
+
+def test_the_applys_record_cannot_erase_the_failed_volumes_the_api_wrote(
+    tmp_path, cluster
+):
+    """Server-side apply owns fields per manager. The apply writes under
+    `htrflow-campaigns` and never sets `failedVolumes` at all, so the
+    sentences the read API wrote under its own manager stay: one record,
+    two writers, no field either of them can take from the other by
+    omission (B76)."""
+    from htrflow_web.kube import FIELD_MANAGER as WEB_MANAGER
+
+    live_job = _object("Job", "kyrk")
+    live_job["metadata"]["namespace"] = NS
+    live_job["spec"] = {"completions": 3}
+    live_job["status"] = {
+        "conditions": [{"type": "Complete", "status": "True"}],
+        "succeeded": 3,
+    }
+    cluster.live = [live_job]
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    written = cluster.applied["campaign-kyrk-status"]
+    assert "failedVolumes" not in written["data"]
+    assert cluster.managers["campaign-kyrk-status"] == cluster_mod.FIELD_MANAGER
+    assert cluster_mod.FIELD_MANAGER != WEB_MANAGER
