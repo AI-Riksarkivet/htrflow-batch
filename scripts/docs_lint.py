@@ -19,10 +19,21 @@ import sys
 from pathlib import Path
 
 RULES: list[tuple[str, re.Pattern[str]]] = [
-    ("ids", re.compile(r"\b[BDTUCXGI][0-9]{1,3}\b|\bS[0-9]{2}\b|\bTask [0-9]+|\bPhase [12]\b|\bPoC\b")),
+    (
+        "ids",
+        re.compile(
+            r"\b[BDTUCXGI][0-9]{1,3}\b|\bS[0-9]{2}\b|"
+            r"\bTask [0-9]+|\bPhase [12]\b|\bPoC\b"
+        ),
+    ),
     ("dates", re.compile(r"\b20[0-9]{2}-[01][0-9]-[0-3][0-9]\b")),
     # Dotted numbers inside an IP address or CIDR (0.0.0.0/0) are not versions.
-    ("versions", re.compile(r"(?<![0-9.])v?[0-9]+\.[0-9]+\.[0-9]+(?![0-9.])|\bv[0-9]+\.[0-9]+\b")),
+    (
+        "versions",
+        re.compile(
+            r"(?<![0-9.])v?[0-9]+\.[0-9]+\.[0-9]+(?![0-9.])|\bv[0-9]+\.[0-9]+\b"
+        ),
+    ),
     (
         "hardware",
         re.compile(
@@ -32,7 +43,10 @@ RULES: list[tuple[str, re.Pattern[str]]] = [
     ),
     (
         "site",
-        re.compile(r"arkis|lbiiif|riksarkivet\.se|/home/|127\.0\.0\.1|localhost|192\.121\.", re.IGNORECASE),
+        re.compile(
+            r"arkis|lbiiif|riksarkivet\.se|/home/|127\.0\.0\.1|localhost|192\.121\.",
+            re.IGNORECASE,
+        ),
     ),
 ]
 
@@ -75,7 +89,10 @@ def main(argv: list[str]) -> int:
             for rule, pattern in RULES:
                 if not pattern.search(text):
                     continue
-                if any(posix.endswith(suffix) and allowed.search(text) for suffix, allowed in allow):
+                if any(
+                    posix.endswith(suffix) and allowed.search(text)
+                    for suffix, allowed in allow
+                ):
                     continue
                 print(f"{posix}:{number}: {rule}: {text.strip()[:160]}")
                 hits += 1
