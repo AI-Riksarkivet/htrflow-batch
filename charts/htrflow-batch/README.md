@@ -46,13 +46,14 @@ device plugin) is a separate chart:
   unless `security.allowTagImages=true` (PoC iteration only; tags are then
   pulled on every rollout).
 
-## Installing and replaying the PoC
+## Installing
 
-The install commands — the production-shaped install, the hardening steps,
-and the bare-k3s replay with `charts/htrflow-devstack` — live in one place:
-[docs/getting-started/deploy.md](../../docs/getting-started/deploy.md), with
-the day-to-day loop in
-[docs/development/local-k3s.md](../../docs/development/local-k3s.md).
+The production-shaped install and the hardening steps live in
+[docs/getting-started/deploy.md](../../docs/getting-started/deploy.md); a dev
+cluster with `charts/htrflow-devstack` is in
+[docs/getting-started/try-it.md](../../docs/getting-started/try-it.md), and
+the contributor loop in
+[docs/development/dev-cluster.md](../../docs/development/dev-cluster.md).
 Cluster-local constants come from the repo-root `.env` (`.env.example` has
 the PoC defaults). The one image to pin: `make poc-push` builds and pushes
 the web image (`packages/web` plus the SPA and Universal Viewer, all in
