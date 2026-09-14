@@ -129,9 +129,15 @@ per-architecture tags such as `<version>-<arch>`.
 
 Override with `--image-repository` and `--registry`. `--base-revision` sets
 `HTRFLOW_BASE_REVISION` for the wrapper, and `--transformers-version` sets
-`TRANSFORMERS_VERSION`: empty, the default, keeps the dockerfile's pin, so a
-normal release publishes the same image it always did. Naming the other
-transformers line publishes that tag on it instead — for models the default
+`TRANSFORMERS_VERSION`: empty, the default, keeps the dockerfile's pin.
+**That pin is unconditional and it is new.** The architecture whose base is
+the upstream image used to keep whatever transformers version that base
+carried; now both architectures install the pinned one, so the next release
+moves it — deliberately, onto the line the other architecture has been
+running. Nothing in CI builds the wrapper image, so the publish workflow is
+where that build is first proven; treat the first release after this change
+as one to watch. Naming the other transformers line publishes that tag on it
+instead — for models the default
 line cannot read ([Two transformers
 lines](../how-it-works/wrapper.md#model-handling)) — and, since one run
 publishes one image, that is a tag of its own, not a second variant of an
