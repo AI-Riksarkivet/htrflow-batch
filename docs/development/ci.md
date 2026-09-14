@@ -124,8 +124,9 @@ The cluster constants these targets use come from `.env`
   labels — so both architectures of a dockerfile change are proven before
   it lands.
 - **`publish.yml`** — manual, one explicit tag per run; tests, builds,
-  pushes, signs and attests both images
-  ([Releasing](releasing.md#the-publish-workflow)).
+  pushes, signs and attests both images for both of the CPU architectures
+  they ship for — each on a runner of its own architecture, joined into one
+  manifest list per image ([Releasing](releasing.md#the-publish-workflow)).
 - **`docs.yml`** ("Documentation") — on push to `main` and by hand:
   `uv sync --locked --only-group docs` (zensical pinned and hash-checked in
   `uv.lock`), `scripts/docs-site.sh build --clean --strict` with that

@@ -75,7 +75,7 @@ exactly that. Always rendered — there is no `enabled` flag.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `web.image` | `docker.io/riksarkivet/htrflow-web@sha256:…` | **Must be digest-pinned** unless `security.allowTagImages`. The default is a published web image; to run your own build, set the digest you pushed (see [Releasing](../development/releasing.md)) |
+| `web.image` | `docker.io/riksarkivet/htrflow-web@sha256:…` | **Must be digest-pinned** unless `security.allowTagImages`. The default is a published web image — the digest of its multi-architecture manifest list, so it resolves on a node of either kind; a single architecture's digest does not. To run your own build, set the digest you pushed (see [Releasing](../development/releasing.md)) |
 | `web.nodePort` | `30800` | NodePort; the container listens on 8081 |
 | `web.resources` | requests cpu 50m / 128Mi, limits cpu 500m / 256Mi | |
 | `web.internalResultsBase` | `""` | Where THIS POD reaches the results bucket, for `ProgressReader` — `""` (default) means the same address as `publicResultsBase`, correct whenever that URL also resolves to the bucket from inside the cluster (a public S3 endpoint). Set it whenever it does not: a browser-facing address reached through a tunnel or port-forward resolves, from inside the pod, to the pod itself, and the API then silently reads no progress at all. Use the in-cluster address instead, e.g. `http://rustfs.<namespace>.svc.cluster.local:9000/<bucket>` for the devstack's store (see [Dev cluster](../development/dev-cluster.md)) |
