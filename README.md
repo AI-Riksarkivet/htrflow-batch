@@ -14,23 +14,28 @@
 [![SLSA provenance](https://img.shields.io/badge/SLSA-provenance-blue.svg)](.github/actions/sign-attest/action.yml)
 [![SBOM SPDX](https://img.shields.io/badge/SBOM-SPDX-green.svg)](.github/actions/sign-attest/action.yml)
 
-> **Not for use yet.** This repository is under active development at
-> Riksarkivet's AI lab and is not ready for others to run: interfaces,
-> chart values and the campaigns format still change without notice, and
-> the published images are for our own clusters. Watch the releases; this
-> notice goes when there is a version we stand behind.
+> **Not for use yet.** This repository is under active development and is
+> not ready for others to run: interfaces, chart values and the campaigns
+> format still change without notice. Watch the releases. This notice goes
+> when there is a release to stand behind.
 
 Batch handwritten-text recognition for whole archive volumes on Kubernetes,
 built around the stock [htrflow](https://github.com/AI-Riksarkivet/htrflow)
-image. A campaign is a YAML file in a git repository listing the volumes to
-transcribe; a pure converter renders it into one Kubernetes **Indexed Job**
-(one index per volume) plus a warm-up Job that caches the pipeline's models;
-**Kueue** owns queueing and GPU quota; **Kyverno** policies decide which
-images and model revisions may run. In each index a thin wrapper streams the
-volume page by page from IIIF into htrflow, uploads ALTO and PAGE XML the
-moment a page is done, stamps every ALTO with what produced it, and publishes
-an IIIF manifest so the result opens in the viewer. A read-only status page
-shows every campaign and volume live. No CRD, no controller, no database.
+image.
+
+- **A campaign is a YAML file** in a git repository that lists the volumes
+  to transcribe.
+- **A pure converter renders it** into one Kubernetes **Indexed Job** (one
+  index per volume), plus a warm-up Job that caches the pipeline's models.
+- **Kueue** owns queueing and GPU quota. **Kyverno** policies decide which
+  images and model revisions may run.
+- **In each index, a thin wrapper** streams the volume page by page from IIIF
+  into htrflow. It uploads ALTO and PAGE XML the moment a page is done, stamps
+  every ALTO with what produced it, and publishes a IIIF manifest so the
+  result opens in the viewer.
+- **A read-only status page** shows every campaign and volume live.
+
+There is no CRD, no controller and no database.
 
 ## How it fits together
 
@@ -58,11 +63,11 @@ flowchart TB
     viewer --> s3
 ```
 
-- [Architecture](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/architecture/) — the map, and the components and their boundaries
-- [Campaigns](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/campaigns/) — the campaigns repo, the converter and what it renders
-- [Queueing](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/queueing/) and [Kueue in depth](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/kueue/) — how a campaign is admitted, paused and shared
-- [Events and signals](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/signals/) — what the system emits and who reads it
-- [Failure handling](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/failure-handling/) — retries, exit codes, what a person is told
+- [Architecture](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/architecture/): the map, and the components and their boundaries
+- [Campaigns](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/campaigns/): the campaigns repo, the converter and what it renders
+- [Queueing](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/queueing/): how a campaign is admitted, paused and shared
+- [Events and signals](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/signals/): what the system emits and who reads it
+- [Failure handling](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/failure-handling/): retries, exit codes, what a person is told
 
 ```mermaid
 %% One page, inside the wrapper.
@@ -78,9 +83,8 @@ flowchart TB
     fetch --> tmp --> seg --> rec --> xml --> up --> pub
 ```
 
-- [From image to transcription](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/page-flow/) — this path in detail
-- [The wrapper](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/wrapper/) — stages, provenance, exit codes
-- [Memory budget](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/memory-budget/) — why a long volume costs the same as a short one
+- [From image to transcription](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/page-flow/): this path in detail
+- [The wrapper](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/wrapper/): stages, provenance, model cache, and why a long volume costs the same memory as a short one
 
 ## What is in the repository
 
@@ -90,50 +94,35 @@ flowchart TB
 | `packages/converter` | `htrflow-campaigns`: validate, render and apply a campaigns repo (Indexed Jobs, warm-up Jobs, ConfigMaps; pause via Kueue) |
 | `packages/web` + `frontend` | The read API (`/api/v1/jobs`) and the SvelteKit status page, one image |
 | `charts/htrflow-batch` | The Helm chart: Kueue queues, RBAC, NetworkPolicies, Kyverno policies, the status page |
-| `charts/htrflow-devstack` | S3 (RustFS), registry and fixtures for a single-node PoC |
+| `charts/htrflow-devstack` | S3 (RustFS), an image registry and the NVIDIA device plugin for a disposable dev cluster |
 | `examples/campaigns` | The shape of a campaigns repository, with the CI that renders, policy-checks and commits `rendered/` |
-| `docs/` | The documentation site (getting started, how it works, reference, audits) plus `docs/features/`, the product view: one story per deliverable, mirrored to Azure DevOps, kept out of the site |
-| `scripts/` | The exact LOC budgets, the generated configuration reference, the stories ↔ Azure DevOps sync |
+| `docs/` | The documentation site (getting started, how it works, reference, development, roadmap). `docs/features/` holds the product view: one story per deliverable, mirrored to Azure DevOps and kept out of the site |
+| `scripts/` | The exact LOC budgets, the generated configuration reference, the docs lint, the stories ↔ Azure DevOps sync |
 
 ## From nothing to a first transcription
 
-One GPU node is enough. The commands are in the order they must run; every
-one exists in this repository's `Makefile`, and the images they pull are the
-published, signed v0.2.0 ones, so nothing has to be built.
+Two paths, both written out step by step in
+[Try it](https://ai-riksarkivet.github.io/htrflow-batch/getting-started/try-it/):
 
-```bash
-# 0. A Kubernetes cluster with an NVIDIA GPU node. On one machine, k3s is one line:
-curl -sfL https://get.k3s.io | sh -
-export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+- **Without a cluster.** `make compose-smoke` runs the wrapper on one page
+  of a fixture volume against a local S3 server and checks the viewer. It
+  needs only Docker.
+- **On a cluster with one NVIDIA GPU node.** Install the prerequisites the
+  chart does not carry, then install the chart itself. Then describe your
+  volumes in a campaigns repo and apply it. The published, signed images are
+  used, so nothing has to be built.
 
-# 1. Clone, install the tooling, and add the two prerequisites the chart does not carry:
-git clone https://github.com/AI-Riksarkivet/htrflow-batch && cd htrflow-batch
-make install            # uv workspace: the converter CLI and the test suites
-make install-kueue      # Kueue: the queue and GPU quota
-make install-devstack   # Kyverno, an S3 bucket (RustFS), an in-cluster registry, the NVIDIA device plugin
+  ```bash
+  make install && make install-kueue && make install-devstack
+  helm upgrade --install htr charts/htrflow-batch -n <namespace> --set …   # values: see Try it
+  uv run htrflow-campaigns init my-campaigns                              # add your volumes
+  make campaigns-apply DIR=my-campaigns
+  ```
 
-# 2. Install htrflow-batch itself:
-helm upgrade --install htr charts/htrflow-batch -n htr-batch \
-  --set publicResultsBase=http://<node-ip>:30900/htr-results \
-  --set network.apiServer.cidr=<node-ip>/32
-make psa-labels
-
-# 3. Describe what to transcribe — a campaigns repo is a folder of YAML:
-uv run htrflow-campaigns init my-campaigns
-#    edit my-campaigns/campaigns/demo.yaml: one volume, an IIIF manifest URL or a
-#    list of image URLs; the demo pipeline already points at the published wrapper
-make campaigns-apply DIR=my-campaigns
-
-# 4. Watch it, and open the result:
-#    http://<node-ip>:30800        the status page: every campaign, volume and page
-#    the volume's "open" link      the viewer, with the text next to the page image
-```
-
-`<node-ip>` is the address the node is reachable at from your browser. The
-S3 credentials the devstack generated are readable with `kubectl -n htr-batch
-get secret htr-batch-s3`. This path runs with the security controls off, the
-right default for a first look; [Deploy](docs/getting-started/deploy.md) is
-the production-shaped install, with the policies on and your own S3.
+The dev-cluster path runs with the security policies off, which is the right
+default for a first look.
+[Deploy](https://ai-riksarkivet.github.io/htrflow-batch/getting-started/deploy/)
+is the production-shaped install, with your own S3 and the policies on.
 
 ## Developing
 
@@ -143,35 +132,24 @@ make frontend-install && make frontend-test
 make ci                                # everything CI runs: format, lint, typecheck, tests, chart, budgets
 ```
 
-For a cluster, Kueue and Kyverno are prerequisites (`make install-kyverno`
-installs the latter; the chart does not install either controller), plus an
-S3 Secret with a `credentials` ini key:
-
-```bash
-helm install htr charts/htrflow-batch -n htr-batch --create-namespace \
-  --set publicResultsBase=<browser-reachable results base URL> \
-  --set web.image=<web image>@sha256:<digest> \
-  --set security.policies.enabled=true
-```
-
-Then declare volumes in a campaigns repo shaped like
-[`examples/campaigns/`](examples/campaigns/) and apply it:
-`make campaigns-apply DIR=<repo>`, or let the campaigns repo's own CI do it on
-merge. `docs/getting-started/` walks through prerequisites, deployment and a
-first volume; `docs/development/local-k3s.md` is the single-node GPU PoC loop
-(`make install-devstack`).
+[Development](https://ai-riksarkivet.github.io/htrflow-batch/development/)
+covers workspace setup, testing, CI and
+[releasing](https://ai-riksarkivet.github.io/htrflow-batch/development/releasing/).
+[Dev cluster](https://ai-riksarkivet.github.io/htrflow-batch/development/dev-cluster/)
+is the loop of building images and applying campaigns on a single-node GPU
+cluster.
 
 ## Where things stand
 
-- Images: `docker.io/riksarkivet/htrflow-batch` (amd64 and native arm64),
-  signed with cosign, with SLSA provenance and SBOM; pinned by digest in
-  every pipeline file. Chart 0.6.0, wrapper 0.2.0.
-- The product view lives in [`docs/features/`](docs/features/index.md): one
-  story per deliverable, mirrored one-to-one to Azure DevOps PBIs, with
-  what is implemented, partly implemented and not started.
-- The repository is audited from many angles at each milestone; the latest
-  is [`docs/audits/2026-09-07-repo-audit.md`](docs/audits/2026-09-07-repo-audit.md)
-  and its findings are stories.
+- **Images.** `docker.io/riksarkivet/htrflow-batch` (the wrapper) and
+  `docker.io/riksarkivet/htrflow-web` (the web front) are signed with cosign
+  and carry SLSA provenance and an SBOM. Pipeline files pin the wrapper by
+  digest, and the chart's `web.image` pins the web front the same way.
+- **Versions.** Each lives next to what it versions: the charts' `Chart.yaml`
+  files, the packages' `pyproject.toml` files, and `KUEUE_VERSION` in the
+  `Makefile`.
+- **Plans.** What is open and what could come next is on the
+  [Roadmap](https://ai-riksarkivet.github.io/htrflow-batch/roadmap/).
 
 ## Documentation
 
@@ -184,7 +162,7 @@ make docs-serve
 
 ## License
 
-htrflow-batch is licensed under the European Union Public Licence v1.2
-(EUPL-1.2), the same licence as htrflow. See [`LICENSE`](LICENSE). The
-third-party components the images ship are listed with their licences in
-`docs/development/licenses.md`.
+htrflow-batch is licensed under the European Union Public Licence (EUPL-1.2),
+the same licence as htrflow. See [`LICENSE`](LICENSE). The third-party
+components the images ship are listed with their licences in
+[Third-party licences](https://ai-riksarkivet.github.io/htrflow-batch/development/licenses/).
