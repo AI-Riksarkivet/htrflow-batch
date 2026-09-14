@@ -50,6 +50,11 @@ export const jobPhaseSchema = z.enum([
   "Queued",
   "Paused",
   "Running",
+  // The campaign's Job is gone and no terminal record was ever written for
+  // it (a Job deleted by hand or by a prune). Nothing is running, and how
+  // it ended is not on record -- which is honest, where a `Running` that
+  // can never change is not. Only ever seen with `jobGone` (B76).
+  "Unknown",
 ]);
 
 export const jobCountsSchema = z.object({

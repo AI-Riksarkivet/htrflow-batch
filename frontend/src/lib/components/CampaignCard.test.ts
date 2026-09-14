@@ -1012,6 +1012,14 @@ describe("a campaign whose Job has been removed", () => {
     expect(when.textContent).toBeTruthy();
   });
 
+  test("an outcome nobody recorded reads Unknown, never Running", () => {
+    const unknown: JobSummary = { ...reaped, phase: "Unknown" };
+    render(CampaignCard, { job: unknown });
+    expect(screen.getByText("outcome unknown")).toBeTruthy();
+    expect(screen.getByText("job removed")).toBeTruthy();
+    expect(screen.queryByText("Running")).toBeNull();
+  });
+
   test("a campaign whose Job is still there wears no such chip", () => {
     render(CampaignCard, { job });
     expect(screen.queryByText("job removed")).toBeNull();

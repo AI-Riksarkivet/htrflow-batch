@@ -1100,3 +1100,30 @@ def test_a_record_whose_failed_volumes_are_not_json_costs_nothing():
     status = _stored(failedVolumes="not json at all")
     row = projection.record_summary(RECORD, status, CFG, MISSING_WARMUP)
     assert projection.record_detail(row, status, CFG, None)["failures"] == []
+
+
+def test_a_reaped_campaign_with_no_terminal_record_says_unknown():
+    """The Job is gone, so nothing is running -- but the last thing anyone
+    observed was a campaign still going. Reporting `Running` for ever is the
+    one answer that is certainly wrong; the row says the outcome is not
+    known and the card's chip says the Job was removed."""
+    row = projection.record_summary(
+        RECORD, _stored(phase="Running"), CFG, MISSING_WARMUP
+    )
+    assert row["phase"] == "Unknown"
+    assert row["jobGone"] is True
+
+
+def test_a_reaped_campaign_that_was_paused_is_unknown_too():
+    row = projection.record_summary(
+        RECORD, _stored(phase="Paused"), CFG, MISSING_WARMUP
+    )
+    assert row["phase"] == "Unknown"
+
+
+def test_a_terminal_record_keeps_its_own_phase():
+    for phase in projection.FINISHED_PHASES:
+        row = projection.record_summary(
+            RECORD, _stored(phase=phase), CFG, MISSING_WARMUP
+        )
+        assert row["phase"] == phase

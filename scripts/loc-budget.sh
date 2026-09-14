@@ -408,7 +408,12 @@ check converter "$(count packages/converter/src -name '*.py')" 1685
 # row. The comments carry the two rules that are not obvious from the code:
 # a live Job always wins over its record, and a campaign ConfigMap with no
 # status ConfigMap beside it gets no row at all.
-check web       "$(count packages/web/src -name '*.py')" 1377
+# 1377 -> 1384 (2026-09-14, B76 review): a reaped campaign whose record never
+# reached a terminal phase reads `Unknown`, not `Running`. The Job is gone, so
+# nothing is running, and a `Running` that can never change is the one answer
+# that is certainly wrong; the comment says which Job deletions leave this
+# behind now that apply writes the terminal record itself.
+check web       "$(count packages/web/src -name '*.py')" 1384
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
@@ -503,7 +508,11 @@ check web       "$(count packages/web/src -name '*.py')" 1377
 # is housekeeping, not a verdict, and the phase chip beside it already
 # carries the verdict -- and the meta line says when the campaign finished,
 # which past the TTL is the only date left that means anything.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3613
+# 3613 -> 3624 (2026-09-14, B76 review): `Unknown` joins the phase enum and
+# reads "outcome unknown" on the chip, styled with queued/paused rather than
+# with failed -- nobody wrote down how the campaign ended, which is not the
+# same as it having gone wrong.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3624
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

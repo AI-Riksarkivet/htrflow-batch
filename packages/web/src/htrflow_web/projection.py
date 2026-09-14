@@ -185,10 +185,17 @@ def status_record(row: dict, failures: list[dict] | None = None) -> dict[str, st
     return data
 
 
-#: Phases a stored record may carry into a row -- the ones this API itself
-#: writes. A record saying anything else is not a campaign the page can
-#: draw, and is left out rather than guessed at.
+#: Phases a stored record may carry -- the ones this API itself writes. A
+#: record saying anything else is not a campaign the page can draw, and is
+#: left out rather than guessed at.
 _PHASES = (*FINISHED_PHASES, "Running", "Queued", "Paused")
+#: What a reaped campaign's row says when the last thing anyone observed was
+#: a campaign still going. The Job is gone, so nothing is running; how it
+#: ended is simply not on record -- `apply` writes the terminal record from
+#: the live Job, so this is what a Job deleted by hand, or by a prune, or
+#: reaped between the last apply and the last page view, leaves behind.
+#: Reporting `Running` for ever is the one answer that is certainly wrong.
+UNKNOWN_PHASE = "Unknown"
 
 
 def _int(text: object) -> int:
@@ -222,7 +229,7 @@ def record_summary(record: dict, status: dict, cfg, warmup: dict) -> dict | None
         "name": name,
         "campaign": labels.get(_CAMPAIGN_LABEL, "") or name,
         "pipeline": pipeline,
-        "phase": data["phase"],
+        "phase": data["phase"] if data["phase"] in FINISHED_PHASES else UNKNOWN_PHASE,
         "counts": {
             "total": _int(data.get("volumesTotal")),
             "active": 0,  # nothing is running: there is no Job to run it
