@@ -259,7 +259,16 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2721
 # converter-labelled object not in this render -- would delete it on sight.
 # `Cluster._kept_status` keeps the one named after a campaign ConfigMap that
 # IS rendered, and prunes it with that campaign when the file leaves git.
-check converter "$(count packages/converter/src -name '*.py')" 1517
+# 1517 -> 1586 (2026-09-14, B76): apply reads the record beside the
+# append-only check. Past the Job's TTL there is no Job to compare against,
+# and an apply that simply recreated it re-ran every volume (observed live on
+# e2e-prog, 2026-09-08 -> 14). `Cluster.get` answers "is this object there",
+# `_finished` turns the status ConfigMap plus an unchanged volumes.txt into
+# the one sentence that is printed instead of the apply, and `_campaign_of`
+# names which campaign a rendered object belongs to. Most of `_finished` is
+# the paragraph saying why there is no override flag: a campaign that should
+# run again is a new campaign.
+check converter "$(count packages/converter/src -name '*.py')" 1586
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
