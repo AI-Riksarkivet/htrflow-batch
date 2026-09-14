@@ -301,6 +301,8 @@ def test_the_campaign_configmap_records_who_applied_what_and_when(
     """The ConfigMap has no TTL and is pruned only when the campaign file
     leaves git, so it outlives the Job -- which makes it the place the
     provenance belongs (B76)."""
+    if shutil.which("git") is None:
+        pytest.skip("no git on PATH — the CI image has none; _git_head says unknown")
     monkeypatch.setenv("HTRFLOW_SUBMITTER", "Nagon.Annan")
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
