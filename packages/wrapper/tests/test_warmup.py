@@ -151,9 +151,12 @@ def test_warmup_bad_repo_id_is_permanent(tmp_path):
 
 
 def test_warmup_local_entry_not_found_is_transient(tmp_path):
-    """LocalEntryNotFoundError subclasses ValueError by MRO (0.36.2) but
-    means the cache is simply not warm yet -- a re-warm and retry fix it."""
+    """The cache is simply not warm yet -- a re-warm and a retry fix it. The
+    two hub lines disagree about the MRO (on 0.x the error is also a
+    ValueError, on 1.x it is not), so the assertion is the classification."""
     from huggingface_hub.errors import LocalEntryNotFoundError
+
+    assert issubclass(LocalEntryNotFoundError, OSError)  # true on both lines
 
     term_path = tmp_path / "termination-log"
     env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}

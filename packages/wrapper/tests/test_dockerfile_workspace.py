@@ -12,8 +12,8 @@ the gate.
 Since B63 Task 18 the wrapper has ONE dockerfile for both architectures
 (`base-amd64` / `base-arm64`, selected by `FROM base-${TARGETARCH}`), so the
 same bind-mount block serves both arches by construction — what needs
-guarding instead is that the arm64 branch keeps the three hard-won extras
-the GB10 needs, and that nothing in the build path ever asks for a foreign
+guarding instead is that the arm64 branch keeps the hard-won extras the GB10
+needs, and that nothing in the build path ever asks for a foreign
 platform: `uv` segfaults under `qemu-x86_64`, so both images are built on a
 runner of their own architecture and never emulated.
 """
@@ -34,14 +34,14 @@ WRAPPER_DOCKERFILE = REPO / ".docker" / "htrflow-batch.dockerfile"
 _BIND = re.compile(r"--mount=type=bind,source=(packages/[^,]+/pyproject\.toml),")
 
 # The arm64 extras (see the dockerfile's own comments for why each exists):
-# triton JIT-compiles CUDA utils at runtime, TrOCR's slow tokenizer needs
-# sentencepiece to convert, and transformers 5 dropped that conversion.
+# triton JIT-compiles CUDA utils at runtime, and TrOCR's slow tokenizer needs
+# sentencepiece to convert. transformers is NOT here: it is installed for both
+# architectures from the TRANSFORMERS_VERSION build arg below.
 ARM64_EXTRAS = [
     "gcc",
     "libc6-dev",
     "python3.10-dev",
     "sentencepiece==",
-    "transformers==4.",
 ]
 
 # Build paths that must never cross-build: a `--platform` flag or a
@@ -129,3 +129,42 @@ def test_both_base_stages_export_the_htrflow_base_revision():
     assert len(base) == 2
     for stage in base:
         assert "ENV HTRFLOW_BASE_REVISION=${HTRFLOW_BASE_REVISION}" in stage
+
+
+def test_the_transformers_line_is_one_build_arg_every_build_path_can_set() -> None:
+    """Two transformers lines exist because the models do not agree, and which
+    line an image carries is a property of that image -- so it is one build arg
+    with a default, installed once for both architectures, and every path that
+    builds the wrapper can pass it. A path that cannot is a line that can only
+    be built by hand-editing the dockerfile."""
+    text = WRAPPER_DOCKERFILE.read_text()
+    assert re.search(r"^ARG TRANSFORMERS_VERSION=\d", text, re.M), (
+        "the dockerfile must default the transformers line, not require the arg"
+    )
+    pins = re.findall(r"transformers==([^\"'\s]+)", text)
+    assert pins == ["${TRANSFORMERS_VERSION}"], (
+        "the only transformers pin in the image is the build arg: a second, "
+        f"literal one is a line nobody can change from outside — found {pins}"
+    )
+    # A transformers line whose dependencies do not fit the WRAPPER's own
+    # requirements must fail the build, not a warm-up pod. Deliberately not
+    # `uv pip check`: a base venv carries inconsistencies of its own that have
+    # nothing to do with this image, and they must not block its builds -- the
+    # dockerfile's comment may say so, but no step may run it.
+    assert not re.search(r"^\s*RUN.*uv pip check", text, re.M)
+    assert 'requires("htrflow-batch-wrapper")' in text
+    assert "req.specifier.contains(have" in text
+
+    makefile = (REPO / "Makefile").read_text()
+    assert "--build-arg TRANSFORMERS_VERSION=$(TRANSFORMERS_VERSION)" in makefile
+
+    dagger = (REPO / ".dagger" / "build.go").read_text()
+    assert 'Name: "TRANSFORMERS_VERSION"' in dagger
+    publish_go = (REPO / ".dagger" / "publish.go").read_text()
+    assert "transformersVersion string" in publish_go  # the function's own arg
+    assert "resolvedTag, transformersVersion)" in publish_go  # reaches the build
+
+    publish = (REPO / ".github" / "workflows" / "publish.yml").read_text()
+    assert "transformers_version:" in publish  # the dispatch input
+    assert "--transformers-version" in publish  # the dagger-built architecture
+    assert '"TRANSFORMERS_VERSION=${TRANSFORMERS_VERSION}"' in publish  # the other

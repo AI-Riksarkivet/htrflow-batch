@@ -36,6 +36,11 @@ on:
         required: false
         default: ""
         type: string
+      transformers_version:
+        description: "TRANSFORMERS_VERSION build arg for the wrapper (empty keeps the dockerfile default, the line upstream htrflow is tested on). Set it to publish the tag on the other transformers line, for models the default line cannot read; a pipeline pins the image digest it runs, so both lines can be in use at once."
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -121,6 +126,7 @@ jobs:
             --tag ${{ inputs.tag }}
             --tag-suffix "${{ matrix.tag_suffix }}"
             --base-revision "${{ inputs.base_revision }}"
+            --transformers-version "${{ inputs.transformers_version }}"
             --docker-username env:DOCKERHUB_USERNAME
             --docker-password env:DOCKERHUB_TOKEN
           cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
@@ -202,12 +208,21 @@ jobs:
           image: ${{ env.HTRFLOW_ARM64_BASE }}
 
       - name: Build and push the arm64 wrapper
+        env:
+          # Only passed when the run asked for a line: an empty build arg
+          # would override the dockerfile's default with nothing.
+          TRANSFORMERS_VERSION: ${{ inputs.transformers_version }}
         run: |
           ref="${IMAGE}:${{ inputs.tag }}-arm64"
+          transformers=()
+          if [ -n "$TRANSFORMERS_VERSION" ]; then
+            transformers=(--build-arg "TRANSFORMERS_VERSION=${TRANSFORMERS_VERSION}")
+          fi
           docker build -f .docker/htrflow-batch.dockerfile \
             --build-arg "HTRFLOW_ARM64_BASE=${HTRFLOW_ARM64_BASE}" \
             --build-arg "HTRFLOW_BASE_REVISION=${{ steps.base.outputs.revision }}" \
             --build-arg "HTRFLOW_BATCH_VERSION=${{ inputs.tag }}" \
+            "${transformers[@]}" \
             -t "$ref" .
           docker push "$ref"
 
