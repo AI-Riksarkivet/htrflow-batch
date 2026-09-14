@@ -604,7 +604,14 @@ check web       "$(count packages/web/src -name '*.py')" 1434
 # absent) and so does the paragraph saying why there is no "Models (5)"
 # expander: a real pipeline names two or three models, so the line fits and
 # clipping it with a title is the whole of the narrow-screen case.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3847
+# 3847 -> 3857 (2026-09-14, card layout review): the quiet line's links pay
+# for their own accessibility. The underline moves to the text colour (the
+# hairline it had was 1.26:1 on the light card, 1.31:1 on the dark -- nothing
+# marked a link at rest), the links take the focus ring every other control
+# on this card wears, and the clipped line clips with a margin so that ring
+# survives at its edge. Four declarations, a rule of its own for focus, and
+# the comment saying which contrast the underline now carries.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3857
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
