@@ -105,7 +105,10 @@ def _from_progress(doc: dict, now: float) -> dict | None:
 def _from_manifest(doc: dict, now: float) -> dict | None:
     """The same counts off ``manifest.json``, for a volume finished before
     the wrapper wrote progress files at all. A skipped page is one an earlier
-    run produced: it is in the bucket, so it counts as done."""
+    run produced: it is in the bucket, so it counts as done; a failed one is
+    a page the volume completed without (the product owner, 2026-09-14), and
+    a done row has to say how many of those there were rather than read as a
+    clean volume."""
     del now  # manifest.json carries no timestamp of its own; see below
     results = doc.get("results")
     if not isinstance(doc.get("pages"), int) or not isinstance(results, dict):
@@ -121,8 +124,11 @@ def _from_manifest(doc: dict, now: float) -> dict | None:
         "stage": "done",
         "updatedAt": None,
         "ageSeconds": None,
-        # A volume only publishes manifest.json after a clean verify, so a
-        # run this old has no failed page to name and no error count kept.
+        # The per-page reason IS in manifest.json's `results`, but naming it
+        # here would mean picking a "most recent" failure out of a document
+        # that records no order; progress.json, which every current wrapper
+        # writes and which this is only the fallback for, carries the one the
+        # run itself saw last.
         "lastError": None,
         "errors": 0,
         # manifest.json existing at all means the viewer manifest does too

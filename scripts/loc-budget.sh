@@ -332,7 +332,11 @@ check converter "$(count packages/converter/src -name '*.py')" 1434
 # above met -- card-links' 690 -> 722 (+32) on top of page-progress, plus one
 # line for create_app's signature now carrying both batch_version and
 # progress.
-check web       "$(count packages/web/src -name '*.py')" 1025
+# 1025 -> 1031 (2026-09-14, a done row can carry failed pages): the
+# manifest.json fallback's comments now say why a finished volume may have
+# lost pages and why the reason for them is progress.json's to name, not
+# this document's -- manifest.json records no order among its results.
+check web       "$(count packages/web/src -name '*.py')" 1031
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
