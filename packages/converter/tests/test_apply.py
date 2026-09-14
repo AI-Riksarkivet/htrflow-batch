@@ -437,3 +437,41 @@ def test_a_finished_campaign_whose_volumes_moved_is_still_applied(tmp_path, clus
     ]
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     assert "kyrk" in [c[2] for c in cluster.of("apply")]
+
+
+def test_the_apply_records_a_finished_job_nobody_looked_at(tmp_path, cluster, capsys):
+    """The read API writes the record only while a person has the status
+    page open. This apply finds the Job still there and finished, records
+    that, and then -- in the same run -- leaves the campaign alone."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    live_job = _object("Job", "kyrk")
+    live_job["metadata"]["namespace"] = NS
+    live_job["metadata"]["labels"]["htrflow.riksarkivet.se/campaign"] = "kyrk"
+    live_job["metadata"]["labels"]["htrflow.riksarkivet.se/pipeline"] = "demo-v1"
+    live_job["spec"] = {"completions": 3}
+    live_job["status"] = {
+        "conditions": [{"type": "Complete", "status": "True"}],
+        "succeeded": 3,
+        "completionTime": "2026-09-08T10:00:00Z",
+    }
+    cluster.live = [_record("kyrk"), live_job]
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    written = cluster.applied["campaign-kyrk-status"]["data"]
+    assert written["phase"] == "Succeeded"
+    assert written["volumesDone"] == "3"
+    # And the skip works off what this very apply just wrote.
+    assert "kyrk" not in [c[2] for c in cluster.of("apply") if c[1] == "Job"]
+    assert "campaign kyrk finished 2026-09-08, unchanged, left alone" in (
+        capsys.readouterr().out
+    )
+
+
+def test_a_running_job_is_not_recorded_by_the_apply(tmp_path, cluster):
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    live_job = _object("Job", "kyrk")
+    live_job["spec"] = {"completions": 3}
+    live_job["status"] = {"conditions": [], "active": 1}
+    cluster.live = [_record("kyrk"), live_job]
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert "campaign-kyrk-status" not in cluster.applied
+    assert "kyrk" in [c[2] for c in cluster.of("apply")]

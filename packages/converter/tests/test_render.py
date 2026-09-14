@@ -595,3 +595,96 @@ def test_the_campaign_configmap_names_the_image_its_volumes_ran_on():
     assert cm["metadata"]["annotations"] == {
         "htrflow.riksarkivet.se/image-digest": demo.image
     }
+
+
+# --- apply's own observation of a finished Job (B76 review) --------------
+
+
+def _live_job(conditions, **status) -> dict:
+    return {
+        "metadata": {
+            "name": "kyrk",
+            "namespace": "htr-test",
+            "labels": {
+                "htrflow.riksarkivet.se/campaign": "kyrk",
+                "htrflow.riksarkivet.se/pipeline": "demo-v1",
+            },
+        },
+        "spec": {"completions": 3},
+        "status": {"conditions": conditions, **status},
+    }
+
+
+def test_a_running_job_has_nothing_to_record():
+    """While the campaign runs, the read API sees more than an apply does --
+    it reads the pods. Only the END is what an apply must not miss."""
+    _, _, cfg = _kyrk()
+    job = _live_job([], active=1, succeeded=1)
+    assert render.status_configmap(job, cfg) is None
+
+
+def test_a_completed_job_is_recorded_by_the_apply_itself():
+    """The read API writes the record only while someone has the status page
+    open. A campaign that finished unwatched and was then reaped would have
+    no terminal record at all, and the next apply would run it again."""
+    _, _, cfg = _kyrk()
+    job = _live_job(
+        [{"type": "Complete", "status": "True"}],
+        succeeded=3,
+        startTime="2026-09-08T08:00:00Z",
+        completionTime="2026-09-08T10:00:00Z",
+    )
+    cm = render.status_configmap(job, cfg)
+    assert cm["metadata"]["name"] == "campaign-kyrk-status"
+    assert cm["metadata"]["namespace"] == "htr-test"
+    assert cm["metadata"]["labels"]["htrflow.riksarkivet.se/kind"] == "status"
+    assert cm["metadata"]["labels"]["htrflow.riksarkivet.se/campaign"] == "kyrk"
+    assert cm["data"] == {
+        "phase": "Succeeded",
+        "volumesTotal": "3",
+        "volumesDone": "3",
+        "volumesFailed": "0",
+        "startedAt": "2026-09-08T08:00:00Z",
+        "finishedAt": "2026-09-08T10:00:00Z",
+        "resultsBase": f"{cfg.public_results_base}/htr-test/demo-v1",
+    }
+
+
+def test_a_job_that_gave_up_with_some_indexes_done_is_partially_failed():
+    """A Failed Job has no completionTime: its condition is the only clock."""
+    _, _, cfg = _kyrk()
+    job = _live_job(
+        [
+            {
+                "type": "Failed",
+                "status": "True",
+                "lastTransitionTime": "2026-09-08T09:30:00Z",
+            }
+        ],
+        succeeded=2,
+    )
+    data = render.status_configmap(job, cfg)["data"]
+    assert data["phase"] == "PartiallyFailed"
+    assert (data["volumesDone"], data["volumesFailed"]) == ("2", "1")
+    assert data["finishedAt"] == "2026-09-08T09:30:00Z"
+
+
+def test_a_job_that_published_nothing_is_failed():
+    _, _, cfg = _kyrk()
+    job = _live_job([{"type": "Failed", "status": "True"}])
+    assert render.status_configmap(job, cfg)["data"]["phase"] == "Failed"
+
+
+def test_the_apply_and_the_read_api_write_the_same_field_names():
+    """Two writers, one record. The read API observes more (it reads pods,
+    so it alone writes `failedVolumes`), but every field the apply writes
+    must be one the API writes too, or a merge would carry two spellings of
+    the same fact."""
+    from htrflow_web import projection
+
+    _, _, cfg = _kyrk()
+    job = _live_job([{"type": "Complete", "status": "True"}], succeeded=3)
+    theirs = projection.status_record(
+        projection.summarize(job, cfg, {"phase": "succeeded"})
+    )
+    assert set(render.status_configmap(job, cfg)["data"]) == set(theirs)

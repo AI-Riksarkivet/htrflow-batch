@@ -285,20 +285,22 @@ def _provenance(repo: Path) -> dict[str, str]:
 _FINISHED_PHASES = ("Succeeded", "Failed", "PartiallyFailed")
 
 
-def _finished(cluster, name: str, volumes: str) -> str | None:
+def _finished(cluster, name: str, volumes: str, observed: dict | None) -> str | None:
     """One sentence when this campaign is over and unchanged, else ``None``.
 
     The record outlives the Job (B76): past ``ttlSecondsAfterFinished``
     there is no Job left to compare against, and an apply that simply
     recreated it would re-run every volume and pay the whole GPU bill
     again -- resume makes that cheap, not right. The status ConfigMap the
-    read API wrote says how the campaign ended and the campaign ConfigMap
-    says on which volumes; a volume list that has MOVED is not this
+    read API wrote -- or, when the Job outlived every visit to the status
+    page, the one THIS apply just wrote from it (``observed``) -- says how
+    the campaign ended, and the campaign ConfigMap says on which volumes.
+    A volume list that has MOVED is not this
     function's business, it is the append-only rule's, which ``_render``
     already ran. There is deliberately no override flag: a campaign that
     should run again is a new campaign.
     """
-    status = cluster.get("ConfigMap", f"campaign-{name}{STATUS_SUFFIX}")
+    status = observed or cluster.get("ConfigMap", f"campaign-{name}{STATUS_SUFFIX}")
     data = (status or {}).get("data") or {}
     if data.get("phase") not in _FINISHED_PHASES:
         return None
@@ -382,12 +384,29 @@ def _apply(
             prov = _provenance(repo)
             # Asked before anything is sent, so a finished campaign's
             # ConfigMap is not re-stamped with a new apply time either.
+            # Observe before deciding. The read API writes this record in
+            # more detail, but only while a person has the status page
+            # open; a campaign that finished unwatched would otherwise
+            # reach its TTL with no terminal record at all, and this apply
+            # would recreate the Job and run every volume again.
+            observed: dict[str, dict] = {}
+            for obj in campaigns:
+                if obj["kind"] != "Job":
+                    continue
+                name = obj["metadata"]["name"]
+                live = cluster.get("Job", name)
+                record = render.status_configmap(live, cfg) if live else None
+                if record is not None:
+                    cluster.apply(record)
+                    observed[name] = record
             done: set[str] = set()
             for obj in campaigns:
                 if obj["kind"] != "ConfigMap":
                     continue
                 name = _campaign_of(obj)
-                said = _finished(cluster, name, obj["data"]["volumes.txt"])
+                said = _finished(
+                    cluster, name, obj["data"]["volumes.txt"], observed.get(name)
+                )
                 if said is not None:
                     done.add(name)
                     print(said)
