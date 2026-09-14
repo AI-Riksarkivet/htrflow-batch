@@ -419,7 +419,14 @@ check converter "$(count packages/converter/src -name '*.py')" 1685
 # erased the only place those sentences survive. A value that says nothing
 # ("", "[]") never replaces one that says something, and `finishedAt` never
 # moves backwards -- two writers, two clocks.
-check web       "$(count packages/web/src -name '*.py')" 1412
+# 1412 -> 1434 (2026-09-14, B76 review): the write is on the request's
+# critical path, so it is bounded and quiet. RECORD_WRITES_PER_REQUEST caps
+# one page load at 20 server-side applies instead of one per campaign in the
+# namespace (the rest are written by the next poll, and by the apply itself,
+# which is what guarantees a terminal record exists at all); `refused`
+# remembers the namespaces whose last write was denied, so an RBAC grant that
+# was never renewed says so once instead of once per campaign per poll.
+check web       "$(count packages/web/src -name '*.py')" 1434
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
