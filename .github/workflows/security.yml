@@ -1,0 +1,77 @@
+name: Security
+
+# Trivy over the two images this repository builds, on a schedule. ci.yml
+# already gates CRITICAL findings when a change lands on main, but an image's
+# CVE surface moves when advisories are published, not when this repository
+# is edited — a weekly run is what catches that.
+#
+# Each job first writes the CRITICAL/HIGH report, unfixed findings included,
+# to the Security tab (`dagger call scan-sarif`), then runs the same CRITICAL
+# gate as ci.yml, so a new critical fails the scheduled run. On a push the
+# gate is skipped — ci.yml has just run it — and the report is refreshed so
+# alerts a dependency bump fixed are closed.
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".docker/**"
+      - "uv.lock"
+      - "packages/*/pyproject.toml"
+      - "frontend/bun.lock"
+      - ".github/workflows/security.yml"
+  schedule:
+    - cron: "0 5 * * 1" # Mondays 05:00 UTC, before the working week
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Scan image (${{ matrix.image }})
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write # SARIF upload to the Security tab
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: web
+            gate: scan-web
+          - image: wrapper
+            gate: scan
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Trivy report (SARIF)
+        uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77 # v8.4.1
+        with:
+          verb: call
+          args: scan-sarif --image ${{ matrix.image }} export --path ./trivy-${{ matrix.image }}.sarif
+          cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+          version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
+
+      - name: Upload the SARIF as an artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: trivy-${{ matrix.image }}
+          path: ./trivy-${{ matrix.image }}.sarif
+          if-no-files-found: error
+
+      - name: Upload to the Security tab
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: ./trivy-${{ matrix.image }}.sarif
+          category: trivy-${{ matrix.image }}
+
+      - name: Trivy gate (CRITICAL blocks)
+        if: github.event_name != 'push'
+        uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77 # v8.4.1
+        with:
+          verb: call
+          args: ${{ matrix.gate }} --severity CRITICAL --ignore-unfixed
+          cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+          version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
