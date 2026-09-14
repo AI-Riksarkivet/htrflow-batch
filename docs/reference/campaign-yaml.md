@@ -28,6 +28,7 @@ public_results_base: ""           # public URL prefix results are served from (r
 source_template: "https://lbiiif.riksarkivet.se/arkis!{ref}/manifest"
 max_seconds: 21600                # each pod's activeDeadlineSeconds; a pipeline's own `max_seconds:` overrides it
 warmup_wait_seconds: 900          # how long a pod waits for its pipeline's warm-up marker before failing the index; capped by that pod's own deadline
+ttl_seconds_after_finished: 604800  # a week: how long a finished campaign's Job stays before Kubernetes deletes it; a pipeline's own `ttl_seconds_after_finished:` overrides it
 manifest_max_bytes: 16777216      # 16 MiB
 fetch_max_bytes: 67108864         # 64 MiB
 ```
@@ -98,6 +99,10 @@ max_seconds: 3600          # optional: this recipe's per-volume wall-clock
                            # budget (the pod's activeDeadlineSeconds),
                            # overriding converter.yaml's
 
+ttl_seconds_after_finished: 1209600   # optional: how long THIS pipeline's
+                                      # finished campaign Jobs stay,
+                                      # overriding converter.yaml's
+
 steps:                     # htrflow pipeline steps, passed through verbatim
   - step: Segmentation
     settings:
@@ -127,6 +132,7 @@ validation error and blocks rendering for every campaign that uses it:
 | Pipeline id is a DNS-1123 label (lowercase, `[a-z0-9.-]` interior, ≤63 chars) | It becomes the ConfigMap name `htr-pipeline-<id>` |
 | `image:` contains `@sha256:` | Digest pin — provenance is recorded per volume in `manifest.json` |
 | `max_seconds:`, when set, is a positive integer | It becomes `spec.template.spec.activeDeadlineSeconds` — the *pod's* deadline, so only the overrunning attempt is killed — for every campaign on this pipeline; unset falls back to `converter.yaml`. A sixty-page spread recipe and a single-page one do not want the same budget, and a budget the volume cannot meet costs `backoffLimitPerIndex` retries before the index is capped |
+| `ttl_seconds_after_finished:`, when set, is a positive integer | It becomes the campaign Job's `ttlSecondsAfterFinished`. The Job is an inspection window, not the campaign's record — that is the campaign's ConfigMap, which has no TTL ([The record a campaign leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)) — so this is only how long `completedIndexes` stays readable with `kubectl` |
 | `steps:` is present | Only the `steps:` document goes into the ConfigMap; no `Export` steps (the wrapper appends them — a pipeline with one fails the warm-up) |
 | No key the pipeline file does not have (`model_revision:` included — it was removed in Task 22, the pin lives in `steps` now) | A stray key is a typo or a leftover, and both are cheaper to hear about at `validate` than to wonder about later |
 

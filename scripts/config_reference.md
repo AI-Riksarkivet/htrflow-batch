@@ -28,6 +28,14 @@ the Job skeleton sets, and `warmup.py` — a separate entrypoint, with its
 own contract — reads four more. Both are listed, not folded into `Config`,
 in "Also read from the environment" under the wrapper table below.
 
+**Read outside these models.** `htrflow-campaigns apply` reads one
+environment variable of its own, `HTRFLOW_SUBMITTER`: the name stamped on
+every campaign ConfigMap it applies (`htrflow.riksarkivet.se/submitter`,
+lower-cased), which CI sets from whoever triggered the run. Unset, the apply
+uses its own OS user. It is not a `converter.yaml` key — it says who is
+running this apply, not how the cluster is configured — so it is not in the
+converter table below.
+
 **Prefixes.** The web front's env is `HTRFLOW_`-prefixed: an operator's
 settings for a long-lived service. The wrapper's are bare — the in-pod
 contract written by the Job the converter renders
@@ -45,6 +53,13 @@ in a pod environment nothing else writes.
 - **The read API is unauthenticated**: `GET /api/v1/jobs[/…]` and the
   campaign browser are open to anyone who can reach the port —
   `network.web.ingressCidrs` is the only gate.
+- **The read API's RBAC is get/list/watch, plus one write**: `create` and
+  `patch` on ConfigMaps in its own namespace, for the per-campaign status
+  ConfigMap it writes from what it observes
+  ([The record a campaign leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)).
+  It is a namespaced `Role`, it grants no `delete`, and it may not write a
+  Job or a Pod — `packages/web/tests/test_app.py` greps the package's source
+  to keep the one write the only one.
 - **The results bucket is public-read**: everything under
   `publicResultsBase`, except `status/logs/*` when `rustfs.publicLogs` is
   off. There is nothing else to exclude — the run log is the only key

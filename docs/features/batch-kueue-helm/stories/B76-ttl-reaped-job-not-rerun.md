@@ -35,6 +35,11 @@ bort en färdig kampanjfil (X6).
 ## Klart när
 
 - [ ] En kampanj som körts klart och vars Job städats bort körs inte om vid nästa
-      `htrflow-campaigns apply`, verifierat på PoC-klustret.
-- [ ] TTL:t går att sätta i `converter.yaml` och syns i den genererade
-      konfigurationsreferensen.
+      `htrflow-campaigns apply`, verifierat på PoC-klustret. — byggt och testat
+      (`apply` läser status-ConfigMappen bredvid append-only-kontrollen och
+      skriver ut en mening i stället för att applya); återstår att verifiera på
+      PoC-klustret.
+- [x] TTL:t går att sätta i `converter.yaml` och syns i den genererade
+      konfigurationsreferensen. — `ttl_seconds_after_finished` (en vecka som
+      default, per pipeline där det behövs) i
+      `docs/reference/configuration.md`.
