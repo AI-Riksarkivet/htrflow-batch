@@ -132,7 +132,7 @@ def call(method, url, ops):
 
 def story(path, dry):
     t, meta, body = read(path)
-    sid = os.path.basename(path)[:3]
+    sid = os.path.basename(path).split("-")[0]  # ids run past 99; see wire.py
     parts = re.split(r"^## (?:Done when|Klart när)\s*$", body, flags=re.M)
     desc_md, ac_md = parts[0], (parts[1] if len(parts) > 1 else "")
     ops = [

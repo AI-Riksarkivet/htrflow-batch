@@ -74,6 +74,7 @@ tables below.
 | [B31](stories/B31-audit-fixes-chart-ops.md) | Audit fixes — the chart is safe to install and the bucket exposes only results |
 | [B41](stories/B41-gpu-wrapper-image-in-ci.md) | GPU wrapper image (arm64) built in CI with SLSA provenance and a Trivy scan |
 | [B63](stories/B63-campaigns-as-indexed-jobs.md) | Kampanjer körs som Kubernetes Indexed Jobs — reconcilern och dess statusfiler tas bort |
+| [B101](stories/B101-private-models-warmup-token.md) | Privata modeller på Hugging Face hämtas av warm-up med en token |
 
 ### Partly implemented — named items still open (see the PBI's commit note)
 
