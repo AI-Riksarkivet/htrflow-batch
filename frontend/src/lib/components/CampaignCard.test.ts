@@ -614,8 +614,8 @@ describe("CampaignCard", () => {
     expect(screen.getByText("vol2")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "2 pages could not be processed (p012, p045); the volume is retried " +
-          "automatically and only those pages are redone.",
+        "2 pages are missing from the results (p012, p045); the volume is " +
+          "retried automatically and only those pages are redone.",
       ),
     ).toBeInTheDocument();
   });

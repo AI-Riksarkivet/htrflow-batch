@@ -66,8 +66,22 @@ describe("describeReason", () => {
           "missing=['p012', 'p045'] failed=['p101']",
       }),
     ).toBe(
-      "3 pages could not be processed (p012, p045, p101); the volume is " +
+      "2 pages are missing from the results (p012, p045); the volume is " +
         "retried automatically and only those pages are redone.",
+    );
+  });
+
+  test("every page in the attempt failed: a broken model, not a volume", () => {
+    expect(
+      reasonOf({
+        stage: "verify",
+        error:
+          "verify failed: all 3 processed pages failed errors: p101: boom " +
+          "failed=['p101', 'p102', 'p103']",
+      }),
+    ).toBe(
+      "None of the 3 pages processed in this attempt produced a result; the " +
+        "volume is retried automatically — check the model and the GPU.",
     );
   });
 
@@ -79,15 +93,15 @@ describe("describeReason", () => {
         error: "verify failed: missing=['a', 'b', 'c', 'd', 'e'] failed=[]",
       }),
     ).toBe(
-      "5 pages could not be processed (a, b, c and 2 more); the volume is " +
-        "retried automatically and only those pages are redone.",
+      "5 pages are missing from the results (a, b, c and 2 more); the volume " +
+        "is retried automatically and only those pages are redone.",
     );
   });
 
   test("one failed page is singular", () => {
     expect(
       reasonOf({ stage: "verify", error: "verify failed: failed=['p7']" }),
-    ).toContain("1 page could not be processed (p7);");
+    ).toContain("1 page is missing from the results (p7);");
   });
 
   test("a verify message whose page lists were truncated away", () => {
@@ -97,7 +111,7 @@ describe("describeReason", () => {
         error: "verify failed: 900 missing, 0 f...",
       }),
     ).toBe(
-      "Some pages could not be processed; the volume is retried " +
+      "Some pages are missing from the results; the volume is retried " +
         "automatically and only those pages are redone.",
     );
   });
@@ -291,9 +305,25 @@ describe("describeProgress", () => {
   });
 
   test("a stage with no word of its own is still shown, not dropped", () => {
-    expect(describeProgress({ ...progress, stage: "done" })).toContain(
-      "· done ·",
+    expect(describeProgress({ ...progress, stage: "warmup" })).toContain(
+      "· warmup ·",
     );
+  });
+
+  test("a finished volume reads as its pages, failures and all", () => {
+    // The state chip beside this line already says "done" (CampaignCard), and
+    // a volume now finishes WITH failed pages recorded, so this line is where
+    // the reader finds out it lost one.
+    expect(
+      describeProgress({
+        ...progress,
+        done: 637,
+        total: 638,
+        failed: 1,
+        stage: "done",
+        ageSeconds: null,
+      }),
+    ).toBe("637 / 638 pages · 1 failed");
   });
 
   test("no timestamp, no stage: just the pages", () => {
