@@ -22,6 +22,7 @@ namespace: htr-batch              # Kubernetes namespace campaigns render into
 queue: htr-batch                  # Kueue LocalQueue name
 window: 20                        # Job parallelism, and the CAP a campaign's own `window:` is clamped to
 s3_secret: htr-batch-s3           # Secret carrying S3 credentials
+hf_token_secret: ""               # optional: Secret with a `token` key, read by the warm-up for a private or gated Hub model
 data_pvc: htr-test-data           # PVC mounted as the model cache
 runtime_class: nvidia             # RuntimeClass for GPU pods — on the warm-up Job too
 node_selector: {}
@@ -38,6 +39,16 @@ fetch_max_bytes: 67108864         # 64 MiB
 `queue`, `s3_secret` and `data_pvc` name objects the htrflow-batch chart
 creates; the [Configuration](configuration.md) page shows which chart value
 each must agree with.
+
+`hf_token_secret` names an object no chart creates — you make it yourself,
+like the S3 Secret. Leave it unset unless a pipeline pulls a **private or
+gated** model from Hugging Face Hub: then create a Secret in the campaign
+namespace with a single `token` key holding a Hub token with **read** scope,
+and name it here. The converter renders it as `HF_TOKEN` into that
+pipeline's warm-up Job and nowhere else. Campaign pods run
+`HF_HUB_OFFLINE=1` against the cache the warm-up filled, and have no route
+to the Hub, so they never need it
+([The model cache](../how-it-works/wrapper.md#the-model-cache)).
 
 !!! note "The image allow-list and the model-revision rule are cluster policy"
 

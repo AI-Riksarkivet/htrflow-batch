@@ -98,6 +98,20 @@ covers the bucket.
   anonymous HTTP GETs through `HTRFLOW_INTERNAL_RESULTS_BASE`, using the same
   public-read policy a browser relies on.
 
+### Who holds a Hugging Face token
+
+Nobody, unless a pipeline needs one. A private or gated model is downloaded
+by the warm-up pod, which is the only pod with egress to the Hub, and the
+only pod that can hold the token: `converter.yaml`'s `hf_token_secret` names
+a Secret with a `token` key, and the converter renders it as `HF_TOKEN` on
+the warm-up container alone
+([The model cache](wrapper.md#the-model-cache)). The token needs **read**
+scope and nothing more. Campaign pods get neither the env nor the Secret
+name — they run `HF_HUB_OFFLINE=1` against the filled cache — so the
+credential never reaches the long-lived pod that runs model code over
+fetched images. No chart template creates or reads this Secret; it is the
+operator's object, like the S3 one.
+
 ## Pod security posture
 
 Every pod the platform runs meets Pod Security **`restricted`**: the
@@ -134,7 +148,10 @@ data volume.
   `credentials` key (AWS ini format) is mounted at `/secrets/s3` (mode `0440`)
   and reaches boto3 through `AWS_SHARED_CREDENTIALS_FILE`. Only the non-secret
   `S3_ENDPOINT` and `S3_BUCKET` are passed as env. Nothing uses `envFrom` on a
-  Secret.
+  Secret. The one credential that does travel as env is the optional
+  `HF_TOKEN`, because `huggingface_hub` reads its token from the environment;
+  it is confined to the warm-up pod, which mounts no S3 Secret, holds no
+  campaign data and exits when its download is done.
 - **The model cache is read-only for campaign pods.** They mount the cache
   PVC `readOnly` and run with `HF_HUB_OFFLINE=1`. The per-pipeline warm-up pod
   is the only writer ([The Wrapper](wrapper.md#the-model-cache)), so a
