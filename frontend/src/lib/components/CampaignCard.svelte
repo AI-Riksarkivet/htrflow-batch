@@ -883,7 +883,6 @@
      down the column, the numbers are what it stops for. */
   .vprogress {
     display: block;
-    position: relative;
     font-size: 11.5px;
     color: var(--muted-foreground);
     overflow-wrap: anywhere;
@@ -939,24 +938,29 @@
     }
   }
 
-  /* Third gesture: one second of the running blue behind the line whose
-     page count just moved, so a poll landing is something a reader catches
-     rather than infers. Behind the text (z-index -1 under an unstacked
-     parent), and on a pseudo-element so the fade is an opacity -- animating
-     a background colour to `transparent` greys on the way out. */
-  .vprogress.bump::before {
-    content: "";
-    position: absolute;
-    z-index: -1;
-    inset: -1px -0.25rem;
+  /* Third gesture: one second of the running blue behind the line whose page
+     count just moved, so a poll landing is something a reader catches rather
+     than infers. The colour is the line's own background for the length of
+     the animation and nothing before or after it -- no pseudo-element, so
+     there is no paint order to get wrong. It fades to a zero-alpha
+     `--primary-soft` rather than to `transparent`, which is black at alpha 0
+     and would grey on the way out. */
+  .vprogress.bump {
     border-radius: 3px;
-    background: var(--primary-soft);
-    animation: settle 1s ease-out forwards;
+    animation: settle 1s ease-out;
   }
 
   @keyframes settle {
+    from {
+      background-color: var(--primary-soft);
+    }
+
     to {
-      opacity: 0;
+      background-color: color-mix(
+        in oklab,
+        var(--primary-soft) 0%,
+        transparent
+      );
     }
   }
 
@@ -1099,10 +1103,14 @@
       animation: none;
     }
 
-    /* Not `animation: none` -- an unanimated sheen or highlight would
-       simply be parked on screen. The bar still fills; it jumps there. */
-    .fill::after,
-    .vprogress.bump::before {
+    /* The highlight lives entirely inside its keyframes, so turning the
+       animation off leaves no colour behind. The sheen is a real element and
+       has to be hidden, not merely stilled, or it parks across the fill. */
+    .vprogress.bump {
+      animation: none;
+    }
+
+    .fill::after {
       display: none;
     }
 
