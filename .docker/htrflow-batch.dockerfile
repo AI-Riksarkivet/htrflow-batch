@@ -137,8 +137,22 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
         gcc libc6-dev python3.10-dev \
       && rm -rf /var/lib/apt/lists/* \
       && uv pip install --python /app/.venv/bin/python --no-cache \
-           "sentencepiece==0.2.2" "transformers==4.57.6"; \
+           "sentencepiece==0.2.2"; \
     fi
+
+# The transformers line, both architectures, pinned here so the image says
+# which one it runs. Two lines exist because the models do not agree: a
+# model saved by transformers 5 (its tokenizer config carries keys 4.x cannot
+# read, and 4.x decodes its byte-level tokenizer wrongly) needs 5.x, while
+# a model saved by 4.x (the base handwritten models, whose positional
+# embedding buffer 5.x leaves on the meta device) needs 4.x until it is
+# re-saved. A pipeline pins the image digest it runs, so one campaigns repo
+# can carry pipelines on either line. Default: the 4.x line upstream htrflow
+# is tested on; `make build-wrapper TRANSFORMERS_VERSION=5.9.0` builds the
+# other.
+ARG TRANSFORMERS_VERSION=4.57.6
+RUN uv pip install --python /app/.venv/bin/python --no-cache \
+      "transformers==${TRANSFORMERS_VERSION}"
 
 # Packages of the base's venv with published fixes that htrflow's own lock
 # predates: pillow and Brotli. The `wrapper-image` group in uv.lock pins them

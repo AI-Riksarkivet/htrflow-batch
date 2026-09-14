@@ -276,6 +276,10 @@ endif
 # IMAGE_TAG is what the image will be called, so it is also what it reports
 # as its version (the status page's header, the OCI label).
 VERSION_BUILD_ARG = --build-arg HTRFLOW_BATCH_VERSION=$(IMAGE_TAG)
+# Which transformers line the wrapper image carries (see the dockerfile):
+# unset = the dockerfile's default; TRANSFORMERS_VERSION=5.9.0 builds the
+# image for models saved by transformers 5.
+WRAPPER_BUILD_ARGS += $(if $(TRANSFORMERS_VERSION),--build-arg TRANSFORMERS_VERSION=$(TRANSFORMERS_VERSION))
 
 build-wrapper:
 	docker build -f $(WRAPPER_DOCKERFILE) $(WRAPPER_BUILD_ARGS) $(VERSION_BUILD_ARG) -t $(WRAPPER_IMAGE) .
