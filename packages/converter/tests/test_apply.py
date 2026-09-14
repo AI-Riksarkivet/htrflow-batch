@@ -262,7 +262,9 @@ def test_dry_run_renders_but_reaches_no_cluster(tmp_path, monkeypatch, capsys):
 
 def test_a_cluster_error_prints_the_sentence_and_exits_1(tmp_path, cluster, capsys):
     """``cli._apply`` must turn a ``ClusterError`` into a one-sentence stderr
-    line and exit 1 -- not let it explode into a traceback."""
+    line -- not let it explode into a traceback. A server that refuses
+    *everything* (a Role without apply, a webhook rejecting the lot) is the
+    total failure it always was: exit 1, not the refused-object code."""
     sentence = (
         "not allowed to apply Job/kyrk in htr-test: Forbidden — the "
         "htrflow-batch chart renders the needed ServiceAccount behind "
@@ -279,7 +281,9 @@ def test_a_cluster_error_prints_the_sentence_and_exits_1(tmp_path, cluster, caps
     rc = cli.main(["apply", str(repo), "--out", str(out)])
     assert rc == 1
     captured = capsys.readouterr()
-    assert captured.err.strip() == sentence
+    lines = captured.err.strip().splitlines()
+    assert set(lines[:-1]) == {sentence}
+    assert lines[-1].endswith("the other 0 were applied (exit 1)")
     assert captured.out.count("Traceback") == 0
 
 
@@ -632,3 +636,56 @@ def test_a_volume_list_that_really_moved_is_still_applied(tmp_path, cluster):
     cluster.live = [_record("kyrk", moved), _status("kyrk", "Succeeded")]
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     assert "kyrk" in [c[2] for c in cluster.of("apply")]
+
+
+def _refuses(cluster, target: str, error: Exception) -> None:
+    """Make the fake API server refuse exactly one object's apply."""
+    real = FakeCluster._method
+
+    def method(kind, verb, name=""):
+        inner = real(cluster, kind, verb, name)
+        if verb != "patch":
+            return inner
+
+        def patch(name, ns, obj, **kw):
+            if name == target:
+                raise error
+            return inner(name, ns, obj, **kw)
+
+        return patch
+
+    cluster._method = method
+
+
+def test_one_refused_object_does_not_stop_the_apply(tmp_path, cluster, capsys):
+    """The live failure this exists for: one object the API server would not
+    take aborted the whole loop, and the campaign behind it in the order was
+    never applied at all. A refusal is now one object's problem."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    _refuses(
+        cluster,
+        "kyrk",
+        cluster_mod.ClusterError("apply Job/kyrk: 409 Conflict"),
+    )
+    rc = cli.main(["apply", str(repo), "--out", str(out)])
+    assert rc == cli.REFUSED, "a refused object is not a total failure"
+    assert [c[2] for c in cluster.of("apply")] == [
+        "htr-pipeline-demo-v1",
+        "htr-warmup-demo-v1",
+        "campaign-kyrk",
+        "campaign-loc",
+        "loc",
+    ]
+    err = capsys.readouterr().err
+    assert "apply Job/kyrk: 409 Conflict" in err
+    assert "Job/kyrk" in err.splitlines()[-1], "the summary names what was refused"
+
+
+def test_a_refused_campaign_job_still_lets_the_rest_prune(tmp_path, cluster):
+    """A refusal stops nothing downstream either: the prune and the pause
+    sync are about every OTHER campaign in the repo."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    cluster.live = [_object("Job", "cancelled")]
+    _refuses(cluster, "kyrk", cluster_mod.ClusterError("apply Job/kyrk: 409"))
+    assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == cli.REFUSED
+    assert cluster.of("delete") == [("delete", "Job", "cancelled")]
