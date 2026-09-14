@@ -111,9 +111,11 @@ script). A CSP header from the server must not be stricter than the meta tag
 - **Running motion.** Only what is running moves, so that a campaign still
   working cannot be mistaken for a finished one between polls: the state and
   phase chips carry a pulsing dot (`aria-hidden` — the chip's word is the
-  state), an active row and a Running header carry a 3px `role="progressbar"`
-  bar whose fill eases to `done`/`total` over 600 ms with a slow sheen
-  crossing it, and the progress line whose `done` actually changed since the
+  state; the header's needs a succeeded warm-up too, since `Running` is also
+  what a campaign reads as while its warm-up is pending), an active row and a
+  Running header whose summed `pagesTotal` is above zero carry a 3px
+  `role="progressbar"` bar whose fill eases to `done`/`total` over 600 ms
+  with a slow sheen crossing it, and the progress line whose `done` actually changed since the
   last poll fades a second of the running blue out from behind its text.
   Under `prefers-reduced-motion: reduce` there is no pulse, no sheen and no
   fade — the bar still shows the same fraction, it just jumps to it.
