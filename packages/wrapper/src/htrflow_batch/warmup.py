@@ -50,6 +50,7 @@ PERMANENT_ERRORS: tuple[type[BaseException], ...] = (
     ValueError,  # incl. pydantic ValidationError; driver's "bad pipeline config"
     yaml.YAMLError,
     KeyError,  # unknown step name: htrflow STEPS[step.lower()]
+    TypeError,  # a step's `settings:` reach its constructor as kwargs (W2)
     NotImplementedError,  # unknown model class: htrflow get_model_by_name
     RepositoryNotFoundError,
     RevisionNotFoundError,

@@ -131,7 +131,8 @@ Resources, mounts and pod hardening are in
 - a 400, 401, 403, 404 or 410 on the manifest
 - a manifest body over `MANIFEST_MAX_BYTES`, non-JSON, with no canvases, or
   with a canvas that has no image
-- bad pipeline YAML, or an unknown step or model class
+- bad pipeline YAML, an unknown step or model class, or a setting a step
+  does not take
 
 **Transient:**
 
@@ -331,8 +332,8 @@ same shape on its `warmup` container. Exit 13 there is `FailJob`.
 - **A transient failure** (a network or disk error) is retried by Kubernetes
   up to `backoffLimit`.
 - **A permanent failure** is exit 13. The causes are a bad model id or
-  revision, an unknown step, invalid YAML, or a marker that could not be
-  written. It leaves the warm-up Job failed.
+  revision, an unknown step, a setting a step does not take, invalid YAML,
+  or a marker that could not be written. It leaves the warm-up Job failed.
 - **The marker is written before the success log line**, and failing to write
   it is fatal. A warm-up that exits `0` without a marker would be a green Job
   whose campaigns then wait for nothing.
