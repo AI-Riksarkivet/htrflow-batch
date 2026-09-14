@@ -42,15 +42,20 @@ enough, to settle the questions a single node cannot:
 - **Retention and size guards.** Nothing prunes the model cache, the run
   logs or old results. A retired pipeline's snapshots and warm-up marker stay
   on the cache volume until someone removes them by hand.
-- **Durable failure history.** A completed volume is remembered forever by
-  its `manifest.json`. A failed one is not: once the Job's TTL reaps it, the
-  run log is all that is left, and the next attempt overwrites it. A durable
-  failure record, or a database, is only worth it if failure analytics
-  demand one.
+- **Durable failure history is a summary.** A completed volume is
+  remembered forever by its `manifest.json`. A failed one is remembered by
+  the campaign's status ConfigMap, which keeps the id and one sentence for up
+  to 50 failed volumes; past that, and for the detail behind any of them, the
+  run log is all that is left once the Job's TTL reaps it, and the next
+  attempt overwrites it. A per-volume failure record, or a database, is only
+  worth it if failure analytics demand one.
 - **Finished campaigns after the TTL.** The Workload goes with the reaped
-  Job, so nothing remembers that a campaign already ran. A later apply
-  creates the Job again. Resume skips the pages already in the bucket, but
-  every volume still takes a GPU slot and a model load to find that out.
+  Job, so the queue remembers nothing. The campaign's status ConfigMap does,
+  and `apply` leaves a finished, unchanged campaign alone rather than
+  creating the Job again. What is not covered: a campaign whose volume list
+  is appended to after the TTL is a changed campaign, so it is applied as a
+  new Job over the whole list, and resume — not the queue — is what keeps the
+  volumes that already finished cheap.
 - **Small-volume batching.** A model load costs about the same for every
   volume. That cost disappears in a volume of hundreds of pages, but it
   can dominate a volume of ten. If tiny volumes become common, the converter
