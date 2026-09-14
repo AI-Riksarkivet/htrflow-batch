@@ -702,14 +702,16 @@
     white-space: pre-wrap;
   }
 
-  /* One quiet row at the foot of the header block: provenance on the left,
-     dates on the right, nothing in it heavier than the counts above it. The
-     models half is the half that gives up width first -- it clips, and its
-     title carries the list the clip cut. */
+  /* One quiet row at the foot of the header block: provenance, then the
+     dates, nothing in it heavier than the counts above. Left-aligned at
+     every width -- holding the dates at the far edge only reads as a pair
+     while both halves share a line, and on a phone they do not. The models
+     half is the half that gives up width first: it clips, and its title
+     carries the list the clip cut. `clip` with a margin rather than
+     `hidden`, so a focus ring on the last link is not shaved off. */
   .card-meta {
     display: flex;
     flex-wrap: wrap;
-    justify-content: space-between;
     gap: 0.15rem 0.75rem;
     margin: 0.3rem 0 0;
     font-size: 12px;
@@ -718,7 +720,8 @@
 
   .models {
     min-width: 0;
-    overflow: hidden;
+    overflow: clip;
+    overflow-clip-margin: 4px;
     white-space: nowrap;
     text-overflow: ellipsis;
   }
@@ -727,17 +730,26 @@
     white-space: nowrap;
   }
 
-  /* Links, but in the line's own colour: underlined so they are findable
-     without it, and only hover and focus spend the accent. */
+  /* Links in the line's own colour, and the underline in that colour too:
+     it carries the contrast the text does, so it is what marks a link at
+     rest rather than a hairline nobody can see. Hover and focus spend the
+     accent, and focus takes the same ring every other control here wears. */
   .models a {
     color: inherit;
-    text-decoration-color: var(--border);
+    text-decoration: underline;
+    text-decoration-color: currentColor;
+    text-underline-offset: 0.15em;
   }
 
-  .models a:hover,
+  .models a:hover {
+    color: var(--primary);
+  }
+
   .models a:focus-visible {
     color: var(--primary);
-    text-decoration-color: currentColor;
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 3px;
   }
 
   .chip.phase.succeeded {
