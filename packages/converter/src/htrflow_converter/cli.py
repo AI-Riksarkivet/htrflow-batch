@@ -17,7 +17,7 @@ from pathlib import Path
 import yaml
 
 from . import render
-from .models import Campaign
+from .models import STATUS_SUFFIX, Campaign
 from .parse import ValidationError, load
 
 _PART_RE = re.compile(r"-part(\d+)\.yaml\Z")
@@ -298,7 +298,7 @@ def _finished(cluster, name: str, volumes: str) -> str | None:
     already ran. There is deliberately no override flag: a campaign that
     should run again is a new campaign.
     """
-    status = cluster.get("ConfigMap", f"campaign-{name}{render.STATUS_SUFFIX}")
+    status = cluster.get("ConfigMap", f"campaign-{name}{STATUS_SUFFIX}")
     data = (status or {}).get("data") or {}
     if data.get("phase") not in _FINISHED_PHASES:
         return None

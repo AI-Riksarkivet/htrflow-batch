@@ -27,7 +27,8 @@ from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 from urllib3.exceptions import HTTPError
 
-from .render import CAMPAIGN_SELECTOR, STATUS_SUFFIX
+from .models import STATUS_SUFFIX
+from .render import CAMPAIGN_SELECTOR
 
 #: Field manager for every apply: what lets a field this tool stopped
 #: rendering be removed from a live object -- the role `kubectl`'s

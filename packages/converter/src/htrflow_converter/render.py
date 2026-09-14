@@ -42,10 +42,6 @@ _QUEUE_LABEL = "kueue.x-k8s.io/queue-name"
 _PRIORITY_LABEL = "kueue.x-k8s.io/priority-class"
 _SHA_ANNOTATION = "htrflow.riksarkivet.se/pipeline-sha256"
 _DIGEST_ANNOTATION = "htrflow.riksarkivet.se/image-digest"
-#: ``campaign-<name>`` + this is the status ConfigMap the read API
-#: writes beside the record (packages/web ``projection.STATUS_SUFFIX``).
-#: Nothing here renders one; the prune has to recognise it.
-STATUS_SUFFIX = "-status"
 
 
 def label_value(text: str) -> str:

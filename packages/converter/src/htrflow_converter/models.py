@@ -41,6 +41,13 @@ _IMAGE_RE = re.compile(r"[a-z0-9./:-]+@sha256:[0-9a-f]{64}\Z")
 #: campaign it is named after -- and be reported as "append-only" instead,
 #: which sends its author looking for a change they never made.
 _PART_RE = re.compile(r"-part\d+\Z")
+#: ``campaign-<name>`` + this is the status ConfigMap the read API writes
+#: beside a campaign's own record (packages/web ``projection``; ``render``
+#: and ``cluster`` import it from here). A campaign named ``x-status`` would
+#: render a record ConfigMap called ``campaign-x-status`` -- the very name
+#: the API writes the status of campaign ``x`` to, and which a prune then
+#: keeps or deletes on the wrong campaign's behalf.
+STATUS_SUFFIX = "-status"
 
 #: `name`/`id` are taken from the file name (parse.py overrides whatever the
 #: YAML says), so the only way to fix either is to rename the file.
@@ -163,6 +170,12 @@ class Campaign(BaseModel):
             raise ValueError(
                 'ends in "-part<number>", which is what the converter calls '
                 "the parts of a campaign it splits — rename the file"
+            )
+        if v.endswith(STATUS_SUFFIX):
+            raise ValueError(
+                'ends in "-status", which is what the read API calls the '
+                "ConfigMap it writes beside the record of a campaign — "
+                "rename the file"
             )
         return v
 
