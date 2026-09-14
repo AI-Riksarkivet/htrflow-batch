@@ -42,6 +42,12 @@ _WORKLOADS = "workloads"
 _JOB_UID_LABEL = "kueue.x-k8s.io/job-uid"
 #: The two kinds this tool renders -> (client attribute, method noun).
 _KINDS = {"Job": ("batch", "job"), "ConfigMap": ("core", "config_map")}
+#: Characters of a server message this package will repeat. The branch
+#: below is the one that carries the API server's own words, and a 422 whose
+#: `details.causes` are empty still has the whole rejected value in them --
+#: a pod template is thousands of characters of Go struct. This is a
+#: terminal line, so it is cut rather than allowed to flood one.
+MAX_MESSAGE = 300
 #: Seconds a replaced Job is waited for. Background propagation returns at
 #: once and the object lingers while its pods go, so this covers a pod's
 #: grace period and no more -- past that the apply says so and stops.
@@ -124,6 +130,8 @@ def _api_error(
             # arrives as a paragraph with blank lines in it, and everything
             # else this package prints is one sentence per problem.
             message = " " + " ".join(json.loads(e.body)["message"].split())
+        if len(message) > MAX_MESSAGE:
+            message = message[:MAX_MESSAGE].rstrip() + " …"
     return ClusterError(f"{verb} {target}: {e.status} {e.reason}{message}")
 
 
