@@ -338,6 +338,21 @@ apply deletes the warm-up Job and ConfigMap of a pipeline file that is gone.
   batch pod has no path to Hugging Face Hub even with `HF_HUB_OFFLINE` unset
   ([Security → NetworkPolicy](security.md#networkpolicy)).
 
+**Private models.** A model that is private or gated on Hugging Face Hub
+cannot be downloaded anonymously, so the warm-up needs a token. Set
+`hf_token_secret` in `converter.yaml` to the name of a Secret in the campaign
+namespace with one key, `token`, holding a Hub token with **read** scope. The
+converter renders it as `HF_TOKEN` on the warm-up container only
+(`secretKeyRef`, `optional: false`, so a missing Secret keeps the pod from
+starting rather than letting it fail later on a download that looks like a
+typo in the model id). Campaign pods get nothing: they run `HF_HUB_OFFLINE=1`
+against the cache the warm-up already filled, and the `htr-batch-job`
+NetworkPolicy gives them no route to the Hub, so the token would be a
+credential they could not spend. The warm-up logs one line saying a token is
+present — never the value, never its length — which is how a run is read back
+for "the Secret reached the pod" against "it did not". Unset the key and
+nothing changes: the warm-up downloads anonymously, as it always has.
+
 **How a campaign pod waits for it.** The `warmup-wait` init container polls
 for `/data/warmup/<pipeline-id>.done` every 10 s. It waits at most
 `converter.yaml`'s `warmup_wait_seconds` (default 900), or the pod's own

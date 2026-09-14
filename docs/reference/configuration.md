@@ -48,12 +48,19 @@ in a pod environment nothing else writes.
 
 ## Three security sentences
 
-- **No credential is ever an environment variable**: S3 credentials reach a
-  pod as a mounted Secret file (`AWS_SHARED_CREDENTIALS_FILE`,
-  `/secrets/s3/credentials`), and `packages/wrapper/tests/test_config.py`
-  fails if any field of these models, or any literal env read in the
-  wrapper, is ever named like one. The devstack's own S3 store refuses to
-  render on credentials nobody chose (`devStack.insecureDefaults`).
+- **Credentials are mounted files, with one scoped exception**: S3
+  credentials reach a pod as a mounted Secret file
+  (`AWS_SHARED_CREDENTIALS_FILE`, `/secrets/s3/credentials`), and
+  `packages/wrapper/tests/test_config.py` fails if any field of these
+  models, or any literal env read in the wrapper, is ever named like one.
+  The exception is `HF_TOKEN`, which `huggingface_hub` reads from the
+  environment: `converter.yaml`'s `hf_token_secret` names a Secret whose
+  `token` key the converter renders as `HF_TOKEN` into the **warm-up** pod
+  alone — the short-lived pod that downloads models and holds nothing else.
+  Campaign pods get neither the env nor the Secret name, and the test's
+  exemption is per file, so reading a token anywhere but the warm-up
+  entrypoint still fails. The devstack's own S3 store refuses to render on
+  credentials nobody chose (`devStack.insecureDefaults`).
 - **The read API is unauthenticated**: `GET /api/v1/jobs[/…]` and the
   campaign browser are open to anyone who can reach the port —
   `network.web.ingressCidrs` is the only gate.
@@ -99,7 +106,7 @@ template` refuses it, **nobody** = convention only.
 | `IMAGE_DIGEST` | env | `unknown` | — | no secret — nobody |
 | `HTRFLOW_BASE_REVISION` | env | `unknown` | — | no secret — nobody |
 
-`Config` is not the whole wrapper env: these 5
+`Config` is not the whole wrapper env: these 6
 names are read directly, by the warm-up entrypoint or by the Job
 skeleton, never as a campaign setting.
 
@@ -109,6 +116,7 @@ skeleton, never as a campaign setting.
 |---|---|---|
 | `TERMINATION_LOG_PATH` | `main.py` | the path Kubernetes sets, not chosen here |
 | `HF_HUB_OFFLINE` | `warmup.py` | the warm-up entrypoint's own contract |
+| `HF_TOKEN` | `warmup.py` | from `hf_token_secret`; read only to log it is set |
 | `HF_HOME` | `warmup.py` | the warm-up entrypoint's own contract |
 | `PIPELINE_ID` | `warmup.py` | the warm-up entrypoint's own contract |
 | `PIPELINE_PATH` | `warmup.py` | the warm-up entrypoint's own contract |
@@ -141,6 +149,7 @@ skeleton, never as a campaign setting.
 | `max_seconds` | `converter.yaml` | `21600` | — | no secret — nobody |
 | `warmup_wait_seconds` | `converter.yaml` | `900` | — | no secret — nobody |
 | `ttl_seconds_after_finished` | `converter.yaml` | `604800` | — | no secret — nobody |
+| `hf_token_secret` | `converter.yaml` | *(empty)* | — | names the Secret the warm-up reads `HF_TOKEN` from — cluster |
 | `manifest_max_bytes` | `converter.yaml` | `16777216` | — | no secret — nobody |
 | `fetch_max_bytes` | `converter.yaml` | `67108864` | — | no secret — nobody |
 
@@ -190,8 +199,10 @@ skeleton, never as a campaign setting.
 ## One-sided keys
 
 `namespace` is the release namespace (a `helm -n` argument, not a chart
-value) and `runtime_class` has no chart key at all, so neither can be checked
-mechanically; the chart's queue quotas, NetworkPolicy CIDRs and image
-settings have no converter counterpart. Prose lives in
+value), and `runtime_class` and `hf_token_secret` have no chart key at all,
+so none of them can be checked mechanically — the Hub-token Secret is the
+operator's own object, like the S3 one, and no chart template names it. The
+chart's queue quotas, NetworkPolicy CIDRs and image settings have no
+converter counterpart. Prose lives in
 [Chart Values](chart.md), [Campaign & Pipeline YAML](campaign-yaml.md) and
 [Wrapper](wrapper.md).

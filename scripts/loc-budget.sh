@@ -163,7 +163,10 @@ fail=0
 # it is defined -- the converter's `models.split_image_urls` -- so this copy
 # of it says only why a copy exists (the GPU image must not carry the
 # converter's Kubernetes client) and points at the tests that pin the two.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2742
+# 2742 -> 2750 (2026-09-14, hf token): the warm-up's one line saying a Hub
+# token is present, and the comment fixing what that line may never say --
+# the value, its length, or whose it is.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
@@ -343,7 +346,15 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2742
 # changed carries the comma line while this render writes the space line --
 # the same volumes, said twice -- so a finished campaign whose Job the TTL
 # had reaped was applied again and re-ran every volume over a separator.
-check converter "$(count packages/converter/src -name '*.py')" 1814
+# 1814 -> 1842 (2026-09-14, hf token): `hf_token_secret` -- the field, the
+# DNS-1123 subdomain a Secret name has to be (spelled out, because the
+# shorthand character class accepts names the API server refuses), and the
+# comment saying why only the warm-up ever gets the token.
+# 1842 -> 1863 (2026-09-14, hf token): the warm-up Job's HF_TOKEN
+# `secretKeyRef`, and the comment saying why the campaign Job gets nothing --
+# that omission is the design, so it has to be readable at the place a later
+# reader would otherwise "fix" it.
+check converter "$(count packages/converter/src -name '*.py')" 1863
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

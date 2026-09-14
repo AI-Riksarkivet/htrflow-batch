@@ -8,7 +8,7 @@
 
 Front matter is the mapping: `type`, `id`, `parent`, `title`. On create the new
 id is written back into the file. Work items get the tags
-`htrflow-batch; story-<ID>` (ID = first three chars of the file name), so the
+`htrflow-batch; story-<ID>` (ID = the file name up to its first dash), so the
 mapping is two-way: Azure tag -> file, file `id:` -> Azure item.
 State and assignee are Azure's; this script never touches them.
 
@@ -132,7 +132,7 @@ def call(method, url, ops):
 
 def story(path, dry):
     t, meta, body = read(path)
-    sid = os.path.basename(path)[:3]
+    sid = os.path.basename(path).split("-")[0]  # ids run past 99; see wire.py
     parts = re.split(r"^## (?:Done when|Klart när)\s*$", body, flags=re.M)
     desc_md, ac_md = parts[0], (parts[1] if len(parts) > 1 else "")
     ops = [
