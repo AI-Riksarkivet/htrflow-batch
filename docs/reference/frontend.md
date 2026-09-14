@@ -101,6 +101,10 @@ script). A CSP header from the server must not be stricter than the meta tag
   that row from the campaign's ConfigMap and the status ConfigMap beside it,
   which have no TTL
   ([The record a campaign leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)).
+  Its `phase` is `Unknown` ("outcome unknown", styled like queued/paused, not
+  like a failure) whenever no terminal record was ever written for it — a Job
+  deleted by hand or by a prune — since a `Running` that can never change is
+  the one answer that is certainly wrong.
   The card wears a neutral chip saying so, beside (never instead of) the
   phase chip: the Job's removal is housekeeping, not a verdict on the
   campaign, and the campaign's own phase is still the verdict. The meta line

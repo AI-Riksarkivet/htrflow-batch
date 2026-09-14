@@ -211,7 +211,18 @@ database — see the [decision log](decision-log.md)):
 | Object | Written by | Holds |
 |---|---|---|
 | `ConfigMap campaign-<name>` | `htrflow-campaigns render` + `apply` | `volumes.txt`, and the provenance annotations below |
-| `ConfigMap campaign-<name>-status` | the read API, from what it observes | `phase`, `volumesTotal`/`volumesDone`/`volumesFailed`, `startedAt`/`finishedAt`, `resultsBase`, `failedVolumes` (up to 50 ids with one sentence each) |
+| `ConfigMap campaign-<name>-status` | **both** the read API and `apply` | `phase`, `volumesTotal`/`volumesDone`/`volumesFailed`, `startedAt`/`finishedAt`, `resultsBase`, `failedVolumes` (up to 50 ids with one sentence each) |
+
+Two writers, on purpose. The read API observes the most — it reads the pods,
+so it alone can say *why* a volume failed — but it only writes while somebody
+has the status page open, and a campaign that finishes unwatched on a Friday
+would reach its TTL with no terminal record at all. So `apply`, the one thing
+guaranteed to run, reads each campaign's live Job before it decides anything
+and writes the ending it can see. Both write the same field names; neither
+ever shrinks the record (a value that says nothing never replaces one that
+says something, and `finishedAt` never moves backwards). `-status` is a
+reserved campaign-file ending for the same reason `-part<number>` is:
+`validate` refuses a campaign called `x-status`.
 
 The provenance annotations on the record, all
 `htrflow.riksarkivet.se/`-prefixed: `image-digest` (rendered — it is a pure
@@ -241,7 +252,10 @@ Three things follow.
   any of this is reached.
 - **The status page still shows it.** `GET /api/v1/jobs` merges the Jobs
   with these ConfigMaps: a pair with no Job is a row carrying `jobGone:
-  true`, the phase and counts the record last observed, and the dates. Its
+  true`, the phase and counts the record last observed, and the dates. A Job
+  removed some other way — by hand, by a prune — can leave a record that
+  never reached a terminal phase; that row reads `Unknown` ("outcome
+  unknown"), never a `Running` that can no longer change. Its
   detail response has the failed volumes with their reason but no per-volume
   rows — those were the Job's. The card shows a "job removed" chip.
 
