@@ -1,16 +1,28 @@
 # Events and signals
 
-Nothing in this system publishes a *campaign* status document. Every question
-about a campaign is answered from a signal that something else already emits:
-Kubernetes' own bookkeeping while the Job exists, and objects in the bucket
-after it is gone.
+Almost nothing in this system publishes a *campaign* status document. Nearly
+every question about a campaign is answered from a signal that something else
+already emits: Kubernetes' own bookkeeping while the Job exists, and objects
+in the bucket after it is gone.
 
-The one exception is a question the cluster cannot answer: how far into a
-volume a running pod has got. The wrapper answers that itself, in
-`progress.json` next to the volume's results. This page lists every signal and
-who reads it.
+Two questions are the exception.
 
-Answering that question makes the read API a bucket **reader**, not only a
+- **How far into a volume a running pod has got** is one the cluster cannot
+  answer. The wrapper answers it itself, in `progress.json` next to the
+  volume's results.
+- **How a campaign ended** has to outlive the Job that knew it. One document
+  is written for that, and for nothing else: the ConfigMap
+  `campaign-<name>-status`, beside the campaign's own. The read API writes it
+  whenever a request observes something the stored one does not already say,
+  and `htrflow-campaigns apply` writes it from the live Job before it decides
+  what to apply, so a campaign that finishes unwatched still leaves a record
+  ([The record a campaign leaves](campaigns.md#the-record-a-campaign-leaves)).
+  It is a handful of fields, written only when they change — never a live
+  mirror of the Job.
+
+This page lists every signal and who reads it.
+
+Answering the first of those makes the read API a bucket **reader**, not only a
 Kubernetes API client. It fetches `progress.json` itself (`ProgressReader` in
 `packages/web`), with anonymous GETs and no credentials. So the web pod must
 be able to reach the results bucket at whatever address works from *inside*
@@ -30,6 +42,7 @@ sequenceDiagram
     participant K as kubelet
     participant W as wrapper, index i
     participant S3 as results bucket
+    participant CM as campaign status ConfigMap
 
     Q->>J: Workload QuotaReserved and Admitted, Job unsuspended
     J->>K: pod for index i (event SuccessfulCreate)
@@ -45,6 +58,7 @@ sequenceDiagram
     K->>J: container exit code
     J->>J: index i added to completedIndexes
     Note over W,J: on failure the wrapper writes the termination message first,<br/>then exits 13 (FailIndex), or 1 or 143 (retried)
+    Note over CM: not written by anything above. The read API copies the phase and<br/>the counts here on a request that sees something new, and apply copies<br/>them off the live Job, so they outlive it
 ```
 
 ## The signals
@@ -64,15 +78,17 @@ sequenceDiagram
 | Warm-up marker `/data/warmup/<pipeline-id>.done` | The warm-up Job, before it logs success | Every batch pod's init container | **yes**, it lives on the cache PVC |
 | Run log `status/logs/<pipeline>/<volume>.txt` | wrapper, every 15 s and once on every exit path | Run viewer, operator ([below](#the-run-log)) | **yes** |
 | `page/NNNN.xml` and `alto/NNNN.xml` | wrapper uploader, PAGE first | Resume (both must exist), verify, the viewer | **yes** |
-| `progress.json` | wrapper, after every page outcome and at every stage change, and with stage `failed` on any exit that is not a success | The read API, from its own path to the bucket, and so the campaign page's page counts and its failure/error notice. The API fetches at most `PROGRESS_FETCH_CAP` (32) per request, running rows first, and caches each for a few seconds | **yes** |
+| `progress.json` | wrapper, after every page outcome and at every stage change, and with stage `failed` on any exit that is not a success | The read API, from its own path to the bucket, and so the campaign page's page counts and its failure/error notice. The API fetches at most `PROGRESS_FETCH_CAP` (32) per request, running rows first, and caches each: 5 s for a running volume, an hour once it is done (a done volume's file never changes again; a *miss* on one is cached for the short window, not the hour) | **yes** |
 | `iiif.json`, `pipeline.yaml` | Publish, after verify. `iiif.json` covers the pages that came out, so a volume with a failed page is one canvas short. `iiif.json` is also written every 10 pages *during* the run, covering the pages done so far | The Universal Viewer, and a person reading the recipe back | **yes** |
 | `manifest.json` | Publish, **last** | Anyone asking "is it done?". `pages_ok`/`pages_failed` say whether the volume lost pages on the way. Resume compares its `page_sources`, and its timings (`gpu_stall_seconds`, `wall_seconds`) are the evidence for or against a [cache layer](../roadmap/cache-layer.md) | **yes** |
 | ALTO `Processing ID="htrflow-batch"` block | `provenance.stamp_alto`, before the upload | Anyone holding the file, with no cluster at all | **yes** |
+| `ConfigMap campaign-<name>-status`: `phase`, the three volume counts, `startedAt`, `finishedAt`, `resultsBase`, and `failedVolumes` from the detail route | The read API on every request that sees something new; `apply`, from the live Job | The campaign browser once the Job is gone, and `apply`, to leave a finished unchanged campaign alone | **yes**, it has no TTL of its own. It is a cluster object, not a bucket one |
 
-The pattern is the same everywhere: **everything Kubernetes emits is
-evidence for a day, and everything in the bucket is evidence for good.** That
-is why `manifest.json`, not an exit code or a Job condition, is the only thing
-that means "done".
+The pattern is the same everywhere: **everything Kubernetes emits is evidence
+for as long as the Job lives, and everything in the bucket is evidence for
+good.** The status ConfigMap is the one deliberate exception, and it carries a
+summary rather than the per-index detail. That is why `manifest.json`, not an
+exit code or a Job condition, is the only thing that means "done".
 
 ## Quick lookups
 
@@ -224,11 +240,15 @@ or set `LOG_SHIP_SECONDS=0`.
 - **Some failures surface as nothing.** A campaign whose `volumes.txt`
   ConfigMap is missing shows an empty table and a "load more" that never
   loads.
-- **Status does not outlive the Job.** A day after a campaign finishes,
-  `completedIndexes` and `failedIndexes` are gone with the Job, and the read
-  API answers 404. No campaign-level record is written to the bucket, so
-  "which volumes failed?" then costs one request per volume, against
-  `manifest.json` and `progress.json`.
+- **Only a summary outlives the Job.** A week after a campaign finishes —
+  `ttlSecondsAfterFinished`, which a pipeline may set for itself — the Job is
+  reaped and `completedIndexes` and `failedIndexes` go with it. The status
+  ConfigMap stays, so the read API still answers with the phase, the three
+  counts, the timestamps and up to 50 failed volume ids with a sentence each;
+  a 404 means no record was ever written, not that one expired. What is gone
+  is per-volume detail beyond those 50, so "which volumes failed?" then costs
+  one request per volume, against `manifest.json` and `progress.json`. No
+  campaign-level record is written to the *bucket* at all.
 - **Read API edges.** One unparseable index label on a pod makes the whole
   response a bare 500. Every poll lists every Pod the campaign has made, not
   only the ones needed.
