@@ -739,3 +739,46 @@ def test_a_iiif_size_url_survives_converter_shell_and_wrapper(tmp_path):
 
     images = config.Config.model_construct(images=result.stdout)
     assert images.image_urls == urls
+
+
+# -- the private-model token (2026-09-14) ----------------------------------
+
+
+def _warmup_env(cfg: ConverterConfig, demo) -> list[dict]:
+    warmup = render.pipeline_objects(demo, cfg)[1]
+    return warmup["spec"]["template"]["spec"]["containers"][0]["env"]
+
+
+def test_no_hf_token_secret_means_no_token_env_anywhere():
+    kyrk, demo, cfg = _kyrk()
+    assert cfg.hf_token_secret == ""
+    assert "HF_TOKEN" not in [e["name"] for e in _warmup_env(cfg, demo)]
+
+
+def test_the_warmup_job_reads_hf_token_from_the_named_secret():
+    """A private model is downloaded once, by the one pod the NetworkPolicy
+    lets reach the Hub. `optional: false` so a missing Secret stops the pod
+    from starting: an anonymous retry would fail on the download anyway, and
+    later than this."""
+    kyrk, demo, cfg = _kyrk()
+    cfg = cfg.model_copy(update={"hf_token_secret": "htr-batch-hf"})
+    token = next(e for e in _warmup_env(cfg, demo) if e["name"] == "HF_TOKEN")
+    assert token["valueFrom"]["secretKeyRef"] == {
+        "name": "htr-batch-hf",
+        "key": "token",
+        "optional": False,
+    }
+    assert "value" not in token  # the value stays in the Secret
+
+
+def test_the_campaign_job_never_gets_the_hub_token():
+    """Offline by design: a campaign pod runs HF_HUB_OFFLINE=1 against the
+    cache the warm-up filled and has no egress to the Hub, so a token there
+    would be a credential in a pod that cannot use it."""
+    kyrk, demo, cfg = _kyrk()
+    cfg = cfg.model_copy(update={"hf_token_secret": "htr-batch-hf"})
+    # Every object the campaign renders to, not just the first part's Job: a
+    # split campaign has several, and the ConfigMap beside each one.
+    rendered = yaml.safe_dump_all(render.campaign_objects(kyrk, demo, cfg))
+    assert "HF_TOKEN" not in rendered
+    assert "htr-batch-hf" not in rendered

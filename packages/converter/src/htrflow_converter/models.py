@@ -35,6 +35,15 @@ _MiB = 1024 * 1024
 _VOLUME_ID_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?\Z")
 _NAME_RE = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?\Z")
 _IMAGE_RE = re.compile(r"[a-z0-9./:-]+@sha256:[0-9a-f]{64}\Z")
+#: A Kubernetes object name in its wider form, DNS-1123 *subdomain* -- what
+#: a Secret name has to be (``_NAME_RE`` above is the narrower label, which
+#: is all a Job name may be). Spelled out rather than simplified to
+#: ``[a-z0-9.-]*``: that shorthand accepts ``a..b`` and ``a.-b``, which the
+#: API server refuses, so the mistake would be caught at apply time instead
+#: of in ``validate``. The 253-character cap is checked beside it.
+_SUBDOMAIN_RE = re.compile(
+    r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*\Z"
+)
 #: The converter names the parts of a campaign it splits ``<name>-part1``,
 #: ``-part2``, ... (``render.campaign_names``). A campaign file with that
 #: ending would share its rendered file, Job and ConfigMap with a part of the
@@ -380,5 +389,24 @@ class ConverterConfig(BaseModel):
     #: was gone before anyone looked at it -- and, until `apply` learnt to
     #: read the record, re-run from the top by the next apply.
     ttl_seconds_after_finished: int = Field(default=7 * 24 * 3600, ge=1)
+    #: A Secret in ``namespace`` with a ``token`` key: a Hugging Face token
+    #: with read scope, for a pipeline whose model is private or gated.
+    #: Empty (the default) means the warm-up downloads anonymously. Only the
+    #: warm-up Job ever gets it -- campaign Jobs run ``HF_HUB_OFFLINE=1``
+    #: against the cache the warm-up filled, so they need no Hub credential
+    #: and must not carry one. No chart value pairs with this: like the S3
+    #: Secret the object is the operator's, and no chart template names it.
+    hf_token_secret: str = ""
     manifest_max_bytes: int = 16 * _MiB
     fetch_max_bytes: int = 64 * _MiB
+
+    @field_validator("hf_token_secret")
+    @classmethod
+    def _check_hf_token_secret(cls, v: str) -> str:
+        if v and (len(v) > 253 or not _SUBDOMAIN_RE.match(v)):
+            raise ValueError(
+                f"is not a Kubernetes Secret name (got {shown(v)}) — use "
+                'lower-case letters, digits, "-" and ".", starting and '
+                "ending with a letter or digit, at most 253 characters"
+            )
+        return v

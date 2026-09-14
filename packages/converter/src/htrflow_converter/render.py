@@ -130,6 +130,27 @@ def _warmup_job(p: Pipeline, cfg: ConverterConfig) -> dict:
     for e in job["spec"]["template"]["spec"]["containers"][0]["env"]:
         if e["name"] == "PIPELINE_ID":
             e["value"] = p.id
+    if cfg.hf_token_secret:
+        # The one pod that reaches HF Hub is the one pod that gets a Hub
+        # credential. The campaign Job deliberately gets nothing: it runs
+        # `HF_HUB_OFFLINE=1` against the cache this Job filled and the
+        # `htr-batch-job` NetworkPolicy gives it no route to the Hub, so a
+        # token there would be a secret in a pod that cannot spend it.
+        # `optional: false` -- a missing Secret must keep the pod from
+        # starting, rather than let it download anonymously and fail later,
+        # on the private model, with a 404 that names no cause.
+        job["spec"]["template"]["spec"]["containers"][0]["env"].append(
+            {
+                "name": "HF_TOKEN",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": cfg.hf_token_secret,
+                        "key": "token",
+                        "optional": False,
+                    }
+                },
+            }
+        )
     _set(job, "spec.template.spec.volumes[0].configMap.name", f"htr-pipeline-{p.id}")
     _set(
         job,

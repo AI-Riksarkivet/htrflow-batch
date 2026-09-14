@@ -45,6 +45,7 @@ SECURITY = {
     "S3_BUCKET": "from the S3 Secret (`secretKeyRef`) — cluster",
     "S3_ENDPOINT": "from the S3 Secret (`secretKeyRef`) — cluster",
     "s3_secret": "names the Secret mounted at `/secrets/s3` — cluster",
+    "hf_token_secret": "names the Secret the warm-up reads `HF_TOKEN` from — cluster",
     "s3.existingSecret": "names that Secret; no template creates it — nobody",
     "publicResultsBase": "the public-read results base; `required` — render",
     "web.image": "digest-pinned unless `security.allowTagImages` — render",
@@ -81,6 +82,7 @@ _WARMUP = "the warm-up entrypoint's own contract"
 ALSO_READ = [
     ("TERMINATION_LOG_PATH", "main.py", "the path Kubernetes sets, not chosen here"),
     ("HF_HUB_OFFLINE", "warmup.py", _WARMUP),
+    ("HF_TOKEN", "warmup.py", "from `hf_token_secret`; read only to log it is set"),
     ("HF_HOME", "warmup.py", _WARMUP),
     ("PIPELINE_ID", "warmup.py", _WARMUP),
     ("PIPELINE_PATH", "warmup.py", _WARMUP),

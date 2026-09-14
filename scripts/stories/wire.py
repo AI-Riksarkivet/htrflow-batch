@@ -25,7 +25,10 @@ def meta(path):
 
 files = {}
 for p in glob.glob(F + "*/stories/*.md"):
-    files[os.path.basename(p)[:3]] = (os.path.relpath(p, F), meta(p)["title"])
+    # The id is what stands before the first dash, not the first three
+    # characters: ids are a sequence that ran past 99, and a fixed width
+    # silently read "B101" as "B10" -- an id that is already another story.
+    files[os.path.basename(p).split("-")[0]] = (os.path.relpath(p, F), meta(p)["title"])
 
 
 def rows(ids, base):
@@ -52,6 +55,7 @@ B_impl = [
     "B31",
     "B41",
     "B63",
+    "B101",
 ]
 C_impl = ["B05", "B32", "C10"]
 C_partly = ["B22", "C08"]
