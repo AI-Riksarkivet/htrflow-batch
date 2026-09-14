@@ -246,7 +246,7 @@ Stage names turn into what the pod was doing:
 |---|---|
 | A non-2xx or a network error, with a list already on screen | "Can't reach the campaign service right now (HTTP 503). Showing the list we last received. Retrying every 60 seconds." |
 | The same, with nothing on screen yet | "Can't reach the campaign service right now (HTTP 500). Retrying every 60 seconds." |
-| `404` on a campaign's detail | "This campaign no longer exists (finished campaigns are removed after 24 hours)." |
+| `404` on a campaign's detail | "This campaign is gone: its campaign file has been removed from the campaigns repo." A campaign whose Job its TTL reaped is not a 404 — it is still served from [the record](campaigns.md#the-record-a-campaign-leaves) |
 | A 200 whose shape does not parse | "The campaign service answered in a form this page doesn't understand. Reload the page; if it keeps happening, the page and the service are running different versions." |
 
 ### The run log
