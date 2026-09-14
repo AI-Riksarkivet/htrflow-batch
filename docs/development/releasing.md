@@ -42,15 +42,17 @@ is never looked up on another.
 - **Where it does not**, the base is an htrflow image built from an htrflow
   source checkout and passed in as a build argument, plus what that base
   lacks at runtime: a C compiler and Python headers (triton JIT-compiles a
-  CPython extension on the GPU path), `sentencepiece` (to convert slow-only
-  tokenizers), and `transformers` pinned to the major line htrflow targets
-  (the next major dropped the slow-to-fast tokenizer conversion that models
-  without `tokenizer.json` depend on). torch and torchvision are pinned
+  CPython extension on the GPU path) and `sentencepiece` (to convert
+  slow-only tokenizers). torch and torchvision are pinned
   explicitly here too, so a base whose own resolution drifts fails the build
   instead of changing silently. Building that base is described in
   [Dev cluster](dev-cluster.md#the-gpu-wrapper-image).
 
-Every architecture-specific step sits behind a `TARGETARCH` test.
+Every architecture-specific step sits behind a `TARGETARCH` test. The
+transformers line is not one of them: both architectures install it from the
+`TRANSFORMERS_VERSION` build argument, whose default is the line upstream
+htrflow is tested on ([Two transformers
+lines](../how-it-works/wrapper.md#model-handling)).
 
 **Each architecture is built natively.** Nothing passes `--platform`:
 `uv` crashes in a cross-architecture build, and a GPU image built for a
@@ -126,13 +128,22 @@ per-architecture tags such as `<version>-<arch>`.
 | web | `riksarkivet/htrflow-web` | `docker.io` |
 
 Override with `--image-repository` and `--registry`. `--base-revision` sets
-`HTRFLOW_BASE_REVISION` for the wrapper.
+`HTRFLOW_BASE_REVISION` for the wrapper, and `--transformers-version` sets
+`TRANSFORMERS_VERSION`: empty, the default, keeps the dockerfile's pin, so a
+normal release publishes the same image it always did. Naming the other
+transformers line publishes that tag on it instead — for models the default
+line cannot read ([Two transformers
+lines](../how-it-works/wrapper.md#model-handling)) — and, since one run
+publishes one image, that is a tag of its own, not a second variant of an
+existing one.
 
 ### The publish workflow
 
 `.github/workflows/publish.yml` is manual (`workflow_dispatch`) only, with
 one required input, the tag (`v<version>`, equal to the wrapper's
-`pyproject.toml` version), and an optional base revision. Registry
+`pyproject.toml` version), and two optional ones: a base revision and a
+transformers version, which reaches the dagger-built architecture as the
+flag above and the other as a `docker build` argument. Registry
 credentials come from the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`
 repository secrets.
 
