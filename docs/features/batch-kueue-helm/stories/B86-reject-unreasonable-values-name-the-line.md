@@ -38,3 +38,6 @@ fil eller rad, och `cli.py:25` pekar på `allowed_image_repos` som chartet äger
       kampanj utan volymer avvisas.
 - [ ] `MAX_IMAGE_WIDTH=0` ger ett permanent konfigurationsfel i stället för
       fullupplösta bilder.
+- [x] En `images:`-URL med komma (IIIF-storlek `2500,`) delas inte längre isär —
+      separatorn är blanksteg, och en URL med blanksteg avvisas i `validate` med
+      filnamn och rad. (live-körning 2026-09-14)

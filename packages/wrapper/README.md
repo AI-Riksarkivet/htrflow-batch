@@ -56,7 +56,7 @@ Exit codes: `0` success, `13` permanent (do not retry), `1` transient,
 | Env var | Meaning |
 |---|---|
 | `VOLUME_REF` | Volume id, last segment of the S3 result prefix |
-| `IIIF_MANIFEST_URL` **or** `IMAGES` | Exactly one: a Presentation v2/v3 manifest URL, or comma-separated image URLs (a synthetic manifest is built and published) |
+| `IIIF_MANIFEST_URL` **or** `IMAGES` | Exactly one: a Presentation v2/v3 manifest URL, or space-separated image URLs (a synthetic manifest is built and published) |
 | `PIPELINE_PATH` | Mounted pipeline YAML (`/config/pipeline.yaml` in Jobs) |
 | `PIPELINE_ID` | Pipeline id, first segment of the S3 result prefix |
 | `S3_BUCKET` | Results bucket |

@@ -73,6 +73,7 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | `pipeline:` is required and must name a file in `pipelines/` | Reported as a validation error; nothing renders |
 | Every volume needs `manifest:` or a non-empty `images:` (unless it is a bare string) | Validation error |
 | `manifest:` and every `images:` entry are absolute `http://` or `https://` URLs | Validation error (`must be an http(s) URL`) |
+| `manifest:` and every `images:` entry are free of whitespace | Validation error naming the volume and which image it is (`percent-encode it as %20`). `volumes.txt` separates an `images:` volume's URLs with a space, and a URL may never contain one — a comma cannot do that job, because a IIIF Image API size request writes the size into the path (`/full/2500,/0/default.jpg`) |
 | Volume ids match `[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?` — alphanumeric at both ends, ≤63 chars | Validation error (`unsafe volume id`). This is the Kubernetes **label-value** alphabet, not a DNS-1123 label: uppercase is allowed |
 | Volume ids are unique within a campaign | Validation error (`duplicate volume id`) |
 | `window:`, when set, is a positive integer | Validation error |
@@ -80,7 +81,7 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | `suspend: true` | Renders `spec.suspend: true` — see [Pausing](#pausing) |
 | **A campaign whose rendered Job already exists in `rendered/` with a different volume list is rejected** | `render` prints `campaign <name> is append-only: create a new campaign` and exits non-zero — Job `completions` is immutable once created, so adding volumes means a new campaign file |
 | The file stem does not end in `-part<number>` | Validation error — that is what the converter calls the parts of a campaign it splits, so such a file would collide with one |
-| More than 10 000 volumes, or more than 900 KiB of `volumes.txt` (an `images:` volume is ONE line of comma-joined URLs) | Split into `<name>-part1`, `-part2`, … — one Job and one ConfigMap each. The API server refuses a ConfigMap over 1 MiB |
+| More than 10 000 volumes, or more than 900 KiB of `volumes.txt` (an `images:` volume is ONE line of space-joined URLs) | Split into `<name>-part1`, `-part2`, … — one Job and one ConfigMap each. The API server refuses a ConfigMap over 1 MiB |
 | A campaign that splits and whose name is long | The name is cut short in the part names: a Job's name is also a label value and its pods' name prefix (`<job>-<index>`), and a DNS label stops at 63 characters. `rendered/` holds `<shortened>-partN.yaml` |
 
 The campaign file stem becomes the `htrflow.riksarkivet.se/campaign` label and,

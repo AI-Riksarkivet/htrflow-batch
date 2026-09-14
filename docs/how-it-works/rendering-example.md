@@ -75,7 +75,7 @@ metadata:
 data:
   volumes.txt: |
     R0001203	https://lbiiif.riksarkivet.se/arkis!R0001203/manifest
-    loose-scans	images:https://example.org/scan1.jpg,https://example.org/scan2.jpg
+    loose-scans	images:https://example.org/scan1.jpg https://example.org/scan2.jpg
 ```
 
 Two lines, one per volume, in campaign-file order — the order that fixes
@@ -83,7 +83,7 @@ which line `$JOB_COMPLETION_INDEX` reads (index 0 gets `R0001203`, index 1
 gets `loose-scans`; see [volumes.txt](../getting-started/run-a-volume.md#where-a-volume-comes-from-volumestxt)
 for the exact format). The bare reference expanded through `converter.yaml`'s
 `source_template` into a full manifest URL; the `images:` volume became one
-line reading `images:` followed by its URLs, comma-joined, with no manifest
+line reading `images:` followed by its URLs, space-joined, with no manifest
 anywhere. `managed-by: converter` is what `apply --prune` and Argo CD's own
 prune use to find this object again once its campaign file is deleted;
 `campaign` and `pipeline` name where it came from.
