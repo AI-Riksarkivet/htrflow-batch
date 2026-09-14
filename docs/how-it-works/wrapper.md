@@ -384,9 +384,10 @@ that is not coming
 missing from `/data/hf` when a batch pod tries to load it: the cache was
 wiped without a re-warm, a download was incomplete, or the PVC was replaced.
 Under `HF_HUB_OFFLINE=1`, `huggingface_hub` then raises
-`LocalEntryNotFoundError`. That class subclasses both `OSError` and
-`ValueError`. `main.py` catches `OSError` before `ValueError`, so the wrapper
-classifies the miss as **transient**, exit 1. Kubernetes retries the index up
+`LocalEntryNotFoundError`. That class is an `OSError` on every version of the
+library, and a `ValueError` as well on the older line. `main.py` catches
+`OSError` before `ValueError`, so the wrapper classifies the miss as
+**transient**, exit 1, whichever line the image carries. Kubernetes retries the index up
 to `backoffLimitPerIndex`, resuming from the pages already published. A retry
 succeeds only once the cache is fixed. The transient classification keeps a
 real gap from failing, with `FailIndex`, a volume that a re-warm can still

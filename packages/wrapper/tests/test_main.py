@@ -528,20 +528,29 @@ def test_verify_detail_survives_the_termination_log_truncation(tmp_path):
     assert "0001: boom: disk full" in term["error"]
 
 
-class _MissingCachedModel(FileNotFoundError, ValueError):
-    """The shape of huggingface_hub.errors.LocalEntryNotFoundError — raised
-    under HF_HUB_OFFLINE=1 for a model absent from the read-only cache. Its
-    MRO in the wrapper image (huggingface_hub 0.36.2) ends
-    ... FileNotFoundError, OSError, ValueError, Exception."""
+class _MissingCachedModel0x(FileNotFoundError, ValueError):
+    """huggingface_hub.errors.LocalEntryNotFoundError as the 0.x line defines
+    it — raised under HF_HUB_OFFLINE=1 for a model absent from the read-only
+    cache, and a ValueError as well as an OSError."""
 
 
-def test_a_missing_cached_model_is_transient(env, cfg, s3):
+class _MissingCachedModel1x(FileNotFoundError):
+    """The same error on the 1.x line, which the image carries when it is
+    built on the newer transformers line: still an OSError, no longer a
+    ValueError."""
+
+
+@pytest.mark.parametrize("shape", [_MissingCachedModel0x, _MissingCachedModel1x])
+def test_a_missing_cached_model_is_transient(env, cfg, s3, shape):
     """A bare ValueError from the model factory is a config mistake (exit 13,
-    FailIndex). This one is also an OSError: the cache is simply not warm yet,
-    and a re-warm plus a retry fixes it — exit 1, not a failed index."""
+    FailIndex). This one is an OSError, whichever hub line named it: the cache
+    is simply not warm yet, and a re-warm plus a retry fixes it — exit 1, not
+    a failed index. The classification must not depend on the MRO, which the
+    two hub lines disagree about."""
+    assert issubclass(shape, OSError)
 
     def factory(c):
-        raise _MissingCachedModel("model 'x' not found in /data/hf")
+        raise shape("model 'x' not found in /data/hf")
 
     assert main(env, process_page_factory=factory) == EXIT_TRANSIENT
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
