@@ -162,9 +162,19 @@ def test_no_setting_may_carry_a_secret():
     here rather than in a review -- and so does a new literal env read
     anywhere in the package, not just a new ``Config`` field."""
     reads = _literal_env_reads()
-    names = Config.env_names() + [n for _, n in reads]
-    looks_like = {n for n in names if re.search(_SECRETISH, n)}
-    carriers = sorted(looks_like - set(_ENV_BY_CONTRACT))
+    # The exemption is for literal reads only. A `Config` field aliased
+    # HF_TOKEN is a different thing entirely: `Config` is the CAMPAIGN pod's
+    # contract, so such a field would ask the converter to put the token in
+    # the one pod that must never hold it.
+    exempt = {n for _, n in reads if n in _ENV_BY_CONTRACT}
+    looks_like = {
+        n
+        for n in Config.env_names() + [n for _, n in reads]
+        if re.search(_SECRETISH, n)
+    }
+    carriers = sorted(
+        looks_like - exempt | {n for n in Config.env_names() if n in exempt}
+    )
     assert carriers == [], (
         f"{carriers}: secrets reach the wrapper as a mounted file, never as env"
     )

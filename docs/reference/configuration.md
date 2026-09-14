@@ -201,7 +201,8 @@ skeleton, never as a campaign setting.
 `namespace` is the release namespace (a `helm -n` argument, not a chart
 value), and `runtime_class` and `hf_token_secret` have no chart key at all,
 so none of them can be checked mechanically — the Hub-token Secret is the
-operator's own object, like the S3 one, and no chart template names it; the chart's queue quotas, NetworkPolicy CIDRs and image
-settings have no converter counterpart. Prose lives in
+operator's own object, like the S3 one, and no chart template names it. The
+chart's queue quotas, NetworkPolicy CIDRs and image settings have no
+converter counterpart. Prose lives in
 [Chart Values](chart.md), [Campaign & Pipeline YAML](campaign-yaml.md) and
 [Wrapper](wrapper.md).

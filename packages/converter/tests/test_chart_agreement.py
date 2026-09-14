@@ -7,8 +7,11 @@ word, and `examples/campaigns/converter.yaml` asked a human to keep it that
 way in a comment. A rename on one side now fails here.
 
 Only keys both sides have are checked: `namespace` is the release namespace
-(a `helm -n` argument, not a value) and `runtime_class` has no chart key at
-all — docs/reference/configuration.md lists what is one-sided.
+(a `helm -n` argument, not a value), `runtime_class` has no chart key at all,
+and neither has `hf_token_secret` — the Hub-token Secret is the operator's
+own object, like the S3 one, and no chart template creates or reads it, so
+there is no twin to drift from. docs/reference/configuration.md lists what
+is one-sided.
 """
 
 from __future__ import annotations

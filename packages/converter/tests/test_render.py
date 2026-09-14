@@ -777,7 +777,8 @@ def test_the_campaign_job_never_gets_the_hub_token():
     would be a credential in a pod that cannot use it."""
     kyrk, demo, cfg = _kyrk()
     cfg = cfg.model_copy(update={"hf_token_secret": "htr-batch-hf"})
-    pod = render.campaign_objects(kyrk, demo, cfg)[1]["spec"]["template"]["spec"]
-    rendered = yaml.safe_dump(pod)
+    # Every object the campaign renders to, not just the first part's Job: a
+    # split campaign has several, and the ConfigMap beside each one.
+    rendered = yaml.safe_dump_all(render.campaign_objects(kyrk, demo, cfg))
     assert "HF_TOKEN" not in rendered
     assert "htr-batch-hf" not in rendered
