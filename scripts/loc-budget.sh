@@ -262,7 +262,12 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2742
 # re-render it. `models.split_image_urls` + `parse_source_line` (+33) read a
 # line back as what it MEANS, comma or space, and cli compares those (+7);
 # the docstrings carry the transition rule the wrapper now only points at.
-check converter "$(count packages/converter/src -name '*.py')" 1498
+# 1498 -> 1515 (2026-09-14, review nits): `_shown_url` strips userinfo out
+# of every URL a validation problem echoes back (+11 with the comment saying
+# why a campaign file's own credentials must not reach a CI log), the
+# whitespace and non-http sentences wrap over two lines each, and parse.py
+# flattens tab and CR as well as newline so one problem stays one line (+3).
+check converter "$(count packages/converter/src -name '*.py')" 1515
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

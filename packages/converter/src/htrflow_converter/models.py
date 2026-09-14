@@ -85,7 +85,17 @@ def _http_url(value: str) -> bool:
 #: rule is enforced here, where the author can still fix it.
 _WHITESPACE_RE = re.compile(r"\s")
 
-_PERCENT_ENCODE = "a URL cannot contain whitespace — percent-encode it as %20"
+_PERCENT_ENCODE = "percent-encode a space as %20"
+
+#: Userinfo, stripped out of any URL a problem echoes back: a campaign file
+#: should carry no credentials, but a problem line is printed in CI logs and
+#: pasted into chat, so one that does must lose them here. The class excludes
+#: ``?#`` so a bare ``@`` in a query before the first ``/`` is left alone.
+_USERINFO_RE = re.compile(r"(?<=//)[^/@?#]*@")
+
+
+def _shown_url(value: str) -> str:
+    return _USERINFO_RE.sub("***@", value)
 
 
 def split_image_urls(value: str) -> list[str]:
@@ -156,12 +166,13 @@ class Volume(BaseModel):
     def _check_manifest(cls, v: str | None) -> str | None:
         if v is not None and _WHITESPACE_RE.search(v):
             raise ValueError(
-                f'has a manifest with whitespace in it ("{v}") — {_PERCENT_ENCODE}'
+                f"has a manifest with whitespace in it "
+                f'("{_shown_url(v)}") — {_PERCENT_ENCODE}'
             )
         if v is not None and not _http_url(v):
             raise ValueError(
-                f'has a manifest that is not an http(s) URL ("{v}") — write '
-                "the whole URL, starting with https://"
+                f'has a manifest that is not an http(s) URL ("{_shown_url(v)}") '
+                "— write the whole URL, starting with https://"
             )
         return v
 
@@ -171,12 +182,13 @@ class Volume(BaseModel):
         for n, u in enumerate(v, start=1):
             if _WHITESPACE_RE.search(u):
                 raise ValueError(
-                    f'has image {n} with whitespace in it ("{u}") — {_PERCENT_ENCODE}'
+                    f"has image {n} with whitespace in it "
+                    f'("{_shown_url(u)}") — {_PERCENT_ENCODE}'
                 )
             if not _http_url(u):
                 raise ValueError(
-                    f'lists an image that is not an http(s) URL ("{u}") — '
-                    "every entry under images: is a whole URL"
+                    f"lists an image that is not an http(s) URL "
+                    f'("{_shown_url(u)}") — every entry under images: is a whole URL'
                 )
         return v
 
