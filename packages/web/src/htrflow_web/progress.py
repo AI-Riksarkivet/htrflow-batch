@@ -19,6 +19,7 @@ to keep working when the bucket does not.
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime, timezone
 from typing import Callable
@@ -38,13 +39,24 @@ MAX_ENTRIES = 5000
 #: Short: a slow bucket must not hold the API's own response open.
 TIMEOUT = 2.0
 
+#: The file is ours, but it arrives over the network like any other
+#: document and this process holds it in memory while it parses it. A real
+#: progress.json is a few hundred bytes; anything past this is not one, and
+#: the body is dropped unread rather than buffered (2026-09-14 audit).
+MAX_BODY = 64 * 1024
+
+#: How much of a string from that document may reach the card. `lastPage`,
+#: `stage` and the error sentence are all rendered for a person to read.
+MAX_FIELD = 300
+
 
 def _int(value: object) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 def _str_or_none(value: object) -> str | None:
-    return value if isinstance(value, str) else None
+    """A string from the document, clipped to what a card can show."""
+    return value[:MAX_FIELD] if isinstance(value, str) else None
 
 
 def _last_error(value: object) -> dict | None:
@@ -56,7 +68,7 @@ def _last_error(value: object) -> dict | None:
     error = value.get("error")
     if not isinstance(error, str):
         return None
-    return {"page": _str_or_none(value.get("page")), "error": error}
+    return {"page": _str_or_none(value.get("page")), "error": error[:MAX_FIELD]}
 
 
 def _age_seconds(updated_at: str | None, now: float) -> int | None:
@@ -198,10 +210,22 @@ class ProgressReader:
         self, url: str, parse: Callable[[dict, float], dict | None], now: float
     ) -> dict | None:
         try:
-            response = self._client.get(url)
-            if response.status_code != 200:
-                return None
-            doc = response.json()
+            doc = self._body(url)
         except Exception:
             return None  # unreachable, timed out, or not JSON at all
         return parse(doc, now) if isinstance(doc, dict) else None
+
+    def _body(self, url: str) -> object:
+        """The document at ``url``, read in chunks and abandoned past
+        ``MAX_BODY``. Redirects are not followed: the URL is built from an
+        operator's results base, and a bucket answering it with a Location
+        is not somewhere this pod should go next."""
+        with self._client.stream("GET", url, follow_redirects=False) as response:
+            if response.status_code != 200:
+                return None
+            body = bytearray()
+            for chunk in response.iter_bytes():
+                body += chunk
+                if len(body) > MAX_BODY:
+                    return None
+        return json.loads(body)

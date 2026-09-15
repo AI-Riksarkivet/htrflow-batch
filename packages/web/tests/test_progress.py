@@ -242,3 +242,51 @@ def test_a_row_with_no_timestamp_has_no_age_to_recompute():
     )
     assert r.fetch(BASE, "vol0", "done")["ageSeconds"] is None
     assert r.fetch(BASE, "vol0", "done")["ageSeconds"] is None
+
+
+def test_a_body_bigger_than_the_cap_is_no_progress():
+    """The file is ours, but it arrives over the network like any other
+    document and this process holds it in memory (2026-09-14 audit). A
+    bucket serving something enormous at that key is an unreadable file,
+    which this module already knows how to answer for."""
+    huge = {"pages_total": 1, "pad": "x" * (progress_mod.MAX_BODY + 1)}
+    r, _ = reader({f"{BASE}/vol0/progress.json": httpx.Response(200, json=huge)})
+    assert r.fetch(BASE, "vol0", "active") is None
+
+
+def test_a_body_inside_the_cap_still_reads():
+    ok = {**PROGRESS, "pad": "x" * 1000}
+    r, _ = reader({f"{BASE}/vol0/progress.json": httpx.Response(200, json=ok)})
+    assert r.fetch(BASE, "vol0", "active")["total"] == 638
+
+
+def test_a_redirect_is_not_followed():
+    """The URL is built from an operator's results base; a bucket that
+    answers it with a redirect is not somewhere this pod should follow."""
+    r, asked = reader(
+        {
+            f"{BASE}/vol0/progress.json": httpx.Response(
+                302, headers={"location": "http://169.254.169.254/latest/meta-data/"}
+            )
+        }
+    )
+    assert r.fetch(BASE, "vol0", "active") is None
+    assert asked == [f"{BASE}/vol0/progress.json"]
+
+
+def test_the_strings_a_person_reads_are_clipped():
+    """`lastPage`, `stage` and the error sentence all render into the card.
+    A megabyte of them is not a page the reader can use."""
+    long = "y" * 5000
+    doc = {
+        **PROGRESS,
+        "last_page": long,
+        "stage": long,
+        "last_error": {"page": long, "error": long},
+    }
+    r, _ = reader({f"{BASE}/vol0/progress.json": httpx.Response(200, json=doc)})
+    got = r.fetch(BASE, "vol0", "active")
+    assert len(got["lastPage"]) == progress_mod.MAX_FIELD
+    assert len(got["stage"]) == progress_mod.MAX_FIELD
+    assert len(got["lastError"]["error"]) == progress_mod.MAX_FIELD
+    assert len(got["lastError"]["page"]) == progress_mod.MAX_FIELD
