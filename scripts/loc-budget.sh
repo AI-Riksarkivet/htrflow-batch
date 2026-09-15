@@ -566,7 +566,12 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # names built from them, and ignored the namespaces the service was actually
 # given. Both halves are checked against one DNS-1123 label and against
 # `cfg.namespaces` before any read happens.
-check web       "$(count packages/web/src -name '*.py')" 1666
+# 1666 -> 1690 (2026-09-14, audit) F9: a volume's progress file was read
+# whole, with no size cap and no cap on the strings inside it, and the URL it
+# came from was followed wherever it redirected. It is now streamed and
+# abandoned past 64 KB, redirects are refused, and the three strings a person
+# reads off the card are clipped.
+check web       "$(count packages/web/src -name '*.py')" 1690
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
