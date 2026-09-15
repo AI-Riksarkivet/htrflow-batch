@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime, timezone
 
 import yaml
 
@@ -348,10 +349,32 @@ def merge_record(stored: dict[str, str], fresh: dict[str, str]) -> dict[str, str
         old = stored.get(key, "")
         if value in _SAYS_NOTHING and old not in _SAYS_NOTHING:
             continue
-        if key == "finishedAt" and old > value:
+        if key == "finishedAt" and not _is_later(value, old):
             continue
         merged[key] = value
     return merged
+
+
+def _instant(text: str) -> datetime | None:
+    """An RFC 3339 timestamp as a moment in time. A value without an offset
+    is read as UTC -- which is what every writer of this field means."""
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _is_later(value: str, old: str) -> bool:
+    """Whether ``value`` is a later moment than ``old``. Compared as moments,
+    not as text: the two writers of this field do not see the same clock and
+    need not write the same offset, and `09:00Z` sorts before `10:00+02:00`
+    as a string while being an hour after it (2026-09-14 audit). A fresh
+    value that is not a timestamp at all never replaces one that is."""
+    fresh, stored = _instant(value), _instant(old)
+    if fresh is None:
+        return False
+    return stored is None or fresh >= stored
 
 
 def status_configmap(row: dict, data: dict[str, str]) -> dict:
