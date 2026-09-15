@@ -1540,3 +1540,26 @@ def _failing_everywhere(cfg):
         raise RuntimeError("htrflow's Segmentation worker thread died")
 
     return process
+
+
+def test_the_sigterm_handler_outlives_the_final_log_ship(env, cfg, s3, monkeypatch):
+    """W16: the handler was put back to the default before `capture.finish()`,
+    which is where the run log is uploaded -- so a second SIGTERM arriving
+    during a drain (the kubelet's, then the node's) killed the pod outright
+    and lost the log the first one had gone to the trouble of preserving."""
+    from htrflow_batch.logship import LogCapture
+
+    seen = []
+    original = LogCapture.finish
+
+    def finish(self):
+        seen.append(signal.getsignal(signal.SIGTERM))
+        return original(self)
+
+    monkeypatch.setattr(LogCapture, "finish", finish)
+    before = signal.getsignal(signal.SIGTERM)
+
+    assert main(env, process_page_factory=fake_factory) == EXIT_OK
+
+    assert seen and seen[0] is not before  # ours, for the whole of the ship
+    assert signal.getsignal(signal.SIGTERM) is before  # and put back after it

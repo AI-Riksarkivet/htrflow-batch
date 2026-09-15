@@ -216,8 +216,6 @@ def main(
         code = EXIT_SIGTERM
         return code  # reached only when _hard_exit is stubbed (tests)
     finally:
-        if previous is not None:
-            _set_signal(signal.SIGTERM, previous)
         # C13 fix round, item 6: on every exit path but the successful one
         # (state.stage == "done", already written by _main just before it
         # returns) the file was staying at whatever stage the run was doing
@@ -229,6 +227,13 @@ def main(
         if state.tracker is not None and state.stage != "done":
             state.tracker.stage_changed("failed")
         capture.finish()
+        if previous is not None:
+            # W16: after the final log ship, not before it. A drain sends
+            # SIGTERM and the node may send a second one; with the handler
+            # already back at the default, that second one killed the pod
+            # outright and lost the log the first had gone to the trouble of
+            # preserving.
+            _set_signal(signal.SIGTERM, previous)
         if code not in (None, EXIT_OK):
             # W7: every failure exit, not only SIGTERM. Returning normally
             # hands the interpreter a ThreadPoolExecutor to join at shutdown,
