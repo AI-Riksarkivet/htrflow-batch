@@ -926,12 +926,20 @@ describe("CampaignCard", () => {
       stubDetail(failed);
       render(CampaignCard, { job: failed });
       await vi.advanceTimersByTimeAsync(0);
+      // The sentence is written out, not computed by calling the renderer
+      // this card calls: an expectation built from the code under test
+      // passes whatever that code says (2026-09-14 audit). $lib/reasons has
+      // its own tests for how the sentence is built.
+      const sentence =
+        "The warm-up failed: unknown model class 'Yolo9'. Fix the pipeline " +
+        "file, then re-apply it — the warm-up will not retry on its own.";
+      expect(describeReason(reason)).toBe(sentence);
       const chip = screen.getByText("warm-up failed");
       expect(chip).toHaveClass("failed");
-      expect(chip).toHaveAttribute("title", describeReason(reason));
-      expect(screen.queryByText(describeReason(reason))).toBeNull();
+      expect(chip).toHaveAttribute("title", sentence);
+      expect(screen.queryByText(sentence)).toBeNull();
       await expand();
-      expect(screen.getByText(describeReason(reason))).toBeInTheDocument();
+      expect(screen.getByText(sentence)).toBeInTheDocument();
     });
 
     test("succeeded: no chip at all", async () => {
@@ -1052,23 +1060,36 @@ describe("a campaign whose Job has been removed", () => {
     jobGone: true,
   };
 
+  // `getByText` already throws when there is no such element, so
+  // `.toBeTruthy()` on its result asserted nothing at all (2026-09-14
+  // audit). What each of these is really about is which element it is and
+  // what it says.
   test("wears a job removed chip", () => {
     render(CampaignCard, { job: reaped });
-    expect(screen.getByText("job removed")).toBeTruthy();
+    const chip = screen.getByText("job removed");
+    expect(chip).toHaveClass("chip", "gone");
+    expect(chip).toHaveAttribute("title", expect.stringContaining("removed"));
   });
 
-  test("says when it finished", () => {
+  test("says when it finished, in words and in the machine-readable form", () => {
     render(CampaignCard, { job: reaped });
     const when = screen.getByTitle("2026-09-08T10:00:00Z");
-    expect(when.textContent).toBeTruthy();
+    expect(when.tagName).toBe("TIME");
+    expect(when).toHaveAttribute("datetime", "2026-09-08T10:00:00Z");
+    expect(when).toHaveTextContent(/\d/);
   });
 
   test("an outcome nobody recorded reads Unknown, never Running", () => {
     const unknown: JobSummary = { ...reaped, phase: "Unknown" };
-    render(CampaignCard, { job: unknown });
-    expect(screen.getByText("outcome unknown")).toBeTruthy();
-    expect(screen.getByText("job removed")).toBeTruthy();
+    const { container } = render(CampaignCard, { job: unknown });
+    expect(screen.getByText("outcome unknown")).toHaveClass("chip", "phase");
+    expect(screen.getByText("job removed")).toHaveClass("chip", "gone");
     expect(screen.queryByText("Running")).toBeNull();
+    // Styled like a campaign that is over, not like one that went wrong.
+    expect(container.querySelector(".campaign")).toHaveAttribute(
+      "data-health",
+      "idle",
+    );
   });
 
   test("a campaign whose Job is still there wears no such chip", () => {
