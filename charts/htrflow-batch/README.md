@@ -74,6 +74,15 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 here would make the upgrade notes wrong for anyone actually on that
 version.
 
+### From 0.7.0 to 0.8.0 — the one thing that stops an upgrade
+
+| Change | What to do |
+|---|---|
+| **A `0.0.0.0/0` web ingress must be accepted explicitly.** `helm upgrade` fails with a sentence naming `network.web.allowPublicIngress` unless the release either lists real ranges in `network.web.ingressCidrs` or sets that flag. | Decide which it is. A dev cluster reached from wherever a browser happens to be: `--set network.web.allowPublicIngress=true`. Anything else: `--set network.web.ingressCidrs='{<range>}'` (include the node range — NodePort traffic arrives SNAT'd from the node). |
+| **New enforcing policies with `security.policies.enabled`.** The apply identity may delete only converter-labelled objects, and the web front may write only `campaign-<name>-status` ConfigMaps. | Nothing, unless something else in the namespace uses those ServiceAccounts. The policies need Kyverno; with `policies.enabled: false` they are not rendered. |
+| **Catch-all egress loses link-local and the private ranges.** | If a batch Job or warm-up legitimately reaches a private address, name that range in `network.iiifCidrs` / `network.s3Cidrs` — a named range is its own rule and stays reachable — or narrow `network.privateCidrs`. |
+| **S3 egress by CIDR is limited to `network.s3Ports` (default 443).** | Set `network.s3Ports` if your endpoint answers on another port. |
+
 ### From 0.2.0 to 0.3.0 — what to decide first (B63: campaigns as Indexed Jobs)
 
 | Change | What to do |
@@ -137,6 +146,56 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 `htrflow-web` / `templates/web.yaml` they became in 0.4.0. Renaming them
 here would make the upgrade notes wrong for anyone actually on that
 version.
+
+### 0.8.0 — 2026-09-14 (deployment audit)
+
+**Breaking at render time, on purpose.** `network.web.ingressCidrs` still
+defaults to `["0.0.0.0/0"]`, but the chart now refuses to render that
+default unless **`network.web.allowPublicIngress: true`** says the exposure
+is deliberate: the web front is a NodePort with no authentication of its
+own. An upgrade that says nothing about ingress fails with that sentence.
+Either list the ranges that may reach it, or set the flag.
+
+Added:
+- **`values-prod.yaml`** — the profile
+  [docs/getting-started/deploy.md](../../docs/getting-started/deploy.md)
+  starts from: `security.policies.enabled`, the allow-list set to what the
+  release publishes, `requireModelRevision`, `verifyImages` and
+  `psaEnforce: restricted`. Only the switches; every site-specific value
+  stays a `--set`, and a render of the file alone fails asking for them.
+- `templates/policies/rbac-scope.yaml` (with `security.policies.enabled`):
+  `htrflow-batch-rbac-scope-<ns>`, `Enforce`, **`background: false`** (it
+  matches on the requesting ServiceAccount, which a background scan has
+  none of). Two rules for the two grants RBAC cannot narrow — a verb covers
+  a resource type and never one object's name:
+  - `web-writes-status-only` — the web ServiceAccount may CREATE or UPDATE
+    only ConfigMaps named `campaign-<name>-status`. Its Role's
+    `create`/`patch` otherwise covers `htr-pipeline-<id>`, the pipeline a
+    campaign Job mounts.
+  - `apply-deletes-only-what-it-rendered` — rendered with
+    `apply.rbac.enabled`: the apply ServiceAccount may DELETE only objects
+    labelled `htrflow.riksarkivet.se/managed-by: converter`.
+- `htr-campaigns-apply` NetworkPolicy (`apply.rbac.enabled` +
+  `network.enabled`): DNS and the API server for a pod labelled
+  `app: htrflow-campaigns`. Under the default deny that pod previously had
+  an identity and no route to the API server, and the apply hung.
+- **`network.privateCidrs`** (default the three private blocks) and
+  **`network.s3Ports`** (default `[443]`).
+
+Changed:
+- Every catch-all (`0.0.0.0/0`) egress now excludes link-local
+  (`169.254.0.0/16`), loopback and `network.privateCidrs` as well as the
+  cluster and node ranges. A range named in `iiifCidrs`/`s3Cidrs` is its own
+  rule and stays reachable.
+- The CIDR half of the S3 egress rule names ports (`network.s3Ports`)
+  instead of allowing every port of that range.
+- `htrflow-batch-model-revision-<ns>` matches **any** ConfigMap carrying a
+  `pipeline.yaml` key, not only those labelled `managed-by: converter`.
+- The two image policies' **Pod** rules walk `ephemeralContainers` as well
+  as `containers` and `initContainers`.
+- The `security.verifyImages.subject` examples in `values.yaml` and
+  `ci/full-values.yaml` name the organisation that actually signs, and a
+  branch ref — publishing is a manual dispatch and never carries a tag ref.
 
 ### 0.6.0 — 2026-09-04 (B63: policy is Kyverno's, not the converter's)
 
