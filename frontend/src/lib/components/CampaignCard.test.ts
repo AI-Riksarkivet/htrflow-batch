@@ -151,7 +151,8 @@ describe("CampaignCard", () => {
     // done: the published result
     expect(done.getByRole("link", { name: "open" })).toHaveAttribute(
       "href",
-      "uv.html#?manifest=https://pub/htr-test/demo-v1/vol0/iiif.json",
+      "uv.html#?manifest=" +
+        encodeURIComponent("https://pub/htr-test/demo-v1/vol0/iiif.json"),
     );
     expect(done.getByRole("link", { name: "source" })).toHaveAttribute(
       "href",
@@ -164,7 +165,8 @@ describe("CampaignCard", () => {
       within(rows[1] as HTMLElement).getByRole("link", { name: "open" }),
     ).toHaveAttribute(
       "href",
-      "uv.html#?manifest=https://iiif.example.org/vol1/manifest",
+      "uv.html#?manifest=" +
+        encodeURIComponent("https://iiif.example.org/vol1/manifest"),
     );
 
     // no source at all: the open and source slots stay empty, log stays
@@ -277,20 +279,24 @@ describe("CampaignCard", () => {
       within(rows[0] as HTMLElement).getByRole("link", { name: "open" }),
     ).toHaveAttribute(
       "href",
-      "uv.html#?manifest=https://pub/htr-test/demo-v1/vol1/iiif.json",
+      "uv.html#?manifest=" +
+        encodeURIComponent("https://pub/htr-test/demo-v1/vol1/iiif.json"),
     );
     // Nothing published yet: still the source manifest, as before.
     expect(
       within(rows[1] as HTMLElement).getByRole("link", { name: "open" }),
     ).toHaveAttribute(
       "href",
-      "uv.html#?manifest=https://iiif.example.org/vol1/manifest",
+      "uv.html#?manifest=" +
+        encodeURIComponent("https://iiif.example.org/vol1/manifest"),
     );
   });
 
-  test("a sourceUrl that is not an http(s) URL never becomes a link", async () => {
-    // volumes.txt is a file humans edit in a git repo; the card checks the
-    // URL again at the last step before it becomes an href.
+  test("a sourceUrl that is not an http(s) URL never reaches the card", async () => {
+    // volumes.txt is a file humans edit in a git repo. Since the audit the
+    // schema refuses the row at the boundary ($lib/api, httpUrlSchema), so
+    // the card never sees it and says what it says about any answer it
+    // cannot read; the card's own checks stay as the last step.
     const hostile = {
       ...volumeFailed,
       sourceUrl: "javascript:alert(1)",
@@ -303,13 +309,12 @@ describe("CampaignCard", () => {
     );
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    await expand();
 
-    const row = screen.getAllByRole("row").slice(1)[0] as HTMLElement;
-    expect(within(row).queryByRole("link", { name: "source" })).toBeNull();
-    // and it must not reach the viewer through the "open" slot either
-    expect(within(row).queryByRole("link", { name: "open" })).toBeNull();
-    expect(within(row).getByRole("link", { name: "log" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "source" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "open" })).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "answered in a form this page doesn't understand",
+    );
   });
 
   test("the log link carries log+manifest always, and live=1 only for a volume that is not done", async () => {
@@ -348,6 +353,23 @@ describe("CampaignCard", () => {
         encodeURIComponent(volumeFailed.manifestUrl) +
         "&live=1",
     );
+  });
+
+  test("an unknown row's log link is not live: nothing is writing it", async () => {
+    const detail = {
+      ...detail0,
+      failures: [],
+      volumes: [{ ...volumeDone, state: "unknown" }],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(detail)),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+    const log = screen.getByRole("link", { name: /log/ });
+    expect(log.getAttribute("href")).not.toContain("live=1");
   });
 
   test("no thumbnails: no <img> anywhere in the card", async () => {
@@ -551,7 +573,8 @@ describe("CampaignCard", () => {
     expect(screen.queryByText("vol0")).toBeNull(); // not the loaded row
     expect(screen.getByRole("link", { name: "open" })).toHaveAttribute(
       "href",
-      "uv.html#?manifest=https://iiif.example.org/vol260/manifest",
+      "uv.html#?manifest=" +
+        encodeURIComponent("https://iiif.example.org/vol260/manifest"),
     );
     expect(screen.getByRole("link", { name: "source" })).toHaveAttribute(
       "href",
@@ -920,12 +943,20 @@ describe("CampaignCard", () => {
       stubDetail(failed);
       render(CampaignCard, { job: failed });
       await vi.advanceTimersByTimeAsync(0);
+      // The sentence is written out, not computed by calling the renderer
+      // this card calls: an expectation built from the code under test
+      // passes whatever that code says (2026-09-14 audit). $lib/reasons has
+      // its own tests for how the sentence is built.
+      const sentence =
+        "The warm-up failed: unknown model class 'Yolo9'. Fix the pipeline " +
+        "file, then re-apply it — the warm-up will not retry on its own.";
+      expect(describeReason(reason)).toBe(sentence);
       const chip = screen.getByText("warm-up failed");
       expect(chip).toHaveClass("failed");
-      expect(chip).toHaveAttribute("title", describeReason(reason));
-      expect(screen.queryByText(describeReason(reason))).toBeNull();
+      expect(chip).toHaveAttribute("title", sentence);
+      expect(screen.queryByText(sentence)).toBeNull();
       await expand();
-      expect(screen.getByText(describeReason(reason))).toBeInTheDocument();
+      expect(screen.getByText(sentence)).toBeInTheDocument();
     });
 
     test("succeeded: no chip at all", async () => {
@@ -1046,23 +1077,36 @@ describe("a campaign whose Job has been removed", () => {
     jobGone: true,
   };
 
+  // `getByText` already throws when there is no such element, so
+  // `.toBeTruthy()` on its result asserted nothing at all (2026-09-14
+  // audit). What each of these is really about is which element it is and
+  // what it says.
   test("wears a job removed chip", () => {
     render(CampaignCard, { job: reaped });
-    expect(screen.getByText("job removed")).toBeTruthy();
+    const chip = screen.getByText("job removed");
+    expect(chip).toHaveClass("chip", "gone");
+    expect(chip).toHaveAttribute("title", expect.stringContaining("removed"));
   });
 
-  test("says when it finished", () => {
+  test("says when it finished, in words and in the machine-readable form", () => {
     render(CampaignCard, { job: reaped });
     const when = screen.getByTitle("2026-09-08T10:00:00Z");
-    expect(when.textContent).toBeTruthy();
+    expect(when.tagName).toBe("TIME");
+    expect(when).toHaveAttribute("datetime", "2026-09-08T10:00:00Z");
+    expect(when).toHaveTextContent(/\d/);
   });
 
   test("an outcome nobody recorded reads Unknown, never Running", () => {
     const unknown: JobSummary = { ...reaped, phase: "Unknown" };
-    render(CampaignCard, { job: unknown });
-    expect(screen.getByText("outcome unknown")).toBeTruthy();
-    expect(screen.getByText("job removed")).toBeTruthy();
+    const { container } = render(CampaignCard, { job: unknown });
+    expect(screen.getByText("outcome unknown")).toHaveClass("chip", "phase");
+    expect(screen.getByText("job removed")).toHaveClass("chip", "gone");
     expect(screen.queryByText("Running")).toBeNull();
+    // Styled like a campaign that is over, not like one that went wrong.
+    expect(container.querySelector(".campaign")).toHaveAttribute(
+      "data-health",
+      "idle",
+    );
   });
 
   test("a campaign whose Job is still there wears no such chip", () => {
@@ -1219,5 +1263,214 @@ describe("CampaignCard's running motion", () => {
     const flashed = container.querySelectorAll(".vprogress.bump");
     expect(flashed).toHaveLength(1); // vol3 sent the same count back
     expect(flashed[0]).toHaveTextContent("151 / 638 pages");
+  });
+});
+
+describe("a progress bar cannot be talked out of its own scale", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  async function campaignBar(
+    pagesDone: number,
+    pagesTotal: number,
+  ): Promise<HTMLElement> {
+    const body = {
+      ...detail0,
+      failures: [],
+      volumes: [],
+      pagesDone,
+      pagesTotal,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(body)),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    return container.querySelector('[role="progressbar"]') as HTMLElement;
+  }
+
+  // done/total come from the wrapper's progress.json in the results bucket:
+  // a document that arrives over the network, and one a half-written run can
+  // make disagree with itself (2026-09-14 audit).
+  test("more pages done than the volume has fills the bar exactly once", async () => {
+    const bar = await campaignBar(900, 100);
+    expect(bar.querySelector(".fill")).toHaveStyle({ width: "100%" });
+    expect(bar).toHaveAttribute("aria-valuenow", "100");
+    expect(bar).toHaveAttribute("aria-valuemax", "100");
+  });
+
+  test("a negative count reads as nothing done, not a bar running backwards", async () => {
+    const bar = await campaignBar(-5, 100);
+    expect(bar.querySelector(".fill")).toHaveStyle({ width: "0%" });
+    expect(bar).toHaveAttribute("aria-valuenow", "0");
+  });
+
+  test("an ordinary fraction is unchanged", async () => {
+    const bar = await campaignBar(25, 100);
+    expect(bar.querySelector(".fill")).toHaveStyle({ width: "25%" });
+    expect(bar).toHaveAttribute("aria-valuenow", "25");
+  });
+});
+
+describe("the viewer link is built the way every other link is", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  async function openLink(volume: unknown): Promise<HTMLElement | null> {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes: [volume] }),
+      ),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+    const row = screen.getAllByRole("row").slice(1)[0] as HTMLElement;
+    return within(row).queryByRole("link", { name: "open" });
+  }
+
+  // iiifUrl is built by the API from a volume id that came off a campaign's
+  // volumes.txt, a file people edit in a git repo. `sourceUrl` was checked
+  // at this last step and `iiifUrl` was not (2026-09-14 audit); the schema
+  // now refuses such a row outright, and this is the belt beside it.
+  test("an iiifUrl that is not an http(s) URL never reaches the viewer", async () => {
+    const hostile = { ...volumeDone, iiifUrl: "javascript:alert(1)" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes: [hostile] }),
+      ),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.queryByRole("link", { name: "open" })).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "answered in a form this page doesn't understand",
+    );
+  });
+
+  test("a manifest URL is encoded into the fragment, not pasted into it", async () => {
+    const odd = {
+      ...volumeDone,
+      iiifUrl: "https://pub/htr-test/demo-v1/vol %261/iiif.json",
+    };
+    expect(await openLink(odd)).toHaveAttribute(
+      "href",
+      "uv.html#?manifest=" +
+        encodeURIComponent("https://pub/htr-test/demo-v1/vol %261/iiif.json"),
+    );
+  });
+
+  test("an ordinary manifest URL still opens", async () => {
+    expect(await openLink(volumeDone)).toHaveAttribute(
+      "href",
+      "uv.html#?manifest=" +
+        encodeURIComponent("https://pub/htr-test/demo-v1/vol0/iiif.json"),
+    );
+  });
+});
+
+// R1: the Job is gone, but manifest.json, iiif.json, alto/ and the run log
+// are all still in the bucket. The card has to draw those rows like any
+// other — the whole point of rebuilding them server-side was that a
+// finished campaign stays openable (the product owner, 2026-09-14).
+describe("a reaped campaign's volumes are still openable", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const reaped: JobSummary = {
+    ...job,
+    phase: "Succeeded",
+    counts: { total: 3, active: 0, done: 2, failed: 1 },
+    finishedAt: "2026-09-08T10:00:00Z",
+    jobGone: true,
+  };
+
+  const failedRow = {
+    ...volumeFailed,
+    reason: { stage: null, permanent: null, error: "manifest 404" },
+  };
+
+  async function openCard(rows: unknown[], row: JobSummary = reaped) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          ...row,
+          failures: rows.filter(
+            (v) => (v as { state: string }).state === "failed",
+          ),
+          volumes: rows,
+        }),
+      ),
+    );
+    render(CampaignCard, { job: row });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+    return screen.getAllByRole("row").slice(1) as HTMLElement[];
+  }
+
+  test("every row is there, with its open, source and log links", async () => {
+    const rows = await openCard([volumeDone, failedRow]);
+    expect(rows).toHaveLength(2);
+    const done = within(rows[0] as HTMLElement);
+    expect(done.getByRole("link", { name: "open" })).toHaveAttribute(
+      "href",
+      "uv.html#?manifest=" + encodeURIComponent(volumeDone.iiifUrl),
+    );
+    expect(done.getByRole("link", { name: "source" })).toHaveAttribute(
+      "href",
+      volumeDone.sourceUrl,
+    );
+    expect(done.getByRole("link", { name: "log" })).toHaveAttribute(
+      "href",
+      expect.stringContaining(encodeURIComponent(volumeDone.logUrl)),
+    );
+  });
+
+  test("a failed row still says why, next to its log", async () => {
+    const rows = await openCard([volumeDone, failedRow]);
+    const failed = within(rows[1] as HTMLElement);
+    expect(failed.getByText(/manifest 404/)).toBeInTheDocument();
+    expect(failed.getByRole("link", { name: "log" })).toBeInTheDocument();
+  });
+
+  test("a campaign nobody recorded the ending of still lists its volumes", async () => {
+    const unknown: JobSummary = { ...reaped, phase: "Unknown" };
+    const rows = await openCard(
+      [{ ...volumeDone, state: "unknown", progress: null }],
+      unknown,
+    );
+    expect(rows).toHaveLength(1);
+    const row = within(rows[0] as HTMLElement);
+    expect(row.getByText("unknown")).toBeInTheDocument();
+    // Nothing says the result is published, so "open" falls back to the
+    // volume's own source manifest rather than a file that may not be there.
+    expect(row.getByRole("link", { name: "open" })).toHaveAttribute(
+      "href",
+      "uv.html#?manifest=" + encodeURIComponent(volumeDone.sourceUrl),
+    );
+    expect(row.getByRole("link", { name: "log" })).toBeInTheDocument();
   });
 });

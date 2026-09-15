@@ -13,6 +13,7 @@
     type VolumeView,
   } from "$lib/api.js";
   import { RELOAD_MS } from "$lib/config.js";
+  import { startPolling } from "$lib/poll.js";
   import { modelLabel, modelUrl, pipelineModels } from "$lib/pipeline.js";
   import {
     describeApiError,
@@ -169,7 +170,7 @@
   // next page (the "load more" button). A poll re-fetches every page that is
   // currently open, rounded up to whole pages, so a tick does not undo
   // "load more" under the reader's cursor; counts.total still ends paging.
-  async function load(reset: boolean): Promise<void> {
+  async function load(reset: boolean, signal?: AbortSignal): Promise<boolean> {
     try {
       const offset = reset ? 0 : volumes.length;
       const limit = reset
@@ -178,7 +179,14 @@
             Math.max(PAGE, Math.ceil(volumes.length / PAGE) * PAGE),
           )
         : PAGE;
-      const detail = await fetchJob(job.namespace, job.name, offset, limit);
+      const detail = await fetchJob(
+        job.namespace,
+        job.name,
+        offset,
+        limit,
+        signal,
+      );
+      if (signal?.aborted) return true;
       // A short answer is the whole list, so it replaces what is loaded; a
       // full one may have more behind it, and those rows stay as they were
       // rather than vanishing under the reader.
@@ -207,10 +215,13 @@
       pipelineSteps = detail.pipelineSteps;
       pipelineYaml = detail.pipelineYaml;
       detailError = null;
+      return true;
     } catch (e) {
+      if (signal?.aborted) return true;
       // One sentence, never the transport detail or a ZodError: what the
       // reader can do about it is the point ($lib/reasons).
       detailError = describeApiError(e, volumes.length > 0);
+      return false;
     }
   }
 
@@ -225,14 +236,28 @@
     // and an effect that reads its own output re-runs forever. Nothing here
     // needs re-subscribing anyway — the list keys each card by
     // namespace/name, so a card never changes campaign under its own feet.
-    untrack(() => void load(true));
-    const timer = setInterval(() => void load(true), RELOAD_MS);
-    return () => clearInterval(timer);
+    // $lib/poll is what keeps a page of cards from each queueing up requests
+    // against a slow API, and from polling at all while nobody is looking.
+    return untrack(() =>
+      startPolling((signal) => load(true, signal), RELOAD_MS),
+    );
   });
 
-  /** The fill's width; callers only ask for one when `total` is known. */
+  /**
+   * The fill's width, clamped to the track. `done` and `total` come from the
+   * wrapper's progress.json in the results bucket — a document that arrives
+   * over the network, and one a half-written run can make disagree with
+   * itself — so a bar 900% wide or running backwards was a page the numbers
+   * could ask for (2026-09-14 audit).
+   */
   function pct(done: number, total: number): string {
-    return `${((done / total) * 100).toFixed(1)}%`;
+    const ratio = total > 0 ? done / total : 0;
+    return `${(Math.min(Math.max(ratio, 0), 1) * 100).toFixed(1)}%`;
+  }
+
+  /** The same clamp for the value a screen reader is told. */
+  function clamp(done: number, total: number): number {
+    return Math.min(Math.max(done, 0), Math.max(total, 0));
   }
 
   // Defence in depth. `sourceUrl` is the API's copy of a line from a
@@ -255,7 +280,12 @@
     const published =
       v.state === "done" || (v.progress?.viewerPublished ?? false);
     const manifest = published ? v.iiifUrl : sourceOf(v);
-    return manifest === null ? null : `uv.html#?manifest=${manifest}`;
+    // Checked and encoded like every other URL this card turns into an
+    // href: `iiifUrl` is built by the API from a volume id that came off a
+    // campaign's volumes.txt, and it went into the fragment unread and
+    // unescaped (2026-09-14 audit).
+    if (manifest === null || !isHttpUrl(manifest)) return null;
+    return `uv.html#?manifest=${encodeURIComponent(manifest)}`;
   }
 
   // manifest carries manifestUrl so /log's RunSummaryCard has something to
@@ -267,7 +297,7 @@
       encodeURIComponent(v.logUrl) +
       "&manifest=" +
       encodeURIComponent(v.manifestUrl) +
-      (v.state !== "done" ? "&live=1" : "")
+      (v.state !== "done" && v.state !== "unknown" ? "&live=1" : "")
     );
   }
 
@@ -313,9 +343,9 @@
     class="bar"
     role="progressbar"
     aria-label="Pages done in {label}"
-    aria-valuenow={done}
+    aria-valuenow={clamp(done, total)}
     aria-valuemin={0}
-    aria-valuemax={total}
+    aria-valuemax={Math.max(total, 0)}
   >
     <span class="fill" style="width: {pct(done, total)}"></span>
   </span>
@@ -1089,6 +1119,9 @@
     background: var(--destructive-soft);
   }
 
+  /* Nobody recorded what this volume did: the same quiet treatment as a
+     volume that has not started, since neither is a failure. */
+  .status.unknown,
   .status.pending {
     color: var(--muted-foreground);
     background: var(--muted);

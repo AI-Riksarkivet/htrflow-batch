@@ -92,9 +92,10 @@ Every stage name can appear in the termination message.
    An empty manifest, a canvas with no image, a non-JSON body or a 4xx is exit
    13. A 5xx, a 429 or a network error is exit 1.
 2. **resume**: lists `page/` and `alto/` in S3. A page counts as done only
-   when **both** exist. A page is reprocessed if its recorded `page_sources`
-   URL in the previous `manifest.json` differs from the one the manifest gives
-   now; the comparison is between redacted URLs. `RESUME=false` forces
+   when **both** exist. A page is reprocessed if its recorded
+   `page_source_digests` entry in the previous `manifest.json` differs from
+   the digest of the URL the manifest gives now; credentials are taken out of
+   both, so a re-signed URL is not a new source image. `RESUME=false` forces
    everything to be reprocessed. Skipped pages are never downloaded.
 3. **load**: starts `stream.PageStream(...)` downloading, **then** calls
    `Pipeline.from_config($PIPELINE_PATH)`. The model load overlaps the first

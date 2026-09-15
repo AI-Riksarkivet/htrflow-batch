@@ -81,7 +81,8 @@ but per-volume detail past the TTL comes from the bucket.
 | `pages` | canvas count |
 | `pages_ok`, `pages_failed` | how the volume came out: `pages_ok` + `pages_failed` + the pages resume skipped = `pages`. `pages_failed > 0` on a volume that is nonetheless done — every one of those pages is in `results` with its `error` |
 | `results` | `{"0001": {"status": "ok" \| "failed" \| "skipped", "seconds", "error"?}, …}` |
-| `page_sources` | `{"0001": <source image URL, userinfo/query stripped>, …}` — what resume compares |
+| `page_sources` | `{"0001": <source image URL, userinfo/query stripped>, …}` — for a reader, not for the comparison |
+| `page_source_digests` | `{"0001": <sha256 hex>, …}` — what resume compares: the full source URL with its credentials removed (userinfo, the `X-Amz-*` presign parameters, `token`, `sig`, `signature`, `key`), hashed. The redacted URL above has lost its query, so on a host that selects the image with `?id=` every page of a volume looks the same; a digest keeps the query without publishing it |
 | `canvas_ids` | `{"0001": <source canvas id or null>, …}` |
 | `source_manifest` | the manifest URL the pod fetched (verbatim), or, for `IMAGES` volumes, the synthetic manifest id the wrapper published to `sources/` |
 | `max_image_width`, `bytes_fetched`, `wall_seconds`, `gpu_stall_seconds`, `pages_per_second` | run metrics |
@@ -95,11 +96,14 @@ the pod is still running. It is best-effort in both directions: a write that
 fails is logged and forgotten (a status file must never cost a page its
 work), and a reader that cannot fetch it shows no progress rather than an
 error. It says nothing about completion — `manifest.json` alone does that,
-and is written last.
+and is written last. A run that fails in its `config` stage writes none at
+all: the bucket and the prefix this key lives under are themselves settings,
+so until they parse there is nowhere to put it — that failure is read from the
+termination message and the pod's log instead.
 
 | Field | Meaning |
 |---|---|
-| `stage` | `setup`, `resume`, `load`, `stream`, `verify`, `publish`, then `done`, or `failed` on any exit that is not a success — the wrapper's own stage names. There is no `config` here: the tracker is built after that stage, so a `ConfigError` leaves no `progress.json` at all |
+| `stage` | `setup`, `resume`, `load`, `stream`, `verify`, `publish`, `done` — the wrapper's own stage names — or `failed`, written on the way out of a run that did not finish. A run stopped by a SIGTERM is the one exception: it leaves the stage it was in, so the little time the pod has left goes to shipping the run log rather than to a status write. The termination message still names the stage. There is no `config` here: the tracker is built after that stage, so a `ConfigError` leaves no `progress.json` at all |
 | `pages_total` | canvases in the manifest this run covers |
 | `pages_done` | pages in the bucket: this run's `ok` pages **plus** the ones a previous run finished and resume skipped |
 | `pages_failed` | pages this run recorded as failed |

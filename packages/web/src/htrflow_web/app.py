@@ -15,15 +15,22 @@ whole job.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import logging
+import re
+import time
 from importlib import metadata
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import projection
+from .kube import ApplyConflict, ClusterUnavailable
 from .progress import ProgressReader
 
 _LOG = logging.getLogger(__name__)
@@ -38,6 +45,49 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Content-Security-Policy": "frame-ancestors 'none'",
 }
+
+#: The Universal Viewer is a third-party page with no <meta> CSP of its own,
+#: and until the 2026-09-14 audit the only thing forbidden on it was framing.
+#: What the built viewer actually needs, read off /app/static in the image:
+#: its bundle from a file beside it ('self'); ONE inline <script> and ONE
+#: inline <style>, which is what the hashes below are for; images from
+#: anywhere, including the data: URIs in uv.css and the blob: tiles
+#: OpenSeadragon builds; a manifest fetched from wherever the URL fragment
+#: points. Not needed and so not granted: 'unsafe-eval' (the one
+#: `new Function` in the bundle is webpack's globalThis probe, inside a
+#: try/catch with a `window` fallback) and any third-party script origin.
+#: `worker-src blob:` is granted for the 3D and audio decoders in UV's lazy
+#: chunks, which an image manifest never loads.
+UV_CSP = (
+    "default-src 'self'; script-src 'self'{scripts}; style-src 'self'{styles}; "
+    "object-src 'none'; img-src * data: blob:; connect-src *; "
+    "worker-src 'self' blob:; frame-ancestors 'none'"
+)
+
+#: A <script>/<style> with a body of its own -- one that loads a file has a
+#: `src` and is covered by 'self' instead.
+_INLINE = re.compile(r"<(script|style)(?![^>]*\bsrc=)[^>]*>(.*?)</\1>", re.S | re.I)
+
+UV_PATH = "/uv.html"
+
+
+def uv_csp(static: Path) -> str | None:
+    """``UV_CSP`` with the built viewer's own inline blocks hashed into it,
+    or ``None`` when there is no viewer to serve (a source checkout builds
+    no site). Computed once per process: the file cannot change under a
+    running container."""
+    try:
+        html = (static / UV_PATH.lstrip("/")).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    found: dict[str, list[str]] = {"script": [], "style": []}
+    for kind, body in _INLINE.findall(html):
+        digest = base64.b64encode(hashlib.sha256(body.encode()).digest()).decode()
+        found[kind.lower()].append(f" 'sha256-{digest}'")
+    return UV_CSP.format(
+        scripts="".join(found["script"]), styles="".join(found["style"])
+    )
+
 
 #: This package's own version, read off the installed distribution. Reported
 #: beside the deployed tag, never instead of it: the workspace members are
@@ -60,6 +110,31 @@ DEV_VERSION = "dev"
 #: (packages/converter ``render.status_configmap``), which is what actually
 #: guarantees a terminal record exists.
 RECORD_WRITES_PER_REQUEST = 20
+
+#: How long a namespace whose write was refused is left alone. Long enough
+#: that a denied grant costs one round trip per ten minutes rather than
+#: twenty per page load; short enough that renewing the grant is visible
+#: without restarting the service.
+REFUSAL_COOLDOWN = 600.0
+
+#: The one sentence a 502 says. The reader can do nothing about an RBAC
+#: change or a busy API server except wait for the next poll, which the page
+#: makes on its own.
+CLUSTER_UNAVAILABLE_DETAIL = (
+    "the Kubernetes API did not answer this request - the page retries on its own"
+)
+
+#: One DNS-1123 label -- what a Job, a ConfigMap and a namespace can each be
+#: called. The length cap (63) is checked beside it.
+DNS_1123 = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?")
+
+#: What /config.js says. `frontend/static/config.js` is the same file for a
+#: `bun run dev` that has no service to ask.
+CONFIG_JS = (
+    "// Served by the read API, from its own environment.\n"
+    'window.API_BASE = "/api/v1";\n'
+    "window.RESULTS_BASE = {results_base};\n"
+)
 
 #: Where the image puts the built site (.docker/htrflow-web.dockerfile).
 DEFAULT_STATIC_DIR = "/app/static"
@@ -140,11 +215,45 @@ def create_app(
     if progress is None and not site_only:
         progress = ProgressReader()
 
+    viewer_csp = uv_csp(Path(static_dir or DEFAULT_STATIC_DIR))
+
     @app.middleware("http")
     async def security_headers(request, call_next):
         response = await call_next(request)
         response.headers.update(SECURITY_HEADERS)
+        if request.url.path == UV_PATH and viewer_csp is not None:
+            response.headers["Content-Security-Policy"] = viewer_csp
         return response
+
+    @app.exception_handler(ClusterUnavailable)
+    async def cluster_unavailable(request, exc) -> JSONResponse:
+        """A read the API server refused or never answered. Registered as a
+        handler rather than left to escape, because an escaping exception is
+        answered by Starlette OUTSIDE the middleware above -- a plain-text
+        500 with no nosniff and no frame-ancestors on it (2026-09-14 audit).
+        The client's own message names verbs and identities and is logged,
+        never sent."""
+        _LOG.warning("cluster read failed: %s", exc)
+        return JSONResponse(
+            status_code=502,
+            content={"detail": CLUSTER_UNAVAILABLE_DETAIL},
+        )
+
+    @app.api_route("/config.js", methods=GET_HEAD)
+    def config_js() -> Response:
+        """The page's runtime configuration, built from this process's own
+        environment rather than read off a file in the image (2026-09-14
+        audit). `RESULTS_BASE` is what the run-log route checks its `?log=`
+        and `?manifest=` against, and a copy of it that an operator had to
+        keep in step with HTRFLOW_PUBLIC_RESULTS_BASE would be wrong exactly
+        when it mattered. Site-only mode has no cfg and says so with an
+        empty base. The API is always same-origin: this file is served by
+        the service that answers /api/v1."""
+        base = getattr(reader.cfg, "public_results_base", "") or ""
+        return Response(
+            CONFIG_JS.format(results_base=json.dumps(base)),
+            media_type="text/javascript",
+        )
 
     @app.api_route("/healthz", methods=GET_HEAD)
     def healthz() -> dict:
@@ -154,10 +263,13 @@ def create_app(
     def version() -> dict:
         return {"version": batch_version, "web": WEB_VERSION}
 
-    # Namespaces whose last write was refused. A denied RBAC grant fails
-    # for every campaign on every poll, which is a log nobody can read: say
-    # it once and remember it. (Per app, so a restart says it again.)
-    refused: set[str] = set()
+    # Namespaces whose last write was refused, and when. A denied RBAC grant
+    # fails for every campaign on every poll -- a log nobody can read, and
+    # RECORD_WRITES_PER_REQUEST server-side applies on the critical path of
+    # every page load, for ever (2026-09-14 audit). Said once, then left
+    # alone until the cooldown expires, so a grant that was renewed starts
+    # working again on its own. (Per app, so a restart tries immediately.)
+    refused: dict[str, float] = {}
 
     def _record(row: dict, live: dict | None, failures: list[dict] | None) -> bool:
         """Write the campaign's status ConfigMap when this request saw
@@ -173,6 +285,9 @@ def create_app(
         a 500 is a status page nobody can read."""
         if not hasattr(reader, "apply_configmap"):
             return False  # site-only: no cluster
+        refused_at = refused.get(row["namespace"])
+        if refused_at is not None and time.monotonic() - refused_at < REFUSAL_COOLDOWN:
+            return False
         stored = (live or {}).get("data") or {}
         data = projection.merge_record(stored, projection.status_record(row, failures))
         if data == stored:
@@ -181,12 +296,18 @@ def create_app(
         namespace = row["namespace"]
         try:
             reader.apply_configmap(cm)
+        except ApplyConflict:
+            # `htrflow-campaigns apply` owns these fields now and its
+            # terminal values are the authoritative ones. Nothing is wrong
+            # with this service's grant, so the namespace does not go into
+            # the cooldown below (2026-09-14 review).
+            return True
         except Exception as e:  # noqa: BLE001 - any client error, same answer
             if namespace not in refused:
-                refused.add(namespace)
                 _LOG.warning("could not write %s: %s", cm["metadata"]["name"], e)
+            refused[namespace] = time.monotonic()
             return True
-        refused.discard(namespace)
+        refused.pop(namespace, None)
         return True
 
     def _campaign_configmaps() -> tuple[dict, dict]:
@@ -250,6 +371,21 @@ def create_app(
         rows.sort(key=lambda row: row["createdAt"] or "", reverse=True)
         return rows
 
+    def _serves(namespace: str, name: str) -> bool:
+        """Whether this API could have a campaign by this name at all.
+
+        Both halves go straight into an API path and into the ConfigMap
+        names built from them, and the service is scoped to the namespaces
+        it was given -- so a string no Kubernetes object could carry, or a
+        namespace this API does not serve, is answered before any read
+        rather than after one (2026-09-14 audit). Site-only mode has no
+        `cfg` and no namespaces to compare against; its reader answers 503
+        for everything and that is the honest answer there."""
+        if not all(len(v) <= 63 and DNS_1123.fullmatch(v) for v in (namespace, name)):
+            return False
+        served = getattr(reader.cfg, "namespaces", ())
+        return not served or namespace in served
+
     @app.api_route("/api/v1/jobs/{namespace}/{name}", methods=GET_HEAD)
     def get_job(
         namespace: str,
@@ -257,9 +393,11 @@ def create_app(
         offset: int = Query(0, ge=0),
         limit: int = Query(200, ge=1, le=1000),
     ) -> dict:
+        if not _serves(namespace, name):
+            raise HTTPException(status_code=404, detail="job not found")
         job = reader.get_job(namespace, name)
         if job is None:
-            return _reaped_detail(namespace, name)
+            return _reaped_detail(namespace, name, offset, limit)
         cm_name = projection.configmap_ref(job)
         configmap = reader.get_configmap(namespace, cm_name) if cm_name else None
         pipe_name = projection.configmap_ref(job, "pipeline")
@@ -281,7 +419,7 @@ def create_app(
         _record(body, reader.get_configmap(namespace, status_name), body["failures"])
         return body
 
-    def _reaped_detail(namespace: str, name: str) -> dict:
+    def _reaped_detail(namespace: str, name: str, offset: int, limit: int) -> dict:
         """The campaign page of a campaign whose Job is gone. The pipeline
         ConfigMap is asked for by name here -- the one place this package
         rebuilds the converter's ``htr-pipeline-<id>`` convention instead of
@@ -303,7 +441,16 @@ def create_app(
         if row is None:
             raise HTTPException(status_code=404, detail="job not found")
         pipe = reader.get_configmap(namespace, f"htr-pipeline-{row['pipeline']}")
-        return projection.record_detail(row, status, reader.cfg, pipe)
+        return projection.record_detail(
+            row,
+            record,
+            status,
+            reader.cfg,
+            pipe,
+            offset,
+            limit,
+            fetch_progress=progress.fetch if progress is not None else None,
+        )
 
     def _warmup_status(
         job: dict, warmup_jobs: list[dict], reasons: dict[tuple[str, str], dict | None]

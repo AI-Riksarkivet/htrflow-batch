@@ -104,7 +104,8 @@ helm upgrade --install htr charts/htrflow-batch -n <namespace> \
   --set web.internalResultsBase=http://rustfs.<namespace>.svc.cluster.local:9000/htr-results \
   --set network.apiServer.cidr=<apiserver-address>/32 \
   --set network.iiifCidrs='{<iiif-source-cidr>}' \
-  --set network.clusterCidrs='{<pod-cidr>,<service-cidr>}'
+  --set network.clusterCidrs='{<pod-cidr>,<service-cidr>}' \
+  --set network.web.allowPublicIngress=true
 make psa-labels
 ```
 
@@ -118,6 +119,10 @@ make psa-labels
   cluster this is usually the node's address.
 - `network.iiifCidrs` must cover the host you transcribe from. Campaign pods
   can reach nothing else.
+- `network.web.allowPublicIngress` accepts the default ingress list, which is
+  every address: the web front has no authentication of its own, so the chart
+  will not render that silently. On a dev cluster it is what you want; in
+  front of anything real, list `network.web.ingressCidrs` instead.
 
 The security policies stay off here. Kyverno is installed, but no policy is
 rendered. To turn them on, allow the images this namespace runs:

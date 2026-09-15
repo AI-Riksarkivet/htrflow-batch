@@ -28,9 +28,13 @@ security:
   verifyImages:
     enabled: true
     issuer: https://token.actions.githubusercontent.com
-    subject: https://github.com/Riksarkivet/htrflow-batch/.github/workflows/publish.yml@refs/tags/*
+    subject: https://github.com/AI-Riksarkivet/htrflow-batch/.github/workflows/publish.yml@refs/heads/main
 
 network:
+  # This file is a render fixture, not an install: it keeps the catch-all
+  # default and says so, which is also what exercises the opt-out.
+  web:
+    allowPublicIngress: true
   nodeCidrs: ["10.16.51.56/32"]
   apiServer:
     cidr: 10.16.51.56/32

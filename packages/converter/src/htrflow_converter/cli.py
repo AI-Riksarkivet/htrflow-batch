@@ -82,8 +82,34 @@ def _report(e: ValidationError, tail: str) -> int:
     return 1
 
 
+#: A repo with no converter.yaml is not refused by ``parse.load`` -- as a
+#: library, a missing file is every setting at its default. As a COMMAND it
+#: has to be: the namespace, the queue, the S3 Secret and the model-cache PVC
+#: all come from that file, so a repo without one silently applies one
+#: cluster's campaigns to whatever ``htr-batch`` happens to be, and
+#: ``--prune`` deletes what is already there.
+_NO_CONVERTER_YAML = (
+    "{path} is not there, and without it the namespace, the queue, the S3 "
+    "Secret and the model-cache PVC would all be guessed at — copy the "
+    "converter.yaml that htrflow-campaigns init writes and set it up for "
+    "your cluster"
+)
+
+
+def _missing_config(repo: Path) -> str | None:
+    return (
+        None
+        if (repo / "converter.yaml").is_file()
+        else _NO_CONVERTER_YAML.format(path=repo / "converter.yaml")
+    )
+
+
 def _validate(repo_dir: str) -> int:
     repo = Path(repo_dir)
+    missing = _missing_config(repo)
+    if missing is not None:
+        print(missing)
+        return 1
     try:
         campaigns, pipelines, cfg = load(
             repo / "campaigns", repo / "pipelines", repo / "converter.yaml"
@@ -236,15 +262,21 @@ def _unsafe_out(repo: Path, out: Path) -> str | None:
     return None
 
 
-def _render(repo_dir: str, out_dir: str, record_dir: str | None = None) -> int:
+def _render(repo_dir: str, out_dir: str) -> int:
     """Render ``repo_dir`` into ``out_dir``.
 
-    ``record_dir`` is where the PREVIOUS render is, when that is not
-    ``out_dir``: an ``apply`` with no ``--out`` renders into a temp directory
-    that records nothing, and the repo's committed ``rendered/`` is still the
-    record its pipelines and campaigns have to agree with.
+    ``--out`` says where this render is WRITTEN. What it is held against is
+    the repo's own committed ``rendered/``, always: that is the record of
+    what has been applied (B78), and a render directory that is empty --
+    ``apply``'s temp directory, a fresh ``--out`` an operator reached for
+    when a render looked wrong -- is not evidence that a campaign has never
+    run.
     """
     repo = Path(repo_dir)
+    missing = _missing_config(repo)
+    if missing is not None:
+        print(missing)
+        return 1
     try:
         campaigns, pipelines, cfg = load(
             repo / "campaigns", repo / "pipelines", repo / "converter.yaml"
@@ -260,7 +292,7 @@ def _render(repo_dir: str, out_dir: str, record_dir: str | None = None) -> int:
     if clash is not None:
         print(clash)
         return 1
-    record = Path(record_dir) if record_dir else out
+    record = repo / RENDERED
     edited = _edited_pipeline(campaigns, pipelines, cfg, record)
     if edited is not None:
         print(edited)
@@ -276,7 +308,11 @@ def _render(repo_dir: str, out_dir: str, record_dir: str | None = None) -> int:
         # separator changed says the same thing with commas in it, and an
         # unchanged campaign must still re-render (models.parse_source_line).
         new_volumes = [parse_source_line(v.source_line()) for v in c.volumes]
-        existing = _existing_parts(campaigns_out, c)
+        # Under the RECORD, never under `--out`: an apply with no --out
+        # renders into a temp directory, where an earlier render of this
+        # campaign cannot be, so both rules below found nothing to hold it
+        # against and a swapped volume list went straight to the cluster.
+        existing = _existing_parts(record / "campaigns", c)
         objects = render.campaign_objects(c, pipelines[c.pipeline], cfg)
         paths = [campaigns_out / f"{o['metadata']['name']}.yaml" for o in objects[1::2]]
         if existing:
@@ -297,7 +333,7 @@ def _render(repo_dir: str, out_dir: str, record_dir: str | None = None) -> int:
             # more, a shorter stem). Renaming them is not a re-render, it is
             # a delete and a restart -- `apply --prune` takes the Jobs that
             # already ran these volumes with it.
-            if existing != paths:
+            if [p.name for p in existing] != [p.name for p in paths]:
                 print(
                     f"campaign {c.name} was rendered as {_shape(existing)} and "
                     f"now renders as {_shape(paths)}: applying that would delete "
@@ -418,6 +454,16 @@ def _finished(cluster, name: str, volumes: str, observed: dict | None) -> str | 
 
 
 _NO_RECORD = "could not record how campaign {name} ended, continuing without it: "
+#: A campaign is rendered as a pair: the ConfigMap that carries its
+#: volumes.txt and the Job that mounts it. A directory where the pair has
+#: come apart -- a half-finished write, a hand edit, a bad merge of
+#: `rendered/` -- used to raise a bare KeyError on the Job's name, from
+#: inside the loop that was about to apply it.
+_INCOMPLETE_RENDER = (
+    "{dir} has a Job for campaign {name} but no ConfigMap carrying its "
+    "volumes.txt, so this render is incomplete — re-render the repo and "
+    "apply that"
+)
 
 
 def _record_and_decide(cluster, cfg, name: str, volumes: str) -> str | None:
@@ -511,6 +557,14 @@ _REFUSED_SUMMARY = (
     "{n} of {total} objects were refused by the API server and are "
     "unchanged: {names} — the other {ok} were applied (exit {code})"
 )
+#: A campaign Job the API server refused is a campaign the Kueue pause sync
+#: never sees -- and for a paused one that is the pause not being enforced:
+#: git says stopped, the live Job is running, and nothing in this apply is
+#: going to stop it. Exit 1, like a Workload that never appeared.
+_REFUSED_PAUSE = (
+    "{name}: paused in git, but the API server refused its Job, so the pause "
+    "is NOT enforced; fix what the refusal says and re-run the apply"
+)
 
 
 def _cluster(namespace: str):
@@ -532,21 +586,39 @@ def _objects(dir_: Path) -> list[dict]:
     return objects
 
 
+#: ``--prune`` deletes every converter-labelled object the render did not
+#: produce, so a render that produced NOTHING cancels every campaign in the
+#: namespace at once. That is a real thing to want -- deleting the last
+#: campaign file is how the last campaign is retired -- and it is also what a
+#: mistyped directory or a checkout that never happened looks like, so it has
+#: to be said out loud.
+_EMPTY_PRUNE = (
+    "refusing --prune: nothing under {dir} rendered a campaign, so this would "
+    "delete every campaign the converter manages in the namespace — check "
+    "that this is the campaigns repo you meant, or pass --allow-empty to "
+    "cancel them all on purpose"
+)
+
+
 def _apply(
-    repo_dir: str, out_dir: str | None, prune: bool, pause_wait: int, dry_run: bool
+    repo_dir: str,
+    out_dir: str | None,
+    prune: bool,
+    pause_wait: int,
+    dry_run: bool,
+    allow_empty: bool = False,
 ) -> int:
     with contextlib.ExitStack() as stack:
-        record_dir = None
         if out_dir is None:
             out_dir = stack.enter_context(tempfile.TemporaryDirectory("-htr-render"))
-            record_dir = str(Path(repo_dir) / RENDERED)
-        rc = _render(repo_dir, out_dir, record_dir)
+        rc = _render(repo_dir, out_dir)
         if rc:
             return rc
         repo, out = Path(repo_dir), Path(out_dir)
         # Pipelines first: a campaign's Job mounts its pipeline's ConfigMap
         # and waits on its warm-up Job's marker file.
         pipelines, campaigns = _objects(out / "pipelines"), _objects(out / "campaigns")
+        empty_prune = prune and not campaigns and not allow_empty
         if dry_run:
             for obj in pipelines + campaigns:
                 print(f"would apply: {obj['kind']}/{obj['metadata']['name']}")
@@ -555,8 +627,15 @@ def _apply(
                     f"would prune: every {render.CAMPAIGN_SELECTOR} Job/ConfigMap "
                     "in the namespace that is not listed above"
                 )
+            # Printed AFTER the preview, not instead of it: an empty prune is
+            # the one an operator most wants to see the shape of first.
+            if empty_prune:
+                print(_EMPTY_PRUNE.format(dir=repo / "campaigns"), file=sys.stderr)
             print("(--dry-run: nothing was sent to the API server)")
             return 0
+        if empty_prune:
+            print(_EMPTY_PRUNE.format(dir=repo / "campaigns"), file=sys.stderr)
+            return 1
         # The namespace comes from converter.yaml, not from the rendered
         # objects: a repo whose last campaign was deleted renders nothing at
         # all, which is exactly when --prune has work to do. (_render just
@@ -592,12 +671,24 @@ def _apply(
                 if obj["kind"] != "Job":
                     continue
                 name = obj["metadata"]["name"]
-                # Never a precondition for the apply. An identity whose Role
-                # predates this needs a `get` on Jobs that nothing needed
-                # before, and a human may be on a restricted kubeconfig --
-                # refusing to apply anything over that would take the
-                # campaigns repo offline for a permission it never had. Warn
-                # once, and apply this campaign as any other.
+                # This Job's own ConfigMap is missing from the render: not a
+                # permission or a cluster problem but a broken directory, and
+                # applying a Job whose volumes.txt is not there would start a
+                # campaign that cannot read its own work list. Nothing has
+                # been sent yet, so stop here.
+                if name not in volumes_of:
+                    print(
+                        _INCOMPLETE_RENDER.format(name=name, dir=out / "campaigns"),
+                        file=sys.stderr,
+                    )
+                    return 1
+                # Reading the record, by contrast, is never a precondition
+                # for the apply. An identity whose Role predates this needs a
+                # `get` on Jobs that nothing needed before, and a human may
+                # be on a restricted kubeconfig -- refusing to apply anything
+                # over that would take the campaigns repo offline for a
+                # permission it never had. Warn once, and apply this campaign
+                # as any other.
                 try:
                     said = _record_and_decide(cluster, cfg, name, volumes_of[name])
                 except ClusterError as e:
@@ -607,7 +698,7 @@ def _apply(
                     done.add(name)
                     print(said)
             refused: list[str] = []
-            applied = 0
+            applied = failed = 0
             for objects, is_campaign in ((pipelines, False), (campaigns, True)):
                 for obj in objects:
                     if is_campaign and _campaign_of(obj) in done:
@@ -626,6 +717,20 @@ def _apply(
                     except ClusterError as e:
                         print(e, file=sys.stderr)
                         refused.append(name)
+                        # A refused Job never reaches the Kueue sync below,
+                        # so a campaign git says is paused is running right
+                        # now with nothing about to stop it. That is the
+                        # unenforced pause, not a change still to make.
+                        if (
+                            is_campaign
+                            and obj["kind"] == "Job"
+                            and obj["spec"].get("suspend")
+                        ):
+                            print(
+                                _REFUSED_PAUSE.format(name=obj["metadata"]["name"]),
+                                file=sys.stderr,
+                            )
+                            failed = 1
                         continue
                     applied += 1
                     print(f"applied: {name}")
@@ -637,7 +742,6 @@ def _apply(
                 cluster.prune(
                     {(o["kind"], o["metadata"]["name"]) for o in pipelines + campaigns}
                 )
-            failed = 0
             for live, suspended in jobs:
                 failed |= cluster.sync_pause(live, suspended, pause_wait)
             if refused:
@@ -699,6 +803,12 @@ def main(argv: list[str] | None = None) -> int:
         "deletes every converter-labelled object not in this apply)",
     )
     apply_p.add_argument(
+        "--allow-empty",
+        action="store_true",
+        help="let --prune run on a render with no campaigns at all, which "
+        "cancels every campaign in the namespace",
+    )
+    apply_p.add_argument(
         "--pause-wait",
         type=int,
         default=10,
@@ -716,7 +826,12 @@ def main(argv: list[str] | None = None) -> int:
         return _render(args.repo_dir, args.out)
     if args.command == "apply":
         return _apply(
-            args.repo_dir, args.out, args.prune, args.pause_wait, args.dry_run
+            args.repo_dir,
+            args.out,
+            args.prune,
+            args.pause_wait,
+            args.dry_run,
+            args.allow_empty,
         )
     return _validate(args.repo_dir)
 

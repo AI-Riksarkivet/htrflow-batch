@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from htrflow_batch import main as main_mod
-from htrflow_batch.iiif import redact_url
+from htrflow_batch.iiif import redact_url, source_digest
 from htrflow_batch.main import (
     EXIT_OK,
     EXIT_PERMANENT,
@@ -1252,3 +1252,337 @@ def test_default_factory_rebuilds_the_pipeline_after_a_dead_worker_thread(
     )
     assert len(built) == 2  # page 0003 ran on a pipeline built from scratch
     assert held == ["first build", None]  # its weights were dropped first
+
+
+def test_a_reprocessed_page_that_fails_publishes_no_stale_alto(env, cfg, s3):
+    """W3: `missing` subtracts a LIVE S3 listing, so a page reprocessed and
+    failed this run used to be 'accounted for' by the previous run's objects
+    -- and publish read that stale ALTO into iiif.json while manifest.json
+    said the page had failed. The objects go before the page is reprocessed,
+    and a failed page never contributes a canvas."""
+    for name in ("0001", "0002", "0003"):
+        _put_done(s3, cfg, name)
+    src = "https://iiif.example/mock-vol/page-{:05d}/full/2500,/0/default.jpg"
+    s3.put_object(
+        Bucket=cfg.s3_bucket,
+        Key="demo-v1/SE-RA-1234/manifest.json",
+        Body=json.dumps(
+            {
+                "pages": 3,
+                "page_sources": {
+                    "0001": src.format(1),
+                    "0002": "https://iiif.example/OLD/page-00002/full/2500,/0/default.jpg",
+                    "0003": src.format(3),
+                },
+            }
+        ).encode(),
+    )
+
+    def factory(c):
+        def process(path):
+            if path.stem == "0002":
+                raise RuntimeError("htrflow's Segmentation worker thread died")
+            return _write_outputs(c, path.stem)
+
+        return process
+
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    keys = _keys(s3, cfg)
+    assert "demo-v1/SE-RA-1234/alto/0002.xml" not in keys
+    assert "demo-v1/SE-RA-1234/page/0002.xml" not in keys
+    iiif = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/iiif.json")[
+            "Body"
+        ].read()
+    )
+    assert [c["id"].rsplit("/", 1)[-1] for c in iiif["items"]] == ["0001", "0003"]
+    body = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert body["results"]["0002"]["status"] == "failed"
+
+
+def test_a_failed_page_keeps_its_stale_alto_out_of_the_viewer(env, cfg, s3):
+    """RESUME=off reprocesses every page without a `changed` set to delete
+    from, so the failed names are taken out of the uploaded listing publish
+    reads dimensions back from (W3)."""
+    for name in ("0001", "0002", "0003"):
+        _put_done(s3, cfg, name)
+
+    def factory(c):
+        def process(path):
+            if path.stem == "0002":
+                raise RuntimeError("htrflow's Segmentation worker thread died")
+            return _write_outputs(c, path.stem)
+
+        return process
+
+    assert main({**env, "RESUME": "false"}, process_page_factory=factory) == EXIT_OK
+    iiif = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/iiif.json")[
+            "Body"
+        ].read()
+    )
+    assert [c["id"].rsplit("/", 1)[-1] for c in iiif["items"]] == ["0001", "0003"]
+
+
+def test_resume_reprocesses_a_page_selected_by_its_query(images_env, cfg, s3):
+    """W5: hosts that select the image with `?id=` exist, and the stored
+    source was redacted (query dropped) before it was compared -- so every
+    page of such a manifest looked unchanged, forever. The digest beside it
+    keeps the query."""
+    _put_done(s3, cfg, "0001")
+    s3.put_object(
+        Bucket=cfg.s3_bucket,
+        Key="demo-v1/SE-RA-1234/manifest.json",
+        Body=json.dumps(
+            {
+                "pages": 1,
+                "page_sources": {"0001": "https://img.example/iiif"},
+                "page_source_digests": {
+                    "0001": source_digest("https://img.example/iiif?id=OLD")
+                },
+            }
+        ).encode(),
+    )
+    calls = []
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            calls.append(path.stem)
+            return inner(path)
+
+        return process
+
+    env = dict(images_env, IMAGES="https://img.example/iiif?id=NEW")
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    assert calls == ["0001"]
+    body = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert body["page_source_digests"]["0001"] == source_digest(
+        "https://img.example/iiif?id=NEW"
+    )
+
+
+def test_resume_keeps_a_done_page_whose_token_rotated(images_env, cfg, s3):
+    """The credentials are taken out of the digest, so a re-signed URL is not
+    a new source -- else the whole volume would be reprocessed on every
+    retry (W5)."""
+    _put_done(s3, cfg, "0001")
+    s3.put_object(
+        Bucket=cfg.s3_bucket,
+        Key="demo-v1/SE-RA-1234/manifest.json",
+        Body=json.dumps(
+            {
+                "pages": 1,
+                "page_source_digests": {
+                    "0001": source_digest("https://img.example/1.jpg?token=OLD")
+                },
+            }
+        ).encode(),
+    )
+    calls = []
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            calls.append(path.stem)
+            return inner(path)
+
+        return process
+
+    env = dict(images_env, IMAGES="https://img.example/1.jpg?token=NEW")
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    assert calls == []
+
+
+def test_a_transient_failure_exits_without_joining_the_downloads(
+    env, cfg, s3, monkeypatch, hard_exits
+):
+    """W7: only SIGTERM went through `_hard_exit`. Exits 1 and 13 returned
+    normally, and the interpreter then joined the download pool's workers at
+    shutdown -- a fetch sitting in its 120 s timeout held the container open
+    long after the run had decided to fail."""
+    real = ResultStore.upload_page
+
+    def drop_0002(self, name, files):
+        if name != "0002":
+            return real(self, name, files)
+
+    monkeypatch.setattr(ResultStore, "upload_page", drop_0002)
+    assert main(env, process_page_factory=fake_factory) == EXIT_TRANSIENT
+    assert hard_exits == [EXIT_TRANSIENT]
+
+
+def test_a_permanent_failure_exits_the_same_way(env, cfg, s3, hard_exits):
+    assert main({**env, "PIPELINE_PATH": ""}, process_page_factory=fake_factory) == (
+        EXIT_PERMANENT
+    )
+    assert hard_exits == [EXIT_PERMANENT]
+
+
+def test_a_successful_run_returns_normally(env, cfg, s3, hard_exits):
+    """Nothing is in flight when the stream has been consumed to the end, so
+    a run that worked still exits the ordinary way."""
+    assert main(env, process_page_factory=fake_factory) == EXIT_OK
+    assert hard_exits == []
+
+
+def _dead_pipeline_pages(cfg, tmp_path, monkeypatch, rebuilds: list, pages: int):
+    """A pipeline that kills its worker thread on every page, with the
+    rebuilds after it scripted: ``True`` builds, ``False`` raises. Returns the
+    fetched pages to hand to ``consume``."""
+    from htrflow_batch import driver
+    from htrflow_batch.fetch import FetchResult
+    from htrflow_batch.iiif import PageRef
+
+    built = []
+
+    def load_pipeline(path, out_dir):
+        ok = rebuilds[len(built)]
+        built.append(ok)
+        if not ok:
+            raise OSError("CUDA error: out of memory")
+        return object()
+
+    def process_page(pipeline, image_path, out_dir):
+        raise driver.PipelineDead(f"page {image_path.stem}: worker thread died")
+
+    monkeypatch.setattr(driver, "load_pipeline", load_pipeline)
+    monkeypatch.setattr(driver, "process_page", process_page)
+    monkeypatch.setattr(driver, "release_pipeline", lambda pipeline: None)
+    items = []
+    for i in range(1, pages + 1):
+        image = tmp_path / f"{i:04d}.jpg"
+        image.write_bytes(b"jpg")
+        items.append(
+            FetchResult(
+                page=PageRef(index=i, name=f"{i:04d}", image_url="x", canvas={}),
+                path=image,
+                error=None,
+            )
+        )
+    return items
+
+
+def test_rebuilds_that_keep_failing_abort_the_run(cfg, tmp_path, monkeypatch):
+    """W9: a rebuild that cannot succeed degraded silently -- every later page
+    failed, and because the first page or two had come out `ok` the all-failed
+    guard never fired: 600 failed pages, manifest.json published, the index
+    green. Three consecutive rebuild failures end the run instead, transient,
+    so the retry gets a fresh pod."""
+    from htrflow_batch.stream import Unrecoverable, consume
+
+    items = _dead_pipeline_pages(
+        cfg, tmp_path, monkeypatch, [True, False, False, False], 4
+    )
+    stats = StreamStats()
+    with pytest.raises(Unrecoverable, match="3 consecutive pipeline rebuilds failed"):
+        consume(
+            items, main_mod._default_factory(cfg), lambda name, files: None, stats=stats
+        )
+    assert [r.status for r in stats.results.values()] == ["failed"] * 3
+
+
+def test_a_rebuild_that_works_starts_the_count_again(cfg, tmp_path, monkeypatch):
+    """Only CONSECUTIVE failures mean the pipeline cannot be rebuilt at all;
+    a rebuild that works says the process is still healthy."""
+    from htrflow_batch.stream import Unrecoverable, consume
+
+    rebuilds = [True, False, False, True, False, False, False]
+    items = _dead_pipeline_pages(cfg, tmp_path, monkeypatch, rebuilds, 7)
+    stats = StreamStats()
+    with pytest.raises(Unrecoverable):
+        consume(
+            items, main_mod._default_factory(cfg), lambda name, files: None, stats=stats
+        )
+    assert len(stats.results) == 6  # the run reached page 7 before it gave up
+
+
+def _recording_client(monkeypatch) -> list:
+    made: list = []
+    original = main_mod._http_client
+
+    def make():
+        client = original()
+        made.append(client)
+        return client
+
+    monkeypatch.setattr(main_mod, "_http_client", make)
+    return made
+
+
+def test_the_http_client_is_closed_on_the_way_out(env, cfg, s3, monkeypatch):
+    """W15: the client owns a connection pool and its sockets, and nothing
+    ever closed it -- it survived to interpreter shutdown, holding keep-alive
+    connections to the image host open for the rest of the run."""
+    made = _recording_client(monkeypatch)
+    assert main(env, process_page_factory=fake_factory) == EXIT_OK
+    assert [client.is_closed for client in made] == [True]
+
+
+def test_the_http_client_is_closed_when_the_run_fails(env, cfg, s3, monkeypatch):
+    made = _recording_client(monkeypatch)
+    assert main(env, process_page_factory=_failing_everywhere) == EXIT_TRANSIENT
+    assert [client.is_closed for client in made] == [True]
+
+
+def _failing_everywhere(cfg):
+    def process(path):
+        raise RuntimeError("htrflow's Segmentation worker thread died")
+
+    return process
+
+
+def test_the_sigterm_handler_outlives_the_final_log_ship(env, cfg, s3, monkeypatch):
+    """W16: the handler was put back to the default before `capture.finish()`,
+    which is where the run log is uploaded -- so a second SIGTERM arriving
+    during a drain (the kubelet's, then the node's) killed the pod outright
+    and lost the log the first one had gone to the trouble of preserving."""
+    from htrflow_batch.logship import LogCapture
+
+    seen = []
+    original = LogCapture.finish
+
+    def finish(self):
+        seen.append(signal.getsignal(signal.SIGTERM))
+        return original(self)
+
+    monkeypatch.setattr(LogCapture, "finish", finish)
+    before = signal.getsignal(signal.SIGTERM)
+
+    assert main(env, process_page_factory=fake_factory) == EXIT_OK
+
+    assert seen == [signal.SIG_IGN]  # uninterruptible for the whole ship
+    assert signal.getsignal(signal.SIGTERM) is before  # and put back after it
+
+
+def test_a_second_sigterm_during_the_final_ship_is_ignored(env, cfg, s3, monkeypatch):
+    """W16 review: a drain sends SIGTERM and the node may send another. With
+    the handler still installed, the second one raised Terminated inside
+    main's own finally -- a traceback out of main, and the streams never put
+    back. The cleanup is uninterruptible instead."""
+    from htrflow_batch.logship import LogCapture
+
+    original = LogCapture.finish
+
+    def finish(self):
+        os.kill(os.getpid(), signal.SIGTERM)  # the node's second signal
+        return original(self)
+
+    monkeypatch.setattr(LogCapture, "finish", finish)
+    before = signal.getsignal(signal.SIGTERM)
+    streams = (sys.stdout, sys.stderr)
+
+    assert main(env, process_page_factory=fake_factory) == EXIT_OK
+
+    assert (sys.stdout, sys.stderr) == streams
+    assert signal.getsignal(signal.SIGTERM) is before

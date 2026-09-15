@@ -267,3 +267,34 @@ def test_warmup_says_nothing_about_a_token_when_there_is_none(tmp_path, caplog):
     with caplog.at_level(logging.INFO, logger="htrflow_batch.warmup"):
         assert main(_env(tmp_path), load=lambda _: None) == EXIT_OK
     assert [m for m in caplog.messages if "HF_TOKEN" in m] == []
+
+
+def test_warmup_mistyped_pipeline_setting_is_permanent(tmp_path):
+    """W2: a TypeError from building the pipeline is a mistyped setting in the
+    YAML, not a network hiccup -- exit 13, so the warm-up Job's backoffLimit
+    stops retrying a pipeline that cannot get better."""
+    term_path = tmp_path / "termination-log"
+    env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
+
+    def boom(_):
+        raise TypeError("__init__() got an unexpected keyword argument 'batch_sz'")
+
+    rc = main(env, load=boom)
+    assert rc == EXIT_PERMANENT
+    assert json.loads(term_path.read_text())["permanent"] is True
+
+
+def test_warmup_redacts_urls_in_its_output(tmp_path, capsys):
+    """W8: the warm-up pod mounts no S3 Secret, so it ships no run log and
+    `kubectl logs` is where its failure is read -- and huggingface_hub names
+    the URL it called, query and all. The batch wrapper's RedactingFormatter
+    belongs here too; basicConfig installs a plain one."""
+    env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(tmp_path / "term")}
+
+    def boom(_):
+        raise OSError("Connection error for url: https://hf.co/api/models?token=S3CRET")
+
+    assert main(env, load=boom) == EXIT_TRANSIENT
+    err = capsys.readouterr().err
+    assert "S3CRET" not in err
+    assert "https://hf.co/api/models" in err

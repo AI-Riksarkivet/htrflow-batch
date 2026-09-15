@@ -4,9 +4,11 @@ import {
   fetchJob,
   fetchJobs,
   isHttpUrl,
+  isResultUrl,
   jobDetailSchema,
   jobSummarySchema,
   shortDate,
+  volumeStateSchema,
   warmupSchema,
 } from "./api.js";
 
@@ -397,5 +399,162 @@ describe("shortDate", () => {
   test("null and junk stay null", () => {
     expect(shortDate(null)).toBeNull();
     expect(shortDate("not-a-date")).toBeNull();
+  });
+});
+
+describe("an abandoned request is actually abandoned", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  test("fetchJobs hands its signal to fetch", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
+      jsonResponse([]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    await fetchJobs(controller.signal);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+  });
+
+  test("fetchJob hands its signal to fetch", async () => {
+    const body = { ...summary, ...pipeline, failures: [], volumes: [] };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
+      jsonResponse(body),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    await fetchJob("htr-test", "kyrk", 0, 200, controller.signal);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+  });
+
+  test("an aborted fetch reads as the API being unreachable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new DOMException("aborted", "AbortError");
+      }),
+    );
+    const controller = new AbortController();
+    controller.abort();
+    await expect(fetchJobs(controller.signal)).rejects.toBeInstanceOf(
+      ApiUnreachable,
+    );
+  });
+});
+
+describe("a URL field has to be a URL", () => {
+  // Every one of these becomes an href or a fetch target. They are our own
+  // API's, so a value that is not an absolute http(s) URL is a bug on our
+  // side -- and the schema is where this page says so (2026-09-14 audit).
+  test("a campaign row with a resultsBase that is not a URL is unreadable", () => {
+    expect(
+      jobSummarySchema.safeParse({ ...summary, resultsBase: "/results" })
+        .success,
+    ).toBe(false);
+  });
+
+  test.each(["manifestUrl", "iiifUrl", "altoPrefix", "logUrl"])(
+    "a volume row with a %s that is not a URL is unreadable",
+    (field) => {
+      const detail = {
+        ...summary,
+        ...pipeline,
+        failures: [],
+        volumes: [{ ...volume, [field]: "javascript:alert(1)" }],
+      };
+      expect(jobDetailSchema.safeParse(detail).success).toBe(false);
+    },
+  );
+
+  test("sourceUrl may be null but may not be something else", () => {
+    const withSource = (sourceUrl: unknown) => ({
+      ...summary,
+      ...pipeline,
+      failures: [],
+      volumes: [{ ...volume, sourceUrl }],
+    });
+    expect(jobDetailSchema.safeParse(withSource(null)).success).toBe(true);
+    expect(jobDetailSchema.safeParse(withSource("images:x")).success).toBe(
+      false,
+    );
+  });
+
+  test("the campaign notice's log link is a URL too", () => {
+    const detail = {
+      ...summary,
+      ...pipeline,
+      failures: [],
+      volumes: [],
+      lastError: {
+        page: "0044",
+        error: "boom",
+        volume: "vol0",
+        logUrl: "not a url",
+      },
+    };
+    expect(jobDetailSchema.safeParse(detail).success).toBe(false);
+  });
+});
+
+describe("isResultUrl", () => {
+  const base = "https://results.example.org/bucket";
+
+  test("a URL under the configured results base is allowed", () => {
+    expect(isResultUrl(`${base}/status/logs/demo/v1.txt`, base)).toBe(true);
+    expect(isResultUrl(`${base}/htr-test/demo/vol0/manifest.json`, base)).toBe(
+      true,
+    );
+  });
+
+  test("a URL that walks back out of the base is refused", () => {
+    // `/bucket/../evil.txt` starts with the base as text and is not under
+    // it at all (2026-09-14 review).
+    expect(isResultUrl(`${base}/../evil.txt`, base)).toBe(false);
+    expect(isResultUrl(`${base}/x/../../evil.txt`, base)).toBe(false);
+    expect(isResultUrl(`${base}/x/../y.txt`, base)).toBe(true);
+  });
+
+  test("the same URL written differently is still the same URL", () => {
+    expect(isResultUrl(`${base}/a%2Db.txt`, base)).toBe(true);
+    expect(
+      isResultUrl(`${base}/x.txt`, "HTTPS://results.example.org/bucket"),
+    ).toBe(true);
+  });
+
+  test("a URL anywhere else is not, however absolute it is", () => {
+    expect(isResultUrl("https://evil.example.org/log.txt", base)).toBe(false);
+    // The prefix has to end at a path boundary, or a lookalike host passes.
+    expect(isResultUrl(`${base}.evil.org/log.txt`, base)).toBe(false);
+    expect(isResultUrl("javascript:alert(1)", base)).toBe(false);
+  });
+
+  test("a trailing slash on the base changes nothing", () => {
+    expect(isResultUrl(`${base}/x.txt`, `${base}/`)).toBe(true);
+  });
+
+  test("an unset base accepts any absolute http(s) URL, as before", () => {
+    expect(isResultUrl("https://anywhere.example.org/x.txt", "")).toBe(true);
+    expect(isResultUrl("javascript:alert(1)", "")).toBe(false);
+  });
+});
+
+describe("a volume whose state nobody recorded", () => {
+  test("`unknown` is a state the page can read", () => {
+    expect(volumeStateSchema.parse("unknown")).toBe("unknown");
+  });
+
+  test("a reaped campaign's rows parse with it", () => {
+    const detail = {
+      ...summary,
+      ...pipeline,
+      jobGone: true,
+      phase: "Unknown",
+      failures: [],
+      volumes: [{ ...volume, state: "unknown", progress: null }],
+    };
+    expect(jobDetailSchema.parse(detail).volumes[0]?.state).toBe("unknown");
+  });
+
+  test("a state nobody defined is still refused", () => {
+    expect(volumeStateSchema.safeParse("probably-fine").success).toBe(false);
   });
 });

@@ -803,6 +803,32 @@ class TestVolumeProgress:
         )
         assert len(asked) == projection.PROGRESS_FETCH_CAP
 
+    def test_a_bucket_that_does_not_answer_gives_up_inside_the_budget(
+        self, monkeypatch
+    ):
+        """Every fetch here takes a second of the budget. The cap alone let a
+        request hold a worker for cap x the HTTP timeout -- 64 s for an
+        unreachable bucket -- and forty such requests emptied the threadpool
+        that /healthz is answered from (2026-09-14 audit)."""
+        ticks = iter(range(100))
+        monkeypatch.setattr(projection.time, "monotonic", lambda: float(next(ticks)))
+        n = 40
+        fetch, asked = self._fetch({})
+        pods = [_pod(i, active=True) for i in range(n)]
+        body = projection.detail(
+            _job(completions=n, active=n, completed="", failed=""),
+            _configmap(n=n),
+            pods,
+            CFG,
+            offset=0,
+            limit=n,
+            warmup=MISSING_WARMUP,
+            fetch_progress=fetch,
+        )
+        assert 0 < len(asked) < projection.PROGRESS_FETCH_CAP
+        assert len(asked) <= projection.PROGRESS_FETCH_BUDGET
+        assert body["volumes"][0]["progress"] is None, "still a row, just no progress"
+
     def test_running_rows_are_not_crowded_out_by_a_page_full_of_done_ones(self):
         """Most of a big campaign is done; a few volumes are still running.
         The running ones must not lose the cap to done rows ahead of them."""
@@ -1027,7 +1053,13 @@ RECORD = {
             "htrflow.riksarkivet.se/pipeline": "demo-v1",
         },
     },
-    "data": {"volumes.txt": "vol0\thttps://iiif.example.org/vol0/manifest\n"},
+    "data": {
+        "volumes.txt": (
+            "vol0\thttps://iiif.example.org/vol0/manifest\n"
+            "vol1\timages:https://img.example.org/a.jpg https://img.example.org/b.jpg\n"
+            "vol2\thttps://iiif.example.org/vol2/manifest\n"
+        )
+    },
 }
 
 
@@ -1062,6 +1094,19 @@ def test_a_reaped_campaign_is_a_row_like_any_other():
     ), "the row must be the same shape a live campaign's is"
 
 
+def test_a_reaped_rows_links_come_from_the_config_this_process_has():
+    """The record keeps the base the campaign ran under, and it is worth
+    keeping -- but it is informational. The row's links and the progress
+    this process fetches for them have to be the same place, and the
+    progress base was always derived while the links were not (2026-09-14
+    review): a bucket that moved gave a page of links to the old one."""
+    status = _stored(resultsBase="https://moved.example.org/old/demo-v1")
+    row = projection.record_summary(RECORD, status, CFG, MISSING_WARMUP)
+    assert row["resultsBase"] == "https://results.example.org/htr-test/demo-v1"
+    body = projection.record_detail(row, RECORD, status, CFG, None)
+    assert body["volumes"][0]["iiifUrl"].startswith(row["resultsBase"])
+
+
 def test_a_live_campaign_says_its_job_is_there():
     assert (
         projection.summarize(_finished_job(), CFG, MISSING_WARMUP)["jobGone"] is False
@@ -1076,30 +1121,119 @@ def test_a_record_with_a_phase_this_api_never_writes_is_left_out():
     )
 
 
-def test_the_reaped_detail_carries_the_failures_the_record_kept():
-    status = _stored(
-        phase="PartiallyFailed",
-        volumesFailed="1",
-        failedVolumes='[{"id":"vol2","reason":"manifest 404"}]',
-    )
-    row = projection.record_summary(RECORD, status, CFG, MISSING_WARMUP)
-    body = projection.record_detail(row, status, CFG, None)
-    assert body["volumes"] == []  # the per-index states went with the Job
-    assert body["latest"] is None
-    assert len(body["failures"]) == 1
-    failure = body["failures"][0]
-    assert failure["id"] == "vol2"
-    assert failure["state"] == "failed"
-    assert failure["reason"]["error"] == "manifest 404"
-    assert failure["iiifUrl"].endswith("/vol2/iiif.json")
-    assert failure["logUrl"].endswith("/status/logs/demo-v1/vol2.txt")
-    assert (body["pagesDone"], body["pagesTotal"]) == (0, 0)
+class TestTheReapedDetailStillHasItsVolumes:
+    """The Job's completedIndexes went with the Job, but manifest.json,
+    iiif.json, alto/ and the run log are all still in the bucket -- and the
+    campaign page showed no rows at all, so nobody could open any of them
+    (R1, the product owner, 2026-09-14). The rows are rebuilt from what
+    survives: volumes.txt on the campaign record, the failures the status
+    record kept, and the phase for everything else."""
 
+    def _body(self, status: dict, **kwargs) -> dict:
+        row = projection.record_summary(RECORD, status, CFG, MISSING_WARMUP)
+        return projection.record_detail(row, RECORD, status, CFG, None, **kwargs)
 
-def test_a_record_whose_failed_volumes_are_not_json_costs_nothing():
-    status = _stored(failedVolumes="not json at all")
-    row = projection.record_summary(RECORD, status, CFG, MISSING_WARMUP)
-    assert projection.record_detail(row, status, CFG, None)["failures"] == []
+    def _failed(self) -> dict:
+        return _stored(
+            phase="PartiallyFailed",
+            volumesDone="2",
+            volumesFailed="1",
+            failedVolumes='[{"id":"vol2","reason":"manifest 404"}]',
+        )
+
+    def test_every_volume_the_campaign_ran_is_a_row_again(self):
+        body = self._body(self._failed())
+        assert [v["id"] for v in body["volumes"]] == ["vol0", "vol1", "vol2"]
+        assert [v["index"] for v in body["volumes"]] == [0, 1, 2]
+
+    def test_the_links_are_the_ones_a_live_row_would_carry(self):
+        vol0 = self._body(self._failed())["volumes"][0]
+        base = "https://results.example.org/htr-test/demo-v1"
+        assert vol0["manifestUrl"] == f"{base}/vol0/manifest.json"
+        assert vol0["iiifUrl"] == f"{base}/vol0/iiif.json"
+        assert vol0["altoPrefix"] == f"{base}/vol0/alto/"
+        assert vol0["logUrl"].endswith("/status/logs/demo-v1/vol0.txt")
+        assert vol0["sourceUrl"] == "https://iiif.example.org/vol0/manifest"
+
+    def test_an_images_volume_has_no_source_manifest_to_open(self):
+        assert self._body(self._failed())["volumes"][1]["sourceUrl"] is None
+
+    def test_a_volume_the_record_named_is_failed_with_its_reason(self):
+        vol2 = self._body(self._failed())["volumes"][2]
+        assert vol2["state"] == "failed"
+        assert vol2["reason"]["error"] == "manifest 404"
+
+    def test_every_other_volume_took_the_campaigns_own_ending(self):
+        assert [v["state"] for v in self._body(self._failed())["volumes"]] == [
+            "done",
+            "done",
+            "failed",
+        ]
+
+    def test_an_outcome_nobody_recorded_leaves_its_rows_unknown(self):
+        """`Unknown` is the record's own word for "nobody wrote down how
+        this ended". Calling every row `done` said the opposite, and
+        contradicted the record's own volumesFailed whenever the detail
+        endpoint never got to name the failures (2026-09-14 review)."""
+        status = _stored(phase="Running", finishedAt="", volumesFailed="1")
+        body = self._body(status)
+        assert body["phase"] == "Unknown"
+        assert [v["state"] for v in body["volumes"]] == ["unknown"] * 3
+        assert body["latest"] is None, "nothing is known to have finished"
+
+    def test_a_volume_the_record_named_is_failed_even_then(self):
+        status = _stored(
+            phase="Running",
+            finishedAt="",
+            volumesFailed="1",
+            failedVolumes='[{"id":"vol2","reason":"manifest 404"}]',
+        )
+        states = [v["state"] for v in self._body(status)["volumes"]]
+        assert states == ["unknown", "unknown", "failed"]
+
+    def test_a_campaign_that_failed_outright_has_no_done_rows(self):
+        status = _stored(phase="Failed", volumesDone="0", volumesFailed="3")
+        assert {v["state"] for v in self._body(status)["volumes"]} == {"failed"}
+
+    def test_the_failures_list_is_the_failed_rows_themselves(self):
+        body = self._body(self._failed())
+        assert [v["id"] for v in body["failures"]] == ["vol2"]
+        assert body["failures"][0]["index"] == 2, "its real index, not its rank"
+
+    def test_the_folded_card_shows_the_last_volume_that_finished(self):
+        assert self._body(self._failed())["latest"]["id"] == "vol1"
+
+    def test_the_rows_are_paged_like_a_live_campaigns(self):
+        body = self._body(self._failed(), offset=1, limit=1)
+        assert [v["id"] for v in body["volumes"]] == ["vol1"]
+        assert [v["id"] for v in body["failures"]] == ["vol2"], "never paged"
+
+    def test_the_pages_come_from_the_bucket_like_a_live_campaigns(self):
+        """A done volume's manifest.json is still there, and it is what says
+        the viewer manifest was published."""
+        asked: list[tuple[str, str]] = []
+
+        def fetch(base: str, vol_id: str, state: str) -> dict | None:
+            asked.append((vol_id, state))
+            return _progress(done=4, total=4, stage="done") if state == "done" else None
+
+        body = self._body(self._failed(), fetch_progress=fetch)
+        assert ("vol0", "done") in asked
+        assert body["pagesTotal"] == 8, "the two done volumes"
+        assert body["volumes"][0]["progress"]["done"] == 4
+
+    def test_a_record_whose_failed_volumes_are_not_json_costs_nothing(self):
+        body = self._body(_stored(failedVolumes="not json at all"))
+        assert body["failures"] == []
+        assert [v["state"] for v in body["volumes"]] == ["done"] * 3
+
+    def test_a_campaign_with_no_record_of_its_volumes_still_answers(self):
+        """The campaign ConfigMap is gone (a prune took it) but the status
+        one is not: no rows, and the page says what it knows."""
+        row = projection.record_summary(RECORD, self._failed(), CFG, MISSING_WARMUP)
+        body = projection.record_detail(row, None, self._failed(), CFG, None)
+        assert body["volumes"] == []
+        assert body["latest"] is None
 
 
 def test_a_reaped_campaign_with_no_terminal_record_says_unknown():
@@ -1169,3 +1303,120 @@ def test_everything_else_is_the_freshest_observation():
     stored = {"phase": "Running", "volumesDone": "1"}
     merged = projection.merge_record(stored, {"phase": "Succeeded", "volumesDone": "3"})
     assert merged == {"phase": "Succeeded", "volumesDone": "3"}
+
+
+def test_a_pod_with_a_completion_index_that_is_not_a_number_is_skipped():
+    """The label is written by the Job controller, but a hand-made pod (or a
+    future field) can carry anything. One such pod used to take the whole
+    campaign page down with a bare 500 (F1); it is simply not a row's pod."""
+    pods = [
+        {"metadata": {"labels": {"batch.kubernetes.io/job-completion-index": "x"}}},
+        {"metadata": {"labels": {"batch.kubernetes.io/job-completion-index": "0"}}},
+    ]
+    body = projection.detail(
+        _job(completed="", failed=""), _configmap(), pods, CFG, warmup=MISSING_WARMUP
+    )
+    states = [v["state"] for v in body["volumes"]]
+    assert states[0] == "active", "index 0's pod still counts"
+    assert set(states[1:]) == {"pending"}, "the unreadable label is nobody's index"
+
+
+class TestTheRecordStaysUnderTheConfigMapLimit:
+    """`failedVolumes` capped the number of entries but not their size, and
+    a wrapper writes whatever its termination message said -- a Python
+    traceback, a whole pod-template struct. Fifty of those is a ConfigMap
+    the API server refuses (2026-09-14 audit)."""
+
+    def _row(self) -> dict:
+        return projection.summarize(_job(), CFG, MISSING_WARMUP)
+
+    def _failures(self, n: int, error: str) -> list[dict]:
+        return [
+            {
+                "id": f"vol{i}",
+                "reason": {"stage": None, "permanent": None, "error": error},
+            }
+            for i in range(n)
+        ]
+
+    def test_one_reason_is_clipped_to_a_sentence(self):
+        data = projection.status_record(self._row(), self._failures(1, "e" * 5000))
+        (entry,) = json.loads(data["failedVolumes"])
+        assert len(entry["reason"]) == projection.MAX_REASON
+
+    def test_the_whole_field_stays_under_the_byte_cap(self):
+        data = projection.status_record(self._row(), self._failures(50, "e" * 5000))
+        blob = data["failedVolumes"]
+        assert len(blob.encode()) <= projection.MAX_FAILED_VOLUMES
+        assert json.loads(blob), "some failures are still recorded"
+
+    def test_an_ordinary_set_of_failures_is_untouched(self):
+        data = projection.status_record(self._row(), self._failures(3, "manifest 404"))
+        assert json.loads(data["failedVolumes"]) == [
+            {"id": f"vol{i}", "reason": "manifest 404"} for i in range(3)
+        ]
+
+
+class TestFinishedAtNeverMovesBackwards:
+    """The read API and `htrflow-campaigns apply` both write this field and
+    do not see the same clock, so the merge keeps the earlier instant. It
+    compared the two as strings, which is not the same question once the two
+    writers disagree about the offset (2026-09-14 audit)."""
+
+    def _merged(self, stored: str, fresh: str) -> str:
+        return projection.merge_record({"finishedAt": stored}, {"finishedAt": fresh})[
+            "finishedAt"
+        ]
+
+    def test_a_later_wall_clock_in_another_offset_is_still_later(self):
+        # 10:00+02:00 is 08:00Z -- earlier than the 09:00Z on record.
+        assert self._merged("2026-01-01T09:00:00Z", "2026-01-01T10:00:00+02:00") == (
+            "2026-01-01T09:00:00Z"
+        )
+
+    def test_a_genuinely_later_instant_still_wins(self):
+        assert self._merged("2026-01-01T09:00:00Z", "2026-01-01T10:00:00Z") == (
+            "2026-01-01T10:00:00Z"
+        )
+
+    def test_a_timestamp_without_an_offset_is_read_as_utc(self):
+        assert self._merged("2026-01-01T09:00:00Z", "2026-01-01T08:00:00") == (
+            "2026-01-01T09:00:00Z"
+        )
+
+    def test_a_value_that_is_not_a_timestamp_never_replaces_one(self):
+        assert self._merged("2026-01-01T09:00:00Z", "soon") == "2026-01-01T09:00:00Z"
+
+    def test_the_first_timestamp_is_taken_whatever_was_there(self):
+        assert self._merged("not a date", "2026-01-01T09:00:00Z") == (
+            "2026-01-01T09:00:00Z"
+        )
+
+
+def test_a_volume_id_is_encoded_into_every_url_a_row_carries():
+    """Volume ids come off a campaign's volumes.txt, a file people edit in a
+    git repo. The progress URL encoded them and the row's own links did not,
+    so `../` in an id walked out of the campaign's prefix in the href a
+    reader clicks (2026-09-14 review)."""
+    cm = {
+        "metadata": {"name": "campaign-kyrk", "namespace": "htr-test"},
+        "data": {"volumes.txt": "../../status\thttps://iiif.example.org/x\n"},
+    }
+    row = projection.detail(
+        _job(completed="", failed=""), cm, [], CFG, warmup=MISSING_WARMUP
+    )["volumes"][0]
+    assert row["id"] == "../../status", "the id itself is the id"
+    base = "https://results.example.org/htr-test/demo-v1"
+    assert row["manifestUrl"] == f"{base}/..%2F..%2Fstatus/manifest.json"
+    assert row["iiifUrl"] == f"{base}/..%2F..%2Fstatus/iiif.json"
+    assert row["altoPrefix"] == f"{base}/..%2F..%2Fstatus/alto/"
+    assert row["logUrl"].endswith("/status/logs/demo-v1/..%2F..%2Fstatus.txt")
+
+
+def test_an_ordinary_volume_id_is_left_alone_in_its_urls():
+    row = projection.detail(
+        _job(completed="", failed=""), _configmap(n=1), [], CFG, warmup=MISSING_WARMUP
+    )["volumes"][0]
+    base = "https://results.example.org/htr-test/demo-v1"
+    assert row["manifestUrl"] == f"{base}/vol0/manifest.json"
+    assert row["logUrl"] == "https://results.example.org/status/logs/demo-v1/vol0.txt"

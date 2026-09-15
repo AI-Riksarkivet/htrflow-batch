@@ -131,7 +131,8 @@ Resources, mounts and pod hardening are in
 - a 400, 401, 403, 404 or 410 on the manifest
 - a manifest body over `MANIFEST_MAX_BYTES`, non-JSON, with no canvases, or
   with a canvas that has no image
-- bad pipeline YAML, or an unknown step or model class
+- bad pipeline YAML, an unknown step or model class, or a setting a step
+  does not take
 
 **Transient:**
 
@@ -140,6 +141,7 @@ Resources, mounts and pod hardening are in
 - a run where every processed page failed and nothing was resumed
 - a model-load `OSError`, including a model missing from the read-only cache
 - five consecutive upload failures (`UploadOutage`)
+- three consecutive pipeline rebuild failures after a dead worker thread
 
 The full table is in the [Wrapper reference](../reference/wrapper.md).
 
@@ -281,7 +283,13 @@ Everything an operator needs is in the bucket well before the Job's
 | Key | Written when | Content |
 |---|---|---|
 | `status/logs/<pipeline>/<volume>.txt` | While the volume runs, every 15 s, and once on exit (also on SIGTERM) | The wrapper's own stdout and stderr: the complete log ([The run log](signals.md#the-run-log)) |
-| `<pipeline>/<volume>/progress.json` | After every page outcome and at every stage change | The last stage reached, page counts and the most recent page failure |
+| `<pipeline>/<volume>/progress.json` | After every page outcome and at every stage change, except in the `config` stage (see below) | The last stage reached, page counts and the most recent page failure |
+
+A run that fails in the `config` stage writes no `progress.json` at all: the
+bucket, the prefix and the volume's own name are settings, so until they
+parse there is nowhere to write it to. That failure is permanent and its
+evidence is the termination message and the pod's log, both of which name the
+setting; the campaign page shows it from the pod.
 
 The read API shows a failed pod's termination message as `reason` only while
 that pod still exists. Once the pod is garbage-collected, the log above is
@@ -331,8 +339,8 @@ same shape on its `warmup` container. Exit 13 there is `FailJob`.
 - **A transient failure** (a network or disk error) is retried by Kubernetes
   up to `backoffLimit`.
 - **A permanent failure** is exit 13. The causes are a bad model id or
-  revision, an unknown step, invalid YAML, or a marker that could not be
-  written. It leaves the warm-up Job failed.
+  revision, an unknown step, a setting a step does not take, invalid YAML,
+  or a marker that could not be written. It leaves the warm-up Job failed.
 - **The marker is written before the success log line**, and failing to write
   it is fatal. A warm-up that exits `0` without a marker would be a green Job
   whose campaigns then wait for nothing.

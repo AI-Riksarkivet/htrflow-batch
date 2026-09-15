@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { isTerminalLog, parseRunLog, splitLogLine } from "./runlog.js";
+import {
+  LOG_TAIL_BYTES,
+  isTerminalLog,
+  parseRunLog,
+  splitLogLine,
+  tailOf,
+} from "./runlog.js";
 
 describe("parseRunLog", () => {
   test("classifies and groups a log covering all five kinds", () => {
@@ -198,5 +204,26 @@ describe("isTerminalLog", () => {
       (_, i) => `  File "x.py", line ${i}, in f`,
     ).join("\n");
     expect(isTerminalLog(marker + traceback)).toBe(true);
+  });
+});
+
+describe("tailOf", () => {
+  test("a log inside the limit is left exactly as it is", () => {
+    expect(tailOf("a\nb\nc", 100)).toBe("a\nb\nc");
+  });
+
+  test("a longer log keeps its end, cut at a line boundary", () => {
+    const text = "first\n" + "x".repeat(50) + "\nlast\n";
+    const tail = tailOf(text, 10);
+    expect(tail).toBe("last\n");
+    expect(text.endsWith(tail)).toBe(true);
+  });
+
+  test("a log with no line break at all is still cut", () => {
+    expect(tailOf("x".repeat(100), 10)).toHaveLength(10);
+  });
+
+  test("the default limit is the one the page renders", () => {
+    expect(tailOf("x".repeat(LOG_TAIL_BYTES + 5))).toHaveLength(LOG_TAIL_BYTES);
   });
 });

@@ -25,11 +25,12 @@ from .iiif import (
     pages_from_manifest,
     redact_url,
     redact_urls,
+    source_digest,
 )
 from .logship import LogCapture
 from .progress import Progress
 from .store import ResultStore
-from .stream import PageOutcome, PageStream, StreamStats, consume
+from .stream import PageOutcome, PageStream, StreamStats, Unrecoverable, consume
 from .synthetic import build_manifest
 
 log = logging.getLogger("htrflow_batch")
@@ -123,21 +124,40 @@ def terminate(env: Mapping[str, str], reason: dict) -> None:
         log.warning("could not write termination log to %s", path)
 
 
+#: Consecutive pipeline rebuild failures after which the run is abandoned
+#: (W9), the same bargain as stream.MAX_UPLOAD_FAILURES: a rebuild that cannot
+#: succeed makes every remaining page fail, and because the pages before the
+#: first death came out `ok` the all-failed guard never fires -- so the volume
+#: would publish a manifest of 600 failures and leave the index green.
+MAX_REBUILD_FAILURES = 3
+
+
 def _default_factory(cfg: Config):
     from . import driver  # htrflow imports stay function-local
 
     out_dir = Path(cfg.workdir) / "outputs"
     pipeline = driver.load_pipeline(cfg.pipeline_path, out_dir)
+    rebuild_failures = 0
 
     def process(image_path: Path):
-        nonlocal pipeline
+        nonlocal pipeline, rebuild_failures
         if pipeline is None:
             # B88: the previous page killed an htrflow worker thread, so that
             # pipeline is unusable. Rebuild here rather than in the handler
             # below, so the failed page keeps its own error -- the models come
             # back from the cache PVC, not the Hub.
             log.warning("rebuilding the htrflow pipeline after a dead worker thread")
-            pipeline = driver.load_pipeline(cfg.pipeline_path, out_dir)
+            try:
+                pipeline = driver.load_pipeline(cfg.pipeline_path, out_dir)
+            except Exception as e:
+                rebuild_failures += 1
+                if rebuild_failures >= MAX_REBUILD_FAILURES:
+                    raise Unrecoverable(
+                        f"{rebuild_failures} consecutive pipeline rebuilds failed, "
+                        f"last: {e!r} — every remaining page would fail the same way"
+                    ) from e
+                raise
+            rebuild_failures = 0
         try:
             files = driver.process_page(pipeline, image_path, out_dir)
         except driver.PipelineDead:
@@ -170,26 +190,39 @@ def main(
     capture = LogCapture.install()
 
     def on_sigterm(signum, frame):
+        if state.tracker is not None:
+            # W4: everything status-shaped is dropped from here on, so the
+            # 120 s grace goes to the final log ship instead of three PUTs.
+            state.tracker.terminating = True
         raise Terminated()
 
     previous = _set_signal(signal.SIGTERM, on_sigterm)
-    sigterm = False
+    #: The code this run is exiting with, or None while it is still running or
+    #: unwinding an exception _main did not classify -- such an exception must
+    #: keep its traceback rather than be turned into a code here.
+    code: Optional[int] = None
     try:
-        return _main(env, process_page_factory, capture, state)
+        code = _main(env, process_page_factory, capture, state)
+        return code
     except Terminated:
         # O2: the pod's activeDeadlineSeconds or a node drain. Leave the evidence a
         # failure would (termination message + complete run log), then exit
         # 143 so Kubernetes retries the index like exit 1, not FailIndex.
         # Same shape as the other failure lines: the run viewer's terminal-line
         # regex (frontend runlog.ts) is the contract that stops live polling.
-        sigterm = True
         advice = _advice(False, "SIGTERM")
         log.error("transient failure in %s: SIGTERM — %s", state.stage, advice)
         terminate(env, {"stage": state.stage, "permanent": False, "error": "SIGTERM"})
-        return EXIT_SIGTERM  # reached only when _hard_exit is stubbed (tests)
+        code = EXIT_SIGTERM
+        return code  # reached only when _hard_exit is stubbed (tests)
     finally:
-        if previous is not None:
-            _set_signal(signal.SIGTERM, previous)
+        # W16: the cleanup is uninterruptible. A drain sends SIGTERM and the
+        # node may send a second one; with the handler still installed that
+        # one raised Terminated inside this very block -- a traceback out of
+        # main, exit 1, and the streams never put back -- and with it already
+        # restored it killed the pod outright, losing the log the first had
+        # gone to the trouble of preserving.
+        _set_signal(signal.SIGTERM, signal.SIG_IGN)
         # C13 fix round, item 6: on every exit path but the successful one
         # (state.stage == "done", already written by _main just before it
         # returns) the file was staying at whatever stage the run was doing
@@ -201,8 +234,16 @@ def main(
         if state.tracker is not None and state.stage != "done":
             state.tracker.stage_changed("failed")
         capture.finish()
-        if sigterm:
-            _hard_exit(EXIT_SIGTERM)
+        if previous is not None:
+            _set_signal(signal.SIGTERM, previous)  # W16: after the ship
+        if code not in (None, EXIT_OK):
+            # W7: every failure exit, not only SIGTERM. Returning normally
+            # hands the interpreter a ThreadPoolExecutor to join at shutdown,
+            # so a download sitting in its 120 s timeout kept the container
+            # alive long after the run had decided to fail. The evidence is
+            # already out: the termination message is written and the run log
+            # has just been shipped by capture.finish() above.
+            _hard_exit(code)
 
 
 def _main(
@@ -236,14 +277,24 @@ def _main(
         tracker = Progress(cfg, store, capture)
         state.on_change = tracker.stage_changed
         state.tracker = tracker
-        client = _http_client()
-
-        source, source_url, pages = _setup(cfg, client, store, state)
-        tracker.pages, tracker.source = pages, source
-        todo, done = _resume(cfg, store, pages, state)
-        stats, nbytes = _stream(
-            cfg, client, store, todo, done, process_page_factory, state, stop, tracker
-        )
+        # W15: context-managed, so the connection pool and its sockets go when
+        # the last stage that fetches anything is done, on every path out. The
+        # publish stage below talks only to S3.
+        with _http_client() as client:
+            source, source_url, pages = _setup(cfg, client, store, state)
+            tracker.pages, tracker.source = pages, source
+            todo, done = _resume(cfg, store, pages, state)
+            stats, nbytes = _stream(
+                cfg,
+                client,
+                store,
+                todo,
+                done,
+                process_page_factory,
+                state,
+                stop,
+                tracker,
+            )
         uploaded = _verify(store, pages, stats, state)
         state.stage = "publish"
         wrote_iiif = publish.run(
@@ -341,6 +392,11 @@ def _resume(
             cfg.volume_ref,
             len(changed),
         )
+        for name in sorted(changed):
+            # W3: before, not after -- a reprocessing that fails must leave
+            # the page with no stored outputs at all, else the stale pair
+            # answers for it at verify and in the viewer manifest.
+            store.delete_page(name)
         done -= changed
     todo = [p for p in pages if p.name not in done]
     log.info(
@@ -375,6 +431,7 @@ def _stream(
         lookahead=cfg.lookahead_pages,
         concurrency=cfg.download_concurrency,
         max_bytes=cfg.fetch_max_bytes,
+        max_pixels=cfg.max_image_pixels,
         stop=stop,
     )
     try:
@@ -408,8 +465,11 @@ def _verify(
     leave the bucket without manifest.json — except when every page this run
     processed failed and nothing was resumed, which is a broken model or a
     dead GPU, not a volume.
-    Returns what is stored, which publish reads back for the pages this run
-    skipped."""
+    Returns what is stored MINUS this run's failed pages (W3): with RESUME
+    off there is no `changed` set for `_resume` to delete from, so a page
+    reprocessed and failed still has the previous run's objects -- and publish
+    would read that ALTO back into iiif.json for a page manifest.json records
+    as failed."""
     state.stage = "verify"
     uploaded = store.uploaded_pages()
     failed = sorted(n for n, r in stats.results.items() if r.status == "failed")
@@ -443,7 +503,7 @@ def _verify(
             f"verify failed: all {len(statuses)} processed pages failed"
             f"{_failure_detail(stats, failed)} failed={failed}"
         )
-    return uploaded
+    return uploaded - set(failed)
 
 
 #: How much of the failed pages' errors goes in the verify message: enough to
@@ -483,18 +543,33 @@ def _synthetic_source(cfg: Config, store: ResultStore) -> tuple[dict, str]:
 
 def _changed_sources(store: ResultStore, pages, done: set[str]) -> set[str]:
     """Done pages whose image URL differs from the one the previous completed
-    run recorded in manifest.json (W7). No previous manifest, or one without
-    page_sources (older wrapper), means nothing to compare: keep them done.
-    publish stores page_sources REDACTED (S6), so compare redacted: a tokenised
-    URL otherwise differs from its stored form on every retry, forever."""
-    previous = store.get_json_or_none("manifest.json")
-    sources = (previous or {}).get("page_sources")
-    if not isinstance(sources, dict):
-        return set()
+    run recorded in manifest.json (W7). No previous manifest, or one with
+    neither field below (older wrapper), means nothing to compare: keep them
+    done.
+
+    ``page_source_digests`` is the comparison (W5): the published
+    ``page_sources`` are REDACTED (S6, the bucket is public), and a redacted
+    URL has lost its query -- so on a host that selects the image with
+    ``?id=`` every page looked unchanged forever. The redacted form is still
+    read from a manifest written before the digests existed."""
+    previous = store.get_json_or_none("manifest.json") or {}
+    digests = previous.get("page_source_digests")
+    if isinstance(digests, dict):
+        return _differs(pages, done, digests, source_digest)
+    sources = previous.get("page_sources")
+    return (
+        _differs(pages, done, sources, redact_url)
+        if isinstance(sources, dict)
+        else set()
+    )
+
+
+def _differs(
+    pages, done: set[str], stored: dict, form: Callable[[str], str]
+) -> set[str]:
+    """The done pages the previous run recorded under a different identity."""
     return {
         p.name
         for p in pages
-        if p.name in done
-        and p.name in sources
-        and sources[p.name] != redact_url(p.image_url)
+        if p.name in done and p.name in stored and stored[p.name] != form(p.image_url)
     }

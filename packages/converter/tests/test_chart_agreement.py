@@ -125,11 +125,14 @@ def test_the_read_api_may_write_the_campaign_record():
     assert verbs["configmaps"].replace('"', "").split(", ") == [
         "get",
         "list",
-        "watch",
         "create",
         "patch",
     ]
-    assert verbs["jobs"] == verbs["pods"] == '"get", "list", "watch"'
+    assert verbs["jobs"] == verbs["pods"] == '"get", "list"'
+    assert not any("watch" in granted for granted in verbs.values()), (
+        "the read API computes every response from a get or a list; nothing "
+        "in packages/web opens a watch (2026-09-14 audit)"
+    )
     assert not any("delete" in granted for granted in verbs.values())
 
 

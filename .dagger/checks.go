@@ -141,9 +141,24 @@ var prodChartRenders = []chartRender{
 	{name: "default", sets: []string{
 		"publicResultsBase=https://x/",
 		"network.apiServer.cidr=10.16.51.10/32",
+		// The default ingress list is a catch-all in front of an
+		// unauthenticated NodePort, and the chart refuses to render one
+		// silently. A render fixture says so out loud like any operator.
+		"network.web.allowPublicIngress=true",
 		"web.image=docker.io/riksarkivet/htrflow-web@" + digestZero,
 	}},
 	{name: "full", values: "ci/full-values.yaml"},
+	// The profile docs/getting-started/deploy.md tells operators to start
+	// from. Its site-specific values are deliberately not in the file (a
+	// guessed results base or apiserver address is wrong on every cluster),
+	// so the render supplies placeholders the way an operator supplies real
+	// ones.
+	{name: "prod", values: "values-prod.yaml", sets: []string{
+		"publicResultsBase=https://x/",
+		"network.apiServer.cidr=10.16.51.10/32",
+		"network.web.ingressCidrs={10.16.0.0/16}",
+		"web.image=docker.io/riksarkivet/htrflow-web@" + digestZero,
+	}},
 }
 
 // The devstack chart's own values are all `enabled: false` by default, so
@@ -237,7 +252,7 @@ func (m *HtrflowBatch) CheckChart(
 		return "", fmt.Errorf("helm lint/template failed: %w", err)
 	}
 
-	for _, name := range []string{"prod-default", "prod-full"} {
+	for _, name := range []string{"prod-default", "prod-full", "prod-prod"} {
 		content, err := helm.File("/out/" + name + ".yaml").Contents(ctx)
 		if err != nil {
 			return "", fmt.Errorf("reading rendered %s: %w", name, err)

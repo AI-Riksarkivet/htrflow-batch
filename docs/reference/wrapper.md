@@ -188,13 +188,14 @@ so its settings are namespaced.
 | `AWS_SHARED_CREDENTIALS_FILE` | *(boto3 default)* | Read by boto3, not `Config`. Jobs set `/secrets/s3/credentials` — the mounted Secret file; credentials are never env |
 | `S3_PREFIX` | `""` | Extra prefix before `<pipeline>/<volume>/` (and before `sources/`); leading and trailing `/` are stripped. The converter always sets it to `<namespace>/`; empty only when the wrapper is run by hand |
 | `MAX_IMAGE_WIDTH` | `2500` | Downscale request sent to the IIIF Image API (`/full/{w},/`; `max` for narrower canvases; a 400 falls back to `max`). Service-less canvases are fetched at native size |
-| `RESUME` | `true` | Skip pages that already have **both** PAGE and ALTO in S3 and whose `page_sources` URL is unchanged. The run log says `[<volume>] resume: <n> done, <m> to process` |
+| `RESUME` | `true` | Skip pages that already have **both** PAGE and ALTO in S3 and whose `page_source_digests` entry is unchanged. The run log says `[<volume>] resume: <n> done, <m> to process` |
 | `LOOKAHEAD_PAGES` | `64` | Prefetch depth of the download pipeline |
 | `MAX_PAGES` | `0` | Truncate the volume (0 = all pages) — the knob for a fast end-to-end check of one or a handful of pages |
 | `WORKDIR_PATH` | `/work` | Scratch dir (Jobs mount a 2 Gi memory-backed emptyDir) |
 | `DOWNLOAD_CONCURRENCY` | `12` | Parallel page downloads |
 | `MANIFEST_MAX_BYTES` | `16777216` | Byte cap on the manifest body (over it: exit 13). Jobs set it from `converter.yaml`'s `manifest_max_bytes` |
 | `FETCH_MAX_BYTES` | `67108864` | Byte cap on one image body (over it: the page fails without retry). Jobs set it from `converter.yaml`'s `fetch_max_bytes` |
+| `MAX_IMAGE_PIXELS` | `100000000` | Cap on one image's decoded size, `width × height`, read from its header after the download (over it: the page fails without retry, and the file is deleted). The byte cap above bounds the transfer, this one bounds the memory the page costs. `0` turns it off |
 | `IMAGE_DIGEST` | `unknown` | Provenance only — Jobs set the pipeline's digest-pinned image; recorded verbatim in `manifest.json` and in every ALTO's `htrflow-batch` Processing block |
 | `HTRFLOW_BASE_REVISION` | `unknown` | Provenance only — set by the image itself (ENV next to its OCI label), stamped into every ALTO |
 | `LOG_SHIP_SECONDS` | `15` | How often the run's own stdout/stderr is uploaded to `status/logs/<pipeline>/<volume>.txt` while it runs (`0` = final upload only) |
@@ -264,7 +265,7 @@ termination message is the only evidence. Details in
 | Code | Class | Raised by | Kubernetes reaction |
 |---|---|---|---|
 | `0` | success | verify passed, `manifest.json` published | index `Complete`; `manifest.json` in S3 = done |
-| `13` | permanent — `{"permanent": true}` | `ConfigError` (missing or invalid env); manifest URL not http(s); manifest HTTP 400/401/403/404/410; body over `MANIFEST_MAX_BYTES`; non-JSON or non-object JSON; no canvases; a canvas without an image, with a malformed shape, or with a non-http(s) image URL; bad pipeline YAML, an unknown step or model class, an `Export` step in the YAML (`ValueError` from `driver.load_pipeline`). An exception that is *also* an `OSError` never lands here — see the `1` row | `podFailurePolicy` fails the index at once (`FailIndex`) — never retried |
+| `13` | permanent — `{"permanent": true}` | `ConfigError` (missing or invalid env); manifest URL not http(s); manifest HTTP 400/401/403/404/410; body over `MANIFEST_MAX_BYTES`; non-JSON or non-object JSON; no canvases; a canvas without an image, with a malformed shape, or with a non-http(s) image URL; bad pipeline YAML, an unknown step or model class, a setting a step does not take, an `Export` step in the YAML (`ValueError` from `driver.load_pipeline`). An exception that is *also* an `OSError` never lands here — see the `1` row | `podFailurePolicy` fails the index at once (`FailIndex`) — never retried |
 | `1` | transient — `{"permanent": false}` | manifest 5xx/429/other status or a network error (`TransientManifestError`); the verify gate, for a page **missing** (neither uploaded nor recorded as failed) or for a run where every page it processed failed and nothing was resumed — the message lists the missing and failed page names and, for the first 10 failed pages, the error behind each (clipped to 200 chars); every page failure is also logged as it happens, and a page that failed does not by itself fail the run; any `OSError`, including one that is also a `ValueError` — `huggingface_hub.errors.LocalEntryNotFoundError` (a model missing from the read-only `HF_HOME` cache under `HF_HUB_OFFLINE=1`) is an `OSError` on every version of the library and a `ValueError` on the older line too, and a re-warm fixes it; `UploadOutage` after 5 consecutive S3 upload failures; anything else | retried up to `backoffLimitPerIndex` (3); resume makes a retry cheap |
 | `143` | SIGTERM — `{"permanent": false, "error": "SIGTERM"}` | the handler: termination log, final run-log ship, `os._exit(143)`. Sent by a node drain, a preemption, or by the kubelet when the pod's `activeDeadlineSeconds` expires — the pod then also carries `status.reason: DeadlineExceeded`, which the read API surfaces as `"error": "DeadlineExceeded"` | a drain or preemption carries `DisruptionTarget`, so the attempt is not counted against `backoffLimitPerIndex` and the index runs again; a deadline kill is counted and retried like exit 1 — either way, pages already published are not redone |
 
@@ -286,7 +287,8 @@ The warm-up entrypoint uses the same codes and writes the same
 `{"stage": "warmup", "permanent", "error"}` termination message:
 
 - **13** for `ValueError` (incl. pydantic), `yaml.YAMLError`, `KeyError`
-  (unknown step), `NotImplementedError` (unknown model class),
+  (unknown step), `NotImplementedError` (unknown model class), `TypeError`
+  (a setting a step does not take),
   `RepositoryNotFoundError` and `RevisionNotFoundError` (a bad model id or
   revision); when `HF_HUB_OFFLINE` is set; when `PIPELINE_PATH` is missing or
   unreadable; and when the `<pipeline_id>.done` marker cannot be written (the
@@ -330,7 +332,8 @@ as failed with a reason — and its presence is the sole "done" signal for
 anything that lists results directly. A volume can therefore be done *and*
 have lost pages; `pages_ok` and `pages_failed` say which it was. It embeds
 the pipeline YAML and its sha256 (the drift ground truth), `image_digest`,
-per-page results, `page_sources` and `canvas_ids` (what a resume compares),
+per-page results, `page_sources`, `page_source_digests` (what a resume
+compares) and `canvas_ids`,
 the run metrics (`wall_seconds`, `gpu_stall_seconds`, `pages_per_second`,
 `bytes_fetched`) and `viewer_url`
 ([field table](s3-layout.md#manifestjson-completion-marker)).

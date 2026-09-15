@@ -40,11 +40,29 @@ reserved for the authenticated forge login CI stamps as a label at render
 time, which is evidence, where this is only the account the command ran
 under.
 
+**What the browser is told.** The campaign browser has no environment of its
+own: it reads `window.API_BASE` and `window.RESULTS_BASE` out of `/config.js`,
+and the web front *serves that file itself*, written from
+`HTRFLOW_PUBLIC_RESULTS_BASE`. So there is no second copy of the results base
+for an operator to keep in step — set `publicResultsBase` and the page
+follows — and the run-log route, which will only open a URL under that base,
+cannot be pointed somewhere the API does not serve.
+[Frontend](frontend.md) has the table of what the page reads.
+
 **Prefixes.** The web front's env is `HTRFLOW_`-prefixed: an operator's
 settings for a long-lived service. The wrapper's are bare — the in-pod
 contract written by the Job the converter renders
 (`packages/converter/src/htrflow_converter/manifests/campaign-job.yaml`),
 in a pod environment nothing else writes.
+
+**Two caps, two different costs.** `FETCH_MAX_BYTES` bounds what a page's
+image may weigh on the wire; `MAX_IMAGE_PIXELS` bounds what decoding it
+costs. They are not the same number — a few megabytes of JPEG can carry a
+gigapixel image, and the wrapper hands every page to a pipeline that decodes
+it into memory — so a file well inside the byte cap could still take the pod
+out. The pixel count is read from the image's header, which costs nothing per
+page; a page over either cap fails without a retry, and `MAX_IMAGE_PIXELS: 0`
+turns the second check off.
 
 ## Three security sentences
 
