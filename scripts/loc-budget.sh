@@ -499,7 +499,90 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 3156
 # unenforced pause outranks a refused object at the exit code. And a server
 # message this package repeats is cut at MAX_MESSAGE: a 422 with no
 # `details.causes` still carries the whole rejected pod template.
-check converter "$(count packages/converter/src -name '*.py')" 2157
+# 2157 -> 2161 (2026-09-14, audit C1): `apply` with no --out looks up an
+# earlier render of each campaign under the repo's own rendered/, so the
+# append-only and split-shape rules run for it too -- the comparison is by
+# file NAME now, since the two directories differ.
+# 2161 -> 2224 (2026-09-14, audit C2): two refusals `--prune` needed. A
+# render that produced no campaigns at all no longer prunes every campaign
+# in the namespace unless --allow-empty says so, and a repo with no
+# converter.yaml is refused by the COMMAND (the library still defaults --
+# the namespace, queue, Secret and PVC names are not things to guess at).
+# Most of the lines are the two sentences and the paragraphs saying why.
+# 2224 -> 2245 (2026-09-14, audit C3): a refused campaign Job never reaches
+# the Kueue pause sync, so a paused campaign was left running while the
+# apply reported only "some objects were refused" (exit 3). The refusal now
+# says the pause is not enforced and the apply exits 1, like a Workload that
+# never appeared.
+# 2245 -> 2283 (2026-09-14, audit C4): `source_template` is validated where
+# it is written -- exactly one {ref} and nothing else in braces -- and the
+# fill inside Volume's before-validator is caught, so a stray placeholder is
+# a line about converter.yaml instead of a KeyError traceback out of
+# `validate`. The placeholder reader and the two sentences are most of it.
+# 2283 -> 2306 (2026-09-14, audit C5): `priority` is validated as the label
+# value it is rendered into (kueue.x-k8s.io/priority-class). A free string
+# there was a 422 at apply time, after the campaign's ConfigMap had already
+# been written.
+# 2306 -> 2366 (2026-09-14, audit C6): every converter.yaml setting that
+# names a cluster object (namespace, queue, s3_secret, data_pvc,
+# runtime_class) is checked as one, and node_selector as the labels it is
+# copied into. A capitalised namespace used to pass `validate` and be
+# refused at apply time, with the render already committed.
+# 2366 -> 2394 (2026-09-14, audit C7): every API call carries a (connect,
+# read) timeout. The client sends none by default, so a half-open connection
+# left the apply blocked in recv with no deadline anywhere above it. Mostly
+# the call sites rewrapping onto their own lines.
+# 2394 -> 2409 (2026-09-14, audit C8): the immutable-field refusal gives the
+# advice that fits the Job it is about -- a warm-up is a recipe and a new
+# pipeline file, a live campaign's Job cannot change at all -- and the
+# warm-up name prefix becomes a constant `cluster` can read.
+# 2409 -> 2429 (2026-09-14, audit C9): an `images:` volume whose line of
+# volumes.txt is over 100 KiB is refused, naming the volume and its image
+# count. The Job exports that line as one environment entry and Linux stops
+# one at 128 KiB, so the pod died with "Argument list too long" before the
+# wrapper started and nothing said which volume did it.
+# 2429 -> 2437 (2026-09-14, audit C11): the two byte caps take ge=1 (at 0
+# every volume of every campaign is over the cap), and the two second
+# budgets a 32-bit ceiling -- they are rendered into int32 Kubernetes
+# fields, so a larger number was a 422 halfway through an apply.
+# 2437 -> 2450 (2026-09-14, audit C13): a campaign with no volumes at all is
+# refused. It rendered `completions: 0`, which Kubernetes reports as
+# Succeeded the moment the Job is created -- a campaign that is over before
+# it starts, and green.
+# 2450 -> 2466 (2026-09-14, audit C14): a rendered campaign whose ConfigMap
+# and Job have come apart is one sentence naming the campaign, not a bare
+# KeyError out of the loop that was about to apply it.
+# 2466 -> 2498 (2026-09-14, audit C15): every API call is retried three
+# times, 1/2/4 seconds apart, on 429 and 500-504 -- a rate limit or an
+# apiserver being upgraded left a campaign unapplied and the operator
+# re-running the whole command. Nothing else is retried: 409, 403 and 422
+# are answers about the request, not about the server's moment.
+# 2498 -> 2510 (2026-09-14, audit C10): a URL echoed back in a problem line
+# loses the value of a signing query parameter as well as its userinfo.
+# Those lines reach CI logs and pull requests; the stored URL cannot be
+# redacted at all, which the security page now says out loud.
+# 2510 -> 2527 (2026-09-14, audit review): a namespace is a DNS-1123 LABEL,
+# not the subdomain the other object names are -- `htr.batch.example` and a
+# 64-character name passed `validate` and were refused at apply time, with
+# the render already committed. Its own rule and its own sentence, which
+# says 63 and says no dots.
+# 2527 -> 2533 (2026-09-14, audit review): the incomplete-render stop got
+# its own paragraph -- it had landed under the comment that explains why a
+# refused record read is NOT a reason to stop, which reads as the opposite
+# of what the code does.
+# 2533 -> 2538 (2026-09-14, audit review): --dry-run previews an empty
+# prune instead of being refused before it can print anything -- the one
+# prune an operator most wants to see the shape of first -- and the real
+# run still refuses.
+# 2538 -> 2541 (2026-09-14, audit review): `X-Amz-Security-Token` and
+# `X-Amz-Credential` join the query parameters a problem line blanks -- a
+# presigned S3 URL carries all three, and the alternation is longest-first
+# so the security token is not matched as a bare `token`.
+# 2541 -> 2551 (2026-09-14, audit review): a DELETE retried past a 5xx takes
+# a 404 as its own success -- the attempt before it reached the API server
+# and only the answer was lost, so the retry was about to report an object
+# missing that it had just deleted. A first-attempt 404 still stands.
+check converter "$(count packages/converter/src -name '*.py')" 2551
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from string import Formatter
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -31,10 +32,17 @@ from pydantic import (
 )
 
 _MiB = 1024 * 1024
+#: `activeDeadlineSeconds` and `ttlSecondsAfterFinished` are int32 in the
+#: Kubernetes API, so a larger number is a 422 halfway through an apply.
+_INT32_MAX = 2**31 - 1
 
 _VOLUME_ID_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?\Z")
 _NAME_RE = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?\Z")
 _IMAGE_RE = re.compile(r"[a-z0-9./:-]+@sha256:[0-9a-f]{64}\Z")
+#: A Kubernetes label VALUE, which is what ``_VOLUME_ID_RE`` already spells
+#: out (a volume id becomes one). Under its own name for the settings that
+#: are rendered into a label rather than into a name.
+_LABEL_VALUE_RE = _VOLUME_ID_RE
 #: A Kubernetes object name in its wider form, DNS-1123 *subdomain* -- what
 #: a Secret name has to be (``_NAME_RE`` above is the narrower label, which
 #: is all a Job name may be). Spelled out rather than simplified to
@@ -44,6 +52,35 @@ _IMAGE_RE = re.compile(r"[a-z0-9./:-]+@sha256:[0-9a-f]{64}\Z")
 _SUBDOMAIN_RE = re.compile(
     r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*\Z"
 )
+#: A DNS-1123 *label*: lower-case, no dots, at most 63 characters. What a
+#: namespace has to be -- the wider subdomain rule below accepts
+#: ``htr.batch.example``, which the API server refuses.
+_DNS_LABEL_RE = re.compile(r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?\Z")
+_NOT_A_NAMESPACE = (
+    "is not a Kubernetes namespace (got {shown}) — use lower-case letters, "
+    'digits and "-", starting and ending with a letter or digit, at most 63 '
+    "characters and no dots"
+)
+
+#: The settings that name an object the API server has to accept, and the
+#: one that names a RuntimeClass. None of them was checked: a name with a
+#: capital in it passed ``validate`` and was refused at apply time -- after
+#: the render was committed and the campaigns were live.
+_NOT_AN_OBJECT_NAME = (
+    "is not a Kubernetes object name (got {shown}) — use lower-case letters, "
+    'digits, "-" and ".", starting and ending with a letter or digit, at '
+    "most 253 characters"
+)
+#: ``node_selector`` is copied into the pod spec, where both halves of every
+#: entry have to be a label: a key is an optional DNS-subdomain prefix and a
+#: name, a value is the label alphabet. A pod the API server will not take is
+#: a campaign that never starts.
+_NOT_A_NODE_LABEL = (
+    "has a {what} that is not a Kubernetes node label (got {shown}) — a key "
+    'is a name, optionally after a "<dns-prefix>/"; both halves and the '
+    'value are letters, digits, ".", "_" and "-", at most 63 characters'
+)
+
 #: The converter names the parts of a campaign it splits ``<name>-part1``,
 #: ``-part2``, ... (``render.campaign_names``). A campaign file with that
 #: ending would share its rendered file, Job and ConfigMap with a part of the
@@ -103,6 +140,21 @@ _WHITESPACE_RE = re.compile(r"\s")
 
 _PERCENT_ENCODE = "percent-encode a space as %20"
 
+#: Bytes one ``images:`` volume's line of ``volumes.txt`` may take. The
+#: campaign Job's shell exports that line's URLs as a single ``IMAGES``
+#: environment entry, and Linux caps one entry at 128 KiB
+#: (``MAX_ARG_STRLEN``): past that the pod dies with "Argument list too
+#: long" before the wrapper starts, and nothing in the campaign says which
+#: volume did it. The margin below 128 KiB covers the rest of the entry and
+#: leaves the line format somewhere to grow; the API server's own 1 MiB
+#: ConfigMap limit is further off again (``render.MAX_BYTES_PER_JOB``).
+MAX_IMAGES_BYTES = 100 * 1024
+_TOO_MANY_IMAGES = (
+    "lists {count} images, whose one line of volumes.txt is {kib} KiB — the "
+    "Job exports them as one environment entry, which stops at 128 KiB, so "
+    "split the volume in two or give it a IIIF manifest instead"
+)
+
 #: Userinfo, stripped out of any URL a problem echoes back: a campaign file
 #: should carry no credentials, but a problem line is printed in CI logs and
 #: pasted into chat, so one that does must lose them here. The class excludes
@@ -110,8 +162,59 @@ _PERCENT_ENCODE = "percent-encode a space as %20"
 _USERINFO_RE = re.compile(r"(?<=//)[^/@?#]*@")
 
 
+#: Query parameters whose value signs or authorises the request. A presigned
+#: source URL carries its credential there, and a problem line is printed in
+#: CI logs and pasted into chat, so the echo drops it the way it already
+#: drops userinfo. That is all this can do: the URL itself is stored verbatim
+#: in volumes.txt, in the campaign's ConfigMap and in the committed
+#: `rendered/` -- a source URL is not a secret (docs: how-it-works/security).
+#: Longest name first, so `signature=` is not matched as `sig` and a
+#: presigned S3 URL's `X-Amz-Security-Token` is not matched as `token`.
+_SIGNED_RE = re.compile(
+    r"(?<=[?&])(X-Amz-Security-Token|X-Amz-Signature|X-Amz-Credential"
+    r"|signature|token|sig|key)=[^&#]*",
+    re.IGNORECASE,
+)
+
+
 def _shown_url(value: str) -> str:
-    return _USERINFO_RE.sub("***@", value)
+    return _SIGNED_RE.sub(r"\1=***", _USERINFO_RE.sub("***@", value))
+
+
+#: ``source_template`` is filled in a *before* validator
+#: (``Volume._expand``), where a stray placeholder leaves pydantic as a
+#: KeyError or an IndexError -- a traceback where a campaign author should
+#: get a line about their own file. So the template is checked once, where it
+#: is written, and the fill is caught as well.
+_BAD_TEMPLATE = (
+    "must have {{ref}} in it exactly once and nothing else in braces (got "
+    "{shown}) — {{ref}} is where a campaign's bare volume id goes"
+)
+_UNFILLABLE_TEMPLATE = (
+    "cannot be turned into a manifest URL — converter.yaml's source_template "
+    "is {shown}, and only {{ref}} can be filled in; give the volume a "
+    "manifest: of its own, or fix the template"
+)
+
+
+def _placeholders(template: str) -> list[str]:
+    """The names in braces, left to right. A template that is not a format
+    string at all (a brace left open) raises, and is refused with the rest."""
+    try:
+        return [f for _, f, _, _ in Formatter().parse(template) if f is not None]
+    except ValueError:
+        return []
+
+
+def _object_name(value: str) -> bool:
+    return bool(value) and len(value) <= 253 and bool(_SUBDOMAIN_RE.match(value))
+
+
+def _label_key(key: str) -> bool:
+    prefix, slash, name = key.rpartition("/")
+    if slash and not _object_name(prefix):
+        return False
+    return bool(_LABEL_VALUE_RE.match(name))
 
 
 def split_image_urls(value: str) -> list[str]:
@@ -161,7 +264,12 @@ class Volume(BaseModel):
     def _expand(cls, data: Any, info: ValidationInfo) -> Any:
         if isinstance(data, str):
             template = (info.context or {}).get("source_template", "")
-            return {"id": data, "manifest": template.format(ref=data)}
+            try:
+                return {"id": data, "manifest": template.format(ref=data)}
+            except (KeyError, IndexError, ValueError) as e:
+                raise ValueError(
+                    _UNFILLABLE_TEMPLATE.format(shown=shown(template))
+                ) from e
         if not isinstance(data, dict) or "id" not in data:
             raise ValueError(
                 'has no id — write the entry as "- R1", or as "- id: R1" '
@@ -217,6 +325,11 @@ class Volume(BaseModel):
                 "needs exactly one source — give it manifest: <IIIF manifest "
                 "URL>, or images: <list of image URLs>"
             )
+        size = len(self.source_line().encode()) if self.images else 0
+        if size > MAX_IMAGES_BYTES:
+            raise ValueError(
+                _TOO_MANY_IMAGES.format(count=len(self.images), kib=size // 1024)
+            )
         return self
 
     def source_line(self) -> str:
@@ -228,6 +341,18 @@ class Volume(BaseModel):
         if self.manifest is not None:
             return f"{self.id}\t{self.manifest}"
         return f"{self.id}\timages:{' '.join(self.images)}"
+
+
+#: ``priority`` is rendered as the ``kueue.x-k8s.io/priority-class`` label
+#: (``render._campaign_job``), so a value outside the label alphabet is a 422
+#: from the API server halfway through an apply -- after the campaign's
+#: ConfigMap has already been written.
+_NOT_A_PRIORITY = (
+    "is not a Kubernetes label value (got {shown}) — it becomes the "
+    "kueue.x-k8s.io/priority-class label, so name the Kueue PriorityClass "
+    'with letters, digits, ".", "_" and "-", starting and ending with a '
+    "letter or digit, at most 63 characters"
+)
 
 
 class Campaign(BaseModel):
@@ -259,6 +384,13 @@ class Campaign(BaseModel):
             )
         return v
 
+    @field_validator("priority")
+    @classmethod
+    def _check_priority(cls, v: str) -> str:
+        if v and not _LABEL_VALUE_RE.match(v):
+            raise ValueError(_NOT_A_PRIORITY.format(shown=shown(v)))
+        return v
+
     @field_validator("pipeline")
     @classmethod
     def _check_pipeline_ref(cls, v: str) -> str:
@@ -267,6 +399,19 @@ class Campaign(BaseModel):
                 "is empty — name one of the files in pipelines/, without the .yaml"
             )
         return v
+
+    @model_validator(mode="after")
+    def _check_volumes(self) -> "Campaign":
+        if not self.volumes:
+            # `completions: 0` is a Job Kubernetes reports as Succeeded the
+            # moment it is created: a campaign that is over before it starts,
+            # green, with no volume ever fetched and nothing to say why.
+            raise ValueError(
+                "this campaign lists no volumes — add at least one entry "
+                "under volumes:, or remove the file (removing it is how a "
+                "finished campaign is retired)"
+            )
+        return self
 
     @field_validator("window", mode="before")
     @classmethod
@@ -325,6 +470,8 @@ class Pipeline(BaseModel):
             raise ValueError(
                 f"must be a whole number of seconds, 1 or more (got {shown(v)})"
             )
+        if isinstance(v, int) and v > _INT32_MAX:
+            raise ValueError(f"must be {_INT32_MAX} or less (got {shown(v)})")
         return v
 
     def pipeline_yaml(self) -> str:
@@ -377,7 +524,7 @@ class ConverterConfig(BaseModel):
     tolerations: list[dict] = Field(default_factory=list)
     public_results_base: str = ""
     source_template: str = "https://lbiiif.riksarkivet.se/arkis!{ref}/manifest"
-    max_seconds: int = Field(default=21600, ge=1)
+    max_seconds: int = Field(default=21600, ge=1, le=_INT32_MAX)
     #: How long a batch pod's `warmup-wait` init container waits for its
     #: pipeline's marker before giving up. It holds the pod's GPU while it
     #: waits, so this is a GPU-hours budget, not a patience setting.
@@ -388,7 +535,7 @@ class ConverterConfig(BaseModel):
     #: bucket. A day was short enough that a campaign finished on a Friday
     #: was gone before anyone looked at it -- and, until `apply` learnt to
     #: read the record, re-run from the top by the next apply.
-    ttl_seconds_after_finished: int = Field(default=7 * 24 * 3600, ge=1)
+    ttl_seconds_after_finished: int = Field(default=7 * 24 * 3600, ge=1, le=_INT32_MAX)
     #: A Secret in ``namespace`` with a ``token`` key: a Hugging Face token
     #: with read scope, for a pipeline whose model is private or gated.
     #: Empty (the default) means the warm-up downloads anonymously. Only the
@@ -397,8 +544,54 @@ class ConverterConfig(BaseModel):
     #: and must not carry one. No chart value pairs with this: like the S3
     #: Secret the object is the operator's, and no chart template names it.
     hf_token_secret: str = ""
-    manifest_max_bytes: int = 16 * _MiB
-    fetch_max_bytes: int = 64 * _MiB
+    #: The largest manifest, and the largest single image, the wrapper may
+    #: fetch. At 0 every volume of every campaign fails the cap.
+    manifest_max_bytes: int = Field(default=16 * _MiB, ge=1)
+    fetch_max_bytes: int = Field(default=64 * _MiB, ge=1)
+
+    @field_validator("namespace")
+    @classmethod
+    def _check_namespace(cls, v: str) -> str:
+        if not _DNS_LABEL_RE.match(v):
+            raise ValueError(_NOT_A_NAMESPACE.format(shown=shown(v)))
+        return v
+
+    @field_validator("queue", "s3_secret", "data_pvc")
+    @classmethod
+    def _check_object_name(cls, v: str) -> str:
+        if not _object_name(v):
+            raise ValueError(_NOT_AN_OBJECT_NAME.format(shown=shown(v)))
+        return v
+
+    @field_validator("runtime_class")
+    @classmethod
+    def _check_runtime_class(cls, v: str) -> str:
+        # Empty is a real answer here -- a cluster with no GPU RuntimeClass
+        # renders no `runtimeClassName` at all (``render._scheduling``).
+        if v and not _object_name(v):
+            raise ValueError(_NOT_AN_OBJECT_NAME.format(shown=shown(v)))
+        return v
+
+    @field_validator("node_selector")
+    @classmethod
+    def _check_node_selector(cls, v: dict[str, str]) -> dict[str, str]:
+        for key, value in v.items():
+            if not _label_key(key):
+                raise ValueError(_NOT_A_NODE_LABEL.format(what="key", shown=shown(key)))
+            if value and not _LABEL_VALUE_RE.match(value):
+                raise ValueError(
+                    _NOT_A_NODE_LABEL.format(
+                        what=f'value for "{key}"', shown=shown(value)
+                    )
+                )
+        return v
+
+    @field_validator("source_template")
+    @classmethod
+    def _check_source_template(cls, v: str) -> str:
+        if _placeholders(v) != ["ref"]:
+            raise ValueError(_BAD_TEMPLATE.format(shown=shown(v)))
+        return v
 
     @field_validator("hf_token_secret")
     @classmethod
