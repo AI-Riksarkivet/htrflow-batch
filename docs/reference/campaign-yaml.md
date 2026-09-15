@@ -36,6 +36,11 @@ manifest_max_bytes: 16777216      # 16 MiB
 fetch_max_bytes: 67108864         # 64 MiB
 ```
 
+The file itself is required: every command refuses a repo without a
+`converter.yaml` rather than falling back to defaults, because the namespace
+a campaign is applied to — and pruned in — is one of the settings that would
+be guessed at.
+
 `queue`, `s3_secret` and `data_pvc` name objects the htrflow-batch chart
 creates; the [Configuration](configuration.md) page shows which chart value
 each must agree with.
@@ -86,16 +91,29 @@ volumes:
       - https://example.org/page2.jpg
 ```
 
+!!! warning "Source URLs are not secrets"
+
+    Every `manifest:` and `images:` URL is stored verbatim — in git, in the
+    committed `rendered/`, in the campaign's ConfigMap and in each volume's
+    `manifest.json`. A presigned URL therefore publishes its signature to
+    everyone who can read any of those. Validation problems echo such a URL
+    back with its userinfo and its signing query parameter blanked, because
+    those lines travel further still, but the stored URL is untouched. See
+    [Source URLs are not secrets](../how-it-works/security.md#source-urls-are-not-secrets).
+
 Rules enforced by `parse_campaign` (`validate`, and by `render`):
 
 | Rule | Consequence when violated |
 |------|---------------------------|
 | `pipeline:` is required and must name a file in `pipelines/` | Reported as a validation error; nothing renders |
+| A campaign lists at least one volume | Validation error — no volumes renders a Job with `completions: 0`, which Kubernetes reports as Succeeded the moment it is created |
 | Every volume needs `manifest:` or a non-empty `images:` (unless it is a bare string) | Validation error |
 | `manifest:` and every `images:` entry are absolute `http://` or `https://` URLs | Validation error (`must be an http(s) URL`) |
 | No whitespace (space, tab, line break) inside a `manifest:` or `images:` URL | Validation error naming the volume and the image — percent-encode a space as `%20`. Whitespace separates the URLs of an `images:` volume in `volumes.txt`, which is why it cannot appear inside one; a comma can (a IIIF size such as `/full/2500,/`) |
+| An `images:` volume whose one line of `volumes.txt` is over 100 KiB | Validation error naming the volume and how many images it lists. The Job exports that line's URLs as a single `IMAGES` environment entry, and Linux stops one entry at 128 KiB — the pod would die with `Argument list too long` before the wrapper starts. Split the volume, or give it a IIIF manifest |
 | Volume ids match `[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?` — alphanumeric at both ends, ≤63 chars | Validation error (`unsafe volume id`). This is the Kubernetes **label-value** alphabet, not a DNS-1123 label: uppercase is allowed |
 | Volume ids are unique within a campaign | Validation error (`duplicate volume id`) |
+| `priority:`, when set, is a Kubernetes label value (letters, digits, `.`, `_`, `-`, alphanumeric at both ends, ≤63) | Validation error naming the `kueue.x-k8s.io/priority-class` label it is rendered into — otherwise the API server refuses the Job with a 422 halfway through an apply |
 | `window:`, when set, is a positive integer | Validation error |
 | `window:` above `converter.yaml`'s `window` | Silently clamped to it at render time — `converter.yaml`'s value is the per-cluster cap and should be set to what the ClusterQueue's GPU quota can actually admit. Rendering more would let Kueue's partial admission shrink it on the live Job: Kueue then rewrites `spec.parallelism` and rejects every later apply of the unchanged rendered file (`cannot change when partial admission is enabled and the job is not suspended`) |
 | `suspend: true` | Renders `spec.suspend: true` — see [Pausing](#pausing) |
@@ -198,10 +216,16 @@ campaigns/broken.yaml: volume "R1" is listed twice — remove the duplicate
 | `pipeline:` naming a file that is not in `pipelines/` | `pipeline "kyrk-v3" has no file in pipelines/ — add pipelines/kyrk-v3.yaml, or point pipeline: at one that is there` |
 | A campaign file called `foo-part1.yaml` | `the campaign name (taken from the file name) ends in "-part<number>", which is what the converter calls the parts of a campaign it splits — rename the file` |
 | A tag instead of a digest in `image:` | `"image" is not pinned to a digest (got "repo/img:v5") — write image: <registry>/<repo>@sha256:<64 hex digits>` |
+| `namespace:` written as anything but a DNS-1123 label | `"namespace" is not a Kubernetes namespace (got "htr.batch.example") — use lower-case letters, digits and "-", starting and ending with a letter or digit, at most 63 characters and no dots` |
+| `queue:`, `s3_secret:`, `data_pvc:` or `runtime_class:` written as anything but a Kubernetes object name | `"queue" is not a Kubernetes object name (got "HTR-Batch") — use lower-case letters, digits, "-" and ".", starting and ending with a letter or digit, at most 253 characters` |
+| A `node_selector:` key or value that is not a label | `"node_selector" has a key that is not a Kubernetes node label (got "Bad Key") — a key is a name, optionally after a "<dns-prefix>/"; both halves and the value are letters, digits, ".", "_" and "-", at most 63 characters` |
 | `allowed_image_repos:` or `require_model_revision:` in `converter.yaml` | `allowed_image_repos moved to the htrflow-batch chart (security.allowedImageRepos, enforced by Kyverno) — remove it from converter.yaml` |
+| A `source_template:` with no `{ref}` in it, with `{ref}` twice, or with any other placeholder | `"source_template" must have {ref} in it exactly once and nothing else in braces (got "https://iiif.example.org/{id}/manifest") — {ref} is where a campaign's bare volume id goes` — it is filled in for every bare volume id, so a template that cannot be filled would otherwise fail per volume |
 | `steps:` that is not a list | `"steps" must be a list of steps — write steps: and then "- step: <Name>" entries under it` |
 | `window: "5"` (quoted, so YAML makes it text), `window: 0`, `window: true` | `"window" must be a whole number of 1 or more (got "5" — quotes make it text)` — the "quotes" half is added only when the value really is a number, so `suspend: maybe` is not told about quotes it does not have |
 | `max_seconds:` likewise | `"max_seconds" must be a whole number of seconds, 1 or more (got 0)` |
+| `max_seconds:` or `ttl_seconds_after_finished:` larger than a 32-bit field | `"max_seconds" must be 2147483647 or less (got 4294967296)` — both are rendered into int32 Kubernetes fields, so a larger number is a 422 halfway through an apply |
+| `manifest_max_bytes:` or `fetch_max_bytes:` at 0 | `"fetch_max_bytes" must be 1 or more (got 0)` — at 0 every image is over the cap, so every volume of every campaign fails |
 | `suspend: maybe` (or any other non-boolean) | `"suspend" must be true or false (got "maybe")` |
 | A setting given a list or a block where one value belongs | `"window" must be a whole number (got a list)` — the value is described, never dumped as a Python repr |
 | A bad value inside a nested setting | `"node_selector.a" must be text (got 1)`, `"tolerations" entry 1 must be settings written as "key: value" lines (got 3)` — a list position is counted from 1, never shown as `tolerations.0` |
@@ -235,6 +259,12 @@ since a campaign's Job references its pipeline's ConfigMap.
 `htrflow-campaigns apply` does that ordering itself; by hand it is
 `kubectl apply -f rendered/pipelines -f rendered/campaigns`.
 
+`--out` says where a render is *written*. What it is held against is always
+the repo's own committed `rendered/`: that is the record of what has been
+applied, so rendering into a fresh directory — or the temp directory an
+`apply` with no `--out` uses — does not turn a campaign that is already
+running into a new one.
+
 `render` also **removes** files under `--out` that this render did not
 produce, so deleting `campaigns/<name>.yaml` deletes
 `rendered/campaigns/<name>.yaml` too. Deleting the manifest is only half of
@@ -248,6 +278,14 @@ in the namespace carrying the converter's `managed-by=converter` label and
 deletes the ones this render did not produce. Every object the converter
 renders — both ConfigMaps and both Jobs — carries that label for exactly
 this reason.
+
+A render that produces **no campaigns at all** is refused with `--prune`
+instead of cancelling every campaign in the namespace: an empty
+`campaigns/`, a mistyped directory and a checkout that never happened all
+look like that. Pass `--allow-empty` when retiring the last campaign really
+is what you mean (`make campaigns-apply DIR=… PRUNE=1 ALLOW_EMPTY=1`).
+`--dry-run` still prints what such a prune would delete, and says the real
+run will refuse it.
 
 The four objects above are not built up field-by-field in Python: the
 skeletons **are** the Job/ConfigMap, checked in as real YAML at
@@ -354,8 +392,10 @@ its campaign; leave it off and Argo CD's own prune does the same job.
 The hook fails the sync on any non-zero exit, so treat exit `3` — some
 objects refused, everything else applied — as what it is: the sync did
 change the cluster, and the summary line in the hook's log names what is
-still to fix. Exit `1` means nothing was applied, or a pause is not being
-enforced. See [refused objects](#when-the-api-server-refuses-an-object).
+still to fix. Exit `1` outranks it: nothing reached the cluster at all, or a
+campaign git says is paused is not actually paused — which can be true while
+other objects *were* applied, so read the summary line rather than inferring
+it from the code. See [refused objects](#when-the-api-server-refuses-an-object).
 
 ## When the API server refuses an object
 
@@ -368,11 +408,14 @@ Job htr-warmup-demo: the pod template changed and a Job's pod template is immuta
 1 of 6 objects were refused by the API server and are unchanged: Job/kyrk — the other 5 were applied (exit 3)
 ```
 
+The codes are a precedence, highest first — `1` beats `3` beats `0` — so
+`1` does not mean nothing was applied when a pause is what failed:
+
 | Exit | What it means |
 | --- | --- |
+| `1` | a pause is **not enforced** — a paused campaign's Workload never appeared, or its Job was refused — whatever else was applied; or nothing reached the cluster at all (no credentials, an unreachable API server, a render that did not pass, a server that refused every object) |
+| `3` | some objects were refused and are unchanged, everything else was applied, and every pause holds; the summary line names what was refused |
 | `0` | everything was applied |
-| `1` | nothing was — no credentials, an unreachable API server, a render that did not pass, a paused campaign whose Workload never appeared, or a server that refused every object |
-| `3` | some objects were refused and are unchanged, everything else was applied; the summary line names them |
 
 A Job's **pod template cannot be edited** once the Job exists — that is
 Kubernetes, not this tool — and two quite different changes move one: an

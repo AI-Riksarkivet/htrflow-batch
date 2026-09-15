@@ -75,7 +75,7 @@ def test_render_writes_the_expected_file_names(tmp_path):
 def test_render_rejects_an_added_volume_on_an_existing_campaign(tmp_path, capsys):
     repo = tmp_path / "repo"
     shutil.copytree(GOOD, repo)
-    out = tmp_path / "rendered"
+    out = repo / "rendered"
     assert main(["render", str(repo), "--out", str(out)]) == 0
 
     kyrk_path = repo / "campaigns" / "kyrk.yaml"
@@ -93,7 +93,7 @@ def test_render_rejects_an_added_volume_on_an_existing_campaign(tmp_path, capsys
 def test_render_a_new_campaign_renders_fine(tmp_path):
     repo = tmp_path / "repo"
     shutil.copytree(GOOD, repo)
-    out = tmp_path / "rendered"
+    out = repo / "rendered"
     assert main(["render", str(repo), "--out", str(out)]) == 0
 
     (repo / "campaigns" / "brandnew.yaml").write_text(
@@ -109,7 +109,7 @@ def test_render_reports_a_clean_error_for_a_corrupt_existing_campaign_file(
 ):
     repo = tmp_path / "repo"
     shutil.copytree(GOOD, repo)
-    out = tmp_path / "rendered"
+    out = repo / "rendered"
     assert main(["render", str(repo), "--out", str(out)]) == 0
 
     (out / "campaigns" / "kyrk.yaml").write_text("foo: [1, 2\n")
@@ -129,7 +129,7 @@ def test_render_removes_the_manifest_of_a_deleted_campaign(tmp_path):
     because the prune compares the cluster against exactly that file."""
     repo = tmp_path / "repo"
     shutil.copytree(GOOD, repo)
-    out = tmp_path / "rendered"
+    out = repo / "rendered"
     assert main(["render", str(repo), "--out", str(out)]) == 0
     rendered = out / "campaigns" / "kyrk.yaml"
     assert rendered.exists()
@@ -145,7 +145,7 @@ def test_render_removes_the_manifest_of_a_deleted_campaign(tmp_path):
 def test_render_removes_a_pipeline_manifest_when_the_pipeline_is_deleted(tmp_path):
     repo = tmp_path / "repo"
     shutil.copytree(GOOD, repo)
-    out = tmp_path / "rendered"
+    out = repo / "rendered"
     assert main(["render", str(repo), "--out", str(out)]) == 0
     stale = out / "pipelines" / "demo-v1.yaml"
     assert stale.exists()
@@ -177,7 +177,7 @@ def test_render_refuses_an_out_dir_that_contains_the_sources(tmp_path, capsys):
 def test_render_prints_every_removed_path_and_also_removes_yml(tmp_path, capsys):
     repo = tmp_path / "repo"
     shutil.copytree(GOOD, repo)
-    out = tmp_path / "rendered"
+    out = repo / "rendered"
     assert main(["render", str(repo), "--out", str(out)]) == 0
     stale_yml = out / "campaigns" / "gone.yml"
     stale_yml.write_text("{}\n")
@@ -227,7 +227,7 @@ def test_append_only_still_finds_the_parts_of_a_cut_down_campaign_name(
     ]
     path = repo / "campaigns" / f"{name}.yaml"
     path.write_text(yaml.safe_dump({"pipeline": "demo-v1", "volumes": volumes}))
-    out = tmp_path / "rendered"
+    out = repo / "rendered"
     assert main(["render", str(repo), "--out", str(out)]) == 0
 
     parts = sorted((out / "campaigns").glob("a*-part*.yaml"))
@@ -269,7 +269,7 @@ def test_render_refuses_to_re_split_a_campaign_that_is_already_rendered(
     (repo / "campaigns" / "wide.yaml").write_text(
         yaml.safe_dump({"pipeline": "demo-v1", "volumes": volumes})
     )
-    out = tmp_path / "rendered"
+    out = repo / "rendered"
     assert main(["render", str(repo), "--out", str(out)]) == 0
     # what the previous rule left behind: one file, one Job, one ConfigMap
     single = out / "campaigns" / "wide.yaml"
@@ -327,7 +327,7 @@ def test_render_refuses_two_campaigns_whose_split_names_collide(
         (repo / "campaigns" / f"{shared}-{tail}.yaml").write_text(
             _split_campaign(count)
         )
-    out = tmp_path / "rendered"
+    out = repo / "rendered"
 
     assert main(["render", str(repo), "--out", str(out)]) == 1
     printed = capsys.readouterr().out
@@ -370,7 +370,7 @@ def test_a_comma_rendered_campaign_is_unchanged_and_is_rewritten_with_spaces(
     them."""
     repo = tmp_path / "repo"
     shutil.copytree(GOOD, repo)
-    out = tmp_path / "rendered"
+    out = repo / "rendered"
     assert main(["render", str(repo), "--out", str(out)]) == 0
     rendered = out / "campaigns" / "kyrk.yaml"
     _rewrite_volumes_txt(rendered, SCANS_SPACED, SCANS_COMMAED)
@@ -386,7 +386,7 @@ def test_a_comma_rendered_campaign_whose_volumes_changed_is_still_refused(
 ):
     repo = tmp_path / "repo"
     shutil.copytree(GOOD, repo)
-    out = tmp_path / "rendered"
+    out = repo / "rendered"
     assert main(["render", str(repo), "--out", str(out)]) == 0
     _rewrite_volumes_txt(
         out / "campaigns" / "kyrk.yaml",
@@ -526,3 +526,19 @@ def test_a_changed_model_id_is_a_changed_recipe(tmp_path, capsys):
 
     assert main(["render", str(repo), "--out", str(out)]) == 1
     assert "pipeline demo-v1 changed (steps)" in capsys.readouterr().out
+
+
+def test_validate_refuses_a_repo_without_a_converter_yaml(tmp_path, capsys):
+    """`converter.yaml` is what says which namespace, queue, Secret and PVC a
+    campaign belongs to. A repo without one is not a campaigns repo, and
+    every one of those settings quietly falling back to a default is how an
+    apply reaches the wrong namespace."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    (repo / "converter.yaml").unlink()
+    assert main(["validate", str(repo)]) == 1
+    printed = capsys.readouterr().out
+    assert str(repo / "converter.yaml") in printed
+    assert "htrflow-campaigns init" in printed
+    assert main(["render", str(repo), "--out", str(tmp_path / "rendered")]) == 1
+    assert not (tmp_path / "rendered").exists()

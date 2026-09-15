@@ -787,3 +787,146 @@ def test_an_unenforced_pause_outranks_a_refused_object(tmp_path, cluster, capsys
     err = capsys.readouterr().err
     assert "pausy: paused in git" in err
     assert "Job/kyrk" in err, "the refusal is still reported"
+
+
+def test_apply_without_out_holds_campaigns_against_the_committed_render(
+    tmp_path, cluster, capsys
+):
+    """The campaign half of the same rule. A temp render directory holds no
+    earlier render, so the append-only check found nothing to compare a
+    swapped volume against and applied it -- the one command that reaches a
+    cluster being the one command the guard did not run for."""
+    repo = _repo(tmp_path)
+    assert cli.main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    path = repo / "campaigns" / "kyrk.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["volumes"][0] = "R9999999"
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    capsys.readouterr()
+
+    assert cli.main(["apply", str(repo)]) == 1
+    assert "campaign kyrk is append-only" in capsys.readouterr().out
+    assert cluster.of("apply") == [], "nothing reached the cluster"
+
+
+def test_prune_refuses_a_render_that_produced_no_campaigns(tmp_path, cluster, capsys):
+    """A typo in the directory, or a checkout that never happened, renders
+    zero campaigns -- and `--prune` then deletes every campaign the converter
+    manages in the namespace, which is the whole archive's work. Refused
+    unless cancelling them all is said out loud."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    for path in (repo / "campaigns").glob("*.yaml"):
+        path.unlink()
+    cluster.live = [_object("Job", "kyrk"), _object("ConfigMap", "campaign-kyrk")]
+    assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == 1
+    assert cluster.of("delete") == []
+    err = capsys.readouterr().err
+    assert str(repo / "campaigns") in err
+    assert "--allow-empty" in err
+
+
+def test_allow_empty_prunes_the_last_campaign_away(tmp_path, cluster):
+    """The way out the sentence names: deleting the last campaign file IS how
+    a campaign is cancelled, so the empty render has to be applicable."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    for path in (repo / "campaigns").glob("*.yaml"):
+        path.unlink()
+    cluster.live = [_object("Job", "kyrk")]
+    rc = cli.main(["apply", str(repo), "--out", str(out), "--prune", "--allow-empty"])
+    assert rc == 0
+    assert cluster.of("delete") == [("delete", "Job", "kyrk")]
+
+
+def test_a_repo_without_a_converter_yaml_is_refused_before_the_cluster(
+    tmp_path, cluster, capsys
+):
+    """Without converter.yaml every setting silently defaults -- including
+    the namespace -- so an apply meant for one cluster's campaigns lands on
+    another's objects, and a --prune deletes them."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    (repo / "converter.yaml").unlink()
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 1
+    assert cluster.calls == []
+    assert "converter.yaml" in capsys.readouterr().out
+
+
+def test_a_refused_paused_campaign_job_is_an_unenforced_pause(
+    tmp_path, cluster, capsys
+):
+    """A refused Job never reaches the Kueue sync, so a campaign git says is
+    paused went on running with the apply reporting only "some objects were
+    refused" (exit 3). The pause is what is not enforced here, and that is
+    exit 1 -- the same answer as a Workload that never appeared."""
+    repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
+    _refuses(cluster, "pausy", cluster_mod.ClusterError("apply Job/pausy: 409"))
+    rc = cli.main(["apply", str(repo), "--out", str(out), "--pause-wait", "1"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "pausy: paused in git, but the API server refused its Job" in err
+    assert "Job/pausy" in err, "the refusal itself is still reported"
+
+
+def test_an_incomplete_rendered_campaign_is_a_sentence_not_a_keyerror(
+    tmp_path, cluster, monkeypatch, capsys
+):
+    """A campaign is rendered as a pair -- the ConfigMap with its volumes.txt
+    and the Job that mounts it. Reading a directory where the pair has come
+    apart (a half-finished write, a hand edit, a bad merge of `rendered/`)
+    raised a bare KeyError on the Job's name, from inside the loop that is
+    about to apply it."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    (out / "campaigns").mkdir(parents=True)
+    (out / "pipelines").mkdir()
+    (out / "campaigns" / "kyrk.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "batch/v1",
+                "kind": "Job",
+                "metadata": {"name": "kyrk", "namespace": NS},
+                "spec": {},
+            }
+        )
+    )
+    monkeypatch.setattr(cli, "_render", lambda *a, **kw: 0)
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 1
+    err = capsys.readouterr().err
+    assert "campaign kyrk" in err and "re-render" in err
+    assert cluster.of("apply") == [], "nothing reached the cluster"
+
+
+def test_apply_to_a_fresh_out_dir_still_holds_campaigns_against_rendered(
+    tmp_path, cluster, capsys
+):
+    """`--out` says where this render is written, never what it is held
+    against: the committed `rendered/` is the record. An `--out` pointing
+    somewhere empty is the same blind spot as a temp directory, and it is the
+    one an operator reaches for when a render looks wrong."""
+    repo = _repo(tmp_path)
+    assert cli.main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    path = repo / "campaigns" / "kyrk.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["volumes"][0] = "R9999999"
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    capsys.readouterr()
+
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "fresh")]) == 1
+    assert "campaign kyrk is append-only" in capsys.readouterr().out
+    assert cluster.of("apply") == [], "nothing reached the cluster"
+
+
+def test_dry_run_previews_an_empty_prune_and_the_real_run_still_refuses(
+    tmp_path, cluster, capsys
+):
+    """`--dry-run` is how an operator checks a prune before running it, so
+    the one case worth checking hardest -- a render with no campaigns at all
+    -- must be previewable: it prints what would go, says the real run will
+    refuse, and then the real run does."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    for path in (repo / "campaigns").glob("*.yaml"):
+        path.unlink()
+    rc = cli.main(["apply", str(repo), "--out", str(out), "--prune", "--dry-run"])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert f"would prune: every {CAMPAIGN_SELECTOR}" in captured.out
+    assert "--allow-empty" in captured.err
+    assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == 1

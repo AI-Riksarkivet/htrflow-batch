@@ -11,6 +11,10 @@ dependencies = [
     "pyyaml",
     "pydantic>=2.7",
     "huggingface-hub>=0.30,<2",
+    # fetch.py opens each downloaded image's header to bound its pixel count
+    # (W14). The runtime image installs its own pin last (the `wrapper-image`
+    # group), which is the one that survives there.
+    "pillow>=10",
 ]
 
 [build-system]

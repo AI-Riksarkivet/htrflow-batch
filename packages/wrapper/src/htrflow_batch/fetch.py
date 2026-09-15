@@ -35,6 +35,15 @@ from .iiif import PageRef
 #: Default cap on one image body (env ``FETCH_MAX_BYTES``; docs: wrapper).
 FETCH_MAX_BYTES = 64 * 1024 * 1024
 
+#: Default cap on one image's DECODED size (env ``MAX_IMAGE_PIXELS``; docs:
+#: wrapper). 100 MP is ~4x an A0 sheet at 400 dpi -- far above anything a
+#: digitised page is, and far below what would exhaust a pod.
+MAX_IMAGE_PIXELS = 100_000_000
+
+#: Serialises the swap of Pillow's own limit in ``_check_pixels`` -- it is a
+#: module global and the download pool has a dozen threads.
+_PIXEL_GUARD = threading.Lock()
+
 _CHUNK = 256 * 1024
 
 #: Content types that can never be a raster image; refused before reading.
@@ -105,6 +114,46 @@ def _save(resp: httpx.Response, path: Path, max_bytes: int) -> int:
     return size
 
 
+def _check_pixels(path: Path, max_pixels: int) -> None:
+    """W14 (2026-09-14, audit): bound what DECODING the page will cost.
+
+    ``max_bytes`` bounds the download, and the two are not the same number: a
+    few MB of JPEG can carry a gigapixel image, and htrflow decodes every page
+    into memory -- so a pod was OOM-killed by a file that had passed every
+    check the fetcher made. ``Image.open`` reads the header only, so this
+    costs nothing per page. A file Pillow cannot read is NOT rejected here:
+    that is htrflow's business, and is where a page that will not decode has
+    always failed. The rejected file goes, like every other partial one.
+
+    Pillow's own bomb guard is turned off for the header read, so
+    ``max_pixels`` is the only gate and the wrapper is the one that says what
+    happened. Both halves of that guard were in the way: above roughly twice
+    ``Image.MAX_IMAGE_PIXELS`` (~179 MP) ``Image.open`` raises
+    ``DecompressionBombError``, which the ``except`` below swallowed -- so a
+    40000x40000 image passed the very check this function exists for -- and
+    above ``Image.MAX_IMAGE_PIXELS`` itself (~89 MP, BELOW our own default)
+    it warns, on pages nothing is wrong with. The lock keeps the swap from
+    two pool threads overlapping; a header read is a few KB, so serialising
+    them costs nothing."""
+    from PIL import Image
+
+    with _PIXEL_GUARD:
+        limit, Image.MAX_IMAGE_PIXELS = Image.MAX_IMAGE_PIXELS, None
+        try:
+            with Image.open(path) as image:
+                width, height = image.size
+        except Exception:
+            return  # not a size we can read: a decodability gate this is not
+        finally:
+            Image.MAX_IMAGE_PIXELS = limit
+    if max_pixels and width * height > max_pixels:
+        path.unlink(missing_ok=True)
+        raise _Reject(
+            f"too large: {width}x{height} = {width * height} pixels > {max_pixels}",
+            retry=False,
+        )
+
+
 def describe(e: BaseException) -> str:
     """The sentence a failed page records -- and, through progress.json,
     the one the status page's notice shows. This package's own exceptions
@@ -134,18 +183,21 @@ def fetch_page(
     retries: int,
     backoff: float,
     max_bytes: int = FETCH_MAX_BYTES,
+    max_pixels: int = MAX_IMAGE_PIXELS,
     stop: threading.Event | None = None,
 ) -> FetchResult:
     last = "unknown error"
     url = page.image_url
     path = dest_dir / f"{page.name}.jpg"
-    for attempt in range(retries):
+    attempt = 0
+    while attempt < retries:
         if stop is not None and stop.is_set():
             return FetchResult(page=page, path=None, error="stopped: run aborted")
         try:
             with client.stream("GET", url, timeout=120, follow_redirects=True) as resp:
                 if resp.status_code == 200:
                     size = _save(resp, path, max_bytes)
+                    _check_pixels(path, max_pixels)  # W14
                     return FetchResult(page=page, path=path, error=None, size=size)
                 last = f"HTTP {resp.status_code}"
                 if resp.status_code == 400:
@@ -153,6 +205,12 @@ def fetch_page(
                     # (no upscaling); retry unscaled instead of failing the page.
                     fallback = re.sub(r"/full/\d+,/", "/full/max/", url)
                     if fallback != url:
+                        # W13: a different URL, not another go at the one that
+                        # failed, so it does not spend one of the page's
+                        # attempts (and does not wait out a backoff to ask a
+                        # question this code has already answered). It can
+                        # happen once: the substitution is then a no-op and the
+                        # next 400 falls through like any other.
                         url = fallback
                         continue
         except _Reject as e:
@@ -161,7 +219,8 @@ def fetch_page(
                 break
         except Exception as e:
             last = describe(e)
+        attempt += 1
         # Skip sleep after final attempt
-        if attempt < retries - 1:
-            time.sleep(backoff * (2**attempt))
+        if attempt < retries:
+            time.sleep(backoff * (2 ** (attempt - 1)))
     return FetchResult(page=page, path=None, error=last)

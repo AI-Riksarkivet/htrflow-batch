@@ -124,9 +124,13 @@ compose-down:
 # --prune deletes every converter-labelled object in the namespace that is
 # not in THIS apply, so running it against a partial checkout (a probe
 # directory with its own converter.yaml, say) would cancel everything else.
+# For that reason a PRUNE=1 whose render produced NO campaigns at all is
+# refused; ALLOW_EMPTY=1 goes with it when retiring the last campaign really
+# is the point.
 campaigns-apply:
 	@test -n "$(DIR)" || (echo "usage: make campaigns-apply DIR=<campaigns-repo-dir>"; exit 2)
-	uv run htrflow-campaigns apply $(DIR) --out $(DIR)/rendered $(if $(PRUNE),--prune)
+	uv run htrflow-campaigns apply $(DIR) --out $(DIR)/rendered $(if $(PRUNE),--prune) \
+	  $(if $(ALLOW_EMPTY),--allow-empty)
 
 # The reproducible core of the Indexed Jobs E2E (docs/development/e2e-indexed-jobs.md):
 # validate the campaigns repo, render + apply it, then block until every

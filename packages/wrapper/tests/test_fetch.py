@@ -226,3 +226,170 @@ def test_stop_event_short_circuits_a_page_without_touching_the_network(tmp_path)
     r = _one(tmp_path, handler, retries=3, stop=stop)
     assert r.path is None and "stopped" in r.error
     assert started == []
+
+
+def test_the_unscaled_fallback_does_not_spend_an_attempt(tmp_path):
+    """W13: the fallback asks a DIFFERENT URL, so it is not another go at the
+    one that failed -- and taking one of the page's attempts meant a single
+    retry (or a flaky server after the switch) lost the page for a reason the
+    fetcher had already worked out."""
+    seen = []
+
+    def handler(req):
+        seen.append(str(req.url))
+        if "/full/2500,/" in req.url.path:
+            return httpx.Response(400)
+        return httpx.Response(200, content=JPEG + b"narrow-image")
+
+    page = PageRef(
+        index=1,
+        name="0001",
+        image_url="https://img/iiif/full/2500,/0/default.jpg",
+        canvas={},
+    )
+    r = fetch_page(page, tmp_path, _client(handler), 1, 0.0)
+    assert r.error is None
+    assert [u.rsplit("/full/", 1)[1] for u in seen] == [
+        "2500,/0/default.jpg",
+        "max/0/default.jpg",
+    ]
+
+
+def test_a_400_that_is_not_a_size_still_spends_its_attempts(tmp_path):
+    """The fallback is a one-off substitution; a 400 it cannot change is an
+    ordinary failure and must not loop."""
+    calls = []
+
+    def handler(req):
+        calls.append(1)
+        return httpx.Response(400)
+
+    page = PageRef(index=1, name="0001", image_url="https://img/a.jpg", canvas={})
+    r = fetch_page(page, tmp_path, _client(handler), 3, 0.0)
+    assert r.error == "HTTP 400"
+    assert len(calls) == 3
+
+
+def test_a_400_after_the_fallback_does_not_loop(tmp_path):
+    """Once the URL is unscaled the substitution is a no-op, so the second
+    400 falls through and spends the attempt like any other."""
+    calls = []
+
+    def handler(req):
+        calls.append(str(req.url))
+        return httpx.Response(400)
+
+    page = PageRef(
+        index=1,
+        name="0001",
+        image_url="https://img/iiif/full/2500,/0/default.jpg",
+        canvas={},
+    )
+    r = fetch_page(page, tmp_path, _client(handler), 2, 0.0)
+    assert r.error == "HTTP 400"
+    assert len(calls) == 3  # the sized one, then the unscaled one twice
+
+
+def _real_jpeg(width: int, height: int) -> bytes:
+    """A decodable image of a named size -- the byte cap cannot tell one of
+    these from the other, which is the point of MAX_IMAGE_PIXELS."""
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height)).save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
+def test_an_image_over_the_pixel_cap_is_refused(tmp_path):
+    """W14: FETCH_MAX_BYTES bounds the DOWNLOAD, not what decoding it costs.
+    A few MB of JPEG can carry a gigapixel image, and htrflow decodes every
+    page into memory -- so the pod is OOM-killed by a file that passed every
+    check the fetcher had."""
+    body = _real_jpeg(40, 40)
+
+    def handler(req):
+        return httpx.Response(200, content=body)
+
+    page = PageRef(index=1, name="0001", image_url="https://img/1.jpg", canvas={})
+    r = fetch_page(page, tmp_path, _client(handler), 3, 0.0, max_pixels=100)
+    assert r.path is None
+    assert r.error == "too large: 40x40 = 1600 pixels > 100"
+    assert not (tmp_path / "0001.jpg").exists()  # nothing left in the workdir
+
+
+def test_an_image_inside_the_pixel_cap_is_kept(tmp_path):
+    body = _real_jpeg(40, 40)
+
+    def handler(req):
+        return httpx.Response(200, content=body)
+
+    page = PageRef(index=1, name="0001", image_url="https://img/1.jpg", canvas={})
+    r = fetch_page(page, tmp_path, _client(handler), 3, 0.0, max_pixels=10_000)
+    assert r.error is None and r.path is not None
+
+
+def test_the_pixel_cap_is_not_a_decodability_gate(tmp_path):
+    """A file Pillow cannot read is left to htrflow, which is where a page
+    that will not decode has always failed. This guard is about SIZE."""
+
+    def handler(req):
+        return httpx.Response(200, content=JPEG + b"not really a jpeg")
+
+    page = PageRef(index=1, name="0001", image_url="https://img/1.jpg", canvas={})
+    assert fetch_page(page, tmp_path, _client(handler), 3, 0.0).error is None
+
+
+def _png_declaring(width: int, height: int) -> bytes:
+    """A one-pixel PNG whose IHDR claims a size it does not carry -- what a
+    decompression bomb looks like to a header read, without the gigabytes."""
+    import io
+    import struct
+    import zlib
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (1, 1)).save(buffer, format="PNG")
+    data = bytearray(buffer.getvalue())
+    ihdr = data.index(b"IHDR")
+    struct.pack_into(">II", data, ihdr + 4, width, height)
+    crc = zlib.crc32(bytes(data[ihdr : ihdr + 17])) & 0xFFFFFFFF
+    struct.pack_into(">I", data, ihdr + 17, crc)
+    return bytes(data)
+
+
+def test_a_real_decompression_bomb_is_rejected(tmp_path):
+    """W14 review, BLOCKING: Pillow raises DecompressionBombError of its own
+    above ~179 MP, and the guard's `except Exception: return` swallowed it --
+    so a 40000x40000 image sailed past the very check it exists for. The
+    wrapper's cap has to be the only gate."""
+    body = _png_declaring(40000, 40000)
+
+    def handler(req):
+        return httpx.Response(200, content=body)
+
+    page = PageRef(index=1, name="0001", image_url="https://img/1.png", canvas={})
+    r = fetch_page(page, tmp_path, _client(handler), 3, 0.0, max_pixels=100_000_000)
+    assert r.path is None
+    assert r.error == "too large: 40000x40000 = 1600000000 pixels > 100000000"
+    assert not (tmp_path / "0001.jpg").exists()
+
+
+def test_a_page_under_the_cap_passes_without_a_warning(tmp_path, recwarn):
+    """Pillow warns above ~89 MP, which is BELOW the wrapper's own default
+    cap -- so a legitimate 90-100 MP page printed a DecompressionBombWarning
+    into the run log for a page nothing was wrong with."""
+    import warnings
+
+    body = _png_declaring(10_000, 10_000)  # 100 MP: over Pillow's warn line
+
+    def handler(req):
+        return httpx.Response(200, content=body)
+
+    page = PageRef(index=1, name="0001", image_url="https://img/1.png", canvas={})
+    warnings.simplefilter("always")  # record them rather than raise them
+    r = fetch_page(page, tmp_path, _client(handler), 3, 0.0, max_pixels=150_000_000)
+    assert r.error is None and r.path is not None
+    assert [w for w in recwarn if "decompression" in str(w.message).lower()] == []
