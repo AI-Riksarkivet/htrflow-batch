@@ -16,6 +16,7 @@ operator-facing, uses ``HTRFLOW_``.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -23,6 +24,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class ConfigError(ValueError):
     pass
+
+
+#: What may appear in a name the wrapper builds S3 keys and public URLs out of
+#: (W12, 2026-09-14 audit).
+_KEY_SAFE = re.compile(r"[A-Za-z0-9._-]+")
 
 
 class Config(BaseModel):
@@ -61,6 +67,22 @@ class Config(BaseModel):
     #: into every ALTO (provenance.py) and the run manifest (publish.py).
     image_digest: str = Field("unknown", alias="IMAGE_DIGEST")
     htrflow_base_revision: str = Field("unknown", alias="HTRFLOW_BASE_REVISION")
+
+    @field_validator("volume_ref", "pipeline_id")
+    @classmethod
+    def _key_shaped(cls, v: str) -> str:
+        """W12: both go verbatim into every S3 key this run writes
+        (``<pipeline>/<volume>/…``) and into the public ``viewer_url``. A
+        campaign file is where they come from, so the shape is checked once,
+        here, and a name that would write outside the volume's own prefix --
+        or point a reader's viewer somewhere else -- fails the run
+        permanently instead."""
+        if not _KEY_SAFE.fullmatch(v) or ".." in v:
+            raise ValueError(
+                "VOLUME_REF and PIPELINE_ID may contain only letters, digits, "
+                f"'.', '_' and '-', and no '..': {v!r}"
+            )
+        return v
 
     @field_validator("s3_prefix")
     @classmethod
