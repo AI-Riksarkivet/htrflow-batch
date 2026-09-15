@@ -4,7 +4,7 @@ Read-only but for one write: every method here is a get/list against Jobs,
 ConfigMaps or Pods, except ``apply_configmap``, which server-side applies
 the per-campaign status ConfigMap this service is the only observer of
 (B76). Nothing here ever deletes, and nothing touches a Job or a Pod — the
-RBAC granted to the service is get/list/watch plus create/patch on
+RBAC granted to the service is get/list plus create/patch on
 ConfigMaps (charts/htrflow-batch/templates/web.yaml), and a test greps this
 package's source to keep it that way.
 

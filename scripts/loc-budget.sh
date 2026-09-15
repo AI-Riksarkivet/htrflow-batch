@@ -745,5 +745,9 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3857
 # on jobs and configmaps -- the command now reads each campaign's live Job to
 # record how it ended, and reads the record back to leave a finished campaign
 # alone. `list` does not authorize a read by name.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 774
+# 774 -> 776 (2026-09-14, audit) D17: the web Role granted `watch` on
+# jobs, pods and configmaps and nothing in packages/web has ever opened one
+# -- every response is computed from a get or a list on the request. Two
+# lines of comment for three verbs removed.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 776
 exit $fail
