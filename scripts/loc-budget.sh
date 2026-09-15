@@ -396,7 +396,12 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # apply reported only "some objects were refused" (exit 3). The refusal now
 # says the pause is not enforced and the apply exits 1, like a Workload that
 # never appeared.
-check converter "$(count packages/converter/src -name '*.py')" 2245
+# 2245 -> 2283 (2026-09-14, audit C4): `source_template` is validated where
+# it is written -- exactly one {ref} and nothing else in braces -- and the
+# fill inside Volume's before-validator is caught, so a stray placeholder is
+# a line about converter.yaml instead of a KeyError traceback out of
+# `validate`. The placeholder reader and the two sentences are most of it.
+check converter "$(count packages/converter/src -name '*.py')" 2283
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

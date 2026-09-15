@@ -222,3 +222,15 @@ def test_a_problem_line_never_carries_a_raw_tab_or_carriage_return(tmp_path):
         )
     (problem,) = exc_info.value.problems
     assert not set(problem) & set("\t\r\n"), repr(problem)
+
+
+def test_a_bare_volume_under_an_unfillable_template_is_a_sentence_not_a_keyerror():
+    """The same rule, one layer down: `ConverterConfig` refuses a template
+    that cannot be filled, and a `Volume` handed one anyway still leaves as a
+    validation problem rather than as a traceback out of the validator."""
+    with pytest.raises(ValidationError) as exc_info:
+        Volume.model_validate(
+            "R123", context={"source_template": "https://example.org/{id}/manifest"}
+        )
+    (msg,) = [str(e["msg"]) for e in exc_info.value.errors()]
+    assert "source_template" in msg and "{ref}" in msg
