@@ -1474,3 +1474,143 @@ describe("a reaped campaign's volumes are still openable", () => {
     expect(row.getByRole("link", { name: "log" })).toBeInTheDocument();
   });
 });
+
+// A volume that finished but lost pages read exactly like a clean one: the
+// same green chip, with "1 failed" buried in the progress line beside it
+// (the product owner, 2026-09-15). Amber is the colour the header already
+// uses for a campaign that published some of itself and not the rest.
+describe("done, but with pages missing", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function progress(failed: number) {
+    return {
+      done: 2,
+      total: 3,
+      failed,
+      lastPage: "0003",
+      stage: "done",
+      updatedAt: "2026-09-14T07:00:00Z",
+      ageSeconds: 97_200,
+      lastError: null,
+      errors: 0,
+      viewerPublished: true,
+    };
+  }
+
+  function lostVolume(failed: number) {
+    return { ...volumeDone, progress: progress(failed) };
+  }
+
+  async function card(body: Record<string, unknown>, row: JobSummary = job) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ ...detail0, ...row, ...body })),
+    );
+    return render(CampaignCard, { job: row });
+  }
+
+  describe("the volume row", () => {
+    async function statusChip(failed: number): Promise<HTMLElement> {
+      const { container } = await card({
+        failures: [],
+        volumes: [lostVolume(failed)],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await expand();
+      return container.querySelector(".status") as HTMLElement;
+    }
+
+    test("takes the warning colour when pages were lost", async () => {
+      const chip = await statusChip(1);
+      expect(chip).toHaveClass("status", "done", "lost");
+    });
+
+    test("says so in words, so the colour is not carrying it alone", async () => {
+      const chip = await statusChip(1);
+      expect(chip).toHaveAttribute("title", "done with 1 failed page");
+      expect(chip).toHaveTextContent("done with 1 failed page");
+    });
+
+    test("counts more than one page in the plural", async () => {
+      expect(await statusChip(4)).toHaveAttribute(
+        "title",
+        "done with 4 failed pages",
+      );
+    });
+
+    test("a clean volume is green and says nothing extra", async () => {
+      const chip = await statusChip(0);
+      expect(chip).not.toHaveClass("lost");
+      expect(chip).not.toHaveAttribute("title");
+      expect(chip).toHaveTextContent("done");
+    });
+  });
+
+  describe("the campaign header", () => {
+    async function header(pagesFailed: number) {
+      const succeeded: JobSummary = {
+        ...job,
+        phase: "Succeeded",
+        counts: { total: 3, active: 0, done: 3, failed: 0 },
+      };
+      const { container } = await card(
+        { failures: [], volumes: [], pagesDone: 2, pagesTotal: 3, pagesFailed },
+        succeeded,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      return {
+        chip: container.querySelector(".chip.phase") as HTMLElement,
+        section: container.querySelector(".campaign") as HTMLElement,
+      };
+    }
+
+    test("a campaign that succeeded with failed pages is amber, not green", async () => {
+      const { chip, section } = await header(1);
+      expect(chip).toHaveClass("lost");
+      expect(section).toHaveAttribute("data-health", "lost");
+      expect(chip).toHaveAttribute("title", "done with 1 failed page");
+      expect(chip).toHaveTextContent("done with 1 failed page");
+    });
+
+    test("a campaign that succeeded cleanly stays green", async () => {
+      const { chip, section } = await header(0);
+      expect(chip).not.toHaveClass("lost");
+      expect(section).toHaveAttribute("data-health", "done");
+      expect(chip).not.toHaveAttribute("title");
+      expect(chip).toHaveTextContent("Succeeded");
+    });
+  });
+
+  describe("the folded card's one-line strip", () => {
+    async function strip(failed: number): Promise<HTMLElement> {
+      const latest = lostVolume(failed);
+      const { container } = await card({
+        failures: [],
+        volumes: [latest],
+        latest,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      return container.querySelector(".latest-state") as HTMLElement;
+    }
+
+    test("follows the row: amber, and it says why", async () => {
+      const state = await strip(1);
+      expect(state).toHaveClass("lost");
+      expect(state).toHaveAttribute("title", "done with 1 failed page");
+      expect(state).toHaveTextContent("done with 1 failed page");
+    });
+
+    test("a clean volume's strip is unchanged", async () => {
+      const state = await strip(0);
+      expect(state).not.toHaveClass("lost");
+      expect(state).toHaveTextContent("done");
+    });
+  });
+});

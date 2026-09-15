@@ -997,7 +997,17 @@ check web       "$(count packages/web/src -name '*.py')" 1866
 # 4091 -> 4102 (2026-09-14, audit review) LIVE_MAX_FAILURES counts attempts, not minutes, and
 # the backoff stretched twenty of them from five minutes to an hour. Both
 # the constant and the branch that reads it now say so.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4102
+# 4102 -> 4167 (2026-09-15, done with failures): a volume that finished
+# but lost pages wore the same green chip a clean one does, with "1 failed"
+# buried in the progress line beside it -- so the loss was easy to miss on a
+# page whose whole job is to show it. A `done` row whose progress.failed is
+# above zero takes the warning token the phase chip already gives a
+# partially failed campaign, and so do the folded strip and -- when every
+# index published and pages were still lost -- the header chip and the card's
+# accent. The lines are three markup sites that each gained a class, a title
+# and a screen-reader sentence (the colour must not be the only thing saying
+# it), the two helpers behind them, and four CSS rules.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4167
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
