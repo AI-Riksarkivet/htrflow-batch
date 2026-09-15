@@ -21,12 +21,20 @@
 # A fence's info string carries an optional Marp image directive, so a deck
 # controls how large its diagram is drawn:  ```mermaid h:420
 #
-# Fonts come from Google Fonts at render time, so the first build needs
-# network access. Decks live in docs/slides and are NOT part of the
-# documentation site (scripts/docs-site.sh stages docs/ without them).
+# Fonts are bundled, not fetched: docs/slides/theme/fonts holds Open Sans as
+# woff2 (inlined in the theme) and as ttf (what fontconfig reads). This script
+# points fontconfig at that directory for the run, because Mermaid MEASURES
+# every label with the font the browser resolves, and a fallback would size
+# each node box against the wrong metrics. Each rendered SVG then gets the
+# regular face embedded as a data URI, so the committed file draws the same
+# outside this build as inside it.
+#
+# Decks live in docs/slides and are NOT part of the documentation site
+# (scripts/docs-site.sh stages docs/ without them).
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+cd "$SCRIPT_DIR/.."
 
 SLIDES_DIR=docs/slides
 ASSETS_DIR="$SLIDES_DIR/assets"
@@ -53,9 +61,27 @@ export CHROME_NO_SANDBOX=${CHROME_NO_SANDBOX:-true}
 # Puppeteer refuses some binaries unless the path arrives through its own
 # config file, so write one and pass it with -p.
 PUPPETEER_CONFIG=$(mktemp -t puppeteer-XXXXXX.json)
-trap 'rm -f "$PUPPETEER_CONFIG"' EXIT
+FONT_CONF=$(mktemp -t slides-fonts-XXXXXX.conf)
+FONT_CACHE=$(mktemp -d -t slides-fontcache-XXXXXX)
+trap 'rm -rf "$PUPPETEER_CONFIG" "$FONT_CONF" "$FONT_CACHE"' EXIT
 printf '{"executablePath": "%s", "args": ["--no-sandbox"]}\n' \
   "${PUPPETEER_EXECUTABLE_PATH:-}" >"$PUPPETEER_CONFIG"
+
+# Both renderers resolve fonts through fontconfig, never through the theme's
+# data URIs. Hand them a config that keeps the system one and adds the
+# bundled faces: nothing is installed into the user's home, and the file is
+# written fresh on every run, so this is idempotent and leaves nothing behind.
+FONTS_DIR="$PWD/$SLIDES_DIR/theme/fonts"
+cat >"$FONT_CONF" <<XML
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+<fontconfig>
+  <include ignore_missing="yes">/etc/fonts/fonts.conf</include>
+  <dir>$FONTS_DIR</dir>
+  <cachedir>$FONT_CACHE</cachedir>
+</fontconfig>
+XML
+export FONTCONFIG_FILE="$FONT_CONF"
 
 mkdir -p "$OUT_DIR" "$ASSETS_DIR"
 
@@ -100,6 +126,8 @@ PY
     echo "  rendering $(basename "$svg")"
     $MMDC -p "$PUPPETEER_CONFIG" -c "$MERMAID_CONFIG" \
       -i "$mmd" -o "$svg" -b transparent >/dev/null
+    python3 "$SCRIPT_DIR/slides_embed_font.py" \
+      "$svg" "$FONTS_DIR/OpenSans-Regular.woff2"
   done
 
   # --html allows raw HTML in the markdown (the column and table helpers).
