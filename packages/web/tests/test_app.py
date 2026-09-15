@@ -668,7 +668,10 @@ def test_a_contested_record_is_not_treated_as_a_refused_namespace(caplog):
     for _ in range(3):
         assert client.get("/api/v1/jobs").status_code == 200
     assert reader.attempts == 3, "still tried on every poll"
-    assert caplog.text == ""
+    # Not `caplog.text == ""`: the test client's own httpx logs a line per
+    # request under CI's log level. What must not be there is this
+    # service's "could not write" warning.
+    assert "could not write" not in caplog.text
 
 
 class ManyReader(RecordingReader):
