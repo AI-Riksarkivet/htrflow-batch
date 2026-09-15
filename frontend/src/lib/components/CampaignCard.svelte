@@ -280,7 +280,12 @@
     const published =
       v.state === "done" || (v.progress?.viewerPublished ?? false);
     const manifest = published ? v.iiifUrl : sourceOf(v);
-    return manifest === null ? null : `uv.html#?manifest=${manifest}`;
+    // Checked and encoded like every other URL this card turns into an
+    // href: `iiifUrl` is built by the API from a volume id that came off a
+    // campaign's volumes.txt, and it went into the fragment unread and
+    // unescaped (2026-09-14 audit).
+    if (manifest === null || !isHttpUrl(manifest)) return null;
+    return `uv.html#?manifest=${encodeURIComponent(manifest)}`;
   }
 
   // manifest carries manifestUrl so /log's RunSummaryCard has something to

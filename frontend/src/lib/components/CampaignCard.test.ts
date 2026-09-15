@@ -151,7 +151,8 @@ describe("CampaignCard", () => {
     // done: the published result
     expect(done.getByRole("link", { name: "open" })).toHaveAttribute(
       "href",
-      "uv.html#?manifest=https://pub/htr-test/demo-v1/vol0/iiif.json",
+      "uv.html#?manifest=" +
+        encodeURIComponent("https://pub/htr-test/demo-v1/vol0/iiif.json"),
     );
     expect(done.getByRole("link", { name: "source" })).toHaveAttribute(
       "href",
@@ -164,7 +165,8 @@ describe("CampaignCard", () => {
       within(rows[1] as HTMLElement).getByRole("link", { name: "open" }),
     ).toHaveAttribute(
       "href",
-      "uv.html#?manifest=https://iiif.example.org/vol1/manifest",
+      "uv.html#?manifest=" +
+        encodeURIComponent("https://iiif.example.org/vol1/manifest"),
     );
 
     // no source at all: the open and source slots stay empty, log stays
@@ -277,14 +279,16 @@ describe("CampaignCard", () => {
       within(rows[0] as HTMLElement).getByRole("link", { name: "open" }),
     ).toHaveAttribute(
       "href",
-      "uv.html#?manifest=https://pub/htr-test/demo-v1/vol1/iiif.json",
+      "uv.html#?manifest=" +
+        encodeURIComponent("https://pub/htr-test/demo-v1/vol1/iiif.json"),
     );
     // Nothing published yet: still the source manifest, as before.
     expect(
       within(rows[1] as HTMLElement).getByRole("link", { name: "open" }),
     ).toHaveAttribute(
       "href",
-      "uv.html#?manifest=https://iiif.example.org/vol1/manifest",
+      "uv.html#?manifest=" +
+        encodeURIComponent("https://iiif.example.org/vol1/manifest"),
     );
   });
 
@@ -551,7 +555,8 @@ describe("CampaignCard", () => {
     expect(screen.queryByText("vol0")).toBeNull(); // not the loaded row
     expect(screen.getByRole("link", { name: "open" })).toHaveAttribute(
       "href",
-      "uv.html#?manifest=https://iiif.example.org/vol260/manifest",
+      "uv.html#?manifest=" +
+        encodeURIComponent("https://iiif.example.org/vol260/manifest"),
     );
     expect(screen.getByRole("link", { name: "source" })).toHaveAttribute(
       "href",
@@ -1272,5 +1277,58 @@ describe("a progress bar cannot be talked out of its own scale", () => {
     const bar = await campaignBar(25, 100);
     expect(bar.querySelector(".fill")).toHaveStyle({ width: "25%" });
     expect(bar).toHaveAttribute("aria-valuenow", "25");
+  });
+});
+
+describe("the viewer link is built the way every other link is", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  async function openLink(volume: unknown): Promise<HTMLElement | null> {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes: [volume] }),
+      ),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+    const row = screen.getAllByRole("row").slice(1)[0] as HTMLElement;
+    return within(row).queryByRole("link", { name: "open" });
+  }
+
+  // iiifUrl is built by the API from a volume id that came off a campaign's
+  // volumes.txt, a file people edit in a git repo. `sourceUrl` was checked
+  // at this last step and `iiifUrl` was not (2026-09-14 audit).
+  test("an iiifUrl that is not an http(s) URL never reaches the viewer", async () => {
+    const hostile = { ...volumeDone, iiifUrl: "javascript:alert(1)" };
+    expect(await openLink(hostile)).toBeNull();
+  });
+
+  test("a manifest URL is encoded into the fragment, not pasted into it", async () => {
+    const odd = {
+      ...volumeDone,
+      iiifUrl: "https://pub/htr-test/demo-v1/vol %261/iiif.json",
+    };
+    expect(await openLink(odd)).toHaveAttribute(
+      "href",
+      "uv.html#?manifest=" +
+        encodeURIComponent("https://pub/htr-test/demo-v1/vol %261/iiif.json"),
+    );
+  });
+
+  test("an ordinary manifest URL still opens", async () => {
+    expect(await openLink(volumeDone)).toHaveAttribute(
+      "href",
+      "uv.html#?manifest=" +
+        encodeURIComponent("https://pub/htr-test/demo-v1/vol0/iiif.json"),
+    );
   });
 });

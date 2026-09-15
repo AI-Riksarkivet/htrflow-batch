@@ -738,7 +738,11 @@ check web       "$(count packages/web/src -name '*.py')" 1792
 # with itself -- so a bar 900% wide, or one running backwards, was a page the
 # numbers could ask for. Both the fill and the value a screen reader is told
 # are clamped to the track.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3949
+# 3949 -> 3954 (2026-09-14, audit) F16: `sourceUrl` was checked at the last
+# step before it became an href and `iiifUrl` was not, and neither was
+# encoded into the viewer's `#?manifest=` fragment -- both come from a
+# volume id that arrived off a campaign's volumes.txt.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3954
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
