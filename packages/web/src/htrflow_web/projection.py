@@ -269,63 +269,97 @@ def record_summary(record: dict, status: dict, cfg, warmup: dict) -> dict | None
     }
 
 
-def _record_failures(row: dict, status: dict, cfg) -> list[dict]:
-    """The failed volumes the record kept, as rows the page already knows
-    how to draw. Their ``reason`` is the one sentence the detail endpoint
-    observed while the pods still existed; anything finer is in the volume's
-    own ``manifest.json`` in the bucket (docs: reference/s3-layout)."""
+def _recorded_reasons(status: dict) -> dict[str, str]:
+    """``{volume id: reason}`` from the status record's ``failedVolumes``.
+    Those sentences are the detail endpoint's, observed while the pods still
+    existed; anything finer is in the volume's own ``manifest.json`` in the
+    bucket (docs: reference/s3-layout)."""
     try:
         listed = json.loads((status.get("data") or {}).get("failedVolumes") or "[]")
     except ValueError:
-        listed = []
-    base, pipeline = row["resultsBase"], row["pipeline"]
-    rows = []
-    for i, entry in enumerate(listed if isinstance(listed, list) else []):
-        if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
-            continue
-        vol_id = entry["id"]
-        rows.append(
-            {
-                "index": i,
-                "id": vol_id,
-                "state": "failed",
-                "manifestUrl": f"{base}/{vol_id}/manifest.json",
-                "iiifUrl": f"{base}/{vol_id}/iiif.json",
-                "altoPrefix": f"{base}/{vol_id}/alto/",
-                "logUrl": _log_url(pipeline, vol_id, cfg),
-                "sourceUrl": None,
-                "reason": {
-                    "stage": None,
-                    "permanent": None,
-                    "error": str(entry.get("reason", "")),
-                },
-                "progress": None,
-            }
-        )
-    return rows
+        return {}
+    if not isinstance(listed, list):
+        return {}
+    return {
+        entry["id"]: str(entry.get("reason", ""))
+        for entry in listed
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str)
+    }
+
+
+#: What a volume nobody named as failed did, given how the campaign ended.
+#: A reaped campaign has no per-index state left -- that was the Job's
+#: ``completedIndexes`` -- so the campaign's own ending is what every row
+#: that is not in ``failedVolumes`` gets. ``Unknown`` means nobody wrote
+#: down how the campaign ended at all, and the record's counts are the last
+#: thing observed; the bucket answers for the rows either way.
+_RECORD_STATE = {
+    "Succeeded": "done",
+    "PartiallyFailed": "done",
+    "Unknown": "done",
+    "Failed": "failed",
+}
 
 
 def record_detail(
-    row: dict, status: dict, cfg, pipeline_configmap: dict | None
+    row: dict,
+    record: dict | None,
+    status: dict,
+    cfg,
+    pipeline_configmap: dict | None,
+    offset: int = 0,
+    limit: int = 200,
+    fetch_progress=None,
 ) -> dict:
-    """``JobDetail`` for a campaign whose Job is gone: the record, and the
-    failures it kept. No per-volume rows -- the per-index states were the
-    Job's ``completedIndexes`` and went with it, and the volumes themselves
-    are listed in the bucket (B76 piece 4) -- and no page counts, which are
-    read from progress files a finished run has nothing more to add to."""
+    """``JobDetail`` for a campaign whose Job is gone.
+
+    The Job's ``completedIndexes`` went with the Job, but manifest.json,
+    iiif.json, alto/ and the run log are all still in the bucket -- and this
+    endpoint answered with no rows at all, so a finished campaign was one
+    nobody could open a single volume of (R1, the product owner,
+    2026-09-14). The rows are rebuilt from what has no TTL: the campaign
+    record's ``volumes.txt`` for the ids and their sources, the status
+    record's ``failedVolumes`` for the ones that failed and why, and the
+    campaign's own ending for everything else. Their page counts come from
+    the bucket like a live campaign's, through the same cap and deadline.
+    """
     pipeline_yaml = _pipeline_yaml(pipeline_configmap)
+    reasons = _recorded_reasons(status)
+    results_base, pipeline = row["resultsBase"], row["pipeline"]
+    ending = _RECORD_STATE.get(row["phase"], "done")
+    volumes: list[dict] = []
+    for idx, line in enumerate(_volume_lines(record)):
+        vol_id = line.split("\t", 1)[0]
+        state = "failed" if vol_id in reasons else ending
+        volume = _volume_row(idx, line, state, results_base, pipeline, cfg)
+        if vol_id in reasons:
+            volume["reason"] = {
+                "stage": None,
+                "permanent": None,
+                "error": reasons[vol_id],
+            }
+        volumes.append(volume)
+
+    failures = sorted(
+        (v for v in volumes if v["state"] == "failed" and "reason" in v),
+        key=lambda v: v["index"],
+        reverse=True,
+    )[:_MAX_FAILURES]
+    page = volumes[offset : offset + limit]
+    latest = _latest(volumes)
+    known = _attach_progress(
+        [*page, *failures, *([latest] if latest else [])],
+        _internal_results_base(row["namespace"], pipeline, cfg),
+        fetch_progress or (lambda *_args: None),
+    )
     return {
         **row,
+        **_campaign_pages(known),
         "pipelineSteps": _pipeline_steps(pipeline_yaml),
         "pipelineYaml": pipeline_yaml,
-        "latest": None,
-        "failures": _record_failures(row, status, cfg),
-        "volumes": [],
-        "pagesDone": 0,
-        "pagesTotal": 0,
-        "pagesFailed": 0,
-        "errors": 0,
-        "lastError": None,
+        "latest": latest,
+        "failures": failures,
+        "volumes": page,
     }
 
 
@@ -541,6 +575,26 @@ def newest(pods: list[dict]) -> dict:
     )
 
 
+def _volume_row(
+    idx: int, line: str, state: str, results_base: str, pipeline: str, cfg
+) -> dict:
+    """One row of a campaign's volume table, from its ``volumes.txt`` line.
+    Every URL below is derived from the id, so the same function builds a
+    live campaign's rows and a reaped one's -- there is nothing to read off
+    the Job (R1, 2026-09-14)."""
+    vol_id = line.split("\t", 1)[0]
+    return {
+        "index": idx,
+        "id": vol_id,
+        "state": state,
+        "manifestUrl": f"{results_base}/{vol_id}/manifest.json",
+        "iiifUrl": f"{results_base}/{vol_id}/iiif.json",
+        "altoPrefix": f"{results_base}/{vol_id}/alto/",
+        "logUrl": _log_url(pipeline, vol_id, cfg),
+        "sourceUrl": _source_url(line),
+    }
+
+
 def _volume_state(
     idx: int, completed: set[int], failed: set[int], has_pod: bool
 ) -> str:
@@ -699,17 +753,8 @@ def detail(
     # nullable sourceUrl) and the sort below needs a comparable key type.
     volumes: list[dict] = []
     for idx, line in enumerate(_volume_lines(configmap)):
-        vol_id = line.split("\t", 1)[0]
-        row = {
-            "index": idx,
-            "id": vol_id,
-            "state": _volume_state(idx, completed, failed, idx in pods_by_index),
-            "manifestUrl": f"{results_base}/{vol_id}/manifest.json",
-            "iiifUrl": f"{results_base}/{vol_id}/iiif.json",
-            "altoPrefix": f"{results_base}/{vol_id}/alto/",
-            "logUrl": _log_url(pipeline, vol_id, cfg),
-            "sourceUrl": _source_url(line),
-        }
+        state = _volume_state(idx, completed, failed, idx in pods_by_index)
+        row = _volume_row(idx, line, state, results_base, pipeline, cfg)
         if idx in pods_by_index:
             newest_pod = newest(pods_by_index[idx])
             reason = wrapper_reason(newest_pod)

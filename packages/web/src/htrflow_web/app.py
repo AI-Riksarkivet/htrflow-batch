@@ -366,7 +366,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="job not found")
         job = reader.get_job(namespace, name)
         if job is None:
-            return _reaped_detail(namespace, name)
+            return _reaped_detail(namespace, name, offset, limit)
         cm_name = projection.configmap_ref(job)
         configmap = reader.get_configmap(namespace, cm_name) if cm_name else None
         pipe_name = projection.configmap_ref(job, "pipeline")
@@ -388,7 +388,7 @@ def create_app(
         _record(body, reader.get_configmap(namespace, status_name), body["failures"])
         return body
 
-    def _reaped_detail(namespace: str, name: str) -> dict:
+    def _reaped_detail(namespace: str, name: str, offset: int, limit: int) -> dict:
         """The campaign page of a campaign whose Job is gone. The pipeline
         ConfigMap is asked for by name here -- the one place this package
         rebuilds the converter's ``htr-pipeline-<id>`` convention instead of
@@ -410,7 +410,16 @@ def create_app(
         if row is None:
             raise HTTPException(status_code=404, detail="job not found")
         pipe = reader.get_configmap(namespace, f"htr-pipeline-{row['pipeline']}")
-        return projection.record_detail(row, status, reader.cfg, pipe)
+        return projection.record_detail(
+            row,
+            record,
+            status,
+            reader.cfg,
+            pipe,
+            offset,
+            limit,
+            fetch_progress=progress.fetch if progress is not None else None,
+        )
 
     def _warmup_status(
         job: dict, warmup_jobs: list[dict], reasons: dict[tuple[str, str], dict | None]

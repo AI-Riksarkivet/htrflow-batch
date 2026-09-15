@@ -585,7 +585,15 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # write the same offset -- `09:00Z` sorts before `10:00+02:00` while being an
 # hour after it. The two are parsed and compared as moments, a value with no
 # offset read as UTC.
-check web       "$(count packages/web/src -name '*.py')" 1738
+# 1738 -> 1792 (2026-09-14, R1) a campaign whose Job the TTL reaped answered
+# its detail route with no volume rows at all, so the page showed it as
+# finished and nobody could open a volume in the viewer, read its ALTO or its
+# run log -- while manifest.json, iiif.json, alto/ and the log were all still
+# in the bucket. The rows are rebuilt from what has no TTL (the record's
+# volumes.txt, the status record's failedVolumes, the campaign's own ending),
+# through the same row builder a live campaign's rows come from, and their
+# page counts come from the bucket like a live campaign's.
+check web       "$(count packages/web/src -name '*.py')" 1792
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

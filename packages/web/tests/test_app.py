@@ -516,7 +516,13 @@ REAPED_RECORD = {
             "htrflow.riksarkivet.se/pipeline": "demo-v1",
         },
     },
-    "data": {"volumes.txt": "vol9\thttps://iiif.example.org/vol9/manifest\n"},
+    "data": {
+        "volumes.txt": (
+            "vol9\thttps://iiif.example.org/vol9/manifest\n"
+            "vol8\thttps://iiif.example.org/vol8/manifest\n"
+            "vol7\thttps://iiif.example.org/vol7/manifest\n"
+        )
+    },
 }
 
 REAPED_STATUS = {
@@ -529,7 +535,7 @@ REAPED_STATUS = {
         "startedAt": "2025-12-01T01:00:00Z",
         "finishedAt": "2025-12-01T05:00:00Z",
         "resultsBase": "https://results.example.org/htr-test/demo-v1",
-        "failedVolumes": "[]",
+        "failedVolumes": '[{"id":"vol8","reason":"manifest 404"}]',
     },
 }
 
@@ -577,15 +583,25 @@ def test_a_campaign_configmap_with_no_record_beside_it_is_not_a_row():
     assert [row["name"] for row in client.get("/api/v1/jobs").json()] == ["kyrk"]
 
 
-def test_the_detail_of_a_reaped_campaign_is_what_the_record_has():
+def test_the_detail_of_a_reaped_campaign_still_opens_its_volumes():
+    """The Job is gone, but manifest.json, iiif.json, alto/ and the run log
+    are all still in the bucket -- and this route answered with no rows at
+    all, so nobody could open any of them (R1, the product owner,
+    2026-09-14)."""
     client = TestClient(create_app(_reaped_reader(), progress=FakeProgress()))
     resp = client.get("/api/v1/jobs/htr-test/gamla")
     assert resp.status_code == 200
     body = resp.json()
     assert body["jobGone"] is True
-    assert body["volumes"] == []
-    assert body["failures"] == []
-    assert body["latest"] is None
+    assert [v["id"] for v in body["volumes"]] == ["vol9", "vol8", "vol7"]
+    base = "https://results.example.org/htr-test/demo-v1"
+    assert body["volumes"][0]["iiifUrl"] == f"{base}/vol9/iiif.json"
+    assert body["volumes"][0]["altoPrefix"] == f"{base}/vol9/alto/"
+    assert body["volumes"][0]["logUrl"].endswith("/status/logs/demo-v1/vol9.txt")
+    assert [v["state"] for v in body["volumes"]] == ["done", "failed", "done"]
+    assert body["volumes"][1]["reason"]["error"] == "manifest 404"
+    assert [v["id"] for v in body["failures"]] == ["vol8"]
+    assert body["latest"]["id"] == "vol7", "the last volume that finished"
 
 
 def test_a_campaign_with_neither_job_nor_record_is_still_a_404():
