@@ -399,3 +399,42 @@ describe("shortDate", () => {
     expect(shortDate("not-a-date")).toBeNull();
   });
 });
+
+describe("an abandoned request is actually abandoned", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  test("fetchJobs hands its signal to fetch", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
+      jsonResponse([]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    await fetchJobs(controller.signal);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+  });
+
+  test("fetchJob hands its signal to fetch", async () => {
+    const body = { ...summary, ...pipeline, failures: [], volumes: [] };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
+      jsonResponse(body),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    await fetchJob("htr-test", "kyrk", 0, 200, controller.signal);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+  });
+
+  test("an aborted fetch reads as the API being unreachable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new DOMException("aborted", "AbortError");
+      }),
+    );
+    const controller = new AbortController();
+    controller.abort();
+    await expect(fetchJobs(controller.signal)).rejects.toBeInstanceOf(
+      ApiUnreachable,
+    );
+  });
+});

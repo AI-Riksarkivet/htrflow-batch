@@ -716,7 +716,15 @@ check web       "$(count packages/web/src -name '*.py')" 1738
 # on this card wears, and the clipped line clips with a margin so that ring
 # survives at its edge. Four declarations, a rule of its own for focus, and
 # the comment saying which contrast the underline now carries.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3857
+# 3857 -> 3937 (2026-09-14, audit) F3/F14: every poll on this site -- the
+# campaign list, each card's own volume table, the live run log -- had no
+# in-flight guard, never passed its AbortController's signal into fetch (so
+# an abandoned request ran to completion and only its answer was dropped),
+# polled a tab nobody was looking at, and asked a dead API at full cadence
+# for ever. $lib/poll is the one poller all three now share: one request in
+# flight, paused while `document.hidden`, doubling the wait on consecutive
+# failures up to five minutes, and polling at once on the way back.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3937
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

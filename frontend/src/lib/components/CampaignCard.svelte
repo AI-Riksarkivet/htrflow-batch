@@ -13,6 +13,7 @@
     type VolumeView,
   } from "$lib/api.js";
   import { RELOAD_MS } from "$lib/config.js";
+  import { startPolling } from "$lib/poll.js";
   import { modelLabel, modelUrl, pipelineModels } from "$lib/pipeline.js";
   import {
     describeApiError,
@@ -169,7 +170,7 @@
   // next page (the "load more" button). A poll re-fetches every page that is
   // currently open, rounded up to whole pages, so a tick does not undo
   // "load more" under the reader's cursor; counts.total still ends paging.
-  async function load(reset: boolean): Promise<void> {
+  async function load(reset: boolean, signal?: AbortSignal): Promise<boolean> {
     try {
       const offset = reset ? 0 : volumes.length;
       const limit = reset
@@ -178,7 +179,14 @@
             Math.max(PAGE, Math.ceil(volumes.length / PAGE) * PAGE),
           )
         : PAGE;
-      const detail = await fetchJob(job.namespace, job.name, offset, limit);
+      const detail = await fetchJob(
+        job.namespace,
+        job.name,
+        offset,
+        limit,
+        signal,
+      );
+      if (signal?.aborted) return true;
       // A short answer is the whole list, so it replaces what is loaded; a
       // full one may have more behind it, and those rows stay as they were
       // rather than vanishing under the reader.
@@ -207,10 +215,13 @@
       pipelineSteps = detail.pipelineSteps;
       pipelineYaml = detail.pipelineYaml;
       detailError = null;
+      return true;
     } catch (e) {
+      if (signal?.aborted) return true;
       // One sentence, never the transport detail or a ZodError: what the
       // reader can do about it is the point ($lib/reasons).
       detailError = describeApiError(e, volumes.length > 0);
+      return false;
     }
   }
 
@@ -225,9 +236,11 @@
     // and an effect that reads its own output re-runs forever. Nothing here
     // needs re-subscribing anyway — the list keys each card by
     // namespace/name, so a card never changes campaign under its own feet.
-    untrack(() => void load(true));
-    const timer = setInterval(() => void load(true), RELOAD_MS);
-    return () => clearInterval(timer);
+    // $lib/poll is what keeps a page of cards from each queueing up requests
+    // against a slow API, and from polling at all while nobody is looking.
+    return untrack(() =>
+      startPolling((signal) => load(true, signal), RELOAD_MS),
+    );
   });
 
   /** The fill's width; callers only ask for one when `total` is known. */

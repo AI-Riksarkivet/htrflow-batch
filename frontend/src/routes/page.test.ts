@@ -205,4 +205,47 @@ describe("/ campaign page", () => {
     );
     expect(alert).not.toHaveTextContent(/unreachable|ZodError/);
   });
+
+  // The list page is left open for hours, with a card per campaign each
+  // polling for its own volume table (2026-09-14 audit).
+  test("a slow poll is not joined by the next one", async () => {
+    let listCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.toString().endsWith("/version"))
+          return jsonResponse({ version: "v0.2.0", web: "0.1.0" });
+        if (url.toString().includes("/jobs/")) return jsonResponse(detail);
+        listCalls += 1;
+        return new Promise<Response>(() => {}); // never answers
+      }) as unknown as typeof fetch,
+    );
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 5);
+    expect(listCalls).toBe(1);
+  });
+
+  test("nothing is polled while the tab is in the background", async () => {
+    const fetchMock = vi.fn(routedFetch([job]));
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    const settled = fetchMock.mock.calls.length;
+
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      get: () => true,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 5);
+    expect(fetchMock.mock.calls.length).toBe(settled);
+
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      get: () => false,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(settled);
+  });
 });
