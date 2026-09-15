@@ -320,3 +320,42 @@ def test_source_digest_publishes_nothing_of_the_url():
 
     digest = source_digest("https://img.example/iiif?id=1")
     assert len(digest) == 64 and all(c in "0123456789abcdef" for c in digest)
+
+
+def test_painting_body_drops_a_body_with_a_javascript_id():
+    """W6: the body is copied verbatim out of a third-party manifest into an
+    iiif.json we publish under our own domain. Only the fetch URL was ever
+    scheme-checked, and that is the service's -- so a canvas whose service is
+    a normal image service and whose body id is `javascript:` published the
+    `javascript:` id to every viewer that opened the volume."""
+    from htrflow_batch.iiif import painting_body
+
+    canvas = _canvas_with_service(3000, 4000)
+    canvas["items"][0]["items"][0]["body"]["id"] = "javascript:alert(1)"
+    assert painting_body(canvas) == {}
+
+
+def test_painting_body_drops_a_body_with_a_javascript_service():
+    from htrflow_batch.iiif import painting_body
+
+    canvas = _canvas_with_service(3000, 4000)
+    canvas["items"][0]["items"][0]["body"]["service"] = [{"id": "javascript:alert(1)"}]
+    assert painting_body(canvas) == {}
+
+
+def test_painting_body_drops_a_p2_resource_with_a_javascript_id(p2_manifest):
+    canvas = p2_manifest["sequences"][0]["canvases"][0]
+    canvas["images"][0]["resource"]["@id"] = "javascript:alert(1)"
+    from htrflow_batch.iiif import painting_body
+
+    assert painting_body(canvas) == {}
+
+
+def test_painting_body_drops_a_body_that_is_not_an_object():
+    """A bare-URL body (manifests in the wild carry them) must not be copied
+    into the manifest as if it were one."""
+    from htrflow_batch.iiif import painting_body
+
+    canvas = _canvas_with_service(3000, 4000)
+    canvas["items"][0]["items"][0]["body"] = "https://img/full/max/0/default.jpg"
+    assert painting_body(canvas) == {}

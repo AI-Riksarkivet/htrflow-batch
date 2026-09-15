@@ -201,20 +201,48 @@ def _image_url(canvas: dict, width: int) -> str | None:
     return None
 
 
+def _publishable(body: dict) -> bool:
+    """Whether a painting body may be copied into the manifest we publish
+    (W6, 2026-09-14 audit).
+
+    The body comes out of a third-party manifest and goes, verbatim, into an
+    iiif.json served from our own domain -- so every URL in it is a viewer's
+    idea of what to load. Only the URL the wrapper FETCHES was ever
+    scheme-checked, and on a canvas with an image service that is the
+    service's: a body whose ``id`` reads ``javascript:`` sailed past it and
+    was published. Both ids are checked here; a body that fails is dropped,
+    which costs that canvas its image and nothing else."""
+    ids = [body.get("id") or body.get("@id")]
+    service = body.get("service")
+    for entry in service if isinstance(service, list) else [service]:
+        if isinstance(entry, dict):
+            ids.append(entry.get("id") or entry.get("@id"))
+    for value in ids:
+        if not isinstance(value, str) or not value:
+            return False
+        try:
+            check_http_url(value, "canvas image")
+        except ManifestError:
+            return False
+    return True
+
+
 def painting_body(canvas: dict) -> dict:
     """P3-style annotation body for a P3 or P2 canvas. P2 services are
     emitted with v2-style keys (@id/@type/profile) — UV silently shows no
-    image otherwise (docs: wrapper)."""
+    image otherwise (docs: wrapper). A body carrying a URL we would not fetch
+    is not published either (``_publishable``)."""
     for ap in canvas.get("items", []):
         for anno in ap.get("items", []):
-            if anno.get("body"):
-                return anno["body"]
+            body = anno.get("body")
+            if isinstance(body, dict) and _publishable(body):
+                return body
     for img in canvas.get("images", []):
         res = img.get("resource") or {}
         rid = res.get("@id") or res.get("id")
         if not rid:
             continue
-        body: dict = {
+        body = {
             "id": rid,
             "type": "Image",
             "format": res.get("format", "image/jpeg"),
@@ -228,7 +256,7 @@ def painting_body(canvas: dict) -> dict:
                     "profile": "http://iiif.io/api/image/2/level2.json",
                 }
             ]
-        return body
+        return body if _publishable(body) else {}
     return {}
 
 

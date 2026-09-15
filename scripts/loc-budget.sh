@@ -199,7 +199,13 @@ fail=0
 # never reprocessed anything. `source_digest` and the paragraph naming the
 # parameters that rotate, the new manifest field, and `_differs`, which the
 # digest and the older redacted form now share.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2911
+# 2911 -> 2939 (2026-09-14, audit W6): a painting body copied out of a
+# third-party manifest has every id in it scheme-checked before it reaches the
+# iiif.json we publish. Only the URL the wrapper fetches was checked, and on a
+# canvas with an image service that is the service's -- so a body whose `id`
+# read `javascript:` was published to every viewer that opened the volume.
+# `_publishable` and the paragraph saying whose URL ends up where.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2939
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
