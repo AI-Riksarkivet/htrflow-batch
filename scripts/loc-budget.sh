@@ -742,7 +742,12 @@ check web       "$(count packages/web/src -name '*.py')" 1792
 # step before it became an href and `iiifUrl` was not, and neither was
 # encoded into the viewer's `#?manifest=` fragment -- both come from a
 # volume id that arrived off a campaign's volumes.txt.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3954
+# 3954 -> 3964 (2026-09-14, audit) F18: every URL the read API sends was a
+# plain z.string(), so a field that is not a URL at all reached an href or a
+# fetch target and was only ever caught by whichever component happened to
+# check it again. They are refined at the boundary now, nullable where the
+# API really does send null.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3964
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

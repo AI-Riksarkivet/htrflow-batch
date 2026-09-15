@@ -438,3 +438,57 @@ describe("an abandoned request is actually abandoned", () => {
     );
   });
 });
+
+describe("a URL field has to be a URL", () => {
+  // Every one of these becomes an href or a fetch target. They are our own
+  // API's, so a value that is not an absolute http(s) URL is a bug on our
+  // side -- and the schema is where this page says so (2026-09-14 audit).
+  test("a campaign row with a resultsBase that is not a URL is unreadable", () => {
+    expect(
+      jobSummarySchema.safeParse({ ...summary, resultsBase: "/results" })
+        .success,
+    ).toBe(false);
+  });
+
+  test.each(["manifestUrl", "iiifUrl", "altoPrefix", "logUrl"])(
+    "a volume row with a %s that is not a URL is unreadable",
+    (field) => {
+      const detail = {
+        ...summary,
+        ...pipeline,
+        failures: [],
+        volumes: [{ ...volume, [field]: "javascript:alert(1)" }],
+      };
+      expect(jobDetailSchema.safeParse(detail).success).toBe(false);
+    },
+  );
+
+  test("sourceUrl may be null but may not be something else", () => {
+    const withSource = (sourceUrl: unknown) => ({
+      ...summary,
+      ...pipeline,
+      failures: [],
+      volumes: [{ ...volume, sourceUrl }],
+    });
+    expect(jobDetailSchema.safeParse(withSource(null)).success).toBe(true);
+    expect(jobDetailSchema.safeParse(withSource("images:x")).success).toBe(
+      false,
+    );
+  });
+
+  test("the campaign notice's log link is a URL too", () => {
+    const detail = {
+      ...summary,
+      ...pipeline,
+      failures: [],
+      volumes: [],
+      lastError: {
+        page: "0044",
+        error: "boom",
+        volume: "vol0",
+        logUrl: "not a url",
+      },
+    };
+    expect(jobDetailSchema.safeParse(detail).success).toBe(false);
+  });
+});

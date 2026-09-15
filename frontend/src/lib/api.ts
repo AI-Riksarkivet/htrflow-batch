@@ -41,6 +41,16 @@ export function shortDate(
   });
 }
 
+/**
+ * A field this page turns into an href or a fetch target. They are the read
+ * API's own, so one that is not an absolute http(s) URL is a bug on our
+ * side and the row is unreadable — the same answer a field of the wrong
+ * type gets (2026-09-14 audit).
+ */
+export const httpUrlSchema = z
+  .string()
+  .refine(isHttpUrl, { message: "must be an absolute http(s) URL" });
+
 export const jobPhaseSchema = z.enum([
   "Succeeded",
   // The Job gave up with some indexes already published — not the same
@@ -105,7 +115,7 @@ export const jobSummarySchema = z.object({
   // When the campaign stopped, as the API observed it. Additive, and
   // defaulted: an older API answers without it.
   finishedAt: z.string().nullable().default(null),
-  resultsBase: z.string(),
+  resultsBase: httpUrlSchema,
   warmup: warmupSchema,
   // The campaign's Job is past its `ttlSecondsAfterFinished` and has been
   // removed; this row is served from the campaign's ConfigMap and the
@@ -163,13 +173,13 @@ export const volumeViewSchema = z.object({
   index: z.number(),
   id: z.string(),
   state: volumeStateSchema,
-  manifestUrl: z.string(),
-  iiifUrl: z.string(),
-  altoPrefix: z.string(),
-  logUrl: z.string(),
+  manifestUrl: httpUrlSchema,
+  iiifUrl: httpUrlSchema,
+  altoPrefix: httpUrlSchema,
+  logUrl: httpUrlSchema,
   // The volume's source manifest, straight off its volumes.txt line; null
   // for an `images:` volume, which has no manifest to open.
-  sourceUrl: z.string().nullable(),
+  sourceUrl: httpUrlSchema.nullable(),
   reason: volumeReasonSchema.optional(),
   progress: volumeProgressSchema.nullable(),
 });
@@ -204,7 +214,7 @@ export const jobDetailSchema = jobSummarySchema.extend({
       page: z.string().nullable(),
       error: z.string(),
       volume: z.string(),
-      logUrl: z.string(),
+      logUrl: httpUrlSchema,
     })
     .nullable(),
 });

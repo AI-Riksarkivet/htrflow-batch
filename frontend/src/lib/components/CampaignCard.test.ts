@@ -292,9 +292,11 @@ describe("CampaignCard", () => {
     );
   });
 
-  test("a sourceUrl that is not an http(s) URL never becomes a link", async () => {
-    // volumes.txt is a file humans edit in a git repo; the card checks the
-    // URL again at the last step before it becomes an href.
+  test("a sourceUrl that is not an http(s) URL never reaches the card", async () => {
+    // volumes.txt is a file humans edit in a git repo. Since the audit the
+    // schema refuses the row at the boundary ($lib/api, httpUrlSchema), so
+    // the card never sees it and says what it says about any answer it
+    // cannot read; the card's own checks stay as the last step.
     const hostile = {
       ...volumeFailed,
       sourceUrl: "javascript:alert(1)",
@@ -307,13 +309,12 @@ describe("CampaignCard", () => {
     );
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    await expand();
 
-    const row = screen.getAllByRole("row").slice(1)[0] as HTMLElement;
-    expect(within(row).queryByRole("link", { name: "source" })).toBeNull();
-    // and it must not reach the viewer through the "open" slot either
-    expect(within(row).queryByRole("link", { name: "open" })).toBeNull();
-    expect(within(row).getByRole("link", { name: "log" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "source" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "open" })).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "answered in a form this page doesn't understand",
+    );
   });
 
   test("the log link carries log+manifest always, and live=1 only for a volume that is not done", async () => {
@@ -1306,10 +1307,22 @@ describe("the viewer link is built the way every other link is", () => {
 
   // iiifUrl is built by the API from a volume id that came off a campaign's
   // volumes.txt, a file people edit in a git repo. `sourceUrl` was checked
-  // at this last step and `iiifUrl` was not (2026-09-14 audit).
+  // at this last step and `iiifUrl` was not (2026-09-14 audit); the schema
+  // now refuses such a row outright, and this is the belt beside it.
   test("an iiifUrl that is not an http(s) URL never reaches the viewer", async () => {
     const hostile = { ...volumeDone, iiifUrl: "javascript:alert(1)" };
-    expect(await openLink(hostile)).toBeNull();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes: [hostile] }),
+      ),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.queryByRole("link", { name: "open" })).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "answered in a form this page doesn't understand",
+    );
   });
 
   test("a manifest URL is encoded into the fragment, not pasted into it", async () => {
