@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from string import Formatter
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -114,6 +115,31 @@ def _shown_url(value: str) -> str:
     return _USERINFO_RE.sub("***@", value)
 
 
+#: ``source_template`` is filled in a *before* validator
+#: (``Volume._expand``), where a stray placeholder leaves pydantic as a
+#: KeyError or an IndexError -- a traceback where a campaign author should
+#: get a line about their own file. So the template is checked once, where it
+#: is written, and the fill is caught as well.
+_BAD_TEMPLATE = (
+    "must have {{ref}} in it exactly once and nothing else in braces (got "
+    "{shown}) — {{ref}} is where a campaign's bare volume id goes"
+)
+_UNFILLABLE_TEMPLATE = (
+    "cannot be turned into a manifest URL — converter.yaml's source_template "
+    "is {shown}, and only {{ref}} can be filled in; give the volume a "
+    "manifest: of its own, or fix the template"
+)
+
+
+def _placeholders(template: str) -> list[str]:
+    """The names in braces, left to right. A template that is not a format
+    string at all (a brace left open) raises, and is refused with the rest."""
+    try:
+        return [f for _, f, _, _ in Formatter().parse(template) if f is not None]
+    except ValueError:
+        return []
+
+
 def split_image_urls(value: str) -> list[str]:
     """The URLs inside an ``images:`` source, split on whitespace.
 
@@ -161,7 +187,12 @@ class Volume(BaseModel):
     def _expand(cls, data: Any, info: ValidationInfo) -> Any:
         if isinstance(data, str):
             template = (info.context or {}).get("source_template", "")
-            return {"id": data, "manifest": template.format(ref=data)}
+            try:
+                return {"id": data, "manifest": template.format(ref=data)}
+            except (KeyError, IndexError, ValueError) as e:
+                raise ValueError(
+                    _UNFILLABLE_TEMPLATE.format(shown=shown(template))
+                ) from e
         if not isinstance(data, dict) or "id" not in data:
             raise ValueError(
                 'has no id — write the entry as "- R1", or as "- id: R1" '
@@ -399,6 +430,13 @@ class ConverterConfig(BaseModel):
     hf_token_secret: str = ""
     manifest_max_bytes: int = 16 * _MiB
     fetch_max_bytes: int = 64 * _MiB
+
+    @field_validator("source_template")
+    @classmethod
+    def _check_source_template(cls, v: str) -> str:
+        if _placeholders(v) != ["ref"]:
+            raise ValueError(_BAD_TEMPLATE.format(shown=shown(v)))
+        return v
 
     @field_validator("hf_token_secret")
     @classmethod

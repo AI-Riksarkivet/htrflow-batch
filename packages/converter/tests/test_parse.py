@@ -474,3 +474,27 @@ def test_hf_token_secret_must_be_a_secret_name(tmp_path):
         'converter.yaml: "hf_token_secret"' in p and "Secret" in p
         for p in exc_info.value.problems
     ), exc_info.value.problems
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "https://iiif.example.org/{id}/manifest",  # the wrong placeholder
+        "https://iiif.example.org/manifest",  # none at all
+        "https://iiif.example.org/{ref}/{ref}/manifest",  # twice
+        "https://iiif.example.org/{ref/manifest",  # a brace left open
+    ],
+)
+def test_a_source_template_that_cannot_be_filled_is_one_sentence(tmp_path, template):
+    """`source_template.format(ref=...)` runs inside a validator, where a
+    stray placeholder left pydantic with a KeyError/IndexError and the author
+    with a traceback. The template is checked where it is written instead."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + f'\nsource_template: "{template}"\n')
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert problem.startswith('converter.yaml: "source_template" ')
+    assert "{ref}" in problem
