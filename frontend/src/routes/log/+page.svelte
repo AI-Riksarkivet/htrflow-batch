@@ -87,6 +87,13 @@
       const message = e instanceof Error ? e.message : String(e);
       // A live volume's log may not exist yet (first upload pending) — keep
       // polling rather than freezing on the first 404, but not forever.
+      //
+      // LIVE_MAX_FAILURES counts ATTEMPTS, not minutes, and since the audit
+      // $lib/poll doubles the wait after each one up to MAX_POLL_MS. So the
+      // twenty attempts are no longer twenty live periods (5 min) but a
+      // little over an hour — which is the point: a log that has not landed
+      // is worth waiting longer for, at a cost that falls away rather than
+      // one request every fifteen seconds until someone closes the tab.
       failures += 1;
       if (!live) {
         logError = message;
