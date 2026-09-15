@@ -20,17 +20,28 @@ device plugin, a bucket and its Secret. Then:
 
 ```bash
 helm install htr charts/htrflow-batch -n <namespace> --create-namespace \
+  -f charts/htrflow-batch/values-prod.yaml \
   --set publicResultsBase=<results-base-url> \
   --set web.image=<registry>/htrflow-web@sha256:<digest> \
   --set network.iiifCidrs='{<iiif-source-cidr>}' \
   --set network.s3Cidrs='{<s3-endpoint-cidr>}' \
   --set network.clusterCidrs='{<pod-cidr>,<service-cidr>}' \
   --set network.apiServer.cidr=<apiserver-address>/32 \
-  --set network.web.ingressCidrs='{<range-that-may-reach-the-web-front>}' \
-  --set security.allowedImageRepos='{<registry>/}' \
-  --set security.policies.enabled=true
+  --set network.web.ingressCidrs='{<range-that-may-reach-the-web-front>}'
 make psa-labels
 ```
+
+`values-prod.yaml` is the profile to start from, and it is only the
+switches: the Kyverno policies on and enforcing, the image allow-list set to
+what the release publishes, model revisions required, image signatures
+verified, and Pod Security at `restricted`. The chart's own defaults leave
+all of those off, because a policy nothing reconciles is worse than no
+policy on a cluster without Kyverno — but that means a default install
+enforces none of it.
+
+Everything on the `--set` lines is what one cluster cannot know for
+another. The profile deliberately does not guess them, so an install that
+forgets one fails asking for it rather than rendering something plausible.
 
 The chart is installed from a checkout of this repository. `make psa-labels`
 and the other cluster targets take the release name and namespace from
@@ -192,14 +203,15 @@ The dev cluster's `rustfs-init` hook applies the same shape
 - **Namespace labels.** Helm cannot label a namespace it did not create, so
   run `make psa-labels` once after each install or upgrade. It sets Pod
   Security Admission `enforce` to the release's `security.psaEnforce`
-  (`baseline` by default), and `warn` and `audit` to `restricted`. The
-  platform's pods are restricted-clean, so `restricted` is worth enforcing.
+  (`baseline` by default, `restricted` under `values-prod.yaml`), and `warn`
+  and `audit` to `restricted`. The platform's pods are restricted-clean, so
+  it is a level they actually meet.
   `PSA_ENFORCE=…` overrides the level before the first install.
-- **Trust boundary.** Set `security.allowedImageRepos` and turn on
-  `security.policies.enabled`. The Kyverno policies are the only thing that
-  enforces the allow-list and the model-revision rule, and an empty list
-  lets any image run on the GPU. Consider `security.requireModelRevision:
-  true`, and `security.verifyImages.*` once your images are cosign-signed.
+- **Trust boundary.** `values-prod.yaml` turns all of this on:
+  `security.policies.enabled`, the allow-list, `requireModelRevision` and
+  `verifyImages`. The Kyverno policies are the only thing that enforces the
+  allow-list and the model-revision rule, and an empty list lets any image
+  run on the GPU. Installing without the profile means setting each by hand.
   The subject is the signing workflow's own identity, and publishing is a
   manual dispatch, so it carries the branch the run started from and never a
   tag; `values.yaml` has the example to copy
