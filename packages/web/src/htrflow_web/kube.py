@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Mapping
 from typing import Protocol
 
@@ -116,6 +117,20 @@ class ClusterUnavailable(Exception):
     here as one exception, so ``app.py`` has one thing to answer with (a 502)
     instead of letting a client error escape as a bare 500 (2026-09-14
     audit). 404 is not one of these: a missing object is ``None``."""
+
+
+class ApplyConflict(Exception):
+    """Another field manager owns a field of the record this service tried to
+    write. Contention, not a denied grant: `htrflow-campaigns apply` writes
+    the same record from the live Job once a campaign is over, and those
+    terminal values are the authoritative ones. Its own exception so
+    ``app.py`` does not treat it as a namespace whose RBAC went away
+    (2026-09-14 review)."""
+
+
+#: How long the retry waits for the other manager to finish writing.
+#: Retrying in the same microsecond meets the same half-finished write.
+CONFLICT_PAUSE = 0.2
 
 
 def _read(api: object, method: str, *args: object, **kwargs: object) -> dict | None:
@@ -247,7 +262,8 @@ class Reader:
         over, and those terminal values are the authoritative ones; forcing
         would take the fields back off it on every poll of an open status
         page. A 409 while the other manager is mid-write is retried once,
-        and a second one is left to stand.
+        after a short pause, and a second one is left to stand as an
+        ``ApplyConflict`` -- contention, not a refusal.
         """
         meta = body["metadata"]
         for attempt in (1, 2):
@@ -262,8 +278,11 @@ class Reader:
                 )
                 return
             except client.ApiException as e:
-                if e.status != 409 or attempt == 2:
+                if e.status != 409:
                     raise ClusterUnavailable(f"apply {meta['name']}: {e.status}") from e
+                if attempt == 2:
+                    raise ApplyConflict(meta["name"]) from e
+                time.sleep(CONFLICT_PAUSE)
 
     def list_pods(self, namespace: str, job_name: str) -> list[dict]:
         body = _read(
