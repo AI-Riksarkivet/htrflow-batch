@@ -71,12 +71,13 @@ def source_digest(url: str) -> str:
     re-signed URL is not a new source image."""
     try:
         parsed = httpx.URL(url)
-        kept = [
+        # a tuple, not a list: httpx types the parameter pairs as invariant
+        kept = tuple(
             (name, value)
             for name, value in parsed.params.multi_items()
             if name.lower() not in _CREDENTIAL_PARAMS
             and not name.lower().startswith("x-amz-")
-        ]
+        )
         text = str(parsed.copy_with(userinfo=b"", params=httpx.QueryParams(kept)))
     except Exception:
         text = url.split("?", 1)[0]  # not a URL we can parse: path only

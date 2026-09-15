@@ -192,7 +192,7 @@ fail=0
 # progress, an interim iiif.json, a second progress saying "failed") ahead of
 # the final log ship -- the one piece of evidence that matters. Mostly the
 # paragraph saying which writes are dropped and why the ship is not.
-# 2859 -> 2911 (2026-09-14, audit W5): resume compares a sha256 of the full
+# 2859 -> 2912 (2026-09-14, audit W5): resume compares a sha256 of the full
 # source URL, credentials removed, instead of the redacted one it publishes.
 # The redacted form has lost its query, so on a host that selects the image
 # with `?id=` every page of a volume compared equal and an edited manifest
@@ -254,13 +254,13 @@ fail=0
 # AFTER the final log ship, not before it. A drain sends one SIGTERM and the
 # node may send another; with the handler already back at the default, the
 # second killed the pod outright and lost the log the first had preserved.
-# 3099 -> 3106 (2026-09-14, audit W17): the step-thread guard re-checks that
+# 3099 -> 3107 (2026-09-14, audit W17): the step-thread guard re-checks that
 # the run has not finished before it fails the page. A thread dying in the
 # same tick the run completed failed a page whose outputs were already
 # written -- and the failure path deletes them, so the retry redid it for
 # nothing. The lines are the guard and the note pointing at the next page's
 # own check, which still catches the dead pipeline.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3106
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3107
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
