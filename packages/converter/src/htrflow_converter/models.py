@@ -152,8 +152,20 @@ _TOO_MANY_IMAGES = (
 _USERINFO_RE = re.compile(r"(?<=//)[^/@?#]*@")
 
 
+#: Query parameters whose value signs or authorises the request. A presigned
+#: source URL carries its credential there, and a problem line is printed in
+#: CI logs and pasted into chat, so the echo drops it the way it already
+#: drops userinfo. That is all this can do: the URL itself is stored verbatim
+#: in volumes.txt, in the campaign's ConfigMap and in the committed
+#: `rendered/` -- a source URL is not a secret (docs: how-it-works/security).
+#: Longest name first, so `signature=` is not matched as `sig`.
+_SIGNED_RE = re.compile(
+    r"(?<=[?&])(X-Amz-Signature|signature|token|sig|key)=[^&#]*", re.IGNORECASE
+)
+
+
 def _shown_url(value: str) -> str:
-    return _USERINFO_RE.sub("***@", value)
+    return _SIGNED_RE.sub(r"\1=***", _USERINFO_RE.sub("***@", value))
 
 
 #: ``source_template`` is filled in a *before* validator
