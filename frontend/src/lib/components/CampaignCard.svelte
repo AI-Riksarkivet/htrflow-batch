@@ -1119,6 +1119,9 @@
     background: var(--destructive-soft);
   }
 
+  /* Nobody recorded what this volume did: the same quiet treatment as a
+     volume that has not started, since neither is a failure. */
+  .status.unknown,
   .status.pending {
     color: var(--muted-foreground);
     background: var(--muted);

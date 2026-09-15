@@ -182,6 +182,12 @@ export const volumeStateSchema = z.enum([
   "active",
   "done",
   "failed",
+  // The campaign's Job is gone and no terminal record was ever written for
+  // it, so what this volume did was never observed by anything. Only ever
+  // seen on a `jobGone` campaign whose phase is `Unknown`; the row's links
+  // still work, and its progress file says what actually happened when
+  // there is one (2026-09-14 review).
+  "unknown",
 ]);
 
 // One row per line of the campaign's volumes.txt ConfigMap.

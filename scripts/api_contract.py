@@ -197,9 +197,19 @@ def build() -> dict:
         PIPELINE_CM,
         fetch_progress=_progress,
     )
+    # The rows of a campaign nobody recorded the ending of: `unknown` is a
+    # volume state like any other, and the page has to draw it.
+    unknown_detail = projection.record_detail(
+        unknown,
+        _record("okand"),
+        _status("okand", phase="Running", finishedAt=""),
+        CFG,
+        PIPELINE_CM,
+        fetch_progress=_progress,
+    )
     return {
         "summaries": [live, gone, unknown],
-        "details": [live_detail, gone_detail],
+        "details": [live_detail, gone_detail, unknown_detail],
     }
 
 

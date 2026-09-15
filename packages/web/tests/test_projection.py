@@ -1157,6 +1157,27 @@ class TestTheReapedDetailStillHasItsVolumes:
             "failed",
         ]
 
+    def test_an_outcome_nobody_recorded_leaves_its_rows_unknown(self):
+        """`Unknown` is the record's own word for "nobody wrote down how
+        this ended". Calling every row `done` said the opposite, and
+        contradicted the record's own volumesFailed whenever the detail
+        endpoint never got to name the failures (2026-09-14 review)."""
+        status = _stored(phase="Running", finishedAt="", volumesFailed="1")
+        body = self._body(status)
+        assert body["phase"] == "Unknown"
+        assert [v["state"] for v in body["volumes"]] == ["unknown"] * 3
+        assert body["latest"] is None, "nothing is known to have finished"
+
+    def test_a_volume_the_record_named_is_failed_even_then(self):
+        status = _stored(
+            phase="Running",
+            finishedAt="",
+            volumesFailed="1",
+            failedVolumes='[{"id":"vol2","reason":"manifest 404"}]',
+        )
+        states = [v["state"] for v in self._body(status)["volumes"]]
+        assert states == ["unknown", "unknown", "failed"]
+
     def test_a_campaign_that_failed_outright_has_no_done_rows(self):
         status = _stored(phase="Failed", volumesDone="0", volumesFailed="3")
         assert {v["state"] for v in self._body(status)["volumes"]} == {"failed"}

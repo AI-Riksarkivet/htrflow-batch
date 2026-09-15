@@ -8,6 +8,7 @@ import {
   jobDetailSchema,
   jobSummarySchema,
   shortDate,
+  volumeStateSchema,
   warmupSchema,
 } from "./api.js";
 
@@ -518,5 +519,27 @@ describe("isResultUrl", () => {
   test("an unset base accepts any absolute http(s) URL, as before", () => {
     expect(isResultUrl("https://anywhere.example.org/x.txt", "")).toBe(true);
     expect(isResultUrl("javascript:alert(1)", "")).toBe(false);
+  });
+});
+
+describe("a volume whose state nobody recorded", () => {
+  test("`unknown` is a state the page can read", () => {
+    expect(volumeStateSchema.parse("unknown")).toBe("unknown");
+  });
+
+  test("a reaped campaign's rows parse with it", () => {
+    const detail = {
+      ...summary,
+      ...pipeline,
+      jobGone: true,
+      phase: "Unknown",
+      failures: [],
+      volumes: [{ ...volume, state: "unknown", progress: null }],
+    };
+    expect(jobDetailSchema.parse(detail).volumes[0]?.state).toBe("unknown");
+  });
+
+  test("a state nobody defined is still refused", () => {
+    expect(volumeStateSchema.safeParse("probably-fine").success).toBe(false);
   });
 });

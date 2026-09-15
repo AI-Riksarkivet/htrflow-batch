@@ -603,7 +603,12 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # manager owns the field, which is exactly what `apply` writing the terminal
 # record looks like. Its own `ApplyConflict`, and the retry waits a moment
 # instead of meeting the same half-finished write.
-check web       "$(count packages/web/src -name '*.py')" 1842
+# 1842 -> 1850 (2026-09-14, audit review) a reaped campaign whose phase is `Unknown` called every
+# volume row `done`, which claimed the opposite of what `Unknown` means and
+# contradicted the record's own volumesFailed whenever the detail endpoint
+# never got to name the failures. Those rows say `unknown`, and the bucket
+# still answers for them (progress.json, or the manifest.json fallback).
+check web       "$(count packages/web/src -name '*.py')" 1850
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
@@ -768,7 +773,10 @@ check web       "$(count packages/web/src -name '*.py')" 1842
 # at all. Both must now sit under the results base the service names in
 # /config.js; an unset base still accepts any absolute URL, for a dev run
 # with no service to ask.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4066
+# 4066 -> 4075 (2026-09-14, audit review) `unknown` joins the volume-state enum and the card draws it
+# with the quiet treatment a volume that has not started gets -- neither is
+# a failure.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4075
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

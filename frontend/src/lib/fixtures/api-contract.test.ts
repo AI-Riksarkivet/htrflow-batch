@@ -52,5 +52,9 @@ describe("the read API's contract", () => {
       .find((r) => r.jobGone);
     expect(reaped?.volumes.length).toBeGreaterThan(0);
     expect(reaped?.latest).not.toBeNull();
+    const states = contract.details.flatMap((r) =>
+      jobDetailSchema.parse(r).volumes.map((v) => v.state),
+    );
+    expect(states).toContain("unknown");
   });
 });
