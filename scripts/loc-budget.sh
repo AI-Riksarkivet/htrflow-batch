@@ -540,7 +540,12 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # `call_api`, since the generated methods overwrite `Accept`), and the status
 # ConfigMaps -- whose `data` IS the reaped campaign's row -- as a second,
 # label-separated list.
-check web       "$(count packages/web/src -name '*.py')" 1559
+# 1559 -> 1571 (2026-09-14, audit) F4: the progress fan-out had a per-row cap
+# but no overall budget, so an unreachable bucket held one worker for the cap
+# times progress.py's timeout -- over a minute, inside a sync handler -- and
+# enough such requests emptied the threadpool /healthz is answered from. The
+# rows past a five-second deadline are answered with no progress.
+check web       "$(count packages/web/src -name '*.py')" 1571
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
