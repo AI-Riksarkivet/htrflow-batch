@@ -1211,3 +1211,39 @@ def test_a_pod_with_a_completion_index_that_is_not_a_number_is_skipped():
     states = [v["state"] for v in body["volumes"]]
     assert states[0] == "active", "index 0's pod still counts"
     assert set(states[1:]) == {"pending"}, "the unreadable label is nobody's index"
+
+
+class TestTheRecordStaysUnderTheConfigMapLimit:
+    """`failedVolumes` capped the number of entries but not their size, and
+    a wrapper writes whatever its termination message said -- a Python
+    traceback, a whole pod-template struct. Fifty of those is a ConfigMap
+    the API server refuses (2026-09-14 audit)."""
+
+    def _row(self) -> dict:
+        return projection.summarize(_job(), CFG, MISSING_WARMUP)
+
+    def _failures(self, n: int, error: str) -> list[dict]:
+        return [
+            {
+                "id": f"vol{i}",
+                "reason": {"stage": None, "permanent": None, "error": error},
+            }
+            for i in range(n)
+        ]
+
+    def test_one_reason_is_clipped_to_a_sentence(self):
+        data = projection.status_record(self._row(), self._failures(1, "e" * 5000))
+        (entry,) = json.loads(data["failedVolumes"])
+        assert len(entry["reason"]) == projection.MAX_REASON
+
+    def test_the_whole_field_stays_under_the_byte_cap(self):
+        data = projection.status_record(self._row(), self._failures(50, "e" * 5000))
+        blob = data["failedVolumes"]
+        assert len(blob.encode()) <= projection.MAX_FAILED_VOLUMES
+        assert json.loads(blob), "some failures are still recorded"
+
+    def test_an_ordinary_set_of_failures_is_untouched(self):
+        data = projection.status_record(self._row(), self._failures(3, "manifest 404"))
+        assert json.loads(data["failedVolumes"]) == [
+            {"id": f"vol{i}", "reason": "manifest 404"} for i in range(3)
+        ]
