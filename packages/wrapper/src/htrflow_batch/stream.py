@@ -62,6 +62,15 @@ def discard(path: Path) -> None:
         pass  # the outcome is already recorded; a failed delete changes nothing
 
 
+class Unrecoverable(RuntimeError):
+    """A condition that would make every remaining page fail the same way, so
+    the page loop must not absorb it as one page's failure (W9). ``consume``
+    drains what it can -- that is the whole point of it -- but draining 600
+    pages through a pipeline that cannot be rebuilt publishes a manifest full
+    of failures and a green index. Raised by the caller's ``process``; the run
+    ends transient and the retry gets a fresh pod."""
+
+
 class UploadOutage(RuntimeError):
     """The result store failed for N pages in a row: transient, abort now
     rather than drain the whole volume through a dead bucket."""
@@ -191,6 +200,8 @@ def consume(
             t0 = time.monotonic()
             try:
                 files = process(item.path)
+            except Unrecoverable:
+                raise  # not this page's failure: every later page would share it
             except Exception as e:  # drain-what-you-can; verify gate decides later
                 _failed(stats, name, describe(e))
                 continue
