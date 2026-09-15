@@ -229,7 +229,12 @@ fail=0
 # is meant for a RESUMED page, whose dimensions are in the bucket rather than
 # in hand; a page that simply has none looked identical, so one of them
 # switched the live viewer off for the rest of the volume.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3009
+# 3009 -> 3031 (2026-09-14, audit W12): VOLUME_REF and PIPELINE_ID are
+# checked against [A-Za-z0-9._-]+ with no '..'. Both go verbatim into every S3
+# key the run writes and into the public viewer_url, and both come out of a
+# campaign file -- so the shape is settled once, in Config, and a name that
+# would write outside the volume's own prefix fails the run permanently.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3031
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
