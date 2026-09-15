@@ -684,5 +684,13 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3857
 # matched on the requesting ServiceAccount is the only place that scope can
 # be said. Half the file is the paragraph explaining why `background: false`
 # and a subject match are one decision, not two.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 821
+# 821 -> 834 (2026-09-14, audit): the web front's ingress list defaults to
+# every address in front of an unauthenticated NodePort. The default stays
+# (a dev stack that loses it loses its browser), so the guard makes it an
+# explicit choice instead -- `htrflow-batch.validate` fails unless
+# network.web.allowPublicIngress says so, and only when the policies are
+# actually rendered, since a campaigns repo's CI renders this chart with
+# network.enabled=false to get at the policy objects alone. The comment is
+# most of the thirteen lines.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 834
 exit $fail

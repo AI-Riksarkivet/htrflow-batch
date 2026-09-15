@@ -26,6 +26,7 @@ helm install htr charts/htrflow-batch -n <namespace> --create-namespace \
   --set network.s3Cidrs='{<s3-endpoint-cidr>}' \
   --set network.clusterCidrs='{<pod-cidr>,<service-cidr>}' \
   --set network.apiServer.cidr=<apiserver-address>/32 \
+  --set network.web.ingressCidrs='{<range-that-may-reach-the-web-front>}' \
   --set security.allowedImageRepos='{<registry>/}' \
   --set security.policies.enabled=true
 make psa-labels
@@ -64,6 +65,7 @@ chart cannot look these up.
 | `network.clusterCidrs` | Your cluster's pod and service CIDRs. Warm-up pods get public egress except to these ranges and the node addresses. The default is one distribution's defaults, so set yours. |
 | `network.nodeCidrs` | Node addresses. Looked up at install time, like the API server address. |
 | `web.internalResultsBase` | Where the read API pod itself reaches the bucket, whenever `publicResultsBase` does not resolve to the bucket from inside the cluster. See [Exposing the web front](viewing.md#exposing-the-web-front). |
+| `network.web.ingressCidrs` | The address ranges that may reach the web front. It defaults to every address, in front of a NodePort with no authentication of its own, and the chart refuses to render that default unless `network.web.allowPublicIngress` also says so. Either list your ranges here, or set that flag to accept the catch-all. |
 | `security.allowedImageRepos`, `security.policies.enabled` | Your registry prefixes, and the Kyverno policies on. See [Hardening](#hardening-the-chart-cannot-do-alone). |
 
 The web image carries the read API, the campaign browser and the Universal
@@ -206,8 +208,11 @@ The dev cluster's `rustfs-init` hook applies the same shape
 - **Run logs.** Keep `status/logs/*` private if run logs may carry anything
   sensitive (see the table above).
 - **Web front ingress.** `network.web.ingressCidrs` limits who can reach
-  the web front's port. The default allows every address. NodePort traffic arrives
-  SNAT'd from the node, so include the node range.
+  the web front's port. The default allows every address, so the chart will
+  not render it unless `network.web.allowPublicIngress` is also set — an
+  install that says nothing about ingress fails with that sentence rather
+  than quietly opening the port. NodePort traffic arrives SNAT'd from the
+  node, so include the node range in whatever you list.
 
 ## Upgrading
 

@@ -359,11 +359,15 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "ingressCidrs"
+            "ingressCidrs",
+            "allowPublicIngress"
           ],
           "properties": {
             "ingressCidrs": {
               "$ref": "#/definitions/cidrList"
+            },
+            "allowPublicIngress": {
+              "type": "boolean"
             }
           }
         }

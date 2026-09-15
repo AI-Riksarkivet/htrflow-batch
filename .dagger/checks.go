@@ -141,6 +141,10 @@ var prodChartRenders = []chartRender{
 	{name: "default", sets: []string{
 		"publicResultsBase=https://x/",
 		"network.apiServer.cidr=10.16.51.10/32",
+		// The default ingress list is a catch-all in front of an
+		// unauthenticated NodePort, and the chart refuses to render one
+		// silently. A render fixture says so out loud like any operator.
+		"network.web.allowPublicIngress=true",
 		"web.image=docker.io/riksarkivet/htrflow-web@" + digestZero,
 	}},
 	{name: "full", values: "ci/full-values.yaml"},

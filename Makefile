@@ -170,6 +170,7 @@ e2e:
 DEVSTACK_CHART := charts/htrflow-devstack
 CHART_DEFAULT_SETS := --set publicResultsBase=https://x/ \
                        --set network.apiServer.cidr=10.16.51.10/32 \
+                       --set network.web.allowPublicIngress=true \
                        --set web.image=docker.io/riksarkivet/htrflow-web@sha256:0000000000000000000000000000000000000000000000000000000000000000
 helm-lint:
 	helm lint $(CHART) $(CHART_DEFAULT_SETS)

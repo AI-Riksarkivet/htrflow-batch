@@ -222,6 +222,13 @@ service ranges, because the warm-up pod's public egress excludes them.
 | RustFS (`app=rustfs`, devstack) | 9000 from anywhere (and 9001 when the console is on) | none | — |
 | rustfs-init hook (`app=rustfs-init`, devstack) | none | RustFS on 9000 | — |
 
+The web front's ingress list defaults to every address, because the dev
+stack and the compose stack are reached from wherever the operator's browser
+is. That default is in front of a NodePort with no authentication, so the
+chart refuses to render it unless `network.web.allowPublicIngress` says the
+exposure is deliberate. Listing the ranges that may reach it needs no such
+flag.
+
 Under the default deny, anything applied by hand in the namespace has no
 network access unless it gets its own policy. `images:` volumes hosted
 somewhere other than the IIIF origin need their host added to
