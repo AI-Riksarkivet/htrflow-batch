@@ -112,6 +112,17 @@ class ResultStore:
         except ValueError:
             pass  # publish leaves a page with no dims out, it does not fail
 
+    def delete_page(self, name: str) -> None:
+        """Drop a page's stored outputs, before it is processed again (W3,
+        2026-09-14 audit). The verify gate subtracts a LIVE listing of the
+        bucket, so a page reprocessed and FAILED this run would be accounted
+        for by the previous run's objects -- and publish would read that stale
+        ALTO into iiif.json while manifest.json records the page as failed."""
+        for fmt in PAGE_FORMATS:
+            self.client.delete_object(
+                Bucket=self.bucket, Key=self._key(f"{fmt}/{name}.xml")
+            )
+
     def put_json(self, rel_key: str, obj: dict) -> None:
         self._put(self._key(rel_key), _json_bytes(obj), "application/json")
 
