@@ -19,6 +19,7 @@ import base64
 import hashlib
 import logging
 import re
+import time
 from importlib import metadata
 from pathlib import Path
 
@@ -108,6 +109,12 @@ DEV_VERSION = "dev"
 #: (packages/converter ``render.status_configmap``), which is what actually
 #: guarantees a terminal record exists.
 RECORD_WRITES_PER_REQUEST = 20
+
+#: How long a namespace whose write was refused is left alone. Long enough
+#: that a denied grant costs one round trip per ten minutes rather than
+#: twenty per page load; short enough that renewing the grant is visible
+#: without restarting the service.
+REFUSAL_COOLDOWN = 600.0
 
 #: The one sentence a 502 says. The reader can do nothing about an RBAC
 #: change or a busy API server except wait for the next poll, which the page
@@ -227,10 +234,13 @@ def create_app(
     def version() -> dict:
         return {"version": batch_version, "web": WEB_VERSION}
 
-    # Namespaces whose last write was refused. A denied RBAC grant fails
-    # for every campaign on every poll, which is a log nobody can read: say
-    # it once and remember it. (Per app, so a restart says it again.)
-    refused: set[str] = set()
+    # Namespaces whose last write was refused, and when. A denied RBAC grant
+    # fails for every campaign on every poll -- a log nobody can read, and
+    # RECORD_WRITES_PER_REQUEST server-side applies on the critical path of
+    # every page load, for ever (2026-09-14 audit). Said once, then left
+    # alone until the cooldown expires, so a grant that was renewed starts
+    # working again on its own. (Per app, so a restart tries immediately.)
+    refused: dict[str, float] = {}
 
     def _record(row: dict, live: dict | None, failures: list[dict] | None) -> bool:
         """Write the campaign's status ConfigMap when this request saw
@@ -246,6 +256,9 @@ def create_app(
         a 500 is a status page nobody can read."""
         if not hasattr(reader, "apply_configmap"):
             return False  # site-only: no cluster
+        refused_at = refused.get(row["namespace"])
+        if refused_at is not None and time.monotonic() - refused_at < REFUSAL_COOLDOWN:
+            return False
         stored = (live or {}).get("data") or {}
         data = projection.merge_record(stored, projection.status_record(row, failures))
         if data == stored:
@@ -256,10 +269,10 @@ def create_app(
             reader.apply_configmap(cm)
         except Exception as e:  # noqa: BLE001 - any client error, same answer
             if namespace not in refused:
-                refused.add(namespace)
                 _LOG.warning("could not write %s: %s", cm["metadata"]["name"], e)
+            refused[namespace] = time.monotonic()
             return True
-        refused.discard(namespace)
+        refused.pop(namespace, None)
         return True
 
     def _campaign_configmaps() -> tuple[dict, dict]:

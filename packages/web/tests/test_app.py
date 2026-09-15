@@ -621,8 +621,32 @@ def test_a_refused_write_is_logged_once_per_namespace(caplog):
     client = TestClient(create_app(reader, progress=FakeProgress()))
     for _ in range(3):
         assert client.get("/api/v1/jobs").status_code == 200
-    assert reader.attempts == 3, "the write is still attempted every time"
     assert caplog.text.count("forbidden") == 1
+
+
+def test_a_refused_namespace_is_left_alone_for_the_cooldown():
+    """An unrenewed RBAC grant refuses every campaign on every poll, and
+    each refusal is a server-side apply on the request's critical path --
+    twenty round trips per page load, for ever (2026-09-14 audit)."""
+    reader = _Refusing()
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    for _ in range(3):
+        assert client.get("/api/v1/jobs").status_code == 200
+    assert reader.attempts == 1, "one refusal is enough to stop trying"
+
+
+def test_the_cooldown_expires_and_the_grant_is_tried_again(monkeypatch):
+    """A grant that was renewed must start working again on its own."""
+    from htrflow_web import app as app_mod
+
+    clock = [0.0]
+    monkeypatch.setattr(app_mod.time, "monotonic", lambda: clock[0])
+    reader = _Refusing()
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    client.get("/api/v1/jobs")
+    clock[0] = app_mod.REFUSAL_COOLDOWN + 1
+    client.get("/api/v1/jobs")
+    assert reader.attempts == 2
 
 
 def test_no_request_writes_more_records_than_its_cap():
