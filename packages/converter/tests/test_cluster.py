@@ -474,3 +474,25 @@ def test_a_refusal_the_server_meant_is_not_retried(cluster, monkeypatch, slept):
         cluster.apply(JOB)
     assert attempts == ["PATCH"]
     assert slept == []
+
+
+def test_a_delete_retried_past_a_5xx_takes_a_404_as_done(slept):
+    """The retry itself makes this 404: the first attempt reached the API
+    server and only the answer was lost, so the object is gone because of
+    this call, not missing before it. A first-attempt 404 still stands --
+    that one is an object the caller was wrong about."""
+    from htrflow_converter.cluster import _retrying
+
+    answers = [ApiException(status=503, reason="flaky"), ApiException(status=404)]
+
+    def delete():
+        raise answers.pop(0)
+
+    assert _retrying(delete, gone_is_done=True) is None
+    assert slept == [1]
+
+    with pytest.raises(ApiException) as exc:
+        _retrying(
+            lambda: (_ for _ in ()).throw(ApiException(status=404)), gone_is_done=True
+        )
+    assert exc.value.status == 404

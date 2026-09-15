@@ -188,16 +188,24 @@ def _errors(verb: str, kind: str, name: str, namespace: str):
         raise _unreachable(e) from e
 
 
-def _retrying(fn: Any, *args: Any, **kwargs: Any) -> Any:
-    """``fn(*args, **kwargs)``, retried while the server says "not now"."""
-    for attempt in range(RETRIES):
+def _retrying(fn: Any, *args: Any, gone_is_done: bool = False, **kwargs: Any) -> Any:
+    """``fn(*args, **kwargs)``, retried while the server says "not now".
+
+    ``gone_is_done`` is for a DELETE: a retry that finds the object gone
+    found the work of the attempt before it -- that one reached the API
+    server and only its answer was lost -- so the 404 is this call's own
+    success, not a missing object. A 404 on the FIRST attempt still stands:
+    nothing of ours deleted that, so the caller was wrong about it.
+    """
+    for attempt in range(RETRIES + 1):
         try:
             return fn(*args, **kwargs)
         except ApiException as e:
-            if e.status not in RETRY_STATUSES:
+            if attempt and gone_is_done and e.status == 404:
+                return None
+            if e.status not in RETRY_STATUSES or attempt == RETRIES:
                 raise
             time.sleep(RETRY_BACKOFF << attempt)
-    return fn(*args, **kwargs)
 
 
 def _raw(
@@ -283,6 +291,7 @@ class Cluster:
                 self._method("Job", "delete"),
                 name,
                 self.namespace,
+                gone_is_done=True,
                 propagation_policy="Background",
                 _request_timeout=REQUEST_TIMEOUT,
             )
@@ -343,6 +352,7 @@ class Cluster:
                         self._method(kind, "delete"),
                         name,
                         self.namespace,
+                        gone_is_done=True,
                         _request_timeout=REQUEST_TIMEOUT,
                         **extra,
                     )

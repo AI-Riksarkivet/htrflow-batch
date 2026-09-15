@@ -460,7 +460,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # `X-Amz-Credential` join the query parameters a problem line blanks -- a
 # presigned S3 URL carries all three, and the alternation is longest-first
 # so the security token is not matched as a bare `token`.
-check converter "$(count packages/converter/src -name '*.py')" 2541
+# 2541 -> 2551 (2026-09-14, audit review): a DELETE retried past a 5xx takes
+# a 404 as its own success -- the attempt before it reached the API server
+# and only the answer was lost, so the retry was about to report an object
+# missing that it had just deleted. A first-attempt 404 still stands.
+check converter "$(count packages/converter/src -name '*.py')" 2551
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
