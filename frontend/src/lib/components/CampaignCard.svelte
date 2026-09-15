@@ -297,7 +297,7 @@
       encodeURIComponent(v.logUrl) +
       "&manifest=" +
       encodeURIComponent(v.manifestUrl) +
-      (v.state !== "done" ? "&live=1" : "")
+      (v.state !== "done" && v.state !== "unknown" ? "&live=1" : "")
     );
   }
 

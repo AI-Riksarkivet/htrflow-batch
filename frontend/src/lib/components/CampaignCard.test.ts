@@ -355,6 +355,23 @@ describe("CampaignCard", () => {
     );
   });
 
+  test("an unknown row's log link is not live: nothing is writing it", async () => {
+    const detail = {
+      ...detail0,
+      failures: [],
+      volumes: [{ ...volumeDone, state: "unknown" }],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(detail)),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+    const log = screen.getByRole("link", { name: /log/ });
+    expect(log.getAttribute("href")).not.toContain("live=1");
+  });
+
   test("no thumbnails: no <img> anywhere in the card", async () => {
     const detail = { ...detail0, failures: [], volumes: [volumeDone] };
     vi.stubGlobal(
