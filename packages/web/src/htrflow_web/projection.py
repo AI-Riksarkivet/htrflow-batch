@@ -290,13 +290,17 @@ def _recorded_reasons(status: dict) -> dict[str, str]:
 #: What a volume nobody named as failed did, given how the campaign ended.
 #: A reaped campaign has no per-index state left -- that was the Job's
 #: ``completedIndexes`` -- so the campaign's own ending is what every row
-#: that is not in ``failedVolumes`` gets. ``Unknown`` means nobody wrote
-#: down how the campaign ended at all, and the record's counts are the last
-#: thing observed; the bucket answers for the rows either way.
+#: that is not in ``failedVolumes`` gets. ``Unknown`` is the record's own
+#: word for "nobody wrote down how this ended", and its rows say the same:
+#: calling them `done` claimed the opposite, and contradicted the record's
+#: own ``volumesFailed`` whenever the detail endpoint never got to name the
+#: failures (2026-09-14 review). The bucket still answers for such a row --
+#: its progress file, or its manifest.json, says what actually happened.
+UNKNOWN_STATE = "unknown"
 _RECORD_STATE = {
     "Succeeded": "done",
     "PartiallyFailed": "done",
-    "Unknown": "done",
+    UNKNOWN_PHASE: UNKNOWN_STATE,
     "Failed": "failed",
 }
 
@@ -326,7 +330,7 @@ def record_detail(
     pipeline_yaml = _pipeline_yaml(pipeline_configmap)
     reasons = _recorded_reasons(status)
     results_base, pipeline = row["resultsBase"], row["pipeline"]
-    ending = _RECORD_STATE.get(row["phase"], "done")
+    ending = _RECORD_STATE.get(row["phase"], UNKNOWN_STATE)
     volumes: list[dict] = []
     for idx, line in enumerate(_volume_lines(record)):
         vol_id = line.split("\t", 1)[0]

@@ -37,6 +37,6 @@ def test_the_fixture_covers_the_rows_the_page_has_to_draw():
     for detail in doc["details"]:
         assert detail["volumes"], "a campaign with no rows proves nothing"
     states = {v["state"] for d in doc["details"] for v in d["volumes"]}
-    assert {"done", "failed"} <= states
+    assert {"done", "failed", "unknown"} <= states
     assert any(v["sourceUrl"] is None for d in doc["details"] for v in d["volumes"])
     assert any(v["progress"] is not None for d in doc["details"] for v in d["volumes"])

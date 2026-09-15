@@ -37,6 +37,10 @@ DONE_TTL = 3600.0
 #: refill is one cheap GET per row on screen.
 MAX_ENTRIES = 5000
 
+#: States whose file will not change again: the volume is over, or its
+#: campaign's Job is gone and nothing is left to write one (`unknown`).
+_FINISHED = ("done", "unknown")
+
 #: Short: a slow bucket must not hold the API's own response open.
 TIMEOUT = 2.0
 
@@ -185,7 +189,7 @@ class ProgressReader:
         # (2026-09-14 audit).
         base = f"{results_base}/{quote(volume_id, safe='')}"
         found = self._cached(f"{base}/progress.json", _from_progress, state, now)
-        if found is None and state == "done":
+        if found is None and state in _FINISHED:
             # Written by a wrapper that predates progress.json. One GET more,
             # cached for the hour: a finished volume is finished.
             found = self._cached(f"{base}/manifest.json", _from_manifest, state, now)
@@ -205,7 +209,7 @@ class ProgressReader:
         value = self._get(url, parse, now)
         # A miss on a done volume is cached briefly, not for the hour: it may
         # simply be a file that has not landed yet.
-        ttl = DONE_TTL if state == "done" and value is not None else RUNNING_TTL
+        ttl = DONE_TTL if state in _FINISHED and value is not None else RUNNING_TTL
         if len(self._cache) >= MAX_ENTRIES:
             self._cache.clear()
         self._cache[url] = (monotonic_now + ttl, value)
