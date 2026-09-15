@@ -283,7 +283,13 @@ Everything an operator needs is in the bucket well before the Job's
 | Key | Written when | Content |
 |---|---|---|
 | `status/logs/<pipeline>/<volume>.txt` | While the volume runs, every 15 s, and once on exit (also on SIGTERM) | The wrapper's own stdout and stderr: the complete log ([The run log](signals.md#the-run-log)) |
-| `<pipeline>/<volume>/progress.json` | After every page outcome and at every stage change | The last stage reached, page counts and the most recent page failure |
+| `<pipeline>/<volume>/progress.json` | After every page outcome and at every stage change, except in the `config` stage (see below) | The last stage reached, page counts and the most recent page failure |
+
+A run that fails in the `config` stage writes no `progress.json` at all: the
+bucket, the prefix and the volume's own name are settings, so until they
+parse there is nowhere to write it to. That failure is permanent and its
+evidence is the termination message and the pod's log, both of which name the
+setting; the campaign page shows it from the pod.
 
 The read API shows a failed pod's termination message as `reason` only while
 that pod still exists. Once the pod is garbage-collected, the log above is

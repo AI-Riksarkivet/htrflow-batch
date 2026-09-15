@@ -96,7 +96,10 @@ the pod is still running. It is best-effort in both directions: a write that
 fails is logged and forgotten (a status file must never cost a page its
 work), and a reader that cannot fetch it shows no progress rather than an
 error. It says nothing about completion — `manifest.json` alone does that,
-and is written last.
+and is written last. A run that fails in its `config` stage writes none at
+all: the bucket and the prefix this key lives under are themselves settings,
+so until they parse there is nowhere to put it — that failure is read from the
+termination message and the pod's log instead.
 
 | Field | Meaning |
 |---|---|
