@@ -912,3 +912,21 @@ def test_apply_to_a_fresh_out_dir_still_holds_campaigns_against_rendered(
     assert cli.main(["apply", str(repo), "--out", str(tmp_path / "fresh")]) == 1
     assert "campaign kyrk is append-only" in capsys.readouterr().out
     assert cluster.of("apply") == [], "nothing reached the cluster"
+
+
+def test_dry_run_previews_an_empty_prune_and_the_real_run_still_refuses(
+    tmp_path, cluster, capsys
+):
+    """`--dry-run` is how an operator checks a prune before running it, so
+    the one case worth checking hardest -- a render with no campaigns at all
+    -- must be previewable: it prints what would go, says the real run will
+    refuse, and then the real run does."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    for path in (repo / "campaigns").glob("*.yaml"):
+        path.unlink()
+    rc = cli.main(["apply", str(repo), "--out", str(out), "--prune", "--dry-run"])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert f"would prune: every {CAMPAIGN_SELECTOR}" in captured.out
+    assert "--allow-empty" in captured.err
+    assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == 1
