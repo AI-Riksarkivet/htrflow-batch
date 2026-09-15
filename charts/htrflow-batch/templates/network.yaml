@@ -20,7 +20,19 @@ node address it resolves to — hence the `lookup` auto-detection in web.yaml.
     {{- end }}
   {{- end }}
 {{- end }}
-{{- $internal := concat .Values.network.clusterCidrs $nodes }}
+{{- /*
+What a catch-all egress must NOT reach (2026-09-14, audit). The cluster and
+node ranges were the whole list, which left two holes open to any pod with
+the documented `iiifCidrs: 0.0.0.0/0` and to every warm-up pod: 169.254/16,
+where a cloud serves instance credentials to whoever asks, and the private
+ranges the cluster's own VPC is carved out of. Loopback is in for the same
+reason it costs nothing. `network.privateCidrs` is the operator's list, so a
+cluster with a different private plan can say so. This carves out the
+CATCH-ALL, not the address: a range the operator names in iiifCidrs or
+s3Cidrs is its own ipBlock in the same rule, and egress rules are a union,
+so an on-premises origin keeps working by being named.
+*/}}
+{{- $internal := concat .Values.network.clusterCidrs $nodes (list "169.254.0.0/16" "127.0.0.0/8") .Values.network.privateCidrs | uniq }}
 {{- $dns := dict "to" (list (dict
       "namespaceSelector" (dict "matchLabels" (dict "kubernetes.io/metadata.name" "kube-system"))
       "podSelector" (dict "matchLabels" (dict "k8s-app" "kube-dns"))))
@@ -35,7 +47,12 @@ endpoint from network.s3Cidrs.
 {{- if .Values.network.s3Cidrs }}
   {{- $blocks := list }}
   {{- range .Values.network.s3Cidrs }}{{ $blocks = append $blocks (dict "ipBlock" (dict "cidr" .)) }}{{ end }}
-  {{- $s3 = append $s3 (dict "to" $blocks) }}
+  {{- /* Named ports, not the whole range (2026-09-14, audit): a
+       self-hosted endpoint's CIDR is a slice of the operator's own
+       network, and this rule used to open every port of it. */}}
+  {{- $s3Ports := list }}
+  {{- range .Values.network.s3Ports }}{{ $s3Ports = append $s3Ports (dict "port" .) }}{{ end }}
+  {{- $s3 = append $s3 (dict "to" $blocks "ports" $s3Ports) }}
 {{- end }}
 {{- $anyPublic := list (dict "ipBlock" (dict "cidr" "0.0.0.0/0" "except" $internal)) }}
 {{- $labels := include "htrflow-batch.labels" . }}

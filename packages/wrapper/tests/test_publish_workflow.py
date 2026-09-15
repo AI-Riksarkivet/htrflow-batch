@@ -15,14 +15,29 @@ the chart and the campaign pipelines reference.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 import yaml
 
 REPO = Path(__file__).resolve().parents[3]
-WORKFLOW = yaml.safe_load((REPO / ".github" / "workflows" / "publish.yml").read_text())
+WORKFLOWS = REPO / ".github" / "workflows"
+WORKFLOW = yaml.safe_load((WORKFLOWS / "publish.yml").read_text())
 JOBS = WORKFLOW["jobs"]
+
+#: An expression is substituted into the text before anything runs, so a
+#: script that contains one is a script written partly by whoever supplied
+#: the value. `secrets.*` and `env.*` are not here: a secret is masked and
+#: redacted by the runner, and `env` is the destination this rule pushes
+#: things towards.
+_EXPRESSION = re.compile(r"\$\{\{\s*(inputs|steps)\.")
+
+#: Both workflows that build or publish an image. `dagger-for-github` is in
+#: the scan because its `args` input is not an argument list: the action
+#: interpolates it, unquoted, into a `run:` of its own, so a value reaching
+#: it is a second shell's worth of script text.
+_SCRIPTED = ["publish.yml", "ci.yml"]
 
 # Runner labels per architecture: a per-arch tag built on the wrong runner is
 # a cross-build with extra steps.
@@ -72,7 +87,7 @@ def test_every_image_ends_as_one_manifest_list_under_the_plain_tag() -> None:
         step["run"] for step in manifest["steps"] if "imagetools create" in str(step)
     )
     for suffix in RUNNERS:
-        assert f'"${{IMAGE}}:${{{{ inputs.tag }}}}{suffix}"' in create
+        assert f'"${{IMAGE}}:${{TAG}}{suffix}"' in create
 
 
 def test_every_pushed_digest_is_signed_and_attested() -> None:
@@ -81,3 +96,45 @@ def test_every_pushed_digest_is_signed_and_attested() -> None:
     for name, job in JOBS.items():
         steps = [step.get("uses", "") for step in job["steps"]]
         assert "./.github/actions/sign-attest" in steps, name
+
+
+def test_no_run_block_interpolates_a_dispatch_input() -> None:
+    """`${{ inputs.tag }}` inside a `run:` is textual substitution into the
+    script before any shell sees it, so whatever the dispatcher typed becomes
+    code -- in jobs that hold the registry credential and the keyless signing
+    identity. The tag pattern is checked by the first step, but that step is
+    itself one of the interpolations, so it cannot be what protects them.
+
+    Every use goes through the environment instead, where the shell treats
+    it as data whatever it contains.
+    """
+    for name, job in JOBS.items():
+        for step in job["steps"]:
+            run = step.get("run", "")
+            assert "${{ inputs." not in run, (name, step.get("name"))
+            if "$TAG" in run or "${TAG}" in run:
+                env = {**job.get("env", {}), **step.get("env", {})}
+                assert env.get("TAG") == "${{ inputs.tag }}", name
+
+
+@pytest.mark.parametrize("name", _SCRIPTED)
+def test_no_script_carries_a_github_expression(name: str) -> None:
+    """The narrower rule above covers `run:` blocks in publish.yml. This is
+    the whole of it: `with: args:` on the dagger action is shell text too
+    (the action pastes it unquoted into a `run:`), a step output is as much
+    an outside value as a dispatch input, and ci.yml builds images from the
+    same dockerfiles.
+
+    Everything goes through `env:`, where the shell reads it as data
+    whatever it contains.
+    """
+    workflow = yaml.safe_load((WORKFLOWS / name).read_text())
+    for job, body in workflow["jobs"].items():
+        for step in body["steps"]:
+            scripts = {
+                "run": step.get("run", ""),
+                "args": str(step.get("with", {}).get("args", "")),
+            }
+            for where, script in scripts.items():
+                found = _EXPRESSION.search(script)
+                assert not found, (name, job, step.get("name"), where, found.group())

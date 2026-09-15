@@ -405,6 +405,75 @@ def test_kubeconform_strict_passes_on_rendered_files(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+#: Pod Security `restricted`, as the chart's own `_helpers.tpl` spells it for
+#: the pods it renders. `security.psaEnforce: restricted` (the production
+#: profile) is a claim about every pod in the namespace, and most of them are
+#: these -- rendered here, applied outside the chart, and so invisible to any
+#: gate the chart has.
+RESTRICTED_POD = {
+    "runAsNonRoot": True,
+    "runAsUser": 1000,
+    "runAsGroup": 1000,
+    "fsGroup": 1000,
+    "seccompProfile": {"type": "RuntimeDefault"},
+}
+RESTRICTED_CONTAINER = {
+    "allowPrivilegeEscalation": False,
+    "readOnlyRootFilesystem": True,
+    "capabilities": {"drop": ["ALL"]},
+}
+
+
+def test_every_job_the_converter_renders_is_restricted_clean():
+    """A campaign pod runs model code over images fetched from the network,
+    for hours, on a GPU node, with the results bucket's write credentials.
+    Both Jobs here are the ones the namespace's Pod Security level is really
+    about, and nothing in the chart can check them: they are applied outside
+    it. Every container, init containers included, and no API token in any
+    of them."""
+    kyrk, demo, cfg = _kyrk()
+    rendered = [
+        *render.pipeline_objects(demo, cfg),
+        *render.campaign_objects(kyrk, demo, cfg),
+    ]
+    jobs = [o for o in rendered if o["kind"] == "Job"]
+    assert {j["metadata"]["labels"]["app"] for j in jobs} == {
+        "htrflow-warmup",
+        "htrflow-batch",
+    }
+    for job in jobs:
+        spec = job["spec"]["template"]["spec"]
+        name = job["metadata"]["name"]
+        assert spec["automountServiceAccountToken"] is False, name
+        assert {
+            k: spec["securityContext"].get(k) for k in RESTRICTED_POD
+        } == RESTRICTED_POD, name
+        containers = [*spec["containers"], *spec.get("initContainers", [])]
+        assert containers, name
+        for container in containers:
+            assert {
+                k: container["securityContext"].get(k) for k in RESTRICTED_CONTAINER
+            } == RESTRICTED_CONTAINER, (name, container["name"])
+
+
+def test_the_ci_test_image_carries_the_tools_this_suite_shells_out_to():
+    """A `skipif` on a missing binary is a test that stops running without
+    saying so, and two of them did exactly that for months: the CI pytest
+    image had neither kubeconform (this file) nor git (test_apply.py), so the
+    manifest validation and the commit provenance were never checked in CI
+    while the suite reported green.
+
+    The dagger test container installs git and copies kubeconform and helm
+    out of the same digest-pinned images the chart render uses. This asserts
+    it still does, because the skip cannot.
+    """
+    dagger = (Path(__file__).resolve().parents[3] / ".dagger" / "test.go").read_text()
+    assert "--no-install-recommends git" in dagger
+    assert '"/usr/local/bin/kubeconform"' in dagger
+    assert '"/usr/local/bin/helm"' in dagger
+    assert "m.withTestTools(container)." in dagger
+
+
 def test_window_is_capped_by_the_converter_window():
     """`converter.yaml: window` is the per-cluster cap, not merely a default:
     a campaign may ask for less concurrency, never more. Rendering more than

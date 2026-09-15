@@ -15,7 +15,7 @@ lists what the module exposes on your checkout.
 | `check-frontend` | `bun install --frozen-lockfile`, then `bun run check`, `bun run test` and `bun run build`, in a digest-pinned node container carrying the pinned bun binary (vitest needs a real node runtime) |
 | `check-chart` | `helm lint` and a render of both charts on their defaults and on each chart's `ci/full-values.yaml`, plus a render the devstack chart must refuse (RustFS without chosen credentials); asserts the production chart renders no `CronJob`, always renders the `htrflow-web` Deployment with a `/healthz` livenessProbe, and renders no devstack-labelled object; then `kubeconform -strict` on every render and on the converter's Job and ConfigMap skeletons |
 | `test` | the workspace pytest suite in a uv container (`uv run --no-sync pytest`, no GPU) — wrapper, converter, web |
-| `test-driver` | opt-in: `packages/wrapper/tests/test_driver_real.py` against the real htrflow inside the built wrapper image — the level-0 pin test ([Testing](testing.md)); `make test-driver-real` is the local twin |
+| `test-driver` | `packages/wrapper/tests/test_driver_real.py` against the real htrflow inside a wrapper image it builds itself — the level-0 pin test ([Testing](testing.md)). `make test-driver-real` runs the same test against an image that already exists, which is how `ci.yml` runs it: the dagger engine builds in its own cache and cannot see a base image that exists only in the runner's docker daemon |
 | `build-wrapper` | the wrapper image from `.docker/htrflow-batch.dockerfile`, for the engine's own platform. The optional `--platform` exists for a caller with an engine per platform; nothing here passes it ([Releasing](releasing.md#one-dockerfile-every-architecture)). `--transformers-version` builds the image on the other transformers line; empty keeps the dockerfile's default ([Two transformers lines](../how-it-works/wrapper.md#model-handling)) |
 | `build-web` | the web image from `.docker/htrflow-web.dockerfile` (CPU-only, no torch): the campaign browser SPA, the Universal Viewer fork at the pinned `UV4_REF` with `.docker/uv4-uv-html.patch` applied, and the read API that serves both. A CA bundle goes in as the optional `ca` build secret |
 | `scan` | Trivy over the built wrapper image; table output, fails on findings (default `CRITICAL,HIGH`, unfixed findings ignored) |
@@ -124,9 +124,11 @@ The cluster constants these targets use come from `.env`
   still builds the other. A fourth job runs on every trigger, pull requests
   included, on a native runner of the second architecture the wrapper ships
   for: it builds the htrflow base from source at the pinned htrflow commit
-  and the wrapper on top of it, pushes nothing, and prints the image's base
+  and the wrapper on top of it, runs the level-0 library-API pin test against
+  the image it just built, pushes nothing, and prints the image's base
   labels — so both architectures of a dockerfile change are proven before
-  it lands.
+  it lands, and the canary for an htrflow release that moves the library API
+  finally runs on every push instead of waiting to be remembered.
 - **`publish.yml`** — manual, one explicit tag per run; tests, builds,
   pushes, signs and attests both images for both of the CPU architectures
   they ship for — each on a runner of its own architecture, joined into one

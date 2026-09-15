@@ -165,9 +165,9 @@ PAGE, then ALTO, and eventually `manifest.json` last.
 ## Where a later run touches this page again
 
 - **Resume** lists `page/` and `alto/`. It treats the page as done only if it
-  is in **both**, and only if its `page_sources` entry in the previous
-  `manifest.json` still matches the URL this run would fetch. Both sides of
-  that comparison are redacted. A done page is never downloaded.
+  is in **both**, and only if its `page_source_digests` entry in the previous
+  `manifest.json` still matches the digest of the URL this run would fetch.
+  Credentials are out of both sides of that comparison. A done page is never downloaded.
 - **Verify** lists S3 once more after the loop. A page missing from either
   format, and not recorded as failed, means exit 1 and a retry.
 - **The viewer** opens `uv.html#?manifest=…` on the volume's source manifest

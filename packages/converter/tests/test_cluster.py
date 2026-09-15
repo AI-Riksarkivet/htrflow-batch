@@ -22,7 +22,13 @@ from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 from urllib3.exceptions import MaxRetryError
 
-from htrflow_converter.cluster import APPLY_PATCH, FIELD_MANAGER, Cluster, ClusterError
+from htrflow_converter.cluster import (
+    APPLY_PATCH,
+    FIELD_MANAGER,
+    REQUEST_TIMEOUT,
+    Cluster,
+    ClusterError,
+)
 
 
 class _Response:
@@ -55,6 +61,7 @@ def cluster(monkeypatch):
                 "query": dict(query_params or []),
                 "content_type": (header_params or {}).get("Content-Type"),
                 "body": kwargs.get("body"),
+                "timeout": kwargs.get("_request_timeout"),
             }
         )
         body = answer.get(method, {})
@@ -349,6 +356,7 @@ def test_replace_job_deletes_in_the_background_then_creates_it_again(
 
     monkeypatch.setattr(client.ApiClient, "call_api", call_api)
     cluster.replace_job(JOB)
+    assert all(c["timeout"] == REQUEST_TIMEOUT for c in cluster.calls)
     assert [(c["method"], c["path"]) for c in cluster.calls] == [
         ("DELETE", "/apis/batch/v1/namespaces/htr-batch/jobs/kyrk"),
         ("PATCH", "/apis/batch/v1/namespaces/htr-batch/jobs/kyrk"),
@@ -379,3 +387,112 @@ def test_a_server_message_is_capped_before_it_is_repeated():
     assert len(line) < MAX_MESSAGE + 100
     assert line.startswith("apply Job/kyrk: 422 Unprocessable Entity spec.template: ")
     assert line.endswith("…")
+
+
+def test_every_request_carries_a_connect_and_read_timeout(cluster):
+    """Without one, a half-open connection to the API server hangs the apply
+    for ever: nothing above this has a deadline of its own, and an apply that
+    never returns is a campaigns repo whose CI job never returns either."""
+    cluster.answer["GET"] = {"items": [{"metadata": {"name": "gone"}}]}
+    cluster.apply(JOB)
+    cluster.get("Job", "kyrk")
+    cluster.prune(set())
+    cluster.sync_pause({"metadata": {"name": "k", "uid": "u9"}}, True, 0)
+    verbs = {c["method"] for c in cluster.calls}
+    assert verbs == {"PATCH", "GET", "DELETE"}, verbs
+    assert {c["timeout"] for c in cluster.calls} == {REQUEST_TIMEOUT}
+
+
+def test_a_refused_campaign_job_is_given_a_campaigns_way_out():
+    """The advice was written for a pipeline file and printed for every Job
+    alike: a campaign Job carries no recipe of its own, so "a changed recipe
+    is a new pipeline file" sent its reader to edit a file that is not the
+    one in front of them. A live campaign's Job simply cannot change."""
+    from htrflow_converter.cluster import ImmutableField, _api_error
+
+    e = _api_error("apply", "Job", "kyrk", "htr-batch", _immutable_refusal())
+    assert isinstance(e, ImmutableField)
+    assert str(e) == (
+        "Job kyrk: the pod template changed and a Job's pod template is "
+        "immutable once the Job exists — a live campaign's Job cannot change, "
+        "so finish or remove the campaign, then apply"
+    )
+
+
+def _flaky(monkeypatch, status: int, failures: int) -> list[str]:
+    """Make the first ``failures`` requests fail with ``status``."""
+    real = client.ApiClient.call_api
+    attempts: list[str] = []
+
+    def call_api(self, resource_path, method, *a, **kw):
+        attempts.append(method)
+        if len(attempts) <= failures:
+            raise ApiException(status=status, reason="flaky")
+        return real(self, resource_path, method, *a, **kw)
+
+    monkeypatch.setattr(client.ApiClient, "call_api", call_api)
+    return attempts
+
+
+@pytest.fixture
+def slept(monkeypatch) -> list[float]:
+    waits: list[float] = []
+    monkeypatch.setattr("htrflow_converter.cluster.time.sleep", waits.append)
+    return waits
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
+def test_a_busy_or_restarting_api_server_is_retried(
+    cluster, monkeypatch, slept, status
+):
+    """An apply is a long sequence of requests against a control plane that
+    is upgraded, rate-limited and load-balanced. One 503 from a restarting
+    apiserver used to leave a campaign unapplied and the operator re-running
+    the whole command."""
+    attempts = _flaky(monkeypatch, status, 2)
+    cluster.apply(JOB)
+    assert attempts == ["PATCH"] * 3
+    assert slept == [1, 2]
+
+
+def test_a_retry_is_bounded_and_then_says_so(cluster, monkeypatch, slept):
+    """A server that keeps refusing is not waited on for ever: the sentence
+    the last refusal carries is the one the apply reports."""
+    attempts = _flaky(monkeypatch, 503, 99)
+    with pytest.raises(ClusterError) as exc:
+        cluster.apply(JOB)
+    assert attempts == ["PATCH"] * 4
+    assert slept == [1, 2, 4]
+    assert str(exc.value) == "apply Job/kyrk: 503 flaky"
+
+
+def test_a_refusal_the_server_meant_is_not_retried(cluster, monkeypatch, slept):
+    """409, 403, 422: answers about this request, not about the server's
+    moment. Retrying them wastes a minute and changes nothing."""
+    attempts = _flaky(monkeypatch, 409, 99)
+    with pytest.raises(ClusterError):
+        cluster.apply(JOB)
+    assert attempts == ["PATCH"]
+    assert slept == []
+
+
+def test_a_delete_retried_past_a_5xx_takes_a_404_as_done(slept):
+    """The retry itself makes this 404: the first attempt reached the API
+    server and only the answer was lost, so the object is gone because of
+    this call, not missing before it. A first-attempt 404 still stands --
+    that one is an object the caller was wrong about."""
+    from htrflow_converter.cluster import _retrying
+
+    answers = [ApiException(status=503, reason="flaky"), ApiException(status=404)]
+
+    def delete():
+        raise answers.pop(0)
+
+    assert _retrying(delete, gone_is_done=True) is None
+    assert slept == [1]
+
+    with pytest.raises(ApiException) as exc:
+        _retrying(
+            lambda: (_ for _ in ()).throw(ApiException(status=404)), gone_is_done=True
+        )
+    assert exc.value.status == 404

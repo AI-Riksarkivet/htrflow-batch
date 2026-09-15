@@ -222,3 +222,72 @@ def test_a_problem_line_never_carries_a_raw_tab_or_carriage_return(tmp_path):
         )
     (problem,) = exc_info.value.problems
     assert not set(problem) & set("\t\r\n"), repr(problem)
+
+
+def test_a_bare_volume_under_an_unfillable_template_is_a_sentence_not_a_keyerror():
+    """The same rule, one layer down: `ConverterConfig` refuses a template
+    that cannot be filled, and a `Volume` handed one anyway still leaves as a
+    validation problem rather than as a traceback out of the validator."""
+    with pytest.raises(ValidationError) as exc_info:
+        Volume.model_validate(
+            "R123", context={"source_template": "https://example.org/{id}/manifest"}
+        )
+    (msg,) = [str(e["msg"]) for e in exc_info.value.errors()]
+    assert "source_template" in msg and "{ref}" in msg
+
+
+def test_an_images_volume_too_long_for_one_environment_entry_is_refused():
+    """The Job's shell exports the line's URLs as `IMAGES`, and Linux caps a
+    single environment entry at 128 KiB: past that the pod dies with
+    "Argument list too long" before the wrapper starts, with nothing in the
+    campaign to say which volume did it. Refused where the author can still
+    split it."""
+    urls = [f"https://example.org/scan{n:05d}.jpg" for n in range(4000)]
+    with pytest.raises(ValidationError) as exc_info:
+        Volume.model_validate({"id": "R1", "images": urls})
+    (msg,) = [str(e["msg"]) for e in exc_info.value.errors()]
+    assert "4000 images" in msg
+    assert "KiB" in msg and "manifest" in msg
+
+
+def test_an_images_volume_just_under_the_line_budget_is_kept():
+    urls = [f"https://example.org/scan{n:05d}.jpg" for n in range(3000)]
+    assert len(Volume.model_validate({"id": "R1", "images": urls}).images) == 3000
+
+
+@pytest.mark.parametrize(
+    "param",
+    [
+        "X-Amz-Signature",
+        "X-Amz-Security-Token",
+        "X-Amz-Credential",
+        "token",
+        "sig",
+        "signature",
+        "key",
+    ],
+)
+def test_a_signed_url_loses_its_signature_when_a_problem_echoes_it(param):
+    """A problem line is printed in CI logs and pasted into chat. A presigned
+    source URL carries its credential in the query, so the echo drops it the
+    way it already drops userinfo -- which is all this can do: the URL itself
+    is stored verbatim in volumes.txt and in `rendered/`."""
+    with pytest.raises(ValidationError) as exc_info:
+        Volume.model_validate(
+            {"id": "v1", "manifest": f"https://example.org/m anifest?{param}=sekret"}
+        )
+    (msg,) = [str(e["msg"]) for e in exc_info.value.errors()]
+    assert "sekret" not in msg
+    assert f"{param}=***" in msg
+
+
+def test_a_query_parameter_that_merely_ends_in_a_redacted_name_is_left_alone():
+    """`?pagekey=` and `?sig` are not the same word: the redaction is on a
+    parameter, not on a substring, or half the problem lines in the repo
+    would come back as asterisks."""
+    with pytest.raises(ValidationError) as exc_info:
+        Volume.model_validate(
+            {"id": "v1", "manifest": "https://example.org/m anifest?pagekey=7"}
+        )
+    (msg,) = [str(e["msg"]) for e in exc_info.value.errors()]
+    assert "pagekey=7" in msg

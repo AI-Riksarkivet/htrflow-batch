@@ -21,6 +21,40 @@ but only when the schema is evaluated; this fires from any template.
 {{- fail "security.verifyImages.issuer and .subject are required when security.verifyImages.enabled" }}
 {{- end }}
 {{- end }}
+{{- /*
+The web front is an unauthenticated NodePort, and its ingress list defaults
+to every address (2026-09-14, audit). The default stays -- the dev stack and
+the compose smoke rely on it and a narrowed default would cut them off on
+upgrade -- but the operator has to say the exposure is deliberate. Only when
+the policies are actually rendered: a campaigns repo's CI renders this chart
+with network.enabled=false to get at the policy objects alone.
+*/}}
+{{- if and .Values.network.enabled (has "0.0.0.0/0" .Values.network.web.ingressCidrs) }}
+{{- if not .Values.network.web.allowPublicIngress }}
+{{- fail "network.web.ingressCidrs allows 0.0.0.0/0, and the web front has no authentication of its own: either list the ranges that may reach it (include the node range — NodePort traffic arrives SNAT'd from the node), or set network.web.allowPublicIngress=true to accept that any address that can route to a node may open the campaign browser, the viewer and the read API" }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+The kube-apiserver as a pod reaches it AFTER service DNAT -- the address an
+egress rule has to name, since kube-router (k3s) matches egress on the
+backing endpoint rather than the ClusterVIP. Auto-detected at install time;
+`network.apiServer.cidr` is the answer for `helm template` and for a
+kubeconfig that may not read Endpoints. Two policies need it (the web front
+and the apply pod), so it is computed once here rather than a third time.
+*/}}
+{{- define "htrflow-batch.apiServerCidr" -}}
+{{- $api := .Values.network.apiServer.cidr }}
+{{- if not $api }}
+  {{- with (lookup "v1" "Endpoints" "default" "kubernetes") }}
+    {{- with (index .subsets 0) }}{{ $api = printf "%s/32" (index .addresses 0).ip }}{{ end }}
+  {{- end }}
+{{- end }}
+{{- if not $api }}
+{{- fail "network.apiServer.cidr is required when the kube-apiserver endpoint cannot be looked up (helm template / no RBAC)" }}
+{{- end }}
+{{- $api }}
 {{- end }}
 
 {{/*

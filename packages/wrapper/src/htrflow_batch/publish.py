@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from .config import Config
-from .iiif import PageRef, redact_url, redact_urls
+from .iiif import PageRef, redact_url, redact_urls, source_digest
 from .store import ResultStore
 from .stream import StreamStats
 from .viewer import build_viewer_manifest, parse_alto_dims_bytes
@@ -119,6 +119,10 @@ def run_manifest(
         # a done one (_changed_sources). Redacted (S6): the bucket is public
         # and tokens rotate anyway.
         "page_sources": {p.name: redact_url(p.image_url) for p in pages},
+        # W5: the redacted form above cannot tell two pages apart on a host
+        # that selects the image by query (`?id=`), so resume compares this
+        # digest of the full URL-minus-credentials instead.
+        "page_source_digests": {p.name: source_digest(p.image_url) for p in pages},
         "canvas_ids": {p.name: _canvas_id(p.canvas) for p in pages},
         "max_image_width": cfg.max_image_width,
         "bytes_fetched": bytes_fetched,

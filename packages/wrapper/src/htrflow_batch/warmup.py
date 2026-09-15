@@ -25,6 +25,7 @@ from huggingface_hub.errors import (
     RevisionNotFoundError,
 )
 
+from .logship import RedactingFormatter
 from .main import (
     EXIT_OK,
     EXIT_PERMANENT,
@@ -50,6 +51,7 @@ PERMANENT_ERRORS: tuple[type[BaseException], ...] = (
     ValueError,  # incl. pydantic ValidationError; driver's "bad pipeline config"
     yaml.YAMLError,
     KeyError,  # unknown step name: htrflow STEPS[step.lower()]
+    TypeError,  # a step's `settings:` reach its constructor as kwargs (W2)
     NotImplementedError,  # unknown model class: htrflow get_model_by_name
     RepositoryNotFoundError,
     RevisionNotFoundError,
@@ -82,13 +84,30 @@ def _fail(env: Mapping[str, str], msg: str) -> int:
     return EXIT_PERMANENT
 
 
+def _install_logging() -> None:
+    """The batch wrapper's redaction, in the warm-up too (W8, 2026-09-14
+    audit). ``logging.basicConfig`` installed a plain ``Formatter``, and the
+    warm-up mounts no S3 Secret -- it ships no run log, so ``kubectl logs`` is
+    where its failure is read, and huggingface_hub's errors name the URL they
+    called, query and all. A previous handler of ours is dropped first:
+    production calls this once per process, and a second call (tests) must not
+    keep writing to a stream that has gone."""
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    for handler in [
+        h for h in root.handlers if isinstance(h.formatter, RedactingFormatter)
+    ]:
+        root.removeHandler(handler)
+    handler = logging.StreamHandler()
+    handler.setFormatter(RedactingFormatter("%(asctime)s %(levelname)s %(message)s"))
+    root.addHandler(handler)
+
+
 def main(
     env: Optional[Mapping[str, str]] = None,
     load: Callable[[str], object] = _load,
 ) -> int:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
-    )
+    _install_logging()
     env = dict(env if env is not None else os.environ)
 
     def on_sigterm(signum, frame):

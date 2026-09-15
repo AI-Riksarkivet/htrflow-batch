@@ -1,6 +1,6 @@
 from htrflow_batch import publish
 from htrflow_batch.config import Config
-from htrflow_batch.iiif import PageRef
+from htrflow_batch.iiif import PageRef, source_digest
 from htrflow_batch.stream import PageOutcome, StreamStats
 
 PIPELINE = "steps: []\n"
@@ -74,6 +74,16 @@ def test_run_manifest_is_the_completion_marker_field_for_field(cfg, monkeypatch)
         "page_sources": {
             "0001": "https://iiif.example/p1/full/2500,/0/default.jpg",
             "0002": "https://iiif.example/p2/full/2500,/0/default.jpg",
+        },
+        # W5: what resume actually compares -- the redacted URLs above have
+        # lost their query and cannot tell two pages of a `?id=` host apart.
+        "page_source_digests": {
+            # the full URL, credentials out -- and unreadable, which is what
+            # lets a query reach the public manifest at all
+            "0001": source_digest(
+                "https://iiif.example/p1/full/2500,/0/default.jpg?t=S3CRET"
+            ),
+            "0002": source_digest("https://iiif.example/p2/full/2500,/0/default.jpg"),
         },
         "canvas_ids": {
             "0001": "https://iiif.example/p1/canvas",
