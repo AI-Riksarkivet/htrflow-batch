@@ -526,7 +526,14 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # answers it with a one-sentence 502 that carries the headers, and a pod
 # whose completion-index label is not a number is skipped rather than taking
 # the page down with it.
-check web       "$(count packages/web/src -name '*.py')" 1474
+# 1474 -> 1513 (2026-09-14, audit) T1/T2: `Reader` was the one class in this
+# package with no test of its own, and the fakes had nothing tying them to
+# it. `ReaderLike` writes the duck type down (a test binds every double
+# against it), and `apply_configmap` stops passing `force=True` -- `apply`
+# writes the same record from the live Job once a campaign is over, and
+# forcing took those terminal values back off it on every poll; a 409 while
+# the other manager is mid-write is retried once instead.
+check web       "$(count packages/web/src -name '*.py')" 1513
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

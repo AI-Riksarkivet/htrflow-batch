@@ -1,10 +1,32 @@
-"""Config.from_env: the web front's whole env contract (docs: configuration.md)."""
+"""``Config.from_env`` and ``Reader``: the web front's env contract, and the
+requests the adapter actually puts on the wire.
+
+``test_app.py`` drives the routes through a fake reader -- fast, and about
+what the API answers. This file is the other half: the real generated
+``kubernetes`` client with ``ApiClient.call_api`` intercepted, so the HTTP
+request is asserted (the same intercept
+``packages/converter/tests/test_cluster.py`` uses). Get the apply's content
+type wrong and the API server treats the record as a strategic-merge patch;
+get the 404 handling wrong and a reaped campaign 500s instead of falling
+back to its record.
+"""
 
 from __future__ import annotations
 
-import pytest
+import json
 
-from htrflow_web.kube import Config
+import pytest
+from kubernetes import client, config
+from urllib3.exceptions import MaxRetryError
+
+from htrflow_web.kube import (
+    CAMPAIGN_CONFIGMAPS,
+    FIELD_MANAGER,
+    LABEL_SELECTOR,
+    ClusterUnavailable,
+    Config,
+    Reader,
+)
 
 
 def test_missing_results_base_raises():
@@ -13,13 +35,17 @@ def test_missing_results_base_raises():
 
 
 def test_site_only_does_not_require_a_results_base():
-    Config.from_env({"HTRFLOW_WEB_SITE_ONLY": "1"})  # must not raise
+    """The compose stack has the site and no bucket; the base it would build
+    result URLs from is not a setting it has to carry."""
+    cfg = Config.from_env({"HTRFLOW_WEB_SITE_ONLY": "1"})
+    assert cfg.site_only is True
+    assert cfg.public_results_base == ""
 
 
 def test_site_only_zero_still_counts_as_true():
     """``from_env`` treats any non-empty value as true -- including the
     string "0" -- so a results base is still not required."""
-    Config.from_env({"HTRFLOW_WEB_SITE_ONLY": "0"})  # must not raise
+    assert Config.from_env({"HTRFLOW_WEB_SITE_ONLY": "0"}).site_only is True
 
 
 def test_results_base_trailing_slash_is_stripped():
@@ -78,3 +104,172 @@ def test_internal_results_base_can_differ_from_the_public_one():
         cfg.internal_results_base
         == "http://rustfs.htr-batch.svc.cluster.local:9000/htr-results"
     )
+
+
+# --- Reader: what the adapter puts on the wire ---------------------------
+
+
+class _Response:
+    """What ``call_api(_preload_content=False)`` hands back: raw bytes."""
+
+    def __init__(self, body: dict) -> None:
+        self.data = json.dumps(body).encode()
+
+
+def _api_error(status: int) -> client.ApiException:
+    return client.ApiException(status=status, reason="from the fixture")
+
+
+@pytest.fixture
+def reader(monkeypatch) -> Reader:
+    """A real ``Reader`` whose every request is recorded, not sent.
+
+    ``reader.answer`` maps an HTTP method to what the API server says: a
+    dict is decoded as the body, an exception is raised, and a list is a
+    queue of either (so a retry can be given a different answer)."""
+    monkeypatch.setattr(
+        config,
+        "load_incluster_config",
+        lambda: (_ for _ in ()).throw(config.ConfigException("not in a pod")),
+    )
+    monkeypatch.setattr(config, "load_kube_config", lambda: None)
+    calls: list[dict] = []
+    answer: dict[str, object] = {}
+
+    def call_api(
+        self, resource_path, method, path_params=None, query_params=None,
+        header_params=None, **kwargs,
+    ):  # fmt: skip
+        calls.append(
+            {
+                "path": resource_path.format(**(path_params or {})),
+                "method": method,
+                "query": dict(query_params or []),
+                "content_type": (header_params or {}).get("Content-Type"),
+                "body": kwargs.get("body"),
+            }
+        )
+        reply = answer.get(method, {})
+        if isinstance(reply, list):
+            reply = reply.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return _Response(reply)
+
+    monkeypatch.setattr(client.ApiClient, "call_api", call_api)
+    r = Reader(
+        Config.from_env(
+            {
+                "HTRFLOW_PUBLIC_RESULTS_BASE": "http://x",
+                "HTRFLOW_NAMESPACES": "htr-a,htr-b",
+            }
+        )
+    )
+    r.calls, r.answer = calls, answer  # type: ignore[attr-defined]
+    return r
+
+
+def test_list_jobs_asks_every_namespace_with_the_campaign_selector(reader: Reader):
+    """One list per configured namespace -- the warm-up Jobs carry
+    `managed-by=converter` too, so the selector is what keeps them out."""
+    reader.answer["GET"] = {"items": [{"metadata": {"name": "kyrk"}}]}
+    assert len(reader.list_jobs()) == 2
+    assert [c["path"] for c in reader.calls] == [
+        "/apis/batch/v1/namespaces/htr-a/jobs",
+        "/apis/batch/v1/namespaces/htr-b/jobs",
+    ]
+    assert {c["query"]["labelSelector"] for c in reader.calls} == {LABEL_SELECTOR}
+
+
+def test_list_warmups_asks_for_the_warmup_jobs_instead(reader: Reader):
+    reader.answer["GET"] = {"items": []}
+    reader.list_warmups()
+    selectors = {c["query"]["labelSelector"] for c in reader.calls}
+    assert selectors == {
+        "app=htrflow-warmup,htrflow.riksarkivet.se/managed-by=converter"
+    }
+
+
+def test_list_configmaps_selects_only_a_campaigns_own(reader: Reader):
+    reader.answer["GET"] = {"items": []}
+    reader.list_configmaps()
+    assert {c["query"]["labelSelector"] for c in reader.calls} == {CAMPAIGN_CONFIGMAPS}
+
+
+def test_list_pods_asks_for_one_jobs_pods(reader: Reader):
+    reader.answer["GET"] = {"items": []}
+    reader.list_pods("htr-a", "kyrk")
+    assert reader.calls[0]["path"] == "/api/v1/namespaces/htr-a/pods"
+    selector = reader.calls[0]["query"]["labelSelector"]
+    assert selector == "batch.kubernetes.io/job-name=kyrk"
+
+
+def test_a_missing_object_is_none_not_an_error(reader: Reader):
+    """A campaign whose Job the TTL reaped is a 404, and the detail route
+    falls back to its record on exactly this ``None`` (B76)."""
+    reader.answer["GET"] = _api_error(404)
+    assert reader.get_job("htr-a", "gamla") is None
+    assert reader.get_configmap("htr-a", "campaign-gamla") is None
+
+
+@pytest.mark.parametrize("status", [403, 429, 500])
+def test_a_refused_read_is_one_exception_the_api_can_answer(
+    reader: Reader, status: int
+):
+    reader.answer["GET"] = _api_error(status)
+    with pytest.raises(ClusterUnavailable):
+        reader.list_jobs()
+
+
+def test_a_connection_that_never_answers_is_the_same_exception(reader: Reader):
+    """urllib3 raises for a refused connection or a timeout long before
+    there is an HTTP status to look at."""
+    reader.answer["GET"] = MaxRetryError(None, "http://apiserver")
+    with pytest.raises(ClusterUnavailable):
+        reader.list_jobs()
+
+
+RECORD = {
+    "apiVersion": "v1",
+    "kind": "ConfigMap",
+    "metadata": {"name": "campaign-kyrk-status", "namespace": "htr-a"},
+    "data": {"phase": "Running"},
+}
+
+
+def test_the_record_is_applied_the_way_a_server_side_apply_is(reader: Reader):
+    """The content type is the whole difference between a server-side apply
+    and a strategic-merge patch, which would merge `data` instead of
+    replacing it and never drop a key this service stopped writing."""
+    reader.apply_configmap(RECORD)
+    (call,) = reader.calls
+    assert call["method"] == "PATCH"
+    assert call["path"] == "/api/v1/namespaces/htr-a/configmaps/campaign-kyrk-status"
+    assert call["content_type"] == "application/apply-patch+yaml"
+    assert call["query"]["fieldManager"] == FIELD_MANAGER
+    assert call["body"] == RECORD
+
+
+def test_the_apply_never_forces_another_managers_field(reader: Reader):
+    """`htrflow-campaigns apply` writes this same record from the live Job
+    once a campaign is over, and its terminal values are the authoritative
+    ones. Forcing would take them over on every poll of the status page."""
+    reader.apply_configmap(RECORD)
+    assert "force" not in reader.calls[0]["query"]
+
+
+def test_a_conflicted_apply_is_retried_once(reader: Reader):
+    """409 is what the API server says while another manager is mid-write."""
+    reader.answer["PATCH"] = [_api_error(409), {}]
+    reader.apply_configmap(RECORD)
+    assert len(reader.calls) == 2
+
+
+def test_a_second_conflict_is_left_to_the_caller(reader: Reader):
+    """The other manager really does own the field. `app.py` logs that once
+    per namespace and answers the request anyway -- a record a few minutes
+    old beats a status page nobody can read."""
+    reader.answer["PATCH"] = [_api_error(409), _api_error(409)]
+    with pytest.raises(ClusterUnavailable):
+        reader.apply_configmap(RECORD)
+    assert len(reader.calls) == 2

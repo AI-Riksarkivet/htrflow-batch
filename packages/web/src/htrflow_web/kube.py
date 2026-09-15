@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping
+from typing import Protocol
 
 from kubernetes import client, config
 from pydantic import BaseModel, ConfigDict, Field
@@ -123,7 +124,32 @@ def _read(api: object, method: str, *args: object, **kwargs: object) -> dict | N
     return json.loads(resp.data)
 
 
+class ReaderLike(Protocol):
+    """What ``app.py`` asks of whatever it is handed: ``Reader`` in a pod,
+    ``NoCluster`` in site-only mode, a fake in the tests. Written down so the
+    doubles cannot drift from the real adapter -- a fake that answers with
+    one fewer argument passes its own tests and proves nothing about the
+    route (2026-09-14 audit); a test binds every signature below against
+    each of them.
+
+    ``apply_configmap`` is deliberately absent: site-only mode has no cluster
+    to write to, and ``app.py`` asks for the attribute rather than calling
+    into a 503 on every request.
+    """
+
+    cfg: Config | None
+
+    def list_jobs(self) -> list[dict]: ...
+    def list_warmups(self) -> list[dict]: ...
+    def get_job(self, namespace: str, name: str) -> dict | None: ...
+    def get_configmap(self, namespace: str, name: str) -> dict | None: ...
+    def list_configmaps(self) -> list[dict]: ...
+    def list_pods(self, namespace: str, job_name: str) -> list[dict]: ...
+
+
 class Reader:
+    cfg: Config
+
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         try:
@@ -168,17 +194,30 @@ class Reader:
         """The one write this service makes. Raises like any other client
         call — ``app.py`` logs it and answers the request anyway, because a
         status page that 500s when it cannot write a record is worse than
-        one whose record is a few minutes old."""
+        one whose record is a few minutes old.
+
+        Deliberately NOT forced (2026-09-14 audit). `htrflow-campaigns
+        apply` writes this same record from the live Job once a campaign is
+        over, and those terminal values are the authoritative ones; forcing
+        would take the fields back off it on every poll of an open status
+        page. A 409 while the other manager is mid-write is retried once,
+        and a second one is left to stand.
+        """
         meta = body["metadata"]
-        self.core.patch_namespaced_config_map(
-            meta["name"],
-            meta["namespace"],
-            body,
-            field_manager=FIELD_MANAGER,
-            force=True,
-            _content_type=_APPLY_PATCH,
-            _preload_content=False,
-        )
+        for attempt in (1, 2):
+            try:
+                self.core.patch_namespaced_config_map(
+                    meta["name"],
+                    meta["namespace"],
+                    body,
+                    field_manager=FIELD_MANAGER,
+                    _content_type=_APPLY_PATCH,
+                    _preload_content=False,
+                )
+                return
+            except client.ApiException as e:
+                if e.status != 409 or attempt == 2:
+                    raise ClusterUnavailable(f"apply {meta['name']}: {e.status}") from e
 
     def list_pods(self, namespace: str, job_name: str) -> list[dict]:
         body = _read(
