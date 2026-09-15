@@ -1,0 +1,9 @@
+flowchart LR
+  G["campaigns<br/>repo"]
+  V["validate<br/>and render"]
+  R["rendered/<br/>in git"]
+  K["Indexed Job<br/>ConfigMaps"]
+  Q["Kueue<br/>GPU quota"]
+  P["GPU pod<br/>one volume"]
+  S[("S3 bucket<br/>ALTO, PAGE")]
+  G --> V --> R --> K --> Q --> P --> S
