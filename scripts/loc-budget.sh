@@ -747,7 +747,12 @@ check web       "$(count packages/web/src -name '*.py')" 1792
 # fetch target and was only ever caught by whichever component happened to
 # check it again. They are refined at the boundary now, nullable where the
 # API really does send null.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3964
+# 3964 -> 4026 (2026-09-14, audit) F10: a volume of a few hundred pages
+# leaves a run log of tens of megabytes, and the live page re-parsed and
+# re-rendered the whole of it every fifteen seconds. The end is drawn by
+# default -- cut at a line boundary -- with the rest one click away and the
+# `raw` link still opening the whole object.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4026
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

@@ -120,3 +120,20 @@ export function isTerminalLog(text: string): boolean {
   const tail = text.split("\n").slice(-500).join("\n");
   return TERMINAL_RE.test(tail);
 }
+
+/**
+ * How much of a run log the page renders by default. A volume of a few
+ * hundred pages leaves a log of tens of megabytes, and the whole of it was
+ * re-parsed and re-rendered on every live poll (2026-09-14 audit) — work
+ * nobody asked for, since what a reader following a run wants is the end.
+ */
+export const LOG_TAIL_BYTES = 2_000_000;
+
+/** The last `limit` characters of a log, cut at a line boundary so the
+ * first line shown is a whole one. */
+export function tailOf(text: string, limit: number = LOG_TAIL_BYTES): string {
+  if (text.length <= limit) return text;
+  const cut = text.length - limit;
+  const nl = text.indexOf("\n", cut);
+  return text.slice(nl === -1 ? cut : nl + 1);
+}

@@ -15,8 +15,10 @@
   } from "$lib/run.js";
   import {
     isTerminalLog,
+    LOG_TAIL_BYTES,
     parseRunLog,
     splitLogLine,
+    tailOf,
     type LogGroup,
   } from "$lib/runlog.js";
 
@@ -152,8 +154,20 @@
     }
   });
 
+  // A volume of a few hundred pages leaves a log of tens of megabytes, and
+  // the whole of it was re-parsed and re-rendered on every live poll
+  // (2026-09-14 audit). What a reader following a run wants is the end, so
+  // that is what is drawn — with the rest one click away, and nothing
+  // thrown away: `raw` still opens the whole object in a tab.
+  let whole = $state(false);
+  const clipped = $derived(
+    !whole && logText !== null && logText.length > LOG_TAIL_BYTES,
+  );
+  const shown = $derived(
+    logText === null ? null : whole ? logText : tailOf(logText),
+  );
   const parsed = $derived<{ groups: LogGroup[] } | null>(
-    logText !== null ? parseRunLog(logText) : null,
+    shown !== null ? parseRunLog(shown) : null,
   );
 
   // Tint for the per-line level chip. WARNING/ERROR/CRITICAL get the same
@@ -215,6 +229,15 @@
         <pre class="code-block">{manifest.pipeline_yaml}</pre>
       </details>
     {/if}
+  {/if}
+
+  {#if clipped}
+    <p class="clipped">
+      Showing the end of this log.
+      <button type="button" onclick={() => (whole = true)}
+        >show whole log</button
+      >
+    </p>
   {/if}
 
   <section class="log" aria-label="run log">
@@ -343,6 +366,28 @@
     .pulse {
       animation: none;
     }
+  }
+
+  .clipped {
+    color: var(--muted-foreground);
+    font-size: 0.8rem;
+    margin: 0 0 0.6rem;
+  }
+
+  .clipped button {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--primary);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
+  .clipped button:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 3px;
   }
 
   details.pipeline-yaml {
