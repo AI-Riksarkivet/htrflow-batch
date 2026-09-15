@@ -7,6 +7,9 @@
 #   CHROME_PATH                 the browser Marp renders with
 #   PUPPETEER_EXECUTABLE_PATH   the browser the Mermaid CLI renders with
 #
+# Setting either one sets the other. Both renderers run with Chromium's
+# sandbox off, because it needs user namespaces this host may not allow.
+#
 #   CHROME_PATH=/path/to/chrome PUPPETEER_EXECUTABLE_PATH=/path/to/chrome \
 #     scripts/slides.sh
 #
@@ -40,6 +43,12 @@ fi
 if [ -n "${PUPPETEER_EXECUTABLE_PATH:-}" ] && [ -z "${CHROME_PATH:-}" ]; then
   export CHROME_PATH="$PUPPETEER_EXECUTABLE_PATH"
 fi
+
+# Chromium's sandbox needs unprivileged user namespaces, which many hosts now
+# restrict. Both renderers open only files from this checkout, so both are run
+# with the sandbox off: CHROME_NO_SANDBOX for Marp, and --no-sandbox in the
+# Puppeteer config for the Mermaid CLI. Override CHROME_NO_SANDBOX to keep it.
+export CHROME_NO_SANDBOX=${CHROME_NO_SANDBOX:-true}
 
 # Puppeteer refuses some binaries unless the path arrives through its own
 # config file, so write one and pass it with -p.
@@ -93,10 +102,18 @@ PY
       -i "$mmd" -o "$svg" -b transparent >/dev/null
   done
 
+  # --html allows raw HTML in the markdown (the column and table helpers).
+  # The output format comes from -o, and needs a flag of its own only where
+  # Marp asks for one — passing --html as a format would collide with it.
   for fmt in html pdf pptx; do
     echo "  $OUT_DIR/$name.$fmt"
-    $MARP --theme "$THEME" --html --allow-local-files \
-      --"$fmt" -o "$OUT_DIR/$name.$fmt" "$build" >/dev/null
+    case "$fmt" in
+      html) flag="" ;;
+      *) flag="--$fmt" ;;
+    esac
+    # shellcheck disable=SC2086  # $flag is one optional word, or none
+    $MARP --no-stdin --theme "$THEME" --html --allow-local-files \
+      $flag -o "$OUT_DIR/$name.$fmt" "$build" >/dev/null
   done
 
   rm -f "$build"
