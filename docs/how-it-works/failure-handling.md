@@ -141,6 +141,7 @@ Resources, mounts and pod hardening are in
 - a run where every processed page failed and nothing was resumed
 - a model-load `OSError`, including a model missing from the read-only cache
 - five consecutive upload failures (`UploadOutage`)
+- three consecutive pipeline rebuild failures after a dead worker thread
 
 The full table is in the [Wrapper reference](../reference/wrapper.md).
 

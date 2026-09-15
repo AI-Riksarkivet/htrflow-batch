@@ -217,7 +217,14 @@ fail=0
 # its failure is read, and huggingface_hub quotes back the URL it called,
 # query and all. The lines are the installer and the paragraph saying why
 # basicConfig cannot do it and why a previous handler is dropped first.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2967
+# 2967 -> 2997 (2026-09-14, audit W9): three consecutive pipeline rebuild
+# failures end the run. A rebuild that cannot succeed degraded silently --
+# every later page failed, and since the pages before the first dead worker
+# thread came out `ok` the all-failed guard never fired, so the volume
+# published a manifest of 600 failures and left the index green. The counter,
+# the `Unrecoverable` channel the page loop does not absorb, and the two
+# paragraphs saying which bargain each is.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2997
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

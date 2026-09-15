@@ -30,7 +30,7 @@ from .iiif import (
 from .logship import LogCapture
 from .progress import Progress
 from .store import ResultStore
-from .stream import PageOutcome, PageStream, StreamStats, consume
+from .stream import PageOutcome, PageStream, StreamStats, Unrecoverable, consume
 from .synthetic import build_manifest
 
 log = logging.getLogger("htrflow_batch")
@@ -124,21 +124,40 @@ def terminate(env: Mapping[str, str], reason: dict) -> None:
         log.warning("could not write termination log to %s", path)
 
 
+#: Consecutive pipeline rebuild failures after which the run is abandoned
+#: (W9), the same bargain as stream.MAX_UPLOAD_FAILURES: a rebuild that cannot
+#: succeed makes every remaining page fail, and because the pages before the
+#: first death came out `ok` the all-failed guard never fires -- so the volume
+#: would publish a manifest of 600 failures and leave the index green.
+MAX_REBUILD_FAILURES = 3
+
+
 def _default_factory(cfg: Config):
     from . import driver  # htrflow imports stay function-local
 
     out_dir = Path(cfg.workdir) / "outputs"
     pipeline = driver.load_pipeline(cfg.pipeline_path, out_dir)
+    rebuild_failures = 0
 
     def process(image_path: Path):
-        nonlocal pipeline
+        nonlocal pipeline, rebuild_failures
         if pipeline is None:
             # B88: the previous page killed an htrflow worker thread, so that
             # pipeline is unusable. Rebuild here rather than in the handler
             # below, so the failed page keeps its own error -- the models come
             # back from the cache PVC, not the Hub.
             log.warning("rebuilding the htrflow pipeline after a dead worker thread")
-            pipeline = driver.load_pipeline(cfg.pipeline_path, out_dir)
+            try:
+                pipeline = driver.load_pipeline(cfg.pipeline_path, out_dir)
+            except Exception as e:
+                rebuild_failures += 1
+                if rebuild_failures >= MAX_REBUILD_FAILURES:
+                    raise Unrecoverable(
+                        f"{rebuild_failures} consecutive pipeline rebuilds failed, "
+                        f"last: {e!r} — every remaining page would fail the same way"
+                    ) from e
+                raise
+            rebuild_failures = 0
         try:
             files = driver.process_page(pipeline, image_path, out_dir)
         except driver.PipelineDead:

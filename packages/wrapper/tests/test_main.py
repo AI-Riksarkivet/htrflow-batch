@@ -1434,3 +1434,74 @@ def test_a_successful_run_returns_normally(env, cfg, s3, hard_exits):
     a run that worked still exits the ordinary way."""
     assert main(env, process_page_factory=fake_factory) == EXIT_OK
     assert hard_exits == []
+
+
+def _dead_pipeline_pages(cfg, tmp_path, monkeypatch, rebuilds: list, pages: int):
+    """A pipeline that kills its worker thread on every page, with the
+    rebuilds after it scripted: ``True`` builds, ``False`` raises. Returns the
+    fetched pages to hand to ``consume``."""
+    from htrflow_batch import driver
+    from htrflow_batch.fetch import FetchResult
+    from htrflow_batch.iiif import PageRef
+
+    built = []
+
+    def load_pipeline(path, out_dir):
+        ok = rebuilds[len(built)]
+        built.append(ok)
+        if not ok:
+            raise OSError("CUDA error: out of memory")
+        return object()
+
+    def process_page(pipeline, image_path, out_dir):
+        raise driver.PipelineDead(f"page {image_path.stem}: worker thread died")
+
+    monkeypatch.setattr(driver, "load_pipeline", load_pipeline)
+    monkeypatch.setattr(driver, "process_page", process_page)
+    monkeypatch.setattr(driver, "release_pipeline", lambda pipeline: None)
+    items = []
+    for i in range(1, pages + 1):
+        image = tmp_path / f"{i:04d}.jpg"
+        image.write_bytes(b"jpg")
+        items.append(
+            FetchResult(
+                page=PageRef(index=i, name=f"{i:04d}", image_url="x", canvas={}),
+                path=image,
+                error=None,
+            )
+        )
+    return items
+
+
+def test_rebuilds_that_keep_failing_abort_the_run(cfg, tmp_path, monkeypatch):
+    """W9: a rebuild that cannot succeed degraded silently -- every later page
+    failed, and because the first page or two had come out `ok` the all-failed
+    guard never fired: 600 failed pages, manifest.json published, the index
+    green. Three consecutive rebuild failures end the run instead, transient,
+    so the retry gets a fresh pod."""
+    from htrflow_batch.stream import Unrecoverable, consume
+
+    items = _dead_pipeline_pages(
+        cfg, tmp_path, monkeypatch, [True, False, False, False], 4
+    )
+    stats = StreamStats()
+    with pytest.raises(Unrecoverable, match="3 consecutive pipeline rebuilds failed"):
+        consume(
+            items, main_mod._default_factory(cfg), lambda name, files: None, stats=stats
+        )
+    assert [r.status for r in stats.results.values()] == ["failed"] * 3
+
+
+def test_a_rebuild_that_works_starts_the_count_again(cfg, tmp_path, monkeypatch):
+    """Only CONSECUTIVE failures mean the pipeline cannot be rebuilt at all;
+    a rebuild that works says the process is still healthy."""
+    from htrflow_batch.stream import Unrecoverable, consume
+
+    rebuilds = [True, False, False, True, False, False, False]
+    items = _dead_pipeline_pages(cfg, tmp_path, monkeypatch, rebuilds, 7)
+    stats = StreamStats()
+    with pytest.raises(Unrecoverable):
+        consume(
+            items, main_mod._default_factory(cfg), lambda name, files: None, stats=stats
+        )
+    assert len(stats.results) == 6  # the run reached page 7 before it gave up
