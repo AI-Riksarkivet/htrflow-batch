@@ -597,7 +597,13 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # itself now, built from its own environment, so the page's idea of where
 # the results live cannot drift from the API's -- which is what the run-log
 # route checks its `?log=` and `?manifest=` against.
-check web       "$(count packages/web/src -name '*.py')" 1817
+# 1817 -> 1842 (2026-09-14, audit review) a 409 on the record apply was
+# raised as ClusterUnavailable, which put the namespace into the ten-minute
+# cooldown kept for a DENIED grant -- but a conflict says another field
+# manager owns the field, which is exactly what `apply` writing the terminal
+# record looks like. Its own `ApplyConflict`, and the retry waits a moment
+# instead of meeting the same half-finished write.
+check web       "$(count packages/web/src -name '*.py')" 1842
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

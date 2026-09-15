@@ -19,11 +19,13 @@ import pytest
 from kubernetes import client, config
 from urllib3.exceptions import MaxRetryError
 
+from htrflow_web import kube
 from htrflow_web.kube import (
     CAMPAIGN_CONFIGMAPS,
     FIELD_MANAGER,
     LABEL_SELECTOR,
     PARTIAL_METADATA,
+    ApplyConflict,
     ClusterUnavailable,
     Config,
     Reader,
@@ -288,11 +290,39 @@ def test_a_conflicted_apply_is_retried_once(reader: Reader):
     assert len(reader.calls) == 2
 
 
-def test_a_second_conflict_is_left_to_the_caller(reader: Reader):
-    """The other manager really does own the field. `app.py` logs that once
-    per namespace and answers the request anyway -- a record a few minutes
-    old beats a status page nobody can read."""
+def test_the_retry_waits_for_the_other_manager_to_finish(reader, monkeypatch):
+    """Retrying the same body in the same microsecond meets the same
+    half-finished write. A short pause is the whole point of the retry."""
+    slept: list[float] = []
+    monkeypatch.setattr(kube.time, "sleep", slept.append)
+    reader.answer["PATCH"] = [_api_error(409), {}]
+    reader.apply_configmap(RECORD)
+    assert slept == [kube.CONFLICT_PAUSE]
+
+
+def test_a_second_conflict_is_a_conflict_not_a_refusal(reader, monkeypatch):
+    """`apply` owns these fields now, and its terminal values are the
+    authoritative ones -- there is nothing wrong with this service's grant.
+    A distinct exception, so `app.py` does not put the namespace into the
+    cooldown it keeps for a denied one (2026-09-14 review)."""
+    monkeypatch.setattr(kube.time, "sleep", lambda _s: None)
     reader.answer["PATCH"] = [_api_error(409), _api_error(409)]
-    with pytest.raises(ClusterUnavailable):
+    with pytest.raises(ApplyConflict):
         reader.apply_configmap(RECORD)
     assert len(reader.calls) == 2
+
+
+def test_a_conflict_is_not_reported_as_the_cluster_being_unavailable(
+    reader, monkeypatch
+):
+    monkeypatch.setattr(kube.time, "sleep", lambda _s: None)
+    reader.answer["PATCH"] = [_api_error(409), _api_error(409)]
+    with pytest.raises(Exception) as caught:
+        reader.apply_configmap(RECORD)
+    assert not isinstance(caught.value, ClusterUnavailable)
+
+
+def test_a_refused_apply_is_still_the_cluster_saying_no(reader: Reader):
+    reader.answer["PATCH"] = _api_error(403)
+    with pytest.raises(ClusterUnavailable):
+        reader.apply_configmap(RECORD)

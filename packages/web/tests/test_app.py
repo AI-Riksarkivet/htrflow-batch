@@ -17,7 +17,12 @@ from htrflow_web.app import (
     NoCluster,
     create_app,
 )
-from htrflow_web.kube import ClusterUnavailable, Reader, ReaderLike
+from htrflow_web.kube import (
+    ApplyConflict,
+    ClusterUnavailable,
+    Reader,
+    ReaderLike,
+)
 
 JOB = {
     "metadata": {
@@ -641,6 +646,31 @@ class _Refusing(RecordingReader):
         raise RuntimeError("configmaps is forbidden")
 
 
+class _Contested(RecordingReader):
+    """Every write meets another field manager, the way `apply`'s terminal
+    record does once a campaign is over."""
+
+    def __init__(self, live=None) -> None:
+        super().__init__(live)
+        self.attempts = 0
+
+    def apply_configmap(self, body: dict) -> None:
+        self.attempts += 1
+        raise ApplyConflict(body["metadata"]["name"])
+
+
+def test_a_contested_record_is_not_treated_as_a_refused_namespace(caplog):
+    """A 409 says another manager owns the field, not that this service's
+    grant went away -- so it must not stop the writes for ten minutes, and
+    it is not worth a line in the log either (2026-09-14 review)."""
+    reader = _Contested()
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    for _ in range(3):
+        assert client.get("/api/v1/jobs").status_code == 200
+    assert reader.attempts == 3, "still tried on every poll"
+    assert caplog.text == ""
+
+
 class ManyReader(RecordingReader):
     """More campaigns in one namespace than one request may write for."""
 
@@ -760,13 +790,13 @@ def test_every_reader_double_answers_the_calls_the_routes_make(double):
     method is bound with the arguments `kube.ReaderLike` declares -- a fake
     that dropped `namespace` fails here rather than in production."""
     assert READER_METHODS, "the protocol has methods to check"
-    declared = {
+    on_class = {
         name
         for base in double.__mro__
         for name in (*vars(base), *getattr(base, "__annotations__", {}))
     }
     for attr in ReaderLike.__annotations__:
-        assert attr in declared, f"{double.__name__} has no {attr}"
+        assert attr in on_class, f"{double.__name__} has no {attr}"
     for name, declared in READER_METHODS.items():
         impl = getattr(double, name, None)
         assert impl is not None, f"{double.__name__} has no {name}()"

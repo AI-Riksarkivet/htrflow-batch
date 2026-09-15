@@ -30,7 +30,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import projection
-from .kube import ClusterUnavailable
+from .kube import ApplyConflict, ClusterUnavailable
 from .progress import ProgressReader
 
 _LOG = logging.getLogger(__name__)
@@ -296,6 +296,12 @@ def create_app(
         namespace = row["namespace"]
         try:
             reader.apply_configmap(cm)
+        except ApplyConflict:
+            # `htrflow-campaigns apply` owns these fields now and its
+            # terminal values are the authoritative ones. Nothing is wrong
+            # with this service's grant, so the namespace does not go into
+            # the cooldown below (2026-09-14 review).
+            return True
         except Exception as e:  # noqa: BLE001 - any client error, same answer
             if namespace not in refused:
                 _LOG.warning("could not write %s: %s", cm["metadata"]["name"], e)
