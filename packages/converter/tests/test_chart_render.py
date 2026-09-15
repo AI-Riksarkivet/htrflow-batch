@@ -286,3 +286,42 @@ def test_the_model_revision_rule_reaches_any_configmap_carrying_a_pipeline(
     assert resources["namespaces"] == [NAMESPACE]
     assert "selector" not in resources
     assert 'data."pipeline.yaml"' in pinned["context"][0]["variable"]["jmesPath"]
+
+
+# --- D6: the apply identity's delete is namespace-wide --------------------
+
+
+def test_the_apply_identity_may_only_delete_what_the_converter_rendered(
+    full: list[dict],
+):
+    """`--prune` is a delete, so the Role grants one -- and RBAC grants it
+    over the whole resource type: every Job and every ConfigMap in the
+    namespace, a running campaign's Job and another team's ConfigMap
+    included. The prune itself only ever selects converter-labelled objects;
+    this makes that the limit rather than the intention."""
+    policy = named(full, "ClusterPolicy", f"htrflow-batch-rbac-scope-{NAMESPACE}")
+    prune = rule(policy, "apply-deletes-only-what-it-rendered")
+    match = prune["match"]["any"][0]
+    assert sorted(match["resources"]["kinds"]) == ["ConfigMap", "Job"]
+    assert match["resources"]["operations"] == ["DELETE"]
+    assert match["subjects"] == [
+        {"kind": "ServiceAccount", "name": "htrflow-campaigns", "namespace": NAMESPACE}
+    ]
+    condition = prune["validate"]["deny"]["conditions"]["all"][0]
+    # A DELETE admission review carries the object as `oldObject`; reading
+    # `request.object` there would compare against nothing at all.
+    assert "request.oldObject.metadata.labels" in condition["key"]
+    assert "htrflow.riksarkivet.se/managed-by" in condition["key"]
+    assert condition["operator"] == "NotEquals"
+    assert condition["value"] == "converter"
+
+
+def test_the_prune_rule_is_rendered_with_the_identity_it_scopes():
+    """No ServiceAccount, nothing to scope: `apply.rbac.enabled` is off by
+    default because an idle identity that may delete Jobs is a liability."""
+    rendered = render(
+        sets=DEFAULT_SETS
+        + ("security.policies.enabled=true", "apply.rbac.enabled=false")
+    )
+    policy = named(rendered, "ClusterPolicy", f"htrflow-batch-rbac-scope-{NAMESPACE}")
+    assert [r["name"] for r in policy["spec"]["rules"]] == ["web-writes-status-only"]

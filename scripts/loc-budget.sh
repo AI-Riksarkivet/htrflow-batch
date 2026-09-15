@@ -704,5 +704,11 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3857
 # 856 -> 857 (2026-09-14, audit): the model-revision rule drops its
 # `managed-by: converter` selector (four lines) for the paragraph saying why
 # a label anyone can leave off is not what identifies a pipeline (five).
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 857
+# 857 -> 893 (2026-09-14, audit): rbac-scope.yaml gains the prune rule --
+# the apply identity's `delete` is granted over every Job and ConfigMap in
+# the namespace, because that is the only shape RBAC has, and only
+# admission can hold it to the objects the converter labelled. Rendered
+# with the identity it scopes (apply.rbac.enabled), so it is never a rule
+# about a ServiceAccount that does not exist.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 893
 exit $fail
