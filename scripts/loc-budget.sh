@@ -556,7 +556,12 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # computed at fetch and cached with them, so a card read "updated 8 s ago"
 # all afternoon. The age is recomputed from the row's own timestamp on every
 # cache hit; nothing is re-fetched.
-check web       "$(count packages/web/src -name '*.py')" 1632
+# 1632 -> 1645 (2026-09-14, audit) F7: a refused namespace was remembered for
+# logging only, so an unrenewed RBAC grant still cost twenty server-side
+# applies on the critical path of every page load, for ever. The refusal now
+# also stops the writes for a cooldown, which expires so a renewed grant
+# starts working without a restart.
+check web       "$(count packages/web/src -name '*.py')" 1645
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
