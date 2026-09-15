@@ -530,6 +530,22 @@ def test_a_campaign_whose_job_is_gone_still_has_a_row():
     assert body[0]["name"] == "kyrk", "newest first, reaped rows included"
 
 
+def test_the_list_route_draws_a_reaped_row_from_metadata_alone():
+    """The record is listed as PartialObjectMetadata (2026-09-14 audit), so
+    `data` -- the campaign's whole volume list -- is simply not there. A row
+    that needed it would break here rather than on a real backfill."""
+    metadata_only = {"metadata": REAPED_RECORD["metadata"]}
+    assert "data" not in metadata_only
+    client = TestClient(
+        create_app(
+            RecordingReader([metadata_only, REAPED_STATUS]), progress=FakeProgress()
+        )
+    )
+    rows = {row["name"]: row for row in client.get("/api/v1/jobs").json()}
+    assert rows["gamla"]["jobGone"] is True
+    assert rows["gamla"]["counts"]["done"] == 4
+
+
 def test_a_campaign_configmap_with_no_record_beside_it_is_not_a_row():
     """Never observed by this API: it is being applied right now, and the
     Job will say more than a guess would."""

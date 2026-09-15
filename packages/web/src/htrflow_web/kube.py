@@ -24,6 +24,8 @@ from kubernetes import client, config
 from pydantic import BaseModel, ConfigDict, Field
 from urllib3.exceptions import HTTPError
 
+from .projection import KIND_LABEL, STATUS_KIND
+
 #: Selects campaign progress Jobs only — excludes the per-pipeline warm-up
 #: Jobs, which carry ``managed-by=converter`` too but not ``app`` or
 #: ``campaign`` (packages/converter/src/htrflow_converter/render.py).
@@ -43,6 +45,14 @@ CAMPAIGN_CONFIGMAPS = (
 #: creates the status ConfigMap or updates exactly the fields this manager
 #: owns, with no read-modify-write race against a concurrent request.
 _APPLY_PATCH = "application/apply-patch+yaml"
+
+#: A list that answers with each object's ``metadata`` and nothing else --
+#: what `kubectl get --output-watch-events=false` uses under the hood. The
+#: campaign record's ``data`` is the campaign's whole volume list, and the
+#: list route never reads it (2026-09-14 audit).
+PARTIAL_METADATA = (
+    "application/json;as=PartialObjectMetadata;g=meta.k8s.io;v=v1,application/json"
+)
 FIELD_MANAGER = "htrflow-web"
 
 _NAMESPACE_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
@@ -179,16 +189,52 @@ class Reader:
         return _read(self.core, "read_namespaced_config_map", name, namespace)
 
     def list_configmaps(self) -> list[dict]:
+        """Both ConfigMaps of every campaign in every namespace, in one list.
+
+        Two calls per namespace, not one, and the difference is `data`
+        (2026-09-14 audit). The record's `data` is `volumes.txt` -- one line
+        per volume, megabytes for a real backfill -- and the list route reads
+        nothing off it but labels and dates, so it is asked for as
+        PartialObjectMetadata and those bytes never reach this process. The
+        status ConfigMap's `data` IS the reaped campaign's row, so that one
+        is fetched whole; it is a handful of short fields.
+        """
         cms: list[dict] = []
         for ns in self.cfg.namespaces:
+            cms.extend(self._records(ns))
             body = _read(
                 self.core,
                 "list_namespaced_config_map",
                 ns,
-                label_selector=CAMPAIGN_CONFIGMAPS,
+                label_selector=f"{CAMPAIGN_CONFIGMAPS},{KIND_LABEL}={STATUS_KIND}",
             )
             cms.extend((body or {}).get("items", []))
         return cms
+
+    def _records(self, namespace: str) -> list[dict]:
+        """The campaign records of one namespace, metadata only. The typed
+        client overwrites `Accept` on every generated method, so this is the
+        one call this adapter makes through ``call_api`` itself."""
+        try:
+            resp = self.core.api_client.call_api(
+                "/api/v1/namespaces/{namespace}/configmaps",
+                "GET",
+                {"namespace": namespace},
+                [
+                    (
+                        "labelSelector",
+                        f"{CAMPAIGN_CONFIGMAPS},{KIND_LABEL}!={STATUS_KIND}",
+                    )
+                ],
+                {"Accept": PARTIAL_METADATA},
+                auth_settings=["BearerToken"],
+                _preload_content=False,
+            )
+        except client.ApiException as e:
+            raise ClusterUnavailable(f"list records: {e.status}") from e
+        except HTTPError as e:
+            raise ClusterUnavailable(f"list records: {type(e).__name__}") from e
+        return json.loads(resp.data).get("items", [])
 
     def apply_configmap(self, body: dict) -> None:
         """The one write this service makes. Raises like any other client
