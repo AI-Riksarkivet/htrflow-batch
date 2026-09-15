@@ -721,5 +721,11 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3857
 # the debugger's choosing on the GPU node, and neither the digest pin nor
 # the repository allow-list could see it. Twelve lines, all of them the
 # paragraph in each file saying why the Job rules deliberately do not.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 944
+# 944 -> 955 (2026-09-14, audit review): rbac-scope.yaml's status-name
+# pattern mirrors the converter's `_NAME_RE` rather than approximating it
+# with a DNS label -- campaign names may carry dots, and the approximation
+# would have denied the read API's write for every dotted campaign. Plus an
+# explicit `failurePolicy: Fail`, and the paragraph saying why a denied
+# write is an outage rather than a control.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 955
 exit $fail

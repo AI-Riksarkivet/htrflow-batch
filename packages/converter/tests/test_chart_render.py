@@ -18,12 +18,15 @@ Three renders, each the same command an operator would run:
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
+
+from htrflow_converter.models import _NAME_RE
 
 REPO = Path(__file__).resolve().parents[3]
 CHART = REPO / "charts" / "htrflow-batch"
@@ -117,6 +120,44 @@ def test_the_read_api_may_only_write_its_own_status_configmaps(full: list[dict])
     condition = web["validate"]["deny"]["conditions"]["all"][0]
     assert "campaign-" in condition["key"] and "-status$" in condition["key"]
     assert condition["operator"] == "Equals" and condition["value"] is False
+    # A policy that refuses a legal name is an outage, not a control: the
+    # status write would fail for that campaign and nothing would say why.
+    assert _status_name_pattern(web) == f"^campaign-{_NAME_RE.pattern[:-2]}-status$"
+    assert policy["spec"]["failurePolicy"] == "Fail"
+
+
+def _status_name_pattern(rule_body: dict) -> str:
+    key = rule_body["validate"]["deny"]["conditions"]["all"][0]["key"]
+    return re.search(r"regex_match\('([^']+)'", key).group(1)
+
+
+@pytest.mark.parametrize(
+    "campaign",
+    ["kyrk", "sdhk.1500", "a", "kyrk-1600-1700", "sdhk.1500.b-2"],
+)
+def test_every_campaign_name_the_converter_accepts_may_have_a_status(
+    full: list[dict], campaign: str
+):
+    """The converter's own name rule allows dots (`_NAME_RE`), and campaign
+    files are named after their archive references -- `sdhk.1500` is the
+    shape, not the exception. The first pattern here was a DNS *label* and
+    refused every dotted one, so with the policies on the read API's write
+    would have been denied for exactly the campaigns most likely to exist.
+    The rule mirrors `_NAME_RE` instead of approximating it.
+    """
+    assert _NAME_RE.match(campaign), "fixture is not a name the converter takes"
+    policy = named(full, "ClusterPolicy", f"htrflow-batch-rbac-scope-{NAMESPACE}")
+    pattern = _status_name_pattern(rule(policy, "web-writes-status-only"))
+    assert re.match(pattern, f"campaign-{campaign}-status")
+
+
+@pytest.mark.parametrize("name", ["htr-pipeline-demo-v1", "campaign-kyrk", "x-status"])
+def test_the_objects_the_rule_exists_to_protect_are_still_refused(
+    full: list[dict], name: str
+):
+    policy = named(full, "ClusterPolicy", f"htrflow-batch-rbac-scope-{NAMESPACE}")
+    pattern = _status_name_pattern(rule(policy, "web-writes-status-only"))
+    assert not re.match(pattern, name)
 
 
 def test_the_rbac_scope_policy_follows_the_policies_switch(default: list[dict]):
