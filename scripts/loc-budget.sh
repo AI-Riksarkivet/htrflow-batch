@@ -571,7 +571,10 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # came from was followed wherever it redirected. It is now streamed and
 # abandoned past 64 KB, redirects are refused, and the three strings a person
 # reads off the card are clipped.
-check web       "$(count packages/web/src -name '*.py')" 1690
+# 1690 -> 1695 (2026-09-14, audit) F15: a volume id went into the progress
+# URL unencoded, so an id with `../` in it -- volumes.txt is a file people
+# edit in a git repo -- was normalised into a request for another key.
+check web       "$(count packages/web/src -name '*.py')" 1695
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

@@ -290,3 +290,18 @@ def test_the_strings_a_person_reads_are_clipped():
     assert len(got["stage"]) == progress_mod.MAX_FIELD
     assert len(got["lastError"]["error"]) == progress_mod.MAX_FIELD
     assert len(got["lastError"]["page"]) == progress_mod.MAX_FIELD
+
+
+def test_a_volume_id_cannot_walk_out_of_its_own_prefix():
+    """Volume ids come off a campaign's volumes.txt, a file people edit in a
+    git repo. Unencoded, `../..` was normalised by the client into a request
+    for somebody else's key (2026-09-14 audit)."""
+    r, asked = reader({})
+    r.fetch(BASE, "../../status/logs", "active")
+    assert asked == [f"{BASE}/..%2F..%2Fstatus%2Flogs/progress.json"]
+
+
+def test_an_ordinary_volume_id_is_left_as_it_is():
+    r, asked = reader({})
+    r.fetch(BASE, "R0001203", "active")
+    assert asked == [f"{BASE}/R0001203/progress.json"]

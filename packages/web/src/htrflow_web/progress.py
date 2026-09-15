@@ -23,6 +23,7 @@ import json
 import time
 from datetime import datetime, timezone
 from typing import Callable
+from urllib.parse import quote
 
 import httpx
 
@@ -178,7 +179,11 @@ class ProgressReader:
         # has its ageSeconds recomputed against it (`_aged`), so the counts
         # in a row can be as stale as the TTL but "updated N ago" never is.
         now = time.time()
-        base = f"{results_base}/{volume_id}"
+        # Encoded: volume ids come off a campaign's volumes.txt, a file
+        # people edit in a git repo, and an id with `../` in it was
+        # normalised by the client into a request for another key
+        # (2026-09-14 audit).
+        base = f"{results_base}/{quote(volume_id, safe='')}"
         found = self._cached(f"{base}/progress.json", _from_progress, state, now)
         if found is None and state == "done":
             # Written by a wrapper that predates progress.json. One GET more,
