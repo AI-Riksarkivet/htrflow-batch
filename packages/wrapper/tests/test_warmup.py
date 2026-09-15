@@ -282,3 +282,19 @@ def test_warmup_mistyped_pipeline_setting_is_permanent(tmp_path):
     rc = main(env, load=boom)
     assert rc == EXIT_PERMANENT
     assert json.loads(term_path.read_text())["permanent"] is True
+
+
+def test_warmup_redacts_urls_in_its_output(tmp_path, capsys):
+    """W8: the warm-up pod mounts no S3 Secret, so it ships no run log and
+    `kubectl logs` is where its failure is read -- and huggingface_hub names
+    the URL it called, query and all. The batch wrapper's RedactingFormatter
+    belongs here too; basicConfig installs a plain one."""
+    env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(tmp_path / "term")}
+
+    def boom(_):
+        raise OSError("Connection error for url: https://hf.co/api/models?token=S3CRET")
+
+    assert main(env, load=boom) == EXIT_TRANSIENT
+    err = capsys.readouterr().err
+    assert "S3CRET" not in err
+    assert "https://hf.co/api/models" in err
