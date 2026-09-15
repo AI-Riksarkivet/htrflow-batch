@@ -423,3 +423,71 @@ def test_the_image_rules_see_an_ephemeral_container_too(
 
     job = rule(rendered, rule_name.replace("pod-", "job-"))
     assert "ephemeralContainers" not in job["context"][0]["variable"]["jmesPath"]
+
+
+# --- D14: defaults called production-shaped that enforce nothing ----------
+
+#: What `values-prod.yaml` cannot know: the bucket's public base, the API
+#: server as pods reach it, the image digest, and who may reach the web
+#: front. A profile that guessed any of them would be wrong on every
+#: cluster, so they stay the operator's to pass.
+PROD_SETS = REQUIRED_SETS + ("network.web.ingressCidrs={10.16.0.0/16}",)
+
+
+@pytest.fixture(scope="module")
+def prod() -> list[dict]:
+    return render(values="values-prod.yaml", sets=PROD_SETS)
+
+
+def test_the_production_profile_turns_on_what_the_defaults_leave_off(
+    prod: list[dict],
+):
+    """`values.yaml` calls itself production-shaped and ships the policies
+    off, the allow-list empty, model revisions optional, image verification
+    off and Pod Security at baseline -- so an install that follows the page
+    enforces none of what this repository built. The profile is where those
+    are on, and it renders."""
+    policies = {o["metadata"]["name"] for o in objects(prod, "ClusterPolicy")}
+    assert policies == {
+        f"htrflow-batch-{name}-{NAMESPACE}"
+        for name in ("images-pinned", "images-allowed", "model-revision",
+                     "verify-images", "rbac-scope")
+    }
+    for policy in objects(prod, "ClusterPolicy"):
+        assert policy["spec"]["validationFailureAction"] == "Enforce"
+
+    values = yaml.safe_load((CHART / "values-prod.yaml").read_text(encoding="utf-8"))
+    assert values["security"]["psaEnforce"] == "restricted"
+    assert values["security"]["requireModelRevision"] is True
+    assert values["security"]["allowedImageRepos"] == ["docker.io/riksarkivet/"]
+    assert values["security"]["verifyImages"]["subject"] == SIGNING_SUBJECT
+
+
+def test_every_pod_the_profile_renders_passes_pod_security_restricted(
+    prod: list[dict],
+):
+    """`psaEnforce: restricted` is only honest if the pods clear it. The
+    chart renders one pod of its own; the Jobs the converter renders are
+    checked by its own tests against the same shape."""
+    pods = [
+        o["spec"]["template"]["spec"]
+        for o in objects(prod, "Deployment")
+    ]
+    assert pods
+    for spec in pods:
+        assert spec["securityContext"]["runAsNonRoot"] is True
+        assert spec["securityContext"]["seccompProfile"] == {"type": "RuntimeDefault"}
+        assert spec["securityContext"]["runAsUser"] >= 1000
+        for container in spec["containers"]:
+            security = container["securityContext"]
+            assert security["allowPrivilegeEscalation"] is False
+            assert security["readOnlyRootFilesystem"] is True
+            assert security["capabilities"] == {"drop": ["ALL"]}
+
+
+def test_the_profile_leaves_the_site_specific_values_to_the_site():
+    """A profile that guessed the results base, the API server address or
+    the ingress ranges would be wrong on every cluster. It must fail asking
+    for them, not render something plausible."""
+    refused = helm_template(values="values-prod.yaml")
+    assert refused.returncode != 0

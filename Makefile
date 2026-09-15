@@ -172,15 +172,25 @@ CHART_DEFAULT_SETS := --set publicResultsBase=https://x/ \
                        --set network.apiServer.cidr=10.16.51.10/32 \
                        --set network.web.allowPublicIngress=true \
                        --set web.image=docker.io/riksarkivet/htrflow-web@sha256:0000000000000000000000000000000000000000000000000000000000000000
+# The production profile is rendered like any other input: it is the file
+# the deployment page tells operators to start from, so a change that stops
+# it rendering has to fail here. Its site-specific values are the operator's,
+# so the fixture supplies placeholders for them.
+CHART_PROD_SETS := --set publicResultsBase=https://x/ \
+                       --set network.apiServer.cidr=10.16.51.10/32 \
+                       --set network.web.ingressCidrs='{10.16.0.0/16}' \
+                       --set web.image=docker.io/riksarkivet/htrflow-web@sha256:0000000000000000000000000000000000000000000000000000000000000000
 helm-lint:
 	helm lint $(CHART) $(CHART_DEFAULT_SETS)
 	helm lint $(CHART) -f $(CHART)/ci/full-values.yaml
+	helm lint $(CHART) -f $(CHART)/values-prod.yaml $(CHART_PROD_SETS)
 	helm lint $(DEVSTACK_CHART)
 	helm lint $(DEVSTACK_CHART) -f $(DEVSTACK_CHART)/ci/full-values.yaml
 
 helm-template: helm-lint
 	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_DEFAULT_SETS) > /dev/null
 	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/ci/full-values.yaml > /dev/null
+	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/values-prod.yaml $(CHART_PROD_SETS) > /dev/null
 	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) > /dev/null
 	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) -f $(DEVSTACK_CHART)/ci/full-values.yaml > /dev/null
 	@# RustFS on credentials nobody chose must be refused (B63 Task 27).
@@ -189,6 +199,7 @@ helm-template: helm-lint
 	@if command -v kubeconform >/dev/null; then \
 	  helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_DEFAULT_SETS) | kubeconform -strict -ignore-missing-schemas -summary && \
 	  helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/ci/full-values.yaml | kubeconform -strict -ignore-missing-schemas -summary && \
+	  helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/values-prod.yaml $(CHART_PROD_SETS) | kubeconform -strict -ignore-missing-schemas -summary && \
 	  helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) | kubeconform -strict -ignore-missing-schemas -summary && \
 	  helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) -f $(DEVSTACK_CHART)/ci/full-values.yaml | kubeconform -strict -ignore-missing-schemas -summary; \
 	else echo "kubeconform not installed — schema validation skipped"; fi
