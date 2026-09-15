@@ -514,3 +514,52 @@ def test_campaign_priority_must_be_a_label_value(tmp_path, bad):
     (problem,) = exc_info.value.problems
     assert problem.startswith('campaigns/kyrk.yaml: "priority" ')
     assert "kueue.x-k8s.io/priority-class" in problem
+
+
+@pytest.mark.parametrize(
+    "key,bad",
+    [
+        ("namespace", "HTR-Batch"),
+        ("namespace", ""),
+        ("queue", "htr batch"),
+        ("s3_secret", "htr_batch_s3"),
+        ("data_pvc", "-htr-test-data"),
+        ("runtime_class", "NVIDIA"),
+    ],
+)
+def test_a_converter_yaml_object_name_must_be_a_kubernetes_name(tmp_path, key, bad):
+    """Every one of these names an object the API server has to accept. A
+    capitalised namespace passed `validate` and was refused at apply time,
+    which is after the render is committed and the campaign is live."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + f'\n{key}: "{bad}"\n')
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert problem.startswith(
+        f'converter.yaml: "{key}" is not a Kubernetes object name'
+    )
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'node_selector: {"Nvidia Com/gpu": "present"}',
+        'node_selector: {"nvidia.com/gpu.present": "yes please"}',
+    ],
+)
+def test_a_node_selector_that_is_not_a_label_is_refused(tmp_path, line):
+    """`node_selector` is copied into the pod spec as `nodeSelector`, where
+    both halves have to be a label -- a pod the API server will not take is a
+    campaign that never starts."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + f"\n{line}\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert problem.startswith('converter.yaml: "node_selector" ')
+    assert "node label" in problem

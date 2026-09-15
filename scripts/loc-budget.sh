@@ -405,7 +405,12 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # value it is rendered into (kueue.x-k8s.io/priority-class). A free string
 # there was a 422 at apply time, after the campaign's ConfigMap had already
 # been written.
-check converter "$(count packages/converter/src -name '*.py')" 2306
+# 2306 -> 2366 (2026-09-14, audit C6): every converter.yaml setting that
+# names a cluster object (namespace, queue, s3_secret, data_pvc,
+# runtime_class) is checked as one, and node_selector as the labels it is
+# copied into. A capitalised namespace used to pass `validate` and be
+# refused at apply time, with the render already committed.
+check converter "$(count packages/converter/src -name '*.py')" 2366
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
