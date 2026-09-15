@@ -1366,3 +1366,94 @@ describe("the viewer link is built the way every other link is", () => {
     );
   });
 });
+
+// R1: the Job is gone, but manifest.json, iiif.json, alto/ and the run log
+// are all still in the bucket. The card has to draw those rows like any
+// other — the whole point of rebuilding them server-side was that a
+// finished campaign stays openable (the product owner, 2026-09-14).
+describe("a reaped campaign's volumes are still openable", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const reaped: JobSummary = {
+    ...job,
+    phase: "Succeeded",
+    counts: { total: 3, active: 0, done: 2, failed: 1 },
+    finishedAt: "2026-09-08T10:00:00Z",
+    jobGone: true,
+  };
+
+  const failedRow = {
+    ...volumeFailed,
+    reason: { stage: null, permanent: null, error: "manifest 404" },
+  };
+
+  async function openCard(rows: unknown[], row: JobSummary = reaped) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          ...row,
+          failures: rows.filter(
+            (v) => (v as { state: string }).state === "failed",
+          ),
+          volumes: rows,
+        }),
+      ),
+    );
+    render(CampaignCard, { job: row });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+    return screen.getAllByRole("row").slice(1) as HTMLElement[];
+  }
+
+  test("every row is there, with its open, source and log links", async () => {
+    const rows = await openCard([volumeDone, failedRow]);
+    expect(rows).toHaveLength(2);
+    const done = within(rows[0] as HTMLElement);
+    expect(done.getByRole("link", { name: "open" })).toHaveAttribute(
+      "href",
+      "uv.html#?manifest=" + encodeURIComponent(volumeDone.iiifUrl),
+    );
+    expect(done.getByRole("link", { name: "source" })).toHaveAttribute(
+      "href",
+      volumeDone.sourceUrl,
+    );
+    expect(done.getByRole("link", { name: "log" })).toHaveAttribute(
+      "href",
+      expect.stringContaining(encodeURIComponent(volumeDone.logUrl)),
+    );
+  });
+
+  test("a failed row still says why, next to its log", async () => {
+    const rows = await openCard([volumeDone, failedRow]);
+    const failed = within(rows[1] as HTMLElement);
+    expect(failed.getByText(/manifest 404/)).toBeInTheDocument();
+    expect(failed.getByRole("link", { name: "log" })).toBeInTheDocument();
+  });
+
+  test("a campaign nobody recorded the ending of still lists its volumes", async () => {
+    const unknown: JobSummary = { ...reaped, phase: "Unknown" };
+    const rows = await openCard(
+      [{ ...volumeDone, state: "unknown", progress: null }],
+      unknown,
+    );
+    expect(rows).toHaveLength(1);
+    const row = within(rows[0] as HTMLElement);
+    expect(row.getByText("unknown")).toBeInTheDocument();
+    // Nothing says the result is published, so "open" falls back to the
+    // volume's own source manifest rather than a file that may not be there.
+    expect(row.getByRole("link", { name: "open" })).toHaveAttribute(
+      "href",
+      "uv.html#?manifest=" + encodeURIComponent(volumeDone.sourceUrl),
+    );
+    expect(row.getByRole("link", { name: "log" })).toBeInTheDocument();
+  });
+});
