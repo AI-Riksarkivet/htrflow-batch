@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,8 +10,13 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from htrflow_web.app import RECORD_WRITES_PER_REQUEST, SECURITY_HEADERS, create_app
-from htrflow_web.kube import ClusterUnavailable
+from htrflow_web.app import (
+    RECORD_WRITES_PER_REQUEST,
+    SECURITY_HEADERS,
+    NoCluster,
+    create_app,
+)
+from htrflow_web.kube import ClusterUnavailable, Reader, ReaderLike
 
 JOB = {
     "metadata": {
@@ -83,6 +89,9 @@ class FakeReader:
             "campaign-kyrk": CONFIGMAP,
             "htr-pipeline-demo-v1": PIPELINE_CONFIGMAP,
         }.get(name)
+
+    def list_configmaps(self) -> list[dict]:
+        return []  # no record ConfigMaps: only the Job answers for a campaign
 
     def list_pods(self, namespace: str, job_name: str) -> list[dict]:
         return []
@@ -650,3 +659,36 @@ def test_the_502_never_quotes_the_client_error():
         raise_server_exceptions=False,
     )
     assert "403" not in client.get("/api/v1/jobs").text
+
+
+# --- the doubles cannot drift from the real adapter (audit T2) ------------
+
+
+READER_METHODS = {
+    name: inspect.signature(fn)
+    for name, fn in vars(ReaderLike).items()
+    if inspect.isfunction(fn) and not name.startswith("_")
+}
+
+
+@pytest.mark.parametrize(
+    "double", [Reader, NoCluster, FakeReader, RecordingReader, _Refusing]
+)
+def test_every_reader_double_answers_the_calls_the_routes_make(double):
+    """`app.py` duck-types its reader, so nothing but this stops a fake from
+    answering a call the real one could not (or the other way round). Each
+    method is bound with the arguments `kube.ReaderLike` declares -- a fake
+    that dropped `namespace` fails here rather than in production."""
+    assert READER_METHODS, "the protocol has methods to check"
+    declared = {
+        name
+        for base in double.__mro__
+        for name in (*vars(base), *getattr(base, "__annotations__", {}))
+    }
+    for attr in ReaderLike.__annotations__:
+        assert attr in declared, f"{double.__name__} has no {attr}"
+    for name, declared in READER_METHODS.items():
+        impl = getattr(double, name, None)
+        assert impl is not None, f"{double.__name__} has no {name}()"
+        args = [f"<{p}>" for p in list(declared.parameters)[1:]]
+        inspect.signature(impl).bind(double, *args)
