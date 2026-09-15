@@ -618,9 +618,7 @@ def _apply(
         # Pipelines first: a campaign's Job mounts its pipeline's ConfigMap
         # and waits on its warm-up Job's marker file.
         pipelines, campaigns = _objects(out / "pipelines"), _objects(out / "campaigns")
-        if prune and not campaigns and not allow_empty:
-            print(_EMPTY_PRUNE.format(dir=repo / "campaigns"), file=sys.stderr)
-            return 1
+        empty_prune = prune and not campaigns and not allow_empty
         if dry_run:
             for obj in pipelines + campaigns:
                 print(f"would apply: {obj['kind']}/{obj['metadata']['name']}")
@@ -629,8 +627,15 @@ def _apply(
                     f"would prune: every {render.CAMPAIGN_SELECTOR} Job/ConfigMap "
                     "in the namespace that is not listed above"
                 )
+            # Printed AFTER the preview, not instead of it: an empty prune is
+            # the one an operator most wants to see the shape of first.
+            if empty_prune:
+                print(_EMPTY_PRUNE.format(dir=repo / "campaigns"), file=sys.stderr)
             print("(--dry-run: nothing was sent to the API server)")
             return 0
+        if empty_prune:
+            print(_EMPTY_PRUNE.format(dir=repo / "campaigns"), file=sys.stderr)
+            return 1
         # The namespace comes from converter.yaml, not from the rendered
         # objects: a repo whose last campaign was deleted renders nothing at
         # all, which is exactly when --prune has work to do. (_render just

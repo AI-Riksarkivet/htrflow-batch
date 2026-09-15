@@ -283,7 +283,9 @@ A render that produces **no campaigns at all** is refused with `--prune`
 instead of cancelling every campaign in the namespace: an empty
 `campaigns/`, a mistyped directory and a checkout that never happened all
 look like that. Pass `--allow-empty` when retiring the last campaign really
-is what you mean.
+is what you mean (`make campaigns-apply DIR=… PRUNE=1 ALLOW_EMPTY=1`).
+`--dry-run` still prints what such a prune would delete, and says the real
+run will refuse it.
 
 The four objects above are not built up field-by-field in Python: the
 skeletons **are** the Job/ConfigMap, checked in as real YAML at
