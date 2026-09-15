@@ -52,10 +52,20 @@ _LABEL_VALUE_RE = _VOLUME_ID_RE
 _SUBDOMAIN_RE = re.compile(
     r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*\Z"
 )
-#: The four settings that name an object the API server has to accept, and
-#: the one that names a RuntimeClass. None of them was checked: a namespace
-#: with a capital in it passed ``validate`` and was refused at apply time --
-#: after the render was committed and the campaigns were live.
+#: A DNS-1123 *label*: lower-case, no dots, at most 63 characters. What a
+#: namespace has to be -- the wider subdomain rule below accepts
+#: ``htr.batch.example``, which the API server refuses.
+_DNS_LABEL_RE = re.compile(r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?\Z")
+_NOT_A_NAMESPACE = (
+    "is not a Kubernetes namespace (got {shown}) — use lower-case letters, "
+    'digits and "-", starting and ending with a letter or digit, at most 63 '
+    "characters and no dots"
+)
+
+#: The settings that name an object the API server has to accept, and the
+#: one that names a RuntimeClass. None of them was checked: a name with a
+#: capital in it passed ``validate`` and was refused at apply time -- after
+#: the render was committed and the campaigns were live.
 _NOT_AN_OBJECT_NAME = (
     "is not a Kubernetes object name (got {shown}) — use lower-case letters, "
     'digits, "-" and ".", starting and ending with a letter or digit, at '
@@ -536,7 +546,14 @@ class ConverterConfig(BaseModel):
     manifest_max_bytes: int = Field(default=16 * _MiB, ge=1)
     fetch_max_bytes: int = Field(default=64 * _MiB, ge=1)
 
-    @field_validator("namespace", "queue", "s3_secret", "data_pvc")
+    @field_validator("namespace")
+    @classmethod
+    def _check_namespace(cls, v: str) -> str:
+        if not _DNS_LABEL_RE.match(v):
+            raise ValueError(_NOT_A_NAMESPACE.format(shown=shown(v)))
+        return v
+
+    @field_validator("queue", "s3_secret", "data_pvc")
     @classmethod
     def _check_object_name(cls, v: str) -> str:
         if not _object_name(v):

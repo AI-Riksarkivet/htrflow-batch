@@ -443,7 +443,12 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # loses the value of a signing query parameter as well as its userinfo.
 # Those lines reach CI logs and pull requests; the stored URL cannot be
 # redacted at all, which the security page now says out loud.
-check converter "$(count packages/converter/src -name '*.py')" 2510
+# 2510 -> 2527 (2026-09-14, audit review): a namespace is a DNS-1123 LABEL,
+# not the subdomain the other object names are -- `htr.batch.example` and a
+# 64-character name passed `validate` and were refused at apply time, with
+# the render already committed. Its own rule and its own sentence, which
+# says 63 and says no dots.
+check converter "$(count packages/converter/src -name '*.py')" 2527
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

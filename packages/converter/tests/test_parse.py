@@ -519,8 +519,6 @@ def test_campaign_priority_must_be_a_label_value(tmp_path, bad):
 @pytest.mark.parametrize(
     "key,bad",
     [
-        ("namespace", "HTR-Batch"),
-        ("namespace", ""),
         ("queue", "htr batch"),
         ("s3_secret", "htr_batch_s3"),
         ("data_pvc", "-htr-test-data"),
@@ -624,3 +622,21 @@ def test_a_campaign_with_no_volumes_at_all_is_refused(tmp_path):
         _load(root)
     (problem,) = exc_info.value.problems
     assert problem.startswith("campaigns/kyrk.yaml: this campaign lists no volumes")
+
+
+@pytest.mark.parametrize("bad", ["htr.batch.example", "h" * 64, "HTR-Batch", ""])
+def test_a_namespace_is_a_label_not_a_subdomain(tmp_path, bad):
+    """A namespace is a DNS-1123 *label*: no dots, at most 63 characters. The
+    wider object-name rule let both through `validate` and left them to the
+    API server, which refuses them once the render is already committed."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + f'\nnamespace: "{bad}"\n')
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert problem.startswith(
+        'converter.yaml: "namespace" is not a Kubernetes namespace'
+    )
+    assert "63" in problem
