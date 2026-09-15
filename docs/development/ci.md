@@ -99,7 +99,11 @@ a misleading npm-internal crash rather than a certificate error unless
 - **Documentation:** `docs-serve`, `docs-build` (through
   `scripts/docs-site.sh`), `config-reference` (regenerates
   `docs/reference/configuration.md`; a test asserts the committed page
-  equals it).
+  equals it). Slides live in `docs/slides` and build with
+  `scripts/slides.sh`: they are Marp sources rather than site pages, so
+  `scripts/docs-site.sh` stages them out the way it stages out the stories,
+  and `slides.sh` writes into `site/slides` after the site build, which
+  clears `site/` first.
 - **Contracts:** `api-contract` (regenerates
   `frontend/src/lib/fixtures/api-contract.json` from real read-API output; a
   test asserts the committed fixture equals it — see
