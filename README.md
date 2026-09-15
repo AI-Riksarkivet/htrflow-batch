@@ -136,7 +136,8 @@ is the production-shaped install, with your own S3 and the policies on.
 ```bash
 make install && make test              # uv workspace sync + wrapper, converter and web tests
 make frontend-install && make frontend-test
-make ci                                # everything CI runs: format, lint, typecheck, tests, chart, budgets
+make ci                                # the dagger gates CI runs: format, lint, typecheck, frontend, chart, tests
+scripts/loc-budget.sh                  # the non-test line budgets, a CI step of its own
 ```
 
 [Development](https://ai-riksarkivet.github.io/htrflow-batch/development/)

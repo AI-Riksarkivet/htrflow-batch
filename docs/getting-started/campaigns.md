@@ -127,13 +127,23 @@ This is exactly:
 uv run htrflow-campaigns apply <campaigns-repo-dir> --out <campaigns-repo-dir>/rendered
 ```
 
-This one command does four things, in order:
+This one command does five things, in order:
 
 1. Renders the repo.
-2. Applies `rendered/pipelines`. Pipelines go first because a campaign's Job
+2. **Records how each campaign stands, before anything is sent.** For every
+   campaign it is about to apply it reads the live Job, writes the campaign's
+   status ConfigMap from it, and then reads that record back: a campaign the
+   record says is finished, whose volume list has not moved, is left alone
+   and skipped for the rest of the run — it prints one line saying so instead
+   of an `applied:` line. That is what keeps a finished campaign from being
+   run again once its Job is past its TTL
+   ([The record a campaign leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)).
+   None of this is a precondition: an identity whose Role cannot read Jobs
+   gets a warning on stderr and the campaign is applied as any other.
+3. Applies `rendered/pipelines`. Pipelines go first because a campaign's Job
    references its pipeline's ConfigMap.
-3. Applies `rendered/campaigns`.
-4. Sets each campaign's `suspend:` on its Kueue Workload.
+4. Applies `rendered/campaigns`.
+5. Sets each campaign's `suspend:` on its Kueue Workload.
 
 It talks to the API server through the official Kubernetes client, with no
 `kubectl` in the loop, and prints one `applied: <Kind>/<name>` line per
