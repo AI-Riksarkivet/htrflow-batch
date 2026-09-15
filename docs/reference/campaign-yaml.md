@@ -66,7 +66,7 @@ to the Hub, so they never need it
 
 ```yaml
 pipeline: demo-v1          # required: a pipeline id from pipelines/
-priority: ""                # optional: a Kueue PriorityClass name
+priority: ""                # optional: a Kueue WorkloadPriorityClass name
 window: 20                   # optional: this campaign's parallelism, clamped to converter.yaml's window
 suspend: false               # optional: true pauses this campaign (see "Pausing" below)
 volumes:

@@ -253,10 +253,13 @@ script). A CSP header from the server must not be stricter than the meta tag
   header, never an alert over the list.
 - **Warm-up chip.** Beside the pipeline chip whenever `JobSummary.warmup`
   isn't `succeeded`: "warm-up pending/running/failed" or "no warm-up"
-  (`missing`). `failed` and `missing` also push the card's left accent to
-  the failed colour — the campaign's pods cannot start on their own either
-  way. A `failed` match's `title` (and, with the card open, a line under the
-  chip) is `describeReason(warmup.reason)`; there is no warm-up log to link
+  (`missing`). `failed` also pushes the card's left accent to the failed
+  colour — the campaign's pods cannot start without it. `missing` pushes the
+  accent only while the campaign's own phase is **not** `Succeeded`: an old
+  pipeline that never had a warm-up Job must not paint a finished campaign
+  red. The chip itself shows either way. A `failed` match's `title` (and,
+  with the card open, a line under the chip) is
+  `describeReason(warmup.reason)`; there is no warm-up log to link
   instead.
 - **Folded by default.** A card starts collapsed and remembers the reader's
   choice in `localStorage` under `htrflow.card.<namespace>/<name>` — every
@@ -271,12 +274,17 @@ script). A CSP header from the server must not be stricter than the meta tag
 - **No thumbnails.** The read API has no per-volume image field; the volume
   table is id / state / links only.
 - **Failures block.** `JobDetail.failures` (up to 50 newest
-  failed-with-a-reason rows, independent of the volume table's paging) is
-  rendered as a compact callout above the volume table, visible even while
-  the table is collapsed, only when non-empty: a `failures (<n>)` heading
-  and one line per entry, `<id> — <sentence>` from `describeReason`
-  (CSS-clamped to one line, no JS truncation), each line linking to the same
-  `logHref` as its table row.
+  failed-with-a-reason rows, computed over every volume, independent of the
+  volume table's paging) is rendered as a compact callout above the volume
+  table. It shows only the failures the reader cannot already see: folded,
+  that is all of them, under the heading `failures (<n>)`; with the table
+  open, the callout drops every failure whose row is on a loaded page and
+  the heading becomes `failures not shown below (<n>)`, so a failure is
+  never listed twice. It is not rendered at all when that filtered list is
+  empty — an open table holding every failure shows no callout. One line per
+  entry, `<id> — <sentence>` from `describeReason` (CSS-clamped to one line,
+  no JS truncation), each line linking to the same `logHref` as its table
+  row.
 - **Paged volumes.** `CampaignCard` fetches its own volumes via `fetchJob`
   (`offset`/`limit`, default page 200), independently of the campaign list
   poll on `/`; a "load more" button pages in the next batch when
