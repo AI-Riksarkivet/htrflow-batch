@@ -38,7 +38,7 @@ pipeline.
 | **Control-plane digest gate**: `web.image` must be `@sha256:`-pinned unless `security.allowTagImages` is set | The chart template | Anyone with push access to the registry replacing the web front in place |
 | **http(s)-only sources, byte caps, redirect caps** | `parse_pipeline`/`parse_campaign`, and the wrapper (`MANIFEST_MAX_BYTES`, `FETCH_MAX_BYTES`, at most 5 redirects, raster images only) | SSRF and denial of service driven by campaign data |
 | **No runtime path to the campaigns repo** | The campaigns repo's own CI, outside this system | Nothing in the cluster clones the campaigns repo or holds a credential for it |
-| **URL redaction** | Wrapper logs, the termination log, `page_sources` | A tokenised private IIIF URL ending up in a world-readable log |
+| **URL redaction** | Wrapper logs, the warm-up's logs, the termination log, `page_sources` | A tokenised private IIIF URL, or a Hub URL an error quoted back, ending up in a world-readable log |
 
 All three policies are off by default (`security.policies.enabled: false`),
 because a policy nothing reconciles is worse than none. They are the only

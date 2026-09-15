@@ -211,7 +211,13 @@ fail=0
 # kept the container alive long after the run had decided to fail. The lines
 # are the exit code the finally now carries and the note saying why an
 # exception `_main` did not classify must NOT be turned into one.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2949
+# 2949 -> 2967 (2026-09-14, audit W8): the warm-up installs the batch
+# wrapper's RedactingFormatter instead of basicConfig's plain one. The warm-up
+# pod mounts no S3 Secret, so it ships no run log -- `kubectl logs` is where
+# its failure is read, and huggingface_hub quotes back the URL it called,
+# query and all. The lines are the installer and the paragraph saying why
+# basicConfig cannot do it and why a previous handler is dropped first.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2967
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
