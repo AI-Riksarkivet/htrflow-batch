@@ -1402,3 +1402,35 @@ def test_resume_keeps_a_done_page_whose_token_rotated(images_env, cfg, s3):
     env = dict(images_env, IMAGES="https://img.example/1.jpg?token=NEW")
     assert main(env, process_page_factory=factory) == EXIT_OK
     assert calls == []
+
+
+def test_a_transient_failure_exits_without_joining_the_downloads(
+    env, cfg, s3, monkeypatch, hard_exits
+):
+    """W7: only SIGTERM went through `_hard_exit`. Exits 1 and 13 returned
+    normally, and the interpreter then joined the download pool's workers at
+    shutdown -- a fetch sitting in its 120 s timeout held the container open
+    long after the run had decided to fail."""
+    real = ResultStore.upload_page
+
+    def drop_0002(self, name, files):
+        if name != "0002":
+            return real(self, name, files)
+
+    monkeypatch.setattr(ResultStore, "upload_page", drop_0002)
+    assert main(env, process_page_factory=fake_factory) == EXIT_TRANSIENT
+    assert hard_exits == [EXIT_TRANSIENT]
+
+
+def test_a_permanent_failure_exits_the_same_way(env, cfg, s3, hard_exits):
+    assert main({**env, "PIPELINE_PATH": ""}, process_page_factory=fake_factory) == (
+        EXIT_PERMANENT
+    )
+    assert hard_exits == [EXIT_PERMANENT]
+
+
+def test_a_successful_run_returns_normally(env, cfg, s3, hard_exits):
+    """Nothing is in flight when the stream has been consumed to the end, so
+    a run that worked still exits the ordinary way."""
+    assert main(env, process_page_factory=fake_factory) == EXIT_OK
+    assert hard_exits == []

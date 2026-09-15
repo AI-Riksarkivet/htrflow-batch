@@ -205,7 +205,13 @@ fail=0
 # canvas with an image service that is the service's -- so a body whose `id`
 # read `javascript:` was published to every viewer that opened the volume.
 # `_publishable` and the paragraph saying whose URL ends up where.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2939
+# 2939 -> 2949 (2026-09-14, audit W7): every failure exit leaves through
+# `_hard_exit`, not only SIGTERM. Returning normally handed the interpreter
+# the download pool to join at shutdown, so a fetch inside its 120 s timeout
+# kept the container alive long after the run had decided to fail. The lines
+# are the exit code the finally now carries and the note saying why an
+# exception `_main` did not classify must NOT be turned into one.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2949
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

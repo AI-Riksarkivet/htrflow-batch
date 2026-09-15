@@ -178,20 +178,24 @@ def main(
         raise Terminated()
 
     previous = _set_signal(signal.SIGTERM, on_sigterm)
-    sigterm = False
+    #: The code this run is exiting with, or None while it is still running or
+    #: unwinding an exception _main did not classify -- such an exception must
+    #: keep its traceback rather than be turned into a code here.
+    code: Optional[int] = None
     try:
-        return _main(env, process_page_factory, capture, state)
+        code = _main(env, process_page_factory, capture, state)
+        return code
     except Terminated:
         # O2: the pod's activeDeadlineSeconds or a node drain. Leave the evidence a
         # failure would (termination message + complete run log), then exit
         # 143 so Kubernetes retries the index like exit 1, not FailIndex.
         # Same shape as the other failure lines: the run viewer's terminal-line
         # regex (frontend runlog.ts) is the contract that stops live polling.
-        sigterm = True
         advice = _advice(False, "SIGTERM")
         log.error("transient failure in %s: SIGTERM — %s", state.stage, advice)
         terminate(env, {"stage": state.stage, "permanent": False, "error": "SIGTERM"})
-        return EXIT_SIGTERM  # reached only when _hard_exit is stubbed (tests)
+        code = EXIT_SIGTERM
+        return code  # reached only when _hard_exit is stubbed (tests)
     finally:
         if previous is not None:
             _set_signal(signal.SIGTERM, previous)
@@ -206,8 +210,14 @@ def main(
         if state.tracker is not None and state.stage != "done":
             state.tracker.stage_changed("failed")
         capture.finish()
-        if sigterm:
-            _hard_exit(EXIT_SIGTERM)
+        if code not in (None, EXIT_OK):
+            # W7: every failure exit, not only SIGTERM. Returning normally
+            # hands the interpreter a ThreadPoolExecutor to join at shutdown,
+            # so a download sitting in its 120 s timeout kept the container
+            # alive long after the run had decided to fail. The evidence is
+            # already out: the termination message is written and the run log
+            # has just been shipped by capture.finish() above.
+            _hard_exit(code)
 
 
 def _main(
