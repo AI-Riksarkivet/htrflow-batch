@@ -243,9 +243,21 @@
     );
   });
 
-  /** The fill's width; callers only ask for one when `total` is known. */
+  /**
+   * The fill's width, clamped to the track. `done` and `total` come from the
+   * wrapper's progress.json in the results bucket — a document that arrives
+   * over the network, and one a half-written run can make disagree with
+   * itself — so a bar 900% wide or running backwards was a page the numbers
+   * could ask for (2026-09-14 audit).
+   */
   function pct(done: number, total: number): string {
-    return `${((done / total) * 100).toFixed(1)}%`;
+    const ratio = total > 0 ? done / total : 0;
+    return `${(Math.min(Math.max(ratio, 0), 1) * 100).toFixed(1)}%`;
+  }
+
+  /** The same clamp for the value a screen reader is told. */
+  function clamp(done: number, total: number): number {
+    return Math.min(Math.max(done, 0), Math.max(total, 0));
   }
 
   // Defence in depth. `sourceUrl` is the API's copy of a line from a
@@ -326,9 +338,9 @@
     class="bar"
     role="progressbar"
     aria-label="Pages done in {label}"
-    aria-valuenow={done}
+    aria-valuenow={clamp(done, total)}
     aria-valuemin={0}
-    aria-valuemax={total}
+    aria-valuemax={Math.max(total, 0)}
   >
     <span class="fill" style="width: {pct(done, total)}"></span>
   </span>
