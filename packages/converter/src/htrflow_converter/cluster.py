@@ -48,6 +48,14 @@ _KINDS = {"Job": ("batch", "job"), "ConfigMap": ("core", "config_map")}
 #: a pod template is thousands of characters of Go struct. This is a
 #: terminal line, so it is cut rather than allowed to flood one.
 MAX_MESSAGE = 300
+#: (connect, read) seconds on every request. The client sends none by
+#: default, so a connection the API server (or a load balancer between) has
+#: half-closed leaves the apply blocked in `recv` for ever -- no deadline of
+#: its own, and a CI job that never returns. The read side is generous: a
+#: `list` of a large namespace is slow, while a connect that takes five
+#: seconds is a server that is not there.
+REQUEST_TIMEOUT = (5, 60)
+
 #: Seconds a replaced Job is waited for. Background propagation returns at
 #: once and the object lingers while its pods go, so this covers a pod's
 #: grace period and no more -- past that the apply says so and stops.
@@ -160,7 +168,14 @@ def _raw(
     verb: str, kind: str, name: str, namespace: str, fn: Any, *args: Any, **kwargs: Any
 ) -> dict:
     with _errors(verb, kind, name, namespace):
-        return json.loads(fn(*args, _preload_content=False, **kwargs).data)
+        return json.loads(
+            fn(
+                *args,
+                _preload_content=False,
+                _request_timeout=REQUEST_TIMEOUT,
+                **kwargs,
+            ).data
+        )
 
 
 class Cluster:
@@ -228,7 +243,10 @@ class Cluster:
         name = obj["metadata"]["name"]
         with _errors("delete", "Job", name, self.namespace):
             self._method("Job", "delete")(
-                name, self.namespace, propagation_policy="Background"
+                name,
+                self.namespace,
+                propagation_policy="Background",
+                _request_timeout=REQUEST_TIMEOUT,
             )
         for _ in range(DELETE_WAIT):
             if self.get("Job", name) is None:
@@ -246,7 +264,10 @@ class Cluster:
         reaped: the second still has its ConfigMaps (B76)."""
         try:
             body = self._method(kind, "read", name)(
-                name, self.namespace, _preload_content=False
+                name,
+                self.namespace,
+                _preload_content=False,
+                _request_timeout=REQUEST_TIMEOUT,
             )
         except ApiException as e:
             if e.status == 404:
@@ -279,7 +300,12 @@ class Cluster:
                     continue
                 extra = {"propagation_policy": "Background"} if kind == "Job" else {}
                 with _errors("delete", kind, name, self.namespace):
-                    self._method(kind, "delete")(name, self.namespace, **extra)
+                    self._method(kind, "delete")(
+                        name,
+                        self.namespace,
+                        _request_timeout=REQUEST_TIMEOUT,
+                        **extra,
+                    )
                 print(f"pruned: {kind}/{name}")
 
     @staticmethod
@@ -301,6 +327,7 @@ class Cluster:
                 self.namespace,
                 _WORKLOADS,
                 label_selector=f"{_JOB_UID_LABEL}={uid}",
+                _request_timeout=REQUEST_TIMEOUT,
             )
         items = listed.get("items", [])
         return items[0] if items else None
@@ -349,5 +376,6 @@ class Cluster:
                 wl_name,
                 {"spec": {"active": want}},
                 _content_type=MERGE_PATCH,
+                _request_timeout=REQUEST_TIMEOUT,
             )
         return 0
