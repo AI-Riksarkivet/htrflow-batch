@@ -28,7 +28,7 @@ from kubernetes.client.exceptions import ApiException
 from urllib3.exceptions import HTTPError
 
 from .models import STATUS_SUFFIX
-from .render import CAMPAIGN_SELECTOR
+from .render import CAMPAIGN_SELECTOR, WARMUP_PREFIX
 
 #: Field manager for every apply: what lets a field this tool stopped
 #: rendering be removed from a live object -- the role `kubectl`'s
@@ -66,6 +66,20 @@ class ClusterError(Exception):
     """A cluster problem this module already has a one-sentence answer for."""
 
 
+#: What to do about a Job the API server will not take, by what the Job is.
+#: One sentence used to serve both, and it was the warm-up's: a campaign Job
+#: carries no recipe of its own, so "a changed recipe is a new pipeline file"
+#: sent its reader to edit a file that is not the one in front of them.
+_WARMUP_ADVICE = (
+    "a pipeline id is a permanent name for a recipe, so a changed recipe is "
+    "a new pipeline file, and a Job that has to change is deleted and "
+    "created again"
+)
+_CAMPAIGN_ADVICE = (
+    "a live campaign's Job cannot change, so finish or remove the campaign, then apply"
+)
+
+
 class ImmutableField(ClusterError):
     """An apply the API server refused because it would change a field that
     cannot change once the object exists.
@@ -87,12 +101,8 @@ class ImmutableField(ClusterError):
             what = "the pod template changed and a Job's pod template is immutable"
         else:
             what = f"{', '.join(fields)} changed and is immutable"
-        super().__init__(
-            f"{kind} {name}: {what} once the Job exists — a pipeline id is a "
-            "permanent name for a recipe, so a changed recipe is a new "
-            "pipeline file, and a Job that has to change is deleted and "
-            "created again"
-        )
+        advice = _WARMUP_ADVICE if name.startswith(WARMUP_PREFIX) else _CAMPAIGN_ADVICE
+        super().__init__(f"{kind} {name}: {what} once the Job exists — {advice}")
 
 
 def _immutable_fields(e: ApiException) -> tuple[str, ...]:

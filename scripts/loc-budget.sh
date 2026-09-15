@@ -414,7 +414,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # read) timeout. The client sends none by default, so a half-open connection
 # left the apply blocked in recv with no deadline anywhere above it. Mostly
 # the call sites rewrapping onto their own lines.
-check converter "$(count packages/converter/src -name '*.py')" 2394
+# 2394 -> 2409 (2026-09-14, audit C8): the immutable-field refusal gives the
+# advice that fits the Job it is about -- a warm-up is a recipe and a new
+# pipeline file, a live campaign's Job cannot change at all -- and the
+# warm-up name prefix becomes a constant `cluster` can read.
+check converter "$(count packages/converter/src -name '*.py')" 2409
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
