@@ -139,7 +139,8 @@ def fetch_page(
     last = "unknown error"
     url = page.image_url
     path = dest_dir / f"{page.name}.jpg"
-    for attempt in range(retries):
+    attempt = 0
+    while attempt < retries:
         if stop is not None and stop.is_set():
             return FetchResult(page=page, path=None, error="stopped: run aborted")
         try:
@@ -153,6 +154,12 @@ def fetch_page(
                     # (no upscaling); retry unscaled instead of failing the page.
                     fallback = re.sub(r"/full/\d+,/", "/full/max/", url)
                     if fallback != url:
+                        # W13: a different URL, not another go at the one that
+                        # failed, so it does not spend one of the page's
+                        # attempts (and does not wait out a backoff to ask a
+                        # question this code has already answered). It can
+                        # happen once: the substitution is then a no-op and the
+                        # next 400 falls through like any other.
                         url = fallback
                         continue
         except _Reject as e:
@@ -161,7 +168,8 @@ def fetch_page(
                 break
         except Exception as e:
             last = describe(e)
+        attempt += 1
         # Skip sleep after final attempt
-        if attempt < retries - 1:
-            time.sleep(backoff * (2**attempt))
+        if attempt < retries:
+            time.sleep(backoff * (2 ** (attempt - 1)))
     return FetchResult(page=page, path=None, error=last)

@@ -234,7 +234,12 @@ fail=0
 # key the run writes and into the public viewer_url, and both come out of a
 # campaign file -- so the shape is settled once, in Config, and a name that
 # would write outside the volume's own prefix fails the run permanently.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3031
+# 3031 -> 3039 (2026-09-14, audit W13): the unscaled `/full/max/` fallback
+# after a level1 server's 400 no longer spends one of the page's fetch
+# attempts -- it asks a different URL, not the same one again. The loop counts
+# attempts itself now, and the comment says why the substitution can happen at
+# most once.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3039
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
