@@ -123,6 +123,10 @@ CLUSTER_UNAVAILABLE_DETAIL = (
     "the Kubernetes API did not answer this request - the page retries on its own"
 )
 
+#: One DNS-1123 label -- what a Job, a ConfigMap and a namespace can each be
+#: called. The length cap (63) is checked beside it.
+DNS_1123 = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?")
+
 #: Where the image puts the built site (.docker/htrflow-web.dockerfile).
 DEFAULT_STATIC_DIR = "/app/static"
 
@@ -336,6 +340,21 @@ def create_app(
         rows.sort(key=lambda row: row["createdAt"] or "", reverse=True)
         return rows
 
+    def _serves(namespace: str, name: str) -> bool:
+        """Whether this API could have a campaign by this name at all.
+
+        Both halves go straight into an API path and into the ConfigMap
+        names built from them, and the service is scoped to the namespaces
+        it was given -- so a string no Kubernetes object could carry, or a
+        namespace this API does not serve, is answered before any read
+        rather than after one (2026-09-14 audit). Site-only mode has no
+        `cfg` and no namespaces to compare against; its reader answers 503
+        for everything and that is the honest answer there."""
+        if not all(len(v) <= 63 and DNS_1123.fullmatch(v) for v in (namespace, name)):
+            return False
+        served = getattr(reader.cfg, "namespaces", ())
+        return not served or namespace in served
+
     @app.api_route("/api/v1/jobs/{namespace}/{name}", methods=GET_HEAD)
     def get_job(
         namespace: str,
@@ -343,6 +362,8 @@ def create_app(
         offset: int = Query(0, ge=0),
         limit: int = Query(200, ge=1, le=1000),
     ) -> dict:
+        if not _serves(namespace, name):
+            raise HTTPException(status_code=404, detail="job not found")
         job = reader.get_job(namespace, name)
         if job is None:
             return _reaped_detail(namespace, name)

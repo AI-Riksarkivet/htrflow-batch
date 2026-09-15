@@ -68,7 +68,10 @@ PIPELINE_CONFIGMAP = {
 
 
 class FakeReader:
-    cfg = SimpleNamespace(public_results_base="https://results.example.org")
+    cfg = SimpleNamespace(
+        public_results_base="https://results.example.org",
+        namespaces=("htr-test",),
+    )
 
     def list_jobs(self) -> list[dict]:
         return [JOB]
@@ -732,3 +735,56 @@ def test_every_reader_double_answers_the_calls_the_routes_make(double):
         assert impl is not None, f"{double.__name__} has no {name}()"
         args = [f"<{p}>" for p in list(declared.parameters)[1:]]
         inspect.signature(impl).bind(double, *args)
+
+
+# --- the detail route only answers for names that could exist (F8) -------
+
+
+class Counting(FakeReader):
+    """Records every read, so a test can assert one never happened."""
+
+    def __init__(self) -> None:
+        self.asked: list[tuple[str, str]] = []
+
+    def get_job(self, namespace: str, name: str) -> dict | None:
+        self.asked.append((namespace, name))
+        return super().get_job(namespace, name)
+
+    def get_configmap(self, namespace: str, name: str) -> dict | None:
+        self.asked.append((namespace, name))
+        return super().get_configmap(namespace, name)
+
+
+@pytest.mark.parametrize(
+    ("namespace", "name"),
+    [
+        ("htr-test", "Kyrk"),  # DNS-1123 is lower-case
+        ("htr-test", "kyrk.part1"),  # a label carries no dots
+        ("htr-test", "-kyrk"),
+        ("htr-test", "kyrk-"),
+        ("htr-test", "kyrk_1"),
+        ("htr-test", "k" * 64),
+        ("htr-test", "kyrk%2F..%2Fx"),
+        ("HTR-TEST", "kyrk"),
+        ("kube-system", "kyrk"),  # a real namespace, not one this API serves
+    ],
+)
+def test_a_campaign_this_api_could_not_have_is_a_404_before_any_read(
+    namespace: str, name: str
+):
+    """Both halves go into an API path and into a ConfigMap name built from
+    them, and the service is scoped to the namespaces it was given. A string
+    the cluster could never name, or a namespace this API does not serve, is
+    not a campaign to go looking for (2026-09-14 audit) -- not refused after
+    the read, but never read at all."""
+    reader = Counting()
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    assert client.get(f"/api/v1/jobs/{namespace}/{name}").status_code == 404
+    assert reader.asked == []
+
+
+def test_a_campaign_the_cluster_could_carry_still_answers():
+    reader = Counting()
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    assert client.get("/api/v1/jobs/htr-test/kyrk").status_code == 200
+    assert reader.asked != []
