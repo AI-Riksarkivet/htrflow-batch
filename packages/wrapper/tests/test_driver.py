@@ -766,7 +766,8 @@ def _inject_step_building_fake(monkeypatch) -> list:
 
         @staticmethod
         def from_config(path):
-            config = yaml.safe_load(open(path))
+            with open(path) as handle:
+                config = yaml.safe_load(handle)
             # resolved from the module global on every call, as htrflow's own
             # `from htrflow.pipeline.steps import init_step` name is
             return MockPipeline(
