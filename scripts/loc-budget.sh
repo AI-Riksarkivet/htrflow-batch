@@ -418,7 +418,12 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # advice that fits the Job it is about -- a warm-up is a recipe and a new
 # pipeline file, a live campaign's Job cannot change at all -- and the
 # warm-up name prefix becomes a constant `cluster` can read.
-check converter "$(count packages/converter/src -name '*.py')" 2409
+# 2409 -> 2429 (2026-09-14, audit C9): an `images:` volume whose line of
+# volumes.txt is over 100 KiB is refused, naming the volume and its image
+# count. The Job exports that line as one environment entry and Linux stops
+# one at 128 KiB, so the pod died with "Argument list too long" before the
+# wrapper started and nothing said which volume did it.
+check converter "$(count packages/converter/src -name '*.py')" 2429
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
