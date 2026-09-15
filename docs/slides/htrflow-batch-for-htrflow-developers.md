@@ -6,7 +6,7 @@ lang: en
 ---
 
 <!-- _class: lead cover -->
-<!-- _footer: "Enheten för AI-labb och datatjänster · 2026-09-15" -->
+<!-- _footer: "Enheten för AI-labb och datatjänster,  2026-09-15" -->
 
 # htrflow-batch: HTRflow at archive scale
 
@@ -93,6 +93,8 @@ steps:
 </div>
 </div>
 
+<p class="note">Write access to this repository decides which image and which models run with the results bucket's write credentials. Give it the care you give CI configuration.</p>
+
 <!--
 A campaign names exactly one pipeline. A volume is a reference code the
 converter expands through source_template, or an explicit IIIF manifest, or
@@ -101,27 +103,32 @@ a bare list of image URLs. Opening a pull request is how work is submitted.
 
 ---
 
-# What `apply` does with those files
+# What `apply` does
 
-```mermaid h:420
+```mermaid w:1124
 flowchart LR
-  G["campaigns repo<br/>campaigns/ · pipelines/"]
-  V["validate and render<br/>htrflow-campaigns, in CI"]
-  R["rendered/<br/>committed to git"]
-  K["Kubernetes objects<br/>Indexed Job · ConfigMaps · warm-up Job"]
-  Q["Kueue<br/>GPU quota, admission"]
-  P["GPU pod<br/>one volume, wrapper + htrflow"]
-  S[("S3 results bucket<br/>ALTO · PAGE · manifests")]
+  G["campaigns<br/>repo"]
+  V["validate<br/>and render"]
+  R["rendered/<br/>in git"]
+  K["Indexed Job<br/>ConfigMaps"]
+  Q["Kueue<br/>GPU quota"]
+  P["GPU pod<br/>one volume"]
+  S[("S3 bucket<br/>ALTO, PAGE")]
   G --> V --> R --> K --> Q --> P --> S
 ```
 
-The converter is a plain Python package. It never runs inside the cluster, and nothing in the cluster can read the campaigns repo.
+A pull request validates and renders; CI commits `rendered/` on main. One `apply` then does five things in order:
+
+1. Render the repo again, and check `rendered/` is exactly that render.
+2. Write how each campaign stands to the campaign's record, before anything is sent.
+3. Apply the pipelines — a campaign's Job references its pipeline's ConfigMap.
+4. Apply the campaigns, skipping any the record says is finished and unchanged.
+5. Put each campaign's pause state on its Kueue Workload.
 
 <!--
-Five things happen in one command: render, record how each campaign stands,
-apply the pipelines, apply the campaigns, then set each campaign's pause
-state on its Kueue Workload. A campaign the record says is finished is left
-alone.
+The converter is a plain Python package. It never runs inside the cluster,
+and nothing in the cluster holds a credential for the campaigns repo, so
+step 1 is also the whole of what the cluster is ever told.
 -->
 
 ---
@@ -225,15 +232,18 @@ weights have to be in the cache, at the revision you pinned.
 
 ```
 <namespace>/<pipeline>/<volume>/
-  page/0001.xml        PAGE XML, uploaded first
-  alto/0001.xml        ALTO — "this page is done"
-  iiif.json            viewer manifest, rewritten
-                       every ten pages
-  progress.json        pages done / failed, live
-  pipeline.yaml        the steps this run used
-  manifest.json        written LAST — the only
-                       thing that means "done"
+  page/0001.xml     PAGE XML, uploaded first
+  alto/0001.xml     ALTO — "this page is done"
+  iiif.json         viewer manifest, rewritten
+                    every ten pages
+  progress.json     pages done and failed, live
+  pipeline.yaml     the steps this run used
+  manifest.json     written LAST — the only
+                    thing that means "done"
+
 status/logs/<pipeline>/<volume>.txt
+                    the run's own log, shipped
+                    while the run goes
 ```
 
 </div>
