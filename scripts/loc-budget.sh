@@ -551,7 +551,12 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # fragment. It gets a policy of its own, with the built viewer's one inline
 # <script> and one inline <style> hashed into it at startup so nothing has
 # to be allowed by 'unsafe-inline'.
-check web       "$(count packages/web/src -name '*.py')" 1621
+# 1621 -> 1632 (2026-09-14, audit) F6: a done volume's row is cached for an
+# hour because its counts never change again -- but its `ageSeconds` was
+# computed at fetch and cached with them, so a card read "updated 8 s ago"
+# all afternoon. The age is recomputed from the row's own timestamp on every
+# cache hit; nothing is re-fetched.
+check web       "$(count packages/web/src -name '*.py')" 1632
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

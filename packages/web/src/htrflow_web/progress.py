@@ -138,6 +138,18 @@ def _from_manifest(doc: dict, now: float) -> dict | None:
     }
 
 
+def _aged(value: dict | None, now: float) -> dict | None:
+    """A cached row with its ``ageSeconds`` recomputed for this request. The
+    counts in a cached row are stale by at most the TTL, but the age is
+    stale by however long the row has been cached -- an hour, for a done
+    volume -- and "updated 8 s ago" then said so all afternoon (2026-09-14
+    audit). The timestamp it is computed from is in the row already, so this
+    costs nothing and re-fetches nothing."""
+    if value is None or value.get("updatedAt") is None:
+        return value
+    return {**value, "ageSeconds": _age_seconds(value["updatedAt"], now)}
+
+
 class ProgressReader:
     """One HTTP client and one small cache for the life of the app."""
 
@@ -150,10 +162,9 @@ class ProgressReader:
         own (``<public_results_base>/<namespace>/<pipeline>``)."""
         if state == "pending":
             return None  # no pod has run: there is nothing in the bucket yet
-        # One clock read per call, not per cache miss: a cached hit still
-        # carries the ageSeconds computed when it was fetched (stale by at
-        # most the cache TTL), which is the same staleness budget every other
-        # field in a cached row already has.
+        # One clock read per call, not per cache miss -- and a cached hit
+        # has its ageSeconds recomputed against it (`_aged`), so the counts
+        # in a row can be as stale as the TTL but "updated N ago" never is.
         now = time.time()
         base = f"{results_base}/{volume_id}"
         found = self._cached(f"{base}/progress.json", _from_progress, state, now)
@@ -173,7 +184,7 @@ class ProgressReader:
         monotonic_now = time.monotonic()
         hit = self._cache.get(url)
         if hit is not None and hit[0] > monotonic_now:
-            return hit[1]
+            return _aged(hit[1], now)
         value = self._get(url, parse, now)
         # A miss on a done volume is cached briefly, not for the hour: it may
         # simply be a file that has not landed yet.
