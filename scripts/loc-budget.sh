@@ -716,5 +716,10 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3857
 # refactor that paid for part of it: the apiserver-endpoint lookup is now one
 # helper instead of a copy per template, which is what kept the third copy
 # from being written.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 932
+# 932 -> 944 (2026-09-14, audit): the two image rules walk
+# `ephemeralContainers` in their Pod rules. `kubectl debug` runs an image of
+# the debugger's choosing on the GPU node, and neither the digest pin nor
+# the repository allow-list could see it. Twelve lines, all of them the
+# paragraph in each file saying why the Job rules deliberately do not.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 944
 exit $fail
