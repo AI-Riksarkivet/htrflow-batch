@@ -52,6 +52,11 @@ export function startPolling(tick: Tick, period: number): () => void {
     inflight = controller;
     try {
       failures = (await tick(controller.signal)) ? 0 : failures + 1;
+    } catch {
+      // A tick that let something escape is a tick that failed, not the
+      // end of the poll: before this, one bug in a handler stopped the page
+      // updating for good and said nothing (2026-09-14 review).
+      failures += 1;
     } finally {
       inflight = null;
     }

@@ -103,6 +103,41 @@ describe("startPolling", () => {
     stop();
   });
 
+  test("a tick that throws is a failed tick, not the end of the poll", async () => {
+    // A caller that lets something escape -- a bug in a handler, a schema
+    // that threw where nothing catches it -- used to stop the page updating
+    // for good, silently (2026-09-14 review).
+    let thrown = 0;
+    const run = vi.fn(async () => {
+      thrown += 1;
+      throw new Error("boom");
+    });
+    const stop = startPolling(run, PERIOD);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(thrown).toBe(1);
+    // Backed off like any other failure: the period alone buys nothing.
+    await vi.advanceTimersByTimeAsync(PERIOD * 2);
+    expect(thrown).toBe(2);
+    await vi.advanceTimersByTimeAsync(MAX_POLL_MS * 5);
+    expect(thrown).toBeGreaterThan(2);
+    stop();
+  });
+
+  test("a tick that throws once does not poison the ones after it", async () => {
+    let calls = 0;
+    const run = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("boom");
+      return true;
+    });
+    const stop = startPolling(run, PERIOD);
+    await vi.advanceTimersByTimeAsync(PERIOD * 2);
+    expect(calls).toBe(2);
+    await vi.advanceTimersByTimeAsync(PERIOD);
+    expect(calls).toBe(3); // back on the plain cadence
+    stop();
+  });
+
   test("stopping aborts the tick in flight and schedules nothing more", async () => {
     let seen: AbortSignal | undefined;
     const pending = deferred();
