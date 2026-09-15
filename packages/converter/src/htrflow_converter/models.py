@@ -36,6 +36,10 @@ _MiB = 1024 * 1024
 _VOLUME_ID_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?\Z")
 _NAME_RE = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?\Z")
 _IMAGE_RE = re.compile(r"[a-z0-9./:-]+@sha256:[0-9a-f]{64}\Z")
+#: A Kubernetes label VALUE, which is what ``_VOLUME_ID_RE`` already spells
+#: out (a volume id becomes one). Under its own name for the settings that
+#: are rendered into a label rather than into a name.
+_LABEL_VALUE_RE = _VOLUME_ID_RE
 #: A Kubernetes object name in its wider form, DNS-1123 *subdomain* -- what
 #: a Secret name has to be (``_NAME_RE`` above is the narrower label, which
 #: is all a Job name may be). Spelled out rather than simplified to
@@ -261,6 +265,18 @@ class Volume(BaseModel):
         return f"{self.id}\timages:{' '.join(self.images)}"
 
 
+#: ``priority`` is rendered as the ``kueue.x-k8s.io/priority-class`` label
+#: (``render._campaign_job``), so a value outside the label alphabet is a 422
+#: from the API server halfway through an apply -- after the campaign's
+#: ConfigMap has already been written.
+_NOT_A_PRIORITY = (
+    "is not a Kubernetes label value (got {shown}) — it becomes the "
+    "kueue.x-k8s.io/priority-class label, so name the Kueue PriorityClass "
+    'with letters, digits, ".", "_" and "-", starting and ending with a '
+    "letter or digit, at most 63 characters"
+)
+
+
 class Campaign(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -288,6 +304,13 @@ class Campaign(BaseModel):
                 "ConfigMap it writes beside the record of a campaign — "
                 "rename the file"
             )
+        return v
+
+    @field_validator("priority")
+    @classmethod
+    def _check_priority(cls, v: str) -> str:
+        if v and not _LABEL_VALUE_RE.match(v):
+            raise ValueError(_NOT_A_PRIORITY.format(shown=shown(v)))
         return v
 
     @field_validator("pipeline")
