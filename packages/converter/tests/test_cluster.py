@@ -401,3 +401,19 @@ def test_every_request_carries_a_connect_and_read_timeout(cluster):
     verbs = {c["method"] for c in cluster.calls}
     assert verbs == {"PATCH", "GET", "DELETE"}, verbs
     assert {c["timeout"] for c in cluster.calls} == {REQUEST_TIMEOUT}
+
+
+def test_a_refused_campaign_job_is_given_a_campaigns_way_out():
+    """The advice was written for a pipeline file and printed for every Job
+    alike: a campaign Job carries no recipe of its own, so "a changed recipe
+    is a new pipeline file" sent its reader to edit a file that is not the
+    one in front of them. A live campaign's Job simply cannot change."""
+    from htrflow_converter.cluster import ImmutableField, _api_error
+
+    e = _api_error("apply", "Job", "kyrk", "htr-batch", _immutable_refusal())
+    assert isinstance(e, ImmutableField)
+    assert str(e) == (
+        "Job kyrk: the pod template changed and a Job's pod template is "
+        "immutable once the Job exists — a live campaign's Job cannot change, "
+        "so finish or remove the campaign, then apply"
+    )
