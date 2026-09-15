@@ -18,9 +18,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-WORKFLOWS = sorted(
-    (Path(__file__).resolve().parents[3] / ".github" / "workflows").glob("*.yml")
-)
+#: GitHub reads both spellings out of this directory, so a rule that globs
+#: one of them is a rule the next workflow can be written straight past.
+_DIR = Path(__file__).resolve().parents[3] / ".github" / "workflows"
+WORKFLOWS = sorted(p for p in _DIR.iterdir() if p.suffix in (".yml", ".yaml"))
 
 
 def _checkout_steps(workflow: dict) -> list[tuple[str, dict]]:
