@@ -1,0 +1,11 @@
+flowchart TB
+  JOB["campaign Job<br/>Indexed, suspended at CREATE"]
+  LQ["LocalQueue<br/>htr-batch"]
+  WL["Workload<br/>count = parallelism"]
+  CQ["ClusterQueue<br/>htr-batch-cq"]
+  RF["ResourceFlavor<br/>default-flavor"]
+  JOB -->|"queue-name label"| LQ
+  JOB -->|"reconciler creates"| WL
+  LQ --> CQ
+  WL -->|"quota reserved in"| CQ
+  CQ --> RF
