@@ -574,7 +574,13 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # 1690 -> 1695 (2026-09-14, audit) F15: a volume id went into the progress
 # URL unencoded, so an id with `../` in it -- volumes.txt is a file people
 # edit in a git repo -- was normalised into a request for another key.
-check web       "$(count packages/web/src -name '*.py')" 1695
+# 1695 -> 1715 (2026-09-14, audit) F11: the campaign record's failedVolumes
+# capped the number of entries but not their size, and a reason is whatever
+# the wrapper's termination message said -- a traceback, a pod-template
+# struct. Fifty of those is a ConfigMap the API server refuses, which is a
+# campaign with no record at all, so each reason is clipped and the oldest
+# entries are dropped until the field fits.
+check web       "$(count packages/web/src -name '*.py')" 1715
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

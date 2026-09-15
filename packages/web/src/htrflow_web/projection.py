@@ -176,14 +176,34 @@ def status_record(row: dict, failures: list[dict] | None = None) -> dict[str, st
         "resultsBase": row["resultsBase"],
     }
     if failures is not None:
-        data["failedVolumes"] = json.dumps(
-            [
-                {"id": v["id"], "reason": (v.get("reason") or {}).get("error", "")}
-                for v in failures[:_MAX_FAILURES]
-            ],
-            separators=(",", ":"),
-        )
+        data["failedVolumes"] = _failed_volumes(failures)
     return data
+
+
+#: A reason is one sentence for a card to show. The wrapper writes whatever
+#: its termination message said, which can be a whole Python traceback.
+MAX_REASON = 300
+#: And the field as a whole, serialized. A ConfigMap is capped at 1 MiB by
+#: the API server, and a record it refuses is a campaign with no record at
+#: all (2026-09-14 audit) -- so the oldest failures are dropped until it
+#: fits, rather than the write failing.
+MAX_FAILED_VOLUMES = 200 * 1024
+
+
+def _failed_volumes(failures: list[dict]) -> str:
+    entries = [
+        {
+            "id": v["id"][:MAX_REASON],
+            "reason": ((v.get("reason") or {}).get("error") or "")[:MAX_REASON],
+        }
+        for v in failures[:_MAX_FAILURES]
+    ]
+    while entries:
+        blob = json.dumps(entries, separators=(",", ":"))
+        if len(blob.encode()) <= MAX_FAILED_VOLUMES:
+            return blob
+        entries.pop()
+    return "[]"
 
 
 #: Phases a stored record may carry -- the ones this API itself writes. A
