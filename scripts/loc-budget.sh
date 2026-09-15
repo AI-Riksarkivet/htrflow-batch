@@ -276,7 +276,11 @@ fail=0
 # htrflow starts the daemon thread last, so such a step holds nothing and is
 # collected; a step that started one earlier would need tracking inside
 # htrflow itself.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3135
+# 3135 -> 3137 (2026-09-14, audit W12 review): a name that is exactly "."
+# is refused too, and the docstring says why both it and ".." are: an S3 key
+# is an opaque string, but the URLs built from one are resolved by whatever
+# reads them.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3137
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

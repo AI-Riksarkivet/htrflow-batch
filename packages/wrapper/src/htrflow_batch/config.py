@@ -80,11 +80,13 @@ class Config(BaseModel):
         campaign file is where they come from, so the shape is checked once,
         here, and a name that would write outside the volume's own prefix --
         or point a reader's viewer somewhere else -- fails the run
-        permanently instead."""
-        if not _KEY_SAFE.fullmatch(v) or ".." in v:
+        permanently instead. ``.`` and ``..`` are refused outright: an S3 key
+        is an opaque string, but the URLs built from one are resolved by
+        whatever reads them."""
+        if not _KEY_SAFE.fullmatch(v) or ".." in v or v == ".":
             raise ValueError(
                 "VOLUME_REF and PIPELINE_ID may contain only letters, digits, "
-                f"'.', '_' and '-', and no '..': {v!r}"
+                f"'.', '_' and '-', may not be '.' and may not contain '..': {v!r}"
             )
         return v
 
