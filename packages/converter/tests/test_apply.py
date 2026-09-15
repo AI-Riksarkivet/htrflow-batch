@@ -848,3 +848,19 @@ def test_a_repo_without_a_converter_yaml_is_refused_before_the_cluster(
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 1
     assert cluster.calls == []
     assert "converter.yaml" in capsys.readouterr().out
+
+
+def test_a_refused_paused_campaign_job_is_an_unenforced_pause(
+    tmp_path, cluster, capsys
+):
+    """A refused Job never reaches the Kueue sync, so a campaign git says is
+    paused went on running with the apply reporting only "some objects were
+    refused" (exit 3). The pause is what is not enforced here, and that is
+    exit 1 -- the same answer as a Workload that never appeared."""
+    repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
+    _refuses(cluster, "pausy", cluster_mod.ClusterError("apply Job/pausy: 409"))
+    rc = cli.main(["apply", str(repo), "--out", str(out), "--pause-wait", "1"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "pausy: paused in git, but the API server refused its Job" in err
+    assert "Job/pausy" in err, "the refusal itself is still reported"

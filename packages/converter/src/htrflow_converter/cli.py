@@ -545,6 +545,14 @@ _REFUSED_SUMMARY = (
     "{n} of {total} objects were refused by the API server and are "
     "unchanged: {names} — the other {ok} were applied (exit {code})"
 )
+#: A campaign Job the API server refused is a campaign the Kueue pause sync
+#: never sees -- and for a paused one that is the pause not being enforced:
+#: git says stopped, the live Job is running, and nothing in this apply is
+#: going to stop it. Exit 1, like a Workload that never appeared.
+_REFUSED_PAUSE = (
+    "{name}: paused in git, but the API server refused its Job, so the pause "
+    "is NOT enforced; fix what the refusal says and re-run the apply"
+)
 
 
 def _cluster(namespace: str):
@@ -663,7 +671,7 @@ def _apply(
                     done.add(name)
                     print(said)
             refused: list[str] = []
-            applied = 0
+            applied = failed = 0
             for objects, is_campaign in ((pipelines, False), (campaigns, True)):
                 for obj in objects:
                     if is_campaign and _campaign_of(obj) in done:
@@ -682,6 +690,20 @@ def _apply(
                     except ClusterError as e:
                         print(e, file=sys.stderr)
                         refused.append(name)
+                        # A refused Job never reaches the Kueue sync below,
+                        # so a campaign git says is paused is running right
+                        # now with nothing about to stop it. That is the
+                        # unenforced pause, not a change still to make.
+                        if (
+                            is_campaign
+                            and obj["kind"] == "Job"
+                            and obj["spec"].get("suspend")
+                        ):
+                            print(
+                                _REFUSED_PAUSE.format(name=obj["metadata"]["name"]),
+                                file=sys.stderr,
+                            )
+                            failed = 1
                         continue
                     applied += 1
                     print(f"applied: {name}")
@@ -693,7 +715,6 @@ def _apply(
                 cluster.prune(
                     {(o["kind"], o["metadata"]["name"]) for o in pipelines + campaigns}
                 )
-            failed = 0
             for live, suspended in jobs:
                 failed |= cluster.sync_pause(live, suspended, pause_wait)
             if refused:
