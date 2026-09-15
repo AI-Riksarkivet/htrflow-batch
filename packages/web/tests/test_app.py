@@ -477,12 +477,24 @@ def test_a_failed_write_is_logged_and_the_request_still_answers(caplog):
     assert "campaign-kyrk-status" in caplog.text
 
 
-def test_site_only_mode_writes_nothing():
-    """No cluster to write to — and NoCluster's 503 must not be raised from
-    inside the record path either."""
-    from htrflow_web.app import NoCluster
+def test_site_only_mode_answers_honestly_instead_of_writing():
+    """No cluster to write to -- and NoCluster's 503 must not escape from
+    inside the record path as a 500. Driven through the route: asking the
+    class whether it has the attribute only re-states how the code is
+    written (2026-09-14 audit)."""
+    client = TestClient(create_app(NoCluster(), progress=FakeProgress()))
+    resp = client.get("/api/v1/jobs")
+    assert resp.status_code == 503
+    assert "HTRFLOW_WEB_SITE_ONLY" in resp.json()["detail"]
 
-    assert not hasattr(NoCluster, "apply_configmap")
+
+def test_a_reader_that_cannot_write_still_answers_the_list():
+    """The other half of the same branch: a reader with no
+    `apply_configmap` (every fake in this file) lists campaigns normally."""
+    reader = FakeReader()
+    assert not hasattr(reader, "apply_configmap")
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    assert len(client.get("/api/v1/jobs").json()) == 1
 
 
 REAPED_RECORD = {
