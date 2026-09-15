@@ -710,5 +710,11 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3857
 # admission can hold it to the objects the converter labelled. Rendered
 # with the identity it scopes (apply.rbac.enabled), so it is never a rule
 # about a ServiceAccount that does not exist.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 893
+# 893 -> 932 (2026-09-14, audit): the apply pod gets a NetworkPolicy. It had
+# a ServiceAccount and, under this chart's own default deny, no route to the
+# API server -- an apply that hangs to its deadline saying nothing. Net of a
+# refactor that paid for part of it: the apiserver-endpoint lookup is now one
+# helper instead of a copy per template, which is what kept the third copy
+# from being written.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 932
 exit $fail

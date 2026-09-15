@@ -325,3 +325,44 @@ def test_the_prune_rule_is_rendered_with_the_identity_it_scopes():
     )
     policy = named(rendered, "ClusterPolicy", f"htrflow-batch-rbac-scope-{NAMESPACE}")
     assert [r["name"] for r in policy["spec"]["rules"]] == ["web-writes-status-only"]
+
+
+# --- D7: the apply identity had no way out of the default deny ------------
+
+
+def test_the_apply_pod_can_reach_the_api_server_it_was_given_an_identity_for(
+    full: list[dict],
+):
+    """`apply.rbac.enabled` exists for `htrflow-campaigns apply` running
+    INSIDE the cluster. With the namespace default deny on -- which is the
+    chart's own default -- that pod had a ServiceAccount and no route to the
+    API server, so the apply hung until its deadline with nothing in its log
+    to say why. An identity without a network is not an identity."""
+    policy = named(full, "NetworkPolicy", "htr-campaigns-apply")
+    assert policy["spec"]["podSelector"]["matchLabels"] == {
+        "app": "htrflow-campaigns"
+    }
+    assert policy["spec"]["policyTypes"] == ["Ingress", "Egress"]
+    assert "ingress" not in policy["spec"]
+
+    egress = policy["spec"]["egress"]
+    dns = next(r for r in egress if any("podSelector" in to for to in r["to"]))
+    assert dns["ports"] == [
+        {"port": 53, "protocol": "UDP"},
+        {"port": 53, "protocol": "TCP"},
+    ]
+    api = next(r for r in egress if any("ipBlock" in to for to in r["to"]))
+    # ci/full-values.yaml states the endpoint, as `helm template` must.
+    assert api["to"] == [{"ipBlock": {"cidr": "10.16.51.56/32"}}]
+    assert api["ports"] == [{"port": 6443}]
+    # Nothing else: it reads its campaigns from a directory, not a network.
+    assert len(egress) == 2
+
+
+def test_the_apply_pods_policy_comes_with_its_identity():
+    """No ServiceAccount, no pod to let out."""
+    rendered = render(sets=DEFAULT_SETS + ("apply.rbac.enabled=false",))
+    assert [
+        o for o in objects(rendered, "NetworkPolicy")
+        if o["metadata"]["name"] == "htr-campaigns-apply"
+    ] == []

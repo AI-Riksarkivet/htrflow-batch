@@ -37,6 +37,27 @@ with network.enabled=false to get at the policy objects alone.
 {{- end }}
 
 {{/*
+The kube-apiserver as a pod reaches it AFTER service DNAT -- the address an
+egress rule has to name, since kube-router (k3s) matches egress on the
+backing endpoint rather than the ClusterVIP. Auto-detected at install time;
+`network.apiServer.cidr` is the answer for `helm template` and for a
+kubeconfig that may not read Endpoints. Two policies need it (the web front
+and the apply pod), so it is computed once here rather than a third time.
+*/}}
+{{- define "htrflow-batch.apiServerCidr" -}}
+{{- $api := .Values.network.apiServer.cidr }}
+{{- if not $api }}
+  {{- with (lookup "v1" "Endpoints" "default" "kubernetes") }}
+    {{- with (index .subsets 0) }}{{ $api = printf "%s/32" (index .addresses 0).ip }}{{ end }}
+  {{- end }}
+{{- end }}
+{{- if not $api }}
+{{- fail "network.apiServer.cidr is required when the kube-apiserver endpoint cannot be looked up (helm template / no RBAC)" }}
+{{- end }}
+{{- $api }}
+{{- end }}
+
+{{/*
 Control-plane images (web.image) must be digest-pinned: a tag can be
 re-pushed by anyone with registry write access (audit S3).
 security.allowTagImages opens the PoC iteration loop. Usage:
