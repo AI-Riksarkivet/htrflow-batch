@@ -226,3 +226,65 @@ def test_stop_event_short_circuits_a_page_without_touching_the_network(tmp_path)
     r = _one(tmp_path, handler, retries=3, stop=stop)
     assert r.path is None and "stopped" in r.error
     assert started == []
+
+
+def test_the_unscaled_fallback_does_not_spend_an_attempt(tmp_path):
+    """W13: the fallback asks a DIFFERENT URL, so it is not another go at the
+    one that failed -- and taking one of the page's attempts meant a single
+    retry (or a flaky server after the switch) lost the page for a reason the
+    fetcher had already worked out."""
+    seen = []
+
+    def handler(req):
+        seen.append(str(req.url))
+        if "/full/2500,/" in req.url.path:
+            return httpx.Response(400)
+        return httpx.Response(200, content=JPEG + b"narrow-image")
+
+    page = PageRef(
+        index=1,
+        name="0001",
+        image_url="https://img/iiif/full/2500,/0/default.jpg",
+        canvas={},
+    )
+    r = fetch_page(page, tmp_path, _client(handler), 1, 0.0)
+    assert r.error is None
+    assert [u.rsplit("/full/", 1)[1] for u in seen] == [
+        "2500,/0/default.jpg",
+        "max/0/default.jpg",
+    ]
+
+
+def test_a_400_that_is_not_a_size_still_spends_its_attempts(tmp_path):
+    """The fallback is a one-off substitution; a 400 it cannot change is an
+    ordinary failure and must not loop."""
+    calls = []
+
+    def handler(req):
+        calls.append(1)
+        return httpx.Response(400)
+
+    page = PageRef(index=1, name="0001", image_url="https://img/a.jpg", canvas={})
+    r = fetch_page(page, tmp_path, _client(handler), 3, 0.0)
+    assert r.error == "HTTP 400"
+    assert len(calls) == 3
+
+
+def test_a_400_after_the_fallback_does_not_loop(tmp_path):
+    """Once the URL is unscaled the substitution is a no-op, so the second
+    400 falls through and spends the attempt like any other."""
+    calls = []
+
+    def handler(req):
+        calls.append(str(req.url))
+        return httpx.Response(400)
+
+    page = PageRef(
+        index=1,
+        name="0001",
+        image_url="https://img/iiif/full/2500,/0/default.jpg",
+        canvas={},
+    )
+    r = fetch_page(page, tmp_path, _client(handler), 2, 0.0)
+    assert r.error == "HTTP 400"
+    assert len(calls) == 3  # the sized one, then the unscaled one twice
