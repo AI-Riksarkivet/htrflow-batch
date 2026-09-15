@@ -417,3 +417,60 @@ def test_a_refused_campaign_job_is_given_a_campaigns_way_out():
         "immutable once the Job exists — a live campaign's Job cannot change, "
         "so finish or remove the campaign, then apply"
     )
+
+
+def _flaky(monkeypatch, status: int, failures: int) -> list[str]:
+    """Make the first ``failures`` requests fail with ``status``."""
+    real = client.ApiClient.call_api
+    attempts: list[str] = []
+
+    def call_api(self, resource_path, method, *a, **kw):
+        attempts.append(method)
+        if len(attempts) <= failures:
+            raise ApiException(status=status, reason="flaky")
+        return real(self, resource_path, method, *a, **kw)
+
+    monkeypatch.setattr(client.ApiClient, "call_api", call_api)
+    return attempts
+
+
+@pytest.fixture
+def slept(monkeypatch) -> list[float]:
+    waits: list[float] = []
+    monkeypatch.setattr("htrflow_converter.cluster.time.sleep", waits.append)
+    return waits
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
+def test_a_busy_or_restarting_api_server_is_retried(
+    cluster, monkeypatch, slept, status
+):
+    """An apply is a long sequence of requests against a control plane that
+    is upgraded, rate-limited and load-balanced. One 503 from a restarting
+    apiserver used to leave a campaign unapplied and the operator re-running
+    the whole command."""
+    attempts = _flaky(monkeypatch, status, 2)
+    cluster.apply(JOB)
+    assert attempts == ["PATCH"] * 3
+    assert slept == [1, 2]
+
+
+def test_a_retry_is_bounded_and_then_says_so(cluster, monkeypatch, slept):
+    """A server that keeps refusing is not waited on for ever: the sentence
+    the last refusal carries is the one the apply reports."""
+    attempts = _flaky(monkeypatch, 503, 99)
+    with pytest.raises(ClusterError) as exc:
+        cluster.apply(JOB)
+    assert attempts == ["PATCH"] * 4
+    assert slept == [1, 2, 4]
+    assert str(exc.value) == "apply Job/kyrk: 503 flaky"
+
+
+def test_a_refusal_the_server_meant_is_not_retried(cluster, monkeypatch, slept):
+    """409, 403, 422: answers about this request, not about the server's
+    moment. Retrying them wastes a minute and changes nothing."""
+    attempts = _flaky(monkeypatch, 409, 99)
+    with pytest.raises(ClusterError):
+        cluster.apply(JOB)
+    assert attempts == ["PATCH"]
+    assert slept == []
