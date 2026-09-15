@@ -199,8 +199,10 @@ The dev cluster's `rustfs-init` hook applies the same shape
   `security.policies.enabled`. The Kyverno policies are the only thing that
   enforces the allow-list and the model-revision rule, and an empty list
   lets any image run on the GPU. Consider `security.requireModelRevision:
-  true`, and `security.verifyImages.*` (issuer and subject of the signing CI
-  identity) once your images are cosign-signed
+  true`, and `security.verifyImages.*` once your images are cosign-signed.
+  The subject is the signing workflow's own identity, and publishing is a
+  manual dispatch, so it carries the branch the run started from and never a
+  tag; `values.yaml` has the example to copy
   ([Security → Trust boundary](../how-it-works/security.md#trust-boundary)).
 - **Model-cache ownership.** Platform pods run as uid 1000. A cache volume
   first written by a root-running pod, on a volume plugin that ignores

@@ -366,3 +366,30 @@ def test_the_apply_pods_policy_comes_with_its_identity():
         o for o in objects(rendered, "NetworkPolicy")
         if o["metadata"]["name"] == "htr-campaigns-apply"
     ] == []
+
+
+# --- D8: a signing identity nothing ever signed as -------------------------
+
+#: The identity `publish.yml` actually gets from Sigstore: the repository is
+#: under the AI- organisation, and the workflow is `workflow_dispatch`, so
+#: the certificate carries the branch it ran from -- never a tag ref.
+SIGNING_SUBJECT = (
+    "https://github.com/AI-Riksarkivet/htrflow-batch"
+    "/.github/workflows/publish.yml@refs/heads/main"
+)
+
+
+def test_the_signing_identity_example_is_one_a_release_can_produce(
+    full: list[dict],
+):
+    """Both copies of the cosign subject named the wrong organisation, and
+    the render fixture also asked for `@refs/tags/*`. An operator who copies
+    either gets a policy that refuses every image the release publishes --
+    and finds out at admission, on a cluster, not here."""
+    policy = named(full, "ClusterPolicy", f"htrflow-batch-verify-images-{NAMESPACE}")
+    keyless = policy["spec"]["rules"][0]["verifyImages"][0]["attestors"][0]
+    assert keyless["entries"][0]["keyless"]["subject"] == SIGNING_SUBJECT
+
+    values = (CHART / "values.yaml").read_text(encoding="utf-8")
+    assert SIGNING_SUBJECT in values
+    assert "github.com/Riksarkivet/" not in values

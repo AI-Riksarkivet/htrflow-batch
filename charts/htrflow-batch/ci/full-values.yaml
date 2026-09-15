@@ -28,7 +28,7 @@ security:
   verifyImages:
     enabled: true
     issuer: https://token.actions.githubusercontent.com
-    subject: https://github.com/Riksarkivet/htrflow-batch/.github/workflows/publish.yml@refs/tags/*
+    subject: https://github.com/AI-Riksarkivet/htrflow-batch/.github/workflows/publish.yml@refs/heads/main
 
 network:
   # This file is a render fixture, not an install: it keeps the catch-all
