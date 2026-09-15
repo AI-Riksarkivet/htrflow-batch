@@ -697,5 +697,9 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3857
 # template and eleven of comment, because the surprising half is not what is
 # excluded but what still is not: a range the operator NAMES stays reachable,
 # since it is its own ipBlock and egress rules are a union.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 846
+# 846 -> 856 (2026-09-14, audit): the CIDR half of the S3 egress rule names
+# its ports. Five lines in each of the two files that build that rule
+# (network.yaml for the batch Job, web.yaml for the read API -- separate
+# templates cannot share a variable), comment included.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 856
 exit $fail

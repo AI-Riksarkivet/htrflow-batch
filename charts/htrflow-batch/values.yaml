@@ -159,6 +159,11 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   # `app: rustfs` pod (a no-op unless charts/htrflow-devstack's RustFS is
   # installed). A real endpoint goes here.
   s3Cidrs: []
+  # Ports those endpoints answer on. A real endpoint is 443; a self-hosted
+  # one often is not, and the answer to that is this value rather than a
+  # rule with no ports at all. The in-namespace RustFS pod is matched by
+  # label instead and is always allowed on 9000.
+  s3Ports: [443]
   # Ranges that pods granted *public* egress (warm-up) must NOT reach: pod
   # and service CIDRs (k3s defaults) plus every node address. Node addresses
   # and the kube-apiserver endpoint are auto-detected at install/upgrade

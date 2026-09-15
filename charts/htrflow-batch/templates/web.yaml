@@ -164,7 +164,12 @@ endpoint from network.s3Cidrs.
 {{- if .Values.network.s3Cidrs }}
   {{- $blocks := list }}
   {{- range .Values.network.s3Cidrs }}{{ $blocks = append $blocks (dict "ipBlock" (dict "cidr" .)) }}{{ end }}
-  {{- $s3 = append $s3 (dict "to" $blocks) }}
+  {{- /* Named ports, not the whole range (2026-09-14, audit): a
+       self-hosted endpoint's CIDR is a slice of the operator's own
+       network, and this rule used to open every port of it. */}}
+  {{- $s3Ports := list }}
+  {{- range .Values.network.s3Ports }}{{ $s3Ports = append $s3Ports (dict "port" .) }}{{ end }}
+  {{- $s3 = append $s3 (dict "to" $blocks "ports" $s3Ports) }}
 {{- end }}
 # Web front: browsers in (NodePort traffic arrives SNAT'd from the node, so
 # the node range must be in network.web.ingressCidrs); egress to DNS, the
