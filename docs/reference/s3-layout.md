@@ -121,7 +121,7 @@ pages than `pages_done` says are finished, rather than overwrite a complete
 `iiif.json` with one naming only the pages since resume; the final publish
 reads the resumed pages' ALTO back and always writes the complete one.
 
-## Live status: the read API, not a file in this bucket
+## Live status: the read API, not a file
 
 `GET /api/v1/jobs` and `GET /api/v1/jobs/{namespace}/{name}` are the whole
 story: every response is computed live from the Job/Pod/ConfigMap state, plus
