@@ -3,14 +3,18 @@
 # (B63 Task 22). HF Hub weights are pickles and a repo id alone is mutable,
 # so an unpinned model is a code-execution hole that opens later.
 #
-# The subject is the pipeline ConfigMap the converter renders: its
-# `pipeline.yaml` key is the htrflow steps document, parsed here with
-# Kyverno's `parse_yaml` so the rule reads the structure the wrapper will.
-# Only top-level steps are walked, exactly as the converter's rule did. The
-# `|| 'steps: []'` is for the campaign ConfigMaps, which carry the same
-# label but a `volumes.txt` and no pipeline. `context` + `deny` rather than
-# `foreach` for the reason spelled out in images-pinned.yaml: the message
-# names the model.
+# The subject is any ConfigMap carrying a `pipeline.yaml` key: that key is
+# the htrflow steps document, parsed here with Kyverno's `parse_yaml` so the
+# rule reads the structure the wrapper will. Only top-level steps are
+# walked, exactly as the converter's rule did. The `|| 'steps: []'` is what
+# passes every OTHER ConfigMap in the namespace straight through.
+#
+# It matched `managed-by: converter` until 2026-09-14 (audit), which made
+# the rule skippable by anyone who can create a ConfigMap: leave the label
+# off and the pipeline is admitted unpinned. A label is a claim about an
+# object, not a property of it -- the `pipeline.yaml` key is the property.
+# `context` + `deny` rather than `foreach` for the reason spelled out in
+# images-pinned.yaml: the message names the model.
 #
 # A model is pinned two different ways depending on who loads it (B63 Task
 # 22 fix round 2): YOLO's Ultralytics wrapper takes `model_settings.revision`
@@ -35,9 +39,6 @@ spec:
           - resources:
               kinds: [ConfigMap]
               namespaces: [{{ .Release.Namespace | quote }}]
-              selector:
-                matchLabels:
-                  htrflow.riksarkivet.se/managed-by: converter
       context:
         - name: unpinned
           variable:

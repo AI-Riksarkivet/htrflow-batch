@@ -701,5 +701,8 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3857
 # its ports. Five lines in each of the two files that build that rule
 # (network.yaml for the batch Job, web.yaml for the read API -- separate
 # templates cannot share a variable), comment included.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 856
+# 856 -> 857 (2026-09-14, audit): the model-revision rule drops its
+# `managed-by: converter` selector (four lines) for the paragraph saying why
+# a label anyone can leave off is not what identifies a pipeline (five).
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 857
 exit $fail

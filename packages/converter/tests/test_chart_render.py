@@ -266,3 +266,23 @@ def test_an_endpoint_on_another_port_is_a_value_not_a_fork():
         if {"ipBlock": {"cidr": "10.0.0.5/32"}} in rule.get("to", [])
     )
     assert by_cidr["ports"] == [{"port": 9000}, {"port": 443}]
+
+
+# --- D5: a label is not what makes a ConfigMap a pipeline -----------------
+
+
+def test_the_model_revision_rule_reaches_any_configmap_carrying_a_pipeline(
+    full: list[dict],
+):
+    """The rule matched `managed-by: converter`, a label anyone who can
+    create a ConfigMap can leave off. The rule exists because unpinned
+    Hugging Face weights are mutable pickles, and a hand-written pipeline
+    ConfigMap is exactly the case it should catch. What makes a ConfigMap a
+    pipeline is the `pipeline.yaml` key, so that is what it matches on."""
+    policy = named(full, "ClusterPolicy", f"htrflow-batch-model-revision-{NAMESPACE}")
+    pinned = rule(policy, "pipeline-models-pinned")
+    resources = pinned["match"]["any"][0]["resources"]
+    assert resources["kinds"] == ["ConfigMap"]
+    assert resources["namespaces"] == [NAMESPACE]
+    assert "selector" not in resources
+    assert 'data."pipeline.yaml"' in pinned["context"][0]["variable"]["jmesPath"]
