@@ -237,10 +237,13 @@ export class ApiUnreachable extends Error {
   }
 }
 
-async function getJson(url: string): Promise<unknown> {
+async function getJson(url: string, signal?: AbortSignal): Promise<unknown> {
   let res: Response;
   try {
-    res = await fetch(url, { cache: "no-store" });
+    // The signal is what makes abandoning a poll actually stop it: without
+    // it the request ran to completion and only its answer was dropped
+    // (2026-09-14 audit).
+    res = await fetch(url, { cache: "no-store", signal: signal ?? null });
   } catch (e) {
     throw new ApiUnreachable(e instanceof Error ? e.message : String(e), {
       cause: e,
@@ -272,10 +275,10 @@ export async function fetchVersion(): Promise<Version> {
 }
 
 /** GET /api/v1/jobs — every campaign Job, newest first (server-sorted). */
-export async function fetchJobs(): Promise<JobList> {
+export async function fetchJobs(signal?: AbortSignal): Promise<JobList> {
   const rows = z
     .array(z.unknown())
-    .parse(await getJson(`${resolveApiBase()}/jobs`));
+    .parse(await getJson(`${resolveApiBase()}/jobs`, signal));
   const jobs: JobSummary[] = [];
   let unreadable = 0;
   for (const row of rows) {
@@ -299,10 +302,11 @@ export async function fetchJob(
   name: string,
   offset = 0,
   limit = 200,
+  signal?: AbortSignal,
 ): Promise<JobDetail> {
   const url =
     `${resolveApiBase()}/jobs/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}` +
     `?offset=${offset}&limit=${limit}`;
-  const raw = await getJson(url);
+  const raw = await getJson(url, signal);
   return jobDetailSchema.parse(raw);
 }

@@ -6,6 +6,7 @@
   // nothing); LIVE_MAX_FAILURES stops a log that never appears from
   // spinning forever. Both documented in $lib/config.
   import { LIVE_MAX_FAILURES, LIVE_MS } from "$lib/config.js";
+  import { startPolling } from "$lib/poll.js";
   import { isHttpUrl, shortDate } from "$lib/api.js";
   import {
     isTerminalManifest,
@@ -55,30 +56,19 @@
   // who scrolled up to look at something must not be yanked back down.
   let stickToBottom = $state(true);
 
-  // One request per resource in flight: a slow poll is abandoned when the
-  // next starts (or the page goes away), so responses never land out of order.
-  let logInflight: AbortController | null = null;
-  let manifestInflight: AbortController | null = null;
-
-  async function loadLog(): Promise<void> {
+  async function loadLog(signal: AbortSignal): Promise<boolean> {
     if (logUrl === null) {
       logError =
         rawLogUrl === null
           ? "no log URL given"
           : "log URL must be an absolute http(s) URL";
-      return;
+      return true; // nothing to retry: the URL itself is the problem
     }
-    logInflight?.abort();
-    const controller = new AbortController();
-    logInflight = controller;
     try {
       // no-cache (not no-store): the browser revalidates with the object's
       // ETag and gets a 304 when nothing changed, instead of re-pulling a
       // multi-MB log every poll.
-      const res = await fetch(logUrl, {
-        cache: "no-cache",
-        signal: controller.signal,
-      });
+      const res = await fetch(logUrl, { cache: "no-cache", signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const text = await res.text();
       logError = null;
@@ -88,8 +78,9 @@
         updatedAt = new Date().toISOString();
       }
       if (live && isTerminalLog(text)) live = false;
+      return true;
     } catch (e) {
-      if (controller.signal.aborted) return;
+      if (signal.aborted) return true;
       const message = e instanceof Error ? e.message : String(e);
       // A live volume's log may not exist yet (first upload pending) — keep
       // polling rather than freezing on the first 404, but not forever.
@@ -100,6 +91,7 @@
         live = false;
         logError = `gave up after ${failures} failed polls (${message})`;
       }
+      return false;
     }
   }
 
@@ -108,16 +100,10 @@
       window.innerHeight + window.scrollY >= document.body.scrollHeight - 40;
   }
 
-  async function loadManifest(): Promise<void> {
+  async function loadManifest(signal: AbortSignal): Promise<void> {
     if (manifestUrl === null) return;
-    manifestInflight?.abort();
-    const controller = new AbortController();
-    manifestInflight = controller;
     try {
-      const res = await fetch(manifestUrl, {
-        cache: "no-cache",
-        signal: controller.signal,
-      });
+      const res = await fetch(manifestUrl, { cache: "no-cache", signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const parsed = runManifestSchema.safeParse(await res.json());
       if (parsed.success) {
@@ -131,22 +117,29 @@
     }
   }
 
-  $effect(() => {
-    void loadLog();
-    void loadManifest();
-    return () => {
-      logInflight?.abort();
-      manifestInflight?.abort();
-    };
-  });
+  // One reader for the page. A live volume polls on the wrapper's log-ship
+  // cadence through $lib/poll — one request in flight at a time, nothing
+  // fetched while the tab is in the background, and a run of failures
+  // doubling the wait (2026-09-14 audit); a finished one is read once.
+  // `started` is why `live` going false re-runs this effect and reads
+  // nothing: the tick that saw the terminal line already has the text.
+  let started = false;
 
   $effect(() => {
-    if (!live) return;
-    const timer = setInterval(() => {
-      void loadLog();
-      if (manifest === null) void loadManifest();
-    }, LIVE_MS);
-    return () => clearInterval(timer);
+    const tick = async (signal: AbortSignal): Promise<boolean> => {
+      const ok = await loadLog(signal);
+      if (manifest === null) await loadManifest(signal);
+      return ok;
+    };
+    if (live) {
+      started = true;
+      return startPolling(tick, LIVE_MS);
+    }
+    if (started) return;
+    started = true;
+    const controller = new AbortController();
+    void tick(controller.signal);
+    return () => controller.abort();
   });
 
   $effect(() => {
