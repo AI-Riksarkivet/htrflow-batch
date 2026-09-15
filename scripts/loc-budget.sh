@@ -180,7 +180,13 @@ fail=0
 # TypeError is not permanent, so a mistyped `settings:` key exited 1 and burned
 # every retry. The lines are the frame check and the paragraph saying how the
 # two TypeErrors are told apart.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2825
+# 2825 -> 2844 (2026-09-14, audit W3): a page that is reprocessed has its
+# stored pair deleted first, and the verify gate stops handing publish the
+# names that failed. Both close the same hole: `missing` and `alto_dims` read
+# a LIVE bucket listing, so a previous run's objects answered for a page this
+# run had just failed -- iiif.json carried a canvas whose ALTO was the old
+# one while manifest.json recorded the page as failed.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2844
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

@@ -341,6 +341,11 @@ def _resume(
             cfg.volume_ref,
             len(changed),
         )
+        for name in sorted(changed):
+            # W3: before, not after -- a reprocessing that fails must leave
+            # the page with no stored outputs at all, else the stale pair
+            # answers for it at verify and in the viewer manifest.
+            store.delete_page(name)
         done -= changed
     todo = [p for p in pages if p.name not in done]
     log.info(
@@ -408,8 +413,11 @@ def _verify(
     leave the bucket without manifest.json — except when every page this run
     processed failed and nothing was resumed, which is a broken model or a
     dead GPU, not a volume.
-    Returns what is stored, which publish reads back for the pages this run
-    skipped."""
+    Returns what is stored MINUS this run's failed pages (W3): with RESUME
+    off there is no `changed` set for `_resume` to delete from, so a page
+    reprocessed and failed still has the previous run's objects -- and publish
+    would read that ALTO back into iiif.json for a page manifest.json records
+    as failed."""
     state.stage = "verify"
     uploaded = store.uploaded_pages()
     failed = sorted(n for n, r in stats.results.items() if r.status == "failed")
@@ -443,7 +451,7 @@ def _verify(
             f"verify failed: all {len(statuses)} processed pages failed"
             f"{_failure_detail(stats, failed)} failed={failed}"
         )
-    return uploaded
+    return uploaded - set(failed)
 
 
 #: How much of the failed pages' errors goes in the verify message: enough to

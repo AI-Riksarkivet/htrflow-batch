@@ -1252,3 +1252,77 @@ def test_default_factory_rebuilds_the_pipeline_after_a_dead_worker_thread(
     )
     assert len(built) == 2  # page 0003 ran on a pipeline built from scratch
     assert held == ["first build", None]  # its weights were dropped first
+
+
+def test_a_reprocessed_page_that_fails_publishes_no_stale_alto(env, cfg, s3):
+    """W3: `missing` subtracts a LIVE S3 listing, so a page reprocessed and
+    failed this run used to be 'accounted for' by the previous run's objects
+    -- and publish read that stale ALTO into iiif.json while manifest.json
+    said the page had failed. The objects go before the page is reprocessed,
+    and a failed page never contributes a canvas."""
+    for name in ("0001", "0002", "0003"):
+        _put_done(s3, cfg, name)
+    src = "https://iiif.example/mock-vol/page-{:05d}/full/2500,/0/default.jpg"
+    s3.put_object(
+        Bucket=cfg.s3_bucket,
+        Key="demo-v1/SE-RA-1234/manifest.json",
+        Body=json.dumps(
+            {
+                "pages": 3,
+                "page_sources": {
+                    "0001": src.format(1),
+                    "0002": "https://iiif.example/OLD/page-00002/full/2500,/0/default.jpg",
+                    "0003": src.format(3),
+                },
+            }
+        ).encode(),
+    )
+
+    def factory(c):
+        def process(path):
+            if path.stem == "0002":
+                raise RuntimeError("htrflow's Segmentation worker thread died")
+            return _write_outputs(c, path.stem)
+
+        return process
+
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    keys = _keys(s3, cfg)
+    assert "demo-v1/SE-RA-1234/alto/0002.xml" not in keys
+    assert "demo-v1/SE-RA-1234/page/0002.xml" not in keys
+    iiif = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/iiif.json")[
+            "Body"
+        ].read()
+    )
+    assert [c["id"].rsplit("/", 1)[-1] for c in iiif["items"]] == ["0001", "0003"]
+    body = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert body["results"]["0002"]["status"] == "failed"
+
+
+def test_a_failed_page_keeps_its_stale_alto_out_of_the_viewer(env, cfg, s3):
+    """RESUME=off reprocesses every page without a `changed` set to delete
+    from, so the failed names are taken out of the uploaded listing publish
+    reads dimensions back from (W3)."""
+    for name in ("0001", "0002", "0003"):
+        _put_done(s3, cfg, name)
+
+    def factory(c):
+        def process(path):
+            if path.stem == "0002":
+                raise RuntimeError("htrflow's Segmentation worker thread died")
+            return _write_outputs(c, path.stem)
+
+        return process
+
+    assert main({**env, "RESUME": "false"}, process_page_factory=factory) == EXIT_OK
+    iiif = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/iiif.json")[
+            "Body"
+        ].read()
+    )
+    assert [c["id"].rsplit("/", 1)[-1] for c in iiif["items"]] == ["0001", "0003"]
