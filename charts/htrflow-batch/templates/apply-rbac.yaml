@@ -61,4 +61,36 @@ subjects:
   - kind: ServiceAccount
     name: htrflow-campaigns
     namespace: {{ .Release.Namespace }}
+{{- if .Values.network.enabled }}
+---
+# An identity with no route to the API server is not an identity
+# (2026-09-14, audit): under this chart's own namespace default deny, an
+# apply pod had its ServiceAccount and nowhere to send a request, so the
+# command hung to its deadline with nothing in the log to say why. Label the
+# Job's pod `app: htrflow-campaigns` for this to apply to it.
+#
+# DNS and the API server, and nothing else: `apply` reads its campaigns from
+# a directory it was given, never from a network.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: htr-campaigns-apply
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app: htrflow-campaigns }
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    - to:
+        - ipBlock: { cidr: {{ include "htrflow-batch.apiServerCidr" . | quote }} }
+      ports:
+        - { port: {{ .Values.network.apiServer.port }} }
+{{- end }}
 {{- end }}
