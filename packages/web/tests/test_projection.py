@@ -803,6 +803,32 @@ class TestVolumeProgress:
         )
         assert len(asked) == projection.PROGRESS_FETCH_CAP
 
+    def test_a_bucket_that_does_not_answer_gives_up_inside_the_budget(
+        self, monkeypatch
+    ):
+        """Every fetch here takes a second of the budget. The cap alone let a
+        request hold a worker for cap x the HTTP timeout -- 64 s for an
+        unreachable bucket -- and forty such requests emptied the threadpool
+        that /healthz is answered from (2026-09-14 audit)."""
+        ticks = iter(range(100))
+        monkeypatch.setattr(projection.time, "monotonic", lambda: float(next(ticks)))
+        n = 40
+        fetch, asked = self._fetch({})
+        pods = [_pod(i, active=True) for i in range(n)]
+        body = projection.detail(
+            _job(completions=n, active=n, completed="", failed=""),
+            _configmap(n=n),
+            pods,
+            CFG,
+            offset=0,
+            limit=n,
+            warmup=MISSING_WARMUP,
+            fetch_progress=fetch,
+        )
+        assert 0 < len(asked) < projection.PROGRESS_FETCH_CAP
+        assert len(asked) <= projection.PROGRESS_FETCH_BUDGET
+        assert body["volumes"][0]["progress"] is None, "still a row, just no progress"
+
     def test_running_rows_are_not_crowded_out_by_a_page_full_of_done_ones(self):
         """Most of a big campaign is done; a few volumes are still running.
         The running ones must not lose the cap to done rows ahead of them."""

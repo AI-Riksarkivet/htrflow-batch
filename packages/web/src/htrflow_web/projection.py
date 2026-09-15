@@ -9,6 +9,7 @@ cluster (docs: task-4-brief).
 from __future__ import annotations
 
 import json
+import time
 
 import yaml
 
@@ -564,6 +565,15 @@ def _latest(volumes: list[dict]) -> dict | None:
 #: whose progress.json never changes again) fill whatever budget is left.
 PROGRESS_FETCH_CAP = 32
 
+#: Seconds the whole fan-out may take, cap or no cap. Each fetch is one
+#: sequential GET with progress.py's own short timeout, so an unreachable
+#: bucket cost cap x that timeout -- over a minute of one worker, inside a
+#: sync handler, and forty such requests emptied the threadpool /healthz is
+#: answered from (2026-09-14 audit). Past the deadline the remaining rows
+#: are answered with no progress, which is what an unreadable file already
+#: means: a decoration missing from a page that still draws.
+PROGRESS_FETCH_BUDGET = 5.0
+
 
 def _attach_progress(rows: list[dict], results_base: str, fetch) -> list[dict]:
     """Give every row the response actually carries its ``progress`` — the
@@ -580,9 +590,11 @@ def _attach_progress(rows: list[dict], results_base: str, fetch) -> list[dict]:
     running = [row for row in fetchable if row["state"] == "active"]
     rest = [row for row in fetchable if row["state"] != "active"]
     asked = {id(row) for row in (running + rest)[:PROGRESS_FETCH_CAP]}
+    deadline = time.monotonic() + PROGRESS_FETCH_BUDGET
     for row in shown:
+        wanted = id(row) in asked and time.monotonic() < deadline
         row["progress"] = (
-            fetch(results_base, row["id"], row["state"]) if id(row) in asked else None
+            fetch(results_base, row["id"], row["state"]) if wanted else None
         )
     return [row for row in shown if row["progress"]]
 
