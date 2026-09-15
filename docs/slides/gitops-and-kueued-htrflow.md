@@ -8,9 +8,9 @@ lang: en
 <!-- _class: lead cover -->
 <!-- _footer: "Enheten för AI-labb och datatjänster,  2026-09-15" -->
 
-# htrflow-batch: HTRflow at archive scale
+# GitOps and Kueued HTRflow
 
-## The pipeline you already write, run over thousands of volumes — for the people who build htrflow
+## Pipelines you already write, campaigns you commit — how htrflow-batch runs them at archive scale
 
 <!--
 This is about the layer above htrflow, not a change to htrflow. Everything
@@ -37,7 +37,7 @@ know Kubernetes.
 ## This is what changes
 
 - Thousands of volumes, not one folder. Pages arrive from IIIF, not from disk.
-- One GPU shared by everyone, so a run waits its turn.
+- GPUs are a shared, counted pool. A campaign is admitted when the GPUs its `window` needs fit the free quota, and waits when they do not.
 - Results stream into an S3 bucket page by page, while the run is still going.
 - Interrupted work resumes: a page already in the bucket is never fetched again.
 
@@ -93,12 +93,80 @@ steps:
 </div>
 </div>
 
-<p class="note">Write access to this repository decides which image and which models run with the results bucket's write credentials. Give it the care you give CI configuration.</p>
+<div class="cols">
+<div>
+
+```
+uvx --from "git+https://github.com/AI-Riksarkivet/\
+htrflow-batch@<ref>#subdirectory=packages/converter" \
+  htrflow-campaigns validate .
+```
+
+</div>
+<div>
+
+<p class="note">One program, three verbs — <code>validate</code>, <code>render</code>, <code>apply</code>. Validating needs no cluster, so the same program runs on your laptop and in the pull request, one sentence per problem, naming the file.</p>
+
+</div>
+</div>
 
 <!--
 A campaign names exactly one pipeline. A volume is a reference code the
 converter expands through source_template, or an explicit IIIF manifest, or
 a bare list of image URLs. Opening a pull request is how work is submitted.
+-->
+
+---
+
+# `converter.yaml`: what the cluster already is
+
+<div class="dense">
+
+```
+namespace: htr-batch                 # where campaigns are applied — and pruned
+queue: htr-batch                     # the Kueue LocalQueue a Job labels itself with
+s3_secret: htr-batch-s3              # Secret holding the results-bucket credentials
+data_pvc: htr-test-data              # the model cache, mounted read-only into every pod
+runtime_class: nvidia                # RuntimeClass for GPU pods — and for the warm-up Job
+hf_token_secret: ""                  # optional, and yours to create: a private or gated Hub model
+
+window: 20                           # default parallelism, and the cap a campaign's own window is clamped to
+
+max_seconds: 21600                   # each pod's activeDeadlineSeconds; a pipeline may override it
+warmup_wait_seconds: 900             # how long a pod waits for its pipeline's warm-up marker
+ttl_seconds_after_finished: 604800   # a week the finished Job stays; a pipeline may override it
+manifest_max_bytes: 16777216         # 16 MiB
+fetch_max_bytes: 67108864            # 64 MiB
+source_template: "https://<iiif-host>/<path>/{ref}/manifest"   # {ref} is a bare volume id
+public_results_base: ""              # the URL results are served from — the read API needs it
+```
+
+</div>
+
+<div class="cols">
+<div>
+
+<p class="note"><strong>The first block must agree with the chart.</strong> These are names of objects the release already made; the token Secret is the exception — no chart makes that one, you do.</p>
+
+</div>
+<div>
+
+<p class="note"><strong><code>window</code> is the number to get right.</strong> Set it to what the ClusterQueue's GPU quota can admit. Partial admission is not used, so a window the quota cannot cover never starts — and a live window Kueue had shrunk would make the rendered file un-appliable afterwards.</p>
+
+</div>
+</div>
+
+<p class="note"><strong>Deliberately not here:</strong> the image allow-list and the model-revision rule. Both are Kyverno policies the chart ships, re-run over <code>rendered/</code> in CI.</p>
+
+<!--
+Every value on this slide is the shipped default. The file itself is
+required: a repo without one is refused rather than defaulted, because the
+namespace a campaign is applied to — and pruned in — is exactly the setting
+you do not want guessed.
+
+Unknown keys are rejected too, which is how allowed_image_repos or
+require_model_revision in this file becomes a validation error naming the
+chart value instead of a setting that silently does nothing.
 -->
 
 ---
@@ -152,11 +220,57 @@ system is the results bucket.
 
 ---
 
+# One Job, one index per volume
+
+```mermaid w:780
+flowchart LR
+  J["campaign Job, Indexed<br/>completions = volumes, parallelism = window"]
+  P0["index 0"]
+  P1["index 1 · retried"]
+  P2["index 2 · FailIndex"]
+  S[("S3 bucket<br/>one prefix per volume")]
+  J --> P0 --> S
+  J --> P1 --> S
+  J --> P2 --> S
+```
+
+<div class="cols">
+<div>
+
+- **`completions` is the number of volumes,** fixed when the Job is created — the whole reason a campaign file is append-only.
+- **`parallelism` is the window:** how many indexes run at once, so how many GPUs. Kueue admits the Job as **one** Workload of that size.
+
+</div>
+<div>
+
+- **Each pod reads its own line.** `JOB_COMPLETION_INDEX` picks line *index + 1* of `volumes.txt`, split on the **first tab** into `VOLUME_REF` and either `IIIF_MANIFEST_URL` or `IMAGES`.
+- **Retries are per index.** Exit 1 retries it, up to `backoffLimitPerIndex: 3`, resuming from the bucket; exit 13 fails it at once.
+
+</div>
+</div>
+
+<!--
+The prologue then execs the wrapper. A volumes.txt line is `<id>` TAB
+`<manifest url>`, or `<id>` TAB
+`images:<url> <url> …` for a volume given as bare image URLs. Whitespace is
+the separator because a URL cannot contain it, while a comma is legal in one.
+
+The other indexes carry on regardless: maxFailedIndexes is set to the number
+of volumes, so one bad volume never stops the rest. The Job ends Complete when every index is done, or Failed
+with failedIndexes naming exactly which ones were not — and the campaign page
+reads PartiallyFailed when some did finish.
+
+The first podFailurePolicy rule is Ignore on DisruptionTarget: a preempted or
+drained pod is not this index's failure.
+-->
+
+---
+
 # Kueue: why your campaign is waiting
 
 - **Kueue decides when, the scheduler decides where.** It is an admission controller with a GPU quota, and it knows nothing about HTR, IIIF or S3.
-- **One campaign is one Workload,** not one per volume. It is admitted as a whole, and it holds its GPU until the last volume is done.
-- **`window:`** is the Job's parallelism — how many volumes run at once. It is clamped to the cluster-wide cap in `converter.yaml`, and the whole window must fit the quota or nothing starts.
+- **One campaign is one Workload,** not one per volume. It is admitted as a whole, and it holds the GPUs it was admitted for until its last volume is done.
+- **`window:`** is the Job's parallelism — how many volumes run at once, so how many GPUs it takes. It is clamped to the cluster-wide cap in `converter.yaml`, and the whole window must fit the free quota or nothing starts.
 - **Nothing jumps the line.** Preemption is off and there are no priority classes; a workload that does not fit is skipped rather than blocking the rest.
 - **Pausing is a git change.** `suspend: true` in the campaign file; the apply puts the same intent on the Workload, and running pods are evicted with every finished volume kept.
 
@@ -294,10 +408,51 @@ request. The last two are conventions the review has to hold.
 
 ---
 
+# Removing, archiving, re-running
+
+<div class="cols">
+<div>
+
+- **Deleting `campaigns/<name>.yaml` changes nothing yet.** The next render drops it from `rendered/` — and that is only half of cancelling.
+- **The next *pruning* apply removes three objects:** the Job, the `campaign-<name>` ConfigMap and its status ConfigMap. A running Job is killed and Kueue takes its GPUs back; a finished one was probably reaped by its TTL a week after it ended.
+- **Pruning is opt-in on both sides.** By hand, `make campaigns-apply … PRUNE=1`; through Argo CD, `syncPolicy.automated.prune: true`. Neither defaults to on.
+
+</div>
+<div>
+
+- **The results are never touched.** `alto/`, `page/`, `manifest.json`, `iiif.json` and the run log stay under their pipeline and volume prefix. Removing those is a separate, deliberate step.
+- **"Archive" means leaving the file alone.** It costs two small ConfigMaps, keeps the campaign on the status page with its finish date and its failed volumes, and `apply` leaves a finished campaign alone anyway.
+- **Re-running is a new campaign name.** Same volumes and same pipeline id: resume finds the pages already in the bucket and does not transcribe them again. The *same* name with a changed volume list is refused — append-only.
+
+</div>
+</div>
+
+<p class="note"><strong>Two rails on prune.</strong> An empty render is refused unless you pass <code>--allow-empty</code>, and prune only ever considers objects the converter labelled as its own.</p>
+
+<!--
+The distinction worth landing: git decides what SHOULD exist; prune is what
+makes the cluster agree. Deleting a file and never pruning leaves a finished
+campaign's ConfigMaps in the namespace for ever — harmless, and invisible in
+the repo, which is exactly why it surprises people.
+
+The two rails matter because an empty `campaigns/`, a mistyped directory and
+a checkout that never happened all look exactly alike from inside the
+converter — hence `--allow-empty` when retiring the last campaign really is
+what you mean. The label is `managed-by=converter`, on every object the
+converter renders. `--dry-run` prints what a prune would delete, and says
+outright that the real run will refuse an empty render.
+
+Re-running the same volumes under a new campaign name is cheap, not free:
+each volume still takes a slot and a model load, and rewrites its viewer
+manifest and manifest.json.
+-->
+
+---
+
 # Bringing a new model
 
 - **Pin the revision** — the commit hash, not a branch name. Without it an upstream re-upload silently changes what a pipeline id means.
-- **Choose the batch size.** `generation_settings` goes through verbatim, and the pod's memory request is what the GPU quota is counted in.
+- **Choose the batch size.** `generation_settings` goes through verbatim, and the pod's requests are what the queue's quota is counted in.
 - **Say which transformers line the model was saved by.** It decides which image the pipeline pins, and the failure mode of getting it wrong is text that is subtly wrong rather than an error.
 - **Ask for a token Secret** if the model is private or gated on the Hub; the warm-up is the only pod that can use one.
 - **Run the throwaway campaign,** read the run log and one ALTO, then point a real campaign at the same pipeline id.
