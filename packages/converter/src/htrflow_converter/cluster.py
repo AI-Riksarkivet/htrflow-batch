@@ -56,6 +56,20 @@ MAX_MESSAGE = 300
 #: seconds is a server that is not there.
 REQUEST_TIMEOUT = (5, 60)
 
+#: Statuses that say "not now" rather than "not this request": a rate limit,
+#: and the 5xx an apiserver being upgraded, a load balancer with no healthy
+#: backend or an overloaded etcd answers with. An apply is a long sequence of
+#: requests against a control plane that is none of it under our control, and
+#: one of these used to leave a campaign unapplied and the operator
+#: re-running the whole command. Everything else -- 409, 403, 422 -- is an
+#: answer about the request itself, and waiting changes nothing.
+RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+#: Retries after the first attempt, and the seconds before each: 1, 2, 4.
+#: Bounded on purpose -- an apply that hangs on a dead control plane is worse
+#: than one that says so.
+RETRIES = 3
+RETRY_BACKOFF = 1
+
 #: Seconds a replaced Job is waited for. Background propagation returns at
 #: once and the object lingers while its pods go, so this covers a pod's
 #: grace period and no more -- past that the apply says so and stops.
@@ -174,12 +188,25 @@ def _errors(verb: str, kind: str, name: str, namespace: str):
         raise _unreachable(e) from e
 
 
+def _retrying(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    """``fn(*args, **kwargs)``, retried while the server says "not now"."""
+    for attempt in range(RETRIES):
+        try:
+            return fn(*args, **kwargs)
+        except ApiException as e:
+            if e.status not in RETRY_STATUSES:
+                raise
+            time.sleep(RETRY_BACKOFF << attempt)
+    return fn(*args, **kwargs)
+
+
 def _raw(
     verb: str, kind: str, name: str, namespace: str, fn: Any, *args: Any, **kwargs: Any
 ) -> dict:
     with _errors(verb, kind, name, namespace):
         return json.loads(
-            fn(
+            _retrying(
+                fn,
                 *args,
                 _preload_content=False,
                 _request_timeout=REQUEST_TIMEOUT,
@@ -252,7 +279,8 @@ class Cluster:
         """
         name = obj["metadata"]["name"]
         with _errors("delete", "Job", name, self.namespace):
-            self._method("Job", "delete")(
+            _retrying(
+                self._method("Job", "delete"),
                 name,
                 self.namespace,
                 propagation_policy="Background",
@@ -273,7 +301,8 @@ class Cluster:
         apply tell a campaign nobody has run from one whose Job the TTL
         reaped: the second still has its ConfigMaps (B76)."""
         try:
-            body = self._method(kind, "read", name)(
+            body = _retrying(
+                self._method(kind, "read", name),
                 name,
                 self.namespace,
                 _preload_content=False,
@@ -310,7 +339,8 @@ class Cluster:
                     continue
                 extra = {"propagation_policy": "Background"} if kind == "Job" else {}
                 with _errors("delete", kind, name, self.namespace):
-                    self._method(kind, "delete")(
+                    _retrying(
+                        self._method(kind, "delete"),
                         name,
                         self.namespace,
                         _request_timeout=REQUEST_TIMEOUT,
@@ -332,7 +362,8 @@ class Cluster:
         """The Kueue Workload of the Job with ``uid``. Kueue labels it with
         that uid, the only link that survives a delete/recreate of the Job."""
         with _errors("list", "Workload", "", self.namespace):
-            listed = self.custom.list_namespaced_custom_object(
+            listed = _retrying(
+                self.custom.list_namespaced_custom_object,
                 *_KUEUE,
                 self.namespace,
                 _WORKLOADS,
@@ -379,7 +410,8 @@ class Cluster:
         wl_name = wl["metadata"]["name"]
         print(f"{name}: workload/{wl_name} active={str(want).lower()}")
         with _errors("patch", "Workload", wl_name, self.namespace):
-            self.custom.patch_namespaced_custom_object(
+            _retrying(
+                self.custom.patch_namespaced_custom_object,
                 *_KUEUE,
                 self.namespace,
                 _WORKLOADS,
