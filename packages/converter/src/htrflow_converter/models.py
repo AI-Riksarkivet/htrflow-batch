@@ -127,6 +127,21 @@ _WHITESPACE_RE = re.compile(r"\s")
 
 _PERCENT_ENCODE = "percent-encode a space as %20"
 
+#: Bytes one ``images:`` volume's line of ``volumes.txt`` may take. The
+#: campaign Job's shell exports that line's URLs as a single ``IMAGES``
+#: environment entry, and Linux caps one entry at 128 KiB
+#: (``MAX_ARG_STRLEN``): past that the pod dies with "Argument list too
+#: long" before the wrapper starts, and nothing in the campaign says which
+#: volume did it. The margin below 128 KiB covers the rest of the entry and
+#: leaves the line format somewhere to grow; the API server's own 1 MiB
+#: ConfigMap limit is further off again (``render.MAX_BYTES_PER_JOB``).
+MAX_IMAGES_BYTES = 100 * 1024
+_TOO_MANY_IMAGES = (
+    "lists {count} images, whose one line of volumes.txt is {kib} KiB — the "
+    "Job exports them as one environment entry, which stops at 128 KiB, so "
+    "split the volume in two or give it a IIIF manifest instead"
+)
+
 #: Userinfo, stripped out of any URL a problem echoes back: a campaign file
 #: should carry no credentials, but a problem line is printed in CI logs and
 #: pasted into chat, so one that does must lose them here. The class excludes
@@ -281,6 +296,11 @@ class Volume(BaseModel):
             raise ValueError(
                 "needs exactly one source — give it manifest: <IIIF manifest "
                 "URL>, or images: <list of image URLs>"
+            )
+        size = len(self.source_line().encode()) if self.images else 0
+        if size > MAX_IMAGES_BYTES:
+            raise ValueError(
+                _TOO_MANY_IMAGES.format(count=len(self.images), kib=size // 1024)
             )
         return self
 
