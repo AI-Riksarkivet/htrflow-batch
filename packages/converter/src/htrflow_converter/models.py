@@ -375,6 +375,19 @@ class Campaign(BaseModel):
             )
         return v
 
+    @model_validator(mode="after")
+    def _check_volumes(self) -> "Campaign":
+        if not self.volumes:
+            # `completions: 0` is a Job Kubernetes reports as Succeeded the
+            # moment it is created: a campaign that is over before it starts,
+            # green, with no volume ever fetched and nothing to say why.
+            raise ValueError(
+                "this campaign lists no volumes — add at least one entry "
+                "under volumes:, or remove the file (removing it is how a "
+                "finished campaign is retired)"
+            )
+        return self
+
     @field_validator("window", mode="before")
     @classmethod
     def _check_window(cls, v: object) -> object:

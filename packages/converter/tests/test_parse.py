@@ -611,3 +611,16 @@ def test_a_pipelines_seconds_are_capped_the_same_way(tmp_path):
         'pipelines/demo-v1.yaml: "max_seconds" must be 2147483647 or less '
         "(got 4294967296)"
     )
+
+
+def test_a_campaign_with_no_volumes_at_all_is_refused(tmp_path):
+    """No volumes renders a Job with `completions: 0`, which Kubernetes
+    reports as Succeeded the moment it is created: a campaign that is over
+    before it starts, and a green one at that."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "campaigns" / "kyrk.yaml").write_text("pipeline: demo-v1\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert problem.startswith("campaigns/kyrk.yaml: this campaign lists no volumes")
