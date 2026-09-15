@@ -423,7 +423,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # count. The Job exports that line as one environment entry and Linux stops
 # one at 128 KiB, so the pod died with "Argument list too long" before the
 # wrapper started and nothing said which volume did it.
-check converter "$(count packages/converter/src -name '*.py')" 2429
+# 2429 -> 2437 (2026-09-14, audit C11): the two byte caps take ge=1 (at 0
+# every volume of every campaign is over the cap), and the two second
+# budgets a 32-bit ceiling -- they are rendered into int32 Kubernetes
+# fields, so a larger number was a 422 halfway through an apply.
+check converter "$(count packages/converter/src -name '*.py')" 2437
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

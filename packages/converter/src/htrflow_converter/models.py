@@ -32,6 +32,9 @@ from pydantic import (
 )
 
 _MiB = 1024 * 1024
+#: `activeDeadlineSeconds` and `ttlSecondsAfterFinished` are int32 in the
+#: Kubernetes API, so a larger number is a 422 halfway through an apply.
+_INT32_MAX = 2**31 - 1
 
 _VOLUME_ID_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?\Z")
 _NAME_RE = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?\Z")
@@ -429,6 +432,8 @@ class Pipeline(BaseModel):
             raise ValueError(
                 f"must be a whole number of seconds, 1 or more (got {shown(v)})"
             )
+        if isinstance(v, int) and v > _INT32_MAX:
+            raise ValueError(f"must be {_INT32_MAX} or less (got {shown(v)})")
         return v
 
     def pipeline_yaml(self) -> str:
@@ -481,7 +486,7 @@ class ConverterConfig(BaseModel):
     tolerations: list[dict] = Field(default_factory=list)
     public_results_base: str = ""
     source_template: str = "https://lbiiif.riksarkivet.se/arkis!{ref}/manifest"
-    max_seconds: int = Field(default=21600, ge=1)
+    max_seconds: int = Field(default=21600, ge=1, le=_INT32_MAX)
     #: How long a batch pod's `warmup-wait` init container waits for its
     #: pipeline's marker before giving up. It holds the pod's GPU while it
     #: waits, so this is a GPU-hours budget, not a patience setting.
@@ -492,7 +497,7 @@ class ConverterConfig(BaseModel):
     #: bucket. A day was short enough that a campaign finished on a Friday
     #: was gone before anyone looked at it -- and, until `apply` learnt to
     #: read the record, re-run from the top by the next apply.
-    ttl_seconds_after_finished: int = Field(default=7 * 24 * 3600, ge=1)
+    ttl_seconds_after_finished: int = Field(default=7 * 24 * 3600, ge=1, le=_INT32_MAX)
     #: A Secret in ``namespace`` with a ``token`` key: a Hugging Face token
     #: with read scope, for a pipeline whose model is private or gated.
     #: Empty (the default) means the warm-up downloads anonymously. Only the
@@ -501,8 +506,10 @@ class ConverterConfig(BaseModel):
     #: and must not carry one. No chart value pairs with this: like the S3
     #: Secret the object is the operator's, and no chart template names it.
     hf_token_secret: str = ""
-    manifest_max_bytes: int = 16 * _MiB
-    fetch_max_bytes: int = 64 * _MiB
+    #: The largest manifest, and the largest single image, the wrapper may
+    #: fetch. At 0 every volume of every campaign fails the cap.
+    manifest_max_bytes: int = Field(default=16 * _MiB, ge=1)
+    fetch_max_bytes: int = Field(default=64 * _MiB, ge=1)
 
     @field_validator("namespace", "queue", "s3_secret", "data_pvc")
     @classmethod

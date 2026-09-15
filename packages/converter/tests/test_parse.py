@@ -563,3 +563,51 @@ def test_a_node_selector_that_is_not_a_label_is_refused(tmp_path, line):
     (problem,) = exc_info.value.problems
     assert problem.startswith('converter.yaml: "node_selector" ')
     assert "node label" in problem
+
+
+@pytest.mark.parametrize("key", ["manifest_max_bytes", "fetch_max_bytes"])
+def test_a_byte_cap_of_zero_or_less_is_refused(tmp_path, key):
+    """Both are handed to the wrapper as the largest thing it may fetch. At
+    0 every manifest and every image is over the cap, so every volume in
+    every campaign fails -- and nothing said so at render time."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + f"\n{key}: 0\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [
+        f'converter.yaml: "{key}" must be 1 or more (got 0)'
+    ]
+
+
+@pytest.mark.parametrize("key", ["max_seconds", "ttl_seconds_after_finished"])
+def test_seconds_beyond_a_32_bit_field_are_refused(tmp_path, key):
+    """Both are rendered into 32-bit Kubernetes fields
+    (`activeDeadlineSeconds`, `ttlSecondsAfterFinished`); a larger number is
+    refused by the API server halfway through an apply."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + f"\n{key}: 4294967296\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert (
+        problem
+        == f'converter.yaml: "{key}" must be 2147483647 or less (got 4294967296)'
+    )
+
+
+def test_a_pipelines_seconds_are_capped_the_same_way(tmp_path):
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    pipeline = root / "pipelines" / "demo-v1.yaml"
+    pipeline.write_text(pipeline.read_text() + "\nmax_seconds: 4294967296\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert problem == (
+        'pipelines/demo-v1.yaml: "max_seconds" must be 2147483647 or less '
+        "(got 4294967296)"
+    )
