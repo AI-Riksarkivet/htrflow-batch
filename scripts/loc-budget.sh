@@ -790,7 +790,10 @@ check web       "$(count packages/web/src -name '*.py')" 1863
 # 4086 -> 4091 (2026-09-14, audit review) a tick that let something escape stopped the poll
 # for good and said nothing. It counts as a failed tick and backs off like
 # any other.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4091
+# 4091 -> 4102 (2026-09-14, audit review) LIVE_MAX_FAILURES counts attempts, not minutes, and
+# the backoff stretched twenty of them from five minutes to an hour. Both
+# the constant and the branch that reads it now say so.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4102
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
