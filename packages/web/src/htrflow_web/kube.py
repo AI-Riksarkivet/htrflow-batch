@@ -51,8 +51,11 @@ _APPLY_PATCH = "application/apply-patch+yaml"
 #: what `kubectl get --output-watch-events=false` uses under the hood. The
 #: campaign record's ``data`` is the campaign's whole volume list, and the
 #: list route never reads it (2026-09-14 audit).
+# A LIST asks for the List form: the API server answers 406 to a list request
+# whose Accept names the single-object form, and does not fall back to the
+# plain JSON offered after the comma (seen live on a 1.35 server).
 PARTIAL_METADATA = (
-    "application/json;as=PartialObjectMetadata;g=meta.k8s.io;v=v1,application/json"
+    "application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1,application/json"
 )
 FIELD_MANAGER = "htrflow-web"
 

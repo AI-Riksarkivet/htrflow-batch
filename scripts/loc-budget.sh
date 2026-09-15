@@ -817,7 +817,10 @@ check converter "$(count packages/converter/src -name '*.py')" 2551
 # own links did not, so `../` in an id -- volumes.txt is a file people edit
 # in a git repo -- walked out of the campaign's prefix in the href a reader
 # clicks. Every URL a row carries is encoded now; the `id` field is not.
-check web       "$(count packages/web/src -name '*.py')" 1863
+# 1863 -> 1866 (2026-09-15, hotfix): the metadata list's Accept names the
+# List form -- the single-object form drew a 406 from a live API server and
+# took the whole status page down; three lines of comment saying so.
+check web       "$(count packages/web/src -name '*.py')" 1866
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
