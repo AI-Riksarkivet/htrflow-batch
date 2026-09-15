@@ -147,13 +147,20 @@ data volume.
   `/tmp`.
 - **Service account tokens.** `automountServiceAccountToken: false` is set
   on every pod except the **web front**. It is the one pod that needs an API
-  credential: a namespace-scoped Role with get/list/watch on `jobs`, `pods`
-  and `configmaps`, and nothing cluster-wide. The web front is also the pod
-  browsers reach, and it has no authentication of its own. Remote code
-  execution in that process would therefore read the token. That is why the
-  Role stays read-only and scoped to one namespace, and why the web front
-  belongs behind an authenticated proxy before anyone outside a trusted
-  network can reach it.
+  credential: a namespace-scoped Role, nothing cluster-wide. It reads `jobs`,
+  `pods` and `configmaps` — and it is no longer only a reader. It also holds
+  `create` and `patch` on ConfigMaps, because the per-campaign status record
+  it writes is what still answers for a campaign once the Job behind it is
+  past its TTL. RBAC cannot scope a verb to one object name, so that grant
+  covers every ConfigMap in the namespace; the name scope is the `rbac-scope`
+  policy above instead. The web front is also the pod browsers reach, and it
+  has no authentication of its own. Remote code execution in that process
+  would read the token and could then write ConfigMaps as far as admission
+  allows: one campaign's status object with the policies on, any ConfigMap in
+  the namespace — the pipelines a Job mounts included — without them. So the
+  web front belongs behind an authenticated proxy before anyone outside a
+  trusted network can reach it, and `security.policies.enabled` counts for
+  more now that this pod writes at all.
 - **Secrets are files, not environment variables.** The S3 Secret's
   `credentials` key (AWS ini format) is mounted at `/secrets/s3` (mode `0440`)
   and reaches boto3 through `AWS_SHARED_CREDENTIALS_FILE`. Only the non-secret
