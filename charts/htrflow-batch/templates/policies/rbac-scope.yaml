@@ -44,4 +44,40 @@ spec:
               - key: {{ `"{{ regex_match('^campaign-[a-z0-9]([-a-z0-9]*[a-z0-9])?-status$', request.object.metadata.name) }}"` }}
                 operator: Equals
                 value: false
+{{- if .Values.apply.rbac.enabled }}
+    # `htrflow-campaigns apply --prune` is what makes "deleting a campaign
+    # file cancels the campaign" true, and a prune is a delete, so the Role
+    # grants one -- over every Job and every ConfigMap in the namespace,
+    # because that is the only shape RBAC has. The command itself only ever
+    # lists converter-labelled objects; this rule is what makes that the
+    # limit rather than the intention, so a compromised pipeline cannot
+    # reach a running campaign's Job or another team's ConfigMap.
+    #
+    # A DELETE admission review carries the object as `oldObject`;
+    # `request.object` is null there, and a rule reading it would compare
+    # against nothing and admit everything.
+    - name: apply-deletes-only-what-it-rendered
+      match:
+        any:
+          - resources:
+              kinds: [Job, ConfigMap]
+              namespaces: [{{ .Release.Namespace | quote }}]
+              operations: [DELETE]
+            subjects:
+              - kind: ServiceAccount
+                name: htrflow-campaigns
+                namespace: {{ .Release.Namespace }}
+      validate:
+        message: >-
+          the apply identity may only delete objects the converter rendered
+          (label htrflow.riksarkivet.se/managed-by: converter)
+        deny:
+          conditions:
+            all:
+              # Single-quoted YAML: the label key needs double quotes of
+              # its own in JMESPath, and `''` is how one of these survives.
+              - key: {{ `'{{ request.oldObject.metadata.labels."htrflow.riksarkivet.se/managed-by" || ''unlabelled'' }}'` }}
+                operator: NotEquals
+                value: converter
+{{- end }}
 {{- end }}
