@@ -505,6 +505,21 @@ describe("isResultUrl", () => {
     );
   });
 
+  test("a URL that walks back out of the base is refused", () => {
+    // `/bucket/../evil.txt` starts with the base as text and is not under
+    // it at all (2026-09-14 review).
+    expect(isResultUrl(`${base}/../evil.txt`, base)).toBe(false);
+    expect(isResultUrl(`${base}/x/../../evil.txt`, base)).toBe(false);
+    expect(isResultUrl(`${base}/x/../y.txt`, base)).toBe(true);
+  });
+
+  test("the same URL written differently is still the same URL", () => {
+    expect(isResultUrl(`${base}/a%2Db.txt`, base)).toBe(true);
+    expect(
+      isResultUrl(`${base}/x.txt`, "HTTPS://results.example.org/bucket"),
+    ).toBe(true);
+  });
+
   test("a URL anywhere else is not, however absolute it is", () => {
     expect(isResultUrl("https://evil.example.org/log.txt", base)).toBe(false);
     // The prefix has to end at a path boundary, or a lookalike host passes.
