@@ -892,3 +892,23 @@ def test_an_incomplete_rendered_campaign_is_a_sentence_not_a_keyerror(
     err = capsys.readouterr().err
     assert "campaign kyrk" in err and "re-render" in err
     assert cluster.of("apply") == [], "nothing reached the cluster"
+
+
+def test_apply_to_a_fresh_out_dir_still_holds_campaigns_against_rendered(
+    tmp_path, cluster, capsys
+):
+    """`--out` says where this render is written, never what it is held
+    against: the committed `rendered/` is the record. An `--out` pointing
+    somewhere empty is the same blind spot as a temp directory, and it is the
+    one an operator reaches for when a render looks wrong."""
+    repo = _repo(tmp_path)
+    assert cli.main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    path = repo / "campaigns" / "kyrk.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["volumes"][0] = "R9999999"
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    capsys.readouterr()
+
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "fresh")]) == 1
+    assert "campaign kyrk is append-only" in capsys.readouterr().out
+    assert cluster.of("apply") == [], "nothing reached the cluster"
