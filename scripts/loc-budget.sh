@@ -224,7 +224,12 @@ fail=0
 # published a manifest of 600 failures and left the index green. The counter,
 # the `Unrecoverable` channel the page loop does not absorb, and the two
 # paragraphs saying which bargain each is.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2997
+# 2997 -> 3009 (2026-09-14, audit W11): the interim viewer manifest counts
+# the pages whose own ALTO carries no WIDTH/HEIGHT as covered. The skip rule
+# is meant for a RESUMED page, whose dimensions are in the bucket rather than
+# in hand; a page that simply has none looked identical, so one of them
+# switched the live viewer off for the rest of the volume.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3009
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

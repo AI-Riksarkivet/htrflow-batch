@@ -393,3 +393,51 @@ def test_sigterm_stops_the_status_writes(env, cfg, s3, monkeypatch):
     assert main(env, process_page_factory=factory) == 143
     assert len(puts) == at_kill[0]  # not one further PUT after the signal
     assert "failed" not in puts
+
+
+def test_one_unparsable_alto_does_not_disable_the_interim_manifest(
+    env, cfg, s3, monkeypatch
+):
+    """W11: the interim publish is skipped while the dimensions in hand cover
+    fewer pages than the run has finished -- a rule meant for a resumed run,
+    which reads a page an earlier run uploaded as finished without holding its
+    dimensions. A page whose own ALTO will not parse looked exactly the same,
+    so a single bad page switched the live viewer off for the rest of the
+    volume."""
+    monkeypatch.setattr(progress_mod, "PUBLISH_EVERY_PAGES", 1)
+    no_dims = "<alto><Layout><Page/></Layout></alto>"
+
+    def factory(c):
+        def process(path: Path):
+            files = _write_outputs(cfg, path.stem)
+            if path.stem == "0001":
+                files["alto"].write_text(no_dims)
+            return files
+
+        return process
+
+    seen: list = []
+
+    def watch(stem):
+        seen.append(_keys_have_iiif(s3, cfg))
+
+    def watching_factory(c):
+        inner = factory(c)
+
+        def process(path: Path):
+            watch(path.stem)
+            return inner(path)
+
+        return process
+
+    assert main(env, process_page_factory=watching_factory) == EXIT_OK
+    # Nothing before page 0001; by page 0003 the two finished pages are
+    # covered (0002's dimensions plus 0001, known to have none) and the
+    # interim manifest is live again.
+    assert seen == [False, False, True]
+    assert len(_get(s3, cfg, "iiif.json")["items"]) == 2  # 0001 has no canvas
+
+
+def _keys_have_iiif(s3, cfg) -> bool:
+    resp = s3.list_objects_v2(Bucket=cfg.s3_bucket, Prefix=f"{PREFIX}/iiif.json")
+    return bool(resp.get("Contents"))
