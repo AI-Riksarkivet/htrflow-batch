@@ -213,3 +213,32 @@ def test_a_naive_timestamp_is_read_as_utc_not_local_time():
         }
     )
     assert r.fetch(BASE, "vol0", "active")["ageSeconds"] == 12
+
+
+def test_a_cached_row_ages_with_the_clock(monkeypatch):
+    """A done volume's file is cached for the hour because it never changes
+    again -- but "updated 8 s ago" does, and the card read it for an hour
+    (2026-09-14 audit). The age is recomputed from the cached timestamp on
+    every hit; nothing is re-fetched."""
+    r, asked = reader(
+        {f"{BASE}/vol0/progress.json": httpx.Response(200, json=PROGRESS)}
+    )
+    first = r.fetch(BASE, "vol0", "done")
+    assert first["ageSeconds"] == 12
+    monkeypatch.setattr(progress_mod.time, "time", lambda: NOW + 3000)
+    again = r.fetch(BASE, "vol0", "done")
+    assert asked == [f"{BASE}/vol0/progress.json"], "still one GET"
+    assert again["ageSeconds"] == 3012
+    assert again["updatedAt"] == first["updatedAt"]
+
+
+def test_a_row_with_no_timestamp_has_no_age_to_recompute():
+    """manifest.json is a completion marker, not a clock."""
+    r, _ = reader(
+        {
+            f"{BASE}/vol0/progress.json": httpx.Response(404),
+            f"{BASE}/vol0/manifest.json": httpx.Response(200, json=MANIFEST),
+        }
+    )
+    assert r.fetch(BASE, "vol0", "done")["ageSeconds"] is None
+    assert r.fetch(BASE, "vol0", "done")["ageSeconds"] is None
