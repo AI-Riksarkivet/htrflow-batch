@@ -1,0 +1,3 @@
+# The defaults are fine: this fixture is about the problem in campaigns/ or
+# pipelines/. The file has to be here because the command refuses a repo
+# without one.

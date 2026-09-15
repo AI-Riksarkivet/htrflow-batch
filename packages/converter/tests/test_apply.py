@@ -807,3 +807,44 @@ def test_apply_without_out_holds_campaigns_against_the_committed_render(
     assert cli.main(["apply", str(repo)]) == 1
     assert "campaign kyrk is append-only" in capsys.readouterr().out
     assert cluster.of("apply") == [], "nothing reached the cluster"
+
+
+def test_prune_refuses_a_render_that_produced_no_campaigns(tmp_path, cluster, capsys):
+    """A typo in the directory, or a checkout that never happened, renders
+    zero campaigns -- and `--prune` then deletes every campaign the converter
+    manages in the namespace, which is the whole archive's work. Refused
+    unless cancelling them all is said out loud."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    for path in (repo / "campaigns").glob("*.yaml"):
+        path.unlink()
+    cluster.live = [_object("Job", "kyrk"), _object("ConfigMap", "campaign-kyrk")]
+    assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == 1
+    assert cluster.of("delete") == []
+    err = capsys.readouterr().err
+    assert str(repo / "campaigns") in err
+    assert "--allow-empty" in err
+
+
+def test_allow_empty_prunes_the_last_campaign_away(tmp_path, cluster):
+    """The way out the sentence names: deleting the last campaign file IS how
+    a campaign is cancelled, so the empty render has to be applicable."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    for path in (repo / "campaigns").glob("*.yaml"):
+        path.unlink()
+    cluster.live = [_object("Job", "kyrk")]
+    rc = cli.main(["apply", str(repo), "--out", str(out), "--prune", "--allow-empty"])
+    assert rc == 0
+    assert cluster.of("delete") == [("delete", "Job", "kyrk")]
+
+
+def test_a_repo_without_a_converter_yaml_is_refused_before_the_cluster(
+    tmp_path, cluster, capsys
+):
+    """Without converter.yaml every setting silently defaults -- including
+    the namespace -- so an apply meant for one cluster's campaigns lands on
+    another's objects, and a --prune deletes them."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    (repo / "converter.yaml").unlink()
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 1
+    assert cluster.calls == []
+    assert "converter.yaml" in capsys.readouterr().out

@@ -36,6 +36,11 @@ manifest_max_bytes: 16777216      # 16 MiB
 fetch_max_bytes: 67108864         # 64 MiB
 ```
 
+The file itself is required: every command refuses a repo without a
+`converter.yaml` rather than falling back to defaults, because the namespace
+a campaign is applied to — and pruned in — is one of the settings that would
+be guessed at.
+
 `queue`, `s3_secret` and `data_pvc` name objects the htrflow-batch chart
 creates; the [Configuration](configuration.md) page shows which chart value
 each must agree with.
@@ -248,6 +253,12 @@ in the namespace carrying the converter's `managed-by=converter` label and
 deletes the ones this render did not produce. Every object the converter
 renders — both ConfigMaps and both Jobs — carries that label for exactly
 this reason.
+
+A render that produces **no campaigns at all** is refused with `--prune`
+instead of cancelling every campaign in the namespace: an empty
+`campaigns/`, a mistyped directory and a checkout that never happened all
+look like that. Pass `--allow-empty` when retiring the last campaign really
+is what you mean.
 
 The four objects above are not built up field-by-field in Python: the
 skeletons **are** the Job/ConfigMap, checked in as real YAML at
