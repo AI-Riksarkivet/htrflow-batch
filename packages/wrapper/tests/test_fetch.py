@@ -288,3 +288,54 @@ def test_a_400_after_the_fallback_does_not_loop(tmp_path):
     r = fetch_page(page, tmp_path, _client(handler), 2, 0.0)
     assert r.error == "HTTP 400"
     assert len(calls) == 3  # the sized one, then the unscaled one twice
+
+
+def _real_jpeg(width: int, height: int) -> bytes:
+    """A decodable image of a named size -- the byte cap cannot tell one of
+    these from the other, which is the point of MAX_IMAGE_PIXELS."""
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height)).save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
+def test_an_image_over_the_pixel_cap_is_refused(tmp_path):
+    """W14: FETCH_MAX_BYTES bounds the DOWNLOAD, not what decoding it costs.
+    A few MB of JPEG can carry a gigapixel image, and htrflow decodes every
+    page into memory -- so the pod is OOM-killed by a file that passed every
+    check the fetcher had."""
+    body = _real_jpeg(40, 40)
+
+    def handler(req):
+        return httpx.Response(200, content=body)
+
+    page = PageRef(index=1, name="0001", image_url="https://img/1.jpg", canvas={})
+    r = fetch_page(page, tmp_path, _client(handler), 3, 0.0, max_pixels=100)
+    assert r.path is None
+    assert r.error == "too large: 40x40 = 1600 pixels > 100"
+    assert not (tmp_path / "0001.jpg").exists()  # nothing left in the workdir
+
+
+def test_an_image_inside_the_pixel_cap_is_kept(tmp_path):
+    body = _real_jpeg(40, 40)
+
+    def handler(req):
+        return httpx.Response(200, content=body)
+
+    page = PageRef(index=1, name="0001", image_url="https://img/1.jpg", canvas={})
+    r = fetch_page(page, tmp_path, _client(handler), 3, 0.0, max_pixels=10_000)
+    assert r.error is None and r.path is not None
+
+
+def test_the_pixel_cap_is_not_a_decodability_gate(tmp_path):
+    """A file Pillow cannot read is left to htrflow, which is where a page
+    that will not decode has always failed. This guard is about SIZE."""
+
+    def handler(req):
+        return httpx.Response(200, content=JPEG + b"not really a jpeg")
+
+    page = PageRef(index=1, name="0001", image_url="https://img/1.jpg", canvas={})
+    assert fetch_page(page, tmp_path, _client(handler), 3, 0.0).error is None

@@ -46,6 +46,15 @@ contract written by the Job the converter renders
 (`packages/converter/src/htrflow_converter/manifests/campaign-job.yaml`),
 in a pod environment nothing else writes.
 
+**Two caps, two different costs.** `FETCH_MAX_BYTES` bounds what a page's
+image may weigh on the wire; `MAX_IMAGE_PIXELS` bounds what decoding it
+costs. They are not the same number — a few megabytes of JPEG can carry a
+gigapixel image, and the wrapper hands every page to a pipeline that decodes
+it into memory — so a file well inside the byte cap could still take the pod
+out. The pixel count is read from the image's header, which costs nothing per
+page; a page over either cap fails without a retry, and `MAX_IMAGE_PIXELS: 0`
+turns the second check off.
+
 ## Three security sentences
 
 - **Credentials are mounted files, with one scoped exception**: S3

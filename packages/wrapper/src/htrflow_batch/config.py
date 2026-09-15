@@ -62,6 +62,10 @@ class Config(BaseModel):
     # S5 byte caps on fetches driven by campaign data (docs: wrapper)
     manifest_max_bytes: int = Field(16 * 1024 * 1024, alias="MANIFEST_MAX_BYTES")
     fetch_max_bytes: int = Field(64 * 1024 * 1024, alias="FETCH_MAX_BYTES")
+    #: W14: the byte cap bounds the download, this one bounds what decoding it
+    #: costs -- a few MB of JPEG can carry a gigapixel image, and htrflow
+    #: decodes every page into memory. 0 turns the check off.
+    max_image_pixels: int = Field(100_000_000, alias="MAX_IMAGE_PIXELS")
     #: Provenance the Job skeleton stamps: the pipeline's digest-pinned image
     #: and, from the image's own ENV, the htrflow it was built on. Both go
     #: into every ALTO (provenance.py) and the run manifest (publish.py).

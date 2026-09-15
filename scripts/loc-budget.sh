@@ -239,7 +239,13 @@ fail=0
 # attempts -- it asks a different URL, not the same one again. The loop counts
 # attempts itself now, and the comment says why the substitution can happen at
 # most once.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3039
+# 3039 -> 3084 (2026-09-14, audit W14): MAX_IMAGE_PIXELS. FETCH_MAX_BYTES
+# bounds the transfer, not what decoding it costs -- a few MB of JPEG can
+# carry a gigapixel image, and htrflow decodes every page into memory, so a
+# file well inside the byte cap OOM-killed the pod. The header read, the
+# Config field, the two signatures it travels through, and the paragraph
+# saying why an image Pillow cannot read is deliberately NOT rejected here.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3084
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
