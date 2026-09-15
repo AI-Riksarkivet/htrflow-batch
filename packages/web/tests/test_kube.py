@@ -326,3 +326,13 @@ def test_a_refused_apply_is_still_the_cluster_saying_no(reader: Reader):
     reader.answer["PATCH"] = _api_error(403)
     with pytest.raises(ClusterUnavailable):
         reader.apply_configmap(RECORD)
+
+
+def test_the_metadata_list_asks_for_the_list_form():
+    """A list request must name PartialObjectMetadataList, not the single
+    object form: the API server answers 406 to the latter and does not fall
+    back to the plain JSON offered after it (a 1.35 server, live)."""
+    from htrflow_web.kube import PARTIAL_METADATA
+
+    first = PARTIAL_METADATA.split(",")[0]
+    assert "as=PartialObjectMetadataList;" in first
