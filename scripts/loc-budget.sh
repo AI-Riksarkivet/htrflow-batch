@@ -254,7 +254,13 @@ fail=0
 # AFTER the final log ship, not before it. A drain sends one SIGTERM and the
 # node may send another; with the handler already back at the default, the
 # second killed the pod outright and lost the log the first had preserved.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3099
+# 3099 -> 3106 (2026-09-14, audit W17): the step-thread guard re-checks that
+# the run has not finished before it fails the page. A thread dying in the
+# same tick the run completed failed a page whose outputs were already
+# written -- and the failure path deletes them, so the retry redid it for
+# nothing. The lines are the guard and the note pointing at the next page's
+# own check, which still catches the dead pipeline.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3106
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
