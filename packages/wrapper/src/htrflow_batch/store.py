@@ -32,6 +32,13 @@ class ResultStore:
         #: page is uploaded (X2), and reading each one back would be one
         #: sequential S3 GET of a full ALTO body per page.
         self.page_dims: dict[str, tuple[int, int]] = {}
+        #: Pages whose own ALTO carries no usable WIDTH/HEIGHT. Counted, not
+        #: forgotten (W11): progress.py skips the interim viewer manifest
+        #: while the dimensions in hand cover fewer pages than the run has
+        #: finished -- a rule for a RESUMED page, whose dimensions are in the
+        #: bucket and not here. One page that simply has none looked the same
+        #: and switched the live viewer off for the rest of the volume.
+        self.dimless_pages: set[str] = set()
         # W6: default boto timeouts (60 s connect/read, legacy retries) let an
         # S3 outage pin every PUT for minutes and the run for hours. Bounded
         # here; stream.consume aborts after N consecutive upload failures.
@@ -110,7 +117,8 @@ class ResultStore:
         try:
             self.page_dims[name] = parse_alto_dims(roots["alto"])
         except ValueError:
-            pass  # publish leaves a page with no dims out, it does not fail
+            # publish leaves a page with no dims out, it does not fail
+            self.dimless_pages.add(name)
 
     def delete_page(self, name: str) -> None:
         """Drop a page's stored outputs, before it is processed again (W3,
