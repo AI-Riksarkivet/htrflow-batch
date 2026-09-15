@@ -29,18 +29,28 @@ narrower: it checks only ConfigMaps that carry the converter's
 `managed-by: converter` label, and only the top-level `steps:` in their
 pipeline.
 
+Admission is also where the platform's own identities are scoped. RBAC
+grants a verb over a resource *type* and has no way to name one object, so
+two grants the code needs are necessarily wider than the code: the read
+API's `create`/`patch` on ConfigMaps, and the apply identity's `delete` on
+Jobs and ConfigMaps. The `rbac-scope` policy narrows both by matching on the
+requesting ServiceAccount, which only the API server can see. It runs with
+`background: false`, because a background scan replays stored objects with
+no requester to match.
+
 | Control | Where | What it closes |
 |---|---|---|
 | **Digest pin**: `security.policies.enabled` | Kyverno `ClusterPolicy` `htrflow-batch-images-pinned-<namespace>`, at admission for every Job and Pod in the namespace, and in the campaigns repo's CI through the Kyverno CLI. Message: `image must be pinned by digest: <image>` | A mutable tag changing what a pipeline id means. `htrflow-campaigns validate` also refuses a pipeline whose `image:` is not `@sha256:`-pinned, because the renderer needs the digest, but it only sees what it renders |
 | **Image allow-list**: `security.allowedImageRepos` (with `policies.enabled`) | Kyverno `ClusterPolicy` `htrflow-batch-images-allowed-<namespace>`, in the same two places. Message: `image is not from an allowed repository: <image> — allowed: <list>` | Images from any registry. With an empty list the policy is not rendered and nothing is checked |
 | **Model revision**: `security.requireModelRevision` (with `policies.enabled`) | Kyverno `ClusterPolicy` `htrflow-batch-model-revision-<namespace>`, at admission of the pipeline ConfigMap and in the CLI. Message: `models not pinned to a revision: <models> — add revision: <40-character commit hash> under model_settings (YOLO) or model_settings.model_kwargs (TrOCR and other Hugging Face models)` | An unpinned Hugging Face repo swapping its weights under the same pipeline id |
+| **Write scope of a ServiceAccount**: `security.policies.enabled` | Kyverno `ClusterPolicy` `htrflow-batch-rbac-scope-<namespace>`, at admission, on every ConfigMap write by the web ServiceAccount. Message: `the read API may only write a campaign's own status ConfigMap (campaign-<name>-status), not <name>` | The read API using a Role that cannot be scoped to one object name to overwrite a pipeline ConfigMap, and so choose the weights the next campaign loads |
 | **Signed images**: `security.verifyImages.*` (Kyverno `ClusterPolicy`, cosign keyless) | At admission, for every Pod in the namespace | Images not built by the CI identity you name. Off by default. Needs the image to be signed at publish time ([CI](../development/ci.md)) |
 | **Control-plane digest gate**: `web.image` must be `@sha256:`-pinned unless `security.allowTagImages` is set | The chart template | Anyone with push access to the registry replacing the web front in place |
 | **http(s)-only sources, byte caps, redirect caps** | `parse_pipeline`/`parse_campaign`, and the wrapper (`MANIFEST_MAX_BYTES`, `FETCH_MAX_BYTES`, at most 5 redirects, raster images only) | SSRF and denial of service driven by campaign data |
 | **No runtime path to the campaigns repo** | The campaigns repo's own CI, outside this system | Nothing in the cluster clones the campaigns repo or holds a credential for it |
 | **URL redaction** | Wrapper logs, the termination log, `page_sources` | A tokenised private IIIF URL ending up in a world-readable log |
 
-All three policies are off by default (`security.policies.enabled: false`),
+These policies are all off by default (`security.policies.enabled: false`),
 because a policy nothing reconciles is worse than none. They are the only
 thing that enforces the image allow-list and the model-revision rule. A rule
 inside the converter would only ever see what the converter rendered, and a
