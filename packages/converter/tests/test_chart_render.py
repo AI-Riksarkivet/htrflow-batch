@@ -31,11 +31,15 @@ NAMESPACE = "htr-batch"
 
 #: Values the chart `fail`s without and that no cluster is present to look
 #: up. Mirrors the Makefile's CHART_DEFAULT_SETS -- never an install.
-DEFAULT_SETS = (
+REQUIRED_SETS = (
     "publicResultsBase=https://x/",
     "network.apiServer.cidr=10.16.51.10/32",
     "web.image=docker.io/riksarkivet/htrflow-web@sha256:" + "0" * 64,
 )
+#: The default ingress list is a catch-all, and the chart makes that an
+#: explicit choice rather than a silent default.
+PUBLIC_INGRESS = "network.web.allowPublicIngress=true"
+DEFAULT_SETS = REQUIRED_SETS + (PUBLIC_INGRESS,)
 
 pytestmark = pytest.mark.skipif(
     shutil.which("helm") is None, reason="helm not on PATH"
@@ -122,3 +126,42 @@ def test_the_rbac_scope_policy_follows_the_policies_switch(default: list[dict]):
     `security.policies.enabled`, because a policy nothing reconciles is
     worse than none at all."""
     assert objects(default, "ClusterPolicy") == []
+
+
+# --- D2: an unauthenticated NodePort open to every address by default -----
+
+
+def test_the_catch_all_web_ingress_has_to_be_said_out_loud():
+    """`network.web.ingressCidrs` defaults to every IPv4 address, in front of
+    a NodePort with no authentication of its own. The default stays -- the
+    dev stack and the compose smoke both rely on it, and narrowing it by
+    guess would break them on upgrade -- but it stops being something an
+    operator can ship without noticing."""
+    refused = helm_template(sets=REQUIRED_SETS)
+    assert refused.returncode != 0
+    assert "network.web.allowPublicIngress" in refused.stderr
+
+    allowed = render(sets=DEFAULT_SETS)
+    ingress = named(allowed, "NetworkPolicy", "htr-web")["spec"]["ingress"]
+    assert ingress[0]["from"] == [{"ipBlock": {"cidr": "0.0.0.0/0"}}]
+
+
+def test_a_named_ingress_range_needs_no_opt_out():
+    """The flag is about the catch-all, not about ingress: an operator who
+    lists the ranges that may reach the web front says enough by listing
+    them."""
+    rendered = render(
+        sets=REQUIRED_SETS + ("network.web.ingressCidrs={10.16.0.0/16}",)
+    )
+    ingress = named(rendered, "NetworkPolicy", "htr-web")["spec"]["ingress"]
+    assert ingress[0]["from"] == [{"ipBlock": {"cidr": "10.16.0.0/16"}}]
+
+
+def test_the_catch_all_guard_is_silent_when_the_policies_are_not_rendered():
+    """A campaigns repo's CI renders this chart with `network.enabled=false`
+    to get at the policy objects alone. There is no web NetworkPolicy in
+    that render, so there is nothing for the guard to warn about."""
+    result = helm_template(
+        sets=REQUIRED_SETS + ("network.enabled=false",)
+    )
+    assert result.returncode == 0, result.stderr

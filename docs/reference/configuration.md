@@ -195,6 +195,7 @@ skeleton, never as a campaign setting.
 | `network.apiServer.cidr` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `network.apiServer.port` | `values.yaml` | `6443` | — | no secret — nobody |
 | `network.web.ingressCidrs` | `values.yaml` | `[0.0.0.0/0]` | — | the only gate on the read API — cluster |
+| `network.web.allowPublicIngress` | `values.yaml` | `false` | — | no secret — nobody |
 
 ## One-sided keys
 
