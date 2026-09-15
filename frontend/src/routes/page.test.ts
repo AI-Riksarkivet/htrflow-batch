@@ -121,21 +121,6 @@ describe("/ campaign page", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  // The list is the page someone leaves open while a campaign runs, so the
-  // running motion has to survive the whole render, not only the component
-  // test: a Running campaign arrives with a beating dot in its phase chip.
-  test("a running campaign arrives with a pulsing dot in its phase chip", async () => {
-    vi.stubGlobal("fetch", routedFetch([job]));
-    const { container } = render(CampaignsPage);
-    await vi.advanceTimersByTimeAsync(0);
-
-    const dot = container.querySelector(".chip.phase.running .dot");
-    expect(dot).toHaveClass("pulse");
-    // The chip's own word carries the state; the dot is decoration.
-    expect(dot).toHaveAttribute("aria-hidden", "true");
-    expect(screen.getByText("Running")).toBeInTheDocument();
-  });
-
   test("shows an empty state with no campaigns", async () => {
     vi.stubGlobal("fetch", routedFetch([]));
     render(CampaignsPage);
@@ -171,9 +156,14 @@ describe("/ campaign page", () => {
     expect(screen.getByText("htr-test/kyrk")).toBeInTheDocument();
   });
 
-  // A campaign the read API serves from its two ConfigMaps because the Job
-  // is past its ttlSecondsAfterFinished (B76): still a row, still a card.
-  test("a campaign whose Job has been removed is still listed", async () => {
+  // What only this page can be wrong about: the rows it was sent, in the
+  // order it was sent them, one card each. How a card draws a running
+  // campaign or a reaped one is CampaignCard's own test, and asserting the
+  // pulse and the "job removed" chip again here only made the same
+  // statement twice (2026-09-14 audit). A campaign whose Job is past its
+  // ttlSecondsAfterFinished is served from its two ConfigMaps (B76) and is
+  // a row like any other, which is the part that belongs here.
+  test("renders the rows the API sent, in that order, live and reaped alike", async () => {
     const reaped = {
       ...job,
       name: "gamla",
@@ -183,11 +173,14 @@ describe("/ campaign page", () => {
       jobGone: true,
     };
     vi.stubGlobal("fetch", routedFetch([job, reaped]));
-    render(CampaignsPage);
+    const { container } = render(CampaignsPage);
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(screen.getByText("htr-test/gamla")).toBeInTheDocument();
-    expect(screen.getByText("job removed")).toBeInTheDocument();
+    const names = [...container.querySelectorAll(".camp-name")].map(
+      (el) => el.textContent,
+    );
+    expect(names).toEqual(["htr-test/kyrk", "htr-test/gamla"]);
+    expect(container.querySelectorAll("section.campaign")).toHaveLength(2);
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
