@@ -1,11 +1,9 @@
-sequenceDiagram
-  participant S as IIIF source
-  participant W as wrapper
-  participant H as htrflow
-  participant B as S3 bucket
-  W->>S: GET page, width-capped
-  S-->>W: image to tmpfs
-  W->>H: pipeline.run(page)
-  H-->>W: ALTO + PAGE
-  W->>B: PAGE, then ALTO
-  W->>B: progress.json
+flowchart LR
+  J["campaign Job, Indexed<br/>completions = volumes, parallelism = window"]
+  P0["index 0"]
+  P1["index 1 · retried"]
+  P2["index 2 · FailIndex"]
+  S[("S3 bucket<br/>one prefix per volume")]
+  J --> P0 --> S
+  J --> P1 --> S
+  J --> P2 --> S

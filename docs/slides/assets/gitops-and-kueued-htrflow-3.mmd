@@ -1,0 +1,11 @@
+sequenceDiagram
+  participant S as IIIF source
+  participant W as wrapper
+  participant H as htrflow
+  participant B as S3 bucket
+  W->>S: GET page, width-capped
+  S-->>W: image to tmpfs
+  W->>H: pipeline.run(page)
+  H-->>W: ALTO + PAGE
+  W->>B: PAGE, then ALTO
+  W->>B: progress.json
