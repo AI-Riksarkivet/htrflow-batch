@@ -37,7 +37,7 @@ spec:
         onExitCodes: { containerName: wrapper, operator: In, values: [13] }
       - action: FailIndex           # the warm-up gate gave up on its marker
         onExitCodes: { containerName: warmup-wait, operator: In, values: [13] }
-  ttlSecondsAfterFinished: 86400
+  ttlSecondsAfterFinished: 604800  # a week: converter.yaml's default, else the pipeline's
   template:
     spec:
       activeDeadlineSeconds: 21600  # the per-volume budget: pipeline max_seconds, else converter.yaml's
@@ -106,7 +106,9 @@ exec python -m htrflow_batch
 line 1 (`+ 1`), and so on — index 0 above gets `VOLUME_REF=R0001203` and
 `IIIF_MANIFEST_URL=https://<iiif-host>/<path>/R0001203/manifest`; index 1
 gets `VOLUME_REF=loose-scans` and
-`IMAGES=https://example.org/scan1.jpg,https://example.org/scan2.jpg`. An
+`IMAGES=https://example.org/scan1.jpg https://example.org/scan2.jpg` — the
+URLs are separated by a **space**, the one character a URL cannot carry
+unescaped. An
 index past the end of the file (`completions` is set from the same volume
 list, so it should not occur) gets an empty `line` and exits 13, `FailIndex`,
 rather than running the wrapper with nothing to work on.
@@ -136,7 +138,7 @@ rather than running the wrapper with nothing to work on.
 $ kubectl get configmap campaign-<name> -n <namespace> \
     -o jsonpath='{.data.volumes\.txt}'
 R0001203	https://<iiif-host>/<path>/R0001203/manifest
-loose-scans	images:https://example.org/scan1.jpg,https://example.org/scan2.jpg
+loose-scans	images:https://example.org/scan1.jpg https://example.org/scan2.jpg
 ```
 
 (the `\.` escapes the literal dot in the key name `volumes.txt`, which
@@ -237,6 +239,7 @@ for. It does not use `Config`; it reads:
 | `PIPELINE_ID` | the pipeline id | Names the marker, `<HF_HOME's parent>/warmup/<PIPELINE_ID>.done` |
 | `HF_HOME` | `/data/hf` | The model cache on the PVC, the only writer of it |
 | `HF_HUB_OFFLINE` | *(unset)* | Must be unset, empty, `0` or `false`: an offline warm-up downloads nothing, so it exits 13 rather than open the gate on an empty cache |
+| `HF_TOKEN` | from `converter.yaml`'s `hf_token_secret`, when one is named | A Hugging Face token, for a private or gated model. The warm-up reads its **presence** and nothing else — it logs one line saying a token is set, and leaves the value to `huggingface_hub`. Campaign pods never get one |
 | `TERMINATION_LOG_PATH` | *(unset)* | As for the wrapper |
 
 The warm-up Job also sets `CUDA_VISIBLE_DEVICES=""` and the same
@@ -246,8 +249,14 @@ pod.
 ## Stages
 
 `config → setup → resume → load → stream → verify → publish`; the current
-stage is what the termination log reports, and `progress.json` records each
-one (plus `done` after publish). Details in
+stage is what the termination log reports.
+
+`progress.json` records the same stages **except `config`**, and adds two of
+its own: `done` after publish, and `failed` on any exit that is not a
+success. The file starts at `setup`, because the tracker that writes it is
+built only once the config stage has passed — so a `ConfigError` (exit 13: a
+missing or invalid environment) leaves **no `progress.json` at all**, and the
+termination message is the only evidence. Details in
 [The Wrapper](../how-it-works/wrapper.md).
 
 ## Exit codes

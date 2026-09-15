@@ -393,7 +393,7 @@ metadata:
 data:
   volumes.txt: |
     volume-1	<iiif-manifest-url>
-    loose-scans	images:https://example.org/scan1.jpg,https://example.org/scan2.jpg
+    loose-scans	images:https://example.org/scan1.jpg https://example.org/scan2.jpg
 ```
 
 There are two lines, one per volume, in campaign-file order. That order fixes
