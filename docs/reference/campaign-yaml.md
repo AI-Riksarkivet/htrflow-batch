@@ -212,6 +212,8 @@ campaigns/broken.yaml: volume "R1" is listed twice — remove the duplicate
 | `steps:` that is not a list | `"steps" must be a list of steps — write steps: and then "- step: <Name>" entries under it` |
 | `window: "5"` (quoted, so YAML makes it text), `window: 0`, `window: true` | `"window" must be a whole number of 1 or more (got "5" — quotes make it text)` — the "quotes" half is added only when the value really is a number, so `suspend: maybe` is not told about quotes it does not have |
 | `max_seconds:` likewise | `"max_seconds" must be a whole number of seconds, 1 or more (got 0)` |
+| `max_seconds:` or `ttl_seconds_after_finished:` larger than a 32-bit field | `"max_seconds" must be 2147483647 or less (got 4294967296)` — both are rendered into int32 Kubernetes fields, so a larger number is a 422 halfway through an apply |
+| `manifest_max_bytes:` or `fetch_max_bytes:` at 0 | `"fetch_max_bytes" must be 1 or more (got 0)` — at 0 every image is over the cap, so every volume of every campaign fails |
 | `suspend: maybe` (or any other non-boolean) | `"suspend" must be true or false (got "maybe")` |
 | A setting given a list or a block where one value belongs | `"window" must be a whole number (got a list)` — the value is described, never dumped as a Python repr |
 | A bad value inside a nested setting | `"node_selector.a" must be text (got 1)`, `"tolerations" entry 1 must be settings written as "key: value" lines (got 3)` — a list position is counted from 1, never shown as `tolerations.0` |
