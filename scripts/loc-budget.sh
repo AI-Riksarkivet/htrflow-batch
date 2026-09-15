@@ -580,7 +580,12 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # struct. Fifty of those is a ConfigMap the API server refuses, which is a
 # campaign with no record at all, so each reason is clipped and the oldest
 # entries are dropped until the field fits.
-check web       "$(count packages/web/src -name '*.py')" 1715
+# 1715 -> 1738 (2026-09-14, audit) F19: the rule that a campaign's finishedAt
+# never moves backwards was a string compare, and its two writers need not
+# write the same offset -- `09:00Z` sorts before `10:00+02:00` while being an
+# hour after it. The two are parsed and compared as moments, a value with no
+# offset read as UTC.
+check web       "$(count packages/web/src -name '*.py')" 1738
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

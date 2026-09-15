@@ -1247,3 +1247,39 @@ class TestTheRecordStaysUnderTheConfigMapLimit:
         assert json.loads(data["failedVolumes"]) == [
             {"id": f"vol{i}", "reason": "manifest 404"} for i in range(3)
         ]
+
+
+class TestFinishedAtNeverMovesBackwards:
+    """The read API and `htrflow-campaigns apply` both write this field and
+    do not see the same clock, so the merge keeps the earlier instant. It
+    compared the two as strings, which is not the same question once the two
+    writers disagree about the offset (2026-09-14 audit)."""
+
+    def _merged(self, stored: str, fresh: str) -> str:
+        return projection.merge_record({"finishedAt": stored}, {"finishedAt": fresh})[
+            "finishedAt"
+        ]
+
+    def test_a_later_wall_clock_in_another_offset_is_still_later(self):
+        # 10:00+02:00 is 08:00Z -- earlier than the 09:00Z on record.
+        assert self._merged("2026-01-01T09:00:00Z", "2026-01-01T10:00:00+02:00") == (
+            "2026-01-01T09:00:00Z"
+        )
+
+    def test_a_genuinely_later_instant_still_wins(self):
+        assert self._merged("2026-01-01T09:00:00Z", "2026-01-01T10:00:00Z") == (
+            "2026-01-01T10:00:00Z"
+        )
+
+    def test_a_timestamp_without_an_offset_is_read_as_utc(self):
+        assert self._merged("2026-01-01T09:00:00Z", "2026-01-01T08:00:00") == (
+            "2026-01-01T09:00:00Z"
+        )
+
+    def test_a_value_that_is_not_a_timestamp_never_replaces_one(self):
+        assert self._merged("2026-01-01T09:00:00Z", "soon") == "2026-01-01T09:00:00Z"
+
+    def test_the_first_timestamp_is_taken_whatever_was_there(self):
+        assert self._merged("not a date", "2026-01-01T09:00:00Z") == (
+            "2026-01-01T09:00:00Z"
+        )
