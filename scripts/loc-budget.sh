@@ -608,7 +608,11 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # contradicted the record's own volumesFailed whenever the detail endpoint
 # never got to name the failures. Those rows say `unknown`, and the bucket
 # still answers for them (progress.json, or the manifest.json fallback).
-check web       "$(count packages/web/src -name '*.py')" 1850
+# 1850 -> 1854 (2026-09-14, audit review) a reaped row's links came from the resultsBase
+# stored in the record while the progress files this process fetched for
+# them came from the current config -- two different places whenever a
+# bucket moved. Both are derived now; the stored one stays as provenance.
+check web       "$(count packages/web/src -name '*.py')" 1854
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

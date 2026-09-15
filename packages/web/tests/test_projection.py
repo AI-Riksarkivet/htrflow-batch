@@ -1094,6 +1094,19 @@ def test_a_reaped_campaign_is_a_row_like_any_other():
     ), "the row must be the same shape a live campaign's is"
 
 
+def test_a_reaped_rows_links_come_from_the_config_this_process_has():
+    """The record keeps the base the campaign ran under, and it is worth
+    keeping -- but it is informational. The row's links and the progress
+    this process fetches for them have to be the same place, and the
+    progress base was always derived while the links were not (2026-09-14
+    review): a bucket that moved gave a page of links to the old one."""
+    status = _stored(resultsBase="https://moved.example.org/old/demo-v1")
+    row = projection.record_summary(RECORD, status, CFG, MISSING_WARMUP)
+    assert row["resultsBase"] == "https://results.example.org/htr-test/demo-v1"
+    body = projection.record_detail(row, RECORD, status, CFG, None)
+    assert body["volumes"][0]["iiifUrl"].startswith(row["resultsBase"])
+
+
 def test_a_live_campaign_says_its_job_is_there():
     assert (
         projection.summarize(_finished_job(), CFG, MISSING_WARMUP)["jobGone"] is False

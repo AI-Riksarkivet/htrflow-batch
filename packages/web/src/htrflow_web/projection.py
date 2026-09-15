@@ -262,8 +262,12 @@ def record_summary(record: dict, status: dict, cfg, warmup: dict) -> dict | None
         "createdAt": meta.get("creationTimestamp"),
         "startedAt": data.get("startedAt") or None,
         "finishedAt": data.get("finishedAt") or None,
-        "resultsBase": data.get("resultsBase")
-        or _results_base(namespace, pipeline, cfg),
+        # Derived, never the stored one. The record keeps the base the
+        # campaign ran under and that is worth keeping, but it is
+        # informational: the links on this row and the progress files THIS
+        # process fetches for them have to name the same place, and the
+        # progress base was always derived (2026-09-14 review).
+        "resultsBase": _results_base(namespace, pipeline, cfg),
         "warmup": warmup,
         "jobGone": True,
     }
