@@ -186,7 +186,7 @@ so its settings are namespaced.
 | `AWS_SHARED_CREDENTIALS_FILE` | *(boto3 default)* | Read by boto3, not `Config`. Jobs set `/secrets/s3/credentials` — the mounted Secret file; credentials are never env |
 | `S3_PREFIX` | `""` | Extra prefix before `<pipeline>/<volume>/` (and before `sources/`); leading and trailing `/` are stripped. The converter always sets it to `<namespace>/`; empty only when the wrapper is run by hand |
 | `MAX_IMAGE_WIDTH` | `2500` | Downscale request sent to the IIIF Image API (`/full/{w},/`; `max` for narrower canvases; a 400 falls back to `max`). Service-less canvases are fetched at native size |
-| `RESUME` | `true` | Skip pages that already have **both** PAGE and ALTO in S3 and whose `page_sources` URL is unchanged. The run log says `[<volume>] resume: <n> done, <m> to process` |
+| `RESUME` | `true` | Skip pages that already have **both** PAGE and ALTO in S3 and whose `page_source_digests` entry is unchanged. The run log says `[<volume>] resume: <n> done, <m> to process` |
 | `LOOKAHEAD_PAGES` | `64` | Prefetch depth of the download pipeline |
 | `MAX_PAGES` | `0` | Truncate the volume (0 = all pages) — the knob for a fast end-to-end check of one or a handful of pages |
 | `WORKDIR_PATH` | `/work` | Scratch dir (Jobs mount a 2 Gi memory-backed emptyDir) |
@@ -322,7 +322,8 @@ as failed with a reason — and its presence is the sole "done" signal for
 anything that lists results directly. A volume can therefore be done *and*
 have lost pages; `pages_ok` and `pages_failed` say which it was. It embeds
 the pipeline YAML and its sha256 (the drift ground truth), `image_digest`,
-per-page results, `page_sources` and `canvas_ids` (what a resume compares),
+per-page results, `page_sources`, `page_source_digests` (what a resume
+compares) and `canvas_ids`,
 the run metrics (`wall_seconds`, `gpu_stall_seconds`, `pages_per_second`,
 `bytes_fetched`) and `viewer_url`
 ([field table](s3-layout.md#manifestjson-completion-marker)).

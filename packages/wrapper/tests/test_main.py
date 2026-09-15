@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from htrflow_batch import main as main_mod
-from htrflow_batch.iiif import redact_url
+from htrflow_batch.iiif import redact_url, source_digest
 from htrflow_batch.main import (
     EXIT_OK,
     EXIT_PERMANENT,
@@ -1326,3 +1326,79 @@ def test_a_failed_page_keeps_its_stale_alto_out_of_the_viewer(env, cfg, s3):
         ].read()
     )
     assert [c["id"].rsplit("/", 1)[-1] for c in iiif["items"]] == ["0001", "0003"]
+
+
+def test_resume_reprocesses_a_page_selected_by_its_query(images_env, cfg, s3):
+    """W5: hosts that select the image with `?id=` exist, and the stored
+    source was redacted (query dropped) before it was compared -- so every
+    page of such a manifest looked unchanged, forever. The digest beside it
+    keeps the query."""
+    _put_done(s3, cfg, "0001")
+    s3.put_object(
+        Bucket=cfg.s3_bucket,
+        Key="demo-v1/SE-RA-1234/manifest.json",
+        Body=json.dumps(
+            {
+                "pages": 1,
+                "page_sources": {"0001": "https://img.example/iiif"},
+                "page_source_digests": {
+                    "0001": source_digest("https://img.example/iiif?id=OLD")
+                },
+            }
+        ).encode(),
+    )
+    calls = []
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            calls.append(path.stem)
+            return inner(path)
+
+        return process
+
+    env = dict(images_env, IMAGES="https://img.example/iiif?id=NEW")
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    assert calls == ["0001"]
+    body = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert body["page_source_digests"]["0001"] == source_digest(
+        "https://img.example/iiif?id=NEW"
+    )
+
+
+def test_resume_keeps_a_done_page_whose_token_rotated(images_env, cfg, s3):
+    """The credentials are taken out of the digest, so a re-signed URL is not
+    a new source -- else the whole volume would be reprocessed on every
+    retry (W5)."""
+    _put_done(s3, cfg, "0001")
+    s3.put_object(
+        Bucket=cfg.s3_bucket,
+        Key="demo-v1/SE-RA-1234/manifest.json",
+        Body=json.dumps(
+            {
+                "pages": 1,
+                "page_source_digests": {
+                    "0001": source_digest("https://img.example/1.jpg?token=OLD")
+                },
+            }
+        ).encode(),
+    )
+    calls = []
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            calls.append(path.stem)
+            return inner(path)
+
+        return process
+
+    env = dict(images_env, IMAGES="https://img.example/1.jpg?token=NEW")
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    assert calls == []

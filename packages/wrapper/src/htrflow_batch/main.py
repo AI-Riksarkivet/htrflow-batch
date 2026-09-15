@@ -25,6 +25,7 @@ from .iiif import (
     pages_from_manifest,
     redact_url,
     redact_urls,
+    source_digest,
 )
 from .logship import LogCapture
 from .progress import Progress
@@ -495,18 +496,33 @@ def _synthetic_source(cfg: Config, store: ResultStore) -> tuple[dict, str]:
 
 def _changed_sources(store: ResultStore, pages, done: set[str]) -> set[str]:
     """Done pages whose image URL differs from the one the previous completed
-    run recorded in manifest.json (W7). No previous manifest, or one without
-    page_sources (older wrapper), means nothing to compare: keep them done.
-    publish stores page_sources REDACTED (S6), so compare redacted: a tokenised
-    URL otherwise differs from its stored form on every retry, forever."""
-    previous = store.get_json_or_none("manifest.json")
-    sources = (previous or {}).get("page_sources")
-    if not isinstance(sources, dict):
-        return set()
+    run recorded in manifest.json (W7). No previous manifest, or one with
+    neither field below (older wrapper), means nothing to compare: keep them
+    done.
+
+    ``page_source_digests`` is the comparison (W5): the published
+    ``page_sources`` are REDACTED (S6, the bucket is public), and a redacted
+    URL has lost its query -- so on a host that selects the image with
+    ``?id=`` every page looked unchanged forever. The redacted form is still
+    read from a manifest written before the digests existed."""
+    previous = store.get_json_or_none("manifest.json") or {}
+    digests = previous.get("page_source_digests")
+    if isinstance(digests, dict):
+        return _differs(pages, done, digests, source_digest)
+    sources = previous.get("page_sources")
+    return (
+        _differs(pages, done, sources, redact_url)
+        if isinstance(sources, dict)
+        else set()
+    )
+
+
+def _differs(
+    pages, done: set[str], stored: dict, form: Callable[[str], str]
+) -> set[str]:
+    """The done pages the previous run recorded under a different identity."""
     return {
         p.name
         for p in pages
-        if p.name in done
-        and p.name in sources
-        and sources[p.name] != redact_url(p.image_url)
+        if p.name in done and p.name in stored and stored[p.name] != form(p.image_url)
     }
