@@ -49,6 +49,25 @@ _LABEL_VALUE_RE = _VOLUME_ID_RE
 _SUBDOMAIN_RE = re.compile(
     r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*\Z"
 )
+#: The four settings that name an object the API server has to accept, and
+#: the one that names a RuntimeClass. None of them was checked: a namespace
+#: with a capital in it passed ``validate`` and was refused at apply time --
+#: after the render was committed and the campaigns were live.
+_NOT_AN_OBJECT_NAME = (
+    "is not a Kubernetes object name (got {shown}) — use lower-case letters, "
+    'digits, "-" and ".", starting and ending with a letter or digit, at '
+    "most 253 characters"
+)
+#: ``node_selector`` is copied into the pod spec, where both halves of every
+#: entry have to be a label: a key is an optional DNS-subdomain prefix and a
+#: name, a value is the label alphabet. A pod the API server will not take is
+#: a campaign that never starts.
+_NOT_A_NODE_LABEL = (
+    "has a {what} that is not a Kubernetes node label (got {shown}) — a key "
+    'is a name, optionally after a "<dns-prefix>/"; both halves and the '
+    'value are letters, digits, ".", "_" and "-", at most 63 characters'
+)
+
 #: The converter names the parts of a campaign it splits ``<name>-part1``,
 #: ``-part2``, ... (``render.campaign_names``). A campaign file with that
 #: ending would share its rendered file, Job and ConfigMap with a part of the
@@ -142,6 +161,17 @@ def _placeholders(template: str) -> list[str]:
         return [f for _, f, _, _ in Formatter().parse(template) if f is not None]
     except ValueError:
         return []
+
+
+def _object_name(value: str) -> bool:
+    return bool(value) and len(value) <= 253 and bool(_SUBDOMAIN_RE.match(value))
+
+
+def _label_key(key: str) -> bool:
+    prefix, slash, name = key.rpartition("/")
+    if slash and not _object_name(prefix):
+        return False
+    return bool(_LABEL_VALUE_RE.match(name))
 
 
 def split_image_urls(value: str) -> list[str]:
@@ -453,6 +483,36 @@ class ConverterConfig(BaseModel):
     hf_token_secret: str = ""
     manifest_max_bytes: int = 16 * _MiB
     fetch_max_bytes: int = 64 * _MiB
+
+    @field_validator("namespace", "queue", "s3_secret", "data_pvc")
+    @classmethod
+    def _check_object_name(cls, v: str) -> str:
+        if not _object_name(v):
+            raise ValueError(_NOT_AN_OBJECT_NAME.format(shown=shown(v)))
+        return v
+
+    @field_validator("runtime_class")
+    @classmethod
+    def _check_runtime_class(cls, v: str) -> str:
+        # Empty is a real answer here -- a cluster with no GPU RuntimeClass
+        # renders no `runtimeClassName` at all (``render._scheduling``).
+        if v and not _object_name(v):
+            raise ValueError(_NOT_AN_OBJECT_NAME.format(shown=shown(v)))
+        return v
+
+    @field_validator("node_selector")
+    @classmethod
+    def _check_node_selector(cls, v: dict[str, str]) -> dict[str, str]:
+        for key, value in v.items():
+            if not _label_key(key):
+                raise ValueError(_NOT_A_NODE_LABEL.format(what="key", shown=shown(key)))
+            if value and not _LABEL_VALUE_RE.match(value):
+                raise ValueError(
+                    _NOT_A_NODE_LABEL.format(
+                        what=f'value for "{key}"', shown=shown(value)
+                    )
+                )
+        return v
 
     @field_validator("source_template")
     @classmethod
