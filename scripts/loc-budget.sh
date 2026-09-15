@@ -724,7 +724,13 @@ check web       "$(count packages/web/src -name '*.py')" 1738
 # for ever. $lib/poll is the one poller all three now share: one request in
 # flight, paused while `document.hidden`, doubling the wait on consecutive
 # failures up to five minutes, and polling at once on the way back.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3937
+# 3937 -> 3949 (2026-09-14, audit) F17: the page-progress bar took its width
+# and its aria-valuemax straight from the wrapper's progress.json -- counts
+# that arrive over the network and that a half-written run can make disagree
+# with itself -- so a bar 900% wide, or one running backwards, was a page the
+# numbers could ask for. Both the fill and the value a screen reader is told
+# are clamped to the track.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3949
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

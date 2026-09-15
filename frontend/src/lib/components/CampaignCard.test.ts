@@ -1221,3 +1221,56 @@ describe("CampaignCard's running motion", () => {
     expect(flashed[0]).toHaveTextContent("151 / 638 pages");
   });
 });
+
+describe("a progress bar cannot be talked out of its own scale", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  async function campaignBar(
+    pagesDone: number,
+    pagesTotal: number,
+  ): Promise<HTMLElement> {
+    const body = {
+      ...detail0,
+      failures: [],
+      volumes: [],
+      pagesDone,
+      pagesTotal,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(body)),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    return container.querySelector('[role="progressbar"]') as HTMLElement;
+  }
+
+  // done/total come from the wrapper's progress.json in the results bucket:
+  // a document that arrives over the network, and one a half-written run can
+  // make disagree with itself (2026-09-14 audit).
+  test("more pages done than the volume has fills the bar exactly once", async () => {
+    const bar = await campaignBar(900, 100);
+    expect(bar.querySelector(".fill")).toHaveStyle({ width: "100%" });
+    expect(bar).toHaveAttribute("aria-valuenow", "100");
+    expect(bar).toHaveAttribute("aria-valuemax", "100");
+  });
+
+  test("a negative count reads as nothing done, not a bar running backwards", async () => {
+    const bar = await campaignBar(-5, 100);
+    expect(bar.querySelector(".fill")).toHaveStyle({ width: "0%" });
+    expect(bar).toHaveAttribute("aria-valuenow", "0");
+  });
+
+  test("an ordinary fraction is unchanged", async () => {
+    const bar = await campaignBar(25, 100);
+    expect(bar.querySelector(".fill")).toHaveStyle({ width: "25%" });
+    expect(bar).toHaveAttribute("aria-valuenow", "25");
+  });
+});
