@@ -1561,5 +1561,28 @@ def test_the_sigterm_handler_outlives_the_final_log_ship(env, cfg, s3, monkeypat
 
     assert main(env, process_page_factory=fake_factory) == EXIT_OK
 
-    assert seen and seen[0] is not before  # ours, for the whole of the ship
+    assert seen == [signal.SIG_IGN]  # uninterruptible for the whole ship
     assert signal.getsignal(signal.SIGTERM) is before  # and put back after it
+
+
+def test_a_second_sigterm_during_the_final_ship_is_ignored(env, cfg, s3, monkeypatch):
+    """W16 review: a drain sends SIGTERM and the node may send another. With
+    the handler still installed, the second one raised Terminated inside
+    main's own finally -- a traceback out of main, and the streams never put
+    back. The cleanup is uninterruptible instead."""
+    from htrflow_batch.logship import LogCapture
+
+    original = LogCapture.finish
+
+    def finish(self):
+        os.kill(os.getpid(), signal.SIGTERM)  # the node's second signal
+        return original(self)
+
+    monkeypatch.setattr(LogCapture, "finish", finish)
+    before = signal.getsignal(signal.SIGTERM)
+    streams = (sys.stdout, sys.stderr)
+
+    assert main(env, process_page_factory=fake_factory) == EXIT_OK
+
+    assert (sys.stdout, sys.stderr) == streams
+    assert signal.getsignal(signal.SIGTERM) is before
