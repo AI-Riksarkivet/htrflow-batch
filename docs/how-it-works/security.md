@@ -226,7 +226,7 @@ on-premises IIIF origin or S3 endpoint keeps working by being named.
 
 | Pod | Ingress | Egress (besides kube-dns) | Cannot reach |
 |---|---|---|---|
-| campaign pod (`app=htrflow-batch`) | none | S3 (the in-namespace `app=rustfs` pod, or `network.s3Cidrs`); the IIIF origins in `network.iiifCidrs` on 443/80 | Hugging Face Hub, the API server, the registry, anything else in-cluster, the rest of the internet |
+| campaign pod (`app=htrflow-batch`) | none | S3 (the in-namespace `app=rustfs` pod on 9000, or `network.s3Cidrs` on `network.s3Ports`); the IIIF origins in `network.iiifCidrs` on 443/80 | Hugging Face Hub, the API server, the registry, anything else in-cluster, the rest of the internet |
 | warm-up pod (`app=htrflow-warmup`) | none | the public internet on 443, minus the carve-out above (Hugging Face Hub is a CDN, so there is no CIDR to pin) | S3, the API server, anything in-cluster, link-local and private addresses |
 | web front (`app=htrflow-web`) | `network.web.ingressCidrs` on 8081 (NodePort traffic arrives SNAT'd from the node, so include the node range) | the API server (`network.apiServer.cidr`); S3 (same targets as the campaign pod) for its `progress.json` reader | the IIIF origin, Hugging Face Hub, anything else in-cluster |
 | RustFS (`app=rustfs`, devstack) | 9000 from anywhere (and 9001 when the console is on) | none | — |

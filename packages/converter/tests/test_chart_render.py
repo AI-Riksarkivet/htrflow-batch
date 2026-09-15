@@ -221,3 +221,48 @@ def test_a_private_range_the_operator_listed_is_still_reachable():
     policy = named(rendered, "NetworkPolicy", "htr-batch-job")
     targets = [to for rule in policy["spec"]["egress"] for to in rule.get("to", [])]
     assert {"ipBlock": {"cidr": "10.1.2.3/32"}} in targets
+
+
+# --- D4: all-port egress to the S3 range ----------------------------------
+
+
+@pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-web"])
+def test_s3_egress_names_the_ports_it_needs(policy_name: str):
+    """The CIDR half of the S3 rule carried no `ports` at all, so both pods
+    that reach S3 had egress to EVERY port of that range -- which for a
+    self-hosted endpoint is a range of the operator's own network. The
+    in-cluster half always named 9000; this is the other half saying so too.
+    """
+    rendered = render(sets=DEFAULT_SETS + ("network.s3Cidrs={10.0.0.5/32}",))
+    egress = named(rendered, "NetworkPolicy", policy_name)["spec"]["egress"]
+    by_cidr = [
+        rule
+        for rule in egress
+        if {"ipBlock": {"cidr": "10.0.0.5/32"}} in rule.get("to", [])
+    ]
+    assert len(by_cidr) == 1
+    assert by_cidr[0]["ports"] == [{"port": 443}]
+
+    in_cluster = [
+        rule
+        for rule in egress
+        if {"podSelector": {"matchLabels": {"app": "rustfs"}}} in rule.get("to", [])
+    ]
+    assert len(in_cluster) == 1
+    assert in_cluster[0]["ports"] == [{"port": 9000}]
+
+
+def test_an_endpoint_on_another_port_is_a_value_not_a_fork():
+    """A self-hosted endpoint is often not on 443, and the answer to that
+    must not be "widen the rule again"."""
+    rendered = render(
+        sets=DEFAULT_SETS
+        + ("network.s3Cidrs={10.0.0.5/32}", "network.s3Ports={9000,443}")
+    )
+    egress = named(rendered, "NetworkPolicy", "htr-batch-job")["spec"]["egress"]
+    by_cidr = next(
+        rule
+        for rule in egress
+        if {"ipBlock": {"cidr": "10.0.0.5/32"}} in rule.get("to", [])
+    )
+    assert by_cidr["ports"] == [{"port": 9000}, {"port": 443}]
