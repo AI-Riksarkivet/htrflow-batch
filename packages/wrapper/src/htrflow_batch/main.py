@@ -270,14 +270,24 @@ def _main(
         tracker = Progress(cfg, store, capture)
         state.on_change = tracker.stage_changed
         state.tracker = tracker
-        client = _http_client()
-
-        source, source_url, pages = _setup(cfg, client, store, state)
-        tracker.pages, tracker.source = pages, source
-        todo, done = _resume(cfg, store, pages, state)
-        stats, nbytes = _stream(
-            cfg, client, store, todo, done, process_page_factory, state, stop, tracker
-        )
+        # W15: context-managed, so the connection pool and its sockets go when
+        # the last stage that fetches anything is done, on every path out. The
+        # publish stage below talks only to S3.
+        with _http_client() as client:
+            source, source_url, pages = _setup(cfg, client, store, state)
+            tracker.pages, tracker.source = pages, source
+            todo, done = _resume(cfg, store, pages, state)
+            stats, nbytes = _stream(
+                cfg,
+                client,
+                store,
+                todo,
+                done,
+                process_page_factory,
+                state,
+                stop,
+                tracker,
+            )
         uploaded = _verify(store, pages, stats, state)
         state.stage = "publish"
         wrote_iiif = publish.run(
