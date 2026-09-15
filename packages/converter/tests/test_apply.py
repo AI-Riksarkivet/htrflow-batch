@@ -864,3 +864,31 @@ def test_a_refused_paused_campaign_job_is_an_unenforced_pause(
     err = capsys.readouterr().err
     assert "pausy: paused in git, but the API server refused its Job" in err
     assert "Job/pausy" in err, "the refusal itself is still reported"
+
+
+def test_an_incomplete_rendered_campaign_is_a_sentence_not_a_keyerror(
+    tmp_path, cluster, monkeypatch, capsys
+):
+    """A campaign is rendered as a pair -- the ConfigMap with its volumes.txt
+    and the Job that mounts it. Reading a directory where the pair has come
+    apart (a half-finished write, a hand edit, a bad merge of `rendered/`)
+    raised a bare KeyError on the Job's name, from inside the loop that is
+    about to apply it."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    (out / "campaigns").mkdir(parents=True)
+    (out / "pipelines").mkdir()
+    (out / "campaigns" / "kyrk.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "batch/v1",
+                "kind": "Job",
+                "metadata": {"name": "kyrk", "namespace": NS},
+                "spec": {},
+            }
+        )
+    )
+    monkeypatch.setattr(cli, "_render", lambda *a, **kw: 0)
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 1
+    err = capsys.readouterr().err
+    assert "campaign kyrk" in err and "re-render" in err
+    assert cluster.of("apply") == [], "nothing reached the cluster"
