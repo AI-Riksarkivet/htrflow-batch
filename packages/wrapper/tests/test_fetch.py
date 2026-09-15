@@ -339,3 +339,57 @@ def test_the_pixel_cap_is_not_a_decodability_gate(tmp_path):
 
     page = PageRef(index=1, name="0001", image_url="https://img/1.jpg", canvas={})
     assert fetch_page(page, tmp_path, _client(handler), 3, 0.0).error is None
+
+
+def _png_declaring(width: int, height: int) -> bytes:
+    """A one-pixel PNG whose IHDR claims a size it does not carry -- what a
+    decompression bomb looks like to a header read, without the gigabytes."""
+    import io
+    import struct
+    import zlib
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (1, 1)).save(buffer, format="PNG")
+    data = bytearray(buffer.getvalue())
+    ihdr = data.index(b"IHDR")
+    struct.pack_into(">II", data, ihdr + 4, width, height)
+    crc = zlib.crc32(bytes(data[ihdr : ihdr + 17])) & 0xFFFFFFFF
+    struct.pack_into(">I", data, ihdr + 17, crc)
+    return bytes(data)
+
+
+def test_a_real_decompression_bomb_is_rejected(tmp_path):
+    """W14 review, BLOCKING: Pillow raises DecompressionBombError of its own
+    above ~179 MP, and the guard's `except Exception: return` swallowed it --
+    so a 40000x40000 image sailed past the very check it exists for. The
+    wrapper's cap has to be the only gate."""
+    body = _png_declaring(40000, 40000)
+
+    def handler(req):
+        return httpx.Response(200, content=body)
+
+    page = PageRef(index=1, name="0001", image_url="https://img/1.png", canvas={})
+    r = fetch_page(page, tmp_path, _client(handler), 3, 0.0, max_pixels=100_000_000)
+    assert r.path is None
+    assert r.error == "too large: 40000x40000 = 1600000000 pixels > 100000000"
+    assert not (tmp_path / "0001.jpg").exists()
+
+
+def test_a_page_under_the_cap_passes_without_a_warning(tmp_path, recwarn):
+    """Pillow warns above ~89 MP, which is BELOW the wrapper's own default
+    cap -- so a legitimate 90-100 MP page printed a DecompressionBombWarning
+    into the run log for a page nothing was wrong with."""
+    import warnings
+
+    body = _png_declaring(10_000, 10_000)  # 100 MP: over Pillow's warn line
+
+    def handler(req):
+        return httpx.Response(200, content=body)
+
+    page = PageRef(index=1, name="0001", image_url="https://img/1.png", canvas={})
+    warnings.simplefilter("always")  # record them rather than raise them
+    r = fetch_page(page, tmp_path, _client(handler), 3, 0.0, max_pixels=150_000_000)
+    assert r.error is None and r.path is not None
+    assert [w for w in recwarn if "decompression" in str(w.message).lower()] == []

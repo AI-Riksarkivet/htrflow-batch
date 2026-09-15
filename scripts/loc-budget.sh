@@ -260,7 +260,13 @@ fail=0
 # written -- and the failure path deletes them, so the retry redid it for
 # nothing. The lines are the guard and the note pointing at the next page's
 # own check, which still catches the dead pipeline.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3107
+# 3107 -> 3126 (2026-09-14, audit W14 review): Pillow's own bomb guard is
+# turned off for the header read, under a lock, so MAX_IMAGE_PIXELS is the
+# only gate. Its error above ~179 MP was being swallowed by the "a file we
+# cannot read is not rejected" except -- a 40000x40000 image passed the very
+# check the guard exists for -- and its warning at ~89 MP fires below our own
+# default, on pages nothing is wrong with.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3126
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

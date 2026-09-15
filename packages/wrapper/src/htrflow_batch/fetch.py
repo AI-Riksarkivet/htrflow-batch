@@ -40,6 +40,10 @@ FETCH_MAX_BYTES = 64 * 1024 * 1024
 #: digitised page is, and far below what would exhaust a pod.
 MAX_IMAGE_PIXELS = 100_000_000
 
+#: Serialises the swap of Pillow's own limit in ``_check_pixels`` -- it is a
+#: module global and the download pool has a dozen threads.
+_PIXEL_GUARD = threading.Lock()
+
 _CHUNK = 256 * 1024
 
 #: Content types that can never be a raster image; refused before reading.
@@ -119,14 +123,29 @@ def _check_pixels(path: Path, max_pixels: int) -> None:
     check the fetcher made. ``Image.open`` reads the header only, so this
     costs nothing per page. A file Pillow cannot read is NOT rejected here:
     that is htrflow's business, and is where a page that will not decode has
-    always failed. The rejected file goes, like every other partial one."""
+    always failed. The rejected file goes, like every other partial one.
+
+    Pillow's own bomb guard is turned off for the header read, so
+    ``max_pixels`` is the only gate and the wrapper is the one that says what
+    happened. Both halves of that guard were in the way: above roughly twice
+    ``Image.MAX_IMAGE_PIXELS`` (~179 MP) ``Image.open`` raises
+    ``DecompressionBombError``, which the ``except`` below swallowed -- so a
+    40000x40000 image passed the very check this function exists for -- and
+    above ``Image.MAX_IMAGE_PIXELS`` itself (~89 MP, BELOW our own default)
+    it warns, on pages nothing is wrong with. The lock keeps the swap from
+    two pool threads overlapping; a header read is a few KB, so serialising
+    them costs nothing."""
     from PIL import Image
 
-    try:
-        with Image.open(path) as image:
-            width, height = image.size
-    except Exception:
-        return  # not a size we can read: a decodability gate this is not
+    with _PIXEL_GUARD:
+        limit, Image.MAX_IMAGE_PIXELS = Image.MAX_IMAGE_PIXELS, None
+        try:
+            with Image.open(path) as image:
+                width, height = image.size
+        except Exception:
+            return  # not a size we can read: a decodability gate this is not
+        finally:
+            Image.MAX_IMAGE_PIXELS = limit
     if max_pixels and width * height > max_pixels:
         path.unlink(missing_ok=True)
         raise _Reject(
