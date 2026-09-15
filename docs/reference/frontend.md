@@ -48,35 +48,48 @@ versions are the `engines` field of `frontend/package.json`.
 | `src/lib/alto.ts`                                    | `parseAlto` (ALTO XML → text lines + confidence), `altoUrl`, `prettyXml` (the raw-XML toggle)                                                              |
 | `src/lib/pipeline.ts`                                | `pipelineModels` (the models a pipeline YAML names, and what pins them), `modelLabel`, `modelUrl`                                                            |
 | `src/lib/reasons.ts`                                 | `describeReason`, `describeApiError` and the other sentence builders — the one place a message a person reads is written                                    |
+| `src/lib/poll.ts`                                    | the one poller behind every route: one request in flight, nothing fetched while the tab is hidden, the wait doubling on consecutive failures                |
 | `src/lib/theme.svelte.ts`                            | the one theme store (`ThemeToggle.svelte` on every route)                                                                                                   |
 | `src/lib/components/`                                | `CampaignCard`, `RunSummaryCard`, `PageGrid`, `PagesTable`, `ThemeToggle`                                                                                   |
 | `src/routes/+page.svelte`, `routes/log/`, `routes/alto/` | the three routes                                                                                                                                        |
 | `src/app.css`                                        | design tokens per theme (AA-checked), reduced-motion, and the header/chip/code-block chrome shared by every route (kept out of each route's scoped styles) |
-| `static/config.js`                                   | the deployment hook (`window.API_BASE`)                                                                                                                     |
+| `static/config.js`                                   | `window.API_BASE`/`RESULTS_BASE` for a `bun run dev`; in a deployment the read API serves its own `/config.js`                                              |
 
 ## Configuration
 
-| Setting                | Runtime (deploy)                                        | Build time       | Default                                    |
-| ---------------------- | ------------------------------------------------------- | ---------------- | ------------------------------------------ |
-| read API base          | `window.API_BASE` — set by **overwriting `/config.js`** | `VITE_API_BASE`  | `/api/v1`                                  |
-| campaign list re-fetch | —                                                       | `VITE_RELOAD_MS` | `60000`                                    |
-| live-log re-fetch      | —                                                       | `VITE_LIVE_MS`   | `15000` (the wrapper's `LOG_SHIP_SECONDS`) |
-| live-log give-up       | —                                                       | —                | `LIVE_MAX_FAILURES = 20` polls (5 min)     |
+| Setting                | Runtime (deploy)                             | Build time           | Default                                    |
+| ---------------------- | -------------------------------------------- | -------------------- | ------------------------------------------ |
+| read API base          | `window.API_BASE`, served in `/config.js`     | `VITE_API_BASE`      | `/api/v1`                                  |
+| results base           | `window.RESULTS_BASE`, served in `/config.js` | `VITE_RESULTS_BASE`  | *(empty — see below)*                      |
+| campaign list re-fetch | —                                            | `VITE_RELOAD_MS`     | `60000`                                    |
+| live-log re-fetch      | —                                            | `VITE_LIVE_MS`       | `15000` (the wrapper's `LOG_SHIP_SECONDS`) |
+| live-log give-up       | —                                            | —                    | `LIVE_MAX_FAILURES = 20` attempts          |
+| poll backoff ceiling   | —                                            | —                    | `MAX_POLL_MS = 300000`                     |
+
+`/config.js` is **served by the read API**, not read out of a file: the same
+process that answers `/api/v1` writes it from its own environment
+(`packages/web`, `CONFIG_JS`), so `window.RESULTS_BASE` is always the
+`HTRFLOW_PUBLIC_RESULTS_BASE` the API builds its result URLs from and cannot
+drift from it. There is nothing for a deployment to overwrite: set
+`publicResultsBase` on the chart and the page follows. `static/config.js` is
+the same file for a `bun run dev`, which has no service to ask; it ships an
+empty `RESULTS_BASE`, which the run-log route reads as "nobody said" and
+falls back to accepting any absolute http(s) URL.
 
 The API base is resolved on every fetch, highest first: `window.API_BASE`,
 then `VITE_API_BASE`, then the default. **The page ships a CSP**
 (`svelte.config.js`, `kit.csp` in `hash` mode: `script-src 'self'` plus the
 hash of SvelteKit's own init script, `object-src 'none'`, `base-uri 'self'`),
-so a deployment sets `window.API_BASE` by serving its own **`/config.js`**
-— a same-origin file loaded before the app — never by injecting an inline
-`<script>` into `index.html`, which the CSP blocks. `static/config.js`,
-built into the image, ships `window.API_BASE = "/api/v1"` — same-origin,
-because the read API is the process serving the page, so `script-src 'self'`
-already covers it (no `connect-src` directive is set, so fetches are
-unrestricted by this CSP; the only restriction is on what may _execute_ as
-script). A CSP header from the server must not be stricter than the meta tag
-(the browser enforces the intersection); `packages/web` only adds
-`frame-ancestors 'none'`.
+which is why the configuration arrives as a same-origin file loaded before
+the app and never as an inline `<script>` in `index.html` — that the CSP
+blocks. `/api/v1` is same-origin because the read API is the process serving
+the page, so `script-src 'self'` already covers `/config.js` (no
+`connect-src` directive is set, so fetches are unrestricted by this CSP; the
+only restriction is on what may _execute_ as script). A CSP header from the
+server must not be stricter than the meta tag (the browser enforces the
+intersection); `packages/web` adds `frame-ancestors 'none'` to every
+response, and a policy of its own to `/uv.html`, which has no meta tag —
+Universal Viewer is not built by this project.
 
 ## Derivation rules
 
