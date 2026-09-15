@@ -131,6 +131,21 @@ jobs:
             --build-arg "HTRFLOW_BASE_REVISION=${{ steps.base.outputs.revision }}" \
             -t htrflow-batch:ci-arm64 .
 
+      # The level-0 library-API pin (packages/wrapper/tests/test_driver_real.py):
+      # the real htrflow Pipeline.from_config / Export / auto_import on a
+      # one-page CPU fixture, inside the image the step above built. It ran in
+      # no workflow at all until now — the canary for an htrflow release that
+      # moves the API the driver drives was something a person had to remember
+      # to run.
+      #
+      # Here rather than in a job of its own, and through `make` rather than
+      # `dagger call test-driver`: this job already has the image, and the
+      # dagger engine builds in its own cache and cannot see a base image that
+      # exists only in this runner's docker daemon. No GPU and no Hub: the
+      # fixture pipeline is one binarization step and the run is offline.
+      - name: Library-API pin test, against the image just built
+        run: make test-driver-real WRAPPER_IMAGE=htrflow-batch:ci-arm64
+
       - name: What was built
         # The provenance labels are inherited from the base stage the build
         # selected — proof that TARGETARCH picked base-arm64, not base-amd64.
