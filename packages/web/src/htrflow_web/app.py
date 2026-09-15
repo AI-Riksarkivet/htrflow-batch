@@ -15,7 +15,10 @@ whole job.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import logging
+import re
 from importlib import metadata
 from pathlib import Path
 
@@ -40,6 +43,49 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Content-Security-Policy": "frame-ancestors 'none'",
 }
+
+#: The Universal Viewer is a third-party page with no <meta> CSP of its own,
+#: and until the 2026-09-14 audit the only thing forbidden on it was framing.
+#: What the built viewer actually needs, read off /app/static in the image:
+#: its bundle from a file beside it ('self'); ONE inline <script> and ONE
+#: inline <style>, which is what the hashes below are for; images from
+#: anywhere, including the data: URIs in uv.css and the blob: tiles
+#: OpenSeadragon builds; a manifest fetched from wherever the URL fragment
+#: points. Not needed and so not granted: 'unsafe-eval' (the one
+#: `new Function` in the bundle is webpack's globalThis probe, inside a
+#: try/catch with a `window` fallback) and any third-party script origin.
+#: `worker-src blob:` is granted for the 3D and audio decoders in UV's lazy
+#: chunks, which an image manifest never loads.
+UV_CSP = (
+    "default-src 'self'; script-src 'self'{scripts}; style-src 'self'{styles}; "
+    "object-src 'none'; img-src * data: blob:; connect-src *; "
+    "worker-src 'self' blob:; frame-ancestors 'none'"
+)
+
+#: A <script>/<style> with a body of its own -- one that loads a file has a
+#: `src` and is covered by 'self' instead.
+_INLINE = re.compile(r"<(script|style)(?![^>]*\bsrc=)[^>]*>(.*?)</\1>", re.S | re.I)
+
+UV_PATH = "/uv.html"
+
+
+def uv_csp(static: Path) -> str | None:
+    """``UV_CSP`` with the built viewer's own inline blocks hashed into it,
+    or ``None`` when there is no viewer to serve (a source checkout builds
+    no site). Computed once per process: the file cannot change under a
+    running container."""
+    try:
+        html = (static / UV_PATH.lstrip("/")).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    found: dict[str, list[str]] = {"script": [], "style": []}
+    for kind, body in _INLINE.findall(html):
+        digest = base64.b64encode(hashlib.sha256(body.encode()).digest()).decode()
+        found[kind.lower()].append(f" 'sha256-{digest}'")
+    return UV_CSP.format(
+        scripts="".join(found["script"]), styles="".join(found["style"])
+    )
+
 
 #: This package's own version, read off the installed distribution. Reported
 #: beside the deployed tag, never instead of it: the workspace members are
@@ -149,10 +195,14 @@ def create_app(
     if progress is None and not site_only:
         progress = ProgressReader()
 
+    viewer_csp = uv_csp(Path(static_dir or DEFAULT_STATIC_DIR))
+
     @app.middleware("http")
     async def security_headers(request, call_next):
         response = await call_next(request)
         response.headers.update(SECURITY_HEADERS)
+        if request.url.path == UV_PATH and viewer_csp is not None:
+            response.headers["Content-Security-Policy"] = viewer_csp
         return response
 
     @app.exception_handler(ClusterUnavailable)

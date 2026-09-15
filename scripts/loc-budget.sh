@@ -545,7 +545,13 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # times progress.py's timeout -- over a minute, inside a sync handler -- and
 # enough such requests emptied the threadpool /healthz is answered from. The
 # rows past a five-second deadline are answered with no progress.
-check web       "$(count packages/web/src -name '*.py')" 1571
+# 1571 -> 1621 (2026-09-14, audit) F5: /uv.html is a third-party page with no
+# <meta> CSP of its own, and the only thing the header forbade on it was
+# framing -- while the page takes its manifest URL straight from the
+# fragment. It gets a policy of its own, with the built viewer's one inline
+# <script> and one inline <style> hashed into it at startup so nothing has
+# to be allowed by 'unsafe-inline'.
+check web       "$(count packages/web/src -name '*.py')" 1621
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
