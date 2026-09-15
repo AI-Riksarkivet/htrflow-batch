@@ -262,14 +262,21 @@ def _run_guarded(pipeline, document, stem: str) -> None:
     is still the backstop for the process as a whole.
     """
 
+    failure: list[BaseException] = []
+    done = threading.Event()
+
     def check() -> None:
         step = _dead_step(pipeline)
-        if step is not None:
+        # W17: a thread that dies in the same tick the run completes must not
+        # fail a page that is finished -- its outputs are written, and the
+        # failure path below deletes them, so the page would be redone on the
+        # retry for nothing. The dead pipeline is caught by the next page's
+        # check before its run, which is the same guarantee as the one this
+        # function's docstring makes for a run that has already returned.
+        if step is not None and not done.is_set():
             raise _dead(step, stem)
 
     check()  # never enqueue onto a dead queue: that is what blocks forever
-    failure: list[BaseException] = []
-    done = threading.Event()
 
     def run() -> None:
         try:

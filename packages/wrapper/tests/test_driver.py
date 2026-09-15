@@ -866,3 +866,50 @@ def test_load_pipeline_mistyped_setting_is_permanent(tmp_path, monkeypatch):
         driver.load_pipeline(str(pipeline_yaml), tmp_path / "out")
 
     assert called_with == [str(pipeline_yaml)]  # the dict branch is not taken
+
+
+def test_a_page_that_finished_is_not_failed_by_a_late_thread_death(
+    tmp_path, monkeypatch
+):
+    """W17: the guard looks at the step threads every second WHILE the run is
+    waiting. A thread that dies in the same tick the run completes made it
+    fail a page whose outputs were already written -- and the failure path
+    then deleted them, so the page was redone on the retry for nothing."""
+    import time
+
+    _inject_process_fakes(monkeypatch)
+    from htrflow_batch import driver
+
+    monkeypatch.setattr(driver, "THREAD_POLL_SECONDS", 0.01)
+    out_dir = tmp_path / "out"
+    blocked = threading.Event()
+
+    class _Pipeline:
+        steps = ()
+
+        def run(self, document):
+            blocked.wait(5)  # held until the guard is inside a check
+            for fmt in ("alto", "page"):
+                path = out_dir / fmt / "0044.xml"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("<x/>")
+
+    looks = []
+    step = _FakeStep()
+
+    def dead_step(pipeline):
+        looks.append(1)
+        if len(looks) == 1:
+            return None  # the check before the run: everything alive
+        blocked.set()  # the run finishes while this check is still going
+        while not (out_dir / "page" / "0044.xml").exists():
+            time.sleep(0.005)
+        time.sleep(0.05)  # ... and long enough to be recorded as done
+        return step  # only now is the dead thread visible
+
+    monkeypatch.setattr(driver, "_dead_step", dead_step)
+
+    files = driver.process_page(_Pipeline(), _image(tmp_path), out_dir)
+
+    assert sorted(files) == ["alto", "page"]
+    assert files["alto"].exists() and files["page"].exists()
