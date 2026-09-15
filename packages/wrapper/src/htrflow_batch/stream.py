@@ -16,7 +16,13 @@ from typing import Callable, Iterable, Iterator
 import httpx
 from pydantic import BaseModel, Field
 
-from .fetch import FETCH_MAX_BYTES, FetchResult, describe, fetch_page
+from .fetch import (
+    FETCH_MAX_BYTES,
+    MAX_IMAGE_PIXELS,
+    FetchResult,
+    describe,
+    fetch_page,
+)
 from .iiif import PageRef
 
 log = logging.getLogger("htrflow_batch")
@@ -100,6 +106,7 @@ class PageStream:
         retries: int = 3,
         backoff: float = 0.5,
         max_bytes: int = FETCH_MAX_BYTES,
+        max_pixels: int = MAX_IMAGE_PIXELS,
         stop: threading.Event | None = None,
     ) -> None:
         self.bytes_fetched = 0
@@ -111,6 +118,7 @@ class PageStream:
             retries=retries,
             backoff=backoff,
             max_bytes=max_bytes,
+            max_pixels=max_pixels,
             stop=stop,
         )
         self._queued = list(pages)

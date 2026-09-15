@@ -35,6 +35,11 @@ from .iiif import PageRef
 #: Default cap on one image body (env ``FETCH_MAX_BYTES``; docs: wrapper).
 FETCH_MAX_BYTES = 64 * 1024 * 1024
 
+#: Default cap on one image's DECODED size (env ``MAX_IMAGE_PIXELS``; docs:
+#: wrapper). 100 MP is ~4x an A0 sheet at 400 dpi -- far above anything a
+#: digitised page is, and far below what would exhaust a pod.
+MAX_IMAGE_PIXELS = 100_000_000
+
 _CHUNK = 256 * 1024
 
 #: Content types that can never be a raster image; refused before reading.
@@ -105,6 +110,31 @@ def _save(resp: httpx.Response, path: Path, max_bytes: int) -> int:
     return size
 
 
+def _check_pixels(path: Path, max_pixels: int) -> None:
+    """W14 (2026-09-14, audit): bound what DECODING the page will cost.
+
+    ``max_bytes`` bounds the download, and the two are not the same number: a
+    few MB of JPEG can carry a gigapixel image, and htrflow decodes every page
+    into memory -- so a pod was OOM-killed by a file that had passed every
+    check the fetcher made. ``Image.open`` reads the header only, so this
+    costs nothing per page. A file Pillow cannot read is NOT rejected here:
+    that is htrflow's business, and is where a page that will not decode has
+    always failed. The rejected file goes, like every other partial one."""
+    from PIL import Image
+
+    try:
+        with Image.open(path) as image:
+            width, height = image.size
+    except Exception:
+        return  # not a size we can read: a decodability gate this is not
+    if max_pixels and width * height > max_pixels:
+        path.unlink(missing_ok=True)
+        raise _Reject(
+            f"too large: {width}x{height} = {width * height} pixels > {max_pixels}",
+            retry=False,
+        )
+
+
 def describe(e: BaseException) -> str:
     """The sentence a failed page records -- and, through progress.json,
     the one the status page's notice shows. This package's own exceptions
@@ -134,6 +164,7 @@ def fetch_page(
     retries: int,
     backoff: float,
     max_bytes: int = FETCH_MAX_BYTES,
+    max_pixels: int = MAX_IMAGE_PIXELS,
     stop: threading.Event | None = None,
 ) -> FetchResult:
     last = "unknown error"
@@ -147,6 +178,7 @@ def fetch_page(
             with client.stream("GET", url, timeout=120, follow_redirects=True) as resp:
                 if resp.status_code == 200:
                     size = _save(resp, path, max_bytes)
+                    _check_pixels(path, max_pixels)  # W14
                     return FetchResult(page=page, path=path, error=None, size=size)
                 last = f"HTTP {resp.status_code}"
                 if resp.status_code == 400:
