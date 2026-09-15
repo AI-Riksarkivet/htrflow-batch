@@ -1,7 +1,7 @@
 .PHONY: install format lint check test typecheck test-driver-real ci build scan publish \
         compose-up compose-test compose-smoke compose-down helm-lint helm-template \
         install-devstack install-kyverno \
-        docs-serve docs-build config-reference \
+        docs-serve docs-build config-reference api-contract \
         poc-push poc-push-arm64 build-wrapper build-htrflow-base-arm64 build-web scan-web clean install-kueue \
         campaigns-apply psa-labels e2e \
         frontend-install frontend-test frontend-check frontend-build frontend-dev
@@ -239,6 +239,13 @@ docs-serve:
 
 docs-build: config-reference
 	scripts/docs-site.sh build --clean
+
+# frontend/src/lib/fixtures/api-contract.json is real read-API output, parsed
+# by the frontend's own zod schemas in a vitest (2026-09-14 audit). The
+# committed file must equal this output -- packages/web/tests/test_contract.py
+# asserts it, so `make ci`'s pytest run is what catches a stale fixture.
+api-contract:
+	uv run --no-sync python scripts/api_contract.py
 
 # docs/reference/configuration.md is generated from the three config models
 # and the chart's values (B63 Task 27). The committed page must equal this
