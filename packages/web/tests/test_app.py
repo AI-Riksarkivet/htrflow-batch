@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from htrflow_web.app import (
+    DNS_1123,
     RECORD_WRITES_PER_REQUEST,
     SECURITY_HEADERS,
     NoCluster,
@@ -415,6 +416,14 @@ class RecordingReader(FakeReader):
         return super().get_configmap(namespace, name)
 
     def apply_configmap(self, body: dict) -> None:
+        # The API server refuses a name no object could carry, and a fake
+        # that accepts one proves nothing about what the cluster would do
+        # with the names this package builds (2026-09-14 audit).
+        meta = body["metadata"]
+        for field in ("name", "namespace"):
+            value = meta[field]
+            assert len(value) <= 63, f"{field} is not a DNS-1123 label: {value!r}"
+            assert DNS_1123.fullmatch(value), f"{field} is not DNS-1123: {value!r}"
         self.written.append(body)
 
 
@@ -800,3 +809,13 @@ def test_a_campaign_the_cluster_could_carry_still_answers():
     client = TestClient(create_app(reader, progress=FakeProgress()))
     assert client.get("/api/v1/jobs/htr-test/kyrk").status_code == 200
     assert reader.asked != []
+
+
+def test_the_recording_fake_refuses_a_name_the_cluster_would():
+    """The guard above is the point of this fake, so it is asserted here
+    rather than only ever being true by accident."""
+    reader = RecordingReader()
+    with pytest.raises(AssertionError, match="DNS-1123"):
+        reader.apply_configmap(
+            {"metadata": {"name": "Campaign-Kyrk", "namespace": "htr-test"}}
+        )
