@@ -405,6 +405,24 @@ def test_kubeconform_strict_passes_on_rendered_files(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_the_ci_test_image_carries_the_tools_this_suite_shells_out_to():
+    """A `skipif` on a missing binary is a test that stops running without
+    saying so, and two of them did exactly that for months: the CI pytest
+    image had neither kubeconform (this file) nor git (test_apply.py), so the
+    manifest validation and the commit provenance were never checked in CI
+    while the suite reported green.
+
+    The dagger test container installs git and copies kubeconform and helm
+    out of the same digest-pinned images the chart render uses. This asserts
+    it still does, because the skip cannot.
+    """
+    dagger = (Path(__file__).resolve().parents[3] / ".dagger" / "test.go").read_text()
+    assert "--no-install-recommends git" in dagger
+    assert '"/usr/local/bin/kubeconform"' in dagger
+    assert '"/usr/local/bin/helm"' in dagger
+    assert "m.withTestTools(container)." in dagger
+
+
 def test_window_is_capped_by_the_converter_window():
     """`converter.yaml: window` is the per-cluster cap, not merely a default:
     a campaign may ask for less concurrency, never more. Rendering more than
