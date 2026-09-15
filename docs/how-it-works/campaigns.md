@@ -42,6 +42,7 @@ flowchart TB
     C["converter in CI<br/>htrflow-campaigns render"]
     R["rendered/<br/>committed to git"]
     A["Argo CD or htrflow-campaigns apply"]
+    J["campaign Indexed Job<br/>and its ConfigMaps"]
     K["Kueue"]
     W["wrapper pods<br/>one per volume, one index each"]
     S[("S3 results bucket")]
@@ -50,9 +51,10 @@ flowchart TB
 
     G -->|"PR: validate"| C
     C -->|"main: render, commit"| R
-    R --> A -->|apply| K --> W
+    R --> A -->|apply| J
+    J -->|"queue-name label"| K -->|"admits, up to the window"| W
     W -->|"page/, alto/, progress.json, iiif.json,<br/>manifest.json, run log"| S
-    API -->|"list and get Jobs, Pods, ConfigMaps"| K
+    API -->|"list and get Jobs, Pods, ConfigMaps<br/>write the status ConfigMap"| J
     API -->|"progress.json"| S
     B -->|"page, uv.html, /api/v1/jobs"| API
     B -->|"iiif.json, ALTO, run log, manifest.json"| S
@@ -240,7 +242,7 @@ TTL at all:
 | Object | Written by | Holds |
 |---|---|---|
 | `ConfigMap campaign-<name>` | `render`, then `apply` | `volumes.txt`, and the provenance annotations below |
-| `ConfigMap campaign-<name>-status` | **both** the read API and `apply` | `phase`, `volumesTotal`, `volumesDone`, `volumesFailed`, `startedAt`, `finishedAt`, `resultsBase`, and `failedVolumes` — up to 50 volume ids with one sentence each |
+| `ConfigMap campaign-<name>-status` | **both** the read API and `apply` | `phase`, `volumesTotal`, `volumesDone`, `volumesFailed`, `startedAt`, `finishedAt`, `resultsBase` — and, from one writer only, `failedVolumes` |
 
 Two writers, on purpose. The read API observes the most, because it reads
 the pods and so is the only one that can say *why* a volume failed. But it
@@ -248,6 +250,14 @@ writes only while somebody has the status page open, and a campaign that
 finishes unwatched would reach its TTL with no terminal record at all. So
 `apply`, the one thing guaranteed to run, reads each campaign's live Job
 before it decides anything and writes the ending it can see.
+
+`failedVolumes` — up to 50 volume ids with one sentence each — is the one
+field they do not share. Only the read API's **detail** route writes it,
+because only that route reads the pods. The list route and `apply` leave the
+field out of their write entirely rather than send an empty one, which would
+wipe what the detail route observed. So a campaign nobody ever opened the
+page for keeps a record with counts and no ids, and so does one whose failed
+pods were collected before anyone looked.
 
 Both write the same field names, and neither ever shrinks the record: a
 value that says nothing never replaces one that says something, and
