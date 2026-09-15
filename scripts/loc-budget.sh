@@ -561,7 +561,12 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # applies on the critical path of every page load, for ever. The refusal now
 # also stops the writes for a cooldown, which expires so a renewed grant
 # starts working without a restart.
-check web       "$(count packages/web/src -name '*.py')" 1645
+# 1645 -> 1666 (2026-09-14, audit) F8: the campaign detail route took any
+# namespace and any name, put both into an API path and into the ConfigMap
+# names built from them, and ignored the namespaces the service was actually
+# given. Both halves are checked against one DNS-1123 label and against
+# `cfg.namespaces` before any read happens.
+check web       "$(count packages/web/src -name '*.py')" 1666
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
