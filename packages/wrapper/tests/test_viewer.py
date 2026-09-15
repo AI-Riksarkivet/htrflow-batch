@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from htrflow_batch.iiif import pages_from_manifest
@@ -123,3 +125,33 @@ def test_viewer_manifest_label_falls_back_when_empty(cfg, p2_manifest):
     m = _p2_viewer_manifest(cfg, p2_manifest)
     assert m["items"][0]["label"] == {"none": ["0001"]}
     assert m["label"] == {"none": ["SE-RA-1234"]}
+
+
+def test_viewer_manifest_publishes_no_javascript_body(cfg):
+    """W6: end to end -- nothing a canvas carries reaches the published
+    manifest without having been scheme-checked first."""
+    from htrflow_batch.iiif import PageRef
+    from htrflow_batch.viewer import build_viewer_manifest
+
+    canvas = {
+        "items": [
+            {
+                "items": [
+                    {
+                        "body": {
+                            "id": "javascript:alert(1)",
+                            "service": [{"id": "https://img/iiif/page-1"}],
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+    page = PageRef(
+        index=1,
+        name="0001",
+        image_url="https://img/iiif/page-1/full/max/0/default.jpg",
+        canvas=canvas,
+    )
+    manifest = build_viewer_manifest(cfg, {}, [page], {"0001": (100, 200)})
+    assert "javascript:" not in json.dumps(manifest)
