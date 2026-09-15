@@ -99,7 +99,7 @@ and is written last.
 
 | Field | Meaning |
 |---|---|
-| `stage` | `setup`, `resume`, `load`, `stream`, `verify`, `publish`, `done` — the wrapper's own stage names |
+| `stage` | `setup`, `resume`, `load`, `stream`, `verify`, `publish`, `done` — the wrapper's own stage names — or `failed`, written on the way out of a run that did not finish. A run stopped by a SIGTERM is the one exception: it leaves the stage it was in, so the little time the pod has left goes to shipping the run log rather than to a status write. The termination message still names the stage |
 | `pages_total` | canvases in the manifest this run covers |
 | `pages_done` | pages in the bucket: this run's `ok` pages **plus** the ones a previous run finished and resume skipped |
 | `pages_failed` | pages this run recorded as failed |

@@ -170,6 +170,10 @@ def main(
     capture = LogCapture.install()
 
     def on_sigterm(signum, frame):
+        if state.tracker is not None:
+            # W4: everything status-shaped is dropped from here on, so the
+            # 120 s grace goes to the final log ship instead of three PUTs.
+            state.tracker.terminating = True
         raise Terminated()
 
     previous = _set_signal(signal.SIGTERM, on_sigterm)

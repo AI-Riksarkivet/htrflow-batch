@@ -186,7 +186,13 @@ fail=0
 # a LIVE bucket listing, so a previous run's objects answered for a page this
 # run had just failed -- iiif.json carried a canvas whose ALTO was the old
 # one while manifest.json recorded the page as failed.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2844
+# 2844 -> 2859 (2026-09-14, audit W4): a `terminating` flag on the progress
+# tracker, set by the SIGTERM handler. The kubelet allows 120 s before the
+# SIGKILL and the cleanup was spending it on three status PUTs (the page's
+# progress, an interim iiif.json, a second progress saying "failed") ahead of
+# the final log ship -- the one piece of evidence that matters. Mostly the
+# paragraph saying which writes are dropped and why the ship is not.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2859
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
