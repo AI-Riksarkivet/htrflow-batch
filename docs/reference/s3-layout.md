@@ -99,7 +99,7 @@ and is written last.
 
 | Field | Meaning |
 |---|---|
-| `stage` | `setup`, `resume`, `load`, `stream`, `verify`, `publish`, `done` — the wrapper's own stage names |
+| `stage` | `setup`, `resume`, `load`, `stream`, `verify`, `publish`, then `done`, or `failed` on any exit that is not a success — the wrapper's own stage names. There is no `config` here: the tracker is built after that stage, so a `ConfigError` leaves no `progress.json` at all |
 | `pages_total` | canvases in the manifest this run covers |
 | `pages_done` | pages in the bucket: this run's `ok` pages **plus** the ones a previous run finished and resume skipped |
 | `pages_failed` | pages this run recorded as failed |
@@ -121,14 +121,22 @@ pages than `pages_done` says are finished, rather than overwrite a complete
 `iiif.json` with one naming only the pages since resume; the final publish
 reads the resumed pages' ALTO back and always writes the complete one.
 
-## Live status: the read API, not a file
+## Live status: the read API, not a file in this bucket
 
-`GET /api/v1/jobs` and `GET /api/v1/jobs/{namespace}/{name}` are the
-whole story: no status *document* is written anywhere — every response is
-computed live from the Job/Pod/ConfigMap state, plus the volumes' own
-`progress.json` for the rows it answers with (memoized a few seconds, never
-persisted). A stored status document would need a writer that stays in step
-with the cluster; computing it on each request cannot drift.
+`GET /api/v1/jobs` and `GET /api/v1/jobs/{namespace}/{name}` are the whole
+story: every response is computed live from the Job/Pod/ConfigMap state, plus
+the volumes' own `progress.json` for the rows it answers with (memoized 5 s
+for a running volume and an hour for a finished one, never persisted here). A
+stored status document would need a writer that stays in step with the
+cluster; computing it on each request cannot drift.
+
+Nothing campaign-level is written to **this bucket**. One summary *is*
+written, but as a cluster object rather than an S3 key: the ConfigMap
+`campaign-<name>-status`, by the read API and by `htrflow-campaigns apply`,
+so that a campaign's phase and counts survive the Job's TTL
+([The record a campaign leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)).
+It is a summary, not a mirror: the per-index detail still lives on the Job
+while the Job exists, and in each volume's own `manifest.json` afterwards.
 
 - **Campaign summary**: `namespace`, `name`, `pipeline`, `phase`
   (`Queued`/`Paused`/`Running`/`Succeeded`/`PartiallyFailed`/`Failed`,
