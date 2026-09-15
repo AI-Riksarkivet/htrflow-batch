@@ -37,7 +37,18 @@ export function isResultUrl(
 ): boolean {
   if (!isHttpUrl(value)) return false;
   if (base === "") return true;
-  return value.startsWith(base.endsWith("/") ? base : `${base}/`);
+  // Compared as URLs, not as text: `<base>/../evil.txt` starts with the
+  // base and is not under it at all, and a host written in another case is
+  // the same host (2026-09-14 review).
+  let here: string;
+  let root: string;
+  try {
+    here = new URL(value).href;
+    root = new URL(base).href;
+  } catch {
+    return false;
+  }
+  return here.startsWith(root.endsWith("/") ? root : `${root}/`);
 }
 
 /** "25 Aug, 14:32" — viewer-local unless a timeZone is forced (tests use UTC). */

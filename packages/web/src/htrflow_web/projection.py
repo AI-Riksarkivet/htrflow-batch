@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 import yaml
 
@@ -591,13 +592,18 @@ def _volume_row(
     live campaign's rows and a reaped one's -- there is nothing to read off
     the Job (R1, 2026-09-14)."""
     vol_id = line.split("\t", 1)[0]
+    # Encoded into every URL, the way progress.py encodes its own: the id
+    # came off a campaign's volumes.txt, a file people edit in a git repo,
+    # and `../` in one walked out of the campaign's prefix in the href a
+    # reader clicks (2026-09-14 review). The `id` field stays as written.
+    key = quote(vol_id, safe="")
     return {
         "index": idx,
         "id": vol_id,
         "state": state,
-        "manifestUrl": f"{results_base}/{vol_id}/manifest.json",
-        "iiifUrl": f"{results_base}/{vol_id}/iiif.json",
-        "altoPrefix": f"{results_base}/{vol_id}/alto/",
+        "manifestUrl": f"{results_base}/{key}/manifest.json",
+        "iiifUrl": f"{results_base}/{key}/iiif.json",
+        "altoPrefix": f"{results_base}/{key}/alto/",
         "logUrl": _log_url(pipeline, vol_id, cfg),
         "sourceUrl": _source_url(line),
     }
@@ -621,7 +627,10 @@ def _log_url(pipeline: str, volume_id: str, cfg) -> str:
     across namespaces, unlike the per-namespace results under
     ``resultsBase``. Absolute (not a bare key) because the browser has no
     bucket base URL to resolve a key against."""
-    return f"{cfg.public_results_base}/status/logs/{pipeline}/{volume_id}.txt"
+    return (
+        f"{cfg.public_results_base}/status/logs/"
+        f"{quote(pipeline, safe='')}/{quote(volume_id, safe='')}.txt"
+    )
 
 
 def _pipeline_yaml(configmap: dict | None) -> str:

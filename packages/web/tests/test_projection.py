@@ -1391,3 +1391,32 @@ class TestFinishedAtNeverMovesBackwards:
         assert self._merged("not a date", "2026-01-01T09:00:00Z") == (
             "2026-01-01T09:00:00Z"
         )
+
+
+def test_a_volume_id_is_encoded_into_every_url_a_row_carries():
+    """Volume ids come off a campaign's volumes.txt, a file people edit in a
+    git repo. The progress URL encoded them and the row's own links did not,
+    so `../` in an id walked out of the campaign's prefix in the href a
+    reader clicks (2026-09-14 review)."""
+    cm = {
+        "metadata": {"name": "campaign-kyrk", "namespace": "htr-test"},
+        "data": {"volumes.txt": "../../status\thttps://iiif.example.org/x\n"},
+    }
+    row = projection.detail(
+        _job(completed="", failed=""), cm, [], CFG, warmup=MISSING_WARMUP
+    )["volumes"][0]
+    assert row["id"] == "../../status", "the id itself is the id"
+    base = "https://results.example.org/htr-test/demo-v1"
+    assert row["manifestUrl"] == f"{base}/..%2F..%2Fstatus/manifest.json"
+    assert row["iiifUrl"] == f"{base}/..%2F..%2Fstatus/iiif.json"
+    assert row["altoPrefix"] == f"{base}/..%2F..%2Fstatus/alto/"
+    assert row["logUrl"].endswith("/status/logs/demo-v1/..%2F..%2Fstatus.txt")
+
+
+def test_an_ordinary_volume_id_is_left_alone_in_its_urls():
+    row = projection.detail(
+        _job(completed="", failed=""), _configmap(n=1), [], CFG, warmup=MISSING_WARMUP
+    )["volumes"][0]
+    base = "https://results.example.org/htr-test/demo-v1"
+    assert row["manifestUrl"] == f"{base}/vol0/manifest.json"
+    assert row["logUrl"] == "https://results.example.org/status/logs/demo-v1/vol0.txt"

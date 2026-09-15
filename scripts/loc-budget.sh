@@ -612,7 +612,11 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # stored in the record while the progress files this process fetched for
 # them came from the current config -- two different places whenever a
 # bucket moved. Both are derived now; the stored one stays as provenance.
-check web       "$(count packages/web/src -name '*.py')" 1854
+# 1854 -> 1863 (2026-09-14, audit review) the progress URL encoded the volume id and the row's
+# own links did not, so `../` in an id -- volumes.txt is a file people edit
+# in a git repo -- walked out of the campaign's prefix in the href a reader
+# clicks. Every URL a row carries is encoded now; the `id` field is not.
+check web       "$(count packages/web/src -name '*.py')" 1863
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
@@ -780,7 +784,10 @@ check web       "$(count packages/web/src -name '*.py')" 1854
 # 4066 -> 4075 (2026-09-14, audit review) `unknown` joins the volume-state enum and the card draws it
 # with the quiet treatment a volume that has not started gets -- neither is
 # a failure.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4075
+# 4075 -> 4086 (2026-09-14, audit review) `isResultUrl` compared the log URL to the results base
+# as text, so `<base>/../evil.txt` passed while not being under the base at
+# all. Both are normalised through `new URL` first.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4086
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
