@@ -100,6 +100,10 @@ a misleading npm-internal crash rather than a certificate error unless
   `scripts/docs-site.sh`), `config-reference` (regenerates
   `docs/reference/configuration.md`; a test asserts the committed page
   equals it).
+- **Contracts:** `api-contract` (regenerates
+  `frontend/src/lib/fixtures/api-contract.json` from real read-API output; a
+  test asserts the committed fixture equals it — see
+  [Testing](testing.md#the-two-generated-files-ci-checks-are-current)).
 - **Frontend:** `frontend-install`, `frontend-test`, `frontend-check`,
   `frontend-build`, `frontend-dev`.
 
