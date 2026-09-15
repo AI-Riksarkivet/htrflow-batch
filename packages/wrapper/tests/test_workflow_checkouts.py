@@ -18,7 +18,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-WORKFLOWS = sorted((Path(__file__).resolve().parents[3] / ".github" / "workflows").glob("*.yml"))
+WORKFLOWS = sorted(
+    (Path(__file__).resolve().parents[3] / ".github" / "workflows").glob("*.yml")
+)
 
 
 def _checkout_steps(workflow: dict) -> list[tuple[str, dict]]:

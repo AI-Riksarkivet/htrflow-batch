@@ -41,9 +41,7 @@ REQUIRED_SETS = (
 PUBLIC_INGRESS = "network.web.allowPublicIngress=true"
 DEFAULT_SETS = REQUIRED_SETS + (PUBLIC_INGRESS,)
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("helm") is None, reason="helm not on PATH"
-)
+pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm not on PATH")
 
 
 def helm_template(
@@ -150,9 +148,7 @@ def test_a_named_ingress_range_needs_no_opt_out():
     """The flag is about the catch-all, not about ingress: an operator who
     lists the ranges that may reach the web front says enough by listing
     them."""
-    rendered = render(
-        sets=REQUIRED_SETS + ("network.web.ingressCidrs={10.16.0.0/16}",)
-    )
+    rendered = render(sets=REQUIRED_SETS + ("network.web.ingressCidrs={10.16.0.0/16}",))
     ingress = named(rendered, "NetworkPolicy", "htr-web")["spec"]["ingress"]
     assert ingress[0]["from"] == [{"ipBlock": {"cidr": "10.16.0.0/16"}}]
 
@@ -161,9 +157,7 @@ def test_the_catch_all_guard_is_silent_when_the_policies_are_not_rendered():
     """A campaigns repo's CI renders this chart with `network.enabled=false`
     to get at the policy objects alone. There is no web NetworkPolicy in
     that render, so there is nothing for the guard to warn about."""
-    result = helm_template(
-        sets=REQUIRED_SETS + ("network.enabled=false",)
-    )
+    result = helm_template(sets=REQUIRED_SETS + ("network.enabled=false",))
     assert result.returncode == 0, result.stderr
 
 
@@ -339,9 +333,7 @@ def test_the_apply_pod_can_reach_the_api_server_it_was_given_an_identity_for(
     API server, so the apply hung until its deadline with nothing in its log
     to say why. An identity without a network is not an identity."""
     policy = named(full, "NetworkPolicy", "htr-campaigns-apply")
-    assert policy["spec"]["podSelector"]["matchLabels"] == {
-        "app": "htrflow-campaigns"
-    }
+    assert policy["spec"]["podSelector"]["matchLabels"] == {"app": "htrflow-campaigns"}
     assert policy["spec"]["policyTypes"] == ["Ingress", "Egress"]
     assert "ingress" not in policy["spec"]
 
@@ -363,7 +355,8 @@ def test_the_apply_pods_policy_comes_with_its_identity():
     """No ServiceAccount, no pod to let out."""
     rendered = render(sets=DEFAULT_SETS + ("apply.rbac.enabled=false",))
     assert [
-        o for o in objects(rendered, "NetworkPolicy")
+        o
+        for o in objects(rendered, "NetworkPolicy")
         if o["metadata"]["name"] == "htr-campaigns-apply"
     ] == []
 
@@ -450,8 +443,13 @@ def test_the_production_profile_turns_on_what_the_defaults_leave_off(
     policies = {o["metadata"]["name"] for o in objects(prod, "ClusterPolicy")}
     assert policies == {
         f"htrflow-batch-{name}-{NAMESPACE}"
-        for name in ("images-pinned", "images-allowed", "model-revision",
-                     "verify-images", "rbac-scope")
+        for name in (
+            "images-pinned",
+            "images-allowed",
+            "model-revision",
+            "verify-images",
+            "rbac-scope",
+        )
     }
     for policy in objects(prod, "ClusterPolicy"):
         assert policy["spec"]["validationFailureAction"] == "Enforce"
@@ -469,10 +467,7 @@ def test_every_pod_the_profile_renders_passes_pod_security_restricted(
     """`psaEnforce: restricted` is only honest if the pods clear it. The
     chart renders one pod of its own; the Jobs the converter renders are
     checked by its own tests against the same shape."""
-    pods = [
-        o["spec"]["template"]["spec"]
-        for o in objects(prod, "Deployment")
-    ]
+    pods = [o["spec"]["template"]["spec"] for o in objects(prod, "Deployment")]
     assert pods
     for spec in pods:
         assert spec["securityContext"]["runAsNonRoot"] is True
