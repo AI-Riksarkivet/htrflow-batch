@@ -391,7 +391,12 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # converter.yaml is refused by the COMMAND (the library still defaults --
 # the namespace, queue, Secret and PVC names are not things to guess at).
 # Most of the lines are the two sentences and the paragraphs saying why.
-check converter "$(count packages/converter/src -name '*.py')" 2224
+# 2224 -> 2245 (2026-09-14, audit C3): a refused campaign Job never reaches
+# the Kueue pause sync, so a paused campaign was left running while the
+# apply reported only "some objects were refused" (exit 3). The refusal now
+# says the pause is not enforced and the apply exits 1, like a Workload that
+# never appeared.
+check converter "$(count packages/converter/src -name '*.py')" 2245
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
