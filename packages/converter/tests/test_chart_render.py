@@ -393,3 +393,33 @@ def test_the_signing_identity_example_is_one_a_release_can_produce(
     values = (CHART / "values.yaml").read_text(encoding="utf-8")
     assert SIGNING_SUBJECT in values
     assert "github.com/Riksarkivet/" not in values
+
+
+# --- D10: the container list the image rules walk -------------------------
+
+
+@pytest.mark.parametrize(
+    "policy,rule_name",
+    [
+        ("images-pinned", "pod-images-pinned"),
+        ("images-allowed", "pod-images-allowed"),
+    ],
+)
+def test_the_image_rules_see_an_ephemeral_container_too(
+    full: list[dict], policy: str, rule_name: str
+):
+    """`kubectl debug` attaches an ephemeral container to a running pod, and
+    it runs an image of the debugger's choosing on the GPU node, sharing the
+    target's namespaces. Both image rules walked `containers` and
+    `initContainers` and stopped there, so that image needed neither a
+    digest nor an allowed repository.
+
+    Only the Pod rules: Kubernetes forbids `ephemeralContainers` in a pod
+    TEMPLATE, so there is nothing for the Job rules to walk.
+    """
+    rendered = named(full, "ClusterPolicy", f"htrflow-batch-{policy}-{NAMESPACE}")
+    pod = rule(rendered, rule_name)["context"][0]["variable"]["jmesPath"]
+    assert "[containers, initContainers, ephemeralContainers][]" in pod
+
+    job = rule(rendered, rule_name.replace("pod-", "job-"))
+    assert "ephemeralContainers" not in job["context"][0]["variable"]["jmesPath"]

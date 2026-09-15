@@ -10,6 +10,12 @@
 # the rule the cluster runs, and a rejected Job is named by ONE message
 # instead of two.
 #
+# The Pod rules walk `ephemeralContainers` as well (2026-09-14, audit): a
+# `kubectl debug` attaches one to a running pod, and it runs an image of the
+# debugger's choosing on the GPU node in the target's namespaces. The Job
+# rules do not, because Kubernetes forbids ephemeral containers in a pod
+# template -- there is nothing there to walk.
+#
 # `context` + `deny`, not `foreach`: a message may not name a `foreach`
 # element (Kyverno rejects `element.image` outside the loop), and a message
 # that does not say WHICH image is wrong sends its reader hunting. The
@@ -59,7 +65,7 @@ spec:
         - name: unpinned
           variable:
             jmesPath: >-
-              request.object.spec.[containers, initContainers][] | [?image]
+              request.object.spec.[containers, initContainers, ephemeralContainers][] | [?image]
               | [?!regex_match('^\S+@sha256:[0-9a-f]{64}$', image)].image
             default: []
       validate:

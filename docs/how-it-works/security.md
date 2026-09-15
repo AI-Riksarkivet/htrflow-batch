@@ -24,7 +24,9 @@ is set, the chart ships `ClusterPolicy` objects, and the API server applies
 them to every Job, Pod and pipeline ConfigMap in the namespace, whoever wrote
 it. The campaigns repo's CI can run the same policies over its rendered output
 with the Kyverno CLI, so a bad change fails in the pull request, not at apply
-time. The two image rules apply to every Job and Pod. The revision rule
+time. The two image rules apply to every Job and Pod, and on a Pod they
+cover the ephemeral containers a debugging session attaches as well as the
+ones it was created with. The revision rule
 applies to every ConfigMap carrying a `pipeline.yaml` key — that key is what
 makes a ConfigMap a pipeline, where a label is only a claim about one — and
 reads the top-level `steps:` in it.
