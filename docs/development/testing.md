@@ -7,10 +7,12 @@
    htrflow inside the built wrapper image; the canary for an htrflow bump
    that breaks the [driver](../how-it-works/wrapper.md). No model is
    loaded — a binarization step exercises the step, document and serializer
-   path — so it runs offline in seconds. Opt-in, because it needs the wrapper
-   image: `make test-driver-real` locally, `dagger call test-driver` in CI,
-   both running `packages/wrapper/tests/test_driver_real.py` inside the
-   image. `driver.py` keeps every htrflow import function-local, so the
+   path — so it runs offline in seconds. It needs the wrapper image, so it
+   runs in the one CI job that has already built one, straight after that
+   build (`make test-driver-real` against the image it just made);
+   `dagger call test-driver` builds its own and is the way to run it
+   anywhere else. All three run `packages/wrapper/tests/test_driver_real.py`
+   inside the image. `driver.py` keeps every htrflow import function-local, so the
    ordinary suite (level 1, `test_driver.py`) runs without torch against
    fakes.
 1. **Unit tests** — wrapper: manifest walking (IIIF Presentation 2 and 3,
