@@ -359,3 +359,45 @@ def test_painting_body_drops_a_body_that_is_not_an_object():
     canvas = _canvas_with_service(3000, 4000)
     canvas["items"][0]["items"][0]["body"] = "https://img/full/max/0/default.jpg"
     assert painting_body(canvas) == {}
+
+
+def test_painting_body_takes_the_first_usable_item_of_a_choice():
+    """W6 review: P3 lets a painting annotation offer a Choice -- several
+    representations of the same page, the client picking one. Requiring a
+    single body object dropped the image for every canvas shaped that way, so
+    the first item we would publish is taken instead."""
+    from htrflow_batch.iiif import painting_body
+
+    canvas = _canvas_with_service(3000, 4000)
+    anno = canvas["items"][0]["items"][0]
+    anno["body"] = {
+        "type": "Choice",
+        "items": [
+            {"id": "javascript:alert(1)", "type": "Image"},
+            {"id": "https://img/colour.jpg", "type": "Image"},
+        ],
+    }
+    assert painting_body(canvas)["id"] == "https://img/colour.jpg"
+
+
+def test_painting_body_takes_the_first_usable_item_of_a_bare_list():
+    """Manifests in the wild also put a plain list of bodies there."""
+    from htrflow_batch.iiif import painting_body
+
+    canvas = _canvas_with_service(3000, 4000)
+    canvas["items"][0]["items"][0]["body"] = [
+        {"id": "ftp://img/scan.jpg", "type": "Image"},
+        {"id": "https://img/scan.jpg", "type": "Image"},
+    ]
+    assert painting_body(canvas)["id"] == "https://img/scan.jpg"
+
+
+def test_painting_body_drops_a_choice_with_nothing_publishable():
+    from htrflow_batch.iiif import painting_body
+
+    canvas = _canvas_with_service(3000, 4000)
+    canvas["items"][0]["items"][0]["body"] = {
+        "type": "Choice",
+        "items": [{"id": "javascript:alert(1)", "type": "Image"}],
+    }
+    assert painting_body(canvas) == {}

@@ -228,16 +228,35 @@ def _publishable(body: dict) -> bool:
     return True
 
 
+def _body_candidates(body: object) -> list[dict]:
+    """The bodies one painting annotation offers, in order.
+
+    Usually one. P3 also allows a ``Choice`` -- several representations of the
+    same page, the client picking one -- and manifests in the wild put a bare
+    list there as well. Both are flattened so the first body that may be
+    published wins, rather than the annotation being dropped for a shape."""
+    if isinstance(body, list):
+        candidates = body
+    elif isinstance(body, dict) and body.get("type") == "Choice":
+        items = body.get("items")
+        candidates = items if isinstance(items, list) else []
+    else:
+        candidates = [body]
+    return [item for item in candidates if isinstance(item, dict)]
+
+
 def painting_body(canvas: dict) -> dict:
     """P3-style annotation body for a P3 or P2 canvas. P2 services are
     emitted with v2-style keys (@id/@type/profile) — UV silently shows no
     image otherwise (docs: wrapper). A body carrying a URL we would not fetch
-    is not published either (``_publishable``)."""
+    is not published either (``_publishable``), and a canvas offering several
+    (``_body_candidates``) is published with the first that passes — one
+    image, not the Choice."""
     for ap in canvas.get("items", []):
         for anno in ap.get("items", []):
-            body = anno.get("body")
-            if isinstance(body, dict) and _publishable(body):
-                return body
+            for body in _body_candidates(anno.get("body")):
+                if _publishable(body):
+                    return body
     for img in canvas.get("images", []):
         res = img.get("resource") or {}
         rid = res.get("@id") or res.get("id")
