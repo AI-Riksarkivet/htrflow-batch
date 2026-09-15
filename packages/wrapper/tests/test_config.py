@@ -2,9 +2,19 @@ import re
 from pathlib import Path
 
 import pytest
-from conftest import REQUIRED_ENV
 
 from htrflow_batch.config import Config, ConfigError
+
+#: The env every test below starts from; conftest's fixture builds the same
+#: one, but importing it would tie this file to how pytest was invoked.
+REQUIRED_ENV = {
+    "VOLUME_REF": "SE-RA-1234",
+    "IIIF_MANIFEST_URL": "https://x/manifest",
+    "PIPELINE_PATH": "/config/pipeline.yaml",
+    "PIPELINE_ID": "demo-v1",
+    "S3_BUCKET": "htr-results",
+    "PUBLIC_RESULTS_BASE": "http://public/htr-results",
+}
 
 #: A name that would mean a credential is travelling as an environment
 #: variable rather than as the mounted Secret file.
