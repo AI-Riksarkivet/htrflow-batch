@@ -7,7 +7,7 @@
   // spinning forever. Both documented in $lib/config.
   import { LIVE_MAX_FAILURES, LIVE_MS } from "$lib/config.js";
   import { startPolling } from "$lib/poll.js";
-  import { isHttpUrl, shortDate } from "$lib/api.js";
+  import { isResultUrl, shortDate } from "$lib/api.js";
   import {
     isTerminalManifest,
     runManifestSchema,
@@ -30,12 +30,13 @@
     return new URLSearchParams(window.location.search).get(name);
   }
 
-  // The query string is untrusted input: only absolute http(s) URLs are
-  // fetched or linked. Anything else is treated as absent (and, for the log
-  // itself, reported).
+  // The query string is untrusted input — a link like this is something
+  // people paste to each other. Only an absolute http(s) URL inside this
+  // deployment's own results base is fetched or linked; anything else is
+  // treated as absent (and, for the log itself, reported).
   function httpParam(name: string): string | null {
     const value = queryParam(name);
-    return value !== null && isHttpUrl(value) ? value : null;
+    return value !== null && isResultUrl(value) ? value : null;
   }
 
   const rawLogUrl = queryParam("log");
@@ -63,7 +64,7 @@
       logError =
         rawLogUrl === null
           ? "no log URL given"
-          : "log URL must be an absolute http(s) URL";
+          : "log URL must be an absolute http(s) URL in the results bucket";
       return true; // nothing to retry: the URL itself is the problem
     }
     try {

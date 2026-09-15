@@ -120,3 +120,50 @@ describe("/log with a very large log", () => {
     expect(screen.queryByRole("button", { name: "show whole log" })).toBeNull();
   });
 });
+
+describe("/log only opens this deployment's own results", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    delete window.RESULTS_BASE;
+    window.history.replaceState(null, "", "/");
+  });
+
+  test("a log URL outside the results base is refused before any fetch", async () => {
+    window.RESULTS_BASE = "https://results.example.org/bucket";
+    window.history.replaceState(
+      null,
+      "",
+      "/log?log=https://evil.example.org/x.txt",
+    );
+    const fetchMock = fetch404();
+    vi.stubGlobal("fetch", fetchMock);
+    render(LogPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "in the results bucket",
+    );
+  });
+
+  test("a log URL inside it is fetched as before", async () => {
+    const base = "https://results.example.org/bucket";
+    window.RESULTS_BASE = base;
+    window.history.replaceState(
+      null,
+      "",
+      `/log?log=${base}/status/logs/d/v.txt`,
+    );
+    const fetchMock = vi.fn(
+      async () => new Response("2026-09-08 09:00:00,000 INFO hi\n"),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    render(LogPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${base}/status/logs/d/v.txt`,
+      expect.objectContaining({ cache: "no-cache" }),
+    );
+  });
+});

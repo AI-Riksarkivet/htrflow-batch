@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { DEFAULT_API_BASE, envInt, resolveApiBase } from "./config.js";
+import {
+  DEFAULT_API_BASE,
+  DEFAULT_RESULTS_BASE,
+  envInt,
+  resolveApiBase,
+  resolveResultsBase,
+} from "./config.js";
 
 describe("config", () => {
   test("window.API_BASE wins over the default; empty or missing falls back", () => {
@@ -13,6 +19,15 @@ describe("config", () => {
 
   test("the default is same-origin /api/v1", () => {
     expect(DEFAULT_API_BASE).toBe("/api/v1");
+  });
+
+  test("window.RESULTS_BASE is where the results are; empty means nobody said", () => {
+    expect(resolveResultsBase({ RESULTS_BASE: "https://pub/bucket" })).toBe(
+      "https://pub/bucket",
+    );
+    expect(resolveResultsBase({ RESULTS_BASE: "" })).toBe(DEFAULT_RESULTS_BASE);
+    expect(resolveResultsBase({})).toBe(DEFAULT_RESULTS_BASE);
+    expect(DEFAULT_RESULTS_BASE).toBe("");
   });
 
   test("envInt accepts positive integers only", () => {

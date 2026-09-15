@@ -593,7 +593,11 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # volumes.txt, the status record's failedVolumes, the campaign's own ending),
 # through the same row builder a live campaign's rows come from, and their
 # page counts come from the bucket like a live campaign's.
-check web       "$(count packages/web/src -name '*.py')" 1792
+# 1792 -> 1817 (2026-09-14, audit) F20: the service serves /config.js
+# itself now, built from its own environment, so the page's idea of where
+# the results live cannot drift from the API's -- which is what the run-log
+# route checks its `?log=` and `?manifest=` against.
+check web       "$(count packages/web/src -name '*.py')" 1817
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
@@ -752,7 +756,13 @@ check web       "$(count packages/web/src -name '*.py')" 1792
 # re-rendered the whole of it every fifteen seconds. The end is drawn by
 # default -- cut at a line boundary -- with the rest one click away and the
 # `raw` link still opening the whole object.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4026
+# 4026 -> 4066 (2026-09-14, audit) F20: /log took its `?log=` and
+# `?manifest=` straight out of the query string and fetched any absolute
+# http(s) URL, so a link pasted to someone could point the page at any host
+# at all. Both must now sit under the results base the service names in
+# /config.js; an unset base still accepts any absolute URL, for a dev run
+# with no service to ask.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4066
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
