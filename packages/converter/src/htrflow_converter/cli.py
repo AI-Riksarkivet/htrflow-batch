@@ -82,8 +82,34 @@ def _report(e: ValidationError, tail: str) -> int:
     return 1
 
 
+#: A repo with no converter.yaml is not refused by ``parse.load`` -- as a
+#: library, a missing file is every setting at its default. As a COMMAND it
+#: has to be: the namespace, the queue, the S3 Secret and the model-cache PVC
+#: all come from that file, so a repo without one silently applies one
+#: cluster's campaigns to whatever ``htr-batch`` happens to be, and
+#: ``--prune`` deletes what is already there.
+_NO_CONVERTER_YAML = (
+    "{path} is not there, and without it the namespace, the queue, the S3 "
+    "Secret and the model-cache PVC would all be guessed at — copy the "
+    "converter.yaml that htrflow-campaigns init writes and set it up for "
+    "your cluster"
+)
+
+
+def _missing_config(repo: Path) -> str | None:
+    return (
+        None
+        if (repo / "converter.yaml").is_file()
+        else _NO_CONVERTER_YAML.format(path=repo / "converter.yaml")
+    )
+
+
 def _validate(repo_dir: str) -> int:
     repo = Path(repo_dir)
+    missing = _missing_config(repo)
+    if missing is not None:
+        print(missing)
+        return 1
     try:
         campaigns, pipelines, cfg = load(
             repo / "campaigns", repo / "pipelines", repo / "converter.yaml"
@@ -245,6 +271,10 @@ def _render(repo_dir: str, out_dir: str, record_dir: str | None = None) -> int:
     record its pipelines and campaigns have to agree with.
     """
     repo = Path(repo_dir)
+    missing = _missing_config(repo)
+    if missing is not None:
+        print(missing)
+        return 1
     try:
         campaigns, pipelines, cfg = load(
             repo / "campaigns", repo / "pipelines", repo / "converter.yaml"
@@ -536,8 +566,27 @@ def _objects(dir_: Path) -> list[dict]:
     return objects
 
 
+#: ``--prune`` deletes every converter-labelled object the render did not
+#: produce, so a render that produced NOTHING cancels every campaign in the
+#: namespace at once. That is a real thing to want -- deleting the last
+#: campaign file is how the last campaign is retired -- and it is also what a
+#: mistyped directory or a checkout that never happened looks like, so it has
+#: to be said out loud.
+_EMPTY_PRUNE = (
+    "refusing --prune: nothing under {dir} rendered a campaign, so this would "
+    "delete every campaign the converter manages in the namespace — check "
+    "that this is the campaigns repo you meant, or pass --allow-empty to "
+    "cancel them all on purpose"
+)
+
+
 def _apply(
-    repo_dir: str, out_dir: str | None, prune: bool, pause_wait: int, dry_run: bool
+    repo_dir: str,
+    out_dir: str | None,
+    prune: bool,
+    pause_wait: int,
+    dry_run: bool,
+    allow_empty: bool = False,
 ) -> int:
     with contextlib.ExitStack() as stack:
         record_dir = None
@@ -551,6 +600,9 @@ def _apply(
         # Pipelines first: a campaign's Job mounts its pipeline's ConfigMap
         # and waits on its warm-up Job's marker file.
         pipelines, campaigns = _objects(out / "pipelines"), _objects(out / "campaigns")
+        if prune and not campaigns and not allow_empty:
+            print(_EMPTY_PRUNE.format(dir=repo / "campaigns"), file=sys.stderr)
+            return 1
         if dry_run:
             for obj in pipelines + campaigns:
                 print(f"would apply: {obj['kind']}/{obj['metadata']['name']}")
@@ -703,6 +755,12 @@ def main(argv: list[str] | None = None) -> int:
         "deletes every converter-labelled object not in this apply)",
     )
     apply_p.add_argument(
+        "--allow-empty",
+        action="store_true",
+        help="let --prune run on a render with no campaigns at all, which "
+        "cancels every campaign in the namespace",
+    )
+    apply_p.add_argument(
         "--pause-wait",
         type=int,
         default=10,
@@ -720,7 +778,12 @@ def main(argv: list[str] | None = None) -> int:
         return _render(args.repo_dir, args.out)
     if args.command == "apply":
         return _apply(
-            args.repo_dir, args.out, args.prune, args.pause_wait, args.dry_run
+            args.repo_dir,
+            args.out,
+            args.prune,
+            args.pause_wait,
+            args.dry_run,
+            args.allow_empty,
         )
     return _validate(args.repo_dir)
 

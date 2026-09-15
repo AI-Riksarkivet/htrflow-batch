@@ -526,3 +526,19 @@ def test_a_changed_model_id_is_a_changed_recipe(tmp_path, capsys):
 
     assert main(["render", str(repo), "--out", str(out)]) == 1
     assert "pipeline demo-v1 changed (steps)" in capsys.readouterr().out
+
+
+def test_validate_refuses_a_repo_without_a_converter_yaml(tmp_path, capsys):
+    """`converter.yaml` is what says which namespace, queue, Secret and PVC a
+    campaign belongs to. A repo without one is not a campaigns repo, and
+    every one of those settings quietly falling back to a default is how an
+    apply reaches the wrong namespace."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    (repo / "converter.yaml").unlink()
+    assert main(["validate", str(repo)]) == 1
+    printed = capsys.readouterr().out
+    assert str(repo / "converter.yaml") in printed
+    assert "htrflow-campaigns init" in printed
+    assert main(["render", str(repo), "--out", str(tmp_path / "rendered")]) == 1
+    assert not (tmp_path / "rendered").exists()
