@@ -96,6 +96,7 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | Rule | Consequence when violated |
 |------|---------------------------|
 | `pipeline:` is required and must name a file in `pipelines/` | Reported as a validation error; nothing renders |
+| A campaign lists at least one volume | Validation error — no volumes renders a Job with `completions: 0`, which Kubernetes reports as Succeeded the moment it is created |
 | Every volume needs `manifest:` or a non-empty `images:` (unless it is a bare string) | Validation error |
 | `manifest:` and every `images:` entry are absolute `http://` or `https://` URLs | Validation error (`must be an http(s) URL`) |
 | No whitespace (space, tab, line break) inside a `manifest:` or `images:` URL | Validation error naming the volume and the image — percent-encode a space as `%20`. Whitespace separates the URLs of an `images:` volume in `volumes.txt`, which is why it cannot appear inside one; a comma can (a IIIF size such as `/full/2500,/`) |

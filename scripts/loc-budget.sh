@@ -427,7 +427,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # every volume of every campaign is over the cap), and the two second
 # budgets a 32-bit ceiling -- they are rendered into int32 Kubernetes
 # fields, so a larger number was a 422 halfway through an apply.
-check converter "$(count packages/converter/src -name '*.py')" 2437
+# 2437 -> 2450 (2026-09-14, audit C13): a campaign with no volumes at all is
+# refused. It rendered `completions: 0`, which Kubernetes reports as
+# Succeeded the moment the Job is created -- a campaign that is over before
+# it starts, and green.
+check converter "$(count packages/converter/src -name '*.py')" 2450
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
