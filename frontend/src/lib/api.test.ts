@@ -4,6 +4,7 @@ import {
   fetchJob,
   fetchJobs,
   isHttpUrl,
+  isResultUrl,
   jobDetailSchema,
   jobSummarySchema,
   shortDate,
@@ -490,5 +491,32 @@ describe("a URL field has to be a URL", () => {
       },
     };
     expect(jobDetailSchema.safeParse(detail).success).toBe(false);
+  });
+});
+
+describe("isResultUrl", () => {
+  const base = "https://results.example.org/bucket";
+
+  test("a URL under the configured results base is allowed", () => {
+    expect(isResultUrl(`${base}/status/logs/demo/v1.txt`, base)).toBe(true);
+    expect(isResultUrl(`${base}/htr-test/demo/vol0/manifest.json`, base)).toBe(
+      true,
+    );
+  });
+
+  test("a URL anywhere else is not, however absolute it is", () => {
+    expect(isResultUrl("https://evil.example.org/log.txt", base)).toBe(false);
+    // The prefix has to end at a path boundary, or a lookalike host passes.
+    expect(isResultUrl(`${base}.evil.org/log.txt`, base)).toBe(false);
+    expect(isResultUrl("javascript:alert(1)", base)).toBe(false);
+  });
+
+  test("a trailing slash on the base changes nothing", () => {
+    expect(isResultUrl(`${base}/x.txt`, `${base}/`)).toBe(true);
+  });
+
+  test("an unset base accepts any absolute http(s) URL, as before", () => {
+    expect(isResultUrl("https://anywhere.example.org/x.txt", "")).toBe(true);
+    expect(isResultUrl("javascript:alert(1)", "")).toBe(false);
   });
 });

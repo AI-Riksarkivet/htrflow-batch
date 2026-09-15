@@ -40,6 +40,28 @@ export function resolveApiBase(
     : DEFAULT_API_BASE;
 }
 
+/**
+ * Where this deployment's results live — the same `publicResultsBase` the
+ * read API builds every result URL from. Served in /config.js by the read
+ * API itself (packages/web), so it cannot drift from what the API says.
+ * Empty when nobody said (a `bun run dev` with no /config.js, a site-only
+ * build): the run-log route then accepts any absolute http(s) URL, as it
+ * did before this existed (2026-09-14 audit).
+ */
+export const DEFAULT_RESULTS_BASE = env.VITE_RESULTS_BASE ?? "";
+
+/** Resolved per use, like `resolveApiBase`: /config.js may load late. */
+export function resolveResultsBase(
+  win: { RESULTS_BASE?: string } | undefined = typeof window === "undefined"
+    ? undefined
+    : window,
+): string {
+  const injected = win?.RESULTS_BASE;
+  return typeof injected === "string" && injected !== ""
+    ? injected
+    : DEFAULT_RESULTS_BASE;
+}
+
 /** The source repository, linked from the status page's header. */
 export const REPO_URL = "https://github.com/AI-Riksarkivet/htrflow-batch";
 

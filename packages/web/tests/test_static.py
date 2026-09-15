@@ -60,7 +60,7 @@ def static_dir(tmp_path: Path) -> Path:
     (tmp_path / "log.html").write_text("<h1>run log</h1>")
     (tmp_path / "alto.html").write_text("<h1>alto viewer</h1>")
     (tmp_path / "uv.html").write_text(UV_HTML)
-    (tmp_path / "config.js").write_text('window.API_BASE = "/api/v1";\n')
+    (tmp_path / "config.js").write_text("STATIC FALLBACK\n")
     (tmp_path / "_app").mkdir()
     (tmp_path / "_app" / "start.js").write_text("// bundle")
     # A decoy the API route must shadow: static is mounted at /, so only
@@ -90,6 +90,25 @@ def test_serves_the_built_site(client: TestClient, path: str, marker: str):
     resp = client.get(path)
     assert resp.status_code == 200
     assert marker in resp.text
+
+
+def test_config_js_is_the_services_own_answer(client: TestClient):
+    """The page's results base and the API's are the same setting; a copy in
+    the image that an operator had to keep in step would be wrong exactly
+    when it mattered (2026-09-14 audit)."""
+    resp = client.get("/config.js")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/javascript")
+    assert 'window.API_BASE = "/api/v1";' in resp.text
+    assert 'window.RESULTS_BASE = "https://results.example.org";' in resp.text
+    assert "STATIC" not in resp.text, "never the file in the image"
+
+
+def test_config_js_says_nothing_when_there_is_no_cluster(static_dir: Path):
+    """Site-only mode has no results base to name, and the run-log route
+    reads an empty one as "nobody said"."""
+    client = TestClient(create_app(NoCluster(), static_dir=static_dir))
+    assert 'window.RESULTS_BASE = "";' in client.get("/config.js").text
 
 
 def test_api_routes_win_over_static(client: TestClient):

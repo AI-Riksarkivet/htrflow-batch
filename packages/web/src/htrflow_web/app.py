@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import logging
 import re
 import time
@@ -24,7 +25,7 @@ from importlib import metadata
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -127,6 +128,14 @@ CLUSTER_UNAVAILABLE_DETAIL = (
 #: called. The length cap (63) is checked beside it.
 DNS_1123 = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?")
 
+#: What /config.js says. `frontend/static/config.js` is the same file for a
+#: `bun run dev` that has no service to ask.
+CONFIG_JS = (
+    "// Served by the read API, from its own environment.\n"
+    'window.API_BASE = "/api/v1";\n'
+    "window.RESULTS_BASE = {results_base};\n"
+)
+
 #: Where the image puts the built site (.docker/htrflow-web.dockerfile).
 DEFAULT_STATIC_DIR = "/app/static"
 
@@ -228,6 +237,22 @@ def create_app(
         return JSONResponse(
             status_code=502,
             content={"detail": CLUSTER_UNAVAILABLE_DETAIL},
+        )
+
+    @app.api_route("/config.js", methods=GET_HEAD)
+    def config_js() -> Response:
+        """The page's runtime configuration, built from this process's own
+        environment rather than read off a file in the image (2026-09-14
+        audit). `RESULTS_BASE` is what the run-log route checks its `?log=`
+        and `?manifest=` against, and a copy of it that an operator had to
+        keep in step with HTRFLOW_PUBLIC_RESULTS_BASE would be wrong exactly
+        when it mattered. Site-only mode has no cfg and says so with an
+        empty base. The API is always same-origin: this file is served by
+        the service that answers /api/v1."""
+        base = getattr(reader.cfg, "public_results_base", "") or ""
+        return Response(
+            CONFIG_JS.format(results_base=json.dumps(base)),
+            media_type="text/javascript",
         )
 
     @app.api_route("/healthz", methods=GET_HEAD)

@@ -7,7 +7,7 @@
 // small pure view helpers every route needs (isHttpUrl, shortDate), since
 // there is no derivation layer left to keep them in.
 import { z } from "zod";
-import { resolveApiBase } from "./config.js";
+import { resolveApiBase, resolveResultsBase } from "./config.js";
 
 /**
  * Only absolute http(s) URLs may reach an href/src: query strings and
@@ -22,6 +22,22 @@ export function isHttpUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * An http(s) URL this deployment's own results bucket serves. The run-log
+ * route takes its `?log=` and `?manifest=` straight out of the query
+ * string, so a link mailed to someone could point the page at any host at
+ * all (2026-09-14 audit). An unset base — nobody said where the results
+ * are — accepts any absolute http(s) URL, which is what it did before.
+ */
+export function isResultUrl(
+  value: string,
+  base: string = resolveResultsBase(),
+): boolean {
+  if (!isHttpUrl(value)) return false;
+  if (base === "") return true;
+  return value.startsWith(base.endsWith("/") ? base : `${base}/`);
 }
 
 /** "25 Aug, 14:32" — viewer-local unless a timeZone is forced (tests use UTC). */
