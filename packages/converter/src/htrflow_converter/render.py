@@ -15,6 +15,11 @@ from .models import STATUS_SUFFIX, Campaign, ConverterConfig, Pipeline, Volume
 _LABEL_JUNK = re.compile(r"[^A-Za-z0-9_.-]")
 _PATH_RE = re.compile(r"[^.\[\]]+|\[\d+\]")
 MAX_VOLUMES_PER_JOB = 10_000
+#: What a pipeline's warm-up Job is called. ``cluster`` reads it too: a Job
+#: the API server refuses for an immutable field is told a different way
+#: out depending on whether it is a warm-up (deleted and created again) or a
+#: campaign (left exactly where it is).
+WARMUP_PREFIX = "htr-warmup-"
 #: Bytes of ``volumes.txt`` one part may carry. The API server sums the
 #: values under ``data`` and ``binaryData`` -- nothing else, not the keys,
 #: the metadata or the managed fields -- and refuses a ConfigMap over 1 MiB
@@ -123,7 +128,7 @@ def _pipeline_configmap(p: Pipeline, cfg: ConverterConfig) -> dict:
 
 def _warmup_job(p: Pipeline, cfg: ConverterConfig) -> dict:
     job = _load("warmup-job.yaml")
-    _set(job, "metadata.name", f"htr-warmup-{p.id}")
+    _set(job, "metadata.name", f"{WARMUP_PREFIX}{p.id}")
     _set(job, "metadata.namespace", cfg.namespace)
     job["metadata"]["labels"][_PIPELINE_LABEL] = label_value(p.id)
     _set(job, "spec.template.spec.containers[0].image", p.image)

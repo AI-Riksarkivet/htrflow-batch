@@ -74,6 +74,13 @@ class Progress:
         #: the old count-based threshold before it finishes, and pages 1-9 of
         #: a bigger one would have linked to a manifest that is not there yet.
         self.viewer_published = False
+        #: Set by main's SIGTERM handler (W4, 2026-09-14 audit). The kubelet
+        #: allows 120 s between SIGTERM and SIGKILL, and the cleanup was
+        #: spending it on status objects -- the page's progress PUT, an
+        #: interim iiif.json, a second progress PUT saying "failed" -- each
+        #: able to sit out its own timeouts against a sick bucket, ahead of
+        #: the final log ship, which is the evidence that matters.
+        self.terminating = False
 
     def _counts(self) -> tuple[int, int]:
         """Done and failed. A skipped page is one an earlier run finished and
@@ -117,6 +124,8 @@ class Progress:
         }
 
     def write(self) -> None:
+        if self.terminating:
+            return  # W4: the grace period belongs to the final log ship
         try:
             self.store.put_progress(self.body())
         except Exception as e:
@@ -129,6 +138,8 @@ class Progress:
         self.write()
 
     def after_page(self, name: str) -> None:
+        if self.terminating:
+            return  # W4: neither the progress PUT nor the interim manifest
         self.last_page = name
         done, _ = self._counts()
         # Before the write: _publish_viewer can flip viewer_published, and
@@ -140,22 +151,26 @@ class Progress:
 
     def _publish_viewer(self, done: int) -> None:
         """``iiif.json`` for the pages this run has finished. Only the dims
-        already in memory (``store.page_dims``, off the ALTO the upload
-        parsed anyway) — reading a resumed run's earlier ALTOs back would be
-        one S3 GET per page in the middle of the page loop. The final publish
-        does read them, so the published manifest always ends up complete.
+            already in memory (``store.page_dims``, off the ALTO the upload
+            parsed anyway) — reading a resumed run's earlier ALTOs back would be
+            one S3 GET per page in the middle of the page loop. The final publish
+            does read them, so the published manifest always ends up complete.
 
-        ``done`` counts resumed pages too (``_counts``), but ``store.page_dims``
-        only ever holds THIS run's own pages -- a run resumed at page 600 of
-        638 has no dims for the 600 it skipped. Publishing here with only the
-        10 or so this run has actually processed would overwrite a complete
-        638-canvas iiif.json with a 10-canvas one, so this is skipped whenever
-        the dims in hand cover fewer pages than ``done`` says are finished;
-        the final publish (which DOES read a resumed page's ALTO back) still
-        writes the complete manifest, so a resumed run is never worse off
-        than today's "no interim iiif.json at all" (docs: s3-layout)."""
+            ``done`` counts resumed pages too (``_counts``), but ``store.page_dims``
+            only ever holds THIS run's own pages -- a run resumed at page 600 of
+            638 has no dims for the 600 it skipped. Publishing here with only the
+            10 or so this run has actually processed would overwrite a complete
+            638-canvas iiif.json with a 10-canvas one, so this is skipped whenever
+            the dims in hand -- plus the pages known to have none -- cover fewer
+        pages than ``done`` says are finished;
+            the final publish (which DOES read a resumed page's ALTO back) still
+            writes the complete manifest, so a resumed run is never worse off
+            than today's "no interim iiif.json at all" (docs: s3-layout)."""
         dims = known_dims(self.store, self.pages)
-        if not dims or len(dims) < done:
+        # W11: a page of this run's own whose ALTO carries no WIDTH/HEIGHT is
+        # covered too -- it will never have dimensions, and counting it as a
+        # gap disabled the interim manifest for every page after it.
+        if not dims or len(dims) + len(self.store.dimless_pages) < done:
             return
         try:
             self.store.put_json(

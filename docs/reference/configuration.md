@@ -55,6 +55,15 @@ contract written by the Job the converter renders
 (`packages/converter/src/htrflow_converter/manifests/campaign-job.yaml`),
 in a pod environment nothing else writes.
 
+**Two caps, two different costs.** `FETCH_MAX_BYTES` bounds what a page's
+image may weigh on the wire; `MAX_IMAGE_PIXELS` bounds what decoding it
+costs. They are not the same number — a few megabytes of JPEG can carry a
+gigapixel image, and the wrapper hands every page to a pipeline that decodes
+it into memory — so a file well inside the byte cap could still take the pod
+out. The pixel count is read from the image's header, which costs nothing per
+page; a page over either cap fails without a retry, and `MAX_IMAGE_PIXELS: 0`
+turns the second check off.
+
 ## Three security sentences
 
 - **Credentials are mounted files, with one scoped exception**: S3
@@ -112,6 +121,7 @@ template` refuses it, **nobody** = convention only.
 | `LOG_SHIP_SECONDS` | env | `15.0` | — | no secret — nobody |
 | `MANIFEST_MAX_BYTES` | env | `16777216` | — | no secret — nobody |
 | `FETCH_MAX_BYTES` | env | `67108864` | — | no secret — nobody |
+| `MAX_IMAGE_PIXELS` | env | `100000000` | — | no secret — nobody |
 | `IMAGE_DIGEST` | env | `unknown` | — | no secret — nobody |
 | `HTRFLOW_BASE_REVISION` | env | `unknown` | — | no secret — nobody |
 
@@ -199,11 +209,14 @@ skeleton, never as a campaign setting.
 | `network.defaultDeny` | `values.yaml` | `true` | — | no secret — nobody |
 | `network.iiifCidrs` | `values.yaml` | `[192.121.221.27/32]` | — | no secret — nobody |
 | `network.s3Cidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `network.s3Ports` | `values.yaml` | `[443]` | — | no secret — nobody |
 | `network.clusterCidrs` | `values.yaml` | `[10.42.0.0/16, 10.43.0.0/16]` | — | no secret — nobody |
 | `network.nodeCidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `network.privateCidrs` | `values.yaml` | `[10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]` | — | no secret — nobody |
 | `network.apiServer.cidr` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `network.apiServer.port` | `values.yaml` | `6443` | — | no secret — nobody |
 | `network.web.ingressCidrs` | `values.yaml` | `[0.0.0.0/0]` | — | the only gate on the read API — cluster |
+| `network.web.allowPublicIngress` | `values.yaml` | `false` | — | no secret — nobody |
 
 ## One-sided keys
 

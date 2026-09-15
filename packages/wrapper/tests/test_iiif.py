@@ -280,3 +280,124 @@ def test_redact_url():
         redact_urls("bad https://u:p@h/a?x=1 and http://h2/b?y=2 end")
         == "bad https://h/a and http://h2/b end"
     )
+
+
+def test_source_digest_keeps_the_identifying_query():
+    """W5: redact_url drops the whole query, so two pages a host selects with
+    ``?id=`` were indistinguishable and an edited manifest never triggered a
+    reprocess. The digest keeps the query without publishing it."""
+    from htrflow_batch.iiif import source_digest
+
+    one = source_digest("https://img.example/iiif?id=1")
+    assert one != source_digest("https://img.example/iiif?id=2")
+    assert one == source_digest("https://img.example/iiif?id=1")
+
+
+@pytest.mark.parametrize(
+    "credential",
+    [
+        "token=SECRET",
+        "sig=SECRET",
+        "signature=SECRET",
+        "key=SECRET",
+        "X-Amz-Signature=SECRET",
+    ],
+)
+def test_source_digest_ignores_rotating_credentials(credential):
+    """A tokenised URL differs from its stored form on every retry; only the
+    part that names the image may reach the digest."""
+    from htrflow_batch.iiif import source_digest
+
+    bare = source_digest("https://img.example/iiif?id=1")
+    assert source_digest(f"https://img.example/iiif?id=1&{credential}") == bare
+    assert source_digest("https://u:pw@img.example/iiif?id=1") == bare
+
+
+def test_source_digest_publishes_nothing_of_the_url():
+    """It goes into the world-readable manifest.json (S6), so it must be a
+    digest and nothing else."""
+    from htrflow_batch.iiif import source_digest
+
+    digest = source_digest("https://img.example/iiif?id=1")
+    assert len(digest) == 64 and all(c in "0123456789abcdef" for c in digest)
+
+
+def test_painting_body_drops_a_body_with_a_javascript_id():
+    """W6: the body is copied verbatim out of a third-party manifest into an
+    iiif.json we publish under our own domain. Only the fetch URL was ever
+    scheme-checked, and that is the service's -- so a canvas whose service is
+    a normal image service and whose body id is `javascript:` published the
+    `javascript:` id to every viewer that opened the volume."""
+    from htrflow_batch.iiif import painting_body
+
+    canvas = _canvas_with_service(3000, 4000)
+    canvas["items"][0]["items"][0]["body"]["id"] = "javascript:alert(1)"
+    assert painting_body(canvas) == {}
+
+
+def test_painting_body_drops_a_body_with_a_javascript_service():
+    from htrflow_batch.iiif import painting_body
+
+    canvas = _canvas_with_service(3000, 4000)
+    canvas["items"][0]["items"][0]["body"]["service"] = [{"id": "javascript:alert(1)"}]
+    assert painting_body(canvas) == {}
+
+
+def test_painting_body_drops_a_p2_resource_with_a_javascript_id(p2_manifest):
+    canvas = p2_manifest["sequences"][0]["canvases"][0]
+    canvas["images"][0]["resource"]["@id"] = "javascript:alert(1)"
+    from htrflow_batch.iiif import painting_body
+
+    assert painting_body(canvas) == {}
+
+
+def test_painting_body_drops_a_body_that_is_not_an_object():
+    """A bare-URL body (manifests in the wild carry them) must not be copied
+    into the manifest as if it were one."""
+    from htrflow_batch.iiif import painting_body
+
+    canvas = _canvas_with_service(3000, 4000)
+    canvas["items"][0]["items"][0]["body"] = "https://img/full/max/0/default.jpg"
+    assert painting_body(canvas) == {}
+
+
+def test_painting_body_takes_the_first_usable_item_of_a_choice():
+    """W6 review: P3 lets a painting annotation offer a Choice -- several
+    representations of the same page, the client picking one. Requiring a
+    single body object dropped the image for every canvas shaped that way, so
+    the first item we would publish is taken instead."""
+    from htrflow_batch.iiif import painting_body
+
+    canvas = _canvas_with_service(3000, 4000)
+    anno = canvas["items"][0]["items"][0]
+    anno["body"] = {
+        "type": "Choice",
+        "items": [
+            {"id": "javascript:alert(1)", "type": "Image"},
+            {"id": "https://img/colour.jpg", "type": "Image"},
+        ],
+    }
+    assert painting_body(canvas)["id"] == "https://img/colour.jpg"
+
+
+def test_painting_body_takes_the_first_usable_item_of_a_bare_list():
+    """Manifests in the wild also put a plain list of bodies there."""
+    from htrflow_batch.iiif import painting_body
+
+    canvas = _canvas_with_service(3000, 4000)
+    canvas["items"][0]["items"][0]["body"] = [
+        {"id": "ftp://img/scan.jpg", "type": "Image"},
+        {"id": "https://img/scan.jpg", "type": "Image"},
+    ]
+    assert painting_body(canvas)["id"] == "https://img/scan.jpg"
+
+
+def test_painting_body_drops_a_choice_with_nothing_publishable():
+    from htrflow_batch.iiif import painting_body
+
+    canvas = _canvas_with_service(3000, 4000)
+    canvas["items"][0]["items"][0]["body"] = {
+        "type": "Choice",
+        "items": [{"id": "javascript:alert(1)", "type": "Image"}],
+    }
+    assert painting_body(canvas) == {}

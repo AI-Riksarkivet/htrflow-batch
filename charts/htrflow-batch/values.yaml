@@ -133,7 +133,9 @@ security:
   verifyImages:
     enabled: false
     issuer: ""               # e.g. https://token.actions.githubusercontent.com
-    subject: ""               # e.g. https://github.com/Riksarkivet/htrflow-batch/.github/workflows/publish.yml@refs/heads/main (publish is workflow_dispatch: the identity carries the branch ref, not a tag)
+    subject: ""               # e.g. https://github.com/AI-Riksarkivet/htrflow-batch/.github/workflows/publish.yml@refs/heads/main (publish is workflow_dispatch: the identity
+                             # carries the BRANCH it ran from, never a tag ref — a `@refs/tags/*`
+                             # subject matches nothing this release has ever signed as)
     imageReferences: []
     rekorUrl: https://rekor.sigstore.dev
 
@@ -159,6 +161,11 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   # `app: rustfs` pod (a no-op unless charts/htrflow-devstack's RustFS is
   # installed). A real endpoint goes here.
   s3Cidrs: []
+  # Ports those endpoints answer on. A real endpoint is 443; a self-hosted
+  # one often is not, and the answer to that is this value rather than a
+  # rule with no ports at all. The in-namespace RustFS pod is matched by
+  # label instead and is always allowed on 9000.
+  s3Ports: [443]
   # Ranges that pods granted *public* egress (warm-up) must NOT reach: pod
   # and service CIDRs (k3s defaults) plus every node address. Node addresses
   # and the kube-apiserver endpoint are auto-detected at install/upgrade
@@ -166,6 +173,13 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   # kubeconfig without list-nodes permission.
   clusterCidrs: ["10.42.0.0/16", "10.43.0.0/16"]
   nodeCidrs: []
+  # Also carved out of every catch-all egress, on top of the ranges above
+  # and link-local (169.254.0.0/16, where a cloud serves instance
+  # credentials) and loopback, which are always excluded. The default is the
+  # three private blocks: whatever your cluster sits inside is one of them,
+  # and neither a warm-up nor a batch Job has any business there. A range
+  # listed in iiifCidrs or s3Cidrs stays reachable — it is its own rule.
+  privateCidrs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
   apiServer:
     cidr: ""               # e.g. 10.16.51.56/32 — kube-apiserver as reached AFTER service DNAT; required by the read API's NetworkPolicy
     port: 6443
@@ -174,3 +188,8 @@ network:                   # NetworkPolicies (docs: development/security, D14)
     # from the node, so the node range must be included — 0.0.0.0/0 keeps
     # the PoC's "any browser that can reach the node" behaviour).
     ingressCidrs: ["0.0.0.0/0"]
+    # The catch-all above is in front of a NodePort with no authentication
+    # of its own, so the chart refuses to render it unless this says the
+    # exposure is deliberate. Narrowing the default instead would break
+    # every dev stack on upgrade; making it loud does not.
+    allowPublicIngress: false

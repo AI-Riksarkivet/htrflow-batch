@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 
@@ -49,6 +50,38 @@ def redact_url(url: str) -> str:
     if u.port is not None:
         host = f"{host}:{u.port}"
     return f"{u.scheme}://{host}{u.path}"
+
+
+#: Query parameters that carry a credential rather than name the image; they
+#: rotate, so they must not reach the digest below. ``X-Amz-*`` (presigned S3)
+#: is matched by prefix.
+_CREDENTIAL_PARAMS = frozenset({"token", "sig", "signature", "key"})
+
+
+def source_digest(url: str) -> str:
+    """A stable identity for a page's source image, for the resume comparison
+    (W5, 2026-09-14 audit).
+
+    ``redact_url`` drops the whole query, and that is the only form of the URL
+    the public manifest may carry (S6) -- so on a host that selects the image
+    with ``?id=`` every page of a volume looked identical and an edited
+    manifest never triggered a reprocess. A digest keeps the query without
+    publishing it. The credentials come out first: userinfo, the ``X-Amz-*``
+    presign parameters and the token/sig/signature/key families rotate, and a
+    re-signed URL is not a new source image."""
+    try:
+        parsed = httpx.URL(url)
+        # a tuple, not a list: httpx types the parameter pairs as invariant
+        kept = tuple(
+            (name, value)
+            for name, value in parsed.params.multi_items()
+            if name.lower() not in _CREDENTIAL_PARAMS
+            and not name.lower().startswith("x-amz-")
+        )
+        text = str(parsed.copy_with(userinfo=b"", params=httpx.QueryParams(kept)))
+    except Exception:
+        text = url.split("?", 1)[0]  # not a URL we can parse: path only
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 _URL_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s\"'<>)\]]+")
@@ -169,20 +202,67 @@ def _image_url(canvas: dict, width: int) -> str | None:
     return None
 
 
+def _publishable(body: dict) -> bool:
+    """Whether a painting body may be copied into the manifest we publish
+    (W6, 2026-09-14 audit).
+
+    The body comes out of a third-party manifest and goes, verbatim, into an
+    iiif.json served from our own domain -- so every URL in it is a viewer's
+    idea of what to load. Only the URL the wrapper FETCHES was ever
+    scheme-checked, and on a canvas with an image service that is the
+    service's: a body whose ``id`` reads ``javascript:`` sailed past it and
+    was published. Both ids are checked here; a body that fails is dropped,
+    which costs that canvas its image and nothing else."""
+    ids = [body.get("id") or body.get("@id")]
+    service = body.get("service")
+    for entry in service if isinstance(service, list) else [service]:
+        if isinstance(entry, dict):
+            ids.append(entry.get("id") or entry.get("@id"))
+    for value in ids:
+        if not isinstance(value, str) or not value:
+            return False
+        try:
+            check_http_url(value, "canvas image")
+        except ManifestError:
+            return False
+    return True
+
+
+def _body_candidates(body: object) -> list[dict]:
+    """The bodies one painting annotation offers, in order.
+
+    Usually one. P3 also allows a ``Choice`` -- several representations of the
+    same page, the client picking one -- and manifests in the wild put a bare
+    list there as well. Both are flattened so the first body that may be
+    published wins, rather than the annotation being dropped for a shape."""
+    if isinstance(body, list):
+        candidates = body
+    elif isinstance(body, dict) and body.get("type") == "Choice":
+        items = body.get("items")
+        candidates = items if isinstance(items, list) else []
+    else:
+        candidates = [body]
+    return [item for item in candidates if isinstance(item, dict)]
+
+
 def painting_body(canvas: dict) -> dict:
     """P3-style annotation body for a P3 or P2 canvas. P2 services are
     emitted with v2-style keys (@id/@type/profile) — UV silently shows no
-    image otherwise (docs: wrapper)."""
+    image otherwise (docs: wrapper). A body carrying a URL we would not fetch
+    is not published either (``_publishable``), and a canvas offering several
+    (``_body_candidates``) is published with the first that passes — one
+    image, not the Choice."""
     for ap in canvas.get("items", []):
         for anno in ap.get("items", []):
-            if anno.get("body"):
-                return anno["body"]
+            for body in _body_candidates(anno.get("body")):
+                if _publishable(body):
+                    return body
     for img in canvas.get("images", []):
         res = img.get("resource") or {}
         rid = res.get("@id") or res.get("id")
         if not rid:
             continue
-        body: dict = {
+        body = {
             "id": rid,
             "type": "Image",
             "format": res.get("format", "image/jpeg"),
@@ -196,7 +276,7 @@ def painting_body(canvas: dict) -> dict:
                     "profile": "http://iiif.io/api/image/2/level2.json",
                 }
             ]
-        return body
+        return body if _publishable(body) else {}
     return {}
 
 

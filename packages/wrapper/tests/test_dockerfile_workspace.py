@@ -24,6 +24,7 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO = Path(__file__).resolve().parents[3]
 DOCKERFILES = [
@@ -168,3 +169,28 @@ def test_the_transformers_line_is_one_build_arg_every_build_path_can_set() -> No
     assert "transformers_version:" in publish  # the dispatch input
     assert "--transformers-version" in publish  # the dagger-built architecture
     assert '"TRANSFORMERS_VERSION=${TRANSFORMERS_VERSION}"' in publish  # the other
+
+
+def test_the_library_api_pin_runs_against_the_image_ci_builds() -> None:
+    """`test_driver_real.py` is the canary for an htrflow release that
+    changes the library API the driver drives -- and no workflow ran it. Both
+    ways to run it (`dagger call test-driver`, `make test-driver-real`) were
+    things a person had to remember, and nobody did, so the pin protected
+    nothing.
+
+    It runs in the job that has already built the wrapper image, through
+    `make`: `dagger call test-driver` cannot serve there, because the dagger
+    engine builds in its own cache and cannot see a base image that exists
+    only in that runner's docker daemon.
+    """
+    ci = yaml.safe_load((REPO / ".github" / "workflows" / "ci.yml").read_text())
+    job = ci["jobs"]["build-arm64"]
+    built = [s for s in job["steps"] if "docker build" in s.get("run", "")]
+    assert len(built) == 1
+    tag = re.search(r"-t (\S+)", built[0]["run"]).group(1)
+
+    driver = [s for s in job["steps"] if "test-driver-real" in s.get("run", "")]
+    assert len(driver) == 1, "the level-0 pin runs in no workflow"
+    # Against the image this job built, not one it would have to pull.
+    assert f"WRAPPER_IMAGE={tag}" in driver[0]["run"]
+    assert job["steps"].index(driver[0]) > job["steps"].index(built[0])
