@@ -254,7 +254,7 @@ def test_the_comma_fallback_never_takes_a_url_that_merely_contains_a_comma():
 
 @pytest.mark.parametrize(
     "value",
-    ["../other", "a/b", "..", "vol ume", "vol\nume", "vol#1", "a..b"],
+    ["../other", "a/b", "..", ".", "vol ume", "vol\nume", "vol#1", "a..b"],
 )
 @pytest.mark.parametrize("name", ["VOLUME_REF", "PIPELINE_ID"])
 def test_key_shaped_fields_are_refused(name, value):
