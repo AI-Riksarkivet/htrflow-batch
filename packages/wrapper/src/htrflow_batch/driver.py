@@ -53,6 +53,13 @@ def _tracked_steps(built: list):
         return
 
     def tracking(step_config):
+        # Recorded only once init_step RETURNS, so the step whose own
+        # construction raised is not in `built`. That is right for htrflow as
+        # it is: Inference.__init__ starts its daemon thread last, after the
+        # model is on the GPU, so a step that raised has nothing holding it
+        # and the collector takes it and its weights. A step that started a
+        # thread before it could fail would need the tracking one level down,
+        # inside htrflow.
         step = original(step_config)
         built.append(step)
         return step
