@@ -452,6 +452,16 @@ def _finished(cluster, name: str, volumes: str, observed: dict | None) -> str | 
 
 
 _NO_RECORD = "could not record how campaign {name} ended, continuing without it: "
+#: A campaign is rendered as a pair: the ConfigMap that carries its
+#: volumes.txt and the Job that mounts it. A directory where the pair has
+#: come apart -- a half-finished write, a hand edit, a bad merge of
+#: `rendered/` -- used to raise a bare KeyError on the Job's name, from
+#: inside the loop that was about to apply it.
+_INCOMPLETE_RENDER = (
+    "{dir} has a Job for campaign {name} but no ConfigMap carrying its "
+    "volumes.txt, so this render is incomplete — re-render the repo and "
+    "apply that"
+)
 
 
 def _record_and_decide(cluster, cfg, name: str, volumes: str) -> str | None:
@@ -662,6 +672,12 @@ def _apply(
                 # refusing to apply anything over that would take the
                 # campaigns repo offline for a permission it never had. Warn
                 # once, and apply this campaign as any other.
+                if name not in volumes_of:
+                    print(
+                        _INCOMPLETE_RENDER.format(name=name, dir=out / "campaigns"),
+                        file=sys.stderr,
+                    )
+                    return 1
                 try:
                     said = _record_and_decide(cluster, cfg, name, volumes_of[name])
                 except ClusterError as e:

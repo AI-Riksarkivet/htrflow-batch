@@ -431,7 +431,10 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # refused. It rendered `completions: 0`, which Kubernetes reports as
 # Succeeded the moment the Job is created -- a campaign that is over before
 # it starts, and green.
-check converter "$(count packages/converter/src -name '*.py')" 2450
+# 2450 -> 2466 (2026-09-14, audit C14): a rendered campaign whose ConfigMap
+# and Job have come apart is one sentence naming the campaign, not a bare
+# KeyError out of the loop that was about to apply it.
+check converter "$(count packages/converter/src -name '*.py')" 2466
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
