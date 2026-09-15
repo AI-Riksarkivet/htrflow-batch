@@ -533,7 +533,14 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # writes the same record from the live Job once a campaign is over, and
 # forcing took those terminal values back off it on every poll; a 409 while
 # the other manager is mid-write is retried once instead.
-check web       "$(count packages/web/src -name '*.py')" 1513
+# 1513 -> 1559 (2026-09-14, audit) F2: the campaign list pulled every campaign
+# record ConfigMap WITH its `volumes.txt` on every poll -- one line per volume,
+# megabytes for a real backfill, for labels and a date. The records are now
+# listed as PartialObjectMetadata (the one call this adapter makes through
+# `call_api`, since the generated methods overwrite `Accept`), and the status
+# ConfigMaps -- whose `data` IS the reaped campaign's row -- as a second,
+# label-separated list.
+check web       "$(count packages/web/src -name '*.py')" 1559
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule

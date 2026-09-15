@@ -19,7 +19,7 @@ _MANAGED_BY_LABEL = "htrflow.riksarkivet.se/managed-by"
 #: the converter renders. Both carry `managed-by=converter`, which is what
 #: `htrflow-campaigns apply --prune` deletes a cancelled campaign by, so the
 #: record and its status go together when the campaign file leaves git.
-_KIND_LABEL = "htrflow.riksarkivet.se/kind"
+KIND_LABEL = "htrflow.riksarkivet.se/kind"
 STATUS_KIND = "status"
 #: ``campaign-<name>`` + this is the status ConfigMap of that campaign --
 #: the one name both the read API and `apply` build (B76).
@@ -346,7 +346,7 @@ def status_configmap(row: dict, data: dict[str, str]) -> dict:
                 _MANAGED_BY_LABEL: "converter",
                 _CAMPAIGN_LABEL: row["campaign"],
                 _PIPELINE_LABEL: row["pipeline"],
-                _KIND_LABEL: STATUS_KIND,
+                KIND_LABEL: STATUS_KIND,
             },
         },
         "data": data,

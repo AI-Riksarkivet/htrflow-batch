@@ -23,6 +23,7 @@ from htrflow_web.kube import (
     CAMPAIGN_CONFIGMAPS,
     FIELD_MANAGER,
     LABEL_SELECTOR,
+    PARTIAL_METADATA,
     ClusterUnavailable,
     Config,
     Reader,
@@ -146,6 +147,7 @@ def reader(monkeypatch) -> Reader:
                 "method": method,
                 "query": dict(query_params or []),
                 "content_type": (header_params or {}).get("Content-Type"),
+                "accept": (header_params or {}).get("Accept"),
                 "body": kwargs.get("body"),
             }
         )
@@ -190,10 +192,31 @@ def test_list_warmups_asks_for_the_warmup_jobs_instead(reader: Reader):
     }
 
 
-def test_list_configmaps_selects_only_a_campaigns_own(reader: Reader):
+def test_the_campaign_record_is_listed_without_its_volumes(reader: Reader):
+    """`volumes.txt` is the whole campaign -- one line per volume, megabytes
+    for a real backfill -- and the list route reads nothing but the record's
+    labels and dates off it. Asking for PartialObjectMetadata keeps those
+    bytes off the wire on every poll of every open status page."""
     reader.answer["GET"] = {"items": []}
     reader.list_configmaps()
-    assert {c["query"]["labelSelector"] for c in reader.calls} == {CAMPAIGN_CONFIGMAPS}
+    records = [c for c in reader.calls if "!=status" in c["query"]["labelSelector"]]
+    assert len(records) == len(reader.cfg.namespaces)
+    for call in records:
+        assert call["path"].endswith("/configmaps")
+        assert call["accept"] == PARTIAL_METADATA
+        assert call["query"]["labelSelector"].startswith(CAMPAIGN_CONFIGMAPS)
+
+
+def test_the_status_record_is_listed_with_its_data(reader: Reader):
+    """The status ConfigMap IS the campaign once its Job is gone: a handful
+    of short fields, and the page cannot draw the row without them."""
+    reader.answer["GET"] = {"items": []}
+    reader.list_configmaps()
+    statuses = [
+        c for c in reader.calls if "!=status" not in c["query"]["labelSelector"]
+    ]
+    assert len(statuses) == len(reader.cfg.namespaces)
+    assert all(c["accept"] != PARTIAL_METADATA for c in statuses)
 
 
 def test_list_pods_asks_for_one_jobs_pods(reader: Reader):
