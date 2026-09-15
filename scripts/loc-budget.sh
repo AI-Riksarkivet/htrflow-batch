@@ -266,7 +266,12 @@ fail=0
 # cannot read is not rejected" except -- a 40000x40000 image passed the very
 # check the guard exists for -- and its warning at ~89 MP fires below our own
 # default, on pages nothing is wrong with.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3126
+# 3126 -> 3128 (2026-09-14, audit W16 review): the cleanup block ignores
+# SIGTERM outright for its duration instead of merely keeping the handler.
+# Restoring it late (W16) fixed the pod being killed mid-ship but left the
+# other half: the second signal then raised Terminated inside main's own
+# finally, so main raised instead of returning and the streams stayed torn.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3128
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
