@@ -15,14 +15,29 @@ the chart and the campaign pipelines reference.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 import yaml
 
 REPO = Path(__file__).resolve().parents[3]
-WORKFLOW = yaml.safe_load((REPO / ".github" / "workflows" / "publish.yml").read_text())
+WORKFLOWS = REPO / ".github" / "workflows"
+WORKFLOW = yaml.safe_load((WORKFLOWS / "publish.yml").read_text())
 JOBS = WORKFLOW["jobs"]
+
+#: An expression is substituted into the text before anything runs, so a
+#: script that contains one is a script written partly by whoever supplied
+#: the value. `secrets.*` and `env.*` are not here: a secret is masked and
+#: redacted by the runner, and `env` is the destination this rule pushes
+#: things towards.
+_EXPRESSION = re.compile(r"\$\{\{\s*(inputs|steps)\.")
+
+#: Both workflows that build or publish an image. `dagger-for-github` is in
+#: the scan because its `args` input is not an argument list: the action
+#: interpolates it, unquoted, into a `run:` of its own, so a value reaching
+#: it is a second shell's worth of script text.
+_SCRIPTED = ["publish.yml", "ci.yml"]
 
 # Runner labels per architecture: a per-arch tag built on the wrong runner is
 # a cross-build with extra steps.
@@ -100,3 +115,26 @@ def test_no_run_block_interpolates_a_dispatch_input() -> None:
             if "$TAG" in run or "${TAG}" in run:
                 env = {**job.get("env", {}), **step.get("env", {})}
                 assert env.get("TAG") == "${{ inputs.tag }}", name
+
+
+@pytest.mark.parametrize("name", _SCRIPTED)
+def test_no_script_carries_a_github_expression(name: str) -> None:
+    """The narrower rule above covers `run:` blocks in publish.yml. This is
+    the whole of it: `with: args:` on the dagger action is shell text too
+    (the action pastes it unquoted into a `run:`), a step output is as much
+    an outside value as a dispatch input, and ci.yml builds images from the
+    same dockerfiles.
+
+    Everything goes through `env:`, where the shell reads it as data
+    whatever it contains.
+    """
+    workflow = yaml.safe_load((WORKFLOWS / name).read_text())
+    for job, body in workflow["jobs"].items():
+        for step in body["steps"]:
+            scripts = {
+                "run": step.get("run", ""),
+                "args": str(step.get("with", {}).get("args", "")),
+            }
+            for where, script in scripts.items():
+                found = _EXPRESSION.search(script)
+                assert not found, (name, job, step.get("name"), where, found.group())

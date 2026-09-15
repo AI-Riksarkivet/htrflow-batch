@@ -126,6 +126,11 @@ jobs:
             fi
           done
 
+      # `args` is not an argument list: the action pastes it, unquoted, into
+      # a `run:` of its own, so a dispatch input written here would be script
+      # text in a second shell. The shell variables below are read from this
+      # step's environment by that same shell, which is what keeps the value
+      # data. `--component` is the workflow's own matrix, not an input.
       - name: Publish with Dagger (tests, builds, pushes)
         id: publish
         uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77 # v8.4.1
@@ -134,15 +139,17 @@ jobs:
           args: >-
             publish-docker
             --component ${{ matrix.component }}
-            --tag ${{ inputs.tag }}
-            --tag-suffix "${{ matrix.tag_suffix }}"
-            --base-revision "${{ inputs.base_revision }}"
-            --transformers-version "${{ inputs.transformers_version }}"
+            --tag "$TAG"
+            --tag-suffix "$TAG_SUFFIX"
+            --base-revision "$BASE_REVISION"
+            --transformers-version "$TRANSFORMERS_VERSION"
             --docker-username env:DOCKERHUB_USERNAME
             --docker-password env:DOCKERHUB_TOKEN
           cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
           version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
         env:
+          BASE_REVISION: ${{ inputs.base_revision }}
+          TRANSFORMERS_VERSION: ${{ inputs.transformers_version }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
@@ -226,6 +233,8 @@ jobs:
           # Only passed when the run asked for a line: an empty build arg
           # would override the dockerfile's default with nothing.
           TRANSFORMERS_VERSION: ${{ inputs.transformers_version }}
+          # A step output is as much an outside value as a dispatch input.
+          BASE_REVISION: ${{ steps.base.outputs.revision }}
         run: |
           ref="${IMAGE}:${TAG}-arm64"
           transformers=()
@@ -234,7 +243,7 @@ jobs:
           fi
           docker build -f .docker/htrflow-batch.dockerfile \
             --build-arg "HTRFLOW_ARM64_BASE=${HTRFLOW_ARM64_BASE}" \
-            --build-arg "HTRFLOW_BASE_REVISION=${{ steps.base.outputs.revision }}" \
+            --build-arg "HTRFLOW_BASE_REVISION=${BASE_REVISION}" \
             --build-arg "HTRFLOW_BATCH_VERSION=${TAG}" \
             "${transformers[@]}" \
             -t "$ref" .
