@@ -89,12 +89,21 @@ jobs:
     env:
       REGISTRY: docker.io
       IMAGE: docker.io/${{ matrix.repository }}
+      # The dispatch inputs reach every `run:` below as environment
+      # variables and never as `${{ }}` inside the script: an expression is
+      # substituted into the text before a shell exists, so whatever was
+      # typed into the dispatch form would be code in a job holding the
+      # registry credential and the signing identity. The tag pattern is
+      # checked in the first step, which is itself one of those scripts, so
+      # it can never be what protects them.
+      TAG: ${{ inputs.tag }}
+      TAG_SUFFIX: ${{ matrix.tag_suffix }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Validate the tag
         run: |
-          [[ "${{ inputs.tag }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] \
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] \
             || { echo "::error::tag must look like vX.Y.Z"; exit 1; }
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -108,7 +117,7 @@ jobs:
         # job will create must be free — the manifest list is as immutable as
         # the images under it.
         run: |
-          for ref in "${IMAGE}:${{ inputs.tag }}${{ matrix.tag_suffix }}" "${IMAGE}:${{ inputs.tag }}"; do
+          for ref in "${IMAGE}:${TAG}${TAG_SUFFIX}" "${IMAGE}:${TAG}"; do
             if docker manifest inspect "$ref" >/dev/null 2>&1; then
               echo "::error::$ref already exists; tags are immutable — bump the version and publish a new tag"
               exit 1
@@ -169,12 +178,13 @@ jobs:
     env:
       REGISTRY: docker.io
       IMAGE: docker.io/riksarkivet/htrflow-batch
+      TAG: ${{ inputs.tag }}   # as data, not as script text — see the publish job
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Validate the tag
         run: |
-          [[ "${{ inputs.tag }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] \
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] \
             || { echo "::error::tag must look like vX.Y.Z"; exit 1; }
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -185,7 +195,7 @@ jobs:
 
       - name: Refuse to overwrite a published tag
         run: |
-          for ref in "${IMAGE}:${{ inputs.tag }}-arm64" "${IMAGE}:${{ inputs.tag }}"; do
+          for ref in "${IMAGE}:${TAG}-arm64" "${IMAGE}:${TAG}"; do
             if docker manifest inspect "$ref" >/dev/null 2>&1; then
               echo "::error::$ref already exists; tags are immutable — bump the version and publish a new tag"
               exit 1
@@ -213,7 +223,7 @@ jobs:
           # would override the dockerfile's default with nothing.
           TRANSFORMERS_VERSION: ${{ inputs.transformers_version }}
         run: |
-          ref="${IMAGE}:${{ inputs.tag }}-arm64"
+          ref="${IMAGE}:${TAG}-arm64"
           transformers=()
           if [ -n "$TRANSFORMERS_VERSION" ]; then
             transformers=(--build-arg "TRANSFORMERS_VERSION=${TRANSFORMERS_VERSION}")
@@ -221,7 +231,7 @@ jobs:
           docker build -f .docker/htrflow-batch.dockerfile \
             --build-arg "HTRFLOW_ARM64_BASE=${HTRFLOW_ARM64_BASE}" \
             --build-arg "HTRFLOW_BASE_REVISION=${{ steps.base.outputs.revision }}" \
-            --build-arg "HTRFLOW_BATCH_VERSION=${{ inputs.tag }}" \
+            --build-arg "HTRFLOW_BATCH_VERSION=${TAG}" \
             "${transformers[@]}" \
             -t "$ref" .
           docker push "$ref"
@@ -229,7 +239,7 @@ jobs:
       - name: Extract the published digest
         id: digest
         run: |
-          digest="$(docker buildx imagetools inspect "${IMAGE}:${{ inputs.tag }}-arm64" --format '{{.Manifest.Digest}}')"
+          digest="$(docker buildx imagetools inspect "${IMAGE}:${TAG}-arm64" --format '{{.Manifest.Digest}}')"
           [[ "$digest" == sha256:* ]] || { echo "::error::no digest for the pushed image: $digest"; exit 1; }
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "published ${IMAGE}@${digest}"
@@ -268,6 +278,7 @@ jobs:
     env:
       REGISTRY: docker.io
       IMAGE: docker.io/${{ matrix.repository }}
+      TAG: ${{ inputs.tag }}   # as data, not as script text — see the publish job
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -280,9 +291,9 @@ jobs:
       - name: Create the manifest list
         id: create
         run: |
-          docker buildx imagetools create -t "${IMAGE}:${{ inputs.tag }}" \
-            "${IMAGE}:${{ inputs.tag }}-amd64" "${IMAGE}:${{ inputs.tag }}-arm64"
-          digest="$(docker buildx imagetools inspect "${IMAGE}:${{ inputs.tag }}" --format '{{.Manifest.Digest}}')"
+          docker buildx imagetools create -t "${IMAGE}:${TAG}" \
+            "${IMAGE}:${TAG}-amd64" "${IMAGE}:${TAG}-arm64"
+          digest="$(docker buildx imagetools inspect "${IMAGE}:${TAG}" --format '{{.Manifest.Digest}}')"
           [[ "$digest" == sha256:* ]] || { echo "::error::no digest for the manifest list: $digest"; exit 1; }
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           docker buildx imagetools inspect "${IMAGE}@${digest}"
