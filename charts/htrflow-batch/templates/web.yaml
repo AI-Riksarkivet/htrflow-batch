@@ -29,15 +29,17 @@ rules:
   # privilege: a server-side apply of an object that does not exist yet is a
   # create. Nothing here may ever delete, or write a Job or a Pod —
   # packages/web/tests/test_app.py greps the source to keep it that way.
+  # No `watch`: every response is computed from a get or a list on the
+  # request, and nothing in packages/web opens a watch (2026-09-14 audit).
   - apiGroups: ["batch"]
     resources: ["jobs"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list"]
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list"]
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["get", "list", "watch", "create", "patch"]
+    verbs: ["get", "list", "create", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
