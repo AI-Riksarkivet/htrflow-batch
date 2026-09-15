@@ -38,7 +38,7 @@ pipeline.
 | **Control-plane digest gate**: `web.image` must be `@sha256:`-pinned unless `security.allowTagImages` is set | The chart template | Anyone with push access to the registry replacing the web front in place |
 | **http(s)-only sources, byte caps, redirect caps** | `parse_pipeline`/`parse_campaign`, and the wrapper (`MANIFEST_MAX_BYTES`, `FETCH_MAX_BYTES`, at most 5 redirects, raster images only) | SSRF and denial of service driven by campaign data |
 | **No runtime path to the campaigns repo** | The campaigns repo's own CI, outside this system | Nothing in the cluster clones the campaigns repo or holds a credential for it |
-| **URL redaction** | Wrapper logs, the warm-up's logs, the termination log, `page_sources` | A tokenised private IIIF URL, or a Hub URL an error quoted back, ending up in a world-readable log |
+| **URL redaction** | Wrapper logs, the warm-up's logs, the termination log, `page_sources`, and the problem lines `validate` prints (userinfo, and a signing query parameter such as `X-Amz-Signature`, `X-Amz-Security-Token`, `X-Amz-Credential`, `signature`, `token`, `sig` or `key`) | A tokenised private IIIF URL ending up in a world-readable log or a pull request comment. It does **not** hide the URL itself — see [Source URLs are not secrets](#source-urls-are-not-secrets) |
 
 All three policies are off by default (`security.policies.enabled: false`),
 because a policy nothing reconciles is worse than none. They are the only
@@ -85,6 +85,25 @@ It uses `NotResource` because RustFS applies a `Deny` statement to the
 credentialed principals as well, and ignores a condition that targets only
 anonymous callers. `scripts/compose_init.py` mirrors the same policy for the
 compose stack.
+
+### Source URLs are not secrets
+
+A volume's `manifest:` and `images:` URLs are stored **verbatim**, in four
+places: the campaign file in git, the rendered campaign under `rendered/`
+(committed by the campaigns repo's CI), the `campaign-<name>` ConfigMap in
+the cluster, and `page_sources` in each volume's `manifest.json`. So a
+presigned URL put into a campaign publishes its signature to everyone who
+can read the repo, everyone who can read the namespace, and everyone who can
+read the results.
+
+Treat a source URL as public. If the source needs a credential, give it one
+the platform holds — not one written into the URL — or accept that the URL
+is as public as the campaigns repo. What the converter does do is keep a
+credential out of the *problem lines* it prints: a URL echoed back in a
+validation error loses its userinfo and the value of a signing query
+parameter, because those lines travel further than the file does (into CI
+logs and pull request comments). That is redaction of the echo, not of the
+stored value.
 
 ### Who holds S3 credentials
 
