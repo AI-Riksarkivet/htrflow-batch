@@ -410,7 +410,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # runtime_class) is checked as one, and node_selector as the labels it is
 # copied into. A capitalised namespace used to pass `validate` and be
 # refused at apply time, with the render already committed.
-check converter "$(count packages/converter/src -name '*.py')" 2366
+# 2366 -> 2394 (2026-09-14, audit C7): every API call carries a (connect,
+# read) timeout. The client sends none by default, so a half-open connection
+# left the apply blocked in recv with no deadline anywhere above it. Mostly
+# the call sites rewrapping onto their own lines.
+check converter "$(count packages/converter/src -name '*.py')" 2394
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

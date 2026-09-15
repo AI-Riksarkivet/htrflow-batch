@@ -22,7 +22,13 @@ from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 from urllib3.exceptions import MaxRetryError
 
-from htrflow_converter.cluster import APPLY_PATCH, FIELD_MANAGER, Cluster, ClusterError
+from htrflow_converter.cluster import (
+    APPLY_PATCH,
+    FIELD_MANAGER,
+    REQUEST_TIMEOUT,
+    Cluster,
+    ClusterError,
+)
 
 
 class _Response:
@@ -55,6 +61,7 @@ def cluster(monkeypatch):
                 "query": dict(query_params or []),
                 "content_type": (header_params or {}).get("Content-Type"),
                 "body": kwargs.get("body"),
+                "timeout": kwargs.get("_request_timeout"),
             }
         )
         body = answer.get(method, {})
@@ -349,6 +356,7 @@ def test_replace_job_deletes_in_the_background_then_creates_it_again(
 
     monkeypatch.setattr(client.ApiClient, "call_api", call_api)
     cluster.replace_job(JOB)
+    assert all(c["timeout"] == REQUEST_TIMEOUT for c in cluster.calls)
     assert [(c["method"], c["path"]) for c in cluster.calls] == [
         ("DELETE", "/apis/batch/v1/namespaces/htr-batch/jobs/kyrk"),
         ("PATCH", "/apis/batch/v1/namespaces/htr-batch/jobs/kyrk"),
@@ -379,3 +387,17 @@ def test_a_server_message_is_capped_before_it_is_repeated():
     assert len(line) < MAX_MESSAGE + 100
     assert line.startswith("apply Job/kyrk: 422 Unprocessable Entity spec.template: ")
     assert line.endswith("…")
+
+
+def test_every_request_carries_a_connect_and_read_timeout(cluster):
+    """Without one, a half-open connection to the API server hangs the apply
+    for ever: nothing above this has a deadline of its own, and an apply that
+    never returns is a campaigns repo whose CI job never returns either."""
+    cluster.answer["GET"] = {"items": [{"metadata": {"name": "gone"}}]}
+    cluster.apply(JOB)
+    cluster.get("Job", "kyrk")
+    cluster.prune(set())
+    cluster.sync_pause({"metadata": {"name": "k", "uid": "u9"}}, True, 0)
+    verbs = {c["method"] for c in cluster.calls}
+    assert verbs == {"PATCH", "GET", "DELETE"}, verbs
+    assert {c["timeout"] for c in cluster.calls} == {REQUEST_TIMEOUT}
