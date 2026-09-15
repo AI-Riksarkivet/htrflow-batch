@@ -498,3 +498,19 @@ def test_a_source_template_that_cannot_be_filled_is_one_sentence(tmp_path, templ
     (problem,) = exc_info.value.problems
     assert problem.startswith('converter.yaml: "source_template" ')
     assert "{ref}" in problem
+
+
+@pytest.mark.parametrize("bad", ["high priority", "hög-prio", "p" * 64, "-high"])
+def test_campaign_priority_must_be_a_label_value(tmp_path, bad):
+    """`priority:` is rendered straight into the `kueue.x-k8s.io/priority-class`
+    LABEL. A value the label alphabet does not allow is a 422 from the API
+    server halfway through an apply, so it is refused in `validate`."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    campaign = root / "campaigns" / "kyrk.yaml"
+    campaign.write_text(campaign.read_text() + f'\npriority: "{bad}"\n')
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert problem.startswith('campaigns/kyrk.yaml: "priority" ')
+    assert "kueue.x-k8s.io/priority-class" in problem

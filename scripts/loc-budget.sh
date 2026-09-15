@@ -401,7 +401,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # fill inside Volume's before-validator is caught, so a stray placeholder is
 # a line about converter.yaml instead of a KeyError traceback out of
 # `validate`. The placeholder reader and the two sentences are most of it.
-check converter "$(count packages/converter/src -name '*.py')" 2283
+# 2283 -> 2306 (2026-09-14, audit C5): `priority` is validated as the label
+# value it is rendered into (kueue.x-k8s.io/priority-class). A free string
+# there was a 422 at apply time, after the campaign's ConfigMap had already
+# been written.
+check converter "$(count packages/converter/src -name '*.py')" 2306
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
