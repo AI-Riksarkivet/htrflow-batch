@@ -448,7 +448,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # 64-character name passed `validate` and were refused at apply time, with
 # the render already committed. Its own rule and its own sentence, which
 # says 63 and says no dots.
-check converter "$(count packages/converter/src -name '*.py')" 2527
+# 2527 -> 2533 (2026-09-14, audit review): the incomplete-render stop got
+# its own paragraph -- it had landed under the comment that explains why a
+# refused record read is NOT a reason to stop, which reads as the opposite
+# of what the code does.
+check converter "$(count packages/converter/src -name '*.py')" 2533
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

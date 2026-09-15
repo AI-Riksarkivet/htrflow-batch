@@ -666,18 +666,24 @@ def _apply(
                 if obj["kind"] != "Job":
                     continue
                 name = obj["metadata"]["name"]
-                # Never a precondition for the apply. An identity whose Role
-                # predates this needs a `get` on Jobs that nothing needed
-                # before, and a human may be on a restricted kubeconfig --
-                # refusing to apply anything over that would take the
-                # campaigns repo offline for a permission it never had. Warn
-                # once, and apply this campaign as any other.
+                # This Job's own ConfigMap is missing from the render: not a
+                # permission or a cluster problem but a broken directory, and
+                # applying a Job whose volumes.txt is not there would start a
+                # campaign that cannot read its own work list. Nothing has
+                # been sent yet, so stop here.
                 if name not in volumes_of:
                     print(
                         _INCOMPLETE_RENDER.format(name=name, dir=out / "campaigns"),
                         file=sys.stderr,
                     )
                     return 1
+                # Reading the record, by contrast, is never a precondition
+                # for the apply. An identity whose Role predates this needs a
+                # `get` on Jobs that nothing needed before, and a human may
+                # be on a restricted kubeconfig -- refusing to apply anything
+                # over that would take the campaigns repo offline for a
+                # permission it never had. Warn once, and apply this campaign
+                # as any other.
                 try:
                     said = _record_and_decide(cluster, cfg, name, volumes_of[name])
                 except ClusterError as e:
