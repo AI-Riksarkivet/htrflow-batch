@@ -100,6 +100,8 @@ jobs:
       TAG_SUFFIX: ${{ matrix.tag_suffix }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false # nothing here pushes; the token would outlive the step
 
       - name: Validate the tag
         run: |
@@ -181,6 +183,8 @@ jobs:
       TAG: ${{ inputs.tag }}   # as data, not as script text — see the publish job
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Validate the tag
         run: |
@@ -281,6 +285,8 @@ jobs:
       TAG: ${{ inputs.tag }}   # as data, not as script text — see the publish job
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
