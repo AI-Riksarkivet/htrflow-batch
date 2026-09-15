@@ -192,6 +192,7 @@ skeleton, never as a campaign setting.
 | `network.s3Cidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `network.clusterCidrs` | `values.yaml` | `[10.42.0.0/16, 10.43.0.0/16]` | — | no secret — nobody |
 | `network.nodeCidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `network.privateCidrs` | `values.yaml` | `[10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]` | — | no secret — nobody |
 | `network.apiServer.cidr` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `network.apiServer.port` | `values.yaml` | `6443` | — | no secret — nobody |
 | `network.web.ingressCidrs` | `values.yaml` | `[0.0.0.0/0]` | — | the only gate on the read API — cluster |

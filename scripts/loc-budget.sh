@@ -692,5 +692,10 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3857
 # actually rendered, since a campaigns repo's CI renders this chart with
 # network.enabled=false to get at the policy objects alone. The comment is
 # most of the thirteen lines.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 834
+# 834 -> 846 (2026-09-14, audit): the `except` list of every catch-all
+# egress gains link-local, loopback and network.privateCidrs. One line of
+# template and eleven of comment, because the surprising half is not what is
+# excluded but what still is not: a range the operator NAMES stays reachable,
+# since it is its own ipBlock and egress rules are a union.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 846
 exit $fail

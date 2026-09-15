@@ -165,3 +165,59 @@ def test_the_catch_all_guard_is_silent_when_the_policies_are_not_rendered():
         sets=REQUIRED_SETS + ("network.enabled=false",)
     )
     assert result.returncode == 0, result.stderr
+
+
+# --- D3: what a catch-all egress still reaches ----------------------------
+
+#: k3s pod + service ranges (the chart's `clusterCidrs` default), loopback,
+#: the link-local block every cloud serves instance credentials from, and
+#: the three private ranges a VPC is built out of.
+CATCH_ALL_EXCEPT = {
+    "10.42.0.0/16",
+    "10.43.0.0/16",
+    "169.254.0.0/16",
+    "127.0.0.0/8",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+}
+
+
+def _catch_alls(policy: dict) -> list[dict]:
+    return [
+        to["ipBlock"]
+        for rule in policy["spec"]["egress"]
+        for to in rule.get("to", [])
+        if to.get("ipBlock", {}).get("cidr") == "0.0.0.0/0"
+    ]
+
+
+@pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-warmup"])
+def test_a_catch_all_egress_reaches_neither_metadata_nor_a_private_network(
+    policy_name: str,
+):
+    """`except` used to carve out the pod, service and node ranges and
+    nothing else, so a pod with the documented catch-all could still reach
+    169.254.169.254 -- the address a cloud hands out instance credentials
+    on -- and every RFC1918 address in the surrounding network. Warm-up pods
+    have that catch-all by construction (Hugging Face Hub is a CDN with no
+    CIDR to pin); batch Jobs get it whenever a volume's images live off the
+    IIIF origin, which the deployment page documents.
+    """
+    rendered = render(sets=DEFAULT_SETS + ("network.iiifCidrs={0.0.0.0/0}",))
+    blocks = _catch_alls(named(rendered, "NetworkPolicy", policy_name))
+    assert blocks, f"{policy_name} has no catch-all egress to check"
+    for block in blocks:
+        assert set(block["except"]) == CATCH_ALL_EXCEPT
+
+
+def test_a_private_range_the_operator_listed_is_still_reachable():
+    """The carve-out is of the catch-all, not of the address: an explicitly
+    listed range is its own ipBlock in the same rule, and egress rules are a
+    union. So an on-premises IIIF host keeps working by being named."""
+    rendered = render(
+        sets=DEFAULT_SETS + ("network.iiifCidrs={0.0.0.0/0,10.1.2.3/32}",)
+    )
+    policy = named(rendered, "NetworkPolicy", "htr-batch-job")
+    targets = [to for rule in policy["spec"]["egress"] for to in rule.get("to", [])]
+    assert {"ipBlock": {"cidr": "10.1.2.3/32"}} in targets

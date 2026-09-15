@@ -214,10 +214,20 @@ Helm `lookup`, and you can override it with `network.apiServer` and
 `network.nodeCidrs`. `network.clusterCidrs` must hold your cluster's pod and
 service ranges, because the warm-up pod's public egress excludes them.
 
+A catch-all egress is never the whole internet. Every rule that allows
+`0.0.0.0/0` carves out the pod, service and node ranges, link-local
+(`169.254.0.0/16`, where a cloud serves instance credentials to any process
+that asks), loopback, and `network.privateCidrs` — the three private blocks
+by default, which is where the cluster's own network lives. Set that value
+if your private plan is a different one. The carve-out is of the catch-all,
+not of the address: a range you name in `network.iiifCidrs` or
+`network.s3Cidrs` is its own rule, and egress rules are a union, so an
+on-premises IIIF origin or S3 endpoint keeps working by being named.
+
 | Pod | Ingress | Egress (besides kube-dns) | Cannot reach |
 |---|---|---|---|
 | campaign pod (`app=htrflow-batch`) | none | S3 (the in-namespace `app=rustfs` pod, or `network.s3Cidrs`); the IIIF origins in `network.iiifCidrs` on 443/80 | Hugging Face Hub, the API server, the registry, anything else in-cluster, the rest of the internet |
-| warm-up pod (`app=htrflow-warmup`) | none | the public internet on 443, minus the pod, service and node ranges (Hugging Face Hub is a CDN, so there is no CIDR to pin) | S3, the API server, anything in-cluster |
+| warm-up pod (`app=htrflow-warmup`) | none | the public internet on 443, minus the carve-out above (Hugging Face Hub is a CDN, so there is no CIDR to pin) | S3, the API server, anything in-cluster, link-local and private addresses |
 | web front (`app=htrflow-web`) | `network.web.ingressCidrs` on 8081 (NodePort traffic arrives SNAT'd from the node, so include the node range) | the API server (`network.apiServer.cidr`); S3 (same targets as the campaign pod) for its `progress.json` reader | the IIIF origin, Hugging Face Hub, anything else in-cluster |
 | RustFS (`app=rustfs`, devstack) | 9000 from anywhere (and 9001 when the console is on) | none | — |
 | rustfs-init hook (`app=rustfs-init`, devstack) | none | RustFS on 9000 | — |
@@ -232,8 +242,8 @@ flag.
 Under the default deny, anything applied by hand in the namespace has no
 network access unless it gets its own policy. `images:` volumes hosted
 somewhere other than the IIIF origin need their host added to
-`network.iiifCidrs`. A catch-all range there still excludes the cluster, node
-and API server ranges.
+`network.iiifCidrs`. A catch-all range there still excludes everything in
+the carve-out above.
 
 **Known limitation: the policy sync window.** Some CNIs apply a new pod's
 policies asynchronously, after the pod already has its IP, and until they do

@@ -306,6 +306,7 @@
         "iiifCidrs",
         "s3Cidrs",
         "clusterCidrs",
+        "privateCidrs",
         "nodeCidrs",
         "apiServer",
         "web"
@@ -324,6 +325,9 @@
           "$ref": "#/definitions/cidrList"
         },
         "clusterCidrs": {
+          "$ref": "#/definitions/cidrList"
+        },
+        "privateCidrs": {
           "$ref": "#/definitions/cidrList"
         },
         "nodeCidrs": {
