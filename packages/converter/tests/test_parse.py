@@ -474,3 +474,169 @@ def test_hf_token_secret_must_be_a_secret_name(tmp_path):
         'converter.yaml: "hf_token_secret"' in p and "Secret" in p
         for p in exc_info.value.problems
     ), exc_info.value.problems
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "https://iiif.example.org/{id}/manifest",  # the wrong placeholder
+        "https://iiif.example.org/manifest",  # none at all
+        "https://iiif.example.org/{ref}/{ref}/manifest",  # twice
+        "https://iiif.example.org/{ref/manifest",  # a brace left open
+    ],
+)
+def test_a_source_template_that_cannot_be_filled_is_one_sentence(tmp_path, template):
+    """`source_template.format(ref=...)` runs inside a validator, where a
+    stray placeholder left pydantic with a KeyError/IndexError and the author
+    with a traceback. The template is checked where it is written instead."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + f'\nsource_template: "{template}"\n')
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert problem.startswith('converter.yaml: "source_template" ')
+    assert "{ref}" in problem
+
+
+@pytest.mark.parametrize("bad", ["high priority", "hög-prio", "p" * 64, "-high"])
+def test_campaign_priority_must_be_a_label_value(tmp_path, bad):
+    """`priority:` is rendered straight into the `kueue.x-k8s.io/priority-class`
+    LABEL. A value the label alphabet does not allow is a 422 from the API
+    server halfway through an apply, so it is refused in `validate`."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    campaign = root / "campaigns" / "kyrk.yaml"
+    campaign.write_text(campaign.read_text() + f'\npriority: "{bad}"\n')
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert problem.startswith('campaigns/kyrk.yaml: "priority" ')
+    assert "kueue.x-k8s.io/priority-class" in problem
+
+
+@pytest.mark.parametrize(
+    "key,bad",
+    [
+        ("queue", "htr batch"),
+        ("s3_secret", "htr_batch_s3"),
+        ("data_pvc", "-htr-test-data"),
+        ("runtime_class", "NVIDIA"),
+    ],
+)
+def test_a_converter_yaml_object_name_must_be_a_kubernetes_name(tmp_path, key, bad):
+    """Every one of these names an object the API server has to accept. A
+    capitalised namespace passed `validate` and was refused at apply time,
+    which is after the render is committed and the campaign is live."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + f'\n{key}: "{bad}"\n')
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert problem.startswith(
+        f'converter.yaml: "{key}" is not a Kubernetes object name'
+    )
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'node_selector: {"Nvidia Com/gpu": "present"}',
+        'node_selector: {"nvidia.com/gpu.present": "yes please"}',
+    ],
+)
+def test_a_node_selector_that_is_not_a_label_is_refused(tmp_path, line):
+    """`node_selector` is copied into the pod spec as `nodeSelector`, where
+    both halves have to be a label -- a pod the API server will not take is a
+    campaign that never starts."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + f"\n{line}\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert problem.startswith('converter.yaml: "node_selector" ')
+    assert "node label" in problem
+
+
+@pytest.mark.parametrize("key", ["manifest_max_bytes", "fetch_max_bytes"])
+def test_a_byte_cap_of_zero_or_less_is_refused(tmp_path, key):
+    """Both are handed to the wrapper as the largest thing it may fetch. At
+    0 every manifest and every image is over the cap, so every volume in
+    every campaign fails -- and nothing said so at render time."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + f"\n{key}: 0\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [
+        f'converter.yaml: "{key}" must be 1 or more (got 0)'
+    ]
+
+
+@pytest.mark.parametrize("key", ["max_seconds", "ttl_seconds_after_finished"])
+def test_seconds_beyond_a_32_bit_field_are_refused(tmp_path, key):
+    """Both are rendered into 32-bit Kubernetes fields
+    (`activeDeadlineSeconds`, `ttlSecondsAfterFinished`); a larger number is
+    refused by the API server halfway through an apply."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + f"\n{key}: 4294967296\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert (
+        problem
+        == f'converter.yaml: "{key}" must be 2147483647 or less (got 4294967296)'
+    )
+
+
+def test_a_pipelines_seconds_are_capped_the_same_way(tmp_path):
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    pipeline = root / "pipelines" / "demo-v1.yaml"
+    pipeline.write_text(pipeline.read_text() + "\nmax_seconds: 4294967296\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert problem == (
+        'pipelines/demo-v1.yaml: "max_seconds" must be 2147483647 or less '
+        "(got 4294967296)"
+    )
+
+
+def test_a_campaign_with_no_volumes_at_all_is_refused(tmp_path):
+    """No volumes renders a Job with `completions: 0`, which Kubernetes
+    reports as Succeeded the moment it is created: a campaign that is over
+    before it starts, and a green one at that."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "campaigns" / "kyrk.yaml").write_text("pipeline: demo-v1\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert problem.startswith("campaigns/kyrk.yaml: this campaign lists no volumes")
+
+
+@pytest.mark.parametrize("bad", ["htr.batch.example", "h" * 64, "HTR-Batch", ""])
+def test_a_namespace_is_a_label_not_a_subdomain(tmp_path, bad):
+    """A namespace is a DNS-1123 *label*: no dots, at most 63 characters. The
+    wider object-name rule let both through `validate` and left them to the
+    API server, which refuses them once the render is already committed."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + f'\nnamespace: "{bad}"\n')
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert problem.startswith(
+        'converter.yaml: "namespace" is not a Kubernetes namespace'
+    )
+    assert "63" in problem
