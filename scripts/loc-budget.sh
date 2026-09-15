@@ -280,7 +280,11 @@ fail=0
 # is refused too, and the docstring says why both it and ".." are: an S3 key
 # is an opaque string, but the URLs built from one are resolved by whatever
 # reads them.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3137
+# 3137 -> 3156 (2026-09-14, audit W6 review): a canvas that offers several
+# painting bodies -- a P3 Choice, or the bare list manifests in the wild put
+# there -- is published with the first one that passes the URL check, instead
+# of losing its image because the shape was not a single object.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3156
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
