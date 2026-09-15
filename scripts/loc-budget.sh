@@ -199,7 +199,7 @@ fail=0
 # never reprocessed anything. `source_digest` and the paragraph naming the
 # parameters that rotate, the new manifest field, and `_differs`, which the
 # digest and the older redacted form now share.
-# 2911 -> 2939 (2026-09-14, audit W6): a painting body copied out of a
+# 2912 -> 2939 (2026-09-14, audit W6): a painting body copied out of a
 # third-party manifest has every id in it scheme-checked before it reaches the
 # iiif.json we publish. Only the URL the wrapper fetches was checked, and on a
 # canvas with an image service that is the service's -- so a body whose `id`
@@ -271,7 +271,12 @@ fail=0
 # Restoring it late (W16) fixed the pod being killed mid-ship but left the
 # other half: the second signal then raised Terminated inside main's own
 # finally, so main raised instead of returning and the streams stayed torn.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3128
+# 3128 -> 3135 (2026-09-14, audit W1 review): the paragraph saying why a
+# step whose own __init__ raised is deliberately NOT in the tracked list --
+# htrflow starts the daemon thread last, so such a step holds nothing and is
+# collected; a step that started one earlier would need tracking inside
+# htrflow itself.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3135
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
