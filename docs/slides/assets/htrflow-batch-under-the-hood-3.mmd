@@ -1,0 +1,15 @@
+flowchart LR
+  B["publish.yml<br/>workflow_dispatch<br/>tag must not exist"]
+  D["pushed digest<br/>per architecture,<br/>then the manifest list"]
+  S["cosign sign<br/>keyless, Sigstore OIDC"]
+  PR["SLSA build provenance<br/>attested to the registry"]
+  SB["SPDX SBOM<br/>Trivy, per architecture"]
+  V["values.yaml<br/>pins the list digest"]
+  K["Kyverno verifyImages<br/>issuer + subject, Enforce"]
+  POD["pod admitted"]
+  B --> D
+  D --> S
+  D --> PR
+  D --> SB
+  S -.-> K
+  V --> K --> POD

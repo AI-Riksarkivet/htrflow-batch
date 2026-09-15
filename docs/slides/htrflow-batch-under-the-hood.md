@@ -10,10 +10,10 @@ lang: en
 
 # htrflow-batch under the hood
 
-## Two platform pieces, in detail: how Kueue divides one GPU, and how an artifact gets a signature
+## Two platform pieces, in detail: how Kueue divides a pool of GPUs, and how an artifact gets a signature
 
 <!--
-The companion deck is "htrflow-batch: HTRflow at archive scale", and it stops
+The companion deck is "GitOps and Kueued HTRflow", and it stops
 at "Kueue decides when your campaign runs". This one opens that box, and then
 opens the other one: models and images as signed artifacts. Audience is the
 same htrflow developers, plus anyone curious about the platform layer.
@@ -44,7 +44,7 @@ rather than skipped.
 <div>
 
 - **It is a job-level admission controller and quota manager, not a pod scheduler.** It never picks a node and never binds a pod; campaign pods keep `schedulerName: default-scheduler`.
-- **A campaign is one Indexed Job, so one Workload** — not one per volume. It is admitted as a whole and holds its GPU until the last index finishes.
+- **A campaign is one Indexed Job, so one Workload** — not one per volume. It is admitted as a whole and holds the GPUs it was admitted for until its last index finishes.
 - **The whole of Kueue's view of HTR is a label.** `kueue.x-k8s.io/queue-name` on the Job, and the pod template's resource *requests*. It knows nothing about IIIF, S3 or models.
 - **`make install-kueue` installs `KUEUE_VERSION`, today `v0.18.1`** (`Makefile`). The chart writes `kueue.x-k8s.io/v1beta2`; the converter's pause patch still asks for `v1beta1`.
 
@@ -81,25 +81,34 @@ paused that keeps on running.
 
 # The object graph
 
-```mermaid h:400
-flowchart LR
-  subgraph chart["charts/htrflow-batch/templates/kueue.yaml"]
-    LQ["LocalQueue<br/>htr-batch<br/>namespaced"]
-    CQ["ClusterQueue<br/>htr-batch-cq<br/>cpu 4 · mem 8Gi · gpu 1"]
-    RF["ResourceFlavor<br/>default-flavor<br/>no nodeLabels"]
-  end
+<div class="cols wide-right">
+<div>
+
+```mermaid h:440
+flowchart TB
   JOB["campaign Job<br/>Indexed, suspended at CREATE"]
-  WL["Workload<br/>podSet main<br/>count = parallelism"]
-  N["GPU nodes<br/>bound by kube-scheduler"]
+  LQ["LocalQueue<br/>htr-batch"]
+  WL["Workload<br/>count = parallelism"]
+  CQ["ClusterQueue<br/>htr-batch-cq"]
+  RF["ResourceFlavor<br/>default-flavor"]
   JOB -->|"queue-name label"| LQ
+  JOB -->|"reconciler creates"| WL
   LQ --> CQ
-  CQ --> RF
-  RF -.->|"empty, so it<br/>adds no nodeSelector"| N
-  JOB -->|"Job reconciler creates"| WL
   WL -->|"quota reserved in"| CQ
+  CQ --> RF
 ```
 
-<p class="note">The converter renders the Job. The chart renders the three queue objects. Kueue renders the Workload — nothing else ever writes one.</p>
+</div>
+<div>
+
+**Two chains that meet at the ClusterQueue.** One is configuration: a Job names a LocalQueue by label, the LocalQueue names one ClusterQueue, the ClusterQueue names flavors. The other is runtime: the Job gets a Workload, and the Workload is what holds quota.
+
+**Three writers, and only three.** The converter renders the Job. The chart renders the three queue objects. Kueue renders the Workload — nothing else ever writes one.
+
+<p class="note">The flavor is the honest one. It is empty, so it contributes nothing to placement: a pod lands on a GPU node because it <em>requests</em> a GPU, and <code>kube-scheduler</code> binds it — not because Kueue said where.</p>
+
+</div>
+</div>
 
 <!--
 Read it as two chains that meet at the ClusterQueue. The left-to-right chain
@@ -124,7 +133,7 @@ requests nvidia.com/gpu, not because Kueue said so.
 > "An object that you can define to describe what resources are available in a cluster."
 > <span class="note">— Concepts</span>
 
-**Today.** One, named by `queue.flavor`, default `default-flavor`, with no `nodeLabels` and no `nodeTaints`. The docs call that an *empty ResourceFlavor*, and it is the right shape for one homogeneous GPU node: Kueue injects no `nodeSelector` at admission.
+**Today.** One, named by `queue.flavor`, default `default-flavor`, with no `nodeLabels` and no `nodeTaints`. The docs call that an *empty ResourceFlavor*, and it is the right shape while every GPU node is alike: Kueue injects no `nodeSelector` at admission.
 
 **Planned.** One flavor per GPU generation in the platform release, so a campaign can be told which hardware it may have.
 
@@ -136,7 +145,7 @@ requests nvidia.com/gpu, not because Kueue said so.
 > "A cluster-scoped resource that governs a pool of resources, defining usage limits and Fair Sharing rules."
 > <span class="note">— Concepts</span>
 
-**Today.** One, `htr-batch-cq`. One resource group covering cpu, memory and `nvidia.com/gpu`, `nominalQuota` 4 / 8Gi / 1 — **exactly one wrapper pod**. A `namespaceSelector` on `kubernetes.io/metadata.name` keeps another namespace from pointing a LocalQueue at our GPU.
+**Today.** One, `htr-batch-cq`. One resource group covering cpu, memory and `nvidia.com/gpu`, with a `nominalQuota` per resource — the chart's defaults, 4 / 8Gi / 1, are **one wrapper pod**, and a real cluster sets its own. A `namespaceSelector` on `kubernetes.io/metadata.name` keeps another namespace from pointing a LocalQueue at our GPU.
 
 **Planned.** One per tenant, each with its own `nominalQuota` and a `borrowingLimit`.
 
@@ -178,7 +187,7 @@ limit, and 8Gi is what the quota sees.
 > "ClusterQueues within the same Cohort … can share resources with each other."
 > <span class="note">— Cohort</span>
 
-**Today: none.** The ClusterQueue has no cohort field, so there is no quota to borrow and none to lend. An idle GPU stays idle.
+**Today: none.** The ClusterQueue has no cohort field, so there is no quota to borrow and none to lend. Idle GPUs stay idle.
 
 **Planned.** Every ClusterQueue sets `cohortName: htr`. Nominal quota becomes a floor rather than a ceiling: you get yours, you may borrow what nobody is using, and reclaim takes it back.
 
@@ -209,8 +218,8 @@ pool has exactly one.
 
 - **We never write one.** Kueue's Job reconciler creates it, owned by the Job and labelled `kueue.x-k8s.io/job-uid` — the one link that survives a delete and recreate.
 - **`podSets[0].count` is the Job's `parallelism`, not its `completions`.** A podSet describes the pods that exist at once, not the work items.
-- **So `window:` *is* the quota question.** `parallelism = min(campaign window, converter.yaml window)`, and the whole podSet must fit, because we do not use partial admission.
-- **Pause is a Workload patch.** Kueue owns `spec.suspend` on a Job it manages and sets it back within seconds, so `apply` patches the Workload instead.
+- **So `window:` *is* the quota question.** `parallelism = min(campaign window, converter.yaml window)`, and the whole podSet must fit — we do not use partial admission.
+- **Pause is a Workload patch.** Kueue owns a managed Job's `spec.suspend` and sets it back within seconds, so `apply` patches the Workload.
 
 </div>
 <div>
@@ -233,9 +242,9 @@ if spec.active != intent:
 </div>
 
 <!--
-Worth saying out loud: the shipped defaults are inadmissible. converter.yaml's
-window is 20 against a one-GPU quota, so parallelism renders as 20, the podSet
-never fits, and the campaign reads "Queued" for ever. That is the single most
+Worth saying out loud: the two shipped defaults disagree. converter.yaml's
+window is 20 and the chart's GPU quota is 1, so parallelism renders as 20, the
+podSet never fits, and the campaign reads "Queued" for ever. That is the single most
 common reason a campaign never starts, and it is written down as a known limit
 in queueing.md rather than quietly fixed, because the fix is a per-cluster
 value.
@@ -245,22 +254,32 @@ value.
 
 # The admission cycle
 
-```mermaid w:1100
+```mermaid w:1124
 flowchart LR
-  A["Job applied<br/>mjob.kb.io patches<br/>spec.suspend = true"]
-  B["Workload created<br/>owned by the Job"]
-  C{"does the podSet<br/>fit the quota?"}
-  P["pending<br/>no conditions,<br/>counted in<br/>pendingWorkloads"]
-  D["QuotaReserved<br/>then Admitted"]
-  E["reconciler patches<br/>spec.suspend = false"]
+  A["Job applied<br/>suspended by<br/>the webhook"]
+  B["Workload<br/>created"]
+  C{"podSet fits<br/>the quota?"}
+  P["pending<br/>blocks nobody"]
+  D["QuotaReserved,<br/>Admitted,<br/>unsuspended"]
   F["pods created,<br/>bound by<br/>kube-scheduler"]
   A --> B --> C
-  C -->|"yes"| D --> E --> F
+  C -->|"yes"| D --> F
   C -->|"no"| P
-  P -->|"re-evaluated;<br/>it blocks nobody"| C
+  P --> C
 ```
 
-**Admission is per Job, once.** Kubernetes then replaces each finished pod with the next index without asking Kueue again — which is why a campaign at the front of the queue owns the GPU until its last volume is done, minutes or weeks later.
+<div class="cols">
+<div>
+
+**Admission is per Job, once.** Kubernetes then replaces each finished pod with the next index without asking Kueue again — which is why a campaign at the front of the queue keeps its GPUs until its last volume is done, minutes or weeks later.
+
+</div>
+<div>
+
+**Four controllers, one line each.** The mutating webhook suspends the Job at `CREATE`. Kueue orders the queue, reserves quota and unsuspends. The Job controller makes pods. `kube-scheduler` binds them.
+
+</div>
+</div>
 
 <!--
 Six steps, four controllers. The mutating webhook suspends the Job at CREATE
@@ -285,21 +304,18 @@ next slide says what could go there.
 > "Older Workloads that can't be admitted will not block newer Workloads that fit."
 > <span class="note">— ClusterQueue</span>
 
-With one GPU and a podSet of one, nothing smaller can slip through, so it behaves as a plain queue.
+Where the quota is barely wider than one campaign's window, nothing smaller can slip through, and it behaves as a plain queue.
 
 **Preemption is off.** `withinClusterQueue: Never`, `reclaimWithinCohort: Never`. Nothing jumps the line, and nothing is ever evicted to make room.
 
 </div>
 <div>
 
-**Priority is a dangling reference.** A campaign's `priority:` renders the label `kueue.x-k8s.io/priority-class`, but the chart renders no
+**Priority is a dangling reference.** A campaign's `priority:` renders the label `kueue.x-k8s.io/priority-class`, but the chart renders no WorkloadPriorityClass — "a priority class whose value is utilized by Kueue controller and is independent from Pod's priority" — so Kueue's validating webhook rejects the Job.
 
-> "priority class whose value is utilized by Kueue controller and is independent from Pod's priority"
-> <span class="note">— WorkloadPriorityClass</span>
+**PLANNED:** three classes, `htr-interactive` 1000, `htr-bulk` 100 (default), `htr-idle` 10.
 
-— so Kueue's validating webhook rejects the Job. **PLANNED:** three classes, `htr-interactive` 1000, `htr-bulk` 100 (the default), `htr-idle` 10, with `reclaimWithinCohort: Any`.
-
-**AdmissionCheck**, "a mechanism that allows Kueue to consider additional criteria before admitting a Workload", runs between quota reservation and admission. We configure none — not today, not in the design.
+**AdmissionCheck** runs between reservation and admission: "a mechanism that allows Kueue to consider additional criteria before admitting a Workload". We configure none, today or in the design.
 
 </div>
 </div>
@@ -328,7 +344,7 @@ better than a half-wired one.
 > "A mechanism allowing to schedule Workloads optimizing Pod placement for network throughput."
 > <span class="note">— Concepts</span>
 
-A `Topology` is "a cluster-scoped resource that represents the hierarchical topology of nodes in a data center" — block, rack, node — named from a ResourceFlavor's `topologyName`, with a podSet annotation asking for one domain. Beta and on by default since Kueue **v0.14**.
+A `Topology` is "a cluster-scoped resource that represents the hierarchical topology of nodes in a data center" — block, rack, node — named from a ResourceFlavor's `topologyName`. Beta and on by default since Kueue **v0.14**.
 
 **We do not use it, and it would not help.** It pays off when the pods of *one* Workload talk to each other. Ours do not: each index is one volume, one GPU, one bucket.
 
@@ -342,7 +358,7 @@ A `Topology` is "a cluster-scoped resource that represents the hierarchical topo
 
 Pods claim devices through a `ResourceClaimTemplate` against a `DeviceClass`; Kueue maps each DeviceClass to a quota resource name in its own Configuration. Beta and on by default since Kueue **v0.18** — which is the version we install.
 
-**We do not use it.** We count whole `nvidia.com/gpu` units. DRA is how you would one day give half a card to a small volume, or a specific MIG partition to a big one.
+**We do not use it.** We count whole `nvidia.com/gpu` units. DRA is how you would one day give half a card to a small volume, or a MIG partition to a big one.
 
 </div>
 </div>
@@ -379,10 +395,10 @@ other one.
 <div class="cols wide-left">
 <div>
 
-- **A warm-up Job fills a cache PVC, once per pipeline id.** It runs the wrapper image on CPU, outside the queue — no `queue-name` label, no GPU request — and simply builds the pipeline. Building it *is* the download.
-- **The marker, not the weights, is the contract.** Warm-up writes `/data/warmup/<pipeline-id>.done`; a campaign pod's `warmup-wait` init container polls for that file and never looks at what is in `hub/`.
-- **Campaign pods run offline and read-only.** `HF_HUB_OFFLINE=1`, the PVC mounted `readOnly: true`, and the `htr-batch-job` NetworkPolicy gives them DNS, S3 and the IIIF CIDRs — no route to the Hub at all.
-- **The pin is a revision, checked by Kyverno.** `security.requireModelRevision` refuses a pipeline ConfigMap whose steps name a model without a 40-hex commit hash.
+- **A warm-up Job fills a cache PVC, once per pipeline id.** It runs the wrapper image on CPU, outside the queue — no queue label, no GPU. Building the pipeline *is* the download.
+- **The marker, not the weights, is the contract.** Warm-up writes `/data/warmup/<pipeline-id>.done`; a pod's `warmup-wait` init container polls for that file and never looks in `hub/`.
+- **Campaign pods run offline and read-only.** `HF_HUB_OFFLINE=1`, the PVC mounted `readOnly: true`, and a NetworkPolicy allowing only DNS, S3 and the IIIF CIDRs — no route to the Hub.
+- **The pin is a revision, checked by Kyverno.** `security.requireModelRevision` refuses a pipeline ConfigMap naming a model with no 40-hex commit hash.
 - **A private or gated model needs `hf_token_secret`,** rendered as `HF_TOKEN` on the warm-up container alone.
 
 </div>
@@ -398,7 +414,7 @@ other one.
   <pipeline-id>.done
 ```
 
-<p class="note">One <code>ReadWriteOnce</code> 30 GiB PVC today, which pins every Job to the node holding the volume. The multi-tenant design makes it <code>ReadWriteMany</code> on a shared filesystem, warmed once for the whole cluster — which is what makes a pipeline id have to be unique cluster-wide.</p>
+<p class="note">The chart's default is one <code>ReadWriteOnce</code> 30 GiB PVC, which pins every Job to the node holding the volume. The multi-tenant design makes it <code>ReadWriteMany</code> on a shared filesystem, warmed once for the whole cluster — which is what makes a pipeline id have to be unique cluster-wide.</p>
 
 <p class="note">Standing ruling: <strong>models are never baked into the image.</strong></p>
 
@@ -460,9 +476,9 @@ ecosystem disagree about.
 <div class="cols wide-left">
 <div>
 
-- **A plain OCI image works as a Kubernetes image volume.** `FROM scratch` plus the model files, mounted read-only at `/models`: file checksums equal the Hub files, and htrflow loads and predicts offline. On containerd, today, with no extra component.
-- **A ModelPack artifact mounts EMPTY.** Same cluster, same image-volume mechanism: the kubelet reports the pull as successful, the directory is empty, and there is no event and no error. containerd unpacks standard image layers only. Silent, which is the bad kind of broken.
-- **So ModelPack needs extraction, not mounting.** An init container running `modctl pull --extract-from-remote` as a non-root user, authenticated by a pull-only registry robot, extracted the model and the wrapper loaded it offline. A tag that does not exist fails the init container before the transcription container starts.
+- **A plain OCI image works as a Kubernetes image volume.** `FROM scratch` plus the model files, mounted read-only at `/models`: checksums equal the Hub files, and htrflow loads and predicts offline. On containerd today, with no extra component.
+- **A ModelPack artifact mounts EMPTY.** Same cluster, same mechanism: the kubelet reports the pull as successful, the directory is empty, and there is no event and no error. containerd unpacks standard image layers only — silent, which is the bad kind of broken.
+- **So ModelPack needs extraction, not mounting.** An init container running `modctl pull --extract-from-remote` as a non-root user, with a pull-only registry robot, extracted the model; the wrapper then loaded it offline.
 - **Harbor serves them and can enforce the pin.** A `models` project with a tag-immutability rule answers 412 to moving or deleting a tag.
 
 </div>
@@ -489,7 +505,9 @@ DaemonSet with bidirectional mounts.
 
 The takeaway the AI lab wrote down: for multi-node distribution, prefer plain
 OCI images and image volumes, and extend the Kyverno digest rules to
-volumes[].image.reference.
+volumes[].image.reference. One more property of the init-container path: a
+tag that does not exist fails the init container before the transcription
+container ever starts.
 -->
 
 ---
