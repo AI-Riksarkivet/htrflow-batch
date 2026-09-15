@@ -505,9 +505,12 @@ def test_the_production_profile_turns_on_what_the_defaults_leave_off(
 def test_every_pod_the_profile_renders_passes_pod_security_restricted(
     prod: list[dict],
 ):
-    """`psaEnforce: restricted` is only honest if the pods clear it. The
-    chart renders one pod of its own; the Jobs the converter renders are
-    checked by its own tests against the same shape."""
+    """`psaEnforce: restricted` is only honest if the pods clear it. This is
+    the one pod the chart renders; the campaign and warm-up Jobs are the
+    other half, and `test_render.py`'s
+    `test_every_job_the_converter_renders_is_restricted_clean` holds them to
+    the same shape -- they are applied outside the chart, so no render of it
+    can see them."""
     pods = [o["spec"]["template"]["spec"] for o in objects(prod, "Deployment")]
     assert pods
     for spec in pods:
