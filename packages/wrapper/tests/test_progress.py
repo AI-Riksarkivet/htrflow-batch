@@ -302,7 +302,12 @@ def test_a_failed_run_leaves_a_terminal_stage_not_stuck_at_stream(env, cfg, s3):
     assert _get(s3, cfg, "progress.json")["stage"] == "failed"
 
 
-def test_a_sigterm_run_also_leaves_a_terminal_stage(env, cfg, s3, monkeypatch):
+def test_a_sigterm_run_leaves_the_stage_it_was_in(env, cfg, s3, monkeypatch):
+    """A SIGTERMed run is the one exception to the terminal stage above (W4):
+    the pod has 120 s before the SIGKILL and that time goes to the final log
+    ship, not to a status PUT that may sit out its own timeouts first. The
+    index is retried anyway, and the termination message -- a local file --
+    still names the stage and says SIGTERM."""
     monkeypatch.setattr(main_mod, "_hard_exit", lambda code: None)
 
     def factory(c):
@@ -314,7 +319,7 @@ def test_a_sigterm_run_also_leaves_a_terminal_stage(env, cfg, s3, monkeypatch):
         return process
 
     assert main(env, process_page_factory=factory) == main_mod.EXIT_SIGTERM
-    assert _get(s3, cfg, "progress.json")["stage"] == "failed"
+    assert _get(s3, cfg, "progress.json")["stage"] == "stream"
 
 
 def test_the_last_error_is_redacted_and_bounded(cfg, s3):
@@ -356,3 +361,35 @@ def test_errors_are_counted_as_they_are_logged(cfg, s3):
         assert tracker.body()["errors"] == 1
     finally:
         capture.finish()
+
+
+def test_sigterm_stops_the_status_writes(env, cfg, s3, monkeypatch):
+    """W4: the kubelet gives the pod 120 s between SIGTERM and SIGKILL, and
+    the cleanup was spending it on status objects -- this page's progress
+    PUT, an interim iiif.json, then one more progress PUT saying "failed" --
+    before the final log ship, the one piece of evidence that matters. Once
+    the handler has fired, nothing status-shaped is written again."""
+    monkeypatch.setattr(progress_mod, "PUBLISH_EVERY_PAGES", 1)
+    monkeypatch.setattr(main_mod, "_hard_exit", lambda code: None)
+    puts: list[str] = []
+    original = ResultStore.put_progress
+
+    def recording(self, body):
+        puts.append(body["stage"])
+        return original(self, body)
+
+    monkeypatch.setattr(ResultStore, "put_progress", recording)
+    at_kill: list[int] = []
+
+    def factory(c):
+        def process(path):
+            if path.stem == "0002":
+                at_kill.append(len(puts))
+                os.kill(os.getpid(), signal.SIGTERM)
+            return _write_outputs(c, path.stem)
+
+        return process
+
+    assert main(env, process_page_factory=factory) == 143
+    assert len(puts) == at_kill[0]  # not one further PUT after the signal
+    assert "failed" not in puts

@@ -74,6 +74,13 @@ class Progress:
         #: the old count-based threshold before it finishes, and pages 1-9 of
         #: a bigger one would have linked to a manifest that is not there yet.
         self.viewer_published = False
+        #: Set by main's SIGTERM handler (W4, 2026-09-14 audit). The kubelet
+        #: allows 120 s between SIGTERM and SIGKILL, and the cleanup was
+        #: spending it on status objects -- the page's progress PUT, an
+        #: interim iiif.json, a second progress PUT saying "failed" -- each
+        #: able to sit out its own timeouts against a sick bucket, ahead of
+        #: the final log ship, which is the evidence that matters.
+        self.terminating = False
 
     def _counts(self) -> tuple[int, int]:
         """Done and failed. A skipped page is one an earlier run finished and
@@ -117,6 +124,8 @@ class Progress:
         }
 
     def write(self) -> None:
+        if self.terminating:
+            return  # W4: the grace period belongs to the final log ship
         try:
             self.store.put_progress(self.body())
         except Exception as e:
@@ -129,6 +138,8 @@ class Progress:
         self.write()
 
     def after_page(self, name: str) -> None:
+        if self.terminating:
+            return  # W4: neither the progress PUT nor the interim manifest
         self.last_page = name
         done, _ = self._counts()
         # Before the write: _publish_viewer can flip viewer_published, and
