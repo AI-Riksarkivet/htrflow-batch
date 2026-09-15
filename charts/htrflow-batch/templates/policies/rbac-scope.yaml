@@ -1,0 +1,47 @@
+{{- if .Values.security.policies.enabled }}
+# What RBAC cannot say (2026-09-14, audit): a Role's verbs cover a whole
+# resource type and never one object's name, so the read API's create/patch
+# on configmaps also covers `htr-pipeline-<id>` -- the immutable ConfigMap a
+# campaign Job mounts as its pipeline. Overwrite that and the next campaign
+# loads weights of someone else's choosing, from a pod browsers reach that
+# has no authentication of its own. The Role is already the narrowest one
+# RBAC can express; admission is the only place left that sees WHO is
+# asking.
+#
+# `background: false` is not a choice here: a background scan replays stored
+# objects with no requesting user, and a rule matched on `subjects` has
+# nothing to match. `operations: [CREATE, UPDATE]` is every write -- a
+# `patch` reaches admission as an UPDATE, and a server-side apply of an
+# object that does not exist yet as a CREATE.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: htrflow-batch-rbac-scope-{{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: web-writes-status-only
+      match:
+        any:
+          - resources:
+              kinds: [ConfigMap]
+              namespaces: [{{ .Release.Namespace | quote }}]
+              operations: [CREATE, UPDATE]
+            subjects:
+              - kind: ServiceAccount
+                name: htrflow-web
+                namespace: {{ .Release.Namespace }}
+      validate:
+        message: >-
+          the read API may only write a campaign's own status ConfigMap
+          (campaign-<name>-status), not
+          {{ `{{ request.object.metadata.name }}` }}
+        deny:
+          conditions:
+            all:
+              - key: {{ `"{{ regex_match('^campaign-[a-z0-9]([-a-z0-9]*[a-z0-9])?-status$', request.object.metadata.name) }}"` }}
+                operator: Equals
+                value: false
+{{- end }}

@@ -678,5 +678,11 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3857
 # on jobs and configmaps -- the command now reads each campaign's live Job to
 # record how it ended, and reads the record back to leave a finished campaign
 # alone. `list` does not authorize a read by name.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 774
+# 774 -> 821 (2026-09-14, audit): templates/policies/rbac-scope.yaml. RBAC
+# cannot scope a verb to an object name, so the read API's create/patch on
+# configmaps covers the immutable pipeline ConfigMaps too; a Kyverno rule
+# matched on the requesting ServiceAccount is the only place that scope can
+# be said. Half the file is the paragraph explaining why `background: false`
+# and a subject match are one decision, not two.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 821
 exit $fail
