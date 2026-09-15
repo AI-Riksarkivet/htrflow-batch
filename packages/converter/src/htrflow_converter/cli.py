@@ -262,13 +262,15 @@ def _unsafe_out(repo: Path, out: Path) -> str | None:
     return None
 
 
-def _render(repo_dir: str, out_dir: str, record_dir: str | None = None) -> int:
+def _render(repo_dir: str, out_dir: str) -> int:
     """Render ``repo_dir`` into ``out_dir``.
 
-    ``record_dir`` is where the PREVIOUS render is, when that is not
-    ``out_dir``: an ``apply`` with no ``--out`` renders into a temp directory
-    that records nothing, and the repo's committed ``rendered/`` is still the
-    record its pipelines and campaigns have to agree with.
+    ``--out`` says where this render is WRITTEN. What it is held against is
+    the repo's own committed ``rendered/``, always: that is the record of
+    what has been applied (B78), and a render directory that is empty --
+    ``apply``'s temp directory, a fresh ``--out`` an operator reached for
+    when a render looked wrong -- is not evidence that a campaign has never
+    run.
     """
     repo = Path(repo_dir)
     missing = _missing_config(repo)
@@ -290,7 +292,7 @@ def _render(repo_dir: str, out_dir: str, record_dir: str | None = None) -> int:
     if clash is not None:
         print(clash)
         return 1
-    record = Path(record_dir) if record_dir else out
+    record = repo / RENDERED
     edited = _edited_pipeline(campaigns, pipelines, cfg, record)
     if edited is not None:
         print(edited)
@@ -607,11 +609,9 @@ def _apply(
     allow_empty: bool = False,
 ) -> int:
     with contextlib.ExitStack() as stack:
-        record_dir = None
         if out_dir is None:
             out_dir = stack.enter_context(tempfile.TemporaryDirectory("-htr-render"))
-            record_dir = str(Path(repo_dir) / RENDERED)
-        rc = _render(repo_dir, out_dir, record_dir)
+        rc = _render(repo_dir, out_dir)
         if rc:
             return rc
         repo, out = Path(repo_dir), Path(out_dir)

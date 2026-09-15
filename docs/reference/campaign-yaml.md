@@ -258,6 +258,12 @@ since a campaign's Job references its pipeline's ConfigMap.
 `htrflow-campaigns apply` does that ordering itself; by hand it is
 `kubectl apply -f rendered/pipelines -f rendered/campaigns`.
 
+`--out` says where a render is *written*. What it is held against is always
+the repo's own committed `rendered/`: that is the record of what has been
+applied, so rendering into a fresh directory — or the temp directory an
+`apply` with no `--out` uses — does not turn a campaign that is already
+running into a new one.
+
 `render` also **removes** files under `--out` that this render did not
 produce, so deleting `campaigns/<name>.yaml` deletes
 `rendered/campaigns/<name>.yaml` too. Deleting the manifest is only half of
