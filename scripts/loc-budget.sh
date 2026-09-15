@@ -787,7 +787,10 @@ check web       "$(count packages/web/src -name '*.py')" 1863
 # 4075 -> 4086 (2026-09-14, audit review) `isResultUrl` compared the log URL to the results base
 # as text, so `<base>/../evil.txt` passed while not being under the base at
 # all. Both are normalised through `new URL` first.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4086
+# 4086 -> 4091 (2026-09-14, audit review) a tick that let something escape stopped the poll
+# for good and said nothing. It counts as a failed tick and backs off like
+# any other.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4091
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
