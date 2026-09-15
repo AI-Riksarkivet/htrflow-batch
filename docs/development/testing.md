@@ -25,7 +25,9 @@
    chart-owned key in `converter.yaml`), render (golden fixture → expected
    ConfigMap/Job YAML), the 10 000-volume split, and the chart-agreement test
    that asserts `docs/reference/configuration.md` equals what
-   `make config-reference` generates. Web front: `projection.py`'s pure
+   `make config-reference` generates. Read API and page: the contract
+   fixture `make api-contract` prints, parsed by the frontend's own schemas
+   (below). Web front: `projection.py`'s pure
    functions against hand-built Job/Pod/ConfigMap dicts (phase derivation,
    index-range parsing, per-volume state, termination messages, warm-up
    matching) plus the route and static-mount tests — no fixture cluster
@@ -59,6 +61,34 @@ cd frontend && bun run test     # vitest
 # or, reproducibly, the way CI runs it:
 dagger call test                # add --ca-bundle <file> behind a TLS-inspecting proxy
 ```
+
+## The two generated files CI checks are current
+
+Two files in this repository are printed by a script and committed, and in
+both cases a test in the normal suite fails when the committed copy is not
+what the script prints — so `dagger call test` (and therefore `make ci`)
+catches a stale one without a job of its own.
+
+| File | Regenerate with | The test that asserts it |
+| --- | --- | --- |
+| `docs/reference/configuration.md` | `make config-reference` | `packages/converter/tests/test_chart_agreement.py` |
+| `frontend/src/lib/fixtures/api-contract.json` | `make api-contract` | `packages/web/tests/test_contract.py` |
+
+The contract fixture is the one thing tying the read API to the page that
+parses it. `scripts/api_contract.py` calls `projection.py` itself — the same
+functions the routes call — and writes a document covering the rows the two
+sides have historically disagreed about: a live campaign, one whose Job the
+TTL reaped, one whose ending nobody recorded (`Unknown` phase, `unknown`
+volume rows), a `finishedAt` of `null`, a failed volume with its reason, and
+a volume with progress read out of the bucket.
+`frontend/src/lib/fixtures/api-contract.test.ts` parses every row of it with
+`jobSummarySchema`/`jobDetailSchema` and also asserts that the only fields
+the page drops are the two it means to drop — so a field added to the API
+for this page, and then not read by it, shows up here rather than in a
+campaign nobody can open.
+
+Change a projection and the pytest fails; run `make api-contract` and the
+vitest tells you whether the schemas can still read what you changed.
 
 `make test` runs the three Python packages (wrapper, converter, web); the
 root `pyproject.toml`'s `testpaths` names exactly those three. `dagger call
