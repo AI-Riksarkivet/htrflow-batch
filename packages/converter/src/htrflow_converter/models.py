@@ -168,9 +168,12 @@ _USERINFO_RE = re.compile(r"(?<=//)[^/@?#]*@")
 #: drops userinfo. That is all this can do: the URL itself is stored verbatim
 #: in volumes.txt, in the campaign's ConfigMap and in the committed
 #: `rendered/` -- a source URL is not a secret (docs: how-it-works/security).
-#: Longest name first, so `signature=` is not matched as `sig`.
+#: Longest name first, so `signature=` is not matched as `sig` and a
+#: presigned S3 URL's `X-Amz-Security-Token` is not matched as `token`.
 _SIGNED_RE = re.compile(
-    r"(?<=[?&])(X-Amz-Signature|signature|token|sig|key)=[^&#]*", re.IGNORECASE
+    r"(?<=[?&])(X-Amz-Security-Token|X-Amz-Signature|X-Amz-Credential"
+    r"|signature|token|sig|key)=[^&#]*",
+    re.IGNORECASE,
 )
 
 

@@ -256,7 +256,16 @@ def test_an_images_volume_just_under_the_line_budget_is_kept():
 
 
 @pytest.mark.parametrize(
-    "param", ["X-Amz-Signature", "token", "sig", "signature", "key"]
+    "param",
+    [
+        "X-Amz-Signature",
+        "X-Amz-Security-Token",
+        "X-Amz-Credential",
+        "token",
+        "sig",
+        "signature",
+        "key",
+    ],
 )
 def test_a_signed_url_loses_its_signature_when_a_problem_echoes_it(param):
     """A problem line is printed in CI logs and pasted into chat. A presigned

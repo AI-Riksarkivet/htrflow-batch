@@ -456,7 +456,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # prune instead of being refused before it can print anything -- the one
 # prune an operator most wants to see the shape of first -- and the real
 # run still refuses.
-check converter "$(count packages/converter/src -name '*.py')" 2538
+# 2538 -> 2541 (2026-09-14, audit review): `X-Amz-Security-Token` and
+# `X-Amz-Credential` join the query parameters a problem line blanks -- a
+# presigned S3 URL carries all three, and the alternation is longest-first
+# so the security token is not matched as a bare `token`.
+check converter "$(count packages/converter/src -name '*.py')" 2541
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
