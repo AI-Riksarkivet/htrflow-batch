@@ -91,6 +91,16 @@ volumes:
       - https://example.org/page2.jpg
 ```
 
+!!! warning "Source URLs are not secrets"
+
+    Every `manifest:` and `images:` URL is stored verbatim — in git, in the
+    committed `rendered/`, in the campaign's ConfigMap and in each volume's
+    `manifest.json`. A presigned URL therefore publishes its signature to
+    everyone who can read any of those. Validation problems echo such a URL
+    back with its userinfo and its signing query parameter blanked, because
+    those lines travel further still, but the stored URL is untouched. See
+    [Source URLs are not secrets](../how-it-works/security.md#source-urls-are-not-secrets).
+
 Rules enforced by `parse_campaign` (`validate`, and by `render`):
 
 | Rule | Consequence when violated |

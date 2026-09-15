@@ -439,7 +439,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # apiserver being upgraded left a campaign unapplied and the operator
 # re-running the whole command. Nothing else is retried: 409, 403 and 422
 # are answers about the request, not about the server's moment.
-check converter "$(count packages/converter/src -name '*.py')" 2498
+# 2498 -> 2510 (2026-09-14, audit C10): a URL echoed back in a problem line
+# loses the value of a signing query parameter as well as its userinfo.
+# Those lines reach CI logs and pull requests; the stored URL cannot be
+# redacted at all, which the security page now says out loud.
+check converter "$(count packages/converter/src -name '*.py')" 2510
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

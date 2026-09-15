@@ -253,3 +253,32 @@ def test_an_images_volume_too_long_for_one_environment_entry_is_refused():
 def test_an_images_volume_just_under_the_line_budget_is_kept():
     urls = [f"https://example.org/scan{n:05d}.jpg" for n in range(3000)]
     assert len(Volume.model_validate({"id": "R1", "images": urls}).images) == 3000
+
+
+@pytest.mark.parametrize(
+    "param", ["X-Amz-Signature", "token", "sig", "signature", "key"]
+)
+def test_a_signed_url_loses_its_signature_when_a_problem_echoes_it(param):
+    """A problem line is printed in CI logs and pasted into chat. A presigned
+    source URL carries its credential in the query, so the echo drops it the
+    way it already drops userinfo -- which is all this can do: the URL itself
+    is stored verbatim in volumes.txt and in `rendered/`."""
+    with pytest.raises(ValidationError) as exc_info:
+        Volume.model_validate(
+            {"id": "v1", "manifest": f"https://example.org/m anifest?{param}=sekret"}
+        )
+    (msg,) = [str(e["msg"]) for e in exc_info.value.errors()]
+    assert "sekret" not in msg
+    assert f"{param}=***" in msg
+
+
+def test_a_query_parameter_that_merely_ends_in_a_redacted_name_is_left_alone():
+    """`?pagekey=` and `?sig` are not the same word: the redaction is on a
+    parameter, not on a substring, or half the problem lines in the repo
+    would come back as asterisks."""
+    with pytest.raises(ValidationError) as exc_info:
+        Volume.model_validate(
+            {"id": "v1", "manifest": "https://example.org/m anifest?pagekey=7"}
+        )
+    (msg,) = [str(e["msg"]) for e in exc_info.value.errors()]
+    assert "pagekey=7" in msg
