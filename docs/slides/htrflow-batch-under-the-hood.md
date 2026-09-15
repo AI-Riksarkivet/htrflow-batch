@@ -145,7 +145,7 @@ requests nvidia.com/gpu, not because Kueue said so.
 > "A cluster-scoped resource that governs a pool of resources, defining usage limits and Fair Sharing rules."
 > <span class="note">— Concepts</span>
 
-**Today.** One, `htr-batch-cq`. One resource group covering cpu, memory and `nvidia.com/gpu`, with a `nominalQuota` per resource — the chart's defaults, 4 / 8Gi / 1, are **one wrapper pod**, and a real cluster sets its own. A `namespaceSelector` on `kubernetes.io/metadata.name` keeps another namespace from pointing a LocalQueue at our GPU.
+**Today.** One, `htr-batch-cq`. One resource group covering cpu, memory and `nvidia.com/gpu`, with a `nominalQuota` per resource — the chart's defaults, 4 / 8Gi / 1, are **one wrapper pod**, and a real cluster sets its own. A `namespaceSelector` on `kubernetes.io/metadata.name` keeps another namespace from pointing a LocalQueue at these GPUs.
 
 **Planned.** One per tenant, each with its own `nominalQuota` and a `borrowingLimit`.
 
