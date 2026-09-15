@@ -280,3 +280,43 @@ def test_redact_url():
         redact_urls("bad https://u:p@h/a?x=1 and http://h2/b?y=2 end")
         == "bad https://h/a and http://h2/b end"
     )
+
+
+def test_source_digest_keeps_the_identifying_query():
+    """W5: redact_url drops the whole query, so two pages a host selects with
+    ``?id=`` were indistinguishable and an edited manifest never triggered a
+    reprocess. The digest keeps the query without publishing it."""
+    from htrflow_batch.iiif import source_digest
+
+    one = source_digest("https://img.example/iiif?id=1")
+    assert one != source_digest("https://img.example/iiif?id=2")
+    assert one == source_digest("https://img.example/iiif?id=1")
+
+
+@pytest.mark.parametrize(
+    "credential",
+    [
+        "token=SECRET",
+        "sig=SECRET",
+        "signature=SECRET",
+        "key=SECRET",
+        "X-Amz-Signature=SECRET",
+    ],
+)
+def test_source_digest_ignores_rotating_credentials(credential):
+    """A tokenised URL differs from its stored form on every retry; only the
+    part that names the image may reach the digest."""
+    from htrflow_batch.iiif import source_digest
+
+    bare = source_digest("https://img.example/iiif?id=1")
+    assert source_digest(f"https://img.example/iiif?id=1&{credential}") == bare
+    assert source_digest("https://u:pw@img.example/iiif?id=1") == bare
+
+
+def test_source_digest_publishes_nothing_of_the_url():
+    """It goes into the world-readable manifest.json (S6), so it must be a
+    digest and nothing else."""
+    from htrflow_batch.iiif import source_digest
+
+    digest = source_digest("https://img.example/iiif?id=1")
+    assert len(digest) == 64 and all(c in "0123456789abcdef" for c in digest)

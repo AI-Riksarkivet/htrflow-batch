@@ -192,7 +192,14 @@ fail=0
 # progress, an interim iiif.json, a second progress saying "failed") ahead of
 # the final log ship -- the one piece of evidence that matters. Mostly the
 # paragraph saying which writes are dropped and why the ship is not.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2859
+# 2859 -> 2911 (2026-09-14, audit W5): resume compares a sha256 of the full
+# source URL, credentials removed, instead of the redacted one it publishes.
+# The redacted form has lost its query, so on a host that selects the image
+# with `?id=` every page of a volume compared equal and an edited manifest
+# never reprocessed anything. `source_digest` and the paragraph naming the
+# parameters that rotate, the new manifest field, and `_differs`, which the
+# digest and the older redacted form now share.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 2911
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

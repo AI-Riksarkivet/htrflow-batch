@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 
@@ -49,6 +50,37 @@ def redact_url(url: str) -> str:
     if u.port is not None:
         host = f"{host}:{u.port}"
     return f"{u.scheme}://{host}{u.path}"
+
+
+#: Query parameters that carry a credential rather than name the image; they
+#: rotate, so they must not reach the digest below. ``X-Amz-*`` (presigned S3)
+#: is matched by prefix.
+_CREDENTIAL_PARAMS = frozenset({"token", "sig", "signature", "key"})
+
+
+def source_digest(url: str) -> str:
+    """A stable identity for a page's source image, for the resume comparison
+    (W5, 2026-09-14 audit).
+
+    ``redact_url`` drops the whole query, and that is the only form of the URL
+    the public manifest may carry (S6) -- so on a host that selects the image
+    with ``?id=`` every page of a volume looked identical and an edited
+    manifest never triggered a reprocess. A digest keeps the query without
+    publishing it. The credentials come out first: userinfo, the ``X-Amz-*``
+    presign parameters and the token/sig/signature/key families rotate, and a
+    re-signed URL is not a new source image."""
+    try:
+        parsed = httpx.URL(url)
+        kept = [
+            (name, value)
+            for name, value in parsed.params.multi_items()
+            if name.lower() not in _CREDENTIAL_PARAMS
+            and not name.lower().startswith("x-amz-")
+        ]
+        text = str(parsed.copy_with(userinfo=b"", params=httpx.QueryParams(kept)))
+    except Exception:
+        text = url.split("?", 1)[0]  # not a URL we can parse: path only
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 _URL_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s\"'<>)\]]+")
