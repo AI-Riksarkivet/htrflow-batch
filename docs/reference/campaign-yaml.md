@@ -389,8 +389,10 @@ its campaign; leave it off and Argo CD's own prune does the same job.
 The hook fails the sync on any non-zero exit, so treat exit `3` — some
 objects refused, everything else applied — as what it is: the sync did
 change the cluster, and the summary line in the hook's log names what is
-still to fix. Exit `1` means nothing was applied, or a pause is not being
-enforced. See [refused objects](#when-the-api-server-refuses-an-object).
+still to fix. Exit `1` outranks it: nothing reached the cluster at all, or a
+campaign git says is paused is not actually paused — which can be true while
+other objects *were* applied, so read the summary line rather than inferring
+it from the code. See [refused objects](#when-the-api-server-refuses-an-object).
 
 ## When the API server refuses an object
 
@@ -403,11 +405,14 @@ Job htr-warmup-demo: the pod template changed and a Job's pod template is immuta
 1 of 6 objects were refused by the API server and are unchanged: Job/kyrk — the other 5 were applied (exit 3)
 ```
 
+The codes are a precedence, highest first — `1` beats `3` beats `0` — so
+`1` does not mean nothing was applied when a pause is what failed:
+
 | Exit | What it means |
 | --- | --- |
+| `1` | a pause is **not enforced** — a paused campaign's Workload never appeared, or its Job was refused — whatever else was applied; or nothing reached the cluster at all (no credentials, an unreachable API server, a render that did not pass, a server that refused every object) |
+| `3` | some objects were refused and are unchanged, everything else was applied, and every pause holds; the summary line names what was refused |
 | `0` | everything was applied |
-| `1` | nothing was — no credentials, an unreachable API server, a render that did not pass, a paused campaign whose Workload never appeared, or a server that refused every object |
-| `3` | some objects were refused and are unchanged, everything else was applied; the summary line names them |
 
 A Job's **pod template cannot be edited** once the Job exists — that is
 Kubernetes, not this tool — and two quite different changes move one: an

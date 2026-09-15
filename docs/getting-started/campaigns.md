@@ -142,9 +142,10 @@ connection at all.
 
 One object the API server will not take does not stop the others: it is
 named on stderr, the rest are applied, and the command exits **3** with a
-summary line naming what was left unchanged. Exit `0` is everything applied
-and exit `1` is nothing applied — or a paused campaign whose pause could not
-be enforced, which outranks a refusal. See
+summary line naming what was left unchanged. The codes are a precedence,
+highest first: `1` is a pause that is not enforced — whatever else was
+applied — or nothing applied at all, `3` is some objects refused with every
+pause holding, and `0` is everything applied. See
 [refused objects](../reference/campaign-yaml.md#when-the-api-server-refuses-an-object)
 for what `apply` does about a Job whose pod template changed.
 
