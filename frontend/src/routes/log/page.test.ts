@@ -1,7 +1,8 @@
-import { render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { LIVE_MAX_FAILURES, LIVE_MS } from "$lib/config.js";
 import { MAX_POLL_MS } from "$lib/poll.js";
+import { LOG_TAIL_BYTES } from "$lib/runlog.js";
 import LogPage from "./+page.svelte";
 
 function fetch404(): typeof fetch {
@@ -66,5 +67,56 @@ describe("/log live mode", () => {
       "must be an absolute http(s) URL",
     );
     expect(screen.queryByRole("link", { name: "raw" })).toBeNull();
+  });
+});
+
+describe("/log with a very large log", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    window.history.replaceState(null, "", "/log?log=http://bucket/logs/v1.txt");
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    window.history.replaceState(null, "", "/");
+  });
+
+  const head = "2026-09-08 09:00:00,000 INFO the first line\n";
+  const tail = "2026-09-08 09:59:59,000 INFO the last line\n";
+  const huge = head + "x".repeat(LOG_TAIL_BYTES) + "\n" + tail;
+
+  function serve(text: string): void {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(text)) as typeof fetch,
+    );
+  }
+
+  test("only the end is drawn, and the page says so", async () => {
+    serve(huge);
+    render(LogPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByText(/Showing the end of this log/)).toBeInTheDocument();
+    expect(screen.getByText("the last line")).toBeInTheDocument();
+    expect(screen.queryByText("the first line")).toBeNull();
+  });
+
+  test("the whole log is one click away", async () => {
+    serve(huge);
+    render(LogPage);
+    await vi.advanceTimersByTimeAsync(0);
+    await fireEvent.click(
+      screen.getByRole("button", { name: "show whole log" }),
+    );
+    expect(screen.getByText("the first line")).toBeInTheDocument();
+    expect(screen.queryByText(/Showing the end of this log/)).toBeNull();
+  });
+
+  test("an ordinary log is drawn whole with no control at all", async () => {
+    serve(head + tail);
+    render(LogPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByText("the first line")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "show whole log" })).toBeNull();
   });
 });
