@@ -68,7 +68,10 @@ rendered every NetworkPolicy away; the chart now fails loudly when
 `.Values.network` is missing.
 
 Everything below this line is history: each entry names the objects and
-value keys **as they were at that version** — `api.*`, `viewer.*`,
+value keys **as they were at that version**. `/config.js` is one of them —
+since the 2026-09-14 web audit the read API serves it from its own
+environment, so an entry below describing it as a file in an image, or as a
+ConfigMap the nginx viewer mounted, is describing the version it names — `api.*`, `viewer.*`,
 `htrflow-api`, `templates/api.yaml`, `htr-api` — not the `web.*` /
 `htrflow-web` / `templates/web.yaml` they became in 0.4.0. Renaming them
 here would make the upgrade notes wrong for anyone actually on that
@@ -121,13 +124,17 @@ adoption recipe.)
 `web.nodePort`) is the whole browser-facing surface: the campaign browser at
 `/`, Universal Viewer at `/uv.html`, and `GET /api/v1/jobs[/{ns}/{name}]`
 read-only over the Indexed Jobs a campaign renders to — Role/RoleBinding
-scoped to `get`/`list`/`watch` on `jobs`/`pods`/`configmaps` in the release
+scoped to `get`/`list` on `jobs`/`pods`/`configmaps` (plus `create`/`patch`
+on `configmaps`, for the per-campaign status record it writes) in the release
 namespace, never a ClusterRole. It is the one pod in this chart with
 `automountServiceAccountToken: true` (everything else has it off) because it
 *is* a Kubernetes API client. NetworkPolicy `htr-web` lets browsers in from
-`network.web.ingressCidrs` and lets it out to DNS and the apiserver only.
-`/config.js`, built into the image, points the campaign browser at
-`window.API_BASE = "/api/v1"` — same-origin, no proxy.
+`network.web.ingressCidrs` and lets it out to DNS, the apiserver and the
+results bucket. The pod also **serves `/config.js` itself**, written from its
+own environment: `window.API_BASE = "/api/v1"` (same-origin, no proxy) and
+`window.RESULTS_BASE` from `publicResultsBase`. There is nothing for an
+operator to overwrite — set `publicResultsBase` and the campaign browser
+follows.
 
 ## Changelog
 
