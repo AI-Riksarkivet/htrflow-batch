@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import gc
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
@@ -14,6 +15,60 @@ from .stream import discard
 #: Every format the wrapper appends an Export step for; process_page requires
 #: all of them and store.upload_page uploads them page-first.
 EXPECTED_FORMATS = ("alto", "page")
+
+
+def _refused_the_path(Pipeline, e: BaseException) -> bool:
+    """Whether ``from_config`` refused the ARGUMENT -- an older htrflow whose
+    ``from_config`` takes a parsed dict, handed a path -- rather than a step
+    or model constructor deeper in raising a TypeError of its own (W2).
+
+    Told apart by where the TypeError was raised: in ``from_config``'s own
+    code object, or below it. The distinction matters because the pinned
+    htrflow's ``from_config`` does ``open(path)``, so retrying a constructor's
+    TypeError with the dict only raises a second one from ``open(dict)`` --
+    and a bare TypeError is not permanent, so a mistyped pipeline setting
+    exited 1 and burned every retry instead of failing at once.
+    """
+    tb = e.__traceback__
+    while tb is not None and tb.tb_next is not None:
+        tb = tb.tb_next
+    function = getattr(Pipeline.from_config, "__func__", Pipeline.from_config)
+    return tb is not None and tb.tb_frame.f_code is getattr(function, "__code__", None)
+
+
+@contextmanager
+def _tracked_steps(built: list):
+    """Record every step htrflow builds, so a failed construction can be torn
+    down (W1). ``Pipeline.from_config`` owns the loop that calls ``init_step``
+    and keeps its results in a local list, so the only way to reach the steps
+    made before the failure is to see them go past: the name is swapped for
+    the duration of the construction and put back whatever happens. Only the
+    main thread builds pipelines, and an htrflow that does not expose the name
+    is simply not tracked."""
+    from htrflow.pipeline import pipeline as module  # ty: ignore[unresolved-import]
+
+    original = getattr(module, "init_step", None)
+    if original is None:
+        yield
+        return
+
+    def tracking(step_config):
+        # Recorded only once init_step RETURNS, so the step whose own
+        # construction raised is not in `built`. That is right for htrflow as
+        # it is: Inference.__init__ starts its daemon thread last, after the
+        # model is on the GPU, so a step that raised has nothing holding it
+        # and the collector takes it and its weights. A step that started a
+        # thread before it could fail would need the tracking one level down,
+        # inside htrflow.
+        step = original(step_config)
+        built.append(step)
+        return step
+
+    module.init_step = tracking
+    try:
+        yield
+    finally:
+        module.init_step = original
 
 
 def build_pipeline(pipeline_path: str):
@@ -36,17 +91,33 @@ def build_pipeline(pipeline_path: str):
     except (yaml.YAMLError, OSError) as e:
         raise ValueError(f"bad pipeline config: {e}") from e
 
+    built: list = []
     try:
-        try:
-            return Pipeline.from_config(str(pipeline_path))
-        except TypeError:
-            # older htrflow builds: from_config takes a parsed config dict
-            return Pipeline.from_config(config)
-    except (KeyError, NotImplementedError) as e:
-        # htrflow: KeyError from STEPS[name] for an unknown step, and
+        with _tracked_steps(built):
+            try:
+                return Pipeline.from_config(str(pipeline_path))
+            except TypeError as e:
+                if not _refused_the_path(Pipeline, e):
+                    raise
+                # older htrflow builds: from_config takes a parsed config dict
+                return Pipeline.from_config(config)
+    except BaseException as e:
+        # W1 (2026-09-14, audit): a construction that raises part-way has
+        # already built every step before the failing one, and each Inference
+        # among them started a daemon thread bound to itself -- so nothing
+        # collects them and their weights sit on the GPU for the life of the
+        # process. A rebuild that keeps failing (main.py) would repeat that
+        # per page until the GPU is out of memory, so the partial pipeline is
+        # torn down here, where it is still reachable.
+        release_steps(built)
+        # htrflow: KeyError from STEPS[name] for an unknown step,
         # NotImplementedError from get_model_by_name for an unknown model
-        # class. Config mistakes -> PERMANENT, like malformed YAML above.
-        raise ValueError(f"bad pipeline config: unknown step or model: {e}") from e
+        # class, and TypeError from a step or model constructor, which htrflow
+        # hands the YAML's `settings:` as keyword arguments (W2). Config
+        # mistakes -> PERMANENT, like malformed YAML above.
+        if isinstance(e, (KeyError, NotImplementedError, TypeError)):
+            raise ValueError(f"bad pipeline config: unknown step or model: {e}") from e
+        raise
 
 
 def load_pipeline(pipeline_path: str, out_dir: Path):
@@ -54,17 +125,21 @@ def load_pipeline(pipeline_path: str, out_dir: Path):
     from htrflow.pipeline.steps import Export  # ty: ignore[unresolved-import]
 
     pipeline = build_pipeline(pipeline_path)
-    for step in pipeline.steps:
-        if isinstance(step, Export):
-            raise ValueError(
-                "pipeline YAML must not contain Export steps; "
-                "the wrapper appends them (docs: wrapper)"
-            )
-    exports = [Export(str(out_dir / fmt), fmt) for fmt in EXPECTED_FORMATS]
-    # rebuild so Pipeline.__init__ wires the new steps the same way as the
-    # originals (older htrflow sets parent_pipeline there; append leaves the
-    # Export orphaned and its metadata None)
-    return Pipeline(list(pipeline.steps) + exports)
+    try:
+        for step in pipeline.steps:
+            if isinstance(step, Export):
+                raise ValueError(
+                    "pipeline YAML must not contain Export steps; "
+                    "the wrapper appends them (docs: wrapper)"
+                )
+        exports = [Export(str(out_dir / fmt), fmt) for fmt in EXPECTED_FORMATS]
+        # rebuild so Pipeline.__init__ wires the new steps the same way as the
+        # originals (older htrflow sets parent_pipeline there; append leaves the
+        # Export orphaned and its metadata None)
+        return Pipeline(list(pipeline.steps) + exports)
+    except BaseException:
+        release_pipeline(pipeline)  # W1: the same leak, one construction later
+        raise
 
 
 def release_documents() -> None:
@@ -153,7 +228,13 @@ def release_pipeline(pipeline) -> None:
     again, so the models go now and the parked thread keeps only itself and
     that page's Document.
     """
-    for step in getattr(pipeline, "steps", ()):
+    release_steps(getattr(pipeline, "steps", ()))
+
+
+def release_steps(steps) -> None:
+    """The same for a bare list of steps: what a pipeline that never finished
+    being constructed leaves behind (W1)."""
+    for step in steps:
         try:
             step.model = None
         except Exception:
@@ -188,14 +269,21 @@ def _run_guarded(pipeline, document, stem: str) -> None:
     is still the backstop for the process as a whole.
     """
 
+    failure: list[BaseException] = []
+    done = threading.Event()
+
     def check() -> None:
         step = _dead_step(pipeline)
-        if step is not None:
+        # W17: a thread that dies in the same tick the run completes must not
+        # fail a page that is finished -- its outputs are written, and the
+        # failure path below deletes them, so the page would be redone on the
+        # retry for nothing. The dead pipeline is caught by the next page's
+        # check before its run, which is the same guarantee as the one this
+        # function's docstring makes for a run that has already returned.
+        if step is not None and not done.is_set():
             raise _dead(step, stem)
 
     check()  # never enqueue onto a dead queue: that is what blocks forever
-    failure: list[BaseException] = []
-    done = threading.Event()
 
     def run() -> None:
         try:

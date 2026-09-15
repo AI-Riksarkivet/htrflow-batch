@@ -4,7 +4,7 @@ Read-only but for one write: every method here is a get/list against Jobs,
 ConfigMaps or Pods, except ``apply_configmap``, which server-side applies
 the per-campaign status ConfigMap this service is the only observer of
 (B76). Nothing here ever deletes, and nothing touches a Job or a Pod — the
-RBAC granted to the service is get/list/watch plus create/patch on
+RBAC granted to the service is get/list plus create/patch on
 ConfigMaps (charts/htrflow-batch/templates/web.yaml), and a test greps this
 package's source to keep it that way.
 
@@ -17,10 +17,15 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Mapping
+from typing import Protocol
 
 from kubernetes import client, config
 from pydantic import BaseModel, ConfigDict, Field
+from urllib3.exceptions import HTTPError
+
+from .projection import KIND_LABEL, STATUS_KIND
 
 #: Selects campaign progress Jobs only — excludes the per-pipeline warm-up
 #: Jobs, which carry ``managed-by=converter`` too but not ``app`` or
@@ -41,6 +46,14 @@ CAMPAIGN_CONFIGMAPS = (
 #: creates the status ConfigMap or updates exactly the fields this manager
 #: owns, with no read-modify-write race against a concurrent request.
 _APPLY_PATCH = "application/apply-patch+yaml"
+
+#: A list that answers with each object's ``metadata`` and nothing else --
+#: what `kubectl get --output-watch-events=false` uses under the hood. The
+#: campaign record's ``data`` is the campaign's whole volume list, and the
+#: list route never reads it (2026-09-14 audit).
+PARTIAL_METADATA = (
+    "application/json;as=PartialObjectMetadata;g=meta.k8s.io;v=v1,application/json"
+)
 FIELD_MANAGER = "htrflow-web"
 
 _NAMESPACE_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
@@ -98,6 +111,28 @@ class Config(BaseModel):
         )
 
 
+class ClusterUnavailable(Exception):
+    """The API server did not answer this read. Every way that can happen --
+    a 403 after an RBAC change, a 429, a connection that timed out -- arrives
+    here as one exception, so ``app.py`` has one thing to answer with (a 502)
+    instead of letting a client error escape as a bare 500 (2026-09-14
+    audit). 404 is not one of these: a missing object is ``None``."""
+
+
+class ApplyConflict(Exception):
+    """Another field manager owns a field of the record this service tried to
+    write. Contention, not a denied grant: `htrflow-campaigns apply` writes
+    the same record from the live Job once a campaign is over, and those
+    terminal values are the authoritative ones. Its own exception so
+    ``app.py`` does not treat it as a namespace whose RBAC went away
+    (2026-09-14 review)."""
+
+
+#: How long the retry waits for the other manager to finish writing.
+#: Retrying in the same microsecond meets the same half-finished write.
+CONFLICT_PAUSE = 0.2
+
+
 def _read(api: object, method: str, *args: object, **kwargs: object) -> dict | None:
     """Call a get/list method with ``_preload_content=False`` and decode the
     raw server JSON, so callers get the same camelCase dicts the API server
@@ -108,11 +143,38 @@ def _read(api: object, method: str, *args: object, **kwargs: object) -> dict | N
     except client.ApiException as e:
         if e.status == 404:
             return None
-        raise
+        raise ClusterUnavailable(f"{method}: {e.status}") from e
+    except HTTPError as e:  # urllib3: refused, timed out, TLS
+        raise ClusterUnavailable(f"{method}: {type(e).__name__}") from e
     return json.loads(resp.data)
 
 
+class ReaderLike(Protocol):
+    """What ``app.py`` asks of whatever it is handed: ``Reader`` in a pod,
+    ``NoCluster`` in site-only mode, a fake in the tests. Written down so the
+    doubles cannot drift from the real adapter -- a fake that answers with
+    one fewer argument passes its own tests and proves nothing about the
+    route (2026-09-14 audit); a test binds every signature below against
+    each of them.
+
+    ``apply_configmap`` is deliberately absent: site-only mode has no cluster
+    to write to, and ``app.py`` asks for the attribute rather than calling
+    into a 503 on every request.
+    """
+
+    cfg: Config | None
+
+    def list_jobs(self) -> list[dict]: ...
+    def list_warmups(self) -> list[dict]: ...
+    def get_job(self, namespace: str, name: str) -> dict | None: ...
+    def get_configmap(self, namespace: str, name: str) -> dict | None: ...
+    def list_configmaps(self) -> list[dict]: ...
+    def list_pods(self, namespace: str, job_name: str) -> list[dict]: ...
+
+
 class Reader:
+    cfg: Config
+
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         try:
@@ -142,32 +204,85 @@ class Reader:
         return _read(self.core, "read_namespaced_config_map", name, namespace)
 
     def list_configmaps(self) -> list[dict]:
+        """Both ConfigMaps of every campaign in every namespace, in one list.
+
+        Two calls per namespace, not one, and the difference is `data`
+        (2026-09-14 audit). The record's `data` is `volumes.txt` -- one line
+        per volume, megabytes for a real backfill -- and the list route reads
+        nothing off it but labels and dates, so it is asked for as
+        PartialObjectMetadata and those bytes never reach this process. The
+        status ConfigMap's `data` IS the reaped campaign's row, so that one
+        is fetched whole; it is a handful of short fields.
+        """
         cms: list[dict] = []
         for ns in self.cfg.namespaces:
+            cms.extend(self._records(ns))
             body = _read(
                 self.core,
                 "list_namespaced_config_map",
                 ns,
-                label_selector=CAMPAIGN_CONFIGMAPS,
+                label_selector=f"{CAMPAIGN_CONFIGMAPS},{KIND_LABEL}={STATUS_KIND}",
             )
             cms.extend((body or {}).get("items", []))
         return cms
+
+    def _records(self, namespace: str) -> list[dict]:
+        """The campaign records of one namespace, metadata only. The typed
+        client overwrites `Accept` on every generated method, so this is the
+        one call this adapter makes through ``call_api`` itself."""
+        try:
+            resp = self.core.api_client.call_api(
+                "/api/v1/namespaces/{namespace}/configmaps",
+                "GET",
+                {"namespace": namespace},
+                [
+                    (
+                        "labelSelector",
+                        f"{CAMPAIGN_CONFIGMAPS},{KIND_LABEL}!={STATUS_KIND}",
+                    )
+                ],
+                {"Accept": PARTIAL_METADATA},
+                auth_settings=["BearerToken"],
+                _preload_content=False,
+            )
+        except client.ApiException as e:
+            raise ClusterUnavailable(f"list records: {e.status}") from e
+        except HTTPError as e:
+            raise ClusterUnavailable(f"list records: {type(e).__name__}") from e
+        return json.loads(resp.data).get("items", [])
 
     def apply_configmap(self, body: dict) -> None:
         """The one write this service makes. Raises like any other client
         call — ``app.py`` logs it and answers the request anyway, because a
         status page that 500s when it cannot write a record is worse than
-        one whose record is a few minutes old."""
+        one whose record is a few minutes old.
+
+        Deliberately NOT forced (2026-09-14 audit). `htrflow-campaigns
+        apply` writes this same record from the live Job once a campaign is
+        over, and those terminal values are the authoritative ones; forcing
+        would take the fields back off it on every poll of an open status
+        page. A 409 while the other manager is mid-write is retried once,
+        after a short pause, and a second one is left to stand as an
+        ``ApplyConflict`` -- contention, not a refusal.
+        """
         meta = body["metadata"]
-        self.core.patch_namespaced_config_map(
-            meta["name"],
-            meta["namespace"],
-            body,
-            field_manager=FIELD_MANAGER,
-            force=True,
-            _content_type=_APPLY_PATCH,
-            _preload_content=False,
-        )
+        for attempt in (1, 2):
+            try:
+                self.core.patch_namespaced_config_map(
+                    meta["name"],
+                    meta["namespace"],
+                    body,
+                    field_manager=FIELD_MANAGER,
+                    _content_type=_APPLY_PATCH,
+                    _preload_content=False,
+                )
+                return
+            except client.ApiException as e:
+                if e.status != 409:
+                    raise ClusterUnavailable(f"apply {meta['name']}: {e.status}") from e
+                if attempt == 2:
+                    raise ApplyConflict(meta["name"]) from e
+                time.sleep(CONFLICT_PAUSE)
 
     def list_pods(self, namespace: str, job_name: str) -> list[dict]:
         body = _read(

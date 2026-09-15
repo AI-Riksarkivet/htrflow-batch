@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +10,19 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from htrflow_web.app import RECORD_WRITES_PER_REQUEST, create_app
+from htrflow_web.app import (
+    DNS_1123,
+    RECORD_WRITES_PER_REQUEST,
+    SECURITY_HEADERS,
+    NoCluster,
+    create_app,
+)
+from htrflow_web.kube import (
+    ApplyConflict,
+    ClusterUnavailable,
+    Reader,
+    ReaderLike,
+)
 
 JOB = {
     "metadata": {
@@ -61,7 +74,10 @@ PIPELINE_CONFIGMAP = {
 
 
 class FakeReader:
-    cfg = SimpleNamespace(public_results_base="https://results.example.org")
+    cfg = SimpleNamespace(
+        public_results_base="https://results.example.org",
+        namespaces=("htr-test",),
+    )
 
     def list_jobs(self) -> list[dict]:
         return [JOB]
@@ -82,6 +98,9 @@ class FakeReader:
             "campaign-kyrk": CONFIGMAP,
             "htr-pipeline-demo-v1": PIPELINE_CONFIGMAP,
         }.get(name)
+
+    def list_configmaps(self) -> list[dict]:
+        return []  # no record ConfigMaps: only the Job answers for a campaign
 
     def list_pods(self, namespace: str, job_name: str) -> list[dict]:
         return []
@@ -402,6 +421,14 @@ class RecordingReader(FakeReader):
         return super().get_configmap(namespace, name)
 
     def apply_configmap(self, body: dict) -> None:
+        # The API server refuses a name no object could carry, and a fake
+        # that accepts one proves nothing about what the cluster would do
+        # with the names this package builds (2026-09-14 audit).
+        meta = body["metadata"]
+        for field in ("name", "namespace"):
+            value = meta[field]
+            assert len(value) <= 63, f"{field} is not a DNS-1123 label: {value!r}"
+            assert DNS_1123.fullmatch(value), f"{field} is not DNS-1123: {value!r}"
         self.written.append(body)
 
 
@@ -464,12 +491,24 @@ def test_a_failed_write_is_logged_and_the_request_still_answers(caplog):
     assert "campaign-kyrk-status" in caplog.text
 
 
-def test_site_only_mode_writes_nothing():
-    """No cluster to write to — and NoCluster's 503 must not be raised from
-    inside the record path either."""
-    from htrflow_web.app import NoCluster
+def test_site_only_mode_answers_honestly_instead_of_writing():
+    """No cluster to write to -- and NoCluster's 503 must not escape from
+    inside the record path as a 500. Driven through the route: asking the
+    class whether it has the attribute only re-states how the code is
+    written (2026-09-14 audit)."""
+    client = TestClient(create_app(NoCluster(), progress=FakeProgress()))
+    resp = client.get("/api/v1/jobs")
+    assert resp.status_code == 503
+    assert "HTRFLOW_WEB_SITE_ONLY" in resp.json()["detail"]
 
-    assert not hasattr(NoCluster, "apply_configmap")
+
+def test_a_reader_that_cannot_write_still_answers_the_list():
+    """The other half of the same branch: a reader with no
+    `apply_configmap` (every fake in this file) lists campaigns normally."""
+    reader = FakeReader()
+    assert not hasattr(reader, "apply_configmap")
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    assert len(client.get("/api/v1/jobs").json()) == 1
 
 
 REAPED_RECORD = {
@@ -482,7 +521,13 @@ REAPED_RECORD = {
             "htrflow.riksarkivet.se/pipeline": "demo-v1",
         },
     },
-    "data": {"volumes.txt": "vol9\thttps://iiif.example.org/vol9/manifest\n"},
+    "data": {
+        "volumes.txt": (
+            "vol9\thttps://iiif.example.org/vol9/manifest\n"
+            "vol8\thttps://iiif.example.org/vol8/manifest\n"
+            "vol7\thttps://iiif.example.org/vol7/manifest\n"
+        )
+    },
 }
 
 REAPED_STATUS = {
@@ -495,7 +540,7 @@ REAPED_STATUS = {
         "startedAt": "2025-12-01T01:00:00Z",
         "finishedAt": "2025-12-01T05:00:00Z",
         "resultsBase": "https://results.example.org/htr-test/demo-v1",
-        "failedVolumes": "[]",
+        "failedVolumes": '[{"id":"vol8","reason":"manifest 404"}]',
     },
 }
 
@@ -520,6 +565,22 @@ def test_a_campaign_whose_job_is_gone_still_has_a_row():
     assert body[0]["name"] == "kyrk", "newest first, reaped rows included"
 
 
+def test_the_list_route_draws_a_reaped_row_from_metadata_alone():
+    """The record is listed as PartialObjectMetadata (2026-09-14 audit), so
+    `data` -- the campaign's whole volume list -- is simply not there. A row
+    that needed it would break here rather than on a real backfill."""
+    metadata_only = {"metadata": REAPED_RECORD["metadata"]}
+    assert "data" not in metadata_only
+    client = TestClient(
+        create_app(
+            RecordingReader([metadata_only, REAPED_STATUS]), progress=FakeProgress()
+        )
+    )
+    rows = {row["name"]: row for row in client.get("/api/v1/jobs").json()}
+    assert rows["gamla"]["jobGone"] is True
+    assert rows["gamla"]["counts"]["done"] == 4
+
+
 def test_a_campaign_configmap_with_no_record_beside_it_is_not_a_row():
     """Never observed by this API: it is being applied right now, and the
     Job will say more than a guess would."""
@@ -527,15 +588,25 @@ def test_a_campaign_configmap_with_no_record_beside_it_is_not_a_row():
     assert [row["name"] for row in client.get("/api/v1/jobs").json()] == ["kyrk"]
 
 
-def test_the_detail_of_a_reaped_campaign_is_what_the_record_has():
+def test_the_detail_of_a_reaped_campaign_still_opens_its_volumes():
+    """The Job is gone, but manifest.json, iiif.json, alto/ and the run log
+    are all still in the bucket -- and this route answered with no rows at
+    all, so nobody could open any of them (R1, the product owner,
+    2026-09-14)."""
     client = TestClient(create_app(_reaped_reader(), progress=FakeProgress()))
     resp = client.get("/api/v1/jobs/htr-test/gamla")
     assert resp.status_code == 200
     body = resp.json()
     assert body["jobGone"] is True
-    assert body["volumes"] == []
-    assert body["failures"] == []
-    assert body["latest"] is None
+    assert [v["id"] for v in body["volumes"]] == ["vol9", "vol8", "vol7"]
+    base = "https://results.example.org/htr-test/demo-v1"
+    assert body["volumes"][0]["iiifUrl"] == f"{base}/vol9/iiif.json"
+    assert body["volumes"][0]["altoPrefix"] == f"{base}/vol9/alto/"
+    assert body["volumes"][0]["logUrl"].endswith("/status/logs/demo-v1/vol9.txt")
+    assert [v["state"] for v in body["volumes"]] == ["done", "failed", "done"]
+    assert body["volumes"][1]["reason"]["error"] == "manifest 404"
+    assert [v["id"] for v in body["failures"]] == ["vol8"]
+    assert body["latest"]["id"] == "vol7", "the last volume that finished"
 
 
 def test_a_campaign_with_neither_job_nor_record_is_still_a_404():
@@ -575,6 +646,34 @@ class _Refusing(RecordingReader):
         raise RuntimeError("configmaps is forbidden")
 
 
+class _Contested(RecordingReader):
+    """Every write meets another field manager, the way `apply`'s terminal
+    record does once a campaign is over."""
+
+    def __init__(self, live=None) -> None:
+        super().__init__(live)
+        self.attempts = 0
+
+    def apply_configmap(self, body: dict) -> None:
+        self.attempts += 1
+        raise ApplyConflict(body["metadata"]["name"])
+
+
+def test_a_contested_record_is_not_treated_as_a_refused_namespace(caplog):
+    """A 409 says another manager owns the field, not that this service's
+    grant went away -- so it must not stop the writes for ten minutes, and
+    it is not worth a line in the log either (2026-09-14 review)."""
+    reader = _Contested()
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    for _ in range(3):
+        assert client.get("/api/v1/jobs").status_code == 200
+    assert reader.attempts == 3, "still tried on every poll"
+    # Not `caplog.text == ""`: the test client's own httpx logs a line per
+    # request under CI's log level. What must not be there is this
+    # service's "could not write" warning.
+    assert "could not write" not in caplog.text
+
+
 class ManyReader(RecordingReader):
     """More campaigns in one namespace than one request may write for."""
 
@@ -595,8 +694,32 @@ def test_a_refused_write_is_logged_once_per_namespace(caplog):
     client = TestClient(create_app(reader, progress=FakeProgress()))
     for _ in range(3):
         assert client.get("/api/v1/jobs").status_code == 200
-    assert reader.attempts == 3, "the write is still attempted every time"
     assert caplog.text.count("forbidden") == 1
+
+
+def test_a_refused_namespace_is_left_alone_for_the_cooldown():
+    """An unrenewed RBAC grant refuses every campaign on every poll, and
+    each refusal is a server-side apply on the request's critical path --
+    twenty round trips per page load, for ever (2026-09-14 audit)."""
+    reader = _Refusing()
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    for _ in range(3):
+        assert client.get("/api/v1/jobs").status_code == 200
+    assert reader.attempts == 1, "one refusal is enough to stop trying"
+
+
+def test_the_cooldown_expires_and_the_grant_is_tried_again(monkeypatch):
+    """A grant that was renewed must start working again on its own."""
+    from htrflow_web import app as app_mod
+
+    clock = [0.0]
+    monkeypatch.setattr(app_mod.time, "monotonic", lambda: clock[0])
+    reader = _Refusing()
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    client.get("/api/v1/jobs")
+    clock[0] = app_mod.REFUSAL_COOLDOWN + 1
+    client.get("/api/v1/jobs")
+    assert reader.attempts == 2
 
 
 def test_no_request_writes_more_records_than_its_cap():
@@ -608,3 +731,140 @@ def test_no_request_writes_more_records_than_its_cap():
     body = client.get("/api/v1/jobs").json()
     assert len(body) == RECORD_WRITES_PER_REQUEST + 5, "every row still answers"
     assert len(reader.written) == RECORD_WRITES_PER_REQUEST
+
+
+# --- the cluster not answering is a 502, not a bare 500 (F1) --------------
+
+
+class _Unavailable(FakeReader):
+    """Everything the API server could say that is not a 404: a 403 after an
+    RBAC change, a 429, a connection that timed out."""
+
+    def list_jobs(self) -> list[dict]:
+        raise ClusterUnavailable("jobs: 403 Forbidden")
+
+    def get_job(self, namespace: str, name: str) -> dict | None:
+        raise ClusterUnavailable("jobs/kyrk: timed out")
+
+
+@pytest.mark.parametrize("path", ["/api/v1/jobs", "/api/v1/jobs/htr-test/kyrk"])
+def test_a_cluster_that_does_not_answer_is_a_502_with_the_headers(path: str):
+    """A bare exception leaves Starlette's own plain-text 500, which never
+    passes through the header middleware: the browser gets a page with no
+    nosniff, no Referrer-Policy and no frame-ancestors at all."""
+    client = TestClient(
+        create_app(_Unavailable(), progress=FakeProgress()),
+        raise_server_exceptions=False,
+    )
+    resp = client.get(path)
+    assert resp.status_code == 502
+    assert resp.headers["content-type"].startswith("application/json")
+    assert resp.json()["detail"].count(".") <= 1, "one sentence for the reader"
+    for name, value in SECURITY_HEADERS.items():
+        assert resp.headers[name] == value
+
+
+def test_the_502_never_quotes_the_client_error():
+    """The API server's own message names namespaces, verbs and identities;
+    the page says what the reader can do instead."""
+    client = TestClient(
+        create_app(_Unavailable(), progress=FakeProgress()),
+        raise_server_exceptions=False,
+    )
+    assert "403" not in client.get("/api/v1/jobs").text
+
+
+# --- the doubles cannot drift from the real adapter (audit T2) ------------
+
+
+READER_METHODS = {
+    name: inspect.signature(fn)
+    for name, fn in vars(ReaderLike).items()
+    if inspect.isfunction(fn) and not name.startswith("_")
+}
+
+
+@pytest.mark.parametrize(
+    "double", [Reader, NoCluster, FakeReader, RecordingReader, _Refusing]
+)
+def test_every_reader_double_answers_the_calls_the_routes_make(double):
+    """`app.py` duck-types its reader, so nothing but this stops a fake from
+    answering a call the real one could not (or the other way round). Each
+    method is bound with the arguments `kube.ReaderLike` declares -- a fake
+    that dropped `namespace` fails here rather than in production."""
+    assert READER_METHODS, "the protocol has methods to check"
+    on_class = {
+        name
+        for base in double.__mro__
+        for name in (*vars(base), *getattr(base, "__annotations__", {}))
+    }
+    for attr in ReaderLike.__annotations__:
+        assert attr in on_class, f"{double.__name__} has no {attr}"
+    for name, declared in READER_METHODS.items():
+        impl = getattr(double, name, None)
+        assert impl is not None, f"{double.__name__} has no {name}()"
+        args = [f"<{p}>" for p in list(declared.parameters)[1:]]
+        inspect.signature(impl).bind(double, *args)
+
+
+# --- the detail route only answers for names that could exist (F8) -------
+
+
+class Counting(FakeReader):
+    """Records every read, so a test can assert one never happened."""
+
+    def __init__(self) -> None:
+        self.asked: list[tuple[str, str]] = []
+
+    def get_job(self, namespace: str, name: str) -> dict | None:
+        self.asked.append((namespace, name))
+        return super().get_job(namespace, name)
+
+    def get_configmap(self, namespace: str, name: str) -> dict | None:
+        self.asked.append((namespace, name))
+        return super().get_configmap(namespace, name)
+
+
+@pytest.mark.parametrize(
+    ("namespace", "name"),
+    [
+        ("htr-test", "Kyrk"),  # DNS-1123 is lower-case
+        ("htr-test", "kyrk.part1"),  # a label carries no dots
+        ("htr-test", "-kyrk"),
+        ("htr-test", "kyrk-"),
+        ("htr-test", "kyrk_1"),
+        ("htr-test", "k" * 64),
+        ("htr-test", "kyrk%2F..%2Fx"),
+        ("HTR-TEST", "kyrk"),
+        ("kube-system", "kyrk"),  # a real namespace, not one this API serves
+    ],
+)
+def test_a_campaign_this_api_could_not_have_is_a_404_before_any_read(
+    namespace: str, name: str
+):
+    """Both halves go into an API path and into a ConfigMap name built from
+    them, and the service is scoped to the namespaces it was given. A string
+    the cluster could never name, or a namespace this API does not serve, is
+    not a campaign to go looking for (2026-09-14 audit) -- not refused after
+    the read, but never read at all."""
+    reader = Counting()
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    assert client.get(f"/api/v1/jobs/{namespace}/{name}").status_code == 404
+    assert reader.asked == []
+
+
+def test_a_campaign_the_cluster_could_carry_still_answers():
+    reader = Counting()
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    assert client.get("/api/v1/jobs/htr-test/kyrk").status_code == 200
+    assert reader.asked != []
+
+
+def test_the_recording_fake_refuses_a_name_the_cluster_would():
+    """The guard above is the point of this fake, so it is asserted here
+    rather than only ever being true by accident."""
+    reader = RecordingReader()
+    with pytest.raises(AssertionError, match="DNS-1123"):
+        reader.apply_configmap(
+            {"metadata": {"name": "Campaign-Kyrk", "namespace": "htr-test"}}
+        )

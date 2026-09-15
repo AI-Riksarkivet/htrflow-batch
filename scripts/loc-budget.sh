@@ -166,7 +166,125 @@ fail=0
 # 2742 -> 2750 (2026-09-14, hf token): the warm-up's one line saying a Hub
 # token is present, and the comment fixing what that line may never say --
 # the value, its length, or whose it is.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
+# 2750 -> 2801 (2026-09-14, audit W1): a pipeline construction that raises
+# part-way is torn down. htrflow's Inference.__init__ starts a daemon thread
+# bound to the step, so every step built before the failure keeps its model
+# weights on the GPU forever, and a rebuild that keeps failing repeats that
+# per page. Most of the lines are the tracking context manager and the
+# paragraph saying why the wrapper swaps a name in another package's module
+# at all: from_config owns the loop and keeps the partial list to itself.
+# 2801 -> 2825 (2026-09-14, audit W2): the older-htrflow dict fallback is
+# taken only when from_config refused the PATH, not when a step constructor
+# below it raised a TypeError of its own -- the pinned from_config does
+# open(path), so the dict retry only raised a second TypeError, and a bare
+# TypeError is not permanent, so a mistyped `settings:` key exited 1 and burned
+# every retry. The lines are the frame check and the paragraph saying how the
+# two TypeErrors are told apart.
+# 2825 -> 2844 (2026-09-14, audit W3): a page that is reprocessed has its
+# stored pair deleted first, and the verify gate stops handing publish the
+# names that failed. Both close the same hole: `missing` and `alto_dims` read
+# a LIVE bucket listing, so a previous run's objects answered for a page this
+# run had just failed -- iiif.json carried a canvas whose ALTO was the old
+# one while manifest.json recorded the page as failed.
+# 2844 -> 2859 (2026-09-14, audit W4): a `terminating` flag on the progress
+# tracker, set by the SIGTERM handler. The kubelet allows 120 s before the
+# SIGKILL and the cleanup was spending it on three status PUTs (the page's
+# progress, an interim iiif.json, a second progress saying "failed") ahead of
+# the final log ship -- the one piece of evidence that matters. Mostly the
+# paragraph saying which writes are dropped and why the ship is not.
+# 2859 -> 2912 (2026-09-14, audit W5): resume compares a sha256 of the full
+# source URL, credentials removed, instead of the redacted one it publishes.
+# The redacted form has lost its query, so on a host that selects the image
+# with `?id=` every page of a volume compared equal and an edited manifest
+# never reprocessed anything. `source_digest` and the paragraph naming the
+# parameters that rotate, the new manifest field, and `_differs`, which the
+# digest and the older redacted form now share.
+# 2912 -> 2939 (2026-09-14, audit W6): a painting body copied out of a
+# third-party manifest has every id in it scheme-checked before it reaches the
+# iiif.json we publish. Only the URL the wrapper fetches was checked, and on a
+# canvas with an image service that is the service's -- so a body whose `id`
+# read `javascript:` was published to every viewer that opened the volume.
+# `_publishable` and the paragraph saying whose URL ends up where.
+# 2939 -> 2949 (2026-09-14, audit W7): every failure exit leaves through
+# `_hard_exit`, not only SIGTERM. Returning normally handed the interpreter
+# the download pool to join at shutdown, so a fetch inside its 120 s timeout
+# kept the container alive long after the run had decided to fail. The lines
+# are the exit code the finally now carries and the note saying why an
+# exception `_main` did not classify must NOT be turned into one.
+# 2949 -> 2967 (2026-09-14, audit W8): the warm-up installs the batch
+# wrapper's RedactingFormatter instead of basicConfig's plain one. The warm-up
+# pod mounts no S3 Secret, so it ships no run log -- `kubectl logs` is where
+# its failure is read, and huggingface_hub quotes back the URL it called,
+# query and all. The lines are the installer and the paragraph saying why
+# basicConfig cannot do it and why a previous handler is dropped first.
+# 2967 -> 2997 (2026-09-14, audit W9): three consecutive pipeline rebuild
+# failures end the run. A rebuild that cannot succeed degraded silently --
+# every later page failed, and since the pages before the first dead worker
+# thread came out `ok` the all-failed guard never fired, so the volume
+# published a manifest of 600 failures and left the index green. The counter,
+# the `Unrecoverable` channel the page loop does not absorb, and the two
+# paragraphs saying which bargain each is.
+# 2997 -> 3009 (2026-09-14, audit W11): the interim viewer manifest counts
+# the pages whose own ALTO carries no WIDTH/HEIGHT as covered. The skip rule
+# is meant for a RESUMED page, whose dimensions are in the bucket rather than
+# in hand; a page that simply has none looked identical, so one of them
+# switched the live viewer off for the rest of the volume.
+# 3009 -> 3031 (2026-09-14, audit W12): VOLUME_REF and PIPELINE_ID are
+# checked against [A-Za-z0-9._-]+ with no '..'. Both go verbatim into every S3
+# key the run writes and into the public viewer_url, and both come out of a
+# campaign file -- so the shape is settled once, in Config, and a name that
+# would write outside the volume's own prefix fails the run permanently.
+# 3031 -> 3039 (2026-09-14, audit W13): the unscaled `/full/max/` fallback
+# after a level1 server's 400 no longer spends one of the page's fetch
+# attempts -- it asks a different URL, not the same one again. The loop counts
+# attempts itself now, and the comment says why the substitution can happen at
+# most once.
+# 3039 -> 3084 (2026-09-14, audit W14): MAX_IMAGE_PIXELS. FETCH_MAX_BYTES
+# bounds the transfer, not what decoding it costs -- a few MB of JPEG can
+# carry a gigapixel image, and htrflow decodes every page into memory, so a
+# file well inside the byte cap OOM-killed the pod. The header read, the
+# Config field, the two signatures it travels through, and the paragraph
+# saying why an image Pillow cannot read is deliberately NOT rejected here.
+# 3084 -> 3094 (2026-09-14, audit W15): the httpx.Client is context-managed
+# around the stages that fetch. Nothing ever closed it, so its connection pool
+# and the keep-alive sockets to the image host survived to interpreter
+# shutdown. The lines are the `with`, the re-indented call it wraps and the
+# note that publish talks only to S3.
+# 3094 -> 3099 (2026-09-14, audit W16): the SIGTERM handler is restored
+# AFTER the final log ship, not before it. A drain sends one SIGTERM and the
+# node may send another; with the handler already back at the default, the
+# second killed the pod outright and lost the log the first had preserved.
+# 3099 -> 3107 (2026-09-14, audit W17): the step-thread guard re-checks that
+# the run has not finished before it fails the page. A thread dying in the
+# same tick the run completed failed a page whose outputs were already
+# written -- and the failure path deletes them, so the retry redid it for
+# nothing. The lines are the guard and the note pointing at the next page's
+# own check, which still catches the dead pipeline.
+# 3107 -> 3126 (2026-09-14, audit W14 review): Pillow's own bomb guard is
+# turned off for the header read, under a lock, so MAX_IMAGE_PIXELS is the
+# only gate. Its error above ~179 MP was being swallowed by the "a file we
+# cannot read is not rejected" except -- a 40000x40000 image passed the very
+# check the guard exists for -- and its warning at ~89 MP fires below our own
+# default, on pages nothing is wrong with.
+# 3126 -> 3128 (2026-09-14, audit W16 review): the cleanup block ignores
+# SIGTERM outright for its duration instead of merely keeping the handler.
+# Restoring it late (W16) fixed the pod being killed mid-ship but left the
+# other half: the second signal then raised Terminated inside main's own
+# finally, so main raised instead of returning and the streams stayed torn.
+# 3128 -> 3135 (2026-09-14, audit W1 review): the paragraph saying why a
+# step whose own __init__ raised is deliberately NOT in the tracked list --
+# htrflow starts the daemon thread last, so such a step holds nothing and is
+# collected; a step that started one earlier would need tracking inside
+# htrflow itself.
+# 3135 -> 3137 (2026-09-14, audit W12 review): a name that is exactly "."
+# is refused too, and the docstring says why both it and ".." are: an S3 key
+# is an opaque string, but the URLs built from one are resolved by whatever
+# reads them.
+# 3137 -> 3156 (2026-09-14, audit W6 review): a canvas that offers several
+# painting bodies -- a P3 Choice, or the bare list manifests in the wild put
+# there -- is published with the first one that passes the URL check, instead
+# of losing its image because the shape was not a single object.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3156
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
@@ -381,7 +499,90 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 2750
 # unenforced pause outranks a refused object at the exit code. And a server
 # message this package repeats is cut at MAX_MESSAGE: a 422 with no
 # `details.causes` still carries the whole rejected pod template.
-check converter "$(count packages/converter/src -name '*.py')" 2157
+# 2157 -> 2161 (2026-09-14, audit C1): `apply` with no --out looks up an
+# earlier render of each campaign under the repo's own rendered/, so the
+# append-only and split-shape rules run for it too -- the comparison is by
+# file NAME now, since the two directories differ.
+# 2161 -> 2224 (2026-09-14, audit C2): two refusals `--prune` needed. A
+# render that produced no campaigns at all no longer prunes every campaign
+# in the namespace unless --allow-empty says so, and a repo with no
+# converter.yaml is refused by the COMMAND (the library still defaults --
+# the namespace, queue, Secret and PVC names are not things to guess at).
+# Most of the lines are the two sentences and the paragraphs saying why.
+# 2224 -> 2245 (2026-09-14, audit C3): a refused campaign Job never reaches
+# the Kueue pause sync, so a paused campaign was left running while the
+# apply reported only "some objects were refused" (exit 3). The refusal now
+# says the pause is not enforced and the apply exits 1, like a Workload that
+# never appeared.
+# 2245 -> 2283 (2026-09-14, audit C4): `source_template` is validated where
+# it is written -- exactly one {ref} and nothing else in braces -- and the
+# fill inside Volume's before-validator is caught, so a stray placeholder is
+# a line about converter.yaml instead of a KeyError traceback out of
+# `validate`. The placeholder reader and the two sentences are most of it.
+# 2283 -> 2306 (2026-09-14, audit C5): `priority` is validated as the label
+# value it is rendered into (kueue.x-k8s.io/priority-class). A free string
+# there was a 422 at apply time, after the campaign's ConfigMap had already
+# been written.
+# 2306 -> 2366 (2026-09-14, audit C6): every converter.yaml setting that
+# names a cluster object (namespace, queue, s3_secret, data_pvc,
+# runtime_class) is checked as one, and node_selector as the labels it is
+# copied into. A capitalised namespace used to pass `validate` and be
+# refused at apply time, with the render already committed.
+# 2366 -> 2394 (2026-09-14, audit C7): every API call carries a (connect,
+# read) timeout. The client sends none by default, so a half-open connection
+# left the apply blocked in recv with no deadline anywhere above it. Mostly
+# the call sites rewrapping onto their own lines.
+# 2394 -> 2409 (2026-09-14, audit C8): the immutable-field refusal gives the
+# advice that fits the Job it is about -- a warm-up is a recipe and a new
+# pipeline file, a live campaign's Job cannot change at all -- and the
+# warm-up name prefix becomes a constant `cluster` can read.
+# 2409 -> 2429 (2026-09-14, audit C9): an `images:` volume whose line of
+# volumes.txt is over 100 KiB is refused, naming the volume and its image
+# count. The Job exports that line as one environment entry and Linux stops
+# one at 128 KiB, so the pod died with "Argument list too long" before the
+# wrapper started and nothing said which volume did it.
+# 2429 -> 2437 (2026-09-14, audit C11): the two byte caps take ge=1 (at 0
+# every volume of every campaign is over the cap), and the two second
+# budgets a 32-bit ceiling -- they are rendered into int32 Kubernetes
+# fields, so a larger number was a 422 halfway through an apply.
+# 2437 -> 2450 (2026-09-14, audit C13): a campaign with no volumes at all is
+# refused. It rendered `completions: 0`, which Kubernetes reports as
+# Succeeded the moment the Job is created -- a campaign that is over before
+# it starts, and green.
+# 2450 -> 2466 (2026-09-14, audit C14): a rendered campaign whose ConfigMap
+# and Job have come apart is one sentence naming the campaign, not a bare
+# KeyError out of the loop that was about to apply it.
+# 2466 -> 2498 (2026-09-14, audit C15): every API call is retried three
+# times, 1/2/4 seconds apart, on 429 and 500-504 -- a rate limit or an
+# apiserver being upgraded left a campaign unapplied and the operator
+# re-running the whole command. Nothing else is retried: 409, 403 and 422
+# are answers about the request, not about the server's moment.
+# 2498 -> 2510 (2026-09-14, audit C10): a URL echoed back in a problem line
+# loses the value of a signing query parameter as well as its userinfo.
+# Those lines reach CI logs and pull requests; the stored URL cannot be
+# redacted at all, which the security page now says out loud.
+# 2510 -> 2527 (2026-09-14, audit review): a namespace is a DNS-1123 LABEL,
+# not the subdomain the other object names are -- `htr.batch.example` and a
+# 64-character name passed `validate` and were refused at apply time, with
+# the render already committed. Its own rule and its own sentence, which
+# says 63 and says no dots.
+# 2527 -> 2533 (2026-09-14, audit review): the incomplete-render stop got
+# its own paragraph -- it had landed under the comment that explains why a
+# refused record read is NOT a reason to stop, which reads as the opposite
+# of what the code does.
+# 2533 -> 2538 (2026-09-14, audit review): --dry-run previews an empty
+# prune instead of being refused before it can print anything -- the one
+# prune an operator most wants to see the shape of first -- and the real
+# run still refuses.
+# 2538 -> 2541 (2026-09-14, audit review): `X-Amz-Security-Token` and
+# `X-Amz-Credential` join the query parameters a problem line blanks -- a
+# presigned S3 URL carries all three, and the alternation is longest-first
+# so the security token is not matched as a bare `token`.
+# 2541 -> 2551 (2026-09-14, audit review): a DELETE retried past a 5xx takes
+# a 404 as its own success -- the attempt before it reached the API server
+# and only the answer was lost, so the retry was about to report an object
+# missing that it had just deleted. A first-attempt 404 still stands.
+check converter "$(count packages/converter/src -name '*.py')" 2551
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
@@ -518,7 +719,105 @@ check converter "$(count packages/converter/src -name '*.py')" 2157
 # which is what guarantees a terminal record exists at all); `refused`
 # remembers the namespaces whose last write was denied, so an RBAC grant that
 # was never renewed says so once instead of once per campaign per poll.
-check web       "$(count packages/web/src -name '*.py')" 1434
+# 1434 -> 1474 (2026-09-14, audit) F1: a client error that is not a 404 --
+# a 403 after an RBAC change, a 429, a connection that timed out -- escaped
+# as a bare exception, and Starlette answers those OUTSIDE the header
+# middleware: a plain-text 500 with no nosniff and no frame-ancestors on it.
+# kube.py now raises one `ClusterUnavailable` for all of them and app.py
+# answers it with a one-sentence 502 that carries the headers, and a pod
+# whose completion-index label is not a number is skipped rather than taking
+# the page down with it.
+# 1474 -> 1513 (2026-09-14, audit) T1/T2: `Reader` was the one class in this
+# package with no test of its own, and the fakes had nothing tying them to
+# it. `ReaderLike` writes the duck type down (a test binds every double
+# against it), and `apply_configmap` stops passing `force=True` -- `apply`
+# writes the same record from the live Job once a campaign is over, and
+# forcing took those terminal values back off it on every poll; a 409 while
+# the other manager is mid-write is retried once instead.
+# 1513 -> 1559 (2026-09-14, audit) F2: the campaign list pulled every campaign
+# record ConfigMap WITH its `volumes.txt` on every poll -- one line per volume,
+# megabytes for a real backfill, for labels and a date. The records are now
+# listed as PartialObjectMetadata (the one call this adapter makes through
+# `call_api`, since the generated methods overwrite `Accept`), and the status
+# ConfigMaps -- whose `data` IS the reaped campaign's row -- as a second,
+# label-separated list.
+# 1559 -> 1571 (2026-09-14, audit) F4: the progress fan-out had a per-row cap
+# but no overall budget, so an unreachable bucket held one worker for the cap
+# times progress.py's timeout -- over a minute, inside a sync handler -- and
+# enough such requests emptied the threadpool /healthz is answered from. The
+# rows past a five-second deadline are answered with no progress.
+# 1571 -> 1621 (2026-09-14, audit) F5: /uv.html is a third-party page with no
+# <meta> CSP of its own, and the only thing the header forbade on it was
+# framing -- while the page takes its manifest URL straight from the
+# fragment. It gets a policy of its own, with the built viewer's one inline
+# <script> and one inline <style> hashed into it at startup so nothing has
+# to be allowed by 'unsafe-inline'.
+# 1621 -> 1632 (2026-09-14, audit) F6: a done volume's row is cached for an
+# hour because its counts never change again -- but its `ageSeconds` was
+# computed at fetch and cached with them, so a card read "updated 8 s ago"
+# all afternoon. The age is recomputed from the row's own timestamp on every
+# cache hit; nothing is re-fetched.
+# 1632 -> 1645 (2026-09-14, audit) F7: a refused namespace was remembered for
+# logging only, so an unrenewed RBAC grant still cost twenty server-side
+# applies on the critical path of every page load, for ever. The refusal now
+# also stops the writes for a cooldown, which expires so a renewed grant
+# starts working without a restart.
+# 1645 -> 1666 (2026-09-14, audit) F8: the campaign detail route took any
+# namespace and any name, put both into an API path and into the ConfigMap
+# names built from them, and ignored the namespaces the service was actually
+# given. Both halves are checked against one DNS-1123 label and against
+# `cfg.namespaces` before any read happens.
+# 1666 -> 1690 (2026-09-14, audit) F9: a volume's progress file was read
+# whole, with no size cap and no cap on the strings inside it, and the URL it
+# came from was followed wherever it redirected. It is now streamed and
+# abandoned past 64 KB, redirects are refused, and the three strings a person
+# reads off the card are clipped.
+# 1690 -> 1695 (2026-09-14, audit) F15: a volume id went into the progress
+# URL unencoded, so an id with `../` in it -- volumes.txt is a file people
+# edit in a git repo -- was normalised into a request for another key.
+# 1695 -> 1715 (2026-09-14, audit) F11: the campaign record's failedVolumes
+# capped the number of entries but not their size, and a reason is whatever
+# the wrapper's termination message said -- a traceback, a pod-template
+# struct. Fifty of those is a ConfigMap the API server refuses, which is a
+# campaign with no record at all, so each reason is clipped and the oldest
+# entries are dropped until the field fits.
+# 1715 -> 1738 (2026-09-14, audit) F19: the rule that a campaign's finishedAt
+# never moves backwards was a string compare, and its two writers need not
+# write the same offset -- `09:00Z` sorts before `10:00+02:00` while being an
+# hour after it. The two are parsed and compared as moments, a value with no
+# offset read as UTC.
+# 1738 -> 1792 (2026-09-14, R1) a campaign whose Job the TTL reaped answered
+# its detail route with no volume rows at all, so the page showed it as
+# finished and nobody could open a volume in the viewer, read its ALTO or its
+# run log -- while manifest.json, iiif.json, alto/ and the log were all still
+# in the bucket. The rows are rebuilt from what has no TTL (the record's
+# volumes.txt, the status record's failedVolumes, the campaign's own ending),
+# through the same row builder a live campaign's rows come from, and their
+# page counts come from the bucket like a live campaign's.
+# 1792 -> 1817 (2026-09-14, audit) F20: the service serves /config.js
+# itself now, built from its own environment, so the page's idea of where
+# the results live cannot drift from the API's -- which is what the run-log
+# route checks its `?log=` and `?manifest=` against.
+# 1817 -> 1842 (2026-09-14, audit review) a 409 on the record apply was
+# raised as ClusterUnavailable, which put the namespace into the ten-minute
+# cooldown kept for a DENIED grant -- but a conflict says another field
+# manager owns the field, which is exactly what `apply` writing the terminal
+# record looks like. Its own `ApplyConflict`, and the retry waits a moment
+# instead of meeting the same half-finished write.
+# 1842 -> 1850 (2026-09-14, audit review) a reaped campaign whose phase is `Unknown` called every
+# volume row `done`, which claimed the opposite of what `Unknown` means and
+# contradicted the record's own volumesFailed whenever the detail endpoint
+# never got to name the failures. Those rows say `unknown`, and the bucket
+# still answers for them (progress.json, or the manifest.json fallback).
+# 1850 -> 1854 (2026-09-14, audit review) a reaped row's links came from the resultsBase
+# stored in the record while the progress files this process fetched for
+# them came from the current config -- two different places whenever a
+# bucket moved. Both are derived now; the stored one stays as provenance.
+# 1854 -> 1863 (2026-09-14, audit review) the progress URL encoded the volume id and the row's
+# own links did not, so `../` in an id -- volumes.txt is a file people edit
+# in a git repo -- walked out of the campaign's prefix in the href a reader
+# clicks. Every URL a row carries is encoded now; the `id` field is not.
+check web       "$(count packages/web/src -name '*.py')" 1863
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
@@ -649,7 +948,53 @@ check web       "$(count packages/web/src -name '*.py')" 1434
 # on this card wears, and the clipped line clips with a margin so that ring
 # survives at its edge. Four declarations, a rule of its own for focus, and
 # the comment saying which contrast the underline now carries.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3857
+# 3857 -> 3937 (2026-09-14, audit) F3/F14: every poll on this site -- the
+# campaign list, each card's own volume table, the live run log -- had no
+# in-flight guard, never passed its AbortController's signal into fetch (so
+# an abandoned request ran to completion and only its answer was dropped),
+# polled a tab nobody was looking at, and asked a dead API at full cadence
+# for ever. $lib/poll is the one poller all three now share: one request in
+# flight, paused while `document.hidden`, doubling the wait on consecutive
+# failures up to five minutes, and polling at once on the way back.
+# 3937 -> 3949 (2026-09-14, audit) F17: the page-progress bar took its width
+# and its aria-valuemax straight from the wrapper's progress.json -- counts
+# that arrive over the network and that a half-written run can make disagree
+# with itself -- so a bar 900% wide, or one running backwards, was a page the
+# numbers could ask for. Both the fill and the value a screen reader is told
+# are clamped to the track.
+# 3949 -> 3954 (2026-09-14, audit) F16: `sourceUrl` was checked at the last
+# step before it became an href and `iiifUrl` was not, and neither was
+# encoded into the viewer's `#?manifest=` fragment -- both come from a
+# volume id that arrived off a campaign's volumes.txt.
+# 3954 -> 3964 (2026-09-14, audit) F18: every URL the read API sends was a
+# plain z.string(), so a field that is not a URL at all reached an href or a
+# fetch target and was only ever caught by whichever component happened to
+# check it again. They are refined at the boundary now, nullable where the
+# API really does send null.
+# 3964 -> 4026 (2026-09-14, audit) F10: a volume of a few hundred pages
+# leaves a run log of tens of megabytes, and the live page re-parsed and
+# re-rendered the whole of it every fifteen seconds. The end is drawn by
+# default -- cut at a line boundary -- with the rest one click away and the
+# `raw` link still opening the whole object.
+# 4026 -> 4066 (2026-09-14, audit) F20: /log took its `?log=` and
+# `?manifest=` straight out of the query string and fetched any absolute
+# http(s) URL, so a link pasted to someone could point the page at any host
+# at all. Both must now sit under the results base the service names in
+# /config.js; an unset base still accepts any absolute URL, for a dev run
+# with no service to ask.
+# 4066 -> 4075 (2026-09-14, audit review) `unknown` joins the volume-state enum and the card draws it
+# with the quiet treatment a volume that has not started gets -- neither is
+# a failure.
+# 4075 -> 4086 (2026-09-14, audit review) `isResultUrl` compared the log URL to the results base
+# as text, so `<base>/../evil.txt` passed while not being under the base at
+# all. Both are normalised through `new URL` first.
+# 4086 -> 4091 (2026-09-14, audit review) a tick that let something escape stopped the poll
+# for good and said nothing. It counts as a failed tick and backs off like
+# any other.
+# 4091 -> 4102 (2026-09-14, audit review) LIVE_MAX_FAILURES counts attempts, not minutes, and
+# the backoff stretched twenty of them from five minutes to an hour. Both
+# the constant and the branch that reads it now say so.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4102
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
@@ -678,5 +1023,58 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 3857
 # on jobs and configmaps -- the command now reads each campaign's live Job to
 # record how it ended, and reads the record back to leave a finished campaign
 # alone. `list` does not authorize a read by name.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 774
+# 774 -> 821 (2026-09-14, audit): templates/policies/rbac-scope.yaml. RBAC
+# cannot scope a verb to an object name, so the read API's create/patch on
+# configmaps covers the immutable pipeline ConfigMaps too; a Kyverno rule
+# matched on the requesting ServiceAccount is the only place that scope can
+# be said. Half the file is the paragraph explaining why `background: false`
+# and a subject match are one decision, not two.
+# 821 -> 834 (2026-09-14, audit): the web front's ingress list defaults to
+# every address in front of an unauthenticated NodePort. The default stays
+# (a dev stack that loses it loses its browser), so the guard makes it an
+# explicit choice instead -- `htrflow-batch.validate` fails unless
+# network.web.allowPublicIngress says so, and only when the policies are
+# actually rendered, since a campaigns repo's CI renders this chart with
+# network.enabled=false to get at the policy objects alone. The comment is
+# most of the thirteen lines.
+# 834 -> 846 (2026-09-14, audit): the `except` list of every catch-all
+# egress gains link-local, loopback and network.privateCidrs. One line of
+# template and eleven of comment, because the surprising half is not what is
+# excluded but what still is not: a range the operator NAMES stays reachable,
+# since it is its own ipBlock and egress rules are a union.
+# 846 -> 856 (2026-09-14, audit): the CIDR half of the S3 egress rule names
+# its ports. Five lines in each of the two files that build that rule
+# (network.yaml for the batch Job, web.yaml for the read API -- separate
+# templates cannot share a variable), comment included.
+# 856 -> 857 (2026-09-14, audit): the model-revision rule drops its
+# `managed-by: converter` selector (four lines) for the paragraph saying why
+# a label anyone can leave off is not what identifies a pipeline (five).
+# 857 -> 893 (2026-09-14, audit): rbac-scope.yaml gains the prune rule --
+# the apply identity's `delete` is granted over every Job and ConfigMap in
+# the namespace, because that is the only shape RBAC has, and only
+# admission can hold it to the objects the converter labelled. Rendered
+# with the identity it scopes (apply.rbac.enabled), so it is never a rule
+# about a ServiceAccount that does not exist.
+# 893 -> 932 (2026-09-14, audit): the apply pod gets a NetworkPolicy. It had
+# a ServiceAccount and, under this chart's own default deny, no route to the
+# API server -- an apply that hangs to its deadline saying nothing. Net of a
+# refactor that paid for part of it: the apiserver-endpoint lookup is now one
+# helper instead of a copy per template, which is what kept the third copy
+# from being written.
+# 932 -> 944 (2026-09-14, audit): the two image rules walk
+# `ephemeralContainers` in their Pod rules. `kubectl debug` runs an image of
+# the debugger's choosing on the GPU node, and neither the digest pin nor
+# the repository allow-list could see it. Twelve lines, all of them the
+# paragraph in each file saying why the Job rules deliberately do not.
+# 944 -> 955 (2026-09-14, audit review): rbac-scope.yaml's status-name
+# pattern mirrors the converter's `_NAME_RE` rather than approximating it
+# with a DNS label -- campaign names may carry dots, and the approximation
+# would have denied the read API's write for every dotted campaign. Plus an
+# explicit `failurePolicy: Fail`, and the paragraph saying why a denied
+# write is an outage rather than a control.
+# 955 -> 957 (2026-09-14, audit, merged with the deployment round) D17: the web Role granted `watch` on
+# jobs, pods and configmaps and nothing in packages/web has ever opened one
+# -- every response is computed from a get or a list on the request. Two
+# lines of comment for three verbs removed.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 957
 exit $fail

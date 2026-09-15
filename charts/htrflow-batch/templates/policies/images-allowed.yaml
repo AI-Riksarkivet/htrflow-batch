@@ -11,6 +11,12 @@
 # `ghcr.io/riksarkivet-evil`. The repository is the part before `@`; the
 # digest pin itself is the images-pinned policy's job.
 #
+# The Pod rules walk `ephemeralContainers` as well (2026-09-14, audit): a
+# `kubectl debug` attaches one to a running pod, and it runs an image of the
+# debugger's choosing on the GPU node in the target's namespaces. The Job
+# rules do not, because Kubernetes forbids ephemeral containers in a pod
+# template -- there is nothing there to walk.
+#
 # This covers EVERY pod in the namespace, the platform's own included: an
 # image outside these prefixes cannot start here, so a supporting workload
 # from another registry (charts/htrflow-devstack's RustFS, say) needs its
@@ -60,7 +66,7 @@ spec:
         - name: foreign
           variable:
             jmesPath: >-
-              request.object.spec.[containers, initContainers][] | [?image]
+              request.object.spec.[containers, initContainers, ephemeralContainers][] | [?image]
               | [?!regex_match({{ $re | squote }}, split(image, '@')[0])].image
             default: []
       validate:

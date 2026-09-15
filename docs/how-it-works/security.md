@@ -24,23 +24,36 @@ is set, the chart ships `ClusterPolicy` objects, and the API server applies
 them to every Job, Pod and pipeline ConfigMap in the namespace, whoever wrote
 it. The campaigns repo's CI can run the same policies over its rendered output
 with the Kyverno CLI, so a bad change fails in the pull request, not at apply
-time. The two image rules apply to every Job and Pod. The revision rule is
-narrower: it checks only ConfigMaps that carry the converter's
-`managed-by: converter` label, and only the top-level `steps:` in their
-pipeline.
+time. The two image rules apply to every Job and Pod, and on a Pod they
+cover the ephemeral containers a debugging session attaches as well as the
+ones it was created with. The revision rule
+applies to every ConfigMap carrying a `pipeline.yaml` key — that key is what
+makes a ConfigMap a pipeline, where a label is only a claim about one — and
+reads the top-level `steps:` in it.
+
+Admission is also where the platform's own identities are scoped. RBAC
+grants a verb over a resource *type* and has no way to name one object, so
+two grants the code needs are necessarily wider than the code: the read
+API's `create`/`patch` on ConfigMaps, and the apply identity's `delete` on
+Jobs and ConfigMaps. The `rbac-scope` policy narrows both by matching on the
+requesting ServiceAccount, which only the API server can see. It runs with
+`background: false`, because a background scan replays stored objects with
+no requester to match.
 
 | Control | Where | What it closes |
 |---|---|---|
 | **Digest pin**: `security.policies.enabled` | Kyverno `ClusterPolicy` `htrflow-batch-images-pinned-<namespace>`, at admission for every Job and Pod in the namespace, and in the campaigns repo's CI through the Kyverno CLI. Message: `image must be pinned by digest: <image>` | A mutable tag changing what a pipeline id means. `htrflow-campaigns validate` also refuses a pipeline whose `image:` is not `@sha256:`-pinned, because the renderer needs the digest, but it only sees what it renders |
-| **Image allow-list**: `security.allowedImageRepos` (with `policies.enabled`) | Kyverno `ClusterPolicy` `htrflow-batch-images-allowed-<namespace>`, in the same two places. Message: `image is not from an allowed repository: <image> — allowed: <list>` | Images from any registry. With an empty list the policy is not rendered and nothing is checked |
-| **Model revision**: `security.requireModelRevision` (with `policies.enabled`) | Kyverno `ClusterPolicy` `htrflow-batch-model-revision-<namespace>`, at admission of the pipeline ConfigMap and in the CLI. Message: `models not pinned to a revision: <models> — add revision: <40-character commit hash> under model_settings (YOLO) or model_settings.model_kwargs (TrOCR and other Hugging Face models)` | An unpinned Hugging Face repo swapping its weights under the same pipeline id |
+| **Image allow-list**: `security.allowedImageRepos` (with `policies.enabled`) | Kyverno `ClusterPolicy` `htrflow-batch-images-allowed-<namespace>`, in the same two places. Message: `image is not from an allowed repository: <image> — allowed: <list>` | Images from any registry. With an empty list the policy is not rendered and nothing is checked. The match is a prefix on a path boundary, so an organisation-wide prefix admits every repository in that organisation, including one created after you wrote the list — name the exact repositories if that organisation has more writers than this platform does |
+| **Model revision**: `security.requireModelRevision` (with `policies.enabled`) | Kyverno `ClusterPolicy` `htrflow-batch-model-revision-<namespace>`, at admission of any ConfigMap with a `pipeline.yaml` key, and in the CLI. Message: `models not pinned to a revision: <models> — add revision: <40-character commit hash> under model_settings (YOLO) or model_settings.model_kwargs (TrOCR and other Hugging Face models)` | An unpinned Hugging Face repo swapping its weights under the same pipeline id |
+| **Write scope of a ServiceAccount**: `security.policies.enabled` | Kyverno `ClusterPolicy` `htrflow-batch-rbac-scope-<namespace>`, at admission, on every ConfigMap write by the web ServiceAccount. Message: `the read API may only write a campaign's own status ConfigMap (campaign-<name>-status), not <name>` | The read API using a Role that cannot be scoped to one object name to overwrite a pipeline ConfigMap, and so choose the weights the next campaign loads |
+| **Delete scope of the apply identity**: `security.policies.enabled` with `apply.rbac.enabled` | Kyverno `ClusterPolicy` `htrflow-batch-rbac-scope-<namespace>`, at admission, on every Job or ConfigMap the apply ServiceAccount deletes. Message: `the apply identity may only delete objects the converter rendered` | A pruning identity reaching a Job or ConfigMap it never rendered — a running campaign's, or another workload's in the same namespace |
 | **Signed images**: `security.verifyImages.*` (Kyverno `ClusterPolicy`, cosign keyless) | At admission, for every Pod in the namespace | Images not built by the CI identity you name. Off by default. Needs the image to be signed at publish time ([CI](../development/ci.md)) |
 | **Control-plane digest gate**: `web.image` must be `@sha256:`-pinned unless `security.allowTagImages` is set | The chart template | Anyone with push access to the registry replacing the web front in place |
 | **http(s)-only sources, byte caps, redirect caps** | `parse_pipeline`/`parse_campaign`, and the wrapper (`MANIFEST_MAX_BYTES`, `FETCH_MAX_BYTES`, at most 5 redirects, raster images only) | SSRF and denial of service driven by campaign data |
 | **No runtime path to the campaigns repo** | The campaigns repo's own CI, outside this system | Nothing in the cluster clones the campaigns repo or holds a credential for it |
-| **URL redaction** | Wrapper logs, the termination log, `page_sources` | A tokenised private IIIF URL ending up in a world-readable log |
+| **URL redaction** | Wrapper logs, the warm-up's logs, the termination log, `page_sources`, and the problem lines `validate` prints (userinfo, and a signing query parameter such as `X-Amz-Signature`, `X-Amz-Security-Token`, `X-Amz-Credential`, `signature`, `token`, `sig` or `key`) | A tokenised private IIIF URL ending up in a world-readable log or a pull request comment. It does **not** hide the URL itself — see [Source URLs are not secrets](#source-urls-are-not-secrets) |
 
-All three policies are off by default (`security.policies.enabled: false`),
+These policies are all off by default (`security.policies.enabled: false`),
 because a policy nothing reconciles is worse than none. They are the only
 thing that enforces the image allow-list and the model-revision rule. A rule
 inside the converter would only ever see what the converter rendered, and a
@@ -85,6 +98,25 @@ It uses `NotResource` because RustFS applies a `Deny` statement to the
 credentialed principals as well, and ignores a condition that targets only
 anonymous callers. `scripts/compose_init.py` mirrors the same policy for the
 compose stack.
+
+### Source URLs are not secrets
+
+A volume's `manifest:` and `images:` URLs are stored **verbatim**, in four
+places: the campaign file in git, the rendered campaign under `rendered/`
+(committed by the campaigns repo's CI), the `campaign-<name>` ConfigMap in
+the cluster, and `page_sources` in each volume's `manifest.json`. So a
+presigned URL put into a campaign publishes its signature to everyone who
+can read the repo, everyone who can read the namespace, and everyone who can
+read the results.
+
+Treat a source URL as public. If the source needs a credential, give it one
+the platform holds — not one written into the URL — or accept that the URL
+is as public as the campaigns repo. What the converter does do is keep a
+credential out of the *problem lines* it prints: a URL echoed back in a
+validation error loses its userinfo and the value of a signing query
+parameter, because those lines travel further than the file does (into CI
+logs and pull request comments). That is redaction of the echo, not of the
+stored value.
 
 ### Who holds S3 credentials
 
@@ -140,21 +172,21 @@ data volume.
   execs. The web front gets an emptyDir at `/tmp`.
 - **Service account tokens.** `automountServiceAccountToken: false` is set
   on every pod except the **web front**. It is the one pod that needs an API
-  credential: a namespace-scoped Role with `get`/`list`/`watch` on `jobs`,
-  `pods` and `configmaps`, plus `create` and `patch` on `configmaps` — that
-  is read-only but for the single record it writes, the campaign's
-  `campaign-<name>-status` ConfigMap
-  ([The record a campaign leaves](campaigns.md#the-record-a-campaign-leaves)).
-  Nothing cluster-wide, no `delete`, and nothing at all on Jobs or Pods
-  beyond reading them. Be clear-eyed about what the write costs: RBAC cannot
-  restrict those two verbs to a name pattern, so an attacker holding this
-  token could create or overwrite **any** ConfigMap in the namespace,
-  including a pipeline's. The web front is also the pod browsers reach, and
-  it has no authentication of its own. Remote code execution in that process
-  would read the token. That is why the Role is otherwise read-only and
-  scoped to one namespace, and why the web front belongs behind an
-  authenticated proxy before anyone outside a trusted network can reach
-  it.
+  credential: a namespace-scoped Role, nothing cluster-wide. It reads `jobs`,
+  `pods` and `configmaps` — and it is no longer only a reader. It also holds
+  `create` and `patch` on ConfigMaps, because the per-campaign status record
+  it writes is what still answers for a campaign once the Job behind it is
+  past its TTL
+  ([The record a campaign leaves](campaigns.md#the-record-a-campaign-leaves)). RBAC cannot scope a verb to one object name, so that grant
+  covers every ConfigMap in the namespace; the name scope is the `rbac-scope`
+  policy above instead. The web front is also the pod browsers reach, and it
+  has no authentication of its own. Remote code execution in that process
+  would read the token and could then write ConfigMaps as far as admission
+  allows: one campaign's status object with the policies on, any ConfigMap in
+  the namespace — the pipelines a Job mounts included — without them. So the
+  web front belongs behind an authenticated proxy before anyone outside a
+  trusted network can reach it, and `security.policies.enabled` counts for
+  more now that this pod writes at all.
 - **Secrets are files, not environment variables.** The S3 Secret's
   `credentials` key (AWS ini format) is mounted at `/secrets/s3` (mode `0440`)
   and reaches boto3 through `AWS_SHARED_CREDENTIALS_FILE`. Only the non-secret
@@ -208,19 +240,40 @@ Helm `lookup`, and you can override it with `network.apiServer` and
 `network.nodeCidrs`. `network.clusterCidrs` must hold your cluster's pod and
 service ranges, because the warm-up pod's public egress excludes them.
 
+A catch-all egress is never the whole internet. Every rule that allows
+`0.0.0.0/0` carves out the pod, service and node ranges, link-local
+(`169.254.0.0/16`, where a cloud serves instance credentials to any process
+that asks), loopback, and `network.privateCidrs` — the three private blocks
+by default, which is where the cluster's own network lives. Set that value
+if your private plan is a different one. The carve-out is of the catch-all,
+not of the address: a range you name in `network.iiifCidrs` or
+`network.s3Cidrs` is its own rule, and egress rules are a union, so an
+on-premises IIIF origin or S3 endpoint keeps working by being named.
+
 | Pod | Ingress | Egress (besides kube-dns) | Cannot reach |
 |---|---|---|---|
-| campaign pod (`app=htrflow-batch`) | none | S3 (the in-namespace `app=rustfs` pod, or `network.s3Cidrs`); the IIIF origins in `network.iiifCidrs` on 443/80 | Hugging Face Hub, the API server, the registry, anything else in-cluster, the rest of the internet |
-| warm-up pod (`app=htrflow-warmup`) | none | the public internet on 443, minus the pod, service and node ranges (Hugging Face Hub is a CDN, so there is no CIDR to pin) | the API server, and anything in-cluster — including an in-cluster S3. An S3 endpoint on the public internet is *not* blocked by this rule; what keeps the warm-up out of the results bucket is that it mounts no S3 Secret and holds no credential |
+| campaign pod (`app=htrflow-batch`) | none | S3 (the in-namespace `app=rustfs` pod on 9000, or `network.s3Cidrs` on `network.s3Ports`); the IIIF origins in `network.iiifCidrs` on 443/80 | Hugging Face Hub, the API server, the registry, anything else in-cluster, the rest of the internet |
+| warm-up pod (`app=htrflow-warmup`) | none | the public internet on 443, minus the carve-out above (Hugging Face Hub is a CDN, so there is no CIDR to pin) | S3, the API server, anything in-cluster, link-local and private addresses |
 | web front (`app=htrflow-web`) | `network.web.ingressCidrs` on 8081 (NodePort traffic arrives SNAT'd from the node, so include the node range) | the API server (`network.apiServer.cidr`); S3 (same targets as the campaign pod) for its `progress.json` reader | the IIIF origin, Hugging Face Hub, anything else in-cluster |
+| apply pod (`app=htrflow-campaigns`, only with `apply.rbac.enabled`) | none | the API server (`network.apiServer.cidr`) | S3, the IIIF origin, Hugging Face Hub, anything else in-cluster. It reads its campaigns from a directory, never from a network |
 | RustFS (`app=rustfs`, devstack) | 9000 from anywhere (and 9001 when the console is on) | none | — |
 | rustfs-init hook (`app=rustfs-init`, devstack) | none | RustFS on 9000 | — |
 
+The web front's ingress list defaults to every address, because the dev
+stack and the compose stack are reached from wherever the operator's browser
+is. That default is in front of a NodePort with no authentication, so the
+chart refuses to render it unless `network.web.allowPublicIngress` says the
+exposure is deliberate. Listing the ranges that may reach it needs no such
+flag.
+
 Under the default deny, anything applied by hand in the namespace has no
-network access unless it gets its own policy. `images:` volumes hosted
+network access unless it gets its own policy. That includes the pod that
+runs `htrflow-campaigns apply` in-cluster: label it `app=htrflow-campaigns`
+and the chart's policy lets it reach the API server it was given an identity
+for. `images:` volumes hosted
 somewhere other than the IIIF origin need their host added to
-`network.iiifCidrs`. A catch-all range there still excludes the cluster, node
-and API server ranges.
+`network.iiifCidrs`. A catch-all range there still excludes everything in
+the carve-out above.
 
 **Known limitation: the policy sync window.** Some CNIs apply a new pod's
 policies asynchronously, after the pod already has its IP, and until they do

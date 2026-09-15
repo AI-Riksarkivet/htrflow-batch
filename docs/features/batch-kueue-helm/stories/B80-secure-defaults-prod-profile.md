@@ -23,8 +23,11 @@ så catch-allen `iiifCidrs: ["0.0.0.0/0"]` lämnar länklokala adresser nåbara 
 batch-poddarna (X11, E10).
 
 ## Vad som levereras
-- `ci/prod-values.yaml` som `getting-started/deploy.md` utgår från: policies på,
-  allow-list satt, `requireModelRevision: true`, `psaEnforce: restricted`.
+- `values-prod.yaml` som `getting-started/deploy.md` utgår från: policies på,
+  allow-list satt, `requireModelRevision: true`, `psaEnforce: restricted`,
+  `verifyImages` på med rätt signeringsidentitet. (levererad 2026-09-14,
+  revisionsrundan; filen ligger i chartroten, inte under `ci/`, eftersom den är
+  en installationsprofil och inte en renderingsfixtur)
 - `htrflow-batch.validate` gör `fail` på `policies.enabled: false` utan ett uttalat
   opt-out-värde; chartet renderar PSA-labels när det äger namespacet.
 - Egress-undantaget täcker länklokala adresser.
@@ -32,6 +35,8 @@ batch-poddarna (X11, E10).
 
 ## Klart när
 
-- [ ] `helm install -f ci/prod-values.yaml` ger ett namespace där policies är
-      Enforce och PSA är `restricted`, utan extra Makefile-körning.
+- [x] `helm install -f values-prod.yaml` ger policies i Enforce och
+      `psaEnforce: restricted`. PSA-etiketterna sätts fortfarande av
+      `make psa-labels`: Helm kan inte etikettera ett namespace det inte
+      själv skapat, så det steget står kvar på installationssidan.
 - [ ] En installation utan opt-out och utan policies misslyckas med en mening.

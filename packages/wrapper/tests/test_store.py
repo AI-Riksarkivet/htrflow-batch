@@ -130,3 +130,27 @@ def test_get_json_or_none(cfg, s3):
     assert store.get_json_or_none("manifest.json") == {"pages": 1}
     store.put_text("manifest.json", "not json", "application/json")
     assert store.get_json_or_none("manifest.json") is None
+
+
+def test_delete_page_removes_both_formats(cfg, s3, tmp_path):
+    """W3: a page about to be reprocessed must not leave the previous run's
+    objects behind -- if this run then FAILS the page, the stale pair would
+    make the verify gate count it as accounted for and publish would read the
+    stale ALTO into iiif.json while manifest.json says the page failed."""
+    store = ResultStore(cfg)
+    store.upload_page(
+        "0001",
+        {
+            "alto": _mk(tmp_path, "alto/0001.xml", "<alto/>"),
+            "page": _mk(tmp_path, "page/0001.xml", "<PcGts/>"),
+        },
+    )
+    store.delete_page("0001")
+    assert store.done_pages() == set()
+    assert store._list_stems("alto") == set()
+    assert store._list_stems("page") == set()
+
+
+def test_delete_page_tolerates_a_page_that_is_not_there(cfg, s3):
+    """Nothing to delete is the normal case on a first run."""
+    ResultStore(cfg).delete_page("0007")

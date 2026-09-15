@@ -9,6 +9,9 @@ cluster (docs: task-4-brief).
 from __future__ import annotations
 
 import json
+import time
+from datetime import datetime, timezone
+from urllib.parse import quote
 
 import yaml
 
@@ -19,7 +22,7 @@ _MANAGED_BY_LABEL = "htrflow.riksarkivet.se/managed-by"
 #: the converter renders. Both carry `managed-by=converter`, which is what
 #: `htrflow-campaigns apply --prune` deletes a cancelled campaign by, so the
 #: record and its status go together when the campaign file leaves git.
-_KIND_LABEL = "htrflow.riksarkivet.se/kind"
+KIND_LABEL = "htrflow.riksarkivet.se/kind"
 STATUS_KIND = "status"
 #: ``campaign-<name>`` + this is the status ConfigMap of that campaign --
 #: the one name both the read API and `apply` build (B76).
@@ -175,14 +178,34 @@ def status_record(row: dict, failures: list[dict] | None = None) -> dict[str, st
         "resultsBase": row["resultsBase"],
     }
     if failures is not None:
-        data["failedVolumes"] = json.dumps(
-            [
-                {"id": v["id"], "reason": (v.get("reason") or {}).get("error", "")}
-                for v in failures[:_MAX_FAILURES]
-            ],
-            separators=(",", ":"),
-        )
+        data["failedVolumes"] = _failed_volumes(failures)
     return data
+
+
+#: A reason is one sentence for a card to show. The wrapper writes whatever
+#: its termination message said, which can be a whole Python traceback.
+MAX_REASON = 300
+#: And the field as a whole, serialized. A ConfigMap is capped at 1 MiB by
+#: the API server, and a record it refuses is a campaign with no record at
+#: all (2026-09-14 audit) -- so the oldest failures are dropped until it
+#: fits, rather than the write failing.
+MAX_FAILED_VOLUMES = 200 * 1024
+
+
+def _failed_volumes(failures: list[dict]) -> str:
+    entries = [
+        {
+            "id": v["id"][:MAX_REASON],
+            "reason": ((v.get("reason") or {}).get("error") or "")[:MAX_REASON],
+        }
+        for v in failures[:_MAX_FAILURES]
+    ]
+    while entries:
+        blob = json.dumps(entries, separators=(",", ":"))
+        if len(blob.encode()) <= MAX_FAILED_VOLUMES:
+            return blob
+        entries.pop()
+    return "[]"
 
 
 #: Phases a stored record may carry -- the ones this API itself writes. A
@@ -240,70 +263,112 @@ def record_summary(record: dict, status: dict, cfg, warmup: dict) -> dict | None
         "createdAt": meta.get("creationTimestamp"),
         "startedAt": data.get("startedAt") or None,
         "finishedAt": data.get("finishedAt") or None,
-        "resultsBase": data.get("resultsBase")
-        or _results_base(namespace, pipeline, cfg),
+        # Derived, never the stored one. The record keeps the base the
+        # campaign ran under and that is worth keeping, but it is
+        # informational: the links on this row and the progress files THIS
+        # process fetches for them have to name the same place, and the
+        # progress base was always derived (2026-09-14 review).
+        "resultsBase": _results_base(namespace, pipeline, cfg),
         "warmup": warmup,
         "jobGone": True,
     }
 
 
-def _record_failures(row: dict, status: dict, cfg) -> list[dict]:
-    """The failed volumes the record kept, as rows the page already knows
-    how to draw. Their ``reason`` is the one sentence the detail endpoint
-    observed while the pods still existed; anything finer is in the volume's
-    own ``manifest.json`` in the bucket (docs: reference/s3-layout)."""
+def _recorded_reasons(status: dict) -> dict[str, str]:
+    """``{volume id: reason}`` from the status record's ``failedVolumes``.
+    Those sentences are the detail endpoint's, observed while the pods still
+    existed; anything finer is in the volume's own ``manifest.json`` in the
+    bucket (docs: reference/s3-layout)."""
     try:
         listed = json.loads((status.get("data") or {}).get("failedVolumes") or "[]")
     except ValueError:
-        listed = []
-    base, pipeline = row["resultsBase"], row["pipeline"]
-    rows = []
-    for i, entry in enumerate(listed if isinstance(listed, list) else []):
-        if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
-            continue
-        vol_id = entry["id"]
-        rows.append(
-            {
-                "index": i,
-                "id": vol_id,
-                "state": "failed",
-                "manifestUrl": f"{base}/{vol_id}/manifest.json",
-                "iiifUrl": f"{base}/{vol_id}/iiif.json",
-                "altoPrefix": f"{base}/{vol_id}/alto/",
-                "logUrl": _log_url(pipeline, vol_id, cfg),
-                "sourceUrl": None,
-                "reason": {
-                    "stage": None,
-                    "permanent": None,
-                    "error": str(entry.get("reason", "")),
-                },
-                "progress": None,
-            }
-        )
-    return rows
+        return {}
+    if not isinstance(listed, list):
+        return {}
+    return {
+        entry["id"]: str(entry.get("reason", ""))
+        for entry in listed
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str)
+    }
+
+
+#: What a volume nobody named as failed did, given how the campaign ended.
+#: A reaped campaign has no per-index state left -- that was the Job's
+#: ``completedIndexes`` -- so the campaign's own ending is what every row
+#: that is not in ``failedVolumes`` gets. ``Unknown`` is the record's own
+#: word for "nobody wrote down how this ended", and its rows say the same:
+#: calling them `done` claimed the opposite, and contradicted the record's
+#: own ``volumesFailed`` whenever the detail endpoint never got to name the
+#: failures (2026-09-14 review). The bucket still answers for such a row --
+#: its progress file, or its manifest.json, says what actually happened.
+UNKNOWN_STATE = "unknown"
+_RECORD_STATE = {
+    "Succeeded": "done",
+    "PartiallyFailed": "done",
+    UNKNOWN_PHASE: UNKNOWN_STATE,
+    "Failed": "failed",
+}
 
 
 def record_detail(
-    row: dict, status: dict, cfg, pipeline_configmap: dict | None
+    row: dict,
+    record: dict | None,
+    status: dict,
+    cfg,
+    pipeline_configmap: dict | None,
+    offset: int = 0,
+    limit: int = 200,
+    fetch_progress=None,
 ) -> dict:
-    """``JobDetail`` for a campaign whose Job is gone: the record, and the
-    failures it kept. No per-volume rows -- the per-index states were the
-    Job's ``completedIndexes`` and went with it, and the volumes themselves
-    are listed in the bucket (B76 piece 4) -- and no page counts, which are
-    read from progress files a finished run has nothing more to add to."""
+    """``JobDetail`` for a campaign whose Job is gone.
+
+    The Job's ``completedIndexes`` went with the Job, but manifest.json,
+    iiif.json, alto/ and the run log are all still in the bucket -- and this
+    endpoint answered with no rows at all, so a finished campaign was one
+    nobody could open a single volume of (R1, the product owner,
+    2026-09-14). The rows are rebuilt from what has no TTL: the campaign
+    record's ``volumes.txt`` for the ids and their sources, the status
+    record's ``failedVolumes`` for the ones that failed and why, and the
+    campaign's own ending for everything else. Their page counts come from
+    the bucket like a live campaign's, through the same cap and deadline.
+    """
     pipeline_yaml = _pipeline_yaml(pipeline_configmap)
+    reasons = _recorded_reasons(status)
+    results_base, pipeline = row["resultsBase"], row["pipeline"]
+    ending = _RECORD_STATE.get(row["phase"], UNKNOWN_STATE)
+    volumes: list[dict] = []
+    for idx, line in enumerate(_volume_lines(record)):
+        vol_id = line.split("\t", 1)[0]
+        state = "failed" if vol_id in reasons else ending
+        volume = _volume_row(idx, line, state, results_base, pipeline, cfg)
+        if vol_id in reasons:
+            volume["reason"] = {
+                "stage": None,
+                "permanent": None,
+                "error": reasons[vol_id],
+            }
+        volumes.append(volume)
+
+    failures = sorted(
+        (v for v in volumes if v["state"] == "failed" and "reason" in v),
+        key=lambda v: v["index"],
+        reverse=True,
+    )[:_MAX_FAILURES]
+    page = volumes[offset : offset + limit]
+    latest = _latest(volumes)
+    known = _attach_progress(
+        [*page, *failures, *([latest] if latest else [])],
+        _internal_results_base(row["namespace"], pipeline, cfg),
+        fetch_progress or (lambda *_args: None),
+    )
     return {
         **row,
+        **_campaign_pages(known),
         "pipelineSteps": _pipeline_steps(pipeline_yaml),
         "pipelineYaml": pipeline_yaml,
-        "latest": None,
-        "failures": _record_failures(row, status, cfg),
-        "volumes": [],
-        "pagesDone": 0,
-        "pagesTotal": 0,
-        "pagesFailed": 0,
-        "errors": 0,
-        "lastError": None,
+        "latest": latest,
+        "failures": failures,
+        "volumes": page,
     }
 
 
@@ -327,10 +392,32 @@ def merge_record(stored: dict[str, str], fresh: dict[str, str]) -> dict[str, str
         old = stored.get(key, "")
         if value in _SAYS_NOTHING and old not in _SAYS_NOTHING:
             continue
-        if key == "finishedAt" and old > value:
+        if key == "finishedAt" and not _is_later(value, old):
             continue
         merged[key] = value
     return merged
+
+
+def _instant(text: str) -> datetime | None:
+    """An RFC 3339 timestamp as a moment in time. A value without an offset
+    is read as UTC -- which is what every writer of this field means."""
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _is_later(value: str, old: str) -> bool:
+    """Whether ``value`` is a later moment than ``old``. Compared as moments,
+    not as text: the two writers of this field do not see the same clock and
+    need not write the same offset, and `09:00Z` sorts before `10:00+02:00`
+    as a string while being an hour after it (2026-09-14 audit). A fresh
+    value that is not a timestamp at all never replaces one that is."""
+    fresh, stored = _instant(value), _instant(old)
+    if fresh is None:
+        return False
+    return stored is None or fresh >= stored
 
 
 def status_configmap(row: dict, data: dict[str, str]) -> dict:
@@ -346,7 +433,7 @@ def status_configmap(row: dict, data: dict[str, str]) -> dict:
                 _MANAGED_BY_LABEL: "converter",
                 _CAMPAIGN_LABEL: row["campaign"],
                 _PIPELINE_LABEL: row["pipeline"],
-                _KIND_LABEL: STATUS_KIND,
+                KIND_LABEL: STATUS_KIND,
             },
         },
         "data": data,
@@ -470,8 +557,14 @@ def _name_the_deadline(reason: dict, pod_reason: str | None) -> dict:
 
 
 def _pod_completion_index(pod: dict) -> int | None:
+    """The pod's index, or ``None`` when it has no readable one. The label is
+    the Job controller's, but a hand-made pod can carry anything, and one
+    such pod used to take the whole campaign page down (2026-09-14 audit)."""
     raw = _labels(pod).get(_INDEX_LABEL)
-    return int(raw) if raw is not None else None
+    try:
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _pods_by_index(pods: list[dict] | None) -> dict[int, list[dict]]:
@@ -489,6 +582,31 @@ def newest(pods: list[dict]) -> dict:
     return max(
         pods, key=lambda p: (p.get("metadata") or {}).get("creationTimestamp", "")
     )
+
+
+def _volume_row(
+    idx: int, line: str, state: str, results_base: str, pipeline: str, cfg
+) -> dict:
+    """One row of a campaign's volume table, from its ``volumes.txt`` line.
+    Every URL below is derived from the id, so the same function builds a
+    live campaign's rows and a reaped one's -- there is nothing to read off
+    the Job (R1, 2026-09-14)."""
+    vol_id = line.split("\t", 1)[0]
+    # Encoded into every URL, the way progress.py encodes its own: the id
+    # came off a campaign's volumes.txt, a file people edit in a git repo,
+    # and `../` in one walked out of the campaign's prefix in the href a
+    # reader clicks (2026-09-14 review). The `id` field stays as written.
+    key = quote(vol_id, safe="")
+    return {
+        "index": idx,
+        "id": vol_id,
+        "state": state,
+        "manifestUrl": f"{results_base}/{key}/manifest.json",
+        "iiifUrl": f"{results_base}/{key}/iiif.json",
+        "altoPrefix": f"{results_base}/{key}/alto/",
+        "logUrl": _log_url(pipeline, vol_id, cfg),
+        "sourceUrl": _source_url(line),
+    }
 
 
 def _volume_state(
@@ -509,7 +627,10 @@ def _log_url(pipeline: str, volume_id: str, cfg) -> str:
     across namespaces, unlike the per-namespace results under
     ``resultsBase``. Absolute (not a bare key) because the browser has no
     bucket base URL to resolve a key against."""
-    return f"{cfg.public_results_base}/status/logs/{pipeline}/{volume_id}.txt"
+    return (
+        f"{cfg.public_results_base}/status/logs/"
+        f"{quote(pipeline, safe='')}/{quote(volume_id, safe='')}.txt"
+    )
 
 
 def _pipeline_yaml(configmap: dict | None) -> str:
@@ -558,6 +679,15 @@ def _latest(volumes: list[dict]) -> dict | None:
 #: whose progress.json never changes again) fill whatever budget is left.
 PROGRESS_FETCH_CAP = 32
 
+#: Seconds the whole fan-out may take, cap or no cap. Each fetch is one
+#: sequential GET with progress.py's own short timeout, so an unreachable
+#: bucket cost cap x that timeout -- over a minute of one worker, inside a
+#: sync handler, and forty such requests emptied the threadpool /healthz is
+#: answered from (2026-09-14 audit). Past the deadline the remaining rows
+#: are answered with no progress, which is what an unreadable file already
+#: means: a decoration missing from a page that still draws.
+PROGRESS_FETCH_BUDGET = 5.0
+
 
 def _attach_progress(rows: list[dict], results_base: str, fetch) -> list[dict]:
     """Give every row the response actually carries its ``progress`` — the
@@ -574,9 +704,11 @@ def _attach_progress(rows: list[dict], results_base: str, fetch) -> list[dict]:
     running = [row for row in fetchable if row["state"] == "active"]
     rest = [row for row in fetchable if row["state"] != "active"]
     asked = {id(row) for row in (running + rest)[:PROGRESS_FETCH_CAP]}
+    deadline = time.monotonic() + PROGRESS_FETCH_BUDGET
     for row in shown:
+        wanted = id(row) in asked and time.monotonic() < deadline
         row["progress"] = (
-            fetch(results_base, row["id"], row["state"]) if id(row) in asked else None
+            fetch(results_base, row["id"], row["state"]) if wanted else None
         )
     return [row for row in shown if row["progress"]]
 
@@ -638,17 +770,8 @@ def detail(
     # nullable sourceUrl) and the sort below needs a comparable key type.
     volumes: list[dict] = []
     for idx, line in enumerate(_volume_lines(configmap)):
-        vol_id = line.split("\t", 1)[0]
-        row = {
-            "index": idx,
-            "id": vol_id,
-            "state": _volume_state(idx, completed, failed, idx in pods_by_index),
-            "manifestUrl": f"{results_base}/{vol_id}/manifest.json",
-            "iiifUrl": f"{results_base}/{vol_id}/iiif.json",
-            "altoPrefix": f"{results_base}/{vol_id}/alto/",
-            "logUrl": _log_url(pipeline, vol_id, cfg),
-            "sourceUrl": _source_url(line),
-        }
+        state = _volume_state(idx, completed, failed, idx in pods_by_index)
+        row = _volume_row(idx, line, state, results_base, pipeline, cfg)
         if idx in pods_by_index:
             newest_pod = newest(pods_by_index[idx])
             reason = wrapper_reason(newest_pod)

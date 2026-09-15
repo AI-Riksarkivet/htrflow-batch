@@ -121,21 +121,6 @@ describe("/ campaign page", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  // The list is the page someone leaves open while a campaign runs, so the
-  // running motion has to survive the whole render, not only the component
-  // test: a Running campaign arrives with a beating dot in its phase chip.
-  test("a running campaign arrives with a pulsing dot in its phase chip", async () => {
-    vi.stubGlobal("fetch", routedFetch([job]));
-    const { container } = render(CampaignsPage);
-    await vi.advanceTimersByTimeAsync(0);
-
-    const dot = container.querySelector(".chip.phase.running .dot");
-    expect(dot).toHaveClass("pulse");
-    // The chip's own word carries the state; the dot is decoration.
-    expect(dot).toHaveAttribute("aria-hidden", "true");
-    expect(screen.getByText("Running")).toBeInTheDocument();
-  });
-
   test("shows an empty state with no campaigns", async () => {
     vi.stubGlobal("fetch", routedFetch([]));
     render(CampaignsPage);
@@ -171,9 +156,14 @@ describe("/ campaign page", () => {
     expect(screen.getByText("htr-test/kyrk")).toBeInTheDocument();
   });
 
-  // A campaign the read API serves from its two ConfigMaps because the Job
-  // is past its ttlSecondsAfterFinished (B76): still a row, still a card.
-  test("a campaign whose Job has been removed is still listed", async () => {
+  // What only this page can be wrong about: the rows it was sent, in the
+  // order it was sent them, one card each. How a card draws a running
+  // campaign or a reaped one is CampaignCard's own test, and asserting the
+  // pulse and the "job removed" chip again here only made the same
+  // statement twice (2026-09-14 audit). A campaign whose Job is past its
+  // ttlSecondsAfterFinished is served from its two ConfigMaps (B76) and is
+  // a row like any other, which is the part that belongs here.
+  test("renders the rows the API sent, in that order, live and reaped alike", async () => {
     const reaped = {
       ...job,
       name: "gamla",
@@ -183,11 +173,14 @@ describe("/ campaign page", () => {
       jobGone: true,
     };
     vi.stubGlobal("fetch", routedFetch([job, reaped]));
-    render(CampaignsPage);
+    const { container } = render(CampaignsPage);
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(screen.getByText("htr-test/gamla")).toBeInTheDocument();
-    expect(screen.getByText("job removed")).toBeInTheDocument();
+    const names = [...container.querySelectorAll(".camp-name")].map(
+      (el) => el.textContent,
+    );
+    expect(names).toEqual(["htr-test/kyrk", "htr-test/gamla"]);
+    expect(container.querySelectorAll("section.campaign")).toHaveLength(2);
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -204,5 +197,48 @@ describe("/ campaign page", () => {
       "The campaign service answered in a form this page doesn't understand.",
     );
     expect(alert).not.toHaveTextContent(/unreachable|ZodError/);
+  });
+
+  // The list page is left open for hours, with a card per campaign each
+  // polling for its own volume table (2026-09-14 audit).
+  test("a slow poll is not joined by the next one", async () => {
+    let listCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.toString().endsWith("/version"))
+          return jsonResponse({ version: "v0.2.0", web: "0.1.0" });
+        if (url.toString().includes("/jobs/")) return jsonResponse(detail);
+        listCalls += 1;
+        return new Promise<Response>(() => {}); // never answers
+      }) as unknown as typeof fetch,
+    );
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 5);
+    expect(listCalls).toBe(1);
+  });
+
+  test("nothing is polled while the tab is in the background", async () => {
+    const fetchMock = vi.fn(routedFetch([job]));
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    const settled = fetchMock.mock.calls.length;
+
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      get: () => true,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 5);
+    expect(fetchMock.mock.calls.length).toBe(settled);
+
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      get: () => false,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(settled);
   });
 });

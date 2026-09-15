@@ -40,6 +40,28 @@ export function resolveApiBase(
     : DEFAULT_API_BASE;
 }
 
+/**
+ * Where this deployment's results live — the same `publicResultsBase` the
+ * read API builds every result URL from. Served in /config.js by the read
+ * API itself (packages/web), so it cannot drift from what the API says.
+ * Empty when nobody said (a `bun run dev` with no /config.js, a site-only
+ * build): the run-log route then accepts any absolute http(s) URL, as it
+ * did before this existed (2026-09-14 audit).
+ */
+export const DEFAULT_RESULTS_BASE = env.VITE_RESULTS_BASE ?? "";
+
+/** Resolved per use, like `resolveApiBase`: /config.js may load late. */
+export function resolveResultsBase(
+  win: { RESULTS_BASE?: string } | undefined = typeof window === "undefined"
+    ? undefined
+    : window,
+): string {
+  const injected = win?.RESULTS_BASE;
+  return typeof injected === "string" && injected !== ""
+    ? injected
+    : DEFAULT_RESULTS_BASE;
+}
+
 /** The source repository, linked from the status page's header. */
 export const REPO_URL = "https://github.com/AI-Riksarkivet/htrflow-batch";
 
@@ -49,5 +71,9 @@ export const RELOAD_MS = envInt(env.VITE_RELOAD_MS, 60_000);
 /** Live log re-fetch period (default 15 s = the wrapper's LOG_SHIP_SECONDS). */
 export const LIVE_MS = envInt(env.VITE_LIVE_MS, 15_000);
 
-/** Consecutive failed live polls before the viewer gives up (5 min at LIVE_MS). */
+/**
+ * Consecutive failed live polls before the viewer gives up. Attempts, not
+ * minutes: $lib/poll doubles the wait after each failure up to MAX_POLL_MS,
+ * so twenty of them span a little over an hour rather than five minutes.
+ */
 export const LIVE_MAX_FAILURES = 20;

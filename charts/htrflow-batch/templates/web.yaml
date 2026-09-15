@@ -29,15 +29,17 @@ rules:
   # privilege: a server-side apply of an object that does not exist yet is a
   # create. Nothing here may ever delete, or write a Job or a Pod —
   # packages/web/tests/test_app.py greps the source to keep it that way.
+  # No `watch`: every response is computed from a get or a list on the
+  # request, and nothing in packages/web opens a watch (2026-09-14 audit).
   - apiGroups: ["batch"]
     resources: ["jobs"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list"]
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list"]
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["get", "list", "watch", "create", "patch"]
+    verbs: ["get", "list", "create", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -142,17 +144,7 @@ spec:
       nodePort: {{ .Values.web.nodePort }}
 {{- if .Values.network.enabled }}
 ---
-{{- /*
-Same apiserver-CIDR auto-detection as network.yaml (a separate template
-file, so it cannot share that file's local variables): the endpoint kube-
-router matches egress against AFTER service DNAT.
-*/}}
-{{- $api := .Values.network.apiServer.cidr }}
-{{- if not $api }}
-  {{- with (lookup "v1" "Endpoints" "default" "kubernetes") }}
-    {{- with (index .subsets 0) }}{{ $api = printf "%s/32" (index .addresses 0).ip }}{{ end }}
-  {{- end }}
-{{- end }}
+{{- $api := include "htrflow-batch.apiServerCidr" . }}
 {{- /*
 Same S3 egress as the batch Job's own policy (network.yaml's `$s3` -- a
 separate template file, so it cannot share that file's local variable):
@@ -164,7 +156,12 @@ endpoint from network.s3Cidrs.
 {{- if .Values.network.s3Cidrs }}
   {{- $blocks := list }}
   {{- range .Values.network.s3Cidrs }}{{ $blocks = append $blocks (dict "ipBlock" (dict "cidr" .)) }}{{ end }}
-  {{- $s3 = append $s3 (dict "to" $blocks) }}
+  {{- /* Named ports, not the whole range (2026-09-14, audit): a
+       self-hosted endpoint's CIDR is a slice of the operator's own
+       network, and this rule used to open every port of it. */}}
+  {{- $s3Ports := list }}
+  {{- range .Values.network.s3Ports }}{{ $s3Ports = append $s3Ports (dict "port" .) }}{{ end }}
+  {{- $s3 = append $s3 (dict "to" $blocks "ports" $s3Ports) }}
 {{- end }}
 # Web front: browsers in (NodePort traffic arrives SNAT'd from the node, so
 # the node range must be in network.web.ingressCidrs); egress to DNS, the
@@ -195,14 +192,10 @@ spec:
       ports:
         - { port: 53, protocol: UDP }
         - { port: 53, protocol: TCP }
-    {{- if $api }}
     - to:
         - ipBlock: { cidr: {{ $api | quote }} }
       ports:
         - { port: {{ .Values.network.apiServer.port }} }
-    {{- else }}
-    {{- fail "network.apiServer.cidr is required when the kube-apiserver endpoint cannot be looked up (helm template / no RBAC)" }}
-    {{- end }}
     {{- range $s3 }}
     - {{ toJson . }}
     {{- end }}

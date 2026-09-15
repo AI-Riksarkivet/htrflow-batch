@@ -7,7 +7,7 @@
 // small pure view helpers every route needs (isHttpUrl, shortDate), since
 // there is no derivation layer left to keep them in.
 import { z } from "zod";
-import { resolveApiBase } from "./config.js";
+import { resolveApiBase, resolveResultsBase } from "./config.js";
 
 /**
  * Only absolute http(s) URLs may reach an href/src: query strings and
@@ -22,6 +22,33 @@ export function isHttpUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * An http(s) URL this deployment's own results bucket serves. The run-log
+ * route takes its `?log=` and `?manifest=` straight out of the query
+ * string, so a link mailed to someone could point the page at any host at
+ * all (2026-09-14 audit). An unset base — nobody said where the results
+ * are — accepts any absolute http(s) URL, which is what it did before.
+ */
+export function isResultUrl(
+  value: string,
+  base: string = resolveResultsBase(),
+): boolean {
+  if (!isHttpUrl(value)) return false;
+  if (base === "") return true;
+  // Compared as URLs, not as text: `<base>/../evil.txt` starts with the
+  // base and is not under it at all, and a host written in another case is
+  // the same host (2026-09-14 review).
+  let here: string;
+  let root: string;
+  try {
+    here = new URL(value).href;
+    root = new URL(base).href;
+  } catch {
+    return false;
+  }
+  return here.startsWith(root.endsWith("/") ? root : `${root}/`);
 }
 
 /** "25 Aug, 14:32" — viewer-local unless a timeZone is forced (tests use UTC). */
@@ -40,6 +67,16 @@ export function shortDate(
     timeZone,
   });
 }
+
+/**
+ * A field this page turns into an href or a fetch target. They are the read
+ * API's own, so one that is not an absolute http(s) URL is a bug on our
+ * side and the row is unreadable — the same answer a field of the wrong
+ * type gets (2026-09-14 audit).
+ */
+export const httpUrlSchema = z
+  .string()
+  .refine(isHttpUrl, { message: "must be an absolute http(s) URL" });
 
 export const jobPhaseSchema = z.enum([
   "Succeeded",
@@ -105,7 +142,7 @@ export const jobSummarySchema = z.object({
   // When the campaign stopped, as the API observed it. Additive, and
   // defaulted: an older API answers without it.
   finishedAt: z.string().nullable().default(null),
-  resultsBase: z.string(),
+  resultsBase: httpUrlSchema,
   warmup: warmupSchema,
   // The campaign's Job is past its `ttlSecondsAfterFinished` and has been
   // removed; this row is served from the campaign's ConfigMap and the
@@ -156,6 +193,12 @@ export const volumeStateSchema = z.enum([
   "active",
   "done",
   "failed",
+  // The campaign's Job is gone and no terminal record was ever written for
+  // it, so what this volume did was never observed by anything. Only ever
+  // seen on a `jobGone` campaign whose phase is `Unknown`; the row's links
+  // still work, and its progress file says what actually happened when
+  // there is one (2026-09-14 review).
+  "unknown",
 ]);
 
 // One row per line of the campaign's volumes.txt ConfigMap.
@@ -163,13 +206,13 @@ export const volumeViewSchema = z.object({
   index: z.number(),
   id: z.string(),
   state: volumeStateSchema,
-  manifestUrl: z.string(),
-  iiifUrl: z.string(),
-  altoPrefix: z.string(),
-  logUrl: z.string(),
+  manifestUrl: httpUrlSchema,
+  iiifUrl: httpUrlSchema,
+  altoPrefix: httpUrlSchema,
+  logUrl: httpUrlSchema,
   // The volume's source manifest, straight off its volumes.txt line; null
   // for an `images:` volume, which has no manifest to open.
-  sourceUrl: z.string().nullable(),
+  sourceUrl: httpUrlSchema.nullable(),
   reason: volumeReasonSchema.optional(),
   progress: volumeProgressSchema.nullable(),
 });
@@ -204,7 +247,7 @@ export const jobDetailSchema = jobSummarySchema.extend({
       page: z.string().nullable(),
       error: z.string(),
       volume: z.string(),
-      logUrl: z.string(),
+      logUrl: httpUrlSchema,
     })
     .nullable(),
 });
@@ -237,10 +280,13 @@ export class ApiUnreachable extends Error {
   }
 }
 
-async function getJson(url: string): Promise<unknown> {
+async function getJson(url: string, signal?: AbortSignal): Promise<unknown> {
   let res: Response;
   try {
-    res = await fetch(url, { cache: "no-store" });
+    // The signal is what makes abandoning a poll actually stop it: without
+    // it the request ran to completion and only its answer was dropped
+    // (2026-09-14 audit).
+    res = await fetch(url, { cache: "no-store", signal: signal ?? null });
   } catch (e) {
     throw new ApiUnreachable(e instanceof Error ? e.message : String(e), {
       cause: e,
@@ -272,10 +318,10 @@ export async function fetchVersion(): Promise<Version> {
 }
 
 /** GET /api/v1/jobs — every campaign Job, newest first (server-sorted). */
-export async function fetchJobs(): Promise<JobList> {
+export async function fetchJobs(signal?: AbortSignal): Promise<JobList> {
   const rows = z
     .array(z.unknown())
-    .parse(await getJson(`${resolveApiBase()}/jobs`));
+    .parse(await getJson(`${resolveApiBase()}/jobs`, signal));
   const jobs: JobSummary[] = [];
   let unreadable = 0;
   for (const row of rows) {
@@ -299,10 +345,11 @@ export async function fetchJob(
   name: string,
   offset = 0,
   limit = 200,
+  signal?: AbortSignal,
 ): Promise<JobDetail> {
   const url =
     `${resolveApiBase()}/jobs/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}` +
     `?offset=${offset}&limit=${limit}`;
-  const raw = await getJson(url);
+  const raw = await getJson(url, signal);
   return jobDetailSchema.parse(raw);
 }

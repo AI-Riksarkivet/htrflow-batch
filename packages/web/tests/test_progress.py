@@ -213,3 +213,95 @@ def test_a_naive_timestamp_is_read_as_utc_not_local_time():
         }
     )
     assert r.fetch(BASE, "vol0", "active")["ageSeconds"] == 12
+
+
+def test_a_cached_row_ages_with_the_clock(monkeypatch):
+    """A done volume's file is cached for the hour because it never changes
+    again -- but "updated 8 s ago" does, and the card read it for an hour
+    (2026-09-14 audit). The age is recomputed from the cached timestamp on
+    every hit; nothing is re-fetched."""
+    r, asked = reader(
+        {f"{BASE}/vol0/progress.json": httpx.Response(200, json=PROGRESS)}
+    )
+    first = r.fetch(BASE, "vol0", "done")
+    assert first["ageSeconds"] == 12
+    monkeypatch.setattr(progress_mod.time, "time", lambda: NOW + 3000)
+    again = r.fetch(BASE, "vol0", "done")
+    assert asked == [f"{BASE}/vol0/progress.json"], "still one GET"
+    assert again["ageSeconds"] == 3012
+    assert again["updatedAt"] == first["updatedAt"]
+
+
+def test_a_row_with_no_timestamp_has_no_age_to_recompute():
+    """manifest.json is a completion marker, not a clock."""
+    r, _ = reader(
+        {
+            f"{BASE}/vol0/progress.json": httpx.Response(404),
+            f"{BASE}/vol0/manifest.json": httpx.Response(200, json=MANIFEST),
+        }
+    )
+    assert r.fetch(BASE, "vol0", "done")["ageSeconds"] is None
+    assert r.fetch(BASE, "vol0", "done")["ageSeconds"] is None
+
+
+def test_a_body_bigger_than_the_cap_is_no_progress():
+    """The file is ours, but it arrives over the network like any other
+    document and this process holds it in memory (2026-09-14 audit). A
+    bucket serving something enormous at that key is an unreadable file,
+    which this module already knows how to answer for."""
+    huge = {"pages_total": 1, "pad": "x" * (progress_mod.MAX_BODY + 1)}
+    r, _ = reader({f"{BASE}/vol0/progress.json": httpx.Response(200, json=huge)})
+    assert r.fetch(BASE, "vol0", "active") is None
+
+
+def test_a_body_inside_the_cap_still_reads():
+    ok = {**PROGRESS, "pad": "x" * 1000}
+    r, _ = reader({f"{BASE}/vol0/progress.json": httpx.Response(200, json=ok)})
+    assert r.fetch(BASE, "vol0", "active")["total"] == 638
+
+
+def test_a_redirect_is_not_followed():
+    """The URL is built from an operator's results base; a bucket that
+    answers it with a redirect is not somewhere this pod should follow."""
+    r, asked = reader(
+        {
+            f"{BASE}/vol0/progress.json": httpx.Response(
+                302, headers={"location": "http://169.254.169.254/latest/meta-data/"}
+            )
+        }
+    )
+    assert r.fetch(BASE, "vol0", "active") is None
+    assert asked == [f"{BASE}/vol0/progress.json"]
+
+
+def test_the_strings_a_person_reads_are_clipped():
+    """`lastPage`, `stage` and the error sentence all render into the card.
+    A megabyte of them is not a page the reader can use."""
+    long = "y" * 5000
+    doc = {
+        **PROGRESS,
+        "last_page": long,
+        "stage": long,
+        "last_error": {"page": long, "error": long},
+    }
+    r, _ = reader({f"{BASE}/vol0/progress.json": httpx.Response(200, json=doc)})
+    got = r.fetch(BASE, "vol0", "active")
+    assert len(got["lastPage"]) == progress_mod.MAX_FIELD
+    assert len(got["stage"]) == progress_mod.MAX_FIELD
+    assert len(got["lastError"]["error"]) == progress_mod.MAX_FIELD
+    assert len(got["lastError"]["page"]) == progress_mod.MAX_FIELD
+
+
+def test_a_volume_id_cannot_walk_out_of_its_own_prefix():
+    """Volume ids come off a campaign's volumes.txt, a file people edit in a
+    git repo. Unencoded, `../..` was normalised by the client into a request
+    for somebody else's key (2026-09-14 audit)."""
+    r, asked = reader({})
+    r.fetch(BASE, "../../status/logs", "active")
+    assert asked == [f"{BASE}/..%2F..%2Fstatus%2Flogs/progress.json"]
+
+
+def test_an_ordinary_volume_id_is_left_as_it_is():
+    r, asked = reader({})
+    r.fetch(BASE, "R0001203", "active")
+    assert asked == [f"{BASE}/R0001203/progress.json"]

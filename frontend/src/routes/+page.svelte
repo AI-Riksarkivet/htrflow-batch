@@ -5,6 +5,7 @@
   // cadence, both documented in $lib/config / $lib/api.
   import { fetchJobs, fetchVersion, type JobSummary } from "$lib/api.js";
   import { RELOAD_MS, REPO_URL } from "$lib/config.js";
+  import { startPolling } from "$lib/poll.js";
   import { describeApiError, describeUnreadable } from "$lib/reasons.js";
 
   // The last good list stays on screen through a failed poll; `error` is a
@@ -29,38 +30,31 @@
     }
   }
 
-  // One request in flight at a time: a slow poll is abandoned when the next
-  // one starts (or the page goes away), so responses never land out of order.
-  let inflight: AbortController | null = null;
-
-  async function load(): Promise<void> {
-    inflight?.abort();
-    const controller = new AbortController();
-    inflight = controller;
+  // One request in flight at a time, nothing polled while the tab is in the
+  // background, and a run of failures backing off — all of it in
+  // $lib/poll, so the list, each card and the run log cannot disagree.
+  async function load(signal: AbortSignal): Promise<boolean> {
     try {
-      const result = await fetchJobs();
-      if (controller.signal.aborted) return;
+      const result = await fetchJobs(signal);
+      if (signal.aborted) return true;
       jobs = result.jobs;
       unreadable = result.unreadable;
       error = null;
+      return true;
     } catch (e) {
-      if (controller.signal.aborted) return;
+      if (signal.aborted) return true;
       // One sentence for the reader: what is wrong, that the list on
       // screen is the older one, and that it retries on its own. The
       // transport detail (a fetch error string, a ZodError) never reaches
       // the banner — see $lib/reasons.
       error = describeApiError(e, jobs !== null);
+      return false;
     }
   }
 
   $effect(() => {
     void loadVersion();
-    void load();
-    const timer = setInterval(() => void load(), RELOAD_MS);
-    return () => {
-      clearInterval(timer);
-      inflight?.abort();
-    };
+    return startPolling(load, RELOAD_MS);
   });
 </script>
 

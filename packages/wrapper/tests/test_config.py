@@ -5,6 +5,17 @@ import pytest
 
 from htrflow_batch.config import Config, ConfigError
 
+#: The env every test below starts from; conftest's fixture builds the same
+#: one, but importing it would tie this file to how pytest was invoked.
+REQUIRED_ENV = {
+    "VOLUME_REF": "SE-RA-1234",
+    "IIIF_MANIFEST_URL": "https://x/manifest",
+    "PIPELINE_PATH": "/config/pipeline.yaml",
+    "PIPELINE_ID": "demo-v1",
+    "S3_BUCKET": "htr-results",
+    "PUBLIC_RESULTS_BASE": "http://public/htr-results",
+}
+
 #: A name that would mean a credential is travelling as an environment
 #: variable rather than as the mounted Secret file.
 _SECRETISH = r"KEY|TOKEN|PASSWORD|SECRET_ACCESS"
@@ -239,3 +250,23 @@ def test_the_comma_fallback_never_takes_a_url_that_merely_contains_a_comma():
     url = "https://x/full/2500,/0/default.jpg"
     assert _images(url) == [url]
     assert _images(f"{url} https://x/2.jpg") == [url, "https://x/2.jpg"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["../other", "a/b", "..", ".", "vol ume", "vol\nume", "vol#1", "a..b"],
+)
+@pytest.mark.parametrize("name", ["VOLUME_REF", "PIPELINE_ID"])
+def test_key_shaped_fields_are_refused(name, value):
+    """W12: both go verbatim into every S3 key the run writes
+    (`<pipeline>/<volume>/...`) and into the public `viewer_url`. A campaign
+    file is the source, so the shape is checked once, here, and the run fails
+    permanently rather than writing outside its own prefix."""
+    env = dict(REQUIRED_ENV, **{name: value})
+    with pytest.raises(ValueError, match="letters, digits"):
+        Config.from_env(env)
+
+
+@pytest.mark.parametrize("value", ["SE-RA-1234", "demo-v1", "vol.2", "a_b", "0"])
+def test_key_shaped_fields_accept_the_names_campaigns_use(value):
+    Config.from_env(dict(REQUIRED_ENV, VOLUME_REF=value, PIPELINE_ID=value))

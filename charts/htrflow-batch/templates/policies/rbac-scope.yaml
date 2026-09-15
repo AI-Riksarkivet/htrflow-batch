@@ -1,0 +1,94 @@
+{{- if .Values.security.policies.enabled }}
+# What RBAC cannot say (2026-09-14, audit): a Role's verbs cover a whole
+# resource type and never one object's name, so the read API's create/patch
+# on configmaps also covers `htr-pipeline-<id>` -- the immutable ConfigMap a
+# campaign Job mounts as its pipeline. Overwrite that and the next campaign
+# loads weights of someone else's choosing, from a pod browsers reach that
+# has no authentication of its own. The Role is already the narrowest one
+# RBAC can express; admission is the only place left that sees WHO is
+# asking.
+#
+# The name pattern mirrors the converter's own `_NAME_RE` (models.py)
+# character for character, dots included: campaign files are named after
+# archive references, so `sdhk.1500` is the ordinary case. A pattern that
+# approximated it with a DNS label would deny the status write for exactly
+# those campaigns, and a denied write is an outage with no explanation in
+# it.
+#
+# `background: false` is not a choice here: a background scan replays stored
+# objects with no requesting user, and a rule matched on `subjects` has
+# nothing to match. `operations: [CREATE, UPDATE]` is every write -- a
+# `patch` reaches admission as an UPDATE, and a server-side apply of an
+# object that does not exist yet as a CREATE.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: htrflow-batch-rbac-scope-{{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  validationFailureAction: Enforce
+  # Explicit, like verify-images.yaml: a webhook that cannot be reached must
+  # refuse the write, not wave it through. These two rules are the only thing
+  # holding either identity to its own objects.
+  failurePolicy: Fail
+  background: false
+  rules:
+    - name: web-writes-status-only
+      match:
+        any:
+          - resources:
+              kinds: [ConfigMap]
+              namespaces: [{{ .Release.Namespace | quote }}]
+              operations: [CREATE, UPDATE]
+            subjects:
+              - kind: ServiceAccount
+                name: htrflow-web
+                namespace: {{ .Release.Namespace }}
+      validate:
+        message: >-
+          the read API may only write a campaign's own status ConfigMap
+          (campaign-<name>-status), not
+          {{ `{{ request.object.metadata.name }}` }}
+        deny:
+          conditions:
+            all:
+              - key: {{ `"{{ regex_match('^campaign-[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?-status$', request.object.metadata.name) }}"` }}
+                operator: Equals
+                value: false
+{{- if .Values.apply.rbac.enabled }}
+    # `htrflow-campaigns apply --prune` is what makes "deleting a campaign
+    # file cancels the campaign" true, and a prune is a delete, so the Role
+    # grants one -- over every Job and every ConfigMap in the namespace,
+    # because that is the only shape RBAC has. The command itself only ever
+    # lists converter-labelled objects; this rule is what makes that the
+    # limit rather than the intention, so a compromised pipeline cannot
+    # reach a running campaign's Job or another team's ConfigMap.
+    #
+    # A DELETE admission review carries the object as `oldObject`;
+    # `request.object` is null there, and a rule reading it would compare
+    # against nothing and admit everything.
+    - name: apply-deletes-only-what-it-rendered
+      match:
+        any:
+          - resources:
+              kinds: [Job, ConfigMap]
+              namespaces: [{{ .Release.Namespace | quote }}]
+              operations: [DELETE]
+            subjects:
+              - kind: ServiceAccount
+                name: htrflow-campaigns
+                namespace: {{ .Release.Namespace }}
+      validate:
+        message: >-
+          the apply identity may only delete objects the converter rendered
+          (label htrflow.riksarkivet.se/managed-by: converter)
+        deny:
+          conditions:
+            all:
+              # Single-quoted YAML: the label key needs double quotes of
+              # its own in JMESPath, and `''` is how one of these survives.
+              - key: {{ `'{{ request.oldObject.metadata.labels."htrflow.riksarkivet.se/managed-by" || ''unlabelled'' }}'` }}
+                operator: NotEquals
+                value: converter
+{{- end }}
+{{- end }}

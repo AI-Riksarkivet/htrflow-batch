@@ -4,7 +4,21 @@ import boto3
 import pytest
 from moto import mock_aws
 
+from htrflow_batch import main as main_mod
+from htrflow_batch import warmup as warmup_mod
 from htrflow_batch.config import Config
+
+
+@pytest.fixture(autouse=True)
+def hard_exits(monkeypatch) -> list:
+    """``_hard_exit`` is ``os._exit``: every failure exit path goes through it
+    (W7), so without this the first test that fails a run would take the test
+    process with it. The codes are recorded instead; a test that cares what
+    was called asserts on this list."""
+    codes: list = []
+    for module in (main_mod, warmup_mod):
+        monkeypatch.setattr(module, "_hard_exit", codes.append)
+    return codes
 
 
 def _canvas(i: int, service_id: str) -> dict:

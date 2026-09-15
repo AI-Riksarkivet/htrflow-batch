@@ -20,16 +20,28 @@ device plugin, a bucket and its Secret. Then:
 
 ```bash
 helm install htr charts/htrflow-batch -n <namespace> --create-namespace \
+  -f charts/htrflow-batch/values-prod.yaml \
   --set publicResultsBase=<results-base-url> \
   --set web.image=<registry>/htrflow-web@sha256:<digest> \
   --set network.iiifCidrs='{<iiif-source-cidr>}' \
   --set network.s3Cidrs='{<s3-endpoint-cidr>}' \
   --set network.clusterCidrs='{<pod-cidr>,<service-cidr>}' \
   --set network.apiServer.cidr=<apiserver-address>/32 \
-  --set security.allowedImageRepos='{<registry>/}' \
-  --set security.policies.enabled=true
+  --set network.web.ingressCidrs='{<range-that-may-reach-the-web-front>}'
 make psa-labels
 ```
+
+`values-prod.yaml` is the profile to start from, and it is only the
+switches: the Kyverno policies on and enforcing, the image allow-list set to
+what the release publishes, model revisions required, image signatures
+verified, and Pod Security at `restricted`. The chart's own defaults leave
+all of those off, because a policy nothing reconciles is worse than no
+policy on a cluster without Kyverno — but that means a default install
+enforces none of it.
+
+Everything on the `--set` lines is what one cluster cannot know for
+another. The profile deliberately does not guess them, so an install that
+forgets one fails asking for it rather than rendering something plausible.
 
 The chart is installed from a checkout of this repository. `make psa-labels`
 and the other cluster targets take the release name and namespace from
@@ -59,11 +71,13 @@ chart cannot look these up.
 | `publicResultsBase` | The URL base browsers use to reach the results bucket. Every result URL in a published manifest is built from it, so it must be set. |
 | `web.image` | The web front image, pinned by digest. The default is the published image. The chart refuses a tag unless `security.allowTagImages` is true, because anyone who can push to the registry could otherwise replace the web front in place. Tag images are pulled on every rollout. |
 | `network.apiServer.cidr` | The kube-apiserver address as a pod reaches it after service DNAT (port `network.apiServer.port`, default 6443). The read API's NetworkPolicy needs it. It is looked up at install time when the kubeconfig may list nodes. Set it explicitly otherwise, and always for `helm template`. |
-| `network.iiifCidrs` | The address ranges of your IIIF source, and of any host that `images:` volumes point at. Campaign pods may reach these on ports 80 and 443. A catch-all range covering every IPv4 address is accepted and still excludes the cluster, node and API server ranges. The default names one specific IIIF host, so always set this. |
-| `network.s3Cidrs` | The S3 endpoint's address ranges. Campaign pods and the web front's read API both reach S3 through this. |
+| `network.iiifCidrs` | The address ranges of your IIIF source, and of any host that `images:` volumes point at. Campaign pods may reach these on ports 80 and 443. A catch-all range covering every IPv4 address is accepted and still excludes the cluster, node, API server, link-local, loopback and `network.privateCidrs` ranges. The default names one specific IIIF host, so always set this. |
+| `network.s3Cidrs` | The S3 endpoint's address ranges. Campaign pods and the web front's read API both reach S3 through this, on `network.s3Ports` (default 443) and no other port. Set that too if your endpoint answers elsewhere. |
 | `network.clusterCidrs` | Your cluster's pod and service CIDRs. Warm-up pods get public egress except to these ranges and the node addresses. The default is one distribution's defaults, so set yours. |
+| `network.privateCidrs` | The private ranges no catch-all egress may reach, on top of the cluster and node ranges and the link-local and loopback blocks, which are always excluded. The default is the three private blocks; set it only if your network is planned differently. A range you name in `iiifCidrs` or `s3Cidrs` stays reachable. |
 | `network.nodeCidrs` | Node addresses. Looked up at install time, like the API server address. |
 | `web.internalResultsBase` | Where the read API pod itself reaches the bucket, whenever `publicResultsBase` does not resolve to the bucket from inside the cluster. See [Exposing the web front](viewing.md#exposing-the-web-front). |
+| `network.web.ingressCidrs` | The address ranges that may reach the web front. It defaults to every address, in front of a NodePort with no authentication of its own, and the chart refuses to render that default unless `network.web.allowPublicIngress` also says so. Either list your ranges here, or set that flag to accept the catch-all. |
 | `security.allowedImageRepos`, `security.policies.enabled` | Your registry prefixes, and the Kyverno policies on. See [Hardening](#hardening-the-chart-cannot-do-alone). |
 
 The web image carries the read API, the campaign browser and the Universal
@@ -189,15 +203,18 @@ The dev cluster's `rustfs-init` hook applies the same shape
 - **Namespace labels.** Helm cannot label a namespace it did not create, so
   run `make psa-labels` once after each install or upgrade. It sets Pod
   Security Admission `enforce` to the release's `security.psaEnforce`
-  (`baseline` by default), and `warn` and `audit` to `restricted`. The
-  platform's pods are restricted-clean, so `restricted` is worth enforcing.
+  (`baseline` by default, `restricted` under `values-prod.yaml`), and `warn`
+  and `audit` to `restricted`. The platform's pods are restricted-clean, so
+  it is a level they actually meet.
   `PSA_ENFORCE=…` overrides the level before the first install.
-- **Trust boundary.** Set `security.allowedImageRepos` and turn on
-  `security.policies.enabled`. The Kyverno policies are the only thing that
-  enforces the allow-list and the model-revision rule, and an empty list
-  lets any image run on the GPU. Consider `security.requireModelRevision:
-  true`, and `security.verifyImages.*` (issuer and subject of the signing CI
-  identity) once your images are cosign-signed
+- **Trust boundary.** `values-prod.yaml` turns all of this on:
+  `security.policies.enabled`, the allow-list, `requireModelRevision` and
+  `verifyImages`. The Kyverno policies are the only thing that enforces the
+  allow-list and the model-revision rule, and an empty list lets any image
+  run on the GPU. Installing without the profile means setting each by hand.
+  The subject is the signing workflow's own identity, and publishing is a
+  manual dispatch, so it carries the branch the run started from and never a
+  tag; `values.yaml` has the example to copy
   ([Security → Trust boundary](../how-it-works/security.md#trust-boundary)).
 - **Model-cache ownership.** Platform pods run as uid 1000. A cache volume
   first written by a root-running pod, on a volume plugin that ignores
@@ -206,8 +223,11 @@ The dev cluster's `rustfs-init` hook applies the same shape
 - **Run logs.** Keep `status/logs/*` private if run logs may carry anything
   sensitive (see the table above).
 - **Web front ingress.** `network.web.ingressCidrs` limits who can reach
-  the web front's port. The default allows every address. NodePort traffic arrives
-  SNAT'd from the node, so include the node range.
+  the web front's port. The default allows every address, so the chart will
+  not render it unless `network.web.allowPublicIngress` is also set — an
+  install that says nothing about ingress fails with that sentence rather
+  than quietly opening the port. NodePort traffic arrives SNAT'd from the
+  node, so include the node range in whatever you list.
 
 ## Upgrading
 

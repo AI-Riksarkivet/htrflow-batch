@@ -6,7 +6,8 @@
   // nothing); LIVE_MAX_FAILURES stops a log that never appears from
   // spinning forever. Both documented in $lib/config.
   import { LIVE_MAX_FAILURES, LIVE_MS } from "$lib/config.js";
-  import { isHttpUrl, shortDate } from "$lib/api.js";
+  import { startPolling } from "$lib/poll.js";
+  import { isResultUrl, shortDate } from "$lib/api.js";
   import {
     isTerminalManifest,
     runManifestSchema,
@@ -14,8 +15,10 @@
   } from "$lib/run.js";
   import {
     isTerminalLog,
+    LOG_TAIL_BYTES,
     parseRunLog,
     splitLogLine,
+    tailOf,
     type LogGroup,
   } from "$lib/runlog.js";
 
@@ -27,12 +30,13 @@
     return new URLSearchParams(window.location.search).get(name);
   }
 
-  // The query string is untrusted input: only absolute http(s) URLs are
-  // fetched or linked. Anything else is treated as absent (and, for the log
-  // itself, reported).
+  // The query string is untrusted input — a link like this is something
+  // people paste to each other. Only an absolute http(s) URL inside this
+  // deployment's own results base is fetched or linked; anything else is
+  // treated as absent (and, for the log itself, reported).
   function httpParam(name: string): string | null {
     const value = queryParam(name);
-    return value !== null && isHttpUrl(value) ? value : null;
+    return value !== null && isResultUrl(value) ? value : null;
   }
 
   const rawLogUrl = queryParam("log");
@@ -55,30 +59,19 @@
   // who scrolled up to look at something must not be yanked back down.
   let stickToBottom = $state(true);
 
-  // One request per resource in flight: a slow poll is abandoned when the
-  // next starts (or the page goes away), so responses never land out of order.
-  let logInflight: AbortController | null = null;
-  let manifestInflight: AbortController | null = null;
-
-  async function loadLog(): Promise<void> {
+  async function loadLog(signal: AbortSignal): Promise<boolean> {
     if (logUrl === null) {
       logError =
         rawLogUrl === null
           ? "no log URL given"
-          : "log URL must be an absolute http(s) URL";
-      return;
+          : "log URL must be an absolute http(s) URL in the results bucket";
+      return true; // nothing to retry: the URL itself is the problem
     }
-    logInflight?.abort();
-    const controller = new AbortController();
-    logInflight = controller;
     try {
       // no-cache (not no-store): the browser revalidates with the object's
       // ETag and gets a 304 when nothing changed, instead of re-pulling a
       // multi-MB log every poll.
-      const res = await fetch(logUrl, {
-        cache: "no-cache",
-        signal: controller.signal,
-      });
+      const res = await fetch(logUrl, { cache: "no-cache", signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const text = await res.text();
       logError = null;
@@ -88,11 +81,19 @@
         updatedAt = new Date().toISOString();
       }
       if (live && isTerminalLog(text)) live = false;
+      return true;
     } catch (e) {
-      if (controller.signal.aborted) return;
+      if (signal.aborted) return true;
       const message = e instanceof Error ? e.message : String(e);
       // A live volume's log may not exist yet (first upload pending) — keep
       // polling rather than freezing on the first 404, but not forever.
+      //
+      // LIVE_MAX_FAILURES counts ATTEMPTS, not minutes, and since the audit
+      // $lib/poll doubles the wait after each one up to MAX_POLL_MS. So the
+      // twenty attempts are no longer twenty live periods (5 min) but a
+      // little over an hour — which is the point: a log that has not landed
+      // is worth waiting longer for, at a cost that falls away rather than
+      // one request every fifteen seconds until someone closes the tab.
       failures += 1;
       if (!live) {
         logError = message;
@@ -100,6 +101,7 @@
         live = false;
         logError = `gave up after ${failures} failed polls (${message})`;
       }
+      return false;
     }
   }
 
@@ -108,16 +110,10 @@
       window.innerHeight + window.scrollY >= document.body.scrollHeight - 40;
   }
 
-  async function loadManifest(): Promise<void> {
+  async function loadManifest(signal: AbortSignal): Promise<void> {
     if (manifestUrl === null) return;
-    manifestInflight?.abort();
-    const controller = new AbortController();
-    manifestInflight = controller;
     try {
-      const res = await fetch(manifestUrl, {
-        cache: "no-cache",
-        signal: controller.signal,
-      });
+      const res = await fetch(manifestUrl, { cache: "no-cache", signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const parsed = runManifestSchema.safeParse(await res.json());
       if (parsed.success) {
@@ -131,22 +127,29 @@
     }
   }
 
-  $effect(() => {
-    void loadLog();
-    void loadManifest();
-    return () => {
-      logInflight?.abort();
-      manifestInflight?.abort();
-    };
-  });
+  // One reader for the page. A live volume polls on the wrapper's log-ship
+  // cadence through $lib/poll — one request in flight at a time, nothing
+  // fetched while the tab is in the background, and a run of failures
+  // doubling the wait (2026-09-14 audit); a finished one is read once.
+  // `started` is why `live` going false re-runs this effect and reads
+  // nothing: the tick that saw the terminal line already has the text.
+  let started = false;
 
   $effect(() => {
-    if (!live) return;
-    const timer = setInterval(() => {
-      void loadLog();
-      if (manifest === null) void loadManifest();
-    }, LIVE_MS);
-    return () => clearInterval(timer);
+    const tick = async (signal: AbortSignal): Promise<boolean> => {
+      const ok = await loadLog(signal);
+      if (manifest === null) await loadManifest(signal);
+      return ok;
+    };
+    if (live) {
+      started = true;
+      return startPolling(tick, LIVE_MS);
+    }
+    if (started) return;
+    started = true;
+    const controller = new AbortController();
+    void tick(controller.signal);
+    return () => controller.abort();
   });
 
   $effect(() => {
@@ -159,8 +162,20 @@
     }
   });
 
+  // A volume of a few hundred pages leaves a log of tens of megabytes, and
+  // the whole of it was re-parsed and re-rendered on every live poll
+  // (2026-09-14 audit). What a reader following a run wants is the end, so
+  // that is what is drawn — with the rest one click away, and nothing
+  // thrown away: `raw` still opens the whole object in a tab.
+  let whole = $state(false);
+  const clipped = $derived(
+    !whole && logText !== null && logText.length > LOG_TAIL_BYTES,
+  );
+  const shown = $derived(
+    logText === null ? null : whole ? logText : tailOf(logText),
+  );
   const parsed = $derived<{ groups: LogGroup[] } | null>(
-    logText !== null ? parseRunLog(logText) : null,
+    shown !== null ? parseRunLog(shown) : null,
   );
 
   // Tint for the per-line level chip. WARNING/ERROR/CRITICAL get the same
@@ -222,6 +237,15 @@
         <pre class="code-block">{manifest.pipeline_yaml}</pre>
       </details>
     {/if}
+  {/if}
+
+  {#if clipped}
+    <p class="clipped">
+      Showing the end of this log.
+      <button type="button" onclick={() => (whole = true)}
+        >show whole log</button
+      >
+    </p>
   {/if}
 
   <section class="log" aria-label="run log">
@@ -350,6 +374,28 @@
     .pulse {
       animation: none;
     }
+  }
+
+  .clipped {
+    color: var(--muted-foreground);
+    font-size: 0.8rem;
+    margin: 0 0 0.6rem;
+  }
+
+  .clipped button {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--primary);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
+  .clipped button:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 3px;
   }
 
   details.pipeline-yaml {

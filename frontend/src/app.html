@@ -4,7 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>HTR Campaigns</title>
-    <!-- Deployment hook: overwrite /config.js to set window.API_BASE.
+    <!-- Runtime configuration: window.API_BASE and window.RESULTS_BASE.
+         The read API serves this path itself, from its own environment
+         (packages/web), so a deployment configures the page by setting
+         HTRFLOW_PUBLIC_RESULTS_BASE and never by editing a file; the copy in
+         static/ answers a `bun run dev` that has no service to ask.
          Same-origin, so it passes the script-src 'self' CSP. -->
     <script src="%sveltekit.assets%/config.js"></script>
     %sveltekit.head%

@@ -16,7 +16,13 @@ from typing import Callable, Iterable, Iterator
 import httpx
 from pydantic import BaseModel, Field
 
-from .fetch import FETCH_MAX_BYTES, FetchResult, describe, fetch_page
+from .fetch import (
+    FETCH_MAX_BYTES,
+    MAX_IMAGE_PIXELS,
+    FetchResult,
+    describe,
+    fetch_page,
+)
 from .iiif import PageRef
 
 log = logging.getLogger("htrflow_batch")
@@ -62,6 +68,15 @@ def discard(path: Path) -> None:
         pass  # the outcome is already recorded; a failed delete changes nothing
 
 
+class Unrecoverable(RuntimeError):
+    """A condition that would make every remaining page fail the same way, so
+    the page loop must not absorb it as one page's failure (W9). ``consume``
+    drains what it can -- that is the whole point of it -- but draining 600
+    pages through a pipeline that cannot be rebuilt publishes a manifest full
+    of failures and a green index. Raised by the caller's ``process``; the run
+    ends transient and the retry gets a fresh pod."""
+
+
 class UploadOutage(RuntimeError):
     """The result store failed for N pages in a row: transient, abort now
     rather than drain the whole volume through a dead bucket."""
@@ -91,6 +106,7 @@ class PageStream:
         retries: int = 3,
         backoff: float = 0.5,
         max_bytes: int = FETCH_MAX_BYTES,
+        max_pixels: int = MAX_IMAGE_PIXELS,
         stop: threading.Event | None = None,
     ) -> None:
         self.bytes_fetched = 0
@@ -102,6 +118,7 @@ class PageStream:
             retries=retries,
             backoff=backoff,
             max_bytes=max_bytes,
+            max_pixels=max_pixels,
             stop=stop,
         )
         self._queued = list(pages)
@@ -191,6 +208,8 @@ def consume(
             t0 = time.monotonic()
             try:
                 files = process(item.path)
+            except Unrecoverable:
+                raise  # not this page's failure: every later page would share it
             except Exception as e:  # drain-what-you-can; verify gate decides later
                 _failed(stats, name, describe(e))
                 continue

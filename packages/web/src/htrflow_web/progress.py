@@ -19,9 +19,11 @@ to keep working when the bucket does not.
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime, timezone
 from typing import Callable
+from urllib.parse import quote
 
 import httpx
 
@@ -35,8 +37,22 @@ DONE_TTL = 3600.0
 #: refill is one cheap GET per row on screen.
 MAX_ENTRIES = 5000
 
+#: States whose file will not change again: the volume is over, or its
+#: campaign's Job is gone and nothing is left to write one (`unknown`).
+_FINISHED = ("done", "unknown")
+
 #: Short: a slow bucket must not hold the API's own response open.
 TIMEOUT = 2.0
+
+#: The file is ours, but it arrives over the network like any other
+#: document and this process holds it in memory while it parses it. A real
+#: progress.json is a few hundred bytes; anything past this is not one, and
+#: the body is dropped unread rather than buffered (2026-09-14 audit).
+MAX_BODY = 64 * 1024
+
+#: How much of a string from that document may reach the card. `lastPage`,
+#: `stage` and the error sentence are all rendered for a person to read.
+MAX_FIELD = 300
 
 
 def _int(value: object) -> int:
@@ -44,7 +60,8 @@ def _int(value: object) -> int:
 
 
 def _str_or_none(value: object) -> str | None:
-    return value if isinstance(value, str) else None
+    """A string from the document, clipped to what a card can show."""
+    return value[:MAX_FIELD] if isinstance(value, str) else None
 
 
 def _last_error(value: object) -> dict | None:
@@ -56,7 +73,7 @@ def _last_error(value: object) -> dict | None:
     error = value.get("error")
     if not isinstance(error, str):
         return None
-    return {"page": _str_or_none(value.get("page")), "error": error}
+    return {"page": _str_or_none(value.get("page")), "error": error[:MAX_FIELD]}
 
 
 def _age_seconds(updated_at: str | None, now: float) -> int | None:
@@ -138,6 +155,18 @@ def _from_manifest(doc: dict, now: float) -> dict | None:
     }
 
 
+def _aged(value: dict | None, now: float) -> dict | None:
+    """A cached row with its ``ageSeconds`` recomputed for this request. The
+    counts in a cached row are stale by at most the TTL, but the age is
+    stale by however long the row has been cached -- an hour, for a done
+    volume -- and "updated 8 s ago" then said so all afternoon (2026-09-14
+    audit). The timestamp it is computed from is in the row already, so this
+    costs nothing and re-fetches nothing."""
+    if value is None or value.get("updatedAt") is None:
+        return value
+    return {**value, "ageSeconds": _age_seconds(value["updatedAt"], now)}
+
+
 class ProgressReader:
     """One HTTP client and one small cache for the life of the app."""
 
@@ -150,14 +179,17 @@ class ProgressReader:
         own (``<public_results_base>/<namespace>/<pipeline>``)."""
         if state == "pending":
             return None  # no pod has run: there is nothing in the bucket yet
-        # One clock read per call, not per cache miss: a cached hit still
-        # carries the ageSeconds computed when it was fetched (stale by at
-        # most the cache TTL), which is the same staleness budget every other
-        # field in a cached row already has.
+        # One clock read per call, not per cache miss -- and a cached hit
+        # has its ageSeconds recomputed against it (`_aged`), so the counts
+        # in a row can be as stale as the TTL but "updated N ago" never is.
         now = time.time()
-        base = f"{results_base}/{volume_id}"
+        # Encoded: volume ids come off a campaign's volumes.txt, a file
+        # people edit in a git repo, and an id with `../` in it was
+        # normalised by the client into a request for another key
+        # (2026-09-14 audit).
+        base = f"{results_base}/{quote(volume_id, safe='')}"
         found = self._cached(f"{base}/progress.json", _from_progress, state, now)
-        if found is None and state == "done":
+        if found is None and state in _FINISHED:
             # Written by a wrapper that predates progress.json. One GET more,
             # cached for the hour: a finished volume is finished.
             found = self._cached(f"{base}/manifest.json", _from_manifest, state, now)
@@ -173,11 +205,11 @@ class ProgressReader:
         monotonic_now = time.monotonic()
         hit = self._cache.get(url)
         if hit is not None and hit[0] > monotonic_now:
-            return hit[1]
+            return _aged(hit[1], now)
         value = self._get(url, parse, now)
         # A miss on a done volume is cached briefly, not for the hour: it may
         # simply be a file that has not landed yet.
-        ttl = DONE_TTL if state == "done" and value is not None else RUNNING_TTL
+        ttl = DONE_TTL if state in _FINISHED and value is not None else RUNNING_TTL
         if len(self._cache) >= MAX_ENTRIES:
             self._cache.clear()
         self._cache[url] = (monotonic_now + ttl, value)
@@ -187,10 +219,22 @@ class ProgressReader:
         self, url: str, parse: Callable[[dict, float], dict | None], now: float
     ) -> dict | None:
         try:
-            response = self._client.get(url)
-            if response.status_code != 200:
-                return None
-            doc = response.json()
+            doc = self._body(url)
         except Exception:
             return None  # unreachable, timed out, or not JSON at all
         return parse(doc, now) if isinstance(doc, dict) else None
+
+    def _body(self, url: str) -> object:
+        """The document at ``url``, read in chunks and abandoned past
+        ``MAX_BODY``. Redirects are not followed: the URL is built from an
+        operator's results base, and a bucket answering it with a Location
+        is not somewhere this pod should go next."""
+        with self._client.stream("GET", url, follow_redirects=False) as response:
+            if response.status_code != 200:
+                return None
+            body = bytearray()
+            for chunk in response.iter_bytes():
+                body += chunk
+                if len(body) > MAX_BODY:
+                    return None
+        return json.loads(body)
