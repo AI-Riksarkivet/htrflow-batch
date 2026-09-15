@@ -1505,3 +1505,38 @@ def test_a_rebuild_that_works_starts_the_count_again(cfg, tmp_path, monkeypatch)
             items, main_mod._default_factory(cfg), lambda name, files: None, stats=stats
         )
     assert len(stats.results) == 6  # the run reached page 7 before it gave up
+
+
+def _recording_client(monkeypatch) -> list:
+    made: list = []
+    original = main_mod._http_client
+
+    def make():
+        client = original()
+        made.append(client)
+        return client
+
+    monkeypatch.setattr(main_mod, "_http_client", make)
+    return made
+
+
+def test_the_http_client_is_closed_on_the_way_out(env, cfg, s3, monkeypatch):
+    """W15: the client owns a connection pool and its sockets, and nothing
+    ever closed it -- it survived to interpreter shutdown, holding keep-alive
+    connections to the image host open for the rest of the run."""
+    made = _recording_client(monkeypatch)
+    assert main(env, process_page_factory=fake_factory) == EXIT_OK
+    assert [client.is_closed for client in made] == [True]
+
+
+def test_the_http_client_is_closed_when_the_run_fails(env, cfg, s3, monkeypatch):
+    made = _recording_client(monkeypatch)
+    assert main(env, process_page_factory=_failing_everywhere) == EXIT_TRANSIENT
+    assert [client.is_closed for client in made] == [True]
+
+
+def _failing_everywhere(cfg):
+    def process(path):
+        raise RuntimeError("htrflow's Segmentation worker thread died")
+
+    return process

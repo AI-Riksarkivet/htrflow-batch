@@ -245,7 +245,12 @@ fail=0
 # file well inside the byte cap OOM-killed the pod. The header read, the
 # Config field, the two signatures it travels through, and the paragraph
 # saying why an image Pillow cannot read is deliberately NOT rejected here.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3084
+# 3084 -> 3094 (2026-09-14, audit W15): the httpx.Client is context-managed
+# around the stages that fetch. Nothing ever closed it, so its connection pool
+# and the keep-alive sockets to the image host survived to interpreter
+# shutdown. The lines are the `with`, the re-indented call it wraps and the
+# note that publish talks only to S3.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3094
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
