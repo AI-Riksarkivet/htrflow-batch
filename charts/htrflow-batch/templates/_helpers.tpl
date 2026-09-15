@@ -31,7 +31,7 @@ with network.enabled=false to get at the policy objects alone.
 */}}
 {{- if and .Values.network.enabled (has "0.0.0.0/0" .Values.network.web.ingressCidrs) }}
 {{- if not .Values.network.web.allowPublicIngress }}
-{{- fail "network.web.ingressCidrs allows 0.0.0.0/0 and the web front has no authentication of its own: list the ranges that may reach it, or set network.web.allowPublicIngress=true to accept that any address may" }}
+{{- fail "network.web.ingressCidrs allows 0.0.0.0/0, and the web front has no authentication of its own: either list the ranges that may reach it (include the node range — NodePort traffic arrives SNAT'd from the node), or set network.web.allowPublicIngress=true to accept that any address that can route to a node may open the campaign browser, the viewer and the read API" }}
 {{- end }}
 {{- end }}
 {{- end }}
