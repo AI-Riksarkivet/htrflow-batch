@@ -250,7 +250,11 @@ fail=0
 # and the keep-alive sockets to the image host survived to interpreter
 # shutdown. The lines are the `with`, the re-indented call it wraps and the
 # note that publish talks only to S3.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3094
+# 3094 -> 3099 (2026-09-14, audit W16): the SIGTERM handler is restored
+# AFTER the final log ship, not before it. A drain sends one SIGTERM and the
+# node may send another; with the handler already back at the default, the
+# second killed the pod outright and lost the log the first had preserved.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3099
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
