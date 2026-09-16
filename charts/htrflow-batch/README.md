@@ -27,10 +27,10 @@ device plugin) is a separate chart:
 ## Prerequisites
 
 - **Kueue CRDs must already be installed on the cluster.** This chart renders
-  `ResourceFlavor` / `ClusterQueue` / `LocalQueue` objects
-  (`templates/kueue.yaml`) but does not install the Kueue controller or its
-  CRDs itself. The ClusterQueue admits LocalQueues from the release namespace
-  only.
+  `ResourceFlavor` / `ClusterQueue` / `LocalQueue` / `WorkloadPriorityClass`
+  objects (`templates/kueue.yaml`) but does not install the Kueue controller
+  or its CRDs itself. The ClusterQueue admits LocalQueues from the release
+  namespace only.
 - Namespace creation is left to Helm (`--create-namespace`); the chart does
   not render a `Namespace` object for its own release namespace, so the Pod
   Security labels are applied once with `make psa-labels` (reads
@@ -153,6 +153,21 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 `htrflow-web` / `templates/web.yaml` they became in 0.4.0. Renaming them
 here would make the upgrade notes wrong for anyone actually on that
 version.
+
+### 0.9.0 — 2026-09-16 (priority classes)
+
+Added:
+- **`queue.priorityClasses`** — one cluster-scoped `WorkloadPriorityClass`
+  per entry (`templates/kueue.yaml`), on the same API version as the queue
+  objects. Default three: `htr-interactive` (1000), `htr-bulk` (0, the
+  same rank as a campaign that leaves `priority:` out) and `htr-idle`
+  (-10). A campaign's `priority:` now names one of these instead of a
+  class that never existed. Kueue orders the queue by class value first,
+  then by creation time; preemption stays off (`withinClusterQueue:
+  Never`), so a higher class goes ahead of waiting campaigns but never
+  evicts a running one. A campaign naming a class outside this list is
+  still refused by Kueue's webhook at apply time, not by
+  `htrflow-campaigns validate`. An empty list renders no class.
 
 ### 0.8.0 — 2026-09-14 (deployment audit)
 

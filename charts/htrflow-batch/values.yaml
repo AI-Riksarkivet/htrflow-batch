@@ -60,6 +60,28 @@ queue:
       quota: 8Gi
     - name: nvidia.com/gpu
       quota: 1
+  # The classes a campaign file may name with `priority:`, one cluster-scoped
+  # WorkloadPriorityClass each. Kueue orders the queue by value first (higher
+  # first) and by creation time within a value. Preemption stays off in this
+  # chart (`withinClusterQueue: Never`, Kueue's default), so a higher class
+  # goes ahead of every waiting campaign but never evicts a running one. A
+  # Job with no priority label ranks at 0, and the converter renders no label
+  # when a campaign leaves `priority:` out, so the normal class sits at 0:
+  # naming it is the same as leaving the field out. `htrflow-campaigns
+  # validate` cannot check the name (the converter knows nothing about the
+  # cluster); a campaign naming a class that is not in this list is refused
+  # by Kueue's webhook at apply time. This list IS the list of valid names.
+  # An empty list renders no class at all.
+  priorityClasses:
+    - name: htr-interactive
+      value: 1000
+      description: a handful of volumes someone is waiting for
+    - name: htr-bulk
+      value: 0
+      description: the normal campaign, the same as leaving priority out
+    - name: htr-idle
+      value: -10
+      description: fill the gaps when nothing else is waiting
 
 # The web front (D8/D19): the campaign browser at /, Universal Viewer at
 # /uv.html and GET /api/v1/jobs[/…] over the Indexed Jobs a campaign renders
