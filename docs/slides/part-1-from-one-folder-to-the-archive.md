@@ -10,7 +10,7 @@ lang: en
 
 # From one folder to the archive
 
-## Part 1 of 5 — what changes when your pipeline has to run on ten thousand volumes, and the five ideas that carry it
+## Part 1 of 5 — what changes when your pipeline has to run on ten thousand volumes
 
 <!--
 This is the first of five short lessons. It has no YAML in it beyond one
@@ -59,7 +59,7 @@ htrflow pipeline pipeline.yaml images/
 
 One folder of page images in, one folder of ALTO and PAGE out. One GPU, one process, one afternoon.
 
-<p class="note">Everything in this series keeps this file exactly as it is. The <code>steps:</code> document is passed through verbatim; nothing appends to it except the two export steps, which the platform adds itself. The one thing it gains is a line above it naming the image to run it in — Idea 5.</p>
+<p class="note">Everything in this series keeps this file exactly as it is. The <code>steps:</code> document is passed through verbatim; nothing appends to it except the two export steps, which the platform adds itself. The one thing it gains is a line above it naming the image to run it in.</p>
 
 </div>
 </div>
@@ -82,39 +82,44 @@ steps.
 * **Someone will ask, a year later, which model produced this line.** And they will want the answer without asking you.
 
 <!--
-Each of these four becomes one of the five ideas that follow. Read them as
+Each of these four becomes one of the slides that follow. Read them as
 requirements, not as complaints: pages from a server, a GPU pool that is
-shared, resumable work, and provenance. The fifth idea, git, is how you ask
-for any of it.
+shared, resumable work, and provenance. Git, last, is how you ask for any of it.
 
 The fragments are click-through in the HTML deck; the PDF shows them all.
 -->
 
 ---
 
-# Idea 1 — a run is one volume in one pod
+# A run is one volume in one pod
 
-```mermaid w:900
-flowchart LR
-  I["IIIF server<br/>one manifest, many pages"]
-  P["pod<br/>your pipeline + one GPU"]
-  B[("bucket<br/>ALTO, PAGE, one folder per volume")]
-  I -->|"page by page"| P -->|"page by page"| B
+```mermaid h:250
+flowchart TB
+  subgraph A["before the first page"]
+    direction LR
+    W["wait<br/>models in the cache?"] --> S["setup<br/>read the IIIF manifest"] --> R["resume<br/>list the bucket: which<br/>pages are already done"] --> L["load<br/>build the pipeline<br/>while page 1 downloads"]
+  end
+  subgraph B["every page, then the end"]
+    direction LR
+    F["fetch page"] --> H["htrflow runs it"] --> U["upload PAGE, ALTO,<br/>progress.json"] --> V["verify<br/>every page done,<br/>skipped or failed"] --> P["publish<br/>iiif.json, pipeline.yaml,<br/>manifest.json last"] --> X["exit 0<br/>GPU free"]
+    U -. "next page" .-> F
+  end
+  A --> B
 ```
 
 <div class="cols">
 <div>
 
-**A pod** is a process the cluster starts for you, with a GPU attached and your pipeline inside. It is the `htrflow pipeline` command from the first slide, given a manifest URL instead of a folder.
+**A pod is born for one volume and dies with it.** It starts only when the models are in the cache, reads the manifest, lists what the bucket already holds, and builds the pipeline while page one downloads.
 
-**It streams.** The next page downloads while this one is on the GPU; each page's results go to the bucket the moment they exist; the page's files are deleted from the pod. A 600-page volume never needs 600 pages of disk.
+**Then it streams.** The next page downloads while this one is on the GPU; each page's results go to the bucket the moment they exist, and its files are deleted. A 600-page volume never needs 600 pages of disk.
 
 </div>
 <div>
 
-**One rule to remember:** a pod is one volume. Big volume, small volume, it holds its GPU from the first page to the last, then exits and the GPU is free.
+**Then it verifies and publishes.** Every page must be uploaded, skipped or recorded as failed; only then are the viewer manifest and `manifest.json` written, and the pod exits. The GPU is free the same second.
 
-<p class="note">The word for "the thing that runs your pipeline in a pod" is <em>the wrapper</em>. It imports htrflow as a library and runs each page itself. Part 3 opens it up.</p>
+**One rule to remember:** a pod is one volume, holding its GPU from *wait* to *exit*. What does all this inside it is *the wrapper* — htrflow as a library, run page by page. Part 3 opens it up.
 
 </div>
 </div>
@@ -123,8 +128,14 @@ flowchart LR
 Why one volume per pod and not one page per pod: the model load. Building
 the pipeline takes tens of seconds and a lot of GPU memory; you want to pay
 that once per volume, not once per page. And why not ten volumes per pod:
-because then a crash costs ten volumes, and the queue in Idea 3 cannot count
-what it is handing out.
+because then a crash costs ten volumes, and the queue cannot count what it
+is handing out.
+
+The three exits: 0 means done (with any failed pages recorded); 13 means
+"a retry cannot fix this" (bad manifest URL, unknown model) and the index
+is failed at once; 1 means transient (a 5xx, a network error) and
+Kubernetes restarts the pod, which then resumes from the bucket -- the
+resume stage is why a restart costs one page, not a volume.
 -->
 
 ---
@@ -178,7 +189,7 @@ returns to the two deciders — Kueue for when, the scheduler for where.
 
 ---
 
-# Idea 2 — a campaign is a list of volumes, and one Job
+# A campaign is a list of volumes, and one Job
 
 <div class="cols wide-left">
 <div>
@@ -266,7 +277,7 @@ results; a presigned URL publishes its signature.
 
 ---
 
-# Idea 3 — `window`: how many volumes at once
+# `window`: how many volumes at once
 
 ```mermaid h:230
 flowchart LR
@@ -315,7 +326,7 @@ whole" means.
 
 ---
 
-# Idea 3, continued — GPUs are a budget, so campaigns queue
+# GPUs are a budget, so campaigns queue
 
 ```mermaid h:200
 flowchart LR
@@ -359,7 +370,7 @@ pods are evicted with every finished volume kept.
 
 ---
 
-# Idea 4 — results stream into a bucket, and the bucket is the truth
+# Results stream into a bucket, and the bucket is the truth
 
 <div class="cols wide-left">
 <div>
@@ -402,7 +413,7 @@ retry redoes only that page. Part 3.
 
 ---
 
-# Idea 5 — your interface is git
+# Your interface is git
 
 ```mermaid h:110
 flowchart LR
@@ -496,15 +507,13 @@ look at a log to learn about it.
 </div>
 <div>
 
-<p class="note">Think before the next slide. Each of these is something a real user did in the first week, and each has a one-sentence answer that follows from one of the five ideas.</p>
+<p class="note">Think before the next slide. Each of these is something a real user did in the first week, and each has a one-sentence answer that follows from one of the slides before.</p>
 
 </div>
 </div>
 
 <!--
-Give the room a minute. The answers are on the next slide, and each one
-points back at the idea it comes from: 1 is Idea 2, 2 is Idea 5 and Idea 4,
-3 is Idea 3, 4 is Idea 4.
+Give the room a minute. The answers are on the next slide.
 -->
 
 ---
@@ -512,10 +521,10 @@ points back at the idea it comes from: 1 is Idea 2, 2 is Idea 5 and Idea 4,
 # … and what does
 
 <table class="plain">
-<tr><td>1</td><td><strong>Validate refuses the pull request</strong> with "campaign demo is append-only" — the Job's <code>completions</code> cannot grow. You write <code>campaigns/demo-2.yaml</code> with the fifth volume. <em>Idea 2.</em></td></tr>
-<tr><td>2</td><td><strong>Validate refuses that too:</strong> a pipeline file is immutable while a campaign names it. You write <code>pipelines/demo-v2.yaml</code>; its results land in a new folder beside the old ones, and both stay readable. <em>Ideas 5 and 4.</em></td></tr>
-<tr><td>3</td><td><strong>The campaign reads Queued for ever.</strong> A window of 20 never fits a quota of 4, and Kueue does not admit part of a campaign. Set the window to what the cluster can give. <em>Idea 3.</em></td></tr>
-<tr><td>4</td><td><strong>The volume still completes.</strong> The page is named in <code>manifest.json</code>, counted on the card, and the other pages are in the viewer. A page that never <em>uploaded</em> would have failed the volume instead — that one is retried. <em>Idea 4.</em></td></tr>
+<tr><td>1</td><td><strong>Validate refuses the pull request</strong> with "campaign demo is append-only" — the Job's <code>completions</code> cannot grow. You write <code>campaigns/demo-2.yaml</code> with the fifth volume.</td></tr>
+<tr><td>2</td><td><strong>Validate refuses that too:</strong> a pipeline file is immutable while a campaign names it. You write <code>pipelines/demo-v2.yaml</code>; its results land in a new folder beside the old ones, and both stay readable.</td></tr>
+<tr><td>3</td><td><strong>The campaign reads Queued for ever.</strong> A window of 20 never fits a quota of 4, and Kueue does not admit part of a campaign. Set the window to what the cluster can give.</td></tr>
+<tr><td>4</td><td><strong>The volume still completes.</strong> The page is named in <code>manifest.json</code>, counted on the card, and the other pages are in the viewer. A page that never <em>uploaded</em> would have failed the volume instead — that one is retried.</td></tr>
 </table>
 
 <!--
@@ -527,15 +536,9 @@ and a missing upload as a bug to retry.
 
 ---
 
-# The five ideas in five sentences
+# Next
 
-1. **A run is one volume in one pod**, placed by the scheduler on whichever node has a free GPU, streaming pages from IIIF to the bucket.
-2. **A campaign is one Job with one index per volume**, and its volume list is fixed the moment it is created.
-3. **`window` is the campaign's GPU count**, asked for as a whole: it starts when that many are free, and waits when they are not.
-4. **The bucket is the truth**: an ALTO means a page is done, `manifest.json` means a volume is done, and a restart lists before it fetches.
-5. **Git is the interface**: two files, a validator that runs on your laptop, a pull request that becomes a running Job.
-
-<p class="note"><strong>Next:</strong> Part 2, <em>Your interface is git</em> — the two files field by field, validate on your laptop, and a throwaway campaign of six images that runs the whole path in a minute.</p>
+<p class="note"><strong>Part 2, <em>Your interface is git</em>:</strong> the two files field by field, validate on your laptop, and a throwaway campaign of six images that runs the whole path in a minute.</p>
 
 **ai-riksarkivet.github.io/htrflow-batch** — start with *Run a Campaign*.
 
