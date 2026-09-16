@@ -932,6 +932,70 @@ describe("CampaignCard", () => {
     },
   );
 
+  // The live page read "10:56 →11:00": the sr-only span next to the arrow
+  // swallowed the whitespace after it (2026-09-16 review).
+  test("the arrow has a space on each side of it", async () => {
+    const done: JobSummary = {
+      ...job,
+      phase: "Succeeded",
+      createdAt: "2026-01-01T10:56:00Z",
+      finishedAt: "2026-01-01T11:20:00Z",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, ...done, failures: [], volumes: [] }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job: done });
+    await vi.advanceTimersByTimeAsync(0);
+    const when = container.querySelector(".when") as HTMLElement;
+    const seen = (when.textContent ?? "").replace(/created|, finished/g, "");
+    expect(seen.replace(/\s+/g, " ").trim()).toMatch(
+      /\d{2}:\d{2} → \d{2}:\d{2}$/,
+    );
+  });
+
+  test("a running campaign's open end has the same spacing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes: [] }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    const when = container.querySelector(".when") as HTMLElement;
+    const seen = (when.textContent ?? "").replace(
+      /created|, still running/g,
+      "",
+    );
+    expect(seen.replace(/\s+/g, " ").trim()).toMatch(/\d{2}:\d{2} → …$/);
+  });
+
+  test("a finish with no creation date reads without a stray comma", async () => {
+    // The API sends `createdAt` for every row it builds from a Job, but a
+    // record with only a finish is a shape the schema allows.
+    const orphan: JobSummary = {
+      ...job,
+      phase: "Succeeded",
+      createdAt: null,
+      finishedAt: "2026-01-01T11:20:00Z",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, ...orphan, failures: [], volumes: [] }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job: orphan });
+    await vi.advanceTimersByTimeAsync(0);
+    const when = container.querySelector(".when") as HTMLElement;
+    // The comma joins two halves; with only one there is nothing to join.
+    expect(when.querySelector(".sr-only")).toHaveTextContent(/^finished$/);
+    expect(when.textContent).not.toContain("→");
+  });
+
   test("a screen reader hears which date is which", async () => {
     const done: JobSummary = {
       ...job,

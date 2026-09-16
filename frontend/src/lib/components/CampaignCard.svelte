@@ -567,13 +567,16 @@
           >
         {/if}
         {#if finishedLabel !== null}
-          <span class="arrow" aria-hidden="true">→</span><span class="sr-only"
-            >, finished
-          </span><time datetime={job.finishedAt} title={job.finishedAt}
+          {#if job.createdAt !== null}{" "}<span
+              class="arrow"
+              aria-hidden="true">→</span
+            >{" "}{/if}<span class="sr-only"
+            >{job.createdAt === null ? "finished " : ", finished "}</span
+          ><time datetime={job.finishedAt} title={job.finishedAt}
             >{finishedLabel}</time
           >
         {:else if stillGoing}
-          <span class="arrow" aria-hidden="true">→</span><span
+          {" "}<span class="arrow" aria-hidden="true">→</span>{" "}<span
             aria-hidden="true">…</span
           ><span class="sr-only">, still running</span>
         {/if}

@@ -1050,7 +1050,11 @@ check web       "$(count packages/web/src -name '*.py')" 1866
 # 4431 -> 4423 (2026-09-16, card zones review): the restructure left a
 # `.dates` rule nothing selects, the old meta-line comment above the rule that
 # replaced it, and the reduced-motion note stranded above the 520px query.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4423
+# 4423 -> 4426 (2026-09-16, card zones review): the live page read
+# "10:56 ->11:00" -- the screen-reader span beside the arrow swallowed the
+# whitespace after it, so both sides of the arrow carry their own space now.
+# A finish with no creation date beside it says "finished", not ", finished".
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4426
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
