@@ -27,6 +27,14 @@ jobs:
       # Absolute: docs-site.sh cds into its staging directory before running
       # $ZENSICAL, where a relative .venv/bin/zensical does not exist.
       - run: ZENSICAL="$PWD/.venv/bin/zensical" scripts/docs-site.sh build --clean --strict
+      # The slide decks, after the site build (which clears site/): HTML and
+      # PDF into site/slides, linked from the Presentations page. Diagrams
+      # are the committed SVGs (MERMAID=skip); Marp's PDF export drives the
+      # runner's own Chrome. slides.sh pins the Marp version it runs.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: |
+          CHROME_PATH="$(command -v google-chrome)" MERMAID=skip \
+            SLIDES_FORMATS="html pdf" scripts/slides.sh
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site
