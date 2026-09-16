@@ -183,9 +183,9 @@ describe("CampaignCard", () => {
     // is empty, and the run log is still there.
     const images = within(rows[2] as HTMLElement);
     expect(images.queryByRole("link", { name: "vol2" })).toBeNull();
-    expect(
-      images.getByTitle(/nothing to open in the viewer yet/),
-    ).toHaveTextContent("vol2");
+    expect(images.getByTitle(/nothing to open there yet/)).toHaveTextContent(
+      "vol2",
+    );
     expect(images.queryByRole("link", { name: /^manifest for/ })).toBeNull();
     expect(
       images.getByRole("link", { name: "run log for vol2" }),
@@ -2527,4 +2527,74 @@ describe("the status reads figures first, pill last", () => {
       "status",
     ]);
   });
+});
+
+// Two notes from the review of the zones round (2026-09-16).
+describe("the volume line at a phone's width, and what it says it cannot do", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  async function rowFor(v: unknown) {
+    cleanup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes: [v] }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+    return container;
+  }
+
+  // The status column is 9rem at ≤48rem while its content is ~12.5rem of
+  // nowrap, which pushed a `table-layout: fixed` table into horizontal
+  // scroll on a 390px screen.
+  test("the status cell may wrap so a narrow table does not scroll sideways", async () => {
+    // jsdom does not apply a Svelte component's scoped styles, so the rule
+    // itself is what is asserted: the cell must not forbid wrapping (the
+    // pieces inside it keep their own `nowrap`), or a `table-layout: fixed`
+    // table scrolls sideways on a phone.
+    const css = (await import("./CampaignCard.svelte?raw")).default.split(
+      "<style>",
+    )[1];
+    expect(css).toMatch(/td\.vstatus \{\s*white-space: normal;/);
+    expect(css).toMatch(/td\.vstatus \.status \{\s*white-space: nowrap;/);
+    expect(css).toMatch(
+      /@media \(max-width: 48rem\)[\s\S]*?td\.vstatus \.vfigures/,
+    );
+    // ...and the cell it applies to is really there.
+    const container = await rowFor(volumeDone);
+    expect(container.querySelector("td.vstatus")).not.toBeNull();
+  });
+
+  test.each([
+    ["pending" as const, /nothing to open there yet/],
+    ["active" as const, /nothing to open there yet/],
+    ["failed" as const, /no viewer manifest for this volume/],
+    ["unknown" as const, /no viewer manifest for this volume/],
+  ])(
+    "a %s volume with nothing to open says so in the right tense",
+    async (state, wording) => {
+      // "yet" is a promise; a volume that failed or was never recorded is
+      // not going to publish one (2026-09-16 review).
+      const container = await rowFor({
+        ...volumeDone,
+        state,
+        sourceUrl: null,
+        progress: null,
+      });
+      expect(container.querySelector(".vid-name")).toHaveAttribute(
+        "title",
+        expect.stringMatching(wording),
+      );
+    },
+  );
 });

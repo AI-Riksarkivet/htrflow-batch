@@ -1084,7 +1084,12 @@ check web       "$(count packages/web/src -name '*.py')" 1870
 # the fixed-width pill led the status and the variable-width figures trailed
 # it, so the line ended at a different place on every row. Figures first, pill
 # last against the edge: the fixed element is the one that can anchor it.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4667
+# 4667 -> 4690 (2026-09-16, zones review): the status column's content is
+# half as wide again as its 9rem track on a phone, and `nowrap` on the cell
+# pushed a fixed-layout table into sideways scroll; it wraps there instead,
+# figures over pill. And "nothing to open in the viewer yet" promised a
+# manifest to volumes that failed or were never recorded.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4690
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
