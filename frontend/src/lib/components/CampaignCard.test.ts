@@ -639,10 +639,62 @@ describe("CampaignCard", () => {
         "p045); the volume is retried automatically and only those pages " +
         "are redone.",
     );
-    // Clipped by CSS, so the whole of it has to be reachable two other ways.
-    expect(line).toHaveAttribute("title", line.textContent);
-    expect(container.querySelector(".problems .sr-only")).toHaveTextContent(
-      "vol1: Failed while loading the model",
+    // Clipped by CSS, so the whole of it sits in the line's `title` too.
+    expect(container.querySelector(".problems")).toHaveAttribute(
+      "title",
+      line.textContent,
+    );
+  });
+
+  test("each failed volume on the problems line links to its own run log", async () => {
+    // The callout this line replaced gave every failure its own log link,
+    // and losing it meant a failed volume you could read about but not open
+    // unless it happened to be the one the last page error came from
+    // (2026-09-16 review).
+    const offPage = { ...volumeFailed, index: 7, id: "vol7" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          failures: [volumeFailed, offPage],
+          volumes: [],
+        }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const line = container.querySelector(".problems-text") as HTMLElement;
+    const links = [...line.querySelectorAll("a")];
+    expect(links.map((a) => a.textContent)).toEqual(["vol1", "vol7"]);
+    expect(links[0]).toHaveAttribute(
+      "href",
+      `log?log=${encodeURIComponent(volumeFailed.logUrl)}` +
+        `&manifest=${encodeURIComponent(volumeFailed.manifestUrl)}&live=1`,
+    );
+    // Still one line: the sentences are text around those links.
+    expect(line).toHaveTextContent(/^vol1: .* · vol7: /);
+  });
+
+  test("the problems line is the real text, reachable and not duplicated", async () => {
+    // Clipping with overflow does not take text out of the accessibility
+    // tree, so the line needs no hidden second copy -- and a copy beside
+    // links would be read twice (2026-09-16 review).
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [volumeFailed], volumes: [] }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    const line = container.querySelector(".problems-text") as HTMLElement;
+    expect(line).not.toHaveAttribute("aria-hidden");
+    expect(container.querySelector(".problems .sr-only")).toBeNull();
+    expect(container.querySelector(".problems")).toHaveAttribute(
+      "title",
+      expect.stringContaining("vol1:"),
     );
   });
 
@@ -1145,7 +1197,10 @@ describe("CampaignCard's failure notice", () => {
     // The counts are zone 2's job now and are not said twice.
     expect(line.textContent).not.toContain("1 page failed");
     expect(line.textContent).not.toContain("2 errors");
-    expect(line).toHaveAttribute("title", line.textContent);
+    expect(document.querySelector(".problems")).toHaveAttribute(
+      "title",
+      line.textContent,
+    );
     expect(screen.getByRole("link", { name: "log" })).toHaveAttribute(
       "href",
       "log?log=https%3A%2F%2Fpub%2Fstatus%2Flogs%2Fdemo-v1%2Fvol1.txt&live=1",
@@ -1165,10 +1220,12 @@ describe("CampaignCard's failure notice", () => {
   test("the problems line is reachable without a mouse, not title-only", async () => {
     renderWith({ pagesFailed: 1, errors: 0, lastError });
     await vi.advanceTimersByTimeAsync(0);
-    // The full sentence sits in a `.sr-only` node beside the clipped one --
-    // not only in its `title`, which a keyboard-only user never sees.
-    const hidden = document.querySelector(".problems .sr-only") as HTMLElement;
-    expect(hidden).toHaveTextContent(
+    // The sentence is the line's own text, visible to a screen reader
+    // whatever the clip does to it -- `title` alone a keyboard-only user
+    // never sees.
+    const line = document.querySelector(".problems-text") as HTMLElement;
+    expect(line).not.toHaveAttribute("aria-hidden");
+    expect(line).toHaveTextContent(
       "page 0044: htrflow's Segmentation worker thread died",
     );
   });

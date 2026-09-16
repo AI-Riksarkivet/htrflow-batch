@@ -1032,7 +1032,13 @@ check web       "$(count packages/web/src -name '*.py')" 1866
 # read as though it were running. Only a Running campaign gets it; the rest
 # show their created date alone. The arrow is decoration, so "created" and
 # "finished" are spelled out for a screen reader beside it.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4376
+# 4376 -> 4415 (2026-09-16, card zones review): a failed volume named on
+# the problems line could be read about but not opened -- the callout that
+# line replaced gave each one its own log link. The id is the link now. The
+# hidden second copy of the sentences goes with it: clipping with `overflow`
+# leaves text in the accessibility tree, and a copy beside links is read
+# twice.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4415
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

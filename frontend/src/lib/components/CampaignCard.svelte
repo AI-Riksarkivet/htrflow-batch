@@ -83,23 +83,32 @@
   // is the sentences and nothing else -- why the warm-up could not run, why
   // each volume failed, and the last page error -- in the order a reader
   // needs them.
+  const lastErrorText = $derived(describeLastError(notice.lastError));
   const problems = $derived([
     ...(job.warmup.reason
-      ? [`warm-up: ${describeReason(job.warmup.reason)}`]
+      ? [{ id: "warm-up", text: describeReason(job.warmup.reason), href: null }]
       : []),
-    ...unseenFailures.map(
-      (f) =>
-        `${f.id}: ${
-          f.reason === undefined
-            ? "Failed, with no message from the pod."
-            : describeReason(f.reason)
-        }`,
-    ),
-    ...(describeLastError(notice.lastError) === null
+    // Each failed volume keeps its own run log, the way the callout this
+    // line replaced did: a failure a reader can read about but not open is
+    // half a message (2026-09-16 review). The id is the link, so the line
+    // stays one line.
+    ...unseenFailures.map((f) => ({
+      id: f.id,
+      text:
+        f.reason === undefined
+          ? "Failed, with no message from the pod."
+          : describeReason(f.reason),
+      href: logHref(f),
+    })),
+    ...(lastErrorText === null
       ? []
-      : [describeLastError(notice.lastError) as string]),
+      : [{ id: null, text: lastErrorText, href: null }]),
   ]);
-  const problemsText = $derived(problems.join(" · "));
+  const problemsText = $derived(
+    problems
+      .map((p) => (p.id === null ? p.text : `${p.id}: ${p.text}`))
+      .join(" · "),
+  );
   let pipelineSteps = $state<string[]>([]);
   let pipelineYaml = $state("");
   let detailError = $state<string | null>(null);
@@ -593,11 +602,19 @@
 
   <!-- Zone 3. Only when something is wrong, and never the numbers above. -->
   {#if problems.length > 0}
-    <p class="problems">
-      <span class="problems-text" title={problemsText} aria-hidden="true"
-        >{problemsText}</span
+    <!-- The sentences are real text, not a hidden copy of themselves:
+         clipping with `overflow` leaves them in the accessibility tree, and
+         a second copy beside the links below would be read twice
+         (2026-09-16 review). The `title` is for the mouse. -->
+    <p class="problems" title={problemsText}>
+      <span class="problems-text"
+        >{#each problems as part, i (i)}{i > 0
+            ? " · "
+            : ""}{#if part.id !== null}{#if part.href === null}<span class="pid"
+                >{part.id}</span
+              >{:else}<a class="pid" href={part.href}>{part.id}</a
+              >{/if}{": "}{/if}{part.text}{/each}</span
       >
-      <span class="sr-only">{problemsText}</span>
       {#if noticeHref !== null}
         <a class="problems-log" href={noticeHref}>log</a>
       {/if}
@@ -876,6 +893,28 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* The volume's id is the link, so the sentence beside it stays a
+     sentence and the line stays one line. */
+  .pid {
+    font-weight: 500;
+    color: inherit;
+  }
+
+  a.pid {
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+  }
+
+  a.pid:hover {
+    color: var(--primary);
+  }
+
+  a.pid:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 3px;
   }
 
   .problems-log {
