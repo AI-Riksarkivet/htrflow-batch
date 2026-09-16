@@ -1,0 +1,9 @@
+flowchart LR
+  J["campaign Job, Indexed<br/>completions = volumes, parallelism = window"]
+  P0["index 0"]
+  P1["index 1 · retried"]
+  P2["index 2 · FailIndex"]
+  S[("S3 bucket<br/>one prefix per volume")]
+  J --> P0 --> S
+  J --> P1 --> S
+  J --> P2 --> S

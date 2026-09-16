@@ -1,0 +1,11 @@
+flowchart LR
+  A["Job applied<br/>suspended by<br/>the webhook"]
+  B["Workload<br/>created"]
+  C{"podSet fits<br/>the quota?"}
+  P["pending<br/>blocks nobody"]
+  D["QuotaReserved,<br/>Admitted,<br/>unsuspended"]
+  F["pods created,<br/>bound by<br/>kube-scheduler"]
+  A --> B --> C
+  C -->|"yes"| D --> F
+  C -->|"no"| P
+  P --> C

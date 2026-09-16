@@ -10,3 +10,6 @@ site/
 # agent worktrees
 .claude/worktrees/
 .docs-site/
+
+# Marp build copies (scripts/slides.sh)
+docs/slides/.*.build.md
