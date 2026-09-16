@@ -843,11 +843,63 @@ describe("CampaignCard", () => {
       "title",
       "Models: yolov9-regions-1 unpinned",
     );
-    // The word "created" is gone: the arrow says it.
-    expect(container.textContent).not.toContain("created");
+    // The arrow says it visually; the word is there only for a screen
+    // reader (2026-09-16 review).
+    expect(when.querySelector(".sr-only")).toHaveTextContent("created");
     // The models never sit in the identity line.
     const ident = container.querySelector(".camp") as HTMLElement;
     expect(ident.textContent).not.toContain("Models");
+  });
+
+  // The arrow says "and then it finished". A campaign that has not started
+  // has nothing on the other side of it to point at, and pointing anyway
+  // read as though it were running (2026-09-16 review).
+  test.each([["Queued" as const], ["Paused" as const], ["Unknown" as const]])(
+    "a %s campaign shows its created date and no arrow",
+    async (phase) => {
+      const waiting: JobSummary = {
+        ...job,
+        phase,
+        jobGone: phase === "Unknown",
+        counts: { total: 3, active: 0, done: 0, failed: 0 },
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          jsonResponse({ ...detail0, ...waiting, failures: [], volumes: [] }),
+        ),
+      );
+      const { container } = render(CampaignCard, { job: waiting });
+      await vi.advanceTimersByTimeAsync(0);
+      const when = container.querySelector(".when") as HTMLElement;
+      expect(
+        within(when).getByTitle("2026-01-01T00:00:00Z"),
+      ).toBeInTheDocument();
+      expect(when.textContent).not.toContain("→");
+      expect(when.textContent).not.toContain("…");
+    },
+  );
+
+  test("a screen reader hears which date is which", async () => {
+    const done: JobSummary = {
+      ...job,
+      phase: "Succeeded",
+      finishedAt: "2026-01-01T11:20:00Z",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, ...done, failures: [], volumes: [] }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job: done });
+    await vi.advanceTimersByTimeAsync(0);
+    const when = container.querySelector(".when") as HTMLElement;
+    // The arrow is decoration; the words are what joins the two times.
+    expect(when.querySelector(".arrow")).toHaveAttribute("aria-hidden", "true");
+    expect(when.textContent).toContain("created");
+    expect(when.textContent).toContain("finished");
+    expect(when.querySelectorAll(".sr-only")).toHaveLength(2);
   });
 
   test("a campaign still going shows an open-ended range", async () => {
@@ -861,7 +913,7 @@ describe("CampaignCard", () => {
     await vi.advanceTimersByTimeAsync(0);
     const when = container.querySelector(".when") as HTMLElement;
     expect(when).toHaveTextContent("…");
-    expect(within(when).getByText("not finished")).toHaveClass("sr-only");
+    expect(within(when).getByText(/still running/)).toHaveClass("sr-only");
   });
 
   test("a run that finished the same day gives its end the clock only", async () => {

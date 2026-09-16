@@ -1027,7 +1027,12 @@ check web       "$(count packages/web/src -name '*.py')" 1866
 # build a zone-2 cell and a bar, the date-range and problems derivations,
 # and the CSS for the grid, the range and the problems line -- against the
 # notice chip, the failures callout and their styles, all deleted.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4368
+# 4368 -> 4376 (2026-09-16, card zones review): the open-ended "-> ..."
+# rendered for every campaign with no finish time, so a Queued or Paused one
+# read as though it were running. Only a Running campaign gets it; the rest
+# show their created date alone. The arrow is decoration, so "created" and
+# "finished" are spelled out for a screen reader beside it.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4376
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
