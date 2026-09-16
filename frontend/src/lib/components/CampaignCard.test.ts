@@ -1947,3 +1947,88 @@ describe("the problems line never names the same page twice", () => {
     expect((await line("HTTP 400")).textContent).toBe("page 0044: HTTP 400");
   });
 });
+
+// The live PoC read "5 / 8· 3 failed": Svelte trims the whitespace before an
+// element, so the separator had nothing in front of it (2026-09-16 review).
+// And `counts.active` had no home at all after the header line went.
+describe("the figures beside a bar", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  async function cell(
+    name: "volumes" | "pages",
+    row: JobSummary,
+    body: Record<string, unknown> = {},
+  ): Promise<HTMLElement> {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          ...row,
+          failures: [],
+          volumes: [],
+          ...body,
+        }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job: row });
+    await vi.advanceTimersByTimeAsync(0);
+    const cells = [...container.querySelectorAll(".metric")];
+    return cells.find((c) => c.textContent?.startsWith(name))
+      ?.lastElementChild as HTMLElement;
+  }
+
+  test("the separator has a space in front of it", async () => {
+    const figures = await cell("pages", job, {
+      pagesDone: 5,
+      pagesTotal: 8,
+      pagesFailed: 3,
+    });
+    expect(figures.textContent).toBe("5 / 8 · 3 failed");
+  });
+
+  test("a running campaign says how many volumes are in flight", async () => {
+    const figures = await cell("volumes", {
+      ...job,
+      phase: "Running",
+      counts: { total: 5, active: 1, done: 2, failed: 0 },
+    });
+    expect(figures.textContent).toBe("2 / 5 · 1 active");
+  });
+
+  test("both, in the order a reader asks them", async () => {
+    const figures = await cell("volumes", {
+      ...job,
+      phase: "Running",
+      counts: { total: 5, active: 1, done: 2, failed: 1 },
+    });
+    expect(figures.textContent).toBe("2 / 5 · 1 failed · 1 active");
+  });
+
+  test("nothing in flight, nothing said", async () => {
+    const figures = await cell("volumes", {
+      ...job,
+      phase: "Running",
+      counts: { total: 5, active: 0, done: 5, failed: 0 },
+    });
+    expect(figures.textContent).toBe("5 / 5");
+  });
+
+  test("a campaign that is over never says active, whatever the count says", async () => {
+    // A reaped campaign's record can carry a stale `active`; the Job is gone.
+    const figures = await cell("volumes", {
+      ...job,
+      phase: "Succeeded",
+      jobGone: true,
+      counts: { total: 5, active: 2, done: 5, failed: 0 },
+    });
+    expect(figures.textContent).toBe("5 / 5");
+  });
+});

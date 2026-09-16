@@ -1043,7 +1043,11 @@ check web       "$(count packages/web/src -name '*.py')" 1866
 # had forgotten that a pipeline with NO warm-up Job blocks a campaign just as
 # surely as one that failed. `warmupBlocked`/`inTrouble` live in $lib/order
 # and both sides call them.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4423
+# 4423 -> 4431 (2026-09-16, card zones review): `counts.active` had no home
+# left after the header counts line went -- the volumes cell says it while the
+# campaign is Running. And the live page read "5 / 8· 3 failed": Svelte trims
+# the whitespace in front of an element, so each separator carries its own.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4431
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
