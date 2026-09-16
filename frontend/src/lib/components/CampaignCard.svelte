@@ -587,19 +587,10 @@
   {@const lost = lostPages(v)}
   {@const story =
     v.progress === null ? "" : describeProgress(v.progress, v.state)}
-  <span
-    class="status {v.state}"
-    class:lost={lost > 0}
-    title={lost > 0 ? doneWith(lost) : undefined}
-  >
-    <span class="dot" class:pulse={v.state === "active"} aria-hidden="true"
-    ></span>
-    <span class="status-word"
-      >{#if lost > 0}<span aria-hidden="true">{v.state}</span><span
-          class="sr-only">{doneWith(lost)}</span
-        >{:else}{v.state}{/if}</span
-    >
-  </span>
+  <!-- Figures first, the pill last: the pill is the fixed-width element, so
+       it is the one that can anchor the right edge of every row, and the
+       variable-width figures run up against it instead of pushing it about
+       (the product owner, 2026-09-16: "it's very uneven for the eye"). -->
   {#if withReason && v.state === "failed"}
     <span class="vreason" title={reasonOf(v)}>{reasonOf(v)}</span>
   {:else}
@@ -614,11 +605,27 @@
           >{/if}</span
       >
     {/key}
+  {/if}
+  <span
+    class="status {v.state}"
+    class:lost={lost > 0}
+    title={lost > 0 ? doneWith(lost) : undefined}
+  >
+    <span class="dot" class:pulse={v.state === "active"} aria-hidden="true"
+    ></span>
+    <span class="status-word"
+      >{#if lost > 0}<span aria-hidden="true">{v.state}</span><span
+          class="sr-only">{doneWith(lost)}</span
+        >{:else}{v.state}{/if}</span
+    >
+  </span>
+  {#if !(withReason && v.state === "failed")}
+    {@const cell = volumePages(v)}
     {#if v.state === "active" && cell.total > 0}
       {@render bar(`Pages done in ${v.id}`, cell.done, cell.total, "running")}
     {/if}
-    {#if story !== ""}<span class="vprogress">{story}</span>{/if}
   {/if}
+  {#if story !== ""}<span class="vprogress">{story}</span>{/if}
 {/snippet}
 
 <section class="campaign" data-health={health}>
@@ -1315,8 +1322,19 @@
     font-size: 11.5px;
   }
 
-  /* The strip is one line, so the bar sits on it at zone 2's track width
-     rather than below the figures as it does in a table cell. */
+  /* The strip is one line: the bar and the sentence sit in front of the
+     figures rather than after the pill, so the pill still ends the line. In
+     a table cell they are blocks and fall below it on their own. */
+  .latest .vprogress {
+    order: -2;
+  }
+
+  .latest .bar {
+    order: -1;
+  }
+
+  /* The bar sits on the line at zone 2's track width rather than below the
+     figures as it does in a table cell. */
   .latest .bar {
     display: inline-block;
     width: 4.5rem;

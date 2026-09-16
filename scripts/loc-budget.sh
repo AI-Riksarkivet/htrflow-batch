@@ -1080,7 +1080,11 @@ check web       "$(count packages/web/src -name '*.py')" 1870
 # campaign's state for the header row, while being the thing on the card
 # checked least often. It joins the models as one quiet footer line BELOW the
 # volumes, and still toggles the pipeline YAML under it.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4649
+# 4649 -> 4667 (2026-09-16, status order): "very uneven for the eye" --
+# the fixed-width pill led the status and the variable-width figures trailed
+# it, so the line ended at a different place on every row. Figures first, pill
+# last against the edge: the fixed element is the one that can anchor it.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4667
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
