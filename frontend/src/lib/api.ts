@@ -78,6 +78,38 @@ export const httpUrlSchema = z
   .string()
   .refine(isHttpUrl, { message: "must be an absolute http(s) URL" });
 
+/** "10:56" — the clock half of `shortDate`, for the end of a same-day range. */
+export function clockTime(iso: string, timeZone?: string): string | null {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone,
+  });
+}
+
+/**
+ * Whether two timestamps fall on the same day where the reader is. A
+ * campaign that started and finished this morning reads `10:56 → 11:00`;
+ * one that ran overnight has to say both dates.
+ */
+export function sameDay(a: string, b: string, timeZone?: string): boolean {
+  const day = (iso: string) => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime())
+      ? null
+      : d.toLocaleDateString("en-GB", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+          timeZone,
+        });
+  };
+  const first = day(a);
+  return first !== null && first === day(b);
+}
+
 export const jobPhaseSchema = z.enum([
   "Succeeded",
   // The Job gave up with some indexes already published — not the same

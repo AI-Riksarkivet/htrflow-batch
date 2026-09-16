@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   ApiUnreachable,
+  clockTime,
   fetchJob,
   fetchJobs,
   isHttpUrl,
   isResultUrl,
   jobDetailSchema,
   jobSummarySchema,
+  sameDay,
   shortDate,
   volumeStateSchema,
   warmupSchema,
@@ -556,5 +558,25 @@ describe("a volume whose state nobody recorded", () => {
 
   test("a state nobody defined is still refused", () => {
     expect(volumeStateSchema.safeParse("probably-fine").success).toBe(false);
+  });
+});
+
+describe("the compact date range on a card", () => {
+  test("clockTime is the clock half of shortDate", () => {
+    expect(clockTime("2026-09-14T10:56:00Z", "UTC")).toBe("10:56");
+    expect(clockTime("not-a-date")).toBeNull();
+  });
+
+  test("sameDay says whether the end needs its date repeated", () => {
+    expect(sameDay("2026-09-14T10:56:00Z", "2026-09-14T11:00:00Z", "UTC")).toBe(
+      true,
+    );
+    expect(sameDay("2026-09-14T23:56:00Z", "2026-09-15T00:10:00Z", "UTC")).toBe(
+      false,
+    );
+    expect(sameDay("2025-09-14T10:00:00Z", "2026-09-14T10:00:00Z", "UTC")).toBe(
+      false,
+    );
+    expect(sameDay("nope", "2026-09-14T10:00:00Z", "UTC")).toBe(false);
   });
 });

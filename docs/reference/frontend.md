@@ -5,13 +5,14 @@ reading the read API (`packages/web`) that serves it. Source:
 [`frontend/`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/frontend);
 the `frontend/README.md` there is the developer-facing version of this page.
 
-- `/` — every campaign (one card per Indexed Job) with its **volume table**
-  (id, state chip and how far that volume has got, links), the pipeline chip,
-  phase, counts and summed pages in the header, a **quiet meta line** under
-  that header carrying the models and the campaign's dates, a
-  **notice chip** when anything has failed or errored, and — on a failed
-  poll — a banner in plain words over the last list it received. Each card
-  fetches its own volumes, paged. The page header carries the logo
+- `/` — every campaign, one card per Indexed Job, each card the same four
+  zones in the same order so that ten of them scan like ten rows of one
+  table (below), then the folded card's one-line strip or its **volume
+  table** (id, state chip, how far that volume has got, links). Each card
+  fetches its own volumes, paged. The list is ordered by what wants a person
+  — running, then anything wrong, then finished newest-first, then not
+  started (`src/lib/order.ts`) — and a failed poll puts a banner in plain
+  words over the last list it received. The page header carries the logo
   (`static/ra.svg`) and title on the left, and on the right the deployed
   release (`GET /api/v1/version`), a link to the
   [source repository](https://github.com/AI-Riksarkivet/htrflow-batch) as the
@@ -150,23 +151,54 @@ Universal Viewer is not built by this project.
   state; the header's needs a succeeded warm-up too, since `Running` is also
   what a campaign reads as while its warm-up is pending), an active row and a
   Running header whose summed `pagesTotal` is above zero carry a 3px
-  `role="progressbar"` bar whose fill eases to `done`/`total` over 600 ms
-  with a slow sheen crossing it, and the progress line whose `done` actually changed since the
+  `role="progressbar"` bar whose fill eases to `done`/`total` over 600 ms;
+  the sheen crosses a bar only while the work behind it is actually
+  happening, and the progress line whose `done` actually changed since the
   last poll fades a second of the running blue out from behind its text.
   Under `prefers-reduced-motion: reduce` there is no pulse, no sheen and no
   fade — the bar still shows the same fraction, it just jumps to it.
-- **The notice chip.** `describeNotice` turns the campaign's `pagesFailed`,
-  `errors` and `lastError` into one line — "1 page failed · 2 errors ·
-  page 0044: htrflow's Segmentation worker thread died" — shown folded or
-  open, clipped visually with the full sentence still reachable by keyboard
-  and assistive tech (a visually-hidden span carries it, not only the
-  `title` attribute — a tooltip alone is not keyboard-reachable), and
-  linking to the run log of the volume the error came from (the API sends
-  that volume's `logUrl`, since the row it happened in is usually outside
-  the page being shown). Both counts zero means no chip. `errors` counts
-  ERROR-and-worse only (the wrapper's own benign WARNINGs, a pipeline
-  rebuild, "manifest covers n/m pages", must not light this chip on a
-  healthy run).
+### The four zones of a campaign card
+
+Every card has the same four zones, always in this order and always the same
+shape, because the page's real job is a list: a reader scanning ten campaigns
+should find each fact in the same place on each one, the way they would in a
+table.
+
+1. **Identity and state**, one line. The left accent bar, the campaign's
+   `namespace/name` as the fold toggle, then the pipeline chip, the phase
+   chip (with its pulsing dot while the campaign runs, and the warning colour
+   when it finished with pages missing), the warm-up chip while the warm-up
+   has not succeeded, and the "job removed" chip. At the right end of the
+   same line, the two ends of the run as a range — `14 Sept, 10:56 → 11:00`.
+   The arrow is the whole device: "created … finished …" needed two words to
+   say what it says on its own. A run that finished the same day gives its
+   end the clock only; one still going ends in an ellipsis, with "not
+   finished" for assistive tech. Both halves stay `<time>` elements carrying
+   the exact timestamp in `datetime` and `title`.
+2. **Numbers**, one line of fixed columns — `volumes`, `pages` and, only when
+   there are any, `errors`. Each cell is a label, a 3px bar and its figures
+   (`2 / 4 · 2 failed`), and the column tracks are fixed lengths rather than
+   content-derived, so the figures of stacked cards sit on one vertical line.
+   A total nobody knows yet (a campaign that has not run: the API reads page
+   counts out of the bucket) shows the label and an em dash, never a bar of
+   nothing over nothing. `errors` counts ERROR-and-worse only — the wrapper's
+   own benign WARNINGs, a pipeline rebuild, "manifest covers n/m pages", must
+   not read as something wrong on a healthy run.
+3. **Problems**, one line, and only when there is one: why the warm-up could
+   not run, then each failed volume as `id: sentence`, then the most recent
+   page error, then a link to the run log of the volume that error came from
+   (the API sends that volume's `logUrl`, since the row it happened in is
+   usually outside the page being shown). It carries sentences and nothing
+   else — the counts are zone 2's job and are not repeated here. Warning
+   colour, clipped to one line, with the whole of it in the `title` and in a
+   visually-hidden copy beside it, because a tooltip alone is not
+   keyboard-reachable. With the card open it drops the failed volumes that
+   are already visible as rows in the loaded table and keeps the rest.
+   `describeLastError` names the failing page once: the wrapper writes it
+   into its own message as often as not, and the API sends it beside the
+   message, which read "page 0044: page 0044: …" until this was fixed.
+4. **Models**, one quiet line: which weights produced these results. It is
+   the least often read line on the card, so it sits last and lightest.
 - **Sentences, not fields.** No reader ever sees `reason`'s fields, a
   `ZodError` or a transport string: `src/lib/reasons.ts` turns a `reason`
   into one sentence (`describeReason`) and a failed fetch into one sentence
@@ -188,7 +220,7 @@ Universal Viewer is not built by this project.
   did come out. A `Succeeded` campaign whose `pagesFailed` is above zero
   takes that same warning colour, on the phase chip and on the accent, with
   the same "done with N failed pages" title: every index published and pages
-  were still lost inside them. The notice chip beside it is unaffected.
+  were still lost inside them, and zone 2's bars go amber with it.
 - **Log link** —
   `log?log=<encodeURIComponent(logUrl)>&manifest=<encodeURIComponent(manifestUrl)>`,
   plus `&live=1` for a volume whose `state` is not `"done"`. Both URLs come
