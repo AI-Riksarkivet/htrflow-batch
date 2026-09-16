@@ -333,11 +333,17 @@
     return Math.min(Math.max(done, 0), Math.max(total, 0));
   }
 
-  // Zone 1's right end: `14 Sept 10:56 → 11:00`. The arrow is the whole
-  // device -- it says these are the two ends of one run, which "created …
-  // finished …" needed two words to say. A run that finished the same day
-  // shows only the clock for its end; one still going shows an ellipsis,
-  // which pairs with the beating dot in the phase chip beside it.
+  // Zone 1's right end: `14 Sept, 10:56 → 11:00`, the campaign's creation
+  // and its finish. The arrow carries the "and then", which "created … /
+  // finished …" needed two words for; the words themselves are still there
+  // for a screen reader, since an arrow is decoration to one. A run that
+  // finished the same day shows only the clock for its end. Only a campaign
+  // that is RUNNING gets the open-ended form -- one that has not started
+  // has nothing on the other side of the arrow to point at, and pointing
+  // anyway read as though it were running (2026-09-16 review).
+  const stillGoing = $derived(
+    job.phase === "Running" && job.finishedAt === null,
+  );
   const endsSameDay = $derived(
     job.createdAt !== null &&
       job.finishedAt !== null &&
@@ -538,25 +544,27 @@
         >job removed</span
       >
     {/if}
-    <!-- The two ends of one run, at the right end of the identity line. The
-         arrow is the device: "created X finished Y" needed two words to say
-         what it says on its own. -->
+    <!-- When the campaign was created and when it finished, at the right end
+         of the identity line. -->
     {#if job.createdAt !== null || job.finishedAt !== null}
       <span class="when">
         {#if job.createdAt !== null}
-          <time datetime={job.createdAt} title={job.createdAt}
+          <span class="sr-only">created </span><time
+            datetime={job.createdAt}
+            title={job.createdAt}
             >{shortDate(job.createdAt) ?? job.createdAt}</time
           >
         {/if}
-        <span class="arrow" aria-hidden="true">→</span>
         {#if finishedLabel !== null}
-          <time datetime={job.finishedAt} title={job.finishedAt}
+          <span class="arrow" aria-hidden="true">→</span><span class="sr-only"
+            >, finished
+          </span><time datetime={job.finishedAt} title={job.finishedAt}
             >{finishedLabel}</time
           >
-        {:else}
-          <span aria-hidden="true">…</span><span class="sr-only"
-            >not finished</span
-          >
+        {:else if stillGoing}
+          <span class="arrow" aria-hidden="true">→</span><span
+            aria-hidden="true">…</span
+          ><span class="sr-only">, still running</span>
         {/if}
       </span>
     {/if}

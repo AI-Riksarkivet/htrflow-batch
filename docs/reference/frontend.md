@@ -151,12 +151,15 @@ Universal Viewer is not built by this project.
   state; the header's needs a succeeded warm-up too, since `Running` is also
   what a campaign reads as while its warm-up is pending), an active row and a
   Running header whose summed `pagesTotal` is above zero carry a 3px
-  `role="progressbar"` bar whose fill eases to `done`/`total` over 600 ms;
-  the sheen crosses a bar only while the work behind it is actually
-  happening, and the progress line whose `done` actually changed since the
-  last poll fades a second of the running blue out from behind its text.
-  Under `prefers-reduced-motion: reduce` there is no pulse, no sheen and no
-  fade — the bar still shows the same fraction, it just jumps to it.
+  `role="progressbar"` bar whose fill eases to `done`/`total` over 600 ms.
+  Zone 2's bars are on **every** card whose total is above zero, finished or
+  not — what the phase gates is the sheen, which crosses a bar only while the
+  work behind it is actually happening; a finished campaign's bars are still
+  and a campaign that ended with pages missing paints them amber. The
+  progress line whose `done` actually changed since the last poll fades a
+  second of the running blue out from behind its text. Under
+  `prefers-reduced-motion: reduce` there is no pulse, no sheen and no fade —
+  a bar still shows the same fraction, it just jumps to it.
 ### The four zones of a campaign card
 
 Every card has the same four zones, always in this order and always the same
@@ -169,11 +172,14 @@ table.
    chip (with its pulsing dot while the campaign runs, and the warning colour
    when it finished with pages missing), the warm-up chip while the warm-up
    has not succeeded, and the "job removed" chip. At the right end of the
-   same line, the two ends of the run as a range — `14 Sept, 10:56 → 11:00`.
-   The arrow is the whole device: "created … finished …" needed two words to
-   say what it says on its own. A run that finished the same day gives its
-   end the clock only; one still going ends in an ellipsis, with "not
-   finished" for assistive tech. Both halves stay `<time>` elements carrying
+   same line, when the campaign was created and when it finished —
+   `14 Sept, 10:56 → 11:00`. The arrow carries the "and then"; the words
+   "created" and "finished" are still there for a screen reader, since an
+   arrow is decoration to one. A run that finished the same day gives its end
+   the clock only. Only a campaign that is **Running** gets the open-ended
+   form (`→ …`, "still running"): one that has not started has nothing on the
+   other side of the arrow, and a `Queued`, `Paused` or `Unknown` campaign
+   shows its created date alone. Both halves stay `<time>` elements carrying
    the exact timestamp in `datetime` and `title`.
 2. **Numbers**, one line of fixed columns — `volumes`, `pages` and, only when
    there are any, `errors`. Each cell is a label, a 3px bar and its figures
