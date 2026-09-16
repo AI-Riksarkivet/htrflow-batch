@@ -527,6 +527,93 @@ is that the four ideas before it are what the two files are asking for.
 
 ---
 
+# The whole picture
+
+```
+ IN GIT                        IN THE CLUSTER                                    OUTSIDE IT
+
+ campaigns repo                Kyverno       checks every object at the door
+   converter.yaml                 │
+   pipelines/  campaigns/         ▼
+   rendered/   ──── apply ───► Kueue         holds each campaign until its GPUs are free
+                                  │
+ its CI                           ▼
+   converter:                  campaign Job  one pod per volume:
+   validate, render              wrapper + htrflow  ─── pages in ──────────────  IIIF servers
+                                    │        ─── ALTO, PAGE, progress out ──────  S3 bucket
+                                    ▲ models, read-only
+                               warm-up Job   fills the model cache once  ◄────  Hugging Face Hub
+
+                               web front     read API · status page · viewer ◄── your browser
+```
+
+**Two rules hold it together:** nothing in the cluster reads git — `apply` is all it is told; and the bucket is the only thing that remembers.
+
+<!--
+Read it left to right as the life of a campaign: written in git, checked by
+Kyverno, queued by Kueue, run as one pod per volume, results in the bucket,
+watched through the web front. The warm-up is the one pod that talks to the
+Hub, and the web front is the one pod a browser talks to.
+-->
+
+---
+
+# What it is made of
+
+<div class="cols">
+<div>
+
+<p class="filename">ours — in the htrflow-batch repository</p>
+
+<table class="plain">
+<tr><td><strong>wrapper</strong></td><td>runs in every campaign pod: fetch, htrflow, upload, verify</td></tr>
+<tr><td><strong>converter</strong></td><td>the <code>htrflow-campaigns</code> tool: init, validate, render, apply — runs locally and in CI, never in the cluster</td></tr>
+<tr><td><strong>web</strong></td><td>one process: the read API, the status page and the Universal Viewer</td></tr>
+<tr><td><strong>status page</strong></td><td>the browser app the web front serves</td></tr>
+<tr><td><strong>charts</strong></td><td>install the platform — queue, model cache, web front, policies, network rules — and, for development only, an S3 store and a registry</td></tr>
+</table>
+
+</div>
+<div>
+
+<p class="filename">what it stands on</p>
+
+<table class="plain">
+<tr><td><strong>Kubernetes</strong></td><td>runs the pods; its Indexed Jobs are the campaigns</td></tr>
+<tr><td><strong>Kueue</strong></td><td>the queue and the GPU quota — part 4</td></tr>
+<tr><td><strong>Kyverno</strong></td><td>admission policies: allowed image registries, digests, model revisions, signatures</td></tr>
+<tr><td><strong>NVIDIA GPU stack</strong></td><td>driver, container runtime and device plugin, so a pod can have a GPU</td></tr>
+<tr><td><strong>an S3 store</strong></td><td>the results bucket — the only durable state</td></tr>
+<tr><td><strong>a registry</strong></td><td>where the two images live, signed</td></tr>
+<tr><td><strong>Argo CD</strong></td><td>optional: applies <code>rendered/</code> from git instead of a person</td></tr>
+</table>
+
+</div>
+</div>
+
+<!--
+Two images: htrflow-batch (the wrapper on top of htrflow's own image) and
+htrflow-web (the read API, status page and viewer). No database, no
+controller or custom resource of our own: the campaign is a plain Job.
+-->
+
+---
+
+# The status page
+
+![w:860](assets/part-1-status-page.png)
+
+**One card per campaign**, running first, then anything wrong, then finished. The header says how it ended and when; the totals show volumes and pages with failures under the bar; each volume's name opens the viewer, its icons open the run log and manifest; the footer names the pipeline and its models.
+
+<!--
+The page reads the live Jobs and each volume's progress.json, so counts
+move while a pod runs. A campaign whose Job has been deleted a week after
+it ended is rebuilt from its record and shows "job removed"; its results
+and viewer links keep working.
+-->
+
+---
+
 # Follow one campaign
 
 ```mermaid w:1124
