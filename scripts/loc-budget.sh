@@ -582,7 +582,14 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 3156
 # a 404 as its own success -- the attempt before it reached the API server
 # and only the answer was lost, so the retry was about to report an object
 # missing that it had just deleted. A first-attempt 404 still stands.
-check converter "$(count packages/converter/src -name '*.py')" 2551
+# 2551 -> 2582 (2026-09-16, priority classes): converter.yaml gains
+# `priority_classes`, the WorkloadPriorityClass names the chart ships, and
+# `validate` refuses a campaign whose `priority:` is not one of them. Kueue
+# never refuses an unknown class -- the Job stays suspended with no event
+# and reads "Queued" for ever -- so the check has to live here. Ten of the
+# lines are the paragraph saying so; the rest are the field, its validator
+# and the sentence that names the file, the classes and the chart value.
+check converter "$(count packages/converter/src -name '*.py')" 2582
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
