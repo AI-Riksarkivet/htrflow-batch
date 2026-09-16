@@ -1072,7 +1072,12 @@ check web       "$(count packages/web/src -name '*.py')" 1866
 # word holds a slot the width of the longest one and the figures one wide
 # enough for "637 / 638 - 1 failed" in tabular figures, and the clock after
 # the figures runs only while the volume can still change.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4628
+# 4628 -> 4649 (2026-09-16, provenance footer): "pipeline and model info
+# ... are a bit noisy in the header" -- the pipeline chip competed with the
+# campaign's state for the header row, while being the thing on the card
+# checked least often. It joins the models as one quiet footer line BELOW the
+# volumes, and still toggles the pipeline YAML under it.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4649
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
