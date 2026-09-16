@@ -1,0 +1,7 @@
+flowchart LR
+  L["list page/ and alto/<br/>in the bucket"]
+  Q["every page uploaded,<br/>skipped, or recorded as failed?"]
+  P["publish: iiif.json, pipeline.yaml,<br/>then manifest.json — last"]
+  F["otherwise: fail the volume<br/>with the page list in the message"]
+  L --> Q -->|"yes"| P
+  Q -->|"no"| F
