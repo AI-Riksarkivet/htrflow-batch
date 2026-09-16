@@ -103,7 +103,12 @@ a misleading npm-internal crash rather than a certificate error unless
   `scripts/slides.sh`: they are Marp sources rather than site pages, so
   `scripts/docs-site.sh` stages them out the way it stages out the stories,
   and `slides.sh` writes into `site/slides` after the site build, which
-  clears `site/` first.
+  clears `site/` first. The documentation workflow runs both, so every deck
+  at the top of `docs/slides` is published as HTML and PDF and linked from
+  the Presentations page; `slides.sh` lints the decks with the site's own
+  content rules first, and in CI renders no diagrams (`MERMAID=skip`), so a
+  changed diagram must be rendered and committed locally. Superseded decks
+  go in `docs/slides/archive`, which is neither linted nor published.
 - **Contracts:** `api-contract` (regenerates
   `frontend/src/lib/fixtures/api-contract.json` from real read-API output; a
   test asserts the committed fixture equals it — see
