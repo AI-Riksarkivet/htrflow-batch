@@ -372,36 +372,6 @@ whitespace-separated inside the platform.
 
 ---
 
-# Watch it — the status page
-
-<div class="cols wide-left">
-<div>
-
-![h:340](assets/part-2-status-page.png)
-
-</div>
-<div>
-
-**One card per campaign, sorted by what wants a person:** running, wrong, finished.
-
-* **Header:** name, state — *Succeeded*, *partially succeeded* (pages lost), *partially failed* (volumes lost), *Failed* — created → finished.
-* **Totals:** volumes and pages, a bar each, losses under the bar.
-* **Problems:** the warm-up, each failed volume's reason.
-* **Volumes:** id opens the viewer; icons for log and manifest; bar, fraction, state; a page error under its row.
-* **Footer:** pipeline and models.
-
-</div>
-</div>
-
-<!--
-The page reads the live Job and each volume's progress.json, so the counts
-move while a pod runs. A campaign whose Job has been reaped (a week after it
-finished) is rebuilt from its record and shows "job removed"; its results
-and its viewer links keep working.
--->
-
----
-
 # Pause, cancel, re-run — all of it is git
 
 <div class="cols">
