@@ -8,8 +8,8 @@ the `frontend/README.md` there is the developer-facing version of this page.
 - `/` — every campaign, one card per Indexed Job, each card the same four
   zones in the same order so that ten of them scan like ten rows of one
   table (below) and ending in a quiet provenance footer, with the folded
-  card's one-line strip or its **volume table** (id, status, links) between
-  them. Each card
+  card's single volume row or the whole loaded page of them between them —
+  all of it one grid (below). Each card
   fetches its own volumes, paged. The list is ordered by what wants a person
   — running, then anything wrong, then finished newest-first, then not
   started (`src/lib/order.ts`) — and a failed poll puts a banner in plain
@@ -113,24 +113,6 @@ Universal Viewer is not built by this project.
   by the API out of the wrapper's termination message (`stage`/`permanent`
   `null` when it was not the wrapper's JSON), present only while a pod for
   that index still exists.
-- **The status column** says per volume what zone 2 says per campaign, and
-  one snippet renders it in both the folded card's one-line strip and the
-  volume table, so the two cannot drift. The state word is coloured by that
-  volume's health — `done` green, `failed` red, `active` blue,
-  `pending`/`unknown` muted, and a `done` volume whose `progress.failed` is
-  above zero takes the **warning colour** rather than the green one, with
-  "done with N failed pages" as its title and as what a screen reader reads
-  so the colour is never the only thing carrying it. Beside the word are the
-  same figures zone 2 uses: `2 / 3 · 1 failed` with the failed count in the
-  bad colour, `137 / 638` and the bar while the volume is active, and an em
-  dash when nothing has been read out of the bucket yet. `describeProgress`
-  adds only what the numbers cannot — the stage, and how long ago **while
-  that can still change** ("processing pages · updated 12 s ago"): saying the
-  counts again in the same cell made the column two sentences, and a clock on
-  a volume that is done or failed is one nobody is waiting on. A failed
-  volume's one
-  sentence sits in the table's volume column beside the id, and on the strip
-  it replaces the figures, clipped with its title.
 - **A volume line** — the folded card's strip and every table row — reads the
   same way, and is laid out as three fixed grid tracks rather than a flex row
   so that nothing in it drifts between cards: the **id**, linked to the
@@ -206,129 +188,111 @@ Universal Viewer is not built by this project.
   second of the running blue out from behind its text. Under
   `prefers-reduced-motion: reduce` there is no pulse, no sheen and no fade —
   a bar still shows the same fraction, it just jumps to it.
-### The four zones of a campaign card
+### The shape of a campaign card
 
-Every card has the same four zones, always in this order and always the same
-shape, because the page's real job is a list: a reader scanning ten campaigns
-should find each fact in the same place on each one, the way they would in a
-table.
+Every card has the same shape, in the same order, because the page's real job
+is a list: a reader scanning ten campaigns should find each fact in the same
+place on each one, the way they would in a table.
 
 1. **Identity and state**, one line. The left accent bar, the campaign's
-   `namespace/name` as the fold toggle, then the phase
-   chip (with its pulsing dot while the campaign runs, and the warning colour
-   when it finished with pages missing), the warm-up chip while the warm-up
-   has not succeeded, and the "job removed" chip. At the right end of the
-   same line, when the campaign was created and when it finished —
-   `14 Sept, 10:56 → 11:00`. The arrow carries the "and then"; the words
-   "created" and "finished" are still there for a screen reader, since an
-   arrow is decoration to one. A run that finished the same day gives its end
-   the clock only. Only a campaign that is **Running** gets the open-ended
-   form (`→ …`, "still running"): one that has not started has nothing on the
+   `namespace/name` as the fold toggle, then the phase chip (with its pulsing
+   dot while the campaign runs), the warm-up chip while the warm-up has not
+   succeeded, and the "job removed" chip. At the right end of the same line,
+   when the campaign was created and when it finished — `14 Sept, 10:56 →
+   11:00`. The arrow carries the "and then"; the words "created" and
+   "finished" are still there for a screen reader, since an arrow is
+   decoration to one. A run that finished the same day gives its end the
+   clock only. Only a campaign that is **Running** gets the open-ended form
+   (`→ …`, "still running"): one that has not started has nothing on the
    other side of the arrow, and a `Queued`, `Paused` or `Unknown` campaign
    shows its created date alone. Both halves stay `<time>` elements carrying
    the exact timestamp in `datetime` and `title`.
-2. **Numbers**, one line of fixed columns — `volumes`, `pages` and, only when
-   there are any, `errors`. Each cell is a label, a 3px bar and its figures
-   (`2 / 4 · 2 failed`; the volumes cell adds `· 1 active` while the campaign
-   is Running, and only then — a reaped campaign's record can still carry a
-   count of what was in flight when anyone last looked). The column tracks
-   are fixed lengths rather than
-   content-derived, so the figures of stacked cards sit on one vertical line.
-   A total nobody knows yet (a campaign that has not run: the API reads page
-   counts out of the bucket) shows the label and an em dash, never a bar of
-   nothing over nothing. `errors` counts ERROR-and-worse only — the wrapper's
-   own benign WARNINGs, a pipeline rebuild, "manifest covers n/m pages", must
-   not read as something wrong on a healthy run.
-3. **Problems**, one line, and only when there is one: why the warm-up could
-   not run, then each failed volume as `id: sentence` with the id linking to
-   that volume's run log, then the most recent page error, then a link to the
-   run log of the volume that error came from
-   (the API sends that volume's `logUrl`, since the row it happened in is
-   usually outside the page being shown). It carries sentences and nothing
-   else — the counts are zone 2's job and are not repeated here. Warning
-   colour, clipped to one line, with the whole of it in the `title` for the
-   mouse — the sentences are the line's own text, so clipping them with
-   `overflow` leaves them in the accessibility tree and no hidden second copy
-   is needed. With the card open it drops the failed volumes that
-   are already visible as rows in the loaded table and keeps the rest.
-   `describeLastError` names the failing page once: the wrapper writes it
-   into its own message as often as not, and the API sends it beside the
-   message, which read "page 0044: page 0044: …" until this was fixed.
-4. **Provenance**, the card's footer — *below* the folded strip or the open
-   volume table, not in the header: "pipeline `e2e-vd` · Models: …". Which
-   recipe and which weights produced these results is checked once and read
-   least, and in the header it competed with the campaign's state for the
-   same row. The pipeline chip is still the button that toggles the
-   pipeline's YAML, which opens under it.
-- **Sentences, not fields.** No reader ever sees `reason`'s fields, a
-  `ZodError` or a transport string: `src/lib/reasons.ts` turns a `reason`
-  into one sentence (`describeReason`) and a failed fetch into one sentence
-  (`describeApiError`), each saying what happened, where, and what to do
-  next. Which sentence a `reason` gets is decided by its **fields**, never by
-  matching on the error text: a bad env and an unreadable manifest send their
-  reader to different files, and the wrapper's `stage` (`config` vs `setup`)
-  is what tells them apart. It is the single place where a message a person
-  reads is written — the wording is pinned verbatim in `reasons.test.ts`, and
-  the table is in [Failure handling](../how-it-works/failure-handling.md). A
-  `reason` the API could not parse renders as "the pod stopped without a
-  message this page can read", never as the raw JSON.
-- **Phase.** A campaign's `JobSummary.phase` (`Queued`/`Paused`/`Running`/
-  `Succeeded`/`PartiallyFailed`/`Failed`) drives the card's left accent: red
-  if `Failed`, `PartiallyFailed` or any volume is `failed`, blue if
-  `Running`, green if `Succeeded`, grey otherwise. The chip's **word** is
-  decided in one place, and there are four endings a campaign can have:
-  - `Succeeded` with no lost pages — **"Succeeded"**, green.
-  - `Succeeded` with `pagesFailed` above zero — **"partially succeeded"**, in
-    the warning colour, titled "every volume finished, N pages failed". Every
-    volume published and pages were still lost inside them; the accent and
-    zone 2's bars go amber with the chip, and its screen-reader sentence
-    stays "done with N failed pages".
-  - `PartiallyFailed` — **"partially failed"**, the same warning colour: the
-    Job gave up with some indexes already published. The pair means two
-    different losses — whole volumes here, pages inside finished volumes
-    above.
-  - `Failed` — **"Failed"**, the error colour: nothing came out.
+2. **The body: one grid.** Everything the card counts is a row of the *same*
+   four tracks, declared once as CSS custom properties on the card and
+   repeated by every row, so they coincide exactly:
 
-  The list's order (`$lib/order`) puts a campaign with a failed **volume**
-  in the "something wrong" band whatever its phase says. A campaign that lost
-  only **pages** cannot be told apart there: `GET /api/v1/jobs` carries no
-  page counts, and only the card's own detail fetch knows.
-- **Log link** —
-  `log?log=<encodeURIComponent(logUrl)>&manifest=<encodeURIComponent(manifestUrl)>`,
-  plus `&live=1` for a volume whose `state` is not `"done"`. Both URLs come
-  off the same `VolumeView` row: `manifestUrl` is what feeds `/log`'s
-  `RunSummaryCard`, and `logUrl` is absolute and bucket-rooted
-  (`<public_results_base>/status/logs/<pipeline>/<id>.txt`, no
-  namespace/`S3_PREFIX` prefix): the browser has no bucket base URL to
-  resolve a bare key against, so the API builds the full URL — see
-  [Events and signals](../how-it-works/signals.md).
-- **ALTO column.** `RunManifest.viewer_url`
-  (publish.py: `<public_results_base>/<S3_PREFIX><pipeline>/<volume>/iiif.json`,
-  i.e. `Config.volume_prefix`) is typed in `runManifestSchema`, not just
-  passed through; `pageStats`/`summarizeRun` derive each page's ALTO URL
-  alongside it — `altoUrl(viewer_url, pageId)` swaps `iiif.json` for
-  `alto/<pageId>.xml`, the sibling directory `viewer.py`'s `seeAlso` already
-  points at — and attach it as `PageStat.alto` when `viewer_url` is a valid
-  http(s) URL (a manifest without one has no alto column).
-  `PagesTable`'s **alto** cell renders `view` (`/alto?src=<encodeURIComponent(url)>`)
-  and `download` (fetch + `Blob` + a same-origin object URL — `<a download>`
-  is ignored cross-origin, and the results bucket is a different origin from
-  this page) when a row has one, nothing otherwise. `/alto` itself parses the
-  fetched XML with `lib/alto.ts`'s `parseAlto` (namespace-agnostic —
-  `getElementsByTagNameNS("*", …)` — so a default namespace, a prefix, or
-  none all work) into text lines tinted by `WC` in four buckets
-  (high/medium/low/unknown, a legend line names the cutoffs), with a raw-XML
-  toggle (`prettyXml`) and three plain-sentence errors: unreachable, not
-  valid XML, and valid XML with no text lines.
-- **Open, before it is finished.** The **open** slot points at the volume's
-  `iiifUrl` as soon as `state` is `done` **or** `progress.viewerPublished` is
-  true: the wrapper republishes `iiif.json` every ten pages, so a running
-  volume is readable in the viewer long before it publishes — but only once
-  that PUT has actually succeeded, never merely because a page count crossed
-  zero (a volume smaller than the ten-page cadence, or one just past a page
-  but before its own interim publish, would otherwise link to a manifest that
-  is not there yet). Only a volume with nothing published yet falls back to
-  its source manifest.
+   | track | holds |
+   | --- | --- |
+   | 1 (flexes) | `volumes` / `pages`, or a volume's id linked to the viewer |
+   | 2 (`--bar`) | the 3px progress bar |
+   | 3 (`--figures`) | the figures, right-aligned, tabular |
+   | 4 (`--actions`) | the two icon links, then the state pill at the far right |
+
+   The rows are the campaign's **totals** (`volumes`, `pages`), then the
+   **problems line** across all four tracks, then the campaign's **volumes** —
+   one row while the card is folded (`latest`: newest active, else newest
+   done, computed by the API over every volume), or the whole loaded page as
+   an ARIA table when it is open, its column headers present but not drawn.
+   So every number on a card sits in one column and every pill and icon in
+   another, on every card. Totals rows leave track 4 empty.
+
+   **The figures** are `2 / 3 · 1 failed` — the failed count in the bad
+   colour — plus `· 1 active` on the volumes total while the campaign runs,
+   plus `· N errors` on the pages total when there are any (`errors` has no
+   column of its own: a count with no fraction beside it lined up with
+   nothing). An em dash when the total is not known yet: the API reads page
+   counts out of the bucket, and a campaign that has not run has nothing
+   there. `errors` counts ERROR-and-worse only — the wrapper's own benign
+   WARNINGs must not read as something wrong on a healthy run.
+
+   **A campaign of one volume drops both totals rows**: that volume's own row
+   already carries the same two fractions, and stacking a total over an
+   identical row said everything twice. They come back if there is no volume
+   row to carry them — a detail that has not loaded yet.
+
+   **The state pill** is the fixed-width element, which is why it ends the
+   row: the state word holds a slot the width of the longest one
+   ("pending"/"unknown"), so the pill anchors the right edge while the
+   figures run up to it. The word is coloured by that volume's health —
+   `done` green, `failed` red, `active` blue, `pending`/`unknown` muted, and
+   a `done` volume whose `progress.failed` is above zero takes the **warning
+   colour**, with "done with N failed pages" as its title and as what a
+   screen reader reads so the colour is never the only thing carrying it.
+   `describeProgress` adds only what the numbers cannot — the stage, and how
+   long ago **while that can still change** ("processing pages · updated 12 s
+   ago"): a clock on a volume that is done or failed is one nobody is waiting
+   on. A failed volume's one sentence sits under its id in the open list, and
+   takes the figures' place on the folded row, which is one line.
+
+   At phone width (≤520px) the four tracks fold to two — label and figures on
+   the first line, the bar under with the actions beside it — so it is still
+   one column system and nothing overflows.
+3. **Problems**, one line across the grid, and only when there is one: why
+   the warm-up could not run, then each failed volume as `id: sentence` with
+   the id linking to that volume's run log, then the most recent page error,
+   then a link to the run log of the volume that error came from (the API
+   sends that volume's `logUrl`, since the row it happened in is usually
+   outside the page being shown). It carries sentences and nothing else — the
+   counts are the totals' job and are not repeated here. Warning colour,
+   clipped to one line, with the whole of it in the `title` for the mouse —
+   the sentences are the line's own text, so clipping them with `overflow`
+   leaves them in the accessibility tree and no hidden second copy is needed.
+   With the card open it drops the failed volumes that are already visible as
+   rows and keeps the rest. `describeLastError` names the failing page once:
+   the wrapper writes it into its own message as often as not, and the API
+   sends it beside the message, which read "page 0044: page 0044: …" until
+   this was fixed.
+4. **Provenance**, the card's footer — *below* the volumes, not in the
+   header: "pipeline `e2e-vd` · Models: …". Which recipe and which weights
+   produced these results is checked once and read least, and in the header
+   it competed with the campaign's state for the same row. The pipeline chip
+   is still the button that toggles the pipeline's YAML, which opens under
+   it.
+- **The links.** The id itself opens the volume in the viewer — its published
+  `iiifUrl` once there is one, its source manifest before that (`openHref`).
+  A volume with neither is plain text with a title saying so, never a link
+  that goes nowhere ("nothing to open there yet" only while a volume may
+  still publish one; a failed or unrecorded volume says "no viewer manifest
+  for this volume"). Beside it two small icon links in fixed slots: the **run
+  log**, and the volume's **source manifest** when it has one (an `images:`
+  volume does not, and the slot stays empty so the row beside it does not
+  shift). Each is labelled "run log for `<id>`" / "manifest for `<id>`" and
+  carries the same text as its title; the glyphs themselves are inline SVG
+  marked `aria-hidden`, drawn in `currentColor` so both themes get them for
+  free, with 24px of hit area and the same focus ring every other control on
+  the card wears. Inline, because the page's CSP fetches no asset and runs no
+  third-party script — a glyph font would be both. One snippet builds them
+  for the folded row and the open list alike, so the two cannot drift.
 - **Where each link goes.** Every volume row — and the folded card's latest
   strip — is built by one snippet, so a missing link leaves a gap instead of
   shifting its neighbours.
@@ -388,27 +352,24 @@ table.
 - **Folded by default.** A card starts collapsed and remembers the reader's
   choice in `localStorage` under `htrflow.card.<namespace>/<name>` — every
   access wrapped, since a browser may refuse storage; the card then simply
-  forgets. While folded it still shows the failures block and a one-line
-  **latest strip**: `JobDetail.latest` — the newest `active` volume, else the
-  newest `done` one, else nothing — with the same links its table row has, so
-  the viewer and the run log stay one click away. The API computes it over **every** volume,
+  forgets. While folded it still shows the problems line and one volume row:
+  `JobDetail.latest` — the newest `active` volume, else the
+  newest `done` one, else nothing — with the same links and the same columns
+  every open row has, so the viewer and the run log stay one click away.
+  The API computes it over **every** volume,
   like `failures` and unlike `volumes`: picking it in the browser would only
   ever see the page that happens to be loaded, and for a campaign of
   thousands the index in flight is never in the first 200.
-- **No thumbnails.** The read API has no per-volume image field; the volume
-  table is two columns, volume and status.
-- **Failures block.** `JobDetail.failures` (up to 50 newest
-  failed-with-a-reason rows, computed over every volume, independent of the
-  volume table's paging) is rendered as a compact callout above the volume
-  table. It shows only the failures the reader cannot already see: folded,
-  that is all of them, under the heading `failures (<n>)`; with the table
-  open, the callout drops every failure whose row is on a loaded page and
-  the heading becomes `failures not shown below (<n>)`, so a failure is
-  never listed twice. It is not rendered at all when that filtered list is
-  empty — an open table holding every failure shows no callout. One line per
-  entry, `<id> — <sentence>` from `describeReason` (CSS-clamped to one line,
-  no JS truncation), each line linking to the same `logHref` as its table
-  row.
+- **No thumbnails.** The read API has no per-volume image field; a volume row
+  is the card body's four tracks and nothing else.
+- **Failures.** `JobDetail.failures` (up to 50 newest failed-with-a-reason
+  rows, computed over every volume, independent of the volume list's paging)
+  feeds the problems line above the volumes. It carries only the failures the
+  reader cannot already see: folded, that is all of them; with the list open,
+  it drops every failure whose row is on a loaded page, so a failure is never
+  said twice. Nothing is rendered at all when that filtered list is empty.
+  Each entry reads `<id>: <sentence>` from `describeReason`, the id linking
+  to the same `logHref` its volume row does.
 - **Paged volumes.** `CampaignCard` fetches its own volumes via `fetchJob`
   (`offset`/`limit`, default page 200), independently of the campaign list
   poll on `/`; a "load more" button pages in the next batch when
