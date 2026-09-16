@@ -146,7 +146,8 @@ def test_the_viewer_gets_a_csp_of_its_own(client: TestClient):
     assert "default-src 'self'" in csp
     assert "object-src 'none'" in csp
     assert "frame-ancestors 'none'" in csp, "what the header always carried"
-    assert "'unsafe-inline'" not in csp and "'unsafe-eval'" not in csp
+    script_src = [d for d in csp.split(";") if d.strip().startswith("script-src")][0]
+    assert "'unsafe-inline'" not in script_src and "'unsafe-eval'" not in csp
 
 
 def test_the_viewers_own_inline_script_is_allowed_by_its_hash(client: TestClient):
@@ -155,9 +156,22 @@ def test_the_viewers_own_inline_script_is_allowed_by_its_hash(client: TestClient
     nothing an injected tag could add."""
     csp = client.get("/uv.html").headers["Content-Security-Policy"]
     script = UV_HTML.split("<script>")[1].split("</script>")[0]
-    style = UV_HTML.split("<style>")[1].split("</style>")[0]
     assert f"'sha256-{_sha256(script)}'" in csp
-    assert f"'sha256-{_sha256(style)}'" in csp
+
+
+def test_the_viewers_styles_are_unsafe_inline_with_no_hash_beside_it(
+    client: TestClient,
+):
+    """UV lays itself out through `style=` attributes it writes at runtime,
+    which no hash can name: with them blocked the viewer rendered as bare
+    buttons and an image at the foot of the page. A hash next to
+    'unsafe-inline' would make a browser ignore the latter, so the style
+    directive carries the keyword and nothing else."""
+    csp = client.get("/uv.html").headers["Content-Security-Policy"]
+    style_src = [d for d in csp.split(";") if d.strip().startswith("style-src")][0]
+    assert style_src.strip() == "style-src 'self' 'unsafe-inline'"
+    style = UV_HTML.split("<style>")[1].split("</style>")[0]
+    assert f"'sha256-{_sha256(style)}'" not in csp
 
 
 def test_every_other_page_keeps_the_plain_header(client: TestClient):
