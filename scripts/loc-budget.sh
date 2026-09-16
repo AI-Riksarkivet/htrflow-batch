@@ -1106,7 +1106,13 @@ check web       "$(count packages/web/src -name '*.py')" 1870
 # carries, and the <table> becomes rows of the same grid with ARIA roles and
 # headers nobody has to see. Against that: the metric snippet, the table's
 # markup and all of its column CSS are gone.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4650
+# 4650 -> 4689 (2026-09-16, one grid, live): the free width was in the
+# LABEL track, so a short label sat at the far left with its bar hundreds of
+# pixels away and nothing in between; the bar is the flexible track now and
+# the label is content-sized between a floor and a ceiling. And a volume row
+# carried no bar at all -- on a single-volume card, no bar anywhere -- so
+# every volume with a known total gets one, in its own state's colour.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4689
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

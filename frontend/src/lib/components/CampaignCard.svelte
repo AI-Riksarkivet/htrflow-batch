@@ -166,6 +166,28 @@
     };
   }
 
+  /**
+   * A volume's bar, in that volume's own colour: blue and sheening while it
+   * works, green when it finished clean, amber when it finished without some
+   * of its pages, red when it failed. `pending` and `unknown` get none at
+   * all — a bar of nothing over nothing is worse than an empty track (the
+   * product owner, 2026-09-16, on a single-volume card having no bar
+   * anywhere: the volume rows carried none).
+   */
+  function volumeMode(v: VolumeView): string {
+    if (v.state === "active") return "running";
+    if (v.state === "failed") return "failed";
+    return lostPages(v) > 0 ? "lost" : "done";
+  }
+
+  function hasBar(v: VolumeView): boolean {
+    return (
+      (v.progress?.total ?? 0) > 0 &&
+      v.state !== "pending" &&
+      v.state !== "unknown"
+    );
+  }
+
   /** Why a volume failed, in one sentence. */
   function reasonOf(v: VolumeView): string {
     return v.reason === undefined
@@ -655,11 +677,11 @@
     {#if !compact && story !== ""}<span class="vprogress">{story}</span>{/if}
   </span>
   <span class="c-bar" role={cellRole}
-    >{#if v.state === "active" && cell.total > 0}{@render bar(
+    >{#if hasBar(v)}{@render bar(
         `Pages done in ${v.id}`,
         cell.done,
         cell.total,
-        "running",
+        volumeMode(v),
       )}{/if}</span
   >
   <span class="c-figures" role={cellRole}>
@@ -912,8 +934,9 @@
        same columns. Absolute units, not em: the rows do not all share a
        font-size, and a column that moved with the text would not be a
        column. "637 / 638 · 1 failed · 2 errors" is the widest the figures
-       get; the actions track is the icon pair plus the pill. */
-    --bar: 4.5rem;
+       get; the actions track is the icon pair plus the pill. The first two
+       tracks are sized in the row rule below, where the reason they are
+       sized that way is. */
     --figures: 12.5rem;
     --icons: 3.2rem;
     --actions: 9.6rem;
@@ -1233,8 +1256,14 @@
 
   .row {
     display: grid;
+    /* The BAR is the track that stretches, not the label: with the free
+       width in track 1 a short label sat at the far left and its bar began
+       hundreds of pixels away with nothing in between (the product owner,
+       2026-09-16). Track 1 sizes to its content between a floor and a
+       ceiling -- long ids clip, with their title -- and the bar takes what
+       is left, which also makes it a bar worth reading. */
     grid-template-columns:
-      minmax(0, 1fr) var(--bar) var(--figures)
+      minmax(6rem, 16rem) minmax(8rem, 1fr) var(--figures)
       var(--actions);
     align-items: center;
     column-gap: 0.75rem;
@@ -1248,6 +1277,7 @@
 
   .c-label {
     min-width: 0;
+    overflow: hidden;
     font-weight: 500;
     color: var(--foreground);
   }
@@ -1373,10 +1403,19 @@
     transition: width 600ms ease-out;
   }
 
-  /* Published, but not all of it: the same warning token the phase chip
-     takes in the same state. */
+  /* Each volume's bar in that volume's own colour, the same tokens its
+     state word takes: published-but-not-all-of-it amber, finished green,
+     failed red. The default is the running blue. */
   .fill.lost {
     background: var(--warning);
+  }
+
+  .fill.done {
+    background: var(--success);
+  }
+
+  .fill.failed {
+    background: var(--destructive);
   }
 
   /* --background, not white: it reads as a light band on the light theme's

@@ -213,8 +213,8 @@ place on each one, the way they would in a table.
 
    | track | holds |
    | --- | --- |
-   | 1 (flexes) | `volumes` / `pages`, or a volume's id linked to the viewer |
-   | 2 (`--bar`) | the 3px progress bar |
+   | 1 (`minmax(6rem, 16rem)`) | `volumes` / `pages`, or a volume's id linked to the viewer — content-sized between a floor and a ceiling, so a long id clips with its title rather than widening the column |
+   | 2 (`minmax(8rem, 1fr)`) | the 3px progress bar — the one flexible track, so the free width goes into the bar rather than leaving a hole beside a short label |
    | 3 (`--figures`) | the figures, right-aligned, tabular |
    | 4 (`--actions`) | the two icon links, then the state pill at the far right |
 
@@ -239,6 +239,14 @@ place on each one, the way they would in a table.
    already carries the same two fractions, and stacking a total over an
    identical row said everything twice. They come back if there is no volume
    row to carry them — a detail that has not loaded yet.
+
+   **Every row with a known total carries a bar**, in the colour of the thing
+   it measures: the campaign's two totals take the running blue while it
+   runs and amber when it finished with pages missing, and a volume's takes
+   its own state's — blue and sheening while it works, green when it
+   finished clean, amber when it finished without some of its pages, red
+   when it failed. A `pending` or `unknown` volume leaves the track empty: a
+   bar of nothing over nothing says less than no bar.
 
    **The state pill** is the fixed-width element, which is why it ends the
    row: the state word holds a slot the width of the longest one
