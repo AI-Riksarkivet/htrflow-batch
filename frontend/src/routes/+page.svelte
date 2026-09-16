@@ -5,6 +5,7 @@
   // cadence, both documented in $lib/config / $lib/api.
   import { fetchJobs, fetchVersion, type JobSummary } from "$lib/api.js";
   import { RELOAD_MS, REPO_URL } from "$lib/config.js";
+  import { byAttention } from "$lib/order.js";
   import { startPolling } from "$lib/poll.js";
   import { describeApiError, describeUnreadable } from "$lib/reasons.js";
 
@@ -37,7 +38,9 @@
     try {
       const result = await fetchJobs(signal);
       if (signal.aborted) return true;
-      jobs = result.jobs;
+      // The API sorts by creation date; the page sorts by what wants a
+      // person (see $lib/order).
+      jobs = byAttention(result.jobs);
       unreadable = result.unreadable;
       error = null;
       return true;

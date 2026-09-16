@@ -242,3 +242,57 @@ describe("/ campaign page", () => {
     expect(fetchMock.mock.calls.length).toBeGreaterThan(settled);
   });
 });
+
+// The API answers newest-declared first, which says nothing about which
+// campaign wants a person. The page reads: what is moving, what went wrong,
+// what is over (newest first), what has not begun ($lib/order).
+describe("/ campaign list order", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  async function names(rows: unknown[]): Promise<(string | null)[]> {
+    vi.stubGlobal("fetch", routedFetch(rows));
+    const { container } = render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    return [...container.querySelectorAll(".camp-name")].map(
+      (el) => el.textContent,
+    );
+  }
+
+  // The shared `job` fixture is a Running campaign that already carries a
+  // failed volume; these are clean but for the phase each is testing.
+  const clean = { ...job, counts: { total: 3, active: 0, done: 3, failed: 0 } };
+  const queued = { ...clean, name: "queued", phase: "Queued" };
+  const broken = { ...clean, name: "broken", phase: "PartiallyFailed" };
+  const older = {
+    ...clean,
+    name: "older",
+    phase: "Succeeded",
+    finishedAt: "2026-09-01T10:00:00Z",
+  };
+  const newer = {
+    ...clean,
+    name: "newer",
+    phase: "Succeeded",
+    finishedAt: "2026-09-08T10:00:00Z",
+  };
+
+  test("running, then broken, then finished newest-first, then waiting", async () => {
+    expect(await names([queued, older, newer, broken, job])).toEqual([
+      "htr-test/kyrk",
+      "htr-test/broken",
+      "htr-test/newer",
+      "htr-test/older",
+      "htr-test/queued",
+    ]);
+  });
+
+  test("a list of one band keeps the order the API sent", async () => {
+    const a = { ...clean, name: "a", phase: "Queued" };
+    const b = { ...clean, name: "b", phase: "Paused" };
+    expect(await names([b, a])).toEqual(["htr-test/b", "htr-test/a"]);
+  });
+});
