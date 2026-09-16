@@ -1016,7 +1016,18 @@ check web       "$(count packages/web/src -name '*.py')" 1866
 # person. $lib/order puts what is moving first, then what went wrong, then
 # what is over newest-first, then what has not begun -- stable inside each
 # band so a poll never shuffles the page under a reader.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4220
+# 4220 -> 4368 (2026-09-16, card zones): the campaign card grew one piece
+# at a time and ended up saying the same things in three places -- counts
+# floated right of the chips, a notice chip repeating those counts, and a
+# bulleted callout repeating the failures under it -- so no two cards put a
+# fact in the same place and a list of ten could not be scanned. Four fixed
+# zones instead: identity and the run's two ends as a range; the numbers in
+# fixed columns that line up across cards; the problems as one line of
+# sentences; the models, quietest, last. The count is the two snippets that
+# build a zone-2 cell and a bar, the date-range and problems derivations,
+# and the CSS for the grid, the range and the problems line -- against the
+# notice chip, the failures callout and their styles, all deleted.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4368
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

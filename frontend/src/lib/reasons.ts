@@ -224,17 +224,26 @@ export function describeNotice(notice: CampaignNotice): string | null {
     ...count(pagesFailed, "page", " failed"),
     ...count(errors, "error"),
   ];
-  if (lastError !== null) {
-    // The wrapper writes the page into its own message as often as not, and
-    // the API sends the page beside it — prefixing regardless read "page
-    // 0044: page 0044: htrflow's ..." on a live campaign (the product
-    // owner, 2026-09-16). Only this page, spelled this way: a message
-    // naming a DIFFERENT page is saying something the prefix is not.
-    const { page, error } = lastError;
-    const named = page !== null && error.startsWith(`page ${page}:`);
-    parts.push(page === null || named ? error : `page ${page}: ${error}`);
-  }
+  const last = describeLastError(lastError);
+  if (last !== null) parts.push(last);
   return parts.join(" · ");
+}
+
+/**
+ * The most recent page failure as one sentence: "page 0044: htrflow's
+ * Segmentation worker thread died". The wrapper writes the page into its own
+ * message as often as not, and the API sends the page beside it — prefixing
+ * regardless read "page 0044: page 0044: htrflow's ..." on a live campaign
+ * (the product owner, 2026-09-16). Only this page, spelled this way: a
+ * message naming a DIFFERENT page is saying something the prefix is not.
+ */
+export function describeLastError(
+  lastError: CampaignNotice["lastError"],
+): string | null {
+  if (lastError === null) return null;
+  const { page, error } = lastError;
+  const named = page !== null && error.startsWith(`page ${page}:`);
+  return page === null || named ? error : `page ${page}: ${error}`;
 }
 
 /**

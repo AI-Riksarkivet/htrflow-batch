@@ -5,8 +5,10 @@
   // a campaign can carry thousands of volumes. No thumbnails: the read API
   // has no per-volume image, only the finished results.
   import {
+    clockTime,
     fetchJob,
     isHttpUrl,
+    sameDay,
     shortDate,
     type CampaignNotice,
     type JobSummary,
@@ -17,7 +19,7 @@
   import { modelLabel, modelUrl, pipelineModels } from "$lib/pipeline.js";
   import {
     describeApiError,
-    describeNotice,
+    describeLastError,
     describeProgress,
     describeReason,
   } from "$lib/reasons.js";
@@ -74,7 +76,30 @@
     errors: 0,
     lastError: null,
   });
-  const noticeText = $derived(describeNotice(notice));
+  // Zone 3. One line, and only when something is wrong. It merges what used
+  // to be two things: a chip in the header row that repeated counts the
+  // numbers line already shows, and a bulleted callout below it that said
+  // the same failures again (the product owner, 2026-09-16). What is left
+  // is the sentences and nothing else -- why the warm-up could not run, why
+  // each volume failed, and the last page error -- in the order a reader
+  // needs them.
+  const problems = $derived([
+    ...(job.warmup.reason
+      ? [`warm-up: ${describeReason(job.warmup.reason)}`]
+      : []),
+    ...unseenFailures.map(
+      (f) =>
+        `${f.id}: ${
+          f.reason === undefined
+            ? "Failed, with no message from the pod."
+            : describeReason(f.reason)
+        }`,
+    ),
+    ...(describeLastError(notice.lastError) === null
+      ? []
+      : [describeLastError(notice.lastError) as string]),
+  ]);
+  const problemsText = $derived(problems.join(" · "));
   let pipelineSteps = $state<string[]>([]);
   let pipelineYaml = $state("");
   let detailError = $state<string | null>(null);
@@ -97,6 +122,30 @@
       seen.set(v.id, done);
     }
     moved = now;
+  }
+
+  // Zone 2. The two fractions a campaign has -- volumes and pages -- and the
+  // error count, in fixed columns so ten cards line up like a table. A
+  // total of zero is a total nobody knows yet (the API reads page counts
+  // out of the bucket, and a pending campaign has nothing there): the cell
+  // shows its label and an em dash rather than a bar of nothing over
+  // nothing.
+  const volumeCell = $derived({
+    label: "volumes",
+    done: job.counts.done,
+    total: job.counts.total,
+    failed: job.counts.failed,
+  });
+  const pageCell = $derived({
+    label: "pages",
+    done: pages.done,
+    total: pages.total,
+    failed: notice.pagesFailed,
+  });
+
+  /** The figures beside a bar: `2 / 4 · 2 failed`, or `—` when unknown. */
+  function figures(cell: { done: number; total: number; failed: number }) {
+    return cell.total > 0 ? `${cell.done} / ${cell.total}` : "—";
   }
 
   const PAGE = 200;
@@ -284,6 +333,24 @@
     return Math.min(Math.max(done, 0), Math.max(total, 0));
   }
 
+  // Zone 1's right end: `14 Sept 10:56 → 11:00`. The arrow is the whole
+  // device -- it says these are the two ends of one run, which "created …
+  // finished …" needed two words to say. A run that finished the same day
+  // shows only the clock for its end; one still going shows an ellipsis,
+  // which pairs with the beating dot in the phase chip beside it.
+  const endsSameDay = $derived(
+    job.createdAt !== null &&
+      job.finishedAt !== null &&
+      sameDay(job.createdAt, job.finishedAt),
+  );
+  const finishedLabel = $derived(
+    job.finishedAt === null
+      ? null
+      : ((endsSameDay
+          ? clockTime(job.finishedAt)
+          : shortDate(job.finishedAt)) ?? job.finishedAt),
+  );
+
   // Defence in depth. `sourceUrl` is the API's copy of a line from a
   // campaign's volumes.txt, which is a file humans edit in a git repo — so
   // it is checked here too, at the last step before it becomes an href, the
@@ -358,20 +425,51 @@
   </span>
 {/snippet}
 
-<!-- One track, two callers (a running volume's row and the campaign header),
-     so the two bars can never disagree about what a fraction looks like.
-     `aria-label` names the thing being measured, since the bar itself has no
-     text and the numbers beside it belong to a different element. -->
-{#snippet bar(label: string, done: number, total: number)}
+<!-- One track, three callers (a running volume's row and the campaign's two
+     fractions), so no two bars can disagree about what a fraction looks
+     like. `aria-label` names the thing being measured in full, since the bar
+     has no text and the figures beside it are a separate element. `mode` is
+     the one thing that varies: the sheen crosses a bar only while work is
+     actually happening, and the fill goes amber when the campaign finished
+     with pages missing. -->
+{#snippet bar(label: string, done: number, total: number, mode: string)}
   <span
     class="bar"
     role="progressbar"
-    aria-label="Pages done in {label}"
+    aria-label={label}
     aria-valuenow={clamp(done, total)}
     aria-valuemin={0}
     aria-valuemax={Math.max(total, 0)}
   >
-    <span class="fill" style="width: {pct(done, total)}"></span>
+    <span class="fill {mode}" style="width: {pct(done, total)}"></span>
+  </span>
+{/snippet}
+
+<!-- One cell of the numbers line: label, bar, figures. The three tracks are
+     fixed lengths, not content-derived, so the figures of ten stacked cards
+     sit on one vertical line and the eye can run down them. -->
+{#snippet metric(
+  label: string,
+  cell: { done: number; total: number; failed: number },
+  mode: string,
+)}
+  <span class="metric">
+    <span class="metric-label">{label}</span>
+    <span class="metric-bar">
+      {#if cell.total > 0}
+        {@render bar(
+          `${label} done in campaign ${job.name}`,
+          cell.done,
+          cell.total,
+          mode,
+        )}
+      {/if}
+    </span>
+    <span class="metric-figures">
+      {figures(cell)}{#if cell.failed > 0}<span class="bad">
+          · {cell.failed} failed</span
+        >{/if}
+    </span>
   </span>
 {/snippet}
 
@@ -440,103 +538,88 @@
         >job removed</span
       >
     {/if}
-    {#if noticeText !== null}
-      {#if noticeHref !== null}
-        <a
-          class="chip notice"
-          class:bad={notice.pagesFailed > 0}
-          href={noticeHref}
-          title={noticeText}
-          ><span aria-hidden="true">{noticeText}</span><span class="sr-only"
-            >{noticeText}</span
-          ></a
-        >
-      {:else}
-        <span
-          class="chip notice"
-          class:bad={notice.pagesFailed > 0}
-          title={noticeText}
-          ><span aria-hidden="true">{noticeText}</span><span class="sr-only"
-            >{noticeText}</span
-          ></span
-        >
-      {/if}
+    <!-- The two ends of one run, at the right end of the identity line. The
+         arrow is the device: "created X finished Y" needed two words to say
+         what it says on its own. -->
+    {#if job.createdAt !== null || job.finishedAt !== null}
+      <span class="when">
+        {#if job.createdAt !== null}
+          <time datetime={job.createdAt} title={job.createdAt}
+            >{shortDate(job.createdAt) ?? job.createdAt}</time
+          >
+        {/if}
+        <span class="arrow" aria-hidden="true">→</span>
+        {#if finishedLabel !== null}
+          <time datetime={job.finishedAt} title={job.finishedAt}
+            >{finishedLabel}</time
+          >
+        {:else}
+          <span aria-hidden="true">…</span><span class="sr-only"
+            >not finished</span
+          >
+        {/if}
+      </span>
     {/if}
-    <span class="counts">
-      {job.counts.done}/{job.counts.total} volumes
-      {#if job.counts.failed > 0}
-        <span class="bad"> · {job.counts.failed} failed</span>
-      {/if}
-      {#if job.counts.active > 0}
-        <span> · {job.counts.active} active</span>
-      {/if}
-      {#if pages.total > 0}
-        <span> · {pages.done}/{pages.total} pages</span>
-      {/if}
-    </span>
   </div>
-  <!-- Only while the Job runs, and only once the API has read enough
-       progress files to know a total: a bar of nothing over nothing is
-       worse than no bar. -->
-  {#if job.phase === "Running" && pages.total > 0}
-    {@render bar(`campaign ${job.name}`, pages.done, pages.total)}
+
+  <!-- Zone 2. Every card carries these three cells, in the same columns,
+       whether or not the numbers in them are known yet. -->
+  <div class="numbers">
+    {@render metric(
+      "volumes",
+      volumeCell,
+      job.phase === "Running" ? "running" : campaignLost ? "lost" : "",
+    )}
+    {@render metric(
+      "pages",
+      pageCell,
+      job.phase === "Running" ? "running" : campaignLost ? "lost" : "",
+    )}
+    {#if notice.errors > 0}
+      <span class="metric errors">
+        <span class="metric-label">errors</span>
+        <span class="metric-figures bad">{notice.errors}</span>
+      </span>
+    {/if}
+  </div>
+
+  <!-- Zone 3. Only when something is wrong, and never the numbers above. -->
+  {#if problems.length > 0}
+    <p class="problems">
+      <span class="problems-text" title={problemsText} aria-hidden="true"
+        >{problemsText}</span
+      >
+      <span class="sr-only">{problemsText}</span>
+      {#if noticeHref !== null}
+        <a class="problems-log" href={noticeHref}>log</a>
+      {/if}
+    </p>
   {/if}
-  <!-- The card's quiet line: which weights produced these results, and when
-       the campaign ran. Both shouted before -- the models were a full-width
-       row of links right under the pipeline chip, and the dates had a line
-       of their own further down the card (the product owner, 2026-09-14:
-       "can we put the create date somewhere else? the layout is a bit bad;
-       also the list of used models is a bit dominant"). One small muted row
-       at the foot of the header block instead, so the row above it reads
-       name -> status -> counts with no date wedged into it. No expander
-       behind a count: a real pipeline names two or three models
+  <!-- Zone 4. Which weights produced these results: provenance, and the
+       least often read line on the card, so it sits last and lightest. The
+       dates it used to share a line with are at the right end of zone 1 now
+       (the product owner, 2026-09-16). No expander behind a count: a real
+       pipeline names two or three models
        (examples/campaigns/pipelines/demo-v1.yaml), so the whole line fits a
        normal card and clips, with its own title, on a narrow one. -->
-  {#if models.length > 0 || job.createdAt !== null || job.finishedAt !== null}
+  {#if models.length > 0}
     <p class="card-meta">
-      {#if models.length > 0}
-        <span
-          class="models"
-          title="Models: {models.map(modelLabel).join(' · ')}"
-        >
-          Models:
-          {#each models as model, i (i)}
-            {@const href = modelUrl(model)}
-            {i > 0 ? " · " : ""}
-            {#if href === null}
-              {modelLabel(model)}
-            {:else}
-              <a {href} target="_blank" rel="noopener">{modelLabel(model)}</a>
-            {/if}
-          {/each}
-        </span>
-      {/if}
-      {#if job.createdAt !== null || job.finishedAt !== null}
-        <span class="dates">
-          {#if job.createdAt !== null}
-            created <time datetime={job.createdAt} title={job.createdAt}
-              >{shortDate(job.createdAt) ?? job.createdAt}</time
-            >
+      <span class="models" title="Models: {models.map(modelLabel).join(' · ')}">
+        Models:
+        {#each models as model, i (i)}
+          {@const href = modelUrl(model)}
+          {i > 0 ? " · " : ""}
+          {#if href === null}
+            {modelLabel(model)}
+          {:else}
+            <a {href} target="_blank" rel="noopener">{modelLabel(model)}</a>
           {/if}
-          {#if job.finishedAt !== null}
-            {#if job.createdAt !== null}·{/if}
-            finished
-            <time datetime={job.finishedAt} title={job.finishedAt}
-              >{shortDate(job.finishedAt) ?? job.finishedAt}</time
-            >
-          {/if}
-        </span>
-      {/if}
+        {/each}
+      </span>
     </p>
   {/if}
   {#if yamlOpen && pipelineYaml !== ""}
     <pre class="pipeline-yaml" id={yamlId}>{pipelineYaml}</pre>
-  {/if}
-  <!-- Same text as the chip's title, but only while the card is open — the
-       chip's own tooltip already covers it folded, and there is no log to
-       link instead (Task 28). -->
-  {#if !collapsed && job.warmup.reason}
-    <p class="notice error-row">{describeReason(job.warmup.reason)}</p>
   {/if}
   {#if detailError !== null}
     <p class="notice error-row" role="alert">{detailError}</p>
@@ -555,27 +638,6 @@
       <span class="latest-id" title={latest.id}>{latest.id}</span>
       <span class="links">{@render links(latest)}</span>
     </p>
-  {/if}
-  {#if unseenFailures.length > 0}
-    <div class="failures">
-      <p class="failures-heading">
-        {collapsed ? "failures" : "failures not shown below"} ({unseenFailures.length})
-      </p>
-      <ul class="failures-list">
-        {#each unseenFailures as f (f.id)}
-          <li>
-            <a class="failure-link" href={logHref(f)}>
-              <span class="fid">{f.id}</span> —
-              <span class="reason"
-                >{f.reason === undefined
-                  ? "Failed, with no message from the pod."
-                  : describeReason(f.reason)}</span
-              >
-            </a>
-          </li>
-        {/each}
-      </ul>
-    </div>
   {/if}
   {#if !collapsed}
     <div class="table-scroll" id={tableId}>
@@ -628,7 +690,12 @@
                     >
                   {/key}
                   {#if v.state === "active" && v.progress.total > 0}
-                    {@render bar(v.id, v.progress.done, v.progress.total)}
+                    {@render bar(
+                      `Pages done in ${v.id}`,
+                      v.progress.done,
+                      v.progress.total,
+                      "running",
+                    )}
                   {/if}
                 {/if}
               </td>
@@ -725,13 +792,99 @@
     overflow-wrap: anywhere;
   }
 
-  .counts {
+  /* Pushed to the right end of the identity line, and the first thing to
+     wrap under it when the chips take the width (a phone). */
+  .when {
     margin-left: auto;
     color: var(--muted-foreground);
-    font-size: 0.85rem;
-    font-weight: 400;
+    font-size: 0.75rem;
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
+  }
+
+  .when .arrow {
+    padding: 0 0.15em;
+    opacity: 0.7;
+  }
+
+  /* Zone 2. Fixed tracks, not content-derived: ten stacked cards put their
+     figures on one vertical line, which is what makes the list scan like a
+     table rather than like ten paragraphs. */
+  .numbers {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 6.5rem;
+    align-items: center;
+    gap: 0.2rem 1rem;
+    margin: 0.35rem 0 0;
+    font-size: 0.8rem;
+    color: var(--muted-foreground);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .metric {
+    display: grid;
+    grid-template-columns: 3.6rem 4.5rem minmax(0, 1fr);
+    align-items: center;
+    gap: 0 0.5rem;
+    min-width: 0;
+  }
+
+  .metric.errors {
+    grid-template-columns: 3.6rem minmax(0, 1fr);
+  }
+
+  .metric-label {
+    color: var(--muted-foreground);
+  }
+
+  /* The track keeps its width even with no bar in it, so a campaign whose
+     totals are not known yet does not shuffle the figures of the card
+     above it. */
+  .metric-bar {
+    display: block;
+  }
+
+  .metric-figures {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--foreground);
+  }
+
+  /* Zone 3. Warning, not error: a campaign saying this has usually
+     published most of itself. One line, clipped, with the whole of it in
+     the title and in a visually-hidden copy beside it. */
+  .problems {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin: 0.35rem 0 0;
+    font-size: 0.78rem;
+    color: var(--warning);
+  }
+
+  .problems-text {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .problems-log {
+    flex-shrink: 0;
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+  }
+
+  .problems-log:hover {
+    color: var(--primary);
+  }
+
+  .problems-log:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 3px;
   }
 
   .bad {
@@ -791,13 +944,18 @@
      half is the half that gives up width first: it clips, and its title
      carries the list the clip cut. `clip` with a margin rather than
      `hidden`, so a focus ring on the last link is not shaved off. */
+  /* Zone 4, and the quietest line on the card: provenance is what a reader
+     checks once, not what they came for. A step lighter than the numbers
+     above it, in the same muted colour. */
   .card-meta {
     display: flex;
     flex-wrap: wrap;
     gap: 0.15rem 0.75rem;
-    margin: 0.3rem 0 0;
-    font-size: 12px;
+    margin: 0.35rem 0 0;
+    font-size: 11.5px;
+    font-weight: 400;
     color: var(--muted-foreground);
+    opacity: 0.9;
   }
 
   .models {
@@ -861,27 +1019,6 @@
     color: var(--warning);
   }
 
-  /* Clipped, never wrapped: the wrapper's sentence can run long and the
-     header is a single row of chips. The title carries the whole of it. */
-  .chip.notice {
-    max-width: 26rem;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    background: var(--warning-soft);
-    color: var(--warning);
-    text-decoration: none;
-  }
-
-  .chip.notice.bad {
-    background: var(--destructive-soft);
-    color: var(--destructive);
-  }
-
-  a.chip.notice:hover {
-    text-decoration: underline;
-  }
-
   .chip.phase.failed,
   .chip.warmup.failed,
   .chip.warmup.missing {
@@ -896,59 +1033,6 @@
 
   .error-row {
     color: var(--destructive);
-  }
-
-  /* Compact callout: the newest ≤50 failed-with-a-reason rows the API
-     returns, minus those the open table already shows as rows. */
-  .failures {
-    margin-top: 0.4rem;
-    padding: 0.4rem 0.6rem;
-    border: 1px solid var(--destructive);
-    border-radius: var(--radius);
-    background: var(--destructive-soft);
-  }
-
-  .failures-heading {
-    margin: 0 0 0.2rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
-    color: var(--destructive);
-  }
-
-  .failures-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    font-size: 12px;
-  }
-
-  .failure-link {
-    display: flex;
-    gap: 0.4rem;
-    align-items: baseline;
-    min-width: 0;
-    color: inherit;
-    text-decoration: none;
-  }
-
-  .failure-link:hover .reason {
-    text-decoration: underline;
-  }
-
-  .fid {
-    flex-shrink: 0;
-    font-weight: 500;
-  }
-
-  /* One line, ellipsised — the wrapper's own message can run long; no JS
-     truncation, CSS only. */
-  .reason {
-    min-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
   }
 
   table.volumes {
@@ -1073,9 +1157,18 @@
     transition: width 600ms ease-out;
   }
 
+  /* Published, but not all of it: the same warning token the phase chip
+     takes in the same state. */
+  .fill.lost {
+    background: var(--warning);
+  }
+
   /* --background, not white: it reads as a light band on the light theme's
-     dark blue and a dark one on the dark theme's pale blue, from one rule. */
-  .fill::after {
+     dark blue and a dark one on the dark theme's pale blue, from one rule.
+     Only on a bar whose work is actually happening -- every card carries
+     bars now, and a sheen crossing a finished one would say the opposite of
+     what it means. */
+  .fill.running::after {
     content: "";
     position: absolute;
     inset: 0;
@@ -1272,6 +1365,20 @@
 
   /* app.css already shortens every animation to nothing; this says it
      outright, so the dot cannot be left parked mid-beat. */
+  /* A phone. Zone 2's three cells take a line each -- the columns still
+     line up, they are just one per row -- and zone 1's dates drop under the
+     chips rather than squeezing the campaign's name. */
+  @media (max-width: 520px) {
+    .numbers {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .when {
+      margin-left: 0;
+      flex-basis: 100%;
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .dot.pulse {
       animation: none;
@@ -1284,7 +1391,7 @@
       animation: none;
     }
 
-    .fill::after {
+    .fill.running::after {
       display: none;
     }
 

@@ -207,11 +207,13 @@ describe("CampaignCard", () => {
         }),
       ),
     );
-    render(CampaignCard, { job });
+    const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    // The campaign's own line is visible folded — that is the question the
-    // card is asked most often.
-    expect(screen.getByText(/137\s*\/\s*638 pages/)).toBeInTheDocument();
+    // The campaign's own pages cell is visible folded — that is the question
+    // the card is asked most often.
+    const numbers = within(container.querySelector(".numbers") as HTMLElement);
+    expect(numbers.getByText("pages")).toBeInTheDocument();
+    expect(numbers.getByText(/137 \/ 638/)).toBeInTheDocument();
     await expand();
 
     const row = within(screen.getAllByRole("row").slice(1)[0] as HTMLElement);
@@ -603,7 +605,7 @@ describe("CampaignCard", () => {
     expect(screen.queryByRole("link", { name: "log" })).toBeNull();
   });
 
-  test("renders the failures block with both ids and reasons", async () => {
+  test("zone 3 names every failed volume and why, in one line", async () => {
     const secondFailure = {
       ...volumeFailed,
       index: 2,
@@ -623,27 +625,25 @@ describe("CampaignCard", () => {
       "fetch",
       vi.fn(async () => jsonResponse(detail)),
     );
-    render(CampaignCard, { job });
+    const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(screen.getByText("failures (2)")).toBeInTheDocument();
-    expect(screen.getByText("vol1")).toBeInTheDocument();
-    // Sentences, not the wrapper's fields: no reader ever sees a stage
-    // name, a `permanent` flag or a Python list repr.
-    expect(
-      screen.getByText(
-        "Failed while loading the model: model not found. This volume will " +
-          "not be retried — fix the cause, then put the volume in a new " +
-          "campaign.",
-      ),
-    ).toBeInTheDocument();
-    expect(screen.getByText("vol2")).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "2 pages are missing from the results (p012, p045); the volume is " +
-          "retried automatically and only those pages are redone.",
-      ),
-    ).toBeInTheDocument();
+    // Zone 3: one line, each failure as `id: sentence`. Sentences, not the
+    // wrapper's fields — no reader ever sees a stage name, a `permanent`
+    // flag or a Python list repr.
+    const line = container.querySelector(".problems-text") as HTMLElement;
+    expect(line).toHaveTextContent(
+      "vol1: Failed while loading the model: model not found. This volume " +
+        "will not be retried — fix the cause, then put the volume in a new " +
+        "campaign. · vol2: 2 pages are missing from the results (p012, " +
+        "p045); the volume is retried automatically and only those pages " +
+        "are redone.",
+    );
+    // Clipped by CSS, so the whole of it has to be reachable two other ways.
+    expect(line).toHaveAttribute("title", line.textContent);
+    expect(container.querySelector(".problems .sr-only")).toHaveTextContent(
+      "vol1: Failed while loading the model",
+    );
   });
 
   test("a failure already visible as a row in the open table is not listed twice", async () => {
@@ -657,24 +657,21 @@ describe("CampaignCard", () => {
       "fetch",
       vi.fn(async () => jsonResponse(detail)),
     );
-    render(CampaignCard, { job });
+    const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    // Folded: the table is out of sight, so every failure belongs in the callout.
-    expect(screen.getByText("failures (2)")).toBeInTheDocument();
-    expect(screen.getAllByText("vol1")).toHaveLength(1);
+    const line = () => container.querySelector(".problems-text") as HTMLElement;
+    // Folded: the table is out of sight, so every failure belongs on the line.
+    expect(line()).toHaveTextContent("vol1:");
+    expect(line()).toHaveTextContent("vol7:");
 
     await expand();
     // Open: vol1 is a row below, with its reason; only vol7 (not on the
-    // loaded page) still needs the callout.
-    expect(screen.queryByText("failures (2)")).toBeNull();
-    expect(
-      screen.getByText("failures not shown below (1)"),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText("vol1")).toHaveLength(1);
-    expect(screen.getByText("vol7")).toBeInTheDocument();
+    // loaded page) is still worth saying up here.
+    expect(line()).not.toHaveTextContent("vol1:");
+    expect(line()).toHaveTextContent("vol7:");
   });
 
-  test("no callout at all when every failure is a row in the open table", async () => {
+  test("no problems line when every failure is a row in the open table", async () => {
     const detail = {
       ...detail0,
       failures: [volumeFailed],
@@ -684,10 +681,10 @@ describe("CampaignCard", () => {
       "fetch",
       vi.fn(async () => jsonResponse(detail)),
     );
-    render(CampaignCard, { job });
+    const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
     await expand();
-    expect(screen.queryByText(/^failures/)).toBeNull();
+    expect(container.querySelector(".problems")).toBeNull();
     expect(screen.getAllByText("vol1")).toHaveLength(1);
   });
 
@@ -705,15 +702,15 @@ describe("CampaignCard", () => {
       "fetch",
       vi.fn(async () => jsonResponse(detail)),
     );
-    render(CampaignCard, { job });
+    const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
 
-    const block = screen.getByText("failures (1)").closest("div");
-    expect(block?.textContent).toContain(
+    const line = container.querySelector(".problems-text") as HTMLElement;
+    expect(line).toHaveTextContent(
       "The pod stopped without a message this page can read; open the run " +
         "log to see what happened.",
     );
-    expect(block?.textContent).not.toContain("permanent");
+    expect(line.textContent).not.toContain("permanent");
   });
 
   test("the pipeline chip lists its steps and toggles the YAML", async () => {
@@ -801,16 +798,17 @@ describe("CampaignCard", () => {
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    // Zone 4 is the models and nothing else now, so a pipeline with none
+    // has no fourth line at all.
     expect(container.querySelector(".models")).toBeNull();
-    // The quiet line stays -- it still carries the dates.
-    expect(container.querySelector(".card-meta")).not.toBeNull();
+    expect(container.querySelector(".card-meta")).toBeNull();
   });
 
-  // The product owner, 2026-09-14, on the live status page: "can we put the
-  // create date somewhere else? the layout is a bit bad; also the list of
-  // used models is a bit dominant." Both now sit in one small muted line
-  // under the header row, which is left reading name -> status -> counts.
-  test("the created date and the models share one quiet line below the header", async () => {
+  // The product owner, 2026-09-14: "can we put the create date somewhere
+  // else? the layout is a bit bad; also the list of used models is a bit
+  // dominant." The dates moved again on 2026-09-16, to the right end of the
+  // identity line as a range; the models are zone 4, the quietest line.
+  test("the run's two ends sit in zone 1; the models are zone 4", async () => {
     const detail = {
       ...detail0,
       pipelineYaml: `steps:
@@ -829,11 +827,14 @@ describe("CampaignCard", () => {
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
 
-    const meta = container.querySelector(".card-meta") as HTMLElement;
-    const created = within(meta).getByTitle("2026-01-01T00:00:00Z");
+    // Zone 1's right end: the two ends of the run, still machine-readable.
+    const when = container.querySelector(".when") as HTMLElement;
+    const created = within(when).getByTitle("2026-01-01T00:00:00Z");
     expect(created.tagName).toBe("TIME");
     expect(created).toHaveAttribute("datetime", "2026-01-01T00:00:00Z");
-    // Same line, no chip styling on it, and the link is still a link.
+    expect(when).toHaveTextContent("→");
+    // Zone 4: the models, no chip styling, the link still a link.
+    const meta = container.querySelector(".card-meta") as HTMLElement;
     const link = within(meta).getByRole("link", {
       name: "yolov9-regions-1 unpinned",
     });
@@ -842,10 +843,70 @@ describe("CampaignCard", () => {
       "title",
       "Models: yolov9-regions-1 unpinned",
     );
-    // ...and neither of them is in the header row any more.
-    const header = container.querySelector(".camp") as HTMLElement;
-    expect(header.textContent).not.toContain("created");
-    expect(header.textContent).not.toContain("Models");
+    // The word "created" is gone: the arrow says it.
+    expect(container.textContent).not.toContain("created");
+    // The models never sit in the identity line.
+    const ident = container.querySelector(".camp") as HTMLElement;
+    expect(ident.textContent).not.toContain("Models");
+  });
+
+  test("a campaign still going shows an open-ended range", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes: [] }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    const when = container.querySelector(".when") as HTMLElement;
+    expect(when).toHaveTextContent("…");
+    expect(within(when).getByText("not finished")).toHaveClass("sr-only");
+  });
+
+  test("a run that finished the same day gives its end the clock only", async () => {
+    const sameDay = {
+      ...job,
+      createdAt: "2026-01-01T10:56:00Z",
+      finishedAt: "2026-01-01T11:20:00Z",
+      phase: "Succeeded" as const,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, ...sameDay, failures: [], volumes: [] }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job: sameDay });
+    await vi.advanceTimersByTimeAsync(0);
+    const when = container.querySelector(".when") as HTMLElement;
+    const end = within(when).getByTitle("2026-01-01T11:20:00Z");
+    // "1 Jan, 10:56 → 11:20": the date is said once.
+    expect(end.textContent).toMatch(/^\d{2}:\d{2}$/);
+    expect(within(when).getByTitle("2026-01-01T10:56:00Z")).toHaveTextContent(
+      "Jan",
+    );
+  });
+
+  test("a run spanning days says both dates", async () => {
+    const overnight = {
+      ...job,
+      createdAt: "2026-01-01T12:00:00Z",
+      finishedAt: "2026-01-03T12:00:00Z",
+      phase: "Succeeded" as const,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, ...overnight, failures: [], volumes: [] }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job: overnight });
+    await vi.advanceTimersByTimeAsync(0);
+    const when = container.querySelector(".when") as HTMLElement;
+    expect(within(when).getByTitle("2026-01-03T12:00:00Z")).toHaveTextContent(
+      "Jan",
+    );
   });
 
   test("no pipeline YAML: the chip is a static label, not a button", async () => {
@@ -954,9 +1015,11 @@ describe("CampaignCard", () => {
       const chip = screen.getByText("warm-up failed");
       expect(chip).toHaveClass("failed");
       expect(chip).toHaveAttribute("title", sentence);
-      expect(screen.queryByText(sentence)).toBeNull();
-      await expand();
-      expect(screen.getByText(sentence)).toBeInTheDocument();
+      // Zone 3 carries the sentence itself, folded or open: a warm-up that
+      // failed is the reason nothing is happening, and the card should not
+      // make a reader open it to find that out (2026-09-16).
+      const line = document.querySelector(".problems-text") as HTMLElement;
+      expect(line).toHaveTextContent(`warm-up: ${sentence}`);
     });
 
     test("succeeded: no chip at all", async () => {
@@ -968,19 +1031,27 @@ describe("CampaignCard", () => {
     });
   });
 
-  test("header shows pipeline, phase and counts", async () => {
+  test("zone 1 identifies the campaign; zone 2 counts it", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
         jsonResponse({ ...detail0, failures: [], volumes: [] }),
       ),
     );
-    render(CampaignCard, { job });
+    const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    expect(screen.getByText("demo-v1")).toBeInTheDocument();
-    expect(screen.getByText("Running")).toBeInTheDocument();
-    expect(screen.getByText(/1\/3 volumes/)).toBeInTheDocument();
-    expect(screen.getByText(/1 failed/)).toBeInTheDocument();
+
+    const ident = container.querySelector(".camp") as HTMLElement;
+    expect(within(ident).getByText("demo-v1")).toBeInTheDocument();
+    expect(within(ident).getByText("Running")).toBeInTheDocument();
+    expect(within(ident).getByText("htr-test/kyrk")).toBeInTheDocument();
+
+    const numbers = container.querySelector(".numbers") as HTMLElement;
+    expect(within(numbers).getByText("volumes")).toBeInTheDocument();
+    expect(within(numbers).getByText(/1 \/ 3/)).toBeInTheDocument();
+    expect(within(numbers).getByText(/1 failed/)).toBeInTheDocument();
+    // The counts never sit in the identity line any more.
+    expect(within(ident).queryByText(/1 \/ 3/)).toBeNull();
   });
 });
 
@@ -1011,57 +1082,49 @@ describe("CampaignCard's failure notice", () => {
     render(CampaignCard, { job });
   }
 
-  test("a failed page shows on the folded card, and links to that volume's log", async () => {
+  test("the last page error shows folded, with a link to that volume's log", async () => {
     renderWith({ pagesFailed: 1, errors: 2, lastError });
     await vi.advanceTimersByTimeAsync(0);
 
-    const chip = screen.getByRole("link", { name: /1 page failed/ });
-    expect(chip).toHaveTextContent(
-      "1 page failed · 2 errors · page 0044: htrflow's Segmentation " +
-        "worker thread died",
+    const line = document.querySelector(".problems-text") as HTMLElement;
+    expect(line).toHaveTextContent(
+      "page 0044: htrflow's Segmentation worker thread died",
     );
-    // The whole sentence stays readable even when the chip clips it.
-    expect(chip).toHaveAttribute("title", expect.stringContaining("0044"));
-    expect(chip).toHaveAttribute(
+    // The counts are zone 2's job now and are not said twice.
+    expect(line.textContent).not.toContain("1 page failed");
+    expect(line.textContent).not.toContain("2 errors");
+    expect(line).toHaveAttribute("title", line.textContent);
+    expect(screen.getByRole("link", { name: "log" })).toHaveAttribute(
       "href",
       "log?log=https%3A%2F%2Fpub%2Fstatus%2Flogs%2Fdemo-v1%2Fvol1.txt&live=1",
     );
   });
 
-  test("errors alone still get a notice, without a log link", async () => {
+  test("errors with no sentence behind them are a number, not a line", async () => {
     renderWith({ pagesFailed: 0, errors: 3, lastError: null });
     await vi.advanceTimersByTimeAsync(0);
-    // Two nodes carry the sentence on purpose (finding 7): a visible one
-    // clipped by CSS and a visually-hidden one that keeps it reachable by
-    // keyboard/assistive tech even when the visible copy is truncated.
-    expect(screen.getAllByText("3 errors")).toHaveLength(2);
-    expect(screen.queryByRole("link", { name: /error/ })).toBeNull();
+    // Zone 2 counts them; zone 3 has nothing to say that zone 2 has not.
+    const errors = document.querySelector(".metric.errors") as HTMLElement;
+    expect(errors).toHaveTextContent("errors");
+    expect(errors).toHaveTextContent("3");
+    expect(document.querySelector(".problems")).toBeNull();
   });
 
-  test("the notice's full sentence is reachable without a mouse, not title-only", async () => {
-    const lastError = {
-      page: "0044",
-      error: "htrflow's Segmentation worker thread died",
-      volume: "vol1",
-      logUrl: "https://pub/status/logs/demo-v1/vol1.txt",
-    };
+  test("the problems line is reachable without a mouse, not title-only", async () => {
     renderWith({ pagesFailed: 1, errors: 0, lastError });
     await vi.advanceTimersByTimeAsync(0);
-    const chip = screen.getByRole("link", { name: /1 page failed/ });
-    // The full sentence sits in a `.sr-only` node inside the chip -- not
-    // only in its `title`, which a keyboard-only (non-mouse) user never
-    // sees.
-    const hidden = within(chip).getByText(
-      /1 page failed.*Segmentation worker thread died/,
-      { selector: ".sr-only" },
+    // The full sentence sits in a `.sr-only` node beside the clipped one --
+    // not only in its `title`, which a keyboard-only user never sees.
+    const hidden = document.querySelector(".problems .sr-only") as HTMLElement;
+    expect(hidden).toHaveTextContent(
+      "page 0044: htrflow's Segmentation worker thread died",
     );
-    expect(hidden).toBeInTheDocument();
   });
 
-  test("a clean campaign has no notice at all", async () => {
+  test("a clean campaign has no problems line at all", async () => {
     renderWith({});
     await vi.advanceTimersByTimeAsync(0);
-    expect(screen.queryByText(/failed ·|warning/)).toBeNull();
+    expect(document.querySelector(".problems")).toBeNull();
   });
 });
 
@@ -1214,34 +1277,44 @@ describe("CampaignCard's running motion", () => {
     expect(screen.queryByRole("progressbar", { name: /vol0/ })).toBeNull();
   });
 
-  test("the header sums the campaign's pages into one bar while it runs", async () => {
+  test("zone 2 sums the campaign's pages into a bar that sheens while it runs", async () => {
     stubPolls({ volumes: [running], pagesDone: 137, pagesTotal: 638 });
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
 
     const bar = screen.getByRole("progressbar", {
-      name: "Pages done in campaign kyrk",
+      name: "pages done in campaign kyrk",
     });
     expect(bar).toHaveAttribute("aria-valuenow", "137");
     expect(bar).toHaveAttribute("aria-valuemax", "638");
+    expect(bar.querySelector(".fill")).toHaveClass("running");
   });
 
-  test("a campaign that is not Running has neither bar nor dot", async () => {
+  test("a campaign that is not Running keeps its bars but they do not move", async () => {
     stubPolls({ volumes: [running], pagesDone: 137, pagesTotal: 638 });
     const { container } = render(CampaignCard, {
-      job: { ...job, phase: "Succeeded" },
+      job: { ...job, phase: "Succeeded", counts: { ...job.counts, failed: 0 } },
     });
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(screen.queryByRole("progressbar", { name: /campaign/ })).toBeNull();
+    // Every card carries the same two bars; only a running one sheens.
+    const bar = screen.getByRole("progressbar", {
+      name: "pages done in campaign kyrk",
+    });
+    expect(bar.querySelector(".fill")).not.toHaveClass("running");
     expect(container.querySelector(".chip.phase .dot")).toBeNull();
   });
 
-  test("no header bar while the campaign's page totals are still unknown", async () => {
+  test("a total nobody knows yet is an em dash, not a bar of nothing", async () => {
     stubPolls({ volumes: [running] }); // pagesTotal 0: nothing to be a fraction of
-    render(CampaignCard, { job });
+    const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    expect(screen.queryByRole("progressbar", { name: /campaign/ })).toBeNull();
+    expect(
+      screen.queryByRole("progressbar", { name: /pages done in campaign/ }),
+    ).toBeNull();
+    const cells = [...container.querySelectorAll(".metric")];
+    const pagesCell = cells.find((c) => c.textContent?.startsWith("pages"));
+    expect(pagesCell).toHaveTextContent("—");
   });
 
   test("the progress line flashes only once its page count has moved", async () => {
@@ -1293,7 +1366,9 @@ describe("a progress bar cannot be talked out of its own scale", () => {
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    return container.querySelector('[role="progressbar"]') as HTMLElement;
+    return container.querySelector(
+      '[role="progressbar"][aria-label^="pages"]',
+    ) as HTMLElement;
   }
 
   // done/total come from the wrapper's progress.json in the results bucket:
@@ -1612,5 +1687,154 @@ describe("done, but with pages missing", () => {
       expect(state).not.toHaveClass("lost");
       expect(state).toHaveTextContent("done");
     });
+  });
+});
+
+// Ten cards have to read like ten rows of one table, so zone 2 renders the
+// same cells in the same order whatever state a campaign is in — the tracks
+// are fixed lengths in CSS, and this is the DOM half of that promise.
+describe("the numbers line is the same shape on every card", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  async function labels(row: JobSummary, body: Record<string, unknown> = {}) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          ...row,
+          failures: [],
+          volumes: [],
+          ...body,
+        }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job: row });
+    await vi.advanceTimersByTimeAsync(0);
+    return [...container.querySelectorAll(".metric-label")].map(
+      (el) => el.textContent,
+    );
+  }
+
+  test("volumes then pages, in that order, whatever the campaign is doing", async () => {
+    const queued: JobSummary = { ...job, phase: "Queued" };
+    const done: JobSummary = { ...job, phase: "Succeeded" };
+    expect(await labels(job)).toEqual(["volumes", "pages"]);
+    expect(await labels(queued)).toEqual(["volumes", "pages"]);
+    expect(await labels(done)).toEqual(["volumes", "pages"]);
+  });
+
+  test("errors join the line only when there are any", async () => {
+    expect(await labels(job, { errors: 2 })).toEqual([
+      "volumes",
+      "pages",
+      "errors",
+    ]);
+    expect(await labels(job, { errors: 0 })).toEqual(["volumes", "pages"]);
+  });
+
+  test("each cell is label, bar and figures, in that order", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          failures: [],
+          volumes: [],
+          pagesDone: 5,
+          pagesTotal: 8,
+          pagesFailed: 3,
+        }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    const cells = [...container.querySelectorAll(".metric")];
+    const pagesCell = cells.find((c) => c.textContent?.startsWith("pages"))!;
+    expect(
+      [...pagesCell.children].map((c) => c.className.split(" ")[0]),
+    ).toEqual(["metric-label", "metric-bar", "metric-figures"]);
+    expect(pagesCell).toHaveTextContent("5 / 8");
+    expect(pagesCell).toHaveTextContent("· 3 failed");
+  });
+
+  test("a campaign done with pages missing paints its bars amber", async () => {
+    const done: JobSummary = {
+      ...job,
+      phase: "Succeeded",
+      counts: { total: 3, active: 0, done: 3, failed: 0 },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          ...done,
+          failures: [],
+          volumes: [],
+          pagesDone: 5,
+          pagesTotal: 8,
+          pagesFailed: 3,
+        }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job: done });
+    await vi.advanceTimersByTimeAsync(0);
+    const fills = [...container.querySelectorAll(".numbers .fill")];
+    expect(fills).toHaveLength(2);
+    for (const fill of fills) expect(fill).toHaveClass("lost");
+  });
+});
+
+// The wrapper names the failing page in its own message as often as not, and
+// the API sends the page beside it: the card said it twice (the product
+// owner, 2026-09-16).
+describe("the problems line never names the same page twice", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  async function line(error: string): Promise<HTMLElement> {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          failures: [],
+          volumes: [],
+          pagesFailed: 1,
+          lastError: {
+            page: "0044",
+            error,
+            volume: "vol1",
+            logUrl: "https://pub/status/logs/demo-v1/vol1.txt",
+          },
+        }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    return container.querySelector(".problems-text") as HTMLElement;
+  }
+
+  test("a message that already names its page keeps one prefix", async () => {
+    const live = "page 0044: htrflow's Segmentation worker thread died";
+    expect((await line(live)).textContent).toBe(live);
+  });
+
+  test("a message that does not name it is given the page", async () => {
+    expect((await line("HTTP 400")).textContent).toBe("page 0044: HTTP 400");
   });
 });
