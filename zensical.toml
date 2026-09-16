@@ -38,6 +38,7 @@ nav = [
     {"S3 Layout" = "reference/s3-layout.md"},
     {"Campaign Browser" = "reference/frontend.md"},
   ]},
+  { "Presentations" = ["presentations.md"] },
   { "Roadmap" = [
     {"Open and Next" = "roadmap/index.md"},
     {"Cache Layer" = "roadmap/cache-layer.md"},
