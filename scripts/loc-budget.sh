@@ -1210,5 +1210,10 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4822
 # jobs, pods and configmaps and nothing in packages/web has ever opened one
 # -- every response is computed from a get or a list on the request. Two
 # lines of comment for three verbs removed.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 957
+# 957 -> 973 (2026-09-16, priority classes): one WorkloadPriorityClass per
+# queue.priorityClasses entry in kueue.yaml, so a campaign's `priority:`
+# names a class that exists. Six lines of the sixteen are the paragraph
+# saying the fields sit at the top level and that nothing here turns
+# preemption on.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 973
 exit $fail
