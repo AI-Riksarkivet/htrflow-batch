@@ -4,7 +4,9 @@
 # Azure DevOps), specs and plans, audits, the decision log and the run logs.
 # They stay in git at their paths, which code, READMEs and stories link to,
 # but the site documents the system as it is. The generator has no exclude
-# option, so the staging is the exclusion. Output lands in ./site.
+# option, so the staging is the exclusion. The slide decks are staged out for
+# a different reason: they are Marp sources, not site pages, and they build
+# with scripts/slides.sh into the same ./site. Output lands in ./site.
 set -eu
 cmd=${1:-build}
 [ $# -gt 0 ] && shift
@@ -12,7 +14,7 @@ stage=.docs-site
 rm -rf "$stage" site
 mkdir -p "$stage"
 cp -R docs "$stage/docs"
-for history in features superpowers audits \
+for history in features superpowers audits slides \
   how-it-works/decision-log.md development/e2e-indexed-jobs.md development/test-log.md; do
   rm -rf "$stage/docs/$history"
 done
