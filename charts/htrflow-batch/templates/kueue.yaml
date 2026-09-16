@@ -34,3 +34,19 @@ metadata:
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
 spec:
   clusterQueue: {{ .Values.queue.name }}-cq
+{{- /*
+One cluster-scoped WorkloadPriorityClass per queue.priorityClasses entry, on
+the same API version as the queue objects above. `value` and `description`
+sit at the top level of this kind, not under a spec. Nothing here turns
+preemption on: a class only decides who is admitted next.
+*/}}
+{{- range .Values.queue.priorityClasses }}
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: WorkloadPriorityClass
+metadata:
+  name: {{ .name }}
+  labels: {{- include "htrflow-batch.labels" $ | nindent 4 }}
+value: {{ int .value }}
+description: {{ .description | quote }}
+{{- end }}
