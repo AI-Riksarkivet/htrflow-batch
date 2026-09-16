@@ -530,3 +530,52 @@ def test_the_profile_leaves_the_site_specific_values_to_the_site():
     for them, not render something plausible."""
     refused = helm_template(values="values-prod.yaml")
     assert refused.returncode != 0
+
+
+# --- Priority classes: the label the converter renders names a real class -
+
+
+#: What `values.yaml` ships. A Job with no priority label ranks at 0 in
+#: Kueue, and the converter renders no label when a campaign leaves
+#: `priority:` out, so the normal class sits at 0: naming it is the same as
+#: not naming one. Anything that should wait behind those goes below.
+DEFAULT_PRIORITY_CLASSES = {"htr-interactive": 1000, "htr-bulk": 0, "htr-idle": -10}
+
+
+def test_the_default_render_ships_the_three_priority_classes(default: list[dict]):
+    """`render.py` has always put `kueue.x-k8s.io/priority-class: <name>`
+    on a Job whose campaign sets `priority:`, and Kueue's validating
+    webhook refused every one of them because no class of that name
+    existed. The chart is where the names live -- the converter knows
+    nothing about the cluster -- so this is the list `validate` cannot
+    check against."""
+    classes = objects(default, "WorkloadPriorityClass")
+    assert {c["metadata"]["name"]: c["value"] for c in classes} == (
+        DEFAULT_PRIORITY_CLASSES
+    )
+    queue_versions = {o["apiVersion"] for o in objects(default, "ClusterQueue")}
+    for cls in classes:
+        # Cluster-scoped, and on the API version the queue objects use: a
+        # class on an older version than the queue is the pause bug again.
+        assert "namespace" not in cls["metadata"]
+        assert {cls["apiVersion"]} == queue_versions
+        assert cls["description"]
+        assert cls["metadata"]["labels"]["app.kubernetes.io/name"] == "htrflow-batch"
+
+
+def test_preemption_stays_off_with_the_classes_present(default: list[dict]):
+    """A class decides who is admitted next, not who is evicted. Turning
+    preemption on would stop a running volume mid-transcription, and that
+    is a product decision the classes do not make on their own."""
+    queue = named(default, "ClusterQueue", "htr-batch-cq")
+    assert "preemption" not in queue["spec"]
+
+
+def test_an_empty_class_list_renders_none():
+    """An operator who manages the classes elsewhere (or wants none) empties
+    the list, and the chart renders nothing rather than a class with an
+    empty name."""
+    rendered = render(sets=DEFAULT_SETS + ("queue.priorityClasses=null",))
+    assert objects(rendered, "WorkloadPriorityClass") == []
+    # The queue itself is untouched by the list being empty.
+    named(rendered, "ClusterQueue", "htr-batch-cq")
