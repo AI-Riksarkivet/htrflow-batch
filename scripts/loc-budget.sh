@@ -1112,7 +1112,15 @@ check web       "$(count packages/web/src -name '*.py')" 1870
 # the label is content-sized between a floor and a ceiling. And a volume row
 # carried no bar at all -- on a single-volume card, no bar anywhere -- so
 # every volume with a known total gets one, in its own state's colour.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4689
+# 4689 -> 4813 (2026-09-16, one grid, live): three things the deployed card
+# showed. A page error is ONE volume's -- it is that volume's own
+# progress.lastError -- so it is said under that volume's row rather than in
+# a line about the campaign, and the campaign's line keeps it only when the
+# volume is not on screen to say it under. The bar went back to being short
+# and fixed, beside the pill, with the words taking the free width on the
+# left. And what a row LOST is a small line under that row's own bar, so a
+# clean row is one line and nothing moves when there is nothing wrong.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4813
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
