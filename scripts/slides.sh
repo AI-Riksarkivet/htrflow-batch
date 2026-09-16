@@ -58,10 +58,14 @@ MMDC=${MMDC:-"bunx --yes @mermaid-js/mermaid-cli@11.17.0"}
 SLIDES_FORMATS=${SLIDES_FORMATS:-"html pdf pptx"}
 MERMAID=${MERMAID:-render}
 
+# One trap for everything this run creates, set before the first of it, so
+# a failed lint, a missing diagram or a Marp error leaves nothing behind.
+LINT_DIR="" PUPPETEER_CONFIG="" FONT_CONF="" FONT_CACHE="" build=""
+trap 'rm -rf "$LINT_DIR" "$PUPPETEER_CONFIG" "$FONT_CONF" "$FONT_CACHE"; [ -z "$build" ] || rm -f "$build"' EXIT
+
 LINT_DIR=$(mktemp -d -t slides-lint-XXXXXX)
 cp "$SLIDES_DIR"/*.md "$LINT_DIR"/
 python3 "$SCRIPT_DIR/docs_lint.py" "$LINT_DIR"
-rm -rf "$LINT_DIR"
 
 if [ -n "${CHROME_PATH:-}" ] && [ -z "${PUPPETEER_EXECUTABLE_PATH:-}" ]; then
   export PUPPETEER_EXECUTABLE_PATH="$CHROME_PATH"
@@ -81,7 +85,6 @@ export CHROME_NO_SANDBOX=${CHROME_NO_SANDBOX:-true}
 PUPPETEER_CONFIG=$(mktemp -t puppeteer-XXXXXX.json)
 FONT_CONF=$(mktemp -t slides-fonts-XXXXXX.conf)
 FONT_CACHE=$(mktemp -d -t slides-fontcache-XXXXXX)
-trap 'rm -rf "$PUPPETEER_CONFIG" "$FONT_CONF" "$FONT_CACHE"' EXIT
 printf '{"executablePath": "%s", "args": ["--no-sandbox"]}\n' \
   "${PUPPETEER_EXECUTABLE_PATH:-}" >"$PUPPETEER_CONFIG"
 
@@ -110,10 +113,10 @@ for deck in "$SLIDES_DIR"/*.md; do
 
   # Split the deck into mermaid sources plus a copy that points at the SVGs.
   # The build copy stays in docs/slides so its relative asset paths hold.
-  python3 - "$deck" "$build" "$ASSETS_DIR" "$name" <<'PY'
+  python3 - "$deck" "$build" "$ASSETS_DIR" "$name" "$MERMAID" <<'PY'
 import pathlib, re, sys
 
-src, build, assets, name = sys.argv[1:5]
+src, build, assets, name, mode = sys.argv[1:6]
 text = pathlib.Path(src).read_text(encoding="utf-8")
 fence = re.compile(r"^```mermaid[ \t]*(.*?)\n(.*?)^```[ \t]*$", re.M | re.S)
 count = 0
@@ -126,6 +129,10 @@ def take(match: "re.Match[str]") -> str:
     mmd = pathlib.Path(assets) / f"{name}-{count}.mmd"
     body = match.group(2)
     if not mmd.exists() or mmd.read_text(encoding="utf-8") != body:
+        if mode == "skip":
+            # CI renders nothing, so a fence that no longer matches its
+            # committed .mmd would publish the old diagram without a word.
+            sys.exit(f"{mmd.name} does not match its fence in {pathlib.Path(src).name}: run scripts/slides.sh locally and commit the diagram")
         mmd.write_text(body, encoding="utf-8")
     return f"![{directive}](assets/{name}-{count}.svg)"
 
@@ -178,6 +185,7 @@ PY
   esac
 
   rm -f "$build"
+  build=""
 done
 
 echo "decks in $OUT_DIR"
