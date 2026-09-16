@@ -46,7 +46,7 @@ def test_good_fixture_images_volume_kept():
 def test_good_fixture_second_campaign_priority_and_window():
     campaigns, _, _ = _load(GOOD)
     loc = next(c for c in campaigns if c.name == "loc")
-    assert loc.priority == "high"
+    assert loc.priority == "htr-interactive"
     assert loc.window == 5
 
 
@@ -500,11 +500,15 @@ def test_a_source_template_that_cannot_be_filled_is_one_sentence(tmp_path, templ
     assert "{ref}" in problem
 
 
-@pytest.mark.parametrize("bad", ["high priority", "hög-prio", "p" * 64, "-high"])
-def test_campaign_priority_must_be_a_label_value(tmp_path, bad):
+@pytest.mark.parametrize(
+    "bad", ["high priority", "hög-prio", "p" * 64, "-high", "HTR-Bulk", "htr.bulk"]
+)
+def test_campaign_priority_must_be_a_class_name(tmp_path, bad):
     """`priority:` is rendered straight into the `kueue.x-k8s.io/priority-class`
-    LABEL. A value the label alphabet does not allow is a 422 from the API
-    server halfway through an apply, so it is refused in `validate`."""
+    LABEL and has to name a WorkloadPriorityClass, whose names are DNS
+    labels. A case slip like `HTR-Bulk` is a legal label value that names
+    no class, and Kueue does not refuse that: the Job stays suspended with
+    no event. So the alphabet is the class one, refused in `validate`."""
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     campaign = root / "campaigns" / "kyrk.yaml"
@@ -514,6 +518,64 @@ def test_campaign_priority_must_be_a_label_value(tmp_path, bad):
     (problem,) = exc_info.value.problems
     assert problem.startswith('campaigns/kyrk.yaml: "priority" ')
     assert "kueue.x-k8s.io/priority-class" in problem
+
+
+def test_a_priority_the_cluster_has_no_class_for_is_refused(tmp_path):
+    """Verified on a live Kueue: `ValidateJobOnCreate` never looks at the
+    label, the reconciler fails to extract the priority, creates no Workload
+    and raises no event -- the Job stays suspended and the browser shows
+    "Queued" for ever. `converter.yaml`'s `priority_classes` is the cluster
+    fact `validate` checks instead, and the sentence names the campaign
+    file, the classes there are, and where the list comes from."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    campaign = root / "campaigns" / "kyrk.yaml"
+    campaign.write_text(campaign.read_text() + "\npriority: htr-urgent\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert problem == (
+        'campaigns/kyrk.yaml: priority "htr-urgent" is not one of the '
+        "cluster's classes (htr-interactive, htr-bulk, htr-idle) — set "
+        "converter.yaml priority_classes to what the chart's "
+        "queue.priorityClasses ships"
+    )
+
+
+def test_an_empty_class_list_refuses_every_priority(tmp_path):
+    """A cluster whose chart renders no class offers no priority at all: the
+    fixture's `loc` campaign, which names one, is the one refused."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + "\npriority_classes: []\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert problem.startswith('campaigns/loc.yaml: priority "htr-interactive" ')
+    assert "(none)" in problem
+
+
+@pytest.mark.parametrize(
+    "line,said",
+    [
+        (
+            "priority_classes: [htr-interactive, HTR-Bulk]",
+            "is not a priority class name",
+        ),
+        ("priority_classes: [htr-bulk, htr-bulk]", "lists the same class twice"),
+    ],
+)
+def test_the_class_list_itself_is_held_to_the_chart_schema(tmp_path, line, said):
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(cfg.read_text() + f"\n{line}\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert problem.startswith('converter.yaml: "priority_classes" ')
+    assert said in problem
 
 
 @pytest.mark.parametrize(

@@ -17,6 +17,11 @@ queue: htr-batch
 # rendering more and letting Kueue's partial admission shrink it makes the
 # rendered file un-appliable afterwards (docs: reference/campaign-yaml.md).
 window: 20
+# The WorkloadPriorityClass names the chart ships (`queue.priorityClasses`),
+# the only values a campaign's `priority:` may take. Kueue does not refuse
+# an unknown name: the campaign would just read "Queued" for ever, so
+# `validate` refuses it here instead. Leaving `priority:` out is htr-bulk.
+priority_classes: [htr-interactive, htr-bulk, htr-idle]
 s3_secret: htr-batch-s3
 data_pvc: htr-test-data
 runtime_class: nvidia
