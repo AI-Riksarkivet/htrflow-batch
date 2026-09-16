@@ -640,24 +640,6 @@
       <span class="disclosure" aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
       <span class="camp-name">{job.namespace}/{job.name}</span>
     </button>
-    <!-- Two sibling buttons, not a button inside a button: Enter on the
-         pipeline chip opens the YAML and leaves the table alone. Static
-         until the detail has loaded (or when the pipeline ConfigMap is
-         gone): there is nothing to toggle yet. -->
-    {#if pipelineYaml !== ""}
-      <button
-        type="button"
-        class="chip pipeline"
-        aria-expanded={yamlOpen}
-        aria-controls={yamlId}
-        title={pipelineSteps.length > 0
-          ? pipelineSteps.join(" → ")
-          : "show pipeline YAML"}
-        onclick={() => (yamlOpen = !yamlOpen)}>{job.pipeline}</button
-      >
-    {:else}
-      <span class="chip pipeline static">{job.pipeline}</span>
-    {/if}
     {#if warmupChip !== null}
       <span
         class="chip warmup {job.warmup.phase}"
@@ -756,32 +738,6 @@
       {/if}
     </p>
   {/if}
-  <!-- Zone 4. Which weights produced these results: provenance, and the
-       least often read line on the card, so it sits last and lightest. The
-       dates it used to share a line with are at the right end of zone 1 now
-       (the product owner, 2026-09-16). No expander behind a count: a real
-       pipeline names two or three models
-       (examples/campaigns/pipelines/demo-v1.yaml), so the whole line fits a
-       normal card and clips, with its own title, on a narrow one. -->
-  {#if models.length > 0}
-    <p class="card-meta">
-      <span class="models" title="Models: {models.map(modelLabel).join(' · ')}">
-        Models:
-        {#each models as model, i (i)}
-          {@const href = modelUrl(model)}
-          {i > 0 ? " · " : ""}
-          {#if href === null}
-            {modelLabel(model)}
-          {:else}
-            <a {href} target="_blank" rel="noopener">{modelLabel(model)}</a>
-          {/if}
-        {/each}
-      </span>
-    </p>
-  {/if}
-  {#if yamlOpen && pipelineYaml !== ""}
-    <pre class="pipeline-yaml" id={yamlId}>{pipelineYaml}</pre>
-  {/if}
   {#if detailError !== null}
     <p class="notice error-row" role="alert">{detailError}</p>
   {/if}
@@ -837,6 +793,54 @@
         </button>
       {/if}
     </div>
+  {/if}
+  <!-- Zone 4, and the card's footer: which recipe and which weights produced
+       these results. Provenance is checked once and read least, and in the
+       header it competed with the campaign's state for the same row (the
+       product owner, 2026-09-16: "pipeline and model info ... are a bit
+       noisy in the header"), so it sits under the volumes, lightest of all.
+       The chip is still a button and still toggles the YAML below it: two
+       sibling elements, never a button inside a button. Static until the
+       detail has loaded, or when the pipeline ConfigMap is gone -- there is
+       nothing to toggle yet. No expander behind a count either: a real
+       pipeline names two or three models
+       (examples/campaigns/pipelines/demo-v1.yaml), so the whole line fits a
+       normal card and clips, with its own title, on a narrow one. -->
+  <p class="card-meta">
+    <span class="provenance">
+      pipeline
+      {#if pipelineYaml !== ""}
+        <button
+          type="button"
+          class="chip pipeline"
+          aria-expanded={yamlOpen}
+          aria-controls={yamlId}
+          title={pipelineSteps.length > 0
+            ? pipelineSteps.join(" → ")
+            : "show pipeline YAML"}
+          onclick={() => (yamlOpen = !yamlOpen)}>{job.pipeline}</button
+        >
+      {:else}
+        <span class="chip pipeline static">{job.pipeline}</span>
+      {/if}
+    </span>
+    {#if models.length > 0}
+      <span class="models" title="Models: {models.map(modelLabel).join(' · ')}">
+        Models:
+        {#each models as model, i (i)}
+          {@const href = modelUrl(model)}
+          {i > 0 ? " · " : ""}
+          {#if href === null}
+            {modelLabel(model)}
+          {:else}
+            <a {href} target="_blank" rel="noopener">{modelLabel(model)}</a>
+          {/if}
+        {/each}
+      </span>
+    {/if}
+  </p>
+  {#if yamlOpen && pipelineYaml !== ""}
+    <pre class="pipeline-yaml" id={yamlId}>{pipelineYaml}</pre>
   {/if}
 </section>
 
@@ -1047,6 +1051,13 @@
     width: fit-content;
   }
 
+  /* Quieter than it was in the header: it is the last line of the card now,
+     and nothing on that line should pull the eye off the volumes above it. */
+  .card-meta .chip.pipeline {
+    font-size: 11.5px;
+    padding: 0 0.4rem;
+  }
+
   .chip.pipeline {
     background: var(--primary-soft);
     color: var(--primary);
@@ -1091,6 +1102,7 @@
      off. */
   .card-meta {
     display: flex;
+    align-items: baseline;
     flex-wrap: wrap;
     gap: 0.15rem 0.75rem;
     margin: 0.35rem 0 0;
@@ -1098,6 +1110,15 @@
     font-weight: 400;
     color: var(--muted-foreground);
     opacity: 0.9;
+  }
+
+  /* The pipeline half of the footer: the word, then the chip that toggles
+     the recipe behind it. */
+  .provenance {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.35rem;
+    flex-shrink: 0;
   }
 
   .models {

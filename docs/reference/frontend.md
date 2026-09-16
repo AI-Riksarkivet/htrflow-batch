@@ -7,8 +7,9 @@ the `frontend/README.md` there is the developer-facing version of this page.
 
 - `/` — every campaign, one card per Indexed Job, each card the same four
   zones in the same order so that ten of them scan like ten rows of one
-  table (below), then the folded card's one-line strip or its **volume
-  table** (id, state chip, how far that volume has got, links). Each card
+  table (below) and ending in a quiet provenance footer, with the folded
+  card's one-line strip or its **volume table** (id, status, links) between
+  them. Each card
   fetches its own volumes, paged. The list is ordered by what wants a person
   — running, then anything wrong, then finished newest-first, then not
   started (`src/lib/order.ts`) — and a failed poll puts a banner in plain
@@ -210,7 +211,7 @@ should find each fact in the same place on each one, the way they would in a
 table.
 
 1. **Identity and state**, one line. The left accent bar, the campaign's
-   `namespace/name` as the fold toggle, then the pipeline chip, the phase
+   `namespace/name` as the fold toggle, then the phase
    chip (with its pulsing dot while the campaign runs, and the warning colour
    when it finished with pages missing), the warm-up chip while the warm-up
    has not succeeded, and the "job removed" chip. At the right end of the
@@ -250,8 +251,12 @@ table.
    `describeLastError` names the failing page once: the wrapper writes it
    into its own message as often as not, and the API sends it beside the
    message, which read "page 0044: page 0044: …" until this was fixed.
-4. **Models**, one quiet line: which weights produced these results. It is
-   the least often read line on the card, so it sits last and lightest.
+4. **Provenance**, the card's footer — *below* the folded strip or the open
+   volume table, not in the header: "pipeline `e2e-vd` · Models: …". Which
+   recipe and which weights produced these results is checked once and read
+   least, and in the header it competed with the campaign's state for the
+   same row. The pipeline chip is still the button that toggles the
+   pipeline's YAML, which opens under it.
 - **Sentences, not fields.** No reader ever sees `reason`'s fields, a
   `ZodError` or a transport string: `src/lib/reasons.ts` turns a `reason`
   into one sentence (`describeReason`) and a failed fetch into one sentence
@@ -324,13 +329,14 @@ table.
     `volumes.txt` is a file humans edit in a git repo, so `isHttpUrl` guards
     it again at the last step before it becomes an href (this also gates the
     id's fallback).
-- **Pipeline chip.** A button once the detail has loaded: its `title` is
+- **Pipeline chip.** In the card's footer beside the models. A button once
+  the detail has loaded: its `title` is
   `JobDetail.pipelineSteps` joined by ` → `, and clicking it toggles
   `JobDetail.pipelineYaml` in an inline `<pre>` (`aria-expanded` /
   `aria-controls`). Both fields come from the `htr-pipeline-<id>` ConfigMap;
   when it is gone the chip stays a static label with nothing to toggle.
-- **Models line.** Zone 4, the small muted row at the foot of the card: one
-  link per model the pipeline loads, in step order,
+- **Models line.** The right half of zone 4, the small muted row at the foot
+  of the card: one link per model the pipeline loads, in step order,
   separated by `·` and clipped with a title of the whole list when the card
   is too narrow for it — `<repo name> @<short revision>`, or
   `<repo name> unpinned` when nothing pins it, linking to

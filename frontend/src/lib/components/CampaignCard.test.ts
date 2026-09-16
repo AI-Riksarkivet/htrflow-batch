@@ -857,7 +857,7 @@ describe("CampaignCard", () => {
     );
   });
 
-  test("a pipeline with no models renders no models in the quiet line", async () => {
+  test("a pipeline with no models still names itself in the footer", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -871,10 +871,13 @@ describe("CampaignCard", () => {
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    // Zone 4 is the models and nothing else now, so a pipeline with none
-    // has no fourth line at all.
+    // The footer always names the pipeline; the models half is what a
+    // pipeline with none leaves out.
     expect(container.querySelector(".models")).toBeNull();
-    expect(container.querySelector(".card-meta")).toBeNull();
+    expect(container.querySelector(".card-meta")).not.toBeNull();
+    expect(container.querySelector(".provenance")).toHaveTextContent(
+      "pipeline demo-v1",
+    );
   });
 
   // The product owner, 2026-09-14: "can we put the create date somewhere
@@ -1231,9 +1234,17 @@ describe("CampaignCard", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     const ident = container.querySelector(".camp") as HTMLElement;
-    expect(within(ident).getByText("demo-v1")).toBeInTheDocument();
     expect(within(ident).getByText("Running")).toBeInTheDocument();
     expect(within(ident).getByText("htr-test/kyrk")).toBeInTheDocument();
+    // The pipeline is provenance, and sits in the card's footer instead of
+    // competing with the campaign's state for the header row (the product
+    // owner, 2026-09-16).
+    expect(within(ident).queryByText("demo-v1")).toBeNull();
+    const footer = container.querySelector(".card-meta") as HTMLElement;
+    expect(within(footer).getByText("demo-v1")).toBeInTheDocument();
+    expect(footer.compareDocumentPosition(ident)).toBe(
+      Node.DOCUMENT_POSITION_PRECEDING,
+    );
 
     const numbers = container.querySelector(".numbers") as HTMLElement;
     expect(within(numbers).getByText("volumes")).toBeInTheDocument();
