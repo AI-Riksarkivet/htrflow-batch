@@ -29,8 +29,19 @@
 # regular face embedded as a data URI, so the committed file draws the same
 # outside this build as inside it.
 #
-# Decks live in docs/slides and are NOT part of the documentation site
+# Every deck at the top of docs/slides is PUBLISHED: the documentation
+# workflow runs this script after the site build, and the site's
+# Presentations page links each deck's HTML and PDF. So the decks meet the
+# site's content rules and are linted the same way before anything renders.
+# Superseded decks live in docs/slides/archive and are neither linted nor
+# built. The Marp sources themselves stay out of the site pages
 # (scripts/docs-site.sh stages docs/ without them).
+#
+#   SLIDES_FORMATS   which files to write per deck (default: html pdf pptx)
+#   MERMAID          "render" (default) re-renders an SVG older than its
+#                    fence; "skip" never renders and fails on a missing SVG,
+#                    for CI, where a checkout's mtimes say nothing about
+#                    which file is newer and the committed SVGs are the truth
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -42,8 +53,15 @@ THEME="$SLIDES_DIR/theme/riksarkivet.css"
 MERMAID_CONFIG="$SLIDES_DIR/theme/mermaid.json"
 OUT_DIR=site/slides
 
-MARP=${MARP:-"bunx --yes @marp-team/marp-cli@4"}
-MMDC=${MMDC:-"bunx --yes @mermaid-js/mermaid-cli"}
+MARP=${MARP:-"bunx --yes @marp-team/marp-cli@4.5.1"}
+MMDC=${MMDC:-"bunx --yes @mermaid-js/mermaid-cli@11.17.0"}
+SLIDES_FORMATS=${SLIDES_FORMATS:-"html pdf pptx"}
+MERMAID=${MERMAID:-render}
+
+LINT_DIR=$(mktemp -d -t slides-lint-XXXXXX)
+cp "$SLIDES_DIR"/*.md "$LINT_DIR"/
+python3 "$SCRIPT_DIR/docs_lint.py" "$LINT_DIR"
+rm -rf "$LINT_DIR"
 
 if [ -n "${CHROME_PATH:-}" ] && [ -z "${PUPPETEER_EXECUTABLE_PATH:-}" ]; then
   export PUPPETEER_EXECUTABLE_PATH="$CHROME_PATH"
@@ -119,6 +137,10 @@ PY
   for mmd in "$ASSETS_DIR/$name"-*.mmd; do
     [ -e "$mmd" ] || continue
     svg="${mmd%.mmd}.svg"
+    if [ "$MERMAID" = skip ]; then
+      [ -f "$svg" ] || { echo "missing $(basename "$svg"): run scripts/slides.sh locally and commit it"; exit 1; }
+      continue
+    fi
     if [ -f "$svg" ] && [ "$svg" -nt "$mmd" ]; then
       echo "  $(basename "$svg") up to date"
       continue
@@ -133,7 +155,7 @@ PY
   # --html allows raw HTML in the markdown (the column and table helpers).
   # The output format comes from -o, and needs a flag of its own only where
   # Marp asks for one — passing --html as a format would collide with it.
-  for fmt in html pdf pptx; do
+  for fmt in $SLIDES_FORMATS; do
     echo "  $OUT_DIR/$name.$fmt"
     case "$fmt" in
       html) flag="" ;;
@@ -143,6 +165,17 @@ PY
     $MARP --no-stdin --theme "$THEME" --html --allow-local-files \
       $flag -o "$OUT_DIR/$name.$fmt" "$build" >/dev/null
   done
+
+  # The HTML refers to its diagrams and pictures as assets/<file>, relative
+  # to itself; the PDF and PPTX embed them. So the files an HTML deck names
+  # go beside it, and nothing else from assets/ is published.
+  case " $SLIDES_FORMATS " in
+    *" html "*)
+      mkdir -p "$OUT_DIR/assets"
+      { grep -o 'assets/[A-Za-z0-9._-]*' "$OUT_DIR/$name.html" || true; } | sort -u |
+        while read -r ref; do cp "$SLIDES_DIR/$ref" "$OUT_DIR/$ref"; done
+      ;;
+  esac
 
   rm -f "$build"
 done
