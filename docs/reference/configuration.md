@@ -187,6 +187,7 @@ skeleton, never as a campaign setting.
 | `queue.name` | `values.yaml` | `htr-batch` | converter `queue` | no secret — nobody |
 | `queue.flavor` | `values.yaml` | `default-flavor` | — | no secret — nobody |
 | `queue.resources` | `values.yaml` | `[{name: cpu, quota: 4}, {name: memory, quota: 8Gi}, {name: …` | — | no secret — nobody |
+| `queue.priorityClasses` | `values.yaml` | `[{description: a handful of volumes someone is waiting for,…` | — | no secret — nobody |
 | `web.image` | `values.yaml` | `docker.io/riksarkivet/htrflow-web@sha256:af5979224a933bebf1…` | — | digest-pinned unless `security.allowTagImages` — render |
 | `web.nodePort` | `values.yaml` | `30800` | — | no secret — nobody |
 | `web.resources.requests.cpu` | `values.yaml` | `50m` | — | no secret — nobody |
