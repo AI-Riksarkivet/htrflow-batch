@@ -182,23 +182,21 @@ function formatAge(seconds: number): string {
 }
 
 /**
- * How far a volume has got, in one line: "137 / 638 pages · processing
- * pages · updated 12 s ago". The stage is the wrapper's own word turned into
- * what it was doing (the same map a failure sentence uses, so the two never
- * describe the same stage differently); a stage this build does not know is
- * shown as it came rather than dropped, since a reader is better off with an
- * unfamiliar word than with a gap.
+ * What a volume is doing and when it last said so: "processing pages ·
+ * updated 12 s ago". The page counts are deliberately NOT here — the status
+ * column shows them in the same shape zone 2 shows the campaign's, and
+ * saying them again in the same cell made the column two sentences (the
+ * product owner, 2026-09-16). Empty when there is nothing to add to the
+ * numbers: a finished volume with no timestamp says nothing here.
  */
 export function describeProgress(progress: VolumeProgress): string {
-  const { done, total, failed, stage, ageSeconds } = progress;
-  const parts = [`${done} / ${total} pages`];
-  // `done` is the one stage left out: the state chip beside this line already
-  // says it (CampaignCard), and a volume now finishes WITH failed pages
-  // recorded, so this line has to read as the pages — "637 / 638 pages · 1
-  // failed" — not as the word twice over.
+  const { stage, ageSeconds } = progress;
+  const parts = [];
+  // `done` is the one stage left out: the state word beside this line already
+  // says it, and a volume now finishes WITH failed pages recorded, so the
+  // cell must not read as the word twice over.
   if (stage !== null && stage !== "done")
     parts.push(STAGE_WORDS[stage] ?? stage);
-  if (failed > 0) parts.push(`${failed} failed`);
   if (ageSeconds !== null) parts.push(`updated ${formatAge(ageSeconds)}`);
   return parts.join(" · ");
 }

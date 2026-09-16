@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, within } from "@testing-library/svelte";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { JobSummary } from "$lib/api.js";
 import { RELOAD_MS } from "$lib/config.js";
@@ -125,7 +131,7 @@ describe("CampaignCard", () => {
     ).toBeInTheDocument();
   });
 
-  test("every row has the three slots: open, source and log", async () => {
+  test("the id opens the viewer; the log and the manifest are icons", async () => {
     const imagesVolume = {
       ...volumeFailed,
       index: 2,
@@ -148,32 +154,42 @@ describe("CampaignCard", () => {
 
     const rows = screen.getAllByRole("row").slice(1);
     const done = within(rows[0] as HTMLElement);
-    // done: the published result
-    expect(done.getByRole("link", { name: "open" })).toHaveAttribute(
+    // done: the id opens the published result in the viewer
+    expect(done.getByRole("link", { name: "vol0" })).toHaveAttribute(
       "href",
       "uv.html#?manifest=" +
         encodeURIComponent("https://pub/htr-test/demo-v1/vol0/iiif.json"),
     );
-    expect(done.getByRole("link", { name: "source" })).toHaveAttribute(
-      "href",
-      "https://iiif.example.org/vol0/manifest",
-    );
-    expect(done.getByRole("link", { name: "log" })).toBeInTheDocument();
-
-    // not done, but it has a source: "open" shows the source manifest
     expect(
-      within(rows[1] as HTMLElement).getByRole("link", { name: "open" }),
-    ).toHaveAttribute(
+      done.getByRole("link", { name: "manifest for vol0" }),
+    ).toHaveAttribute("href", "https://iiif.example.org/vol0/manifest");
+    expect(
+      done.getByRole("link", { name: "run log for vol0" }),
+    ).toBeInTheDocument();
+    // The glyphs are decoration; the label is what names the link.
+    expect(
+      done.getByRole("link", { name: "run log for vol0" }).querySelector("svg"),
+    ).toHaveAttribute("aria-hidden", "true");
+
+    // not done, but it has a source: the id opens the source manifest
+    const failed = within(rows[1] as HTMLElement);
+    expect(failed.getByRole("link", { name: "vol1" })).toHaveAttribute(
       "href",
       "uv.html#?manifest=" +
         encodeURIComponent("https://iiif.example.org/vol1/manifest"),
     );
 
-    // no source at all: the open and source slots stay empty, log stays
+    // no source at all: the id is plain text saying so, the manifest slot
+    // is empty, and the run log is still there.
     const images = within(rows[2] as HTMLElement);
-    expect(images.queryByRole("link", { name: "open" })).toBeNull();
-    expect(images.queryByRole("link", { name: "source" })).toBeNull();
-    expect(images.getByRole("link", { name: "log" })).toBeInTheDocument();
+    expect(images.queryByRole("link", { name: "vol2" })).toBeNull();
+    expect(
+      images.getByTitle(/nothing to open in the viewer yet/),
+    ).toHaveTextContent("vol2");
+    expect(images.queryByRole("link", { name: /^manifest for/ })).toBeNull();
+    expect(
+      images.getByRole("link", { name: "run log for vol2" }),
+    ).toBeInTheDocument();
   });
 
   test("a running volume says how many pages it has done, and of how many", async () => {
@@ -216,13 +232,17 @@ describe("CampaignCard", () => {
     expect(numbers.getByText(/137 \/ 638/)).toBeInTheDocument();
     await expand();
 
+    // The row says the same numbers in the same shape, and what the numbers
+    // cannot say beside them.
     const row = within(screen.getAllByRole("row").slice(1)[0] as HTMLElement);
+    expect(row.getByText("137 / 638")).toBeInTheDocument();
     expect(
-      row.getByText(/137 \/ 638 pages · processing pages · updated/),
+      row.getByText("processing pages · updated 12 s ago"),
     ).toBeInTheDocument();
-    // A volume with nothing to report shows the state chip and no line.
+    // A volume with nothing to report shows the state word and an em dash.
     const done = within(screen.getAllByRole("row").slice(1)[1] as HTMLElement);
-    expect(done.queryByText(/pages ·/)).toBeNull();
+    expect(done.queryByText(/updated/)).toBeNull();
+    expect(done.getByText("—")).toBeInTheDocument();
   });
 
   test("the viewer opens a volume as soon as it has a page, not only when it is finished", async () => {
@@ -278,7 +298,7 @@ describe("CampaignCard", () => {
     const rows = screen.getAllByRole("row").slice(1);
     // The wrapper rewrites iiif.json every few pages, so it is there to open.
     expect(
-      within(rows[0] as HTMLElement).getByRole("link", { name: "open" }),
+      within(rows[0] as HTMLElement).getByRole("link", { name: /^vol/ }),
     ).toHaveAttribute(
       "href",
       "uv.html#?manifest=" +
@@ -286,7 +306,7 @@ describe("CampaignCard", () => {
     );
     // Nothing published yet: still the source manifest, as before.
     expect(
-      within(rows[1] as HTMLElement).getByRole("link", { name: "open" }),
+      within(rows[1] as HTMLElement).getByRole("link", { name: /^vol/ }),
     ).toHaveAttribute(
       "href",
       "uv.html#?manifest=" +
@@ -312,8 +332,8 @@ describe("CampaignCard", () => {
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(screen.queryByRole("link", { name: "source" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "open" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /^manifest for/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /^vol/ })).toBeNull();
     expect(screen.getByRole("alert")).toHaveTextContent(
       "answered in a form this page doesn't understand",
     );
@@ -335,7 +355,7 @@ describe("CampaignCard", () => {
 
     const rows = screen.getAllByRole("row").slice(1);
     const doneLog = within(rows[0] as HTMLElement).getByRole("link", {
-      name: "log",
+      name: "run log for vol0",
     });
     expect(doneLog).toHaveAttribute(
       "href",
@@ -345,7 +365,7 @@ describe("CampaignCard", () => {
         encodeURIComponent(volumeDone.manifestUrl),
     );
     const failedLog = within(rows[1] as HTMLElement).getByRole("link", {
-      name: "log",
+      name: "run log for vol1",
     });
     expect(failedLog).toHaveAttribute(
       "href",
@@ -544,7 +564,7 @@ describe("CampaignCard", () => {
     expect(screen.getByRole("table")).toBeInTheDocument();
   });
 
-  test("while folded, the API's latest volume keeps open · source · log in reach", async () => {
+  test("while folded, the API's latest volume keeps its links in reach", async () => {
     // Deliberately NOT among `volumes`: the strip comes from the API's
     // `latest`, computed over every volume, not from the page the card
     // happens to have loaded — which for a big campaign never holds the
@@ -573,16 +593,17 @@ describe("CampaignCard", () => {
     expect(screen.queryByRole("table")).toBeNull(); // still folded
     expect(screen.getByText("vol260")).toBeInTheDocument();
     expect(screen.queryByText("vol0")).toBeNull(); // not the loaded row
-    expect(screen.getByRole("link", { name: "open" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "vol260" })).toHaveAttribute(
       "href",
       "uv.html#?manifest=" +
         encodeURIComponent("https://iiif.example.org/vol260/manifest"),
     );
-    expect(screen.getByRole("link", { name: "source" })).toHaveAttribute(
-      "href",
-      "https://iiif.example.org/vol260/manifest",
-    );
-    expect(screen.getByRole("link", { name: "log" })).toHaveAttribute(
+    expect(
+      screen.getByRole("link", { name: "manifest for vol260" }),
+    ).toHaveAttribute("href", "https://iiif.example.org/vol260/manifest");
+    expect(
+      screen.getByRole("link", { name: "run log for vol260" }),
+    ).toHaveAttribute(
       "href",
       expect.stringContaining(encodeURIComponent(active.logUrl)),
     );
@@ -1502,13 +1523,13 @@ describe("CampaignCard's running motion", () => {
     await vi.advanceTimersByTimeAsync(0);
     await expand();
     // First paint is not news: a row nobody has seen before cannot have moved.
-    expect(container.querySelectorAll(".vprogress.bump")).toHaveLength(0);
+    expect(container.querySelectorAll(".vfigures.bump")).toHaveLength(0);
 
     await vi.advanceTimersByTimeAsync(RELOAD_MS);
-    expect(screen.getByText(/151 \/ 638 pages/)).toBeInTheDocument();
-    const flashed = container.querySelectorAll(".vprogress.bump");
+    expect(screen.getByText("151 / 638")).toBeInTheDocument();
+    const flashed = container.querySelectorAll(".vfigures.bump");
     expect(flashed).toHaveLength(1); // vol3 sent the same count back
-    expect(flashed[0]).toHaveTextContent("151 / 638 pages");
+    expect(flashed[0]).toHaveTextContent("151 / 638");
   });
 });
 
@@ -1588,7 +1609,7 @@ describe("the viewer link is built the way every other link is", () => {
     await vi.advanceTimersByTimeAsync(0);
     await expand();
     const row = screen.getAllByRole("row").slice(1)[0] as HTMLElement;
-    return within(row).queryByRole("link", { name: "open" });
+    return within(row).queryByRole("link", { name: "vol0" });
   }
 
   // iiifUrl is built by the API from a volume id that came off a campaign's
@@ -1605,7 +1626,7 @@ describe("the viewer link is built the way every other link is", () => {
     );
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    expect(screen.queryByRole("link", { name: "open" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "vol0" })).toBeNull();
     expect(screen.getByRole("alert")).toHaveTextContent(
       "answered in a form this page doesn't understand",
     );
@@ -1679,19 +1700,20 @@ describe("a reaped campaign's volumes are still openable", () => {
     return screen.getAllByRole("row").slice(1) as HTMLElement[];
   }
 
-  test("every row is there, with its open, source and log links", async () => {
+  test("every row is there, with its id link and its two icons", async () => {
     const rows = await openCard([volumeDone, failedRow]);
     expect(rows).toHaveLength(2);
     const done = within(rows[0] as HTMLElement);
-    expect(done.getByRole("link", { name: "open" })).toHaveAttribute(
+    expect(done.getByRole("link", { name: "vol0" })).toHaveAttribute(
       "href",
       "uv.html#?manifest=" + encodeURIComponent(volumeDone.iiifUrl),
     );
-    expect(done.getByRole("link", { name: "source" })).toHaveAttribute(
-      "href",
-      volumeDone.sourceUrl,
-    );
-    expect(done.getByRole("link", { name: "log" })).toHaveAttribute(
+    expect(
+      done.getByRole("link", { name: "manifest for vol0" }),
+    ).toHaveAttribute("href", volumeDone.sourceUrl);
+    expect(
+      done.getByRole("link", { name: "run log for vol0" }),
+    ).toHaveAttribute(
       "href",
       expect.stringContaining(encodeURIComponent(volumeDone.logUrl)),
     );
@@ -1701,7 +1723,9 @@ describe("a reaped campaign's volumes are still openable", () => {
     const rows = await openCard([volumeDone, failedRow]);
     const failed = within(rows[1] as HTMLElement);
     expect(failed.getByText(/manifest 404/)).toBeInTheDocument();
-    expect(failed.getByRole("link", { name: "log" })).toBeInTheDocument();
+    expect(
+      failed.getByRole("link", { name: "run log for vol1" }),
+    ).toBeInTheDocument();
   });
 
   test("a campaign nobody recorded the ending of still lists its volumes", async () => {
@@ -1713,13 +1737,15 @@ describe("a reaped campaign's volumes are still openable", () => {
     expect(rows).toHaveLength(1);
     const row = within(rows[0] as HTMLElement);
     expect(row.getByText("unknown")).toBeInTheDocument();
-    // Nothing says the result is published, so "open" falls back to the
+    // Nothing says the result is published, so the id falls back to the
     // volume's own source manifest rather than a file that may not be there.
-    expect(row.getByRole("link", { name: "open" })).toHaveAttribute(
+    expect(row.getByRole("link", { name: "vol0" })).toHaveAttribute(
       "href",
       "uv.html#?manifest=" + encodeURIComponent(volumeDone.sourceUrl),
     );
-    expect(row.getByRole("link", { name: "log" })).toBeInTheDocument();
+    expect(
+      row.getByRole("link", { name: "run log for vol0" }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -1845,7 +1871,7 @@ describe("done, but with pages missing", () => {
         latest,
       });
       await vi.advanceTimersByTimeAsync(0);
-      return container.querySelector(".latest-state") as HTMLElement;
+      return container.querySelector(".latest .status") as HTMLElement;
     }
 
     test("follows the row: amber, and it says why", async () => {
@@ -2094,5 +2120,176 @@ describe("the figures beside a bar", () => {
       counts: { total: 5, active: 2, done: 5, failed: 0 },
     });
     expect(figures.textContent).toBe("5 / 5");
+  });
+});
+
+// "I think we should be able to do something about the status column too?"
+// (the product owner, 2026-09-16). It said "DONE one-bad" in green with no
+// numbers at all on the folded strip, and "done" in the pill with a second
+// sentence beside it in the table. Both now say per volume what zone 2 says
+// per campaign.
+describe("the volume status column", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function progress(over: Record<string, unknown> = {}) {
+    return {
+      done: 2,
+      total: 3,
+      failed: 0,
+      lastPage: "0003",
+      stage: "done",
+      updatedAt: "2026-09-14T07:00:00Z",
+      ageSeconds: null,
+      lastError: null,
+      errors: 0,
+      viewerPublished: true,
+      ...over,
+    };
+  }
+
+  async function strip(v: unknown): Promise<HTMLElement> {
+    cleanup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes: [v], latest: v }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    return container.querySelector(".latest") as HTMLElement;
+  }
+
+  async function cell(v: unknown): Promise<HTMLElement> {
+    cleanup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes: [v] }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+    return container.querySelector("tbody td:nth-child(2)") as HTMLElement;
+  }
+
+  const done = { ...volumeDone, progress: progress() };
+  const lost = { ...volumeDone, progress: progress({ failed: 1 }) };
+  const active = {
+    ...volumeDone,
+    state: "active",
+    progress: progress({
+      done: 137,
+      total: 638,
+      stage: "stream",
+      ageSeconds: 12,
+    }),
+  };
+  const unknown = { ...volumeDone, progress: null };
+
+  test("a table row reads id and icons, then the status at the far end", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes: [done] }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+    const cells = [...(container.querySelectorAll("tbody td") ?? [])];
+    expect(cells.map((c) => c.className.split(" ")[0])).toEqual([
+      "vid",
+      "vstatus",
+    ]);
+    // The header says the same two things.
+    expect(
+      [...container.querySelectorAll("thead th")].map((c) => c.textContent),
+    ).toEqual(["volume", "status"]);
+  });
+
+  test("the manifest keeps its slot even when the volume has none", async () => {
+    const noSource = { ...volumeDone, sourceUrl: null, progress: progress() };
+    for (const el of [await strip(noSource), await cell(noSource)]) {
+      const row = el.closest("tr") ?? el;
+      expect(row.querySelectorAll(".slot")).toHaveLength(2);
+      expect(row.querySelectorAll(".vicon")).toHaveLength(1);
+    }
+  });
+
+  test("the strip reads id, then its links, then the status", async () => {
+    const line = await strip(done);
+    const order = [...line.children].map((c) => c.className.split(" ")[0]);
+    expect(order).toEqual(["latest-id", "links", "latest-status"]);
+  });
+
+  test("a done volume: green word and its pages", async () => {
+    for (const el of [await strip(done), await cell(done)]) {
+      const word = el.querySelector(".status") as HTMLElement;
+      expect(word).toHaveClass("done");
+      expect(word).not.toHaveClass("lost");
+      expect(el.querySelector(".vfigures")).toHaveTextContent("2 / 3");
+    }
+  });
+
+  test("a done volume that lost a page: amber word and the count beside it", async () => {
+    for (const el of [await strip(lost), await cell(lost)]) {
+      const word = el.querySelector(".status") as HTMLElement;
+      expect(word).toHaveClass("done", "lost");
+      expect(word).toHaveAttribute("title", "done with 1 failed page");
+      const figs = el.querySelector(".vfigures") as HTMLElement;
+      expect(figs.textContent).toBe("2 / 3 · 1 failed");
+      expect(figs.querySelector(".bad")).toHaveTextContent("1 failed");
+    }
+  });
+
+  test("an active volume: its fraction, its bar and what it is doing", async () => {
+    for (const el of [await strip(active), await cell(active)]) {
+      expect(el.querySelector(".status")).toHaveClass("active");
+      expect(el.querySelector(".vfigures")).toHaveTextContent("137 / 638");
+      expect(el.querySelector('[role="progressbar"]')).not.toBeNull();
+      expect(el.querySelector(".vprogress")).toHaveTextContent(
+        "processing pages · updated 12 s ago",
+      );
+    }
+  });
+
+  test("a volume with nothing read yet says so with an em dash", async () => {
+    for (const el of [await strip(unknown), await cell(unknown)]) {
+      expect(el.querySelector(".vfigures")).toHaveTextContent("—");
+      expect(el.querySelector('[role="progressbar"]')).toBeNull();
+    }
+  });
+
+  test("a failed volume: red word, and the reason on the strip", async () => {
+    const line = await strip(volumeFailed);
+    expect(line.querySelector(".status")).toHaveClass("failed");
+    const reason = line.querySelector(".vreason") as HTMLElement;
+    expect(reason).toHaveTextContent("Failed while loading the model");
+    expect(reason).toHaveAttribute("title", reason.textContent);
+    expect(line.querySelector(".vfigures")).toBeNull();
+  });
+
+  test("...and in the table the reason stays in the volume column", async () => {
+    const td = await cell(volumeFailed);
+    expect(td.querySelector(".status")).toHaveClass("failed");
+    expect(td.querySelector(".vreason")).toBeNull();
+    expect(document.querySelector(".verr")).toHaveTextContent(
+      "Failed while loading the model",
+    );
+  });
+
+  test("the numbers are said once, not twice, in one cell", async () => {
+    const td = await cell(active);
+    expect(td.textContent).not.toMatch(/137 \/ 638.*137 \/ 638/s);
+    expect(td.querySelector(".vprogress")?.textContent).not.toContain("638");
   });
 });

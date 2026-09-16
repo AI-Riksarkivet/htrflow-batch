@@ -106,17 +106,50 @@ Universal Viewer is not built by this project.
   There is no age-based staleness check — every response is computed live
   from the Kubernetes API, so there is nothing that can go stale the way a
   stored status document would.
-- **States.** A `VolumeView.state` is `pending`, `active`, `done`, or
-  `failed` — computed by the API from the Job's index sets, not stored
+- **States.** A `VolumeView.state` is `pending`, `active`, `done`, `failed`
+  or `unknown` — computed by the API from the Job's index sets, not stored
   anywhere; a `failed` row's `reason` is `{stage, permanent, error}` parsed
   by the API out of the wrapper's termination message (`stage`/`permanent`
   `null` when it was not the wrapper's JSON), present only while a pod for
-  that index still exists. A `done` row whose `progress.failed` is above
-  zero takes the **warning colour** rather than the green one — the volume
-  published, but not all of its pages — and carries "done with N failed
-  pages" as its title and as what a screen reader reads, so the colour is
-  never the only thing carrying it; the folded card's one-line strip follows
-  the same rule.
+  that index still exists.
+- **The status column** says per volume what zone 2 says per campaign, and
+  one snippet renders it in both the folded card's one-line strip and the
+  volume table, so the two cannot drift. The state word is coloured by that
+  volume's health — `done` green, `failed` red, `active` blue,
+  `pending`/`unknown` muted, and a `done` volume whose `progress.failed` is
+  above zero takes the **warning colour** rather than the green one, with
+  "done with N failed pages" as its title and as what a screen reader reads
+  so the colour is never the only thing carrying it. Beside the word are the
+  same figures zone 2 uses: `2 / 3 · 1 failed` with the failed count in the
+  bad colour, `137 / 638` and the bar while the volume is active, and an em
+  dash when nothing has been read out of the bucket yet. `describeProgress`
+  adds only what the numbers cannot — the stage and how long ago
+  ("processing pages · updated 12 s ago") — since saying the counts again in
+  the same cell made the column two sentences. A failed volume's one
+  sentence sits in the table's volume column beside the id, and on the strip
+  it replaces the figures, clipped with its title.
+- **A volume line** — the folded card's strip and every table row — reads the
+  same way: the **id**, linked to the viewer; the **two icon links** beside
+  it; then the **status column**, right-aligned at the far end so the figures
+  of every row line up under each other the way zone 2's columns do. The
+  strip's volume is the one most likely to be wanted (`latest`: newest
+  active, else newest done, computed by the API over every volume), so the
+  viewer and the run log are one click away without unfolding. It wraps at
+  narrow widths like the rest of the card, the status still right-aligned.
+- **The links.** The id itself opens the volume in the viewer — its published
+  `iiifUrl` once there is one, its source manifest before that (`openHref`).
+  A volume with neither is plain text with a title saying there is nothing to
+  open yet, never a link that goes nowhere. Beside it two small icon links in
+  fixed slots: the **run log**, and the volume's **source manifest** when it
+  has one (an `images:` volume does not, and the slot stays empty so the row
+  beside it does not shift). Each is labelled "run log for `<id>`" /
+  "manifest for `<id>`" and carries the same text as its title; the glyphs
+  themselves are inline SVG marked `aria-hidden`, drawn in `currentColor` so
+  both themes get them for free, with 24px of hit area and the same focus
+  ring every other control on the card wears. Inline, because the page's CSP
+  fetches no asset and runs no third-party script — a glyph font would be
+  both. One snippet builds them for the strip and the table alike, so the two
+  cannot drift.
 - **The "job removed" chip.** A campaign whose Job is past its
   `ttlSecondsAfterFinished` arrives with `jobGone: true` — the API served
   that row from the campaign's ConfigMap and the status ConfigMap beside it,
@@ -268,29 +301,27 @@ table.
   but before its own interim publish, would otherwise link to a manifest that
   is not there yet). Only a volume with nothing published yet falls back to
   its source manifest.
-- **Three link slots.** Every volume row — and the folded card's latest
-  strip — renders the same three fixed slots, **open · source · log**, from
-  one snippet, so a missing link leaves a gap instead of shifting its
-  neighbours and the eye can scan a column of "source" straight down.
-  - **open** — `uv.html#?manifest=<url>`: the published `iiifUrl` once the
+- **Where each link goes.** Every volume row — and the folded card's latest
+  strip — is built by one snippet, so a missing link leaves a gap instead of
+  shifting its neighbours.
+  - **the id** — `uv.html#?manifest=<url>`: the published `iiifUrl` once the
     volume is `done` or `progress.viewerPublished`, the volume's own
     `sourceUrl` before that, so the viewer is reachable from the first tick.
-    Empty when there is neither.
-  - **source** — `VolumeView.sourceUrl`, the URL half of the volume's
-    `volumes.txt` line, straight to the source manifest. Empty for an
-    `images:` volume, which lists bare image URLs and has no manifest, and
-    empty for anything that is not an absolute http(s) URL: `volumes.txt` is
-    a file humans edit in a git repo, so `isHttpUrl` guards it again at the
-    last step before it becomes an href (this also gates the "open"
-    fallback).
+    Plain text with a title when there is neither.
+  - **the manifest icon** — `VolumeView.sourceUrl`, the URL half of the
+    volume's `volumes.txt` line, straight to the source manifest. Its slot
+    stays empty for an `images:` volume, which lists bare image URLs and has
+    no manifest, and for anything that is not an absolute http(s) URL:
+    `volumes.txt` is a file humans edit in a git repo, so `isHttpUrl` guards
+    it again at the last step before it becomes an href (this also gates the
+    id's fallback).
 - **Pipeline chip.** A button once the detail has loaded: its `title` is
   `JobDetail.pipelineSteps` joined by ` → `, and clicking it toggles
   `JobDetail.pipelineYaml` in an inline `<pre>` (`aria-expanded` /
   `aria-controls`). Both fields come from the `htr-pipeline-<id>` ConfigMap;
   when it is gone the chip stays a static label with nothing to toggle.
-- **Models line.** The left half of the card's quiet meta line, the small
-  muted row at the foot of the header block it shares with the created and
-  finished dates: one link per model the pipeline loads, in step order,
+- **Models line.** Zone 4, the small muted row at the foot of the card: one
+  link per model the pipeline loads, in step order,
   separated by `·` and clipped with a title of the whole list when the card
   is too narrow for it — `<repo name> @<short revision>`, or
   `<repo name> unpinned` when nothing pins it, linking to
@@ -330,13 +361,13 @@ table.
   access wrapped, since a browser may refuse storage; the card then simply
   forgets. While folded it still shows the failures block and a one-line
   **latest strip**: `JobDetail.latest` — the newest `active` volume, else the
-  newest `done` one, else nothing — with the same three link slots, so UV and
-  the run log stay one click away. The API computes it over **every** volume,
+  newest `done` one, else nothing — with the same links its table row has, so
+  the viewer and the run log stay one click away. The API computes it over **every** volume,
   like `failures` and unlike `volumes`: picking it in the browser would only
   ever see the page that happens to be loaded, and for a campaign of
   thousands the index in flight is never in the first 200.
 - **No thumbnails.** The read API has no per-volume image field; the volume
-  table is id / state / links only.
+  table is two columns, volume and status.
 - **Failures block.** `JobDetail.failures` (up to 50 newest
   failed-with-a-reason rows, computed over every volume, independent of the
   volume table's paging) is rendered as a compact callout above the volume
