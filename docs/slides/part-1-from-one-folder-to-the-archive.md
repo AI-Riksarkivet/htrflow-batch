@@ -217,7 +217,8 @@ flowchart TB
 
 ```yaml
 pipeline: demo-v1
-volumes:
+window: 2          # parallelism
+volumes:           # completions = 4
   - R0001203
   - R0001204
   - R0001205
@@ -285,7 +286,7 @@ results; a presigned URL publishes its signature.
 
 # `window`: how many volumes at once
 
-```mermaid h:230
+```mermaid h:170
 flowchart LR
   subgraph W1["wave 1"]
     A["R0001203"]
@@ -305,16 +306,25 @@ flowchart LR
 <div class="cols">
 <div>
 
-**Six volumes, `window: 2`.** Two pods run at once, each on its own GPU; as soon as one finishes, the next volume takes its place. The campaign takes three waves — but nobody plans waves, the Job just keeps two indexes busy.
+<p class="filename">campaigns/demo.yaml — you set it here, per campaign</p>
 
-**So `window` is the campaign's GPU count.** Not the number of volumes, not a speed setting: the number of cards it holds while it runs. `window: 1` is fine, and simply takes six times as long.
+```yaml
+pipeline: demo-v1
+window: 2            # optional; the cluster caps it
+volumes:
+  - R0001203
+  - R0001204
+  # … six in all
+```
+
+**Six volumes, `window: 2`.** Two pods at once, each on its own GPU; when one finishes, the next volume takes its place. Nobody plans the waves — the Job keeps two indexes busy.
 
 </div>
 <div>
 
-**It is asked for as a whole.** Two GPUs free means the campaign starts; one free means it waits for the second. There is no "start with one and grow".
+**So `window` is the campaign's GPU count** — not the number of volumes, not a speed setting. `window: 1` is fine, and takes six times as long.
 
-**The cluster caps it.** A campaign may ask for less than the cluster's cap, never more; what it asks for above the cap is quietly clamped.
+**Asked for as a whole, capped by the cluster.** Two GPUs free means it starts; one free means it waits. Above the cap it is clamped; left out, it gets the cap.
 
 **One rule to remember:** `window` changes how *fast* a campaign finishes, never *what* it produces.
 
