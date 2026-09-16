@@ -1,8 +1,0 @@
-flowchart LR
-  I["IIIF server"]
-  D["downloader pool<br/>12 in flight, at most<br/>64 pages ahead"]
-  T[("tmpfs<br/>/work — 2 GiB, in memory")]
-  C["consumer<br/>one thread: the GPU<br/>serialises the work anyway"]
-  U["uploader<br/>PAGE, then ALTO,<br/>then delete the page's files"]
-  B[("bucket")]
-  I --> D --> T --> C --> U --> B

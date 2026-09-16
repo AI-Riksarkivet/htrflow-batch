@@ -1,7 +1,0 @@
-flowchart LR
-  subgraph CO["one cohort"]
-    A["transcription<br/>quota 8, using 8,<br/>10 more waiting"]
-    B["research<br/>quota 4, using 0"]
-  end
-  A -. "borrows 4 idle GPUs" .-> B
-  B -. "wants them back: reclaim" .-> A
