@@ -81,7 +81,13 @@ steps.
 * **A crash at volume 4,000 must not cost you volumes 1 to 3,999.** Nor the 200 pages already done in volume 4,000.
 * **Someone will ask, a year later, which model produced this line.** And they will want the answer without asking you.
 
+<p class="note"><strong>"Volume" in this series is an archival volume:</strong> one bound unit of pages with a reference code such as R0001203 — the batch a single run works through. It is never a Kubernetes volume, which is a mounted disk; when these slides mean storage they say <em>disk</em>, <em>cache</em> or <em>bucket</em>.</p>
+
 <!--
+Say the volume sentence out loud, because the word collides: in Kubernetes
+a "volume" is storage. Here it is the archival unit -- a book, a bundle, a
+series of scans -- and the platform's unit of work.
+
 Each of these four becomes one of the slides that follow. Read them as
 requirements, not as complaints: pages from a server, a GPU pool that is
 shared, resumable work, and provenance. Git, last, is how you ask for any of it.
