@@ -71,7 +71,8 @@ to the Hub, so they never need it
 
 ```yaml
 pipeline: demo-v1          # required: a pipeline id from pipelines/
-priority: ""                # optional: a Kueue WorkloadPriorityClass name
+priority: ""                # optional: htr-interactive, htr-bulk or htr-idle (the chart's queue.priorityClasses);
+                            # orders the queue, never evicts a running campaign; empty is htr-bulk
 window: 20                   # optional: this campaign's parallelism, clamped to converter.yaml's window
 suspend: false               # optional: true pauses this campaign (see "Pausing" below)
 volumes:
@@ -114,6 +115,7 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | Volume ids match `[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?` — alphanumeric at both ends, ≤63 chars | Validation error (`unsafe volume id`). This is the Kubernetes **label-value** alphabet, not a DNS-1123 label: uppercase is allowed |
 | Volume ids are unique within a campaign | Validation error (`duplicate volume id`) |
 | `priority:`, when set, is a Kubernetes label value (letters, digits, `.`, `_`, `-`, alphanumeric at both ends, ≤63) | Validation error naming the `kueue.x-k8s.io/priority-class` label it is rendered into — otherwise the API server refuses the Job with a 422 halfway through an apply |
+| `priority:` names one of the chart's `queue.priorityClasses` (`htr-interactive`, `htr-bulk`, `htr-idle` by default) | **Not checked by `validate`** — the converter has no cluster to ask. A name the cluster has no class for is refused by Kueue's webhook when the Job is applied. Leaving the field out is `htr-bulk`; a higher class is admitted before every waiting campaign but never evicts a running one ([Queueing](../how-it-works/queueing.md)) |
 | `window:`, when set, is a positive integer | Validation error |
 | `window:` above `converter.yaml`'s `window` | Silently clamped to it at render time — `converter.yaml`'s value is the per-cluster cap and should be set to what the ClusterQueue's GPU quota can actually admit. Rendering more would let Kueue's partial admission shrink it on the live Job: Kueue then rewrites `spec.parallelism` and rejects every later apply of the unchanged rendered file (`cannot change when partial admission is enabled and the job is not suspended`) |
 | `suspend: true` | Renders `spec.suspend: true` — see [Pausing](#pausing) |

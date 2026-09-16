@@ -90,7 +90,7 @@ Every field's rules are in [Campaign & Pipeline YAML](../reference/campaign-yaml
 
 ```yaml title="campaigns/example.yaml"
 pipeline: demo-v1        # exactly one pipeline per campaign
-priority: ""             # optional: a Kueue WorkloadPriorityClass name
+priority: ""             # optional: htr-interactive / htr-bulk / htr-idle (the chart's classes); empty is htr-bulk
 window: 20               # optional: this campaign's parallelism, capped by converter.yaml's window
 volumes:
   - <ref>                          # shorthand: expanded through converter.yaml's source_template

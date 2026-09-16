@@ -55,6 +55,7 @@ models stay until the PVC is dropped.
 |-----|---------|-------------|
 | `queue.name` | `htr-batch` | LocalQueue name; ClusterQueue is `<name>-cq`, admitting LocalQueues from the release namespace only. Must match `converter.yaml`'s `queue` |
 | `queue.flavor` | `default-flavor` | ResourceFlavor |
+| `queue.priorityClasses` | `htr-interactive` 1000, `htr-bulk` 0, `htr-idle` -10 | One cluster-scoped `WorkloadPriorityClass` per entry (`name`, integer `value`, `description`); these are the names a campaign's `priority:` may use, and an empty list renders none. Kueue orders the queue by value first (higher first), then by creation time; preemption stays off, so a higher class goes ahead of waiting campaigns but never evicts a running one. A Job with no label ranks at 0, which is why `htr-bulk` is 0: leaving `priority:` out is `htr-bulk`. A campaign naming a class not in this list is refused by Kueue's webhook at apply time, not by `validate` |
 | `queue.resources` | cpu 4 / memory 8Gi / nvidia.com/gpu 1 | Covered quotas — every resource an index's pod requests must be listed, or Kueue marks it inadmissible. The default admits exactly one campaign index as the converter renders it (requests cpu 4 / 8 Gi / 1 GPU); raise it to run more volumes in parallel. Indexes stuck `queued` with an idle GPU usually mean a dead Kueue controller, not a busy GPU |
 
 ## Web front (`web.*`)

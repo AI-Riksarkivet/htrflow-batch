@@ -38,7 +38,8 @@ flowchart TB
     JOB -->|"Job controller"| POD
 ```
 
-The chart renders three objects from `queue.*`
+The chart renders three queue objects from `queue.*`, plus one priority
+class per `queue.priorityClasses` entry
 ([Chart Values](../reference/chart.md)):
 
 | Object | Name | What it carries |
@@ -46,6 +47,7 @@ The chart renders three objects from `queue.*`
 | `ResourceFlavor` | `queue.flavor` (default `default-flavor`) | Nothing. With no `nodeLabels` or `nodeTaints`, Kueue injects no `nodeSelector` at admission |
 | `ClusterQueue` | `<queue.name>-cq` (default `htr-batch-cq`) | One resource group, one flavor, `nominalQuota` per covered resource, and a `namespaceSelector` on `kubernetes.io/metadata.name`. A ClusterQueue is cluster-scoped, so the selector keeps any other namespace from pointing a LocalQueue at this quota |
 | `LocalQueue` | `queue.name` (default `htr-batch`), in the release namespace | `spec.clusterQueue` pointing at the ClusterQueue. Jobs name this queue in their `queue-name` label |
+| `WorkloadPriorityClass` | one per `queue.priorityClasses` entry (default `htr-interactive` 1000, `htr-bulk` 0, `htr-idle` -10) | `value` and a `description`. Cluster-scoped, so the names are the same for every namespace. A campaign names one in its `priority-class` label |
 
 The default quota is **cpu 4, memory 8 Gi, `nvidia.com/gpu` 1**, which is
 exactly one wrapper pod. Kueue marks a Workload inadmissible unless the
@@ -60,6 +62,18 @@ Everything else on the ClusterQueue is Kueue's own default:
 - `stopPolicy: None`
 - no `cohort`
 
+Priority is where the classes come in. Kueue orders the queue by class value
+first, higher first, and by creation time within a value, so a campaign on
+`htr-interactive` is admitted before every waiting campaign on `htr-bulk`
+however long those have waited. A Job with no `priority-class` label ranks
+at 0, and the converter renders no label when a campaign leaves `priority:`
+out, which is why `htr-bulk` sits at 0: naming it is the same as leaving the
+field out. `htr-idle` sits below both, for work that may wait behind anything
+that turns up. None of this evicts a running campaign: with
+`withinClusterQueue: Never` a higher class goes ahead of what is *waiting*,
+never ahead of what is *running*, and the next admission happens when the
+running campaign's quota comes back.
+
 A cluster with several kinds of GPU node gives each group its own flavor with
 `nodeLabels` and covers the flavors separately. That is a values change, not
 a chart change.
@@ -71,8 +85,9 @@ annotations:
 
 - `kueue.x-k8s.io/queue-name: <queue from converter.yaml>`, always.
 - `kueue.x-k8s.io/priority-class: <priority from the campaign>`, only when
-  the campaign file sets `priority:`. Nothing renders a matching
-  `WorkloadPriorityClass` (see [Known limits](#known-limits)).
+  the campaign file sets `priority:`. The name must be one of the
+  `WorkloadPriorityClass` objects the chart ships (`queue.priorityClasses`);
+  leaving `priority:` out is `htr-bulk`.
 
 ## What a Workload holds
 
@@ -107,8 +122,11 @@ keeping `suspend` right is the reconciler's job.
 **Validating webhook `vjob.kb.io`** (`/validate-batch-v1-job`, `CREATE` and
 `UPDATE`) rejects changes Kueue cannot honour on a managed Job. That includes
 a `priority-class` label naming a `WorkloadPriorityClass` that does not
-exist. `vworkload.kb.io` guards `workloads` and `workloads/status` the same
-way.
+exist. That is where a campaign naming a class outside
+`queue.priorityClasses` is refused: `htrflow-campaigns validate` checks the
+label's spelling, not the cluster's class list, because the converter has
+no cluster to ask. `vworkload.kb.io` guards `workloads` and
+`workloads/status` the same way.
 
 **The Job reconciler** owns the Job-and-Workload pair. It:
 
@@ -274,9 +292,9 @@ victim gets `Evicted` with reason `Preempted`, and a `Preempted` condition
 naming what displaced it. For this system that means stopping a running
 volume mid-transcription. The volume survives, because the wrapper resumes
 from its published pages, but it is a policy choice rather than a switch. A
-cohort would let the queue borrow another tenant's idle quota. Both
-preemption and cohorts need `WorkloadPriorityClass` objects, and the chart
-renders none.
+cohort would let the queue borrow another tenant's idle quota. The chart
+ships the `WorkloadPriorityClass` objects preemption would rank by; what it
+does not do is turn preemption on.
 
 ## Who owns which field
 
@@ -374,11 +392,13 @@ one whose `window` the quota cannot cover, and it reads "Queued" forever.
   are written against the newer one. Kueue serves both today, so the pause
   works; it stops working on the release that drops the older version, and
   the symptom is a campaign git says is paused that keeps running.
-- **There are no priority lanes.** No `WorkloadPriorityClass` is rendered
-  and `withinClusterQueue` is `Never`. A campaign's `priority:` therefore names
-  a class that does not exist, and the validating webhook rejects the Job.
-  Priority lanes need those classes, preemption, and a decision about what
-  "next" means when one campaign owns the whole quota.
+- **Priority orders the queue; preemption is off.** The chart ships three
+  `WorkloadPriorityClass` objects and `withinClusterQueue` stays `Never`, so
+  a campaign's `priority:` decides who is admitted *next* and never evicts
+  a running campaign. While one campaign holds the whole quota, "next" is
+  when that campaign's quota comes back. Preemption stops a running volume
+  mid-transcription (resume makes that survivable), and turning it on is a
+  product decision rather than a switch.
 - **`window` is not checked against the quota.** Without partial admission
   the whole podSet must fit. The shipped defaults (converter `window` 20
   against a one-GPU quota) render `parallelism: 20`, which is inadmissible
