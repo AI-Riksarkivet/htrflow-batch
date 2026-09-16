@@ -35,6 +35,7 @@ JOB_SKELETON = CONVERTER_SRC / "manifests" / "campaign-job.yaml"
 sys.path.insert(0, str(ROOT / "scripts"))
 from config_reference import (  # noqa: E402
     AGREEMENTS,
+    LIST_AGREEMENTS,
     PAGE,
     SECURITY,
     SURFACES,
@@ -146,3 +147,23 @@ def test_the_apply_identity_may_read_what_it_decides_on():
         granted = verbs[resource].replace('"', "").split(", ")
         assert granted[:1] == ["get"], resource
         assert {"create", "patch"} <= set(granted), resource
+
+
+def _names(config: dict) -> dict[str, list[str]]:
+    values = _load(CHART / "values.yaml")
+    return {
+        f"{field} vs {path}": [config[field], [e[key] for e in _at(values, path)]]
+        for field, path, key in LIST_AGREEMENTS
+    }
+
+
+def test_the_priority_classes_the_converter_accepts_are_the_ones_the_chart_ships():
+    """A campaign's `priority:` is checked against `converter.yaml`'s list
+    because Kueue never refuses an unknown class -- the Job just stays
+    suspended, with no event, and reads "Queued" for ever. So the list has
+    to be the chart's, and in the same order."""
+    defaults = {f: getattr(ConverterConfig(), f) for f, _, _ in LIST_AGREEMENTS}
+    for pair, (ours, theirs) in _names(defaults).items():
+        assert ours == theirs, pair
+    for pair, (ours, theirs) in _names(_load(EXAMPLE)).items():
+        assert ours == theirs, pair

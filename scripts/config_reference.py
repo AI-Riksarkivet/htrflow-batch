@@ -28,8 +28,13 @@ AGREEMENTS = [
     ("s3_secret", "s3.existingSecret"),
     ("data_pvc", "modelCache.name"),
 ]
+#: (ConverterConfig list field, chart list path, the key of each entry):
+#: the names on both sides must be the same list, in order.
+LIST_AGREEMENTS = [("priority_classes", "queue.priorityClasses", "name")]
 PAIRS = {("converter", f): f"chart `{p}`" for f, p in AGREEMENTS}
 PAIRS |= {("chart", p): f"converter `{f}`" for f, p in AGREEMENTS}
+PAIRS |= {("converter", f): f"chart `{p}[].{k}`" for f, p, k in LIST_AGREEMENTS}
+PAIRS |= {("chart", p): f"converter `{f}`" for f, p, k in LIST_AGREEMENTS}
 
 #: The results base: one value, four names, three consumers.
 RESULTS_BASE = {

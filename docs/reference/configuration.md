@@ -171,6 +171,7 @@ skeleton, never as a campaign setting.
 | `hf_token_secret` | `converter.yaml` | *(empty)* | — | names the Secret the warm-up reads `HF_TOKEN` from — cluster |
 | `manifest_max_bytes` | `converter.yaml` | `16777216` | — | no secret — nobody |
 | `fetch_max_bytes` | `converter.yaml` | `67108864` | — | no secret — nobody |
+| `priority_classes` | `converter.yaml` | `[htr-interactive, htr-bulk, htr-idle]` | chart `queue.priorityClasses[].name` | no secret — nobody |
 
 ## chart — `charts/htrflow-batch`
 
@@ -187,7 +188,7 @@ skeleton, never as a campaign setting.
 | `queue.name` | `values.yaml` | `htr-batch` | converter `queue` | no secret — nobody |
 | `queue.flavor` | `values.yaml` | `default-flavor` | — | no secret — nobody |
 | `queue.resources` | `values.yaml` | `[{name: cpu, quota: 4}, {name: memory, quota: 8Gi}, {name: …` | — | no secret — nobody |
-| `queue.priorityClasses` | `values.yaml` | `[{description: a handful of volumes someone is waiting for,…` | — | no secret — nobody |
+| `queue.priorityClasses` | `values.yaml` | `[{description: a handful of volumes someone is waiting for,…` | converter `priority_classes` | no secret — nobody |
 | `web.image` | `values.yaml` | `docker.io/riksarkivet/htrflow-web@sha256:af5979224a933bebf1…` | — | digest-pinned unless `security.allowTagImages` — render |
 | `web.nodePort` | `values.yaml` | `30800` | — | no secret — nobody |
 | `web.resources.requests.cpu` | `values.yaml` | `50m` | — | no secret — nobody |
