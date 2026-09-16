@@ -2790,3 +2790,147 @@ describe("a campaign of one volume", () => {
     expect(labels(container)).toEqual(["volumes", "pages"]);
   });
 });
+
+// Two things the live card showed (the product owner, 2026-09-16): the
+// label track took all the free width, so "volumes" sat at the far left with
+// its bar 550px away and nothing in between; and a volume row carried no bar
+// at all, which on a single-volume card meant no bar anywhere.
+describe("the bar is the track that stretches, and every volume has one", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function progress(over: Record<string, unknown> = {}) {
+    return {
+      done: 2,
+      total: 3,
+      failed: 0,
+      lastPage: "0003",
+      stage: "done",
+      updatedAt: "2026-09-14T07:00:00Z",
+      ageSeconds: null,
+      lastError: null,
+      errors: 0,
+      viewerPublished: true,
+      ...over,
+    };
+  }
+
+  async function card(volumes: unknown[], latest: unknown = null) {
+    cleanup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes, latest }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    return container;
+  }
+
+  test("the label is content-sized and the bar takes the free width", async () => {
+    const source: string = (await import("./CampaignCard.svelte?raw")).default;
+    const tracks = (
+      (source.split(".row {")[1] ?? "").split("}")[0] ?? ""
+    ).replace(/\s+/g, " ");
+    // Track 1 sizes to its content between a floor and a ceiling, so a
+    // short label stays short and a long id clips; track 2 is the only
+    // flexible one, so the free width goes into the bar.
+    expect(tracks).toMatch(/minmax\(6rem, 16rem\)/);
+    expect(tracks).toMatch(/minmax\(8rem, 1fr\)/);
+    const container = await card([]);
+    expect(container.querySelector(".row.totals")).not.toBeNull();
+  });
+
+  test("a long volume id clips rather than widening its track", async () => {
+    const long = {
+      ...volumeDone,
+      id: "R0001203-a-very-long-identifier-indeed",
+      progress: progress(),
+    };
+    const container = await card([long], long);
+    const name = container.querySelector(".vid-name") as HTMLElement;
+    expect(name).toHaveAttribute("title", expect.stringContaining(long.id));
+    const source: string = (await import("./CampaignCard.svelte?raw")).default;
+    expect(source).toMatch(/\.vid-name \{[\s\S]*?text-overflow: ellipsis;/);
+  });
+
+  test.each([
+    ["active" as const, 0, "running"],
+    ["done" as const, 0, "done"],
+    ["done" as const, 1, "lost"],
+    ["failed" as const, 0, "failed"],
+  ])(
+    "a %s volume carries a bar in its own colour",
+    async (state, failed, mode) => {
+      const v = { ...volumeDone, state, progress: progress({ failed }) };
+      const container = await card([v], v);
+      const fill = container.querySelector(
+        ".row.volume .c-bar .fill",
+      ) as HTMLElement;
+      expect(fill).not.toBeNull();
+      expect(fill).toHaveClass(mode);
+      expect(fill).toHaveStyle({ width: "66.7%" });
+    },
+  );
+
+  test("only a running volume's bar sheens", async () => {
+    const active = {
+      ...volumeDone,
+      state: "active",
+      progress: progress({ stage: "stream", ageSeconds: 12 }),
+    };
+    const container = await card([active], active);
+    expect(container.querySelector(".row.volume .fill")).toHaveClass("running");
+    const done = { ...volumeDone, progress: progress() };
+    const second = await card([done], done);
+    expect(second.querySelector(".row.volume .fill")).not.toHaveClass(
+      "running",
+    );
+  });
+
+  test.each([["pending" as const], ["unknown" as const]])(
+    "a %s volume leaves the bar track empty",
+    async (state) => {
+      const v = { ...volumeDone, state, progress: null };
+      const container = await card([v], v);
+      const track = container.querySelector(
+        ".row.volume .c-bar",
+      ) as HTMLElement;
+      expect(track).not.toBeNull();
+      expect(track.querySelector(".bar")).toBeNull();
+    },
+  );
+
+  test("a single-volume card still has a bar, now that its row carries one", async () => {
+    const one: JobSummary = {
+      ...job,
+      counts: { total: 1, active: 0, done: 1, failed: 0 },
+      phase: "Succeeded",
+    };
+    const only = { ...volumeDone, progress: progress({ done: 3, total: 3 }) };
+    cleanup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          ...one,
+          failures: [],
+          volumes: [only],
+          latest: only,
+        }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job: one });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelectorAll(".row.totals")).toHaveLength(0);
+    expect(container.querySelector(".row.latest .fill")).toHaveClass("done");
+  });
+});
