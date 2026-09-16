@@ -1047,7 +1047,10 @@ check web       "$(count packages/web/src -name '*.py')" 1866
 # left after the header counts line went -- the volumes cell says it while the
 # campaign is Running. And the live page read "5 / 8· 3 failed": Svelte trims
 # the whitespace in front of an element, so each separator carries its own.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4431
+# 4431 -> 4423 (2026-09-16, card zones review): the restructure left a
+# `.dates` rule nothing selects, the old meta-line comment above the rule that
+# replaced it, and the reduced-motion note stranded above the 520px query.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4423
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

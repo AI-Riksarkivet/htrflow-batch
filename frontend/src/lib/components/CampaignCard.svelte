@@ -986,16 +986,12 @@
     white-space: pre-wrap;
   }
 
-  /* One quiet row at the foot of the header block: provenance, then the
-     dates, nothing in it heavier than the counts above. Left-aligned at
-     every width -- holding the dates at the far edge only reads as a pair
-     while both halves share a line, and on a phone they do not. The models
-     half is the half that gives up width first: it clips, and its title
-     carries the list the clip cut. `clip` with a margin rather than
-     `hidden`, so a focus ring on the last link is not shaved off. */
   /* Zone 4, and the quietest line on the card: provenance is what a reader
      checks once, not what they came for. A step lighter than the numbers
-     above it, in the same muted colour. */
+     above it, in the same muted colour. The models clip rather than wrap,
+     with their title carrying the list the clip cut -- `clip` with a margin
+     rather than `hidden`, so a focus ring on the last link is not shaved
+     off. */
   .card-meta {
     display: flex;
     flex-wrap: wrap;
@@ -1013,10 +1009,6 @@
     overflow-clip-margin: 4px;
     white-space: nowrap;
     text-overflow: ellipsis;
-  }
-
-  .dates {
-    white-space: nowrap;
   }
 
   /* Links in the line's own colour, and the underline in that colour too:
@@ -1412,8 +1404,6 @@
     cursor: default;
   }
 
-  /* app.css already shortens every animation to nothing; this says it
-     outright, so the dot cannot be left parked mid-beat. */
   /* A phone. Zone 2's three cells take a line each -- the columns still
      line up, they are just one per row -- and zone 1's dates drop under the
      chips rather than squeezing the campaign's name. */
@@ -1428,6 +1418,8 @@
     }
   }
 
+  /* app.css already shortens every animation to nothing; this says it
+     outright, so the dot cannot be left parked mid-beat. */
   @media (prefers-reduced-motion: reduce) {
     .dot.pulse {
       animation: none;
