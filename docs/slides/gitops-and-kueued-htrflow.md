@@ -271,7 +271,7 @@ drained pod is not this index's failure.
 - **Kueue decides when, the scheduler decides where.** It is an admission controller with a GPU quota, and it knows nothing about HTR, IIIF or S3.
 - **One campaign is one Workload,** not one per volume. It is admitted as a whole, and it holds the GPUs it was admitted for until its last volume is done.
 - **`window:`** is the Job's parallelism — how many volumes run at once, so how many GPUs it takes. It is clamped to the cluster-wide cap in `converter.yaml`, and the whole window must fit the free quota or nothing starts.
-- **Nothing jumps the line.** Preemption is off and there are no priority classes; a workload that does not fit is skipped rather than blocking the rest.
+- **Priority orders the line; nothing jumps it.** Three classes (`htr-interactive`, `htr-bulk`, `htr-idle`) decide who is admitted next, and preemption is off, so a running campaign is never evicted; a workload that does not fit is skipped rather than blocking the rest.
 - **Pausing is a git change.** `suspend: true` in the campaign file; the apply puts the same intent on the Workload, and running pods are evicted with every finished volume kept.
 
 <!--

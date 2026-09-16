@@ -29,8 +29,10 @@ the work is exposing that as one word in the campaign file.
   `htr-idle` -10) via `queue.priorityClasses`; Kueue släpper in efter klass
   före ålder, men `withinClusterQueue` är fortfarande `Never`, så en högre
   klass går före allt som väntar och avbryter aldrig en kampanj som kör.
-  Ett namn utanför listan avvisas av Kueues webhook vid apply, inte av
-  `validate`. Kvar i storyn: beslutet om preemption.
+  Kueue avvisar inte ett okänt klassnamn (ingen Workload, ingen händelse,
+  kampanjen står "Queued" för evigt), så `converter.yaml` fick
+  `priority_classes` som speglar chartets lista och `validate` avvisar ett
+  `priority:` utanför den. Kvar i storyn: beslutet om preemption.
 
 ## Done when
 

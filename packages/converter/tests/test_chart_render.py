@@ -544,11 +544,11 @@ DEFAULT_PRIORITY_CLASSES = {"htr-interactive": 1000, "htr-bulk": 0, "htr-idle": 
 
 def test_the_default_render_ships_the_three_priority_classes(default: list[dict]):
     """`render.py` has always put `kueue.x-k8s.io/priority-class: <name>`
-    on a Job whose campaign sets `priority:`, and Kueue's validating
-    webhook refused every one of them because no class of that name
-    existed. The chart is where the names live -- the converter knows
-    nothing about the cluster -- so this is the list `validate` cannot
-    check against."""
+    on a Job whose campaign sets `priority:`, and no class of that name
+    existed -- which Kueue does not refuse: no Workload, no event, and the
+    Job reads "Queued" for ever. The chart is where the names live;
+    `converter.yaml`'s `priority_classes` mirrors them so `validate` can
+    refuse a name the cluster does not have."""
     classes = objects(default, "WorkloadPriorityClass")
     assert {c["metadata"]["name"]: c["value"] for c in classes} == (
         DEFAULT_PRIORITY_CLASSES

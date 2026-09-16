@@ -21,6 +21,7 @@ source whenever a campaign lists bare volume ids.
 namespace: htr-batch              # Kubernetes namespace campaigns render into
 queue: htr-batch                  # Kueue LocalQueue name
 window: 20                        # Job parallelism, and the CAP a campaign's own `window:` is clamped to
+priority_classes: [htr-interactive, htr-bulk, htr-idle]   # the WorkloadPriorityClass names the chart ships; what a campaign's `priority:` may name
 s3_secret: htr-batch-s3           # Secret carrying S3 credentials
 hf_token_secret: ""               # optional: Secret with a `token` key, read by the warm-up for a private or gated Hub model
 data_pvc: htr-test-data           # PVC mounted as the model cache
@@ -41,9 +42,13 @@ The file itself is required: every command refuses a repo without a
 a campaign is applied to — and pruned in — is one of the settings that would
 be guessed at.
 
-`queue`, `s3_secret` and `data_pvc` name objects the htrflow-batch chart
-creates; the [Configuration](configuration.md) page shows which chart value
-each must agree with.
+`queue`, `s3_secret`, `data_pvc` and `priority_classes` name objects the
+htrflow-batch chart creates; the [Configuration](configuration.md) page
+shows which chart value each must agree with. `priority_classes` is checked
+here rather than by the cluster because Kueue does not refuse a Job naming a
+class that does not exist: no Workload is created, no event is raised, and
+the campaign reads "Queued" for ever. An empty list means the cluster offers
+no priority and every `priority:` is refused.
 
 `hf_token_secret` names an object no chart creates — you make it yourself,
 like the S3 Secret. Leave it unset unless a pipeline pulls a **private or
@@ -71,7 +76,7 @@ to the Hub, so they never need it
 
 ```yaml
 pipeline: demo-v1          # required: a pipeline id from pipelines/
-priority: ""                # optional: htr-interactive, htr-bulk or htr-idle (the chart's queue.priorityClasses);
+priority: ""                # optional: one of converter.yaml's priority_classes (htr-interactive, htr-bulk, htr-idle);
                             # orders the queue, never evicts a running campaign; empty is htr-bulk
 window: 20                   # optional: this campaign's parallelism, clamped to converter.yaml's window
 suspend: false               # optional: true pauses this campaign (see "Pausing" below)
@@ -114,8 +119,8 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | An `images:` volume whose one line of `volumes.txt` is over 100 KiB | Validation error naming the volume and how many images it lists. The Job exports that line's URLs as a single `IMAGES` environment entry, and Linux stops one entry at 128 KiB — the pod would die with `Argument list too long` before the wrapper starts. Split the volume, or give it a IIIF manifest |
 | Volume ids match `[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?` — alphanumeric at both ends, ≤63 chars | Validation error (`unsafe volume id`). This is the Kubernetes **label-value** alphabet, not a DNS-1123 label: uppercase is allowed |
 | Volume ids are unique within a campaign | Validation error (`duplicate volume id`) |
-| `priority:`, when set, is a Kubernetes label value (letters, digits, `.`, `_`, `-`, alphanumeric at both ends, ≤63) | Validation error naming the `kueue.x-k8s.io/priority-class` label it is rendered into — otherwise the API server refuses the Job with a 422 halfway through an apply |
-| `priority:` names one of the chart's `queue.priorityClasses` (`htr-interactive`, `htr-bulk`, `htr-idle` by default) | **Not checked by `validate`** — the converter has no cluster to ask. A name the cluster has no class for is refused by Kueue's webhook when the Job is applied. Leaving the field out is `htr-bulk`; a higher class is admitted before every waiting campaign but never evicts a running one ([Queueing](../how-it-works/queueing.md)) |
+| `priority:`, when set, is a class name (lower-case letters, digits, `-`, alphanumeric at both ends, ≤63) | Validation error naming the `kueue.x-k8s.io/priority-class` label it is rendered into — a case slip like `HTR-Bulk` is a legal label that names no class |
+| `priority:` is one of `converter.yaml`'s `priority_classes` (`htr-interactive`, `htr-bulk`, `htr-idle` by default, mirroring the chart's `queue.priorityClasses`) | Validation error naming the file, the classes there are and the chart value. **Checked here because the cluster will not**: Kueue does not refuse a Job naming a class that does not exist — no Workload, no event, and the campaign reads "Queued" for ever. Leaving the field out is `htr-bulk`; a higher class is admitted before every waiting campaign but never evicts a running one ([Queueing](../how-it-works/queueing.md)) |
 | `window:`, when set, is a positive integer | Validation error |
 | `window:` above `converter.yaml`'s `window` | Silently clamped to it at render time — `converter.yaml`'s value is the per-cluster cap and should be set to what the ClusterQueue's GPU quota can actually admit. Rendering more would let Kueue's partial admission shrink it on the live Job: Kueue then rewrites `spec.parallelism` and rejects every later apply of the unchanged rendered file (`cannot change when partial admission is enabled and the job is not suspended`) |
 | `suspend: true` | Renders `spec.suspend: true` — see [Pausing](#pausing) |
@@ -216,6 +221,7 @@ campaigns/broken.yaml: volume "R1" is listed twice — remove the duplicate
 | A `manifest:` that is not an http(s) URL | `volume 3 has a manifest that is not an http(s) URL ("javascript:alert(1)") — write the whole URL, starting with https://` |
 | A list entry that is neither a bare id nor a mapping with `id:` | `volume 3 has no id — write the entry as "- R1", or as "- id: R1" with manifest: or images:` |
 | `pipeline:` naming a file that is not in `pipelines/` | `pipeline "kyrk-v3" has no file in pipelines/ — add pipelines/kyrk-v3.yaml, or point pipeline: at one that is there` |
+| `priority:` naming a class `converter.yaml` does not list | `priority "htr-urgent" is not one of the cluster's classes (htr-interactive, htr-bulk, htr-idle) — set converter.yaml priority_classes to what the chart's queue.priorityClasses ships` |
 | A campaign file called `foo-part1.yaml` | `the campaign name (taken from the file name) ends in "-part<number>", which is what the converter calls the parts of a campaign it splits — rename the file` |
 | A tag instead of a digest in `image:` | `"image" is not pinned to a digest (got "repo/img:v5") — write image: <registry>/<repo>@sha256:<64 hex digits>` |
 | `namespace:` written as anything but a DNS-1123 label | `"namespace" is not a Kubernetes namespace (got "htr.batch.example") — use lower-case letters, digits and "-", starting and ending with a letter or digit, at most 63 characters and no dots` |

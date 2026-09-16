@@ -67,11 +67,12 @@ queue:
   # goes ahead of every waiting campaign but never evicts a running one. A
   # Job with no priority label ranks at 0, and the converter renders no label
   # when a campaign leaves `priority:` out, so the normal class sits at 0:
-  # naming it is the same as leaving the field out. `htrflow-campaigns
-  # validate` cannot check the name (the converter knows nothing about the
-  # cluster); a campaign naming a class that is not in this list is refused
-  # by Kueue's webhook at apply time. This list IS the list of valid names.
-  # An empty list renders no class at all.
+  # naming it is the same as leaving the field out. Kueue does not refuse a
+  # Job naming a class that does not exist: its reconciler cannot build the
+  # Workload, raises no event, and the Job stays suspended and reads
+  # "Queued" for ever. So converter.yaml's `priority_classes` mirrors this
+  # list and `htrflow-campaigns validate` refuses a name outside it. An
+  # empty list renders no class at all.
   priorityClasses:
     - name: htr-interactive
       value: 1000
