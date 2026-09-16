@@ -204,7 +204,7 @@ S3 sits behind a single seam, `ResultStore`:
 - **Only durable state.** The results bucket is the one stateful dependency
   in the system. How durable the results are depends on the bucket's own
   replication and backups ([Campaigns → Trade-offs](campaigns.md#trade-offs)).
-- **After the Job is gone.** The Job's TTL is a day. After that, "what has
+- **After the Job is gone.** The Job's TTL is a week by default, set in `converter.yaml`. After that, "what has
   been processed?" is answered by listing `manifest.json` keys in S3. The read
   API's `completedIndexes`/`failedIndexes` view only covers a Job that still
   exists.
