@@ -529,22 +529,26 @@ is that the four ideas before it are what the two files are asking for.
 
 # The whole picture
 
-```
- IN GIT                        IN THE CLUSTER                                    OUTSIDE IT
-
- campaigns repo                Kyverno       checks every object at the door
-   converter.yaml                 │
-   pipelines/  campaigns/         ▼
-   rendered/   ──── apply ───► Kueue         holds each campaign until its GPUs are free
-                                  │
- its CI                           ▼
-   converter:                  campaign Job  one pod per volume:
-   validate, render              wrapper + htrflow  ─── pages in ──────────────  IIIF servers
-                                    │        ─── ALTO, PAGE, progress out ──────  S3 bucket
-                                    ▲ models, read-only
-                               warm-up Job   fills the model cache once  ◄────  Hugging Face Hub
-
-                               web front     read API · status page · viewer ◄── your browser
+```mermaid h:470
+flowchart LR
+  subgraph GIT["in git"]
+    REPO["campaigns repo"] --> CI["CI: validate, render"]
+  end
+  IIIF["IIIF servers"]
+  HUB["Hugging Face Hub"]
+  YOU["browser"]
+  subgraph K8S["in the cluster"]
+    KYV["Kyverno<br/>checks the objects"] --> KUE["Kueue<br/>waits for GPUs"] --> JOB["campaign pods<br/>wrapper + htrflow"]
+    WARM["warm-up<br/>model cache"] -.-> JOB
+    WEB["web front<br/>status · viewer"]
+  end
+  S3[("S3 bucket")]
+  CI -->|"apply"| KYV
+  IIIF --> JOB
+  HUB --> WARM
+  YOU --> WEB
+  JOB --> S3
+  WEB --> S3
 ```
 
 **Two rules hold it together:** nothing in the cluster reads git — `apply` is all it is told; and the bucket is the only thing that remembers.

@@ -1,7 +1,19 @@
 flowchart LR
-  A["PR merged<br/>demo: 1 volume,<br/>window 1"]
-  Bq["Queued<br/>quota full"]
-  C["Running<br/>137 / 638 pages"]
-  D["Done<br/>637 ok, 1 failed"]
-  E["viewer<br/>the whole volume"]
-  A --> Bq --> C --> D --> E
+  subgraph GIT["in git"]
+    REPO["campaigns repo"] --> CI["CI: validate, render"]
+  end
+  IIIF["IIIF servers"]
+  HUB["Hugging Face Hub"]
+  YOU["browser"]
+  subgraph K8S["in the cluster"]
+    KYV["Kyverno<br/>checks the objects"] --> KUE["Kueue<br/>waits for GPUs"] --> JOB["campaign pods<br/>wrapper + htrflow"]
+    WARM["warm-up<br/>model cache"] -.-> JOB
+    WEB["web front<br/>status · viewer"]
+  end
+  S3[("S3 bucket")]
+  CI -->|"apply"| KYV
+  IIIF --> JOB
+  HUB --> WARM
+  YOU --> WEB
+  JOB --> S3
+  WEB --> S3
