@@ -213,6 +213,23 @@
     job.phase === "Succeeded" && notice.pagesFailed > 0,
   );
 
+  // The bar's mood, shared by both totals rows: the sheen crosses them only
+  // while work is happening, and they go amber with the chip when the
+  // campaign finished with pages missing.
+  const rowMode = $derived(
+    job.phase === "Running" ? "running" : campaignLost ? "lost" : "",
+  );
+
+  // A campaign of one volume has nothing to sum: its own row carries the
+  // same two fractions, and stacking a total over an identical row said
+  // everything twice (the product owner, 2026-09-16). Only dropped once
+  // there IS a row to carry them -- a detail that has not loaded yet would
+  // otherwise leave the card with no numbers at all.
+  const showTotals = $derived(
+    job.counts.total !== 1 ||
+      (collapsed ? latest === null : volumes.length === 0),
+  );
+
   // The card's left accent: worst-first, read straight off the Job phase now
   // that the API computes it server-side. `inTrouble` is $lib/order's --
   // the same question the campaign list sorts by, so the accent and the
@@ -568,88 +585,116 @@
   </span>
 {/snippet}
 
-<!-- One cell of the numbers line: label, bar, figures. The three tracks are
-     fixed lengths, not content-derived, so the figures of ten stacked cards
-     sit on one vertical line and the eye can run down them. -->
-{#snippet metric(
+<!-- The figures of any row: the fraction, then whatever qualifies it. The
+     separators carry their own leading space -- Svelte trims the whitespace
+     in front of an element, and the live page read "5 / 8· 3 failed"
+     (2026-09-16 review). `errors` folds in here rather than taking a column
+     of its own: a count with no fraction beside it was a third number row
+     lining up with nothing (the product owner, 2026-09-16). -->
+{#snippet figuresOf(
+  cell: { done: number; total: number; failed: number; active?: number },
+  errors: number,
+)}
+  {figures(cell)}{#if cell.failed > 0}<span class="bad"
+      >{" · "}{cell.failed} failed</span
+    >{/if}{#if cell.active}<span>{" · "}{cell.active} active</span
+    >{/if}{#if errors > 0}<span class="bad"
+      >{" · "}{errors} error{errors === 1 ? "" : "s"}</span
+    >{/if}
+{/snippet}
+
+<!-- A campaign total: the same four tracks a volume row has, with an empty
+     actions cell, so the two numbers the card sums sit in the same column as
+     the numbers of every volume under them. -->
+{#snippet totalsRow(
   label: string,
   cell: { done: number; total: number; failed: number; active?: number },
-  mode: string,
+  errors: number,
 )}
-  <span class="metric">
-    <span class="metric-label">{label}</span>
-    <span class="metric-bar">
-      {#if cell.total > 0}
-        {@render bar(
+  <div class="row totals">
+    <span class="c-label">{label}</span>
+    <span class="c-bar"
+      >{#if cell.total > 0}{@render bar(
           `${label} done in campaign ${job.name}`,
           cell.done,
           cell.total,
-          mode,
-        )}
-      {/if}
-    </span>
-    <!-- The separators carry their own leading space: Svelte trims the
-         whitespace in front of an element, and the live page read
-         "5 / 8· 3 failed" (2026-09-16 review). -->
-    <span class="metric-figures"
-      >{figures(cell)}{#if cell.failed > 0}<span class="bad"
-          >{" · "}{cell.failed} failed</span
-        >{/if}{#if cell.active}<span>{" · "}{cell.active} active</span
-        >{/if}</span
+          rowMode,
+        )}{/if}</span
     >
-  </span>
+    <span class="c-figures">{@render figuresOf(cell, errors)}</span>
+    <span class="c-actions"></span>
+  </div>
 {/snippet}
 
-<!-- The volume status column, in the folded strip and in the table. It says
-     per volume what zone 2 says per campaign: the state word coloured by
-     that volume's health, then the same figures in the same shape (the
-     product owner, 2026-09-16 — the strip used to read "DONE one-bad" in
-     green with no numbers at all). `withReason` is the strip: the table
-     carries a failed volume's sentence in its first column already, and
-     saying it twice in one row would be the duplication this replaced. -->
-{#snippet volumeStatus(v: VolumeView, withReason: boolean)}
+<!-- A volume, as the same four tracks the totals above it use: the id (and,
+     when the row has room, what went wrong and what it is doing), the bar,
+     the figures, and the actions. One snippet for the folded card's single
+     row and for every row of the open list, so the two cannot drift -- and
+     with the tracks shared, every number on the card sits in one column and
+     every pill and icon in another (the product owner, 2026-09-16: "the
+     layout of the columns is a bit bad").
+
+     `compact` is the folded row: it is one line, so a failed volume's
+     sentence takes the figures' place there rather than sitting under the
+     id, and what the volume is doing stays inline. `cellRole` is set only
+     inside the open list, which is an ARIA table. -->
+{#snippet volumeRow(
+  v: VolumeView,
+  compact: boolean,
+  cellRole: string | undefined,
+)}
   {@const lost = lostPages(v)}
+  {@const cell = volumePages(v)}
   {@const story =
     v.progress === null ? "" : describeProgress(v.progress, v.state)}
-  <!-- Figures first, the pill last: the pill is the fixed-width element, so
-       it is the one that can anchor the right edge of every row, and the
-       variable-width figures run up against it instead of pushing it about
-       (the product owner, 2026-09-16: "it's very uneven for the eye"). -->
-  {#if withReason && v.state === "failed"}
-    <span class="vreason" title={reasonOf(v)}>{reasonOf(v)}</span>
-  {:else}
-    {@const cell = volumePages(v)}
-    <!-- Keyed on the count itself: the node is rebuilt only when the number
-         changes, which is what restarts the highlight; `moved` is what
-         decides it runs at all. -->
-    {#key cell.done}
-      <span class="vfigures" class:bump={moved.has(v.id)}
-        >{figures(cell)}{#if cell.failed > 0}<span class="bad"
-            >{" · "}{cell.failed} failed</span
-          >{/if}</span
-      >
-    {/key}
-  {/if}
-  <span
-    class="status {v.state}"
-    class:lost={lost > 0}
-    title={lost > 0 ? doneWith(lost) : undefined}
-  >
-    <span class="dot" class:pulse={v.state === "active"} aria-hidden="true"
-    ></span>
-    <span class="status-word"
-      >{#if lost > 0}<span aria-hidden="true">{v.state}</span><span
-          class="sr-only">{doneWith(lost)}</span
-        >{:else}{v.state}{/if}</span
-    >
-  </span>
-  {#if !(withReason && v.state === "failed")}
-    {@const cell = volumePages(v)}
-    {#if v.state === "active" && cell.total > 0}
-      {@render bar(`Pages done in ${v.id}`, cell.done, cell.total, "running")}
+  <span class="c-label" role={cellRole}>
+    <span class="vid-line">{@render volumeId(v)}</span>
+    {#if !compact && v.reason !== undefined}
+      <span class="verr">{describeReason(v.reason)}</span>
     {/if}
-  {/if}
-  {#if story !== ""}<span class="vprogress">{story}</span>{/if}
+    {#if !compact && story !== ""}<span class="vprogress">{story}</span>{/if}
+  </span>
+  <span class="c-bar" role={cellRole}
+    >{#if v.state === "active" && cell.total > 0}{@render bar(
+        `Pages done in ${v.id}`,
+        cell.done,
+        cell.total,
+        "running",
+      )}{/if}</span
+  >
+  <span class="c-figures" role={cellRole}>
+    {#if compact && v.state === "failed"}
+      <span class="vreason" title={reasonOf(v)}>{reasonOf(v)}</span>
+    {:else}
+      <!-- Keyed on the count itself: the node is rebuilt only when the
+           number changes, which is what restarts the highlight; `moved` is
+           what decides it runs at all. -->
+      {#key cell.done}
+        <span class="vfigures" class:bump={moved.has(v.id)}
+          >{@render figuresOf(cell, 0)}</span
+        >
+      {/key}
+      {#if compact && story !== ""}<span class="vprogress">{story}</span>{/if}
+    {/if}
+  </span>
+  <span class="c-actions" role={cellRole}>
+    <span class="links">{@render links(v)}</span>
+    <!-- The pill is the fixed-width element, so it is the one that can
+         anchor the right edge of every row (2026-09-16). -->
+    <span
+      class="status {v.state}"
+      class:lost={lost > 0}
+      title={lost > 0 ? doneWith(lost) : undefined}
+    >
+      <span class="dot" class:pulse={v.state === "active"} aria-hidden="true"
+      ></span>
+      <span class="status-word"
+        >{#if lost > 0}<span aria-hidden="true">{v.state}</span><span
+            class="sr-only">{doneWith(lost)}</span
+          >{:else}{v.state}{/if}</span
+      >
+    </span>
+  </span>
 {/snippet}
 
 <section class="campaign" data-health={health}>
@@ -728,89 +773,71 @@
     {/if}
   </div>
 
-  <!-- Zone 2. Every card carries these three cells, in the same columns,
-       whether or not the numbers in them are known yet. -->
-  <div class="numbers">
-    {@render metric(
-      "volumes",
-      volumeCell,
-      job.phase === "Running" ? "running" : campaignLost ? "lost" : "",
-    )}
-    {@render metric(
-      "pages",
-      pageCell,
-      job.phase === "Running" ? "running" : campaignLost ? "lost" : "",
-    )}
-    {#if notice.errors > 0}
-      <span class="metric errors">
-        <span class="metric-label">errors</span>
-        <span class="metric-figures bad">{notice.errors}</span>
-      </span>
+  <!-- Zones 2 and 3, and the volumes: ONE column system. Every row below --
+       the campaign's two totals, the folded card's volume, and every row of
+       the open list -- is the same four tracks, so a reader's eye runs down
+       one column of numbers and one column of pills instead of three sets
+       of columns that line up with nothing (the product owner, 2026-09-16).
+       A campaign of one volume drops the totals: that volume's own row is
+       already the total, said twice over. -->
+  <div class="card-body">
+    {#if showTotals}
+      {@render totalsRow("volumes", volumeCell, 0)}
+      {@render totalsRow("pages", pageCell, notice.errors)}
     {/if}
-  </div>
 
-  <!-- Zone 3. Only when something is wrong, and never the numbers above. -->
-  {#if problems.length > 0}
-    <!-- The sentences are real text, not a hidden copy of themselves:
-         clipping with `overflow` leaves them in the accessibility tree, and
-         a second copy beside the links below would be read twice
-         (2026-09-16 review). The `title` is for the mouse. -->
-    <p class="problems" title={problemsText}>
-      <span class="problems-text"
-        >{#each problems as part, i (i)}{i > 0
-            ? " · "
-            : ""}{#if part.id !== null}{#if part.href === null}<span class="pid"
-                >{part.id}</span
-              >{:else}<a class="pid" href={part.href}>{part.id}</a
-              >{/if}{": "}{/if}{part.text}{/each}</span
+    <!-- Only when something is wrong, and never the numbers above. The
+         sentences are real text, not a hidden copy of themselves: clipping
+         with `overflow` leaves them in the accessibility tree, and a second
+         copy beside the links below would be read twice (2026-09-16
+         review). The `title` is for the mouse. -->
+    {#if problems.length > 0}
+      <p class="problems" title={problemsText}>
+        <span class="problems-text"
+          >{#each problems as part, i (i)}{i > 0
+              ? " · "
+              : ""}{#if part.id !== null}{#if part.href === null}<span
+                  class="pid">{part.id}</span
+                >{:else}<a class="pid" href={part.href}>{part.id}</a
+                >{/if}{": "}{/if}{part.text}{/each}</span
+        >
+        {#if noticeHref !== null}
+          <a class="problems-log" href={noticeHref}>log</a>
+        {/if}
+      </p>
+    {/if}
+    {#if detailError !== null}
+      <p class="notice error-row" role="alert">{detailError}</p>
+    {/if}
+
+    {#if collapsed && latest !== null}
+      <div class="row volume latest">
+        {@render volumeRow(latest, true, undefined)}
+      </div>
+    {/if}
+    {#if !collapsed}
+      <!-- An ARIA table rather than a <table>: the rows have to be the same
+           grid the totals above them are, and a real table cannot share
+           those tracks. The column headers are there, just not drawn -- the
+           labels above already say what the columns are. -->
+      <div
+        class="volumes"
+        role="table"
+        aria-label="Volumes in campaign {job.name}"
+        id={tableId}
       >
-      {#if noticeHref !== null}
-        <a class="problems-log" href={noticeHref}>log</a>
-      {/if}
-    </p>
-  {/if}
-  {#if detailError !== null}
-    <p class="notice error-row" role="alert">{detailError}</p>
-  {/if}
-  {#if collapsed && latest !== null}
-    <p class="latest">
-      <span class="latest-id">{@render volumeId(latest)}</span>
-      <span class="links">{@render links(latest)}</span>
-      <span class="latest-status">{@render volumeStatus(latest, true)}</span>
-    </p>
-  {/if}
-  {#if !collapsed}
-    <div class="table-scroll" id={tableId}>
-      <table class="volumes">
-        <caption class="sr-only">Volumes in campaign {job.name}</caption>
-        <colgroup>
-          <col class="c-vid" />
-          <col class="c-status" />
-        </colgroup>
-        <thead>
-          <tr>
-            <th>volume</th>
-            <th class="vstatus">status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each volumes as v (v.id)}
-            <tr>
-              <td class="vid">
-                <span class="vid-line"
-                  >{@render volumeId(v)}<span class="links"
-                    >{@render links(v)}</span
-                  ></span
-                >
-                {#if v.reason !== undefined}
-                  <span class="verr">{describeReason(v.reason)}</span>
-                {/if}
-              </td>
-              <td class="vstatus">{@render volumeStatus(v, false)}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
+        <div class="row head sr-only" role="row">
+          <span role="columnheader">volume</span>
+          <span role="columnheader">progress</span>
+          <span role="columnheader">pages</span>
+          <span role="columnheader">links and status</span>
+        </div>
+        {#each volumes as v (v.id)}
+          <div class="row volume" role="row">
+            {@render volumeRow(v, false, "cell")}
+          </div>
+        {/each}
+      </div>
       {#if hasMore}
         <button
           type="button"
@@ -823,8 +850,8 @@
             : `load more (${volumes.length}/${job.counts.total})`}
         </button>
       {/if}
-    </div>
-  {/if}
+    {/if}
+  </div>
   <!-- Zone 4, and the card's footer: which recipe and which weights produced
        these results. Provenance is checked once and read least, and in the
        header it competed with the campaign's state for the same row (the
@@ -880,10 +907,16 @@
      index done, blue = a Job still running, red = a Job failed or carries a
      failed index, grey = queued/paused/nothing moving. */
   .campaign {
-    /* The two fixed tracks of a volume line, in one place: the icon pair,
-       and the status. "637 / 638 · 1 failed" is the widest the figures get. */
+    /* The card body's four tracks, in one place, so every row -- totals,
+       the folded volume, every row of the open list -- is laid out on the
+       same columns. Absolute units, not em: the rows do not all share a
+       font-size, and a column that moved with the text would not be a
+       column. "637 / 638 · 1 failed · 2 errors" is the widest the figures
+       get; the actions track is the icon pair plus the pill. */
+    --bar: 4.5rem;
+    --figures: 12.5rem;
     --icons: 3.2rem;
-    --status: 14.5rem;
+    --actions: 9.6rem;
     background: var(--card);
     border: 1px solid var(--border);
     border-left: 3px solid var(--muted-foreground);
@@ -969,47 +1002,6 @@
   /* Zone 2. Fixed tracks, not content-derived: ten stacked cards put their
      figures on one vertical line, which is what makes the list scan like a
      table rather than like ten paragraphs. */
-  .numbers {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 6.5rem;
-    align-items: center;
-    gap: 0.2rem 1rem;
-    margin: 0.35rem 0 0;
-    font-size: 0.8rem;
-    color: var(--muted-foreground);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .metric {
-    display: grid;
-    grid-template-columns: 3.6rem 4.5rem minmax(0, 1fr);
-    align-items: center;
-    gap: 0 0.5rem;
-    min-width: 0;
-  }
-
-  .metric.errors {
-    grid-template-columns: 3.6rem minmax(0, 1fr);
-  }
-
-  .metric-label {
-    color: var(--muted-foreground);
-  }
-
-  /* The track keeps its width even with no bar in it, so a campaign whose
-     totals are not known yet does not shuffle the figures of the card
-     above it. */
-  .metric-bar {
-    display: block;
-  }
-
-  .metric-figures {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    color: var(--foreground);
-  }
-
   /* Zone 3. Warning, not error: a campaign saying this has usually
      published most of itself. One line, clipped, with the whole of it in
      the title and in a visually-hidden copy beside it. */
@@ -1225,65 +1217,68 @@
     color: var(--destructive);
   }
 
-  table.volumes {
-    width: 100%;
-    table-layout: fixed;
-    border-collapse: collapse;
-    margin-top: 0.5rem;
-    font-size: 12.5px;
-    line-height: 1.35;
-  }
-
-  .table-scroll {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  /* Wide enough for "137 / 638 pages · processing pages · updated 12 s ago"
-     to wrap to two lines rather than five. */
-  col.c-status {
-    width: 13rem;
-  }
-
-  /* After the col rule so the narrow width wins the cascade: on a phone the
-     status column gives its width back to the volume name. */
-  @media (max-width: 48rem) {
-    col.c-status {
-      width: 9rem;
-    }
-
-    /* Wrapped, the two halves want to stack rather than sit side by side. */
-    td.vstatus .vfigures {
-      min-width: 0;
-      display: block;
-    }
-  }
-
-  table.volumes th {
-    text-align: left;
-    font-weight: 500;
+  /* ONE column system for everything the card counts. Every row -- the
+     campaign's totals, the folded card's volume, every row of the open list
+     -- declares the same four tracks from the same custom properties, so
+     they coincide exactly without a subgrid and without one table's layout
+     leaking into another's. Track 1 flexes (it holds a label or a volume
+     id); the other three are fixed, which is what makes a column of numbers
+     a column across ten cards rather than per card. */
+  .card-body {
+    margin-top: 0.4rem;
+    font-size: 0.78rem;
+    line-height: 1.4;
     color: var(--muted-foreground);
-    font-size: 10.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
-    padding: 0.2rem 0.5rem;
-    border-bottom: 1px solid var(--border);
   }
 
-  table.volumes td {
-    padding: 0.2rem 0.5rem;
-    border-bottom: 1px solid var(--border);
-    vertical-align: middle;
+  .row {
+    display: grid;
+    grid-template-columns:
+      minmax(0, 1fr) var(--bar) var(--figures)
+      var(--actions);
+    align-items: center;
+    column-gap: 0.75rem;
+    padding: 0.12rem 0;
   }
 
-  table.volumes tbody tr:last-child td {
-    border-bottom: none;
+  /* A hairline between volumes, so a long list reads as rows. */
+  .row.volume {
+    border-top: 1px solid var(--border);
   }
 
-  td.vid {
+  .c-label {
+    min-width: 0;
     font-weight: 500;
     color: var(--foreground);
+  }
+
+  .row.totals .c-label {
+    font-weight: 400;
+    color: var(--muted-foreground);
+  }
+
+  .c-figures {
+    min-width: 0;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--foreground);
     overflow: hidden;
+  }
+
+  /* Two fixed halves: the icon pair at the track's left edge, the pill at
+     its right. Nothing here is centred -- both edges are anchored. */
+  .c-actions {
+    display: grid;
+    grid-template-columns: var(--icons) minmax(0, 1fr);
+    align-items: center;
+  }
+
+  .c-actions .status {
+    justify-self: end;
+  }
+
+  .volumes {
+    margin-top: 0;
   }
 
   .vid-name {
@@ -1309,15 +1304,10 @@
   /* The figures, in zone 2's shape and zone 2's colours: the same fraction
      and the same `.bad` count, so a volume's row and the campaign's line
      above it read as one column of numbers (2026-09-16). */
+  /* The figures themselves; the track they sit in is what fixes their
+     width, so a poll that changes the digits moves nothing. */
   .vfigures {
-    font-variant-numeric: tabular-nums;
-    color: var(--foreground);
     white-space: nowrap;
-    /* Wide enough for "637 / 638 · 1 failed", and right-aligned inside it,
-       so neither the pill before it nor the line's right edge moves when a
-       poll changes the digits. */
-    min-width: 9.6em;
-    text-align: right;
   }
 
   /* The widest state word is "pending"/"unknown"; holding the slot keeps
@@ -1352,24 +1342,10 @@
     font-size: 11.5px;
   }
 
-  /* The strip is one line: the bar and the sentence sit in front of the
-     figures rather than after the pill, so the pill still ends the line. In
-     a table cell they are blocks and fall below it on their own. */
-  .latest .vprogress {
-    order: -2;
-  }
-
-  .latest .bar {
-    order: -1;
-  }
-
-  /* The bar sits on the line at zone 2's track width rather than below the
-     figures as it does in a table cell. */
-  .latest .bar {
-    display: inline-block;
-    width: 4.5rem;
+  /* The bar has a track of its own now, so it needs no width and no margin
+     of its own: it fills the column on every row that has one. */
+  .c-bar .bar {
     margin-top: 0;
-    vertical-align: middle;
   }
 
   /* The one thing on this card that moves of its own accord. The fill eases
@@ -1575,80 +1551,19 @@
   }
 
   /* The folded card's one-line window on the campaign: the volume most
-     likely to be wanted, with the same links its table row has, so the
-     viewer and the run log are one click away without unfolding. */
-  /* Three tracks, not a flex row with the status pushed right: with the
-     icons between a variable-width id and a right-aligned status they
-     landed at a different x on every card, and five cards read as three
-     things drifting (the product owner, 2026-09-16, "they are all wobbly").
-     The icons are a track of their own -- a column, the way a table has an
-     action column -- rather than something that follows the id text, which
-     is the only way two glyphs sit in the same place on ten cards whose
-     ids differ in length. The strip's tracks are the table's, so the folded
-     line and the open rows line up with each other too. */
-  .latest {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) var(--icons) var(--status);
-    align-items: baseline;
-    column-gap: 0.5rem;
-    row-gap: 0.35rem;
-    margin: 0.25rem 0 0;
-    font-size: 12.5px;
-    min-width: 0;
-  }
-
-  /* The same pill and the same figures the table row carries: one status
-     column, whether the card is folded or open (2026-09-16). */
-  /* The status is its own track and fills it: the pill has a fixed width
-     (below) and the figures a fixed minimum, so the pill's left edge and the
-     figures' right edge are both the same on every row and every card. */
-  .latest-status {
+     likely to be wanted, with the same links every other row has, so the
+     viewer and the run log are one click away without unfolding. It is a
+     row of the same grid, so its numbers sit under the totals' numbers. */
+  .row.latest .c-label {
     display: flex;
     align-items: baseline;
-    justify-content: flex-end;
-    gap: 0.4rem;
     min-width: 0;
   }
 
-  /* The same two tracks in the table's volume column, so the icons line up
-     with the strip's above them. */
+  /* The id and, in the open list, what went wrong under it. */
   .vid-line {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) var(--icons);
-    align-items: center;
-    column-gap: 0.5rem;
     min-width: 0;
-  }
-
-  td.vstatus,
-  th.vstatus {
-    text-align: right;
-  }
-
-  /* Not `nowrap`: at ≤48rem the track is 9rem and its content is half as
-     wide again, which pushed a `table-layout: fixed` table into sideways
-     scroll on a phone (2026-09-16 review). The cell wraps -- figures over
-     pill, both still right-aligned -- while the pieces inside it keep their
-     own `nowrap`, so a fraction never breaks mid-number. */
-  td.vstatus {
-    white-space: normal;
-  }
-
-  /* The pill cannot be squeezed below its own word. */
-  td.vstatus .status {
-    white-space: nowrap;
-  }
-
-  .latest-id {
-    min-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    font-weight: 500;
-  }
-
-  .latest .links {
-    margin-left: auto;
+    max-width: 100%;
   }
 
   .load-more {
@@ -1672,8 +1587,36 @@
      line up, they are just one per row -- and zone 1's dates drop under the
      chips rather than squeezing the campaign's name. */
   @media (max-width: 520px) {
-    .numbers {
-      grid-template-columns: minmax(0, 1fr);
+    /* Still one column system, two columns wide: the label and its figures
+       share the first line, the bar goes under the label and the actions
+       sit beside it, right. */
+    .row {
+      grid-template-columns: minmax(0, 1fr) max-content;
+      grid-template-areas:
+        "label   figures"
+        "bar     actions";
+      row-gap: 0.15rem;
+      padding: 0.25rem 0;
+    }
+
+    .c-label {
+      grid-area: label;
+    }
+
+    .c-bar {
+      grid-area: bar;
+      align-self: center;
+    }
+
+    .c-figures {
+      grid-area: figures;
+    }
+
+    .c-actions {
+      grid-area: actions;
+      grid-template-columns: var(--icons) max-content;
+      justify-content: end;
+      column-gap: 0.5rem;
     }
 
     .when {

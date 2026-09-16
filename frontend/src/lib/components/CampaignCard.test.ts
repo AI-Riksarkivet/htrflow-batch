@@ -227,7 +227,9 @@ describe("CampaignCard", () => {
     await vi.advanceTimersByTimeAsync(0);
     // The campaign's own pages cell is visible folded — that is the question
     // the card is asked most often.
-    const numbers = within(container.querySelector(".numbers") as HTMLElement);
+    const numbers = within(
+      container.querySelector(".card-body") as HTMLElement,
+    );
     expect(numbers.getByText("pages")).toBeInTheDocument();
     expect(numbers.getByText(/137 \/ 638/)).toBeInTheDocument();
     await expand();
@@ -1246,7 +1248,7 @@ describe("CampaignCard", () => {
       Node.DOCUMENT_POSITION_PRECEDING,
     );
 
-    const numbers = container.querySelector(".numbers") as HTMLElement;
+    const numbers = container.querySelector(".card-body") as HTMLElement;
     expect(within(numbers).getByText("volumes")).toBeInTheDocument();
     expect(within(numbers).getByText(/1 \/ 3/)).toBeInTheDocument();
     expect(within(numbers).getByText(/1 failed/)).toBeInTheDocument();
@@ -1306,10 +1308,12 @@ describe("CampaignCard's failure notice", () => {
   test("errors with no sentence behind them are a number, not a line", async () => {
     renderWith({ pagesFailed: 0, errors: 3, lastError: null });
     await vi.advanceTimersByTimeAsync(0);
-    // Zone 2 counts them; zone 3 has nothing to say that zone 2 has not.
-    const errors = document.querySelector(".metric.errors") as HTMLElement;
-    expect(errors).toHaveTextContent("errors");
-    expect(errors).toHaveTextContent("3");
+    // They ride on the pages figures rather than taking a column that lines
+    // up with nothing (the product owner, 2026-09-16); the problems line has
+    // nothing to say that the numbers have not.
+    const rows = [...document.querySelectorAll(".row.totals")];
+    const pages = rows.find((r) => r.textContent?.startsWith("pages"));
+    expect(pages).toHaveTextContent("· 3 errors");
     expect(document.querySelector(".problems")).toBeNull();
   });
 
@@ -1517,7 +1521,7 @@ describe("CampaignCard's running motion", () => {
     expect(
       screen.queryByRole("progressbar", { name: /pages done in campaign/ }),
     ).toBeNull();
-    const cells = [...container.querySelectorAll(".metric")];
+    const cells = [...container.querySelectorAll(".row.totals")];
     const pagesCell = cells.find((c) => c.textContent?.startsWith("pages"));
     expect(pagesCell).toHaveTextContent("—");
   });
@@ -1934,7 +1938,7 @@ describe("the numbers line is the same shape on every card", () => {
     );
     const { container } = render(CampaignCard, { job: row });
     await vi.advanceTimersByTimeAsync(0);
-    return [...container.querySelectorAll(".metric-label")].map(
+    return [...container.querySelectorAll(".row.totals .c-label")].map(
       (el) => el.textContent,
     );
   }
@@ -1947,16 +1951,20 @@ describe("the numbers line is the same shape on every card", () => {
     expect(await labels(done)).toEqual(["volumes", "pages"]);
   });
 
-  test("errors join the line only when there are any", async () => {
-    expect(await labels(job, { errors: 2 })).toEqual([
-      "volumes",
-      "pages",
-      "errors",
-    ]);
-    expect(await labels(job, { errors: 0 })).toEqual(["volumes", "pages"]);
+  test("errors ride on the pages figures, and only when there are any", async () => {
+    expect(await labels(job, { errors: 2 })).toEqual(["volumes", "pages"]);
+    const pages = () =>
+      [...document.querySelectorAll(".row.totals")]
+        .filter((r) => r.textContent?.startsWith("pages"))
+        .pop()?.textContent ?? "";
+    expect(pages()).toContain("· 2 errors");
+    await labels(job, { errors: 1 });
+    expect(pages()).toContain("· 1 error");
+    await labels(job, { errors: 0 });
+    expect(pages()).not.toContain("error");
   });
 
-  test("each cell is label, bar and figures, in that order", async () => {
+  test("each row is label, bar, figures and actions, in that order", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -1972,13 +1980,15 @@ describe("the numbers line is the same shape on every card", () => {
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    const cells = [...container.querySelectorAll(".metric")];
+    const cells = [...container.querySelectorAll(".row.totals")];
     const pagesCell = cells.find((c) => c.textContent?.startsWith("pages"))!;
     expect(
       [...pagesCell.children].map((c) => c.className.split(" ")[0]),
-    ).toEqual(["metric-label", "metric-bar", "metric-figures"]);
+    ).toEqual(["c-label", "c-bar", "c-figures", "c-actions"]);
     expect(pagesCell).toHaveTextContent("5 / 8");
     expect(pagesCell).toHaveTextContent("· 3 failed");
+    // A totals row has no actions: the pill column belongs to volumes.
+    expect(pagesCell.querySelector(".c-actions")?.textContent?.trim()).toBe("");
   });
 
   test("a campaign done with pages missing paints its bars amber", async () => {
@@ -2003,7 +2013,7 @@ describe("the numbers line is the same shape on every card", () => {
     );
     const { container } = render(CampaignCard, { job: done });
     await vi.advanceTimersByTimeAsync(0);
-    const fills = [...container.querySelectorAll(".numbers .fill")];
+    const fills = [...container.querySelectorAll(".row.totals .fill")];
     expect(fills).toHaveLength(2);
     for (const fill of fills) expect(fill).toHaveClass("lost");
   });
@@ -2087,9 +2097,10 @@ describe("the figures beside a bar", () => {
     );
     const { container } = render(CampaignCard, { job: row });
     await vi.advanceTimersByTimeAsync(0);
-    const cells = [...container.querySelectorAll(".metric")];
-    return cells.find((c) => c.textContent?.startsWith(name))
-      ?.lastElementChild as HTMLElement;
+    const cells = [...container.querySelectorAll(".row.totals")];
+    return cells
+      .find((c) => c.textContent?.startsWith(name))
+      ?.querySelector(".c-figures") as HTMLElement;
   }
 
   test("the separator has a space in front of it", async () => {
@@ -2195,7 +2206,7 @@ describe("the volume status column", () => {
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
     await expand();
-    return container.querySelector("tbody td:nth-child(2)") as HTMLElement;
+    return container.querySelector(".row.volume") as HTMLElement;
   }
 
   const done = { ...volumeDone, progress: progress() };
@@ -2212,7 +2223,7 @@ describe("the volume status column", () => {
   };
   const unknown = { ...volumeDone, progress: null };
 
-  test("a table row reads id and icons, then the status at the far end", async () => {
+  test("a volume row is the same four cells the totals are", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -2222,15 +2233,23 @@ describe("the volume status column", () => {
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
     await expand();
-    const cells = [...(container.querySelectorAll("tbody td") ?? [])];
-    expect(cells.map((c) => c.className.split(" ")[0])).toEqual([
-      "vid",
-      "vstatus",
+    const row = container.querySelector(".row.volume") as HTMLElement;
+    expect([...row.children].map((c) => c.className.split(" ")[0])).toEqual([
+      "c-label",
+      "c-bar",
+      "c-figures",
+      "c-actions",
     ]);
-    // The header says the same two things.
+    // The list is an ARIA table, with headers nobody has to see.
+    expect(container.querySelector('[role="table"]')).toHaveAttribute(
+      "aria-label",
+      "Volumes in campaign kyrk",
+    );
     expect(
-      [...container.querySelectorAll("thead th")].map((c) => c.textContent),
-    ).toEqual(["volume", "status"]);
+      [...container.querySelectorAll('[role="columnheader"]')].map(
+        (c) => c.textContent,
+      ),
+    ).toEqual(["volume", "progress", "pages", "links and status"]);
   });
 
   test("the manifest keeps its slot even when the volume has none", async () => {
@@ -2242,10 +2261,10 @@ describe("the volume status column", () => {
     }
   });
 
-  test("the strip reads id, then its links, then the status", async () => {
+  test("the strip is a row of the card's own grid", async () => {
     const line = await strip(done);
     const order = [...line.children].map((c) => c.className.split(" ")[0]);
-    expect(order).toEqual(["latest-id", "links", "latest-status"]);
+    expect(order).toEqual(["c-label", "c-bar", "c-figures", "c-actions"]);
   });
 
   test("a done volume: green word and its pages", async () => {
@@ -2358,22 +2377,24 @@ describe("a volume line is the same shape on every row and every card", () => {
     return container;
   }
 
-  test("the id, the icons and the status are three grid tracks", async () => {
+  test("every row is the same four grid tracks", async () => {
     const container = await card([vol("vol0")], vol("vol0"));
-    // Folded: the strip carries the tracks itself.
-    const strip = container.querySelector(".latest") as HTMLElement;
+    // Folded: the strip is a row of the same grid.
+    const strip = container.querySelector(".row.latest") as HTMLElement;
     expect([...strip.children].map((c) => c.className.split(" ")[0])).toEqual([
-      "latest-id",
-      "links",
-      "latest-status",
+      "c-label",
+      "c-bar",
+      "c-figures",
+      "c-actions",
     ]);
-    // Open: the volume column carries the id and the icons, the status
-    // column is its own.
+    // Open: the same four, on the same tracks.
     await expand();
-    const line = container.querySelector(".vid-line") as HTMLElement;
-    expect([...line.children].map((c) => c.className.split(" ")[0])).toEqual([
-      "vid-name",
-      "links",
+    const row = container.querySelector(".row.volume") as HTMLElement;
+    expect([...row.children].map((c) => c.className.split(" ")[0])).toEqual([
+      "c-label",
+      "c-bar",
+      "c-figures",
+      "c-actions",
     ]);
   });
 
@@ -2506,32 +2527,35 @@ describe("the status reads figures first, pill last", () => {
     return container;
   }
 
-  test("the strip puts the pill at the far right of the status", async () => {
+  test("the figures come before the actions, and the pill ends them", async () => {
     const container = await render_([vol], vol);
-    const status = container.querySelector(".latest-status") as HTMLElement;
-    expect([...status.children].map((c) => c.className.split(" ")[0])).toEqual([
-      "vfigures",
-      "status",
-    ]);
+    const row = container.querySelector(".row.latest") as HTMLElement;
+    const order = [...row.children].map((c) => c.className.split(" ")[0]);
+    expect(order.indexOf("c-figures")).toBeLessThan(order.indexOf("c-actions"));
+    const actions = row.querySelector(".c-actions") as HTMLElement;
+    expect([...actions.children].map((c) => c.className.split(" ")[0])).toEqual(
+      ["links", "status"],
+    );
   });
 
   test("a table row reads the same way", async () => {
     const container = await render_([vol]);
     await expand();
-    const td = container.querySelector("td.vstatus") as HTMLElement;
-    expect([...td.children].map((c) => c.className.split(" ")[0])).toEqual([
-      "vfigures",
-      "status",
-    ]);
+    const actions = container.querySelector(
+      ".row.volume .c-actions",
+    ) as HTMLElement;
+    expect([...actions.children].map((c) => c.className.split(" ")[0])).toEqual(
+      ["links", "status"],
+    );
   });
 
-  test("a failed volume's reason still runs up against the pill", async () => {
+  test("a failed volume's reason takes the figures' place on the strip", async () => {
     const container = await render_([volumeFailed], volumeFailed);
-    const status = container.querySelector(".latest-status") as HTMLElement;
-    expect([...status.children].map((c) => c.className.split(" ")[0])).toEqual([
-      "vreason",
-      "status",
-    ]);
+    const row = container.querySelector(".row.latest") as HTMLElement;
+    expect(row.querySelector(".c-figures .vreason")).toHaveTextContent(
+      "Failed while loading the model",
+    );
+    expect(row.querySelector(".vfigures")).toBeNull();
   });
 });
 
@@ -2560,25 +2584,20 @@ describe("the volume line at a phone's width, and what it says it cannot do", ()
     return container;
   }
 
-  // The status column is 9rem at ≤48rem while its content is ~12.5rem of
-  // nowrap, which pushed a `table-layout: fixed` table into horizontal
-  // scroll on a 390px screen.
-  test("the status cell may wrap so a narrow table does not scroll sideways", async () => {
-    // jsdom does not apply a Svelte component's scoped styles, so the rule
-    // itself is what is asserted: the cell must not forbid wrapping (the
-    // pieces inside it keep their own `nowrap`), or a `table-layout: fixed`
-    // table scrolls sideways on a phone.
-    const css = (await import("./CampaignCard.svelte?raw")).default.split(
-      "<style>",
-    )[1];
-    expect(css).toMatch(/td\.vstatus \{\s*white-space: normal;/);
-    expect(css).toMatch(/td\.vstatus \.status \{\s*white-space: nowrap;/);
-    expect(css).toMatch(
-      /@media \(max-width: 48rem\)[\s\S]*?td\.vstatus \.vfigures/,
-    );
-    // ...and the cell it applies to is really there.
+  // The card body is one grid, so a phone gets the same tracks folded to
+  // two columns rather than a table scrolling sideways on a 390px screen.
+  test("a phone gets the same tracks, two columns wide", async () => {
+    // jsdom does not apply a Svelte component's scoped styles, so the rules
+    // themselves are what is asserted: label and figures on one line, bar
+    // under with the actions beside it.
+    const source: string = (await import("./CampaignCard.svelte?raw")).default;
+    const phone = source.split("@media (max-width: 520px)")[1] ?? "";
+    expect(phone).toMatch(/\.row \{[\s\S]*?grid-template-areas:/);
+    expect(phone).toMatch(/"label\s+figures"/);
+    expect(phone).toMatch(/"bar\s+actions"/);
+    // ...and the row it applies to is really there.
     const container = await rowFor(volumeDone);
-    expect(container.querySelector("td.vstatus")).not.toBeNull();
+    expect(container.querySelector(".row.volume")).not.toBeNull();
   });
 
   test.each([
@@ -2682,5 +2701,92 @@ describe("what the phase chip calls a campaign", () => {
 
   test("nothing came out: Failed", async () => {
     expect(await chip("Failed")).toHaveTextContent("Failed");
+  });
+});
+
+// A campaign of one volume was two rows of totals over one identical row:
+// the same two fractions said twice (the product owner, 2026-09-16).
+describe("a campaign of one volume", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const one: JobSummary = {
+    ...job,
+    counts: { total: 1, active: 0, done: 1, failed: 0 },
+    phase: "Succeeded",
+  };
+  const only = {
+    ...volumeDone,
+    progress: {
+      done: 3,
+      total: 3,
+      failed: 0,
+      lastPage: "0003",
+      stage: "done",
+      updatedAt: "2026-09-14T07:00:00Z",
+      ageSeconds: null,
+      lastError: null,
+      errors: 0,
+      viewerPublished: true,
+    },
+  };
+
+  async function card(row: JobSummary, body: Record<string, unknown>) {
+    cleanup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, ...row, failures: [], ...body }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job: row });
+    await vi.advanceTimersByTimeAsync(0);
+    return container;
+  }
+
+  function labels(container: HTMLElement): (string | null)[] {
+    return [...container.querySelectorAll(".row.totals .c-label")].map(
+      (el) => el.textContent,
+    );
+  }
+
+  test("drops both totals: its own row is the total", async () => {
+    const container = await card(one, { volumes: [only], latest: only });
+    expect(labels(container)).toEqual([]);
+    // The numbers are still on the card, once.
+    expect(container.querySelector(".row.latest .c-figures")).toHaveTextContent(
+      "3 / 3",
+    );
+  });
+
+  test("...open as well as folded", async () => {
+    const container = await card(one, { volumes: [only], latest: only });
+    await expand();
+    expect(labels(container)).toEqual([]);
+    expect(container.querySelector(".row.volume .c-figures")).toHaveTextContent(
+      "3 / 3",
+    );
+  });
+
+  test("but keeps them while there is no row to carry them", async () => {
+    // The detail has not landed: a card with no numbers at all would be
+    // worse than a total of one.
+    const container = await card(one, { volumes: [], latest: null });
+    expect(labels(container)).toEqual(["volumes", "pages"]);
+  });
+
+  test("a campaign of more than one keeps both", async () => {
+    const many: JobSummary = {
+      ...job,
+      counts: { total: 3, active: 0, done: 3, failed: 0 },
+    };
+    const container = await card(many, { volumes: [only], latest: only });
+    expect(labels(container)).toEqual(["volumes", "pages"]);
   });
 });

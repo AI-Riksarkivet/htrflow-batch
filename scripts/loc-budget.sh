@@ -1095,7 +1095,18 @@ check web       "$(count packages/web/src -name '*.py')" 1870
 # "partially succeeded", the pair to "partially failed": whole volumes there,
 # pages inside finished volumes here. One place decides the word, and the
 # chip's tooltip counts the pages.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4707
+# 4707 -> 4650 (2026-09-16, one grid): "the layout of the columns is a bit
+# bad, also why failed in so many places?" -- the card had three column
+# systems (a totals line, a folded volume line, a table) that lined up with
+# nothing, and stated the same loss at three levels. Everything the card
+# counts is now a row of ONE grid: label, bar, figures, actions, from custom
+# properties every row repeats, so every number sits in one column and every
+# pill in another. `errors` folds into the pages figures instead of taking a
+# column, a campaign of one volume drops the totals its own row already
+# carries, and the <table> becomes rows of the same grid with ARIA roles and
+# headers nobody has to see. Against that: the metric snippet, the table's
+# markup and all of its column CSS are gone.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4650
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
