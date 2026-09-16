@@ -15,6 +15,7 @@
     type VolumeView,
   } from "$lib/api.js";
   import { RELOAD_MS } from "$lib/config.js";
+  import { inTrouble } from "$lib/order.js";
   import { startPolling } from "$lib/poll.js";
   import { modelLabel, modelUrl, pipelineModels } from "$lib/pipeline.js";
   import {
@@ -192,19 +193,12 @@
     job.phase === "Succeeded" && notice.pagesFailed > 0,
   );
 
-  // The card's left accent: worst-first, same intent as the old
-  // volume-derived campaignHealth but read straight off the Job phase now
-  // that the API computes it server-side. A failed warm-up (Task 28) is
-  // worst-first too: the campaign cannot start on its own either way. A
-  // missing warm-up only counts once the campaign is not already done —
-  // an old pipeline that never had a warm-up Job must not paint a finished
-  // campaign red; the chip still shows either way.
+  // The card's left accent: worst-first, read straight off the Job phase now
+  // that the API computes it server-side. `inTrouble` is $lib/order's --
+  // the same question the campaign list sorts by, so the accent and the
+  // order can never disagree about what is wrong (2026-09-16 review).
   const health = $derived(
-    job.phase === "Failed" ||
-      job.phase === "PartiallyFailed" ||
-      job.counts.failed > 0 ||
-      job.warmup.phase === "failed" ||
-      (job.warmup.phase === "missing" && job.phase !== "Succeeded")
+    inTrouble(job)
       ? "failed"
       : job.phase === "Running"
         ? "active"
