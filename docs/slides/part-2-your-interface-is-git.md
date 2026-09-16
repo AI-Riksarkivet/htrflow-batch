@@ -10,14 +10,14 @@ lang: en
 
 # Your interface is git
 
-## Part 2 of 5 — two files, a validator that runs on your laptop, and a pull request that becomes a running campaign
+## Part 2 of 5 — two files, a validator that runs locally, and a pull request that becomes a running campaign
 
 <!--
 Part 1 gave the picture: a pod per volume, one Job per campaign, the queue,
 the bucket, git. This part is the hands-on lesson: what you actually type,
 what the validator says back, and what happens after you press merge.
 
-Bring a terminal. Everything up to "apply" runs on a laptop with no cluster.
+Bring a terminal. Everything up to "apply" runs locally with no cluster.
 -->
 
 ---
@@ -79,6 +79,7 @@ runtime_class: nvidia                # how a pod gets a GPU
 hf_token_secret: ""                  # optional: a Secret for a private or gated Hub model
 
 window: 20                           # the cap a campaign's own window is clamped to
+priority_classes: [htr-interactive, htr-bulk, htr-idle]   # the names a campaign may ask for
 source_template: "https://<iiif-host>/<path>/{ref}/manifest"   # what a bare volume id expands to
 public_results_base: ""              # where results are served from — the status page needs it
 ttl_seconds_after_finished: 604800   # a week the finished Job stays readable
@@ -143,10 +144,10 @@ steps:
 </div>
 <div>
 
-* **The steps are htrflow's, verbatim.** No export step — the platform appends ALTO and PAGE itself, and refuses a file that already has one.
-* **The image is pinned by digest.** A tag can move; a digest cannot. The same id must always mean the same code.
-* **Every model is pinned by revision.** Top-level for YOLO, under `model_kwargs` for TrOCR and the other Hub models. A cluster policy can require it.
-* **The id is the recipe's name for ever.** Results land under it in the bucket. A better recipe is a new file: `demo-v2`.
+* **The steps are htrflow's, verbatim.** No export step — the platform appends ALTO and PAGE itself.
+* **The image is pinned by digest, every model by revision** — top-level for YOLO, under `model_kwargs` for Hub models.
+* **Two layers check it.** `validate` checks the shape: digest format, steps, no export step, no unknown keys. The cluster's policies check the rules — allowed repository, digest, a revision on every model — at admission and in the pull request.
+* **The id is the recipe's name for ever.** A better recipe is a new file: `demo-v2`.
 
 </div>
 </div>
@@ -172,6 +173,7 @@ still names the old one -- next slides. The rest is discipline.
 ```yaml
 pipeline: demo-v1
 window: 4                # at most 4 volumes at once — 4 GPUs
+priority: htr-bulk       # who goes first in the queue; never evicts
 volumes:
   - R0001203             # a reference code: source_template expands it
   - R0001204
@@ -188,10 +190,10 @@ volumes:
 <div>
 
 * **One pipeline id.** A campaign runs one recipe. Two recipes are two campaigns.
-* **Volumes, three ways.** A reference code, a manifest URL, or image URLs. Ids: letters, digits, `.`, `_`, `-`, ≤ 63 chars, unique.
-* **`window` is optional** and clamped to the cluster's cap.
-* **The file's name is the campaign's name** — on the status page, the Job, every pod.
-* **Every URL is stored verbatim** in four places. A presigned URL publishes its signature.
+* **Volumes, three ways.** A reference code, a manifest URL, or image URLs. Ids are label-safe and unique.
+* **`window` and `priority` are optional.** The window is clamped to the cluster's cap; the priority names one of the classes listed in converter.yaml.
+* **The file's name is the campaign's name** everywhere.
+* **Every URL is stored verbatim** in four places; a presigned URL publishes its signature.
 
 </div>
 </div>
@@ -204,7 +206,7 @@ are append-only, so the number is how a series grows.
 
 ---
 
-# Validate on your laptop
+# Validate locally
 
 ```
 uvx --from "git+https://github.com/AI-Riksarkivet/htrflow-batch@<ref>#subdirectory=packages/converter" \
@@ -234,7 +236,7 @@ campaigns/kyrkobocker-1.yaml: duplicate volume id R0001203
 * `pipeline:` names a file in `pipelines/`; at least one volume
 * every `manifest:` and `images:` entry is an absolute `http(s)` URL with no whitespace
 * volume ids are label-safe and unique
-* `window` is a positive whole number
+* `window` is a positive whole number; `priority` is one of converter.yaml's classes
 * **a campaign already rendered cannot change its volume list** — append-only
 * **a pipeline a rendered campaign names cannot change** — immutable while referenced
 * over 10 000 volumes, or a huge list, is split into `-part1`, `-part2`, … for you
@@ -256,7 +258,7 @@ the API server never gets to refuse it halfway through an apply.
 ```mermaid h:120
 flowchart LR
   E["edit<br/>campaigns/kyrkobocker-1.yaml"]
-  V["validate<br/>on your laptop"]
+  V["validate<br/>locally"]
   PR["pull request<br/>CI: validate + policy check"]
   RV["review<br/>a colleague reads the diff"]
   M["merge to main<br/>CI renders and commits rendered/"]
@@ -461,7 +463,7 @@ tool to catch everything, and it deliberately does not.
 
 **1.** You put a presigned S3 URL, signature and all, in an `images:` list, because that is the only way to reach the scans.
 
-**2.** Working on a laptop with only your new campaign file checked out, you run `make campaigns-apply … PRUNE=1`.
+**2.** Working from a checkout with only your new campaign file, you run `make campaigns-apply … PRUNE=1`.
 
 **3.** Two campaigns, months apart, both list `R0001203` under `demo-v1`.
 
