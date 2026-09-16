@@ -10,7 +10,7 @@ lang: en
 
 # Inside one run
 
-## Part 3 of 5 — what the wrapper does with a page, why a restart costs one page and not a volume, and what "failed" means
+## Part 3 of 5 — the container, the pod and what it may do, what the wrapper does with a page, and what "failed" means
 
 <!--
 Part 1 drew the pod's lifecycle in one picture. This part opens it: the
@@ -47,6 +47,150 @@ to something htrflow does.
 This slide is the whole justification for the layer. If htrflow's CLI
 collected its futures and failed on a lost page, half of this deck would be
 unnecessary -- and that is a legitimate thing to fix upstream one day.
+-->
+
+---
+
+# The container — htrflow plus a thin layer
+
+<div class="cols">
+<div>
+
+<table class="plain">
+<tr><td><strong>top</strong></td><td>the wrapper package — installed from a lock file, with hashes</td></tr>
+<tr><td></td><td>httpx and boto3 — fetching pages, writing to S3</td></tr>
+<tr><td><strong>base</strong></td><td>the upstream htrflow image, pinned by digest — Python, PyTorch, htrflow</td></tr>
+</table>
+
+<p class="filename">what the pipeline file points at</p>
+
+```
+docker.io/riksarkivet/htrflow-batch@sha256:cb30d0…
+```
+
+</div>
+<div>
+
+**One image, built on htrflow's own.** Nothing about htrflow is rebuilt or patched; the layer adds the wrapper and the two libraries it needs to fetch pages and write to S3.
+
+**No models inside.** Weights live in the cache the warm-up fills, so one image serves every pipeline and the image stays the size of the code.
+
+**It says where it came from.** The htrflow base revision is a label and an environment variable, so every ALTO can name it. Each release is signed, with a build provenance record and a software bill of materials.
+
+**One rule to remember:** a pipeline names the image by digest, so the code that runs is exactly the code that was reviewed.
+
+</div>
+</div>
+
+<!--
+The transformers line is a build argument of this image: a model saved by
+one major line of transformers needs that line, so a campaigns repo can
+carry pipelines pinning images of both lines. Part 5 returns to that.
+-->
+
+---
+
+# One pod, drawn
+
+```
+campaign pod — one volume, one GPU, then gone
+│
+├─ init container   warmup-wait   waits for this pipeline's model marker
+├─ container        wrapper       fetch · htrflow · upload · verify
+│
+├─ /campaign     read-only    volumes.txt — which volume this index is
+├─ /config       read-only    the pipeline's steps
+├─ /data         read-only    the model cache the warm-up filled
+├─ /secrets/s3   read-only    the bucket credentials, as a file
+└─ /work         in memory    pages, outputs, HOME, TMPDIR — the only writable place
+```
+
+<div class="cols">
+<div>
+
+**Everything a run needs is mounted, nothing is baked in:** which volume, which recipe, which models, where to write. So the same image runs any campaign.
+
+</div>
+<div>
+
+**Nothing it writes outlives it** except what it uploaded to the bucket: `/work` is memory, and it is released with the pod.
+
+</div>
+</div>
+
+<!--
+Pages are width-capped and processed one at a time, so the tmpfs holds a
+window of pages and never the volume; it is counted against the pod's
+memory limit, which is what bounds it.
+-->
+
+---
+
+# What the pod may do
+
+<table class="plain">
+<tr><td><strong>Not root</strong></td><td>runs as an ordinary user, set both in the image and in the pod, so neither side can regress alone</td></tr>
+<tr><td><strong>No privileges</strong></td><td>every Linux capability dropped, privilege escalation refused, the runtime's default system-call filter on</td></tr>
+<tr><td><strong>A read-only filesystem</strong></td><td>the image cannot be written to; the only writable place is the in-memory <code>/work</code></td></tr>
+<tr><td><strong>No cluster identity</strong></td><td>no service-account token is mounted, so the pod cannot talk to the Kubernetes API at all</td></tr>
+<tr><td><strong>Secrets as files</strong></td><td>the S3 credentials are a read-only file, never an environment variable a crash dump or a child process would carry</td></tr>
+<tr><td><strong>Cannot poison the models</strong></td><td>the model cache is mounted read-only; only the warm-up pod writes it, so a bad page cannot change the weights every later run loads</td></tr>
+</table>
+
+<div class="cols">
+<div>
+
+**Pod Security *restricted*.** Every pod the platform runs meets Kubernetes' strictest built-in profile, and the namespace warns on any regression.
+
+</div>
+<div>
+
+**Not a sandbox.** The GPU reaches the pod through the container runtime's GPU hooks; a kernel-isolating runtime with GPU support is the next step if one is ever needed.
+
+</div>
+</div>
+
+<!--
+Why so strict for a transcription job: whoever can write the campaigns repo
+chooses the image and the models, Hub weights are pickled Python that runs
+code when loaded, and every page comes from a URL someone typed. The pod is
+built on the assumption that any of those may be hostile.
+-->
+
+---
+
+# What the pod may reach
+
+<p class="filename">the namespace denies all traffic by default; each kind of pod gets its own short list</p>
+
+<table class="plain">
+<tr><td></td><td><strong>may reach</strong></td><td><strong>may not reach</strong></td></tr>
+<tr><td><strong>campaign pod</strong></td><td>the IIIF servers the platform names · the results bucket</td><td>Hugging Face Hub · the internet · the Kubernetes API · other pods</td></tr>
+<tr><td><strong>warm-up pod</strong></td><td>the public internet on HTTPS, for the Hub</td><td>the results bucket · the Kubernetes API · anything in the cluster · private and link-local addresses</td></tr>
+<tr><td><strong>web front</strong></td><td>the Kubernetes API, to read campaigns · the bucket, to read progress</td><td>the IIIF servers · the Hub · the internet</td></tr>
+</table>
+
+<div class="cols">
+<div>
+
+**A campaign pod reaches two things:** the IIIF servers the platform names, and the bucket. No Hub, no API server, no other pod, no wider internet — so a hostile model has nowhere to send what it reads.
+
+</div>
+<div>
+
+**The warm-up pod is the opposite:** it may reach the internet, because the Hub has no fixed address, but not the bucket, not the cluster, and not the private or link-local ranges. It holds no campaign data and no S3 credentials.
+
+</div>
+</div>
+
+**One rule to remember:** the pod that can reach the internet holds nothing worth stealing; the pod that holds the credentials cannot reach the internet.
+
+<!--
+Images hosted somewhere other than the IIIF origin need their range added to
+the platform's allow-list, or the page fetch is refused like any other
+address. A new pod's network rules can take a moment to apply on some
+network plugins; the wrapper's first network act is the allowed manifest
+fetch, which keeps that window small.
 -->
 
 ---
@@ -418,7 +562,7 @@ making that guarantee stronger than a pin -- a signature.
 
 # Next
 
-<p class="note"><strong>Part 4, <em>Why your campaign is waiting</em>:</strong> the queue taught backwards from the symptom — what "Queued" can mean, the objects behind the GPU budget, the window and the cap, priority, and what a Workload is.</p>
+<p class="note"><strong>Part 4, <em>What the queue can do</em>:</strong> quotas, priority, pause, borrowing, preemption and hardware kinds — what Kueue makes possible for many people sharing many GPUs, and which of it is on today.</p>
 
 **ai-riksarkivet.github.io/htrflow-batch** — *From Image to Transcription* is this deck page by page; *Failure Handling* is every exit code and every sentence a failure turns into; *The Wrapper* is the rest.
 
