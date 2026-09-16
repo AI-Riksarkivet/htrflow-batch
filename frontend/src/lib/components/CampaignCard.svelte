@@ -85,6 +85,23 @@
   // each volume failed, and the last page error -- in the order a reader
   // needs them.
   const lastErrorText = $derived(describeLastError(notice.lastError));
+  // The volumes a reader can actually see right now: the folded card's one
+  // row, or the loaded page of them.
+  const shownVolumes = $derived(
+    collapsed ? (latest === null ? [] : [latest]) : volumes,
+  );
+  // A page error is one volume's -- it is that volume's own
+  // `progress.lastError` -- so it is said under that volume's row rather
+  // than in a line about the campaign (the product owner, 2026-09-16: "seems
+  // misplaced"). Only when the volume is on screen to say it under; a
+  // campaign whose failing volume is on a page nobody has loaded keeps the
+  // sentence in the campaign's line, where it is at least not lost.
+  const lastErrorVolume = $derived(
+    notice.lastError !== null &&
+      shownVolumes.some((v) => v.id === notice.lastError?.volume)
+      ? notice.lastError.volume
+      : null,
+  );
   const problems = $derived([
     ...(job.warmup.reason
       ? [{ id: "warm-up", text: describeReason(job.warmup.reason), href: null }]
@@ -101,7 +118,7 @@
           : describeReason(f.reason),
       href: logHref(f),
     })),
-    ...(lastErrorText === null
+    ...(lastErrorText === null || lastErrorVolume !== null
       ? []
       : [{ id: null, text: lastErrorText, href: null }]),
   ]);
@@ -186,6 +203,15 @@
       v.state !== "pending" &&
       v.state !== "unknown"
     );
+  }
+
+  /** What this volume has to say for itself under its own row. */
+  function noteText(v: VolumeView): string {
+    const parts = [];
+    if (v.reason !== undefined) parts.push(describeReason(v.reason));
+    if (lastErrorVolume === v.id && lastErrorText !== null)
+      parts.push(lastErrorText);
+    return parts.join(" · ");
   }
 
   /** Why a volume failed, in one sentence. */
@@ -607,34 +633,39 @@
   </span>
 {/snippet}
 
-<!-- The figures of any row: the fraction, then whatever qualifies it. The
-     separators carry their own leading space -- Svelte trims the whitespace
-     in front of an element, and the live page read "5 / 8· 3 failed"
-     (2026-09-16 review). `errors` folds in here rather than taking a column
-     of its own: a count with no fraction beside it was a third number row
-     lining up with nothing (the product owner, 2026-09-16). -->
-{#snippet figuresOf(
-  cell: { done: number; total: number; failed: number; active?: number },
-  errors: number,
-)}
-  {figures(cell)}{#if cell.failed > 0}<span class="bad"
-      >{" · "}{cell.failed} failed</span
-    >{/if}{#if cell.active}<span>{" · "}{cell.active} active</span
-    >{/if}{#if errors > 0}<span class="bad"
-      >{" · "}{errors} error{errors === 1 ? "" : "s"}</span
-    >{/if}
+<!-- What a row lost, under its own bar and nowhere else: "1 failed", or
+     "3 failed · 2 errors" on the pages total. A line of its own in the bar's
+     column, so a clean row is one line and nothing moves when there is
+     nothing wrong (the product owner, 2026-09-16: "if we have any failed,
+     put it UNDER the loading bar for that row"). `errors` rides here rather
+     than taking a column -- a count with no fraction beside it lined up with
+     nothing. -->
+{#snippet lostLine(failed: number, errors: number)}
+  {#if failed > 0 || errors > 0}
+    <span class="c-lost"
+      >{#if failed > 0}{`${failed} failed`}{/if}{#if failed > 0 && errors > 0}{" · "}{/if}{#if errors > 0}{`${errors} error${
+          errors === 1 ? "" : "s"
+        }`}{/if}</span
+    >
+  {/if}
 {/snippet}
 
-<!-- A campaign total: the same four tracks a volume row has, with an empty
-     actions cell, so the two numbers the card sums sit in the same column as
-     the numbers of every volume under them. -->
+<!-- A campaign total: the same five tracks a volume row has, with the icons
+     and the pill left empty, so the fraction the card sums sits in the same
+     column as the fraction of every volume under it -- and so does its
+     bar. -->
 {#snippet totalsRow(
   label: string,
   cell: { done: number; total: number; failed: number; active?: number },
   errors: number,
 )}
   <div class="row totals">
-    <span class="c-label">{label}</span>
+    <span class="c-label"
+      >{label}{#if cell.active}<span class="quiet">
+          {" · "}{cell.active} active</span
+        >{/if}</span
+    >
+    <span class="c-links"></span>
     <span class="c-bar"
       >{#if cell.total > 0}{@render bar(
           `${label} done in campaign ${job.name}`,
@@ -643,9 +674,25 @@
           rowMode,
         )}{/if}</span
     >
-    <span class="c-figures">{@render figuresOf(cell, errors)}</span>
-    <span class="c-actions"></span>
+    <span class="c-fraction">{figures(cell)}</span>
+    <span class="c-status"></span>
+    {@render lostLine(cell.failed, errors)}
   </div>
+{/snippet}
+
+<!-- The one sentence a volume has to say for itself, under its own row and
+     across the whole width: why it failed, or the page error it reported.
+     A fifth cell spanning the row rather than a line inside the id\'s cell,
+     which is capped at 16rem and would clip a sentence to nothing. -->
+{#snippet volumeNote(v: VolumeView, cellRole: string | undefined)}
+  {#if v.reason !== undefined || lastErrorVolume === v.id}
+    <p class="row-note" role={cellRole} title={noteText(v)}>
+      <span class="row-note-text">{noteText(v)}</span>
+      {#if lastErrorVolume === v.id && noticeHref !== null}
+        <a class="problems-log" href={noticeHref}>log</a>
+      {/if}
+    </p>
+  {/if}
 {/snippet}
 
 <!-- A volume, as the same four tracks the totals above it use: the id (and,
@@ -671,11 +718,11 @@
     v.progress === null ? "" : describeProgress(v.progress, v.state)}
   <span class="c-label" role={cellRole}>
     <span class="vid-line">{@render volumeId(v)}</span>
-    {#if !compact && v.reason !== undefined}
-      <span class="verr">{describeReason(v.reason)}</span>
-    {/if}
-    {#if !compact && story !== ""}<span class="vprogress">{story}</span>{/if}
+    {#if compact && v.state === "failed"}
+      <span class="vreason" title={reasonOf(v)}>{reasonOf(v)}</span>
+    {:else if story !== ""}<span class="vprogress">{story}</span>{/if}
   </span>
+  <span class="c-links" role={cellRole}>{@render links(v)}</span>
   <span class="c-bar" role={cellRole}
     >{#if hasBar(v)}{@render bar(
         `Pages done in ${v.id}`,
@@ -684,25 +731,17 @@
         volumeMode(v),
       )}{/if}</span
   >
-  <span class="c-figures" role={cellRole}>
-    {#if compact && v.state === "failed"}
-      <span class="vreason" title={reasonOf(v)}>{reasonOf(v)}</span>
-    {:else}
-      <!-- Keyed on the count itself: the node is rebuilt only when the
-           number changes, which is what restarts the highlight; `moved` is
-           what decides it runs at all. -->
-      {#key cell.done}
-        <span class="vfigures" class:bump={moved.has(v.id)}
-          >{@render figuresOf(cell, 0)}</span
-        >
-      {/key}
-      {#if compact && story !== ""}<span class="vprogress">{story}</span>{/if}
-    {/if}
+  <!-- Keyed on the count itself: the node is rebuilt only when the number
+       changes, which is what restarts the highlight; `moved` is what decides
+       it runs at all. -->
+  <span class="c-fraction" role={cellRole}>
+    {#key cell.done}
+      <span class="vfigures" class:bump={moved.has(v.id)}>{figures(cell)}</span>
+    {/key}
   </span>
-  <span class="c-actions" role={cellRole}>
-    <span class="links">{@render links(v)}</span>
-    <!-- The pill is the fixed-width element, so it is the one that can
-         anchor the right edge of every row (2026-09-16). -->
+  <!-- The pill is the fixed-width element, so it is the one that can anchor
+       the right edge of every row (2026-09-16). -->
+  <span class="c-status" role={cellRole}>
     <span
       class="status {v.state}"
       class:lost={lost > 0}
@@ -717,6 +756,7 @@
       >
     </span>
   </span>
+  {@render lostLine(cell.failed, 0)}
 {/snippet}
 
 <section class="campaign" data-health={health}>
@@ -835,6 +875,7 @@
     {#if collapsed && latest !== null}
       <div class="row volume latest">
         {@render volumeRow(latest, true, undefined)}
+        {@render volumeNote(latest, undefined)}
       </div>
     {/if}
     {#if !collapsed}
@@ -850,13 +891,15 @@
       >
         <div class="row head sr-only" role="row">
           <span role="columnheader">volume</span>
+          <span role="columnheader">links</span>
           <span role="columnheader">progress</span>
           <span role="columnheader">pages</span>
-          <span role="columnheader">links and status</span>
+          <span role="columnheader">status</span>
         </div>
         {#each volumes as v (v.id)}
           <div class="row volume" role="row">
             {@render volumeRow(v, false, "cell")}
+            {@render volumeNote(v, "cell")}
           </div>
         {/each}
       </div>
@@ -929,17 +972,19 @@
      index done, blue = a Job still running, red = a Job failed or carries a
      failed index, grey = queued/paused/nothing moving. */
   .campaign {
-    /* The card body's four tracks, in one place, so every row -- totals,
+    /* The card body's fixed tracks, in one place, so every row -- totals,
        the folded volume, every row of the open list -- is laid out on the
        same columns. Absolute units, not em: the rows do not all share a
        font-size, and a column that moved with the text would not be a
-       column. "637 / 638 · 1 failed · 2 errors" is the widest the figures
-       get; the actions track is the icon pair plus the pill. The first two
-       tracks are sized in the row rule below, where the reason they are
-       sized that way is. */
-    --figures: 12.5rem;
+       column. The bar is short and fixed again ("loading bars are a bit
+       big", the product owner, 2026-09-16); the pill's width is its own
+       word slot plus its padding, written down so an empty pill cell on a
+       totals row holds the column open. */
     --icons: 3.2rem;
-    --actions: 9.6rem;
+    --bar: 6rem;
+    /* "637 / 638" in tabular figures, with room to spare. */
+    --fraction: 5rem;
+    --pill: 5.8rem;
     background: var(--card);
     border: 1px solid var(--border);
     border-left: 3px solid var(--muted-foreground);
@@ -1256,15 +1301,16 @@
 
   .row {
     display: grid;
-    /* The BAR is the track that stretches, not the label: with the free
-       width in track 1 a short label sat at the far left and its bar began
-       hundreds of pixels away with nothing in between (the product owner,
-       2026-09-16). Track 1 sizes to its content between a floor and a
-       ceiling -- long ids clip, with their title -- and the bar takes what
-       is left, which also makes it a bar worth reading. */
+    /* Five tracks, and the LABEL is the one that stretches: the words -- a
+       campaign\'s "volumes", a volume\'s id, and what failed in it -- take
+       the left, where there is room for them, and the three fixed things
+       pack against the right in the order a reader wants them: the bar, the
+       fraction it draws, and the state it ended in (the product owner,
+       2026-09-16: "the X / Y should be in between of these; it\'s fine if
+       the \'X failed\' is placed after the volume name"). */
     grid-template-columns:
-      minmax(6rem, 16rem) minmax(8rem, 1fr) var(--figures)
-      var(--actions);
+      minmax(6rem, 1fr) var(--icons) var(--bar) var(--fraction)
+      var(--pill);
     align-items: center;
     column-gap: 0.75rem;
     padding: 0.12rem 0;
@@ -1275,6 +1321,26 @@
     border-top: 1px solid var(--border);
   }
 
+  /* The volume's own sentence, under its own row and across all of it. */
+  .row-note {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin: 0;
+    padding-left: 1rem;
+    font-size: 0.74rem;
+    color: var(--warning);
+    min-width: 0;
+  }
+
+  .row-note-text {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
   .c-label {
     min-width: 0;
     overflow: hidden;
@@ -1282,29 +1348,56 @@
     color: var(--foreground);
   }
 
+  /* The id and what failed in it, on one line that clips as a whole. */
+  .vid-line {
+    display: flex;
+    align-items: baseline;
+    min-width: 0;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
   .row.totals .c-label {
     font-weight: 400;
     color: var(--muted-foreground);
   }
 
-  .c-figures {
+  /* What the row lost, under its own bar: its own line in the bar's column,
+     right-aligned to it, so a clean row stays one line. */
+  .c-lost {
+    grid-column: 3;
+    justify-self: end;
+    font-size: 0.7rem;
+    color: var(--destructive);
+    white-space: nowrap;
+  }
+
+  .quiet {
+    font-weight: 400;
+    color: var(--muted-foreground);
+  }
+
+  /* The one column of numbers on the card, between the bar and the pill. */
+  .c-fraction {
     min-width: 0;
     text-align: right;
     font-variant-numeric: tabular-nums;
     color: var(--foreground);
-    overflow: hidden;
+    white-space: nowrap;
   }
 
-  /* Two fixed halves: the icon pair at the track's left edge, the pill at
-     its right. Nothing here is centred -- both edges are anchored. */
-  .c-actions {
-    display: grid;
-    grid-template-columns: var(--icons) minmax(0, 1fr);
+  /* The icons sit at the left of their own track, the pill at the right of
+     its. Nothing here is centred -- both edges are anchored. */
+  .c-links {
+    display: flex;
     align-items: center;
   }
 
-  .c-actions .status {
-    justify-self: end;
+  .c-status {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
   }
 
   .volumes {
@@ -1373,7 +1466,12 @@
   }
 
   /* The bar has a track of its own now, so it needs no width and no margin
-     of its own: it fills the column on every row that has one. */
+     of its own: it fills the column on every row that has one, and the cell
+     may shrink to nothing rather than push the bar past its track. */
+  .c-bar {
+    min-width: 0;
+  }
+
   .c-bar .bar {
     margin-top: 0;
   }
@@ -1599,12 +1697,6 @@
     min-width: 0;
   }
 
-  /* The id and, in the open list, what went wrong under it. */
-  .vid-line {
-    min-width: 0;
-    max-width: 100%;
-  }
-
   .load-more {
     font: inherit;
     color: var(--foreground);
@@ -1626,36 +1718,68 @@
      line up, they are just one per row -- and zone 1's dates drop under the
      chips rather than squeezing the campaign's name. */
   @media (max-width: 520px) {
-    /* Still one column system, two columns wide: the label and its figures
-       share the first line, the bar goes under the label and the actions
-       sit beside it, right. */
+    /* Still one column system, folded to two lines. Line 1 is the id and
+       what failed in it, across the width; line 2 is the icons, the short
+       bar, the fraction and the pill, packed against the right. On the live
+       phone the figures clipped to "5 / 6 · 1 f" and the bar ran on under
+       the icons (the product owner, 2026-09-16), so the words wrap here
+       rather than clip and the bar\'s cell may shrink. */
     .row {
-      grid-template-columns: minmax(0, 1fr) max-content;
+      grid-template-columns:
+        minmax(0, 1fr) var(--icons) var(--bar) var(--fraction)
+        var(--pill);
       grid-template-areas:
-        "label   figures"
-        "bar     actions";
-      row-gap: 0.15rem;
-      padding: 0.25rem 0;
+        "label label label     label    label"
+        ".     links bar       fraction status"
+        ".     .     lost      lost     lost"
+        "note  note  note      note     note";
+      column-gap: 0.5rem;
+      row-gap: 0.2rem;
+      padding: 0.35rem 0;
     }
 
     .c-label {
       grid-area: label;
     }
 
+    .c-links {
+      grid-area: links;
+    }
+
     .c-bar {
       grid-area: bar;
       align-self: center;
+      min-width: 0;
     }
 
-    .c-figures {
-      grid-area: figures;
+    .c-bar .bar {
+      width: 100%;
     }
 
-    .c-actions {
-      grid-area: actions;
-      grid-template-columns: var(--icons) max-content;
-      justify-content: end;
-      column-gap: 0.5rem;
+    .c-status {
+      grid-area: status;
+    }
+
+    .c-fraction {
+      grid-area: fraction;
+      min-width: 0;
+    }
+
+    .c-lost {
+      grid-area: lost;
+      justify-self: end;
+    }
+
+    /* Wraps rather than clips: the id and what failed in it are the words
+       of the row, and there is a whole line for them here. */
+    .vid-line {
+      white-space: normal;
+      overflow: visible;
+    }
+
+    .row-note {
+      grid-area: note;
+      padding-left: 0;
     }
 
     .when {

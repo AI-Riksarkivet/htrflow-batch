@@ -213,27 +213,33 @@ place on each one, the way they would in a table.
 
    | track | holds |
    | --- | --- |
-   | 1 (`minmax(6rem, 16rem)`) | `volumes` / `pages`, or a volume's id linked to the viewer — content-sized between a floor and a ceiling, so a long id clips with its title rather than widening the column |
-   | 2 (`minmax(8rem, 1fr)`) | the 3px progress bar — the one flexible track, so the free width goes into the bar rather than leaving a hole beside a short label |
-   | 3 (`--figures`) | the figures, right-aligned, tabular |
-   | 4 (`--actions`) | the two icon links, then the state pill at the far right |
+   | 1 (`minmax(6rem, 1fr)`) | `volumes` / `pages`, or a volume's id linked to the viewer — the words of the row, and the one flexible track, which is what keeps the three fixed things packed against the right edge |
+   | 2 (`--icons`) | the two icon links; empty on a totals row |
+   | 3 (`--bar`) | the 3px progress bar, short and fixed |
+   | 4 (`--fraction`) | the bare fraction `X / Y`, right-aligned and tabular — one column of numbers for the whole card |
+   | 5 (`--pill`) | the state pill; empty on a totals row, but the track still holds the column open |
+
+   A row that lost something carries a **second line under its own bar**, in
+   the bar's column and right-aligned to it: `1 failed`, or
+   `3 failed · 2 errors` on the pages total. A clean row is one line, so
+   nothing moves when there is nothing wrong. `· N active` stays beside the
+   label on the volumes total: it is not a loss.
 
    The rows are the campaign's **totals** (`volumes`, `pages`), then the
-   **problems line** across all four tracks, then the campaign's **volumes** —
+   **problems line** across all five tracks, then the campaign's **volumes** —
    one row while the card is folded (`latest`: newest active, else newest
    done, computed by the API over every volume), or the whole loaded page as
    an ARIA table when it is open, its column headers present but not drawn.
-   So every number on a card sits in one column and every pill and icon in
-   another, on every card. Totals rows leave track 4 empty.
+   So every fraction on a card sits in one column, every bar in another and
+   every pill in a third, on every card. A totals row leaves the icons and
+   the pill empty and keeps their columns.
 
-   **The figures** are `2 / 3 · 1 failed` — the failed count in the bad
-   colour — plus `· 1 active` on the volumes total while the campaign runs,
-   plus `· N errors` on the pages total when there are any (`errors` has no
-   column of its own: a count with no fraction beside it lined up with
-   nothing). An em dash when the total is not known yet: the API reads page
-   counts out of the bucket, and a campaign that has not run has nothing
-   there. `errors` counts ERROR-and-worse only — the wrapper's own benign
-   WARNINGs must not read as something wrong on a healthy run.
+   **The fraction** is `2 / 3`, or an em dash when the total is not known
+   yet: the API reads page counts out of the bucket, and a campaign that has
+   not run has nothing there. `errors` counts ERROR-and-worse only — the
+   wrapper's own benign WARNINGs must not read as something wrong on a
+   healthy run — and has no column of its own: a count with no fraction
+   beside it lined up with nothing.
 
    **A campaign of one volume drops both totals rows**: that volume's own row
    already carries the same two fractions, and stacking a total over an
@@ -259,17 +265,28 @@ place on each one, the way they would in a table.
    `describeProgress` adds only what the numbers cannot — the stage, and how
    long ago **while that can still change** ("processing pages · updated 12 s
    ago"): a clock on a volume that is done or failed is one nobody is waiting
-   on. A failed volume's one sentence sits under its id in the open list, and
-   takes the figures' place on the folded row, which is one line.
+   on.
 
-   At phone width (≤520px) the four tracks fold to two — label and figures on
-   the first line, the bar under with the actions beside it — so it is still
-   one column system and nothing overflows.
+   **What a volume has to say for itself** — why it failed, and the page
+   error it reported — is a second line under its own row, spanning the whole
+   width and clipped with its title. A page error is one volume's (it is that
+   volume's `progress.lastError`), so it belongs there rather than in a line
+   about the campaign; the campaign's problems line keeps it only when the
+   volume it happened in is not on screen to say it under. On the folded row,
+   which is one line, a failed volume's sentence sits with its id instead.
+
+   At phone width (≤520px) the tracks fold — the id and what failed in it
+   across the first line, then the icons, the short bar, the fraction and the
+   pill packed against the right — so it is still one column system. The
+   words wrap rather than clip there, and the bar's cell may shrink: on the
+   live phone the figures read "5 / 6 · 1 f" and the bar ran on under the
+   icons.
 3. **Problems**, one line across the grid, and only when there is one: why
-   the warm-up could not run, then each failed volume as `id: sentence` with
-   the id linking to that volume's run log, then the most recent page error,
-   then a link to the run log of the volume that error came from (the API
-   sends that volume's `logUrl`, since the row it happened in is usually
+   the warm-up could not run, and each failed volume as `id: sentence` with
+   the id linking to that volume's run log. The most recent page error joins
+   it only when the volume it happened in is not one of the rows on screen —
+   otherwise it sits under that row (above), with a link to that volume's run
+   log (the API sends its `logUrl`, since the row it happened in is usually
    outside the page being shown). It carries sentences and nothing else — the
    counts are the totals' job and are not repeated here. Warning colour,
    clipped to one line, with the whole of it in the `title` for the mouse —
