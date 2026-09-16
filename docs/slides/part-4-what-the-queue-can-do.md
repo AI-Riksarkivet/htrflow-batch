@@ -33,7 +33,8 @@ testing. Nothing already shown in parts 1 and 2 is repeated.
 <tr><td><strong>WorkloadPriorityClass</strong></td><td>order, preemption rank, borrowing rank</td><td>in use</td></tr>
 <tr><td><strong>Preemption & fair sharing</strong></td><td>make room by evicting; divide idle capacity by weight or by past use</td><td>available</td></tr>
 <tr><td><strong>AdmissionCheck</strong></td><td>a gate after quota: autoscale first, or send to another cluster</td><td>available</td></tr>
-<tr><td><strong>Topology · DRA · elastic</strong></td><td>placement by network, shares of a GPU, resizing a running job</td><td>available</td></tr>
+<tr><td><strong>Topology · elastic</strong></td><td>placement by network, resizing a running job</td><td>available</td></tr>
+<tr><td><strong>DRA devices</strong></td><td>ask for a GPU by what it is, share or split one — and the queue counts it</td><td>not installed</td></tr>
 </table>
 
 <!--
@@ -315,18 +316,209 @@ kinds, plain pods and Deployments.
 
 ---
 
-# Topology, DRA and elastic workloads
+# Topology and elastic workloads
 
 <table class="plain">
 <tr><td><strong>Topology-aware scheduling</strong></td><td>places a Workload's pods in the same block or rack so they talk faster. <em>Not for us:</em> our volumes never talk to each other; Kueue's own docs say independent pods gain nothing.</td></tr>
-<tr><td><strong>Dynamic resource allocation</strong></td><td>counts devices through the new Kubernetes device API, including parts of a GPU — partitioned cards counted by their memory, time-sliced cards by requested capacity. <em>Worth it</em> when small models should not take a whole card.</td></tr>
 <tr><td><strong>Elastic workloads</strong></td><td>changes the parallelism of an admitted Job without suspending it: scaling up is admitted as a new slice, scaling down frees quota at once. <em>Would mean</em> changing a running campaign's window without a pause.</td></tr>
 </table>
 
 <!--
-All three are beta in current Kueue; partitioned-GPU counting and elastic
-jobs sit behind feature gates or need newer Kubernetes, so each would start
-as a test on the dev cluster, not a setting.
+Both are beta in current Kueue; elastic jobs sit behind a feature gate, so
+it would start as a test on the dev cluster, not a setting.
+-->
+
+---
+
+# GPUs today: counted, not described
+
+<div class="cols">
+<div>
+
+<p class="filename">what every campaign pod asks for now</p>
+
+```yaml
+resources:
+  limits:
+    nvidia.com/gpu: 1
+```
+
+**That line says "one of whatever GPU".** Not which model, not how much memory, not a part of one. It is the device-plugin way: a node advertises a number, the scheduler subtracts one.
+
+</div>
+<div>
+
+**What it cannot say:**
+
+* *a card with at least 40 GiB* — for a large recognition model
+* *this model if free, otherwise that one* — a preference with a fallback
+* *half a card* — for a small segmentation model that idles most of a GPU
+* *the same card for two containers* — a model server and its client
+
+**Kubernetes' own docs:** device plugins "require per-container device requests, don't support device sharing, and don't support expression-based device filtering."
+
+</div>
+</div>
+
+<!--
+Source: kubernetes.io, Dynamic Resource Allocation. The whole-card request
+is fine while every GPU is alike and every model fits; it stops being fine
+in a mixed pool.
+-->
+
+---
+
+# DRA — claim a device the way you claim a disk
+
+<div class="cols wide-left">
+<div>
+
+<table class="plain">
+<tr><td><strong>DeviceClass</strong></td><td>a kind of device the cluster offers — like a storage class</td></tr>
+<tr><td><strong>ResourceSlice</strong></td><td>each node's inventory, published by the driver: every device with its attributes and capacity</td></tr>
+<tr><td><strong>ResourceClaim</strong></td><td>a request for devices, which can outlive a pod and be shared — like a volume claim</td></tr>
+<tr><td><strong>ResourceClaimTemplate</strong></td><td>a claim made fresh for every pod, and deleted with it</td></tr>
+<tr><td><strong>DRA driver</strong></td><td>the vendor's part: finds the devices, prepares them for the pod</td></tr>
+</table>
+
+</div>
+<div>
+
+**Stable in Kubernetes since 1.35.** Our cluster runs 1.35 and serves the API; what is missing is a driver.
+
+**The vendor driver replaces the device plugin.** NVIDIA's operator runs one or the other on a cluster, not both — so moving is a cluster change, not a per-campaign one.
+
+**What NVIDIA's driver supports:** whole GPUs and existing MIG partitions, generally available; time-slicing and MPS sharing, alpha.
+
+</div>
+</div>
+
+<!--
+Sources: kubernetes.io DRA pages (stable since v1.35); NVIDIA GPU Operator
+documentation for the DRA driver (GA for full GPUs and existing MIG
+devices, alpha for time-slicing and MPS, "either a GPUCluster resource for
+DRA or a ClusterPolicy resource for the Device Plugin, but not both"); CNCF
+blog, "Understanding Dynamic Resource Allocation in Kubernetes", 2026-07-01.
+-->
+
+---
+
+# Ask for what the model needs
+
+<div class="cols wide-left">
+<div>
+
+<p class="filename">a claim template: a large card if one is free, else any with 20 GiB</p>
+
+<div class="dense">
+
+```yaml
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: trocr-large
+spec:
+  spec:
+    devices:
+      requests:
+      - name: gpu
+        firstAvailable:
+        - name: large
+          deviceClassName: gpu.nvidia.com
+          selectors:
+          - cel:
+              expression: >-
+                device.capacity["gpu.nvidia.com"]
+                .memory.isGreaterThan(quantity("40Gi"))
+        - name: enough
+          deviceClassName: gpu.nvidia.com
+          selectors:
+          - cel:
+              expression: >-
+                device.capacity["gpu.nvidia.com"]
+                .memory.isGreaterThan(quantity("20Gi"))
+```
+
+</div>
+</div>
+<div>
+
+**The pod names a claim instead of a count.** Its container lists the claim, and the scheduler finds a device that matches before it picks the node.
+
+**Selectors are small expressions** over what the driver published about each device: memory, product name, compute capability.
+
+**`firstAvailable` is an ordered wish list.** The first alternative that can be satisfied wins; the rest are fallbacks.
+
+</div>
+</div>
+
+<!--
+The pattern follows the CNCF blog's firstAvailable example, which prefers
+one card model and falls back to another. For htrflow-batch this is where a
+recipe's needs would live: the pipeline file knows its model, so it is the
+natural place to say how much GPU memory that model needs.
+-->
+
+---
+
+# Share a card, split a card
+
+<div class="cols">
+<div>
+
+**Share.** Two containers, or two pods, can name the *same* claim and run on the same GPU — a model server and the batch job that calls it, without two cards.
+
+**Split, in hardware.** A partitionable card — NVIDIA MIG — appears as several smaller devices, each with its own memory and compute, isolated from the others. A pod claims one partition.
+
+</div>
+<div>
+
+**Split, in time.** Time-slicing and MPS let several pods take turns on one card, with no memory isolation — alpha in NVIDIA's driver today.
+
+**What it would mean for us:** segmentation on a slice, recognition on a whole card, in the same pool, and the queue still counting every piece.
+
+<p class="note">Not every GPU partitions. The dev cluster's GPU has no MIG, so there the gain is attributes and sharing, not slices.</p>
+
+</div>
+</div>
+
+<!--
+Partitionable devices in Kubernetes' DRA API are beta since 1.36; the NVIDIA
+driver's support covers MIG partitions that already exist on the card.
+-->
+
+---
+
+# DRA and the queue
+
+<div class="cols">
+<div>
+
+**Kueue counts claims against quota.** A cluster maps each device class to a quota name — say `gpu.nvidia.com` to `nvidia.com/gpu` — so a pool promises GPUs whether pods ask the old way or the new.
+
+**Three ways to count:**
+
+* *devices* — one claim, one GPU, the default
+* *counters* — a partition counted by the memory it uses, for MIG
+* *capacity* — a time-sliced share counted by what the pod asked for
+
+</div>
+<div>
+
+**Maturity in Kueue:** claim templates counted since the version we run; the old `nvidia.com/gpu` request served through DRA, and MIG counters, in the next; time-sliced capacity alpha.
+
+**One limit:** DRA claims and topology-aware placement do not combine yet.
+
+**What it would take here:** the NVIDIA DRA driver in place of the device plugin, the next Kueue, the converter rendering a claim template where it now writes `nvidia.com/gpu`, and a pipeline field for the memory a model needs. **Status:** an idea to test on the dev cluster.
+
+</div>
+</div>
+
+<!--
+Source: kueue.sigs.k8s.io, Dynamic Resource Allocation concept page: the
+ResourceClaimTemplate path is beta since v0.18 (Kubernetes 1.34+); the
+extended-resource path and counter-based quota are beta since v0.19;
+capacity-based quota is alpha in v0.19. The dev cluster runs Kueue v0.18.1.
 -->
 
 ---
