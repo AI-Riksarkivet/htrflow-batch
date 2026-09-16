@@ -344,14 +344,15 @@ class Volume(BaseModel):
 
 
 #: ``priority`` is rendered as the ``kueue.x-k8s.io/priority-class`` label
-#: (``render._campaign_job``), so a value outside the label alphabet is a 422
-#: from the API server halfway through an apply -- after the campaign's
-#: ConfigMap has already been written.
+#: (``render._campaign_job``) and has to name a WorkloadPriorityClass the
+#: chart ships, so it is held to the DNS-label alphabet those names have
+#: (the chart's values schema): a case slip is refused here rather than
+#: leaving the campaign Queued for ever (see ``ConverterConfig``).
 _NOT_A_PRIORITY = (
-    "is not a Kubernetes label value (got {shown}) — it becomes the "
-    "kueue.x-k8s.io/priority-class label, so name the Kueue PriorityClass "
-    'with letters, digits, ".", "_" and "-", starting and ending with a '
-    "letter or digit, at most 63 characters"
+    "is not a priority class name (got {shown}) — it becomes the "
+    "kueue.x-k8s.io/priority-class label, so use lower-case letters, digits "
+    'and "-", starting and ending with a letter or digit, at most 63 '
+    "characters"
 )
 
 
@@ -387,7 +388,7 @@ class Campaign(BaseModel):
     @field_validator("priority")
     @classmethod
     def _check_priority(cls, v: str) -> str:
-        if v and not _LABEL_VALUE_RE.match(v):
+        if v and not _DNS_LABEL_RE.match(v):
             raise ValueError(_NOT_A_PRIORITY.format(shown=shown(v)))
         return v
 
@@ -548,12 +549,33 @@ class ConverterConfig(BaseModel):
     #: fetch. At 0 every volume of every campaign fails the cap.
     manifest_max_bytes: int = Field(default=16 * _MiB, ge=1)
     fetch_max_bytes: int = Field(default=64 * _MiB, ge=1)
+    #: The WorkloadPriorityClass names the cluster has -- the chart's
+    #: ``queue.priorityClasses``, and the default is the chart's default. A
+    #: campaign's ``priority:`` must be one of them: Kueue's webhook never
+    #: looks at the label, so a name the cluster has no class for is not
+    #: refused at apply time -- the reconciler fails to build the Workload,
+    #: raises no event, and the Job stays suspended and reads "Queued" for
+    #: ever. This list is what ``validate`` checks instead. Empty means the
+    #: cluster offers no priority and every ``priority:`` is refused.
+    priority_classes: list[str] = Field(
+        default_factory=lambda: ["htr-interactive", "htr-bulk", "htr-idle"]
+    )
 
     @field_validator("namespace")
     @classmethod
     def _check_namespace(cls, v: str) -> str:
         if not _DNS_LABEL_RE.match(v):
             raise ValueError(_NOT_A_NAMESPACE.format(shown=shown(v)))
+        return v
+
+    @field_validator("priority_classes")
+    @classmethod
+    def _check_priority_classes(cls, v: list[str]) -> list[str]:
+        for name in v:
+            if not _DNS_LABEL_RE.match(name):
+                raise ValueError(_NOT_A_PRIORITY.format(shown=shown(name)))
+        if len(set(v)) != len(v):
+            raise ValueError("lists the same class twice")
         return v
 
     @field_validator("queue", "s3_secret", "data_pvc")

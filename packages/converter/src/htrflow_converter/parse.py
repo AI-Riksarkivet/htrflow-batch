@@ -224,6 +224,15 @@ def load(
                 f"pipelines/ — add pipelines/{c.pipeline}.yaml, or point "
                 "pipeline: at one that is there"
             )
+        # Kueue never refuses an unknown class: the Job just stays suspended
+        # with no event, so the class list has to be checked here.
+        if c.priority and c.priority not in cfg.priority_classes:
+            offered = ", ".join(cfg.priority_classes) or "none"
+            problems.append(
+                f'{files[c.name]}: priority "{c.priority}" is not one of the '
+                f"cluster's classes ({offered}) — set converter.yaml "
+                "priority_classes to what the chart's queue.priorityClasses ships"
+            )
 
     if problems:
         raise ValidationError(problems)
