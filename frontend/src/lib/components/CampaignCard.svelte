@@ -481,12 +481,19 @@
 
 <!-- The id, linked to the viewer when there is something to open there.
      Never a link that goes nowhere: a volume with no published result and no
-     source manifest is plain text saying why. -->
+     source manifest is plain text saying why. "Yet" is a promise, so it is
+     kept for the volumes that may still keep it -- one that failed, or whose
+     outcome nobody recorded, is not going to publish a manifest (2026-09-16
+     review). -->
 {#snippet volumeId(v: VolumeView)}
   {@const open = openHref(v)}
+  {@const coming = v.state === "pending" || v.state === "active"}
   {#if open === null}
-    <span class="vid-name" title="{v.id} — nothing to open in the viewer yet"
-      >{v.id}</span
+    <span
+      class="vid-name"
+      title="{v.id} — {coming
+        ? 'nothing to open there yet'
+        : 'no viewer manifest for this volume'}">{v.id}</span
     >
   {:else}
     <a
@@ -1227,6 +1234,12 @@
     col.c-status {
       width: 9rem;
     }
+
+    /* Wrapped, the two halves want to stack rather than sit side by side. */
+    td.vstatus .vfigures {
+      min-width: 0;
+      display: block;
+    }
   }
 
   table.volumes th {
@@ -1595,7 +1608,17 @@
     text-align: right;
   }
 
+  /* Not `nowrap`: at ≤48rem the track is 9rem and its content is half as
+     wide again, which pushed a `table-layout: fixed` table into sideways
+     scroll on a phone (2026-09-16 review). The cell wraps -- figures over
+     pill, both still right-aligned -- while the pieces inside it keep their
+     own `nowrap`, so a fraction never breaks mid-number. */
   td.vstatus {
+    white-space: normal;
+  }
+
+  /* The pill cannot be squeezed below its own word. */
+  td.vstatus .status {
     white-space: nowrap;
   }
 
