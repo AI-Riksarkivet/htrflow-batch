@@ -57,16 +57,22 @@ SECURITY_HEADERS = {
 #: `new Function` in the bundle is webpack's globalThis probe, inside a
 #: try/catch with a `window` fallback) and any third-party script origin.
 #: `worker-src blob:` is granted for the 3D and audio decoders in UV's lazy
-#: chunks, which an image manifest never loads.
+#: chunks, which an image manifest never loads. Styles are 'unsafe-inline'
+#: and nothing else: UV lays itself out through `style=` attributes it
+#: writes at runtime, which a hash cannot name, and a hash beside the
+#: keyword would make a browser ignore the keyword (2026-09-16, the viewer
+#: rendered unstyled under the hashed policy). Script stays hashed: an
+#: injected style is a layout nuisance, an injected script is the bucket.
 UV_CSP = (
-    "default-src 'self'; script-src 'self'{scripts}; style-src 'self'{styles}; "
+    "default-src 'self'; script-src 'self'{scripts}; "
+    "style-src 'self' 'unsafe-inline'; "
     "object-src 'none'; img-src * data: blob:; connect-src *; "
     "worker-src 'self' blob:; frame-ancestors 'none'"
 )
 
-#: A <script>/<style> with a body of its own -- one that loads a file has a
-#: `src` and is covered by 'self' instead.
-_INLINE = re.compile(r"<(script|style)(?![^>]*\bsrc=)[^>]*>(.*?)</\1>", re.S | re.I)
+#: A <script> with a body of its own -- one that loads a file has a `src`
+#: and is covered by 'self' instead.
+_INLINE = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.S | re.I)
 
 UV_PATH = "/uv.html"
 
@@ -80,13 +86,11 @@ def uv_csp(static: Path) -> str | None:
         html = (static / UV_PATH.lstrip("/")).read_text(encoding="utf-8")
     except OSError:
         return None
-    found: dict[str, list[str]] = {"script": [], "style": []}
-    for kind, body in _INLINE.findall(html):
+    scripts = ""
+    for body in _INLINE.findall(html):
         digest = base64.b64encode(hashlib.sha256(body.encode()).digest()).decode()
-        found[kind.lower()].append(f" 'sha256-{digest}'")
-    return UV_CSP.format(
-        scripts="".join(found["script"]), styles="".join(found["style"])
-    )
+        scripts += f" 'sha256-{digest}'"
+    return UV_CSP.format(scripts=scripts)
 
 
 #: This package's own version, read off the installed distribution. Reported
