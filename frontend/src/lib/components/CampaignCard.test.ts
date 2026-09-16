@@ -1860,7 +1860,13 @@ describe("done, but with pages missing", () => {
       const { chip, section } = await header(1);
       expect(chip).toHaveClass("lost");
       expect(section).toHaveAttribute("data-health", "lost");
-      expect(chip).toHaveAttribute("title", "done with 1 failed page");
+      // The word matches the colour now (2026-09-16); the tooltip says how
+      // many, and the screen-reader sentence is the one it always was.
+      expect(chip).toHaveTextContent("partially succeeded");
+      expect(chip).toHaveAttribute(
+        "title",
+        "every volume finished, 1 page failed",
+      );
       expect(chip).toHaveTextContent("done with 1 failed page");
     });
 
@@ -2597,4 +2603,84 @@ describe("the volume line at a phone's width, and what it says it cannot do", ()
       );
     },
   );
+});
+
+// "we have partially failed, maybe we should have partially succeeded also"
+// (the product owner, 2026-09-16): a campaign whose Job succeeded but whose
+// volumes lost pages wore the word "Succeeded" painted amber — the word and
+// the colour saying different things.
+describe("what the phase chip calls a campaign", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  async function chip(
+    phase: JobSummary["phase"],
+    pagesFailed = 0,
+  ): Promise<HTMLElement> {
+    cleanup();
+    const row: JobSummary = {
+      ...job,
+      phase,
+      counts: { total: 3, active: 0, done: 3, failed: 0 },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          ...row,
+          failures: [],
+          volumes: [],
+          pagesDone: 5,
+          pagesTotal: 8,
+          pagesFailed,
+        }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job: row });
+    await vi.advanceTimersByTimeAsync(0);
+    return container.querySelector(".chip.phase") as HTMLElement;
+  }
+
+  test("a clean success is Succeeded, in green", async () => {
+    const el = await chip("Succeeded");
+    expect(el).toHaveTextContent("Succeeded");
+    expect(el).not.toHaveClass("lost");
+    expect(el).not.toHaveAttribute("title");
+  });
+
+  test("every volume finished but pages were lost: partially succeeded", async () => {
+    const el = await chip("Succeeded", 3);
+    expect(el).toHaveTextContent("partially succeeded");
+    expect(el).toHaveClass("lost");
+    expect(el).toHaveAttribute(
+      "title",
+      "every volume finished, 3 pages failed",
+    );
+    // The sentence a screen reader gets is the one it always was.
+    expect(el.querySelector(".sr-only")).toHaveTextContent(
+      "done with 3 failed pages",
+    );
+  });
+
+  test("one lost page is singular", async () => {
+    expect(await chip("Succeeded", 1)).toHaveAttribute(
+      "title",
+      "every volume finished, 1 page failed",
+    );
+  });
+
+  test("whole volumes failed: partially failed, as before", async () => {
+    expect(await chip("PartiallyFailed")).toHaveTextContent("partially failed");
+  });
+
+  test("nothing came out: Failed", async () => {
+    expect(await chip("Failed")).toHaveTextContent("Failed");
+  });
 });

@@ -177,3 +177,29 @@ describe("byAttention uses the same rule", () => {
     ).toEqual(["running", "cold", "finished"]);
   });
 });
+
+// A campaign that finished every volume but lost pages inside them belongs
+// with the problems, not with the clean finishes (the product owner,
+// 2026-09-16). The list endpoint sends no page counts, so what the sort can
+// see is `counts.failed` — which is what a campaign with a failed VOLUME
+// carries. A campaign that lost only pages is indistinguishable from a clean
+// one until its card fetches its own detail; this pins what is knowable.
+describe("a partially succeeded campaign in the list", () => {
+  test("a failed volume puts it in the problems band, whatever its phase", () => {
+    const lostVolume = job("lost", {
+      phase: "Succeeded",
+      counts: { total: 3, active: 0, done: 2, failed: 1 },
+      finishedAt: "2026-09-08T10:00:00Z",
+    });
+    const clean = job("clean", {
+      phase: "Succeeded",
+      finishedAt: "2026-09-09T10:00:00Z",
+    });
+    // `clean` finished later, so only the band can put `lost` first.
+    expect(byAttention([clean, lostVolume]).map((j) => j.name)).toEqual([
+      "lost",
+      "clean",
+    ]);
+    expect(inTrouble(lostVolume)).toBe(true);
+  });
+});

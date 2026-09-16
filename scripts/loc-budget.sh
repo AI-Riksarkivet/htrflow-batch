@@ -1089,7 +1089,13 @@ check web       "$(count packages/web/src -name '*.py')" 1870
 # pushed a fixed-layout table into sideways scroll; it wraps there instead,
 # figures over pill. And "nothing to open in the viewer yet" promised a
 # manifest to volumes that failed or were never recorded.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4690
+# 4690 -> 4707 (2026-09-16, partially succeeded): a campaign whose Job
+# succeeded but whose volumes lost pages wore the word "Succeeded" painted
+# amber -- the word and the colour saying different things. It says
+# "partially succeeded", the pair to "partially failed": whole volumes there,
+# pages inside finished volumes here. One place decides the word, and the
+# chip's tooltip counts the pages.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4707
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

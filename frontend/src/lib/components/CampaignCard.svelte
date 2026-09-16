@@ -253,13 +253,30 @@
 
   const hasMore = $derived(volumes.length < job.counts.total);
 
-  // Every other phase is already a word; these two are not.
+  // The one place the chip's word is decided. A campaign whose Job succeeded
+  // but whose volumes lost pages used to wear "Succeeded" painted amber --
+  // the word and the colour saying different things (the product owner,
+  // 2026-09-16: "we have partially failed, maybe we should have partially
+  // succeeded also"). The two "partially" words are a pair and mean
+  // different losses: `PartiallyFailed` is whole VOLUMES that never
+  // published, "partially succeeded" is every volume finishing without some
+  // of its PAGES.
   const phaseLabel = $derived(
     job.phase === "PartiallyFailed"
       ? "partially failed"
       : job.phase === "Unknown"
         ? "outcome unknown"
-        : job.phase,
+        : campaignLost
+          ? "partially succeeded"
+          : job.phase,
+  );
+
+  /** "every volume finished, 3 pages failed" — the chip's own tooltip. */
+  const phaseTitle = $derived(
+    campaignLost
+      ? `every volume finished, ${notice.pagesFailed} ` +
+          `page${notice.pagesFailed === 1 ? "" : "s"} failed`
+      : undefined,
   );
 
   // reset=true replaces the table (the poll tick); reset=false appends the
@@ -665,7 +682,7 @@
     <span
       class="chip phase {job.phase.toLowerCase()}"
       class:lost={campaignLost}
-      title={campaignLost ? doneWith(notice.pagesFailed) : undefined}
+      title={phaseTitle}
     >
       {#if beating}<span class="dot pulse" aria-hidden="true"
         ></span>{/if}{#if campaignLost}<span aria-hidden="true"
