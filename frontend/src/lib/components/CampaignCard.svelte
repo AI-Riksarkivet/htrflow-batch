@@ -1720,13 +1720,21 @@
   @media (max-width: 520px) {
     /* Still one column system, folded to two lines. Line 1 is the id and
        what failed in it, across the width; line 2 is the icons, the short
-       bar, the fraction and the pill, packed against the right. On the live
-       phone the figures clipped to "5 / 6 · 1 f" and the bar ran on under
-       the icons (the product owner, 2026-09-16), so the words wrap here
-       rather than clip and the bar\'s cell may shrink. */
+       bar, the fraction and the pill. On the live phone the figures clipped
+       to "5 / 6 · 1 f" and the bar ran on under the icons (the product
+       owner, 2026-09-16), so the words wrap here rather than clip.
+
+       Line 2's four fixed tracks plus their gaps are wider than a 390px
+       card, and a squeezed grid takes the width back from whichever item
+       can give it: on a volume row that was the bar, the only cell whose
+       content has no width of its own, so it collapsed to nothing while
+       the totals rows -- whose icon and pill cells are empty and could
+       give instead -- kept theirs. The bar has a floor now and may shrink
+       between it and its full width, and the leading spacer is gone so
+       line 2 has the whole card to lay out in. */
     .row {
       grid-template-columns:
-        minmax(0, 1fr) var(--icons) var(--bar) var(--fraction)
+        0 var(--icons) minmax(2.5rem, var(--bar)) var(--fraction)
         var(--pill);
       grid-template-areas:
         "label label label     label    label"
@@ -1746,10 +1754,11 @@
       grid-area: links;
     }
 
+    /* Never squeezed away: a row without its bar is the defect this fixes. */
     .c-bar {
       grid-area: bar;
       align-self: center;
-      min-width: 0;
+      min-width: 2.5rem;
     }
 
     .c-bar .bar {

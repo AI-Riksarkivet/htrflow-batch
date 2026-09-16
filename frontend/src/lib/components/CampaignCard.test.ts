@@ -3110,3 +3110,72 @@ describe("where a page error is said", () => {
     expect(container.querySelector(".row-note")).toHaveTextContent("HTTP 400");
   });
 });
+
+// On the live phone the totals rows drew their bar and the volume rows drew
+// none (the product owner, 2026-09-16): line 2's fixed tracks are wider than
+// a 390px card, and a squeezed grid took the width back from the only cell
+// whose content has none of its own — the bar.
+describe("the bar survives a phone's width", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  test("the phone template has a bar area, with a floor under it", async () => {
+    const source: string = (await import("./CampaignCard.svelte?raw")).default;
+    const phone = source.split("@media (max-width: 520px)")[1] ?? "";
+    // Every row of the fold gives the bar a place...
+    expect(phone).toMatch(/"\.\s+links bar\s+fraction status"/);
+    // ...a track that may shrink but never to nothing...
+    expect(phone).toMatch(/minmax\(2\.5rem, var\(--bar\)\)/);
+    // ...and a cell that cannot be squeezed away either.
+    expect(phone).toMatch(/\.c-bar \{[\s\S]*?min-width: 2\.5rem;/);
+    // The lost line still follows it.
+    expect(phone).toMatch(/"\.\s+\.\s+lost\s+lost\s+lost"/);
+  });
+
+  test("a volume row and a totals row ask for the same bar", async () => {
+    // Same markup, same cell, same rules: the fold cannot give one a bar and
+    // the other none.
+    cleanup();
+    const v = {
+      ...volumeDone,
+      progress: {
+        done: 2,
+        total: 3,
+        failed: 1,
+        lastPage: "0003",
+        stage: "done",
+        updatedAt: "2026-09-14T07:00:00Z",
+        ageSeconds: null,
+        lastError: null,
+        errors: 0,
+        viewerPublished: true,
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          failures: [],
+          volumes: [v],
+          latest: v,
+          pagesDone: 2,
+          pagesTotal: 3,
+        }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    const bars = [...container.querySelectorAll(".row .c-bar .bar")];
+    // Two totals rows and the folded volume row: three bars, one shape.
+    expect(bars).toHaveLength(3);
+    for (const bar of bars)
+      expect(bar.parentElement?.className).toContain("c-bar");
+  });
+});
