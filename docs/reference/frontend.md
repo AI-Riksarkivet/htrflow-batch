@@ -275,13 +275,24 @@ table.
 - **Phase.** A campaign's `JobSummary.phase` (`Queued`/`Paused`/`Running`/
   `Succeeded`/`PartiallyFailed`/`Failed`) drives the card's left accent: red
   if `Failed`, `PartiallyFailed` or any volume is `failed`, blue if
-  `Running`, green if `Succeeded`, grey otherwise. `PartiallyFailed` — the
-  Job gave up with some indexes already published — shows as "partially
-  failed" in the warning colour, not the error colour: part of the campaign
-  did come out. A `Succeeded` campaign whose `pagesFailed` is above zero
-  takes that same warning colour, on the phase chip and on the accent, with
-  the same "done with N failed pages" title: every index published and pages
-  were still lost inside them, and zone 2's bars go amber with it.
+  `Running`, green if `Succeeded`, grey otherwise. The chip's **word** is
+  decided in one place, and there are four endings a campaign can have:
+  - `Succeeded` with no lost pages — **"Succeeded"**, green.
+  - `Succeeded` with `pagesFailed` above zero — **"partially succeeded"**, in
+    the warning colour, titled "every volume finished, N pages failed". Every
+    volume published and pages were still lost inside them; the accent and
+    zone 2's bars go amber with the chip, and its screen-reader sentence
+    stays "done with N failed pages".
+  - `PartiallyFailed` — **"partially failed"**, the same warning colour: the
+    Job gave up with some indexes already published. The pair means two
+    different losses — whole volumes here, pages inside finished volumes
+    above.
+  - `Failed` — **"Failed"**, the error colour: nothing came out.
+
+  The list's order (`$lib/order`) puts a campaign with a failed **volume**
+  in the "something wrong" band whatever its phase says. A campaign that lost
+  only **pages** cannot be told apart there: `GET /api/v1/jobs` carries no
+  page counts, and only the card's own detail fetch knows.
 - **Log link** —
   `log?log=<encodeURIComponent(logUrl)>&manifest=<encodeURIComponent(manifestUrl)>`,
   plus `&live=1` for a volume whose `state` is not `"done"`. Both URLs come
