@@ -138,10 +138,13 @@ Universal Viewer is not built by this project.
   their own, so two glyphs sit at the same x on ten cards whose ids differ in
   length; then the **status column**, right-aligned at the far end so the
   figures of every row line up under each other the way zone 2's columns do.
-  Inside it the state word holds a slot the width of the longest one
-  ("pending"/"unknown") and the figures hold one wide enough for
-  "637 / 638 · 1 failed" in tabular figures, so neither the pill's left edge
-  nor the line's right edge moves when a poll changes the digits. The
+  Inside it the **figures come first and the state pill last**, hard against
+  the line's right edge: the pill is the fixed-width element, so it is the
+  one that can anchor that edge on every row while the variable-width
+  figures run up to it. The state word holds a slot the width of the longest
+  one ("pending"/"unknown") and the figures hold one wide enough for
+  "637 / 638 · 1 failed" in tabular figures, so neither the pill nor the
+  line's right edge moves when a poll changes the digits. The
   strip's volume is the one most likely to be wanted (`latest`: newest
   active, else newest done, computed by the API over every volume), so the
   viewer and the run log are one click away without unfolding. It wraps at

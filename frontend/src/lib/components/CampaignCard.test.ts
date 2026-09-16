@@ -2456,3 +2456,75 @@ describe("a volume line is the same shape on every row and every card", () => {
     expect(container.querySelector(".vfigures.bump")).not.toBeNull();
   });
 });
+
+// "can we change the order of the done and 3 / 3 at least, for the status?
+// because now it's very uneven for the eye" (the product owner, 2026-09-16):
+// the pill is the fixed-width element, so it belongs at the edge, with the
+// variable-width figures running up against it.
+describe("the status reads figures first, pill last", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const vol = {
+    ...volumeDone,
+    progress: {
+      done: 2,
+      total: 3,
+      failed: 1,
+      lastPage: "0003",
+      stage: "done",
+      updatedAt: "2026-09-14T07:00:00Z",
+      ageSeconds: null,
+      lastError: null,
+      errors: 0,
+      viewerPublished: true,
+    },
+  };
+
+  async function render_(volumes: unknown[], latest: unknown = null) {
+    cleanup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes, latest }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    return container;
+  }
+
+  test("the strip puts the pill at the far right of the status", async () => {
+    const container = await render_([vol], vol);
+    const status = container.querySelector(".latest-status") as HTMLElement;
+    expect([...status.children].map((c) => c.className.split(" ")[0])).toEqual([
+      "vfigures",
+      "status",
+    ]);
+  });
+
+  test("a table row reads the same way", async () => {
+    const container = await render_([vol]);
+    await expand();
+    const td = container.querySelector("td.vstatus") as HTMLElement;
+    expect([...td.children].map((c) => c.className.split(" ")[0])).toEqual([
+      "vfigures",
+      "status",
+    ]);
+  });
+
+  test("a failed volume's reason still runs up against the pill", async () => {
+    const container = await render_([volumeFailed], volumeFailed);
+    const status = container.querySelector(".latest-status") as HTMLElement;
+    expect([...status.children].map((c) => c.className.split(" ")[0])).toEqual([
+      "vreason",
+      "status",
+    ]);
+  });
+});
