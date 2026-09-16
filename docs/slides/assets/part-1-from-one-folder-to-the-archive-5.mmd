@@ -1,0 +1,10 @@
+flowchart LR
+  A["campaign A<br/>window 2"]
+  Bq["campaign B<br/>window 4"]
+  Q{"free GPUs<br/>quota 4, 2 in use"}
+  R["running"]
+  W["waiting — Queued"]
+  A --> Q
+  Bq --> Q
+  Q -->|"2 fit"| R
+  Q -->|"4 do not"| W
