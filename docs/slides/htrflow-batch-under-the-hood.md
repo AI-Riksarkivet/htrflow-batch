@@ -59,7 +59,7 @@ rather than skipped.
 <tr><td>LocalQueue</td><td>rendered, one</td></tr>
 <tr><td>Workload</td><td>Kueue's, we patch it</td></tr>
 <tr><td>Cohort</td><td>planned</td></tr>
-<tr><td>WorkloadPriorityClass</td><td>planned</td></tr>
+<tr><td>WorkloadPriorityClass</td><td>three, from the chart</td></tr>
 <tr><td>AdmissionCheck</td><td>not used</td></tr>
 <tr><td>Topology / TAS</td><td>not used</td></tr>
 <tr><td>DRA</td><td>not used</td></tr>
@@ -311,9 +311,7 @@ Where the quota is barely wider than one campaign's window, nothing smaller can 
 </div>
 <div>
 
-**Priority is a dangling reference.** A campaign's `priority:` renders the label `kueue.x-k8s.io/priority-class`, but the chart renders no WorkloadPriorityClass — "a priority class whose value is utilized by Kueue controller and is independent from Pod's priority" — so Kueue's validating webhook rejects the Job.
-
-**PLANNED:** three classes, `htr-interactive` 1000, `htr-bulk` 100 (default), `htr-idle` 10.
+**Priority orders the queue.** A campaign's `priority:` renders the label `kueue.x-k8s.io/priority-class`, and the chart ships the three WorkloadPriorityClass objects it may name — "a priority class whose value is utilized by Kueue controller and is independent from Pod's priority": `htr-interactive` 1000, `htr-bulk` 0 (the rank of no label, so the default), `htr-idle` -10. Preemption stays off: a higher class is admitted before waiting campaigns and never evicts a running one.
 
 **AdmissionCheck** runs between reservation and admission: "a mechanism that allows Kueue to consider additional criteria before admitting a Workload". We configure none, today or in the design.
 
@@ -321,10 +319,11 @@ Where the quota is barely wider than one campaign's window, nothing smaller can 
 </div>
 
 <!--
-The priority gap is audit item X17 and story B18: the converter already writes
-the label, no class exists, so setting priority: in a campaign file turns a
-working campaign into one the API server refuses. Until B18 lands, leave it
-out.
+The priority gap was audit item X17 and story B18: the converter already wrote
+the label and no class existed, so setting priority: in a campaign file turned
+a working campaign into one the API server refused. The chart now ships the
+three classes; a name outside them is still refused at apply time, because
+validate has no cluster to ask.
 
 AdmissionCheck is where a cluster-autoscaler hook (ProvisioningRequest) or a
 multi-cluster dispatch (MultiKueue) would go. Neither is on our road; a check

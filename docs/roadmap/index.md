@@ -74,12 +74,12 @@ enough, to settle the questions a single node cannot:
 The current queue, and the reasoning behind each setting, is in
 [Queueing](../how-it-works/queueing.md).
 
-- **Priority lanes.** A campaign's `priority:` renders Kueue's priority-class
-  label, but the chart ships no `WorkloadPriorityClass` and preemption is
-  off. Usable lanes need the classes, a decision on preemption, and an answer
-  for what "next" means while one campaign holds the whole quota. Preemption
-  kills a running volume mid-transcription. Resume makes that survivable, but
-  it is still a product decision, not a switch.
+- **Preemption.** A campaign's `priority:` names one of the three classes
+  the chart ships, and Kueue admits by class before age, but preemption is
+  off: a higher class never evicts a running campaign, and while one
+  campaign holds the whole quota "next" means when that quota comes back.
+  Preemption kills a running volume mid-transcription. Resume makes that
+  survivable, but it is still a product decision, not a switch.
 - **Cohorts and borrowing.** Once the GPU pool is shared with another tenant,
   a cohort lets either side borrow the other's idle quota.
 - **A pause Kueue owns.** Pausing is the converter patching the Workload's
