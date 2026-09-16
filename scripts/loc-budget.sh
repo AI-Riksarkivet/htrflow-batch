@@ -1038,7 +1038,12 @@ check web       "$(count packages/web/src -name '*.py')" 1866
 # hidden second copy of the sentences goes with it: clipping with `overflow`
 # leaves text in the accessibility tree, and a copy beside links is read
 # twice.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4415
+# 4415 -> 4423 (2026-09-16, card zones review): the card's left accent and
+# the list's order asked the same question in two copies, and the list's copy
+# had forgotten that a pipeline with NO warm-up Job blocks a campaign just as
+# surely as one that failed. `warmupBlocked`/`inTrouble` live in $lib/order
+# and both sides call them.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4423
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
