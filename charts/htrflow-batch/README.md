@@ -165,9 +165,11 @@ Added:
   class that never existed. Kueue orders the queue by class value first,
   then by creation time; preemption stays off (`withinClusterQueue:
   Never`), so a higher class goes ahead of waiting campaigns but never
-  evicts a running one. A campaign naming a class outside this list is
-  still refused by Kueue's webhook at apply time, not by
-  `htrflow-campaigns validate`. An empty list renders no class.
+  evicts a running one. Kueue does not refuse a Job naming a class that
+  does not exist (no Workload, no event, "Queued" for ever), so
+  `converter.yaml`'s `priority_classes` mirrors this list and
+  `htrflow-campaigns validate` refuses a name outside it. An empty list
+  renders no class.
 
 ### 0.8.0 — 2026-09-14 (deployment audit)
 

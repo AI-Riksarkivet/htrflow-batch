@@ -321,9 +321,10 @@ Where the quota is barely wider than one campaign's window, nothing smaller can 
 <!--
 The priority gap was audit item X17 and story B18: the converter already wrote
 the label and no class existed, so setting priority: in a campaign file turned
-a working campaign into one the API server refused. The chart now ships the
-three classes; a name outside them is still refused at apply time, because
-validate has no cluster to ask.
+a working campaign into one that read Queued for ever: Kueue does not refuse
+an unknown class, it just never builds the Workload. The chart now ships the
+three classes, converter.yaml lists the same names, and validate refuses a
+name outside them.
 
 AdmissionCheck is where a cluster-autoscaler hook (ProvisioningRequest) or a
 multi-cluster dispatch (MultiKueue) would go. Neither is on our road; a check

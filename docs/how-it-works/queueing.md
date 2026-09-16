@@ -86,8 +86,9 @@ annotations:
 - `kueue.x-k8s.io/queue-name: <queue from converter.yaml>`, always.
 - `kueue.x-k8s.io/priority-class: <priority from the campaign>`, only when
   the campaign file sets `priority:`. The name must be one of the
-  `WorkloadPriorityClass` objects the chart ships (`queue.priorityClasses`);
-  leaving `priority:` out is `htr-bulk`.
+  `WorkloadPriorityClass` objects the chart ships (`queue.priorityClasses`),
+  and `validate` holds it to `converter.yaml`'s `priority_classes`, which
+  mirrors that list; leaving `priority:` out is `htr-bulk`.
 
 ## What a Workload holds
 
@@ -120,13 +121,14 @@ at creation, so the Job cannot run before Kueue has seen it. After that,
 keeping `suspend` right is the reconciler's job.
 
 **Validating webhook `vjob.kb.io`** (`/validate-batch-v1-job`, `CREATE` and
-`UPDATE`) rejects changes Kueue cannot honour on a managed Job. That includes
-a `priority-class` label naming a `WorkloadPriorityClass` that does not
-exist. That is where a campaign naming a class outside
-`queue.priorityClasses` is refused: `htrflow-campaigns validate` checks the
-label's spelling, not the cluster's class list, because the converter has
-no cluster to ask. `vworkload.kb.io` guards `workloads` and
-`workloads/status` the same way.
+`UPDATE`) rejects changes Kueue cannot honour on a managed Job. It does
+**not** look at the `priority-class` label: a Job naming a
+`WorkloadPriorityClass` that does not exist passes the webhook, the
+reconciler then cannot resolve the class, creates no Workload and raises no
+event, and the Job stays suspended — "Queued" for ever, with nothing to say
+why. That is why `htrflow-campaigns validate` refuses a `priority:` outside
+`converter.yaml`'s `priority_classes`, the list that mirrors the chart's.
+`vworkload.kb.io` guards `workloads` and `workloads/status` the same way.
 
 **The Job reconciler** owns the Job-and-Workload pair. It:
 
@@ -396,7 +398,10 @@ one whose `window` the quota cannot cover, and it reads "Queued" forever.
   `WorkloadPriorityClass` objects and `withinClusterQueue` stays `Never`, so
   a campaign's `priority:` decides who is admitted *next* and never evicts
   a running campaign. While one campaign holds the whole quota, "next" is
-  when that campaign's quota comes back. Preemption stops a running volume
+  when that campaign's quota comes back. A `priority:` naming a class the
+  cluster does not have is not refused by Kueue: the Job reads "Queued" for
+  ever with no event, which is why `validate` checks the name against
+  `converter.yaml`'s `priority_classes`. Preemption stops a running volume
   mid-transcription (resume makes that survivable), and turning it on is a
   product decision rather than a switch.
 - **`window` is not checked against the quota.** Without partial admission
