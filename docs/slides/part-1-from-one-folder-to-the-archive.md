@@ -116,7 +116,7 @@ flowchart TB
 
 **A pod is born for one volume and dies with it.** It starts only when the models are in the cache, reads the manifest, lists what the bucket already holds, and builds the pipeline while page one downloads.
 
-**Then it streams.** The next page downloads while this one is on the GPU; each page's results go to the bucket the moment they exist, and its files are deleted. A 600-page volume never needs 600 pages of disk.
+**Then it streams.** The next page downloads while this one is on the GPU; each page's results go to the bucket the moment they exist, and its files are deleted.
 
 </div>
 <div>

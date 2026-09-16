@@ -394,11 +394,12 @@ in a mixed pool.
 </div>
 
 <!--
-Sources: kubernetes.io DRA pages (stable since v1.35); NVIDIA GPU Operator
-documentation for the DRA driver (GA for full GPUs and existing MIG
-devices, alpha for time-slicing and MPS, "either a GPUCluster resource for
-DRA or a ClusterPolicy resource for the Device Plugin, but not both"); CNCF
-blog, "Understanding Dynamic Resource Allocation in Kubernetes", 2026-07-01.
+Sources: the Kubernetes documentation on dynamic resource allocation; the
+NVIDIA GPU Operator documentation for its DRA driver (full GPUs and
+existing MIG devices generally available, time-slicing and MPS alpha,
+"either a GPUCluster resource for DRA or a ClusterPolicy resource for the
+Device Plugin, but not both"); and the CNCF blog post "Understanding
+Dynamic Resource Allocation in Kubernetes".
 -->
 
 ---
@@ -515,10 +516,10 @@ driver's support covers MIG partitions that already exist on the card.
 </div>
 
 <!--
-Source: kueue.sigs.k8s.io, Dynamic Resource Allocation concept page: the
-ResourceClaimTemplate path is beta since v0.18 (Kubernetes 1.34+); the
-extended-resource path and counter-based quota are beta since v0.19;
-capacity-based quota is alpha in v0.19. The dev cluster runs Kueue v0.18.1.
+Source: Kueue's Dynamic Resource Allocation concept page, which gives the
+feature state of each counting path; the claim-template path is the oldest,
+the extended-resource path and counter-based quota came one release later,
+and capacity-based quota is still alpha.
 -->
 
 ---
