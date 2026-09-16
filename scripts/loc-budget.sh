@@ -1007,7 +1007,11 @@ check web       "$(count packages/web/src -name '*.py')" 1866
 # accent. The lines are three markup sites that each gained a class, a title
 # and a screen-reader sentence (the colour must not be the only thing saying
 # it), the two helpers behind them, and four CSS rules.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4167
+# 4167 -> 4173 (2026-09-16, card zones): the campaign notice prefixed the
+# failing page onto the wrapper's own sentence, which names that page as
+# often as not -- "page 0044: page 0044: htrflow's ..." on a live campaign.
+# Prefixed only when the message is not already saying it.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4173
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

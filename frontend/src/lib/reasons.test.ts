@@ -381,6 +381,44 @@ describe("describeNotice", () => {
     );
   });
 
+  // The wrapper writes the page into its own message as often as not, and
+  // the API sends the page beside it: prefixing again read "page 0044: page
+  // 0044: htrflow's ..." on a live campaign (the product owner, 2026-09-16).
+  test("a message that already names its page is not given the page twice", () => {
+    expect(
+      describeNotice({
+        pagesFailed: 1,
+        errors: 0,
+        lastError: {
+          ...lastError,
+          error: "page 0044: htrflow's Segmentation worker thread died",
+        },
+      }),
+    ).toBe(
+      "1 page failed · page 0044: htrflow's Segmentation worker thread died",
+    );
+  });
+
+  test("a message naming a different page keeps both", () => {
+    expect(
+      describeNotice({
+        pagesFailed: 1,
+        errors: 0,
+        lastError: { ...lastError, error: "page 0002: HTTP 400" },
+      }),
+    ).toBe("1 page failed · page 0044: page 0002: HTTP 400");
+  });
+
+  test("a message that merely starts with the word page is untouched", () => {
+    expect(
+      describeNotice({
+        pagesFailed: 1,
+        errors: 0,
+        lastError: { ...lastError, error: "pages were skipped" },
+      }),
+    ).toBe("1 page failed · page 0044: pages were skipped");
+  });
+
   test("an error with no page name still reads as a sentence", () => {
     expect(
       describeNotice({
