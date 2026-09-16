@@ -191,14 +191,16 @@ table.
    own benign WARNINGs, a pipeline rebuild, "manifest covers n/m pages", must
    not read as something wrong on a healthy run.
 3. **Problems**, one line, and only when there is one: why the warm-up could
-   not run, then each failed volume as `id: sentence`, then the most recent
-   page error, then a link to the run log of the volume that error came from
+   not run, then each failed volume as `id: sentence` with the id linking to
+   that volume's run log, then the most recent page error, then a link to the
+   run log of the volume that error came from
    (the API sends that volume's `logUrl`, since the row it happened in is
    usually outside the page being shown). It carries sentences and nothing
    else — the counts are zone 2's job and are not repeated here. Warning
-   colour, clipped to one line, with the whole of it in the `title` and in a
-   visually-hidden copy beside it, because a tooltip alone is not
-   keyboard-reachable. With the card open it drops the failed volumes that
+   colour, clipped to one line, with the whole of it in the `title` for the
+   mouse — the sentences are the line's own text, so clipping them with
+   `overflow` leaves them in the accessibility tree and no hidden second copy
+   is needed. With the card open it drops the failed volumes that
    are already visible as rows in the loaded table and keeps the rest.
    `describeLastError` names the failing page once: the wrapper writes it
    into its own message as often as not, and the API sends it beside the
