@@ -10,428 +10,384 @@ lang: en
 
 # What the queue can do
 
-## Part 4 of 5 — Kueue: sharing many GPUs between many people and many campaigns
+## Part 4 of 5 — Kueue's concepts, one by one, as things a team sharing many GPUs can do with them
 
 <!--
-Parts 1 to 3 treated the queue as a doorman with a count. This part is not
-about how it is wired; it is about what a queue in front of the cluster
-makes possible -- what we use today, what is one setting away, and what the
-multi-tenant plan builds on. Each capability gets one slide: what it is,
-what it would mean for you, and whether it is on here.
+Parts 1 and 2 used three things from Kueue: the window, priority and pause.
+This part is the rest of the toolbox, taken concept by concept from
+kueue.sigs.k8s.io/docs/concepts, each told as a capability: what it lets a
+team do, and whether it is in use here, available, or an idea worth
+testing. Nothing already shown in parts 1 and 2 is repeated.
 -->
 
 ---
 
-# Without a queue
-
-<div class="cols">
-<div>
-
-**Kubernetes alone schedules pods, not work.** Submit a campaign of 600 volumes and it creates as many pods as it is allowed; whoever submits first takes every free GPU, and everyone after gets pods stuck *Pending* — holding memory, CPU, node slots — with no order and no end in sight.
-
-**Nothing is fair, nothing is ordered.** A small urgent job waits behind a week of bulk work. A team that paid for eight GPUs cannot get them while another team's jobs sit on them.
-
-</div>
-<div>
-
-**A queue in front of the cluster changes the question.** Not "is there a node for this pod?" but "may this *campaign* start now, given everyone else's?" — decided once, for the whole campaign, before a single pod exists.
-
-**Kueue is that queue.** It never places a pod and never sees a page: it decides *when* a campaign may start, and the ordinary scheduler still decides *where*.
-
-</div>
-</div>
-
-<!--
-Kueue is a Kubernetes SIG project; it adds queueing, quotas and admission
-on top of normal Jobs, so the Job that renders from a campaign file is an
-ordinary batch Job with one label on it.
--->
-
----
-
-# What Kueue offers, and where we stand
+# The toolbox at a glance
 
 <table class="plain">
-<tr><td><strong>Wait instead of fail</strong></td><td>a campaign starts whole when its GPUs are free, and waits otherwise</td><td>in use</td></tr>
-<tr><td><strong>Quotas</strong></td><td>a counted share of the pool that nobody can exceed</td><td>in use — one shared queue</td></tr>
-<tr><td><strong>Priority</strong></td><td>urgent work goes first among the waiting</td><td>in use — three classes</td></tr>
-<tr><td><strong>Pause and resume</strong></td><td>hand GPUs back without losing finished work</td><td>in use</td></tr>
-<tr><td><strong>Borrowing</strong></td><td>use another team's idle GPUs until they want them back</td><td>planned</td></tr>
-<tr><td><strong>Preemption</strong></td><td>urgent work may stop running work to take its place</td><td>available, off</td></tr>
-<tr><td><strong>Hardware kinds</strong></td><td>ask for a kind of GPU, or fall back to another kind</td><td>planned</td></tr>
-<tr><td><strong>Fair sharing</strong></td><td>share idle capacity by weight, not first come</td><td>available</td></tr>
-<tr><td><strong>More</strong></td><td>partial starts, fractional GPUs, autoscaling, many clusters</td><td>available</td></tr>
+<tr><td><strong>Workload</strong></td><td>the unit of admission — one per campaign; can be deactivated, time-limited, and give quota back early</td><td>in use</td></tr>
+<tr><td><strong>LocalQueue</strong></td><td>a tenant's door into the queue, one per namespace</td><td>in use</td></tr>
+<tr><td><strong>ClusterQueue</strong></td><td>a pool of quota, with its own ordering and a stop switch</td><td>in use</td></tr>
+<tr><td><strong>ResourceFlavor</strong></td><td>kinds of capacity: GPU model, architecture, reserved or interruptible</td><td>one, empty</td></tr>
+<tr><td><strong>Cohort</strong></td><td>pools that lend and borrow, in a weighted tree</td><td>planned</td></tr>
+<tr><td><strong>WorkloadPriorityClass</strong></td><td>order, preemption rank, borrowing rank</td><td>in use</td></tr>
+<tr><td><strong>Preemption & fair sharing</strong></td><td>make room by evicting; divide idle capacity by weight or by past use</td><td>available</td></tr>
+<tr><td><strong>AdmissionCheck</strong></td><td>a gate after quota: autoscale first, or send to another cluster</td><td>available</td></tr>
+<tr><td><strong>Topology · DRA · elastic</strong></td><td>placement by network, shares of a GPU, resizing a running job</td><td>available</td></tr>
 </table>
 
 <!--
-The rest of the deck goes row by row. "Available" means Kueue can do it and
-it is a policy decision for the platform to turn on; "planned" means it is
-part of the multi-tenant design.
+"Available" means the Kueue we install can do it and turning it on is a
+platform decision. The definitions quoted on the next slides are Kueue's
+own, from its concepts pages.
 -->
 
 ---
 
-# Wait instead of fail — all or nothing
+# Workload — more than a waiting ticket
 
-```mermaid w:1000
-flowchart LR
-  C["campaign<br/>window: 4"]
-  Q{"4 GPUs free<br/>in its quota?"}
-  R["starts: 4 volumes at once,<br/>the next one as each ends"]
-  W["waits — Queued<br/>no pods, nothing held"]
-  C --> Q
-  Q -->|"yes"| R
-  Q -->|"no"| W
-  W --> Q
-```
+> "An application that will run to completion. It is the unit of admission in Kueue."
 
 <div class="cols">
 <div>
 
-**What you get.** A campaign never half-starts and never sits as a pile of *Pending* pods. It is either running with everything it asked for, or waiting with nothing held, and a smaller campaign that fits may go ahead of it.
+**Give quota back early.** Kueue releases what a Job no longer needs: when fewer volumes remain than the window, the unused GPUs return to the pool before the campaign ends.
+
+**Stop it after a time.** A maximum execution time deactivates a Workload that runs too long, across attempts — a budget per campaign, not per pod.
 
 </div>
 <div>
 
-**What you control.** `window` in the campaign file: how many volumes at once, so how many GPUs. Bigger finishes sooner — but waits for a bigger gap, and a window larger than the whole quota never starts.
+**Retry the start, not only the run.** With "all-or-nothing with ready pods", a Workload whose pods do not all become ready in time is evicted and requeued with growing backoff, instead of holding quota while stuck.
+
+**Not only batch Jobs.** The same queues admit Ray jobs, PyTorch and other training jobs, plain pods, and even Deployments — so serving a model could draw on the same GPU quota as transcription.
 
 </div>
 </div>
 
 <!--
-All-or-nothing is exactly what a GPU batch job wants: a campaign that got
-one GPU out of four would hold that one while waiting for the rest.
+Dynamic reclaim is why the tail of a long campaign does not hog its full
+window. The pods-ready timeout is worth a test here: a campaign pod waiting
+for a warm-up marker holds its GPU, and Kueue could requeue instead of
+holding.
 -->
 
 ---
 
-# Quotas — a share of the pool
-
-```mermaid h:200
-flowchart TB
-  P["the GPU pool"]
-  A["queue: transcription<br/>quota 8 GPUs"]
-  B["queue: research<br/>quota 4 GPUs"]
-  C["queue: partners<br/>quota 2 GPUs"]
-  P --> A & B & C
-```
+# LocalQueue and ClusterQueue — the door and the pool
 
 <div class="cols">
 <div>
 
-**What it is.** A queue with a counted budget — GPUs, and the CPU and memory that come with them. Everything admitted through it together can never exceed it, however much is submitted.
+> **LocalQueue:** "A namespaced resource that groups closely related workloads belonging to a single tenant."
 
-**What you get.** A predictable share: your campaigns cannot be starved by someone else's week of bulk work, and theirs cannot be by yours.
+> **ClusterQueue:** "A cluster-scoped resource that governs a pool of resources, defining usage limits and Fair Sharing rules."
+
+**Many doors, one pool, or many pools.** Several teams' namespaces can point their LocalQueues at one shared ClusterQueue, or each at its own. A namespace selector decides which namespaces may use a pool at all.
 
 </div>
 <div>
 
-**Here today:** one queue for everyone, with the platform's quota. A campaign names it through converter.yaml; you never type it.
+**Choose how strict the line is.** *BestEffortFIFO* lets a smaller campaign that fits go past an older one that does not — better use of GPUs. *StrictFIFO* never lets anyone pass — fairer to the big campaign at the front.
 
-**Planned:** one queue per team, each with its own quota — the multi-tenant design. Your campaigns repository would point at your team's queue, and the quota is what your team is promised.
+**Hold or drain a whole pool.** A stop policy on the queue: *Hold* admits nothing new while running work finishes — a clean maintenance window; *HoldAndDrain* also evicts what is running.
+
+**Here:** one door, one pool, BestEffortFIFO.
 
 </div>
 </div>
 
 <!--
-The quota counts what pods request, and all resources at once: a campaign
-fits when its GPUs, CPU and memory all fit. That is the platform's
-arithmetic; the user-facing idea is simply "a share".
+The stop policy is the operator's version of a campaign's pause: one switch
+for the whole pool before a driver upgrade or a node reboot, with every
+finished volume kept and every campaign resuming from the bucket.
 -->
 
 ---
 
-# Priority — who goes next
+# ResourceFlavor — kinds of capacity
+
+> "An object that you can define to describe what resources are available in a cluster."
 
 <div class="cols">
 <div>
 
-<p class="filename">campaigns/thesis-deadline.yaml</p>
+**Tell hardware apart.** A flavor matches nodes by label and taint: this GPU model or that one, x86 or ARM, reserved machines or cheaper interruptible ones. Kueue adds the node selector and tolerations to the pods it admits, so nobody writes them by hand.
 
-```yaml
-pipeline: demo-v1
-priority: htr-interactive
-volumes:
-  - R0001203
-  - R0001204
+**A quota per flavor.** A pool can promise eight of the large cards and sixteen of the small ones separately.
+
+</div>
+<div>
+
+**Try one kind, then the next.** A pool lists flavors in order; a campaign lands on the first that has room, and the pool decides whether to keep searching rather than borrow or preempt.
+
+**Here:** one empty flavor, because every GPU is alike — and an empty flavor is exactly what Kueue recommends for a uniform cluster.
+
+**Worth it the day** the pool mixes card generations, or architectures: a large recognition model on large cards, segmentation on the rest.
+
+</div>
+</div>
+
+<!--
+"Flavor fungibility" is Kueue's name for the fallback rules: whether to stop
+at the current flavor when it could borrow, or when it could preempt, or to
+try the next flavor first.
+-->
+
+---
+
+# Cohort — pools that lend
+
+> "A group of ClusterQueues that can borrow unused quota from each other."
+
 ```
+the archive — a cohort tree
+├─ transcription    quota 8    borrowing limit 8     weight 3
+├─ research         quota 4    lending limit 2       weight 1
+└─ partners         quota 0    — may run only on what others lend
+```
+
+<div class="cols">
+<div>
+
+**Borrow and lend, with limits.** A pool may borrow others' unused quota up to its borrowing limit, and keep a lending limit so some of its own is always at hand.
+
+**A pool with no quota of its own** can still run — on borrowed capacity only, and first to give it back.
+
+</div>
+<div>
+
+**Trees, not only groups.** Cohorts can nest — a department over its teams — each level with its own weight, so a department's idle share goes to its own teams before anyone else's.
+
+**Here:** planned, with a queue per team. With one pool there is nobody to lend to.
+
+</div>
+</div>
+
+<!--
+The docs are strict about one detail: to borrow a resource, a ClusterQueue
+must list it with a nominal quota, even if that quota is zero.
+-->
+
+---
+
+# Preemption — four ways to make room
+
+> "The process of evicting one or more admitted Workloads to accommodate another Workload."
 
 <table class="plain">
-<tr><td><code>htr-interactive</code></td><td>a handful of volumes someone is waiting for</td></tr>
-<tr><td><code>htr-bulk</code></td><td>the normal campaign — the same as leaving it out</td></tr>
-<tr><td><code>htr-idle</code></td><td>work that can wait for the gaps</td></tr>
+<tr><td><strong>within a pool</strong></td><td>a higher-priority campaign evicts a lower one in the same queue</td></tr>
+<tr><td><strong>reclaim</strong></td><td>a pool takes back quota it lent, from whoever borrowed it</td></tr>
+<tr><td><strong>borrow and preempt</strong></td><td>a pool already over its quota may still evict lower-priority work elsewhere</td></tr>
+<tr><td><strong>fair sharing</strong></td><td>evict to move usage back towards each pool's fair share</td></tr>
 </table>
 
+<div class="cols">
+<div>
+
+**Who goes first.** Candidates are borrowers before owners, then the lowest priority, then the most recently admitted — so the least work is thrown away.
+
 </div>
 <div>
 
-**What you get.** Among the campaigns *waiting*, the higher class starts first; within a class, the older one.
-
-**What you do not get, here.** Priority does not stop a running campaign. If a long bulk campaign holds the GPUs, the urgent one waits for it to finish — that would take preemption, two slides on.
-
-**`validate` checks the name** against the classes the cluster offers, because a name the cluster does not have would wait for ever without a word.
+**What it costs here.** An evicted campaign's running volumes stop mid-page and resume from the bucket, so a preemption costs minutes of GPU time, not volumes. **Here:** all four off.
 
 </div>
 </div>
 
 <!--
-The practical advice that follows: keep bulk campaigns small enough that
-the line moves, and mark genuinely overnight work htr-idle so the day's
-urgent campaigns go first.
+The victim carries Evicted and Preempted conditions naming what displaced
+it, so the status page could say "stopped to make room for X".
 -->
 
 ---
 
-# Pause and resume
+# Fair sharing — two different fairnesses
 
 <div class="cols">
 <div>
 
-<p class="filename">campaigns/kyrkobocker-1.yaml</p>
+**Fair shares of what is idle.** Each pool gets a weight; its usage is measured as its *dominant* resource share — GPUs, CPU or memory, whichever it uses most of relative to its quota. The pool furthest below its fair share is served first, and preemption can pull a heavy borrower back.
 
-```yaml
-pipeline: demo-v1
-suspend: true        # merge, apply — paused
-volumes:
-  - R0001203
-  # …
-```
+**What it prevents:** a team that submits a thousand campaigns at midnight taking every idle card.
 
 </div>
 <div>
 
-**What you get.** The running volumes stop, every finished volume is kept, and the GPUs go back to the pool for everyone else. Remove the line and the campaign waits for GPUs again, then continues from the next volume — a volume that was mid-run resumes from its pages in the bucket.
+**Fair turns in the line.** *Admission fair sharing* orders waiting work by how much its LocalQueue has used recently, decaying over time — so a team that has had the GPUs all week waits behind one that has had none.
 
-**When to use it.** Make room for something urgent while priority alone cannot; stop a campaign whose output looks wrong without losing what is right; hold a big campaign over a busy week.
+**What it prevents:** one busy namespace starving a quiet one that shares its pool, without anyone setting priorities.
+
+**Here:** neither configured; both matter once there are several teams.
 
 </div>
 </div>
-
-**One rule to remember:** pausing is a git change like any other — reviewable, and undone by deleting a line.
 
 <!--
-Under the hood the apply marks the campaign's Kueue Workload inactive; the
-card reads Paused once a volume has finished and Queued before that.
+Kueue's docs include a proof that preemption-based fair sharing cannot loop:
+if A preempts B, B cannot then preempt A.
 -->
 
 ---
 
-# Borrowing — idle GPUs do not stay idle
-
-```
-one cohort — two teams' queues that may lend each other idle GPUs
-
-  transcription   quota 8   running on 8 + 4 borrowed    10 more campaigns waiting
-  research        quota 4   running on 0                 its 4 GPUs lent while idle
-
-  research submits a campaign  →  its 4 GPUs are reclaimed, and it starts
-```
+# WorkloadPriorityClass — more than order
 
 <div class="cols">
 <div>
 
-**What it is.** Queues in a *cohort* may lend each other quota they are not using. The quota becomes a floor instead of a ceiling: you always get yours, and you may use what nobody else is using right now.
+**Independent of pod priority.** A Workload's priority decides its place in the queue, whether it may preempt, and its rank when pools borrow — without touching how the scheduler ranks pods on a node.
+
+**Changeable while waiting.** The priority of a campaign that has not started yet can be raised or lowered, and Kueue reorders it.
 
 </div>
 <div>
 
-**What you get.** Night-time and holiday GPUs work instead of idling, without anyone giving up their promised share. When the owner submits work, the borrowed capacity is reclaimed.
+**A missing class stops everything.** Kueue does not fall back to anything; the Workload cannot be created until the class exists. That is why `validate` checks the name — and why the platform must create a class before a campaign may use it.
 
-**Here:** planned, with per-team queues. With one shared queue there is nobody to borrow from.
+**Here:** three classes, preemption off — so today priority means order only.
 
 </div>
 </div>
 
 <!--
-Borrowing can be capped per queue (a borrowing limit), and reclaiming can
-either wait for borrowed work to finish or preempt it -- which is the next
-slide's trade-off again.
+Part 1 and part 2 showed the three class names and how a campaign sets one;
+this slide is what else the same object does once preemption or cohorts are
+turned on.
 -->
 
 ---
 
-# Preemption — stopping work to make room
+# AdmissionCheck — a gate after the quota
+
+> "A mechanism allowing internal or external components to influence the timing of workloads admission."
 
 <div class="cols">
 <div>
 
-**What it is.** When higher-priority work cannot fit, Kueue may evict lower-priority work that is running — within a queue, or to reclaim quota that was lent out.
+**How it works.** Quota is reserved first; then every check on the pool must say *Ready* before pods are created. A check can answer *Retry* with backoff or *Rejected* for good.
 
-**What you would get.** An urgent campaign starts in minutes instead of waiting for a week of bulk work to end.
+**Autoscale first.** The provisioning-request check asks the cluster autoscaler for nodes and admits the campaign only when they exist — waiting turns into scaling, in a cloud.
 
 </div>
 <div>
 
-**What it costs.** The evicted campaign's running volumes stop mid-page. They resume from the bucket later, so nothing is lost — but the GPU time since their last page is, and a busy cluster can churn.
+**Another cluster.** MultiKueue is a check that copies the Workload to worker clusters and runs it on the first one that admits it — capacity beyond one cluster, with no change to the Job.
 
-**Here:** available, and deliberately off. A higher class goes first among the waiting and never stops anyone. Turning it on is a policy decision about whose GPU time may be thrown away.
+**Your own check.** Any controller can be one. An idea worth testing here: *models warmed* as a check, so a campaign would not hold GPUs while its warm-up downloads.
+
+**Here:** none.
 
 </div>
 </div>
-
-**One rule to remember:** without preemption, priority reorders the line; with it, priority can empty the counter.
 
 <!--
-Resume is what makes preemption affordable at all in this system: a stopped
-volume costs its in-flight pages, not its finished ones.
+Checks can apply to all flavors of a pool or only some, so a check could
+guard only the interruptible capacity, for example.
 -->
 
 ---
 
-# Hardware kinds — asking for the right GPU
+# MultiKueue — one queue, many clusters
 
 <div class="cols">
 <div>
 
-**What it is.** A *flavor* names a kind of capacity — say, large-memory GPUs and ordinary ones, or reserved machines and cheaper interruptible ones. A queue has a quota per flavor, and can try one flavor first and fall back to the next.
+**A manager and workers.** Users submit to the manager cluster. When a campaign gets quota there, the manager copies it to worker clusters; the first to admit it runs it, the other copies are deleted, and status flows back.
 
-**Here today:** one flavor, because every GPU is alike.
+**How clusters are tried:** all at once for the fastest start, in batches following a preference order, or by a controller of your own.
 
 </div>
 <div>
 
-**What you would get.**
+**What it would mean:** a campaigns repo that targets "the archive's GPUs" rather than one cluster — on-premises first, a cloud partner when the queue is long, with no change to the campaign file.
 
-* A large recognition model lands on cards with enough memory, without anyone naming a machine.
-* Small segmentation work uses the smaller cards and leaves the big ones free.
-* When the preferred kind is full, work falls back to another kind instead of waiting.
+**What it asks:** every worker has the same namespace, the same model cache and a route to the same bucket.
 
-**Planned:** one flavor per GPU generation, when the pool is no longer uniform.
+**Here:** one cluster.
 
 </div>
 </div>
 
 <!--
-From a campaign author's point of view this would most likely surface as a
-pipeline setting -- the recipe knows what its model needs -- rather than a
-per-campaign choice.
+Beta and on by default. Batch Jobs are supported, as are most training job
+kinds, plain pods and Deployments.
 -->
 
 ---
 
-# Fair sharing — idle capacity by weight
-
-<div class="cols">
-<div>
-
-**The problem it solves.** With borrowing, idle GPUs go to whoever asks first. A team that submits a thousand campaigns at midnight takes every spare card; a team that submits one at 00:01 gets none.
-
-**What it is.** Each queue gets a weight. Idle capacity is shared out in proportion to the weights, and the queue furthest below its fair share is served first.
-
-</div>
-<div>
-
-**What you would get.** Spare capacity follows need and agreement, not submission speed. A heavy user still gets far more than a light one when both are busy — but never all of it.
-
-**Here:** available, not configured. It matters once there are several queues borrowing from each other.
-
-</div>
-</div>
-
-<!--
-Fair sharing and priority answer different questions: priority orders work
-within a queue, fair sharing divides idle capacity between queues.
--->
-
----
-
-# And more, one line each
+# Topology, DRA and elastic workloads
 
 <table class="plain">
-<tr><td><strong>Partial start</strong></td><td>a campaign may start with fewer volumes at once than its window when the pool is tight. Off here, so a campaign always runs at the window it asked for.</td></tr>
-<tr><td><strong>Fractional GPUs</strong></td><td>a small model takes part of a card instead of a whole one, through dynamic resource allocation. Not used; every pod takes a whole GPU.</td></tr>
-<tr><td><strong>Autoscaling first</strong></td><td>an admission check can ask a cloud to add nodes before a campaign starts, so waiting turns into scaling. Not used on a fixed pool.</td></tr>
-<tr><td><strong>Placement by topology</strong></td><td>pods of one job placed close together on the network. Not needed: our volumes never talk to each other.</td></tr>
-<tr><td><strong>Many clusters</strong></td><td>one queue dispatching campaigns to whichever cluster has room. Not used; one cluster today.</td></tr>
-<tr><td><strong>Seeing the line</strong></td><td>a campaign's position among the waiting. Available to the platform; not yet on the status page.</td></tr>
+<tr><td><strong>Topology-aware scheduling</strong></td><td>places a Workload's pods in the same block or rack so they talk faster. <em>Not for us:</em> our volumes never talk to each other; Kueue's own docs say independent pods gain nothing.</td></tr>
+<tr><td><strong>Dynamic resource allocation</strong></td><td>counts devices through the new Kubernetes device API, including parts of a GPU — partitioned cards counted by their memory, time-sliced cards by requested capacity. <em>Worth it</em> when small models should not take a whole card.</td></tr>
+<tr><td><strong>Elastic workloads</strong></td><td>changes the parallelism of an admitted Job without suspending it: scaling up is admitted as a new slice, scaling down frees quota at once. <em>Would mean</em> changing a running campaign's window without a pause.</td></tr>
 </table>
 
 <!--
-Every row is a documented Kueue feature. None needs a change to how a
-campaign file looks; they are all decisions on the platform side.
+All three are beta in current Kueue; partitioned-GPU counting and elastic
+jobs sit behind feature gates or need newer Kubernetes, so each would start
+as a test on the dev cluster, not a setting.
 -->
 
 ---
 
-# What is yours, what is the platform's
+# Seeing inside the queue
 
 <div class="cols">
 <div>
 
-<p class="filename">yours — the campaign file</p>
+**Where am I in the line?** Kueue answers a campaign's position among the pending work, per LocalQueue and per ClusterQueue, through its visibility endpoint — what the status page could show instead of a bare *Queued*.
 
-<table class="plain">
-<tr><td><code>window</code></td><td>how many GPUs at once</td></tr>
-<tr><td><code>priority</code></td><td>where in the line</td></tr>
-<tr><td><code>suspend</code></td><td>pause and resume</td></tr>
-</table>
-
-**Three settings, all reviewed in a pull request.** Nothing else about the queue is a user's choice, and nothing else needs to be.
+**Why am I waiting?** A Workload's conditions say which resource and which flavor did not fit, which check is not ready, or who preempted it.
 
 </div>
 <div>
 
-<p class="filename">the platform's — the cluster</p>
+**How is the pool doing?** Prometheus metrics for pending and admitted Workloads, admission wait time, evictions, and quota used against quota promised, per pool.
 
-<table class="plain">
-<tr><td>quotas</td><td>who is promised how much</td></tr>
-<tr><td>priority classes</td><td>which names exist</td></tr>
-<tr><td>cohorts and borrowing</td><td>who may lend to whom</td></tr>
-<tr><td>preemption</td><td>whether work may be stopped</td></tr>
-<tr><td>flavors and fair sharing</td><td>which hardware, divided how</td></tr>
-</table>
+**Here:** the metrics exist on the cluster; the status page does not use the position or the reason yet — a small story, and the most useful one on this slide for users.
 
 </div>
 </div>
 
 <!--
-The split is deliberate: what a campaign asks for lives in git next to the
-campaign; how the pool is divided lives with the people who run the pool.
+The per-resource usage metrics are off by default in Kueue's configuration
+and need to be enabled for the quota dashboards.
 -->
 
 ---
 
-# Which one would you reach for?
+# Which concept would you reach for?
 
 <div class="cols">
 <div>
 
-**1.** Two volumes for a deadline tomorrow, while a 500-volume bulk campaign has just started on every GPU.
+**1.** A driver upgrade tomorrow morning: nothing new should start tonight, and nothing running should be killed.
 
-**2.** The research team's GPUs sit idle every night while transcription has a backlog.
+**2.** Two departments share the GPUs 3 to 1, and each department's idle share should go to its own teams first.
 
-**3.** A new large recognition model runs out of memory on half the cards.
+**3.** Half the new cards are a different model with twice the memory.
 
-**4.** Overnight reprocessing keeps delaying the day's small campaigns.
+**4.** Users keep asking why their campaign says *Queued*.
 
 </div>
 <div>
 
-<p class="note">Think first. Some have an answer you can use today; some need a platform decision.</p>
+<p class="note">One concept each; all four are on the slides before.</p>
 
 </div>
 </div>
-
-<!--
-Give the room a minute. The answers are on the next slide.
--->
 
 ---
 
 # … and the answers
 
 <table class="plain">
-<tr><td>1</td><td><strong>Today: pause the bulk campaign and mark yours <code>htr-interactive</code>.</strong> Priority alone would put you first in the line but still behind all 500 volumes. With preemption on, the platform could make room without a pause.</td></tr>
-<tr><td>2</td><td><strong>Borrowing, in a cohort</strong> — a platform decision that needs a queue per team. Today there is one shared queue, so there is nothing to lend.</td></tr>
-<tr><td>3</td><td><strong>Hardware kinds</strong> — a flavor for the large-memory cards, so the model's pipeline lands only there. Until then, the platform keeps such a pipeline to a pool where every card fits.</td></tr>
-<tr><td>4</td><td><strong>Today: mark the reprocessing <code>htr-idle</code> and split it into smaller campaigns</strong>, so the line moves and the day's work goes first each time a slot frees.</td></tr>
+<tr><td>1</td><td><strong>A stop policy of <em>Hold</em> on the ClusterQueue.</strong> Admitted campaigns finish, nothing new is admitted, and removing the hold resumes the line.</td></tr>
+<tr><td>2</td><td><strong>Hierarchical cohorts with weights</strong> — a cohort per department under one for the archive, weighted 3 and 1, the teams' pools inside each.</td></tr>
+<tr><td>3</td><td><strong>ResourceFlavors</strong> — one per card model, each with its own quota, and flavor order so a large model lands on the large cards and the rest fall back.</td></tr>
+<tr><td>4</td><td><strong>The visibility endpoint and the Workload's conditions</strong> — position in the line and the reason, on the campaign card.</td></tr>
 </table>
-
-<!--
-The pattern in the answers: window, priority and pause are yours and work
-today; borrowing, preemption and flavors are the platform's and come with
-the multi-tenant design.
--->
 
 ---
 
@@ -439,9 +395,4 @@ the multi-tenant design.
 
 <p class="note"><strong>Part 5, <em>Models and signatures</em>:</strong> the model cache and the warm-up, revision pins, the two transformers lines, bringing a new model to the cluster — and what it would take for a model to be signed the way an image already is.</p>
 
-**ai-riksarkivet.github.io/htrflow-batch** — *Queueing* is how this is wired today; **kueue.sigs.k8s.io** is every capability on these slides, in Kueue's own words.
-
-<!--
-The older "under the hood" deck goes concept by concept with Kueue's own
-definitions, for anyone who wants the implementation view.
--->
+**kueue.sigs.k8s.io/docs/concepts** — every concept on these slides, in Kueue's own words. *Queueing* in the htrflow-batch docs is how it is wired here today.

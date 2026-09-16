@@ -1,9 +1,0 @@
-flowchart LR
-  C["campaign<br/>window: 4"]
-  Q{"4 GPUs free<br/>in its quota?"}
-  R["starts: 4 volumes at once,<br/>the next one as each ends"]
-  W["waits — Queued<br/>no pods, nothing held"]
-  C --> Q
-  Q -->|"yes"| R
-  Q -->|"no"| W
-  W --> Q
