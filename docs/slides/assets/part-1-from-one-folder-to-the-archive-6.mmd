@@ -1,8 +1,5 @@
 flowchart LR
-  E["you edit<br/>campaigns/demo.yaml"]
-  V["validate<br/>on your laptop"]
-  PR["pull request<br/>CI validates again"]
-  M["merged on main<br/>rendered/ committed"]
-  AP["apply<br/>cluster objects"]
-  S["status page<br/>and the viewer"]
-  E --> V --> PR --> M --> AP --> S
+  Q["waiting: A (bulk, 09:00) · B (bulk, 09:30) · C (interactive, 10:00)"]
+  O["order Kueue admits them in:<br/>C, then A, then B"]
+  R["running: D (bulk) — untouched<br/>nothing is evicted"]
+  Q --> O --> R

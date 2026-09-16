@@ -72,27 +72,25 @@ steps.
 
 ---
 
-# Now make it ten thousand volumes
+# One volume on your machine, ten thousand in the archive
 
-**Same pipeline. What breaks?**
+<table class="plain">
+<tr><td></td><td><strong>One volume, your machine</strong></td><td><strong>The archive</strong></td></tr>
+<tr><td>Where the pages are</td><td>a folder on disk</td><td>behind a IIIF server, one manifest per volume, fetched page by page</td></tr>
+<tr><td>What runs it</td><td>your GPU, one process</td><td>a pool of GPUs shared with everyone, one process per volume</td></tr>
+<tr><td>When something crashes</td><td>you run it again</td><td>the run resumes from the last page that reached the bucket</td></tr>
+<tr><td>Where the results go</td><td>a folder next to the images</td><td>a bucket, page by page while the run is going, readable in the viewer</td></tr>
+<tr><td>Who made this line, with what</td><td>you remember</td><td>every ALTO says: image digest, model revisions, wrapper version</td></tr>
+<tr><td>How you ask for a run</td><td>a command</td><td>a file in git, and a pull request</td></tr>
+</table>
 
-* **The folder is not on your disk.** The pages live behind an IIIF server, one manifest per volume, and downloading them all first is a job in itself.
-* **One GPU is a week. Many GPUs are shared.** Someone else is also running something, and nobody wants to be the person who took every card.
-* **A crash at volume 4,000 must not cost you volumes 1 to 3,999.** Nor the 200 pages already done in volume 4,000.
-* **Someone will ask, a year later, which model produced this line.** And they will want the answer without asking you.
-
-<p class="note"><strong>"Volume" in this series is an archival volume:</strong> one bound unit of pages with a reference code such as R0001203 — the batch a single run works through. It is never a Kubernetes volume, which is a mounted disk; when these slides mean storage they say <em>disk</em>, <em>cache</em> or <em>bucket</em>.</p>
+<p class="note"><strong>"Volume" here is an archival volume</strong> — a bound unit of pages with a reference code such as R0001203, the batch one run works through — never a Kubernetes volume, which is a disk.</p>
 
 <!--
-Say the volume sentence out loud, because the word collides: in Kubernetes
-a "volume" is storage. Here it is the archival unit -- a book, a bundle, a
-series of scans -- and the platform's unit of work.
-
-Each of these four becomes one of the slides that follow. Read them as
-requirements, not as complaints: pages from a server, a GPU pool that is
-shared, resumable work, and provenance. Git, last, is how you ask for any of it.
-
-The fragments are click-through in the HTML deck; the PDF shows them all.
+Read the right-hand column as the requirements the rest of the deck meets,
+row by row: pages from a server, a shared GPU pool, resumable work,
+streaming results, provenance, and git as the way to ask. Say the volume
+sentence out loud, because the word collides with Kubernetes storage.
 -->
 
 ---
@@ -386,6 +384,54 @@ pods are evicted with every finished volume kept.
 
 ---
 
+# `priority`: who goes first in the line
+
+```mermaid h:170
+flowchart LR
+  Q["waiting: A (bulk, 09:00) · B (bulk, 09:30) · C (interactive, 10:00)"]
+  O["order Kueue admits them in:<br/>C, then A, then B"]
+  R["running: D (bulk) — untouched<br/>nothing is evicted"]
+  Q --> O --> R
+```
+
+<div class="cols">
+<div>
+
+<p class="filename">campaigns/demo.yaml</p>
+
+```yaml
+pipeline: demo-v1
+priority: htr-interactive   # optional; default is htr-bulk
+volumes:
+  - R0001203
+```
+
+**Three classes ship with the cluster.** `htr-interactive` for a handful of volumes someone is waiting for, `htr-bulk` for the normal campaign, `htr-idle` for work that may wait for the gaps.
+
+</div>
+<div>
+
+**Priority orders the queue.** Among the campaigns waiting, the higher class goes first; within a class, the older one. That is all it does.
+
+**It never evicts.** A running campaign keeps its GPUs until its last volume is done, whatever arrives behind it. Preemption is deliberately off.
+
+**One rule to remember:** `priority` decides who is *next*, never who is *stopped*. `validate` refuses a name the cluster does not offer — the cluster itself would leave such a campaign *Queued* for ever, silently.
+
+</div>
+</div>
+
+<!--
+The three names live in the platform's chart values and, mirrored, in the
+campaigns repo's converter.yaml, so validate can refuse a name the cluster
+does not have; a name that reached the cluster anyway would never get a
+Workload and never start, with no event saying why. The reason preemption is
+off: a campaign admitted as a whole holds a window of GPUs for hours or
+weeks, and evicting it to make room throws away partly-done volumes'
+slots -- resume would recover the pages, but the queue would thrash.
+-->
+
+---
+
 # Results stream into a bucket, and the bucket is the truth
 
 <div class="cols wide-left">
@@ -434,7 +480,7 @@ retry redoes only that page. Part 3.
 ```mermaid h:110
 flowchart LR
   E["you edit<br/>campaigns/demo.yaml"]
-  V["validate<br/>on your laptop"]
+  V["validate<br/>locally"]
   PR["pull request<br/>CI validates again"]
   M["merged on main<br/>rendered/ committed"]
   AP["apply<br/>cluster objects"]
@@ -463,7 +509,7 @@ steps:
 </div>
 <div>
 
-**Validate needs no cluster.** The same program runs on your laptop and in the pull request, and says one sentence per problem, naming the file.
+**Validate needs no cluster.** The same program runs locally and in the pull request, and says one sentence per problem, naming the file.
 
 **Nothing in the cluster reads git.** An `apply` renders the repo into Kubernetes objects and sends them. Delete the file, apply with prune, and the Job is gone; the results in the bucket are not.
 
@@ -554,7 +600,7 @@ and a missing upload as a bug to retry.
 
 # Next
 
-<p class="note"><strong>Part 2, <em>Your interface is git</em>:</strong> the two files field by field, validate on your laptop, and a throwaway campaign of six images that runs the whole path in a minute.</p>
+<p class="note"><strong>Part 2, <em>Your interface is git</em>:</strong> the two files field by field, validate locally, and a throwaway campaign of six images that runs the whole path in a minute.</p>
 
 **ai-riksarkivet.github.io/htrflow-batch** — start with *Run a Campaign*.
 
