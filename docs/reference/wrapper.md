@@ -85,7 +85,12 @@ below splits on it. The source half is one of two shapes:
   comma is legal anywhere in one (a IIIF size such as `/full/2500,/`), so
   `validate` refuses a URL with whitespace in it rather than encoding it.
   There is no manifest at all for these; the wrapper builds and publishes a
-  synthetic one itself.
+  synthetic one itself. The separator is read by the wrapper, so it is the
+  pipeline's image that must understand it: a wrapper from before the
+  whitespace form takes the whole line as one URL and fails the volume on the
+  first page, while a current wrapper still reads the older comma-joined
+  form. An `images:` volume therefore needs a pipeline whose image is at
+  least as new as the converter that rendered it.
 
 **How index *i* reads line *i*.** The campaign Job's container command
 (`manifests/campaign-job.yaml`) does the whole job in a few shell lines before
