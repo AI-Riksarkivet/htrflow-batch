@@ -28,7 +28,7 @@ def main(svg_path: str, woff2_path: str) -> int:
     face = (
         "<style>"
         '@font-face{font-family:"Open Sans";font-style:normal;font-weight:400;'
-        'font-display:block;'
+        "font-display:block;"
         f'src:url("data:font/woff2;base64,{b64}") format("woff2");}}'
         "</style>"
     )
