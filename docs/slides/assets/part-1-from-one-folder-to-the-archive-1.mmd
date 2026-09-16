@@ -1,0 +1,5 @@
+flowchart LR
+  I["IIIF server<br/>one manifest, many pages"]
+  P["pod<br/>your pipeline + one GPU"]
+  B[("bucket<br/>ALTO, PAGE, one folder per volume")]
+  I -->|"page by page"| P -->|"page by page"| B
