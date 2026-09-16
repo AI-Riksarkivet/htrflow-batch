@@ -1054,7 +1054,17 @@ check web       "$(count packages/web/src -name '*.py')" 1866
 # "10:56 ->11:00" -- the screen-reader span beside the arrow swallowed the
 # whitespace after it, so both sides of the arrow carry their own space now.
 # A finish with no creation date beside it says "finished", not ", finished".
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4426
+# 4426 -> 4576 (2026-09-16, status column): the folded strip read "DONE
+# one-bad" in green with no numbers at all, and the table cell said "done" in
+# the pill and the counts again in a sentence beside it. One snippet renders
+# the status column for both now, saying per volume what zone 2 says per
+# campaign -- the state word in that volume's colour, then the same figures
+# in the same shape -- and `describeProgress` keeps only what the numbers
+# cannot say. The volume line was reordered with it: the id is the link to
+# the viewer, the run log and the manifest are two inline-SVG icons beside
+# it, and the status sits right-aligned at the far end so the figures of
+# every row line up. Three words of link text per row are gone.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4576
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

@@ -285,10 +285,20 @@ describe("describeProgress", () => {
     viewerPublished: true,
   };
 
-  test("pages, what it is doing, and how long ago", () => {
+  // The page counts moved to the status column's own figures, in the shape
+  // zone 2 uses for the campaign; this says what the numbers cannot (the
+  // product owner, 2026-09-16).
+  test("what it is doing, and how long ago", () => {
     expect(describeProgress(progress)).toBe(
-      "137 / 638 pages · processing pages · updated 12 s ago",
+      "processing pages · updated 12 s ago",
     );
+  });
+
+  test("the counts are not repeated here", () => {
+    expect(describeProgress({ ...progress, failed: 2 })).not.toContain(
+      "2 failed",
+    );
+    expect(describeProgress(progress)).not.toContain("638");
   });
 
   test("minutes and hours once seconds stop meaning anything", () => {
@@ -300,20 +310,14 @@ describe("describeProgress", () => {
     );
   });
 
-  test("failed pages are named, since the count alone hides them", () => {
-    expect(describeProgress({ ...progress, failed: 2 })).toContain("2 failed");
-  });
-
   test("a stage with no word of its own is still shown, not dropped", () => {
-    expect(describeProgress({ ...progress, stage: "warmup" })).toContain(
-      "· warmup ·",
+    expect(describeProgress({ ...progress, stage: "warmup" })).toBe(
+      "warmup · updated 12 s ago",
     );
   });
 
-  test("a finished volume reads as its pages, failures and all", () => {
-    // The state chip beside this line already says "done" (CampaignCard), and
-    // a volume now finishes WITH failed pages recorded, so this line is where
-    // the reader finds out it lost one.
+  test("a finished volume adds nothing to its numbers", () => {
+    // `done` is the state word's job, and the pages are the figures'.
     expect(
       describeProgress({
         ...progress,
@@ -323,10 +327,10 @@ describe("describeProgress", () => {
         stage: "done",
         ageSeconds: null,
       }),
-    ).toBe("637 / 638 pages · 1 failed");
+    ).toBe("");
   });
 
-  test("no timestamp, no stage: just the pages", () => {
+  test("no timestamp, no stage: nothing at all", () => {
     expect(
       describeProgress({
         ...progress,
@@ -335,7 +339,7 @@ describe("describeProgress", () => {
         ageSeconds: null,
         lastPage: null,
       }),
-    ).toBe("137 / 638 pages");
+    ).toBe("");
   });
 
   test("the age comes from the API's own clock, never Date.now()", () => {

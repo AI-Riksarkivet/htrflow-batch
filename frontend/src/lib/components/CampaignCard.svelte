@@ -157,6 +157,22 @@
     failed: notice.pagesFailed,
   });
 
+  /** A volume's pages in the shape zone 2 uses for the campaign's. */
+  function volumePages(v: VolumeView) {
+    return {
+      done: v.progress?.done ?? 0,
+      total: v.progress?.total ?? 0,
+      failed: v.progress?.failed ?? 0,
+    };
+  }
+
+  /** Why a volume failed, in one sentence. */
+  function reasonOf(v: VolumeView): string {
+    return v.reason === undefined
+      ? "Failed, with no message from the pod."
+      : describeReason(v.reason);
+  }
+
   /** The figures beside a bar: `2 / 4 · 2 failed`, or `—` when unknown. */
   function figures(cell: { done: number; total: number; failed: number }) {
     return cell.total > 0 ? `${cell.done} / ${cell.total}` : "—";
@@ -416,26 +432,96 @@
   );
 </script>
 
-<!-- Three fixed slots (open · source · log) so a missing link leaves a gap
-     instead of shifting its neighbours; the eye can scan a column of
-     "source" straight down. One snippet, so the folded strip and the table
-     row can never drift apart. -->
-{#snippet links(v: VolumeView)}
+<!-- "Maybe we can have the volume name as a link to open the viewer, then
+     have a symbol for log and manifest?" (the product owner, 2026-09-16).
+     Three words of link text per row read as three words; the id a reader is
+     already looking at is the thing they want to open, and the two documents
+     behind it are recognisable as glyphs. Both icons are inline SVG: the
+     page's CSP allows no fetched asset and no third-party script, and a
+     glyph font would be both. -->
+{#snippet glyph(kind: string)}
+  {#if kind === "log"}
+    <!-- A page with lines on it: the run log. -->
+    <svg
+      viewBox="0 0 16 16"
+      width="14"
+      height="14"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.3"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="M4 2h5l3 3v9H4z" />
+      <path d="M9 2v3h3M6 8.5h4M6 11h4" />
+    </svg>
+  {:else}
+    <!-- Braces: a document of data, not of words. -->
+    <svg
+      viewBox="0 0 16 16"
+      width="14"
+      height="14"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.3"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path
+        d="M6.5 2.5h-1A1.5 1.5 0 0 0 4 4v2.5L2.5 8 4 9.5V12a1.5 1.5 0 0 0 1.5 1.5h1"
+      />
+      <path
+        d="M9.5 2.5h1A1.5 1.5 0 0 1 12 4v2.5L13.5 8 12 9.5V12a1.5 1.5 0 0 1-1.5 1.5h-1"
+      />
+    </svg>
+  {/if}
+{/snippet}
+
+<!-- The id, linked to the viewer when there is something to open there.
+     Never a link that goes nowhere: a volume with no published result and no
+     source manifest is plain text saying why. -->
+{#snippet volumeId(v: VolumeView)}
   {@const open = openHref(v)}
+  {#if open === null}
+    <span class="vid-name" title="{v.id} — nothing to open in the viewer yet"
+      >{v.id}</span
+    >
+  {:else}
+    <a
+      class="vid-name"
+      href={open}
+      target="_blank"
+      rel="noopener"
+      title="open {v.id} in the viewer">{v.id}</a
+    >
+  {/if}
+{/snippet}
+
+<!-- Two fixed slots, so a volume with no source manifest leaves a gap rather
+     than shifting the row beside it. One snippet, so the folded strip and
+     the table row can never drift apart. -->
+{#snippet links(v: VolumeView)}
   {@const source = sourceOf(v)}
-  <span class="slot">
-    {#if open !== null}
-      <a href={open} target="_blank" rel="noopener">open</a>
-    {/if}
-  </span>
-  <span class="slot">
-    {#if source !== null}
-      <a href={source} target="_blank" rel="noopener">source</a>
-    {/if}
-  </span>
-  <span class="slot">
-    <a href={logHref(v)}>log</a>
-  </span>
+  <span class="slot"
+    ><a
+      class="vicon"
+      href={logHref(v)}
+      aria-label="run log for {v.id}"
+      title="run log for {v.id}">{@render glyph("log")}</a
+    ></span
+  >
+  <span class="slot"
+    >{#if source !== null}<a
+        class="vicon"
+        href={source}
+        target="_blank"
+        rel="noopener"
+        aria-label="manifest for {v.id}"
+        title="manifest for {v.id}">{@render glyph("manifest")}</a
+      >{/if}</span
+  >
 {/snippet}
 
 <!-- One track, three callers (a running volume's row and the campaign's two
@@ -488,6 +574,48 @@
         >{/if}</span
     >
   </span>
+{/snippet}
+
+<!-- The volume status column, in the folded strip and in the table. It says
+     per volume what zone 2 says per campaign: the state word coloured by
+     that volume's health, then the same figures in the same shape (the
+     product owner, 2026-09-16 — the strip used to read "DONE one-bad" in
+     green with no numbers at all). `withReason` is the strip: the table
+     carries a failed volume's sentence in its first column already, and
+     saying it twice in one row would be the duplication this replaced. -->
+{#snippet volumeStatus(v: VolumeView, withReason: boolean)}
+  {@const lost = lostPages(v)}
+  {@const story = v.progress === null ? "" : describeProgress(v.progress)}
+  <span
+    class="status {v.state}"
+    class:lost={lost > 0}
+    title={lost > 0 ? doneWith(lost) : undefined}
+  >
+    <span class="dot" class:pulse={v.state === "active"} aria-hidden="true"
+    ></span>
+    {#if lost > 0}<span aria-hidden="true">{v.state}</span><span class="sr-only"
+        >{doneWith(lost)}</span
+      >{:else}{v.state}{/if}
+  </span>
+  {#if withReason && v.state === "failed"}
+    <span class="vreason" title={reasonOf(v)}>{reasonOf(v)}</span>
+  {:else}
+    {@const cell = volumePages(v)}
+    <!-- Keyed on the count itself: the node is rebuilt only when the number
+         changes, which is what restarts the highlight; `moved` is what
+         decides it runs at all. -->
+    {#key cell.done}
+      <span class="vfigures" class:bump={moved.has(v.id)}
+        >{figures(cell)}{#if cell.failed > 0}<span class="bad"
+            >{" · "}{cell.failed} failed</span
+          >{/if}</span
+      >
+    {/key}
+    {#if v.state === "active" && cell.total > 0}
+      {@render bar(`Pages done in ${v.id}`, cell.done, cell.total, "running")}
+    {/if}
+    {#if story !== ""}<span class="vprogress">{story}</span>{/if}
+  {/if}
 {/snippet}
 
 <section class="campaign" data-health={health}>
@@ -655,18 +783,10 @@
     <p class="notice error-row" role="alert">{detailError}</p>
   {/if}
   {#if collapsed && latest !== null}
-    {@const lost = lostPages(latest)}
     <p class="latest">
-      <span
-        class="latest-state {latest.state}"
-        class:lost={lost > 0}
-        title={lost > 0 ? doneWith(lost) : undefined}
-        >{#if lost > 0}<span aria-hidden="true">{latest.state}</span><span
-            class="sr-only">{doneWith(lost)}</span
-          >{:else}{latest.state}{/if}</span
-      >
-      <span class="latest-id" title={latest.id}>{latest.id}</span>
+      <span class="latest-id">{@render volumeId(latest)}</span>
       <span class="links">{@render links(latest)}</span>
+      <span class="latest-status">{@render volumeStatus(latest, true)}</span>
     </p>
   {/if}
   {#if !collapsed}
@@ -676,60 +796,27 @@
         <colgroup>
           <col class="c-vid" />
           <col class="c-status" />
-          <col class="c-links" />
         </colgroup>
         <thead>
           <tr>
             <th>volume</th>
-            <th>status</th>
-            <th>links</th>
+            <th class="vstatus">status</th>
           </tr>
         </thead>
         <tbody>
           {#each volumes as v (v.id)}
-            {@const lost = lostPages(v)}
             <tr>
               <td class="vid">
-                <span class="vid-name" title={v.id}>{v.id}</span>
+                <span class="vid-line"
+                  >{@render volumeId(v)}<span class="links"
+                    >{@render links(v)}</span
+                  ></span
+                >
                 {#if v.reason !== undefined}
                   <span class="verr">{describeReason(v.reason)}</span>
                 {/if}
               </td>
-              <td>
-                <span
-                  class="status {v.state}"
-                  class:lost={lost > 0}
-                  title={lost > 0 ? doneWith(lost) : undefined}
-                >
-                  <span
-                    class="dot"
-                    class:pulse={v.state === "active"}
-                    aria-hidden="true"
-                  ></span>
-                  {#if lost > 0}<span aria-hidden="true">{v.state}</span><span
-                      class="sr-only">{doneWith(lost)}</span
-                    >{:else}{v.state}{/if}
-                </span>
-                {#if v.progress !== null}
-                  <!-- Keyed on the count itself: the node is rebuilt only
-                       when the number changes, which is what restarts the
-                       highlight; `moved` is what decides it runs at all. -->
-                  {#key v.progress.done}
-                    <span class="vprogress" class:bump={moved.has(v.id)}
-                      >{describeProgress(v.progress)}</span
-                    >
-                  {/key}
-                  {#if v.state === "active" && v.progress.total > 0}
-                    {@render bar(
-                      `Pages done in ${v.id}`,
-                      v.progress.done,
-                      v.progress.total,
-                      "running",
-                    )}
-                  {/if}
-                {/if}
-              </td>
-              <td class="links">{@render links(v)}</td>
+              <td class="vstatus">{@render volumeStatus(v, false)}</td>
             </tr>
           {/each}
         </tbody>
@@ -1099,26 +1186,11 @@
     width: 13rem;
   }
 
-  /* Three slots at 3.3rem, as before Task 7 dropped "source". */
-  col.c-links {
-    width: 11rem;
-  }
-
-  /* After the col rules so the narrow widths win the cascade: on a phone
-     the three slots would leave the volume name a few characters, so both
-     fixed columns tighten instead (the old card's rule, restored with the
-     third slot). */
+  /* After the col rule so the narrow width wins the cascade: on a phone the
+     status column gives its width back to the volume name. */
   @media (max-width: 48rem) {
     col.c-status {
-      width: 7rem;
-    }
-
-    col.c-links {
-      width: 9.6rem;
-    }
-
-    .slot {
-      min-width: 2.9rem;
+      width: 9rem;
     }
   }
 
@@ -1169,11 +1241,46 @@
 
   /* Under the state chip, not beside it: the state is what the eye scans
      down the column, the numbers are what it stops for. */
+  /* The figures, in zone 2's shape and zone 2's colours: the same fraction
+     and the same `.bad` count, so a volume's row and the campaign's line
+     above it read as one column of numbers (2026-09-16). */
+  .vfigures {
+    font-variant-numeric: tabular-nums;
+    color: var(--foreground);
+    white-space: nowrap;
+  }
+
+  /* What the numbers cannot say: the stage, and how long ago. */
   .vprogress {
     display: block;
     font-size: 11.5px;
     color: var(--muted-foreground);
     overflow-wrap: anywhere;
+  }
+
+  /* A failed volume's sentence, on the folded strip only -- in the table it
+     sits in the volume column beside the id. */
+  .vreason {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--destructive);
+  }
+
+  .latest .vprogress,
+  .latest .vfigures {
+    display: inline;
+    font-size: 11.5px;
+  }
+
+  /* The strip is one line, so the bar sits on it at zone 2's track width
+     rather than below the figures as it does in a table cell. */
+  .latest .bar {
+    display: inline-block;
+    width: 4.5rem;
+    margin-top: 0;
+    vertical-align: middle;
   }
 
   /* The one thing on this card that moves of its own accord. The fill eases
@@ -1242,7 +1349,7 @@
      there is no paint order to get wrong. It fades to a zero-alpha
      `--primary-soft` rather than to `transparent`, which is black at alpha 0
      and would grey on the way out. */
-  .vprogress.bump {
+  .vfigures.bump {
     border-radius: 3px;
     animation: settle 1s ease-out;
   }
@@ -1325,57 +1432,102 @@
     background: var(--muted);
   }
 
-  td.links,
-  .latest .links {
+  .links {
+    display: inline-flex;
+    align-items: center;
     white-space: nowrap;
   }
 
+  /* A fixed slot each, so a volume with no source manifest leaves a gap
+     rather than shifting the row beside it. */
   .slot {
-    display: inline-block;
-    min-width: 3.3rem;
+    display: inline-flex;
+    justify-content: center;
+    min-width: 1.6rem;
   }
 
-  td.links a,
-  .latest a {
+  /* 24px of hit area around a 14px glyph: the icon is small, the target is
+     not (2026-09-16). currentColor, so both themes get it for free. */
+  .vicon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    min-height: 24px;
+    color: var(--muted-foreground);
+    text-decoration: none;
+    border-radius: 3px;
+  }
+
+  .vicon:hover {
+    color: var(--primary);
+  }
+
+  .vicon:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 1px;
+    color: var(--primary);
+  }
+
+  a.vid-name {
     color: var(--primary);
     text-decoration: none;
   }
 
-  td.links a:hover,
-  .latest a:hover {
+  a.vid-name:hover {
     text-decoration: underline;
   }
 
+  a.vid-name:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
   /* The folded card's one-line window on the campaign: the volume most
-     likely to be wanted, with the same three links its table row has, so
-     UV and the run log are one click away without unfolding. */
+     likely to be wanted, with the same links its table row has, so the
+     viewer and the run log are one click away without unfolding. */
   .latest {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
-    gap: 0.5rem;
+    gap: 0.35rem 0.5rem;
     margin: 0.25rem 0 0;
     font-size: 12.5px;
     min-width: 0;
   }
 
-  .latest-state {
-    color: var(--muted-foreground);
-    font-size: 10.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
-    flex-shrink: 0;
+  /* The same pill and the same figures the table row carries: one status
+     column, whether the card is folded or open (2026-09-16). */
+  .latest-status {
+    display: flex;
+    align-items: baseline;
+    justify-content: flex-end;
+    gap: 0.4rem;
+    min-width: 0;
+    /* Right-aligned at the far end of the line, so the figures of every row
+       line up under each other the way zone 2's columns do (the product
+       owner, 2026-09-16). It keeps that alignment when it wraps. */
+    margin-left: auto;
   }
 
-  .latest-state.active {
-    color: var(--primary);
+  /* The same, in the table: the id and its icons on the left, the status at
+     the right edge of its own column. */
+  .vid-line {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+    min-width: 0;
+    max-width: 100%;
   }
 
-  .latest-state.done {
-    color: var(--success);
+  td.vstatus,
+  th.vstatus {
+    text-align: right;
   }
 
-  .latest-state.done.lost {
-    color: var(--warning);
+  td.vstatus {
+    white-space: nowrap;
   }
 
   .latest-id {
@@ -1431,7 +1583,7 @@
     /* The highlight lives entirely inside its keyframes, so turning the
        animation off leaves no colour behind. The sheen is a real element and
        has to be hidden, not merely stilled, or it parks across the fill. */
-    .vprogress.bump {
+    .vfigures.bump {
       animation: none;
     }
 
