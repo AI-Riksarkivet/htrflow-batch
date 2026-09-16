@@ -289,56 +289,72 @@ describe("describeProgress", () => {
   // zone 2 uses for the campaign; this says what the numbers cannot (the
   // product owner, 2026-09-16).
   test("what it is doing, and how long ago", () => {
-    expect(describeProgress(progress)).toBe(
+    expect(describeProgress(progress, "active")).toBe(
       "processing pages · updated 12 s ago",
     );
   });
 
   test("the counts are not repeated here", () => {
-    expect(describeProgress({ ...progress, failed: 2 })).not.toContain(
-      "2 failed",
-    );
-    expect(describeProgress(progress)).not.toContain("638");
+    expect(
+      describeProgress({ ...progress, failed: 2 }, "active"),
+    ).not.toContain("2 failed");
+    expect(describeProgress(progress, "active")).not.toContain("638");
   });
 
   test("minutes and hours once seconds stop meaning anything", () => {
-    expect(describeProgress({ ...progress, ageSeconds: 300 })).toContain(
-      "updated 5 min ago",
-    );
-    expect(describeProgress({ ...progress, ageSeconds: 7200 })).toContain(
-      "updated 2 h ago",
-    );
+    expect(
+      describeProgress({ ...progress, ageSeconds: 300 }, "active"),
+    ).toContain("updated 5 min ago");
+    expect(
+      describeProgress({ ...progress, ageSeconds: 7200 }, "active"),
+    ).toContain("updated 2 h ago");
   });
 
   test("a stage with no word of its own is still shown, not dropped", () => {
-    expect(describeProgress({ ...progress, stage: "warmup" })).toBe(
+    expect(describeProgress({ ...progress, stage: "warmup" }, "active")).toBe(
       "warmup · updated 12 s ago",
     );
   });
 
+  // "updated 47 h ago" after every row of a finished campaign is a clock
+  // nobody is waiting on (the product owner, 2026-09-16).
+  test("the clock runs only while something can still change", () => {
+    for (const state of ["done", "failed", "pending"] as const)
+      expect(describeProgress(progress, state)).not.toContain("updated");
+    for (const state of ["active", "unknown"] as const)
+      expect(describeProgress(progress, state)).toContain("updated 12 s ago");
+  });
+
   test("a finished volume adds nothing to its numbers", () => {
-    // `done` is the state word's job, and the pages are the figures'.
+    // `done` is the state word's job, the pages are the figures', and a
+    // clock nobody is waiting on is noise (the product owner, 2026-09-16).
     expect(
-      describeProgress({
-        ...progress,
-        done: 637,
-        total: 638,
-        failed: 1,
-        stage: "done",
-        ageSeconds: null,
-      }),
+      describeProgress(
+        {
+          ...progress,
+          done: 637,
+          total: 638,
+          failed: 1,
+          stage: "done",
+          ageSeconds: 12,
+        },
+        "done",
+      ),
     ).toBe("");
   });
 
   test("no timestamp, no stage: nothing at all", () => {
     expect(
-      describeProgress({
-        ...progress,
-        stage: null,
-        updatedAt: null,
-        ageSeconds: null,
-        lastPage: null,
-      }),
+      describeProgress(
+        {
+          ...progress,
+          stage: null,
+          updatedAt: null,
+          ageSeconds: null,
+          lastPage: null,
+        },
+        "active",
+      ),
     ).toBe("");
   });
 
@@ -347,7 +363,10 @@ describe("describeProgress", () => {
     // ageSeconds would be a shape the API never sends, but the point is
     // that this function never reads a clock of its own to compute it.
     expect(
-      describeProgress({ ...progress, updatedAt: null, ageSeconds: 12 }),
+      describeProgress(
+        { ...progress, updatedAt: null, ageSeconds: 12 },
+        "active",
+      ),
     ).toContain("updated 12 s ago");
   });
 });

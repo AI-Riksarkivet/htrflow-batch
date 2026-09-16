@@ -1064,7 +1064,15 @@ check web       "$(count packages/web/src -name '*.py')" 1866
 # the viewer, the run log and the manifest are two inline-SVG icons beside
 # it, and the status sits right-aligned at the far end so the figures of
 # every row line up. Three words of link text per row are gone.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4576
+# 4576 -> 4628 (2026-09-16, status column): "look at the status now, they
+# are all wobbly" -- the icons sat between a variable-width id and a
+# right-aligned status, so they landed at a different x on every card, and
+# the pill's left edge moved with the width of the figures beside it. The
+# volume line is three fixed grid tracks now (id, icons, status), the state
+# word holds a slot the width of the longest one and the figures one wide
+# enough for "637 / 638 - 1 failed" in tabular figures, and the clock after
+# the figures runs only while the volume can still change.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4628
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

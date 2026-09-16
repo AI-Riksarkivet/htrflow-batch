@@ -2293,3 +2293,155 @@ describe("the volume status column", () => {
     expect(td.querySelector(".vprogress")?.textContent).not.toContain("638");
   });
 });
+
+// "look at the status now, they are all wobbly" (the product owner,
+// 2026-09-16): the icons floated at a different x on every card because they
+// sat between a variable-width id and a right-aligned status, and the pill's
+// left edge moved with the width of the figures beside it.
+describe("a volume line is the same shape on every row and every card", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function vol(id: string, over: Record<string, unknown> = {}) {
+    return {
+      ...volumeDone,
+      id,
+      progress: {
+        done: 2,
+        total: 3,
+        failed: 0,
+        lastPage: "0003",
+        stage: "done",
+        updatedAt: "2026-09-14T07:00:00Z",
+        ageSeconds: 169_200,
+        lastError: null,
+        errors: 0,
+        viewerPublished: true,
+      },
+      ...over,
+    };
+  }
+
+  async function card(volumes: unknown[], latest: unknown = null) {
+    cleanup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [], volumes, latest }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    return container;
+  }
+
+  test("the id, the icons and the status are three grid tracks", async () => {
+    const container = await card([vol("vol0")], vol("vol0"));
+    // Folded: the strip carries the tracks itself.
+    const strip = container.querySelector(".latest") as HTMLElement;
+    expect([...strip.children].map((c) => c.className.split(" ")[0])).toEqual([
+      "latest-id",
+      "links",
+      "latest-status",
+    ]);
+    // Open: the volume column carries the id and the icons, the status
+    // column is its own.
+    await expand();
+    const line = container.querySelector(".vid-line") as HTMLElement;
+    expect([...line.children].map((c) => c.className.split(" ")[0])).toEqual([
+      "vid-name",
+      "links",
+    ]);
+  });
+
+  test("a long id and a short one put their icons in the same place", async () => {
+    // The icons are a track of their own, not a thing that follows the text:
+    // two rows whose ids differ in length line up all the same.
+    const container = await card([vol("a"), vol("R0001203-part-4")]);
+    await expand();
+    const lines = [...container.querySelectorAll(".vid-line")];
+    expect(lines).toHaveLength(2);
+    for (const line of lines) {
+      expect(getComputedStyle(line).gridTemplateColumns).toBe(
+        getComputedStyle(lines[0] as HTMLElement).gridTemplateColumns,
+      );
+    }
+  });
+
+  test("a finished volume says nothing about when it last spoke", async () => {
+    const container = await card([vol("vol0")], vol("vol0"));
+    expect(container.querySelector(".vprogress")).toBeNull();
+    await expand();
+    expect(container.querySelector(".vprogress")).toBeNull();
+    // The figures are still there; it is only the clock that goes.
+    expect(container.querySelector(".vfigures")).toHaveTextContent("2 / 3");
+  });
+
+  test("a failed volume says nothing about it either", async () => {
+    const container = await card([
+      { ...vol("vol1"), state: "failed", reason: volumeFailed.reason },
+    ]);
+    await expand();
+    expect(container.querySelector(".vprogress")).toBeNull();
+  });
+
+  test("a volume still working does say it", async () => {
+    const container = await card([
+      {
+        ...vol("vol2"),
+        state: "active",
+        progress: { ...vol("vol2").progress, stage: "stream", ageSeconds: 12 },
+      },
+    ]);
+    await expand();
+    expect(container.querySelector(".vprogress")).toHaveTextContent(
+      "processing pages · updated 12 s ago",
+    );
+  });
+
+  test("a poll that moves the figures changes nothing but the figures", async () => {
+    let done = 2;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          failures: [],
+          volumes: [
+            {
+              ...vol("vol2"),
+              state: "active",
+              progress: {
+                ...vol("vol2").progress,
+                done,
+                stage: "stream",
+                ageSeconds: 12,
+              },
+            },
+          ],
+        }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+    // `className` on an SVG element is not a string, so read the attribute.
+    const shape = () =>
+      [...container.querySelectorAll("tbody td *")].map((el) =>
+        (el.getAttribute("class") ?? "").replace(/\s*bump\s*/, " ").trim(),
+      );
+    const before = shape();
+    done = 3;
+    await vi.advanceTimersByTimeAsync(RELOAD_MS);
+    expect(container.querySelector(".vfigures")).toHaveTextContent("3 / 3");
+    // Same elements, same classes but for the highlight, so nothing resizes.
+    expect(shape()).toEqual(before);
+    expect(container.querySelector(".vfigures.bump")).not.toBeNull();
+  });
+});
