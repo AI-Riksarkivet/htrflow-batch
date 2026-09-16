@@ -145,6 +145,10 @@
     done: job.counts.done,
     total: job.counts.total,
     failed: job.counts.failed,
+    // Only while the Job is there to be running them: a reaped campaign's
+    // record can still carry a count of volumes that were in flight when
+    // anyone last looked (2026-09-16 review).
+    active: job.phase === "Running" ? job.counts.active : 0,
   });
   const pageCell = $derived({
     label: "pages",
@@ -459,7 +463,7 @@
      sit on one vertical line and the eye can run down them. -->
 {#snippet metric(
   label: string,
-  cell: { done: number; total: number; failed: number },
+  cell: { done: number; total: number; failed: number; active?: number },
   mode: string,
 )}
   <span class="metric">
@@ -474,11 +478,15 @@
         )}
       {/if}
     </span>
-    <span class="metric-figures">
-      {figures(cell)}{#if cell.failed > 0}<span class="bad">
-          · {cell.failed} failed</span
-        >{/if}
-    </span>
+    <!-- The separators carry their own leading space: Svelte trims the
+         whitespace in front of an element, and the live page read
+         "5 / 8· 3 failed" (2026-09-16 review). -->
+    <span class="metric-figures"
+      >{figures(cell)}{#if cell.failed > 0}<span class="bad"
+          >{" · "}{cell.failed} failed</span
+        >{/if}{#if cell.active}<span>{" · "}{cell.active} active</span
+        >{/if}</span
+    >
   </span>
 {/snippet}
 

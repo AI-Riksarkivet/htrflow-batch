@@ -183,7 +183,10 @@ table.
    the exact timestamp in `datetime` and `title`.
 2. **Numbers**, one line of fixed columns — `volumes`, `pages` and, only when
    there are any, `errors`. Each cell is a label, a 3px bar and its figures
-   (`2 / 4 · 2 failed`), and the column tracks are fixed lengths rather than
+   (`2 / 4 · 2 failed`; the volumes cell adds `· 1 active` while the campaign
+   is Running, and only then — a reaped campaign's record can still carry a
+   count of what was in flight when anyone last looked). The column tracks
+   are fixed lengths rather than
    content-derived, so the figures of stacked cards sit on one vertical line.
    A total nobody knows yet (a campaign that has not run: the API reads page
    counts out of the bucket) shows the label and an em dash, never a bar of
