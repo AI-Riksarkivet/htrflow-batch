@@ -112,6 +112,28 @@
   const tableId = $derived(`volumes-${slug}`);
   const yamlId = $derived(`pipeline-${slug}`);
 
+  // A volume that finished but lost pages. It is not a failure — the volume
+  // published — and it is not a clean run either, and the green chip made
+  // the loss easy to miss with "1 failed" buried in the progress line beside
+  // it (the product owner, 2026-09-15). Amber: the colour the phase chip
+  // already gives a campaign that published some of itself and not the rest.
+  function lostPages(v: VolumeView): number {
+    return v.state === "done" ? (v.progress?.failed ?? 0) : 0;
+  }
+
+  // The colour must not be the only thing saying it (WCAG 1.4.1), so this
+  // sentence is both the tooltip and what a screen reader reads instead of
+  // the bare word.
+  function doneWith(failed: number): string {
+    return `done with ${failed} failed page${failed === 1 ? "" : "s"}`;
+  }
+
+  // The campaign-wide version: every index published, and pages were lost
+  // along the way. `counts.failed > 0` is already a failure below.
+  const campaignLost = $derived(
+    job.phase === "Succeeded" && notice.pagesFailed > 0,
+  );
+
   // The card's left accent: worst-first, same intent as the old
   // volume-derived campaignHealth but read straight off the Job phase now
   // that the API computes it server-side. A failed warm-up (Task 28) is
@@ -128,9 +150,11 @@
       ? "failed"
       : job.phase === "Running"
         ? "active"
-        : job.phase === "Succeeded"
-          ? "done"
-          : "idle",
+        : campaignLost
+          ? "lost"
+          : job.phase === "Succeeded"
+            ? "done"
+            : "idle",
   );
 
   // "warm-up pending" / "warm-up running" / "warm-up failed" / "no warm-up";
@@ -396,9 +420,16 @@
           : undefined}>{warmupChip}</span
       >
     {/if}
-    <span class="chip phase {job.phase.toLowerCase()}">
+    <span
+      class="chip phase {job.phase.toLowerCase()}"
+      class:lost={campaignLost}
+      title={campaignLost ? doneWith(notice.pagesFailed) : undefined}
+    >
       {#if beating}<span class="dot pulse" aria-hidden="true"
-        ></span>{/if}{phaseLabel}</span
+        ></span>{/if}{#if campaignLost}<span aria-hidden="true"
+          >{phaseLabel}</span
+        ><span class="sr-only">{doneWith(notice.pagesFailed)}</span
+        >{:else}{phaseLabel}{/if}</span
     >
     {#if job.jobGone}
       <!-- Not a failure: the Job did its work and Kubernetes removed it at
@@ -511,8 +542,16 @@
     <p class="notice error-row" role="alert">{detailError}</p>
   {/if}
   {#if collapsed && latest !== null}
+    {@const lost = lostPages(latest)}
     <p class="latest">
-      <span class="latest-state {latest.state}">{latest.state}</span>
+      <span
+        class="latest-state {latest.state}"
+        class:lost={lost > 0}
+        title={lost > 0 ? doneWith(lost) : undefined}
+        >{#if lost > 0}<span aria-hidden="true">{latest.state}</span><span
+            class="sr-only">{doneWith(lost)}</span
+          >{:else}{latest.state}{/if}</span
+      >
       <span class="latest-id" title={latest.id}>{latest.id}</span>
       <span class="links">{@render links(latest)}</span>
     </p>
@@ -556,6 +595,7 @@
         </thead>
         <tbody>
           {#each volumes as v (v.id)}
+            {@const lost = lostPages(v)}
             <tr>
               <td class="vid">
                 <span class="vid-name" title={v.id}>{v.id}</span>
@@ -564,13 +604,19 @@
                 {/if}
               </td>
               <td>
-                <span class="status {v.state}">
+                <span
+                  class="status {v.state}"
+                  class:lost={lost > 0}
+                  title={lost > 0 ? doneWith(lost) : undefined}
+                >
                   <span
                     class="dot"
                     class:pulse={v.state === "active"}
                     aria-hidden="true"
                   ></span>
-                  {v.state}
+                  {#if lost > 0}<span aria-hidden="true">{v.state}</span><span
+                      class="sr-only">{doneWith(lost)}</span
+                    >{:else}{v.state}{/if}
                 </span>
                 {#if v.progress !== null}
                   <!-- Keyed on the count itself: the node is rebuilt only
@@ -630,6 +676,12 @@
 
   .campaign[data-health="failed"] {
     border-left-color: var(--destructive);
+  }
+
+  /* Published, but not all of it. The same warning token the phase chip
+     gives a partially failed campaign. */
+  .campaign[data-health="lost"] {
+    border-left-color: var(--warning);
   }
 
   .camp {
@@ -801,7 +853,9 @@
   .chip.phase.unknown,
   .chip.warmup.pending,
   .chip.warmup.running,
-  /* Warning, not error: some of the campaign did publish. */
+  /* Warning, not error: some of the campaign did publish — whether the Job
+     said so, or every index succeeded and pages were lost inside them. */
+  .chip.phase.lost,
   .chip.phase.partiallyfailed {
     background: var(--warning-soft);
     color: var(--warning);
@@ -1119,6 +1173,13 @@
     background: var(--destructive-soft);
   }
 
+  /* Done, and pages went missing doing it: the green said the volume was
+     clean. Wins over .status.done above, which it follows. */
+  .status.done.lost {
+    color: var(--warning);
+    background: var(--warning-soft);
+  }
+
   /* Nobody recorded what this volume did: the same quiet treatment as a
      volume that has not started, since neither is a failure. */
   .status.unknown,
@@ -1174,6 +1235,10 @@
 
   .latest-state.done {
     color: var(--success);
+  }
+
+  .latest-state.done.lost {
+    color: var(--warning);
   }
 
   .latest-id {

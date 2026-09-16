@@ -110,7 +110,12 @@ Universal Viewer is not built by this project.
   anywhere; a `failed` row's `reason` is `{stage, permanent, error}` parsed
   by the API out of the wrapper's termination message (`stage`/`permanent`
   `null` when it was not the wrapper's JSON), present only while a pod for
-  that index still exists.
+  that index still exists. A `done` row whose `progress.failed` is above
+  zero takes the **warning colour** rather than the green one — the volume
+  published, but not all of its pages — and carries "done with N failed
+  pages" as its title and as what a screen reader reads, so the colour is
+  never the only thing carrying it; the folded card's one-line strip follows
+  the same rule.
 - **The "job removed" chip.** A campaign whose Job is past its
   `ttlSecondsAfterFinished` arrives with `jobGone: true` — the API served
   that row from the campaign's ConfigMap and the status ConfigMap beside it,
@@ -180,7 +185,10 @@ Universal Viewer is not built by this project.
   `Running`, green if `Succeeded`, grey otherwise. `PartiallyFailed` — the
   Job gave up with some indexes already published — shows as "partially
   failed" in the warning colour, not the error colour: part of the campaign
-  did come out.
+  did come out. A `Succeeded` campaign whose `pagesFailed` is above zero
+  takes that same warning colour, on the phase chip and on the accent, with
+  the same "done with N failed pages" title: every index published and pages
+  were still lost inside them. The notice chip beside it is unaffected.
 - **Log link** —
   `log?log=<encodeURIComponent(logUrl)>&manifest=<encodeURIComponent(manifestUrl)>`,
   plus `&live=1` for a volume whose `state` is not `"done"`. Both URLs come
