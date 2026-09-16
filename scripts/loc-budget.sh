@@ -1120,7 +1120,15 @@ check web       "$(count packages/web/src -name '*.py')" 1870
 # and fixed, beside the pill, with the words taking the free width on the
 # left. And what a row LOST is a small line under that row's own bar, so a
 # clean row is one line and nothing moves when there is nothing wrong.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4813
+# 4813 -> 4822 (2026-09-16, phone bar): on a 390px card the totals rows
+# drew their bar and the volume rows drew none. Line 2's fixed tracks are
+# wider than the card, and a squeezed grid takes the width back from
+# whichever item can give it -- on a volume row that was the bar, the one
+# cell whose content has no width of its own, while the totals rows could
+# give from their empty icon and pill cells instead. The bar's track has a
+# floor now, and the leading spacer column is gone so line 2 has the whole
+# card to lay out in.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4822
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

@@ -277,10 +277,15 @@ place on each one, the way they would in a table.
 
    At phone width (≤520px) the tracks fold — the id and what failed in it
    across the first line, then the icons, the short bar, the fraction and the
-   pill packed against the right — so it is still one column system. The
-   words wrap rather than clip there, and the bar's cell may shrink: on the
-   live phone the figures read "5 / 6 · 1 f" and the bar ran on under the
-   icons.
+   pill on the second — so it is still one column system. The words wrap
+   rather than clip there (on the live phone the figures read "5 / 6 · 1 f"
+   and the bar ran on under the icons), and the bar's track may shrink
+   between a floor and its full width: line 2's fixed tracks are wider than a
+   390px card, and a squeezed grid takes the width back from whichever item
+   can give it — which, on a volume row, was the bar, the one cell whose
+   content has no width of its own. It collapsed to nothing while the totals
+   rows, whose icon and pill cells are empty and could give instead, kept
+   theirs.
 3. **Problems**, one line across the grid, and only when there is one: why
    the warm-up could not run, and each failed volume as `id: sentence` with
    the id linking to that volume's run log. The most recent page error joins
