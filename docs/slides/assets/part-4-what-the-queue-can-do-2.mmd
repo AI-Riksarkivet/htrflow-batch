@@ -1,0 +1,6 @@
+flowchart TB
+  P["the GPU pool"]
+  A["queue: transcription<br/>quota 8 GPUs"]
+  B["queue: research<br/>quota 4 GPUs"]
+  C["queue: partners<br/>quota 2 GPUs"]
+  P --> A & B & C
