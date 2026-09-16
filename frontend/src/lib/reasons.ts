@@ -225,8 +225,14 @@ export function describeNotice(notice: CampaignNotice): string | null {
     ...count(errors, "error"),
   ];
   if (lastError !== null) {
-    const where = lastError.page === null ? "" : `page ${lastError.page}: `;
-    parts.push(`${where}${lastError.error}`);
+    // The wrapper writes the page into its own message as often as not, and
+    // the API sends the page beside it — prefixing regardless read "page
+    // 0044: page 0044: htrflow's ..." on a live campaign (the product
+    // owner, 2026-09-16). Only this page, spelled this way: a message
+    // naming a DIFFERENT page is saying something the prefix is not.
+    const { page, error } = lastError;
+    const named = page !== null && error.startsWith(`page ${page}:`);
+    parts.push(page === null || named ? error : `page ${page}: ${error}`);
   }
   return parts.join(" · ");
 }
