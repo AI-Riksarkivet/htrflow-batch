@@ -123,15 +123,24 @@ Universal Viewer is not built by this project.
   same figures zone 2 uses: `2 / 3 · 1 failed` with the failed count in the
   bad colour, `137 / 638` and the bar while the volume is active, and an em
   dash when nothing has been read out of the bucket yet. `describeProgress`
-  adds only what the numbers cannot — the stage and how long ago
-  ("processing pages · updated 12 s ago") — since saying the counts again in
-  the same cell made the column two sentences. A failed volume's one
+  adds only what the numbers cannot — the stage, and how long ago **while
+  that can still change** ("processing pages · updated 12 s ago"): saying the
+  counts again in the same cell made the column two sentences, and a clock on
+  a volume that is done or failed is one nobody is waiting on. A failed
+  volume's one
   sentence sits in the table's volume column beside the id, and on the strip
   it replaces the figures, clipped with its title.
 - **A volume line** — the folded card's strip and every table row — reads the
-  same way: the **id**, linked to the viewer; the **two icon links** beside
-  it; then the **status column**, right-aligned at the far end so the figures
-  of every row line up under each other the way zone 2's columns do. The
+  same way, and is laid out as three fixed grid tracks rather than a flex row
+  so that nothing in it drifts between cards: the **id**, linked to the
+  viewer, in the one flexible track; the **two icon links** in a track of
+  their own, so two glyphs sit at the same x on ten cards whose ids differ in
+  length; then the **status column**, right-aligned at the far end so the
+  figures of every row line up under each other the way zone 2's columns do.
+  Inside it the state word holds a slot the width of the longest one
+  ("pending"/"unknown") and the figures hold one wide enough for
+  "637 / 638 · 1 failed" in tabular figures, so neither the pill's left edge
+  nor the line's right edge moves when a poll changes the digits. The
   strip's volume is the one most likely to be wanted (`latest`: newest
   active, else newest done, computed by the API over every volume), so the
   viewer and the run log are one click away without unfolding. It wraps at

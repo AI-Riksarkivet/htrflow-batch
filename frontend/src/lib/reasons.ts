@@ -8,6 +8,7 @@ import {
   ApiUnreachable,
   type CampaignNotice,
   type VolumeProgress,
+  type VolumeState,
   type VolumeReason,
 } from "./api.js";
 import { RELOAD_MS } from "./config.js";
@@ -182,14 +183,17 @@ function formatAge(seconds: number): string {
 }
 
 /**
- * What a volume is doing and when it last said so: "processing pages ·
- * updated 12 s ago". The page counts are deliberately NOT here — the status
+ * What a volume is doing and, while that can still change, when it last
+ * said so: "processing pages · updated 12 s ago". The page counts are deliberately NOT here — the status
  * column shows them in the same shape zone 2 shows the campaign's, and
  * saying them again in the same cell made the column two sentences (the
  * product owner, 2026-09-16). Empty when there is nothing to add to the
  * numbers: a finished volume with no timestamp says nothing here.
  */
-export function describeProgress(progress: VolumeProgress): string {
+export function describeProgress(
+  progress: VolumeProgress,
+  state: VolumeState,
+): string {
   const { stage, ageSeconds } = progress;
   const parts = [];
   // `done` is the one stage left out: the state word beside this line already
@@ -197,7 +201,14 @@ export function describeProgress(progress: VolumeProgress): string {
   // cell must not read as the word twice over.
   if (stage !== null && stage !== "done")
     parts.push(STAGE_WORDS[stage] ?? stage);
-  if (ageSeconds !== null) parts.push(`updated ${formatAge(ageSeconds)}`);
+  // How long ago is news only while something might still change: a done or
+  // failed volume put "updated 47 h ago" after every row of a finished
+  // campaign, which is a clock nobody is waiting on (the product owner,
+  // 2026-09-16). `unknown` keeps it -- there the age is the only sign of
+  // when anything last happened at all.
+  const moving = state === "active" || state === "unknown";
+  if (moving && ageSeconds !== null)
+    parts.push(`updated ${formatAge(ageSeconds)}`);
   return parts.join(" · ");
 }
 

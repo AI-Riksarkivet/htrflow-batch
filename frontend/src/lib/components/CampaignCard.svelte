@@ -585,7 +585,8 @@
      saying it twice in one row would be the duplication this replaced. -->
 {#snippet volumeStatus(v: VolumeView, withReason: boolean)}
   {@const lost = lostPages(v)}
-  {@const story = v.progress === null ? "" : describeProgress(v.progress)}
+  {@const story =
+    v.progress === null ? "" : describeProgress(v.progress, v.state)}
   <span
     class="status {v.state}"
     class:lost={lost > 0}
@@ -593,9 +594,11 @@
   >
     <span class="dot" class:pulse={v.state === "active"} aria-hidden="true"
     ></span>
-    {#if lost > 0}<span aria-hidden="true">{v.state}</span><span class="sr-only"
-        >{doneWith(lost)}</span
-      >{:else}{v.state}{/if}
+    <span class="status-word"
+      >{#if lost > 0}<span aria-hidden="true">{v.state}</span><span
+          class="sr-only">{doneWith(lost)}</span
+        >{:else}{v.state}{/if}</span
+    >
   </span>
   {#if withReason && v.state === "failed"}
     <span class="vreason" title={reasonOf(v)}>{reasonOf(v)}</span>
@@ -842,6 +845,10 @@
      index done, blue = a Job still running, red = a Job failed or carries a
      failed index, grey = queued/paused/nothing moving. */
   .campaign {
+    /* The two fixed tracks of a volume line, in one place: the icon pair,
+       and the status. "637 / 638 · 1 failed" is the widest the figures get. */
+    --icons: 3.2rem;
+    --status: 14.5rem;
     background: var(--card);
     border: 1px solid var(--border);
     border-left: 3px solid var(--muted-foreground);
@@ -1248,6 +1255,19 @@
     font-variant-numeric: tabular-nums;
     color: var(--foreground);
     white-space: nowrap;
+    /* Wide enough for "637 / 638 · 1 failed", and right-aligned inside it,
+       so neither the pill before it nor the line's right edge moves when a
+       poll changes the digits. */
+    min-width: 9.6em;
+    text-align: right;
+  }
+
+  /* The widest state word is "pending"/"unknown"; holding the slot keeps
+     every pill the same width, so its left edge stops wandering from row to
+     row (the product owner, 2026-09-16). */
+  .status-word {
+    display: inline-block;
+    min-width: 4.6em;
   }
 
   /* What the numbers cannot say: the stage, and how long ago. */
@@ -1439,11 +1459,12 @@
   }
 
   /* A fixed slot each, so a volume with no source manifest leaves a gap
-     rather than shifting the row beside it. */
+     rather than shifting the row beside it. Left-aligned in the track:
+     the pair starts where the track starts. */
   .slot {
     display: inline-flex;
-    justify-content: center;
-    min-width: 1.6rem;
+    justify-content: flex-start;
+    width: 1.6rem;
   }
 
   /* 24px of hit area around a 14px glyph: the icon is small, the target is
@@ -1487,11 +1508,21 @@
   /* The folded card's one-line window on the campaign: the volume most
      likely to be wanted, with the same links its table row has, so the
      viewer and the run log are one click away without unfolding. */
+  /* Three tracks, not a flex row with the status pushed right: with the
+     icons between a variable-width id and a right-aligned status they
+     landed at a different x on every card, and five cards read as three
+     things drifting (the product owner, 2026-09-16, "they are all wobbly").
+     The icons are a track of their own -- a column, the way a table has an
+     action column -- rather than something that follows the id text, which
+     is the only way two glyphs sit in the same place on ten cards whose
+     ids differ in length. The strip's tracks are the table's, so the folded
+     line and the open rows line up with each other too. */
   .latest {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--icons) var(--status);
     align-items: baseline;
-    gap: 0.35rem 0.5rem;
+    column-gap: 0.5rem;
+    row-gap: 0.35rem;
     margin: 0.25rem 0 0;
     font-size: 12.5px;
     min-width: 0;
@@ -1499,26 +1530,25 @@
 
   /* The same pill and the same figures the table row carries: one status
      column, whether the card is folded or open (2026-09-16). */
+  /* The status is its own track and fills it: the pill has a fixed width
+     (below) and the figures a fixed minimum, so the pill's left edge and the
+     figures' right edge are both the same on every row and every card. */
   .latest-status {
     display: flex;
     align-items: baseline;
     justify-content: flex-end;
     gap: 0.4rem;
     min-width: 0;
-    /* Right-aligned at the far end of the line, so the figures of every row
-       line up under each other the way zone 2's columns do (the product
-       owner, 2026-09-16). It keeps that alignment when it wraps. */
-    margin-left: auto;
   }
 
-  /* The same, in the table: the id and its icons on the left, the status at
-     the right edge of its own column. */
+  /* The same two tracks in the table's volume column, so the icons line up
+     with the strip's above them. */
   .vid-line {
-    display: inline-flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--icons);
     align-items: center;
-    gap: 0.15rem;
+    column-gap: 0.5rem;
     min-width: 0;
-    max-width: 100%;
   }
 
   td.vstatus,
@@ -1570,6 +1600,17 @@
     .when {
       margin-left: 0;
       flex-basis: 100%;
+    }
+
+    /* A 14.5rem status track does not fit beside an id on a phone: the
+       status takes a line of its own, still right-aligned under the id, and
+       the figures still end where the line ends. */
+    .latest {
+      grid-template-columns: minmax(0, 1fr) var(--icons);
+    }
+
+    .latest-status {
+      grid-column: 1 / -1;
     }
   }
 
