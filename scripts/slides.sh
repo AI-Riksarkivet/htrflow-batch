@@ -33,9 +33,9 @@
 # workflow runs this script after the site build, and the site's
 # Presentations page links each deck's HTML and PDF. So the decks meet the
 # site's content rules and are linted the same way before anything renders.
-# Superseded decks live in docs/slides/archive and are neither linted nor
-# built. The Marp sources themselves stay out of the site pages
-# (scripts/docs-site.sh stages docs/ without them).
+# Superseded decks live in docs/slides/archive, and decks not yet ready in
+# docs/slides/drafts; neither is linted or built. The Marp sources themselves
+# stay out of the site pages (scripts/docs-site.sh stages docs/ without them).
 #
 #   SLIDES_FORMATS   which files to write per deck (default: html pdf pptx)
 #   MERMAID          "render" (default) re-renders an SVG older than its
