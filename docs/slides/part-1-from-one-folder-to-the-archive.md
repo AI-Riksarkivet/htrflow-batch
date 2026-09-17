@@ -294,6 +294,32 @@ size: large
 
 ---
 
+# One team, one repo, one queue
+
+![w:940](assets/p1-teams.svg)
+
+<div class="cols">
+<div>
+
+**A team is a repository.** Whoever can merge chooses the image and models that run with the team's bucket credentials — so reviews, credentials and history stay together. Its converter.yaml names the team's namespace and LocalQueue.
+
+</div>
+<div>
+
+**A budget per team, shared when idle.** Each team's ClusterQueue guarantees its share; in one cohort, idle GPUs go to whoever is busy. Urgency inside a team is `priority`, not another queue.
+
+</div>
+</div>
+
+<!--
+One Kueue install serves the whole cluster; flavors and priority classes are
+shared by every team. A second queue inside one repo is only worth it for a
+team with two separate budgets -- and a second repo does that too, with its
+own approvals.
+-->
+
+---
+
 # Why Kyverno
 
 <table class="plain">
