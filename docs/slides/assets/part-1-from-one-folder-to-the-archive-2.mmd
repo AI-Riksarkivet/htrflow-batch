@@ -1,14 +1,9 @@
 flowchart TB
-  subgraph WORK["the work"]
-    direction TB
-    CF["campaign file"] --> JOB["Job<br/>one per campaign"]
-    JOB --> POD["Pod<br/>one per archival volume"]
-    POD --> INIT["init container<br/>waits for the models"]
-    POD --> CON["container<br/>wrapper + htrflow"]
+  subgraph OURS["built in htrflow-batch"]
+    WR["wrapper<br/>runs htrflow in each pod"] ~~~ CO["converter<br/>validate · render · apply"] ~~~ WEB["web front<br/>status page · run log"] ~~~ CH["Helm charts<br/>install the platform"]
   end
-  subgraph QUEUE["the queue — Kueue"]
-    direction TB
-    CQ["ClusterQueue<br/>the GPU quota"] --> LQ["LocalQueue<br/>the name a Job asks for"]
-    LQ --> WL["Workload<br/>one per Job"]
+  subgraph EXT["projects we build on"]
+    HTR["htrflow"] ~~~ K8S["Kubernetes"] ~~~ KUE["Kueue"] ~~~ KYV["Kyverno"] ~~~ UV["Universal Viewer"] ~~~ GPU["NVIDIA GPU stack"] ~~~ S3["S3 store"] ~~~ ARGO["Argo CD<br/>optional"]
   end
-  JOB <-. "admitted?" .-> WL
+  OURS ~~~ EXT
+  style OURS stroke-width:3px

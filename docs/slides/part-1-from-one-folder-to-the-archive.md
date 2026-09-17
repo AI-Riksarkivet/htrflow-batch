@@ -165,6 +165,24 @@ Hub, and the web front is the one pod a browser talks to.
 
 ---
 
+# What it is made of
+
+```mermaid w:1150
+flowchart TB
+  subgraph OURS["built in htrflow-batch"]
+    WR["wrapper<br/>runs htrflow in each pod"] ~~~ CO["converter<br/>validate · render · apply"] ~~~ WEB["web front<br/>status page · run log"] ~~~ CH["Helm charts<br/>install the platform"]
+  end
+  subgraph EXT["projects we build on"]
+    HTR["htrflow"] ~~~ K8S["Kubernetes"] ~~~ KUE["Kueue"] ~~~ KYV["Kyverno"] ~~~ UV["Universal Viewer"] ~~~ GPU["NVIDIA GPU stack"] ~~~ S3["S3 store"] ~~~ ARGO["Argo CD<br/>optional"]
+  end
+  OURS ~~~ EXT
+  style OURS stroke-width:3px
+```
+
+**We built the four boxes on top.** Everything below is an existing project we use as it is — htrflow included, driven as a library.
+
+---
+
 # What is inside what
 
 ```mermaid h:380
@@ -766,47 +784,6 @@ once it has run, which is why a restart is a new name rather than an edit.
 
 ---
 
-# What it is made of
-
-<div class="cols">
-<div>
-
-<p class="filename">ours — in the htrflow-batch repository</p>
-
-<table class="plain">
-<tr><td><strong>wrapper</strong></td><td>runs in every campaign pod: fetch, htrflow, upload, verify</td></tr>
-<tr><td><strong>converter</strong></td><td>the <code>htrflow-campaigns</code> tool: init, validate, render, apply — runs locally and in CI, never in the cluster</td></tr>
-<tr><td><strong>web</strong></td><td>one process: the read API, the status page and the Universal Viewer</td></tr>
-<tr><td><strong>status page</strong></td><td>the browser app the web front serves</td></tr>
-<tr><td><strong>charts</strong></td><td>install the platform — queue, model cache, web front, policies, network rules — and, for development only, an S3 store and a registry</td></tr>
-</table>
-
-</div>
-<div>
-
-<p class="filename">what it stands on</p>
-
-<table class="plain">
-<tr><td><strong>Kubernetes</strong></td><td>runs the pods; its Indexed Jobs are the campaigns</td></tr>
-<tr><td><strong>Kueue</strong></td><td>the queue and the GPU quota — part 4</td></tr>
-<tr><td><strong>Kyverno</strong></td><td>admission policies: allowed image registries, digests, model revisions, signatures</td></tr>
-<tr><td><strong>NVIDIA GPU stack</strong></td><td>driver, container runtime and device plugin, so a pod can have a GPU</td></tr>
-<tr><td><strong>an S3 store</strong></td><td>the results bucket — the only durable state</td></tr>
-<tr><td><strong>a registry</strong></td><td>where the two images live, signed</td></tr>
-<tr><td><strong>Argo CD</strong></td><td>optional: applies <code>rendered/</code> from git instead of a person</td></tr>
-</table>
-
-</div>
-</div>
-
-<!--
-Two images: htrflow-batch (the wrapper on top of htrflow's own image) and
-htrflow-web (the read API, status page and viewer). No database, no
-controller or custom resource of our own: the campaign is a plain Job.
--->
-
----
-
 # The status page
 
 ![w:860](assets/part-1-status-page.png)
@@ -840,7 +817,7 @@ and viewer links keep working.
 
 ![w:700](assets/part-1-run-log.png)
 
-Each volume's log: a summary, one cell per page, the failed pages with their reason, and the log itself — updated while the volume runs.
+Each volume's log: a summary, one cell per page, the failed pages with their reason, and the log itself — updated while the volume runs, and stored in the S3 bucket beside the results for now.
 
 <!--
 Opened from the page icon on a volume's row. The summary names the
