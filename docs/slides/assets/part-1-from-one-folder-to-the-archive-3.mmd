@@ -1,9 +1,14 @@
-flowchart LR
-  A["apply sends<br/>an object"]
-  API["Kubernetes<br/>API server"]
-  K["Kyverno<br/>checks the policies"]
-  OK["accepted<br/>stored and run"]
-  NO["refused<br/>one sentence why"]
-  A --> API --> K
-  K -->|"passes"| OK
-  K -->|"breaks a rule"| NO
+flowchart TB
+  subgraph WORK["the work"]
+    direction TB
+    CF["campaign file"] --> JOB["Job<br/>one per campaign"]
+    JOB --> POD["Pod<br/>one per archival volume"]
+    POD --> INIT["init container<br/>waits for the models"]
+    POD --> CON["container<br/>wrapper + htrflow"]
+  end
+  subgraph QUEUE["the queue — Kueue"]
+    direction TB
+    CQ["ClusterQueue<br/>the GPU quota"] --> LQ["LocalQueue<br/>the name a Job asks for"]
+    LQ --> WL["Workload<br/>one per Job"]
+  end
+  JOB <-. "admitted?" .-> WL

@@ -1,5 +1,9 @@
 flowchart LR
-  Q["waiting: A (bulk, 09:00) · B (bulk, 09:30) · C (interactive, 10:00)"]
-  O["order Kueue admits them in:<br/>C, then A, then B"]
-  R["running: D (bulk) — untouched<br/>nothing is evicted"]
-  Q --> O --> R
+  subgraph CL["the cluster — 4 GPUs"]
+    A["campaign A · window 2<br/>running on 2 GPUs"]
+    FREE["2 GPUs free"]
+  end
+  B["campaign B · window 4<br/>needs 4 — waits, Queued"]
+  C["campaign C · window 2<br/>needs 2 — starts"]
+  B -. "not enough" .-> FREE
+  C --> FREE
