@@ -309,23 +309,23 @@ without asking Kueue again.
 
 ---
 
-# A run is one archival volume in one pod
+# htrflow in a pod
 
-```mermaid h:250
-flowchart TB
-  subgraph A["before the first page"]
-    direction LR
-    W["wait<br/>models in the cache?"] --> S["setup<br/>read the IIIF manifest"] --> R["resume<br/>list the bucket: which<br/>pages are already done"] --> L["load<br/>build the pipeline<br/>while page 1 downloads"]
+```mermaid w:1150
+flowchart LR
+  IN["pages<br/>IIIF or image URLs"]
+  subgraph POD["one pod — one archival volume, one GPU"]
+    PRE["get ready<br/>models · manifest · resume"]
+    HTR["htrflow<br/>your pipeline, page by page"]
+    POST["verify<br/>and publish"]
   end
-  subgraph B["every page, then the end"]
-    direction LR
-    F["fetch page"] --> H["htrflow runs it"] --> U["upload PAGE, ALTO,<br/>progress.json"] --> V["verify<br/>every page done,<br/>skipped or failed"] --> P["publish<br/>iiif.json, pipeline.yaml,<br/>manifest.json last"] --> X["exit 0<br/>GPU free"]
-    U -. "next page" .-> F
-  end
-  A --> B
+  OUT[("bucket<br/>ALTO · PAGE")]
+  IN --> PRE --> HTR --> POST --> OUT
+  HTR -- "each page as it is done" --> OUT
+  style HTR stroke-width:4px,font-weight:bold
 ```
 
-**One pod per archival volume**, holding its GPU from the first page to the last — and freeing it the moment it exits.
+**Every pod runs htrflow** — your pipeline, unchanged — on one archival volume, page by page, and the results reach the bucket as each page finishes.
 
 <!--
 Why one volume per pod and not one page per pod: the model load. Building
