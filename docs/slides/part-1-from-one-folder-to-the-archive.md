@@ -165,6 +165,38 @@ Hub, and the web front is the one pod a browser talks to.
 
 ---
 
+# What is inside what
+
+```mermaid h:380
+flowchart TB
+  subgraph WORK["the work"]
+    direction TB
+    CF["campaign file"] --> JOB["Job<br/>one per campaign"]
+    JOB --> POD["Pod<br/>one per archival volume"]
+    POD --> INIT["init container<br/>waits for the models"]
+    POD --> CON["container<br/>wrapper + htrflow"]
+  end
+  subgraph QUEUE["the queue — Kueue"]
+    direction TB
+    CQ["ClusterQueue<br/>the GPU quota"] --> LQ["LocalQueue<br/>the name a Job asks for"]
+    LQ --> WL["Workload<br/>one per Job"]
+  end
+  JOB <-. "admitted?" .-> WL
+```
+
+**The two meet at the Workload:** Kueue admits a Job's Workload, and only then does the Job create its pods.
+
+<!--
+A container is the running program; a pod is one or more containers that
+share a machine, disk and network; a Job makes pods until its work is done.
+Kueue never touches pods: it makes one Workload per Job, holds it until the
+Job's window fits the ClusterQueue's quota, and lets the Job go. The
+LocalQueue is the name a Job carries in its queue label, and converter.yaml
+sets it for every campaign.
+-->
+
+---
+
 # Why Kyverno
 
 <div class="cols">
@@ -396,38 +428,6 @@ The mental shift is that "the computer" is now a pool: a control plane that
 only decides, and nodes that only run. The pod is the unit that moves
 between them, and the GPU it needs is what decides where it can go. Part 4
 returns to the two deciders — Kueue for when, the scheduler for where.
--->
-
----
-
-# What is inside what
-
-```mermaid h:380
-flowchart TB
-  subgraph WORK["the work"]
-    direction TB
-    CF["campaign file"] --> JOB["Job<br/>one per campaign"]
-    JOB --> POD["Pod<br/>one per archival volume"]
-    POD --> INIT["init container<br/>waits for the models"]
-    POD --> CON["container<br/>wrapper + htrflow"]
-  end
-  subgraph QUEUE["the queue — Kueue"]
-    direction TB
-    CQ["ClusterQueue<br/>the GPU quota"] --> LQ["LocalQueue<br/>the name a Job asks for"]
-    LQ --> WL["Workload<br/>one per Job"]
-  end
-  JOB <-. "admitted?" .-> WL
-```
-
-**The two meet at the Workload:** Kueue admits a Job's Workload, and only then does the Job create its pods.
-
-<!--
-A container is the running program; a pod is one or more containers that
-share a machine, disk and network; a Job makes pods until its work is done.
-Kueue never touches pods: it makes one Workload per Job, holds it until the
-Job's window fits the ClusterQueue's quota, and lets the Job go. The
-LocalQueue is the name a Job carries in its queue label, and converter.yaml
-sets it for every campaign.
 -->
 
 ---
