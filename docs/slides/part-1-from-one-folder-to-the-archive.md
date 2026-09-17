@@ -399,7 +399,7 @@ is handing out.
 
 ![w:1120](assets/part-1-where-pod-runs.svg)
 
-**The control plane decides, the nodes run.** Each pod lands on whichever node has a GPU free — you never name a machine.
+**The control plane decides, the nodes run.** Kueue counts quota, not free GPUs: the scheduler places each pod on a node with a GPU free and the right labels, and a pod with nowhere to go waits *Pending*. You never name a machine.
 
 <!--
 This is the slide for anyone who has run htrflow on one box with one card.
