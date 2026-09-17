@@ -149,6 +149,74 @@ template:
 
 ---
 
+# What KAI would give us
+
+<div class="cols three">
+<div>
+
+<img class="ticon block" src="assets/icon-chart-pie.svg" alt="">
+
+**More volumes per card.** Small models share one GPU: four or five volumes where today there is one.
+
+</div>
+<div>
+
+<img class="ticon block" src="assets/icon-play.svg" alt="">
+
+**Start with what is free.** A campaign starts with one pod and grows; what it borrowed goes back when a team needs it.
+
+</div>
+<div>
+
+<img class="ticon block" src="assets/icon-layers.svg" alt="">
+
+**Whole nodes kept free.** Pods are packed onto few nodes, so work that needs a full node still fits.
+
+</div>
+</div>
+
+<div class="cols">
+<div>
+
+**Better, not new:** team queues with a guaranteed quota, a weight for idle GPUs and a hard limit — Kueue's cohorts cover most of it.
+
+</div>
+<div>
+
+**Not from KAI:** GPUs described by what they are — its DRA support is still on its roadmap.
+
+</div>
+</div>
+
+---
+
+# More volumes per card
+
+![w:1040](assets/future-fractions.svg)
+
+<div class="cols">
+<div>
+
+**A pod asks for part of a card** — a share, or a number of MiB — and KAI places several on one GPU.
+
+</div>
+<div>
+
+**The catch:** nothing stops a pod from using more than its share, and its neighbour runs out of memory. A pipeline needs a known, steady memory use first.
+
+</div>
+</div>
+
+---
+
+# Whole nodes kept free
+
+![w:1040](assets/future-packing.svg)
+
+**The default scheduler spreads pods; KAI packs them** and can move them to close gaps. It matters when the cluster also runs work that needs several GPUs on one node — training, or a large model served.
+
+---
+
 # Team queues that lend and take back
 
 ![w:880](assets/future-kai-queues.svg)
@@ -198,6 +266,20 @@ Open question: resizing an Indexed Job whose completions are larger than its
 parallelism -- Kubernetes' own elastic Indexed Jobs need the two equal, so
 only parallelism may change; this needs a test before anyone relies on it.
 -->
+
+---
+
+# When KAI is worth it
+
+<table class="plain">
+<tr><td></td><td></td><td><strong>worth adding KAI?</strong></td></tr>
+<tr><td class="icon"><img class="ticon" src="assets/icon-microchip.svg" alt=""></td><td>one team, a cluster of its own, models that need a whole card</td><td>no — Kueue covers it</td></tr>
+<tr><td class="icon"><img class="ticon" src="assets/icon-chart-pie.svg" alt=""></td><td>small models that fit several to a card</td><td><strong>yes</strong> — fractions, if memory use is steady</td></tr>
+<tr><td class="icon"><img class="ticon" src="assets/icon-users.svg" alt=""></td><td>several teams, bursty demand, a cluster kept full</td><td><strong>maybe</strong> — start with what is free, and reclaim; Kueue comes close</td></tr>
+<tr><td class="icon"><img class="ticon" src="assets/icon-layers.svg" alt=""></td><td>a cluster shared with training or served models</td><td><strong>yes</strong> — packing, and which work may be stopped</td></tr>
+</table>
+
+**Our volumes are a good fit for reclaim:** a volume resumes from the bucket, so taking a pod back costs only the page in flight.
 
 ---
 

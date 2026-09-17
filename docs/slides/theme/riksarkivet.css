@@ -428,6 +428,11 @@ table.plain td.icon + td {
   margin: 0 0 6px;
 }
 
+/* Two column rows in a row need air between them. */
+.cols + .cols {
+  margin-top: 28px;
+}
+
 .cols.three {
   grid-template-columns: 1fr 1fr 1fr;
   gap: 28px;
