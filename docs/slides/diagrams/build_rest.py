@@ -295,6 +295,26 @@ d.arrow([(504, 212), (688 - GAP, 212)], label="× window", at=(596, 212))
 d.arrow([(1048, 212), (1216 - GAP, 212)], label="requests", at=(1132, 212))
 d.save(OUT + "p1-volume-resources.svg")
 
+# ---------------------------------------------------------------- part 1: one team, one repo, one queue
+d = Diagram(1600, 568)
+gw = (1552 - 32) / 2
+for i, team in enumerate(("transcription", "research")):
+    gx = 24 + i * (gw + 32)
+    d.group(gx, 16, gw, 312, f"Team: {team}", L("users"))
+    d.card(gx + 24, 72, gw - 48, "Campaigns repo", "who may run what, reviewed", L("git-branch"))
+    d.card(gx + 24, 208, gw - 48, "LocalQueue", "in the team's namespace", L("door-open"))
+    d.arrow([(gx + gw / 2, 168), (gx + gw / 2, 208 - GAP)], dot=False)
+d.group(24, 376, 1552, 176, "Cohort — the cluster's GPUs", L("layers"))
+cw = 560
+cx = [24 + gw / 2 - cw / 2, 24 + gw + 32 + gw / 2 - cw / 2]
+for i, team in enumerate(("transcription", "research")):
+    d.card(cx[i], 432, cw, f"ClusterQueue: {team}", "the team's budget", L("layers"))
+    d.arrow([(24 + i * (gw + 32) + gw / 2, 304), (24 + i * (gw + 32) + gw / 2, 432 - GAP)])
+d.arrow([(cx[0] + cw, 456), (cx[1] - GAP, 456)], dot=False)
+d.arrow([(cx[1], 504), (cx[0] + cw + GAP, 504)], dot=False)
+d.pill(800, 480, "lend idle GPUs")
+d.save(OUT + "p1-teams.svg")
+
 # ---------------------------------------------------------------- part 1: cohort, queues, flavors, nodes
 d = Diagram(1600, 584)
 cw = (1552 - 2 * 56) / 3
