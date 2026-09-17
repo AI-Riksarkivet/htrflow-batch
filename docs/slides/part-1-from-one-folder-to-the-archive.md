@@ -94,6 +94,44 @@ sentence out loud, because the word collides with Kubernetes storage.
 
 ---
 
+# The campaign file
+
+<div class="cols">
+<div>
+
+<p class="filename">campaigns/kyrkobocker-1.yaml</p>
+
+```yaml
+pipeline: demo-v1
+window: 2
+priority: htr-bulk
+volumes:
+  - R0001203
+  - R0001204
+  - R0001205
+```
+
+</div>
+<div>
+
+**This is how you ask for a run.** One file per campaign, in git.
+
+* **pipeline** — which htrflow pipeline to run
+* **volumes** — the archival volumes to run it on
+* **window** — how many volumes at once, so how many GPUs
+* **priority** — who goes first when campaigns wait
+
+</div>
+</div>
+
+<!--
+The next slides take this file apart: the pipeline file it names, what a
+volume can be, the window, and priority. Only pipeline and volumes are
+required.
+-->
+
+---
+
 # Rough architecture
 
 ```mermaid h:470
@@ -134,7 +172,7 @@ Hub, and the web front is the one pod a browser talks to.
 <div class="cols">
 <div>
 
-## Kyverno — the door
+## Kyverno — admission
 
 A policy engine for Kubernetes. Every object sent to the cluster is checked against rules before it is accepted.
 

@@ -203,7 +203,7 @@ software not.
 <div class="cols">
 <div>
 
-**Checked at the door.** With image verification on, the cluster's policy engine checks every pod's image against the workflow identity before the pod is admitted: an unsigned image, or one signed by someone else, is refused.
+**Checked at admission.** With image verification on, the cluster's policy engine checks every pod's image against the workflow identity before the pod is admitted: an unsigned image, or one signed by someone else, is refused.
 
 </div>
 <div>
@@ -231,7 +231,7 @@ reviewed.
 <tr><td>what it is</td><td>the model files in an image with nothing else</td><td>the CNCF specification: weights as layers, a config naming format, licence and origin</td><td>the OpenSSF model-signing format: a manifest of every file's hash, signed</td></tr>
 <tr><td>where it lives</td><td>any registry</td><td>a registry that understands it</td><td>beside the files, wherever they are</td></tr>
 <tr><td>how a pod gets it</td><td>mounted directly as a read-only image volume</td><td>pulled and unpacked by a tool before the model loads</td><td>verified by a tool before the model loads</td></tr>
-<tr><td>checked at the door</td><td><strong>yes</strong> — it is an image reference the policy engine can see</td><td>no — checked by our own job</td><td>no — checked by our own job</td></tr>
+<tr><td>checked at admission</td><td><strong>yes</strong> — it is an image reference the policy engine can see</td><td>no — checked by our own job</td><td>no — checked by our own job</td></tr>
 </table>
 
 <p class="note">ModelPack is a vendor-neutral CNCF specification for packaging, distributing and running AI models in cloud-native environments — the same move for models that the OCI image format made for containers.</p>
