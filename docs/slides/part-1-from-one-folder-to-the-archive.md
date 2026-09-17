@@ -641,6 +641,28 @@ retry redoes only that page. Part 3.
 
 ---
 
+# Where the state lives
+
+<table class="plain">
+<tr><td></td><td><strong>holds</strong></td><td><strong>if it is lost</strong></td></tr>
+<tr><td><strong>git</strong></td><td>what <em>should</em> run: campaign files, pipelines, and their history</td><td>nothing running stops, nothing new can be asked for — and every clone is a full copy</td></tr>
+<tr><td><strong>etcd</strong><br/>the cluster's database</td><td>what <em>is</em> running: Jobs, Workloads, the campaign records the status page reads</td><td>rebuilt from git: apply again, and every pod resumes from the bucket without redoing a finished page</td></tr>
+<tr><td><strong>S3 bucket</strong></td><td>the results: ALTO, PAGE, manifest.json, the run logs</td><td>the transcriptions are gone — only running every campaign again brings them back</td></tr>
+</table>
+
+**Only the bucket cannot be rebuilt from the others.** That is where replication and backups matter most.
+
+<!--
+Git is redundant by nature: the hosted repository and every clone hold the
+whole history. etcd is the cluster's own datastore; its snapshots are the
+cluster's business, but nothing in it is irreplaceable, because git says
+what should exist and the bucket says what is already done. The bucket's
+durability is entirely its own replication, versioning and backups --
+nothing in htrflow-batch copies results anywhere else.
+-->
+
+---
+
 # Your interface is git
 
 ```mermaid h:110
@@ -688,6 +710,58 @@ steps:
 This is the slide the data scientist actually needs, and Part 2 is it in
 full: the two files, converter.yaml, validate, render, apply, the status
 page, and the rules the validator enforces.
+-->
+
+---
+
+# Stop, remove, restart — all in git
+
+<div class="cols three">
+<div>
+
+<p class="filename">stop</p>
+
+```yaml
+pipeline: demo-v1
+suspend: true
+volumes:
+  - …
+```
+
+Running volumes stop, finished ones are kept, the GPUs go back. Delete the line to go on from where it stopped.
+
+</div>
+<div>
+
+<p class="filename">remove</p>
+
+```
+git rm campaigns/demo.yaml
+```
+
+The Job is removed from the cluster. The results in the bucket stay.
+
+</div>
+<div>
+
+<p class="filename">restart</p>
+
+```
+git mv campaigns/demo.yaml \
+       campaigns/demo-2.yaml
+```
+
+A new name runs the campaign again, and skips every page already in the bucket.
+
+</div>
+</div>
+
+**Every one is a pull request** — reviewed and merged like any other change.
+
+<!--
+Remove only reaches the cluster when the platform's apply is allowed to
+prune; part 2 covers the details. A campaign's volume list cannot change
+once it has run, which is why a restart is a new name rather than an edit.
 -->
 
 ---
@@ -782,7 +856,7 @@ loading and the pages stand out.
 
 ![w:760](assets/part-1-viewer.png)
 
-**Riksarkivet's Universal Viewer 4:** the page with every transcribed line outlined, and the text beside it — even while the volume is still running.
+**Riksarkivet's Universal Viewer 4:** the page with every transcribed line outlined, and the text beside it — even while the volume is still running. It ships with the platform's Helm chart, so there is no separate viewer to install.
 
 <!--
 The viewer is Riksarkivet's fork of Universal Viewer 4, built into the web
