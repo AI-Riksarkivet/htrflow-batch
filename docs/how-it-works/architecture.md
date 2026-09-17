@@ -3,9 +3,9 @@
 This page is the map. It shows the pictures of the system, the job of each
 piece in a line, and where to read the detail.
 
-![The map: the campaigns repo and delivery, Kyverno and Kueue in the cluster, the warm-up Job, the campaign pods and the read API, and what sits outside](../assets/diagrams/architecture.svg)
+![The map: the campaigns repo, delivery, Kyverno and Kueue in the cluster, the warm-up Job, the campaign pods and the web front, storage, and what sits outside](../assets/diagrams/architecture.svg)
 
-![Inside one pod: the downloader, the page queue on tmpfs, the consumer that runs htrflow, and the uploader](../assets/diagrams/streaming-driver.svg)
+![htrflow in a pod: the init container waits for the models, then the container fetches, runs htrflow and uploads page by page, verifies, publishes and exits](../assets/diagrams/htrflow-in-a-pod.svg)
 
 
 Each piece is deliberately simple:
@@ -50,36 +50,8 @@ look for that field in the "Owns" column.
 
 ## Job lifecycle
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant G as campaigns repo CI
-    participant Ar as Argo CD or htrflow-campaigns apply
-    participant K8s as kube-apiserver
-    participant Q as Kueue
-    participant P as GPU pod (streaming driver), index i
-    participant I as IIIF image server
-    participant S3 as S3 results
+![One campaign, in order: render, apply, Kueue admits, a pod per index fetches, runs and uploads page by page, verifies, publishes and exits](../assets/diagrams/seq-campaign.svg)
 
-    G->>G: htrflow-campaigns render, rendered/ committed
-    Ar->>K8s: apply the campaign Job (completionMode Indexed,<br/>completions=N, queue-name label)
-    Q->>Q: webhook suspends the Job, Workload queued
-    Q->>K8s: quota free, unsuspend the Job (up to parallelism)
-    K8s->>P: schedule a pod for index i (1 GPU, tmpfs workdir, read-only model cache)
-    P->>I: fetch the IIIF manifest for volumes.txt line i
-    P->>S3: list page/ and alto/ (resume check)
-    P->>P: Pipeline.from_config(), models load once, overlapping the first downloads
-    loop streaming, downloader and consumer and uploader run concurrently
-        P->>I: fetch page N+k (bounded lookahead, width-capped)
-        P->>P: pipeline.run(page N) as soon as page N is downloaded
-        P->>S3: upload page N-1's PAGE then ALTO as soon as htrflow wrote them
-        P->>S3: progress.json after every page, the run log every 15 s
-        P->>P: delete page N-1's image and XML from tmpfs (rolling cleanup)
-    end
-    P->>P: verify every page is uploaded, skipped or recorded as failed
-    P->>S3: upload iiif.json, pipeline.yaml, then manifest.json LAST (completion marker)
-    P->>K8s: exit 0, index i in completedIndexes
-```
 
 ## Read next
 

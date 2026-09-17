@@ -129,34 +129,8 @@ the ClusterQueue and LocalQueue.
 
 Step by step, with the controller that acts at each step:
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant A as htrflow-campaigns apply
-    participant K as kube-apiserver
-    participant W as Kueue webhook
-    participant C as Kueue controller
-    participant J as Job controller
-    participant S as kube-scheduler
-    participant N as kubelet
-    A->>K: server-side apply the Indexed Job with its queue-name label
-    K->>W: AdmissionReview CREATE batch/v1 jobs
-    W-->>K: patch spec.suspend to true
-    C->>K: create the Workload, owned by the Job, labelled job-uid
-    Note over C: podSets main count is the Job parallelism
-    C->>C: queue order, BestEffortFIFO
-    C->>K: reserve quota, condition QuotaReserved, then Admitted
-    C->>K: patch the Job spec.suspend to false
-    J->>K: create one pod per index, up to parallelism
-    K->>S: unscheduled pod
-    S->>K: bind it to a node with a free nvidia.com/gpu
-    K->>N: pod assigned
-    N->>N: run init container warmup-wait, then the wrapper
-    N->>K: pod succeeded
-    J->>K: record the index in status.completedIndexes
-    J->>K: Job condition Complete once every index is done
-    C->>K: Workload condition Finished, quota released
-```
+![The admission cycle: apply, the webhook suspends the Job, Kueue creates and admits the Workload, the Job controller creates pods, the scheduler binds them, the kubelet runs them, and the quota is released](../assets/diagrams/seq-admission.svg)
+
 
 | # | What changes |
 |---|---|

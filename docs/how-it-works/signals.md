@@ -34,32 +34,8 @@ the pod cannot reach, every row silently shows no progress.
 
 ## One index, in order
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Q as Kueue
-    participant J as Job controller
-    participant K as kubelet
-    participant W as wrapper, index i
-    participant S3 as results bucket
-    participant CM as campaign status ConfigMap
+![One index, in order: admission, the pod, the run log, each page's files and progress, the completion files, and the exit code](../assets/diagrams/seq-signals-index.svg)
 
-    Q->>J: Workload QuotaReserved and Admitted, Job unsuspended
-    J->>K: pod for index i (event SuccessfulCreate)
-    K->>K: init container warmup-wait reads the marker on the cache PVC
-    W->>S3: run log claimed at start, then re-shipped every 15 s
-    loop each page
-        W->>S3: page XML, then ALTO XML (ALTO carries the provenance block)
-        W->>S3: progress.json (every page), iiif.json (every 10th)
-    end
-    Note over S3: the read API polls progress.json here too, from its own<br/>path to the bucket, not the browser's
-    W->>S3: iiif.json, pipeline.yaml, manifest.json LAST
-    W->>K: exit 0
-    K->>J: container exit code
-    J->>J: index i added to completedIndexes
-    Note over W,J: on failure the wrapper writes the termination message first,<br/>then exits 13 (FailIndex), or 1 or 143 (retried)
-    Note over CM: not written by anything above. The read API copies the phase and<br/>the counts here on a request that sees something new, and apply copies<br/>them off the live Job, so they outlive it
-```
 
 ## The signals
 
@@ -137,21 +113,8 @@ status document for it. **The pod ships its own log to S3.** The browser reads
 the log straight from S3, and asks the read API, the only component with
 cluster credentials, which volumes exist and what state they are in.
 
-```mermaid
-sequenceDiagram
-    participant P as wrapper pod
-    participant S3 as S3 run log key
-    participant API as read API
-    participant B as browser log view
+![The live run log: the wrapper claims the key, ships the buffer every 15 s and once more on exit, while the log view reads it](../assets/diagrams/seq-run-log.svg)
 
-    P->>S3: PUT (claim the key at start)
-    loop every LOG_SHIP_SECONDS (15 s), when the buffer changed
-        P->>S3: PUT the whole buffer
-    end
-    B->>API: GET the campaign detail, per-index state and logUrl
-    B->>S3: GET the log every 15 s, ETag-revalidated, until the terminal line
-    P->>S3: PUT once more on exit, the complete log (also on SIGTERM)
-```
 
 ### Wrapper side (`htrflow_batch.logship`)
 
