@@ -93,7 +93,7 @@ sentence out loud, because the word collides with Kubernetes storage.
 
 ---
 
-# A run is one volume in one pod
+# A run is one archival volume in one pod
 
 ```mermaid h:250
 flowchart TB
