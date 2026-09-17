@@ -262,11 +262,11 @@ Workload.
 # Why Kyverno
 
 <table class="plain">
-<tr><td></td><td><strong>without a rule on the cluster</strong></td><td><strong>with Kyverno</strong></td></tr>
-<tr><td>an image by tag</td><td>someone pushes a new build under the same tag, and every later run silently uses other code</td><td>refused unless pinned by digest — the image an ALTO names is the image that ran</td></tr>
-<tr><td>a model without a revision</td><td>the author re-uploads it, and the same pipeline gives different text</td><td>refused unless pinned to a commit — a pipeline id keeps meaning one set of weights</td></tr>
-<tr><td>an image from anywhere</td><td>a merged file can run any code on our GPUs, with the bucket's credentials</td><td>refused unless it comes from a registry we allow — optionally, signed by our own build</td></tr>
-<tr><td>a Job sent by hand</td><td>anything that skips the converter skips its checks</td><td>checked anyway — every object sent to the cluster passes through</td></tr>
+<tr><td></td><td></td><td><img class="ticon" src="assets/icon-shield-off.svg" alt=""><strong>without a rule on the cluster</strong></td><td><img class="ticon" src="assets/icon-kyverno.svg" alt=""><strong>with Kyverno</strong></td></tr>
+<tr><td class="icon"><img class="ticon" src="assets/icon-tag.svg" alt=""></td><td>an image by tag</td><td>someone pushes a new build under the same tag, and every later run silently uses other code</td><td>refused unless pinned by digest — the image an ALTO names is the image that ran</td></tr>
+<tr><td class="icon"><img class="ticon" src="assets/icon-brain.svg" alt=""></td><td>a model without a revision</td><td>the author re-uploads it, and the same pipeline gives different text</td><td>refused unless pinned to a commit — a pipeline id keeps meaning one set of weights</td></tr>
+<tr><td class="icon"><img class="ticon" src="assets/icon-globe.svg" alt=""></td><td>an image from anywhere</td><td>a merged file can run any code on our GPUs, with the bucket's credentials</td><td>refused unless it comes from a registry we allow — optionally, signed by our own build</td></tr>
+<tr><td class="icon"><img class="ticon" src="assets/icon-hand.svg" alt=""></td><td>a Job sent by hand</td><td>anything that skips the converter skips its checks</td><td>checked anyway — every object sent to the cluster passes through</td></tr>
 </table>
 
 **It enforces good provenance.** When every image is pinned and every model has a revision, what each ALTO says produced it is true — and the cluster enforces that, not every campaigns repository on its own.
