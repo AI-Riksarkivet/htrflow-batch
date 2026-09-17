@@ -199,30 +199,15 @@ sets it for every campaign.
 
 # Why Kyverno
 
-<div class="cols">
-<div>
+<table class="plain">
+<tr><td></td><td><strong>without a rule on the cluster</strong></td><td><strong>with Kyverno</strong></td></tr>
+<tr><td>an image by tag</td><td>someone pushes a new build under the same tag, and every later run silently uses other code</td><td>refused unless pinned by digest — the image an ALTO names is the image that ran</td></tr>
+<tr><td>a model without a revision</td><td>the author re-uploads it, and the same pipeline gives different text</td><td>refused unless pinned to a commit — a pipeline id keeps meaning one set of weights</td></tr>
+<tr><td>an image from anywhere</td><td>a merged file can run any code on our GPUs, with the bucket's credentials</td><td>refused unless it comes from a registry we allow — optionally, signed by our own build</td></tr>
+<tr><td>a Job sent by hand</td><td>anything that skips the converter skips its checks</td><td>checked anyway — every object sent to the cluster passes through</td></tr>
+</table>
 
-**A campaign file decides what runs on our GPUs.** Whoever can merge one chooses the image and the models — and those run with the results bucket's credentials.
-
-**Models are code.** Loading most model weights can run code, and an image can contain anything.
-
-**So the cluster needs a rule it enforces itself,** not a check each campaigns repository has to remember.
-
-</div>
-<div>
-
-**Why not only `validate`?** It checks what the converter renders. Kyverno checks *everything* sent to the namespace — whoever or whatever sends it.
-
-**Why a policy engine?** The rules live with the cluster, in one place, are the same for every team, and run again in each pull request.
-
-</div>
-</div>
-
-<!--
-Kyverno is an open-source policy engine for Kubernetes, installed once on
-the cluster. The platform's chart ships its rules; they are off until a
-cluster turns them on.
--->
+**Reproducible results and a safe shared cluster are the same rules.** Kyverno makes the cluster enforce them, instead of every campaigns repository remembering them.
 
 ---
 
@@ -240,7 +225,12 @@ flowchart LR
   K -->|"breaks a rule"| NO
 ```
 
-**Every object is checked before it exists.** A Job, a pod or a pipeline's ConfigMap that breaks a rule is never stored, so it never runs. The same policies run in the pull request, so a bad pipeline usually fails there first.
+**Every object is checked before it exists** — and the same rules run in the pull request, so a bad pipeline usually fails there first:
+
+```
+models not pinned to a revision: Riksarkivet/yolov9-regions-1
+— add revision: <40-character commit hash> under model_settings
+```
 
 <!--
 Kyverno is a dynamic admission controller: the API server calls it for
@@ -252,28 +242,15 @@ failed check on the pull request, not at apply.
 
 ---
 
-# Kyverno — the rules here
+# Why Kyverno, and not something else
 
 <table class="plain">
-<tr><td><strong>allowed images</strong></td><td>Jobs and pods may only run images from the registries the platform names</td></tr>
-<tr><td><strong>pinned images</strong></td><td>every image must be pinned by digest, never by a tag that can move</td></tr>
-<tr><td><strong>pinned models</strong></td><td>every model in a pipeline must name a commit revision</td></tr>
-<tr><td><strong>signed images</strong></td><td>optional: a pod's image must be signed by our own build</td></tr>
-<tr><td><strong>platform identities</strong></td><td>the status page may only write status records; apply may only delete what it created</td></tr>
+<tr><td><strong>only <code>validate</code></strong></td><td>runs where the author runs it — anything that skips the converter skips the check</td></tr>
+<tr><td><strong>Pod Security</strong></td><td>built into Kubernetes, and on here too — but it checks a pod's privileges, not which image or which model it runs</td></tr>
+<tr><td><strong>Kubernetes' own policies</strong></td><td>built in, rules as small expressions — they check an object's fields, but cannot fetch an image's signature from a registry or create objects</td></tr>
+<tr><td><strong>OPA Gatekeeper</strong></td><td>a capable policy engine — with policies in its own language, Rego</td></tr>
+<tr><td><strong>Kyverno</strong></td><td>policies are ordinary Kubernetes YAML, it verifies image signatures, and the same rules run in CI — the three things we need</td></tr>
 </table>
-
-<p class="filename">what a refusal looks like</p>
-
-```
-models not pinned to a revision: Riksarkivet/yolov9-regions-1
-— add revision: <40-character commit hash> under model_settings
-```
-
-<!--
-All rules are in Enforce mode. They ship with the platform's chart and are
-off by default, turned on per cluster once Kyverno is installed: a policy
-nothing reconciles is worse than none.
--->
 
 ---
 
