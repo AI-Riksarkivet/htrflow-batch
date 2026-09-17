@@ -1,16 +1,14 @@
-flowchart TB
-  subgraph A["get ready"]
-    direction LR
-    W["wait until the models<br/>are in the cache"] --> M["read the manifest<br/>or the image list"] --> R["resume: skip pages<br/>already in the bucket"]
+flowchart LR
+  subgraph W1["wave 1"]
+    A["R0001203"]
+    Bx["R0001204"]
   end
-  subgraph B["page by page"]
-    direction LR
-    F["fetch the page"] --> H["htrflow runs<br/>your pipeline"] --> U["upload ALTO and PAGE<br/>to the bucket"]
-    U -. "next page" .-> F
+  subgraph W2["wave 2"]
+    C["R0001205"]
+    D["R0001206"]
   end
-  subgraph C["finish"]
-    direction LR
-    V["verify every page<br/>is done or recorded"] --> P["publish the viewer manifest<br/>and manifest.json"] --> X["exit<br/>the GPU is free"]
+  subgraph W3["wave 3"]
+    E["R0001207"]
+    F["R0001208"]
   end
-  A --> B --> C
-  style H stroke-width:4px,font-weight:bold
+  W1 --> W2 --> W3

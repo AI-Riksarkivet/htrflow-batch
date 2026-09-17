@@ -1,14 +1,8 @@
 flowchart LR
-  subgraph W1["wave 1"]
-    A["R0001203"]
-    Bx["R0001204"]
-  end
-  subgraph W2["wave 2"]
-    C["R0001205"]
-    D["R0001206"]
-  end
-  subgraph W3["wave 3"]
-    E["R0001207"]
-    F["R0001208"]
-  end
-  W1 --> W2 --> W3
+  E["you edit<br/>campaigns/demo.yaml"]
+  V["validate<br/>locally"]
+  PR["pull request<br/>CI validates again"]
+  M["merged on main<br/>rendered/ committed"]
+  AP["apply<br/>cluster objects"]
+  S["status page<br/>and the viewer"]
+  E --> V --> PR --> M --> AP --> S
