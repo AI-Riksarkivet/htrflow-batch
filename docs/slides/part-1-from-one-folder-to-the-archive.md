@@ -238,6 +238,27 @@ Workload.
 
 ---
 
+# ResourceFlavor and cohort
+
+![w:1040](assets/p1-flavors-cohort.svg)
+
+<div class="cols">
+<div>
+
+**ResourceFlavor — a kind of GPU.** A flavor names nodes by their label: large cards, small cards, interruptible ones. A ClusterQueue holds a quota per flavor and tries them in order.
+
+</div>
+<div>
+
+**Cohort — pools that lend.** ClusterQueues in one cohort borrow each other's idle quota, within limits each pool sets.
+
+**Here:** one flavor, one pool — every GPU is alike.
+
+</div>
+</div>
+
+---
+
 # Why Kyverno
 
 <table class="plain">
@@ -292,8 +313,6 @@ A job queue for Kubernetes. It decides **when** a Job may start, from a counted 
 
 **It can also:**
 
-* **resource flavors** — tell kinds of GPU apart, with a quota for each
-* **cohorts** — let teams borrow each other's idle GPUs
 * **preemption** — stop lower-priority work to make room
 * **fair sharing** — divide idle GPUs by weight between teams
 
