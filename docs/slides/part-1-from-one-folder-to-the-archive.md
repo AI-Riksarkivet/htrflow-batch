@@ -320,6 +320,23 @@ own approvals.
 
 ---
 
+# A team stays in its own queue
+
+![w:940](assets/p1-team-walls.svg)
+
+**RBAC is the wall; the rest say why.** A queue name never crosses a namespace, and each team's apply may write only its own — so a converter.yaml naming another team's namespace is refused by the API server. Kyverno turns the two quiet failures into one sentence: a label naming the wrong queue, and a GPU Job with no queue at all, which would otherwise run outside every quota.
+
+<!--
+Layers, outermost first: RBAC on the apply identity (a ServiceAccount, or an
+Argo CD Application held to one namespace by its AppProject); LocalQueues are
+namespaced and owned by the chart, which the apply role may not create;
+the ClusterQueue's namespaceSelector; and two Kyverno rules. Without the last
+one a Job with no queue-name label starts at once, because Kueue manages only
+labelled Jobs unless manageJobsWithoutQueueName is on.
+-->
+
+---
+
 # Why Kyverno
 
 <table class="plain">
