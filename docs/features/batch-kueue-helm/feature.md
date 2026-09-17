@@ -161,6 +161,7 @@ tables below.
 | [B103](stories/B103-warmup-log-on-status-page.md) | Warm-up-loggen går att läsa från status-sidan |
 | [B104](stories/B104-gpu-flavors-per-flavor-quota.md) | Chartet beskriver flera GPU-sorter, var och en med egen kvot för GPU, CPU och minne |
 | [B105](stories/B105-pipeline-named-pod-size.md) | En pipeline väljer en namngiven poddstorlek som operatören definierar i converter.yaml |
+| [B106](stories/B106-teams-repo-namespace-queue.md) | Flera team delar klustret — ett repo, en namespace, en LocalQueue och en egen ClusterQueue per team i en gemensam cohort |
 
 ### Not started — after production
 
