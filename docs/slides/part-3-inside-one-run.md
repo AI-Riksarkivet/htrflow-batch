@@ -197,16 +197,7 @@ fetch, which keeps that window small.
 
 # Three roles, one loop
 
-```mermaid h:200
-flowchart LR
-  I["IIIF server"]
-  D["downloader pool<br/>12 in flight, at most<br/>64 pages ahead"]
-  T[("tmpfs<br/>/work — 2 GiB, in memory")]
-  C["consumer<br/>one thread: the GPU<br/>serialises the work anyway"]
-  U["uploader<br/>PAGE, then ALTO,<br/>then delete the page's files"]
-  B[("bucket")]
-  I --> D --> T --> C --> U --> B
-```
+![w:1150](assets/p3-loop.svg)
 
 <div class="cols">
 <div>
@@ -362,15 +353,7 @@ exists for its number.
 
 # Verify, then publish
 
-```mermaid w:980
-flowchart LR
-  L["list page/ and alto/<br/>in the bucket"]
-  Q["every page uploaded,<br/>skipped, or recorded as failed?"]
-  P["publish: iiif.json, pipeline.yaml,<br/>then manifest.json — last"]
-  F["otherwise: fail the volume<br/>with the page list in the message"]
-  L --> Q -->|"yes"| P
-  Q -->|"no"| F
-```
+![w:950](assets/p3-verify.svg)
 
 <div class="cols">
 <div>
@@ -414,15 +397,7 @@ pages are recorded as failed. A missing page never reaches the card as
 
 # Exit codes, and what each one costs
 
-```mermaid h:200
-flowchart TB
-  R["the pod runs"]
-  Z["exit 0<br/>done — failed<br/>pages recorded"]
-  T["exit 1<br/>transient: retried up to 3×,<br/>resuming from the bucket"]
-  K["exit 143<br/>SIGTERM: a drain or the<br/>pod deadline — retried like 1"]
-  P["exit 13<br/>permanent: the index fails<br/>at once, never retried"]
-  R --> Z & T & K & P
-```
+![w:1000](assets/p3-exit.svg)
 
 <div class="cols">
 <div>
