@@ -220,4 +220,27 @@ d.arrow([(900, 85), (950, 85), (950, 150), (998, 150)], label="weights", lx=945,
 d.arrow([(900, 275), (950, 275), (950, 210), (998, 210)], label="unblocks", lx=945, ly=300, anchor="end")
 d.save(OUT + "p5-model-path.svg")
 
+
+# ---------------------------------------------------------------- part 4: cohort, queues, flavors, nodes
+d = Diagram(1280, 640)
+d.group(20, 10, 1240, 220, "cohort — the archive")
+d.vbox(90, 60, 440, 150, "ClusterQueue: transcription", "quota 8 large GPUs · 4 small\ntries large first, then small", L("layers"), MAGENTA)
+d.vbox(750, 60, 440, 150, "ClusterQueue: research", "quota 4 small GPUs · 4 interruptible\ntries small first, then interruptible", L("layers"), MAGENTA)
+d.arrow([(534, 135), (746, 135)], dashed=True, both=True)
+d.text(640, 118, "borrow each other's", 16)
+d.text(640, 162, "idle quota", 16)
+flavors = [(60, "ResourceFlavor: large", "gpu=large"), (470, "ResourceFlavor: small", "gpu=small"),
+           (880, "ResourceFlavor: interruptible", "spot=true")]
+for fx, title, label in flavors:
+    d.vbox(fx, 300, 340, 120, title, "matches nodes labelled " + label, L("tag"), MAGENTA)
+    for k in range(2):
+        d.vbox(fx + 10 + k * 170, 480, 150, 130, "node", label, "k8s-node", external=True, isize=44)
+    d.arrow([(fx + 170, 420), (fx + 85, 478)])
+    d.arrow([(fx + 170, 420), (fx + 255, 478)])
+d.arrow([(230, 210), (230, 298)], label="1st", lx=242, ly=265, anchor="start")
+d.arrow([(420, 210), (600, 298)], label="2nd", lx=520, ly=250, anchor="start")
+d.arrow([(860, 210), (680, 298)], label="1st", lx=770, ly=250, anchor="end")
+d.arrow([(1050, 210), (1050, 298)], label="2nd", lx=1062, ly=265, anchor="start")
+d.save(OUT + "p4-cohort.svg")
+
 print("rest written")
