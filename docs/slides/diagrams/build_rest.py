@@ -315,6 +315,26 @@ d.arrow([(cx[1], 504), (cx[0] + cw + GAP, 504)], dot=False)
 d.pill(800, 480, "lend idle GPUs")
 d.save(OUT + "p1-teams.svg")
 
+# ---------------------------------------------------------------- part 1: a team stays in its own queue
+d = Diagram(1600, 568)
+aw, sw = 680, 680
+d.group(24, 16, aw + 48, 536, "Team transcription tries", L("users"))
+d.group(1600 - 24 - sw - 48, 16, sw + 48, 536, "What refuses it", L("lock"))
+tries = [("A Job in research's namespace", "written by its own apply", "k8s-job", {"logo": True},
+          "Refused by RBAC", "apply writes only its own namespace", L("lock"), {}),
+         ("Queue label: research", "on a Job in its namespace", L("tag"), {},
+          "Refused by Kyverno", "the label must name this queue", "kyverno", {"logo": True}),
+         ("A LocalQueue to research's pool", "pointing at another budget", L("door-open"), {},
+          "Refused by the ClusterQueue", "admits its team's namespace only", L("layers"), {}),
+         ("A GPU Job with no queue label", "to skip the line", L("microchip"), {},
+          "Refused by Kyverno", "no GPU outside the queue", "kyverno", {"logo": True})]
+for i, (t, s1, ic, o, rt, rs, ric, ro) in enumerate(tries):
+    y = 72 + i * (CARD_H + 24)
+    d.card(48, y, aw, t, s1, ic, **o)
+    d.card(1600 - 48 - sw, y, sw, rt, rs, ric, bad=True, **ro)
+    d.arrow([(48 + aw, y + 48), (1600 - 48 - sw - GAP, y + 48)])
+d.save(OUT + "p1-team-walls.svg")
+
 # ---------------------------------------------------------------- part 1: cohort, queues, flavors, nodes
 d = Diagram(1600, 584)
 cw = (1552 - 2 * 56) / 3
