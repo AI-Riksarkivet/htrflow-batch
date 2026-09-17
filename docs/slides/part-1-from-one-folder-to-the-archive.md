@@ -379,6 +379,34 @@ Workload waits and Running once it is admitted.
 
 ---
 
+# Suspend — Kueue's switch on the Job
+
+![w:960](assets/p1-suspend.svg)
+
+<div class="cols">
+<div>
+
+**Why a switch.** While a Job is suspended its controller makes no pods: nothing holds a node, and a campaign starts whole or not at all. Kueue only decides *when*; the ordinary Job controller still runs the pods.
+
+</div>
+<div>
+
+**Pause is the same switch.** `suspend: true` in the campaign file makes the apply set the Workload inactive, and Kueue suspends the Job: its pods go, the quota returns. Remove it and the campaign queues again; each volume resumes from the bucket.
+
+</div>
+</div>
+
+<!--
+Kueue's mutating webhook sets spec.suspend on CREATE, before Kyverno's
+validating check sees the Job. Kueue owns spec.suspend on an admitted Job and
+would flip a hand-set value back within seconds, so a pause is written as the
+Workload's spec.active=false (cluster.py sync_pause). A Job whose priority
+class does not exist gets no Workload and stays suspended for ever -- why
+validate refuses unknown classes.
+-->
+
+---
+
 # Where a pod runs
 
 ![w:1120](assets/part-1-where-pod-runs.svg)
