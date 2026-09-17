@@ -13,7 +13,7 @@ lang: en
 ## What changes when your pipeline runs on many nodes
 
 <!--
-This is the first part of the series. It uses no Kubernetes vocabulary
+This deck uses no Kubernetes vocabulary
 that is not introduced on the slide where it is needed. If you know what an
 htrflow pipeline file does, you have everything this deck assumes.
 -->
