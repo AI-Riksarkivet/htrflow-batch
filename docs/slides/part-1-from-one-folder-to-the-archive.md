@@ -215,6 +215,63 @@ sets it for every campaign.
 
 ---
 
+# The Workload
+
+```mermaid w:1100
+flowchart LR
+  J["campaign Job<br/>window 2 · each pod 1 GPU"]
+  W["Workload<br/>asks for 2 GPUs at once"]
+  L["LocalQueue<br/>waits in line"]
+  C{"ClusterQueue<br/>2 GPUs free?"}
+  A["admitted<br/>the Job's pods start"]
+  J -->|"Kueue makes"| W --> L --> C
+  C -->|"yes"| A
+  C -.->|"not yet"| L
+```
+
+**A Workload is Kueue's copy of what a Job asks for:** how many pods at once, and what each one needs. Kueue makes it — you never write one — and it is what waits in line and gets admitted, not the Job itself.
+
+<!--
+The request is the window times one pod's requests: GPUs, CPU and memory
+together. Admission is once per campaign; after that the Job starts each
+next volume without asking again. The card's Queued and Running follow the
+Workload.
+-->
+
+---
+
+# LocalQueue and ClusterQueue
+
+```mermaid h:250
+flowchart LR
+  subgraph NA["namespace: transcription"]
+    JA["campaign Jobs"] --> LQA["LocalQueue"]
+  end
+  subgraph NB["namespace: research"]
+    JB["campaign Jobs"] --> LQB["LocalQueue"]
+  end
+  CQ["ClusterQueue<br/>the GPUs: quota 8"]
+  LQA --> CQ
+  LQB --> CQ
+```
+
+<div class="cols">
+<div>
+
+**LocalQueue — the door.** It lives in a team's namespace, and a Job names it to get in line. It holds no GPUs of its own.
+
+</div>
+<div>
+
+**ClusterQueue — the pool.** It holds the GPU quota, for the whole cluster. Many LocalQueues can point to one ClusterQueue, and share its GPUs.
+
+</div>
+</div>
+
+**Here:** one LocalQueue, `htr-batch`, pointing to one ClusterQueue. converter.yaml names the LocalQueue, so a campaign file never has to.
+
+---
+
 # Why Kyverno
 
 <table class="plain">
@@ -287,38 +344,6 @@ A job queue for Kubernetes. It decides **when** a Job may start, from a counted 
 </div>
 
 **Why:** without it, Kubernetes starts every pod it can, whoever asks first takes every GPU, and the rest pile up half-started. Part 4 goes through all of it.
-
----
-
-# LocalQueue and ClusterQueue
-
-```mermaid h:250
-flowchart LR
-  subgraph NA["namespace: transcription"]
-    JA["campaign Jobs"] --> LQA["LocalQueue"]
-  end
-  subgraph NB["namespace: research"]
-    JB["campaign Jobs"] --> LQB["LocalQueue"]
-  end
-  CQ["ClusterQueue<br/>the GPUs: quota 8"]
-  LQA --> CQ
-  LQB --> CQ
-```
-
-<div class="cols">
-<div>
-
-**LocalQueue — the door.** It lives in a team's namespace, and a Job names it to get in line. It holds no GPUs of its own.
-
-</div>
-<div>
-
-**ClusterQueue — the pool.** It holds the GPU quota, for the whole cluster. Many LocalQueues can point to one ClusterQueue, and share its GPUs.
-
-</div>
-</div>
-
-**Here:** one LocalQueue, `htr-batch`, pointing to one ClusterQueue. converter.yaml names the LocalQueue, so a campaign file never has to.
 
 ---
 
