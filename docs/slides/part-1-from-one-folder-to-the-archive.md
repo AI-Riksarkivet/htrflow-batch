@@ -129,6 +129,49 @@ Hub, and the web front is the one pod a browser talks to.
 
 ---
 
+# Kyverno and Kueue
+
+<div class="cols">
+<div>
+
+## Kyverno — the door
+
+A policy engine for Kubernetes. Every object sent to the cluster is checked against rules before it is accepted.
+
+**Here it refuses:**
+
+* an image from a registry we do not allow
+* an image not pinned by digest
+* a model not pinned to a revision
+* optionally, an image not signed by our build
+
+</div>
+<div>
+
+## Kueue — the queue
+
+A job queue for Kubernetes. It decides *when* a Job may start, from a counted budget of GPUs.
+
+**Here it:**
+
+* holds a campaign until its GPUs are free
+* lets higher priority go first
+* pauses and resumes campaigns
+
+Part 4 is all about what else it can do.
+
+</div>
+</div>
+
+<!--
+Both are open-source Kubernetes projects installed once on the cluster by
+whoever runs the platform. Neither knows anything about HTR: Kyverno sees
+Kubernetes objects and their fields, Kueue sees resource requests and a
+queue name.
+-->
+
+---
+
 # A run is one archival volume in one pod
 
 ```mermaid h:250
