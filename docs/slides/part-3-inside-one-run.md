@@ -197,7 +197,7 @@ fetch, which keeps that window small.
 
 # Three roles, one loop
 
-![w:1150](assets/p3-loop.svg)
+![w:1120](assets/p3-loop.svg)
 
 <div class="cols">
 <div>
@@ -353,7 +353,7 @@ exists for its number.
 
 # Verify, then publish
 
-![w:950](assets/p3-verify.svg)
+![w:1120](assets/p3-verify.svg)
 
 <div class="cols">
 <div>

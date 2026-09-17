@@ -60,7 +60,7 @@ answer where a model author offers it.
 
 # How a model reaches the GPU today
 
-![w:1000](assets/p5-model-path.svg)
+![w:1120](assets/p5-model-path.svg)
 
 <div class="cols">
 <div>
