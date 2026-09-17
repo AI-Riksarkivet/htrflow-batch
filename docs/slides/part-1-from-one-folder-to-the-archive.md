@@ -210,6 +210,103 @@ queue name.
 
 ---
 
+# Kyverno — how admission works
+
+```mermaid w:1100
+flowchart LR
+  A["apply sends<br/>an object"]
+  API["Kubernetes<br/>API server"]
+  K["Kyverno<br/>checks the policies"]
+  OK["accepted<br/>stored and run"]
+  NO["refused<br/>one sentence why"]
+  A --> API --> K
+  K -->|"passes"| OK
+  K -->|"breaks a rule"| NO
+```
+
+**Every object is checked before it exists.** A Job, a pod or a pipeline's ConfigMap that breaks a rule is never stored, so it never runs. The same policies run in the pull request, so a bad pipeline usually fails there first.
+
+<!--
+Kyverno is a dynamic admission controller: the API server calls it for
+every create and update it is registered for, and it answers allow or deny.
+The campaigns repository's CI runs the Kyverno command-line tool over the
+rendered objects, which is why a policy failure normally shows up as a
+failed check on the pull request, not at apply.
+-->
+
+---
+
+# Kyverno — the rules here
+
+<table class="plain">
+<tr><td><strong>allowed images</strong></td><td>Jobs and pods may only run images from the registries the platform names</td></tr>
+<tr><td><strong>pinned images</strong></td><td>every image must be pinned by digest, never by a tag that can move</td></tr>
+<tr><td><strong>pinned models</strong></td><td>every model in a pipeline must name a commit revision</td></tr>
+<tr><td><strong>signed images</strong></td><td>optional: a pod's image must be signed by our own build</td></tr>
+<tr><td><strong>platform identities</strong></td><td>the status page may only write status records; apply may only delete what it created</td></tr>
+</table>
+
+<p class="filename">what a refusal looks like</p>
+
+```
+models not pinned to a revision: Riksarkivet/yolov9-regions-1
+— add revision: <40-character commit hash> under model_settings
+```
+
+<!--
+All rules are in Enforce mode. They ship with the platform's chart and are
+off by default, turned on per cluster once Kyverno is installed: a policy
+nothing reconciles is worse than none.
+-->
+
+---
+
+# Kyverno — what else it can do
+
+<table class="plain">
+<tr><td><strong>validate</strong></td><td>refuse objects that break a rule</td><td>in use</td></tr>
+<tr><td><strong>verify images</strong></td><td>refuse images without a valid signature, or without a signed SBOM or provenance record</td><td>available</td></tr>
+<tr><td><strong>mutate</strong></td><td>change objects on the way in — add a label, a default, a security setting</td><td>not used</td></tr>
+<tr><td><strong>generate</strong></td><td>create objects automatically — a network policy or a quota for every new team namespace</td><td>not used</td></tr>
+<tr><td><strong>cleanup</strong></td><td>delete objects that match a rule, on a schedule</td><td>not used</td></tr>
+<tr><td><strong>audit and report</strong></td><td>warn instead of refuse, and report what already breaks a rule</td><td>available</td></tr>
+</table>
+
+**Generate is the one to watch:** with a namespace per team, it could give every new team its queue, quota and network rules without anyone writing them by hand.
+
+<!--
+Rule types from Kyverno's own documentation: validate, mutate, generate,
+verify images and cleanup, with policy reports for audit mode and
+background scans of objects that already exist.
+-->
+
+---
+
+# Kueue — how a campaign gets its GPUs
+
+```mermaid w:1120
+flowchart LR
+  J["Job created<br/>paused by Kueue"]
+  W["Workload<br/>waits in the queue"]
+  Q{"its window fits<br/>the free GPUs?"}
+  R["admitted<br/>Job unpaused, pods start"]
+  D["last volume done<br/>GPUs back to the pool"]
+  J --> W --> Q
+  Q -->|"yes"| R --> D
+  Q -->|"not yet"| W
+```
+
+**The card follows it:** *Queued* while the Workload waits, *Running* once it is admitted, and a finished state when the last volume is done.
+
+<!--
+Kueue suspends every Job that carries its queue label the moment it is
+created, so nothing starts before Kueue has seen it. Admission is once per
+campaign; after that Kubernetes starts the next volume as each one ends,
+without asking Kueue again.
+-->
+
+---
+
 # A run is one archival volume in one pod
 
 ```mermaid h:250
@@ -712,6 +809,22 @@ and viewer links keep working.
 <tr><td><strong>a volume</strong></td><td>its name opens the viewer · the page icon opens its run log · the braces open its IIIF manifest · its own bar, count and state · a failed page's reason under the row</td></tr>
 <tr><td><strong>footer</strong></td><td>the pipeline id and each model with its revision</td></tr>
 </table>
+
+---
+
+# The run log
+
+![w:700](assets/part-1-run-log.png)
+
+Each volume's log: a summary, one cell per page, the failed pages with their reason, and the log itself — updated while the volume runs.
+
+<!--
+Opened from the page icon on a volume's row. The summary names the
+pipeline, the htrflow version and the image, the page counts, and per-page
+timings with the slowest pages; each cell is a page, green by time or red
+for a failure; the log lines below group the HTTP requests so the model
+loading and the pages stand out.
+-->
 
 ---
 

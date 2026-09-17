@@ -1,19 +1,9 @@
 flowchart LR
-  subgraph CP["control plane — decides"]
-    API["API server<br/>holds every object: Job, ConfigMaps, Secret"]
-    JC["Job controller<br/>keeps N indexes running"]
-    KQ["Kueue<br/>decides WHEN — the GPU budget"]
-    SCH["scheduler<br/>decides WHERE — a node with a free GPU"]
-  end
-  subgraph N1["node 1 · 2 GPUs"]
-    P0["pod · index 0"]
-    P1["pod · index 1"]
-  end
-  subgraph N2["node 2 · 2 GPUs"]
-    P2["pod · index 2"]
-    P3["pod · index 3"]
-  end
-  API --> JC --> SCH
-  KQ --> JC
-  SCH --> N1
-  SCH --> N2
+  J["Job created<br/>paused by Kueue"]
+  W["Workload<br/>waits in the queue"]
+  Q{"its window fits<br/>the free GPUs?"}
+  R["admitted<br/>Job unpaused, pods start"]
+  D["last volume done<br/>GPUs back to the pool"]
+  J --> W --> Q
+  Q -->|"yes"| R --> D
+  Q -->|"not yet"| W

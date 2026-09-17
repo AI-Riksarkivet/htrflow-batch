@@ -1,14 +1,11 @@
 flowchart TB
-  subgraph WORK["the work"]
-    direction TB
-    CF["campaign file"] --> JOB["Job<br/>one per campaign"]
-    JOB --> POD["Pod<br/>one per archival volume"]
-    POD --> INIT["init container<br/>waits for the models"]
-    POD --> CON["container<br/>wrapper + htrflow"]
+  subgraph A["before the first page"]
+    direction LR
+    W["wait<br/>models in the cache?"] --> S["setup<br/>read the IIIF manifest"] --> R["resume<br/>list the bucket: which<br/>pages are already done"] --> L["load<br/>build the pipeline<br/>while page 1 downloads"]
   end
-  subgraph QUEUE["the queue — Kueue"]
-    direction TB
-    CQ["ClusterQueue<br/>the GPU quota"] --> LQ["LocalQueue<br/>the name a Job asks for"]
-    LQ --> WL["Workload<br/>one per Job"]
+  subgraph B["every page, then the end"]
+    direction LR
+    F["fetch page"] --> H["htrflow runs it"] --> U["upload PAGE, ALTO,<br/>progress.json"] --> V["verify<br/>every page done,<br/>skipped or failed"] --> P["publish<br/>iiif.json, pipeline.yaml,<br/>manifest.json last"] --> X["exit 0<br/>GPU free"]
+    U -. "next page" .-> F
   end
-  JOB <-. "admitted?" .-> WL
+  A --> B
