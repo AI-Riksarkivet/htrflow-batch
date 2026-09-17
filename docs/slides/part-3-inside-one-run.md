@@ -59,7 +59,7 @@ unnecessary -- and that is a legitimate thing to fix upstream one day.
 <table class="plain">
 <tr><td><strong>top</strong></td><td>the wrapper package — installed from a lock file, with hashes</td></tr>
 <tr><td></td><td>httpx and boto3 — fetching pages, writing to S3</td></tr>
-<tr><td><strong>base</strong></td><td>the upstream htrflow image, pinned by digest — Python, PyTorch, htrflow</td></tr>
+<tr><td><strong>base</strong></td><td>htrflow's own image, pinned by digest — or, where none is published, a build of it from source</td></tr>
 </table>
 
 <p class="filename">what the pipeline file points at</p>
@@ -71,11 +71,11 @@ docker.io/riksarkivet/htrflow-batch@sha256:cb30d0…
 </div>
 <div>
 
-**One image, built on htrflow's own.** Nothing about htrflow is rebuilt or patched; the layer adds the wrapper and the two libraries it needs to fetch pages and write to S3.
+**One image, built on htrflow's own.** htrflow itself is unchanged; the layer adds the wrapper and the libraries it needs, and pins the GPU libraries — PyTorch and transformers — the models need.
 
 **No models inside.** Weights live in the cache the warm-up fills, so one image serves every pipeline and the image stays the size of the code.
 
-**It says where it came from.** The htrflow base revision is a label and an environment variable, so every ALTO can name it. Each release is signed, with a build provenance record and a software bill of materials.
+**It says where it came from.** The htrflow base revision is a label and an environment variable, so every ALTO can name it.
 
 **One rule to remember:** a pipeline names the image by digest, so the code that runs is exactly the code that was reviewed.
 
@@ -166,7 +166,7 @@ built on the assumption that any of those may be hostile.
 <table class="plain">
 <tr><td></td><td><strong>may reach</strong></td><td><strong>may not reach</strong></td></tr>
 <tr><td><strong>campaign pod</strong></td><td>the IIIF servers the platform names · the results bucket</td><td>Hugging Face Hub · the internet · the Kubernetes API · other pods</td></tr>
-<tr><td><strong>warm-up pod</strong></td><td>the public internet on HTTPS, for the Hub</td><td>the results bucket · the Kubernetes API · anything in the cluster · private and link-local addresses</td></tr>
+<tr><td><strong>warm-up pod</strong></td><td>the public internet on HTTPS, for the Hub</td><td>the Kubernetes API · anything in the cluster · private and link-local addresses — and it holds no bucket credentials</td></tr>
 <tr><td><strong>web front</strong></td><td>the Kubernetes API, to read campaigns · the bucket, to read progress</td><td>the IIIF servers · the Hub · the internet</td></tr>
 </table>
 
@@ -317,7 +317,7 @@ status/logs/<pipeline>/<volume>.txt     the run's own log, shipped every 15 s
 
 **The pipeline id is in the key.** A better recipe writes beside the old results, never over them.
 
-**Timeouts are short.** Ten seconds to connect, sixty to read, three retries — so a dead bucket cannot pin a GPU for hours.
+**Timeouts are short.** Ten seconds to connect, sixty to read, three attempts — so a dead bucket cannot pin a GPU for hours.
 
 </div>
 </div>
@@ -442,7 +442,7 @@ flowchart TB
 </div>
 
 <!--
-Every exit path ends with the same three things: a structured termination
+Every failing exit path ends with the same three things: a structured termination
 message (stage, permanent, error) that the campaign card turns into one
 sentence, the last log ship, and a last progress.json.
 -->
@@ -501,9 +501,8 @@ WARNING page 0044 failed: PipelineDead("… worker thread died; the page
 </div>
 <div>
 
-**What survives the Job.** The Job is reaped a week after it ends. Three things do not expire: `manifest.json` with every page's outcome, `progress.json` with the last count and sentence, and the run log under `status/logs/`. The card is rebuilt from those, and the viewer link keeps working.
+**What survives the Job.** The Job is reaped a week after it ends. What does not expire: the campaign's record in the cluster, `manifest.json` with every page's outcome, `progress.json` with the last count and sentence, and the run log. The card is rebuilt from the record and the bucket, and the viewer link keeps working.
 
-**One rule to remember:** every failure the platform can name ends as a sentence a person can act on — never a stack trace on a card.
 
 </div>
 </div>

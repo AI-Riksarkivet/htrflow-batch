@@ -1,5 +1,5 @@
 flowchart LR
-  R["render again<br/>must equal rendered/"]
+  R["render again<br/>append-only, pipelines unchanged"]
   W["write each campaign's<br/>record — before anything is sent"]
   P["apply pipelines<br/>ConfigMap + warm-up Job"]
   C["apply campaigns<br/>skip finished, unchanged ones"]

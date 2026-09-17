@@ -17,7 +17,7 @@ Parts 1 and 2 used three things from Kueue: the window, priority and pause.
 This part is the rest of the toolbox, taken concept by concept from
 kueue.sigs.k8s.io/docs/concepts, each told as a capability: what it lets a
 team do, and whether it is in use here, available, or an idea worth
-testing. Nothing already shown in parts 1 and 2 is repeated.
+testing.
 -->
 
 ---
@@ -243,7 +243,7 @@ if A preempts B, B cannot then preempt A.
 </div>
 <div>
 
-**A missing class stops everything.** Kueue does not fall back to anything; the Workload cannot be created until the class exists. That is why `validate` checks the name — and why the platform must create a class before a campaign may use it.
+**A missing class stops everything.** Kueue does not fall back to anything; no Workload is made until the class exists, and the card reads *Queued* for ever. That is why `validate` checks the name — and why the platform must create a class before a campaign may use it.
 
 **Here:** three classes, preemption off — so today priority means order only.
 
@@ -271,8 +271,6 @@ turned on.
 
 </div>
 <div>
-
-**Another cluster.** MultiKueue is a check that copies the Workload to worker clusters and runs it on the first one that admits it — capacity beyond one cluster, with no change to the Job.
 
 **Your own check.** Any controller can be one. An idea worth testing here: *models warmed* as a check, so a campaign would not hold GPUs while its warm-up downloads.
 
@@ -319,8 +317,8 @@ kinds, plain pods and Deployments.
 # Topology and elastic workloads
 
 <table class="plain">
-<tr><td><strong>Topology-aware scheduling</strong></td><td>places a Workload's pods in the same block or rack so they talk faster. <em>Not for us:</em> our volumes never talk to each other; Kueue's own docs say independent pods gain nothing.</td></tr>
-<tr><td><strong>Elastic workloads</strong></td><td>changes the parallelism of an admitted Job without suspending it: scaling up is admitted as a new slice, scaling down frees quota at once. <em>Would mean</em> changing a running campaign's window without a pause.</td></tr>
+<tr><td><strong>Topology-aware scheduling</strong></td><td>places a Workload's pods in the same block or rack so they talk faster. <em>Not for us:</em> our volumes never talk to each other.</td></tr>
+<tr><td><strong>Elastic workloads</strong></td><td>changes the parallelism of an admitted Job without suspending it: scaling up is admitted as a new slice, scaling down needs no new admission. <em>Would mean</em> changing a running campaign's window without a pause.</td></tr>
 </table>
 
 <!--
