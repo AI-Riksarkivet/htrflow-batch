@@ -238,7 +238,7 @@ for i, (t, s, ic, o) in enumerate(codes):
 fan(d, 800, 24 + CARD_H, targets, 160)
 d.save(OUT + "p3-exit.svg")
 
-# ---------------------------------------------------------------- part 4: cohort, queues, flavors, nodes
+# ---------------------------------------------------------------- part 1: cohort, queues, flavors, nodes
 d = Diagram(1600, 584)
 cw = (1552 - 2 * 56) / 3
 col = [24 + i * (cw + 56) for i in range(3)]
@@ -261,7 +261,7 @@ d.arrow([(mid[0], 168), (mid[0], fy - GAP)], label="1st", at=(mid[0], lane))
 d.arrow([(600, 168), (600, lane), (mid[1] - 40, lane), (mid[1] - 40, fy - GAP)], label="2nd", at=(680, lane))
 d.arrow([(1000, 168), (1000, lane), (mid[1] + 40, lane), (mid[1] + 40, fy - GAP)], label="1st", at=(920, lane))
 d.arrow([(mid[2], 168), (mid[2], fy - GAP)], label="2nd", at=(mid[2], lane))
-d.save(OUT + "p4-cohort.svg")
+d.save(OUT + "p1-flavors-cohort.svg")
 
 # ---------------------------------------------------------------- part 5: how a model reaches the GPU
 d = Diagram(1600, 312)
