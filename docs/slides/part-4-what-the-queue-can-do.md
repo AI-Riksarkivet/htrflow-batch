@@ -550,42 +550,14 @@ and need to be enabled for the quota dashboards.
 
 ---
 
-# Which concept would you reach for?
-
-<div class="cols">
-<div>
-
-**1.** A driver upgrade tomorrow morning: nothing new should start tonight, and nothing running should be killed.
-
-**2.** Two departments share the GPUs 3 to 1, and each department's idle share should go to its own teams first.
-
-**3.** Half the new cards are a different model with twice the memory.
-
-**4.** Users keep asking why their campaign says *Queued*.
-
-</div>
-<div>
-
-<p class="note">One concept each; all four are on the slides before.</p>
-
-</div>
-</div>
-
----
-
-# … and the answers
-
-<table class="plain">
-<tr><td>1</td><td><strong>A stop policy of <em>Hold</em> on the ClusterQueue.</strong> Admitted campaigns finish, nothing new is admitted, and removing the hold resumes the line.</td></tr>
-<tr><td>2</td><td><strong>Hierarchical cohorts with weights</strong> — a cohort per department under one for the archive, weighted 3 and 1, the teams' pools inside each.</td></tr>
-<tr><td>3</td><td><strong>ResourceFlavors</strong> — one per card model, each with its own quota, and flavor order so a large model lands on the large cards and the rest fall back.</td></tr>
-<tr><td>4</td><td><strong>The visibility endpoint and the Workload's conditions</strong> — position in the line and the reason, on the campaign card.</td></tr>
-</table>
-
----
-
 # Next
 
 <p class="note"><strong>Part 5, <em>Models and signatures</em>:</strong> the model cache and the warm-up, revision pins, the two transformers lines, bringing a new model to the cluster — and what it would take for a model to be signed the way an image already is.</p>
 
 **kueue.sigs.k8s.io/docs/concepts** — every concept on these slides, in Kueue's own words. *Queueing* in the htrflow-batch docs is how it is wired here today.
+
+---
+
+<!-- _class: lead -->
+
+# Any questions?
