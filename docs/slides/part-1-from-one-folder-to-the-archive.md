@@ -245,12 +245,12 @@ Workload.
 <div class="cols">
 <div>
 
-**A kind of GPU.** A flavor names nodes by their label — large cards, small cards, interruptible ones — and Kueue adds that label to the pods it admits, so they land on the right machines.
+**A kind of GPU.** A flavor names nodes by their label — the GPU model NVIDIA's feature discovery writes on each node, A100 or L4 — and Kueue adds that label to the pods it admits, so they land on the right machines.
 
 </div>
 <div>
 
-**A quota per flavor.** A ClusterQueue promises so many of each and tries its flavors in order: a campaign takes the first with room.
+**A quota per flavor.** A ClusterQueue promises so many of each and tries its flavors in order: a campaign takes an A100 if one is free, an L4 if not.
 
 **Here:** one flavor — every GPU is alike.
 

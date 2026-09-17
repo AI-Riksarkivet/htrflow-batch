@@ -243,14 +243,14 @@ d = Diagram(1600, 488)
 cw = (1552 - 56) / 2
 col = [24, 24 + cw + 56]
 mid = [x + cw / 2 for x in col]
-d.card(520, 24, 560, "ClusterQueue", "quota 8 large · 4 small", L("layers"))
+d.card(520, 24, 560, "ClusterQueue", "quota 8 A100 · 4 L4", L("layers"))
 fy = 200
-for i, (name, label) in enumerate((("large", "gpu=large"), ("small", "gpu=small"))):
-    d.card(col[i], fy, cw, f"Flavor: {name}", f"nodes labelled {label}", L("tag"))
+for i, (name, product, gpu) in enumerate((("a100", "NVIDIA-A100-SXM4-80GB", "A100, 80 GB"), ("l4", "NVIDIA-L4", "L4, 24 GB"))):
+    d.card(col[i], fy, cw, f"Flavor: {name}", f"nvidia.com/gpu.product={product}", L("tag"))
     nw = (cw - 24) / 2
     nodes = [(col[i] + k * (nw + 24), 368, nw, CARD_H) for k in range(2)]
     for nx, ny, _, _ in nodes:
-        d.card(nx, ny, nw, "Node", label, "k8s-node", logo=True)
+        d.card(nx, ny, nw, "Node", gpu, "k8s-node", logo=True)
     fan(d, mid[i], fy + CARD_H, nodes, 332)
 d.arrow([(640, 120), (640, 156), (mid[0], 156), (mid[0], fy - GAP)], label="1st", at=((640 + mid[0]) / 2, 156))
 d.arrow([(960, 120), (960, 156), (mid[1], 156), (mid[1], fy - GAP)], label="2nd", at=((960 + mid[1]) / 2, 156))
@@ -262,14 +262,14 @@ cw = (1552 - 2 * 56) / 3
 col = [24 + i * (cw + 56) for i in range(3)]
 mid = [x + cw / 2 for x in col]
 d.group(24, 16, 1552, 176, "Cohort — the archive", L("users"))
-d.card(120, 72, 560, "ClusterQueue: transcription", "quota 8 large · 4 small", L("layers"))
-d.card(920, 72, 560, "ClusterQueue: research", "quota 4 small · 4 interruptible", L("layers"))
+d.card(120, 72, 560, "ClusterQueue: transcription", "quota 8 A100 · 4 L4", L("layers"))
+d.card(920, 72, 560, "ClusterQueue: research", "quota 4 L4 · 4 interruptible", L("layers"))
 d.arrow([(680, 96), (920 - GAP, 96)], dot=False)
 d.arrow([(920, 144), (680 + GAP, 144)], dot=False)
 d.pill(800, 120, "lend idle quota")
 fy, lane = 296, 244
-for i, (name, label) in enumerate((("large", "gpu=large"), ("small", "gpu=small"), ("interruptible", "spot=true"))):
-    d.card(col[i], fy, cw, f"Flavor: {name}", f"nodes labelled {label}", L("tag"))
+for i, (name, label, having) in enumerate((("a100", "A100", "an A100"), ("l4", "L4", "an L4"), ("interruptible", "spot", "spot capacity"))):
+    d.card(col[i], fy, cw, f"Flavor: {name}", f"nodes with {having}", L("tag"))
     nw = (cw - 24) / 2
     nodes = [(col[i] + k * (nw + 24), 464, nw, CARD_H) for k in range(2)]
     for nx, ny, _, _ in nodes:
