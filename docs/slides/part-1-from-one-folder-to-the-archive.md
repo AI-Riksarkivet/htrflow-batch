@@ -207,7 +207,7 @@ sets it for every campaign.
 <tr><td>a Job sent by hand</td><td>anything that skips the converter skips its checks</td><td>checked anyway — every object sent to the cluster passes through</td></tr>
 </table>
 
-**Reproducible results and a safe shared cluster are the same rules.** Kyverno makes the cluster enforce them, instead of every campaigns repository remembering them.
+**It enforces good provenance.** When every image is pinned and every model has a revision, what each ALTO says produced it is true — and the cluster enforces that, not every campaigns repository on its own.
 
 ---
 
