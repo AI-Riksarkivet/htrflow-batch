@@ -4,19 +4,8 @@ This page follows one page from start to finish. Everything here happens
 inside a single wrapper pod, which runs one campaign index and so one volume.
 The volume-level view is [The Wrapper](wrapper.md).
 
-```mermaid
-flowchart TB
-    M["IIIF manifest, fetched, or built from images: and<br/>published to sources/PIPELINE/VOLUME/manifest.json"]
-    P["PageRef: index 1, name 0001,<br/>width-capped image URL"]
-    I["/work/input/0001.jpg on tmpfs<br/>(signature checked, FETCH_MAX_BYTES)"]
-    D["htrflow Document: page, then regions,<br/>then lines, then text on the lines"]
-    X["/work/outputs/page/0001.xml<br/>/work/outputs/alto/0001.xml"]
-    S["ALTO stamped with the htrflow-batch Processing block"]
-    U["S3: page/0001.xml, then alto/0001.xml,<br/>then image and both XML files unlinked from tmpfs"]
-    F["after the last page: iiif.json, pipeline.yaml,<br/>manifest.json LAST"]
+![One page: the manifest, a PageRef, the image on tmpfs, htrflow, the XML, the ALTO stamp, the upload, and the files written after the last page](../assets/diagrams/page-flow.svg)
 
-    M --> P --> I --> D --> X --> S --> U --> F
-```
 
 ## The source
 

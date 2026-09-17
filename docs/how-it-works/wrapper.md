@@ -296,20 +296,8 @@ one.
 
 ## The model cache
 
-```mermaid
-flowchart TB
-    PL["pipelines/pipeline-id.yaml<br/>appears in the campaigns repo"]
-    W["Warm-up Job<br/>htr-warmup-pipeline-id<br/>Pipeline.from_config fills the cache"]
-    PVC[("Model cache PVC<br/>HF_HOME=/data/hf<br/>markers under /data/warmup")]
-    G["warmup-wait init container<br/>polls for the marker file"]
-    P["Campaign pod<br/>wrapper container<br/>HF_HUB_OFFLINE=1, cache mounted read-only"]
+![The model cache: a new pipeline file, the warm-up Job that fills the cache and writes a marker, the warmup-wait init container, and the campaign pod reading the cache offline](../assets/diagrams/warmup.svg)
 
-    PL --> W
-    W -->|"read-write: writes snapshots, then the marker"| PVC
-    PVC -->|"read-only"| G
-    G -->|"marker found, exit 0"| P
-    PVC -->|"read-only"| P
-```
 
 **What is cached.** One PVC holds two kinds of file:
 

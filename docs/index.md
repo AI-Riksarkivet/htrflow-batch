@@ -35,32 +35,8 @@ what to transcribe is declared in a campaigns git repository.
 
 ## How it fits together
 
-```mermaid
-%% One campaign, from a YAML file in git to results in the viewer.
-flowchart TB
-    repo["campaigns repo in git<br/>campaigns/*.yaml · pipelines/*.yaml"]
-    conv["htrflow-campaigns<br/>validate · render · apply"]
-    subgraph cluster["Kubernetes cluster"]
-        kyverno["Kyverno admission policies<br/>every Job, Pod and pipeline ConfigMap<br/>allowed, digest-pinned images · pinned models · optional signatures"]
-        kueue["Kueue<br/>queue, GPU quota, admission"]
-        warm["warm-up Job (CPU)<br/>fills the model cache"]
-        job["Indexed Job, one index per volume<br/>wrapper streams pages through htrflow on the GPU"]
-        web["web front<br/>campaign browser · viewer · read API"]
-    end
-    iiif["IIIF image server"]
-    s3["S3 results bucket<br/>ALTO · PAGE · manifest.json · iiif.json · run log"]
-    browser["browser"]
+![One campaign, from a file in git to results in the viewer: git, delivery, the cluster, storage and the outside world](assets/diagrams/overview.svg)
 
-    repo --> conv -->|apply| kyverno
-    kyverno -->|campaign Job| kueue --> job
-    kyverno -->|warm-up Job, not queued| warm
-    warm -.->|model cache| job
-    job -->|pages in| iiif
-    job -->|results out, page by page| s3
-    web -->|Jobs, Pods| job
-    browser --> web
-    browser --> s3
-```
 
 ## Where to start
 

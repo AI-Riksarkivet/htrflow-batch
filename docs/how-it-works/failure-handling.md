@@ -11,22 +11,8 @@ Failure handling has two layers and one authority:
 - **`manifest.json` in S3** is the authority. It is the only thing that ever
   means "done".
 
-```mermaid
-stateDiagram-v2
-    [*] --> queued: campaign applied<br/>(suspended until Kueue admits)
-    queued --> running: Kueue admits (quota free)
-    running --> done: verify passes (failed pages recorded)<br/>then manifest.json in S3
-    running --> retry: exit 1 or 143 (incl. pod deadline)<br/>and backoffLimitPerIndex left
-    running --> failed_index: exit 13 (FailIndex),<br/>or backoffLimitPerIndex reached
-    retry --> running: pod replaced,<br/>resume skips done pages
-    done --> [*]
-    failed_index --> [*]
-    note right of running
-        pod disruption (drain, preemption)
-        podFailurePolicy Ignore, the pod is
-        replaced and no retry is charged
-    end note
-```
+![One index: queued, running, then done, a retry that resumes, or a failed index; a pod disruption replaces the pod without charging a retry](../assets/diagrams/index-failure.svg)
+
 
 A `failed_index` appears in the Job's `failedIndexes` field and as
 `state: "failed"` on the read API's volume row. The wrapper's termination
