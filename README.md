@@ -24,51 +24,59 @@
 > format still change without notice. Watch the releases. This notice goes
 > when there is a release to stand behind.
 
-Batch handwritten-text recognition for whole archive volumes on Kubernetes,
-built around the stock [htrflow](https://github.com/AI-Riksarkivet/htrflow)
-image.
+Run an [htrflow](https://github.com/AI-Riksarkivet/htrflow) pipeline on whole
+archival volumes, across a Kubernetes cluster of GPU nodes. Your pipeline stays
+exactly as it is; htrflow-batch decides where each volume runs, streams its
+pages in, and publishes ALTO and PAGE XML page by page.
 
-- **A campaign is a YAML file** in a git repository that lists the volumes
-  to transcribe.
-- **A pure converter renders it** into one Kubernetes **Indexed Job** (one
-  index per volume), plus a warm-up Job that caches the pipeline's models.
-- **Kueue** owns queueing and GPU quota. **Kyverno** policies decide which
-  images and model revisions may run.
-- **In each index, a thin wrapper** streams the volume page by page from IIIF
-  into htrflow. It uploads ALTO and PAGE XML the moment a page is done, stamps
-  every ALTO with what produced it, and publishes a IIIF manifest so the
-  result opens in the viewer.
-- **A read-only status page** shows every campaign and volume live.
+**New here?** The [Distributed htrflow](https://ai-riksarkivet.github.io/htrflow-batch/presentations/)
+slides walk through all of it in pictures.
 
-There is no CRD, no controller and no database.
+## From one machine to many
+
+| | one machine | many nodes |
+|---|---|---|
+| **where it runs** | your machine, its GPU | whichever node has a GPU free — chosen for you |
+| **the pages** | a folder on its disk | fetched from a IIIF manifest or plain image URLs |
+| **the models** | downloaded to that disk | a shared cache every node mounts |
+| **the results** | a folder next to the pages | a bucket every node writes to and every browser reads |
+| **when a machine fails** | you start again | the volume resumes on another node from the bucket |
+| **how you start it** | a command | a file in git |
+
+A *volume* here is an archival volume — a bound unit of pages with a reference
+code such as `R0001203` — never a Kubernetes volume.
+
+## A campaign is a file in git
+
+```yaml
+# campaigns/kyrkobocker-1.yaml
+pipeline: demo-v1            # a pipeline file in the same repository
+window: 4                    # optional: how many volumes run at once
+priority: htr-bulk           # optional: where it goes in the line
+volumes:
+  - R0001203                 # a reference code is enough
+  - id: loc-mal2459400
+    manifest: https://…/manifest.json
+  - id: loose-scans
+    images:
+      - https://…/scan-0001.jpg
+```
+
+You validate it locally, open a pull request, and once it is merged an apply
+sends it to the cluster. Stopping, removing and restarting a campaign are git
+changes too. There is no CRD, no controller and no database.
 
 ## How it fits together
 
-```mermaid
-%% One campaign, from a YAML file in git to results in the viewer.
-flowchart TB
-    repo["campaigns repo in git<br/>campaigns/*.yaml · pipelines/*.yaml"]
-    conv["htrflow-campaigns<br/>validate · render · apply"]
-    subgraph cluster["Kubernetes cluster"]
-        kyverno["Kyverno admission policies<br/>every Job, Pod and pipeline ConfigMap<br/>allowed, digest-pinned images · pinned models · optional signatures"]
-        kueue["Kueue<br/>queue, GPU quota, admission"]
-        warm["warm-up Job (CPU)<br/>fills the model cache"]
-        job["Indexed Job, one index per volume<br/>wrapper streams pages through htrflow on the GPU"]
-        web["read API + status page"]
-    end
-    iiif["IIIF image server"]
-    s3["S3 results bucket<br/>ALTO · PAGE · manifest.json · iiif.json · run log"]
-    viewer["viewer"]
+![Rough architecture: git, delivery, the cluster, storage and the outside world](docs/slides/assets/part-1-architecture.svg)
 
-    repo --> conv -->|apply| kyverno
-    kyverno -->|campaign Job| kueue --> job
-    kyverno -->|warm-up Job, not queued| warm
-    warm -.->|model cache| job
-    job -->|pages in| iiif
-    job -->|results out, page by page| s3
-    web -->|Jobs, Pods| job
-    viewer --> s3
-```
+- **A pure converter** (`htrflow-campaigns`) checks the campaign and renders it
+  into one Kubernetes **Indexed Job**, one index per volume, plus a warm-up Job
+  that fills the model cache. It runs in CI, never in the cluster.
+- **Kyverno** decides which images and model revisions may run. **Kueue** holds
+  a campaign until its GPUs are free, and lets higher priority go first.
+- **A web front** shows every campaign and volume live, with each volume's run
+  log and the transcription in the viewer.
 
 - [Architecture](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/architecture/): the map, and the components and their boundaries
 - [Campaigns](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/campaigns/): the campaigns repo, the converter and what it renders
@@ -76,22 +84,25 @@ flowchart TB
 - [Events and signals](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/signals/): what the system emits and who reads it
 - [Failure handling](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/failure-handling/): retries, exit codes, what a person is told
 
-```mermaid
-%% One page, inside the wrapper.
-flowchart TB
-    fetch["fetch the page from IIIF<br/>width-capped, bounded lookahead"]
-    tmp["tmpfs workdir"]
-    seg["htrflow: segmentation<br/>regions, then lines"]
-    rec["htrflow: text recognition<br/>one line at a time"]
-    xml["ALTO + PAGE XML<br/>with provenance: models, image, htrflow-batch"]
-    up["upload the page the moment it is done<br/>then delete it from tmpfs"]
-    pub["at the end: verify every page, publish<br/>iiif.json, pipeline.yaml, manifest.json last"]
+## htrflow in a pod
 
-    fetch --> tmp --> seg --> rec --> xml --> up --> pub
-```
+![One pod per archival volume: wait for the models, then fetch, transcribe and upload page by page, then verify, publish and exit](docs/slides/assets/p1-pod.svg)
+
+Every pod runs htrflow — your pipeline, unchanged — on one archival volume.
+Each page is uploaded the moment it is done, with provenance in every ALTO:
+which models, which image, which htrflow-batch. A restarted pod skips the pages
+already in the bucket, so a crash costs one page, not a volume.
 
 - [From image to transcription](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/page-flow/): this path in detail
 - [The wrapper](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/wrapper/): stages, provenance, model cache, and why a long volume costs the same memory as a short one
+
+## What you see
+
+![The status page: one card per campaign, with its volumes, pages and problems](docs/slides/assets/part-1-status-page.png)
+
+One card per campaign: how it stands, a bar per volume, and one sentence for
+each volume that failed, saying why. A volume's name opens it in the viewer; its
+page icon opens the run log.
 
 ## What is in the repository
 
@@ -162,7 +173,9 @@ cluster.
 ## Documentation
 
 The site is at <https://ai-riksarkivet.github.io/htrflow-batch/>, built from
-`docs/` on every merge to main. Locally:
+`docs/` on every merge to main, with the
+[slides](https://ai-riksarkivet.github.io/htrflow-batch/presentations/) beside
+it. Locally:
 
 ```bash
 make docs-serve
