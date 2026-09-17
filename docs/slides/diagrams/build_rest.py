@@ -71,36 +71,38 @@ d.pill(kx, 40, "until GPUs are free")
 d.save(OUT + "p1-kueue-flow.svg")
 
 # ---------------------------------------------------------------- part 1: htrflow in a pod
-d = Diagram(1600, 744)
-cw = (1552 - 48 - 2 * 96) / 3
-c = [48 + i * (cw + 96) for i in range(3)]
-
-
-def stage(gy, gh, label, icon, cards):
-    d.group(24, gy, 1552, gh, label, icon)
-    for i, (t, s, ic, o) in enumerate(cards):
-        d.card(c[i], gy + 56, cw, t, s, ic, **o)
-        if i:
-            d.arrow([(c[i - 1] + cw, gy + 104), (c[i] - GAP, gy + 104)])
-
-
-stage(16, 176, "Get ready", L("hard-drive-download"), [
-    ("Wait for models", "in the cache", L("hard-drive-download"), {}),
-    ("Read the manifest", "or the image list", L("file-text"), {}),
-    ("Resume", "skip pages already done", L("list-checks"), {})])
-stage(240, 248, "Page by page", L("repeat"), [
-    ("Fetch the page", "one at a time", L("download"), {}),
-    ("htrflow", "runs your pipeline", L("scroll-text"), {"strong": True}),
-    ("Upload", "PAGE and ALTO", L("upload"), {})])
-stage(536, 176, "Finish", L("flag"), [
-    ("Verify", "every page accounted for", L("search-check"), {}),
-    ("Publish", "manifest.json last", L("cloud-upload"), {}),
-    ("Exit", "the GPU is free", L("power"), {})])
-loop = 240 + 56 + CARD_H + 40
-d.arrow([(c[2] + cw / 2, 240 + 56 + CARD_H), (c[2] + cw / 2, loop), (c[0] + cw / 2, loop), (c[0] + cw / 2, 240 + 56 + CARD_H + GAP)],
-        label="next page", at=(c[1] + cw / 2, loop))
-d.arrow([(800, 192), (800, 240 - GAP)], dot=False)
-d.arrow([(800, 488), (800, 536 - GAP)], dot=False)
+d = Diagram(1600, 760)
+d.group(24, 176, 1232, 568, "Pod — one archival volume, one GPU", "k8s-pod")
+# the init container
+d.group(48, 232, 300, 256, "Init container", inner=True)
+d.tall(72, 288, 252, "Wait for models", "until the cache is ready", L("hard-drive-download"))
+# the main container: a loop over pages, then finish right to left
+d.group(372, 232, 860, 488, "Container", inner=True)
+cw = (860 - 48 - 2 * 48) / 3
+c = [396 + i * (cw + 48) for i in range(3)]
+mid = [x + cw / 2 for x in c]
+ra, rb = 288, 520
+d.tall(c[0], ra, cw, "Fetch the page", "skips pages done", L("download"))
+d.tall(c[1], ra, cw, "htrflow", "runs your pipeline", L("scroll-text"), strong=True)
+d.tall(c[2], ra, cw, "Upload", "PAGE, then ALTO", L("upload"))
+d.tall(c[2], rb, cw, "Verify", "every page counted", L("search-check"))
+d.tall(c[1], rb, cw, "Publish", "manifest.json last", L("cloud-upload"))
+d.tall(c[0], rb, cw, "Exit", "the GPU is free", L("power"))
+h = 176
+d.arrow([(324, ra + h / 2), (c[0] - GAP, ra + h / 2)])
+d.arrow([(c[0] + cw, ra + h / 2), (c[1] - GAP, ra + h / 2)])
+d.arrow([(c[1] + cw, ra + h / 2), (c[2] - GAP, ra + h / 2)])
+d.arrow([(mid[2] - 50, ra + h), (mid[2] - 50, 492), (mid[0], 492), (mid[0], ra + h + GAP)], label="next page", at=(mid[1], 492))
+d.arrow([(mid[2] + 50, ra + h), (mid[2] + 50, rb - GAP)])
+d.arrow([(c[2], rb + h / 2), (c[1] + cw + GAP, rb + h / 2)])
+d.arrow([(c[1], rb + h / 2), (c[0] + cw + GAP, rb + h / 2)])
+# what the pod reads, and where it writes
+d.card(mid[0] - 260, 24, 300, "IIIF server", "the page images", L("images"), outside=True)
+d.card(mid[1] - 40, 24, 300, "Model cache", "read-only, shared", L("database"))
+d.card(1296, ra + h / 2 - CARD_H / 2, 280, "S3 bucket", "ALTO · PAGE", L("database"))
+d.arrow([(mid[0] + 30, 120), (mid[0] + 30, ra - GAP)], label="pages", at=(mid[0] + 30, 148))
+d.arrow([(mid[1], 120), (mid[1], ra - GAP)], label="weights", at=(mid[1], 148))
+d.arrow([(c[2] + cw, ra + h / 2), (1296 - GAP, ra + h / 2)])
 d.save(OUT + "p1-pod.svg")
 
 # ---------------------------------------------------------------- part 1: one Job, four indexes
