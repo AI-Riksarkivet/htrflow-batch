@@ -345,6 +345,11 @@ table.plain td:first-child {
   grid-template-columns: 1fr 1.45fr;
 }
 
+.cols.three {
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 28px;
+}
+
 .cols > div > :last-child {
   margin-bottom: 0;
 }
