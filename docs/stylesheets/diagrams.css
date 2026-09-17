@@ -1,0 +1,65 @@
+/* The Mermaid diagrams that stay Mermaid (sequence diagrams, and the roadmap's
+   cache layer) take the colours of the hand-drawn ones in docs/assets/diagrams:
+   magenta lines and numbers, white actors, pale panels. */
+[data-md-color-scheme="default"] {
+  --md-mermaid-edge-color: #b44b6f;
+  --md-mermaid-node-bg-color: #f8e9ef;
+  --md-mermaid-node-fg-color: #1f1a1c;
+  --md-mermaid-label-bg-color: #ffffff;
+  --md-mermaid-label-fg-color: #574d50;
+  --md-mermaid-sequence-actor-bg-color: #ffffff;
+  --md-mermaid-sequence-actor-border-color: #b44b6f;
+  --md-mermaid-sequence-actor-fg-color: #1f1a1c;
+  --md-mermaid-sequence-actor-line-color: #d9cdd1;
+  --md-mermaid-sequence-actorman-bg-color: #ffffff;
+  --md-mermaid-sequence-actorman-line-color: #b44b6f;
+  --md-mermaid-sequence-box-bg-color: #f7f3f4;
+  --md-mermaid-sequence-box-fg-color: #574d50;
+  --md-mermaid-sequence-label-bg-color: #ffffff;
+  --md-mermaid-sequence-label-fg-color: #574d50;
+  --md-mermaid-sequence-loop-bg-color: #f7f3f4;
+  --md-mermaid-sequence-loop-border-color: #d9cdd1;
+  --md-mermaid-sequence-loop-fg-color: #574d50;
+  --md-mermaid-sequence-message-fg-color: #1f1a1c;
+  --md-mermaid-sequence-message-line-color: #b44b6f;
+  --md-mermaid-sequence-note-bg-color: #f8e9ef;
+  --md-mermaid-sequence-note-border-color: #e4d9dd;
+  --md-mermaid-sequence-note-fg-color: #1f1a1c;
+  --md-mermaid-sequence-number-bg-color: #b44b6f;
+  --md-mermaid-sequence-number-fg-color: #ffffff;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-mermaid-edge-color: #e08aa8;
+  --md-mermaid-node-bg-color: #3a2530;
+  --md-mermaid-node-fg-color: #f3e9ed;
+  --md-mermaid-label-bg-color: #221c1f;
+  --md-mermaid-label-fg-color: #d8cbd0;
+  --md-mermaid-sequence-actor-bg-color: #2a2226;
+  --md-mermaid-sequence-actor-border-color: #e08aa8;
+  --md-mermaid-sequence-actor-fg-color: #f3e9ed;
+  --md-mermaid-sequence-actor-line-color: #5a4a51;
+  --md-mermaid-sequence-actorman-bg-color: #2a2226;
+  --md-mermaid-sequence-actorman-line-color: #e08aa8;
+  --md-mermaid-sequence-box-bg-color: #2a2226;
+  --md-mermaid-sequence-box-fg-color: #d8cbd0;
+  --md-mermaid-sequence-label-bg-color: #2a2226;
+  --md-mermaid-sequence-label-fg-color: #d8cbd0;
+  --md-mermaid-sequence-loop-bg-color: #2a2226;
+  --md-mermaid-sequence-loop-border-color: #5a4a51;
+  --md-mermaid-sequence-loop-fg-color: #d8cbd0;
+  --md-mermaid-sequence-message-fg-color: #f3e9ed;
+  --md-mermaid-sequence-message-line-color: #e08aa8;
+  --md-mermaid-sequence-note-bg-color: #3a2530;
+  --md-mermaid-sequence-note-border-color: #5a4a51;
+  --md-mermaid-sequence-note-fg-color: #f3e9ed;
+  --md-mermaid-sequence-number-bg-color: #e08aa8;
+  --md-mermaid-sequence-number-fg-color: #221c1f;
+}
+
+/* The hand-drawn diagrams carry a white ground; soften it a little on the dark
+   theme so a page of them does not glare. */
+[data-md-color-scheme="slate"] .md-content img[src*="assets/diagrams/"] {
+  filter: brightness(0.92);
+  border-radius: 12px;
+}

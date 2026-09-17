@@ -9,6 +9,7 @@ Copyright &copy; 2026 Riksarkivet
 repo_url = "https://github.com/AI-Riksarkivet/htrflow-batch"
 repo_name = "AI-Riksarkivet/htrflow-batch"
 edit_uri = "edit/main/docs/"
+extra_css = ["stylesheets/diagrams.css"]
 
 nav = [
   { "htrflow-batch" = ["index.md"] },
