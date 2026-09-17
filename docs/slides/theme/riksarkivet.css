@@ -405,6 +405,22 @@ table.plain td:first-child {
   margin-right: 8px;
 }
 
+/* A table whose rows start with an icon of their own: the icon keeps its
+   size, and the label beside it reads as the row's name. */
+table.plain td.icon {
+  width: 38px;
+  padding-right: 0;
+}
+
+table.plain td.icon .ticon {
+  min-width: 30px;
+  margin-right: 0;
+}
+
+table.plain td.icon + td {
+  font-weight: 600;
+}
+
 .ticon.block {
   display: block;
   height: 40px;
