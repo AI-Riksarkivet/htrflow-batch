@@ -242,39 +242,6 @@ failed check on the pull request, not at apply.
 
 ---
 
-# Why Kyverno, and not something else
-
-<table class="plain">
-<tr><td><strong>only <code>validate</code></strong></td><td>runs where the author runs it — anything that skips the converter skips the check</td></tr>
-<tr><td><strong>Pod Security</strong></td><td>built into Kubernetes, and on here too — but it checks a pod's privileges, not which image or which model it runs</td></tr>
-<tr><td><strong>Kubernetes' own policies</strong></td><td>built in, rules as small expressions — they check an object's fields, but cannot fetch an image's signature from a registry or create objects</td></tr>
-<tr><td><strong>OPA Gatekeeper</strong></td><td>a capable policy engine — with policies in its own language, Rego</td></tr>
-<tr><td><strong>Kyverno</strong></td><td>policies are ordinary Kubernetes YAML, it verifies image signatures, and the same rules run in CI — the three things we need</td></tr>
-</table>
-
----
-
-# Kyverno — what else it can do
-
-<table class="plain">
-<tr><td><strong>validate</strong></td><td>refuse objects that break a rule</td><td>in use</td></tr>
-<tr><td><strong>verify images</strong></td><td>refuse images without a valid signature, or without a signed SBOM or provenance record</td><td>available</td></tr>
-<tr><td><strong>mutate</strong></td><td>change objects on the way in — add a label, a default, a security setting</td><td>not used</td></tr>
-<tr><td><strong>generate</strong></td><td>create objects automatically — a network policy or a quota for every new team namespace</td><td>not used</td></tr>
-<tr><td><strong>cleanup</strong></td><td>delete objects that match a rule, on a schedule</td><td>not used</td></tr>
-<tr><td><strong>audit and report</strong></td><td>warn instead of refuse, and report what already breaks a rule</td><td>available</td></tr>
-</table>
-
-**Generate is the one to watch:** with a namespace per team, it could give every new team its queue, quota and network rules without anyone writing them by hand.
-
-<!--
-Rule types from Kyverno's own documentation: validate, mutate, generate,
-verify images and cleanup, with policy reports for audit mode and
-background scans of objects that already exist.
--->
-
----
-
 # Kueue
 
 A job queue for Kubernetes. It decides **when** a Job may start, from a counted budget of GPUs.
