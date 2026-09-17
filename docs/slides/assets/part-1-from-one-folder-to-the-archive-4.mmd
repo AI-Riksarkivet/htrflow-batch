@@ -1,11 +1,16 @@
-flowchart LR
-  IN["pages<br/>IIIF or image URLs"]
-  subgraph POD["one pod — one archival volume, one GPU"]
-    PRE["get ready<br/>models · manifest · resume"]
-    HTR["htrflow<br/>your pipeline, page by page"]
-    POST["verify<br/>and publish"]
+flowchart TB
+  subgraph A["get ready"]
+    direction LR
+    W["wait until the models<br/>are in the cache"] --> M["read the manifest<br/>or the image list"] --> R["resume: skip pages<br/>already in the bucket"]
   end
-  OUT[("bucket<br/>ALTO · PAGE")]
-  IN --> PRE --> HTR --> POST --> OUT
-  HTR -- "each page as it is done" --> OUT
-  style HTR stroke-width:4px,font-weight:bold
+  subgraph B["page by page"]
+    direction LR
+    F["fetch the page"] --> H["htrflow runs<br/>your pipeline"] --> U["upload ALTO and PAGE<br/>to the bucket"]
+    U -. "next page" .-> F
+  end
+  subgraph C["finish"]
+    direction LR
+    V["verify every page<br/>is done or recorded"] --> P["publish the viewer manifest<br/>and manifest.json"] --> X["exit<br/>the GPU is free"]
+  end
+  A --> B --> C
+  style H stroke-width:4px,font-weight:bold

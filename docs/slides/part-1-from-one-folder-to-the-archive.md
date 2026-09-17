@@ -318,21 +318,26 @@ Workload waits and Running once it is admitted.
 
 # htrflow in a pod
 
-```mermaid w:1150
-flowchart LR
-  IN["pages<br/>IIIF or image URLs"]
-  subgraph POD["one pod — one archival volume, one GPU"]
-    PRE["get ready<br/>models · manifest · resume"]
-    HTR["htrflow<br/>your pipeline, page by page"]
-    POST["verify<br/>and publish"]
+```mermaid h:400
+flowchart TB
+  subgraph A["get ready"]
+    direction LR
+    W["wait until the models<br/>are in the cache"] --> M["read the manifest<br/>or the image list"] --> R["resume: skip pages<br/>already in the bucket"]
   end
-  OUT[("bucket<br/>ALTO · PAGE")]
-  IN --> PRE --> HTR --> POST --> OUT
-  HTR -- "each page as it is done" --> OUT
-  style HTR stroke-width:4px,font-weight:bold
+  subgraph B["page by page"]
+    direction LR
+    F["fetch the page"] --> H["htrflow runs<br/>your pipeline"] --> U["upload ALTO and PAGE<br/>to the bucket"]
+    U -. "next page" .-> F
+  end
+  subgraph C["finish"]
+    direction LR
+    V["verify every page<br/>is done or recorded"] --> P["publish the viewer manifest<br/>and manifest.json"] --> X["exit<br/>the GPU is free"]
+  end
+  A --> B --> C
+  style H stroke-width:4px,font-weight:bold
 ```
 
-**Every pod runs htrflow** — your pipeline, unchanged — on one archival volume, page by page, and the results reach the bucket as each page finishes.
+**Every pod runs htrflow** — your pipeline, unchanged — on one archival volume, page by page.
 
 <!--
 Why one volume per pod and not one page per pod: the model load. Building
@@ -462,47 +467,6 @@ This is the single design decision the rest follows from: a campaign is one
 Indexed Job, not one Job per volume and not a custom resource with a
 controller. The append-only rule falls straight out of completions being
 immutable. Part 2 shows what the validator says when someone tries anyway.
--->
-
----
-
-# What a volume can be
-
-<div class="cols wide-left">
-<div>
-
-<p class="filename">campaigns/demo.yaml — the same list, three ways of naming a volume</p>
-
-```yaml
-pipeline: demo-v1
-volumes:
-  - R0001203                                  # 1. a reference code
-  - id: loc-mal2459400                        # 2. a IIIF manifest
-    manifest: https://www.loc.gov/item/mal2459400/manifest.json
-  - id: six-pages                             # 3. bare image URLs
-    images:
-      - https://example.org/scan-0001.jpg
-      - https://example.org/scan-0002.jpg
-```
-
-</div>
-<div>
-
-* **A reference code** is expanded to a manifest URL by a template the cluster owns. Most volumes are this.
-* **A manifest URL** is fetched as it is — v2 or v3, any server.
-* **A list of image URLs has no manifest, so the wrapper writes one.** It publishes a *synthetic* IIIF manifest to the bucket first, then runs exactly as for the other two.
-
-</div>
-</div>
-
-**Why the third form matters:** six images are a whole campaign that runs the entire path — queue, pod, bucket, viewer — in about a minute. That is how you prove a new pipeline before running it on real volumes, and how a page from anywhere on the web gets transcribed without a IIIF server in front of it.
-
-<!--
-The synthetic manifest lands under sources/ in the bucket and is what the
-viewer opens; the wrapper treats it like any other manifest afterwards, so
-resume and verify work the same way. One caveat worth saying aloud: every
-URL a campaign names is stored verbatim in git, in the cluster and in the
-results; a presigned URL publishes its signature.
 -->
 
 ---
