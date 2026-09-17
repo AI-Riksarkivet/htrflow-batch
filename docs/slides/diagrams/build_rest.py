@@ -238,6 +238,24 @@ for i, (t, s, ic, o) in enumerate(codes):
 fan(d, 800, 24 + CARD_H, targets, 160)
 d.save(OUT + "p3-exit.svg")
 
+# ---------------------------------------------------------------- part 1: one pool, its flavors, their nodes
+d = Diagram(1600, 488)
+cw = (1552 - 56) / 2
+col = [24, 24 + cw + 56]
+mid = [x + cw / 2 for x in col]
+d.card(520, 24, 560, "ClusterQueue", "quota 8 large · 4 small", L("layers"))
+fy = 200
+for i, (name, label) in enumerate((("large", "gpu=large"), ("small", "gpu=small"))):
+    d.card(col[i], fy, cw, f"Flavor: {name}", f"nodes labelled {label}", L("tag"))
+    nw = (cw - 24) / 2
+    nodes = [(col[i] + k * (nw + 24), 368, nw, CARD_H) for k in range(2)]
+    for nx, ny, _, _ in nodes:
+        d.card(nx, ny, nw, "Node", label, "k8s-node", logo=True)
+    fan(d, mid[i], fy + CARD_H, nodes, 332)
+d.arrow([(640, 120), (640, 156), (mid[0], 156), (mid[0], fy - GAP)], label="1st", at=((640 + mid[0]) / 2, 156))
+d.arrow([(960, 120), (960, 156), (mid[1], 156), (mid[1], fy - GAP)], label="2nd", at=((960 + mid[1]) / 2, 156))
+d.save(OUT + "p1-flavors.svg")
+
 # ---------------------------------------------------------------- part 1: cohort, queues, flavors, nodes
 d = Diagram(1600, 584)
 cw = (1552 - 2 * 56) / 3
