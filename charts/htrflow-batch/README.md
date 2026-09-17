@@ -154,6 +154,21 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 here would make the upgrade notes wrong for anyone actually on that
 version.
 
+### 0.10.0 — 2026-09-17 (v0.3.0, the first GitHub release)
+
+Changed:
+- **`web.image`** now pins the published `v0.3.0` web image
+  (`docker.io/riksarkivet/htrflow-web@sha256:3833537f…`), a multi-architecture
+  manifest list, signed and attested like the wrapper. The web repository on
+  Docker Hub is public from this release; the `v0.2.0` digest the chart pinned
+  before could not be pulled anonymously.
+- **`appVersion`** is `0.3.0`, the version of the wrapper, web and converter
+  released together. Campaign pipelines pin the wrapper at
+  `docker.io/riksarkivet/htrflow-batch@sha256:a3a03fa9…`.
+
+No template or value key changed; an upgrade from 0.9.0 only moves the web
+Deployment to the new image.
+
 ### 0.9.0 — 2026-09-16 (priority classes)
 
 Added:

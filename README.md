@@ -19,10 +19,10 @@
 [![SLSA provenance](https://img.shields.io/badge/SLSA-provenance-blue.svg)](.github/actions/sign-attest/action.yml)
 [![SBOM SPDX](https://img.shields.io/badge/SBOM-SPDX-green.svg)](.github/actions/sign-attest/action.yml)
 
-> **Not for use yet.** This repository is under active development and is
-> not ready for others to run: interfaces, chart values and the campaigns
-> format still change without notice. Watch the releases. This notice goes
-> when there is a release to stand behind.
+> **Early release.** The first [release](https://github.com/AI-Riksarkivet/htrflow-batch/releases)
+> is a pre-release: the campaigns format, the chart values and the API may
+> still change between versions. Read the upgrade notes in the chart's README
+> before moving to a new one.
 
 Run an [htrflow](https://github.com/AI-Riksarkivet/htrflow) pipeline on whole
 archival volumes, across a Kubernetes cluster of GPU nodes. Your pipeline stays
