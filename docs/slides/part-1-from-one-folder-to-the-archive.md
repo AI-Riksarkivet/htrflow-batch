@@ -144,32 +144,7 @@ which the platform sets once for the archive's IIIF server.
 
 # Rough architecture
 
-```mermaid w:1180
-flowchart LR
-  YOU["you<br/>edit a campaign file,<br/>open a pull request"]
-  subgraph GIT["in git"]
-    REPO["campaigns repo"] --> CONV["converter, in CI<br/>validate · render"]
-  end
-  AP["apply<br/>Argo CD or the platform team"]
-  subgraph K8S["in the cluster"]
-    KYV["Kyverno<br/>checks the objects"] --> KUE["Kueue<br/>waits for GPUs"] --> JOB["campaign pods<br/>wrapper + htrflow"]
-    WARM["warm-up<br/>model cache"] -.-> JOB
-    WEB["web front<br/>status · viewer"]
-  end
-  subgraph OUT["external"]
-    IIIF["IIIF and image servers"]
-    HUB["Hugging Face Hub"]
-    BR["browser"]
-  end
-  S3[("S3 bucket")]
-  YOU --> REPO
-  CONV --> AP --> KYV
-  IIIF --> JOB
-  HUB --> WARM
-  BR --> WEB
-  JOB --> S3
-  WEB --> S3
-```
+![w:1020](assets/part-1-architecture.svg)
 
 **You only open a pull request.** The converter checks and renders it in CI; apply — run by Argo CD or the platform team, never by you — sends it to the cluster.
 
