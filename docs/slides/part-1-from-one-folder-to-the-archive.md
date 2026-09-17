@@ -319,7 +319,7 @@ A job queue for Kubernetes. It decides **when** a Job may start, from a counted 
 </div>
 </div>
 
-**Why:** without it, Kubernetes starts every pod it can, whoever asks first takes every GPU, and the rest pile up half-started. Part 4 goes through all of it.
+**Why:** without it, Kubernetes starts every pod it can, whoever asks first takes every GPU, and the rest pile up half-started.
 
 ---
 
