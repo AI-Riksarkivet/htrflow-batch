@@ -1,19 +1,11 @@
-flowchart LR
-  subgraph CP["control plane — decides"]
-    API["API server<br/>holds every object: Job, ConfigMaps, Secret"]
-    JC["Job controller<br/>keeps N indexes running"]
-    KQ["Kueue<br/>decides WHEN — the GPU budget"]
-    SCH["scheduler<br/>decides WHERE — a node with a free GPU"]
+flowchart TB
+  subgraph A["before the first page"]
+    direction LR
+    W["wait<br/>models in the cache?"] --> S["setup<br/>read the IIIF manifest"] --> R["resume<br/>list the bucket: which<br/>pages are already done"] --> L["load<br/>build the pipeline<br/>while page 1 downloads"]
   end
-  subgraph N1["node 1 · 2 GPUs"]
-    P0["pod · index 0"]
-    P1["pod · index 1"]
+  subgraph B["every page, then the end"]
+    direction LR
+    F["fetch page"] --> H["htrflow runs it"] --> U["upload PAGE, ALTO,<br/>progress.json"] --> V["verify<br/>every page done,<br/>skipped or failed"] --> P["publish<br/>iiif.json, pipeline.yaml,<br/>manifest.json last"] --> X["exit 0<br/>GPU free"]
+    U -. "next page" .-> F
   end
-  subgraph N2["node 2 · 2 GPUs"]
-    P2["pod · index 2"]
-    P3["pod · index 3"]
-  end
-  API --> JC --> SCH
-  KQ --> JC
-  SCH --> N1
-  SCH --> N2
+  A --> B

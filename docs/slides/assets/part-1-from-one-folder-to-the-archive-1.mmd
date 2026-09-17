@@ -1,11 +1,19 @@
-flowchart TB
-  subgraph A["before the first page"]
-    direction LR
-    W["wait<br/>models in the cache?"] --> S["setup<br/>read the IIIF manifest"] --> R["resume<br/>list the bucket: which<br/>pages are already done"] --> L["load<br/>build the pipeline<br/>while page 1 downloads"]
+flowchart LR
+  subgraph GIT["in git"]
+    REPO["campaigns repo"] --> CI["CI: validate, render"]
   end
-  subgraph B["every page, then the end"]
-    direction LR
-    F["fetch page"] --> H["htrflow runs it"] --> U["upload PAGE, ALTO,<br/>progress.json"] --> V["verify<br/>every page done,<br/>skipped or failed"] --> P["publish<br/>iiif.json, pipeline.yaml,<br/>manifest.json last"] --> X["exit 0<br/>GPU free"]
-    U -. "next page" .-> F
+  IIIF["IIIF servers"]
+  HUB["Hugging Face Hub"]
+  YOU["browser"]
+  subgraph K8S["in the cluster"]
+    KYV["Kyverno<br/>checks the objects"] --> KUE["Kueue<br/>waits for GPUs"] --> JOB["campaign pods<br/>wrapper + htrflow"]
+    WARM["warm-up<br/>model cache"] -.-> JOB
+    WEB["web front<br/>status · viewer"]
   end
-  A --> B
+  S3[("S3 bucket")]
+  CI -->|"apply"| KYV
+  IIIF --> JOB
+  HUB --> WARM
+  YOU --> WEB
+  JOB --> S3
+  WEB --> S3
