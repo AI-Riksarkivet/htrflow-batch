@@ -62,4 +62,39 @@ d.row(24, [
     ("Resumes", "the volume, from\nthe bucket", L("database")),
 ], gap=96)
 d.save(OUT + "future-window-range.svg")
+# ---------------------------------------------------------------- more volumes per card
+d = Diagram(1600, 312)
+gw = (1552 - 48) / 2
+for i, (label, pods) in enumerate((("Today — one volume per card", 1), ("With KAI fractions — four", 4))):
+    gx = 24 + i * (gw + 48)
+    d.group(gx, 16, gw, 280, label, L("microchip"))
+    d.group(gx + 24, 72, gw - 48, 200, "One GPU · 80 GB", inner=True)
+    sw = (gw - 96 - 3 * 16) / 4
+    for k in range(4):
+        sx = gx + 48 + k * (sw + 16)
+        if k < pods:
+            d.slot(sx, 128, sw, 120, "Volume", "20 GB")
+        else:
+            d.slot(sx, 128, sw, 120, "unused", "20 GB", used=False)
+d.save(OUT + "future-fractions.svg")
+
+# ---------------------------------------------------------------- whole nodes kept free
+d = Diagram(1600, 400)
+gw = (1552 - 48) / 2
+layouts = (("Spread — the default scheduler", [[1, 0, 1, 0], [1, 0, 1, 0]], "no node has 4 GPUs free"),
+           ("Packed — KAI", [[1, 1, 1, 1], [0, 0, 0, 0]], "node 2 fits a 4-GPU job"))
+for i, (label, nodes, note) in enumerate(layouts):
+    gx = 24 + i * (gw + 48)
+    d.group(gx, 16, gw, 368, label, L("layers"))
+    nw = (gw - 72) / 2
+    for n, used in enumerate(nodes):
+        nx = gx + 24 + n * (nw + 24)
+        d.group(nx, 72, nw, 240, f"Node {n + 1}", "k8s-node", inner=True)
+        sw = (nw - 48 - 16) / 2
+        for k, u in enumerate(used):
+            r, cix = divmod(k, 2)
+            d.slot(nx + 24 + cix * (sw + 16), 128 + r * 80, sw, 64, "volume" if u else "free", used=bool(u))
+    d.pill(gx + gw / 2, 344, note)
+d.save(OUT + "future-packing.svg")
+
 print("future written")

@@ -162,6 +162,25 @@ class Diagram:
                 self.arrow([(x - gap, y + h / 2), (x - GAP, y + h / 2)])
         return boxes
 
+    def slot(self, x, y, w, h, title, sub=None, used=True):
+        """A small slot, such as one GPU or part of one: filled when in use,
+        a dashed outline when free."""
+        if used:
+            self.front.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="10" fill="{TINT}" stroke="{MAGENTA}" stroke-width="2"/>')
+            color = INK
+        else:
+            self.front.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="10" fill="#ffffff" stroke="{DOTTED}" '
+                              'stroke-width="2" stroke-dasharray="6 6"/>')
+            color = MUTED
+        cx = x + w / 2
+        self._fits(title, SUB, 600, w - 16)
+        if sub:
+            self._fits(sub, 18, 400, w - 16)
+            self.front.append(f'<text x="{cx}" y="{y+h/2-3}" text-anchor="middle" font-size="{SUB}" font-weight="600" fill="{color}">{esc(title)}</text>'
+                              f'<text x="{cx}" y="{y+h/2+21}" text-anchor="middle" font-size="18" fill="{MUTED}">{esc(sub)}</text>')
+        else:
+            self.front.append(f'<text x="{cx}" y="{y+h/2+7}" text-anchor="middle" font-size="{SUB}" font-weight="600" fill="{color}">{esc(title)}</text>')
+
     # ------------------------------------------------------------ lines
     def arrow(self, pts, label=None, at=None, dashed=False, dot=True, head=True):
         """A right-angle path through `pts` with rounded bends. `label` sits in
