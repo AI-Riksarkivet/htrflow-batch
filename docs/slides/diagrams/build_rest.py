@@ -70,6 +70,28 @@ d.arrow([(kx + 50, y), (kx + 50, 56), (kx - 50, 56), (kx - 50, y - GAP)])
 d.pill(kx, 40, "until GPUs are free")
 d.save(OUT + "p1-kueue-flow.svg")
 
+# ---------------------------------------------------------------- part 1: Kueue's switch on the Job
+d = Diagram(1600, 560)
+gap = 140
+w = (1552 - 3 * gap) / 4
+x = [24 + i * (w + gap) for i in range(4)]
+top = 24
+states = [("Job created", "labelled with\nits queue", "k8s-job", {"logo": True}),
+          ("Suspended", "set by Kueue's webhook:\nno pods yet", L("toggle-left"), {}),
+          ("Running", "admitted: suspend off,\npods created", L("toggle-right"), {"strong": True}),
+          ("Finished", "the quota is\nfree again", L("circle-check"), {})]
+boxes = [d.tall(x[i], top, w, t, sub, ic, **o) for i, (t, sub, ic, o) in enumerate(states)]
+h = boxes[0][3]
+my = top + h / 2
+d.arrow([(x[0] + w, my), (x[1] - GAP, my)])
+d.arrow([(x[1] + w, my), (x[2] - GAP, my)], label="admitted", at=(x[1] + w + gap / 2, my))
+d.arrow([(x[2] + w, my), (x[3] - GAP, my)], label="done", at=(x[2] + w + gap / 2, my))
+py = 330
+paused = d.tall(x[2], py, w, "Paused", "suspended again:\npods deleted", L("pause"))
+d.arrow([(x[2] + w / 2, top + h), (x[2] + w / 2, py - GAP)], label="suspend: true in git", at=(x[2] + w / 2, (top + h + py) / 2))
+d.arrow([(x[2], py + h / 2), (x[1] + w / 2, py + h / 2), (x[1] + w / 2, top + h + GAP)], label="resumed: queues again", at=((x[2] + x[1] + w / 2) / 2, py + h / 2))
+d.save(OUT + "p1-suspend.svg")
+
 # ---------------------------------------------------------------- part 1: htrflow in a pod
 d = Diagram(1600, 760)
 d.group(24, 176, 1232, 568, "Pod — one archival volume, one GPU", "k8s-pod")
