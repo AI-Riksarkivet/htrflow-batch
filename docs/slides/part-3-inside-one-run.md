@@ -10,7 +10,7 @@ lang: en
 
 # Inside one run
 
-## Part 3 of 5 — the container, the pod and what it may do, what the wrapper does with a page, and what "failed" means
+## The container, the pod and what it may do, what the wrapper does with a page, and what "failed" means
 
 <!--
 Part 1 drew the pod's lifecycle in one picture. This part opens it: the
@@ -512,19 +512,6 @@ WARNING page 0044 failed: PipelineDead("… worker thread died; the page
 The run log is shipped every fifteen seconds while the run goes, and once
 more as the last thing before exit, so a pod that died still leaves its
 last minutes readable.
--->
-
----
-
-# Next
-
-<p class="note"><strong>Part 4, <em>What the queue can do</em>:</strong> quotas, priority, pause, borrowing, preemption and hardware kinds — what Kueue makes possible for many people sharing many GPUs, and which of it is on today.</p>
-
-**ai-riksarkivet.github.io/htrflow-batch** — *From Image to Transcription* is this deck page by page; *Failure Handling* is every exit code and every sentence a failure turns into; *The Wrapper* is the rest.
-
-<!--
-Three pages carry this part in writing: page-flow, failure-handling and
-wrapper under "How it works".
 -->
 
 ---

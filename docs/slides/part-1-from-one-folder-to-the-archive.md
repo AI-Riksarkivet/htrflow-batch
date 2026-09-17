@@ -10,16 +10,12 @@ lang: en
 
 # Distributed htrflow
 
-## Part 1 of 5 — what changes when your pipeline runs on many nodes
+## What changes when your pipeline runs on many nodes
 
 <!--
-This is the first of five short lessons. It has no YAML in it beyond one
-campaign file, and no Kubernetes vocabulary that is not introduced on the
-slide where it is needed. If you know what an htrflow pipeline file does,
-you have everything this deck assumes.
-
-The other four: Part 2 is the hands-on lesson, git as the interface. Part 3
-is inside one run. Part 4 is the queue. Part 5 is models and signatures.
+This is the first part of the series. It uses no Kubernetes vocabulary
+that is not introduced on the slide where it is needed. If you know what an
+htrflow pipeline file does, you have everything this deck assumes.
 -->
 
 ---
@@ -878,19 +874,6 @@ This is a real run: 638 pages of one volume, about an hour on one GPU with a
 large TrOCR model, one page lost to a dead segmentation thread. The two
 things to notice: the failure did not cost the volume, and nobody had to
 look at a log to learn about it.
--->
-
----
-
-# Next
-
-<p class="note"><strong>Part 2, <em>Your interface is git</em>:</strong> the two files field by field, validate locally, and a throwaway campaign of six images that runs the whole path in a minute.</p>
-
-**ai-riksarkivet.github.io/htrflow-batch** — start with *Run a Campaign*.
-
-<!--
-The docs page "Run a Campaign" is the written form of Part 2. "From Image to
-Transcription" is Part 3. "Queueing" is Part 4.
 -->
 
 ---

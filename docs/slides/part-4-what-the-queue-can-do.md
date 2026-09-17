@@ -10,7 +10,7 @@ lang: en
 
 # What the queue can do
 
-## Part 4 of 5 — Kueue's concepts, one by one, as things a team sharing many GPUs can do with them
+## Kueue's concepts, one by one, as things a team sharing many GPUs can do with them
 
 <!--
 Parts 1 and 2 used three things from Kueue: the window, priority and pause.
@@ -547,14 +547,6 @@ and capacity-based quota is still alpha.
 The per-resource usage metrics are off by default in Kueue's configuration
 and need to be enabled for the quota dashboards.
 -->
-
----
-
-# Next
-
-<p class="note"><strong>Part 5, <em>Models and signatures</em>:</strong> the model cache and the warm-up, revision pins, the two transformers lines, bringing a new model to the cluster — and what it would take for a model to be signed the way an image already is.</p>
-
-**kueue.sigs.k8s.io/docs/concepts** — every concept on these slides, in Kueue's own words. *Queueing* in the htrflow-batch docs is how it is wired here today.
 
 ---
 

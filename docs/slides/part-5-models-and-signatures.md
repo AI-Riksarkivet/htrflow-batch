@@ -10,7 +10,7 @@ lang: en
 
 # Models and signatures
 
-## Part 5 of 5 — getting weights to the GPU, and knowing who made what runs there
+## Getting weights to the GPU, and knowing who made what runs there
 
 <!--
 Parts 2 and 3 showed the pins and the read-only cache. This part is about
@@ -299,20 +299,6 @@ pinned revision enforced at admission, a cache no campaign pod can write,
 and pods with no route to the Hub. That is a strong convention; a verified
 signature would make it a control.
 -->
-
----
-
-# The series
-
-<table class="plain">
-<tr><td><strong>1</strong></td><td>Distributed htrflow</td><td>from one machine to many nodes, and a rough architecture</td></tr>
-<tr><td><strong>2</strong></td><td>Your interface is git</td><td>the files, validate, the pull request, apply</td></tr>
-<tr><td><strong>3</strong></td><td>Inside one run</td><td>the container, the pod, the loop, failure</td></tr>
-<tr><td><strong>4</strong></td><td>What the queue can do</td><td>Kueue's concepts as capabilities, and GPUs as devices</td></tr>
-<tr><td><strong>5</strong></td><td>Models and signatures</td><td>weights, the warm-up, and who made what runs</td></tr>
-</table>
-
-**ai-riksarkivet.github.io/htrflow-batch** — every deck, and the pages that carry the same material in writing: *The Wrapper* for the model cache, *Security* for the trust boundary, *Releasing* for signing.
 
 ---
 
