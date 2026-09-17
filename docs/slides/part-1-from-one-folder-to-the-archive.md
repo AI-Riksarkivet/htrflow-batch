@@ -529,43 +529,28 @@ whole" means.
 
 ---
 
-# GPUs are a budget, so campaigns queue
+# When there are not enough GPUs
 
-```mermaid h:200
+```mermaid h:230
 flowchart LR
-  A["campaign A<br/>window 2"]
-  Bq["campaign B<br/>window 4"]
-  Q{"free GPUs<br/>quota 4, 2 in use"}
-  R["running"]
-  W["waiting — Queued"]
-  A --> Q
-  Bq --> Q
-  Q -->|"2 fit"| R
-  Q -->|"4 do not"| W
+  subgraph CL["the cluster — 4 GPUs"]
+    A["campaign A · window 2<br/>running on 2 GPUs"]
+    FREE["2 GPUs free"]
+  end
+  B["campaign B · window 4<br/>needs 4 — waits, Queued"]
+  C["campaign C · window 2<br/>needs 2 — starts"]
+  B -. "not enough" .-> FREE
+  C --> FREE
 ```
 
-<div class="cols">
-<div>
+A campaign starts only when **all** the GPUs its window asks for are free. Until then its card reads *Queued* — and a smaller campaign that fits may start before it.
 
-**The doorman is Kueue.** It knows one thing about your campaign: its `window`. If that many GPUs are free, the campaign starts. If not, it waits — and a smaller campaign behind it may go first.
-
-**Once in, you stay in.** A campaign keeps its GPUs until its last volume is done. Nothing jumps the line, and nothing is evicted to make room.
-
-</div>
-<div>
-
-**"Queued" means exactly this.** The Job exists, no pod has started, and the reason is the number on the left against the number in the middle.
-
-**One rule to remember:** a `window` bigger than the cluster's whole quota reads *Queued* for ever. That is the most common reason a campaign "does not start".
-
-</div>
-</div>
+**One rule to remember:** a window larger than the cluster's GPUs never starts.
 
 <!--
-Kueue decides WHEN, Kubernetes decides WHERE. Kueue never picks a node and
-never sees a page. It is an admission controller with a counted quota, and
-campaigns are Workloads to it. Part 4 is entirely about this slide: the
-objects behind the quota, and what "Queued" can mean.
+A campaign keeps its GPUs until its last volume is done; nothing already
+running is stopped to make room. Part 4 covers the objects behind the quota
+and what else the queue can do.
 
 Pausing is also here: suspend: true in the campaign file, and the running
 pods are evicted with every finished volume kept.
