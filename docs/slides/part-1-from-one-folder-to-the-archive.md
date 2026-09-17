@@ -99,13 +99,25 @@ sentence out loud, because the word collides with Kubernetes storage.
 <div class="cols">
 <div>
 
-<p class="filename">campaigns/kyrkobocker-1.yaml</p>
+<p class="filename">campaigns/kyrkobocker-1.yaml — from IIIF</p>
 
 ```yaml
 pipeline: demo-v1
 volumes:
   - id: R0001203
     manifest: https://…/R0001203/manifest
+  - id: R0001204
+    manifest: https://…/R0001204/manifest
+```
+
+</div>
+<div>
+
+<p class="filename">campaigns/loose-scans-1.yaml — from images</p>
+
+```yaml
+pipeline: demo-v1
+volumes:
   - id: loose-scans
     images:
       - https://…/scan-0001.jpg
@@ -113,15 +125,9 @@ volumes:
 ```
 
 </div>
-<div>
-
-**This is how you ask for a run.** One file per campaign, in git.
-
-* **pipeline** — which htrflow pipeline to run
-* **volumes** — the archival volumes to run it on, each as a IIIF manifest or a list of image URLs
-
 </div>
-</div>
+
+**This is how you ask for a run:** one file per campaign, in git — a **pipeline** to run, and the archival **volumes** to run it on.
 
 ---
 
