@@ -1,6 +1,6 @@
 # Presentations
 
-A five-part series for people who know htrflow and want to see what runs
+A series for people who know htrflow and want to see what runs
 it at archive scale. Each part opens in the browser as a presentation (arrow
 keys move, `F` goes full screen) or downloads as a PDF.
 

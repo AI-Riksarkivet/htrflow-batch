@@ -10,7 +10,7 @@ lang: en
 
 # Your interface is git
 
-## Part 2 of 5 — two files, a validator that runs locally, and a pull request that becomes a running campaign
+## Two files, a validator that runs locally, and a pull request that becomes a running campaign
 
 <!--
 Part 1 gave the picture: a pod per volume, one Job per campaign, the queue,
@@ -422,19 +422,6 @@ converter-labelled object that is not in THIS apply.
 Three are enforced and will stop a pull request or an apply; three are
 conventions the review has to hold. Say which is which -- people trust the
 tool to catch everything, and it deliberately does not.
--->
-
----
-
-# Next
-
-<p class="note"><strong>Part 3, <em>Inside one run</em>:</strong> what the wrapper does with a page, why a restart costs one page and not a volume, what "failed" and "missing" mean, and what every file in the bucket is for.</p>
-
-**ai-riksarkivet.github.io/htrflow-batch** — *Run a Campaign* is this deck in writing; *Campaign & Pipeline YAML* is every field and every sentence validate can print.
-
-<!--
-"Run a Campaign" under Getting Started is the written form of this part;
-the YAML reference is what people come back to.
 -->
 
 ---
