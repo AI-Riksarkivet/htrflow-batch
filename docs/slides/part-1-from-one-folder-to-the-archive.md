@@ -57,9 +57,7 @@ steps:
 htrflow pipeline pipeline.yaml images/
 ```
 
-One folder of page images in, one folder of ALTO and PAGE out. One GPU, one process, one afternoon.
-
-<p class="note">Everything in this series keeps this file exactly as it is. The <code>steps:</code> document is passed through verbatim; nothing appends to it except the two export steps, which the platform adds itself. The one thing it gains is a line above it naming the image to run it in.</p>
+One folder of page images in, one folder of ALTO and PAGE out, on one GPU.
 
 </div>
 </div>
@@ -270,7 +268,7 @@ volumes:
 </div>
 </div>
 
-**Why the third form matters:** six images are a whole campaign that runs the entire path — queue, pod, bucket, viewer — in about a minute. That is how you prove a new pipeline before spending a GPU-week on it, and how a page from anywhere on the web gets transcribed without a IIIF server in front of it.
+**Why the third form matters:** six images are a whole campaign that runs the entire path — queue, pod, bucket, viewer — in about a minute. That is how you prove a new pipeline before running it on real volumes, and how a page from anywhere on the web gets transcribed without a IIIF server in front of it.
 
 <!--
 The synthetic manifest lands under sources/ in the bucket and is what the
