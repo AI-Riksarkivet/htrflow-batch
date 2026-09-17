@@ -286,25 +286,36 @@ background scans of objects that already exist.
 
 # Kueue — how a campaign gets its GPUs
 
-```mermaid w:1120
+```mermaid w:1180
 flowchart LR
   J["Job created<br/>paused by Kueue"]
+  K1["Kyverno<br/>checks the Job"]
+  REFUSED["refused<br/>never stored"]
   W["Workload<br/>waits in the queue"]
-  Q{"its window fits<br/>the free GPUs?"}
-  R["admitted<br/>Job unpaused, pods start"]
-  D["last volume done<br/>GPUs back to the pool"]
-  J --> W --> Q
-  Q -->|"yes"| R --> D
+  Q{"window fits<br/>the free GPUs?"}
+  R["admitted<br/>Job unpaused"]
+  K2["Kyverno<br/>checks each pod"]
+  P["pods run"]
+  J --> K1
+  K1 -->|"breaks a rule"| REFUSED
+  K1 -->|"passes"| W --> Q
   Q -->|"not yet"| W
+  Q -->|"yes"| R --> K2 --> P
+  style K1 stroke-width:3px
+  style K2 stroke-width:3px
 ```
 
-**The card follows it:** *Queued* while the Workload waits, *Running* once it is admitted, and a finished state when the last volume is done.
+**Kyverno checks twice:** the Job before it is stored, so a bad one never reaches the queue — and each pod after admission, where image signatures are checked.
 
 <!--
-Kueue suspends every Job that carries its queue label the moment it is
-created, so nothing starts before Kueue has seen it. Admission is once per
-campaign; after that Kubernetes starts the next volume as each one ends,
-without asking Kueue again.
+Kubernetes runs mutating webhooks before validating ones: Kueue's webhook
+pauses the Job first, then Kyverno validates it. Only a stored Job gets a
+Workload. After admission the Job controller creates pods and each pod
+goes through Kyverno again. The pods carry the images already checked on
+the Job, so this second check rarely refuses anything; when it does, the
+campaign is admitted and holds its quota while no pod can start, and the
+card shows Running with no pages. The card itself reads Queued while the
+Workload waits and Running once it is admitted.
 -->
 
 ---
