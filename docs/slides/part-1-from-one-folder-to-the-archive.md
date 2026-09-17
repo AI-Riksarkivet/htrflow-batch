@@ -608,13 +608,42 @@ controller or custom resource of our own: the campaign is a plain Job.
 
 ![w:860](assets/part-1-status-page.png)
 
-**One card per campaign**, running first, then anything wrong, then finished. The header says how it ended and when; the totals show volumes and pages with failures under the bar; each volume's name opens the viewer, its icons open the run log and manifest; the footer names the pipeline and its models.
+**One card per campaign**, running first, then anything wrong, then finished.
 
 <!--
 The page reads the live Jobs and each volume's progress.json, so counts
 move while a pod runs. A campaign whose Job has been deleted a week after
 it ended is rebuilt from its record and shows "job removed"; its results
 and viewer links keep working.
+-->
+
+---
+
+# Reading a card
+
+<table class="plain">
+<tr><td><strong>header</strong></td><td>the campaign's name, how it stands, and when it was created and finished</td></tr>
+<tr><td><strong>state</strong></td><td><em>Queued</em> waiting for GPUs · <em>Running</em> · <em>Paused</em> · <em>Succeeded</em> · <em>partially succeeded</em> some pages lost · <em>partially failed</em> some volumes lost · <em>Failed</em></td></tr>
+<tr><td><strong>extra chips</strong></td><td><em>warm-up</em> the models are not ready yet, or failed to load · <em>job removed</em> finished long ago, results still there</td></tr>
+<tr><td><strong>totals</strong></td><td>volumes and pages done, with a bar; failures in red under the bar</td></tr>
+<tr><td><strong>problems</strong></td><td>one sentence per failed volume, saying why</td></tr>
+<tr><td><strong>a volume</strong></td><td>its name opens the viewer · the page icon opens its run log · the braces open its IIIF manifest · its own bar, count and state · a failed page's reason under the row</td></tr>
+<tr><td><strong>footer</strong></td><td>the pipeline id and each model with its revision</td></tr>
+</table>
+
+---
+
+# The viewer
+
+![w:760](assets/part-1-viewer.png)
+
+**Riksarkivet's Universal Viewer 4:** the page with every transcribed line outlined, and the text beside it — even while the volume is still running.
+
+<!--
+The viewer is Riksarkivet's fork of Universal Viewer 4, built into the web
+front. It reads the volume's iiif.json, which the wrapper republishes every
+ten pages, and each page's ALTO as its text layer, with a clickable
+outline for every line on the page image.
 -->
 
 ---
@@ -645,51 +674,6 @@ look at a log to learn about it.
 
 ---
 
-# What would happen if…
-
-<div class="cols">
-<div>
-
-**1.** The demo campaign is running, and you add a fifth volume to `campaigns/demo.yaml` and open a pull request.
-
-**2.** You improve `pipelines/demo-v1.yaml` — a better line model — while three campaigns name it.
-
-**3.** The cluster has four GPUs and you set `window: 20`.
-
-**4.** Page 44 fails the same way on every retry.
-
-</div>
-<div>
-
-<p class="note">Think before the next slide. Each of these is something a real user did in the first week, and each has a one-sentence answer that follows from one of the slides before.</p>
-
-</div>
-</div>
-
-<!--
-Give the room a minute. The answers are on the next slide.
--->
-
----
-
-# … and what does
-
-<table class="plain">
-<tr><td>1</td><td><strong>Validate refuses the pull request</strong> with "campaign demo is append-only" — the Job's <code>completions</code> cannot grow. You write <code>campaigns/demo-2.yaml</code> with the fifth volume.</td></tr>
-<tr><td>2</td><td><strong>Validate refuses that too:</strong> a pipeline file is immutable while a campaign names it. You write <code>pipelines/demo-v2.yaml</code>; its results land in a new folder beside the old ones, and both stay readable.</td></tr>
-<tr><td>3</td><td><strong>The campaign reads Queued for ever.</strong> A window of 20 never fits a quota of 4, and Kueue does not admit part of a campaign. Set the window to what the cluster can give.</td></tr>
-<tr><td>4</td><td><strong>The volume still completes.</strong> The page is named in <code>manifest.json</code>, counted on the card, and the other pages are in the viewer. A page that never <em>uploaded</em> would have failed the volume instead — that one is retried.</td></tr>
-</table>
-
-<!--
-If the room got three of four, the deck has done its job. The fourth is the
-subtle one and worth dwelling on: "failed" and "missing" are different
-things, and the platform treats a deterministic failure as a fact to record
-and a missing upload as a bug to retry.
--->
-
----
-
 # Next
 
 <p class="note"><strong>Part 2, <em>Your interface is git</em>:</strong> the two files field by field, validate locally, and a throwaway campaign of six images that runs the whole path in a minute.</p>
@@ -700,3 +684,9 @@ and a missing upload as a bug to retry.
 The docs page "Run a Campaign" is the written form of Part 2. "From Image to
 Transcription" is Part 3. "Queueing" is Part 4.
 -->
+
+---
+
+<!-- _class: lead -->
+
+# Any questions?
