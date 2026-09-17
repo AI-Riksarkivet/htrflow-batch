@@ -379,6 +379,21 @@ Workload waits and Running once it is admitted.
 
 ---
 
+# Where a pod runs
+
+![w:1120](assets/part-1-where-pod-runs.svg)
+
+**The control plane decides, the nodes run.** Kueue counts quota, not free GPUs: the scheduler places each pod on a node with a GPU free and the right labels, and a pod with nowhere to go waits *Pending*. You never name a machine.
+
+<!--
+This is the slide for anyone who has run htrflow on one box with one card.
+The mental shift is that "the computer" is now a pool: a control plane that
+only decides, and nodes that only run. The pod is the unit that moves
+between them, and the GPU it needs is what decides where it can go.
+-->
+
+---
+
 # htrflow in a pod
 
 ![w:1000](assets/p1-pod.svg)
@@ -391,21 +406,6 @@ the pipeline takes tens of seconds and a lot of GPU memory; you want to pay
 that once per volume, not once per page. And why not ten volumes per pod:
 because then a crash costs ten volumes, and the queue cannot count what it
 is handing out.
--->
-
----
-
-# Where a pod runs — the cluster, in one picture
-
-![w:1120](assets/part-1-where-pod-runs.svg)
-
-**The control plane decides, the nodes run.** Kueue counts quota, not free GPUs: the scheduler places each pod on a node with a GPU free and the right labels, and a pod with nowhere to go waits *Pending*. You never name a machine.
-
-<!--
-This is the slide for anyone who has run htrflow on one box with one card.
-The mental shift is that "the computer" is now a pool: a control plane that
-only decides, and nodes that only run. The pod is the unit that moves
-between them, and the GPU it needs is what decides where it can go.
 -->
 
 ---
