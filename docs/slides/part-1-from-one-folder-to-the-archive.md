@@ -252,8 +252,6 @@ Workload.
 
 **A quota per flavor.** A ClusterQueue promises GPUs, cores and memory on each flavor, and tries them in order: a pod that may use either takes an A100 if one is free, an L4 if not.
 
-**Here:** planned. Today the chart has one flavor and one quota, for a cluster where every GPU is alike.
-
 </div>
 </div>
 
