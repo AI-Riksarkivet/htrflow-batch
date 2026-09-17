@@ -103,12 +103,13 @@ sentence out loud, because the word collides with Kubernetes storage.
 
 ```yaml
 pipeline: demo-v1
-window: 2
-priority: htr-bulk
 volumes:
-  - R0001203
-  - R0001204
-  - R0001205
+  - id: R0001203
+    manifest: https://…/R0001203/manifest
+  - id: loose-scans
+    images:
+      - https://…/scan-0001.jpg
+      - https://…/scan-0002.jpg
 ```
 
 </div>
@@ -117,18 +118,10 @@ volumes:
 **This is how you ask for a run.** One file per campaign, in git.
 
 * **pipeline** — which htrflow pipeline to run
-* **volumes** — the archival volumes to run it on
-* **window** — how many volumes at once, so how many GPUs
-* **priority** — who goes first when campaigns wait
+* **volumes** — the archival volumes to run it on, each as a IIIF manifest or a list of image URLs
 
 </div>
 </div>
-
-<!--
-The next slides take this file apart: the pipeline file it names, what a
-volume can be, the window, and priority. Only pipeline and volumes are
-required.
--->
 
 ---
 
