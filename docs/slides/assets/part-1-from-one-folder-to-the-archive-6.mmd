@@ -1,5 +1,14 @@
 flowchart LR
-  Q["waiting: A (bulk, 09:00) · B (bulk, 09:30) · C (interactive, 10:00)"]
-  O["order Kueue admits them in:<br/>C, then A, then B"]
-  R["running: D (bulk) — untouched<br/>nothing is evicted"]
-  Q --> O --> R
+  subgraph W1["wave 1"]
+    A["R0001203"]
+    Bx["R0001204"]
+  end
+  subgraph W2["wave 2"]
+    C["R0001205"]
+    D["R0001206"]
+  end
+  subgraph W3["wave 3"]
+    E["R0001207"]
+    F["R0001208"]
+  end
+  W1 --> W2 --> W3

@@ -93,6 +93,41 @@ sentence out loud, because the word collides with Kubernetes storage.
 
 ---
 
+# The whole picture
+
+```mermaid h:470
+flowchart LR
+  subgraph GIT["in git"]
+    REPO["campaigns repo"] --> CI["CI: validate, render"]
+  end
+  IIIF["IIIF servers"]
+  HUB["Hugging Face Hub"]
+  YOU["browser"]
+  subgraph K8S["in the cluster"]
+    KYV["Kyverno<br/>checks the objects"] --> KUE["Kueue<br/>waits for GPUs"] --> JOB["campaign pods<br/>wrapper + htrflow"]
+    WARM["warm-up<br/>model cache"] -.-> JOB
+    WEB["web front<br/>status · viewer"]
+  end
+  S3[("S3 bucket")]
+  CI -->|"apply"| KYV
+  IIIF --> JOB
+  HUB --> WARM
+  YOU --> WEB
+  JOB --> S3
+  WEB --> S3
+```
+
+**Two rules hold it together:** nothing in the cluster reads git — `apply` is all it is told; and the bucket is the only thing that remembers.
+
+<!--
+Read it left to right as the life of a campaign: written in git, checked by
+Kyverno, queued by Kueue, run as one pod per volume, results in the bucket,
+watched through the web front. The warm-up is the one pod that talks to the
+Hub, and the web front is the one pod a browser talks to.
+-->
+
+---
+
 # A run is one archival volume in one pod
 
 ```mermaid h:250
@@ -109,22 +144,7 @@ flowchart TB
   A --> B
 ```
 
-<div class="cols">
-<div>
-
-**A pod is born for one volume and dies with it.** It starts only when the models are in the cache, reads the manifest, lists what the bucket already holds, and builds the pipeline while page one downloads.
-
-**Then it streams.** The next page downloads while this one is on the GPU; each page's results go to the bucket the moment they exist, and its files are deleted.
-
-</div>
-<div>
-
-**Then it verifies and publishes.** Every page must be uploaded, skipped or recorded as failed; only then are the viewer manifest and `manifest.json` written, and the pod exits. The GPU is free the same second.
-
-**One rule to remember:** a pod is one volume, holding its GPU from *wait* to *exit*. What does all this inside it is *the wrapper* — htrflow as a library, run page by page. Part 3 opens it up.
-
-</div>
-</div>
+**One pod per archival volume**, holding its GPU from the first page to the last — and freeing it the moment it exits.
 
 <!--
 Why one volume per pod and not one page per pod: the model load. Building
@@ -166,20 +186,7 @@ flowchart LR
   SCH --> N2
 ```
 
-<div class="cols">
-<div>
-
-**The control plane never runs your pipeline.** It holds the objects you asked for and keeps the world matching them: the Job controller makes one pod per index, Kueue says when it may, the scheduler picks a node with a free GPU.
-
-</div>
-<div>
-
-**The nodes are where the GPUs are, and there are many.** One campaign's pods land on whichever nodes have a card free — index 0 on one machine, index 3 on another. Nothing in the pipeline knows which; pages come from IIIF and results go to the bucket either way.
-
-</div>
-</div>
-
-**One rule to remember:** a campaign is spread across the cluster by the scheduler, one volume per pod, one pod per GPU. You never name a machine.
+**The control plane decides, the nodes run.** Each pod lands on whichever node has a GPU free — you never name a machine.
 
 <!--
 This is the slide for anyone who has run htrflow on one box with one card.
@@ -187,6 +194,38 @@ The mental shift is that "the computer" is now a pool: a control plane that
 only decides, and nodes that only run. The pod is the unit that moves
 between them, and the GPU it needs is what decides where it can go. Part 4
 returns to the two deciders — Kueue for when, the scheduler for where.
+-->
+
+---
+
+# What is inside what
+
+```mermaid h:380
+flowchart TB
+  subgraph WORK["the work"]
+    direction TB
+    CF["campaign file"] --> JOB["Job<br/>one per campaign"]
+    JOB --> POD["Pod<br/>one per archival volume"]
+    POD --> INIT["init container<br/>waits for the models"]
+    POD --> CON["container<br/>wrapper + htrflow"]
+  end
+  subgraph QUEUE["the queue — Kueue"]
+    direction TB
+    CQ["ClusterQueue<br/>the GPU quota"] --> LQ["LocalQueue<br/>the name a Job asks for"]
+    LQ --> WL["Workload<br/>one per Job"]
+  end
+  JOB <-. "admitted?" .-> WL
+```
+
+**The two meet at the Workload:** Kueue admits a Job's Workload, and only then does the Job create its pods.
+
+<!--
+A container is the running program; a pod is one or more containers that
+share a machine, disk and network; a Job makes pods until its work is done.
+Kueue never touches pods: it makes one Workload per Job, holds it until the
+Job's window fits the ClusterQueue's quota, and lets the Job go. The
+LocalQueue is the name a Job carries in its queue label, and converter.yaml
+sets it for every campaign.
 -->
 
 ---
@@ -517,45 +556,9 @@ steps:
 </div>
 
 <!--
-This is the slide the data scientist actually needs, and it is Part 2 in
+This is the slide the data scientist actually needs, and Part 2 is it in
 full: the two files, converter.yaml, validate, render, apply, the status
-page, and the rules the validator enforces. The reason to put it fifth here
-is that the four ideas before it are what the two files are asking for.
--->
-
----
-
-# The whole picture
-
-```mermaid h:470
-flowchart LR
-  subgraph GIT["in git"]
-    REPO["campaigns repo"] --> CI["CI: validate, render"]
-  end
-  IIIF["IIIF servers"]
-  HUB["Hugging Face Hub"]
-  YOU["browser"]
-  subgraph K8S["in the cluster"]
-    KYV["Kyverno<br/>checks the objects"] --> KUE["Kueue<br/>waits for GPUs"] --> JOB["campaign pods<br/>wrapper + htrflow"]
-    WARM["warm-up<br/>model cache"] -.-> JOB
-    WEB["web front<br/>status · viewer"]
-  end
-  S3[("S3 bucket")]
-  CI -->|"apply"| KYV
-  IIIF --> JOB
-  HUB --> WARM
-  YOU --> WEB
-  JOB --> S3
-  WEB --> S3
-```
-
-**Two rules hold it together:** nothing in the cluster reads git — `apply` is all it is told; and the bucket is the only thing that remembers.
-
-<!--
-Read it left to right as the life of a campaign: written in git, checked by
-Kyverno, queued by Kueue, run as one pod per volume, results in the bucket,
-watched through the web front. The warm-up is the one pod that talks to the
-Hub, and the web front is the one pod a browser talks to.
+page, and the rules the validator enforces.
 -->
 
 ---
