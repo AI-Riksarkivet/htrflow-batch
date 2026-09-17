@@ -69,13 +69,13 @@ steps.
 # From one machine to many
 
 <table class="plain">
-<tr><td></td><td><strong>one machine</strong></td><td><strong>many nodes</strong></td></tr>
-<tr><td>where it runs</td><td>your machine, its GPU</td><td>whichever node has a GPU free — chosen for you</td></tr>
-<tr><td>the pages</td><td>a folder on its disk</td><td>fetched over the web — from a IIIF manifest or plain image URLs — by whichever node runs the volume</td></tr>
-<tr><td>the models</td><td>downloaded to that disk</td><td>a shared cache every node mounts</td></tr>
-<tr><td>the results</td><td>a folder next to the pages</td><td>a bucket every node writes to and every browser reads from</td></tr>
-<tr><td>when a machine fails</td><td>you start again</td><td>the volume restarts on another node and resumes from the bucket</td></tr>
-<tr><td>how you start it</td><td>a command on that machine</td><td>a file in git — you never name a machine</td></tr>
+<tr><td></td><td></td><td><img class="ticon" src="assets/icon-monitor.svg" alt=""><strong>one machine</strong></td><td><img class="ticon" src="assets/icon-network.svg" alt=""><strong>many nodes</strong></td></tr>
+<tr><td class="icon"><img class="ticon" src="assets/icon-microchip.svg" alt=""></td><td>where it runs</td><td>your machine, its GPU</td><td>whichever node has a GPU free — chosen for you</td></tr>
+<tr><td class="icon"><img class="ticon" src="assets/icon-images.svg" alt=""></td><td>the pages</td><td>a folder on its disk</td><td>fetched over the web — from a IIIF manifest or plain image URLs — by whichever node runs the volume</td></tr>
+<tr><td class="icon"><img class="ticon" src="assets/icon-brain.svg" alt=""></td><td>the models</td><td>downloaded to that disk</td><td>a shared cache every node mounts</td></tr>
+<tr><td class="icon"><img class="ticon" src="assets/icon-file-text.svg" alt=""></td><td>the results</td><td>a folder next to the pages</td><td>a bucket every node writes to and every browser reads from</td></tr>
+<tr><td class="icon"><img class="ticon" src="assets/icon-rotate-ccw.svg" alt=""></td><td>when a machine fails</td><td>you start again</td><td>the volume restarts on another node and resumes from the bucket</td></tr>
+<tr><td class="icon"><img class="ticon" src="assets/icon-git.svg" alt=""></td><td>how you start it</td><td>a command on that machine</td><td>a file in git — you never name a machine</td></tr>
 </table>
 
 <p class="note"><strong>"Volume" here is an archival volume</strong> — a bound unit of pages with a reference code such as R0001203, the batch one run works through — never a Kubernetes volume, which is a disk.</p>
