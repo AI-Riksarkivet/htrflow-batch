@@ -1,9 +1,9 @@
-"""The hand-drawn diagrams in the opening of the part 1 deck. Run from the
-repository root:
+"""The hand-drawn diagrams in the opening of the Distributed htrflow deck.
+Run from the repository root:
 
     python3 docs/slides/diagrams/build.py
 
-The rest of the decks' diagrams are in build_rest.py.
+The rest are in build_rest.py.
 """
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

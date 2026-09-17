@@ -1,5 +1,5 @@
-"""The remaining hand-drawn diagrams across the decks (build.py holds the
-four in part 1's opening). Run from the repository root:
+"""The rest of the hand-drawn diagrams (build.py holds the four in the
+deck's opening). Run from the repository root:
 
     python3 docs/slides/diagrams/build_rest.py
 """
@@ -24,7 +24,7 @@ def fan(d, x, y, targets, lane):
     d.back.append(f'<circle cx="{x}" cy="{y}" r="4.5" fill="{MAGENTA}"/>')
 
 
-# ---------------------------------------------------------------- part 1: the Workload
+# ---------------------------------------------------------------- the Workload
 d = Diagram(1600, 232)
 d.row(24, [
     ("Campaign Job", "window 2\neach pod 1 GPU", "k8s-job", LOGO),
@@ -35,7 +35,7 @@ d.row(24, [
 ])
 d.save(OUT + "p1-workload.svg")
 
-# ---------------------------------------------------------------- part 1: Kyverno admission
+# ---------------------------------------------------------------- Kyverno admission
 d = Diagram(1600, 336)
 my = 120
 d.card(24, my, 300, "Apply", "sends an object", "argo", logo=True)
@@ -49,7 +49,7 @@ d.arrow([(1068, my + 30), (1140, my + 30), (1140, 72), (1212 - GAP, 72)], label=
 d.arrow([(1068, my + 66), (1140, my + 66), (1140, 264), (1212 - GAP, 264)], label="breaks a rule", at=(1140, 226))
 d.save(OUT + "p1-admission.svg")
 
-# ---------------------------------------------------------------- part 1: Kueue + Kyverno flow
+# ---------------------------------------------------------------- Kueue + Kyverno flow
 d = Diagram(1600, 540)
 y = 110
 boxes = d.row(y, [
@@ -70,7 +70,7 @@ d.arrow([(kx + 50, y), (kx + 50, 56), (kx - 50, 56), (kx - 50, y - GAP)])
 d.pill(kx, 40, "until GPUs are free")
 d.save(OUT + "p1-kueue-flow.svg")
 
-# ---------------------------------------------------------------- part 1: Kueue's switch on the Job
+# ---------------------------------------------------------------- Kueue's switch on the Job
 d = Diagram(1600, 560)
 gap = 140
 w = (1552 - 3 * gap) / 4
@@ -92,7 +92,7 @@ d.arrow([(x[2] + w / 2, top + h), (x[2] + w / 2, py - GAP)], label="suspend: tru
 d.arrow([(x[2], py + h / 2), (x[1] + w / 2, py + h / 2), (x[1] + w / 2, top + h + GAP)], label="resumed: queues again", at=((x[2] + x[1] + w / 2) / 2, py + h / 2))
 d.save(OUT + "p1-suspend.svg")
 
-# ---------------------------------------------------------------- part 1: htrflow in a pod
+# ---------------------------------------------------------------- htrflow in a pod
 d = Diagram(1600, 760)
 d.group(24, 176, 1232, 568, "Pod — one archival volume, one GPU", "k8s-pod")
 # the init container
@@ -127,7 +127,7 @@ d.arrow([(mid[1], 120), (mid[1], ra - GAP)], label="weights", at=(mid[1], 148))
 d.arrow([(c[2] + cw, ra + h / 2), (1296 - GAP, ra + h / 2)])
 d.save(OUT + "p1-pod.svg")
 
-# ---------------------------------------------------------------- part 1: one Job, four indexes
+# ---------------------------------------------------------------- one Job, four indexes
 d = Diagram(760, 400)
 d.card(24, 24, 712, "Job", "completions 4 · parallelism 2", "k8s-job", logo=True)
 spine = 380
@@ -145,7 +145,7 @@ for i, ref in enumerate(["R0001203", "R0001204", "R0001205", "R0001206"]):
         d.arrow([(spine, py + 48), (px - GAP, py + 48)], dot=False)
 d.save(OUT + "p1-job-indexes.svg")
 
-# ---------------------------------------------------------------- part 1: window waves
+# ---------------------------------------------------------------- window waves
 d = Diagram(1600, 282)
 gw = (1552 - 2 * 64) / 3
 for w in range(3):
@@ -158,7 +158,7 @@ for w in range(3):
         d.arrow([(gx - 64, 141), (gx - GAP, 141)], dot=False)
 d.save(OUT + "p1-window.svg")
 
-# ---------------------------------------------------------------- part 1: not enough GPUs
+# ---------------------------------------------------------------- not enough GPUs
 d = Diagram(1600, 336)
 r1, r2 = 72, 200
 d.card(24, r1, 600, "Campaign B · window 4", "needs 4 — waits, reads Queued", L("clock"))
@@ -170,7 +170,7 @@ d.arrow([(624, r1 + 48), (692, r1 + 48), (692, r2 + 28), (784 - GAP, r2 + 28)], 
 d.arrow([(624, r2 + 64), (784 - GAP, r2 + 64)])
 d.save(OUT + "p1-not-enough.svg")
 
-# ---------------------------------------------------------------- part 1: priority
+# ---------------------------------------------------------------- priority
 d = Diagram(1600, 252)
 d.row(24, [
     ("Waiting", "A bulk 09:00 · B bulk 09:30\nC interactive 10:00", L("list-ordered")),
@@ -179,7 +179,7 @@ d.row(24, [
 ], gap=96)
 d.save(OUT + "p1-priority.svg")
 
-# ---------------------------------------------------------------- part 1: git flow
+# ---------------------------------------------------------------- git flow
 d = Diagram(1600, 224)
 d.row(24, [
     ("You edit", "the campaign file", L("pencil")),
@@ -191,7 +191,7 @@ d.row(24, [
 ], gap=40)
 d.save(OUT + "p1-git-flow.svg")
 
-# ---------------------------------------------------------------- part 1: follow one campaign
+# ---------------------------------------------------------------- follow one campaign
 d = Diagram(1600, 224)
 d.row(24, [
     ("Merged", "1 volume · window 1", L("git-merge")),
@@ -202,67 +202,7 @@ d.row(24, [
 ])
 d.save(OUT + "p1-follow.svg")
 
-# ---------------------------------------------------------------- part 2: the pull request
-d = Diagram(1600, 224)
-d.row(24, [
-    ("Edit", "kyrkobocker-1.yaml", L("pencil")),
-    ("Validate", "locally", L("file-check")),
-    ("Pull request", "validate + policies", L("git-pull-request")),
-    ("Review", "a colleague reads it", L("users")),
-    ("Merge", "CI commits rendered/", L("git-merge")),
-])
-d.save(OUT + "p2-pull-request.svg")
-
-# ---------------------------------------------------------------- part 2: apply
-d = Diagram(1600, 252)
-d.row(24, [
-    ("Render again", "append-only,\npipelines unchanged", L("refresh-cw")),
-    ("Write records", "one per campaign,\nbefore anything", L("file-pen")),
-    ("Pipelines", "ConfigMap and\nwarm-up Job", L("file-code")),
-    ("Campaigns", "skips finished,\nunchanged ones", L("send")),
-    ("Pause states", "on each Kueue\nWorkload", L("pause")),
-])
-d.save(OUT + "p2-apply.svg")
-
-# ---------------------------------------------------------------- part 3: three roles
-d = Diagram(1600, 252)
-d.row(24, [
-    ("IIIF server", "the pages", L("images"), OUTSIDE),
-    ("Downloader", "12 in flight,\n64 pages ahead", L("download")),
-    ("tmpfs", "/work,\nin memory", L("memory-stick")),
-    ("Consumer", "one thread —\nthe GPU serialises", L("microchip"), {"strong": True}),
-    ("Uploader", "PAGE, then ALTO,\nthen delete", L("upload")),
-    ("Bucket", "S3", L("database")),
-], gap=40)
-d.save(OUT + "p3-loop.svg")
-
-# ---------------------------------------------------------------- part 3: verify
-d = Diagram(1600, 336)
-my = 120
-d.card(24, my, 330, "List the bucket", "page/ and alto/", L("list-checks"))
-d.card(426, my, 520, "Every page accounted for?", "uploaded, skipped or failed", L("search-check"), strong=True)
-d.card(1136, 24, 440, "Publish", "manifest.json written last", L("cloud-upload"))
-d.card(1136, 216, 440, "Fail the volume", "with the page list", L("circle-x"), bad=True)
-d.arrow([(354, my + 48), (426 - GAP, my + 48)])
-d.arrow([(946, my + 30), (1040, my + 30), (1040, 72), (1136 - GAP, 72)], label="yes", at=(1040, 110))
-d.arrow([(946, my + 66), (1040, my + 66), (1040, 264), (1136 - GAP, 264)], label="no", at=(1040, 226))
-d.save(OUT + "p3-verify.svg")
-
-# ---------------------------------------------------------------- part 3: exit codes
-d = Diagram(1600, 432)
-d.card(640, 24, 320, "The pod runs", None, "k8s-pod", logo=True)
-codes = [("Exit 0", "done — failed\npages recorded", L("circle-check"), {}),
-         ("Exit 1", "transient — retried up to 3×,\nresuming from the bucket", L("rotate-ccw"), {}),
-         ("Exit 143", "a drain or the deadline —\nretried like exit 1", L("power"), {}),
-         ("Exit 13", "permanent — fails at once,\nnever retried", L("octagon-x"), {"bad": True})]
-w = (1552 - 3 * 40) / 4
-targets = []
-for i, (t, s, ic, o) in enumerate(codes):
-    targets.append(d.tall(24 + i * (w + 40), 200, w, t, s, ic, **o))
-fan(d, 800, 24 + CARD_H, targets, 160)
-d.save(OUT + "p3-exit.svg")
-
-# ---------------------------------------------------------------- part 1: one pool, its flavors, their nodes
+# ---------------------------------------------------------------- one pool, its flavors, their nodes
 d = Diagram(1600, 600)
 cw = (1552 - 56) / 2
 col = [24, 24 + cw + 56]
@@ -282,7 +222,7 @@ d.arrow([(640, qb), (640, lane), (mid[0], lane), (mid[0], fy - GAP)], label="1st
 d.arrow([(960, qb), (960, lane), (mid[1], lane), (mid[1], fy - GAP)], label="2nd", at=((960 + mid[1]) / 2, lane))
 d.save(OUT + "p1-flavors.svg")
 
-# ---------------------------------------------------------------- part 1: what one volume asks for
+# ---------------------------------------------------------------- what one volume asks for
 d = Diagram(1600, 424)
 d.group(24, 16, 480, 392, "Size large — converter.yaml", L("file-code"))
 d.card(48, 72, 432, "1 GPU", "on flavor a100", L("microchip"))
@@ -295,7 +235,7 @@ d.arrow([(504, 212), (688 - GAP, 212)], label="× window", at=(596, 212))
 d.arrow([(1048, 212), (1216 - GAP, 212)], label="requests", at=(1132, 212))
 d.save(OUT + "p1-volume-resources.svg")
 
-# ---------------------------------------------------------------- part 1: one team, one repo, one queue
+# ---------------------------------------------------------------- one team, one repo, one queue
 d = Diagram(1600, 568)
 gw = (1552 - 32) / 2
 for i, team in enumerate(("transcription", "research")):
@@ -315,7 +255,7 @@ d.arrow([(cx[1], 504), (cx[0] + cw + GAP, 504)], dot=False)
 d.pill(800, 480, "lend idle GPUs")
 d.save(OUT + "p1-teams.svg")
 
-# ---------------------------------------------------------------- part 1: a team stays in its own queue
+# ---------------------------------------------------------------- a team stays in its own queue
 d = Diagram(1600, 568)
 aw, sw = 680, 680
 d.group(24, 16, aw + 48, 536, "Team transcription tries", L("users"))
@@ -335,7 +275,7 @@ for i, (t, s1, ic, o, rt, rs, ric, ro) in enumerate(tries):
     d.arrow([(48 + aw, y + 48), (1600 - 48 - sw - GAP, y + 48)])
 d.save(OUT + "p1-team-walls.svg")
 
-# ---------------------------------------------------------------- part 1: cohort, queues, flavors, nodes
+# ---------------------------------------------------------------- cohort, queues, flavors, nodes
 d = Diagram(1600, 584)
 cw = (1552 - 2 * 56) / 3
 col = [24 + i * (cw + 56) for i in range(3)]
@@ -360,27 +300,5 @@ d.arrow([(1000, 168), (1000, lane), (mid[1] + 40, lane), (mid[1] + 40, fy - GAP)
 d.arrow([(mid[2], 168), (mid[2], fy - GAP)], label="2nd", at=(mid[2], lane))
 d.save(OUT + "p1-flavors-cohort.svg")
 
-# ---------------------------------------------------------------- part 5: how a model reaches the GPU
-d = Diagram(1600, 312)
-cw = (1552 - 64 - 64 - 150) / 4
-c = [24, 24 + cw + 64, 24 + 2 * (cw + 64), 1576 - cw]
-r1, r2 = 24, 192
-py = (r1 + r2) / 2
-d.card(c[0], r1, cw, "New pipeline", "merged and applied", L("git-pull-request"))
-d.card(c[1], r1, cw, "Warm-up Job", "runs on CPU", L("hard-drive-download"), strong=True)
-d.card(c[1], r2, cw, "Model hub", "Hugging Face", L("cloud-download"), outside=True)
-d.card(c[2], r1, cw, "Model cache", "one shared disk", L("database"))
-d.card(c[2], r2, cw, "Marker file", "pipeline ready", L("flag"))
-d.card(c[3], py, cw, "Pods", "offline, read-only", "k8s-pod", logo=True)
-d.arrow([(c[0] + cw, r1 + 48), (c[1] - GAP, r1 + 48)])
-d.arrow([(c[1] + cw / 2, r2), (c[1] + cw / 2, r1 + CARD_H + GAP)], label="weights", at=(c[1] + cw / 2, 144))
-d.arrow([(c[1] + cw, r1 + 30), (c[2] - GAP, r1 + 30)])
-d.arrow([(c[1] + cw, r1 + 70), (c[1] + cw + 32, r1 + 70), (c[1] + cw + 32, r2 + 48), (c[2] - GAP, r2 + 48)])
-lane = c[3] - 75
-d.arrow([(c[2] + cw, r1 + 48), (lane, r1 + 48), (lane, py + 30), (c[3] - GAP, py + 30)])
-d.arrow([(c[2] + cw, r2 + 48), (lane, r2 + 48), (lane, py + 66), (c[3] - GAP, py + 66)])
-d.pill(lane, (r1 + 48 + py + 30) / 2 - 6, "weights")
-d.pill(lane, (py + 66 + r2 + 48) / 2 + 6, "unblocks")
-d.save(OUT + "p5-model-path.svg")
 
 print("rest written")
