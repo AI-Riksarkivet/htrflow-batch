@@ -359,7 +359,7 @@ volumes:
 
 **Then read three things:** the run log, one ALTO, and the volume in the viewer. If those are right, point a real campaign at the same pipeline id. If not, the recipe changes — and that is a new id, because the six-page results are already published under this one.
 
-**One rule to remember:** never spend a GPU-week on an id you have not seen produce one good page.
+**One rule to remember:** run a new pipeline id on real volumes only after it has produced one good page.
 
 <!--
 Where the six URLs come from: any IIIF image server's size URL, or plain
