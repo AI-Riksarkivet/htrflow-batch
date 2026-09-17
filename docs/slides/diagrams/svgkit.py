@@ -90,10 +90,11 @@ class Diagram:
             tx = x + 44 + (w - 44) / 2
         self.parts.append(f'<text x="{tx}" y="{y+h/2+12}" text-anchor="middle" font-size="19" fill="{INK}">{esc(title)}</text>')
 
-    def arrow(self, pts, dashed=False, label=None, lx=None, ly=None, anchor="middle"):
+    def arrow(self, pts, dashed=False, label=None, lx=None, ly=None, anchor="middle", both=False):
         d = "M" + " L".join(f"{a},{b}" for a, b in pts)
         dash = ' stroke-dasharray="7 5"' if dashed else ""
-        self.parts.append(f'<path d="{d}" fill="none" stroke="{MAGENTA}" stroke-width="2.2" marker-end="url(#arrow)"{dash}/>')
+        start = ' marker-start="url(#arrow)"' if both else ""
+        self.parts.append(f'<path d="{d}" fill="none" stroke="{MAGENTA}" stroke-width="2.2" marker-end="url(#arrow)"{start}{dash}/>')
         if label:
             self.parts.append(f'<text x="{lx}" y="{ly}" text-anchor="{anchor}" font-size="14" fill="{MUTED}">{esc(label)}</text>')
 

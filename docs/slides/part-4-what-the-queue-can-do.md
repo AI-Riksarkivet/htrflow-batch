@@ -172,6 +172,14 @@ must list it with a nominal quota, even if that quota is zero.
 
 ---
 
+# Pools, flavors and nodes — in one picture
+
+![w:880](assets/p4-cohort.svg)
+
+**A pool tries its flavors in order. A flavor is a node label**, so admitted pods land on the right machines.
+
+---
+
 # Preemption — four ways to make room
 
 > "The process of evicting one or more admitted Workloads to accommodate another Workload."
