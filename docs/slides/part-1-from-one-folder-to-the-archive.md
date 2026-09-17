@@ -238,24 +238,34 @@ Workload.
 
 ---
 
-# ResourceFlavor and cohort
+# ResourceFlavor
 
-![w:1040](assets/p1-flavors-cohort.svg)
+![w:1000](assets/p1-flavors.svg)
 
 <div class="cols">
 <div>
 
-**ResourceFlavor — a kind of GPU.** A flavor names nodes by their label: large cards, small cards, interruptible ones. A ClusterQueue holds a quota per flavor and tries them in order.
+**A kind of GPU.** A flavor names nodes by their label — large cards, small cards, interruptible ones — and Kueue adds that label to the pods it admits, so they land on the right machines.
 
 </div>
 <div>
 
-**Cohort — pools that lend.** ClusterQueues in one cohort borrow each other's idle quota, within limits each pool sets.
+**A quota per flavor.** A ClusterQueue promises so many of each and tries its flavors in order: a campaign takes the first with room.
 
-**Here:** one flavor, one pool — every GPU is alike.
+**Here:** one flavor — every GPU is alike.
 
 </div>
 </div>
+
+---
+
+# Cohort
+
+![w:1040](assets/p1-flavors-cohort.svg)
+
+**Pools that lend.** ClusterQueues in one cohort borrow each other's idle quota, within limits each pool sets — a busy team runs on a quiet team's GPUs, and the owner can take them back.
+
+**Here:** one pool, no cohort.
 
 ---
 
