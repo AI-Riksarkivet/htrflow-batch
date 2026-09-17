@@ -234,8 +234,6 @@ Workload.
 </div>
 </div>
 
-**Here:** one LocalQueue, `htr-batch`, pointing to one ClusterQueue. converter.yaml names the LocalQueue, so a campaign file never has to.
-
 ---
 
 # ResourceFlavor
