@@ -1,8 +1,0 @@
-flowchart LR
-  E["you edit<br/>campaigns/demo.yaml"]
-  V["validate<br/>locally"]
-  PR["pull request<br/>CI validates again"]
-  M["merged on main<br/>rendered/ committed"]
-  AP["apply<br/>cluster objects"]
-  S["status page<br/>and the viewer"]
-  E --> V --> PR --> M --> AP --> S

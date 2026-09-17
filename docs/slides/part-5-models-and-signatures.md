@@ -221,7 +221,7 @@ software not.
 # Three ways to make a model an artifact
 
 <table class="plain">
-<tr><td></td><td><strong>plain OCI image</strong></td><td><strong>ModelPack artifact</strong></td><td><strong>signed model directory</strong></td></tr>
+<tr><td></td><td><img class="ticon block" src="assets/icon-package.svg" alt=""><strong>plain OCI image</strong></td><td><img class="ticon block" src="assets/icon-package-check.svg" alt=""><strong>ModelPack artifact</strong></td><td><img class="ticon block" src="assets/icon-file-badge.svg" alt=""><strong>signed model directory</strong></td></tr>
 <tr><td>what it is</td><td>the model files in an image with nothing else</td><td>the CNCF specification: weights as layers, a config naming format, licence and origin</td><td>the OpenSSF model-signing format: a manifest of every file's hash, signed</td></tr>
 <tr><td>where it lives</td><td>any registry</td><td>a registry that understands it</td><td>beside the files, wherever they are</td></tr>
 <tr><td>how a pod gets it</td><td>mounted directly as a read-only image volume</td><td>pulled and unpacked by a tool before the model loads</td><td>verified by a tool before the model loads</td></tr>

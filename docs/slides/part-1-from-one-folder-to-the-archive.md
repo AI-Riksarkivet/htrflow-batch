@@ -187,22 +187,7 @@ Hub, and the web front is the one pod a browser talks to.
 
 # What is inside what
 
-```mermaid h:380
-flowchart TB
-  subgraph WORK["the work"]
-    direction TB
-    CF["campaign file"] --> JOB["Job<br/>one per campaign"]
-    JOB --> POD["Pod<br/>one per archival volume"]
-    POD --> INIT["init container<br/>waits for the models"]
-    POD --> CON["container<br/>wrapper + htrflow"]
-  end
-  subgraph QUEUE["the queue — Kueue"]
-    direction TB
-    CQ["ClusterQueue<br/>the GPU quota"] --> LQ["LocalQueue<br/>the name a Job asks for"]
-    LQ --> WL["Workload<br/>one per Job"]
-  end
-  JOB <-. "admitted?" .-> WL
-```
+![w:1000](assets/part-1-inside-what.svg)
 
 **The two meet at the Workload:** Kueue admits a Job's Workload, and only then does the Job create its pods.
 
@@ -244,18 +229,7 @@ Workload.
 
 # LocalQueue and ClusterQueue
 
-```mermaid h:250
-flowchart LR
-  subgraph NA["namespace: transcription"]
-    JA["campaign Jobs"] --> LQA["LocalQueue"]
-  end
-  subgraph NB["namespace: research"]
-    JB["campaign Jobs"] --> LQB["LocalQueue"]
-  end
-  CQ["ClusterQueue<br/>the GPUs: quota 8"]
-  LQA --> CQ
-  LQB --> CQ
-```
+![w:960](assets/part-1-queues.svg)
 
 <div class="cols">
 <div>
@@ -421,27 +395,7 @@ is handing out.
 
 # Where a pod runs — the cluster, in one picture
 
-```mermaid h:250
-flowchart LR
-  subgraph CP["control plane — decides"]
-    API["API server<br/>holds every object: Job, ConfigMaps, Secret"]
-    JC["Job controller<br/>keeps N indexes running"]
-    KQ["Kueue<br/>decides WHEN — the GPU budget"]
-    SCH["scheduler<br/>decides WHERE — a node with a free GPU"]
-  end
-  subgraph N1["node 1 · 2 GPUs"]
-    P0["pod · index 0"]
-    P1["pod · index 1"]
-  end
-  subgraph N2["node 2 · 2 GPUs"]
-    P2["pod · index 2"]
-    P3["pod · index 3"]
-  end
-  API --> JC --> SCH
-  KQ --> JC
-  SCH --> N1
-  SCH --> N2
-```
+![w:1000](assets/part-1-where-pod-runs.svg)
 
 **The control plane decides, the nodes run.** Each pod lands on whichever node has a GPU free — you never name a machine.
 
@@ -684,9 +638,9 @@ retry redoes only that page. Part 3.
 
 <table class="plain">
 <tr><td></td><td><strong>holds</strong></td><td><strong>if it is lost</strong></td></tr>
-<tr><td><strong>git</strong></td><td>what <em>should</em> run: campaign files and pipelines — and an audit trail of who changed what, who approved it, and when</td><td>nothing running stops, nothing new can be asked for — and every clone is a full copy</td></tr>
-<tr><td><strong>etcd</strong><br/>the cluster's database</td><td>what <em>is</em> running: Jobs, Workloads, the campaign records the status page reads</td><td>rebuilt from git: apply again — campaigns run again, but no page already in the bucket is transcribed again</td></tr>
-<tr><td><strong>S3 bucket</strong></td><td>the results: ALTO, PAGE, manifest.json, the run logs</td><td>the transcriptions are gone — only running every campaign again brings them back</td></tr>
+<tr><td><img class="ticon" src="assets/icon-git.svg" alt=""><strong>git</strong></td><td>what <em>should</em> run: campaign files and pipelines — and an audit trail of who changed what, who approved it, and when</td><td>nothing running stops, nothing new can be asked for — and every clone is a full copy</td></tr>
+<tr><td><img class="ticon" src="assets/icon-etcd.svg" alt=""><strong>etcd</strong><br/>the cluster's database</td><td>what <em>is</em> running: Jobs, Workloads, the campaign records the status page reads</td><td>rebuilt from git: apply again — campaigns run again, but no page already in the bucket is transcribed again</td></tr>
+<tr><td><img class="ticon" src="assets/icon-s3.svg" alt=""><strong>S3 bucket</strong></td><td>the results: ALTO, PAGE, manifest.json, the run logs</td><td>the transcriptions are gone — only running every campaign again brings them back</td></tr>
 </table>
 
 **Only the bucket cannot be rebuilt from the others.** That is where replication and backups matter most.

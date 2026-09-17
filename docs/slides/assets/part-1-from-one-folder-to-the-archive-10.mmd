@@ -1,9 +1,7 @@
 flowchart LR
-  subgraph CL["the cluster — 4 GPUs"]
-    A["campaign A · window 2<br/>running on 2 GPUs"]
-    FREE["2 GPUs free"]
-  end
-  B["campaign B · window 4<br/>needs 4 — waits, Queued"]
-  C["campaign C · window 2<br/>needs 2 — starts"]
-  B -. "not enough" .-> FREE
-  C --> FREE
+  A["PR merged<br/>demo: 1 volume,<br/>window 1"]
+  Bq["Queued<br/>quota full"]
+  C["Running<br/>137 / 638 pages"]
+  D["Done<br/>637 ok, 1 failed"]
+  E["viewer<br/>the whole volume"]
+  A --> Bq --> C --> D --> E

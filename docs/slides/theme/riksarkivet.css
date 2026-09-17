@@ -398,6 +398,20 @@ table.plain td:first-child {
   border-radius: 8px;
 }
 
+.ticon {
+  height: 30px;
+  width: 30px;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+
+.ticon.block {
+  display: block;
+  height: 40px;
+  width: 40px;
+  margin: 0 0 6px;
+}
+
 .cols.three {
   grid-template-columns: 1fr 1fr 1fr;
   gap: 28px;
