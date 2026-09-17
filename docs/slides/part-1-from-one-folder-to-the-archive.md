@@ -301,12 +301,20 @@ size: large
 <div class="cols">
 <div>
 
-**A team is a repository.** Whoever can merge chooses the image and models that run with the team's bucket credentials — so reviews, credentials and history stay together. Its converter.yaml names the team's namespace and LocalQueue.
+```yaml
+# converter.yaml — in the team's repo
+namespace: transcription   # where its Jobs go
+queue: transcription       # the LocalQueue they name
+```
+
+The converter writes both onto every Job; that LocalQueue points at the team's ClusterQueue.
 
 </div>
 <div>
 
-**A budget per team, shared when idle.** Each team's ClusterQueue guarantees its share; in one cohort, idle GPUs go to whoever is busy. Urgency inside a team is `priority`, not another queue.
+**A team is a repository:** whoever can merge chooses what runs with the team's credentials.
+
+**A budget per team,** lent out when idle. Urgency inside a team is `priority`, not another queue.
 
 </div>
 </div>
@@ -324,7 +332,7 @@ own approvals.
 
 ![w:940](assets/p1-team-walls.svg)
 
-**RBAC is the wall; the rest say why.** A queue name never crosses a namespace, and each team's apply may write only its own — so a converter.yaml naming another team's namespace is refused by the API server. Kyverno turns the two quiet failures into one sentence: a label naming the wrong queue, and a GPU Job with no queue at all, which would otherwise run outside every quota.
+**RBAC is the wall:** each team's apply may write only its own namespace. Kyverno says what went wrong, in one sentence.
 
 <!--
 Layers, outermost first: RBAC on the apply identity (a ServiceAccount, or an
