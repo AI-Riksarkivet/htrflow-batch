@@ -36,29 +36,8 @@ for a submitted campaign to keep running.
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    G["campaigns repo<br/>campaigns/*.yaml, pipelines/*.yaml, converter.yaml"]
-    C["converter in CI<br/>htrflow-campaigns render"]
-    R["rendered/<br/>committed to git"]
-    A["Argo CD or htrflow-campaigns apply"]
-    J["campaign Indexed Job<br/>and its ConfigMaps"]
-    K["Kueue"]
-    W["wrapper pods<br/>one per volume, one index each"]
-    S[("S3 results bucket")]
-    API["htrflow-web<br/>GET /api/v1/jobs<br/>campaign browser and Universal Viewer"]
-    B["browser"]
+![From a campaign file to results: the repo, the converter in CI, rendered/, apply, the campaign Job, Kueue, the wrapper pods, the bucket, the web front and the browser](../assets/diagrams/campaigns.svg)
 
-    G -->|"PR: validate"| C
-    C -->|"main: render, commit"| R
-    R --> A -->|apply| J
-    J -->|"queue-name label"| K -->|"admits, up to the window"| W
-    W -->|"page/, alto/, progress.json, iiif.json,<br/>manifest.json, run log"| S
-    API -->|"list and get Jobs, Pods, ConfigMaps<br/>write the status ConfigMap"| J
-    API -->|"progress.json"| S
-    B -->|"page, uv.html, /api/v1/jobs"| API
-    B -->|"iiif.json, ALTO, run log, manifest.json"| S
-```
 
 ## The campaigns repo
 

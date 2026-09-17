@@ -3,54 +3,10 @@
 This page is the map. It shows the pictures of the system, the job of each
 piece in a line, and where to read the detail.
 
-```mermaid
-flowchart TB
-    subgraph git["campaigns repo (git)"]
-        CAMP["campaigns/*.yaml<br/>pipelines/*.yaml<br/>converter.yaml"]
-    end
+![The map: the campaigns repo and delivery, Kyverno and Kueue in the cluster, the warm-up Job, the campaign pods and the read API, and what sits outside](../assets/diagrams/architecture.svg)
 
-    subgraph ci["campaigns repo CI"]
-        CONV["converter<br/>htrflow-campaigns render"]
-    end
+![Inside one pod: the downloader, the page queue on tmpfs, the consumer that runs htrflow, and the uploader](../assets/diagrams/streaming-driver.svg)
 
-    subgraph cluster["Kubernetes cluster"]
-        KYV["Kyverno admission policies<br/>every Job, Pod and pipeline ConfigMap"]
-
-        subgraph queueing["Kueue"]
-            LQ["LocalQueue"] --> CQ["ClusterQueue<br/>quota: N x nvidia.com/gpu"]
-        end
-
-        subgraph job["Indexed Job, one per campaign, one index per volume: the streaming driver"]
-            direction LR
-            DLP["downloader pool<br/>threads, bounded lookahead"]
-            PQ[("page queue<br/>on tmpfs")]
-            CONS["consumer thread<br/>pipeline.run(page)<br/>models loaded once"]
-            UPL["uploader<br/>ships PAGE then ALTO as written,<br/>rolling-deletes image and outputs"]
-            DLP --> PQ --> CONS --> UPL
-        end
-
-        WARM["warm-up Job (CPU)<br/>fills the model cache"]
-        API["read API<br/>GET /api/v1/jobs"]
-        LQ -.->|admits when quota free| job
-        API -->|"list and get, read-only RBAC"| job
-    end
-
-    IIIF["IIIF image server"]
-    S3[("S3<br/>results bucket")]
-    BROWSER["browser<br/>campaign browser and Universal Viewer"]
-
-    CAMP -->|"PR: validate"| CONV
-    CONV -->|"main: render, commit rendered/"| git
-    git -->|"Argo CD or htrflow-campaigns apply"| KYV
-    KYV -->|"campaign Job"| LQ
-    KYV -->|"warm-up Job, one per pipeline file, not queued"| WARM
-    WARM -.->|"model cache, read-only in the Job"| job
-    DLP -->|"width-capped GETs"| IIIF
-    UPL -->|"PAGE and ALTO per page, progress, run log,<br/>manifest.json LAST"| S3
-    API -->|"progress.json"| S3
-    BROWSER -->|"GET /api/v1/jobs"| API
-    BROWSER -->|"iiif.json, ALTO, run log"| S3
-```
 
 Each piece is deliberately simple:
 

@@ -13,30 +13,8 @@ decides where.** The Kueue release the Makefile installs is `KUEUE_VERSION`.
 
 ## Topology
 
-```mermaid
-flowchart TB
-    subgraph chart["chart, templates/kueue.yaml from values.queue"]
-        RF["ResourceFlavor<br/>no nodeLabels, so it matches any node"]
-        CQ["ClusterQueue<br/>one resource group,<br/>nominalQuota per covered resource"]
-        LQ["LocalQueue<br/>in the release namespace"]
-    end
-    subgraph conv["converter, render.py and manifests/campaign-job.yaml"]
-        JOB["campaign Job<br/>label kueue.x-k8s.io/queue-name<br/>Indexed, completions = volumes"]
-    end
-    subgraph kueue["Kueue"]
-        WL["Workload<br/>owned by the Job, labelled job-uid<br/>podSets main, count = parallelism"]
-    end
-    subgraph k8s["Kubernetes"]
-        POD["Pods<br/>one per index, up to parallelism at once"]
-    end
-    LQ --> CQ
-    CQ --> RF
-    JOB -->|"queue-name label"| LQ
-    JOB -->|"Kueue's Job reconciler creates it"| WL
-    WL -->|"quota reserved in"| CQ
-    WL -->|"admitted, so suspend goes false"| JOB
-    JOB -->|"Job controller"| POD
-```
+![The objects: LocalQueue, ClusterQueue and ResourceFlavor from the chart, the campaign Job from the converter, its Workload in Kueue, and the pods](../assets/diagrams/queue-objects.svg)
+
 
 The chart renders three queue objects from `queue.*`, plus one priority
 class per `queue.priorityClasses` entry
@@ -146,24 +124,8 @@ the ClusterQueue and LocalQueue.
 
 ## The admission cycle
 
-```mermaid
-flowchart TB
-    R["rendered<br/>campaign Job manifest in git"]
-    A["applied<br/>webhook sets spec.suspend=true,<br/>one Workload per campaign"]
-    Q["queued<br/>no Admitted condition,<br/>counted in pendingWorkloads"]
-    RUN["admitted and running<br/>QuotaReserved and Admitted,<br/>Job unsuspended up to parallelism"]
-    D["done<br/>Job Complete, Workload Finished,<br/>quota released"]
-    P["paused<br/>workload spec.active=false,<br/>pods evicted, finished indexes kept"]
-    F["failed or partially failed<br/>Job Failed, Workload Finished"]
+![A campaign's life: rendered, applied, queued, running, then done or failed, and paused and back to queued](../assets/diagrams/campaign-lifecycle.svg)
 
-    R -->|"htrflow-campaigns apply"| A
-    A --> Q
-    Q -->|"quota free"| RUN
-    RUN --> D
-    RUN --> F
-    RUN -->|"suspend true in git,<br/>enforced by the apply"| P
-    P -->|"suspend removed"| Q
-```
 
 Step by step, with the controller that acts at each step:
 
