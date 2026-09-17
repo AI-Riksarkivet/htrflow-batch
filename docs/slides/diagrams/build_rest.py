@@ -286,4 +286,27 @@ d.pill(lane, (r1 + 48 + py + 30) / 2 - 6, "weights")
 d.pill(lane, (py + 66 + r2 + 48) / 2 + 6, "unblocks")
 d.save(OUT + "p5-model-path.svg")
 
+# ---------------------------------------------------------------- part 4: topology-aware scheduling
+d = Diagram(1600, 552)
+bw = (1552 - 32) / 2
+rw = (bw - 48 - 24) / 2
+nw = (rw - 48 - 16) / 2
+free = [[("1 free", {}), ("full", {})], [("2 pods", {"strong": True}), ("2 pods", {"strong": True})],
+        [("2 free", {}), ("1 free", {})], [("4 free", {}), ("4 free", {})]]
+rack_x = []
+for b in range(2):
+    bx = 24 + b * (bw + 32)
+    d.group(bx, 192, bw, 344, f"Block {b + 1}", L("layers"))
+    for r in range(2):
+        rx = bx + 24 + r * (rw + 24)
+        rack_x.append(rx)
+        k = b * 2 + r
+        d.group(rx, 248, rw, 264, f"Rack {k + 1}", L("server"), inner=True)
+        for n, (sub, o) in enumerate(free[k]):
+            d.tall(rx + 24 + n * (nw + 16), 304, nw, "Node", sub, "k8s-node", logo=True, **o)
+cx = rack_x[1] + rw / 2
+d.card(cx - 280, 24, 560, "Workload: 4 pods", "required: one rack", "kueue", logo=True)
+d.arrow([(cx, 120), (cx, 248 - GAP)], label="fullest rack that fits", at=(cx, 164))
+d.save(OUT + "p4-topology.svg")
+
 print("rest written")
