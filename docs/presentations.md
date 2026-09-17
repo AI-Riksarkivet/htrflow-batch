@@ -12,7 +12,7 @@ keys move, `F` goes full screen) or downloads as a PDF.
 | **4. What the queue can do** | Kueue's concepts as capabilities — quotas, cohorts, preemption, fair sharing, flavors, admission checks — and dynamic resource allocation for GPUs | [slides](slides/part-4-what-the-queue-can-do.html) · [PDF](slides/part-4-what-the-queue-can-do.pdf) |
 | **5. Models and signatures** | Why weights are the risky part, the warm-up and the model cache, the two transformers lines, bringing a new model, what a signature proves, and three ways a model could become a signed artifact | [slides](slides/part-5-models-and-signatures.html) · [PDF](slides/part-5-models-and-signatures.pdf) |
 
-Each deck ends with a short quiz and points at the pages on this site that
+Each deck points at the pages on this site that
 carry the same material in writing. The decks are built from Markdown in
 the repository's `docs/slides` with Marp, on every change to the main
 branch.
