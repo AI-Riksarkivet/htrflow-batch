@@ -426,50 +426,6 @@ tool to catch everything, and it deliberately does not.
 
 ---
 
-# What would happen if…
-
-<div class="cols">
-<div>
-
-**1.** You put a presigned S3 URL, signature and all, in an `images:` list, because that is the only way to reach the scans.
-
-**2.** Working from a checkout with only your new campaign file, you run `make campaigns-apply … PRUNE=1`.
-
-**3.** Two campaigns, months apart, both list `R0001203` under `demo-v1`.
-
-**4.** You rename `kyrkobocker-1.yaml` to `church-books-1.yaml` while it is running.
-
-</div>
-<div>
-
-<p class="note">Same drill as Part 1: think first. Each has a one-sentence answer, and each follows from one of the slides before.</p>
-
-</div>
-</div>
-
-<!--
-Give the room a minute. The answers are on the next slide.
--->
-
----
-
-# … and what does
-
-<table class="plain">
-<tr><td>1</td><td><strong>It runs, and the signature is published</strong> — in git, in <code>rendered/</code>, in a ConfigMap and in <code>manifest.json</code>, to everyone who can read any of them. Validate blanks it in its <em>messages</em>, never in the stored file. Put the scans somewhere with a plain URL.</td></tr>
-<tr><td>2</td><td><strong>Every other campaign on the cluster is cancelled.</strong> Prune removes every converter-labelled object not in <em>this</em> apply, and this apply has one campaign. The only rail is the empty-render refusal, and one campaign is not empty.</td></tr>
-<tr><td>3</td><td><strong>The second one is cheap, not free.</strong> Its pod lists the bucket, finds every page's ALTO already there, transcribes nothing, and rewrites the viewer manifest and <code>manifest.json</code>. It still takes a slot in the queue and a model load.</td></tr>
-<tr><td>4</td><td><strong>Git sees a delete and a create.</strong> The old name is pruned on the next pruning apply — a running Job killed, its finished volumes kept — and the new name starts as a new campaign, which resumes from those volumes. Cheaper than it sounds, but it was still a cancel.</td></tr>
-</table>
-
-<!--
-Number 2 is the one to dwell on. It is documented, it is in the Makefile's
-own comment, and it will happen to someone. The habit that prevents it:
-prune only from a full checkout of main, or let Argo CD do it.
--->
-
----
-
 # Next
 
 <p class="note"><strong>Part 3, <em>Inside one run</em>:</strong> what the wrapper does with a page, why a restart costs one page and not a volume, what "failed" and "missing" mean, and what every file in the bucket is for.</p>
@@ -480,3 +436,9 @@ prune only from a full checkout of main, or let Argo CD do it.
 "Run a Campaign" under Getting Started is the written form of this part;
 the YAML reference is what people come back to.
 -->
+
+---
+
+<!-- _class: lead -->
+
+# Any questions?

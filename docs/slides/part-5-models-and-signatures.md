@@ -302,40 +302,6 @@ signature would make it a control.
 
 ---
 
-# Which would you reach for?
-
-<div class="cols">
-<div>
-
-**1.** A new recognition model decodes Swedish letters with odd spaces around them, and nothing fails.
-
-**2.** Security asks which exact weights produced a transcription published a year ago.
-
-**3.** A partner offers a fine-tuned model as a download link.
-
-**4.** An auditor asks how you know the image running on the cluster is the one CI built.
-
-</div>
-<div>
-
-<p class="note">Think first. Some have an answer today; some need what the last three slides describe.</p>
-
-</div>
-</div>
-
----
-
-# … and the answers
-
-<table class="plain">
-<tr><td>1</td><td><strong>The wrong transformers line.</strong> Check which line saved the model, and pin the image built for that line in a new pipeline id.</td></tr>
-<tr><td>2</td><td><strong>Today: the ALTO itself</strong> names each model's revision and the image digest, and <code>manifest.json</code> names the pipeline. With signed artifacts it would name the weights' digest too.</td></tr>
-<tr><td>3</td><td><strong>Not as a link.</strong> Today it goes on the Hub under a pinned revision; with artifacts, we package, sign and push it ourselves, and only then does a pipeline name it.</td></tr>
-<tr><td>4</td><td><strong>The signature and the digest pin.</strong> Verify the image's signature against the publish workflow, and the pipeline's digest against the pod — or turn on verification at admission and let the cluster refuse anything else.</td></tr>
-</table>
-
----
-
 # The series
 
 <table class="plain">
@@ -347,3 +313,9 @@ signature would make it a control.
 </table>
 
 **ai-riksarkivet.github.io/htrflow-batch** — every deck, and the pages that carry the same material in writing: *The Wrapper* for the model cache, *Security* for the trust boundary, *Releasing* for signing.
+
+---
+
+<!-- _class: lead -->
+
+# Any questions?

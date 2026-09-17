@@ -516,50 +516,6 @@ last minutes readable.
 
 ---
 
-# What would happen if…
-
-<div class="cols">
-<div>
-
-**1.** The image server, behind a proxy that expired, answers an image URL with its login page and a 200.
-
-**2.** A node is drained at page 300 of a 600-page volume.
-
-**3.** A campaign's `images:` list had a wrong URL for page 7; you fix the URL and re-run the volume under a new campaign name.
-
-**4.** A model's revision on the Hub is deleted after the warm-up filled the cache.
-
-</div>
-<div>
-
-<p class="note">Think first. Each has a one-sentence answer, and each follows from one of the slides before.</p>
-
-</div>
-</div>
-
-<!--
-Give the room a minute. The answers are on the next slide.
--->
-
----
-
-# … and what does
-
-<table class="plain">
-<tr><td>1</td><td><strong>The page fails, the volume completes.</strong> The body check refuses a textual content type and a body with no raster signature; that page is recorded as failed with the reason, and the other pages run. Nothing goes into the bucket as an "image".</td></tr>
-<tr><td>2</td><td><strong>Nothing is lost and nothing is counted.</strong> The pod carries a disruption condition, the failure policy ignores it, Kubernetes restarts the index; the new pod lists the bucket and starts at the first page without an ALTO — 300 pages, not 600.</td></tr>
-<tr><td>3</td><td><strong>Only page 7 is transcribed.</strong> Resume skips every page whose two files exist and whose source URL is unchanged; page 7's URL changed, so it alone is fetched and run, and <code>manifest.json</code> is written again with all 600.</td></tr>
-<tr><td>4</td><td><strong>Nothing happens to running campaigns.</strong> Pods run offline from the cache PVC, with no route to the Hub at all; the revision pin says which snapshot, and the cache holds it. A <em>new</em> pipeline id naming that revision would fail at warm-up — with a permanent error naming the model.</td></tr>
-</table>
-
-<!--
-Number 4 is the reason the cache exists and the reason pods have no Hub
-route: reproducibility survives the outside world changing. Part 5 is about
-making that guarantee stronger than a pin -- a signature.
--->
-
----
-
 # Next
 
 <p class="note"><strong>Part 4, <em>What the queue can do</em>:</strong> quotas, priority, pause, borrowing, preemption and hardware kinds — what Kueue makes possible for many people sharing many GPUs, and which of it is on today.</p>
@@ -570,3 +526,9 @@ making that guarantee stronger than a pin -- a signature.
 Three pages carry this part in writing: page-flow, failure-handling and
 wrapper under "How it works".
 -->
+
+---
+
+<!-- _class: lead -->
+
+# Any questions?
