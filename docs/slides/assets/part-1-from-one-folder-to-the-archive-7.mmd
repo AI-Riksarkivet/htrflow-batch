@@ -1,7 +1,19 @@
-flowchart TB
-  J["Job — completions = 4, parallelism = 2"]
-  A["index 0<br/>R0001203"]
-  Bx["index 1<br/>R0001204"]
-  C["index 2<br/>R0001205"]
-  D["index 3<br/>R0001206"]
-  J --> A & Bx & C & D
+flowchart LR
+  subgraph CP["control plane — decides"]
+    API["API server<br/>holds every object: Job, ConfigMaps, Secret"]
+    JC["Job controller<br/>keeps N indexes running"]
+    KQ["Kueue<br/>decides WHEN — the GPU budget"]
+    SCH["scheduler<br/>decides WHERE — a node with a free GPU"]
+  end
+  subgraph N1["node 1 · 2 GPUs"]
+    P0["pod · index 0"]
+    P1["pod · index 1"]
+  end
+  subgraph N2["node 2 · 2 GPUs"]
+    P2["pod · index 2"]
+    P3["pod · index 3"]
+  end
+  API --> JC --> SCH
+  KQ --> JC
+  SCH --> N1
+  SCH --> N2

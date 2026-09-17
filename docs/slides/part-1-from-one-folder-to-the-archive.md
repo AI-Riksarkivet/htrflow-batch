@@ -258,10 +258,49 @@ A job queue for Kubernetes. It decides **when** a Job may start, from a counted 
 </div>
 <div>
 
-**Why:** without it, Kubernetes starts every pod it can, whoever asked first takes every GPU, and everything else piles up half-started. Part 4 is all about what else it can do.
+**It can also:**
+
+* **resource flavors** — tell kinds of GPU apart, with a quota for each
+* **cohorts** — let teams borrow each other's idle GPUs
+* **preemption** — stop lower-priority work to make room
+* **fair sharing** — divide idle GPUs by weight between teams
 
 </div>
 </div>
+
+**Why:** without it, Kubernetes starts every pod it can, whoever asks first takes every GPU, and the rest pile up half-started. Part 4 goes through all of it.
+
+---
+
+# LocalQueue and ClusterQueue
+
+```mermaid h:250
+flowchart LR
+  subgraph NA["namespace: transcription"]
+    JA["campaign Jobs"] --> LQA["LocalQueue"]
+  end
+  subgraph NB["namespace: research"]
+    JB["campaign Jobs"] --> LQB["LocalQueue"]
+  end
+  CQ["ClusterQueue<br/>the GPUs: quota 8"]
+  LQA --> CQ
+  LQB --> CQ
+```
+
+<div class="cols">
+<div>
+
+**LocalQueue — the door.** It lives in a team's namespace, and a Job names it to get in line. It holds no GPUs of its own.
+
+</div>
+<div>
+
+**ClusterQueue — the pool.** It holds the GPU quota, for the whole cluster. Many LocalQueues can point to one ClusterQueue, and share its GPUs.
+
+</div>
+</div>
+
+**Here:** one LocalQueue, `htr-batch`, pointing to one ClusterQueue. converter.yaml names the LocalQueue, so a campaign file never has to.
 
 ---
 
