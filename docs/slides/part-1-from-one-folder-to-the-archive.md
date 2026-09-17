@@ -259,6 +259,27 @@ Workload.
 
 ---
 
+# What a volume asks for
+
+![w:1040](assets/p1-volume-resources.svg)
+
+<div class="cols">
+<div>
+
+**Per pod, the same every time.** A volume's pod asks for one GPU, four CPU cores and 8 GB of memory, and may grow to 16 GB — the pages waiting in `/work` live in that memory. The numbers are in the Job the converter renders, not in the campaign file.
+
+</div>
+<div>
+
+**Per campaign, times the window.** Kueue adds a campaign's pods up and admits it when the ClusterQueue has all of it left, GPU, cores and memory, in one flavor. It counts requests, never limits.
+
+**Here:** the chart's `queue.resources` sets the quota for all three.
+
+</div>
+</div>
+
+---
+
 # Cohort
 
 ![w:1040](assets/p1-flavors-cohort.svg)
