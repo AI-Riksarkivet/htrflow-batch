@@ -799,8 +799,8 @@ post-processes it.
 1. **Write access to the campaigns repo is a trust decision.** See
    [Security → Trust boundary](security.md#trust-boundary).
 2. **The results bucket is the only durable record of results.** Git holds
-   the desired state, and the cluster holds a Job for a day after it
-   finishes. Nothing in htrflow-batch copies results anywhere else. How
+   the desired state, and the cluster holds a Job for a week after it
+   finishes by default. Nothing in htrflow-batch copies results anywhere else. How
    durable the results are therefore depends entirely on the bucket: its
    replication, versioning and backups. Losing the bucket means recomputing
    every campaign.
