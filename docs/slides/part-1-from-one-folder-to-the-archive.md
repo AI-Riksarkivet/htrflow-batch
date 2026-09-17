@@ -184,19 +184,29 @@ Hub, and the web front is the one pod a browser talks to.
 
 # What it is made of
 
-```mermaid w:1150
-flowchart TB
-  subgraph OURS["built in htrflow-batch"]
-    WR["wrapper<br/>runs htrflow in each pod"] ~~~ CO["converter<br/>validate · render · apply"] ~~~ WEB["web front<br/>status page · run log"] ~~~ CH["Helm charts<br/>install the platform"]
-  end
-  subgraph EXT["projects we build on"]
-    HTR["htrflow"] ~~~ K8S["Kubernetes"] ~~~ KUE["Kueue"] ~~~ KYV["Kyverno"] ~~~ UV["Universal Viewer"] ~~~ GPU["NVIDIA GPU stack"] ~~~ S3["S3 store"] ~~~ ARGO["Argo CD<br/>optional"]
-  end
-  OURS ~~~ EXT
-  style OURS stroke-width:3px
-```
+<p class="layer">built in htrflow-batch</p>
 
-**We built the four boxes on top.** Everything below is an existing project we use as it is — htrflow included, driven as a library.
+<div class="icons four ours">
+<figure><img src="assets/icon-wrapper.svg" alt=""><figcaption>wrapper<span>runs htrflow in each pod</span></figcaption></figure>
+<figure><img src="assets/icon-converter.svg" alt=""><figcaption>converter<span>validate · render · apply</span></figcaption></figure>
+<figure><img src="assets/icon-web.svg" alt=""><figcaption>web front<span>status page · run log</span></figcaption></figure>
+<figure><img src="assets/icon-charts.svg" alt=""><figcaption>Helm charts<span>install the platform</span></figcaption></figure>
+</div>
+
+<p class="layer">projects we build on</p>
+
+<div class="icons eight">
+<figure><img src="assets/icon-htrflow.svg" alt=""><figcaption>htrflow</figcaption></figure>
+<figure><img src="assets/icon-kubernetes.svg" alt=""><figcaption>Kubernetes</figcaption></figure>
+<figure><img src="assets/icon-kueue.svg" alt=""><figcaption>Kueue</figcaption></figure>
+<figure><img src="assets/icon-kyverno.svg" alt=""><figcaption>Kyverno</figcaption></figure>
+<figure><img src="assets/icon-viewer.svg" alt=""><figcaption>Universal Viewer</figcaption></figure>
+<figure><img src="assets/icon-gpu.svg" alt=""><figcaption>NVIDIA GPU stack</figcaption></figure>
+<figure><img src="assets/icon-s3.svg" alt=""><figcaption>S3 store</figcaption></figure>
+<figure><img src="assets/icon-argo.svg" alt=""><figcaption>Argo CD<span>optional</span></figcaption></figure>
+</div>
+
+**We built the four pieces on top.** Everything below is an existing project we use as it is — htrflow included, driven as a library.
 
 ---
 

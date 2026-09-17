@@ -1,9 +1,10 @@
 flowchart LR
-  J["campaign Job<br/>window 2 · each pod 1 GPU"]
-  W["Workload<br/>asks for 2 GPUs at once"]
-  L["LocalQueue<br/>waits in line"]
-  C{"ClusterQueue<br/>2 GPUs free?"}
-  A["admitted<br/>the Job's pods start"]
-  J -->|"Kueue makes"| W --> L --> C
-  C -->|"yes"| A
-  C -.->|"not yet"| L
+  subgraph NA["namespace: transcription"]
+    JA["campaign Jobs"] --> LQA["LocalQueue"]
+  end
+  subgraph NB["namespace: research"]
+    JB["campaign Jobs"] --> LQB["LocalQueue"]
+  end
+  CQ["ClusterQueue<br/>the GPUs: quota 8"]
+  LQA --> CQ
+  LQB --> CQ

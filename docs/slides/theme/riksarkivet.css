@@ -345,6 +345,59 @@ table.plain td:first-child {
   grid-template-columns: 1fr 1.45fr;
 }
 
+/* A row of labelled icons: the "what it is made of" layers. */
+.layer {
+  margin: 4px 0 2px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ra-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.icons {
+  display: grid;
+  gap: 14px;
+  margin: 0 0 22px;
+}
+
+.icons.four { grid-template-columns: repeat(4, 1fr); }
+.icons.eight { grid-template-columns: repeat(8, 1fr); }
+
+.icons figure {
+  margin: 0;
+  text-align: center;
+}
+
+.icons img {
+  height: 58px;
+  width: 58px;
+  object-fit: contain;
+}
+
+.icons.eight img {
+  height: 46px;
+  width: 46px;
+}
+
+.icons figcaption {
+  margin-top: 6px;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.icons figcaption span {
+  display: block;
+  font-size: 14px;
+  color: var(--ra-muted);
+}
+
+.icons.ours {
+  padding: 14px 10px;
+  border: 2px solid var(--ra-magenta);
+  border-radius: 8px;
+}
+
 .cols.three {
   grid-template-columns: 1fr 1fr 1fr;
   gap: 28px;
