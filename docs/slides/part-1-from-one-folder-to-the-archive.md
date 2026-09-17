@@ -70,30 +70,31 @@ steps.
 
 ---
 
-# One volume on your machine, ten thousand in the archive
+# From one machine to many
 
 <table class="plain">
-<tr><td></td><td><strong>One volume, your machine</strong></td><td><strong>The archive</strong></td></tr>
-<tr><td>Where the pages are</td><td>a folder on disk</td><td>behind a IIIF server, one manifest per volume, fetched page by page</td></tr>
-<tr><td>What runs it</td><td>your GPU, one process</td><td>a pool of GPUs shared with everyone, one process per volume</td></tr>
-<tr><td>When something crashes</td><td>you run it again</td><td>the run resumes from the last page that reached the bucket</td></tr>
-<tr><td>Where the results go</td><td>a folder next to the images</td><td>a bucket, page by page while the run is going, readable in the viewer</td></tr>
-<tr><td>Who made this line, with what</td><td>you remember</td><td>every ALTO says: image digest, model revisions, wrapper version</td></tr>
-<tr><td>How you ask for a run</td><td>a command</td><td>a file in git, and a pull request</td></tr>
+<tr><td></td><td><strong>one machine</strong></td><td><strong>many nodes</strong></td></tr>
+<tr><td>where it runs</td><td>your machine, its GPU</td><td>whichever node has a GPU free — chosen for you</td></tr>
+<tr><td>the pages</td><td>a folder on its disk</td><td>fetched from a IIIF server by whichever node runs the volume</td></tr>
+<tr><td>the models</td><td>downloaded to that disk</td><td>a shared cache every node mounts</td></tr>
+<tr><td>the results</td><td>a folder next to the pages</td><td>a bucket every node writes to and every browser reads from</td></tr>
+<tr><td>when a machine fails</td><td>you start again</td><td>the volume restarts on another node and resumes from the bucket</td></tr>
+<tr><td>how you start it</td><td>a command on that machine</td><td>a file in git — you never name a machine</td></tr>
 </table>
 
 <p class="note"><strong>"Volume" here is an archival volume</strong> — a bound unit of pages with a reference code such as R0001203, the batch one run works through — never a Kubernetes volume, which is a disk.</p>
 
 <!--
-Read the right-hand column as the requirements the rest of the deck meets,
-row by row: pages from a server, a shared GPU pool, resumable work,
-streaming results, provenance, and git as the way to ask. Say the volume
+Read the right-hand column as the requirements the rest of the deck meets:
+nothing may live on one node's disk, because the next attempt may run on
+another. So pages come from a server, models from a shared cache, results
+go to a shared bucket, and the request is a file, not a command. Say the volume
 sentence out loud, because the word collides with Kubernetes storage.
 -->
 
 ---
 
-# The whole picture
+# Rough architecture
 
 ```mermaid h:470
 flowchart LR
@@ -117,7 +118,7 @@ flowchart LR
   WEB --> S3
 ```
 
-**Two rules hold it together:** nothing in the cluster reads git — `apply` is all it is told; and the bucket is the only thing that remembers.
+You change files in git; `apply` sends the change to the cluster; the pods write results to the bucket, where the status page and the viewer read them.
 
 <!--
 Read it left to right as the life of a campaign: written in git, checked by
