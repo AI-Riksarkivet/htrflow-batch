@@ -283,8 +283,6 @@ size: large
 
 **Kueue adds the pods up**, times the window, and admits the campaign when that flavor's quota has room.
 
-**Here:** planned. Today every pod asks for 1 GPU, 4 cores and 8 GB.
-
 </div>
 </div>
 
