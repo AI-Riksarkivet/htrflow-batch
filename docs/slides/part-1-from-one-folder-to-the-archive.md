@@ -204,17 +204,7 @@ sets it for every campaign.
 
 # The Workload
 
-```mermaid w:1100
-flowchart LR
-  J["campaign Job<br/>window 2 · each pod 1 GPU"]
-  W["Workload<br/>asks for 2 GPUs at once"]
-  L["LocalQueue<br/>waits in line"]
-  C{"ClusterQueue<br/>2 GPUs free?"}
-  A["admitted<br/>the Job's pods start"]
-  J -->|"Kueue makes"| W --> L --> C
-  C -->|"yes"| A
-  C -.->|"not yet"| L
-```
+![w:1100](assets/p1-workload.svg)
 
 **A Workload is Kueue's copy of what a Job asks for:** how many pods at once, and what each one needs. Kueue makes it — you never write one — and it is what waits in line and gets admitted, not the Job itself.
 
@@ -264,17 +254,7 @@ Workload.
 
 # Kyverno — how admission works
 
-```mermaid w:1100
-flowchart LR
-  A["apply sends<br/>an object"]
-  API["Kubernetes<br/>API server"]
-  K["Kyverno<br/>checks the policies"]
-  OK["accepted<br/>stored and run"]
-  NO["refused<br/>one sentence why"]
-  A --> API --> K
-  K -->|"passes"| OK
-  K -->|"breaks a rule"| NO
-```
+![w:900](assets/p1-admission.svg)
 
 **Every object is checked before it exists** — once the platform turns the rules on, since they ship switched off — and the same rules run in the pull request, so a bad pipeline usually fails there first:
 
@@ -326,24 +306,7 @@ A job queue for Kubernetes. It decides **when** a Job may start, from a counted 
 
 # Kueue — how a campaign gets its GPUs
 
-```mermaid w:1180
-flowchart LR
-  J["Job created<br/>paused by Kueue"]
-  K1["Kyverno<br/>checks the Job"]
-  REFUSED["refused<br/>never stored"]
-  W["Workload<br/>waits in the queue"]
-  Q{"window fits<br/>the free GPUs?"}
-  R["admitted<br/>Job unpaused"]
-  K2["Kyverno<br/>checks each pod"]
-  P["pods run"]
-  J --> K1
-  K1 -->|"breaks a rule"| REFUSED
-  K1 -->|"passes"| W --> Q
-  Q -->|"not yet"| W
-  Q -->|"yes"| R --> K2 --> P
-  style K1 stroke-width:3px
-  style K2 stroke-width:3px
-```
+![w:1150](assets/p1-kueue-flow.svg)
 
 **Kyverno checks twice:** the Job before it is stored, so a bad one never reaches the queue — and each pod after admission, where image signatures can be checked.
 
@@ -362,24 +325,7 @@ Workload waits and Running once it is admitted.
 
 # htrflow in a pod
 
-```mermaid h:400
-flowchart TB
-  subgraph A["get ready"]
-    direction LR
-    W["wait until the models<br/>are in the cache"] --> M["read the manifest<br/>or the image list"] --> R["resume: skip pages<br/>already in the bucket"]
-  end
-  subgraph B["page by page"]
-    direction LR
-    F["fetch the page"] --> H["htrflow runs<br/>your pipeline"] --> U["upload ALTO and PAGE<br/>to the bucket"]
-    U -. "next page" .-> F
-  end
-  subgraph C["finish"]
-    direction LR
-    V["verify every page<br/>is done or recorded"] --> P["publish the viewer manifest<br/>and manifest.json"] --> X["exit<br/>the GPU is free"]
-  end
-  A --> B --> C
-  style H stroke-width:4px,font-weight:bold
-```
+![w:900](assets/p1-pod.svg)
 
 **Every pod runs htrflow** — your pipeline, unchanged — on one archival volume, page by page.
 
@@ -413,15 +359,7 @@ between them, and the GPU it needs is what decides where it can go.
 <div class="cols wide-left">
 <div>
 
-```mermaid h:210
-flowchart TB
-  J["Job — completions = 4, parallelism = 2"]
-  A["index 0<br/>R0001203"]
-  Bx["index 1<br/>R0001204"]
-  C["index 2<br/>R0001205"]
-  D["index 3<br/>R0001206"]
-  J --> A & Bx & C & D
-```
+![w:560](assets/p1-job-indexes.svg)
 
 </div>
 <div>
@@ -458,22 +396,7 @@ immutable. Part 2 lists the rule.
 
 # `window`: how many volumes at once
 
-```mermaid h:170
-flowchart LR
-  subgraph W1["wave 1"]
-    A["R0001203"]
-    Bx["R0001204"]
-  end
-  subgraph W2["wave 2"]
-    C["R0001205"]
-    D["R0001206"]
-  end
-  subgraph W3["wave 3"]
-    E["R0001207"]
-    F["R0001208"]
-  end
-  W1 --> W2 --> W3
-```
+![w:1000](assets/p1-window.svg)
 
 <div class="cols">
 <div>
@@ -516,17 +439,7 @@ whole" means.
 
 # When there are not enough GPUs
 
-```mermaid h:230
-flowchart LR
-  subgraph CL["the cluster — 4 GPUs"]
-    A["campaign A · window 2<br/>running on 2 GPUs"]
-    FREE["2 GPUs free"]
-  end
-  B["campaign B · window 4<br/>needs 4 — waits, Queued"]
-  C["campaign C · window 2<br/>needs 2 — starts"]
-  B -. "not enough" .-> FREE
-  C --> FREE
-```
+![w:900](assets/p1-not-enough.svg)
 
 A campaign starts only when **all** the GPUs its window asks for are free. Until then its card reads *Queued* — and a smaller campaign that fits may start before it.
 
@@ -545,13 +458,7 @@ pods are evicted with every finished volume kept.
 
 # `priority`: who goes first in the line
 
-```mermaid h:170
-flowchart LR
-  Q["waiting: A (bulk, 09:00) · B (bulk, 09:30) · C (interactive, 10:00)"]
-  O["order Kueue admits them in:<br/>C, then A, then B"]
-  R["running: D (bulk) — untouched<br/>nothing is evicted"]
-  Q --> O --> R
-```
+![w:1000](assets/p1-priority.svg)
 
 <div class="cols">
 <div>
@@ -660,16 +567,7 @@ nothing in htrflow-batch copies results anywhere else.
 
 # Your interface is git
 
-```mermaid h:110
-flowchart LR
-  E["you edit<br/>campaigns/demo.yaml"]
-  V["validate<br/>locally"]
-  PR["pull request<br/>CI validates again"]
-  M["merged on main<br/>rendered/ committed"]
-  AP["apply<br/>cluster objects"]
-  S["status page<br/>and the viewer"]
-  E --> V --> PR --> M --> AP --> S
-```
+![w:1150](assets/p1-git-flow.svg)
 
 <div class="cols">
 <div>
@@ -822,15 +720,7 @@ outline for every line on the page image.
 
 # Follow one campaign
 
-```mermaid w:1124
-flowchart LR
-  A["PR merged<br/>demo: 1 volume,<br/>window 1"]
-  Bq["Queued<br/>quota full"]
-  C["Running<br/>137 / 638 pages"]
-  D["Done<br/>637 ok, 1 failed"]
-  E["viewer<br/>the whole volume"]
-  A --> Bq --> C --> D --> E
-```
+![w:1150](assets/p1-follow.svg)
 
 * **Queued.** Another campaign holds the GPUs. The status page shows the campaign with no pod, and says so.
 * **Running.** One pod, one GPU. The page count moves every few seconds, and the volume opens in the viewer at page ten.

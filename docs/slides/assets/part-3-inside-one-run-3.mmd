@@ -1,7 +1,0 @@
-flowchart TB
-  R["the pod runs"]
-  Z["exit 0<br/>done — failed<br/>pages recorded"]
-  T["exit 1<br/>transient: retried up to 3×,<br/>resuming from the bucket"]
-  K["exit 143<br/>SIGTERM: a drain or the<br/>pod deadline — retried like 1"]
-  P["exit 13<br/>permanent: the index fails<br/>at once, never retried"]
-  R --> Z & T & K & P

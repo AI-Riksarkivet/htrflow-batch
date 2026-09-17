@@ -1,9 +1,0 @@
-flowchart LR
-  A["apply sends<br/>an object"]
-  API["Kubernetes<br/>API server"]
-  K["Kyverno<br/>checks the policies"]
-  OK["accepted<br/>stored and run"]
-  NO["refused<br/>one sentence why"]
-  A --> API --> K
-  K -->|"passes"| OK
-  K -->|"breaks a rule"| NO

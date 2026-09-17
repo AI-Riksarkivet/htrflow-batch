@@ -42,6 +42,43 @@ class Diagram:
         else:
             self.parts.append(f'<text x="{tx}" y="{y+h/2+7}" text-anchor="middle" font-size="19" fill="{INK}">{esc(title)}</text>')
 
+    def vbox(self, x, y, w, h, title, sub=None, icon=None, color=None, external=False, isize=38, strong=False, bad=False):
+        """A box with the icon on top and the text under it; `sub` may hold
+        one line break ("\n")."""
+        fill = "#ffffff" if external else PANEL
+        stroke = MUTED if external else MAGENTA
+        sw = 4 if strong else 2
+        self.parts.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="6" fill="{fill}" stroke="{stroke}" stroke-width="{sw}"/>')
+        cx = x + w / 2
+        top = y + 12
+        if icon:
+            self.parts.append(f'<image href="{icon_uri(icon, color)}" x="{cx-isize/2}" y="{top}" width="{isize}" height="{isize}"/>')
+            top += isize + 6
+        weight = ' font-weight="600"' if strong else ""
+        tcolor = "#a3243b" if bad else INK
+        self.parts.append(f'<text x="{cx}" y="{top+18}" text-anchor="middle" font-size="19" fill="{tcolor}"{weight}>{esc(title)}</text>')
+        if sub:
+            for k, line in enumerate(sub.split("\n")):
+                self.parts.append(f'<text x="{cx}" y="{top+40+k*18}" text-anchor="middle" font-size="14" fill="{MUTED}">{esc(line)}</text>')
+
+    def row(self, y, h, items, x0=20, gap=34, w=None, total=1240, **kw):
+        """Lay out vboxes left to right with arrows between them; returns the
+        list of (x, w) so callers can draw extra arrows."""
+        n = len(items)
+        if w is None:
+            w = (total - gap * (n - 1)) / n
+        placed = []
+        for i, it in enumerate(items):
+            x = x0 + i * (w + gap)
+            title, sub, icon = it[:3]
+            opts = it[3] if len(it) > 3 else {}
+            self.vbox(x, y, w, h, title, sub, icon, **{**kw, **opts})
+            placed.append((x, w))
+            if i:
+                px, pw = placed[i - 1]
+                self.arrow([(px + pw, y + h / 2), (x - 2, y + h / 2)])
+        return placed
+
     def cylinder(self, x, y, w, h, title, icon=None):
         r = 14
         self.parts.append(
@@ -49,7 +86,7 @@ class Diagram:
             f'<path d="M{x},{y+r} a{w/2},{r} 0 0,0 {w},0" fill="none" stroke="{MAGENTA}" stroke-width="2"/>')
         tx = x + w / 2
         if icon:
-            self.parts.append(f'<image href="{icon_uri(icon)}" x="{x+14}" y="{y+h/2-12}" width="30" height="30"/>')
+            self.parts.append(f'<image href="{icon_uri(icon, MAGENTA)}" x="{x+14}" y="{y+h/2-12}" width="30" height="30"/>')
             tx = x + 44 + (w - 44) / 2
         self.parts.append(f'<text x="{tx}" y="{y+h/2+12}" text-anchor="middle" font-size="19" fill="{INK}">{esc(title)}</text>')
 

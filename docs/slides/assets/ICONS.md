@@ -5,7 +5,7 @@
   (github.com/cncf/artwork), used to name those projects under the CNCF
   trademark guidelines.
 - `icon-etcd.svg`: the etcd icon from the CNCF artwork repository.
-- Pod and Job icons inside the hand-drawn diagrams (`part-1-*.svg`): the
+- Pod and Job icons inside the hand-drawn diagrams (`docs/slides/diagrams/icons/`): the
   Kubernetes Icons Set (github.com/kubernetes/community, `icons/`), under
   Apache-2.0 or CC-BY-4.0.
 - `icon-kueue.svg`: the Kueue logo from its repository

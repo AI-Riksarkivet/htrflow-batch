@@ -60,21 +60,7 @@ answer where a model author offers it.
 
 # How a model reaches the GPU today
 
-```mermaid w:1120
-flowchart LR
-  PR["new pipeline id<br/>merged and applied"]
-  WU["warm-up Job<br/>CPU, outside the queue"]
-  HUB["Hugging Face Hub"]
-  C[("model cache<br/>one shared disk")]
-  M["marker file<br/>pipeline ready"]
-  P["campaign pods<br/>offline, read-only"]
-  PR --> WU
-  HUB --> WU
-  WU --> C
-  WU --> M
-  M -->|"unblocks"| P
-  C -->|"weights"| P
-```
+![w:1000](assets/p5-model-path.svg)
 
 <div class="cols">
 <div>

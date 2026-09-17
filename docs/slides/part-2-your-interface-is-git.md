@@ -254,15 +254,7 @@ the API server never gets to refuse it halfway through an apply.
 
 # The pull request
 
-```mermaid h:120
-flowchart LR
-  E["edit<br/>campaigns/kyrkobocker-1.yaml"]
-  V["validate<br/>locally"]
-  PR["pull request<br/>CI: validate + policy check"]
-  RV["review<br/>a colleague reads the diff"]
-  M["merge to main<br/>CI renders and commits rendered/"]
-  E --> V --> PR --> RV --> M
-```
+![w:1100](assets/p2-pull-request.svg)
 
 <div class="cols">
 <div>
@@ -291,15 +283,7 @@ compare the next change against. Argo CD, when used, watches rendered/.
 
 # Apply — the one step that touches the cluster
 
-```mermaid h:120
-flowchart LR
-  R["render again<br/>append-only, pipelines unchanged"]
-  W["write each campaign's<br/>record — before anything is sent"]
-  P["apply pipelines<br/>ConfigMap + warm-up Job"]
-  C["apply campaigns<br/>skip finished, unchanged ones"]
-  S["put each pause state<br/>on its Kueue Workload"]
-  R --> W --> P --> C --> S
-```
+![w:1100](assets/p2-apply.svg)
 
 <div class="cols wide-left">
 <div>
