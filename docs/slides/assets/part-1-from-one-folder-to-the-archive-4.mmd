@@ -1,10 +1,9 @@
 flowchart LR
-  subgraph NA["namespace: transcription"]
-    JA["campaign Jobs"] --> LQA["LocalQueue"]
-  end
-  subgraph NB["namespace: research"]
-    JB["campaign Jobs"] --> LQB["LocalQueue"]
-  end
-  CQ["ClusterQueue<br/>the GPUs: quota 8"]
-  LQA --> CQ
-  LQB --> CQ
+  A["apply sends<br/>an object"]
+  API["Kubernetes<br/>API server"]
+  K["Kyverno<br/>checks the policies"]
+  OK["accepted<br/>stored and run"]
+  NO["refused<br/>one sentence why"]
+  A --> API --> K
+  K -->|"passes"| OK
+  K -->|"breaks a rule"| NO

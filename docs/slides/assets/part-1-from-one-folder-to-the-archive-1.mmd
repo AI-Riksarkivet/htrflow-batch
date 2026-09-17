@@ -1,24 +1,14 @@
-flowchart LR
-  YOU["you<br/>edit a campaign file,<br/>open a pull request"]
-  subgraph GIT["in git"]
-    REPO["campaigns repo"] --> CONV["converter, in CI<br/>validate · render"]
+flowchart TB
+  subgraph WORK["the work"]
+    direction TB
+    CF["campaign file"] --> JOB["Job<br/>one per campaign"]
+    JOB --> POD["Pod<br/>one per archival volume"]
+    POD --> INIT["init container<br/>waits for the models"]
+    POD --> CON["container<br/>wrapper + htrflow"]
   end
-  AP["apply<br/>Argo CD or the platform team"]
-  subgraph K8S["in the cluster"]
-    KYV["Kyverno<br/>checks the objects"] --> KUE["Kueue<br/>waits for GPUs"] --> JOB["campaign pods<br/>wrapper + htrflow"]
-    WARM["warm-up<br/>model cache"] -.-> JOB
-    WEB["web front<br/>status · viewer"]
+  subgraph QUEUE["the queue — Kueue"]
+    direction TB
+    CQ["ClusterQueue<br/>the GPU quota"] --> LQ["LocalQueue<br/>the name a Job asks for"]
+    LQ --> WL["Workload<br/>one per Job"]
   end
-  subgraph OUT["external"]
-    IIIF["IIIF and image servers"]
-    HUB["Hugging Face Hub"]
-    BR["browser"]
-  end
-  S3[("S3 bucket")]
-  YOU --> REPO
-  CONV --> AP --> KYV
-  IIIF --> JOB
-  HUB --> WARM
-  BR --> WEB
-  JOB --> S3
-  WEB --> S3
+  JOB <-. "admitted?" .-> WL
