@@ -37,6 +37,22 @@ namespace håller granskning, credentials och historik på samma ställe.
   teamets namespace och `cohort` satt), modellcache, NetworkPolicies och
   apply-RBAC. ResourceFlavors, WorkloadPriorityClasses och Kyverno-policyer
   delas av alla team.
+- Ett team kan inte använda ett annat teams kö, i lager:
+  - **RBAC är väggen.** Varje team har en egen apply-identitet (ServiceAccount
+    eller Argo CD Application i ett AppProject) som bara får skriva i teamets
+    namespace. converter.yaml är ingen säkerhetsgräns — ett repo som skriver en
+    annan namespace nekas av API-servern.
+  - Köer är per namespace: en Jobs `kueue.x-k8s.io/queue-name` pekar bara på en
+    LocalQueue i Jobbens egen namespace. Chartet äger LocalQueues; apply-rollen
+    får inte skapa dem.
+  - ClusterQueue:ns `namespaceSelector` släpper bara in teamets namespace.
+  - **Nytt:** en Kyverno-regel avvisar en Job i en team-namespace vars
+    `queue-name` inte är den namespacens LocalQueue, med en mening som säger
+    vilken kö som gäller — i stället för en Job som står Queued för alltid.
+  - **Nytt:** en Kyverno-regel avvisar en Job eller Pod som begär
+    `nvidia.com/gpu` i en team-namespace utan `queue-name` — i dag startar en
+    sådan Job direkt, utanför Kueue och utanför all kvot (Kueues
+    `manageJobsWithoutQueueName` är av). Samma regel körs i PR-policyjobbet.
 - Webbens `HTRFLOW_NAMESPACES` fylls från `teams`, så status-sidan visar alla
   team (`packages/web/src/htrflow_web/kube.py:91` läser redan flera).
 - Varje teams campaigns-repo har sin converter.yaml med sin `namespace` och `queue`;
@@ -56,6 +72,11 @@ namespace håller granskning, credentials och historik på samma ställe.
       när B:s kampanjer är klara admitteras A:s nästa kampanj inom A:s kvot.
 - [ ] En Job i team A:s namespace kan inte ställa sig i team B:s kö
       (ClusterQueue:ns `namespaceSelector` avvisar den).
+- [ ] Team A:s apply-identitet nekas att skapa en Job i team B:s namespace.
+- [ ] En Job i team A:s namespace med `queue-name` satt till något annat än
+      A:s LocalQueue avvisas vid admission med en mening som namnger rätt kö.
+- [ ] En Job som begär `nvidia.com/gpu` i en team-namespace utan `queue-name`
+      avvisas vid admission; policytesterna täcker både avvisning och godkänd Job.
 - [ ] Status-sidan visar båda teamens kampanjer.
 - [ ] Ett install utan `teams` renderar samma objekt som i dag.
 
