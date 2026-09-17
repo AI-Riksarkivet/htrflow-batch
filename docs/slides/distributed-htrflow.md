@@ -522,7 +522,7 @@ volumes:           # completions = 4
 This is the single design decision the rest follows from: a campaign is one
 Indexed Job, not one Job per volume and not a custom resource with a
 controller. The append-only rule falls straight out of completions being
-immutable. Part 2 lists the rule.
+immutable.
 -->
 
 ---
@@ -580,8 +580,7 @@ A campaign starts only when **all** the GPUs its window asks for are free. Until
 
 <!--
 A campaign keeps its GPUs until its last volume is done; nothing already
-running is stopped to make room. Part 4 covers the objects behind the quota
-and what else the queue can do.
+running is stopped to make room.
 
 Pausing is also here: suspend: true in the campaign file, and the running
 pods are evicted with every finished volume kept.
@@ -669,7 +668,7 @@ is whole. The status page reads exactly these files, plus the live Job.
 
 A page that fails deterministically is recorded in manifest.json and the
 volume still completes; a page that is MISSING fails the volume, and the
-retry redoes only that page. Part 3.
+retry redoes only that page.
 -->
 
 ---
@@ -733,8 +732,8 @@ steps:
 </div>
 
 <!--
-This is the slide the data scientist actually needs, and Part 2 is it in
-full: the two files, converter.yaml, validate, render, apply, and the rules.
+This is the slide the data scientist actually needs: the two files, and a
+pull request as the way work is submitted.
 -->
 
 ---
@@ -785,7 +784,7 @@ A new name runs the campaign again, and skips every page already in the bucket.
 
 <!--
 Remove only reaches the cluster when the platform's apply is allowed to
-prune; part 2 covers the details. A campaign's volume list cannot change
+prune. A campaign's volume list cannot change
 once it has run, which is why a restart is a new name rather than an edit.
 -->
 
