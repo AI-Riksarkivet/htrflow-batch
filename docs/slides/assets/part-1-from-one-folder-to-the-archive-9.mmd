@@ -1,8 +1,10 @@
 flowchart LR
-  E["you edit<br/>campaigns/demo.yaml"]
-  V["validate<br/>locally"]
-  PR["pull request<br/>CI validates again"]
-  M["merged on main<br/>rendered/ committed"]
-  AP["apply<br/>cluster objects"]
-  S["status page<br/>and the viewer"]
-  E --> V --> PR --> M --> AP --> S
+  A["campaign A<br/>window 2"]
+  Bq["campaign B<br/>window 4"]
+  Q{"free GPUs<br/>quota 4, 2 in use"}
+  R["running"]
+  W["waiting — Queued"]
+  A --> Q
+  Bq --> Q
+  Q -->|"2 fit"| R
+  Q -->|"4 do not"| W

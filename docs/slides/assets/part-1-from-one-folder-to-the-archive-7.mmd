@@ -1,10 +1,7 @@
-flowchart LR
-  A["campaign A<br/>window 2"]
-  Bq["campaign B<br/>window 4"]
-  Q{"free GPUs<br/>quota 4, 2 in use"}
-  R["running"]
-  W["waiting — Queued"]
-  A --> Q
-  Bq --> Q
-  Q -->|"2 fit"| R
-  Q -->|"4 do not"| W
+flowchart TB
+  J["Job — completions = 4, parallelism = 2"]
+  A["index 0<br/>R0001203"]
+  Bx["index 1<br/>R0001204"]
+  C["index 2<br/>R0001205"]
+  D["index 3<br/>R0001206"]
+  J --> A & Bx & C & D

@@ -1,0 +1,7 @@
+flowchart LR
+  A["PR merged<br/>demo: 1 volume,<br/>window 1"]
+  Bq["Queued<br/>quota full"]
+  C["Running<br/>137 / 638 pages"]
+  D["Done<br/>637 ok, 1 failed"]
+  E["viewer<br/>the whole volume"]
+  A --> Bq --> C --> D --> E
