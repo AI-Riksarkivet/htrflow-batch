@@ -1,6 +1,6 @@
-/* The Mermaid diagrams that stay Mermaid (sequence diagrams, and the roadmap's
-   cache layer) take the colours of the hand-drawn ones in docs/assets/diagrams:
-   magenta lines and numbers, white actors, pale panels. */
+/* The site's diagrams are hand-drawn (docs/slides/diagrams/build_docs.py).
+   A Mermaid diagram a page adds later still takes their colours: magenta lines
+   and numbers, white actors, pale panels. */
 [data-md-color-scheme="default"] {
   --md-mermaid-edge-color: #b44b6f;
   --md-mermaid-node-bg-color: #f8e9ef;

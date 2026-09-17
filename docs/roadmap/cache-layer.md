@@ -166,48 +166,8 @@ warm-up, and from the Alluxio web under-storage source.
 
 ### Architecture
 
-```mermaid
-flowchart TB
-    CI["campaigns repo CI<br/>applies the campaign Indexed Job"]
+![The cache layer: the warmer and DataLoads, the Alluxio runtime on the GPU nodes, the Dataset PVC the pod reads, the iiif-shim in front of the IIIF origin, and the results bucket](../assets/diagrams/cache-layer.svg)
 
-    subgraph cluster["Kubernetes cluster"]
-        Q["Kueue ClusterQueue"]
-        WARM["warmer<br/>reads queue order and volume lists<br/>creates DataLoads for the next volumes"]
-
-        subgraph fluid["Fluid data layer"]
-            DL["DataLoad per warmed volume"]
-            DS["Dataset iiif-volumes<br/>mount web://iiif-shim/"]
-            RT["AlluxioRuntime<br/>workers on the GPU nodes<br/>memory tier, optional disk tier"]
-            DL --> RT
-            DS --- RT
-        end
-
-        SHIM["iiif-shim, stateless, two replicas<br/>HTML index and byte streaming<br/>width in the path"]
-
-        subgraph pod["campaign pod, one per index"]
-            WRAP["wrapper<br/>resume, run, verify, publish<br/>no download stage"]
-            HTR["htrflow pipeline"]
-            MNT["Dataset PVC, FUSE, read-only<br/>volumes/VOL/wWIDTH/NNNN.jpg"]
-            OUT["memory-backed workdir<br/>outputs only"]
-            WRAP --> HTR
-            HTR -->|read| MNT
-            HTR -->|write| OUT
-        end
-
-        CI -->|"Job, suspended"| Q
-        Q -.->|admits when quota is free| pod
-        WARM -->|reads| Q
-        WARM --> DL
-        RT -->|"list and read-through on miss"| SHIM
-        MNT -->|node-local cache reads| RT
-    end
-
-    IIIF["IIIF origin"]
-    S3[("results bucket")]
-
-    SHIM -->|"manifest JSON and width-capped image GETs"| IIIF
-    WRAP -->|"ALTO, PAGE, manifest.json"| S3
-```
 
 | Piece | Owns | Does not own |
 |---|---|---|
@@ -225,40 +185,8 @@ the cached blocks.
 
 ### Warm path and miss path
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant CI as campaigns repo CI
-    participant API as kube-apiserver
-    participant Q as Kueue
-    participant W as warmer
-    participant A as Alluxio workers
-    participant SH as iiif-shim
-    participant I as IIIF origin
-    participant P as campaign pod via FUSE
-    participant S3 as results bucket
+![One campaign with the cache layer: the warmer prefetches volumes through the shim, Kueue admits, the pod reads pages through FUSE, and results go to the bucket](../assets/diagrams/seq-cache-layer.svg)
 
-    CI->>API: apply campaign Indexed Job, suspended
-    W->>API: read queue order and volume lists
-    W->>API: create DataLoads for the next volumes
-    A->>SH: GET the volume index page
-    SH->>I: fetch the IIIF manifest, cached in the shim
-    A->>SH: GET each page
-    SH->>I: width-capped image GETs
-    Note over A: volume blocks in the memory tier on GPU nodes
-    Q->>API: quota free, unsuspend the Job
-    API->>P: schedule pod, preferring nodes with the blocks
-    P->>S3: list existing outputs to resume
-    P->>P: inputs list is pages minus done
-    P->>A: htrflow reads pages via FUSE
-    A-->>P: warm read from node-local memory
-    P->>A: read of a page never prefetched
-    A->>SH: read-through GET
-    SH->>I: fetch from the origin
-    A-->>P: bytes served and cached
-    P->>P: verify outputs match inputs
-    P->>S3: upload ALTO and PAGE per page, manifest.json last
-```
 
 ### Component contracts
 
