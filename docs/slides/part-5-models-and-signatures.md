@@ -305,7 +305,7 @@ signature would make it a control.
 # The series
 
 <table class="plain">
-<tr><td><strong>1</strong></td><td>From one folder to the archive</td><td>what changes at archive scale, and the whole picture</td></tr>
+<tr><td><strong>1</strong></td><td>From one folder to the archive</td><td>from one machine to many nodes, and a rough architecture</td></tr>
 <tr><td><strong>2</strong></td><td>Your interface is git</td><td>the files, validate, the pull request, apply</td></tr>
 <tr><td><strong>3</strong></td><td>Inside one run</td><td>the container, the pod, the loop, failure</td></tr>
 <tr><td><strong>4</strong></td><td>What the queue can do</td><td>Kueue's concepts as capabilities, and GPUs as devices</td></tr>
