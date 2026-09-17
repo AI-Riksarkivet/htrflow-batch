@@ -127,29 +127,32 @@ volumes:
 
 # Rough architecture
 
-```mermaid h:470
+```mermaid w:1180
 flowchart LR
+  YOU["you<br/>edit a campaign file,<br/>open a pull request"]
   subgraph GIT["in git"]
-    REPO["campaigns repo"] --> CI["CI: validate, render"]
+    REPO["campaigns repo"] --> CONV["converter, in CI<br/>validate · render"]
   end
+  AP["apply<br/>Argo CD or the platform team"]
   IIIF["IIIF and image servers"]
   HUB["Hugging Face Hub"]
-  YOU["browser"]
+  BR["browser"]
   subgraph K8S["in the cluster"]
     KYV["Kyverno<br/>checks the objects"] --> KUE["Kueue<br/>waits for GPUs"] --> JOB["campaign pods<br/>wrapper + htrflow"]
     WARM["warm-up<br/>model cache"] -.-> JOB
     WEB["web front<br/>status · viewer"]
   end
   S3[("S3 bucket")]
-  CI -->|"apply"| KYV
+  YOU --> REPO
+  CONV --> AP --> KYV
   IIIF --> JOB
   HUB --> WARM
-  YOU --> WEB
+  BR --> WEB
   JOB --> S3
   WEB --> S3
 ```
 
-You change files in git; `apply` sends the change to the cluster; the pods write results to the bucket, where the status page and the viewer read them.
+**You only open a pull request.** The converter checks and renders it in CI; apply — run by Argo CD or the platform team, never by you — sends it to the cluster.
 
 <!--
 Read it left to right as the life of a campaign: written in git, checked by
