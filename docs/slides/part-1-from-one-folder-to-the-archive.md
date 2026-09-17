@@ -240,7 +240,7 @@ Workload.
 
 # ResourceFlavor
 
-![w:1000](assets/p1-flavors.svg)
+![w:900](assets/p1-flavors.svg)
 
 <div class="cols">
 <div>
@@ -250,9 +250,9 @@ Workload.
 </div>
 <div>
 
-**A quota per flavor.** A ClusterQueue promises so many of each and tries its flavors in order: a campaign takes an A100 if one is free, an L4 if not.
+**A quota per flavor.** A ClusterQueue promises GPUs, cores and memory on each flavor, and tries them in order: a pod that may use either takes an A100 if one is free, an L4 if not.
 
-**Here:** one flavor — every GPU is alike.
+**Here:** planned. Today the chart has one flavor and one quota, for a cluster where every GPU is alike.
 
 </div>
 </div>
@@ -261,19 +261,29 @@ Workload.
 
 # What a volume asks for
 
-![w:1040](assets/p1-volume-resources.svg)
+![w:900](assets/p1-volume-resources.svg)
 
 <div class="cols">
 <div>
 
-**Per pod, the same every time.** A volume's pod asks for one GPU, four CPU cores and 8 GB of memory, and may grow to 16 GB — the pages waiting in `/work` live in that memory. The numbers are in the Job the converter renders, not in the campaign file.
+```yaml
+# converter.yaml — the operator names sizes
+sizes:
+  small: { flavor: l4,   gpu: 1, cpu: 4, memory: 16Gi }
+  large: { flavor: a100, gpu: 1, cpu: 8, memory: 32Gi }
+
+# pipelines/demo-v1.yaml — the recipe picks one
+size: large
+```
 
 </div>
 <div>
 
-**Per campaign, times the window.** Kueue adds a campaign's pods up and admits it when the ClusterQueue has all of it left, GPU, cores and memory, in one flavor. It counts requests, never limits.
+**The recipe picks, the operator sizes.** `validate` refuses a size converter.yaml does not name.
 
-**Here:** the chart's `queue.resources` sets the quota for all three.
+**Kueue adds the pods up**, times the window, and admits the campaign when that flavor's quota has room.
+
+**Here:** planned. Today every pod asks for 1 GPU, 4 cores and 8 GB.
 
 </div>
 </div>
@@ -286,7 +296,7 @@ Workload.
 
 **Pools that lend.** ClusterQueues in one cohort borrow each other's idle quota, within limits each pool sets — a busy team runs on a quiet team's GPUs, and the owner can take them back.
 
-**Here:** one pool, no cohort.
+**Here:** planned. Today there is one pool.
 
 ---
 

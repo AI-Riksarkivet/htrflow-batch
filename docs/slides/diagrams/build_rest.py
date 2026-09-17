@@ -241,32 +241,34 @@ fan(d, 800, 24 + CARD_H, targets, 160)
 d.save(OUT + "p3-exit.svg")
 
 # ---------------------------------------------------------------- part 1: one pool, its flavors, their nodes
-d = Diagram(1600, 488)
+d = Diagram(1600, 600)
 cw = (1552 - 56) / 2
 col = [24, 24 + cw + 56]
 mid = [x + cw / 2 for x in col]
-d.card(520, 24, 560, "ClusterQueue", "quota 8 A100 · 4 L4", L("layers"))
-fy = 200
+top = d.tall(420, 24, 760, "ClusterQueue", "a100 quota: 8 GPU · 64 cores · 256 GB\nl4 quota: 4 GPU · 16 cores · 64 GB", L("layers"))
+qb = 24 + top[3]
+fy = qb + 82
 for i, (name, product, gpu) in enumerate((("a100", "NVIDIA-A100-SXM4-80GB", "A100, 80 GB"), ("l4", "NVIDIA-L4", "L4, 24 GB"))):
     d.card(col[i], fy, cw, f"Flavor: {name}", f"nvidia.com/gpu.product={product}", L("tag"))
     nw = (cw - 24) / 2
-    nodes = [(col[i] + k * (nw + 24), 368, nw, CARD_H) for k in range(2)]
+    nodes = [(col[i] + k * (nw + 24), fy + 168, nw, CARD_H) for k in range(2)]
     for nx, ny, _, _ in nodes:
         d.card(nx, ny, nw, "Node", gpu, "k8s-node", logo=True)
-    fan(d, mid[i], fy + CARD_H, nodes, 332)
-d.arrow([(640, 120), (640, 156), (mid[0], 156), (mid[0], fy - GAP)], label="1st", at=((640 + mid[0]) / 2, 156))
-d.arrow([(960, 120), (960, 156), (mid[1], 156), (mid[1], fy - GAP)], label="2nd", at=((960 + mid[1]) / 2, 156))
+    fan(d, mid[i], fy + CARD_H, nodes, fy + 132)
+lane = qb + 40
+d.arrow([(640, qb), (640, lane), (mid[0], lane), (mid[0], fy - GAP)], label="1st", at=((640 + mid[0]) / 2, lane))
+d.arrow([(960, qb), (960, lane), (mid[1], lane), (mid[1], fy - GAP)], label="2nd", at=((960 + mid[1]) / 2, lane))
 d.save(OUT + "p1-flavors.svg")
 
 # ---------------------------------------------------------------- part 1: what one volume asks for
 d = Diagram(1600, 424)
-d.group(24, 16, 480, 392, "One pod — one volume", "k8s-pod")
-d.card(48, 72, 432, "1 GPU", "limit the same", L("microchip"))
-d.card(48, 184, 432, "4 CPU cores", "limit the same", L("cpu"))
-d.card(48, 296, 432, "8 GB memory", "limit 16 GB, /work included", L("memory-stick"))
+d.group(24, 16, 480, 392, "Size large — converter.yaml", L("file-code"))
+d.card(48, 72, 432, "1 GPU", "on flavor a100", L("microchip"))
+d.card(48, 184, 432, "8 CPU cores", "request and limit", L("cpu"))
+d.card(48, 296, 432, "32 GB memory", "request and limit", L("memory-stick"))
 wy = 212 - 88
-d.tall(688, wy, 360, "Workload", "window 2:\n2 GPU · 8 cores · 16 GB", "kueue", logo=True, strong=True)
-d.tall(1216, wy, 360, "ClusterQueue", "quota for flavor a100:\n8 GPU · 32 cores · 64 GB", L("layers"))
+d.tall(688, wy, 360, "Workload", "window 2:\n2 GPU · 16 cores · 64 GB", "kueue", logo=True, strong=True)
+d.tall(1216, wy, 360, "ClusterQueue", "a100 quota:\n8 GPU · 64 cores · 256 GB", L("layers"))
 d.arrow([(504, 212), (688 - GAP, 212)], label="× window", at=(596, 212))
 d.arrow([(1048, 212), (1216 - GAP, 212)], label="requests", at=(1132, 212))
 d.save(OUT + "p1-volume-resources.svg")
@@ -277,8 +279,8 @@ cw = (1552 - 2 * 56) / 3
 col = [24 + i * (cw + 56) for i in range(3)]
 mid = [x + cw / 2 for x in col]
 d.group(24, 16, 1552, 176, "Cohort — the archive", L("users"))
-d.card(120, 72, 560, "ClusterQueue: transcription", "quota 8 A100 · 4 L4", L("layers"))
-d.card(920, 72, 560, "ClusterQueue: research", "quota 4 L4 · 4 interruptible", L("layers"))
+d.card(120, 72, 560, "ClusterQueue: transcription", "quota in a100 and l4", L("layers"))
+d.card(920, 72, 560, "ClusterQueue: research", "quota in l4 and interruptible", L("layers"))
 d.arrow([(680, 96), (920 - GAP, 96)], dot=False)
 d.arrow([(920, 144), (680 + GAP, 144)], dot=False)
 d.pill(800, 120, "lend idle quota")

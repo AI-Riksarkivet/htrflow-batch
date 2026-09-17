@@ -18,6 +18,6 @@ reference/chart.md	192\.121\.221\.27/32
 # a code change). Remove when the target is renamed.
 development/dev-cluster.md	make build-htrflow-base-arm64 
 
-# The slide that introduces ResourceFlavor uses real GPU models as its
-# example of telling hardware apart; it describes no one site's cluster.
-part-1-from-one-folder-to-the-archive.md	A100 or L4|takes an A100 if one is free, an L4 if not
+# The slides that introduce ResourceFlavor and pod sizes use real GPU models
+# as the example of telling hardware apart; they describe no one site's cluster.
+part-1-from-one-folder-to-the-archive.md	A100 or L4|takes an A100 if one is free, an L4 if not|flavor: (l4|a100), +gpu: 1
