@@ -144,7 +144,7 @@ which the platform sets once for the archive's IIIF server.
 
 # Rough architecture
 
-![w:1020](assets/part-1-architecture.svg)
+![w:1060](assets/part-1-architecture.svg)
 
 **You only open a pull request.** The converter checks and renders it in CI; apply — run by Argo CD or the platform team, never by you — sends it to the cluster.
 
@@ -187,7 +187,7 @@ Hub, and the web front is the one pod a browser talks to.
 
 # What is inside what
 
-![w:1000](assets/part-1-inside-what.svg)
+![w:1120](assets/part-1-inside-what.svg)
 
 **The two meet at the Workload:** Kueue admits a Job's Workload, and only then does the Job create its pods.
 
@@ -204,7 +204,7 @@ sets it for every campaign.
 
 # The Workload
 
-![w:1100](assets/p1-workload.svg)
+![w:1120](assets/p1-workload.svg)
 
 **A Workload is Kueue's copy of what a Job asks for:** how many pods at once, and what each one needs. Kueue makes it — you never write one — and it is what waits in line and gets admitted, not the Job itself.
 
@@ -219,7 +219,7 @@ Workload.
 
 # LocalQueue and ClusterQueue
 
-![w:960](assets/part-1-queues.svg)
+![w:1000](assets/part-1-queues.svg)
 
 <div class="cols">
 <div>
@@ -254,7 +254,7 @@ Workload.
 
 # Kyverno — how admission works
 
-![w:900](assets/p1-admission.svg)
+![w:1120](assets/p1-admission.svg)
 
 **Every object is checked before it exists** — once the platform turns the rules on, since they ship switched off — and the same rules run in the pull request, so a bad pipeline usually fails there first:
 
@@ -306,7 +306,7 @@ A job queue for Kubernetes. It decides **when** a Job may start, from a counted 
 
 # Kueue — how a campaign gets its GPUs
 
-![w:1150](assets/p1-kueue-flow.svg)
+![w:1120](assets/p1-kueue-flow.svg)
 
 **Kyverno checks twice:** the Job before it is stored, so a bad one never reaches the queue — and each pod after admission, where image signatures can be checked.
 
@@ -325,7 +325,7 @@ Workload waits and Running once it is admitted.
 
 # htrflow in a pod
 
-![w:900](assets/p1-pod.svg)
+![w:1000](assets/p1-pod.svg)
 
 **Every pod runs htrflow** — your pipeline, unchanged — on one archival volume, page by page.
 
@@ -341,7 +341,7 @@ is handing out.
 
 # Where a pod runs — the cluster, in one picture
 
-![w:1000](assets/part-1-where-pod-runs.svg)
+![w:1120](assets/part-1-where-pod-runs.svg)
 
 **The control plane decides, the nodes run.** Each pod lands on whichever node has a GPU free — you never name a machine.
 
@@ -359,7 +359,7 @@ between them, and the GPU it needs is what decides where it can go.
 <div class="cols wide-left">
 <div>
 
-![w:560](assets/p1-job-indexes.svg)
+![w:480](assets/p1-job-indexes.svg)
 
 </div>
 <div>
@@ -396,7 +396,7 @@ immutable. Part 2 lists the rule.
 
 # `window`: how many volumes at once
 
-![w:1000](assets/p1-window.svg)
+![w:1120](assets/p1-window.svg)
 
 <div class="cols">
 <div>
@@ -439,7 +439,7 @@ whole" means.
 
 # When there are not enough GPUs
 
-![w:900](assets/p1-not-enough.svg)
+![w:1120](assets/p1-not-enough.svg)
 
 A campaign starts only when **all** the GPUs its window asks for are free. Until then its card reads *Queued* — and a smaller campaign that fits may start before it.
 
@@ -458,7 +458,7 @@ pods are evicted with every finished volume kept.
 
 # `priority`: who goes first in the line
 
-![w:1000](assets/p1-priority.svg)
+![w:1120](assets/p1-priority.svg)
 
 <div class="cols">
 <div>
@@ -567,7 +567,7 @@ nothing in htrflow-batch copies results anywhere else.
 
 # Your interface is git
 
-![w:1150](assets/p1-git-flow.svg)
+![w:1040](assets/p1-git-flow.svg)
 
 <div class="cols">
 <div>
@@ -585,7 +585,7 @@ steps:
   # … the rest of the htrflow steps, unchanged
 ```
 
-**Two files are yours:** the campaign, and the pipeline it names. The pipeline file is the `steps:` document with one line above it: **which image** runs those steps — htrflow plus the wrapper, pinned by digest so the same id always means the same code.
+**Two files are yours:** the campaign, and the pipeline it names — htrflow's `steps:` plus **which image** runs them, pinned by digest.
 
 </div>
 <div>
@@ -720,7 +720,7 @@ outline for every line on the page image.
 
 # Follow one campaign
 
-![w:1150](assets/p1-follow.svg)
+![w:1120](assets/p1-follow.svg)
 
 * **Queued.** Another campaign holds the GPUs. The status page shows the campaign with no pod, and says so.
 * **Running.** One pod, one GPU. The page count moves every few seconds, and the volume opens in the viewer at page ten.

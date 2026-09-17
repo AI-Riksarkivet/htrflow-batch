@@ -254,7 +254,7 @@ the API server never gets to refuse it halfway through an apply.
 
 # The pull request
 
-![w:1100](assets/p2-pull-request.svg)
+![w:1120](assets/p2-pull-request.svg)
 
 <div class="cols">
 <div>
@@ -283,7 +283,7 @@ compare the next change against. Argo CD, when used, watches rendered/.
 
 # Apply — the one step that touches the cluster
 
-![w:1100](assets/p2-apply.svg)
+![w:1040](assets/p2-apply.svg)
 
 <div class="cols wide-left">
 <div>
@@ -299,9 +299,9 @@ htrflow-campaigns apply . --dry-run                # say what would happen, send
 </div>
 <div>
 
-**Afterwards.** A new pipeline id gets a warm-up Job first, a CPU pod that fills the model cache once. The Job waits for the queue; once admitted, each pod waits for that warm-up, holding its GPU, then runs.
+**Afterwards.** A new pipeline gets a warm-up Job first, which fills the model cache on CPU. Each admitted pod waits for it, then runs.
 
-**Nothing in the cluster reads git.** Apply is all it is ever told; a refused object is reported by name, the rest applied anyway.
+**Refusals are per object.** The refused one is named; the rest are applied.
 
 </div>
 </div>
