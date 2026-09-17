@@ -258,6 +258,19 @@ d.arrow([(640, 120), (640, 156), (mid[0], 156), (mid[0], fy - GAP)], label="1st"
 d.arrow([(960, 120), (960, 156), (mid[1], 156), (mid[1], fy - GAP)], label="2nd", at=((960 + mid[1]) / 2, 156))
 d.save(OUT + "p1-flavors.svg")
 
+# ---------------------------------------------------------------- part 1: what one volume asks for
+d = Diagram(1600, 424)
+d.group(24, 16, 480, 392, "One pod — one volume", "k8s-pod")
+d.card(48, 72, 432, "1 GPU", "limit the same", L("microchip"))
+d.card(48, 184, 432, "4 CPU cores", "limit the same", L("cpu"))
+d.card(48, 296, 432, "8 GB memory", "limit 16 GB, /work included", L("memory-stick"))
+wy = 212 - 88
+d.tall(688, wy, 360, "Workload", "window 2:\n2 GPU · 8 cores · 16 GB", "kueue", logo=True, strong=True)
+d.tall(1216, wy, 360, "ClusterQueue", "quota for flavor a100:\n8 GPU · 32 cores · 64 GB", L("layers"))
+d.arrow([(504, 212), (688 - GAP, 212)], label="× window", at=(596, 212))
+d.arrow([(1048, 212), (1216 - GAP, 212)], label="requests", at=(1132, 212))
+d.save(OUT + "p1-volume-resources.svg")
+
 # ---------------------------------------------------------------- part 1: cohort, queues, flavors, nodes
 d = Diagram(1600, 584)
 cw = (1552 - 2 * 56) / 3
