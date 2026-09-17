@@ -40,11 +40,11 @@ the ways a model could be signed the way the images already are.
 <tr><td>built by</td><td>our CI</td><td>a model author</td></tr>
 <tr><td>pinned by</td><td>digest</td><td>Hub revision</td></tr>
 <tr><td>signed</td><td>yes</td><td>no</td></tr>
-<tr><td>fetched from</td><td>our registry</td><td>the internet</td></tr>
+<tr><td>fetched from</td><td>our own registry namespace</td><td>the internet</td></tr>
 <tr><td>scanned</td><td>yes</td><td>no</td></tr>
 </table>
 
-**The rest of this deck** closes that table's right-hand column, one row at a time.
+**The rest of this deck** shows how the model column could come to match the image column.
 
 </div>
 </div>
@@ -145,7 +145,7 @@ letters, which only a reader notices.
 <tr><td><strong>6</strong></td><td><strong>Point real campaigns at it.</strong> The cache is already warm; the pods start at once.</td></tr>
 </table>
 
-<p class="note">Everything up to step 5 is a pull request: reviewable, and refused by <code>validate</code> or the cluster's policies before a GPU is spent if a pin or a name is wrong.</p>
+<p class="note">Steps 4 and 5 are a pull request. A missing pin is refused before anything runs; a wrong model name only shows in the warm-up — one more reason for the six images.</p>
 
 <!--
 The token path: a Hub token with read access to the model, created as a
@@ -215,12 +215,6 @@ software not.
 </div>
 </div>
 
-<!--
-Four guarantees that are often confused: the signature says who built it,
-the provenance says which run from which commit, the bill of materials
-says what is inside, and the digest pin says that what runs is what was
-reviewed.
--->
 
 ---
 
@@ -237,7 +231,7 @@ reviewed.
 <p class="note">ModelPack is a vendor-neutral CNCF specification for packaging, distributing and running AI models in cloud-native environments — the same move for models that the OCI image format made for containers.</p>
 
 <!--
-Image volumes are a stable Kubernetes feature: a pod mounts content from an
+Image volumes are a Kubernetes feature, stable in its newest releases: a pod mounts content from an
 OCI registry read-only. The OpenSSF model-signing project signs a model as
 an in-toto statement whose subjects are file paths and digests, with
 Sigstore keyless signing by default.
@@ -252,7 +246,7 @@ Sigstore keyless signing by default.
 
 **A plain image works as a volume.** The model files mounted read-only in a pod, their checksums equal to the Hub's files, and htrflow loaded and predicted offline — with no extra component on the node.
 
-**A ModelPack artifact mounts empty.** Same mechanism: the pull is reported as a success, the directory is empty, and nothing logs an error. The container runtime unpacks image layers only.
+**A ModelPack artifact mounts empty.** Same mechanism: the pull is reported as a success, the directory is empty, and nothing logs an error. The container runtime here, containerd, unpacks image layers only.
 
 </div>
 <div>
@@ -289,13 +283,13 @@ can verify on its own.
 <tr><td>a supplier's model</td><td>runs if its revision is pinned</td><td>runs only if we packaged and signed it</td></tr>
 </table>
 
-**The last network hole closes:** no pod in the namespace would need the internet at all.
+**No pod in the namespace would need the internet** at all.
 
 **Status:** designed as a story, depends on a registry with a pull-through cache, and not built. The model cache already makes it a change of where the files come from — the wrapper only ever reads the cache.
 
 <!--
 The honest distinction for the room: today's guarantee for weights is a
-pinned revision enforced at admission, a cache no campaign pod can write,
+pinned revision enforced at admission when the platform turns that policy on, a cache no campaign pod can write,
 and pods with no route to the Hub. That is a strong convention; a verified
 signature would make it a control.
 -->

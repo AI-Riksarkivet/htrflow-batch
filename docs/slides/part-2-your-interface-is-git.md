@@ -48,7 +48,7 @@ my-campaigns/
 
 **Three owners.** `converter.yaml` belongs to the cluster. `pipelines/` and `campaigns/` belong to you. `rendered/` belongs to CI — nobody edits it by hand.
 
-**One program, three verbs.** `validate`, `render`, `apply`. The first two need no cluster at all; the third is the only one that talks to Kubernetes.
+**One program.** `init` makes the repository; `validate` and `render` need no cluster at all; `apply` is the only one that talks to Kubernetes.
 
 <p class="note">Write access here decides which image and which models run with the bucket's credentials — it is reviewed like code because it is the deployment.</p>
 
@@ -74,7 +74,7 @@ and nothing in the cluster holds a credential for this repository.
 namespace: htr-batch                 # where campaigns are applied — and pruned
 queue: htr-batch                     # the Kueue LocalQueue every Job labels itself with
 s3_secret: htr-batch-s3              # the Secret with the results bucket's credentials
-data_pvc: htr-test-data              # the model cache, read-only in every pod
+data_pvc: htr-test-data              # the model cache, read-only in every campaign pod
 runtime_class: nvidia                # how a pod gets a GPU
 hf_token_secret: ""                  # optional: a Secret for a private or gated Hub model
 
@@ -101,7 +101,7 @@ ttl_seconds_after_finished: 604800   # a week the finished Job stays readable
 </div>
 
 <!--
-Every value shown is the shipped default. Unknown keys are rejected, so a
+Values are shown as a typical setup; the template's own defaults point at the archive's IIIF server and a local results base. Unknown keys are rejected, so a
 typo becomes a validation error naming the key, not a setting that silently
 does nothing. The image allow-list and the model-revision rule are
 deliberately NOT here: both are cluster policies, re-run over rendered/ in
@@ -144,9 +144,8 @@ steps:
 </div>
 <div>
 
-* **The steps are htrflow's, verbatim.** No export step — the platform appends ALTO and PAGE itself.
 * **The image is pinned by digest, every model by revision** — top-level for YOLO, under `model_kwargs` for Hub models.
-* **Two layers check it.** `validate` checks the shape: digest format, steps, no export step, no unknown keys. The cluster's policies check the rules — allowed repository, digest, a revision on every model — at admission and in the pull request.
+* **Two layers check it.** `validate` checks the shape: digest format, steps, no unknown keys — an Export step is refused by the wrapper when the pod starts. The cluster's policies, once the platform turns them on, check the rules — allowed repository, digest, a revision on every model — at admission and in the pull request.
 * **The id is the recipe's name for ever.** A better recipe is a new file: `demo-v2`.
 
 </div>
@@ -209,23 +208,24 @@ are append-only, so the number is how a series grows.
 # Validate locally
 
 ```
-uvx --from "git+https://github.com/AI-Riksarkivet/htrflow-batch@<ref>#subdirectory=packages/converter" \
-  htrflow-campaigns validate .
+htrflow-campaigns validate .
 ```
 
 <div class="cols">
 <div>
 
-**No cluster, no credentials, a second or two.** It parses every file, checks every rule, and prints one sentence per problem, naming the file — the same program CI runs on the pull request, so what passes here passes there.
+**No cluster, no credentials, a second or two.** It parses every file and prints one sentence per problem, naming the file. The pull request runs it again, plus a render that checks the rules needing the previous render.
 
 **What it says when something is wrong:**
 
 ```
+campaigns/kyrkobocker-1.yaml: volume "R0001203" is listed
+  twice — remove the duplicate
+campaigns/kyrkobocker-1.yaml: volume 3 lists an image that is
+  not an http(s) URL ("scan-0002.jpg") — every entry under
+  images: is a whole URL
 campaigns/kyrkobocker-1.yaml: "window" must be a whole number
   of 1 or more (got "5" — quotes make it text)
-campaigns/kyrkobocker-1.yaml: volume loose-scans: image 2
-  must be an http(s) URL
-campaigns/kyrkobocker-1.yaml: duplicate volume id R0001203
 ```
 
 </div>
@@ -237,9 +237,8 @@ campaigns/kyrkobocker-1.yaml: duplicate volume id R0001203
 * every `manifest:` and `images:` entry is an absolute `http(s)` URL with no whitespace
 * volume ids are label-safe and unique
 * `window` is a positive whole number; `priority` is one of converter.yaml's classes
-* **a campaign already rendered cannot change its volume list** — append-only
+* **a campaign already rendered cannot change its volume list** — append-only, checked by `render` in the pull request
 * **a pipeline a rendered campaign names cannot change** — immutable while referenced
-* over 10 000 volumes, or a huge list, is split into `-part1`, `-part2`, … for you
 
 </div>
 </div>
@@ -294,7 +293,7 @@ compare the next change against. Argo CD, when used, watches rendered/.
 
 ```mermaid h:120
 flowchart LR
-  R["render again<br/>must equal rendered/"]
+  R["render again<br/>append-only, pipelines unchanged"]
   W["write each campaign's<br/>record — before anything is sent"]
   P["apply pipelines<br/>ConfigMap + warm-up Job"]
   C["apply campaigns<br/>skip finished, unchanged ones"]
@@ -316,7 +315,7 @@ htrflow-campaigns apply . --dry-run                # say what would happen, send
 </div>
 <div>
 
-**Afterwards.** A new pipeline id gets a warm-up Job first, a CPU pod that fills the model cache once. The campaign's Job waits for that, then for the queue, then runs.
+**Afterwards.** A new pipeline id gets a warm-up Job first, a CPU pod that fills the model cache once. The Job waits for the queue; once admitted, each pod waits for that warm-up, holding its GPU, then runs.
 
 **Nothing in the cluster reads git.** Apply is all it is ever told; a refused object is reported by name, the rest applied anyway.
 
@@ -324,8 +323,9 @@ htrflow-campaigns apply . --dry-run                # say what would happen, send
 </div>
 
 <!--
-Step 1 is why hand-edits to rendered/ are pointless: apply renders the repo
-again and refuses to continue if the committed render differs. Step 2 is
+Step 1 renders the files fresh and checks them against the committed
+rendered/ for the append-only and unchanged-pipeline rules; hand-edits to
+rendered/ are pointless because what is applied is the fresh render. Step 2 is
 what gives a campaign its record -- the status page reads it long after the
 Job itself has been reaped.
 -->
@@ -410,7 +410,7 @@ converter-labelled object that is not in THIS apply.
 # The rules that bite
 
 <table class="plain">
-<tr><td>Append-only</td><td>A rendered campaign's volume list cannot change. More volumes is a new file: <code>kyrkobocker-2.yaml</code>. <em>Enforced by validate.</em></td></tr>
+<tr><td>Append-only</td><td>A rendered campaign's volume list cannot change. More volumes is a new file: <code>kyrkobocker-2.yaml</code>. <em>Enforced by render, in the pull request and at apply.</em></td></tr>
 <tr><td>Immutable while referenced</td><td>A pipeline named by a rendered campaign cannot change its image or steps. A better recipe is a new id. <em>Enforced by validate.</em></td></tr>
 <tr><td>Finished is finished</td><td>Apply skips a finished campaign whose list has not moved. There is no <code>--force</code>; a rerun is a new name. <em>Enforced by apply.</em></td></tr>
 <tr><td>Prune is opt-in</td><td>Deleting a file changes nothing until an apply is asked to prune — and then it prunes everything git no longer has. <em>Convention.</em></td></tr>

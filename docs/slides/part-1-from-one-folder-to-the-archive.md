@@ -92,24 +92,34 @@ sentence out loud, because the word collides with Kubernetes storage.
 
 # The campaign file
 
-<div class="cols">
+<div class="cols three">
 <div>
 
-<p class="filename">campaigns/kyrkobocker-1.yaml — from IIIF</p>
+<p class="filename">by reference code</p>
 
 ```yaml
 pipeline: demo-v1
 volumes:
-  - id: R0001203
-    manifest: https://…/R0001203/manifest
-  - id: R0001204
-    manifest: https://…/R0001204/manifest
+  - R0001203
+  - R0001204
 ```
 
 </div>
 <div>
 
-<p class="filename">campaigns/loose-scans-1.yaml — from images</p>
+<p class="filename">by IIIF manifest</p>
+
+```yaml
+pipeline: demo-v1
+volumes:
+  - id: loc-mal2459400
+    manifest: https://…/manifest.json
+```
+
+</div>
+<div>
+
+<p class="filename">by image URLs</p>
 
 ```yaml
 pipeline: demo-v1
@@ -123,7 +133,12 @@ volumes:
 </div>
 </div>
 
-**This is how you ask for a run:** one file per campaign, in git — a **pipeline** to run, and the archival **volumes** to run it on.
+**This is how you ask for a run:** one file per campaign, in git — a **pipeline** to run, and the archival **volumes** to run it on. A reference code alone is enough: the platform turns it into the archive's IIIF manifest.
+
+<!--
+The reference code is expanded through source_template in converter.yaml,
+which the platform sets once for the archive's IIIF server.
+-->
 
 ---
 
@@ -136,13 +151,15 @@ flowchart LR
     REPO["campaigns repo"] --> CONV["converter, in CI<br/>validate · render"]
   end
   AP["apply<br/>Argo CD or the platform team"]
-  IIIF["IIIF and image servers"]
-  HUB["Hugging Face Hub"]
-  BR["browser"]
   subgraph K8S["in the cluster"]
     KYV["Kyverno<br/>checks the objects"] --> KUE["Kueue<br/>waits for GPUs"] --> JOB["campaign pods<br/>wrapper + htrflow"]
     WARM["warm-up<br/>model cache"] -.-> JOB
     WEB["web front<br/>status · viewer"]
+  end
+  subgraph OUT["external"]
+    IIIF["IIIF and image servers"]
+    HUB["Hugging Face Hub"]
+    BR["browser"]
   end
   S3[("S3 bucket")]
   YOU --> REPO
@@ -300,11 +317,12 @@ flowchart LR
   K -->|"breaks a rule"| NO
 ```
 
-**Every object is checked before it exists** — and the same rules run in the pull request, so a bad pipeline usually fails there first:
+**Every object is checked before it exists** — once the platform turns the rules on, since they ship switched off — and the same rules run in the pull request, so a bad pipeline usually fails there first:
 
 ```
 models not pinned to a revision: Riksarkivet/yolov9-regions-1
 — add revision: <40-character commit hash> under model_settings
+(YOLO) or model_settings.model_kwargs (TrOCR and other Hugging Face models)
 ```
 
 <!--
@@ -368,7 +386,7 @@ flowchart LR
   style K2 stroke-width:3px
 ```
 
-**Kyverno checks twice:** the Job before it is stored, so a bad one never reaches the queue — and each pod after admission, where image signatures are checked.
+**Kyverno checks twice:** the Job before it is stored, so a bad one never reaches the queue — and each pod after admission, where image signatures can be checked.
 
 <!--
 Kubernetes runs mutating webhooks before validating ones: Kueue's webhook
@@ -412,12 +430,6 @@ the pipeline takes tens of seconds and a lot of GPU memory; you want to pay
 that once per volume, not once per page. And why not ten volumes per pod:
 because then a crash costs ten volumes, and the queue cannot count what it
 is handing out.
-
-The three exits: 0 means done (with any failed pages recorded); 13 means
-"a retry cannot fix this" (bad manifest URL, unknown model) and the index
-is failed at once; 1 means transient (a 5xx, a network error) and
-Kubernetes restarts the pod, which then resumes from the bucket -- the
-resume stage is why a restart costs one page, not a volume.
 -->
 
 ---
@@ -452,8 +464,7 @@ flowchart LR
 This is the slide for anyone who has run htrflow on one box with one card.
 The mental shift is that "the computer" is now a pool: a control plane that
 only decides, and nodes that only run. The pod is the unit that moves
-between them, and the GPU it needs is what decides where it can go. Part 4
-returns to the two deciders — Kueue for when, the scheduler for where.
+between them, and the GPU it needs is what decides where it can go.
 -->
 
 ---
@@ -501,7 +512,7 @@ volumes:           # completions = 4
 This is the single design decision the rest follows from: a campaign is one
 Indexed Job, not one Job per volume and not a custom resource with a
 controller. The append-only rule falls straight out of completions being
-immutable. Part 2 shows what the validator says when someone tries anyway.
+immutable. Part 2 lists the rule.
 -->
 
 ---
@@ -580,7 +591,7 @@ flowchart LR
 
 A campaign starts only when **all** the GPUs its window asks for are free. Until then its card reads *Queued* — and a smaller campaign that fits may start before it.
 
-**One rule to remember:** a window larger than the cluster's GPUs never starts.
+**One rule to remember:** a window larger than the queue's whole GPU quota never starts — the cap in converter.yaml should not be larger than that quota.
 
 <!--
 A campaign keeps its GPUs until its last volume is done; nothing already
@@ -624,7 +635,7 @@ volumes:
 
 **It never evicts.** A running campaign keeps its GPUs until its last volume is done, whatever arrives behind it. Preemption is deliberately off.
 
-**One rule to remember:** `priority` decides who is *next*, never who is *stopped*. `validate` refuses a name the cluster does not offer — the cluster itself would leave such a campaign *Queued* for ever, silently.
+**One rule to remember:** `priority` decides who is *next*, never who is *stopped*.
 
 </div>
 </div>
@@ -662,7 +673,7 @@ htr-batch/demo-v1/R0001203/
 </div>
 <div>
 
-* **Resume is a list operation.** A pod starts by listing its folder. Every page with an ALTO is skipped; the rest are fetched.
+* **Resume is a list operation.** A pod starts by listing its folder. Every page already done is skipped; the rest are fetched.
 * **So a crash costs one page.** Kubernetes restarts the pod, it lists, it carries on.
 * **Provenance is in the files.** Every ALTO names the image digest and the model revisions; `manifest.json` names every source URL.
 * **The pipeline id is in the path.** A better recipe writes beside the old results, never over them.
@@ -688,12 +699,14 @@ retry redoes only that page. Part 3.
 
 <table class="plain">
 <tr><td></td><td><strong>holds</strong></td><td><strong>if it is lost</strong></td></tr>
-<tr><td><strong>git</strong></td><td>what <em>should</em> run: campaign files, pipelines, and their history</td><td>nothing running stops, nothing new can be asked for — and every clone is a full copy</td></tr>
-<tr><td><strong>etcd</strong><br/>the cluster's database</td><td>what <em>is</em> running: Jobs, Workloads, the campaign records the status page reads</td><td>rebuilt from git: apply again, and every pod resumes from the bucket without redoing a finished page</td></tr>
+<tr><td><strong>git</strong></td><td>what <em>should</em> run: campaign files and pipelines — and an audit trail of who changed what, who approved it, and when</td><td>nothing running stops, nothing new can be asked for — and every clone is a full copy</td></tr>
+<tr><td><strong>etcd</strong><br/>the cluster's database</td><td>what <em>is</em> running: Jobs, Workloads, the campaign records the status page reads</td><td>rebuilt from git: apply again — campaigns run again, but no page already in the bucket is transcribed again</td></tr>
 <tr><td><strong>S3 bucket</strong></td><td>the results: ALTO, PAGE, manifest.json, the run logs</td><td>the transcriptions are gone — only running every campaign again brings them back</td></tr>
 </table>
 
 **Only the bucket cannot be rebuilt from the others.** That is where replication and backups matter most.
+
+**Jobs do not stay in etcd.** A finished Job is deleted a week after it ends — its TTL. The campaign's record stays, so the status page still shows it and its results.
 
 <!--
 Git is redundant by nature: the hosted repository and every clone hold the
@@ -751,8 +764,7 @@ steps:
 
 <!--
 This is the slide the data scientist actually needs, and Part 2 is it in
-full: the two files, converter.yaml, validate, render, apply, the status
-page, and the rules the validator enforces.
+full: the two files, converter.yaml, validate, render, apply, and the rules.
 -->
 
 ---
@@ -782,7 +794,7 @@ Running volumes stop, finished ones are kept, the GPUs go back. Delete the line 
 git rm campaigns/demo.yaml
 ```
 
-The Job is removed from the cluster. The results in the bucket stay.
+The Job is removed from the cluster. The results in the bucket stay — nothing cleans up S3 for now, so removing results is a manual step.
 
 </div>
 <div>
@@ -832,7 +844,7 @@ and viewer links keep working.
 <tr><td><strong>extra chips</strong></td><td><em>warm-up</em> the models are not ready yet, or failed to load · <em>job removed</em> finished long ago, results still there</td></tr>
 <tr><td><strong>totals</strong></td><td>volumes and pages done, with a bar; failures in red under the bar</td></tr>
 <tr><td><strong>problems</strong></td><td>one sentence per failed volume, saying why</td></tr>
-<tr><td><strong>a volume</strong></td><td>its name opens the viewer · the page icon opens its run log · the braces open its IIIF manifest · its own bar, count and state · a failed page's reason under the row</td></tr>
+<tr><td><strong>a volume</strong></td><td>its name opens the viewer · the page icon opens its run log · the braces open its source manifest · its own bar, count and state · a failed page's reason under the row</td></tr>
 <tr><td><strong>footer</strong></td><td>the pipeline id and each model with its revision</td></tr>
 </table>
 
@@ -883,7 +895,7 @@ flowchart LR
 
 * **Queued.** Another campaign holds the GPUs. The status page shows the campaign with no pod, and says so.
 * **Running.** One pod, one GPU. The page count moves every few seconds, and the volume opens in the viewer at page ten.
-* **Done, with one failed page.** Page 44 broke a model worker thread; the wrapper caught it, marked the page failed, rebuilt the pipeline and finished the other 637. The card turns amber, not green, and names the page.
+* **Done, with one failed page.** Page 44 failed and is recorded; the other 637 pages are in the viewer. The card turns amber, not green, and names the page.
 * **What you do about page 44:** nothing, or a new campaign later with a fixed image. Its failure is in `manifest.json` and on the card, and the 637 good pages are in the viewer now.
 
 <!--
