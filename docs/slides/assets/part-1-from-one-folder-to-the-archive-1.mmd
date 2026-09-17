@@ -2,7 +2,7 @@ flowchart LR
   subgraph GIT["in git"]
     REPO["campaigns repo"] --> CI["CI: validate, render"]
   end
-  IIIF["IIIF servers"]
+  IIIF["IIIF and image servers"]
   HUB["Hugging Face Hub"]
   YOU["browser"]
   subgraph K8S["in the cluster"]

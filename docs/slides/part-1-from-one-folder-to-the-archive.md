@@ -75,7 +75,7 @@ steps.
 <table class="plain">
 <tr><td></td><td><strong>one machine</strong></td><td><strong>many nodes</strong></td></tr>
 <tr><td>where it runs</td><td>your machine, its GPU</td><td>whichever node has a GPU free — chosen for you</td></tr>
-<tr><td>the pages</td><td>a folder on its disk</td><td>fetched from a IIIF server by whichever node runs the volume</td></tr>
+<tr><td>the pages</td><td>a folder on its disk</td><td>fetched over the web — from a IIIF manifest or plain image URLs — by whichever node runs the volume</td></tr>
 <tr><td>the models</td><td>downloaded to that disk</td><td>a shared cache every node mounts</td></tr>
 <tr><td>the results</td><td>a folder next to the pages</td><td>a bucket every node writes to and every browser reads from</td></tr>
 <tr><td>when a machine fails</td><td>you start again</td><td>the volume restarts on another node and resumes from the bucket</td></tr>
@@ -101,7 +101,7 @@ flowchart LR
   subgraph GIT["in git"]
     REPO["campaigns repo"] --> CI["CI: validate, render"]
   end
-  IIIF["IIIF servers"]
+  IIIF["IIIF and image servers"]
   HUB["Hugging Face Hub"]
   YOU["browser"]
   subgraph K8S["in the cluster"]
