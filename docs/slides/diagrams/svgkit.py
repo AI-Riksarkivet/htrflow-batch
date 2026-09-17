@@ -64,10 +64,13 @@ class Diagram:
             self.errors.append(f"{t!r} needs {need:.0f}px, has {room:.0f}px")
 
     # ------------------------------------------------------------ panels
-    def group(self, x, y, w, h, label, icon=None, outside=False):
+    def group(self, x, y, w, h, label, icon=None, outside=False, inner=False):
         """A pale panel with its label top left; `outside` draws a dotted
-        outline instead, for things that are not part of the platform."""
-        if outside:
+        outline instead, for things that are not part of the platform, and
+        `inner` a white panel for nesting inside another."""
+        if inner:
+            self.back.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="16" fill="#ffffff" stroke="{HAIR}" stroke-width="1.5"/>')
+        elif outside:
             self.back.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="20" fill="none" stroke="{DOTTED}" '
                              'stroke-width="2" stroke-dasharray="2 8" stroke-linecap="round"/>')
         else:
