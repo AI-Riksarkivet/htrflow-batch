@@ -234,4 +234,6 @@ class Diagram:
         head = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {self.w} {self.h}" width="{self.w}" '
                 f'height="{self.h}" font-family="Open Sans, sans-serif"><style>{fonts}</style>{defs}')
         with open(path, "w", encoding="utf-8") as f:
-            f.write(head + "".join(self.back) + "".join(self.front) + "</svg>")
+            # A white ground of its own, so the diagram reads the same on a dark page.
+            ground = f'<rect width="{self.w}" height="{self.h}" rx="12" fill="#ffffff"/>'
+            f.write(head + ground + "".join(self.back) + "".join(self.front) + "</svg>")
