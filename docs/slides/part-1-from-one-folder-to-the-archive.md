@@ -24,7 +24,7 @@ is inside one run. Part 4 is the queue. Part 5 is models and signatures.
 
 ---
 
-# Start from what you already do
+# Start from how htrflow works
 
 <div class="cols">
 <div>
