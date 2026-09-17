@@ -165,45 +165,31 @@ Hub, and the web front is the one pod a browser talks to.
 
 ---
 
-# Kyverno and Kueue
+# Why Kyverno
 
 <div class="cols">
 <div>
 
-## Kyverno — admission
+**A campaign file decides what runs on our GPUs.** Whoever can merge one chooses the image and the models — and those run with the results bucket's credentials.
 
-A policy engine for Kubernetes. Every object sent to the cluster is checked against rules before it is accepted.
+**Models are code.** Loading most model weights can run code, and an image can contain anything.
 
-**Here it refuses:**
-
-* an image from a registry we do not allow
-* an image not pinned by digest
-* a model not pinned to a revision
-* optionally, an image not signed by our build
+**So the cluster needs a rule it enforces itself,** not a check each campaigns repository has to remember.
 
 </div>
 <div>
 
-## Kueue — the queue
+**Why not only `validate`?** It checks what the converter renders. Kyverno checks *everything* sent to the namespace — whoever or whatever sends it.
 
-A job queue for Kubernetes. It decides *when* a Job may start, from a counted budget of GPUs.
-
-**Here it:**
-
-* holds a campaign until its GPUs are free
-* lets higher priority go first
-* pauses and resumes campaigns
-
-Part 4 is all about what else it can do.
+**Why a policy engine?** The rules live with the cluster, in one place, are the same for every team, and run again in each pull request.
 
 </div>
 </div>
 
 <!--
-Both are open-source Kubernetes projects installed once on the cluster by
-whoever runs the platform. Neither knows anything about HTR: Kyverno sees
-Kubernetes objects and their fields, Kueue sees resource requests and a
-queue name.
+Kyverno is an open-source policy engine for Kubernetes, installed once on
+the cluster. The platform's chart ships its rules; they are off until a
+cluster turns them on.
 -->
 
 ---
@@ -277,6 +263,29 @@ Rule types from Kyverno's own documentation: validate, mutate, generate,
 verify images and cleanup, with policy reports for audit mode and
 background scans of objects that already exist.
 -->
+
+---
+
+# Kueue
+
+A job queue for Kubernetes. It decides **when** a Job may start, from a counted budget of GPUs.
+
+<div class="cols">
+<div>
+
+**Here it:**
+
+* holds a campaign until its GPUs are free
+* lets higher priority go first
+* pauses and resumes campaigns
+
+</div>
+<div>
+
+**Why:** without it, Kubernetes starts every pod it can, whoever asked first takes every GPU, and everything else piles up half-started. Part 4 is all about what else it can do.
+
+</div>
+</div>
 
 ---
 
