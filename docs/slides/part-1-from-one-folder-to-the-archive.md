@@ -8,9 +8,9 @@ lang: en
 <!-- _class: lead cover -->
 <!-- _footer: "Enheten för AI-labb och datatjänster" -->
 
-# From one folder to the archive
+# Distributed htrflow
 
-## Part 1 of 5 — what changes when your pipeline has to run on ten thousand volumes
+## Part 1 of 5 — what changes when your pipeline runs on many nodes
 
 <!--
 This is the first of five short lessons. It has no YAML in it beyond one
