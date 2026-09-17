@@ -314,45 +314,16 @@ kinds, plain pods and Deployments.
 
 ---
 
-# Topology-aware scheduling — keep pods close
+# Topology and elastic workloads
 
-![w:900](assets/p4-topology.svg)
-
-<div class="cols">
-<div>
-
-**Describe the building.** A Topology lists the node labels for each level — block, rack, host — and a flavor points at it.
-
-**Ask for closeness.** A Job's pods *must* share a rack, *prefer* to, or need not. Kueue fills the fullest rack that still fits, so large gaps stay free.
-
-</div>
-<div>
-
-**Why:** pods that talk to each other run faster, and cost less, over a short network path.
-
-**Here:** not used — our volumes never talk to each other. Worth it for multi-node training.
-
-</div>
-</div>
+<table class="plain">
+<tr><td><strong>Topology-aware scheduling</strong></td><td>places a Workload's pods in the same block or rack so they talk faster. <em>Not for us:</em> our volumes never talk to each other.</td></tr>
+<tr><td><strong>Elastic workloads</strong></td><td>changes the parallelism of an admitted Job without suspending it: scaling up is admitted as a new slice, scaling down needs no new admission. <em>Would mean</em> changing a running campaign's window without a pause.</td></tr>
+</table>
 
 <!--
-Placement uses Kueue's greedy packing by default: among the domains where the
-pod set fits, the one with the least free capacity. Rack 4 would fit too, but
-taking it would split the only place an eight-GPU job could still land. The
-cost is on the Kueue side: it starts tracking every pod and node.
--->
-
----
-
-# Elastic workloads
-
-**Resize a running Job.** Kueue changes the parallelism of an admitted Job without suspending it: scaling up is admitted as a new slice, scaling down needs no new admission.
-
-**Here:** not used. It *would mean* changing a running campaign's `window` without a pause.
-
-<!--
-Elastic jobs are behind a feature gate, so it would start as a test on the
-dev cluster, not a setting.
+Both are beta in current Kueue; elastic jobs sit behind a feature gate, so
+it would start as a test on the dev cluster, not a setting.
 -->
 
 ---
