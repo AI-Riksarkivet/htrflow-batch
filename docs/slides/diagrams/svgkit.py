@@ -106,7 +106,7 @@ class Diagram:
             self.front.append(f'<image href="{icon_uri(icon, color)}" x="{tx+(TILE-s)/2}" y="{ty+(TILE-s)/2}" '
                               f'width="{s}" height="{s}"/>')
 
-    def card(self, x, y, w, title, sub=None, icon=None, logo=False, strong=False, bad=False, outside=False):
+    def card(self, x, y, w, title, sub=None, icon=None, logo=False, strong=False, bad=False, outside=False, n=None):
         """A wide card: tile on the left, title and one short line beside it."""
         h = CARD_H
         self._frame(x, y, w, h, strong, bad)
@@ -121,7 +121,13 @@ class Diagram:
                               f'<text x="{tx}" y="{y+h/2+25}" font-size="{SUB}" fill="{MUTED}">{esc(sub)}</text>')
         else:
             self.front.append(f'<text x="{tx}" y="{y+h/2+10}" font-size="{TITLE}" font-weight="600" fill="{color}">{esc(title)}</text>')
+        self._badge(x, y, n)
         return (x, y, w, h)
+
+    def _badge(self, x, y, n):
+        if n is not None:
+            self.front.append(f'<circle cx="{x+8}" cy="{y+8}" r="18" fill="{MAGENTA}"/>'
+                              f'<text x="{x+8}" y="{y+15}" text-anchor="middle" font-size="20" font-weight="600" fill="#ffffff">{n}</text>')
 
     def tall(self, x, y, w, title, sub=None, icon=None, logo=False, strong=False, bad=False, outside=False, n=None):
         """A narrow card: tile on top, title, then up to two short lines."""
@@ -136,9 +142,7 @@ class Diagram:
         for k, line in enumerate(sub.split("\n") if sub else []):
             self._fits(line, SUB, 400, room)
             self.front.append(f'<text x="{cx}" y="{y+152+k*28}" text-anchor="middle" font-size="{SUB}" fill="{MUTED}">{esc(line)}</text>')
-        if n is not None:
-            self.front.append(f'<circle cx="{x+8}" cy="{y+8}" r="18" fill="{MAGENTA}"/>'
-                              f'<text x="{x+8}" y="{y+15}" text-anchor="middle" font-size="20" font-weight="600" fill="#ffffff">{n}</text>')
+        self._badge(x, y, n)
         return (x, y, w, h)
 
     def row(self, y, items, x0=24, total=1552, gap=48):

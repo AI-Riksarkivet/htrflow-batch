@@ -93,24 +93,26 @@ d.arrow([(mid[2] - 60, 440), (mid[2] - 60, 352), (mid[1], 352), (mid[1], ry + CA
 d.save(OUT + "part-1-inside-what.svg")
 
 # ---------------------------------------------------------------- where a pod runs
-d = Diagram(1600, 432)
-d.group(24, 16, 760, 400, "Control plane — decides", L("server"))
-a, b, cw = 48, 48 + 330 + 52, 330
-r1, r2 = 96, 280
-d.card(a, r1, cw, "API server", "holds every object", L("server"))
-d.card(a, r2, cw, "Kueue", "decides when", "kueue", logo=True)
-d.card(b, r1, cw, "Job controller", "keeps pods running", L("repeat"))
-d.card(b, r2, cw, "Scheduler", "decides where", L("calendar-clock"))
-lane = a + cw + 26
-d.arrow([(a + cw, r1 + 30), (b - GAP, r1 + 30)])
-d.arrow([(a + cw, r2 + 48), (lane, r2 + 48), (lane, r1 + 70), (b - GAP, r1 + 70)])
-d.arrow([(b + cw / 2, r1 + CARD_H), (b + cw / 2, r2 - GAP)])
-for i, gy in enumerate((16, 232)):
-    d.group(848, gy, 728, 184, f"Node {i + 1}", "k8s-node")
-    for k in range(2):
-        d.card(872 + k * 352, gy + 72, 328, "Pod", "archival volume", "k8s-pod", logo=True)
-d.arrow([(b + cw, r2 + 48), (872 - GAP, r2 + 48)])
-d.arrow([(b + cw, r2 + 20), (816, r2 + 20), (816, 136), (872 - GAP, 136)])
+d = Diagram(1600, 504)
+d.group(24, 16, 1552, 176, "Control plane — decides", L("server"))
+cw = (1552 - 48 - 2 * 180) / 3
+c = [48 + i * (cw + 180) for i in range(3)]
+d.card(c[0], 72, cw, "Kueue", "admits the Workload", "kueue", logo=True, n=1)
+d.card(c[1], 72, cw, "Job controller", "a pod per volume", L("repeat"), n=2)
+d.card(c[2], 72, cw, "Scheduler", "a node for each pod", L("calendar-clock"), n=3)
+d.arrow([(c[0] + cw, 120), (c[1] - GAP, 120)], label="unsuspends", at=(c[0] + cw + 90, 120))
+d.arrow([(c[1] + cw, 120), (c[2] - GAP, 120)], label="pods", at=(c[1] + cw + 90, 120))
+gw = (1552 - 48) / 2
+for i in range(2):
+    gx = 24 + i * (gw + 48)
+    d.group(gx, 312, gw, 176, f"Node {i + 1}", "k8s-node")
+    d.card(gx + 24, 368, (gw - 72) / 2, "Pod", "the kubelet starts it", "k8s-pod", logo=True, n=4)
+    d.card(gx + 48 + (gw - 72) / 2, 368, (gw - 72) / 2, "GPU", "handed to the pod", L("microchip"))
+    d.arrow([(gx + 24 + (gw - 72) / 2 + GAP, 416), (gx + 48 + (gw - 72) / 2 - GAP, 416)], dot=False, head=False)
+sx = c[2] + cw / 2
+for i, tx in enumerate((24 + (gw - 72) / 4 + 24, 24 + gw + 48 + (gw - 72) / 4 + 24)):
+    d.arrow([(sx, 168), (sx, 252), (tx, 252), (tx, 368 - GAP)], dot=(i == 1))
+d.pill((24 + (gw - 72) / 4 + 24 + sx) / 2, 252, "free GPU · node labels · taints")
 d.save(OUT + "part-1-where-pod-runs.svg")
 
 # ---------------------------------------------------------------- local vs cluster queue
