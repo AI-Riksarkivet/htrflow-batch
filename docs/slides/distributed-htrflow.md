@@ -10,7 +10,7 @@ lang: en
 
 # Distributed htrflow
 
-## What changes when your pipeline runs on many nodes
+## Pipelines plus campaigns
 
 <!--
 This deck uses no Kubernetes vocabulary
@@ -284,7 +284,7 @@ not the pods.
 
 ---
 
-# What a volume asks for
+# GPU, cores and memory
 
 ![w:900](assets/p1-volume-resources.svg)
 
