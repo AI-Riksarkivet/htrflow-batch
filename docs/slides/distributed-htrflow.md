@@ -157,7 +157,7 @@ Hub, and the web front is the one pod a browser talks to.
 
 ---
 
-# What it is made of
+# What the platform is made of
 
 <p class="layer">built in htrflow-batch</p>
 
@@ -185,11 +185,11 @@ Hub, and the web front is the one pod a browser talks to.
 
 ---
 
-# What is inside what
+# From campaign file to container
 
 ![w:1120](assets/part-1-inside-what.svg)
 
-**The two meet at the Workload:** Kueue admits a Job's Workload, and only then does the Job create its pods.
+**The work and the queue meet at the Workload:** Kueue admits a Job's Workload, and only then does the Job create its pods.
 
 <!--
 A container is the running program; a pod is one or more containers that
@@ -202,17 +202,46 @@ sets it for every campaign.
 
 ---
 
+# Kueue
+
+A job queue for Kubernetes. It decides **when** a Job may start, from a counted budget of GPUs.
+
+<div class="cols">
+<div>
+
+**Here it:**
+
+* holds a campaign until its GPUs are free
+* lets higher priority go first
+* pauses and resumes campaigns
+
+</div>
+<div>
+
+**It can also:**
+
+* **preemption** — stop lower-priority work to make room
+* **fair sharing** — divide idle GPUs by weight between teams
+
+</div>
+</div>
+
+**Why:** without it, Kubernetes starts every pod it can, whoever asks first takes every GPU, and the rest pile up half-started.
+
+---
+
 # The Workload
 
 ![w:1120](assets/p1-workload.svg)
 
-**A Workload is Kueue's copy of what a Job asks for:** how many pods at once, and what each one needs. Kueue makes it — you never write one — and it is what waits in line and gets admitted, not the Job itself.
+**A Workload is what Kueue puts in the queue.** It says what the campaign needs: two pods, one GPU each, so two GPUs. Kueue writes it when the Job is created. The pods start when both GPUs are free.
 
 <!--
-The request is the window times one pod's requests: GPUs, CPU and memory
-together. Admission is once per campaign; after that the Job starts each
-next volume without asking again. The card's Queued and Running follow the
-Workload.
+You never write a Workload: Kueue makes one per Job, and the request
+counts CPU and memory the same way, not only GPUs. Admission happens once
+per campaign -- after it, the Job starts each next volume without asking
+again -- and the status page's Queued and Running follow the Workload,
+not the pods.
 -->
 
 ---
@@ -275,9 +304,9 @@ size: large
 </div>
 <div>
 
-**The recipe picks, the operator sizes.** `validate` refuses a size converter.yaml does not name.
+**You pick a size by name.** The platform team decides what `large` means: how many GPUs, how many cores, how much memory, and which kind of GPU. `validate` refuses any other name.
 
-**Kueue adds the pods up**, times the window, and admits the campaign when that flavor's quota has room.
+**Two pods of `large` need twice that.** The campaign asks for 2 GPUs, 16 cores and 64 GB. It waits until the quota has room.
 
 </div>
 </div>
@@ -381,34 +410,6 @@ failed check on the pull request, not at apply.
 
 ---
 
-# Kueue
-
-A job queue for Kubernetes. It decides **when** a Job may start, from a counted budget of GPUs.
-
-<div class="cols">
-<div>
-
-**Here it:**
-
-* holds a campaign until its GPUs are free
-* lets higher priority go first
-* pauses and resumes campaigns
-
-</div>
-<div>
-
-**It can also:**
-
-* **preemption** — stop lower-priority work to make room
-* **fair sharing** — divide idle GPUs by weight between teams
-
-</div>
-</div>
-
-**Why:** without it, Kubernetes starts every pod it can, whoever asks first takes every GPU, and the rest pile up half-started.
-
----
-
 # Kueue — how a campaign gets its GPUs
 
 ![w:1120](assets/p1-kueue-flow.svg)
@@ -424,6 +425,58 @@ the Job, so this second check rarely refuses anything; when it does, the
 campaign is admitted and holds its quota while no pod can start, and the
 card shows Running with no pages. The card itself reads Queued while the
 Workload waits and Running once it is admitted.
+-->
+
+---
+
+# Stop, remove, restart — all in git
+
+<div class="cols three">
+<div>
+
+<p class="filename">stop</p>
+
+```yaml
+pipeline: demo-v1
+suspend: true
+volumes:
+  - …
+```
+
+Running volumes stop, finished ones are kept, the GPUs go back. Delete the line to go on from where it stopped.
+
+</div>
+<div>
+
+<p class="filename">remove</p>
+
+```
+git rm campaigns/demo.yaml
+```
+
+The Job is removed from the cluster. The results in the bucket stay — nothing cleans up S3 for now, so removing results is a manual step.
+
+</div>
+<div>
+
+<p class="filename">restart</p>
+
+```
+git mv campaigns/demo.yaml \
+       campaigns/demo-2.yaml
+```
+
+A new name runs the campaign again, and skips every page already in the bucket.
+
+</div>
+</div>
+
+**Every one is a pull request** — reviewed and merged like any other change.
+
+<!--
+Remove only reaches the cluster when the platform's apply is allowed to
+prune. A campaign's volume list cannot change
+once it has run, which is why a restart is a new name rather than an edit.
 -->
 
 ---
@@ -516,8 +569,6 @@ volumes:           # completions = 4
 * **Pod number 2 reads line 2 of the volume list.** That is the whole trick. No database, no controller of ours, nothing to keep in sync.
 * **`parallelism`** is how many run at once. **`completions`** is how many there are — and it is fixed the moment the Job is created.
 
-**One rule to remember:** more volumes means a *new* campaign file. The list a Job was born with is the list it dies with.
-
 <!--
 This is the single design decision the rest follows from: a campaign is one
 Indexed Job, not one Job per volume and not a custom resource with a
@@ -554,8 +605,6 @@ volumes:
 
 **Asked for as a whole, capped by the cluster.** Two GPUs free means it starts; one free means it waits. Above the cap it is clamped; left out, it gets the cap.
 
-**One rule to remember:** `window` changes how *fast* a campaign finishes, never *what* it produces.
-
 </div>
 </div>
 
@@ -575,8 +624,6 @@ whole" means.
 ![w:1120](assets/p1-not-enough.svg)
 
 A campaign starts only when **all** the GPUs its window asks for are free. Until then its card reads *Queued* — and a smaller campaign that fits may start before it.
-
-**One rule to remember:** a window larger than the queue's whole GPU quota never starts — the cap in converter.yaml should not be larger than that quota.
 
 <!--
 A campaign keeps its GPUs until its last volume is done; nothing already
@@ -612,8 +659,6 @@ volumes:
 **Priority orders the queue.** Among the campaigns waiting, the higher class goes first; within a class, the older one. That is all it does.
 
 **It never evicts.** A running campaign keeps its GPUs until its last volume is done, whatever arrives behind it. Preemption is deliberately off.
-
-**One rule to remember:** `priority` decides who is *next*, never who is *stopped*.
 
 </div>
 </div>
@@ -658,8 +703,6 @@ htr-batch/demo-v1/R0001203/
 
 </div>
 </div>
-
-**One rule to remember:** `manifest.json` present means the volume is complete. Everything else is progress.
 
 <!--
 The order of writes is the contract: PAGE before ALTO, so an ALTO's presence
@@ -726,66 +769,12 @@ steps:
 
 **Nothing in the cluster reads git.** An `apply` renders the repo into Kubernetes objects and sends them. Delete the file, apply with prune, and the Job is gone; the results in the bucket are not.
 
-**One rule to remember:** a pull request is how work is submitted. If it merged, it will run; the status page tells you when.
-
 </div>
 </div>
 
 <!--
 This is the slide the data scientist actually needs: the two files, and a
 pull request as the way work is submitted.
--->
-
----
-
-# Stop, remove, restart — all in git
-
-<div class="cols three">
-<div>
-
-<p class="filename">stop</p>
-
-```yaml
-pipeline: demo-v1
-suspend: true
-volumes:
-  - …
-```
-
-Running volumes stop, finished ones are kept, the GPUs go back. Delete the line to go on from where it stopped.
-
-</div>
-<div>
-
-<p class="filename">remove</p>
-
-```
-git rm campaigns/demo.yaml
-```
-
-The Job is removed from the cluster. The results in the bucket stay — nothing cleans up S3 for now, so removing results is a manual step.
-
-</div>
-<div>
-
-<p class="filename">restart</p>
-
-```
-git mv campaigns/demo.yaml \
-       campaigns/demo-2.yaml
-```
-
-A new name runs the campaign again, and skips every page already in the bucket.
-
-</div>
-</div>
-
-**Every one is a pull request** — reviewed and merged like any other change.
-
-<!--
-Remove only reaches the cluster when the platform's apply is allowed to
-prune. A campaign's volume list cannot change
-once it has run, which is why a restart is a new name rather than an edit.
 -->
 
 ---
