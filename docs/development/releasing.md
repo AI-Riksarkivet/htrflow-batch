@@ -218,6 +218,36 @@ gh attestation verify oci://docker.io/riksarkivet/htrflow-batch:<version>-<arch>
   -R AI-Riksarkivet/htrflow-batch --predicate-type https://spdx.dev/Document/<spdx-version>
 ```
 
+## The GitHub release
+
+Every `v*` tag gets a GitHub release from `.github/workflows/release.yml`. The
+order is the one the images need:
+
+1. **Bump and merge the version**: the wrapper's, the web's and the
+   converter's `pyproject.toml`, and the chart's `appVersion`.
+2. **Publish the images** for the tag with the publish workflow above.
+3. **The release commit** pins the two manifest-list digests in
+   `charts/htrflow-batch/values.yaml`, the demo pipelines and the compose
+   stack, and bumps the chart's `version` with a changelog entry.
+4. **Tag that commit** and push the tag.
+
+The workflow then writes the notes in two parts:
+
+- **`.github/release-notes.md`**, the same for every release: the not-for-use
+  warning, the two image digests (read from Docker Hub for the tag), how to
+  install from the tag and how to verify the images. A tag whose images are
+  not on Docker Hub fails the workflow instead of publishing notes that point
+  at nothing.
+- **The changes**, written by [git-cliff](https://git-cliff.org) from the
+  conventional commits since the previous tag (`cliff.toml`): Added, Fixed,
+  Changed, Build and CI, Documentation, each line led by its scope (`chart`,
+  `converter`, `wrapper`, `web`, `frontend`). Slides, stories, specs,
+  line budgets, formatting and tests are left out.
+
+Below 1.0 every release is marked a pre-release. `make release-notes` shows
+what the next release will list. git-cliff comes from `uv.lock`'s `release`
+group, pinned and hash-checked like the docs tools.
+
 ## Chart releases
 
 The charts (`charts/htrflow-batch`, `charts/htrflow-devstack`) are not
