@@ -1244,5 +1244,9 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4822
 # 973 -> 1010 (2026-09-21, audit 3058): model-revision.yaml gains a second
 # rule refusing keys beside model_settings in a model step, with the
 # paragraph saying why the pin paths alone are not the pin.)
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1051
+# 1010 -> 1029 (2026-09-21, audit 3061): the two image rules walk image
+# volumes, and verify-images names its extractors -- the volume path plus
+# the three container lists, since naming any extractor replaces Kyverno's
+# built-in ones. Most of it is the comments saying so.)
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1070
 exit $fail
