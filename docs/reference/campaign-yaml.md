@@ -437,7 +437,7 @@ spec:
 
 The ServiceAccount is what the htrflow-batch chart renders behind
 `apply.rbac.enabled=true` (default `false`): a Role — never a ClusterRole —
-with `list`/`create`/`patch`/`delete` on `jobs` and `configmaps` and
+with `get`/`list`/`create`/`patch`/`delete` on `jobs` and `configmaps` and
 `list`/`patch` on `workloads.kueue.x-k8s.io`, in the release namespace
 only. `create` is not redundant next to `patch`: a server-side apply whose
 object does not exist yet is authorized as both. Nothing else has to be on
@@ -475,8 +475,8 @@ The codes are a precedence, highest first — `1` beats `3` beats `0` — so
 
 | Exit | What it means |
 | --- | --- |
-| `1` | a pause is **not enforced** — a paused campaign's Workload never appeared, or its Job was refused — whatever else was applied; or nothing reached the cluster at all (no credentials, an unreachable API server, a render that did not pass, a server that refused every object) |
-| `3` | some objects were refused and are unchanged — or `--prune` could not delete some — everything else was applied, and every pause holds; the summary line names each of them |
+| `1` | a pause is **not enforced** — a paused campaign's Workload never appeared, or its Job was refused or could not be checked — whatever else was applied; or nothing reached the cluster at all (no credentials, an unreachable API server, a render that did not pass, a server that refused every object); or the API server stopped answering part-way, after the retries — the line names the object the apply stopped at, and a re-run finishes the job |
+| `3` | some objects were refused and are unchanged — or `--prune` could not delete some, or a campaign's Job or status record could not be read, so whether it had finished could not be checked — everything else was applied, and every pause holds; the summary line names each of them |
 | `0` | everything was applied |
 
 A Job's **pod template cannot be edited** once the Job exists — that is
@@ -492,7 +492,9 @@ token's environment variable). They get different answers:
   `replaced: Job/htr-warmup-<id> — its pod template changed …`. A warm-up
   that is **running** is left alone and reported instead: deleting it would
   take the pod that is downloading with it, while campaigns wait on its
-  marker.
+  marker. A warm-up that has **failed** is replaced as well, even with an
+  unchanged template, since a failed Job never runs again:
+  `replaced: Job/htr-warmup-<id> — it had failed …`.
 - **A campaign Job never is.** Its completed indexes and its results *are*
   the campaign, and deleting it would start every volume over. It is
   reported, left exactly as it is, and the apply exits 3. A pipeline edit

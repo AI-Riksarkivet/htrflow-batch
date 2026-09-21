@@ -326,7 +326,10 @@ same shape on its `warmup` container. Exit 13 there is `FailJob`.
   up to `backoffLimit`.
 - **A permanent failure** is exit 13. The causes are a bad model id or
   revision, an unknown step, a setting a step does not take, invalid YAML,
-  or a marker that could not be written. It leaves the warm-up Job failed.
+  or a marker that could not be written. It leaves the warm-up Job failed
+  until the next `apply`, which deletes and re-creates a failed warm-up, so
+  fixing the cause (a missing Secret, a Hub outage) and re-applying is the
+  whole recovery.
 - **The marker is written before the success log line**, and failing to write
   it is fatal. A warm-up that exits `0` without a marker would be a green Job
   whose campaigns then wait for nothing.
