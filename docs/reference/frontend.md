@@ -90,8 +90,11 @@ the page, so `script-src 'self'` already covers `/config.js` (no
 only restriction is on what may _execute_ as script). A CSP header from the
 server must not be stricter than the meta tag (the browser enforces the
 intersection); `packages/web` adds `frame-ancestors 'none'` to every
-response, and a policy of its own to `/uv.html`, which has no meta tag —
-Universal Viewer is not built by this project.
+response, and a policy of its own to the viewer's `uv.html`, which has no
+meta tag — Universal Viewer is not built by this project. That policy is
+chosen by the file served, not by the path asked for, so `/uv`, `/uv.html/`
+and every other path the static mount resolves to the same file carry it
+too.
 
 ## Derivation rules
 
