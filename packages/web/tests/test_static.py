@@ -8,6 +8,7 @@ The API routes must still win over the static mount.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 from pathlib import Path
@@ -176,9 +177,13 @@ def test_the_viewers_styles_are_unsafe_inline_with_no_hash_beside_it(
 
 #: Every request path the static mount answers with uv.html: the extensionless
 #: retry adds ".html", and StaticFiles normalises the path before it looks the
-#: file up, so a trailing slash or an empty segment names the same file. The
-#: first two are the aliases the 2026-09-17 audit proved XSS through.
-UV_ALIASES = ["/uv.html", "/uv", "/uv.html/", "/uv/", "//uv.html"]
+#: file up, so a trailing slash, an empty segment or a dot segment names the
+#: same file. `/uv` and `/uv.html/` are the aliases the 2026-09-17 audit proved
+#: XSS through. The last three only reach the app from a client that sends
+#: the path as written (a browser or httpx would normalise or misread them),
+#: so they are sent as a raw ASGI request.
+UV_ALIASES = ["/uv.html", "/uv", "/uv.html/", "/uv/"]
+RAW_UV_ALIASES = ["//uv.html", "/./uv.html", "/_app/../uv.html"]
 
 
 @pytest.mark.parametrize("path", UV_ALIASES)
@@ -194,6 +199,40 @@ def test_every_path_that_serves_the_viewer_gets_its_csp(client: TestClient, path
         == client.get("/uv.html").headers["Content-Security-Policy"]
     )
     assert "default-src 'self'" in resp.headers["Content-Security-Policy"]
+
+
+def _raw_get(app, path: str) -> tuple[int, dict[bytes, bytes]]:
+    """GET `path` exactly as written, which no HTTP client here will do."""
+    sent: list[dict] = []
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "GET",
+        "path": path,
+        "raw_path": path.encode(),
+        "root_path": "",
+        "scheme": "http",
+        "query_string": b"",
+        "headers": [(b"host", b"testserver")],
+        "server": ("testserver", 80),
+        "client": ("testclient", 50000),
+    }
+
+    async def receive() -> dict:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    asyncio.run(app(scope, receive, send))
+    return sent[0]["status"], dict(sent[0]["headers"])
+
+
+@pytest.mark.parametrize("path", RAW_UV_ALIASES)
+def test_an_unnormalised_path_to_the_viewer_gets_its_csp(static_dir: Path, path):
+    status, headers = _raw_get(create_app(EmptyReader(), static_dir=static_dir), path)
+    assert status == 200
+    assert headers[b"content-security-policy"].decode() == uv_csp(static_dir)
 
 
 def test_a_revalidated_viewer_keeps_its_csp(client: TestClient):
