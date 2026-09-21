@@ -207,12 +207,18 @@ helm-template: helm-lint
 	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/values-prod.yaml $(CHART_PROD_SETS) > /dev/null
 	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) > /dev/null
 	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) -f $(DEVSTACK_CHART)/ci/full-values.yaml > /dev/null
-	@# An install with the policies off and no allowDisabled must be refused (B80).
-	@! helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_NO_POLICY_SETS) > /dev/null 2>&1 \
-	  || { echo "chart rendered with the policies off and no security.policies.allowDisabled: the B80 guard is gone"; exit 1; }
-	@# RustFS on credentials nobody chose must be refused (B63 Task 27).
-	@! helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) --set rustfs.enabled=true > /dev/null 2>&1 \
-	  || { echo "devstack rendered RustFS with no credentials: the devStack.insecureDefaults guard is gone"; exit 1; }
+	@# An install with the policies off and no allowDisabled must be refused
+	@# (B80) -- by that guard: every other refusal also exits non-zero, so the
+	@# exit code alone would pass with this guard deleted (finding 3103).
+	@out=$$(helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_NO_POLICY_SETS) 2>&1) \
+	  && { echo "chart rendered with the policies off and no security.policies.allowDisabled: the B80 guard is gone"; exit 1; }; \
+	  printf '%s\n' "$$out" | grep -qF 'or set security.policies.allowDisabled=true to accept that' \
+	  || { printf '%s\n' "$$out"; echo "chart refused the policies-off render, but not with the B80 guard's sentence"; exit 1; }
+	@# RustFS on credentials nobody chose must be refused (B63 Task 27), same rule.
+	@out=$$(helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) --set rustfs.enabled=true 2>&1) \
+	  && { echo "devstack rendered RustFS with no credentials: the devStack.insecureDefaults guard is gone"; exit 1; }; \
+	  printf '%s\n' "$$out" | grep -qF 'or set devStack.insecureDefaults: true to accept generated or known ones' \
+	  || { printf '%s\n' "$$out"; echo "devstack refused RustFS with no credentials, but not with the insecureDefaults guard's sentence"; exit 1; }
 	@if command -v kubeconform >/dev/null; then \
 	  helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_DEFAULT_SETS) | kubeconform -strict -ignore-missing-schemas -summary && \
 	  helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/ci/full-values.yaml | kubeconform -strict -ignore-missing-schemas -summary && \
