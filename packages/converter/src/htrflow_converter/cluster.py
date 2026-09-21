@@ -80,6 +80,13 @@ class ClusterError(Exception):
     """A cluster problem this module already has a one-sentence answer for."""
 
 
+class Unreachable(ClusterError):
+    """No answer from the API server at all, after the retries: a refused
+    connection, a read timeout. Not one object's refusal -- the request may
+    well have landed, and the next object would wait out the same timeouts
+    -- so ``cli._apply`` stops on it instead of carrying on (3091)."""
+
+
 #: What to do about a Job the API server will not take, by what the Job is.
 #: One sentence used to serve both, and it was the warm-up's: a campaign Job
 #: carries no recipe of its own, so "a changed recipe is a new pipeline file"
@@ -167,14 +174,14 @@ def _api_error(
     return ClusterError(f"{verb} {target}: {e.status} {e.reason}{message}")
 
 
-def _unreachable(e: HTTPError) -> ClusterError:
+def _unreachable(e: HTTPError) -> Unreachable:
     """``MaxRetryError`` -- a bad or unreachable ``KUBECONFIG`` server -- is
     a ``urllib3.exceptions.HTTPError``, not an ``ApiException``: catching
     only the latter misses the commonest failure of all. The host is the one
     the loaded config points at, not something parsed out of ``e``."""
     host = client.Configuration.get_default_copy().host
     reason = str(getattr(e, "reason", None) or e).splitlines()[0]
-    return ClusterError(f"cannot reach the Kubernetes API server at {host}: {reason}")
+    return Unreachable(f"cannot reach the Kubernetes API server at {host}: {reason}")
 
 
 @contextlib.contextmanager
@@ -189,7 +196,10 @@ def _errors(verb: str, kind: str, name: str, namespace: str):
 
 
 def _retrying(fn: Any, *args: Any, gone_is_done: bool = False, **kwargs: Any) -> Any:
-    """``fn(*args, **kwargs)``, retried while the server says "not now".
+    """``fn(*args, **kwargs)``, retried while the server says "not now" --
+    or says nothing at all: every request this module sends is a
+    server-side apply, a read or a delete, so one whose answer was lost is
+    safe to send again.
 
     ``gone_is_done`` is for a DELETE, which wants the object gone: a 404
     says it is, on any attempt. On a retry the attempt before reached the
@@ -205,7 +215,10 @@ def _retrying(fn: Any, *args: Any, gone_is_done: bool = False, **kwargs: Any) ->
                 return None
             if e.status not in RETRY_STATUSES or attempt == RETRIES:
                 raise
-            time.sleep(RETRY_BACKOFF << attempt)
+        except HTTPError:
+            if attempt == RETRIES:
+                raise
+        time.sleep(RETRY_BACKOFF << attempt)
 
 
 def _raw(
@@ -351,6 +364,8 @@ class Cluster:
                     self.namespace,
                     label_selector=CAMPAIGN_SELECTOR,
                 )
+            except Unreachable:
+                raise
             except ClusterError as e:
                 problems.append((kind, str(e)))
                 continue
@@ -369,6 +384,8 @@ class Cluster:
                             _request_timeout=REQUEST_TIMEOUT,
                             **extra,
                         )
+                except Unreachable:
+                    raise
                 except ClusterError as e:
                     problems.append((f"{kind}/{name}", str(e)))
                     continue

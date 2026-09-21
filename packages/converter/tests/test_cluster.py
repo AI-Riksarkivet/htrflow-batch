@@ -20,7 +20,7 @@ import json
 import pytest
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
-from urllib3.exceptions import MaxRetryError
+from urllib3.exceptions import MaxRetryError, ReadTimeoutError
 
 from htrflow_converter.cluster import (
     APPLY_PATCH,
@@ -28,6 +28,7 @@ from htrflow_converter.cluster import (
     REQUEST_TIMEOUT,
     Cluster,
     ClusterError,
+    Unreachable,
 )
 
 
@@ -252,7 +253,7 @@ def test_forbidden_is_one_sentence(cluster, monkeypatch):
     )
 
 
-def test_unreachable_api_server_is_one_sentence(cluster, monkeypatch):
+def test_unreachable_api_server_is_one_sentence(cluster, monkeypatch, slept):
     """``MaxRetryError`` is not wrapped in ``ApiException`` -- it is what a
     bad or unreachable ``KUBECONFIG`` server actually raises."""
 
@@ -260,7 +261,7 @@ def test_unreachable_api_server_is_one_sentence(cluster, monkeypatch):
         raise MaxRetryError(pool=None, url="/", reason=OSError("Connection refused"))
 
     monkeypatch.setattr(client.ApiClient, "call_api", call_api)
-    with pytest.raises(ClusterError) as exc:
+    with pytest.raises(Unreachable) as exc:
         cluster.apply(JOB)
     message = str(exc.value)
     assert message.startswith("cannot reach the Kubernetes API server at ")
@@ -532,3 +533,39 @@ def test_a_delete_takes_a_404_as_done_on_every_attempt(slept):
     assert _retrying(reaped, gone_is_done=True) is None
     with pytest.raises(ApiException):
         _retrying(reaped)
+
+
+def test_a_lost_connection_is_retried_like_a_busy_server(cluster, monkeypatch, slept):
+    """A read timeout or a refused connection is not the API server's answer
+    about the request -- there is no answer at all, and a server-side apply
+    that did land is safe to send again. It used to be one attempt and then
+    a "refused" object (3091)."""
+    real = client.ApiClient.call_api
+    attempts: list[str] = []
+
+    def call_api(self, resource_path, method, *a, **kw):
+        attempts.append(method)
+        if len(attempts) <= 2:
+            raise ReadTimeoutError(pool=None, url="/", message="Read timed out.")
+        return real(self, resource_path, method, *a, **kw)
+
+    monkeypatch.setattr(client.ApiClient, "call_api", call_api)
+    cluster.apply(JOB)
+    assert attempts == ["PATCH"] * 3
+    assert slept == [1, 2]
+
+
+def test_a_server_that_stays_gone_is_unreachable_not_refused(
+    cluster, monkeypatch, slept
+):
+    """Bounded like every other retry, and then a class of its own: the
+    caller stops the apply on it rather than filing it as one object the
+    API server refused (3091)."""
+
+    def call_api(self, *a, **kw):
+        raise MaxRetryError(pool=None, url="/", reason=OSError("Connection refused"))
+
+    monkeypatch.setattr(client.ApiClient, "call_api", call_api)
+    with pytest.raises(Unreachable):
+        cluster.get("Job", "kyrk")
+    assert slept == [1, 2, 4]

@@ -624,6 +624,16 @@ _REFUSED_PAUSE = (
 )
 
 
+#: The API server stopped answering part-way through: what came before is
+#: applied, the object it stopped on may or may not be, and nothing after it
+#: was sent. Not "refused and unchanged" -- that would be a guess (3091).
+_STOPPED = (
+    "{e} — the apply stopped at {name}: everything before it was applied, "
+    "it may or may not have been, and nothing after it was sent; re-run the "
+    "apply"
+)
+
+
 def _cluster(namespace: str):
     """The API-server adapter, behind a function: `validate` and `render`
     never touch a cluster (nor pay the client's import), and a test swaps
@@ -701,7 +711,7 @@ def _apply(
         # Imported here, not at module level, for the same reason `_cluster`
         # imports `.cluster` lazily: `validate`/`render` must never pay for
         # importing `kubernetes`.
-        from .cluster import ClusterError
+        from .cluster import ClusterError, Unreachable
 
         try:
             cluster = _cluster(cfg.namespace)
@@ -766,6 +776,8 @@ def _apply(
                 if obj["kind"] == "Job" and _campaign_of(obj) not in done:
                     try:
                         cluster.apply(obj, dry_run=True)
+                    except Unreachable:
+                        raise
                     except ClusterError as e:
                         blocked[_campaign_of(obj)] = e
             refused: list[str] = []
@@ -794,6 +806,8 @@ def _apply(
                         live = _apply_object(
                             cluster, obj, not is_campaign and obj["kind"] == "Job"
                         )
+                    except Unreachable as e:
+                        raise Unreachable(_STOPPED.format(e=e, name=name)) from e
                     except ClusterError as e:
                         print(e, file=sys.stderr)
                         refused.append(name)
