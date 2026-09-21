@@ -5,6 +5,7 @@ import {
   screen,
   within,
 } from "@testing-library/svelte";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { JobSummary } from "$lib/api.js";
 import { RELOAD_MS } from "$lib/config.js";
@@ -638,7 +639,7 @@ describe("CampaignCard", () => {
     expect(screen.queryByRole("link", { name: "log" })).toBeNull();
   });
 
-  test("zone 3 names every failed volume and why, in one line", async () => {
+  test("zone 3 names every failed volume and why", async () => {
     const secondFailure = {
       ...volumeFailed,
       index: 2,
@@ -661,7 +662,7 @@ describe("CampaignCard", () => {
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
 
-    // Zone 3: one line, each failure as `id: sentence`. Sentences, not the
+    // Zone 3: each failure as `id: sentence`. Sentences, not the
     // wrapper's fields — no reader ever sees a stage name, a `permanent`
     // flag or a Python list repr.
     const line = container.querySelector(".problems-text") as HTMLElement;
@@ -672,11 +673,8 @@ describe("CampaignCard", () => {
         "p045), and the volume has used all its retries — put it in a new " +
         "campaign to redo them.",
     );
-    // Clipped by CSS, so the whole of it sits in the line's `title` too.
-    expect(container.querySelector(".problems")).toHaveAttribute(
-      "title",
-      line.textContent,
-    );
+    // Nothing is clipped, so nothing needs a mouse-only `title` copy.
+    expect(container.querySelector(".problems")).not.toHaveAttribute("title");
   });
 
   test("a failed volume is never promised a retry; an active one is (3078)", async () => {
@@ -722,6 +720,65 @@ describe("CampaignCard", () => {
     );
   });
 
+  test("a long problems line shows three, and the rest behind a button (3080)", async () => {
+    // Up to 50 failures used to sit in one clipped line: the second one on
+    // was unreadable on a phone or from a keyboard, and a Tab could land on
+    // a link nobody could see (the 2026-09-17 audit). Now the line wraps,
+    // and past three the rest wait behind a button rather than burying the
+    // volumes under a paragraph. A hidden problem is not rendered at all,
+    // so there is no hidden link to focus.
+    const many = Array.from({ length: 5 }, (_, i) => ({
+      ...volumeFailed,
+      index: i + 10,
+      id: `vol${i + 10}`,
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: many, volumes: [] }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    const line = () => container.querySelector(".problems-text") as HTMLElement;
+    const ids = () =>
+      [...line().querySelectorAll("a")].map((a) => a.textContent);
+    expect(ids()).toEqual(["vol10", "vol11", "vol12"]);
+    const more = screen.getByRole("button", { name: "2 more" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    await fireEvent.click(more);
+    expect(ids()).toEqual(["vol10", "vol11", "vol12", "vol13", "vol14"]);
+    const fewer = screen.getByRole("button", { name: "fewer" });
+    expect(fewer).toHaveAttribute("aria-expanded", "true");
+    expect(fewer).toHaveAttribute("aria-controls", line().id);
+  });
+
+  test("three problems or fewer need no button", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...detail0, failures: [volumeFailed], volumes: [] }),
+      ),
+    );
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.queryByRole("button", { name: /more$/ })).toBeNull();
+  });
+
+  test("no sentence on the card is clipped to one line (3080)", () => {
+    // jsdom lays nothing out, so this reads the rules themselves: a line
+    // of sentences, or one that holds links, must wrap rather than cut.
+    // vitest runs from the frontend directory (package.json's scripts).
+    const css = readFileSync("src/lib/components/CampaignCard.svelte", "utf8");
+    for (const selector of [".problems-text", ".row-note-text", ".vreason"]) {
+      const rule = new RegExp(`\\n  \\${selector} \\{([^}]*)\\}`).exec(
+        css,
+      )?.[1];
+      expect(rule, selector).toBeDefined();
+      expect(rule, selector).not.toMatch(/nowrap|overflow:\s*hidden|ellipsis/);
+    }
+  });
+
   test("each failed volume on the problems line links to its own run log", async () => {
     // The callout this line replaced gave every failure its own log link,
     // and losing it meant a failed volume you could read about but not open
@@ -749,7 +806,7 @@ describe("CampaignCard", () => {
       `log?log=${encodeURIComponent(volumeFailed.logUrl)}` +
         `&manifest=${encodeURIComponent(volumeFailed.manifestUrl)}&live=1`,
     );
-    // Still one line: the sentences are text around those links.
+    // The sentences are text around those links.
     expect(line).toHaveTextContent(/^vol1: .* · vol7: /);
   });
 
@@ -768,10 +825,6 @@ describe("CampaignCard", () => {
     const line = container.querySelector(".problems-text") as HTMLElement;
     expect(line).not.toHaveAttribute("aria-hidden");
     expect(container.querySelector(".problems .sr-only")).toBeNull();
-    expect(container.querySelector(".problems")).toHaveAttribute(
-      "title",
-      expect.stringContaining("vol1:"),
-    );
   });
 
   test("a failure already visible as a row in the open table is not listed twice", async () => {
@@ -1348,10 +1401,6 @@ describe("CampaignCard's failure notice", () => {
     // The counts are zone 2's job now and are not said twice.
     expect(line.textContent).not.toContain("1 page failed");
     expect(line.textContent).not.toContain("2 errors");
-    expect(document.querySelector(".problems")).toHaveAttribute(
-      "title",
-      line.textContent,
-    );
     expect(screen.getByRole("link", { name: "log" })).toHaveAttribute(
       "href",
       "log?log=https%3A%2F%2Fpub%2Fstatus%2Flogs%2Fdemo-v1%2Fvol1.txt&live=1",
@@ -2430,7 +2479,9 @@ describe("the volume status column", () => {
     expect(line.querySelector(".status")).toHaveClass("failed");
     const reason = line.querySelector(".vreason") as HTMLElement;
     expect(reason).toHaveTextContent("Failed while loading the model");
-    expect(reason).toHaveAttribute("title", reason.textContent);
+    // Wrapped, not clipped: the sentence is all there to read, on a phone
+    // and from a keyboard, so it needs no mouse-only copy (3080).
+    expect(reason).not.toHaveAttribute("title");
     // The sentence sits with the id, where the words go; the fraction slot
     // still holds the column open.
     expect(line.querySelector(".c-label .vreason")).not.toBeNull();
@@ -3203,7 +3254,7 @@ describe("where a page error is said", () => {
     });
     const note = container.querySelector(".row-note") as HTMLElement;
     expect(note).toHaveTextContent("page 0004: HTTP 400");
-    expect(note).toHaveAttribute("title", expect.stringContaining("HTTP 400"));
+    expect(note).not.toHaveAttribute("title");
     expect(within(note).getByRole("link", { name: "log" })).toHaveAttribute(
       "href",
       expect.stringContaining(encodeURIComponent(lastError.logUrl)),
