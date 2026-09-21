@@ -174,6 +174,36 @@ def test_the_viewers_styles_are_unsafe_inline_with_no_hash_beside_it(
     assert f"'sha256-{_sha256(style)}'" not in csp
 
 
+#: Every request path the static mount answers with uv.html: the extensionless
+#: retry adds ".html", and StaticFiles normalises the path before it looks the
+#: file up, so a trailing slash or an empty segment names the same file. The
+#: first two are the aliases the 2026-09-17 audit proved XSS through.
+UV_ALIASES = ["/uv.html", "/uv", "/uv.html/", "/uv/", "//uv.html"]
+
+
+@pytest.mark.parametrize("path", UV_ALIASES)
+def test_every_path_that_serves_the_viewer_gets_its_csp(client: TestClient, path):
+    """The viewer's policy follows the file served, not the path asked for:
+    matched on the path, `/uv` and `/uv.html/` served the same page with only
+    `frame-ancestors 'none'`, and the ALTO panel's raw line HTML then ran as
+    script on the web front's origin (2026-09-17 audit)."""
+    resp = client.get(path)
+    assert resp.status_code == 200 and "universal viewer" in resp.text
+    assert (
+        resp.headers["Content-Security-Policy"]
+        == client.get("/uv.html").headers["Content-Security-Policy"]
+    )
+    assert "default-src 'self'" in resp.headers["Content-Security-Policy"]
+
+
+def test_a_revalidated_viewer_keeps_its_csp(client: TestClient):
+    """A 304 for the viewer is still the viewer's response."""
+    etag = client.get("/uv").headers["etag"]
+    resp = client.get("/uv", headers={"If-None-Match": etag})
+    assert resp.status_code == 304
+    assert "default-src 'self'" in resp.headers["Content-Security-Policy"]
+
+
 def test_every_other_page_keeps_the_plain_header(client: TestClient):
     """The SPA must not inherit the viewer's policy: its own meta CSP is the
     stricter one, and a header cannot be looser than it anyway."""
