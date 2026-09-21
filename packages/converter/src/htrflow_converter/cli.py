@@ -156,10 +156,13 @@ def _existing_parts(campaigns_out: Path, c: Campaign) -> list[Path]:
     """Every file an earlier render of this campaign left in ``out``, in the
     order it wrote them. A campaign that splits renders under a name cut
     short of its own (see ``render.split_stem``), so the ``-partN`` files are
-    looked up under that stem, not under the campaign's own name."""
-    stem = render.split_stem(c.name)
+    looked up under that stem, not under the campaign's own name. Matched
+    whole, never globbed: ``loc-part*`` also finds the campaign ``loc-partner``
+    (3088)."""
+    part = re.compile(re.escape(render.split_stem(c.name)) + r"-part\d+\.yaml\Z")
     paths = sorted(campaigns_out.glob(f"{c.name}.yaml"))
-    return paths + sorted(campaigns_out.glob(f"{stem}-part*.yaml"), key=_part_number)
+    parts = [p for p in campaigns_out.glob("*.yaml") if part.match(p.name)]
+    return paths + sorted(parts, key=_part_number)
 
 
 def _colliding_names(campaigns: list[Campaign]) -> str | None:
