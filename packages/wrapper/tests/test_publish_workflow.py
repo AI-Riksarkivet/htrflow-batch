@@ -254,3 +254,23 @@ def test_every_arm64_base_is_built_from_the_same_htrflow_commit() -> None:
             e["HTRFLOW_ARM64_BASE_REF"] for e in envs if "HTRFLOW_ARM64_BASE_REF" in e
         }
     assert len(refs) == 1, refs
+
+
+def test_publish_docker_itself_refuses_an_existing_tag() -> None:
+    """Finding 3069: only publish.yml checked the registry, so `make
+    publish` (and any other caller) replaced a signed release's manifest list
+    with an unsigned single-arch image. publish-docker now asks the registry
+    before its tests and again right before the push, and a registry it
+    cannot get an answer from refuses rather than passes."""
+    go = (REPO / ".dagger" / "publish.go").read_text()
+    body = go[go.index("func (m *HtrflowBatch) PublishDocker(") :]
+    checks = [m.start() for m in re.finditer(r"m\.refuseExistingTags\(", body)]
+    assert len(checks) == 2
+    assert checks[0] < body.index("m.Test(ctx") < checks[1]
+    assert checks[1] < body.index(".Publish(ctx, imageRef)")
+    assert "imageRef := refs[0]" in body  # the ref pushed is the ref checked
+    # Only "no such manifest/repository" means free.
+    assert '"MANIFEST_UNKNOWN"' in go and '"NAME_UNKNOWN"' in go
+    assert "cannot tell whether" in go
+    # The Makefile's publish goes through the same function.
+    assert "dagger call publish-docker" in (REPO / "Makefile").read_text()
