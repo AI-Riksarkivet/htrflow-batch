@@ -79,7 +79,7 @@
     errors: 0,
     lastError: null,
   });
-  // Zone 3. One line, and only when something is wrong. It merges what used
+  // Zone 3. Only when something is wrong. It merges what used
   // to be two things: a chip in the header row that repeated counts the
   // numbers line already shows, and a bulleted callout below it that said
   // the same failures again (the product owner, 2026-09-16). What is left
@@ -115,8 +115,7 @@
       : []),
     // Each failed volume keeps its own run log, the way the callout this
     // line replaced did: a failure a reader can read about but not open is
-    // half a message (2026-09-16 review). The id is the link, so the line
-    // stays one line.
+    // half a message (2026-09-16 review). The id is the link.
     ...unseenFailures.map((f) => ({
       id: f.id,
       text: reasonOf(f),
@@ -126,11 +125,18 @@
       ? []
       : [{ id: null, text: lastErrorText, href: null }]),
   ]);
-  const problemsText = $derived(
-    problems
-      .map((p) => (p.id === null ? p.text : `${p.id}: ${p.text}`))
-      .join(" · "),
+  // The line wraps rather than clips -- clipped, the second failure on was
+  // unreadable on a phone or from a keyboard, and a Tab could land on a link
+  // nobody could see (the 2026-09-17 audit, 3080). A campaign can carry up
+  // to 50, so past PROBLEMS_SHOWN the rest wait behind a button instead of
+  // burying the volumes under a paragraph; the ones held back are not
+  // rendered at all, so there is no hidden link to focus.
+  const PROBLEMS_SHOWN = 3;
+  let allProblems = $state(false);
+  const shownProblems = $derived(
+    allProblems ? problems : problems.slice(0, PROBLEMS_SHOWN),
   );
+  const heldBack = $derived(problems.length - PROBLEMS_SHOWN);
   let pipelineSteps = $state<string[]>([]);
   let pipelineYaml = $state("");
   let detailError = $state<string | null>(null);
@@ -254,6 +260,7 @@
     `${job.namespace}-${job.name}`.replace(/[^a-zA-Z0-9_-]/g, "-"),
   );
   const tableId = $derived(`volumes-${slug}`);
+  const problemsId = $derived(`problems-${slug}`);
   const yamlId = $derived(`pipeline-${slug}`);
 
   // A volume that finished but lost pages. It is not a failure — the volume
@@ -738,7 +745,7 @@
      which is capped at 16rem and would clip a sentence to nothing. -->
 {#snippet volumeNote(v: VolumeView, cellRole: string | undefined)}
   {#if v.reason !== undefined || lastErrorVolume === v.id}
-    <p class="row-note" role={cellRole} title={noteText(v)}>
+    <p class="row-note" role={cellRole}>
       <span class="row-note-text">{noteText(v)}</span>
       {#if lastErrorVolume === v.id && noticeHref !== null}
         <a class="problems-log" href={noticeHref}>log</a>
@@ -771,7 +778,7 @@
   <span class="c-label" role={cellRole}>
     <span class="vid-line">{@render volumeId(v)}</span>
     {#if compact && v.state === "failed"}
-      <span class="vreason" title={reasonOf(v)}>{reasonOf(v)}</span>
+      <span class="vreason">{reasonOf(v)}</span>
     {:else if story !== ""}<span class="vprogress">{story}</span>{/if}
   </span>
   <span class="c-links" role={cellRole}>{@render links(v)}</span>
@@ -898,22 +905,32 @@
     {/if}
 
     <!-- Only when something is wrong, and never the numbers above. The
-         sentences are real text, not a hidden copy of themselves: clipping
-         with `overflow` leaves them in the accessibility tree, and a second
-         copy beside the links below would be read twice (2026-09-16
-         review). The `title` is for the mouse. -->
+         sentences are real text, not a hidden copy of themselves, and they
+         wrap: nothing here is cut to one line, so nothing needs a title for
+         the mouse (3080). The page error's own "log" goes with it, and only
+         while it is one of the sentences shown. -->
     {#if problems.length > 0}
-      <p class="problems" title={problemsText}>
-        <span class="problems-text"
-          >{#each problems as part, i (i)}{i > 0
+      <p class="problems">
+        <span class="problems-text" id={problemsId}
+          >{#each shownProblems as part, i (i)}{i > 0
               ? " · "
               : ""}{#if part.id !== null}{#if part.href === null}<span
                   class="pid">{part.id}</span
                 >{:else}<a class="pid" href={part.href}>{part.id}</a
                 >{/if}{": "}{/if}{part.text}{/each}</span
         >
-        {#if noticeHref !== null}
+        {#if noticeHref !== null && shownProblems.some((p) => p.id === null)}
           <a class="problems-log" href={noticeHref}>log</a>
+        {/if}
+        {#if heldBack > 0}
+          <button
+            type="button"
+            class="problems-more"
+            aria-expanded={allProblems}
+            aria-controls={problemsId}
+            onclick={() => (allProblems = !allProblems)}
+            >{allProblems ? "fewer" : `${heldBack} more`}</button
+          >
         {/if}
       </p>
     {/if}
@@ -1120,12 +1137,14 @@
      figures on one vertical line, which is what makes the list scan like a
      table rather than like ten paragraphs. */
   /* Zone 3. Warning, not error: a campaign saying this has usually
-     published most of itself. One line, clipped, with the whole of it in
-     the title and in a visually-hidden copy beside it. */
+     published most of itself. It wraps: clipped to one line, the second
+     failure on could not be read on a phone or from a keyboard, and a
+     focused link inside the clip was invisible (3080). */
   .problems {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
-    gap: 0.5rem;
+    gap: 0.15rem 0.5rem;
     margin: 0.35rem 0 0;
     font-size: 0.78rem;
     color: var(--warning);
@@ -1133,13 +1152,35 @@
 
   .problems-text {
     min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* The rest of a long list: a quiet text button in the line's own
+     colour, with the focus ring every control here wears. */
+  .problems-more {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  }
+
+  .problems-more:hover {
+    color: var(--primary);
+  }
+
+  .problems-more:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 3px;
   }
 
   /* The volume's id is the link, so the sentence beside it stays a
-     sentence and the line stays one line. */
+     sentence. */
   .pid {
     font-weight: 500;
     color: inherit;
@@ -1383,28 +1424,32 @@
     min-width: 0;
   }
 
+  /* Wraps, like zone 3 and for the same reason (3080). */
   .row-note-text {
     min-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
   }
 
+  /* `clip` with a margin rather than `hidden`, here and on the id's line
+     below: an over-long id is still cut, but the focus ring of the link
+     inside it is drawn whole (3080). */
   .c-label {
     min-width: 0;
-    overflow: hidden;
+    overflow: clip;
+    overflow-clip-margin: 4px;
     font-weight: 500;
     color: var(--foreground);
   }
 
-  /* The id and what failed in it, on one line that clips as a whole. */
+  /* The id, on one line that clips. */
   .vid-line {
     display: flex;
     align-items: baseline;
     min-width: 0;
     max-width: 100%;
     white-space: nowrap;
-    overflow: hidden;
+    overflow: clip;
+    overflow-clip-margin: 4px;
   }
 
   .row.totals .c-label {
@@ -1499,12 +1544,11 @@
   }
 
   /* A failed volume's sentence, on the folded strip only -- in the table it
-     sits in the volume column beside the id. */
+     is a line under the row. It wraps, onto a line of its own when it does
+     not fit beside the id (3080). */
   .vreason {
     min-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
     color: var(--destructive);
   }
 
@@ -1742,7 +1786,9 @@
      row of the same grid, so its numbers sit under the totals' numbers. */
   .row.latest .c-label {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
+    column-gap: 0.5rem;
     min-width: 0;
   }
 
