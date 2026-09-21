@@ -589,7 +589,13 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 3156
 # and reads "Queued" for ever -- so the check has to live here. Ten of the
 # lines are the paragraph saying so; the rest are the field, its validator
 # and the sentence that names the file, the classes and the chart value.
-check converter "$(count packages/converter/src -name '*.py')" 2582
+# 2582 -> 2606 (2026-09-21, audit 3058): a step that loads a model may carry
+# only model, model_settings and generation_settings under settings --
+# htrflow merges any other key over model_settings, so one there unpins the
+# model. The frozenset, the check in _check_steps and the sentence naming
+# the steps and keys; half is the comment saying why the converter repeats a
+# rule the cluster also enforces.)
+check converter "$(count packages/converter/src -name '*.py')" 2606
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
@@ -1235,5 +1241,8 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4822
 # endpoint address and port of an HA control plane, read by a nil-safe
 # helper split from the lookup so a test can feed it a fixture. More than
 # half of the lines are the comments saying why each of those is needed.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1014
+# 973 -> 1010 (2026-09-21, audit 3058): model-revision.yaml gains a second
+# rule refusing keys beside model_settings in a model step, with the
+# paragraph saying why the pin paths alone are not the pin.)
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1051
 exit $fail
