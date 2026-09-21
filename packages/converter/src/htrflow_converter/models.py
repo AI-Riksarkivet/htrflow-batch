@@ -422,6 +422,15 @@ class Campaign(BaseModel):
         return v
 
 
+#: What a step that loads a model (``settings.model`` names the loader) may
+#: carry under ``settings``. htrflow's ``Inference.from_config`` pops these
+#: three and passes ``model_settings | <the rest>`` to the model, so any other
+#: key overrides the same key in ``model_settings`` -- ``revision: null``
+#: beside a pinned revision loads the repo's head (audit 2026-09-17, 3058).
+#: The chart's model-revision policy refuses the same shape at admission.
+_MODEL_STEP_SETTINGS = frozenset({"model", "model_settings", "generation_settings"})
+
+
 class Pipeline(BaseModel):
     #: Unknown keys rejected: a stale `model_revision:` (removed B63 Task 22
     #: fix round 2 -- nothing read it) gets the same one-line sentence as any
@@ -461,6 +470,21 @@ class Pipeline(BaseModel):
             raise ValueError(
                 'must be a list of steps — write steps: and then "- step: '
                 '<Name>" entries under it'
+            )
+        stray = [
+            f"step {i} ({step.get('step', '?')}): {', '.join(sorted(extra))}"
+            for i, step in enumerate(v, 1)
+            if isinstance(step, dict)
+            and isinstance(settings := step.get("settings"), dict)
+            and "model" in settings
+            and (extra := set(settings) - _MODEL_STEP_SETTINGS)
+        ]
+        if stray:
+            raise ValueError(
+                "has settings beside model_settings in a step that loads a "
+                f"model ({'; '.join(stray)}) — htrflow merges those over "
+                "model_settings, so one there overrides a pinned revision; "
+                "move them under model_settings"
             )
         return v
 
