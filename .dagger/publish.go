@@ -106,6 +106,13 @@ func (m *HtrflowBatch) PublishDocker(
 	if err != nil {
 		return "", fmt.Errorf("build failed during publish: %w", err)
 	}
+	// The CRITICAL gate ci.yml runs on main, on the image about to be pushed
+	// (finding 3060): the arm64 wrapper job in publish.yml runs the same one
+	// through `make scan-image`, so no architecture ships a critical finding
+	// that has a fix.
+	if _, err := m.scanImage(ctx, container, "CRITICAL", "table", 1, true, caBundle); err != nil {
+		return "", fmt.Errorf("vulnerability gate failed, aborting publish: %w", err)
+	}
 
 	imageRef := registry + "/" + imageRepository + ":" + resolvedTag + tagSuffix
 	if dockerPassword != nil && dockerUsername != nil {

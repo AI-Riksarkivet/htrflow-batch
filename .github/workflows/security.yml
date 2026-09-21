@@ -1,6 +1,6 @@
 name: Security
 
-# Trivy over the two images this repository builds, on a schedule. ci.yml
+# Trivy over the images this repository builds, on a schedule. ci.yml
 # already gates CRITICAL findings when a change lands on main, but an image's
 # CVE surface moves when advisories are published, not when this repository
 # is edited — a weekly run is what catches that.
@@ -75,3 +75,61 @@ jobs:
         env:
           GATE: ${{ matrix.gate }}
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+
+  # The arm64 wrapper (finding 3060). dagger's scan-sarif builds for its
+  # engine's own platform and cannot see a base image that exists only in a
+  # runner's docker daemon, so this job builds the base and the wrapper the
+  # way ci.yml and publish.yml do, on a native arm64 runner, and runs Trivy
+  # through `make scan-image`: the same report and the same gate as above.
+  scan-wrapper-arm64:
+    name: Scan image (wrapper, arm64)
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      HTRFLOW_ARM64_BASE_REF: 0ede4da5493cf01ac97024558a5e4f468d5f360f # = ci.yml / publish.yml
+      HTRFLOW_ARM64_BASE: htrflow:v0.2.6-arm64
+      SCAN_IMAGE: htrflow-batch:scan-arm64
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Build the arm64 htrflow base
+        id: base
+        uses: ./.github/actions/build-htrflow-base-arm64
+        with:
+          ref: ${{ env.HTRFLOW_ARM64_BASE_REF }}
+          image: ${{ env.HTRFLOW_ARM64_BASE }}
+
+      - name: Build the wrapper on top of it (no push)
+        env:
+          BASE_REVISION: ${{ steps.base.outputs.revision }}
+        run: |
+          docker build -f .docker/htrflow-batch.dockerfile \
+            --build-arg "HTRFLOW_ARM64_BASE=${HTRFLOW_ARM64_BASE}" \
+            --build-arg "HTRFLOW_BASE_REVISION=${BASE_REVISION}" \
+            -t "$SCAN_IMAGE" .
+
+      - name: Trivy report (SARIF)
+        run: >-
+          make scan-image SCAN_SEVERITY=CRITICAL,HIGH
+          SCAN_FLAGS="--format sarif --output /out/trivy-wrapper-arm64.sarif"
+
+      - name: Upload the SARIF as an artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: trivy-wrapper-arm64
+          path: ./trivy-wrapper-arm64.sarif
+          if-no-files-found: error
+
+      - name: Upload to the Security tab
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: ./trivy-wrapper-arm64.sarif
+          category: trivy-wrapper-arm64
+
+      - name: Trivy gate (CRITICAL blocks)
+        if: github.event_name != 'push'
+        run: make scan-image

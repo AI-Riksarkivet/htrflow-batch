@@ -221,7 +221,7 @@ jobs:
           ref: ${{ env.HTRFLOW_ARM64_BASE_REF }}
           image: ${{ env.HTRFLOW_ARM64_BASE }}
 
-      - name: Build and push the arm64 wrapper
+      - name: Build the arm64 wrapper
         env:
           # Only passed when the run asked for a line: an empty build arg
           # would override the dockerfile's default with nothing.
@@ -240,7 +240,15 @@ jobs:
             --build-arg "HTRFLOW_BATCH_VERSION=${TAG}" \
             "${transformers[@]}" \
             -t "$ref" .
-          docker push "$ref"
+
+      # Between the build and the push, the gate dagger's publish-docker
+      # runs for the other jobs: Trivy (finding 3060), which stops the
+      # release on a CRITICAL finding with a fix.
+      - name: Vulnerability scan (CRITICAL blocks)
+        run: make scan-image SCAN_IMAGE="${IMAGE}:${TAG}-arm64"
+
+      - name: Push the arm64 wrapper
+        run: docker push "${IMAGE}:${TAG}-arm64"
 
       - name: Extract the published digest
         id: digest

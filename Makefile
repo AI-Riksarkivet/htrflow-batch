@@ -2,7 +2,7 @@
         compose-up compose-test compose-smoke compose-down helm-lint helm-template \
         install-devstack install-kyverno \
         docs-serve docs-build config-reference api-contract \
-        poc-push poc-push-arm64 build-wrapper build-htrflow-base-arm64 lock-htrflow-base-arm64 build-web scan-web clean install-kueue \
+        scan-image poc-push poc-push-arm64 build-wrapper build-htrflow-base-arm64 lock-htrflow-base-arm64 build-web scan-web clean install-kueue \
         campaigns-apply psa-labels e2e \
         frontend-install frontend-test frontend-check frontend-build frontend-dev
 
@@ -361,11 +361,27 @@ poc-push-arm64:
 
 # Vulnerability scan of the web image (the wrapper goes through
 # `make scan` / dagger). Trivy pinned; HIGH/CRITICAL with a fix fail the target.
-TRIVY_IMAGE ?= aquasec/trivy:0.65.0
+# Same Trivy release and digest as .dagger/main.go.
+TRIVY_IMAGE ?= aquasec/trivy:0.65.0@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436
 scan-web: build-web
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
 	  -v trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image \
 	  --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 $(WEB_IMAGE)
+
+# Trivy over an image that exists only in the local docker daemon: the arm64
+# wrapper, whose base the dagger engine cannot see (finding 3060). ci.yml
+# and publish.yml gate on it with the defaults below (CRITICAL with a fix
+# fails), security.yml also writes its SARIF report through it:
+#   make scan-image SCAN_IMAGE=<ref> SCAN_SEVERITY=CRITICAL,HIGH \
+#     SCAN_FLAGS="--format sarif --output /out/trivy.sarif"
+# /out is the working directory.
+SCAN_IMAGE ?= $(WRAPPER_IMAGE)
+SCAN_SEVERITY ?= CRITICAL
+SCAN_FLAGS ?= --ignore-unfixed --exit-code 1
+scan-image:
+	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+	  -v trivy-cache:/root/.cache/trivy -v $(CURDIR):/out $(DOCKER_CA) $(TRIVY_IMAGE) image \
+	  --skip-version-check --severity $(SCAN_SEVERITY) $(SCAN_FLAGS) $(SCAN_IMAGE)
 
 # Helm cannot label a namespace it did not create. The enforce level comes
 # from the installed release's `security.psaEnforce` (baseline by default;
