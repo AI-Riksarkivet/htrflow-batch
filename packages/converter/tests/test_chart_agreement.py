@@ -197,7 +197,7 @@ def test_the_campaigns_ci_checks_policies_as_the_apply_identity():
     web_sa = _service_account("web.yaml")
     assert apply_sa != web_sa
     for workflow in WORKFLOWS:
-        run = _kyverno_step(workflow)
+        run = _kyverno_step(workflow).replace("\\\n", " ")
         assert re.search(r"kyverno apply .*--userinfo ", run), workflow
         usernames = re.findall(r"username: (\S+)", run)
         assert usernames == [

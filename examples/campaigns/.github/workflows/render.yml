@@ -110,10 +110,29 @@ jobs:
         # honours a single --resource, so a second one is silently dropped
         # and half the manifests go unchecked. The `---` keeps the documents
         # of two files from merging into one.
+        #
+        # `--userinfo` says who is asking. The rbac-scope policy holds each
+        # ServiceAccount to its own objects, so it matches on the requester;
+        # with no requester the CLI cannot rule the web identity out, and
+        # that rule refuses every pipeline and campaign ConfigMap. What this
+        # repo renders reaches the cluster through `htrflow-campaigns apply`,
+        # so the check submits as the ServiceAccount the chart creates for
+        # it (`apply.rbac`). An operator's own kubeconfig is no different
+        # here: neither is the web identity, and a rule scoped to the apply
+        # identity only ever matches a delete, which this check never makes.
         run: |
           for f in "$RUNNER_TEMP"/rendered/*/*.yaml; do echo '---'; cat "$f"; done \
             > "$RUNNER_TEMP/all.yaml"
-          kyverno apply "$RUNNER_TEMP/policies.yaml" --resource "$RUNNER_TEMP/all.yaml"
+          cat > "$RUNNER_TEMP/userinfo.yaml" <<EOF
+          apiVersion: cli.kyverno.io/v1alpha1
+          kind: UserInfo
+          metadata:
+            name: htrflow-campaigns-apply
+          userInfo:
+            username: system:serviceaccount:${POLICY_NAMESPACE}:htrflow-campaigns
+          EOF
+          kyverno apply "$RUNNER_TEMP/policies.yaml" --resource "$RUNNER_TEMP/all.yaml" \
+            --userinfo "$RUNNER_TEMP/userinfo.yaml"
 
   render:
     name: Render and commit rendered/
