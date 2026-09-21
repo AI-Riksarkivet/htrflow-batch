@@ -2838,6 +2838,96 @@ describe("what the phase chip calls a campaign", () => {
   });
 });
 
+// A campaign that has finished cannot change, and every detail call lists
+// pods, reads ConfigMaps and up to 32 progress files: a page of old
+// campaigns polling each minute was load that grew with the history and
+// bought nothing (the 2026-09-17 audit, 3079).
+describe("a finished campaign's card stops asking", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function detailFor(row: JobSummary) {
+    return vi.fn(async () =>
+      jsonResponse({ ...detail0, ...row, failures: [], volumes: [] }),
+    );
+  }
+
+  test.each([
+    ["Succeeded", false],
+    ["PartiallyFailed", false],
+    ["Failed", false],
+    ["Unknown", true],
+  ] as const)("%s (job removed: %s) is read once", async (phase, jobGone) => {
+    const row: JobSummary = { ...job, phase, jobGone };
+    const fetchMock = detailFor(row);
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job: row });
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 5);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("a campaign still going keeps polling", async () => {
+    const fetchMock = detailFor(job);
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  test("a campaign that finishes while shown is read once more, then left", async () => {
+    const fetchMock = detailFor(job);
+    vi.stubGlobal("fetch", fetchMock);
+    const { rerender } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await rerender({ job: { ...job, phase: "Succeeded" } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // its final state
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 5);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("a finished campaign's Job being removed is read once more", async () => {
+    // The record the API then serves is a different document from the
+    // live Job's (the per-index states went with the Job).
+    const done: JobSummary = { ...job, phase: "Succeeded" };
+    const fetchMock = detailFor(done);
+    vi.stubGlobal("fetch", fetchMock);
+    const { rerender } = render(CampaignCard, { job: done });
+    await vi.advanceTimersByTimeAsync(0);
+    await rerender({ job: { ...done, jobGone: true } });
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 5);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("a finished campaign whose one read failed tries again until it lands", async () => {
+    const done: JobSummary = { ...job, phase: "Succeeded" };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("", { status: 503 }))
+      .mockResolvedValue(
+        jsonResponse({ ...detail0, ...done, failures: [], volumes: [] }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job: done });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(
+      screen.getByText(/Can't reach the campaign service/),
+    ).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 2); // the backed-off retry
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(/Can't reach the campaign service/)).toBeNull();
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 10);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
 // A campaign of one volume was two rows of totals over one identical row:
 // the same two fractions said twice (the product owner, 2026-09-16).
 describe("a campaign of one volume", () => {
