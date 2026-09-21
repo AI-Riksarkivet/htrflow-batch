@@ -508,6 +508,18 @@ class Pipeline(BaseModel):
                 'must be a list of steps — write steps: and then "- step: '
                 '<Name>" entries under it'
             )
+        # 3098: the wrapper appends its own Export steps and refuses a file
+        # that has one; htrflow resolves a step by its lower-cased name.
+        exports = [
+            i
+            for i, step in enumerate(v, 1)
+            if isinstance(step, dict) and str(step.get("step", "")).lower() == "export"
+        ]
+        if exports:
+            raise ValueError(
+                f"has an Export step (step {', '.join(map(str, exports))}) — the "
+                "wrapper appends the Export steps itself; remove it"
+            )
         stray = [
             f"step {i} ({step.get('step', '?')}): {', '.join(sorted(map(str, extra)))}"
             for i, step in enumerate(v, 1)

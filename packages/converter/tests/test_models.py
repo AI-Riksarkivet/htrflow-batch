@@ -352,8 +352,28 @@ def test_steps_that_load_no_model_keep_their_own_settings():
                         "generation_settings": {"batch_size": 8},
                     },
                 },
-                {"step": "Export", "settings": {"dest": "out", "format": "alto"}},
+                {"step": "ReadingOrderMarginalia", "settings": {"two_page": True}},
             ],
         }
     )
     assert len(pipeline.steps) == 2
+
+
+@pytest.mark.parametrize("name", ["Export", "export"])
+def test_a_pipeline_may_not_carry_its_own_export_step(name):
+    """The wrapper appends the Export steps; one in the file is refused by the
+    wrapper before any model loads (3098), and here before it ever reaches a
+    cluster. htrflow looks a step up by its lower-cased name."""
+    with pytest.raises(ValidationError) as exc_info:
+        Pipeline.model_validate(
+            {
+                "id": "p",
+                "image": "ghcr.io/x/y@sha256:" + "a" * 64,
+                "steps": [
+                    {"step": name, "settings": {"dest": "out", "format": "alto"}}
+                ],
+            }
+        )
+    message = " ".join(str(e["msg"]) for e in exc_info.value.errors())
+    assert "Export" in message
+    assert "the wrapper appends" in message
