@@ -802,7 +802,7 @@ and viewer links keep working.
 <tr><td><strong>extra chips</strong></td><td><em>warm-up</em> the models are not ready yet, or failed to load · <em>job removed</em> finished long ago, results still there</td></tr>
 <tr><td><strong>totals</strong></td><td>volumes and pages done, with a bar; failures in red under the bar</td></tr>
 <tr><td><strong>problems</strong></td><td>one sentence per failed volume, saying why</td></tr>
-<tr><td><strong>a volume</strong></td><td>its name opens the viewer · the page icon opens its run log · the braces open its source manifest · its own bar, count and state · a failed page's reason under the row</td></tr>
+<tr><td><strong>a volume</strong></td><td>its name opens the viewer · the braces open its source manifest · the page icon opens its run log · its own bar, count and state · a failed page's reason under the row</td></tr>
 <tr><td><strong>footer</strong></td><td>the pipeline id and each model with its revision</td></tr>
 </table>
 

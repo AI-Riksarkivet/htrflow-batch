@@ -135,10 +135,10 @@ Universal Viewer is not built by this project.
   `iiifUrl` once there is one, its source manifest before that (`openHref`).
   A volume with neither is plain text with a title saying there is nothing to
   open yet, never a link that goes nowhere. Beside it two small icon links in
-  fixed slots: the **run log**, and the volume's **source manifest** when it
-  has one (an `images:` volume does not, and the slot stays empty so the row
-  beside it does not shift). Each is labelled "run log for `<id>`" /
-  "manifest for `<id>`" and carries the same text as its title; the glyphs
+  fixed slots: the volume's **source manifest** when it has one (an `images:`
+  volume does not, and the slot stays empty so the row beside it does not
+  shift), then its **run log**. Each is labelled "manifest for `<id>`" /
+  "run log for `<id>`" and carries the same text as its title; the glyphs
   themselves are inline SVG marked `aria-hidden`, drawn in `currentColor` so
   both themes get them for free, with 24px of hit area and the same focus
   ring every other control on the card wears. Inline, because the page's CSP
@@ -313,10 +313,10 @@ place on each one, the way they would in a table.
   A volume with neither is plain text with a title saying so, never a link
   that goes nowhere ("nothing to open there yet" only while a volume may
   still publish one; a failed or unrecorded volume says "no viewer manifest
-  for this volume"). Beside it two small icon links in fixed slots: the **run
-  log**, and the volume's **source manifest** when it has one (an `images:`
-  volume does not, and the slot stays empty so the row beside it does not
-  shift). Each is labelled "run log for `<id>`" / "manifest for `<id>`" and
+  for this volume"). Beside it two small icon links in fixed slots: the
+  volume's **source manifest** when it has one (an `images:` volume does not,
+  and the slot stays empty so the row beside it does not shift), then its
+  **run log**. Each is labelled "manifest for `<id>`" / "run log for `<id>`" and
   carries the same text as its title; the glyphs themselves are inline SVG
   marked `aria-hidden`, drawn in `currentColor` so both themes get them for
   free, with 24px of hit area and the same focus ring every other control on
