@@ -32,8 +32,10 @@ RUN bun run build
 # `git diff` in a clone sitting on that commit, so `git apply` has no history
 # to fall back on if upstream drifts. Bump deliberately, re-deriving the patch
 # if needed. The patch enables the uv-iiif-config.json fetch (without it
-# textRightPanelEnabled stays false and the ALTO panel never shows) and fixes
-# the overlay coordinates — docs D19 notes.
+# textRightPanelEnabled stays false and the ALTO panel never shows), fixes
+# the overlay coordinates (docs D19 notes), renders ALTO and search-hit text
+# as text rather than HTML and honours #?config= on the viewer's own origin
+# only (audit 3059). Its preamble says which file carries which change.
 FROM node:20-bookworm@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5 AS uv4
 ARG UV4_REPO=https://github.com/Riksarkivet/universalviewer4
 ARG UV4_REF=f2e8f66d3bd5a69e8e392764204d13d9524f63b2

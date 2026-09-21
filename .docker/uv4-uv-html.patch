@@ -1,3 +1,22 @@
+Riksarkivet/universalviewer4 at UV4_REF (.docker/htrflow-web.dockerfile),
+patched for the web image. Generated as a `git diff` in a clone on that
+commit; `git apply` skips this preamble. What each file changes:
+
+- uv.html: fetch uv-iiif-config.json through the configure event (without
+  it textRightPanelEnabled stays false and the ALTO panel never shows). A
+  #?config= is honoured on the page's own origin only: UV writes a
+  config's content strings into the page as HTML.
+- TextRightPanel.ts: scale ALTO coords to the displayed image and convert
+  them to viewport coords; and render ALTO line text (and search-hit text)
+  as text, never as HTML, so a line reading <img src=x onerror=...> is
+  shown, not run on the web front's origin (2026-09-17 audit, 3059).
+- SearchLeftPanel.ts: render the search service's hit text (before, match,
+  after) as text too; with a manifest from anywhere, its search service is
+  as untrusted as its ALTO.
+- OpenSeadragonCenterPanel.ts: re-add the current canvas's line overlays
+  after clearOverlays(), in viewport coords.
+- styles.less: outline the line overlays.
+
 diff --git a/src/content-handlers/iiif/modules/uv-openseadragoncenterpanel-module/css/styles.less b/src/content-handlers/iiif/modules/uv-openseadragoncenterpanel-module/css/styles.less
 index b2622a8..1a960e8 100644
 --- a/src/content-handlers/iiif/modules/uv-openseadragoncenterpanel-module/css/styles.less
@@ -12,10 +31,60 @@ index b2622a8..1a960e8 100644
            @col: rgb(120, 251, 185);
            background-color: saturate(@col, 100%);
 diff --git a/src/content-handlers/iiif/modules/uv-textrightpanel-module/TextRightPanel.ts b/src/content-handlers/iiif/modules/uv-textrightpanel-module/TextRightPanel.ts
-index e9d30db..20499fb 100644
+index e9d30db..3f5ff7a 100644
 --- a/src/content-handlers/iiif/modules/uv-textrightpanel-module/TextRightPanel.ts
 +++ b/src/content-handlers/iiif/modules/uv-textrightpanel-module/TextRightPanel.ts
-@@ -352,15 +352,34 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+@@ -253,25 +253,32 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+ 
+               const p = getIntersectionPercentage(rect, lineRect);
+               if (p > 50) {
+-                let text = $(
++                // The line and the hit are text (ALTO CONTENT, search
++                // service chars): wrap the first hit in a span built as
++                // nodes. Re-parsing .text() as HTML would turn an escaped
++                // "<img onerror=...>" in the line back into markup.
++                const $line = $(
+                   "div#" + $(lineAnnotationRect).attr("id") + ".lineAnnotation"
+-                ).text();
+-                text = text.replace(
+-                  annotationRect.chars,
+-                  '<span class="searchHitSpan" data-index="' +
+-                    annotationRect.index +
+-                    '" data-canvas-index="' +
+-                    annotationRect.canvasIndex +
+-                    '">' +
+-                    annotationRect.chars +
+-                    "</span>"
+                 );
+-                $(
+-                  "div#" + $(lineAnnotationRect).attr("id") + ".lineAnnotation"
+-                ).html("");
+-                $(
+-                  "div#" + $(lineAnnotationRect).attr("id") + ".lineAnnotation"
+-                ).html(text);
++                const text: string = $line.text();
++                const chars = String(annotationRect.chars);
++                const at = chars ? text.indexOf(chars) : -1;
++                if (at >= 0) {
++                  const $hit = $('<span class="searchHitSpan"></span>')
++                    .attr("data-index", String(annotationRect.index))
++                    .attr(
++                      "data-canvas-index",
++                      String(annotationRect.canvasIndex)
++                    )
++                    .text(chars);
++                  $line
++                    .empty()
++                    .append(
++                      document.createTextNode(text.slice(0, at)),
++                      $hit,
++                      document.createTextNode(text.slice(at + chars.length))
++                    );
++                }
+               }
+             }
+           );
+@@ -352,15 +359,34 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
        const altoDoc = new DOMParser().parseFromString(data, "application/xml");
        const textLines = altoDoc.querySelectorAll("TextLine");
  
@@ -54,7 +123,48 @@ index e9d30db..20499fb 100644
          x =
            x +
            this.offsetX +
-@@ -416,10 +435,13 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+@@ -368,15 +394,16 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+         const text = t.join(" ");
+         this.clipboardText += text + " ";
+ 
++        // ALTO CONTENT is text, never markup: set it with .text() and
++        // .attr() below, so a line reading "<img src=x onerror=...>" shows
++        // those characters instead of running on the viewer's origin.
+         const line = $(
+           '<div id="line-annotation-' +
+             canvasIndex +
+             "-" +
+             i +
+-            '" class="lineAnnotation" tabindex="0">' +
+-            text +
+-            "</div>"
+-        );
++            '" class="lineAnnotation" tabindex="0"></div>'
++        ).text(text);
+ 
+         if (!this.extension.isMobile()) {
+           const div = $(
+@@ -384,9 +411,7 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+               canvasIndex +
+               "-" +
+               i +
+-              '" class="lineAnnotationRect" title="' +
+-              text +
+-              '" data-x="' +
++              '" class="lineAnnotationRect" data-x="' +
+               x +
+               '" data-y="' +
+               y +
+@@ -395,7 +420,7 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+               '" data-height="' +
+               height +
+               '" tabindex="0"></div>'
+-          );
++          ).attr("title", text);
+           $(div).on("keydown", (e: any) => {
+             if (e.keyCode === 13) {
+               $(e.target).trigger("click");
+@@ -416,10 +441,13 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
              this.setCurrentLineAnnotationRect(e.target);
            });
            // Add overlay to OpenSeadragon canvas
@@ -72,11 +182,20 @@ index e9d30db..20499fb 100644
  
            line.on("keydown", (e: any) => {
              if (e.keyCode === 13) {
+@@ -449,7 +477,7 @@ export class TextRightPanel extends RightPanel<TextRightPanelConfig> {
+       }
+       if (header) {
+         this.$transcribedText.append(
+-          $('<div class="label">' + header + "</div>")
++          $('<div class="label"></div>').text(header)
+         );
+       }
+       if (lines.length > 0) {
 diff --git a/src/uv.html b/src/uv.html
-index e19584d..942da9a 100644
+index e19584d..184d222 100644
 --- a/src/uv.html
 +++ b/src/uv.html
-@@ -34,18 +34,18 @@
+@@ -34,18 +34,30 @@
          uv = UV.init("uv", data);
  
  
@@ -91,10 +210,21 @@ index e19584d..942da9a 100644
 -              // })
 -            );
 -          })
--        }
 +        // uv-iiif-config.json carries options (e.g. textRightPanelEnabled) that
-+        // are not compiled into UV.js and must be supplied via the configure event
-+        const configUrl = urlAdapter.get('config') || 'uv-iiif-config.json';
++        // are not compiled into UV.js and must be supplied via the configure event.
++        // A #?config= is honoured on this origin only: a config's content
++        // strings go into the page as HTML, so one from anywhere else would be
++        // script on this origin. Anything else falls back to the default.
++        let configUrl = 'uv-iiif-config.json';
++        const requested = urlAdapter.get('config');
++        if (requested) {
++          try {
++            const url = new URL(requested, location.href);
++            if (url.origin === location.origin) {
++              configUrl = url.href;
++            }
++          } catch (e) {}
+         }
 +        uv.on("configure", function({ config, cb }) {
 +          cb(
 +            new Promise(function (resolve) {
@@ -107,9 +237,11 @@ index e19584d..942da9a 100644
  
          var $UV = document.getElementById("uv");
  
+diff --git a/src/content-handlers/iiif/modules/uv-openseadragoncenterpanel-module/OpenSeadragonCenterPanel.ts b/src/content-handlers/iiif/modules/uv-openseadragoncenterpanel-module/OpenSeadragonCenterPanel.ts
+index 672f621..f52360e 100644
 --- a/src/content-handlers/iiif/modules/uv-openseadragoncenterpanel-module/OpenSeadragonCenterPanel.ts
 +++ b/src/content-handlers/iiif/modules/uv-openseadragoncenterpanel-module/OpenSeadragonCenterPanel.ts
-@@ -1140,27 +1140,31 @@
+@@ -1140,27 +1140,31 @@ export class OpenSeadragonCenterPanel extends CenterPanel<
    }
  
    clearAnnotations(): void {
@@ -160,3 +292,32 @@ index e19584d..942da9a 100644
    }
  
    getAnnotationsForCurrentImages(): AnnotationGroup[] {
+diff --git a/src/content-handlers/iiif/modules/uv-searchleftpanel-module/SearchLeftPanel.ts b/src/content-handlers/iiif/modules/uv-searchleftpanel-module/SearchLeftPanel.ts
+index e6035dd..082fc17 100644
+--- a/src/content-handlers/iiif/modules/uv-searchleftpanel-module/SearchLeftPanel.ts
++++ b/src/content-handlers/iiif/modules/uv-searchleftpanel-module/SearchLeftPanel.ts
+@@ -484,15 +484,18 @@ export class SearchLeftPanel extends LeftPanel<SearchLeftPanelConfig> {
+             '"></div>'
+         );
+         hitNumberSpan.append(i + 1);
+-        const searchHitSpan = $(
+-          '<span class="searchHitSpan">' + searchHit.match + "</span>"
++        // before/match/after are the search service's text: append them
++        // as text nodes, never as HTML, as the ALTO lines are.
++        // String(): jQuery's .text(undefined) is the getter, not a setter.
++        const searchHitSpan = $('<span class="searchHitSpan"></span>').text(
++          String(searchHit.match)
+         );
+ 
+         div.append(
+-          hitNumberSpan[0].outerHTML +
+-            searchHit.before +
+-            searchHitSpan[0].outerHTML +
+-            searchHit.after
++          hitNumberSpan,
++          document.createTextNode(searchHit.before ?? ""),
++          searchHitSpan,
++          document.createTextNode(searchHit.after ?? "")
+         );
+         $(div).on("keydown", (e: any) => {
+           const originalEvent: KeyboardEvent = <KeyboardEvent>e.originalEvent;
