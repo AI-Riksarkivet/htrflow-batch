@@ -95,8 +95,8 @@ volumes:
   characters) and unique within the campaign.
 - **A campaign is append-only.** A Job's `completions` is set once, at
   creation, from the volume list, and Kubernetes cannot change it afterwards.
-  `htrflow-campaigns render` refuses to re-render a campaign whose volume list
-  differs from what is already in `rendered/`, and `htrflow-campaigns apply`
+  `htrflow-campaigns validate` and `render` refuse a campaign whose volume
+  list differs from what is already in `rendered/`, and `htrflow-campaigns apply`
   refuses one whose ConfigMap in the cluster says otherwise: a different
   volume list, pipeline or image. Put new volumes in a new
   campaign file (`example-2.yaml`). The old results stay untouched and
@@ -216,8 +216,11 @@ volume is a single line of space-joined URLs, so a few dozen long image
 volumes can reach that limit on their own. A split also shortens the
 campaign's name. A Job's name becomes both the `batch.kubernetes.io/job-name`
 label value and the prefix of its pods' names (`<job>-<index>`), and neither
-may exceed 63 characters. A campaign file may not itself be named
-`-part<number>`, and `validate` says so.
+may exceed 63 characters. For an Indexed Job the API server also holds the
+hostname of its last pod, `<job>-<completions − 1>`, to a DNS label: no dots,
+at most 63 characters. So a campaign file's name has no dots, and a long one
+leaves room for its volume count; `validate` says so. A campaign file may not
+itself be named `-part<number>` either.
 
 ### The record a campaign leaves
 
