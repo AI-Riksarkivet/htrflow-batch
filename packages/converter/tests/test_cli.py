@@ -175,7 +175,7 @@ def test_render_removes_a_pipeline_manifest_when_the_pipeline_is_deleted(tmp_pat
 
 
 def test_render_refuses_an_out_dir_that_contains_the_sources(tmp_path, capsys):
-    """`--out` is a directory render *deletes from* (see `_prune`). Pointing it
+    """`--out` is a directory render *deletes from* (see `_swap_in`). Pointing it
     at the campaigns repo — or anything above it — would delete the campaigns
     and pipelines it just read."""
     repo = tmp_path / "repo"
@@ -204,6 +204,88 @@ def test_render_prints_every_removed_path_and_also_removes_yml(tmp_path, capsys)
     assert f"removed: {out / 'campaigns' / 'kyrk.yaml'}" in err, err
     assert f"removed: {stale_yml}" in err, err
     assert not stale_yml.exists()
+
+
+def _tree(root: Path) -> dict[str, bytes]:
+    return {
+        p.relative_to(root).as_posix(): p.read_bytes()
+        for p in sorted(root.rglob("*"))
+        if p.is_file()
+    }
+
+
+def test_a_refused_render_leaves_out_exactly_as_it_was(tmp_path, capsys):
+    """A render refused over a later campaign used to have written the
+    pipelines and the campaigns before it already: a campaign that was never
+    applied then counted as rendered, and its volume list was frozen (3089)."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    out = repo / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    before = _tree(out)
+    doc = yaml.safe_load((repo / "pipelines" / "demo-v1.yaml").read_text())
+    doc["image"] = NEW_IMAGE
+    (repo / "pipelines" / "demo-v2.yaml").write_text(yaml.safe_dump(doc))
+    (repo / "campaigns" / "aaa.yaml").write_text(
+        "pipeline: demo-v2\nvolumes:\n  - R5555555\n"
+    )
+    loc = repo / "campaigns" / "loc.yaml"
+    loc.write_text(loc.read_text().replace("R0009998", "R0009997"))
+    capsys.readouterr()
+
+    assert main(["render", str(repo), "--out", str(out)]) == 1
+    assert "campaign loc is append-only" in capsys.readouterr().out
+    assert _tree(out) == before
+
+
+def test_a_render_that_dies_halfway_leaves_out_as_it_was(tmp_path, capsys, monkeypatch):
+    """Nothing lands in --out until every file of the render is written, so
+    a crash (a full disk, a bug) cannot leave a mix of two renders in it."""
+    from htrflow_converter import render
+
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    out = repo / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    # Every file this render writes differs from the last one's: the Hub
+    # token reaches the warm-up, the window every campaign Job.
+    cfg = repo / "converter.yaml"
+    cfg.write_text(
+        cfg.read_text().replace("window: 10", "window: 4")
+        + "hf_token_secret: hf-token\n"
+    )
+    (repo / "campaigns" / "kyrk.yaml").unlink()
+    (repo / "campaigns" / "new.yaml").write_text(
+        "pipeline: demo-v1\nvolumes:\n  - R5555555\n"
+    )
+    before = _tree(out)
+    real = render.campaign_objects
+
+    def dies_on_the_last(c, p, cfg):
+        if c.name == "new":
+            raise OSError("No space left on device")
+        return real(c, p, cfg)
+
+    monkeypatch.setattr(render, "campaign_objects", dies_on_the_last)
+    with pytest.raises(OSError):
+        main(["render", str(repo), "--out", str(out)])
+    assert _tree(out) == before
+    assert sorted(p.name for p in repo.iterdir()) == sorted(
+        ["campaigns", "converter.yaml", "pipelines", "rendered"]
+    ), "the temp directory beside --out was left behind"
+
+
+def test_render_leaves_what_else_is_in_out_alone(tmp_path):
+    """--out is the converter's for pipelines/, campaigns/ and sync.yaml;
+    anything else in it (a README beside rendered/'s files) is not."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    out = repo / "rendered"
+    out.mkdir()
+    (out / "README.md").write_text("kept\n")
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    assert (out / "README.md").read_text() == "kept\n"
 
 
 def test_the_makefile_no_longer_defines_the_prune_selector():
