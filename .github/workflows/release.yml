@@ -1,0 +1,61 @@
+name: Release
+# A GitHub release for every v* tag. The notes are .github/release-notes.md
+# (the pre-release warning, install, verify, and the two image digests read
+# from Docker Hub) followed by git-cliff's list of changes since the previous
+# tag (cliff.toml). The images come first: publish.yml runs by hand for the
+# tag, the release commit pins their digests, and the tag goes on that commit
+# (docs/development/releasing.md). A tag whose images are not on Docker Hub
+# yet fails here rather than publishing notes that point at nothing.
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release; nothing else
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0 # git-cliff reads the history back to the previous tag
+          persist-credentials: false # the release is created through gh with its own token
+      # git-cliff comes from uv.lock's `release` group: pinned and hash-checked.
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      - run: uv sync --locked --only-group release
+      - name: Image digests
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          for pair in htrflow-batch:WRAPPER_DIGEST htrflow-web:WEB_DIGEST; do
+            repo=${pair%%:*} var=${pair##*:}
+            token=$(curl -fsS "https://auth.docker.io/token?service=registry.docker.io&scope=repository:riksarkivet/${repo}:pull" | jq -r .token)
+            digest=$(curl -fsSI -H "Authorization: Bearer ${token}" \
+              -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json" \
+              "https://registry-1.docker.io/v2/riksarkivet/${repo}/manifests/${TAG}" \
+              | tr -d '\r' | awk 'tolower($1) == "docker-content-digest:" {print $2}')
+            if [ -z "$digest" ]; then
+              echo "::error::riksarkivet/${repo}:${TAG} is not on Docker Hub -- run publish.yml for the tag first"
+              exit 1
+            fi
+            echo "${var}=${digest}" >> "$GITHUB_ENV"
+          done
+      - name: Notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          sed -e "s|@TAG@|${TAG}|g" \
+              -e "s|@WRAPPER_DIGEST@|${WRAPPER_DIGEST}|g" \
+              -e "s|@WEB_DIGEST@|${WEB_DIGEST}|g" .github/release-notes.md > notes.md
+          .venv/bin/git-cliff --latest --strip header >> notes.md
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Below 1.0 every release is a pre-release (README: not for use yet).
+          pre=""
+          case "$TAG" in v0.*) pre="--prerelease" ;; esac
+          gh release create "$TAG" --verify-tag $pre --title "$TAG" --notes-file notes.md
