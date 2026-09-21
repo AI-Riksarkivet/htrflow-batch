@@ -9,11 +9,11 @@ mounting a path that no longer exists and every image build broke with
 these dockerfiles (dagger builds its own container graph), so this test is
 the gate.
 
-Since B63 Task 18 the wrapper has ONE dockerfile for both architectures
-(`base-amd64` / `base-arm64`, selected by `FROM base-${TARGETARCH}`), so the
-same bind-mount block serves both arches by construction — what needs
-guarding instead is that the arm64 branch keeps the hard-won extras the GB10
-needs, and that nothing in the build path ever asks for a foreign
+The wrapper has ONE dockerfile, and one recipe, for both architectures: it
+builds its own htrflow base from pinned sources, so the same bind-mount
+block serves both arches by construction — what needs guarding instead is
+that the base stays pinned, that the arm64 step keeps the hard-won extras
+the GB10 needs, and that nothing in the build path ever asks for a foreign
 platform: `uv` segfaults under `qemu-x86_64`, so both images are built on a
 runner of their own architecture and never emulated.
 """
@@ -24,6 +24,7 @@ import re
 from pathlib import Path
 
 import pytest
+import tomllib
 import yaml
 
 REPO = Path(__file__).resolve().parents[3]
@@ -43,8 +44,7 @@ ARM64_EXTRAS = [
     "libc6-dev",
     "python3.10-dev",
 ]
-BASE_ARM64_DOCKERFILE = REPO / ".docker" / "htrflow-base.dockerfile"
-BASE_ARM64_LOCK = REPO / ".docker" / "htrflow-base" / "uv.lock"
+HTRFLOW_BASE = REPO / ".docker" / "htrflow-base"
 
 # Build paths that must never cross-build: a `--platform` flag or a
 # qemu/binfmt setup step is exactly how the wrapper image ends up emulated.
@@ -91,13 +91,17 @@ def test_the_publish_tag_is_baked_into_both_images(name: str) -> None:
     assert 'org.opencontainers.image.version="${HTRFLOW_BATCH_VERSION}"' in text
 
 
-def test_one_wrapper_dockerfile_for_both_arches() -> None:
-    """One file, two base stages, the runtime stage picked by TARGETARCH."""
+def test_one_wrapper_dockerfile_one_base_for_both_arches() -> None:
+    """One file and one htrflow base for both architectures. The amd64 image
+    used to run on the upstream htrflow image, whose htrflow is older than
+    the API the driver drives, and the arm64 one on a base built elsewhere
+    that the dagger engine could not see."""
     assert not (REPO / ".docker" / "htrflow-batch-gpu-arm64.dockerfile").exists()
+    assert not (REPO / ".docker" / "htrflow-base.dockerfile").exists()
     text = WRAPPER_DOCKERFILE.read_text()
-    assert "AS base-amd64" in text
-    assert "AS base-arm64" in text
-    assert "FROM base-${TARGETARCH} AS runtime" in text
+    assert "FROM htrflow-base AS runtime" in text
+    assert "airiksarkivet/htrflow" not in text
+    assert "base-${TARGETARCH}" not in text
 
 
 def test_arm64_branch_keeps_the_extras_the_gb10_needs() -> None:
@@ -107,8 +111,8 @@ def test_arm64_branch_keeps_the_extras_the_gb10_needs() -> None:
     )
     for extra in ARM64_EXTRAS:
         assert extra in guarded, f"arm64 extra missing from the wrapper image: {extra}"
-    # every arm64-only step sits behind the TARGETARCH guard
-    assert guarded.count('if [ "$TARGETARCH" = "arm64" ]') >= 2
+    # the arm64-only step sits behind the TARGETARCH guard
+    assert guarded.count('if [ "$TARGETARCH" = "arm64" ]') == 1
 
 
 def test_nothing_in_the_build_path_asks_for_a_foreign_platform() -> None:
@@ -121,16 +125,17 @@ def test_nothing_in_the_build_path_asks_for_a_foreign_platform() -> None:
             )
 
 
-def test_both_base_stages_export_the_htrflow_base_revision():
+def test_the_base_stage_exports_the_htrflow_base_revision():
     """`HTRFLOW_BASE_REVISION` is an OCI label the wrapper cannot read from
-    inside the container, so each base stage also exports it as ENV, which
-    the runtime stage inherits and `provenance.py` stamps into every ALTO."""
+    inside the container, so the base stage also exports it as ENV, which
+    the runtime stage inherits and `provenance.py` stamps into every ALTO.
+    Unset, it is the htrflow commit the base is built from."""
     text = WRAPPER_DOCKERFILE.read_text(encoding="utf-8")
     stages = re.split(r"^FROM ", text, flags=re.M)
-    base = [s for s in stages if re.match(r".* AS base-(amd64|arm64)\n", s)]
-    assert len(base) == 2
-    for stage in base:
-        assert "ENV HTRFLOW_BASE_REVISION=${HTRFLOW_BASE_REVISION}" in stage
+    base = [s for s in stages if re.match(r".* AS htrflow-base\n", s)]
+    assert len(base) == 1
+    assert "ARG HTRFLOW_BASE_REVISION=${HTRFLOW_REF}" in base[0]
+    assert "ENV HTRFLOW_BASE_REVISION=${HTRFLOW_BASE_REVISION}" in base[0]
 
 
 def test_the_transformers_line_is_one_build_arg_every_build_path_can_set() -> None:
@@ -168,8 +173,7 @@ def test_the_transformers_line_is_one_build_arg_every_build_path_can_set() -> No
 
     publish = (REPO / ".github" / "workflows" / "publish.yml").read_text()
     assert "transformers_version:" in publish  # the dispatch input
-    assert "--transformers-version" in publish  # the dagger-built architecture
-    assert '"TRANSFORMERS_VERSION=${TRANSFORMERS_VERSION}"' in publish  # the other
+    assert "--transformers-version" in publish  # every image is dagger-built
 
 
 def test_the_library_api_pin_runs_against_the_image_ci_builds() -> None:
@@ -209,9 +213,9 @@ def test_every_python_install_in_the_wrapper_image_is_locked() -> None:
     """Finding 3060: sentencepiece, transformers and protobuf went in by a
     bare version pin, so their dependencies resolved afresh at every build
     and nothing checked a hash. Every `uv pip install` now installs a
-    hashed `uv export` of uv.lock, or this repo's own wrapper with
-    --no-deps. The one exception is the amd64 torch swap from the cu128
-    index, which has no lock of its own yet."""
+    hashed `uv export` of uv.lock or a hashed requirements file, or this
+    repo's own wrapper with --no-deps. The amd64 torch swap from the cu128
+    index, the last exception, is gone: torch comes from the base's lock."""
     installs = [
         part
         for line in _logical_lines(WRAPPER_DOCKERFILE.read_text())
@@ -220,8 +224,6 @@ def test_every_python_install_in_the_wrapper_image_is_locked() -> None:
     ]
     assert installs
     for install in installs:
-        if "download.pytorch.org/whl/cu128" in install:
-            continue
         assert "--require-hashes" in install or install.rstrip().endswith(
             "--no-deps /opt/wrapper"
         ), install
@@ -268,31 +270,49 @@ def test_every_transformers_line_is_a_hashed_requirements_file() -> None:
     assert f"transformers=={default} " in (lines / f"{default[0]}.txt").read_text()
 
 
-def test_the_arm64_base_is_built_from_pinned_inputs() -> None:
-    """Finding 3060: the arm64 base came from htrflow's own dockerfile (CUDA
-    image by tag, uv by `latest`) after a fresh `uv lock` in the clone, so
-    two builds of one commit could carry different dependencies. It is now
-    this repo's dockerfile, every image by digest, synced --locked from a
-    lockfile committed here."""
-    text = BASE_ARM64_DOCKERFILE.read_text()
-    froms = re.findall(r"^FROM (\S+)", text, re.M) + re.findall(
-        r"COPY --from=(\S+:\S+)", text
-    )
+def test_the_htrflow_base_is_built_from_pinned_inputs() -> None:
+    """Findings 3060 and 3104: the arm64 base came from htrflow's own
+    dockerfile (CUDA image by tag, uv by `latest`) after a fresh `uv lock`,
+    and the amd64 one was the upstream image with an older htrflow. Both are
+    now stages of the wrapper dockerfile: htrflow by commit, every image by
+    digest, synced --locked from the lock committed in .docker/htrflow-base/
+    -- which is refused unless the checkout's pyproject.toml is the one it
+    was made for."""
+    text = WRAPPER_DOCKERFILE.read_text()
+    froms = [
+        ref
+        for ref in re.findall(r"^FROM (\S+)", text, re.M)
+        if ref not in ("scratch", "htrflow-base")
+    ] + re.findall(r"COPY --from=(\S+:\S+)", text)
     assert froms
     for ref in froms:
         assert re.search(r"@sha256:[0-9a-f]{64}$", ref), ref
-    assert "COPY --from=lock uv.lock" in text
+    ref = re.search(r"^ARG HTRFLOW_REF=([0-9a-f]{40})$", text, re.M)
+    assert ref, "htrflow must be pinned by full commit"
+    assert "ADD https://github.com/AI-Riksarkivet/htrflow.git#${HTRFLOW_REF} /" in text
     syncs = re.findall(r"^RUN uv sync.*$", text, re.M)
-    assert syncs and all("--locked" in s for s in syncs), syncs
-    assert BASE_ARM64_LOCK.read_text().startswith("version = 1")
+    assert len(syncs) == 2 and all("--locked" in s for s in syncs), syncs
+    assert "cmp -s - /app/pyproject.toml" in text
 
-    # Every path that builds the base uses it, and nothing locks afresh.
-    action = (
-        REPO / ".github" / "actions" / "build-htrflow-base-arm64" / "action.yml"
-    ).read_text()
-    makefile = (REPO / "Makefile").read_text()
-    for recipe in (action, makefile):
-        assert "htrflow-base.dockerfile" in recipe
-        assert "lock=" in recipe  # the named build context with the lock
-        assert "docker/htrflow.dockerfile" not in recipe
-    assert not re.search(r"^\s*uv lock\s*$", action, re.M)
+    # The committed pyproject.toml is htrflow's plus the overlay, and the
+    # overlay locks torch per architecture from the right index.
+    pyproject = (HTRFLOW_BASE / "pyproject.toml").read_text()
+    overlay = (HTRFLOW_BASE / "overlay.toml").read_text()
+    assert pyproject.endswith(overlay)
+    assert tomllib.loads(pyproject)["project"]["name"] == "htrflow"
+    uv = tomllib.loads(overlay)["tool"]["uv"]
+    assert "torch==2.9.1; platform_machine == 'x86_64'" in uv["constraint-dependencies"]
+    assert uv["index"] == [
+        {
+            "name": "pytorch-cu128",
+            "url": "https://download.pytorch.org/whl/cu128",
+            "explicit": True,
+        }
+    ]
+    lock = (HTRFLOW_BASE / "uv.lock").read_text()
+    assert 'version = "2.9.1+cu128"' in lock and 'version = "2.13.0"' in lock
+
+    # Nothing builds a base anywhere else any more.
+    assert not (REPO / ".github" / "actions" / "build-htrflow-base-arm64").exists()
+    for path in BUILD_PATHS:
+        assert "HTRFLOW_ARM64_BASE" not in path.read_text(), path.name

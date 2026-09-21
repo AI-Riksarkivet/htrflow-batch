@@ -1,113 +1,128 @@
 # htrflow-batch: the streaming wrapper (docs: how-it-works/wrapper) on top
-# of the stock htrflow image, for BOTH architectures. Build context = repo root.
+# of htrflow, for BOTH architectures. Build context = repo root.
 #
-# One file, two bases, no emulation. `uv` segfaults under `qemu-x86_64` and
+# One file, one recipe, no emulation. `uv` segfaults under `qemu-x86_64` and
 # the GPU never crosses the emulation boundary anyway (a 2-page volume:
 # ~55 s native vs 1 h+ emulated on CPU), so each architecture is built on a
-# machine of its own: `docker build` picks `base-${TARGETARCH}` from the
-# host it runs on and nothing here ever passes `--platform`.
+# machine of its own and nothing here ever passes `--platform`.
 #
-#   amd64  the published upstream image, digest-pinned, plus a torch swap
-#          for cu128 wheels that carry Blackwell (sm_120) kernels.
-#   arm64  a locally built htrflow base (the upstream image is amd64-only),
-#          plus the compiler the GB10 needs — see the guarded steps below.
-#          Build it first, from a checkout of AI-Riksarkivet/htrflow, with
-#          this repository's .docker/htrflow-base.dockerfile and the
-#          lockfile committed beside it (`make build-htrflow-base-arm64`).
-#          `make build-wrapper` on an aarch64 host and the arm64 wrapper
-#          jobs in publish.yml/ci.yml/security.yml all build exactly this
-#          stage.
+# The htrflow base is built here, from source, for both architectures
+# (findings 3060 and the amd64 half of 3104). It used to be two different
+# things: on amd64 the published upstream image, whose htrflow is older than
+# the API the driver drives (the level-0 pin test fails on it), and on arm64
+# a separately built image that the dagger engine could not see. As stages
+# of this file it is one recipe that every build path runs -- `make
+# build-wrapper`, the dagger functions, the workflows -- from the same
+# pinned inputs:
+#
+#   htrflow-src      AI-Riksarkivet/htrflow at HTRFLOW_REF, fetched by
+#                    BuildKit. A local checkout replaces it with
+#                    `--build-context htrflow-src=<dir>` (`make build-wrapper
+#                    HTRFLOW_SRC=<dir>`).
+#   htrflow-builder  the venv, `uv sync --locked` against
+#                    .docker/htrflow-base/: htrflow's own pyproject.toml plus
+#                    this repository's overlay (torch per architecture), and
+#                    the lock both resolve to. htrflow does not commit a lock.
+#   htrflow-base     the CUDA runtime image with that venv; the wrapper is
+#                    installed on top of it below.
 #
 # Reproducibility (audit W8/S7, finding 3060): every input is pinned.
-#   * the amd64 base image and the uv binary are pinned by digest, and so
-#     is everything the arm64 base is built from, down to its lockfile;
-#   * torch/torchvision are pinned per arch. amd64: the versions the
-#     floating cu128 `--upgrade` resolved to on 2026-08-26 (the upstream
-#     base ships torch 2.6.0/torchvision 0.21.0 cu12x; the cu128 index
-#     carries cp310 wheels up to 2.9.1/0.24.1). arm64: what the arm64
-#     base's committed lock installs from PyPI, whose aarch64 wheels bundle
-#     CUDA 13 — torch reports 2.13.0+cu130 and runs on the GB10. The cu128
-#     swap is a no-op on that arch (no cp310 wheel newer than 2.9.1), so
-#     the arm64 branch only asserts the versions, and a refreshed base lock
-#     that moves them fails the build instead of changing the image;
-#   * the wrapper's dependencies and the leaf overrides come from the
-#     workspace lock (`uv export` with hashes), the transformers line from
-#     a hashed requirements file, never a free resolution at build time;
+#   * images and the uv binary by digest, htrflow by commit;
+#   * every Python package from a lockfile, with hashes: htrflow and torch
+#     from the base lock (torch 2.9.1/torchvision 0.24.1 from PyTorch's
+#     cu128 index on amd64, for Blackwell sm_120 kernels on CUDA 12 drivers;
+#     2.13.0/0.28.0 from PyPI on arm64, CUDA 13), the wrapper's dependencies
+#     and the leaf overrides from the workspace lock, the transformers line
+#     from a hashed requirements file. Nothing is resolved at build time;
 #   * apt packages stay unpinned: Ubuntu's archive drops superseded
 #     versions, so an exact apt pin breaks the build on the next security
 #     update (a snapshot mirror is the real fix, out of scope here).
 # Refreshing a pin: `docker buildx imagetools inspect <ref>` for digests;
-# https://download.pytorch.org/whl/cu128/torch/ for torch versions.
+# `make lock-htrflow-base` after moving HTRFLOW_REF or the overlay.
 #
 # Build args:
-#   HTRFLOW_ARM64_BASE     the local arm64 base image tag. A local tag has no
-#                          registry digest to pin — HTRFLOW_BASE_REVISION is
-#                          how the image records what it really contains.
-#   HTRFLOW_BASE_REVISION  `git describe --tags --always --dirty` of the
-#                          htrflow checkout the base was built from; stamped
-#                          into the `se.riksarkivet.htrflow.base.revision`
-#                          label so the image says which htrflow it really
-#                          runs (manifest.json only knows the package
-#                          version, "0.2.6", and the arm64 base is built well
-#                          past that tag). Each base stage declares its own
-#                          default, so an un-passed arg still tells the truth.
-ARG HTRFLOW_ARM64_BASE=htrflow:v0.2.6-arm64
+#   HTRFLOW_REF            the htrflow commit the base is built from. Renovate
+#                          tracks it; a new one needs `make lock-htrflow-base`
+#                          in the same change, or the build refuses it.
+#   HTRFLOW_BASE_REVISION  what the image says it runs, stamped into the
+#                          `se.riksarkivet.htrflow.base.revision` label and
+#                          into every ALTO (manifest.json only knows the
+#                          package version, "0.2.6"). Defaults to
+#                          HTRFLOW_REF; `make build-wrapper HTRFLOW_SRC=…`
+#                          passes the checkout's `git describe --dirty`.
+ARG HTRFLOW_REF=0ede4da5493cf01ac97024558a5e4f468d5f360f
 
-# Both base stages carry their provenance labels; the runtime stage inherits
-# whichever one it is built FROM. BuildKit resolves only the stage the target
-# needs, so the amd64-only upstream image is never even looked up on arm64.
-FROM airiksarkivet/htrflow:v0.2.6-35f48a7@sha256:e56a87f7ad2b9d4fd87dcbed32bfa56cb0ba7cddfcca97ebf0045b77462695de AS base-amd64
-ARG HTRFLOW_BASE_REVISION=v0.2.6-35f48a7
-LABEL org.opencontainers.image.base.name="docker.io/airiksarkivet/htrflow:v0.2.6-35f48a7" \
+FROM scratch AS htrflow-src
+ARG HTRFLOW_REF
+ADD https://github.com/AI-Riksarkivet/htrflow.git#${HTRFLOW_REF} /
+
+# nvidia/cuda:12.1.0-base-ubuntu22.04 (multi-arch index digest), the base the
+# upstream htrflow image uses.
+FROM nvidia/cuda:12.1.0-base-ubuntu22.04@sha256:40042016a816cbbe0504dd0a396e7cfc036a8aa43f5694af60dd6f8f87d24e52 AS htrflow-builder
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 python3-pip python3-dev build-essential \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=ghcr.io/astral-sh/uv:0.12.6@sha256:88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d /uv /bin/uv
+WORKDIR /app
+ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 UV_NO_CACHE=1
+RUN uv venv --python 3.10
+# The lock belongs to htrflow's pyproject.toml plus the overlay, so the
+# pyproject.toml it is synced with must be exactly that: a checkout at any
+# other commit is refused here instead of being installed against a lock
+# made for different sources.
+COPY .docker/htrflow-base/pyproject.toml .docker/htrflow-base/uv.lock /app/
+COPY .docker/htrflow-base/overlay.toml /tmp/overlay.toml
+COPY --from=htrflow-src pyproject.toml /tmp/htrflow-pyproject.toml
+RUN cat /tmp/htrflow-pyproject.toml /tmp/overlay.toml | cmp -s - /app/pyproject.toml \
+    || { echo "htrflow's pyproject.toml is not the one .docker/htrflow-base/uv.lock was made" \
+              "for: run make lock-htrflow-base for this HTRFLOW_REF"; exit 1; }
+RUN uv sync --locked --no-install-project
+COPY --from=htrflow-src src/ /app/src/
+COPY --from=htrflow-src LICENSE README.md /app/
+RUN uv sync --locked
+
+FROM nvidia/cuda:12.1.0-base-ubuntu22.04@sha256:40042016a816cbbe0504dd0a396e7cfc036a8aa43f5694af60dd6f8f87d24e52 AS htrflow-base
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 libgl1 libglib2.0-0 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=htrflow-builder /app/.venv /app/.venv
+COPY --from=htrflow-builder /app/src /app/src
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app:"
+ARG HTRFLOW_REF
+ARG HTRFLOW_BASE_REVISION=${HTRFLOW_REF}
+LABEL org.opencontainers.image.source.htrflow="https://github.com/AI-Riksarkivet/htrflow/tree/${HTRFLOW_REF}" \
       se.riksarkivet.htrflow.base.revision="${HTRFLOW_BASE_REVISION}"
 # Also as ENV: a label is invisible from inside the container, and the
 # wrapper stamps this into every ALTO (provenance.py).
 ENV HTRFLOW_BASE_REVISION=${HTRFLOW_BASE_REVISION}
 
-FROM ${HTRFLOW_ARM64_BASE} AS base-arm64
-ARG HTRFLOW_ARM64_BASE
-ARG HTRFLOW_BASE_REVISION=unknown
-LABEL org.opencontainers.image.base.name="${HTRFLOW_ARM64_BASE}" \
-      se.riksarkivet.htrflow.base.revision="${HTRFLOW_BASE_REVISION}"
-# Also as ENV: a label is invisible from inside the container, and the
-# wrapper stamps this into every ALTO (provenance.py).
-ENV HTRFLOW_BASE_REVISION=${HTRFLOW_BASE_REVISION}
-
-FROM base-${TARGETARCH} AS runtime
+FROM htrflow-base AS runtime
 LABEL org.opencontainers.image.licenses="EUPL-1.2"
 ARG TARGETARCH
 
 # uv 0.12.6 (multi-arch index digest)
 COPY --from=ghcr.io/astral-sh/uv:0.12.6@sha256:88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d /uv /bin/uv
 
-# The base's Ubuntu packages lag behind jammy-security (gnupg and openssl
-# carry Trivy HIGH findings that Ubuntu has already fixed). Upgrade from the
-# Ubuntu archive only: SourceParts=/dev/null hides /etc/apt/sources.list.d,
-# where the NVIDIA CUDA repository lives, so no CUDA, driver or cuDNN
-# package can move with it.
+# The CUDA image's Ubuntu packages lag behind jammy-security (gnupg and
+# openssl carry Trivy HIGH findings that Ubuntu has already fixed). Upgrade
+# from the Ubuntu archive only: SourceParts=/dev/null hides
+# /etc/apt/sources.list.d, where the NVIDIA CUDA repository lives, so no
+# CUDA, driver or cuDNN package can move with it.
 RUN export DEBIAN_FRONTEND=noninteractive \
     && apt-get update -o Dir::Etc::SourceParts=/dev/null \
     && apt-get upgrade -y -o Dir::Etc::SourceParts=/dev/null \
     && rm -rf /var/lib/apt/lists/*
 
-# torch: amd64 swaps in cu128 builds (Blackwell sm_120 kernels); on arm64
-# the base's committed lock already installed it (CUDA 13 aarch64), so the
-# versions are only checked here.
-RUN if [ "$TARGETARCH" = "arm64" ]; then \
-      /app/.venv/bin/python -c 'import sys, torch, torchvision; \
-have = (torch.__version__.split("+")[0], torchvision.__version__.split("+")[0]); \
-sys.exit(None if have == ("2.13.0", "0.28.0") else \
-         f"arm64 base carries torch/torchvision {have}, not 2.13.0/0.28.0: its lock moved")'; \
-    else \
-      uv pip install --python /app/.venv/bin/python --no-cache \
-        --index-url https://download.pytorch.org/whl/cu128 \
-        "torch==2.9.1" "torchvision==0.24.1"; \
-    fi
-
 # The wrapper is a uv workspace member (packages/wrapper). It is installed
 # with `uv pip install` into the base image's existing /app/.venv rather than
 # with the workspace `uv sync` (ra-skills dockerfile/references/python-uv.md):
-# that venv already carries htrflow and the torch installed above, and
+# that venv already carries htrflow and torch from the base lock, and
 # `uv sync` would prune it back to the lockfile's contents, removing exactly
 # the packages this image exists for. Its dependencies are still the LOCKED
 # ones: `uv export` renders the wrapper's subtree of uv.lock (pinned, hashed)

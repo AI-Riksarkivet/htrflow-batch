@@ -2,7 +2,7 @@
         compose-up compose-test compose-smoke compose-smoke-run compose-down helm-lint helm-template \
         install-devstack install-kyverno \
         docs-serve docs-build config-reference api-contract \
-        scan-image poc-push poc-push-arm64 build-wrapper build-htrflow-base-arm64 lock-htrflow-base transformers-requirements build-web scan-web clean install-kueue \
+        scan-image poc-push poc-push-arm64 build-wrapper lock-htrflow-base transformers-requirements build-web scan-web clean install-kueue \
         campaigns-apply psa-labels e2e \
         frontend-install frontend-test frontend-check frontend-build frontend-dev
 
@@ -285,30 +285,26 @@ config-reference:
 
 # PoC: build + push the images into the in-cluster k3s registry ($(HTR_REGISTRY),
 # from .env). Real registries go through `make publish` (dagger), which tests
-# before it pushes. One wrapper dockerfile serves both architectures and
-# `docker build` picks the base stage for the host it runs on — never
-# `--platform`: the amd64 image only runs under qemu on this node, cannot
-# reach the GPU (audit O13), and uv segfaults under the emulator.
+# before it pushes. One wrapper dockerfile serves both architectures, built
+# for the host it runs on — never `--platform`: the amd64 image only runs
+# under qemu on this node, cannot reach the GPU (audit O13), and uv
+# segfaults under the emulator.
 # Each push prints the digest to pin in values (`web.image`, or a campaign
 # pipeline's image); the chart refuses tags unless devStack.allowTagImages.
 WRAPPER_DOCKERFILE ?= .docker/htrflow-batch.dockerfile
 WRAPPER_IMAGE := $(HTR_REGISTRY)/htrflow-batch:$(IMAGE_TAG)
 WEB_IMAGE := $(HTR_REGISTRY)/htrflow-web:$(IMAGE_TAG)
-# Provenance label (audit W8): on arm64 the wrapper builds FROM a locally
-# built htrflow base (the upstream image is amd64-only), so that base's
-# `git describe` from the HTRFLOW_DIR checkout (.env) is stamped as
-# se.riksarkivet.htrflow.base.revision. On amd64 the base is the pinned
-# upstream tag and the dockerfile's own default already says so.
-# Lazily expanded: git only runs when a wrapper build actually happens.
+# The wrapper dockerfile builds its htrflow base itself, from htrflow at the
+# commit it pins (HTRFLOW_REF there). HTRFLOW_SRC=<checkout> builds it from a
+# local checkout instead (the dockerfile's `htrflow-src` stage) and stamps
+# that checkout's `git describe` as se.riksarkivet.htrflow.base.revision
+# (audit W8); the checkout's pyproject.toml must still be the one the
+# committed lock was made for. Lazily expanded: git only runs when a wrapper
+# build actually happens.
 HTRFLOW_DIR ?= $(HOME)/htrflow
-HTRFLOW_ARM64_BASE ?= htrflow:v0.2.6-arm64
-ifeq ($(ARCH),aarch64)
-HTRFLOW_BASE_REVISION = $(shell git -C $(HTRFLOW_DIR) describe --tags --always --dirty 2>/dev/null || echo unknown)
-WRAPPER_BUILD_ARGS = --build-arg HTRFLOW_ARM64_BASE=$(HTRFLOW_ARM64_BASE) \
-                     --build-arg HTRFLOW_BASE_REVISION=$(HTRFLOW_BASE_REVISION)
-else
-WRAPPER_BUILD_ARGS =
-endif
+HTRFLOW_SRC ?=
+WRAPPER_BUILD_ARGS = $(if $(HTRFLOW_SRC),--build-context htrflow-src=$(HTRFLOW_SRC) \
+  --build-arg HTRFLOW_BASE_REVISION=$(shell git -C $(HTRFLOW_SRC) describe --tags --always --dirty 2>/dev/null || echo unknown))
 
 # IMAGE_TAG is what the image will be called, so it is also what it reports
 # as its version (the status page's header, the OCI label).
@@ -321,32 +317,27 @@ WRAPPER_BUILD_ARGS += $(if $(TRANSFORMERS_VERSION),--build-arg TRANSFORMERS_VERS
 build-wrapper:
 	docker build -f $(WRAPPER_DOCKERFILE) $(WRAPPER_BUILD_ARGS) $(VERSION_BUILD_ARG) -t $(WRAPPER_IMAGE) .
 
-# The arm64 base the wrapper builds on: the HTRFLOW_DIR checkout is the
-# build context, the dockerfile and the lock are this repo's
-# (.docker/htrflow-base.dockerfile, finding 3060), so nothing is
-# written into that checkout and nothing is resolved at build time. CI builds
-# the same thing from a throwaway clone pinned to HTRFLOW_ARM64_BASE_REF
-# (.github/actions/build-htrflow-base-arm64). A checkout whose pyproject.toml
-# no longer matches the lock fails the build: refresh the lock with
-# `lock-htrflow-base` from a checkout at the new ref and review the diff.
-HTRFLOW_BASE_LOCK_DIR := .docker/htrflow-base
-UV_LOCK_IMAGE := ghcr.io/astral-sh/uv:0.12.6-debian-slim@sha256:9ac2caa67916b63d27595589abd0f0f10930974c885cd962ee30b71fbab42d9f
-build-htrflow-base-arm64:
-	docker build -f .docker/htrflow-base.dockerfile \
-	  --build-context lock=$(HTRFLOW_BASE_LOCK_DIR) -t $(HTRFLOW_ARM64_BASE) $(HTRFLOW_DIR)
-
-# Re-lock the arm64 base against the HTRFLOW_DIR checkout's pyproject.toml,
-# in a scratch directory (the checkout stays untouched), starting from the
-# committed lock so only what the pyproject change forces moves;
-# UV_LOCK_ARGS=--upgrade moves everything. The debian-slim uv image, not the
+# The htrflow base's lock (.docker/htrflow-base/): htrflow's pyproject.toml
+# at the commit the wrapper dockerfile pins, fetched from GitHub, plus this
+# repository's overlay (torch per architecture), locked in a scratch
+# directory from the committed lock so only what the change forces moves;
+# UV_LOCK_ARGS=--upgrade moves everything. Run it after moving HTRFLOW_REF or
+# editing the overlay, and review the diff: the image build refuses a
+# pyproject.toml the lock was not made for. The debian-slim uv image, not the
 # distroless one: uv probes the filesystem for a libc before it can resolve
 # wheel tags.
+HTRFLOW_BASE_LOCK_DIR := .docker/htrflow-base
+UV_LOCK_IMAGE := ghcr.io/astral-sh/uv:0.12.6-debian-slim@sha256:9ac2caa67916b63d27595589abd0f0f10930974c885cd962ee30b71fbab42d9f
+HTRFLOW_REF = $(shell sed -n 's/^ARG HTRFLOW_REF=//p' $(WRAPPER_DOCKERFILE))
 lock-htrflow-base:
 	@tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
-	cp $(HTRFLOW_DIR)/pyproject.toml $(HTRFLOW_BASE_LOCK_DIR)/uv.lock "$$tmp"/ && \
+	curl -fsSL -o "$$tmp/pyproject.toml" \
+	  https://raw.githubusercontent.com/AI-Riksarkivet/htrflow/$(HTRFLOW_REF)/pyproject.toml && \
+	cat $(HTRFLOW_BASE_LOCK_DIR)/overlay.toml >> "$$tmp/pyproject.toml" && \
+	cp $(HTRFLOW_BASE_LOCK_DIR)/uv.lock "$$tmp"/ && \
 	docker run --rm --user $$(id -u):$$(id -g) -e HOME=/tmp -v "$$tmp:/w" -w /w $(DOCKER_CA) \
 	  $(UV_LOCK_IMAGE) uv lock $(UV_LOCK_ARGS) && \
-	cp "$$tmp/uv.lock" $(HTRFLOW_BASE_LOCK_DIR)/uv.lock && \
+	cp "$$tmp/pyproject.toml" "$$tmp/uv.lock" $(HTRFLOW_BASE_LOCK_DIR)/ && \
 	git diff --stat -- $(HTRFLOW_BASE_LOCK_DIR)
 
 # The transformers lines of the wrapper image (.docker/transformers/<major>.in)

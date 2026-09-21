@@ -1,0 +1,31 @@
+
+# ---------------------------------------------------------------------------
+# Everything above is AI-Riksarkivet/htrflow's pyproject.toml at HTRFLOW_REF,
+# byte for byte; everything below is this repository's, appended by
+# `make lock-htrflow-base` from .docker/htrflow-base/overlay.toml. The image
+# build refuses a pyproject.toml whose first part is not the pinned
+# checkout's, so the lock cannot drift from the source it installs.
+#
+# torch per architecture, both locked with hashes (finding 3060). x86_64:
+# the cu128 builds from PyTorch's index, which carry Blackwell (sm_120)
+# kernels and run on the drivers the CUDA 12 line supports; 2.9.1/0.24.1
+# is what the wrapper image has shipped since it swapped torch. aarch64:
+# PyPI's wheels, which bundle CUDA 13; 2.13.0/0.28.0 is what the GB10 base
+# was locked to.
+[tool.uv]
+environments = ["sys_platform == 'linux'"]
+constraint-dependencies = [
+    "torch==2.9.1; platform_machine == 'x86_64'",
+    "torchvision==0.24.1; platform_machine == 'x86_64'",
+    "torch==2.13.0; platform_machine == 'aarch64'",
+    "torchvision==0.28.0; platform_machine == 'aarch64'",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "platform_machine == 'x86_64'" }]
+torchvision = [{ index = "pytorch-cu128", marker = "platform_machine == 'x86_64'" }]
