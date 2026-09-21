@@ -92,16 +92,26 @@ Every stage name can appear in the termination message.
    An empty manifest, a canvas with no image, a non-JSON body or a 4xx is exit
    13. A 5xx, a 429 or a network error is exit 1.
 2. **resume**: lists `page/` and `alto/` in S3. A page counts as done only
-   when **both** exist. A page is reprocessed if its recorded
-   `page_source_digests` entry in the previous `manifest.json` differs from
-   the digest of the URL the manifest gives now; credentials are taken out of
-   both, so a re-signed URL is not a new source image. `RESUME=false` forces
-   everything to be reprocessed. Skipped pages are never downloaded.
+   when **both** exist. A page is reprocessed if the source digest its ALTO
+   was stamped with at upload (the `source-digest` object metadata) differs
+   from the digest of the URL the manifest gives now. A page stored without
+   that metadata is compared with its `page_source_digests` entry in the
+   previous `manifest.json` instead. Credentials are taken out of both sides,
+   so a re-signed URL is not a new source image. Because each page carries
+   its own record, a page an interrupted attempt redid from a changed source
+   stays done on the next attempt. `RESUME=false` forces everything to be
+   reprocessed. Every page about to be reprocessed loses its stored PAGE and
+   ALTO first, so a reprocessing that fails, or dies between the two PUTs,
+   never leaves an older file answering for the page. Skipped pages are never
+   downloaded.
 3. **load**: starts `stream.PageStream(...)` downloading, **then** calls
    `Pipeline.from_config($PIPELINE_PATH)`. The model load overlaps the first
    pages' downloads, so the GPU's idle time at startup is
    `max(model_load, first_page_download)`, not the sum. Bad YAML, an unknown
-   step or model class, or an `Export` step in the YAML is exit 13. An
+   step or model class, or an `Export` step in the YAML is exit 13. So is a
+   model whose pinned revision under `model_settings` is overridden by a key
+   beside it. Those two are read off the YAML before any model is built,
+   here and in the warm-up alike. An
    `OSError` while building the models is exit 1
    ([The model cache](#the-model-cache)).
 4. **stream**: the downloader, consumer and uploader run as described above.

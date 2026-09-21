@@ -108,7 +108,9 @@ recipe in the file are one click apart.
 Both files are parsed before the first PUT. They are then uploaded **PAGE
 first, ALTO second**. A crash between the two leaves a PAGE without its ALTO,
 which resume reprocesses, and never the reverse. So an ALTO's presence always
-means the page is complete. The ALTO's `Page` dimensions are kept in memory
+means the page is complete. Both PUTs carry the digest of the page's source
+image as object metadata (`source-digest`), which is what a later resume
+compares. The ALTO's `Page` dimensions are kept in memory
 as the file goes by. Because of that, `iiif.json` can be written later without
 reading a single ALTO back.
 
@@ -154,9 +156,13 @@ PAGE, then ALTO, and eventually `manifest.json` last.
 ## Where a later run touches this page again
 
 - **Resume** lists `page/` and `alto/`. It treats the page as done only if it
-  is in **both**, and only if its `page_source_digests` entry in the previous
-  `manifest.json` still matches the digest of the URL this run would fetch.
-  Credentials are out of both sides of that comparison. A done page is never downloaded.
+  is in **both**, and only if the source digest its ALTO carries (the
+  `source-digest` object metadata, written with each upload) still matches
+  the digest of the URL this run would fetch. A page stored without that
+  metadata is compared with its `page_source_digests` entry in the previous
+  `manifest.json`. Credentials are out of both sides of that comparison. A
+  done page is never downloaded. A page that is not done loses whatever it
+  has stored before the run starts.
 - **Verify** lists S3 once more after the loop. A page missing from either
   format, and not recorded as failed, means exit 1 and a retry.
 - **The viewer** opens `uv.html#?manifest=…` on the volume's source manifest

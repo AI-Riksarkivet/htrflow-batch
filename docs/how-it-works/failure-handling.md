@@ -30,10 +30,12 @@ through Kueue ([Queueing](queueing.md#failure-interplay)).
   while the process still exits 0. The wrapper runs each page itself and keeps
   its outcome. After the loop it also lists `page/` and `alto/`, and publishes
   the marker only when every page is accounted for.
-- **Retries converge.** Per-page keys are overwritten blindly. A resumed run
-  skips pages that already have both files and whose source image URL has not
-  changed (per `manifest.json`'s `page_sources`). A retry of a long volume
-  costs minutes, not hours.
+- **Retries converge.** A resumed run skips pages that already have both
+  files and were made from the source image the page has now (per the
+  `source-digest` each page's ALTO carries). Every other page loses its
+  stored files before it is redone. A retry of a long volume costs minutes,
+  not hours, and a source that changed does not reset the attempts that
+  follow it.
 - **A page that cannot be fetched or transcribed is recorded, not hidden.**
   The volume completes, and that page appears as `failed` in `manifest.json`,
   is counted in `pages_failed`, and is named on the campaign page. A page that
