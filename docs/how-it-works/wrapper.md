@@ -73,7 +73,8 @@ The full table, with defaults from `config.py`, is in the
 | `LOOKAHEAD_PAGES` | Maximum pages downloaded ahead of the consumer (bounds tmpfs) | 64 |
 | `DOWNLOAD_CONCURRENCY` | Concurrent image downloads | 12 |
 | `RESUME` | Skip pages whose PAGE and ALTO already exist and whose source URL is unchanged | true |
-| `MANIFEST_MAX_BYTES` / `FETCH_MAX_BYTES` | Byte caps on the manifest and on one image body, because campaign data is untrusted | 16 MiB / 64 MiB |
+| `MANIFEST_MAX_BYTES` / `FETCH_MAX_BYTES` | Byte caps on the manifest and on one image body, because campaign data is untrusted. Counted on the **decoded** bytes, as they are decoded | 16 MiB / 64 MiB |
+| `DOWNLOAD_DEADLINE_SECONDS` | Wall-clock limit on one download: the manifest, or one attempt at a page. The per-read timeouts restart with every byte, so this is what stops a host that sends one byte at a time | 300 |
 | `LOG_SHIP_SECONDS` | How often the run log is uploaded. `0` means final upload only ([The run log](signals.md#the-run-log)) | 15 |
 
 ### Stages around the streaming loop
@@ -86,11 +87,12 @@ Every stage name can appear in the termination message.
    both set, is exit 13, and the campaign page points at `converter.yaml` and
    the chart values.
 1. **setup**: fetches the IIIF manifest (http(s) only, at most 5 redirects,
-   a 60 s timeout, capped at `MANIFEST_MAX_BYTES`) and turns its canvases into
+   a 60 s read timeout inside the `DOWNLOAD_DEADLINE_SECONDS` limit, capped at
+   `MANIFEST_MAX_BYTES`) and turns its canvases into
    an ordered page list with zero-padded file names. For an `images:` volume it
    builds the manifest instead ([From image to transcription](page-flow.md)).
    An empty manifest, a canvas with no image, a non-JSON body or a 4xx is exit
-   13. A 5xx, a 429 or a network error is exit 1.
+   13. A 5xx, a 429, a network error or the download deadline is exit 1.
 2. **resume**: lists `page/` and `alto/` in S3. A page counts as done only
    when **both** exist. A page is reprocessed if the source digest its ALTO
    was stamped with at upload (the `source-digest` object metadata) differs
@@ -116,8 +118,14 @@ Every stage name can appear in the termination message.
    ([The model cache](#the-model-cache)).
 4. **stream**: the downloader, consumer and uploader run as described above.
    - **Per-page failures are recorded, not fatal mid-loop.** That covers a
-     download that failed after its retries, an exception from
-     `pipeline.run`, and malformed XML. The loop drains what it can first.
+     download that failed for good, an exception from `pipeline.run`, and
+     malformed XML. The loop drains what it can first.
+   - **A download the source could not serve today is deferred, not
+     failed.** A network error, the download deadline, a 429, a 5xx, or an
+     HTML page where the image should be is retried in the pod first. If it
+     still fails, the page is recorded as deferred. Verify then finds it
+     missing, so the index is retried and resume fetches only that page
+     ([From image to transcription](page-flow.md#the-width-capped-get)).
    - **`pipeline.run` runs behind a liveness guard.** If a step's htrflow
      worker thread has died, the run would otherwise block forever. The guard
      fails the page, naming the step and its model, and the pipeline is
@@ -129,8 +137,9 @@ Every stage name can appear in the termination message.
    uploaded to both `page/` and `alto/`, skipped by resume, or recorded as
    failed with a reason.
    - **A missing page means exit 1.** A page that is none of those is an
-     upload that never landed. Kubernetes retries the index, resume converges,
-     and the termination message lists the missing and failed pages.
+     upload that never landed, or a download that was deferred. Kubernetes
+     retries the index, resume converges, and the termination message lists
+     the missing and failed pages.
    - **A failed page does not fail the volume.** It would fail the same way
      on every attempt, so failing the volume for it would spend every retry
      and still leave the bucket with good pages and no `manifest.json` to open

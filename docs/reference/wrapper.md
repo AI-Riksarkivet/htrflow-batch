@@ -198,8 +198,9 @@ so its settings are namespaced.
 | `MAX_PAGES` | `0` | Truncate the volume (0 = all pages) — the knob for a fast end-to-end check of one or a handful of pages |
 | `WORKDIR_PATH` | `/work` | Scratch dir (Jobs mount a 2 Gi memory-backed emptyDir) |
 | `DOWNLOAD_CONCURRENCY` | `12` | Parallel page downloads |
-| `MANIFEST_MAX_BYTES` | `16777216` | Byte cap on the manifest body (over it: exit 13). Jobs set it from `converter.yaml`'s `manifest_max_bytes` |
+| `MANIFEST_MAX_BYTES` | `16777216` | Byte cap on the manifest body, counted after decoding (over it: exit 13). Jobs set it from `converter.yaml`'s `manifest_max_bytes` |
 | `FETCH_MAX_BYTES` | `67108864` | Byte cap on one image body (over it: the page fails without retry). Jobs set it from `converter.yaml`'s `fetch_max_bytes` |
+| `DOWNLOAD_DEADLINE_SECONDS` | `300` | Wall-clock limit on one download: the manifest, or one attempt at a page. Past it the connection is cut, in the headers or the body; the manifest is then exit 1, the page is retried and, at the last attempt, deferred |
 | `MAX_IMAGE_PIXELS` | `100000000` | Cap on one image's decoded size, `width × height`, read from its header after the download (over it: the page fails without retry, and the file is deleted). The byte cap above bounds the transfer, this one bounds the memory the page costs. `0` turns it off |
 | `IMAGE_DIGEST` | `unknown` | Provenance only — Jobs set the pipeline's digest-pinned image; recorded verbatim in `manifest.json` and in every ALTO's `htrflow-batch` Processing block |
 | `HTRFLOW_BASE_REVISION` | `unknown` | Provenance only — set by the image itself (ENV next to its OCI label), stamped into every ALTO |
@@ -270,8 +271,8 @@ termination message is the only evidence. Details in
 | Code | Class | Raised by | Kubernetes reaction |
 |---|---|---|---|
 | `0` | success | verify passed, `manifest.json` published | index `Complete`; `manifest.json` in S3 = done |
-| `13` | permanent — `{"permanent": true}` | `ConfigError` (missing or invalid env); manifest URL not http(s); manifest HTTP 400/401/403/404/410; body over `MANIFEST_MAX_BYTES`; non-JSON or non-object JSON; no canvases; a canvas without an image, with a malformed shape, or with a non-http(s) image URL; bad pipeline YAML, an unknown step or model class, a setting a step does not take, an `Export` step in the YAML, a model whose revision pinned under `model_settings` a key beside it overrides (`ValueError` from `driver.build_pipeline`, the last two before any model is built). An exception that is *also* an `OSError` never lands here — see the `1` row | `podFailurePolicy` fails the index at once (`FailIndex`) — never retried |
-| `1` | transient — `{"permanent": false}` | manifest 5xx/429/other status or a network error (`TransientManifestError`); the verify gate, for a page **missing** (neither uploaded nor recorded as failed) or for a run where every page it processed failed and nothing was resumed — the message lists the missing and failed page names and, for the first 10 failed pages, the error behind each (clipped to 200 chars); every page failure is also logged as it happens, and a page that failed does not by itself fail the run; any `OSError`, including one that is also a `ValueError` — `huggingface_hub.errors.LocalEntryNotFoundError` (a model missing from the read-only `HF_HOME` cache under `HF_HUB_OFFLINE=1`) is an `OSError` on every version of the library and a `ValueError` on the older line too, and a re-warm fixes it; `UploadOutage` after 5 consecutive S3 upload failures; anything else | retried up to `backoffLimitPerIndex` (3); resume makes a retry cheap |
+| `13` | permanent — `{"permanent": true}` | `ConfigError` (missing or invalid env); manifest URL not http(s); manifest HTTP 400/401/403/404/410; body over `MANIFEST_MAX_BYTES` once decoded, or a `Content-Encoding` other than `gzip`; non-JSON or non-object JSON; no canvases; a canvas without an image, with a malformed shape, or with a non-http(s) image URL; bad pipeline YAML, an unknown step or model class, a setting a step does not take, an `Export` step in the YAML, a model whose revision pinned under `model_settings` a key beside it overrides (`ValueError` from `driver.build_pipeline`, the last two before any model is built). An exception that is *also* an `OSError` never lands here — see the `1` row | `podFailurePolicy` fails the index at once (`FailIndex`) — never retried |
+| `1` | transient — `{"permanent": false}` | manifest 5xx/429/other status, a network error or the download deadline (`TransientManifestError`); the verify gate, for a page **missing** (neither uploaded nor recorded as failed, or deferred because its source could not serve it) or for a run where every page it processed failed and nothing was resumed — the message lists the missing and failed page names and, for the first 10 failed pages, the error behind each (clipped to 200 chars); every page failure is also logged as it happens, and a page that failed does not by itself fail the run; any `OSError`, including one that is also a `ValueError` — `huggingface_hub.errors.LocalEntryNotFoundError` (a model missing from the read-only `HF_HOME` cache under `HF_HUB_OFFLINE=1`) is an `OSError` on every version of the library and a `ValueError` on the older line too, and a re-warm fixes it; `UploadOutage` after 5 consecutive S3 upload failures; anything else | retried up to `backoffLimitPerIndex` (3); resume makes a retry cheap |
 | `143` | SIGTERM — `{"permanent": false, "error": "SIGTERM"}` | the handler: termination log, final run-log ship, `os._exit(143)`. Sent by a node drain, a preemption, or by the kubelet when the pod's `activeDeadlineSeconds` expires — the pod then also carries `status.reason: DeadlineExceeded`, which the read API surfaces as `"error": "DeadlineExceeded"` | a drain or preemption carries `DisruptionTarget`, so the attempt is not counted against `backoffLimitPerIndex` and the index runs again; a deadline kill is counted and retried like exit 1 — either way, pages already published are not redone |
 
 Failures write one structured reason to the termination log
@@ -282,11 +283,18 @@ characters with `...(truncated)` — the counts and the cause come first, the
 page-name lists last, so what is dropped is the names. The full matrix is in
 [Failure Handling](../how-it-works/failure-handling.md).
 
-Page-fetch acceptance (never a whole-run verdict on its own): 3 attempts
-with 0.5 s × 2ⁿ backoff and a 120 s timeout each; textual Content-Types
+Page-fetch acceptance (never a whole-run verdict on its own): up to 4
+attempts, each with a 120 s read timeout inside the `DOWNLOAD_DEADLINE_SECONDS`
+limit, 2 s × 2ⁿ apart or the `Retry-After` wait if longer (capped at 60 s).
+A network error, the deadline, 408/425/429, a 5xx other than 501/505, a
+textual or empty answer are retried; if they persist the page is **deferred**
+(missing at verify, redone by the index's retry). Any other status fails the
+page at once (a 400 on a sized request first retries `/full/max/`). Only
+`gzip` is requested and it is inflated a chunk at a time; any other
+`Content-Encoding` fails the page. Textual Content-Types
 (`text/*`, JSON, XML, XHTML) refused; the first chunk must carry a raster
 signature (JPEG/PNG/GIF/TIFF/BMP/WebP/JP2); empty bodies refused; a body
-over `FETCH_MAX_BYTES` is not retried; a partial file is always unlinked.
+over `FETCH_MAX_BYTES` once decoded is not retried; a partial file is always unlinked.
 
 The warm-up entrypoint uses the same codes and writes the same
 `{"stage": "warmup", "permanent", "error"}` termination message:
@@ -317,8 +325,9 @@ Source root: [`packages/wrapper/src/htrflow_batch/`](https://github.com/AI-Riksa
 | Module | Description |
 |--------|-------------|
 | `config.py` | `Config.from_env` — the environment contract above |
-| `iiif.py` | Manifest fetch with its guards (http(s) only, byte cap; `main.py`'s client caps redirects at 5) and the permanent/transient split; Presentation 3 and 2 parsing (`pages_from_manifest`); `redact_url`/`redact_urls` |
-| `fetch.py` | One page, fetched safely (`fetch_page`): sized-image request, raster acceptance, byte cap, retry/backoff, `stop` on abort — it never raises, a failure comes back as a `FetchResult` with an error |
+| `iiif.py` | Manifest fetch with its guards (http(s) only, decoded byte cap, deadline) and the permanent/transient split; Presentation 3 and 2 parsing (`pages_from_manifest`), with one rule choosing each canvas's image for both the fetch and the viewer manifest; `redact_url`/`redact_urls` |
+| `bounded.py` | What one download may cost: the client every fetch uses (at most 5 redirects, no keep-alive), the decoded byte cap (`gzip` only, inflated a chunk at a time), and the wall-clock `Deadline` that cuts a download's connections |
+| `fetch.py` | One page, fetched safely (`fetch_page`): sized-image request, raster acceptance, byte cap, retry/backoff with `Retry-After`, the transient/permanent split, `stop` on abort — it never raises, a failure comes back as a `FetchResult` with an error and whether it is transient |
 | `stream.py` | The streaming loop. `PageStream` — the download stream, started when it is constructed, at most `LOOKAHEAD_PAGES` submitted ahead of the consumer, results in submission (manifest) order, `close()` cancels what is queued. `consume()` (`StreamStats`, `UploadOutage`) processes each page the moment it lands, uploads, rolling-deletes |
 | `progress.py` | `Progress` — writes `progress.json` after every page outcome and stage change, and republishes the interim `iiif.json` every 10 pages |
 | `provenance.py` | `stamp_alto` — appends the `htrflow-batch` `<Processing>` block (image digest, htrflow base revision, wrapper version) to an ALTO after Export, before upload |
