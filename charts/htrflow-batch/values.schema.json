@@ -374,6 +374,7 @@
           "additionalProperties": false,
           "required": [
             "cidr",
+            "cidrs",
             "port"
           ],
           "properties": {
@@ -387,6 +388,9 @@
                   "maxLength": 0
                 }
               ]
+            },
+            "cidrs": {
+              "$ref": "#/definitions/cidrList"
             },
             "port": {
               "type": "integer",

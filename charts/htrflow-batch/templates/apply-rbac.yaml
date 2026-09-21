@@ -88,9 +88,6 @@ spec:
       ports:
         - { port: 53, protocol: UDP }
         - { port: 53, protocol: TCP }
-    - to:
-        - ipBlock: { cidr: {{ include "htrflow-batch.apiServerCidr" . | quote }} }
-      ports:
-        - { port: {{ .Values.network.apiServer.port }} }
+    - {{ include "htrflow-batch.apiServerEgress" . }}
 {{- end }}
 {{- end }}

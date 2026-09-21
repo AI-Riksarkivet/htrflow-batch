@@ -52,24 +52,48 @@ after the slash.
 {{- end }}
 
 {{/*
-The kube-apiserver as a pod reaches it AFTER service DNAT -- the address an
-egress rule has to name, since kube-router (k3s) matches egress on the
-backing endpoint rather than the ClusterVIP. Auto-detected at install time;
-`network.apiServer.cidr` is the answer for `helm template` and for a
-kubeconfig that may not read Endpoints. Two policies need it (the web front
-and the apply pod), so it is computed once here rather than a third time.
+The kube-apiserver as a pod reaches it AFTER service DNAT -- the addresses
+an egress rule has to name, since kube-router (k3s) matches egress on the
+backing endpoint rather than the ClusterVIP. An HA control plane has one
+endpoint per API server and DNAT picks any of them, so the rule names every
+one (finding 3101). Auto-detected at install time; `network.apiServer.cidr`
+/ `.cidrs` are the answer for `helm template` and for a kubeconfig that may
+not read Endpoints. Two policies need it (the web front and the apply pod),
+so it is computed once here. Renders the whole egress rule, as JSON.
 */}}
-{{- define "htrflow-batch.apiServerCidr" -}}
-{{- $api := .Values.network.apiServer.cidr }}
-{{- if not $api }}
-  {{- with (lookup "v1" "Endpoints" "default" "kubernetes") }}
-    {{- with (index .subsets 0) }}{{ $api = printf "%s/32" (index .addresses 0).ip }}{{ end }}
-  {{- end }}
+{{- define "htrflow-batch.apiServerEgress" -}}
+{{- $api := .Values.network.apiServer }}
+{{- $cidrs := concat (compact (list $api.cidr)) ($api.cidrs | default list) | uniq }}
+{{- $ports := list $api.port }}
+{{- if not $cidrs }}
+  {{- $found := include "htrflow-batch.apiServerFromEndpoints" (lookup "v1" "Endpoints" "default" "kubernetes") | fromJson }}
+  {{- $cidrs = $found.cidrs }}
+  {{- if $found.ports }}{{ $ports = $found.ports }}{{ end }}
 {{- end }}
-{{- if not $api }}
-{{- fail "network.apiServer.cidr is required when the kube-apiserver endpoint cannot be looked up (helm template / no RBAC)" }}
+{{- if not $cidrs }}
+{{- fail "network.apiServer.cidr or network.apiServer.cidrs is required when the kube-apiserver endpoints cannot be looked up (helm template / no RBAC); list every API server of an HA control plane" }}
 {{- end }}
-{{- $api }}
+{{- $to := list }}
+{{- range $cidrs }}{{ $to = append $to (dict "ipBlock" (dict "cidr" .)) }}{{ end }}
+{{- $portRules := list }}
+{{- range $ports }}{{ $portRules = append $portRules (dict "port" (int .)) }}{{ end }}
+{{- toJson (dict "to" $to "ports" $portRules) }}
+{{- end }}
+
+{{/*
+Every address and port of an Endpoints object (the `kubernetes` Service's,
+from `lookup`), as JSON {"cidrs": [...], "ports": [...]}. Nil-safe: a
+missing object, or one without subsets, is nothing found -- never
+`index of nil`. Separate from the lookup so a test can feed it a fixture.
+*/}}
+{{- define "htrflow-batch.apiServerFromEndpoints" -}}
+{{- $cidrs := list }}
+{{- $ports := list }}
+{{- range (default dict .).subsets }}
+  {{- range .addresses }}{{ $cidrs = append $cidrs (printf "%s/32" .ip) }}{{ end }}
+  {{- range .ports }}{{ $ports = append $ports (int .port) }}{{ end }}
+{{- end }}
+{{- toJson (dict "cidrs" ($cidrs | uniq) "ports" ($ports | uniq)) }}
 {{- end }}
 
 {{/*

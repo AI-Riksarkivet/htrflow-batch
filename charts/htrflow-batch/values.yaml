@@ -205,6 +205,10 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   privateCidrs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
   apiServer:
     cidr: ""               # e.g. 10.16.51.56/32 — kube-apiserver as reached AFTER service DNAT; required by the read API's NetworkPolicy
+    # Every further API server of an HA control plane (one /32 each): after
+    # DNAT a connection may land on any of them. Added to `cidr`; when both
+    # are empty, every address of the `kubernetes` Endpoints is looked up.
+    cidrs: []
     port: 6443
   web:
     # Who may reach the web front's port, by the client's own address (the

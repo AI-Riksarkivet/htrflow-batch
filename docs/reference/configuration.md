@@ -216,6 +216,7 @@ skeleton, never as a campaign setting.
 | `network.nodeCidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `network.privateCidrs` | `values.yaml` | `[10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]` | — | no secret — nobody |
 | `network.apiServer.cidr` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `network.apiServer.cidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `network.apiServer.port` | `values.yaml` | `6443` | — | no secret — nobody |
 | `network.web.ingressCidrs` | `values.yaml` | `[0.0.0.0/0]` | — | the only gate on the read API — cluster |
 | `network.web.allowPublicIngress` | `values.yaml` | `false` | — | no secret — nobody |
