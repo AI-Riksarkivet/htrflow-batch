@@ -3,10 +3,13 @@
 # and installed with --no-deps --require-hashes. Only these packages move; their
 # other dependencies are the base's and the wrapper's, and the image build
 # checks that those satisfy them. huggingface-hub is here because the line
-# needs a different major than the one the other line runs; protobuf and
+# needs a different major than the one the other line runs, tokenizers
+# because the upstream amd64 base carries one older than the line accepts
+# (that check failed on it); protobuf and
 # sentencepiece because transformers needs them to load and convert slow
 # tokenizers.
 transformers==4.57.6
 huggingface-hub==0.36.2
 protobuf==7.36.1
+tokenizers==0.22.2
 sentencepiece==0.2.2 ; platform_machine == 'aarch64'

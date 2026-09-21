@@ -150,8 +150,8 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 # other.
 #
 # Each line is a hashed requirements file, .docker/transformers/<major>.txt,
-# compiled from the .in file beside it: transformers, the huggingface-hub
-# major that line needs, sentencepiece (arm64: TrOCR's slow tokenizer needs
+# compiled from the .in file beside it: transformers, the tokenizers and
+# huggingface-hub that line needs, sentencepiece (arm64: TrOCR's slow tokenizer needs
 # it to convert, and 5.x dropped that conversion) and protobuf (transformers
 # only imports it on the error path of loading a slow tokenizer, and without
 # it that path reports "requires the protobuf library" INSTEAD of the real

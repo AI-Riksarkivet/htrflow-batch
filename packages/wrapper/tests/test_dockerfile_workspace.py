@@ -239,7 +239,13 @@ def test_every_transformers_line_is_a_hashed_requirements_file() -> None:
         compiled = (lines / f"{major}.txt").read_text()
         pins = re.findall(r"^([a-z0-9-]+)==(\S+)", compiled, re.M)
         names = {name for name, _ in pins}
-        assert {"transformers", "huggingface-hub", "protobuf", "sentencepiece"} <= names
+        assert {
+            "transformers",
+            "huggingface-hub",
+            "protobuf",
+            "sentencepiece",
+            "tokenizers",
+        } <= names
         assert dict(pins)["transformers"].startswith(f"{major}.")
         # every pin carries its hashes, and the .txt is the .in compiled
         for name, ver in pins:
