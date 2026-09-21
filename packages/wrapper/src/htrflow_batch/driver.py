@@ -4,6 +4,7 @@ wrapper package imports cleanly on hosts without torch (docs: wrapper)."""
 from __future__ import annotations
 
 import gc
+import re
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -79,19 +80,78 @@ def _steps(config) -> list[dict]:
     return [s for s in steps if isinstance(s, dict)] if isinstance(steps, list) else []
 
 
+#: What htrflow's ``Inference.from_config`` takes off a model step's
+#: ``settings`` before it calls the model: everything else is merged OVER
+#: ``model_settings`` -- ``model_settings | <the rest>`` (htrflow steps.py).
+_MODEL_STEP_SETTINGS = ("model", "model_settings", "generation_settings")
+
+#: Where a revision reaches a loader: YOLO and PyLaia take ``revision``, the
+#: Hugging Face models (TrOCR, DiT, Donut) ``model_kwargs.revision`` -- the two
+#: paths the chart's model-revision policy accepts a pin on.
+_PIN_PATHS = (("revision",), ("model_kwargs", "revision"))
+
+_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _at(mapping: object, path: tuple[str, ...]) -> object:
+    for key in path:
+        mapping = mapping.get(key) if isinstance(mapping, dict) else None
+    return mapping
+
+
+def _is_commit(value: object) -> bool:
+    return isinstance(value, str) and bool(_COMMIT.match(value))
+
+
+def _model_kwargs(settings: dict) -> tuple[dict, dict]:
+    """A model step's ``model_settings`` as written, and the keyword arguments
+    htrflow will actually hand the model -- the same merge, reproduced."""
+    written = settings.get("model_settings")
+    written = written if isinstance(written, dict) else {}
+    rest = {k: v for k, v in settings.items() if k not in _MODEL_STEP_SETTINGS}
+    return written, written | rest
+
+
+def _check_pins(index: int, step: dict) -> None:
+    """3058: a pin under ``model_settings`` -- the one the model-revision
+    policy and ``validate`` read -- must be the revision the model gets. A
+    key beside it wins the merge (``revision: null`` for YOLO, an empty
+    ``model_kwargs`` for TrOCR) and loads the repo's head, which can be
+    pickled code. Both of those refuse the shape already; this is the layer
+    that holds when a pipeline reached the pod past them. A step pinned
+    nowhere is not this rule's to judge: whether that is allowed is the
+    chart's ``requireModelRevision``, which admission enforces."""
+    settings = step.get("settings")
+    if not isinstance(settings, dict) or "model" not in settings:
+        return
+    written, used = _model_kwargs(settings)
+    for path in _PIN_PATHS:
+        pin, effective = _at(written, path), _at(used, path)
+        if _is_commit(pin) and not _is_commit(effective):
+            where = ".".join(path)
+            raise ValueError(
+                f"step {index} ({step.get('step', '?')}): model "
+                f"{written.get('model', '?')} is not pinned to a commit — "
+                f"model_settings.{where} is {pin}, but the {path[0]} key beside "
+                f"model_settings overrides it and htrflow would load revision "
+                f"{effective!r}; move every model setting under model_settings"
+            )
+
+
 def _check_steps(config) -> None:
     """The rules a pipeline file breaks by its text alone, checked on the
     parsed YAML BEFORE ``from_config`` builds anything (3098). Built, every
     model step has put its weights on the GPU -- and the warm-up, which never
     appended Exports, used to pass a pipeline every batch index then loaded
     in full only to exit 13 on."""
-    for step in _steps(config):
+    for index, step in enumerate(_steps(config), 1):
         # htrflow resolves a step by its lower-cased name (steps.STEPS)
         if str(step.get("step", "")).lower() == "export":
             raise ValueError(
                 "pipeline YAML must not contain Export steps; "
                 "the wrapper appends them (docs: wrapper)"
             )
+        _check_pins(index, step)
 
 
 def build_pipeline(pipeline_path: str):
