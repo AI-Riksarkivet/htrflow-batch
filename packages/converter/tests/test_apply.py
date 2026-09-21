@@ -610,20 +610,22 @@ def test_the_applys_record_cannot_erase_the_failed_volumes_the_api_wrote(
     assert cluster_mod.FIELD_MANAGER != WEB_MANAGER
 
 
-def test_a_refused_record_write_still_lets_the_stored_record_decide(
+def test_a_refused_record_write_still_lets_the_live_job_decide(
     tmp_path, cluster, capsys
 ):
-    """Losing the write must not lose the decision. What is already stored
-    still says this campaign is finished, and re-running it would cost the
-    whole GPU bill over a permission the record did not need (B76)."""
+    """Losing the write must not lose the decision. The finished Job still
+    says this campaign is over -- no stored record needed -- and re-running
+    it would cost the whole GPU bill over a permission the decision did not
+    need (B76)."""
     live_job = _object("Job", "kyrk")
     live_job["metadata"]["namespace"] = NS
     live_job["spec"] = {"completions": 3}
     live_job["status"] = {
         "conditions": [{"type": "Complete", "status": "True"}],
         "succeeded": 3,
+        "completionTime": "2026-09-08T10:00:00Z",
     }
-    cluster.live = [live_job, _record("kyrk"), _status("kyrk", "Succeeded")]
+    cluster.live = [live_job, _record("kyrk")]
 
     def forbidden(kind, verb, name=""):
         if verb == "patch" and name.endswith("-status"):
@@ -1150,3 +1152,29 @@ def test_a_server_lost_mid_apply_stops_it_rather_than_refusing_the_rest(
     assert "cannot reach the Kubernetes API server" in err
     assert "stopped at ConfigMap/campaign-kyrk" in err
     assert "refused by the API server" not in err
+
+
+def _running_job(name: str) -> dict:
+    job = _object("Job", name)
+    job["metadata"]["uid"] = f"uid-{name}"
+    job["spec"] = {"completions": 3}
+    job["status"] = {"conditions": [], "active": 1}
+    return job
+
+
+def test_a_running_job_outranks_a_stale_finished_record(tmp_path, cluster, capsys):
+    """A `-status` record that says Succeeded while a live Job is still
+    running is left over from something else: a name reused without
+    --prune, an Argo CD prune (which never tracks `-status`), a Job
+    re-created by hand. It used to win -- "finished, unchanged, left alone",
+    exit 0 -- and a campaign git had just paused went on running, since a
+    campaign left alone never reaches the pause sync (3083)."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    path = repo / "campaigns" / "kyrk.yaml"
+    path.write_text(path.read_text() + "suspend: true\n")
+    cluster.live = [_record("kyrk"), _status("kyrk", "Succeeded"), _running_job("kyrk")]
+    cluster.workloads["uid-kyrk"] = _workload("wl-kyrk", True)
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert ("apply", "Job", "kyrk") in cluster.calls
+    assert cluster.of("patch") == [("patch", "wl-kyrk", False)], "the pause holds"
+    assert "left alone" not in capsys.readouterr().out
