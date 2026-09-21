@@ -422,7 +422,7 @@ nav = (
 """
 )
 # The stories are the product view for the backlog (Azure DevOps), not for the
-# published site (Morgan, 2026-09-07): the nav gets no "Features & Stories"
+# published site (a product-owner ruling, 2026-09-07): the nav gets no "Features & Stories"
 # block, and zensical.toml excludes docs/features/ from the build.
 p = W + "zensical.toml"
 s = open(p).read()
