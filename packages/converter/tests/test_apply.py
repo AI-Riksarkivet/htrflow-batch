@@ -930,3 +930,55 @@ def test_dry_run_previews_an_empty_prune_and_the_real_run_still_refuses(
     assert f"would prune: every {CAMPAIGN_SELECTOR}" in captured.out
     assert "--allow-empty" in captured.err
     assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == 1
+
+
+# --- a prune problem is one object's problem, never the pause's (3090) ---
+
+
+def _delete_fails(cluster, target: str, status: int) -> None:
+    """Make the fake API server answer ``status`` to deleting ``target``."""
+    real = FakeCluster._method
+
+    def method(kind, verb, name=""):
+        inner = real(cluster, kind, verb, name)
+        if verb != "delete":
+            return inner
+
+        def delete(name, ns, **kw):
+            if name == target:
+                raise ApiException(status=status, reason="refused")
+            return inner(name, ns, **kw)
+
+        return delete
+
+    cluster._method = method
+
+
+def test_a_prune_error_is_followed_by_the_pause_sync(tmp_path, cluster, capsys):
+    """One Job the prune could not delete used to end the apply before the
+    Kueue sync ran, so a campaign git says is paused kept running -- zero
+    Workload patches, and nothing on stderr about the pause. The pause is
+    enforced whatever the prune met, and the prune's refusal is reported."""
+    repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
+    cluster.workloads = {"uid-pausy": _workload("job-pausy-c", True)}
+    cluster.live = [_object("Job", "cancelled"), _object("Job", "cancelled-too")]
+    _delete_fails(cluster, "cancelled", 403)
+    rc = cli.main(["apply", str(repo), "--out", str(out), "--prune"])
+    assert cluster.of("patch") == [("patch", "job-pausy-c", False)]
+    assert ("delete", "Job", "cancelled-too") in cluster.calls, "the prune goes on"
+    assert rc == cli.REFUSED, "a Job still to delete is a change still to make"
+    err = capsys.readouterr().err
+    assert "not allowed to delete Job/cancelled" in err
+    assert "Job/cancelled" in err.splitlines()[-1], "the summary names it"
+
+
+def test_a_job_the_ttl_reaped_first_is_pruned_not_an_error(tmp_path, cluster, capsys):
+    """The TTL controller can delete a finished Job between the prune's list
+    and its delete. The 404 that answers is the prune's goal reached."""
+    repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
+    cluster.workloads = {"uid-pausy": _workload("job-pausy-c", True)}
+    cluster.live = [_object("Job", "cancelled")]
+    _delete_fails(cluster, "cancelled", 404)
+    assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == 0
+    assert cluster.of("patch") == [("patch", "job-pausy-c", False)]
+    assert capsys.readouterr().err == ""

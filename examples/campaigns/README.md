@@ -35,7 +35,7 @@ campaign **is** one Kubernetes Indexed Job:
 > render/apply cycle silently undoes your change. The rendered Job carries
 > `spec.suspend: true`, but Kueue owns that field for a Workload it has
 > admitted, so the apply step also patches the Workload's `spec.active`
-> (the last step of `htrflow-campaigns apply`, run by `make campaigns-apply`
+> (the pause sync in `htrflow-campaigns apply`, run by `make campaigns-apply`
 > or as an Argo CD `PostSync` hook). Declared in Git, enforced at apply
 > time.
 >

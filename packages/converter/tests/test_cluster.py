@@ -137,10 +137,13 @@ def test_prune_lists_by_the_renderers_label_and_deletes_jobs_in_background(clust
     assert deletes[0]["query"]["propagationPolicy"] == "Background"
 
 
-def test_prune_delete_forbidden_is_one_sentence(cluster, monkeypatch):
+def test_prune_delete_forbidden_is_one_sentence_and_the_prune_goes_on(
+    cluster, monkeypatch
+):
     """``--prune`` needs ``delete`` where a plain apply does not; a Role that
     lacks it must fail in the same voice as everything else, not as a
-    traceback out of the delete loop."""
+    traceback out of the delete loop -- and one object it may not delete is
+    that object's problem, not the end of the prune (3090)."""
     real = client.ApiClient.call_api
 
     def call_api(self, resource_path, method, *a, **kw):
@@ -150,11 +153,30 @@ def test_prune_delete_forbidden_is_one_sentence(cluster, monkeypatch):
 
     cluster.answer["GET"] = {"items": [{"metadata": {"name": "gone"}}]}
     monkeypatch.setattr(client.ApiClient, "call_api", call_api)
-    with pytest.raises(ClusterError) as exc:
-        cluster.prune(set())
-    assert str(exc.value).startswith(
+    problems = cluster.prune(set())
+    assert [what for what, _ in problems] == ["Job/gone", "ConfigMap/gone"]
+    assert problems[0][1].startswith(
         "not allowed to delete Job/gone in htr-batch: Forbidden"
     )
+
+
+def test_a_prune_that_may_not_list_one_kind_still_prunes_the_other(
+    cluster, monkeypatch
+):
+    real = client.ApiClient.call_api
+
+    def call_api(self, resource_path, method, *a, **kw):
+        if method == "GET" and "/jobs" in resource_path:
+            raise ApiException(status=403, reason="Forbidden")
+        return real(self, resource_path, method, *a, **kw)
+
+    cluster.answer["GET"] = {"items": [{"metadata": {"name": "gone"}}]}
+    monkeypatch.setattr(client.ApiClient, "call_api", call_api)
+    problems = cluster.prune(set())
+    ((what, sentence),) = problems
+    assert what == "Job"
+    assert sentence.startswith("not allowed to list Job in htr-batch")
+    assert [c["method"] for c in cluster.calls] == ["GET", "DELETE"]
 
 
 def test_the_other_api_error_sentences():
@@ -476,11 +498,12 @@ def test_a_refusal_the_server_meant_is_not_retried(cluster, monkeypatch, slept):
     assert slept == []
 
 
-def test_a_delete_retried_past_a_5xx_takes_a_404_as_done(slept):
-    """The retry itself makes this 404: the first attempt reached the API
-    server and only the answer was lost, so the object is gone because of
-    this call, not missing before it. A first-attempt 404 still stands --
-    that one is an object the caller was wrong about."""
+def test_a_delete_takes_a_404_as_done_on_every_attempt(slept):
+    """A delete wants the object gone, and a 404 says it is. On a retry the
+    first attempt reached the API server and only its answer was lost; on
+    the FIRST attempt the TTL controller reaped the Job between the prune's
+    list and its delete -- which used to raise, and end the apply before its
+    pause sync (3090)."""
     from htrflow_converter.cluster import _retrying
 
     answers = [ApiException(status=503, reason="flaky"), ApiException(status=404)]
@@ -491,8 +514,9 @@ def test_a_delete_retried_past_a_5xx_takes_a_404_as_done(slept):
     assert _retrying(delete, gone_is_done=True) is None
     assert slept == [1]
 
-    with pytest.raises(ApiException) as exc:
-        _retrying(
-            lambda: (_ for _ in ()).throw(ApiException(status=404)), gone_is_done=True
-        )
-    assert exc.value.status == 404
+    def reaped():
+        raise ApiException(status=404)
+
+    assert _retrying(reaped, gone_is_done=True) is None
+    with pytest.raises(ApiException):
+        _retrying(reaped)
