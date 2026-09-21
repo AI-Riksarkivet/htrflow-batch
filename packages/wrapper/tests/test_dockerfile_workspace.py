@@ -44,8 +44,8 @@ ARM64_EXTRAS = [
     "libc6-dev",
     "python3.10-dev",
 ]
-BASE_ARM64_DOCKERFILE = REPO / ".docker" / "htrflow-base-arm64.dockerfile"
-BASE_ARM64_LOCK = REPO / ".docker" / "htrflow-base-arm64" / "uv.lock"
+BASE_ARM64_DOCKERFILE = REPO / ".docker" / "htrflow-base.dockerfile"
+BASE_ARM64_LOCK = REPO / ".docker" / "htrflow-base" / "uv.lock"
 
 # Build paths that must never cross-build: a `--platform` flag or a
 # qemu/binfmt setup step is exactly how the wrapper image ends up emulated.
@@ -276,7 +276,7 @@ def test_the_arm64_base_is_built_from_pinned_inputs() -> None:
     ).read_text()
     makefile = (REPO / "Makefile").read_text()
     for recipe in (action, makefile):
-        assert "htrflow-base-arm64.dockerfile" in recipe
+        assert "htrflow-base.dockerfile" in recipe
         assert "lock=" in recipe  # the named build context with the lock
         assert "docker/htrflow.dockerfile" not in recipe
     assert not re.search(r"^\s*uv lock\s*$", action, re.M)

@@ -12,7 +12,7 @@
 #   arm64  a locally built htrflow base (the upstream image is amd64-only),
 #          plus the compiler the GB10 needs — see the guarded steps below.
 #          Build it first, from a checkout of AI-Riksarkivet/htrflow, with
-#          this repository's .docker/htrflow-base-arm64.dockerfile and the
+#          this repository's .docker/htrflow-base.dockerfile and the
 #          lockfile committed beside it (`make build-htrflow-base-arm64`).
 #          `make build-wrapper` on an aarch64 host and the arm64 wrapper
 #          jobs in publish.yml/ci.yml/security.yml all build exactly this

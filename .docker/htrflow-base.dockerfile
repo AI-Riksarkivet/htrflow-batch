@@ -3,8 +3,8 @@
 # checkout of AI-Riksarkivet/htrflow, which is the build CONTEXT; this file
 # and the lockfile are this repository's (audit finding 3060):
 #
-#   docker build -f .docker/htrflow-base-arm64.dockerfile \
-#     --build-context lock=.docker/htrflow-base-arm64 \
+#   docker build -f .docker/htrflow-base.dockerfile \
+#     --build-context lock=.docker/htrflow-base \
 #     -t htrflow:v0.2.6-arm64 <htrflow checkout>
 #
 # (`make build-htrflow-base-arm64` and .github/actions/build-htrflow-base-arm64
@@ -18,7 +18,7 @@
 #     installed with `uv sync --locked`, which refuses a checkout whose
 #     pyproject.toml no longer matches that lock (a moved
 #     HTRFLOW_ARM64_BASE_REF) instead of re-resolving it. Refresh it with
-#     `make lock-htrflow-base-arm64` and review the diff;
+#     `make lock-htrflow-base` and review the diff;
 #   * apt packages stay unpinned, as in the wrapper dockerfile: Ubuntu's
 #     archive drops superseded versions.
 #

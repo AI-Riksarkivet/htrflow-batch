@@ -2,7 +2,7 @@
         compose-up compose-test compose-smoke compose-smoke-run compose-down helm-lint helm-template \
         install-devstack install-kyverno \
         docs-serve docs-build config-reference api-contract \
-        scan-image poc-push poc-push-arm64 build-wrapper build-htrflow-base-arm64 lock-htrflow-base-arm64 build-web scan-web clean install-kueue \
+        scan-image poc-push poc-push-arm64 build-wrapper build-htrflow-base-arm64 lock-htrflow-base build-web scan-web clean install-kueue \
         campaigns-apply psa-labels e2e \
         frontend-install frontend-test frontend-check frontend-build frontend-dev
 
@@ -323,16 +323,16 @@ build-wrapper:
 
 # The arm64 base the wrapper builds on: the HTRFLOW_DIR checkout is the
 # build context, the dockerfile and the lock are this repo's
-# (.docker/htrflow-base-arm64.dockerfile, finding 3060), so nothing is
+# (.docker/htrflow-base.dockerfile, finding 3060), so nothing is
 # written into that checkout and nothing is resolved at build time. CI builds
 # the same thing from a throwaway clone pinned to HTRFLOW_ARM64_BASE_REF
 # (.github/actions/build-htrflow-base-arm64). A checkout whose pyproject.toml
 # no longer matches the lock fails the build: refresh the lock with
-# `lock-htrflow-base-arm64` from a checkout at the new ref and review the diff.
-HTRFLOW_BASE_LOCK_DIR := .docker/htrflow-base-arm64
+# `lock-htrflow-base` from a checkout at the new ref and review the diff.
+HTRFLOW_BASE_LOCK_DIR := .docker/htrflow-base
 UV_LOCK_IMAGE := ghcr.io/astral-sh/uv:0.12.6-debian-slim@sha256:9ac2caa67916b63d27595589abd0f0f10930974c885cd962ee30b71fbab42d9f
 build-htrflow-base-arm64:
-	docker build -f .docker/htrflow-base-arm64.dockerfile \
+	docker build -f .docker/htrflow-base.dockerfile \
 	  --build-context lock=$(HTRFLOW_BASE_LOCK_DIR) -t $(HTRFLOW_ARM64_BASE) $(HTRFLOW_DIR)
 
 # Re-lock the arm64 base against the HTRFLOW_DIR checkout's pyproject.toml,
@@ -341,7 +341,7 @@ build-htrflow-base-arm64:
 # UV_LOCK_ARGS=--upgrade moves everything. The debian-slim uv image, not the
 # distroless one: uv probes the filesystem for a libc before it can resolve
 # wheel tags.
-lock-htrflow-base-arm64:
+lock-htrflow-base:
 	@tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
 	cp $(HTRFLOW_DIR)/pyproject.toml $(HTRFLOW_BASE_LOCK_DIR)/uv.lock "$$tmp"/ && \
 	docker run --rm --user $$(id -u):$$(id -g) -e HOME=/tmp -v "$$tmp:/w" -w /w $(DOCKER_CA) \
