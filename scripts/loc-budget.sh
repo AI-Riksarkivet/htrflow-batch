@@ -830,7 +830,10 @@ check converter "$(count packages/converter/src -name '*.py')" 2582
 # 1866 -> 1870 (2026-09-16, hotfix): the viewer's style directive is
 # 'unsafe-inline' with no hash beside it -- UV writes `style=` attributes at
 # runtime, and under the hashed policy the viewer rendered as bare buttons.
-check web       "$(count packages/web/src -name '*.py')" 1870
+# 1870 -> 1891 (2026-09-21, audit 3059): the viewer's CSP is set by the file
+# served, not the request path -- /uv and /uv.html/ served the same page with
+# frame-ancestors only. BuiltSite.file_response and the docstring saying why.
+check web       "$(count packages/web/src -name '*.py')" 1891
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
