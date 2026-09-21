@@ -46,13 +46,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: ./.github/actions/setup-dagger
+
       - name: Trivy report (SARIF)
-        uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77 # v8.4.1
-        with:
-          verb: call
-          args: scan-sarif --image ${{ matrix.image }} export --path ./trivy-${{ matrix.image }}.sarif
-          cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-          version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
+        run: |
+          dagger call --progress plain scan-sarif --image "$IMAGE" \
+            export --path "./trivy-${IMAGE}.sarif"
+        env:
+          IMAGE: ${{ matrix.image }}
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
       - name: Upload the SARIF as an artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -69,9 +71,7 @@ jobs:
 
       - name: Trivy gate (CRITICAL blocks)
         if: github.event_name != 'push'
-        uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77 # v8.4.1
-        with:
-          verb: call
-          args: ${{ matrix.gate }} --severity CRITICAL --ignore-unfixed
-          cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-          version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
+        run: dagger call --progress plain "$GATE" --severity CRITICAL --ignore-unfixed
+        env:
+          GATE: ${{ matrix.gate }}
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}

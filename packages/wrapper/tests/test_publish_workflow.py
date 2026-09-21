@@ -15,6 +15,7 @@ the chart and the campaign pipelines reference.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -33,11 +34,11 @@ JOBS = WORKFLOW["jobs"]
 #: things towards.
 _EXPRESSION = re.compile(r"\$\{\{\s*(inputs|steps)\.")
 
-#: Both workflows that build or publish an image. `dagger-for-github` is in
-#: the scan because its `args` input is not an argument list: the action
-#: interpolates it, unquoted, into a `run:` of its own, so a value reaching
-#: it is a second shell's worth of script text.
-_SCRIPTED = ["publish.yml", "ci.yml"]
+#: The workflows that build or publish an image. `with: args:` stays in the
+#: scan although no step uses dagger-for-github any more: its `args` input
+#: was not an argument list but script text the action pasted, unquoted, into
+#: a `run:` of its own, and anything shaped like it would be again.
+_SCRIPTED = ["publish.yml", "ci.yml", "security.yml"]
 
 # Runner labels per architecture: a per-arch tag built on the wrong runner is
 # a cross-build with extra steps.
@@ -138,3 +139,71 @@ def test_no_script_carries_a_github_expression(name: str) -> None:
             for where, script in scripts.items():
                 found = _EXPRESSION.search(script)
                 assert not found, (name, job, step.get("name"), where, found.group())
+
+
+SETUP_DAGGER = "./.github/actions/setup-dagger"
+ACTIONS = REPO / ".github" / "actions"
+
+
+def _all_workflows() -> dict[str, dict]:
+    return {p.name: yaml.safe_load(p.read_text()) for p in WORKFLOWS.glob("*.yml")}
+
+
+def test_no_workflow_installs_dagger_through_a_piped_script() -> None:
+    """Finding 3070: dagger/dagger-for-github installs the CLI with
+    `curl https://dl.dagger.io/dagger/install.sh | sh`, in the publish jobs
+    after the registry login and with the signing identity. The CLI comes
+    from the checksum-verified setup action instead."""
+    steps = [
+        (name, step)
+        for name, workflow in _all_workflows().items()
+        for body in workflow["jobs"].values()
+        for step in body.get("steps", [])
+    ] + [
+        (path.parent.name, step)
+        for path in ACTIONS.rglob("action.yml")
+        for step in yaml.safe_load(path.read_text())["runs"].get("steps", [])
+    ]
+    for where, step in steps:
+        assert not step.get("uses", "").startswith("dagger/dagger-for-github"), where
+        assert not re.search(r"curl[^\n]*\|\s*(ba)?sh\b", step.get("run", "")), where
+
+
+def test_every_dagger_call_runs_after_the_pinned_setup() -> None:
+    for name, workflow in _all_workflows().items():
+        for job, body in workflow["jobs"].items():
+            steps = body.get("steps", [])
+            setup = [i for i, s in enumerate(steps) if s.get("uses") == SETUP_DAGGER]
+            calls = [
+                i
+                for i, s in enumerate(steps)
+                if re.search(r"^\s*(ref=\"\$\()?dagger ", s.get("run", ""), re.M)
+            ]
+            if calls:
+                assert setup and setup[0] < calls[0], (name, job)
+
+
+def test_the_setup_pins_the_cli_and_engine_of_dagger_json() -> None:
+    engine = json.loads((REPO / "dagger.json").read_text())["engineVersion"]
+    action = yaml.safe_load((ACTIONS / "setup-dagger" / "action.yml").read_text())
+    env = action["runs"]["steps"][0]["env"]
+    assert "v" + env["DAGGER_VERSION"] == engine
+    for arch in ("AMD64", "ARM64"):
+        assert re.fullmatch(r"[0-9a-f]{64}", env[f"SHA256_LINUX_{arch}"]), arch
+    assert re.fullmatch(
+        rf"registry\.dagger\.io/engine:{re.escape(engine)}@sha256:[0-9a-f]{{64}}",
+        env["ENGINE_IMAGE"],
+    )
+    run = action["runs"]["steps"][0]["run"]
+    assert "sha256sum --check" in run
+    assert "_EXPERIMENTAL_DAGGER_RUNNER_HOST=docker-image://${ENGINE_IMAGE}" in run
+
+
+def test_tools_are_installed_before_the_registry_login() -> None:
+    """Nothing a publish job downloads after `docker login` may be unpinned:
+    the dagger CLI is set up before the credential exists in the job."""
+    for name, job in JOBS.items():
+        uses = [s.get("uses", "") for s in job["steps"]]
+        logins = [i for i, u in enumerate(uses) if u.startswith("docker/login-action")]
+        if SETUP_DAGGER in uses:
+            assert logins and uses.index(SETUP_DAGGER) < logins[0], name
