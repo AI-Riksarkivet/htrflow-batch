@@ -76,8 +76,8 @@ dependencies and the leaf overrides come from the workspace lock
 (`uv export --locked … --require-hashes`, so a stale `uv.lock` fails the
 build). The transformers line is a hashed requirements file per major,
 `.docker/transformers/<major>.txt`, compiled from the `.in` file beside it
-with `make transformers-requirements`: transformers, the `huggingface-hub`
-major it needs, `sentencepiece` and `protobuf`, installed with `--no-deps`
+with `make transformers-requirements`: transformers, the `tokenizers` and
+`huggingface-hub` it needs, `sentencepiece` and `protobuf`, installed with `--no-deps`
 so nothing else in the base moves, and the build then checks that their
 own requirements are met. A `TRANSFORMERS_VERSION` those files do not pin
 fails the build. Nothing is resolved at build time. The source-built base installs htrflow's
