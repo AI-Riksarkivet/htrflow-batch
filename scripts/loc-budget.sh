@@ -594,7 +594,7 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 3156
 # htrflow merges any other key over model_settings, so one there unpins the
 # model. The frozenset, the check in _check_steps and the sentence naming
 # the steps and keys; half is the comment saying why the converter repeats a
-# rule the cluster also enforces.)
+# rule the cluster also enforces.
 # 2582 -> 2600 (3090): the prune no longer stops at its first refusal.
 # `Cluster.prune` catches a refused list or delete per kind and per object
 # and hands back what it could not do, so the apply runs the pause sync for
@@ -610,6 +610,8 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 3156
 # YAML skeletons, no Python), so the render also writes rendered/sync.yaml,
 # a ConfigMap carrying the render's digest -- the one object an Application
 # syncs, so a new render makes it OutOfSync and its apply hook runs.
+# The two rounds above were written in parallel from 2582; together they are
+# 2582 + 24 (3058) + 141 (3090/3084/3085) = 2747.
 check converter "$(count packages/converter/src -name '*.py')" 2747
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
