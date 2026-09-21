@@ -1986,10 +1986,10 @@ describe("done, but with pages missing", () => {
       };
     }
 
-    test("a campaign that succeeded with failed pages is amber, not green", async () => {
+    test("a campaign that succeeded with failed pages is not plain green", async () => {
       const { chip, section } = await header(1);
       expect(chip).toHaveClass("lost");
-      expect(section).toHaveAttribute("data-health", "lost");
+      expect(section).toHaveAttribute("data-health", "partly-succeeded");
       // The word matches the colour now (2026-09-16); the tooltip says how
       // many, and the screen-reader sentence is the one it always was.
       expect(chip).toHaveTextContent("partially succeeded");
@@ -2974,6 +2974,109 @@ describe("a finished campaign's card stops asking", () => {
     expect(screen.queryByText(/Can't reach the campaign service/)).toBeNull();
     await vi.advanceTimersByTimeAsync(RELOAD_MS * 10);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+// "Partially succeeded" and "partially failed" wore the same amber, on the
+// chip and on the card's left accent, and a reader scanning the list could
+// not tell a campaign that lost a few pages from one that lost whole volumes
+// (a maintainer request). Each now mixes the amber with where it ended:
+// green for every volume finished, red for volumes lost. The colours are CSS
+// and jsdom computes none, so the DOM half checks which mix each state asks
+// for and the source half checks what each mix is drawn with.
+describe("the two partial states are told apart by colour", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubStorage();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  async function card(phase: JobSummary["phase"], pagesFailed: number) {
+    cleanup();
+    const row: JobSummary = {
+      ...job,
+      phase,
+      counts: {
+        total: 3,
+        active: 0,
+        done: phase === "Failed" ? 0 : 3,
+        failed: 0,
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          ...row,
+          failures: [],
+          volumes: [],
+          pagesFailed,
+        }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job: row });
+    await vi.advanceTimersByTimeAsync(0);
+    return {
+      chip: container.querySelector(".chip.phase") as HTMLElement,
+      accent: container.querySelector(".campaign") as HTMLElement,
+    };
+  }
+
+  test.each([
+    ["Succeeded", 2, "partially succeeded", "success", "partly-succeeded"],
+    ["PartiallyFailed", 0, "partially failed", "destructive", "partly-failed"],
+  ] as const)(
+    "%s with %i lost pages: %s mixes amber with %s",
+    async (phase, pagesFailed, word, mix, health) => {
+      const { chip, accent } = await card(phase, pagesFailed);
+      expect(chip).toHaveTextContent(word); // the words stay
+      expect(chip).toHaveAttribute("data-mix", mix);
+      expect(accent).toHaveAttribute("data-health", health);
+    },
+  );
+
+  test.each([
+    ["Succeeded", "done"],
+    ["Failed", "failed"],
+  ] as const)("%s is one colour, as before", async (phase, health) => {
+    const { chip, accent } = await card(phase, 0);
+    expect(chip).not.toHaveAttribute("data-mix");
+    expect(accent).toHaveAttribute("data-health", health);
+  });
+
+  test("each mix is drawn with its own tokens: a hard split on the chip, a gradient on the accent", async () => {
+    const css: string = (await import("./CampaignCard.svelte?raw")).default;
+    const rule = (selector: string): string => {
+      const at = css.indexOf(`${selector} {`);
+      expect(at, selector).toBeGreaterThan(-1);
+      return css.slice(at, css.indexOf("}", at));
+    };
+    for (const [mix, token] of [
+      ["success", "--success"],
+      ["destructive", "--destructive"],
+    ]) {
+      expect(rule(`.chip.phase[data-mix="${mix}"]`)).toContain(
+        `--mix-to: var(${token})`,
+      );
+    }
+    expect(rule('.campaign[data-health="partly-succeeded"]')).toContain(
+      "--mix-to: var(--success)",
+    );
+    expect(rule('.campaign[data-health="partly-failed"]')).toContain(
+      "--mix-to: var(--destructive)",
+    );
+    // The chip: amber and the mix meet at one point, never a blend under
+    // the word. The accent has no text on it, so it may blend.
+    expect(rule(".chip.phase[data-mix]")).toMatch(
+      /var\(--warning\) 50%,\s*var\(--mix-to\) 50%/,
+    );
+    expect(rule('.campaign[data-health^="partly-"]')).toMatch(
+      /to bottom,\s*var\(--warning\),\s*var\(--mix-to\)/,
+    );
   });
 });
 
