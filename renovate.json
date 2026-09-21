@@ -78,7 +78,7 @@
     },
     {
       "customType": "regex",
-      "description": "AI-Riksarkivet/htrflow commit the arm64 wrapper base is built from (.github/workflows/{ci,publish,security}.yml build it natively on an arm64 runner). Bumping it rebuilds that base, so it gets its own PR; keep the three workflows on the same commit, and when the new commit changes htrflow's pyproject.toml the base build fails until `make lock-htrflow-base-arm64` refreshes the committed lock in the same PR.",
+      "description": "AI-Riksarkivet/htrflow commit the arm64 wrapper base is built from (.github/workflows/{ci,publish,security}.yml build it natively on an arm64 runner). Bumping it rebuilds that base, so it gets its own PR; keep the three workflows on the same commit, and when the new commit changes htrflow's pyproject.toml the base build fails until `make lock-htrflow-base` refreshes the committed lock in the same PR.",
       "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
       "matchStrings": ["HTRFLOW_ARM64_BASE_REF: (?<currentDigest>[a-f0-9]{40})"],
       "depNameTemplate": "AI-Riksarkivet/htrflow",

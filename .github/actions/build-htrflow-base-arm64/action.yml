@@ -4,7 +4,7 @@ description: >
   airiksarkivet/htrflow — the upstream image is amd64-only — so the base is
   built from source on the arm64 runner: clone AI-Riksarkivet/htrflow at a
   pinned commit and build it with this repository's
-  .docker/htrflow-base-arm64.dockerfile and the lockfile committed beside it
+  .docker/htrflow-base.dockerfile and the lockfile committed beside it
   (finding 3060: every image by digest, dependencies synced --locked, nothing
   resolved at build time). Exactly what `make build-htrflow-base-arm64` does
   on the GB10 node, from a throwaway checkout.
@@ -49,8 +49,8 @@ runs:
         # lock comes from this repository as the named context `lock`, so a
         # moved ref whose pyproject.toml no longer matches it fails the
         # `uv sync --locked` instead of being resolved afresh.
-        docker build -f "$GITHUB_WORKSPACE/.docker/htrflow-base-arm64.dockerfile" \
-          --build-context "lock=$GITHUB_WORKSPACE/.docker/htrflow-base-arm64" \
+        docker build -f "$GITHUB_WORKSPACE/.docker/htrflow-base.dockerfile" \
+          --build-context "lock=$GITHUB_WORKSPACE/.docker/htrflow-base" \
           -t "$IMAGE" "$DIR"
         echo "revision=$(git -C "$DIR" describe --tags --always)" >> "$GITHUB_OUTPUT"
         df -h /
