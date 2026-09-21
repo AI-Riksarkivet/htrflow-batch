@@ -133,8 +133,9 @@ make e2e DIR=<campaigns-repo>                       # validate, apply, wait for 
 `rendered/campaigns`, applies them server-side, and syncs each campaign's
 pause. Repeat after every commit to that branch — nothing watches it for
 you. `make e2e` waits for the warm-up Jobs, then polls every campaign Job
-until it is Complete or Failed (`CAMPAIGN_TIMEOUT` seconds, default 3600),
-and finally requests `/api/v1/jobs` from the web front's NodePort on the
+until it is Complete or Failed (`CAMPAIGN_TIMEOUT` seconds, default 3600).
+It fails if any Job ends Failed, if no campaign Job exists, or if `kubectl`
+cannot read one. Otherwise it finally requests `/api/v1/jobs` from the web front's NodePort on the
 machine running `make`. Editing an already-rendered campaign's volume list in
 place hits the append-only rule
 ([Campaign & Pipeline YAML](../reference/campaign-yaml.md)).
@@ -271,8 +272,8 @@ the chart READMEs ([Releasing](releasing.md#chart-releases)).
   RuntimeClass and device-plugin DaemonSet, which takes down any GPU pod
   running on them. The target looks for a pod outside
   `kube-system` that is Running or Pending and uses `runtimeClassName:
-  nvidia` or requests `nvidia.com/gpu`, and exits non-zero if it finds one;
-  `FORCE=1` skips the check.
+  nvidia` or requests `nvidia.com/gpu`, and exits non-zero if it finds one,
+  or if it cannot list the pods to find out; `FORCE=1` skips the check.
 - **Pausing is `suspend: true` in the campaign file plus the apply.** The
   rendered `spec.suspend` alone does not hold — Kueue owns that field for an
   admitted Workload and undoes a change within seconds — so the pause sync in

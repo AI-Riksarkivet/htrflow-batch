@@ -225,6 +225,11 @@ Pod Security Admission labels once with `make psa-labels`:
 - `warn=restricted`
 - `audit=restricted`
 
+Before the first install there is no release to read, so `enforce` is the
+chart default, `baseline`; `PSA_ENFORCE=restricted` sets it explicitly. The
+target refuses when it cannot read the release, and it refuses any level
+other than `baseline` or `restricted`.
+
 The `warn` label keeps the restricted-clean claim honest: a regression shows
 up as an admission warning when a Job is created.
 

@@ -91,7 +91,8 @@ that namespace.
 - `NVIDIA_DEVICE_PLUGIN=false` leaves the device plugin and RuntimeClass out,
   for a cluster that already has them. The target refuses this while GPU
   pods are running, because deleting the RuntimeClass and DaemonSet takes
-  those pods down. `FORCE=1` overrides the check.
+  those pods down. It also refuses when it cannot list the cluster's pods
+  to find out. `FORCE=1` overrides the check.
 - A device plugin or RuntimeClass that was applied by hand must first be
   adopted into the release, or kept outside it. The commands are under
   "Adopting hand-applied resources" in `charts/htrflow-devstack/README.md`.
