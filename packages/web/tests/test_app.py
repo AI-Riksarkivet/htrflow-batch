@@ -28,6 +28,7 @@ JOB = {
     "metadata": {
         "name": "kyrk",
         "namespace": "htr-test",
+        "uid": "uid-kyrk",
         "creationTimestamp": "2026-01-01T00:00:00Z",
         "labels": {
             "app": "htrflow-batch",
@@ -410,6 +411,7 @@ class RecordingReader(FakeReader):
     def __init__(self, live: list[dict] | None = None) -> None:
         self.live = live or []
         self.written: list[dict] = []
+        self.forced: list[bool] = []
 
     def list_configmaps(self) -> list[dict]:
         return self.live
@@ -420,7 +422,7 @@ class RecordingReader(FakeReader):
                 return cm
         return super().get_configmap(namespace, name)
 
-    def apply_configmap(self, body: dict) -> None:
+    def apply_configmap(self, body: dict, force: bool = False) -> None:
         # The API server refuses a name no object could carry, and a fake
         # that accepts one proves nothing about what the cluster would do
         # with the names this package builds (2026-09-14 audit).
@@ -430,6 +432,7 @@ class RecordingReader(FakeReader):
             assert len(value) <= 63, f"{field} is not a DNS-1123 label: {value!r}"
             assert DNS_1123.fullmatch(value), f"{field} is not DNS-1123: {value!r}"
         self.written.append(body)
+        self.forced.append(force)
 
 
 def _status_of(reader: RecordingReader) -> dict:
@@ -634,6 +637,70 @@ def test_a_later_detail_request_does_not_erase_the_failed_volumes():
     assert _status_of(reader)["data"]["failedVolumes"] == kept
 
 
+def test_failed_volumes_land_when_apply_owns_every_other_field():
+    """apply recorded the ending, with a results base a slash apart from
+    this API's and no campaign label on the Job it read. Sending those
+    fields back unforced was a 409 on every poll, and the failure reasons
+    were never written (3081). Only what apply does not own is sent."""
+    stored = {
+        "metadata": {
+            "name": "campaign-kyrk-status",
+            "namespace": "htr-test",
+            "labels": {"htrflow.riksarkivet.se/campaign": ""},
+            "managedFields": [
+                {
+                    "manager": "htrflow-campaigns",
+                    "operation": "Apply",
+                    "fieldsV1": {
+                        "f:data": {
+                            f"f:{k}": {}
+                            for k in (
+                                "phase", "volumesTotal", "volumesDone",
+                                "volumesFailed", "startedAt", "finishedAt",
+                                "resultsBase", "jobUid",
+                            )
+                        }
+                    },
+                }
+            ],
+        },
+        "data": {
+            "phase": "Running",
+            "jobUid": "uid-kyrk",
+            "resultsBase": "http://x//htr-test/demo-v1",
+        },
+    }  # fmt: skip
+    reader = RecordingReader([stored])
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    assert client.get("/api/v1/jobs/htr-test/kyrk").status_code == 200
+    written = _status_of(reader)
+    assert written["data"] == {"failedVolumes": "[]"}
+    assert "labels" not in written["metadata"]
+    assert reader.forced == [False]
+
+
+def test_a_recreated_job_does_not_inherit_the_last_runs_record():
+    """Same name, new Job: the record of the old one -- its failures, its
+    finishedAt -- is not this run's (3075)."""
+    stored = {
+        "metadata": {"name": "campaign-kyrk-status", "namespace": "htr-test"},
+        "data": {
+            "phase": "PartiallyFailed",
+            "jobUid": "uid-old",
+            "finishedAt": "2026-09-08T10:00:00Z",
+            "failedVolumes": '[{"id":"vol1","reason":"manifest 404"}]',
+        },
+    }
+    reader = RecordingReader([stored])
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    client.get("/api/v1/jobs")
+    written = _status_of(reader)["data"]
+    assert written["jobUid"] == "uid-kyrk"
+    assert written["phase"] == "Running"
+    assert written["finishedAt"] == ""
+    assert "failedVolumes" not in written
+
+
 class _Refusing(RecordingReader):
     """Every write refused, the way an unrenewed RBAC grant refuses them."""
 
@@ -641,7 +708,7 @@ class _Refusing(RecordingReader):
         super().__init__(live)
         self.attempts = 0
 
-    def apply_configmap(self, body: dict) -> None:
+    def apply_configmap(self, body: dict, force: bool = False) -> None:
         self.attempts += 1
         raise RuntimeError("configmaps is forbidden")
 
@@ -654,7 +721,7 @@ class _Contested(RecordingReader):
         super().__init__(live)
         self.attempts = 0
 
-    def apply_configmap(self, body: dict) -> None:
+    def apply_configmap(self, body: dict, force: bool = False) -> None:
         self.attempts += 1
         raise ApplyConflict(body["metadata"]["name"])
 

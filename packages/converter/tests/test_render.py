@@ -719,7 +719,18 @@ def test_a_completed_job_is_recorded_by_the_apply_itself():
         "startedAt": "2026-09-08T08:00:00Z",
         "finishedAt": "2026-09-08T10:00:00Z",
         "resultsBase": f"{cfg.public_results_base}/htr-test/demo-v1",
+        "jobUid": "uid-kyrk-1",
     }
+
+
+def test_the_record_names_the_job_it_describes():
+    """A Job recreated under the same name -- a reaped campaign whose file
+    gained volumes -- is a different run. The uid is what tells the read API
+    and the next apply that this record is about the old one (3075)."""
+    _, _, cfg = _kyrk()
+    job = _live_job([{"type": "Complete", "status": "True"}], succeeded=3)
+    job["metadata"]["uid"] = "uid-kyrk-2"
+    assert render.status_configmap(job, cfg)["data"]["jobUid"] == "uid-kyrk-2"
 
 
 def test_the_records_results_base_has_no_doubled_slash():

@@ -156,11 +156,14 @@ def summarize(job: dict, cfg, warmup: dict) -> dict:
     }
 
 
-def status_record(row: dict, failures: list[dict] | None = None) -> dict[str, str]:
+def status_record(
+    row: dict, failures: list[dict] | None = None, *, job_uid: str = ""
+) -> dict[str, str]:
     """The status ConfigMap's ``data``, from a summary this request already
     computed. The field names are a contract: `htrflow-campaigns apply`
     parses them back to decide whether a finished campaign whose Job has
-    been reaped should be left alone (B76).
+    been reaped should be left alone (B76). ``job_uid`` is the Job's
+    ``metadata.uid``: which run the record is about (3075).
 
     ``failures`` is passed only by the detail endpoint, which is the one
     that reads pods -- a list response has no per-volume reasons, and
@@ -176,6 +179,7 @@ def status_record(row: dict, failures: list[dict] | None = None) -> dict[str, st
         "startedAt": row["startedAt"] or "",
         "finishedAt": row["finishedAt"] or "",
         "resultsBase": row["resultsBase"],
+        "jobUid": job_uid,
     }
     if failures is not None:
         data["failedVolumes"] = _failed_volumes(failures)
@@ -450,24 +454,75 @@ def _is_later(value: str, old: str) -> bool:
     return stored is None or fresh >= stored
 
 
-def status_configmap(row: dict, data: dict[str, str]) -> dict:
+def status_configmap(row: dict, data: dict[str, str], labels: bool = True) -> dict:
     """The whole object the read API applies. Named after the campaign
     ConfigMap beside it and labelled like it, so a prune takes both."""
-    return {
-        "apiVersion": "v1",
-        "kind": "ConfigMap",
-        "metadata": {
-            "name": f"campaign-{row['name']}{STATUS_SUFFIX}",
-            "namespace": row["namespace"],
-            "labels": {
-                _MANAGED_BY_LABEL: "converter",
-                _CAMPAIGN_LABEL: row["campaign"],
-                _PIPELINE_LABEL: row["pipeline"],
-                KIND_LABEL: STATUS_KIND,
-            },
-        },
-        "data": data,
+    meta: dict = {
+        "name": f"campaign-{row['name']}{STATUS_SUFFIX}",
+        "namespace": row["namespace"],
     }
+    if labels:
+        meta["labels"] = {
+            _MANAGED_BY_LABEL: "converter",
+            _CAMPAIGN_LABEL: row["campaign"],
+            _PIPELINE_LABEL: row["pipeline"],
+            KIND_LABEL: STATUS_KIND,
+        }
+    return {"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta, "data": data}
+
+
+#: `htrflow-campaigns apply`'s field manager (converter ``cluster.FIELD_MANAGER``).
+APPLY_MANAGER = "htrflow-campaigns"
+
+
+def _applys_keys(meta: dict) -> set[str]:
+    """The ``data`` keys `htrflow-campaigns apply` owns in the stored record,
+    as the API server wrote them down in its ``managedFields``."""
+    keys: set[str] = set()
+    for entry in meta.get("managedFields") or []:
+        if entry.get("manager") == APPLY_MANAGER and entry.get("operation") == "Apply":
+            data = (entry.get("fieldsV1") or {}).get("f:data") or {}
+            keys |= {k.removeprefix("f:") for k in data}
+    return keys
+
+
+def record_write(
+    stored: dict | None, row: dict, fresh: dict[str, str]
+) -> tuple[dict, bool] | None:
+    """What to apply over the ``stored`` status ConfigMap, and whether to
+    force it -- or ``None`` when it already says all of it.
+
+    Who owns what (3075, 3081). ``jobUid`` names the Job the record is
+    about. `htrflow-campaigns apply` writes the ending it reads off that
+    Job -- the summary fields, ``jobUid`` and the labels -- forced, once the
+    Job is over; that is authoritative, and once apply owns ``phase`` for
+    this Job this API sends only the keys apply does not own, which is
+    ``failedVolumes``: server-side apply keeps a field another manager still
+    owns when this one leaves it out, so nothing is lost by omission and
+    nothing is left to conflict over. Until then this API writes the whole
+    record, merged over what is stored (``merge_record``). A record of
+    ANOTHER Job -- one reaped, then recreated under the same name -- says
+    nothing about this run: it is replaced whole, and forced when apply
+    still owns some of the old run's fields, on the ``resourceVersion``
+    this request read, so an ending apply writes in between wins (a 409).
+    A record without a ``jobUid`` predates it and counts as this Job's.
+    """
+    data = (stored or {}).get("data") or {}
+    meta = (stored or {}).get("metadata") or {}
+    other_job = data.get("jobUid", "") not in ("", fresh["jobUid"])
+    body = fresh if other_job else merge_record(data, fresh)
+    theirs = _applys_keys(meta)
+    if not other_job and "phase" in theirs:
+        body = {k: v for k, v in body.items() if k not in theirs}
+        if all(data.get(k) == v for k, v in body.items()):
+            return None
+        return status_configmap(row, body, labels=False), False
+    if not other_job and body == data:
+        return None
+    cm = status_configmap(row, body)
+    if theirs:
+        cm["metadata"]["resourceVersion"] = meta.get("resourceVersion", "")
+    return cm, bool(theirs)
 
 
 def match_warmup(job: dict, warmup_jobs: list[dict]) -> dict | None:

@@ -254,7 +254,7 @@ class Reader:
             raise ClusterUnavailable(f"list records: {type(e).__name__}") from e
         return json.loads(resp.data).get("items", [])
 
-    def apply_configmap(self, body: dict) -> None:
+    def apply_configmap(self, body: dict, force: bool = False) -> None:
         """The one write this service makes. Raises like any other client
         call — ``app.py`` logs it and answers the request anyway, because a
         status page that 500s when it cannot write a record is worse than
@@ -266,9 +266,13 @@ class Reader:
         would take the fields back off it on every poll of an open status
         page. A 409 while the other manager is mid-write is retried once,
         after a short pause, and a second one is left to stand as an
-        ``ApplyConflict`` -- contention, not a refusal.
+        ``ApplyConflict`` -- contention, not a refusal. ``force`` is only
+        ever asked for a record of another Job (``projection.record_write``),
+        and then with the ``resourceVersion`` it read in ``body``: the API
+        server holds the apply to that version.
         """
         meta = body["metadata"]
+        extra = {"force": True} if force else {}
         for attempt in (1, 2):
             try:
                 self.core.patch_namespaced_config_map(
@@ -278,6 +282,7 @@ class Reader:
                     field_manager=FIELD_MANAGER,
                     _content_type=_APPLY_PATCH,
                     _preload_content=False,
+                    **extra,
                 )
                 return
             except client.ApiException as e:

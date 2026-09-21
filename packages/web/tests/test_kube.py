@@ -283,6 +283,17 @@ def test_the_apply_never_forces_another_managers_field(reader: Reader):
     assert "force" not in reader.calls[0]["query"]
 
 
+def test_a_forced_apply_says_so_and_sends_the_version_it_read(reader: Reader):
+    """Only for a record of another Job (projection.record_write): forced,
+    with the resourceVersion the request read in the body -- the API server
+    treats it as a precondition, so apply's write in between is a 409."""
+    body = {**RECORD, "metadata": {**RECORD["metadata"], "resourceVersion": "7"}}
+    reader.apply_configmap(body, force=True)
+    (call,) = reader.calls
+    assert call["query"]["force"] is True
+    assert call["body"]["metadata"]["resourceVersion"] == "7"
+
+
 def test_a_conflicted_apply_is_retried_once(reader: Reader):
     """409 is what the API server says while another manager is mid-write."""
     reader.answer["PATCH"] = [_api_error(409), {}]
