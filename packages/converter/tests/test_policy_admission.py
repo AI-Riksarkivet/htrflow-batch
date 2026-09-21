@@ -301,3 +301,20 @@ def test_signature_verification_reaches_an_image_volume(tmp_path: Path):
     verdict, out = admission(tmp_path, policy, pod(None))
     assert verdict == "refused", out
     assert OURS in out
+
+
+# --- 3065: verification scoped to a list nothing enforces -----------------
+
+
+def test_verification_alone_reaches_every_image(tmp_path: Path):
+    """`verifyImages.imageReferences` defaulted to `allowedImageRepos`, and
+    Kyverno skips an image outside `imageReferences`. That is only safe
+    while the images-allowed policy refuses everything outside the list; with
+    `policies.enabled` off it is not rendered, and an unsigned image from
+    any other registry was admitted unverified."""
+    policy = render_policy(tmp_path, "verify-images", "security.policies.enabled=false")
+    foreign = pod(None)
+    foreign["spec"]["containers"][0]["image"] = FOREIGN
+    verdict, out = admission(tmp_path, policy, foreign)
+    assert verdict == "refused", out
+    assert FOREIGN in out

@@ -1,6 +1,6 @@
 {{- if .Values.security.verifyImages.enabled }}
 {{- $refs := .Values.security.verifyImages.imageReferences }}
-{{- if not $refs }}
+{{- if and (not $refs) .Values.security.policies.enabled }}
   {{- range .Values.security.allowedImageRepos }}{{ $refs = append $refs (printf "%s*" .) }}{{ end }}
 {{- end }}
 {{- if not $refs }}{{ $refs = list "*" }}{{ end }}
@@ -9,6 +9,11 @@
 # Requires Kyverno ≥ 1.10 with the Pod webhook enabled; cluster-scoped
 # object, so a second release in another namespace needs its own name —
 # hence the namespace suffix.
+#
+# Kyverno skips an image outside `imageReferences`, so narrowing them to
+# `allowedImageRepos` is only safe while images-allowed refuses everything
+# else -- which it does only when `policies.enabled` renders it (2026-09-17
+# audit, 3065). Otherwise the default is every image.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:

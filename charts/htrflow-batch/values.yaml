@@ -119,9 +119,9 @@ security:
   # Image repositories a Job or Pod in this namespace may pin (prefix match
   # on a path boundary, before `@sha256:`). Empty = any registry. A
   # campaigns repo with write access is a code-execution boundary (audit
-  # X4): set this in production. Enforced by the `policies` block below —
-  # with `policies.enabled: false` this value is documentation, and the
-  # default for `verifyImages.imageReferences`.
+  # X4): set this in production. Enforced by the `policies` block below,
+  # and then also the default for `verifyImages.imageReferences` — with
+  # `policies.enabled: false` this value is documentation only.
   allowedImageRepos: []      # e.g. ["ghcr.io/riksarkivet/", "127.0.0.1:30500/"]
   # Require a 40-hex `revision:` on every pipeline step's model (HF Hub
   # weights are pickles; an unpinned repo is mutable). Same: enforced by
@@ -151,8 +151,9 @@ security:
   allowTagImages: false
   # Optional Kyverno ClusterPolicy (Kyverno must be installed) that refuses
   # any Pod in the release namespace whose image is not cosign keyless-signed
-  # by the given identity. imageReferences defaults to allowedImageRepos
-  # (or "*" when that is empty).
+  # by the given identity. imageReferences defaults to "*", or to
+  # allowedImageRepos while `policies.enabled` enforces that list: Kyverno
+  # admits an image outside imageReferences unverified.
   verifyImages:
     enabled: false
     issuer: ""               # e.g. https://token.actions.githubusercontent.com
