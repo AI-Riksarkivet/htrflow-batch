@@ -132,11 +132,61 @@ def test_get_json_or_none(cfg, s3):
     assert store.get_json_or_none("manifest.json") is None
 
 
-def test_delete_page_removes_both_formats(cfg, s3, tmp_path):
+def test_delete_pages_removes_both_formats(cfg, s3, tmp_path):
     """W3: a page about to be reprocessed must not leave the previous run's
     objects behind -- if this run then FAILS the page, the stale pair would
     make the verify gate count it as accounted for and publish would read the
     stale ALTO into iiif.json while manifest.json says the page failed."""
+    store = ResultStore(cfg)
+    for name in ("0001", "0002"):
+        store.upload_page(
+            name,
+            {
+                "alto": _mk(tmp_path, f"alto/{name}.xml", "<alto/>"),
+                "page": _mk(tmp_path, f"page/{name}.xml", "<PcGts/>"),
+            },
+        )
+    store.delete_pages({"0001"})
+    assert store.done_pages() == {"0002"}
+    assert store.stored_pages() == {"page": {"0002"}, "alto": {"0002"}}
+
+
+def test_delete_pages_tolerates_a_page_that_is_not_there(cfg, s3):
+    """Nothing to delete is the normal case on a first run."""
+    ResultStore(cfg).delete_pages({"0007"})
+
+
+def test_delete_pages_batches_to_the_api_limit(cfg, s3, monkeypatch):
+    """RESUME=false clears a whole volume: one DeleteObjects call per 1000
+    keys, not one DELETE per object."""
+    store = ResultStore(cfg)
+    batches: list[int] = []
+    real = store.client.delete_objects
+
+    def spy(**kw):
+        batches.append(len(kw["Delete"]["Objects"]))
+        return real(**kw)
+
+    monkeypatch.setattr(store.client, "delete_objects", spy)
+    store.delete_pages({f"{i:04d}" for i in range(1, 502)})
+    assert batches == [1000, 2]
+
+
+def test_delete_pages_fails_loudly_when_a_key_survives(cfg, s3, monkeypatch):
+    store = ResultStore(cfg)
+    monkeypatch.setattr(
+        store.client,
+        "delete_objects",
+        lambda **kw: {"Errors": [{"Key": "k", "Message": "AccessDenied"}]},
+    )
+    with pytest.raises(RuntimeError, match="could not delete 1 stale"):
+        store.delete_pages({"0001"})
+
+
+def test_page_sources_reads_back_the_digest_each_alto_was_stamped_with(
+    cfg, s3, tmp_path
+):
+    """3096: what resume compares a page's current source against."""
     store = ResultStore(cfg)
     store.upload_page(
         "0001",
@@ -144,13 +194,10 @@ def test_delete_page_removes_both_formats(cfg, s3, tmp_path):
             "alto": _mk(tmp_path, "alto/0001.xml", "<alto/>"),
             "page": _mk(tmp_path, "page/0001.xml", "<PcGts/>"),
         },
+        source="abc123",
     )
-    store.delete_page("0001")
-    assert store.done_pages() == set()
-    assert store._list_stems("alto") == set()
-    assert store._list_stems("page") == set()
-
-
-def test_delete_page_tolerates_a_page_that_is_not_there(cfg, s3):
-    """Nothing to delete is the normal case on a first run."""
-    ResultStore(cfg).delete_page("0007")
+    # an older wrapper's page: no digest on it
+    s3.put_object(
+        Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/alto/0002.xml", Body=b"<a/>"
+    )
+    assert store.page_sources({"0001", "0002"}) == {"0001": "abc123", "0002": None}

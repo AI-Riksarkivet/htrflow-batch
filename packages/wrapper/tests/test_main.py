@@ -223,6 +223,120 @@ def test_resume_reprocesses_pages_whose_source_changed(env, cfg, s3):
     assert body["page_sources"]["0002"] == src.format(2)
 
 
+def _move_source(manifest: dict, to: str) -> None:
+    """Point every canvas of the sample manifest at a new image service."""
+    for canvas in manifest["items"]:
+        body = canvas["items"][0]["items"][0]["body"]
+        page = body["service"][0]["id"].rsplit("/", 1)[-1]
+        body["service"][0]["id"] = f"https://iiif.example/{to}/{page}"
+        body["id"] = f"https://iiif.example/{to}/{page}/full/max/0/default.jpg"
+
+
+def _attempt(env, calls: list, stop_at: str | None = None) -> int:
+    """One run of the volume: records the pages it processes, and dies
+    (exit 1, like a SIGTERM or a lost node) on reaching ``stop_at``."""
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            if path.stem == stop_at:
+                raise main_mod.Unrecoverable("the node went away")
+            calls.append(path.stem)
+            return inner(path)
+
+        return process
+
+    return main(env, process_page_factory=factory)
+
+
+def test_resume_after_a_changed_source_keeps_what_the_last_attempt_did(
+    env, cfg, s3, sample_manifest
+):
+    """3096: the changed-source comparison read only manifest.json, which is
+    written only by a COMPLETED run -- so after the source changed, every
+    attempt threw away the pages the attempt before it had reprocessed from
+    the new source, and a volume that needs more than one attempt never
+    completed. Each page now carries the digest of the source it was made
+    from, so attempt C keeps attempt B's page."""
+    assert _attempt(env, []) == EXIT_OK  # A: complete, from the old source
+    _move_source(sample_manifest, "NEW")
+
+    b: list = []
+    assert _attempt(env, b, stop_at="0002") == EXIT_TRANSIENT
+    assert b == ["0001"]
+    # B deleted what it was about to redo: nothing from the old source is
+    # left standing for a page it did not reach
+    keys = _keys(s3, cfg)
+    assert "demo-v1/SE-RA-1234/alto/0001.xml" in keys
+    assert "demo-v1/SE-RA-1234/alto/0002.xml" not in keys
+
+    c: list = []
+    assert _attempt(env, c) == EXIT_OK
+    assert c == ["0002", "0003"]
+    body = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert body["results"]["0001"]["status"] == "skipped"
+    assert {body["results"][n]["status"] for n in ("0002", "0003")} == {"ok"}
+
+
+def test_a_page_made_from_another_source_than_the_manifest_says_is_redone(
+    env, cfg, s3, sample_manifest
+):
+    """The page's own record wins over manifest.json's: a source changed and
+    changed back leaves manifest.json agreeing with the current source while
+    page 0001 was last made from the other one."""
+    assert _attempt(env, []) == EXIT_OK
+    _move_source(sample_manifest, "NEW")
+    assert _attempt(env, [], stop_at="0002") == EXIT_TRANSIENT
+    _move_source(sample_manifest, "mock-vol")
+
+    calls: list = []
+    assert _attempt(env, calls) == EXIT_OK
+    assert calls == ["0001", "0002", "0003"]
+
+
+def test_every_page_output_records_its_source(env, cfg, s3):
+    assert main(env, process_page_factory=fake_factory) == EXIT_OK
+    src = "https://iiif.example/mock-vol/page-00001/full/2500,/0/default.jpg"
+    for fmt in ("alto", "page"):
+        head = s3.head_object(
+            Bucket=cfg.s3_bucket, Key=f"demo-v1/SE-RA-1234/{fmt}/0001.xml"
+        )
+        assert head["Metadata"] == {"source-digest": source_digest(src)}
+
+
+def test_a_page_half_uploaded_with_resume_off_is_not_done_on_the_retry(
+    env, cfg, s3, monkeypatch
+):
+    """3096: with RESUME=false nothing was deleted first, so a page whose new
+    PAGE XML landed and whose ALTO PUT then failed kept the previous run's
+    ALTO beside it -- and the retry counted that mixed pair as done. Every
+    page a run is about to redo loses its stored outputs first."""
+    for name in ("0001", "0002", "0003"):
+        _put_done(s3, cfg, name)
+    real = ResultStore._put
+
+    def put(self, key, *args, **kwargs):
+        if key.endswith("alto/0002.xml"):
+            raise RuntimeError("S3 went away mid-page")
+        return real(self, key, *args, **kwargs)
+
+    with monkeypatch.context() as m:
+        m.setattr(ResultStore, "_put", put)
+        assert main({**env, "RESUME": "false"}, process_page_factory=fake_factory) == (
+            EXIT_OK
+        )
+    assert "demo-v1/SE-RA-1234/alto/0002.xml" not in _keys(s3, cfg)
+
+    calls: list = []
+    assert _attempt(env, calls) == EXIT_OK
+    assert calls == ["0002"]
+
+
 def test_resume_keeps_done_pages_whose_stored_source_is_redacted(images_env, cfg, s3):
     """page_sources is stored redacted (S6), so the comparison must redact
     too. A tokenised private IIIF URL otherwise looked "changed" on every
@@ -299,9 +413,9 @@ def test_resume_reprocesses_page_with_alto_but_no_page_xml(env, cfg, s3):
 def test_verify_requires_page_xml_too(env, cfg, s3, monkeypatch):
     real = ResultStore.upload_page
 
-    def drop_page_for_0002(self, name, files):
+    def drop_page_for_0002(self, name, files, source=None):
         if name != "0002":
-            return real(self, name, files)
+            return real(self, name, files, source)
         # simulate a PAGE PUT that never landed, bypassing upload_page's check
         self.client.put_object(
             Bucket=self.bucket,
@@ -447,9 +561,9 @@ def test_a_missing_page_is_still_a_verify_failure(env, cfg, s3, monkeypatch):
     inconsistency, not an outcome: that stays transient."""
     real = ResultStore.upload_page
 
-    def drop_0002(self, name, files):
+    def drop_0002(self, name, files, source=None):
         if name != "0002":
-            return real(self, name, files)
+            return real(self, name, files, source)
 
     monkeypatch.setattr(ResultStore, "upload_page", drop_0002)
     assert main(env, process_page_factory=fake_factory) == EXIT_TRANSIENT
@@ -741,7 +855,7 @@ def test_resume_failure_is_attributed_to_resume_stage(env, cfg, s3, monkeypatch)
     def boom(self):
         raise RuntimeError("s3 listing failed")
 
-    monkeypatch.setattr(ResultStore, "done_pages", boom)
+    monkeypatch.setattr(ResultStore, "stored_pages", boom)
     rc = main(env, process_page_factory=fake_factory)
     assert rc == EXIT_TRANSIENT
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
@@ -1413,9 +1527,9 @@ def test_a_transient_failure_exits_without_joining_the_downloads(
     long after the run had decided to fail."""
     real = ResultStore.upload_page
 
-    def drop_0002(self, name, files):
+    def drop_0002(self, name, files, source=None):
         if name != "0002":
-            return real(self, name, files)
+            return real(self, name, files, source)
 
     monkeypatch.setattr(ResultStore, "upload_page", drop_0002)
     assert main(env, process_page_factory=fake_factory) == EXIT_TRANSIENT

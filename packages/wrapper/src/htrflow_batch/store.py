@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import boto3
@@ -16,6 +17,19 @@ from .viewer import parse_alto_dims
 #: every reader key on, so it lands LAST: a crash between the two PUTs can
 #: leave a PAGE without its ALTO (harmless, reprocessed), never the reverse.
 PAGE_FORMATS = ("page", "alto")
+
+#: The user-metadata key every page output carries the digest of the source
+#: image it was made from under (``iiif.source_digest``, 3096). S3 hands it
+#: back lower-cased, as ``x-amz-meta-source-digest``.
+SOURCE_META = "source-digest"
+
+#: HEADs in flight at once when resume reads those digests back: one per done
+#: page, so a sequential pass over a few thousand pages would be the slowest
+#: part of a retry.
+HEAD_CONCURRENCY = 16
+
+#: The most keys one DeleteObjects call takes (the S3 API's own limit).
+DELETE_BATCH = 1000
 
 
 def _json_bytes(obj: dict) -> bytes:
@@ -65,11 +79,22 @@ class ResultStore:
     def _key(self, rel: str) -> str:
         return f"{self.prefix}/{rel}"
 
-    def _put(self, key: str, body: bytes, content_type: str, client=None) -> None:
+    def _put(
+        self,
+        key: str,
+        body: bytes,
+        content_type: str,
+        client=None,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
         """The single put_object call: every write below goes through here, so
         bucket, explicit content type and client choice are stated once."""
         (client or self.client).put_object(
-            Bucket=self.bucket, Key=key, Body=body, ContentType=content_type
+            Bucket=self.bucket,
+            Key=key,
+            Body=body,
+            ContentType=content_type,
+            **({"Metadata": metadata} if metadata else {}),
         )
 
     def _list_stems(self, fmt: str) -> set[str]:
@@ -83,19 +108,24 @@ class ResultStore:
                     names.add(stem[:-4])
         return names
 
+    def stored_pages(self) -> dict[str, set[str]]:
+        """The page names each format has an object for."""
+        return {fmt: self._list_stems(fmt) for fmt in PAGE_FORMATS}
+
     def done_pages(self) -> set[str]:
         """Pages with EVERY format present (W2): a page whose PAGE XML never
         landed is not done, whatever its ALTO says."""
-        done: set[str] | None = None
-        for fmt in PAGE_FORMATS:
-            stems = self._list_stems(fmt)
-            done = stems if done is None else done & stems
-        return done or set()
+        return set.intersection(*self.stored_pages().values())
 
     # fresh listing after the run — the D8 verify gate reads this
     uploaded_pages = done_pages
 
-    def upload_page(self, name: str, files: dict[str, Path]) -> None:
+    def upload_page(
+        self, name: str, files: dict[str, Path], source: str | None = None
+    ) -> None:
+        """Both outputs of one page, each stamped with ``source`` -- the
+        digest of the image it was made from, which a later resume compares
+        (3096)."""
         missing = [fmt for fmt in PAGE_FORMATS if fmt not in files]
         if missing:
             raise ValueError(f"page {name}: missing {', '.join(missing)} output")
@@ -112,24 +142,59 @@ class ResultStore:
                     f"page {name}: {fmt} XML is not well-formed: {e}"
                 ) from e
             bodies[fmt] = data
+        metadata = {SOURCE_META: source} if source else None
         for fmt in PAGE_FORMATS:
-            self._put(self._key(f"{fmt}/{name}.xml"), bodies[fmt], "application/xml")
+            self._put(
+                self._key(f"{fmt}/{name}.xml"),
+                bodies[fmt],
+                "application/xml",
+                metadata=metadata,
+            )
         try:
             self.page_dims[name] = parse_alto_dims(roots["alto"])
         except ValueError:
             # publish leaves a page with no dims out, it does not fail
             self.dimless_pages.add(name)
 
-    def delete_page(self, name: str) -> None:
-        """Drop a page's stored outputs, before it is processed again (W3,
-        2026-09-14 audit). The verify gate subtracts a LIVE listing of the
-        bucket, so a page reprocessed and FAILED this run would be accounted
-        for by the previous run's objects -- and publish would read that stale
-        ALTO into iiif.json while manifest.json records the page as failed."""
-        for fmt in PAGE_FORMATS:
-            self.client.delete_object(
-                Bucket=self.bucket, Key=self._key(f"{fmt}/{name}.xml")
+    def page_sources(self, names) -> dict[str, str | None]:
+        """The source digest each page's ALTO -- the output that makes a page
+        done -- was stamped with, or None for one an older wrapper wrote
+        without it. HEADs, since a listing carries no user metadata."""
+        names = sorted(names)
+
+        def source(name: str) -> str | None:
+            head = self.client.head_object(
+                Bucket=self.bucket, Key=self._key(f"alto/{name}.xml")
             )
+            return (head.get("Metadata") or {}).get(SOURCE_META)
+
+        with ThreadPoolExecutor(max_workers=HEAD_CONCURRENCY) as pool:
+            return dict(zip(names, pool.map(source, names)))
+
+    def delete_pages(self, names) -> None:
+        """Drop pages' stored outputs, before they are processed again (W3,
+        2026-09-14 audit; 3096). The verify gate subtracts a LIVE listing of
+        the bucket, so a page reprocessed and FAILED this run would be
+        accounted for by the previous run's objects -- and publish would read
+        that stale ALTO into iiif.json while manifest.json records the page
+        as failed. A key that is not there is not an error."""
+        keys = [
+            {"Key": self._key(f"{fmt}/{name}.xml")}
+            for name in sorted(names)
+            for fmt in PAGE_FORMATS
+        ]
+        for i in range(0, len(keys), DELETE_BATCH):
+            response = self.client.delete_objects(
+                Bucket=self.bucket,
+                Delete={"Objects": keys[i : i + DELETE_BATCH], "Quiet": True},
+            )
+            errors = response.get("Errors") or []
+            if errors:
+                # a stale object left standing is the very thing this prevents
+                raise RuntimeError(
+                    f"could not delete {len(errors)} stale page output(s), "
+                    f"first: {errors[0].get('Key')}: {errors[0].get('Message')}"
+                )
 
     def put_json(self, rel_key: str, obj: dict) -> None:
         self._put(self._key(rel_key), _json_bytes(obj), "application/json")
