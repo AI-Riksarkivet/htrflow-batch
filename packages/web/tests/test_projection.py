@@ -1351,6 +1351,49 @@ def test_a_longer_failed_volumes_list_does_replace_the_stored_one():
     )
 
 
+def test_two_disjoint_failed_volumes_lists_are_both_kept():
+    """The pods of the first failure are collected before the second one
+    happens, so each detail request names a different volume. Compared as
+    strings the later list replaced the earlier one, and vol5's reason was
+    gone for good (3075)."""
+    stored = {"failedVolumes": '[{"id":"vol5","reason":"manifest 404"}]'}
+    fresh = {"failedVolumes": '[{"id":"vol900","reason":"OOMKilled (exit code 137)"}]'}
+    merged = json.loads(projection.merge_record(stored, fresh)["failedVolumes"])
+    assert merged == [
+        {"id": "vol900", "reason": "OOMKilled (exit code 137)"},
+        {"id": "vol5", "reason": "manifest 404"},
+    ]
+
+
+def test_the_newest_reason_for_a_volume_wins_but_a_blank_never_erases_one():
+    stored = {
+        "failedVolumes": (
+            '[{"id":"vol1","reason":"SIGTERM"},{"id":"vol2","reason":"manifest 404"}]'
+        )
+    }
+    fresh = {
+        "failedVolumes": (
+            '[{"id":"vol1","reason":"DeadlineExceeded"},{"id":"vol2","reason":""}]'
+        )
+    }
+    merged = json.loads(projection.merge_record(stored, fresh)["failedVolumes"])
+    assert merged == [
+        {"id": "vol1", "reason": "DeadlineExceeded"},
+        {"id": "vol2", "reason": "manifest 404"},
+    ]
+
+
+def test_the_merged_failed_volumes_are_capped_like_a_fresh_list():
+    def listed(ids) -> str:
+        return json.dumps([{"id": f"vol{i}", "reason": "x"} for i in ids])
+
+    stored = {"failedVolumes": listed(range(40))}
+    fresh = {"failedVolumes": listed(range(100, 140))}
+    merged = json.loads(projection.merge_record(stored, fresh)["failedVolumes"])
+    assert len(merged) == 50
+    assert merged[0]["id"] == "vol100", "the fresh observation first"
+
+
 def test_finished_at_never_moves_backwards_and_is_never_blanked():
     stored = {"finishedAt": "2026-09-08T10:00:00Z"}
     assert projection.merge_record(stored, {"finishedAt": ""}) == stored

@@ -193,13 +193,19 @@ MAX_FAILED_VOLUMES = 200 * 1024
 
 
 def _failed_volumes(failures: list[dict]) -> str:
-    entries = [
-        {
-            "id": v["id"][:MAX_REASON],
-            "reason": ((v.get("reason") or {}).get("error") or "")[:MAX_REASON],
-        }
-        for v in failures[:_MAX_FAILURES]
-    ]
+    return _capped(
+        [
+            {
+                "id": v["id"][:MAX_REASON],
+                "reason": ((v.get("reason") or {}).get("error") or "")[:MAX_REASON],
+            }
+            for v in failures
+        ]
+    )
+
+
+def _capped(entries: list[dict]) -> str:
+    entries = entries[:_MAX_FAILURES]
     while entries:
         blob = json.dumps(entries, separators=(",", ":"))
         if len(blob.encode()) <= MAX_FAILED_VOLUMES:
@@ -279,8 +285,14 @@ def _recorded_reasons(status: dict) -> dict[str, str]:
     Those sentences are the detail endpoint's, observed while the pods still
     existed; anything finer is in the volume's own ``manifest.json`` in the
     bucket (docs: reference/s3-layout)."""
+    return _parse_failed((status.get("data") or {}).get("failedVolumes") or "")
+
+
+def _parse_failed(text: str) -> dict[str, str]:
+    """A ``failedVolumes`` value as ``{id: reason}``, in its own order. A
+    value that is not the list this module writes is no failures at all."""
     try:
-        listed = json.loads((status.get("data") or {}).get("failedVolumes") or "[]")
+        listed = json.loads(text or "[]")
     except ValueError:
         return {}
     if not isinstance(listed, list):
@@ -290,6 +302,20 @@ def _recorded_reasons(status: dict) -> dict[str, str]:
         for entry in listed
         if isinstance(entry, dict) and isinstance(entry.get("id"), str)
     }
+
+
+def _union_failed(stored: str, fresh: str) -> str:
+    """Two ``failedVolumes`` lists as one, per volume id (3075). Each detail
+    request names the failures whose pods still exist, so two of them a day
+    apart can name disjoint sets -- and the later one replacing the earlier
+    lost every reason in it. The fresh observation leads and its reason
+    wins, except that a blank one (a pod collected since) never erases a
+    sentence the record already has."""
+    merged = _parse_failed(fresh)
+    for vol_id, reason in _parse_failed(stored).items():
+        if not merged.get(vol_id):
+            merged[vol_id] = reason
+    return _capped([{"id": i, "reason": r} for i, r in merged.items()])
 
 
 #: What a volume nobody named as failed did, given how the campaign ended.
@@ -388,7 +414,8 @@ def merge_record(stored: dict[str, str], fresh: dict[str, str]) -> dict[str, str
     rules, both about not losing ground: a value that says nothing never
     replaces one that says something, and ``finishedAt`` never moves
     backwards (the read API and `htrflow-campaigns apply` both write it, and
-    they do not see the same clock).
+    they do not see the same clock). ``failedVolumes`` is merged per volume
+    rather than replaced (``_union_failed``).
     """
     merged = dict(stored)
     for key, value in fresh.items():
@@ -397,7 +424,7 @@ def merge_record(stored: dict[str, str], fresh: dict[str, str]) -> dict[str, str
             continue
         if key == "finishedAt" and not _is_later(value, old):
             continue
-        merged[key] = value
+        merged[key] = _union_failed(old, value) if key == "failedVolumes" else value
     return merged
 
 
