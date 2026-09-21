@@ -24,6 +24,7 @@ import re
 from pathlib import Path
 
 import pytest
+import tomllib
 import yaml
 
 REPO = Path(__file__).resolve().parents[3]
@@ -35,15 +36,16 @@ WRAPPER_DOCKERFILE = REPO / ".docker" / "htrflow-batch.dockerfile"
 _BIND = re.compile(r"--mount=type=bind,source=(packages/[^,]+/pyproject\.toml),")
 
 # The arm64 extras (see the dockerfile's own comments for why each exists):
-# triton JIT-compiles CUDA utils at runtime, and TrOCR's slow tokenizer needs
-# sentencepiece to convert. transformers is NOT here: it is installed for both
-# architectures from the TRANSFORMERS_VERSION build arg below.
+# triton JIT-compiles CUDA utils at runtime. sentencepiece, which TrOCR's slow
+# tokenizer needs to convert, is not here: it is locked with the transformers
+# line (see test_every_transformers_line_is_a_locked_group).
 ARM64_EXTRAS = [
     "gcc",
     "libc6-dev",
     "python3.10-dev",
-    "sentencepiece==",
 ]
+BASE_ARM64_DOCKERFILE = REPO / ".docker" / "htrflow-base-arm64.dockerfile"
+BASE_ARM64_LOCK = REPO / ".docker" / "htrflow-base-arm64" / "uv.lock"
 
 # Build paths that must never cross-build: a `--platform` flag or a
 # qemu/binfmt setup step is exactly how the wrapper image ends up emulated.
@@ -194,3 +196,87 @@ def test_the_library_api_pin_runs_against_the_image_ci_builds() -> None:
     # Against the image this job built, not one it would have to pull.
     assert f"WRAPPER_IMAGE={tag}" in driver[0]["run"]
     assert job["steps"].index(driver[0]) > job["steps"].index(built[0])
+
+
+def _logical_lines(text: str) -> list[str]:
+    """Dockerfile instructions with their continuation lines joined."""
+    code = "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+    return code.replace("\\\n", " ").splitlines()
+
+
+def test_every_python_install_in_the_wrapper_image_is_locked() -> None:
+    """Finding 3060: sentencepiece, transformers and protobuf went in by a
+    bare version pin, so their dependencies resolved afresh at every build
+    and nothing checked a hash. Every `uv pip install` now installs a
+    hashed `uv export` of uv.lock, or this repo's own wrapper with
+    --no-deps. The one exception is the amd64 torch swap from the cu128
+    index, which has no lock of its own yet."""
+    installs = [
+        part
+        for line in _logical_lines(WRAPPER_DOCKERFILE.read_text())
+        for part in line.split("&&")
+        if "uv pip install" in part
+    ]
+    assert installs
+    for install in installs:
+        if "download.pytorch.org/whl/cu128" in install:
+            continue
+        assert "--require-hashes" in install or install.rstrip().endswith(
+            "--no-deps /opt/wrapper"
+        ), install
+
+
+def test_every_transformers_line_is_a_locked_group() -> None:
+    """The TRANSFORMERS_VERSION build arg selects `transformers-<major>`;
+    each such group pins transformers exactly and carries the two packages
+    the line needs, and the dockerfile's default is one of them."""
+    root = tomllib.loads((REPO / "pyproject.toml").read_text())
+    groups = {
+        name: deps
+        for name, deps in root["dependency-groups"].items()
+        if name.startswith("transformers-")
+    }
+    assert set(groups) == {"transformers-4", "transformers-5"}
+    conflicts = root["tool"]["uv"]["conflicts"]
+    assert [{"group": g} for g in sorted(groups)] in conflicts
+    for name, deps in groups.items():
+        pins = [d for d in deps if d.startswith("transformers==")]
+        assert len(pins) == 1 and pins[0].startswith(f"transformers=={name[-1]}.")
+        assert any(d.startswith("protobuf==") for d in deps), name
+        assert "sentencepiece==0.2.2; platform_machine == 'aarch64'" in deps, name
+    default = re.search(
+        r"^ARG TRANSFORMERS_VERSION=(\S+)", WRAPPER_DOCKERFILE.read_text(), re.M
+    ).group(1)
+    assert f"transformers=={default}" in groups[f"transformers-{default[0]}"]
+
+
+def test_the_arm64_base_is_built_from_pinned_inputs() -> None:
+    """Finding 3060: the arm64 base came from htrflow's own dockerfile (CUDA
+    image by tag, uv by `latest`) after a fresh `uv lock` in the clone, so
+    two builds of one commit could carry different dependencies. It is now
+    this repo's dockerfile, every image by digest, synced --locked from a
+    lockfile committed here."""
+    text = BASE_ARM64_DOCKERFILE.read_text()
+    froms = re.findall(r"^FROM (\S+)", text, re.M) + re.findall(
+        r"COPY --from=(\S+:\S+)", text
+    )
+    assert froms
+    for ref in froms:
+        assert re.search(r"@sha256:[0-9a-f]{64}$", ref), ref
+    assert "COPY --from=lock uv.lock" in text
+    syncs = re.findall(r"^RUN uv sync.*$", text, re.M)
+    assert syncs and all("--locked" in s for s in syncs), syncs
+    assert BASE_ARM64_LOCK.read_text().startswith("version = 1")
+
+    # Every path that builds the base uses it, and nothing locks afresh.
+    action = (
+        REPO / ".github" / "actions" / "build-htrflow-base-arm64" / "action.yml"
+    ).read_text()
+    makefile = (REPO / "Makefile").read_text()
+    for recipe in (action, makefile):
+        assert "htrflow-base-arm64.dockerfile" in recipe
+        assert "lock=" in recipe  # the named build context with the lock
+        assert "docker/htrflow.dockerfile" not in recipe
+    assert not re.search(r"^\s*uv lock\s*$", action, re.M)

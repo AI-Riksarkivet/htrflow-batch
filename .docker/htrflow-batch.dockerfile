@@ -10,27 +10,29 @@
 #   amd64  the published upstream image, digest-pinned, plus a torch swap
 #          for cu128 wheels that carry Blackwell (sm_120) kernels.
 #   arm64  a locally built htrflow base (the upstream image is amd64-only),
-#          plus three extras the GB10 needs — see the guarded steps below.
-#          Build it first, from a checkout of AI-Riksarkivet/htrflow:
-#            uv lock && docker build -f docker/htrflow.dockerfile \
-#              -t htrflow:v0.2.6-arm64 .
-#          (the lockfile is gitignored there). `make build-wrapper` on an
-#          aarch64 host and the `wrapper-arm64` jobs in publish.yml/ci.yml
-#          both build exactly this stage.
+#          plus the compiler the GB10 needs — see the guarded steps below.
+#          Build it first, from a checkout of AI-Riksarkivet/htrflow, with
+#          this repository's .docker/htrflow-base-arm64.dockerfile and the
+#          lockfile committed beside it (`make build-htrflow-base-arm64`).
+#          `make build-wrapper` on an aarch64 host and the arm64 wrapper
+#          jobs in publish.yml/ci.yml/security.yml all build exactly this
+#          stage.
 #
-# Reproducibility (audit W8/S7): every input is pinned.
-#   * the amd64 base image and the uv binary are pinned by digest;
+# Reproducibility (audit W8/S7, finding 3060): every input is pinned.
+#   * the amd64 base image and the uv binary are pinned by digest, and so
+#     is everything the arm64 base is built from, down to its lockfile;
 #   * torch/torchvision are pinned per arch. amd64: the versions the
 #     floating cu128 `--upgrade` resolved to on 2026-08-26 (the upstream
 #     base ships torch 2.6.0/torchvision 0.21.0 cu12x; the cu128 index
-#     carries cp310 wheels up to 2.9.1/0.24.1). arm64: the versions the
-#     base's own lock resolves from PyPI, whose aarch64 wheels bundle CUDA
-#     13 — torch reports 2.13.0+cu130 and runs on the GB10. The cu128 swap
-#     is a no-op on that arch (no cp310 wheel newer than 2.9.1), so the
-#     arm64 branch pins explicitly instead, and the build fails if the
-#     base's lock drifts;
-#   * the wrapper's dependencies come from the workspace lock (`uv export`
-#     with hashes), not a free resolution at build time;
+#     carries cp310 wheels up to 2.9.1/0.24.1). arm64: what the arm64
+#     base's committed lock installs from PyPI, whose aarch64 wheels bundle
+#     CUDA 13 — torch reports 2.13.0+cu130 and runs on the GB10. The cu128
+#     swap is a no-op on that arch (no cp310 wheel newer than 2.9.1), so
+#     the arm64 branch only asserts the versions, and a refreshed base lock
+#     that moves them fails the build instead of changing the image;
+#   * the wrapper's dependencies, the transformers line and the leaf
+#     overrides come from the workspace lock (`uv export` with hashes), not
+#     a free resolution at build time;
 #   * apt packages stay unpinned: Ubuntu's archive drops superseded
 #     versions, so an exact apt pin breaks the build on the next security
 #     update (a snapshot mirror is the real fix, out of scope here).
@@ -88,11 +90,14 @@ RUN export DEBIAN_FRONTEND=noninteractive \
     && apt-get upgrade -y -o Dir::Etc::SourceParts=/dev/null \
     && rm -rf /var/lib/apt/lists/*
 
-# torch: amd64 swaps in cu128 builds (Blackwell sm_120 kernels); arm64 pins
-# what the base's own lock already resolved from PyPI (CUDA 13 aarch64).
+# torch: amd64 swaps in cu128 builds (Blackwell sm_120 kernels); on arm64
+# the base's committed lock already installed it (CUDA 13 aarch64), so the
+# versions are only checked here.
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
-      uv pip install --python /app/.venv/bin/python --no-cache \
-        "torch==2.13.0" "torchvision==0.28.0"; \
+      /app/.venv/bin/python -c 'import sys, torch, torchvision; \
+have = (torch.__version__.split("+")[0], torchvision.__version__.split("+")[0]); \
+sys.exit(None if have == ("2.13.0", "0.28.0") else \
+         f"arm64 base carries torch/torchvision {have}, not 2.13.0/0.28.0: its lock moved")'; \
     else \
       uv pip install --python /app/.venv/bin/python --no-cache \
         --index-url https://download.pytorch.org/whl/cu128 \
@@ -123,22 +128,14 @@ RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
 COPY packages/wrapper /opt/wrapper
 RUN uv pip install --python /app/.venv/bin/python --no-cache --no-deps /opt/wrapper
 
-# arm64 only, and after the wrapper install so these versions are the ones
-# that survive. Two extras the locally built base does not carry:
-#   * triton JIT-compiles its CUDA utils (a CPython extension) at runtime —
-#     it needs a C compiler and Python headers or TrOCR generation dies with
-#     "Failed to find C compiler" on the GPU path;
-#   * microsoft/trocr-base-handwritten ships only a slow tokenizer;
-#     transformers needs sentencepiece to convert it — and 5.x dropped that
-#     conversion, one more reason the line below is a deliberate choice.
-# transformers itself is NOT here: it is installed for both architectures
-# from TRANSFORMERS_VERSION, in the step that follows.
+# arm64 only: triton JIT-compiles its CUDA utils (a CPython extension) at
+# runtime, so it needs a C compiler and Python headers or TrOCR generation
+# dies with "Failed to find C compiler" on the GPU path. The locally built
+# base does not carry them.
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
       apt-get update && apt-get install -y --no-install-recommends \
         gcc libc6-dev python3.10-dev \
-      && rm -rf /var/lib/apt/lists/* \
-      && uv pip install --python /app/.venv/bin/python --no-cache \
-           "sentencepiece==0.2.2"; \
+      && rm -rf /var/lib/apt/lists/*; \
     fi
 
 # The transformers line, both architectures, pinned here so the image says
@@ -151,9 +148,31 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 # can carry pipelines on either line. Default: the 4.x line upstream htrflow
 # is tested on; `make build-wrapper TRANSFORMERS_VERSION=5.9.0` builds the
 # other.
+#
+# Each line is a dependency group of the workspace (`transformers-<major>`
+# in the root pyproject.toml), locked with its whole closure: sentencepiece
+# (arm64: TrOCR's slow tokenizer needs it to convert, and 5.x dropped that
+# conversion) and protobuf (transformers only imports it on the error path
+# of loading a slow tokenizer, and without it that path reports "requires
+# the protobuf library" INSTEAD of the real error). The build installs the
+# group's exported, hashed closure, so nothing here is resolved at build
+# time; a version the lock does not carry fails the build.
 ARG TRANSFORMERS_VERSION=4.57.6
-RUN uv pip install --python /app/.venv/bin/python --no-cache \
-      "transformers==${TRANSFORMERS_VERSION}"
+RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=/opt/workspace/pyproject.toml \
+    --mount=type=bind,source=packages/wrapper/pyproject.toml,target=/opt/workspace/packages/wrapper/pyproject.toml \
+    --mount=type=bind,source=packages/converter/pyproject.toml,target=/opt/workspace/packages/converter/pyproject.toml \
+    --mount=type=bind,source=packages/web/pyproject.toml,target=/opt/workspace/packages/web/pyproject.toml \
+    cd /opt/workspace \
+    && uv export --locked --only-group "transformers-${TRANSFORMERS_VERSION%%.*}" --no-emit-project \
+         -o /tmp/transformers-requirements.txt \
+    && { grep -q "^transformers==${TRANSFORMERS_VERSION} " /tmp/transformers-requirements.txt \
+         || { echo "TRANSFORMERS_VERSION=${TRANSFORMERS_VERSION} is not the version uv.lock pins" \
+                   "for its line (pyproject.toml, group transformers-${TRANSFORMERS_VERSION%%.*})"; \
+              exit 1; }; } \
+    && uv pip install --python /app/.venv/bin/python --no-cache --require-hashes \
+         -r /tmp/transformers-requirements.txt \
+    && rm /tmp/transformers-requirements.txt
 
 # Packages of the base's venv with published fixes that htrflow's own lock
 # predates: pillow and Brotli. The `wrapper-image` group in uv.lock pins them
@@ -172,14 +191,6 @@ RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
     && uv pip install --python /app/.venv/bin/python --no-cache --no-deps --require-hashes \
          -r /tmp/image-requirements.txt \
     && rm /tmp/image-requirements.txt
-
-# protobuf, both architectures. transformers only imports it on the error
-# path of loading a slow tokenizer -- and when it is missing, that path
-# raises "requires the protobuf library" INSTEAD of the real error. A
-# tokenizer config the pinned transformers cannot read then shows up in the
-# warm-up's log as a missing library, which is not what happened. With
-# protobuf present the warm-up says what actually failed.
-RUN uv pip install --python /app/.venv/bin/python --no-cache "protobuf==7.36.1"
 
 # What this image must guarantee, after the transformers line has had its say:
 # the WRAPPER's own declared requirements are satisfied by what is installed.

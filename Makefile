@@ -2,7 +2,7 @@
         compose-up compose-test compose-smoke compose-down helm-lint helm-template \
         install-devstack install-kyverno \
         docs-serve docs-build config-reference api-contract \
-        poc-push poc-push-arm64 build-wrapper build-htrflow-base-arm64 build-web scan-web clean install-kueue \
+        poc-push poc-push-arm64 build-wrapper build-htrflow-base-arm64 lock-htrflow-base-arm64 build-web scan-web clean install-kueue \
         campaigns-apply psa-labels e2e \
         frontend-install frontend-test frontend-check frontend-build frontend-dev
 
@@ -311,16 +311,33 @@ WRAPPER_BUILD_ARGS += $(if $(TRANSFORMERS_VERSION),--build-arg TRANSFORMERS_VERS
 build-wrapper:
 	docker build -f $(WRAPPER_DOCKERFILE) $(WRAPPER_BUILD_ARGS) $(VERSION_BUILD_ARG) -t $(WRAPPER_IMAGE) .
 
-# The arm64 base the wrapper builds on. Built from the HTRFLOW_DIR checkout,
-# which this repo treats as read-only: htrflow's lockfile is gitignored
-# there, so the target refuses to run rather than writing a uv.lock into
-# someone else's working tree. CI does the same build in a throwaway clone
-# pinned to HTRFLOW_ARM64_BASE_REF (.github/workflows/publish.yml).
+# The arm64 base the wrapper builds on: the HTRFLOW_DIR checkout is the
+# build context, the dockerfile and the lock are this repo's
+# (.docker/htrflow-base-arm64.dockerfile, finding 3060), so nothing is
+# written into that checkout and nothing is resolved at build time. CI builds
+# the same thing from a throwaway clone pinned to HTRFLOW_ARM64_BASE_REF
+# (.github/actions/build-htrflow-base-arm64). A checkout whose pyproject.toml
+# no longer matches the lock fails the build: refresh the lock with
+# `lock-htrflow-base-arm64` from a checkout at the new ref and review the diff.
+HTRFLOW_BASE_LOCK_DIR := .docker/htrflow-base-arm64
+UV_LOCK_IMAGE := ghcr.io/astral-sh/uv:0.12.6-debian-slim@sha256:9ac2caa67916b63d27595589abd0f0f10930974c885cd962ee30b71fbab42d9f
 build-htrflow-base-arm64:
-	@test -f $(HTRFLOW_DIR)/uv.lock || { \
-	  echo "no $(HTRFLOW_DIR)/uv.lock — run 'uv lock' in that checkout first (this target will not write into it)"; \
-	  exit 1; }
-	docker build -f $(HTRFLOW_DIR)/docker/htrflow.dockerfile -t $(HTRFLOW_ARM64_BASE) $(HTRFLOW_DIR)
+	docker build -f .docker/htrflow-base-arm64.dockerfile \
+	  --build-context lock=$(HTRFLOW_BASE_LOCK_DIR) -t $(HTRFLOW_ARM64_BASE) $(HTRFLOW_DIR)
+
+# Re-lock the arm64 base against the HTRFLOW_DIR checkout's pyproject.toml,
+# in a scratch directory (the checkout stays untouched), starting from the
+# committed lock so only what the pyproject change forces moves;
+# UV_LOCK_ARGS=--upgrade moves everything. The debian-slim uv image, not the
+# distroless one: uv probes the filesystem for a libc before it can resolve
+# wheel tags.
+lock-htrflow-base-arm64:
+	@tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
+	cp $(HTRFLOW_DIR)/pyproject.toml $(HTRFLOW_BASE_LOCK_DIR)/uv.lock "$$tmp"/ && \
+	docker run --rm --user $$(id -u):$$(id -g) -e HOME=/tmp -v "$$tmp:/w" -w /w $(DOCKER_CA) \
+	  $(UV_LOCK_IMAGE) uv lock $(UV_LOCK_ARGS) && \
+	cp "$$tmp/uv.lock" $(HTRFLOW_BASE_LOCK_DIR)/uv.lock && \
+	git diff --stat -- $(HTRFLOW_BASE_LOCK_DIR)
 
 # The web image builds the SPA and the Universal Viewer inside itself, so
 # this needs no pre-built dist/ and no UV checkout. The corp CA is passed as
