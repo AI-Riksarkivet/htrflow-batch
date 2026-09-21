@@ -90,6 +90,21 @@ def test_render_rejects_an_added_volume_on_an_existing_campaign(tmp_path, capsys
     assert "campaign kyrk is append-only: create a new campaign" in out_text
 
 
+def test_validate_refuses_the_change_render_would_refuse(tmp_path, capsys):
+    """`validate` is the pull-request gate and `render` runs on main. A rule
+    only `render` held was a change that went green in review and then
+    stopped every render on main: a swapped volume here (3086)."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    path = repo / "campaigns" / "kyrk.yaml"
+    path.write_text(path.read_text().replace("R0001203", "R0001204"))
+    capsys.readouterr()
+
+    assert main(["validate", str(repo)]) == 1
+    assert "campaign kyrk is append-only" in capsys.readouterr().out
+
+
 def test_render_a_new_campaign_renders_fine(tmp_path):
     repo = tmp_path / "repo"
     shutil.copytree(GOOD, repo)
@@ -317,6 +332,7 @@ def test_render_refuses_to_re_split_a_campaign_that_is_already_rendered(
     assert "create a new campaign" in printed
     assert single.exists()  # nothing removed, nothing renamed
     assert not list((out / "campaigns").glob("wide-part*.yaml"))
+    assert main(["validate", str(repo)]) == 1  # and a pull request says so
 
 
 def _split_campaign(volumes: int) -> str:
@@ -352,6 +368,17 @@ def test_render_refuses_two_campaigns_whose_split_names_collide(
     assert f"{shared}-part1.yaml" in printed
     assert "rename one" in printed
     assert "append-only" not in printed
+
+
+def test_validate_refuses_colliding_split_names_too(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    for tail in ("alpha", "beta"):
+        (repo / "campaigns" / f"{'k' * 50}-{tail}.yaml").write_text(
+            _split_campaign(10_001)
+        )
+    assert main(["validate", str(repo)]) == 1
+    assert "rename one" in capsys.readouterr().out
 
 
 def _rewrite_volumes_txt(path: Path, old: str, new: str) -> str:
