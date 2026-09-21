@@ -639,7 +639,10 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 3321
 # rule each check mirrors.
 # The two rounds above were written in parallel from 2747; together they are
 # 2747 + 65 (3083/3091-3093) + 93 (3086-3089) = 2905.
-check converter "$(count packages/converter/src -name '*.py')" 2905
+# 2747 -> 2759 (2026-09-21, audit 3098): validate refuses a pipeline file
+# with its own Export step, which the wrapper appends -- the author hears it
+# in the pull request instead of from a failed warm-up.
+check converter "$(count packages/converter/src -name '*.py')" 2917
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
