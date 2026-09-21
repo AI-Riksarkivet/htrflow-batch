@@ -180,7 +180,9 @@ spec:
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
-        {{- range .Values.network.web.ingressCidrs }}
+        {{- /* Empty only with allowPublicIngress (the guard in _helpers.tpl):
+             spell the catch-all out rather than render a bare `from:`. */}}
+        {{- range (.Values.network.web.ingressCidrs | default (list "0.0.0.0/0")) }}
         - ipBlock: { cidr: {{ . | quote }} }
         {{- end }}
       ports:

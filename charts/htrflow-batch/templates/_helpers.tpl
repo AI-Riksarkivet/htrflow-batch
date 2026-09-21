@@ -28,9 +28,15 @@ the compose smoke rely on it and a narrowed default would cut them off on
 upgrade -- but the operator has to say the exposure is deliberate. Only when
 the policies are actually rendered: a campaigns repo's CI renders this chart
 with network.enabled=false to get at the policy objects alone.
+An EMPTY list is the same catch-all in other words: an ingress rule whose
+`from` names no source matches every source, so the list an operator writes
+to shut the port would open it (finding 3100).
 */}}
-{{- if and .Values.network.enabled (has "0.0.0.0/0" .Values.network.web.ingressCidrs) }}
-{{- if not .Values.network.web.allowPublicIngress }}
+{{- if and .Values.network.enabled (not .Values.network.web.allowPublicIngress) }}
+{{- if not .Values.network.web.ingressCidrs }}
+{{- fail "network.web.ingressCidrs is empty, and a NetworkPolicy rule with no sources admits every address, so an empty list would open the unauthenticated web front to everyone rather than close it: list the ranges that may reach it, or set network.web.allowPublicIngress=true to accept that any address may" }}
+{{- end }}
+{{- if has "0.0.0.0/0" .Values.network.web.ingressCidrs }}
 {{- fail "network.web.ingressCidrs allows 0.0.0.0/0, and the web front has no authentication of its own: either list the ranges that may reach it (include the node range — NodePort traffic arrives SNAT'd from the node), or set network.web.allowPublicIngress=true to accept that any address that can route to a node may open the campaign browser, the viewer and the read API" }}
 {{- end }}
 {{- end }}
