@@ -231,7 +231,9 @@ Always `--reset-then-reuse-values` (or a full values file), for
 `charts/htrflow-devstack` too: plain `--reuse-values` keeps the old chart's
 defaults, so a new default never reaches an existing release, and a missing
 new value can render whole features away — the chart fails loudly when
-`network` is absent for that reason. Upgrade notes per chart version are in
+`network` is absent for that reason. A release that runs with the
+Kyverno policies off needs `--set security.policies.allowDisabled=true` once:
+the chart refuses to render policies that are off without it. Upgrade notes per chart version are in
 the chart READMEs ([Releasing](releasing.md#chart-releases)).
 
 ## Gotchas
