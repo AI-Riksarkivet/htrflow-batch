@@ -123,9 +123,11 @@ type chartRender struct {
 	name   string
 	values string
 	sets   []string
-	// mustFail inverts the render: helm is expected to refuse it. A guard
-	// nothing exercises is a guard that quietly stops firing.
-	mustFail bool
+	// refusal inverts the render: helm is expected to refuse it, with this
+	// text in its error. A guard nothing exercises is a guard that quietly
+	// stops firing, and the exit code alone is satisfied by any other guard
+	// that happens to fire (finding 3103).
+	refusal string
 }
 
 // digestZero is a syntactically valid (but unpullable) placeholder digest —
@@ -156,7 +158,7 @@ var prodChartRenders = []chartRender{
 		"network.apiServer.cidr=10.16.51.10/32",
 		"network.web.allowPublicIngress=true",
 		"web.image=docker.io/riksarkivet/htrflow-web@" + digestZero,
-	}, mustFail: true},
+	}, refusal: "or set security.policies.allowDisabled=true to accept that"},
 	{name: "full", values: "ci/full-values.yaml"},
 	// The profile docs/getting-started/deploy.md tells operators to start
 	// from. Its site-specific values are deliberately not in the file (a
@@ -179,7 +181,8 @@ var devstackChartRenders = []chartRender{
 	{name: "full", values: "ci/full-values.yaml"},
 	// RustFS on the chart's own empty credentials: refused unless
 	// devStack.insecureDefaults says the stack is a toy (B63 Task 27).
-	{name: "no-credentials", sets: []string{"rustfs.enabled=true"}, mustFail: true},
+	{name: "no-credentials", sets: []string{"rustfs.enabled=true"},
+		refusal: "or set devStack.insecureDefaults: true to accept generated or known ones"},
 }
 
 // docSepRe splits a multi-document `helm template` render on its `---`
@@ -246,9 +249,12 @@ func (m *HtrflowBatch) CheckChart(
 				lint = append(lint, "--set", s)
 				template = append(template, "--set", s)
 			}
-			if r.mustFail {
-				helm = helm.WithExec([]string{"sh", "-c",
-					"! " + strings.Join(template, " ") + " >/dev/null 2>&1"})
+			if r.refusal != "" {
+				// The text goes in through the environment, not the script,
+				// so no quoting of it can go wrong.
+				helm = helm.WithEnvVariable("REFUSAL", r.refusal).WithExec([]string{"sh", "-c",
+					"! " + strings.Join(template, " ") + " >/dev/null 2>/tmp/refusal" +
+						` && { grep -qF -- "$REFUSAL" /tmp/refusal || { cat /tmp/refusal; exit 1; }; }`})
 				continue
 			}
 			outName := c.prefix + r.name
