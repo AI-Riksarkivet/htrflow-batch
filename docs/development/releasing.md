@@ -71,13 +71,16 @@ architecture on a runner of its own.
 
 Every input is pinned ([CI → Dependency pins](ci.md#dependency-pins)): base
 images and the uv binary by digest, torch and torchvision by version per
-base, and everything else Python from a lockfile. The wrapper's own
-dependencies, the transformers line (a `transformers-<major>` dependency
-group of the workspace, with the `sentencepiece` and `protobuf` it needs)
-and the leaf overrides are installed from the workspace lock with hashes
+base, and everything else Python with hashes. The wrapper's own
+dependencies and the leaf overrides come from the workspace lock
 (`uv export --locked … --require-hashes`, so a stale `uv.lock` fails the
-build and nothing is resolved at build time); a `TRANSFORMERS_VERSION` the
-lock does not pin fails the build. The source-built base installs htrflow's
+build). The transformers line is a hashed requirements file per major,
+`.docker/transformers/<major>.txt`, compiled from the `.in` file beside it
+with `make transformers-requirements`: transformers, the `huggingface-hub`
+major it needs, `sentencepiece` and `protobuf`, installed with `--no-deps`
+so nothing else in the base moves, and the build then checks that their
+own requirements are met. A `TRANSFORMERS_VERSION` those files do not pin
+fails the build. Nothing is resolved at build time. The source-built base installs htrflow's
 dependencies with `uv sync --locked` from the lockfile committed in
 `.docker/htrflow-base/`: htrflow does not commit its own, and locking
 afresh on every build meant two builds of one commit could differ. The
