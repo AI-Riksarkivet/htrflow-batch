@@ -43,12 +43,12 @@ import httpx
 from pydantic import BaseModel
 
 from .bounded import (
-    ACCEPT_ENCODING,
     DOWNLOAD_DEADLINE_SECONDS,
     BadEncoding,
     Deadline,
     TooLarge,
     body_chunks,
+    get,
 )
 from .iiif import PageRef
 
@@ -272,17 +272,7 @@ def fetch_page(
         wait = 0.0
         clock = Deadline(deadline)  # 3063: per attempt, whatever the reads do
         try:
-            with (
-                clock,
-                client.stream(
-                    "GET",
-                    url,
-                    headers={"Accept-Encoding": ACCEPT_ENCODING},
-                    timeout=120,
-                    follow_redirects=True,
-                    extensions=clock.extensions,
-                ) as resp,
-            ):
+            with get(client, url, 120, clock) as resp:
                 if resp.status_code == 200:
                     size = _save(resp, path, max_bytes)
                     if clock.expired:  # cut short, but ended like a whole body

@@ -22,6 +22,7 @@ from __future__ import annotations
 import socket
 import threading
 import zlib
+from contextlib import contextmanager
 from typing import Any, Iterator
 
 import httpcore
@@ -47,11 +48,30 @@ def http_client() -> httpx.Client:
     return httpx.Client(max_redirects=5, limits=limits)
 
 
+@contextmanager
+def get(
+    client: httpx.Client, url: str, timeout: float, clock: Deadline
+) -> Iterator[httpx.Response]:
+    """A streamed GET under ``clock``, asking only for what ``body_chunks``
+    can decode with a bound. ``timeout`` is httpx's, per read."""
+    with (
+        clock,
+        client.stream(
+            "GET",
+            url,
+            headers={"Accept-Encoding": ACCEPT_ENCODING},
+            timeout=timeout,
+            follow_redirects=True,
+            extensions=clock.extensions,
+        ) as resp,
+    ):
+        yield resp
+
+
 class Deadline:
     """A wall-clock budget for one download, across its redirects.
 
-    Used as ``with Deadline(s) as d, client.stream(..., extensions=
-    d.extensions)``: httpcore's ``trace`` extension reports each connection
+    Used through ``get``: httpcore's ``trace`` extension reports each connection
     the request opens, and when the timer fires every one of them is shut
     down, so whatever read is blocked on it returns at once and the request
     fails. ``expired`` then says why -- and must be checked after a body that
@@ -74,7 +94,7 @@ class Deadline:
     def reason(self) -> str:
         return f"deadline: not downloaded within {self.seconds:g} s"
 
-    def __enter__(self) -> "Deadline":
+    def __enter__(self) -> Deadline:
         self._timer.start()
         return self
 

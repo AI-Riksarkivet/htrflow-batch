@@ -10,12 +10,12 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 
 from .bounded import (
-    ACCEPT_ENCODING,
     DOWNLOAD_DEADLINE_SECONDS,
     BadEncoding,
     Deadline,
     TooLarge,
     body_chunks,
+    get,
 )
 
 #: Default cap on manifest bytes (env ``MANIFEST_MAX_BYTES``; docs: wrapper).
@@ -119,25 +119,15 @@ def fetch_manifest(
 
     Permanent (ManifestError): non-http(s) URL, 400/401/403/404/410, body
     over the cap once decoded, a Content-Encoding other than gzip, non-JSON
-    or non-object JSON. Transient
-    (TransientManifestError): connection/timeout errors, the download
-    deadline, 5xx, 429 and any other non-200 status.
+    or non-object JSON. Transient (TransientManifestError): connection and
+    timeout errors, the download deadline, 5xx, 429 and any other non-200
+    status.
     """
     check_http_url(url, "manifest URL")
     shown = redact_url(url)
     clock = Deadline(deadline)  # 3063
     try:
-        with (
-            clock,
-            client.stream(
-                "GET",
-                url,
-                headers={"Accept-Encoding": ACCEPT_ENCODING},
-                timeout=60,
-                follow_redirects=True,
-                extensions=clock.extensions,
-            ) as resp,
-        ):
+        with get(client, url, 60, clock) as resp:
             if resp.status_code in PERMANENT_STATUSES:
                 raise ManifestError(
                     f"manifest fetch failed: {shown}: HTTP {resp.status_code}"
