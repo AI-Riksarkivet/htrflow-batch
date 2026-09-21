@@ -628,6 +628,8 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 3156
 # swapped in by rename, replacing the prune (3089). Most of it is the
 # sentences each refusal prints and the comments that say which Kubernetes
 # rule each check mirrors.
+# The two rounds above were written in parallel from 2747; together they are
+# 2747 + 65 (3083/3091-3093) + 93 (3086-3089) = 2905.
 check converter "$(count packages/converter/src -name '*.py')" 2905
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
