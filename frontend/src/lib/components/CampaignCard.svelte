@@ -588,19 +588,11 @@
   {/if}
 {/snippet}
 
-<!-- Two fixed slots, so a volume with no source manifest leaves a gap rather
-     than shifting the row beside it. One snippet, so the folded strip and
+<!-- Two fixed slots, source manifest then run log (where it came from, then
+     what happened), so a volume with no source leaves a gap, not a shift. One snippet, so the folded strip and
      the table row can never drift apart. -->
 {#snippet links(v: VolumeView)}
   {@const source = sourceOf(v)}
-  <span class="slot"
-    ><a
-      class="vicon"
-      href={logHref(v)}
-      aria-label="run log for {v.id}"
-      title="run log for {v.id}">{@render glyph("log")}</a
-    ></span
-  >
   <span class="slot"
     >{#if source !== null}<a
         class="vicon"
@@ -610,6 +602,14 @@
         aria-label="manifest for {v.id}"
         title="manifest for {v.id}">{@render glyph("manifest")}</a
       >{/if}</span
+  >
+  <span class="slot"
+    ><a
+      class="vicon"
+      href={logHref(v)}
+      aria-label="run log for {v.id}"
+      title="run log for {v.id}">{@render glyph("log")}</a
+    ></span
   >
 {/snippet}
 
