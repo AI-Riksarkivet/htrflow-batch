@@ -1248,5 +1248,8 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4822
 # volumes, and verify-images names its extractors -- the volume path plus
 # the three container lists, since naming any extractor replaces Kyverno's
 # built-in ones. Most of it is the comments saying so.)
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1070
+# 1029 -> 1034 (2026-09-21, audit 3065): verify-images narrows
+# imageReferences to the allow-list only while the allow-list policy is
+# rendered; the paragraph saying why is the five lines.)
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1075
 exit $fail
