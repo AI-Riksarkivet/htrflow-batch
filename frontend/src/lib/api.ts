@@ -263,12 +263,15 @@ export const jobDetailSchema = jobSummarySchema.extend({
   latest: volumeViewSchema.nullable(),
   failures: z.array(volumeViewSchema),
   volumes: z.array(volumeViewSchema),
-  // Summed over the volumes THIS response carries (the page, plus `latest`
-  // and the failures) — the API reads one progress file per row it answers
-  // with, up to PROGRESS_FETCH_CAP, never one per volume in the campaign.
-  // Both 0 when none is known.
+  // Summed over every volume of the campaign whose progress the API has
+  // read — from its cache, and at most PROGRESS_FETCH_CAP bucket reads per
+  // request for the rest — so they fill in over a few polls rather than
+  // being the loaded page's. Both 0 when none is known.
   pagesDone: z.number(),
   pagesTotal: z.number(),
+  // How many of the campaign's run volumes those sums cover. Until `counted`
+  // reaches `of`, a volume that lost pages may simply not be read yet.
+  pagesCoverage: z.object({ counted: z.number(), of: z.number() }),
   // The same three, campaign-wide: the failed pages and errors summed, and
   // the most recent error with the volume it happened in and that volume's
   // run log — the row it came from is usually outside the page being shown.

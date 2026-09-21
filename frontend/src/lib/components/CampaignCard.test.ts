@@ -60,6 +60,7 @@ const detailBase = {
   latest: null,
   pagesDone: 0,
   pagesTotal: 0,
+  pagesCoverage: { counted: 0, of: 0 },
   pagesFailed: 0,
   errors: 0,
   lastError: null,
@@ -1533,6 +1534,32 @@ describe("CampaignCard's running motion", () => {
     const cells = [...container.querySelectorAll(".row.totals")];
     const pagesCell = cells.find((c) => c.textContent?.startsWith("pages"));
     expect(pagesCell).toHaveTextContent("—");
+  });
+
+  test("page totals not yet every volume's say how many they cover", async () => {
+    // A lost page in a volume the API has not read yet would otherwise
+    // hide behind a clean-looking total (3076).
+    stubPolls(
+      {
+        pagesDone: 90,
+        pagesTotal: 100,
+        pagesCoverage: { counted: 120, of: 500 },
+      },
+      {
+        pagesDone: 90,
+        pagesTotal: 100,
+        pagesCoverage: { counted: 500, of: 500 },
+      },
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    const pagesCell = () =>
+      [...container.querySelectorAll(".row.totals")].find((c) =>
+        c.textContent?.startsWith("pages"),
+      );
+    expect(pagesCell()).toHaveTextContent("counted in 120 of 500 volumes");
+    await vi.advanceTimersByTimeAsync(RELOAD_MS);
+    expect(pagesCell()).not.toHaveTextContent("counted in");
   });
 
   test("the progress line flashes only once its page count has moved", async () => {
