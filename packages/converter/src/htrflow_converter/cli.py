@@ -119,9 +119,9 @@ def _validate(repo_dir: str) -> int:
         return _report(e, "")
     # `rendered/` is committed, so a pull request has the previous render
     # right there to be held against -- no cluster, and no render of its own.
-    edited = _edited_pipeline(campaigns, pipelines, cfg, repo / RENDERED)
-    if edited is not None:
-        print(edited)
+    refused = _refused(campaigns, pipelines, cfg, repo / RENDERED)
+    if refused is not None:
+        print(refused)
         return 1
     return 0
 
@@ -255,6 +255,55 @@ def _edited_pipeline(campaigns, pipelines: dict, cfg, out: Path) -> str | None:
     return None
 
 
+def _moved_campaign(c: Campaign, record: Path) -> str | None:
+    """One sentence when ``c`` no longer renders as the record says it did."""
+    existing = _existing_parts(record / "campaigns", c)
+    if not existing:
+        return None
+    # Parsed, never byte-for-byte: a rendered file written before the
+    # separator changed says the same thing with commas in it, and an
+    # unchanged campaign must still re-render (models.parse_source_line).
+    try:
+        before = [
+            parse_source_line(line)
+            for p in existing
+            for line in _volumes_txt(p).splitlines()
+        ]
+    except _CorruptRenderedFile as e:
+        return str(e)
+    if before != [parse_source_line(v.source_line()) for v in c.volumes]:
+        return f"campaign {c.name} is append-only: create a new campaign"
+    # Same volumes, different object names: the split rule itself moved (a
+    # byte budget where there was only a count, one part more, a shorter
+    # stem). Renaming them is not a re-render, it is a delete and a restart
+    # -- `apply --prune` takes the Jobs that already ran these volumes with it.
+    names = render.campaign_names(c, render.split(c.volumes))
+    paths = [record / "campaigns" / f"{n}.yaml" for n in names]
+    if [p.name for p in existing] != [p.name for p in paths]:
+        return (
+            f"campaign {c.name} was rendered as {_shape(existing)} and now "
+            f"renders as {_shape(paths)}: applying that would delete the Jobs "
+            "that have already run it and start every volume over — create a "
+            "new campaign instead"
+        )
+    return None
+
+
+def _refused(campaigns, pipelines: dict, cfg, record: Path) -> str | None:
+    """Every rule a repo is held to beyond its own files' shape, in one
+    place: ``validate`` (the pull-request gate) and ``render`` (on main) call
+    this, and nothing else. When only ``render`` held a rule, a change went
+    green in review and then stopped every render on main (3086)."""
+    for problem in (
+        _colliding_names(campaigns),
+        _edited_pipeline(campaigns, pipelines, cfg, record),
+        *(_moved_campaign(c, record) for c in campaigns),
+    ):
+        if problem is not None:
+            return problem
+    return None
+
+
 def _shape(paths: list[Path]) -> str:
     """``kyrk.yaml``, or ``8 parts, kyrk-part1.yaml … kyrk-part8.yaml``."""
     if len(paths) == 1:
@@ -309,14 +358,13 @@ def _render(repo_dir: str, out_dir: str) -> int:
     if unsafe is not None:
         print(unsafe, file=sys.stderr)
         return 1
-    clash = _colliding_names(campaigns)
-    if clash is not None:
-        print(clash)
-        return 1
-    record = repo / RENDERED
-    edited = _edited_pipeline(campaigns, pipelines, cfg, record)
-    if edited is not None:
-        print(edited)
+    # Held against the RECORD, never against `--out`: an apply with no --out
+    # renders into a temp directory, where an earlier render of a campaign
+    # cannot be, so the rules found nothing to hold it against and a swapped
+    # volume list went straight to the cluster.
+    refused = _refused(campaigns, pipelines, cfg, repo / RENDERED)
+    if refused is not None:
+        print(refused)
         return 1
     pipelines_out, campaigns_out = out / "pipelines", out / "campaigns"
     written: set[Path] = set()
@@ -325,43 +373,8 @@ def _render(repo_dir: str, out_dir: str) -> int:
         _write(path, render.pipeline_objects(p, cfg))
         written.add(path)
     for c in campaigns:
-        # Parsed, never byte-for-byte: a rendered file written before the
-        # separator changed says the same thing with commas in it, and an
-        # unchanged campaign must still re-render (models.parse_source_line).
-        new_volumes = [parse_source_line(v.source_line()) for v in c.volumes]
-        # Under the RECORD, never under `--out`: an apply with no --out
-        # renders into a temp directory, where an earlier render of this
-        # campaign cannot be, so both rules below found nothing to hold it
-        # against and a swapped volume list went straight to the cluster.
-        existing = _existing_parts(record / "campaigns", c)
         objects = render.campaign_objects(c, pipelines[c.pipeline], cfg)
         paths = [campaigns_out / f"{o['metadata']['name']}.yaml" for o in objects[1::2]]
-        if existing:
-            try:
-                rendered_volumes = [
-                    parse_source_line(line)
-                    for p in existing
-                    for line in _volumes_txt(p).splitlines()
-                ]
-            except _CorruptRenderedFile as e:
-                print(str(e))
-                return 1
-            if rendered_volumes != new_volumes:
-                print(f"campaign {c.name} is append-only: create a new campaign")
-                return 1
-            # Same volumes, different object names: the split rule itself
-            # moved (a byte budget where there was only a count, one part
-            # more, a shorter stem). Renaming them is not a re-render, it is
-            # a delete and a restart -- `apply --prune` takes the Jobs that
-            # already ran these volumes with it.
-            if [p.name for p in existing] != [p.name for p in paths]:
-                print(
-                    f"campaign {c.name} was rendered as {_shape(existing)} and "
-                    f"now renders as {_shape(paths)}: applying that would delete "
-                    "the Jobs that have already run it and start every volume "
-                    "over — create a new campaign instead"
-                )
-                return 1
         for path, i in zip(paths, range(0, len(objects), 2)):
             _write(path, objects[i : i + 2])
             written.add(path)
