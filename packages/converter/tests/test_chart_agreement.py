@@ -167,3 +167,39 @@ def test_the_priority_classes_the_converter_accepts_are_the_ones_the_chart_ships
         assert ours == theirs, pair
     for pair, (ours, theirs) in _names(_load(EXAMPLE)).items():
         assert ours == theirs, pair
+
+
+WORKFLOWS = [
+    ROOT / "examples" / "campaigns" / ".github" / "workflows" / "render.yml",
+    CONVERTER_SRC / "template" / ".github" / "workflows" / "render.yml",
+]
+
+
+def _kyverno_step(workflow: Path) -> str:
+    steps = _load(workflow)["jobs"]["policy"]["steps"]
+    return next(s["run"] for s in steps if s.get("name") == "Kyverno")
+
+
+def _service_account(template: str) -> str:
+    text = (CHART / "templates" / template).read_text(encoding="utf-8")
+    return re.search(r"kind: ServiceAccount\nmetadata:\n  name: ([\w-]+)", text).group(1)
+
+
+def test_the_campaigns_ci_checks_policies_as_the_apply_identity():
+    """3067: `rbac-scope` matches ConfigMap writes by the web ServiceAccount.
+    `kyverno apply` with no `--userinfo` has no requester to rule that out,
+    so the web rule fired on every pipeline and campaign ConfigMap and the
+    policy job failed on every valid campaign. What the cluster admits from
+    a campaigns repo is written by `htrflow-campaigns apply`, so CI has to
+    submit as that identity -- the one apply-rbac.yaml creates, never the
+    one the web rule is scoped to."""
+    apply_sa = _service_account("apply-rbac.yaml")
+    web_sa = _service_account("web.yaml")
+    assert apply_sa != web_sa
+    for workflow in WORKFLOWS:
+        run = _kyverno_step(workflow)
+        assert re.search(r"kyverno apply .*--userinfo ", run), workflow
+        usernames = re.findall(r"username: (\S+)", run)
+        assert usernames == [
+            f"system:serviceaccount:${{POLICY_NAMESPACE}}:{apply_sa}"
+        ], workflow
