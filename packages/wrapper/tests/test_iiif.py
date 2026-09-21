@@ -401,3 +401,84 @@ def test_painting_body_drops_a_choice_with_nothing_publishable():
         "items": [{"id": "javascript:alert(1)", "type": "Image"}],
     }
     assert painting_body(canvas) == {}
+
+
+def _fetched_and_published(canvas):
+    """What the wrapper downloads for a canvas and what it publishes for it."""
+    from htrflow_batch.iiif import painting_body
+
+    page = pages_from_manifest({"items": [canvas]}, width=2500)[0]
+    return page.image_url, painting_body(page.canvas)
+
+
+def test_a_choice_body_is_fetched_as_the_image_it_publishes():
+    """3097: the fetch URL was chosen by its own rule, which did not know a
+    Choice -- so a canvas the viewer manifest publishes fine failed the whole
+    volume with 'no image'."""
+    canvas = _canvas_with_service(3000, 4000)
+    canvas["items"][0]["items"][0]["body"] = {
+        "type": "Choice",
+        "items": [
+            {"id": "javascript:alert(1)", "type": "Image"},
+            {
+                "id": "https://img/colour.jpg",
+                "type": "Image",
+                "service": [{"id": "https://img/iiif/colour"}],
+            },
+        ],
+    }
+    url, body = _fetched_and_published(canvas)
+    assert url == "https://img/iiif/colour/full/2500,/0/default.jpg"
+    assert body["id"] == "https://img/colour.jpg"
+
+
+def test_a_list_body_is_fetched_as_the_image_it_publishes():
+    """3097: a bare list of bodies raised AttributeError -- exit 13."""
+    canvas = _canvas_with_service(3000, 4000)
+    canvas["items"][0]["items"][0]["body"] = [
+        {"id": "ftp://img/scan.jpg", "type": "Image"},
+        {"id": "https://img/scan.jpg", "type": "Image"},
+    ]
+    assert _fetched_and_published(canvas) == (
+        "https://img/scan.jpg",
+        {"id": "https://img/scan.jpg", "type": "Image"},
+    )
+
+
+def test_an_unpublishable_first_body_does_not_pick_the_fetched_image():
+    """3097: with an http service on an unpublishable first body, image A was
+    fetched and transcribed while image B was published -- the ALTO drawn
+    over the wrong picture."""
+    canvas = _canvas_with_service(3000, 4000)
+    first = canvas["items"][0]["items"][0]
+    first["body"]["id"] = "javascript:alert(1)"  # service stays http
+    second = {
+        "body": {
+            "id": "https://img/b.jpg",
+            "service": [{"id": "https://img/iiif/b"}],
+        }
+    }
+    canvas["items"][0]["items"].append(second)
+    url, body = _fetched_and_published(canvas)
+    assert url == "https://img/iiif/b/full/2500,/0/default.jpg"
+    assert body["id"] == "https://img/b.jpg"
+
+
+def test_a_canvas_with_nothing_publishable_is_fetched_but_not_published():
+    """W6 still holds: a body we will not publish costs the canvas its image
+    in the viewer and nothing else -- the page is fetched and transcribed."""
+    canvas = _canvas_with_service(3000, 4000)
+    canvas["items"][0]["items"][0]["body"]["id"] = "javascript:alert(1)"
+    url, body = _fetched_and_published(canvas)
+    assert url == "https://img/iiif/page-1/full/2500,/0/default.jpg"
+    assert body == {}
+
+
+def test_p2_takes_the_first_publishable_image_for_both(p2_manifest):
+    canvas = p2_manifest["sequences"][0]["canvases"][0]
+    good = {"resource": {"@id": "http://ex/b.jpg", "service": {"@id": "http://ex/b"}}}
+    canvas["images"][0]["resource"]["@id"] = "javascript:alert(1)"
+    canvas["images"].append(good)
+    url, body = _fetched_and_published(canvas)
+    assert url.startswith("http://ex/b/full/")
+    assert body["id"] == "http://ex/b.jpg"
