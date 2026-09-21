@@ -1256,5 +1256,8 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4822
 # rules, one for the object written (CREATE and UPDATE) and one for the
 # object an UPDATE replaces, each with its own message, and the paragraph
 # saying why the delete rule alone was not enough.)
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1125
+# 1084 -> 1093 (2026-09-21, B80): htrflow-batch.validate refuses
+# policies.enabled false without security.policies.allowDisabled -- the fail
+# and the paragraph saying why off has to be said out loud.)
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1134
 exit $fail
