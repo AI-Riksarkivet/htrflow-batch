@@ -207,9 +207,80 @@ describe("describeReason", () => {
   });
 });
 
+/** A volume whose index still has retries left: the pod is being retried. */
 function reasonOf(r: Partial<VolumeReason>): string {
-  return describeReason(reason(r));
+  return describeReason(reason(r), false);
 }
+
+/**
+ * A volume in the Job's failedIndexes: backoffLimitPerIndex is spent, so
+ * nothing retries it however transient the cause was. Saying "it will be
+ * retried" there left a reader waiting for a retry that never comes (the
+ * 2026-09-17 audit, 3078).
+ */
+describe("describeReason for a volume with no retries left", () => {
+  const final = (r: Partial<VolumeReason>) => describeReason(reason(r), true);
+
+  test("a drain or a pause", () => {
+    expect(final({ stage: "stream", permanent: false, error: "SIGTERM" })).toBe(
+      "The pod was stopped by the cluster (a node drain or a pause), and " +
+        "the volume has used all its retries — put it in a new campaign to " +
+        "run it again.",
+    );
+  });
+
+  test("the time budget", () => {
+    expect(
+      final({ stage: "stream", permanent: false, error: "DeadlineExceeded" }),
+    ).toBe(
+      "Stopped when this volume's time budget ran out, and it has used all " +
+        "its retries — put the volume in a new campaign to run it again.",
+    );
+  });
+
+  test("pages missing after verify", () => {
+    expect(
+      final({
+        stage: "verify",
+        permanent: false,
+        error: "verify failed: missing=['p012', 'p045'] failed=[]",
+      }),
+    ).toBe(
+      "2 pages are missing from the results (p012, p045), and the volume " +
+        "has used all its retries — put it in a new campaign to redo them.",
+    );
+  });
+
+  test("every page in the last attempt failed", () => {
+    expect(
+      final({
+        stage: "verify",
+        error:
+          "verify failed: all 3 processed pages failed failed=['a', 'b', 'c']",
+      }),
+    ).toBe(
+      "None of the 3 pages processed in the last attempt produced a result, " +
+        "and the volume has used all its retries — check the model and the " +
+        "GPU, then put it in a new campaign.",
+    );
+  });
+
+  test("any other transient failure", () => {
+    expect(final({ stage: "stream", permanent: false, error: "boom" })).toBe(
+      "Failed while processing pages: boom. The volume has used all its " +
+        "retries — put it in a new campaign to run it again.",
+    );
+  });
+
+  test("a permanent failure reads the same either way", () => {
+    const r = { stage: "load", permanent: true, error: "unknown step 'Foo'" };
+    expect(final(r)).toBe(reasonOf(r));
+  });
+
+  test("a failure with no word on permanence promises nothing either way", () => {
+    expect(final({ error: "Killed" })).toBe("Failed: Killed.");
+  });
+});
 
 describe("describeApiError", () => {
   test("a non-2xx, with the last list still on screen", () => {

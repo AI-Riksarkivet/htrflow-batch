@@ -669,13 +669,56 @@ describe("CampaignCard", () => {
       "vol1: Failed while loading the model: model not found. This volume " +
         "will not be retried — fix the cause, then put the volume in a new " +
         "campaign. · vol2: 2 pages are missing from the results (p012, " +
-        "p045); the volume is retried automatically and only those pages " +
-        "are redone.",
+        "p045), and the volume has used all its retries — put it in a new " +
+        "campaign to redo them.",
     );
     // Clipped by CSS, so the whole of it sits in the line's `title` too.
     expect(container.querySelector(".problems")).toHaveAttribute(
       "title",
       line.textContent,
+    );
+  });
+
+  test("a failed volume is never promised a retry; an active one is (3078)", async () => {
+    // Both pods were SIGTERMed, a transient cause. The failed one is in the
+    // Job's failedIndexes -- its backoffLimitPerIndex is spent -- and the
+    // active one is between attempts. Only the second comes back.
+    const drained = { stage: "stream", permanent: false, error: "SIGTERM" };
+    const failed = { ...volumeFailed, reason: drained };
+    const retrying = {
+      ...volumeFailed,
+      index: 2,
+      id: "vol2",
+      state: "active",
+      reason: drained,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...detail0,
+          failures: [failed],
+          volumes: [failed, retrying],
+        }),
+      ),
+    );
+    const { container } = render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(0);
+    // Folded, the failure is on the problems line.
+    expect(container.querySelector(".problems-text")).toHaveTextContent(
+      "vol1: The pod was stopped by the cluster (a node drain or a pause), " +
+        "and the volume has used all its retries — put it in a new campaign " +
+        "to run it again.",
+    );
+    await expand();
+    const [failedNote, retryingNote] = [
+      ...container.querySelectorAll(".row-note"),
+    ];
+    expect(failedNote).toHaveTextContent("has used all its retries");
+    expect(failedNote).not.toHaveTextContent("will be retried");
+    expect(retryingNote).toHaveTextContent(
+      "The pod was stopped by the cluster (a node drain or a pause); the " +
+        "volume will be retried.",
     );
   });
 
@@ -1215,7 +1258,7 @@ describe("CampaignCard", () => {
       const sentence =
         "The warm-up failed: unknown model class 'Yolo9'. Fix the pipeline " +
         "file, then re-apply it — the warm-up will not retry on its own.";
-      expect(describeReason(reason)).toBe(sentence);
+      expect(describeReason(reason, true)).toBe(sentence);
       const chip = screen.getByText("warm-up failed");
       expect(chip).toHaveClass("failed");
       expect(chip).toHaveAttribute("title", sentence);

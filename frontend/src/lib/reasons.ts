@@ -74,14 +74,16 @@ function naming(names: string[]): string {
  * failed with a reason recorded no longer fails verify at all: the volume
  * completes and names it in manifest.json, so no sentence here covers it.
  */
-function describeVerify(error: string): string {
+function describeVerify(error: string, final: boolean): string {
   if (error.startsWith("verify failed: all ")) {
     const n = pageNames(error, "failed").length;
     const count = n === 0 ? "No page" : `None of the ${n} pages`;
-    return (
-      `${count} processed in this attempt produced a result; the volume is ` +
-      "retried automatically — check the model and the GPU."
-    );
+    return final
+      ? `${count} processed in the last attempt produced a result, and the ` +
+          "volume has used all its retries — check the model and the GPU, " +
+          "then put it in a new campaign."
+      : `${count} processed in this attempt produced a result; the volume ` +
+          "is retried automatically — check the model and the GPU.";
   }
   // `missing=` first: the message carries a `failed=` list too, and those
   // pages are accounted for — naming them here would tell the reader they
@@ -90,36 +92,49 @@ function describeVerify(error: string): string {
   const names = named.length === 0 ? pageNames(error) : named;
   const count = names.length === 0 ? "Some" : String(names.length);
   const plural = names.length === 1 ? "page is" : "pages are";
-  return (
-    `${count} ${plural} missing from the results${naming(names)}; ` +
-    "the volume is retried automatically and only those pages are redone."
-  );
+  const missing = `${count} ${plural} missing from the results${naming(names)}`;
+  return final
+    ? `${missing}, and the volume has used all its retries — put it in a ` +
+        "new campaign to redo them."
+    : `${missing}; the volume is retried automatically and only those ` +
+        "pages are redone.";
 }
 
 /**
  * One sentence for a failed volume. The known failures each get their own —
  * they are the ones an operator meets weekly — and anything else is still a
  * sentence: what stage it was in, what went wrong, and whether it comes back.
+ *
+ * `final` is whether anything will retry it at all. A transient cause says
+ * nothing about that on its own: the pod's message is the same on the last
+ * attempt as on the first, and only the volume's state knows the index has
+ * spent its `backoffLimitPerIndex` — a `failed` volume is one the Job gave
+ * up on, and told it "will be retried" it was waited on for a retry that
+ * never comes (the 2026-09-17 audit, 3078). Required, so no caller can
+ * forget to ask.
  */
-export function describeReason(reason: VolumeReason): string {
+export function describeReason(reason: VolumeReason, final: boolean): string {
   const { stage, permanent, error } = reason;
   // DeadlineExceeded is the pod's activeDeadlineSeconds, named by the API
   // (projection._name_the_deadline); MAX_SECONDS is what the wrapper's own
   // watchdog wrote before Task 25 moved that budget to the pod, and a volume
   // whose last pod predates the change still says it.
   if (error === "DeadlineExceeded" || error === "MAX_SECONDS") {
-    return (
-      "Stopped when this volume's time budget ran out; the next attempt " +
-      "resumes from the pages already finished."
-    );
+    return final
+      ? "Stopped when this volume's time budget ran out, and it has used " +
+          "all its retries — put the volume in a new campaign to run it again."
+      : "Stopped when this volume's time budget ran out; the next attempt " +
+          "resumes from the pages already finished.";
   }
   if (error === "SIGTERM") {
-    return (
-      "The pod was stopped by the cluster (a node drain or a pause); " +
-      "the volume will be retried."
-    );
+    return final
+      ? "The pod was stopped by the cluster (a node drain or a pause), and " +
+          "the volume has used all its retries — put it in a new campaign " +
+          "to run it again."
+      : "The pod was stopped by the cluster (a node drain or a pause); " +
+          "the volume will be retried.";
   }
-  if (error.startsWith("verify failed")) return describeVerify(error);
+  if (error.startsWith("verify failed")) return describeVerify(error, final);
   if (stage === null && permanent === null && /^\s*[{[]/.test(error)) {
     // The API could not parse the pod's termination message and handed the
     // raw text over. Rendering it would put a JSON blob in front of a
@@ -163,8 +178,11 @@ export function describeReason(reason: VolumeReason): string {
       ? `Failed: ${stop(error)}`
       : `Failed while ${doing}: ${stop(error)}`;
   if (permanent === null) return head;
-  return permanent
-    ? `${head} This volume will not be retried — fix the cause, then put the volume in a new campaign.`
+  if (permanent)
+    return `${head} This volume will not be retried — fix the cause, then put the volume in a new campaign.`;
+  return final
+    ? `${head} The volume has used all its retries — put it in a new ` +
+        "campaign to run it again."
     : `${head} It will be retried automatically.`;
 }
 

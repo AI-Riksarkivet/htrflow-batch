@@ -104,9 +104,14 @@
       ? notice.lastError.volume
       : null,
   );
+  // A warm-up reason is only ever shown once the warm-up Job has failed,
+  // which is after its own backoffLimit is spent: nothing retries it.
+  const warmupReason = $derived(
+    job.warmup.reason ? describeReason(job.warmup.reason, true) : undefined,
+  );
   const problems = $derived([
-    ...(job.warmup.reason
-      ? [{ id: "warm-up", text: describeReason(job.warmup.reason), href: null }]
+    ...(warmupReason !== undefined
+      ? [{ id: "warm-up", text: warmupReason, href: null }]
       : []),
     // Each failed volume keeps its own run log, the way the callout this
     // line replaced did: a failure a reader can read about but not open is
@@ -114,10 +119,7 @@
     // stays one line.
     ...unseenFailures.map((f) => ({
       id: f.id,
-      text:
-        f.reason === undefined
-          ? "Failed, with no message from the pod."
-          : describeReason(f.reason),
+      text: reasonOf(f),
       href: logHref(f),
     })),
     ...(lastErrorText === null || lastErrorVolume !== null
@@ -210,10 +212,20 @@
     );
   }
 
+  /**
+   * Whether anything will run this volume again. `failed` is the Job's
+   * failedIndexes -- the index has spent its backoffLimitPerIndex -- so a
+   * transient cause is no promise of a retry there; an `active` volume
+   * carrying a reason is one between attempts (the 2026-09-17 audit, 3078).
+   */
+  function final(v: VolumeView): boolean {
+    return v.state === "failed";
+  }
+
   /** What this volume has to say for itself under its own row. */
   function noteText(v: VolumeView): string {
     const parts = [];
-    if (v.reason !== undefined) parts.push(describeReason(v.reason));
+    if (v.reason !== undefined) parts.push(describeReason(v.reason, final(v)));
     if (lastErrorVolume === v.id && lastErrorText !== null)
       parts.push(lastErrorText);
     return parts.join(" · ");
@@ -223,7 +235,7 @@
   function reasonOf(v: VolumeView): string {
     return v.reason === undefined
       ? "Failed, with no message from the pod."
-      : describeReason(v.reason);
+      : describeReason(v.reason, final(v));
   }
 
   /** The figures beside a bar: `2 / 4 · 2 failed`, or `—` when unknown. */
@@ -793,11 +805,8 @@
       <span class="camp-name">{job.namespace}/{job.name}</span>
     </button>
     {#if warmupChip !== null}
-      <span
-        class="chip warmup {job.warmup.phase}"
-        title={job.warmup.reason
-          ? describeReason(job.warmup.reason)
-          : undefined}>{warmupChip}</span
+      <span class="chip warmup {job.warmup.phase}" title={warmupReason}
+        >{warmupChip}</span
       >
     {/if}
     <span
