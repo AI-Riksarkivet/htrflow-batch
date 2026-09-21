@@ -46,9 +46,9 @@
       "jobGone": false,
       "lastError": {
         "error": "the worker thread died",
-        "logUrl": "https://results.example.org/status/logs/demo-v1/vol0.txt",
+        "logUrl": "https://results.example.org/status/logs/demo-v1/vol1.txt",
         "page": "0044",
-        "volume": "vol0"
+        "volume": "vol1"
       },
       "latest": {
         "altoPrefix": "https://results.example.org/htr-test/demo-v1/vol1/alto/",
@@ -77,6 +77,10 @@
       },
       "name": "kyrk",
       "namespace": "htr-test",
+      "pagesCoverage": {
+        "counted": 3,
+        "of": 3
+      },
       "pagesDone": 411,
       "pagesFailed": 3,
       "pagesTotal": 1914,
@@ -222,9 +226,9 @@
       "jobGone": true,
       "lastError": {
         "error": "the worker thread died",
-        "logUrl": "https://results.example.org/status/logs/demo-v1/vol0.txt",
+        "logUrl": "https://results.example.org/status/logs/demo-v1/vol1.txt",
         "page": "0044",
-        "volume": "vol0"
+        "volume": "vol1"
       },
       "latest": {
         "altoPrefix": "https://results.example.org/htr-test/demo-v1/vol1/alto/",
@@ -253,6 +257,10 @@
       },
       "name": "gamla",
       "namespace": "htr-test",
+      "pagesCoverage": {
+        "counted": 3,
+        "of": 3
+      },
       "pagesDone": 411,
       "pagesFailed": 3,
       "pagesTotal": 1914,
@@ -398,13 +406,17 @@
       "jobGone": true,
       "lastError": {
         "error": "the worker thread died",
-        "logUrl": "https://results.example.org/status/logs/demo-v1/vol0.txt",
+        "logUrl": "https://results.example.org/status/logs/demo-v1/vol2.txt",
         "page": "0044",
-        "volume": "vol0"
+        "volume": "vol2"
       },
       "latest": null,
       "name": "okand",
       "namespace": "htr-test",
+      "pagesCoverage": {
+        "counted": 3,
+        "of": 3
+      },
       "pagesDone": 411,
       "pagesFailed": 3,
       "pagesTotal": 1914,

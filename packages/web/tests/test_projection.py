@@ -801,11 +801,11 @@ class TestVolumeProgress:
         assert d["volumes"][0]["progress"]["done"] == 3
         assert d["volumes"][1]["progress"] is None
 
-    def test_only_the_rows_in_the_answer_are_fetched(self):
-        """One GET per row shown, never one per volume in the campaign: the
-        cost has to grow with the window, not with the archive (C08). The
-        seven-volume campaign answers with two rows plus its one failure
-        (vol3) and `latest` (vol5)."""
+    def test_the_rows_in_the_answer_are_fetched_before_the_rest(self):
+        """The rows a reader is looking at first -- its one failure (vol3)
+        and `latest` (vol5) ahead of the page (vol0, vol1) -- then the rest
+        of the campaign's run volumes, for the campaign's totals. Pending
+        ones have nothing in the bucket and are never asked (3076)."""
         fetch, asked = self._fetch({})
         projection.detail(
             _job(),
@@ -817,12 +817,12 @@ class TestVolumeProgress:
             warmup=MISSING_WARMUP,
             fetch_progress=fetch,
         )
-        assert [v for v, _ in asked] == ["vol0", "vol1", "vol3", "vol5"]
+        assert [v for v, _ in asked] == ["vol3", "vol5", "vol0", "vol1", "vol2"]
 
     def test_at_most_the_cap_is_fetched_even_when_the_page_is_bigger(self):
         """A `limit=1000` page must not turn into a thousand sequential GETs
         through one client (finding 5)."""
-        n = 40
+        n = projection.PROGRESS_FETCH_CAP + 40
         fetch, asked = self._fetch({})
         pods = [_pod(i, active=True) for i in range(n)]
         projection.detail(
@@ -866,11 +866,11 @@ class TestVolumeProgress:
     def test_running_rows_are_not_crowded_out_by_a_page_full_of_done_ones(self):
         """Most of a big campaign is done; a few volumes are still running.
         The running ones must not lose the cap to done rows ahead of them."""
-        n = 40
+        n = projection.PROGRESS_FETCH_CAP + 40
         fetch, asked = self._fetch({})
         pods = [_pod(i, active=True) for i in range(n - 3, n)]  # last 3 running
         projection.detail(
-            _job(completions=n, active=3, completed="0-35", failed=""),
+            _job(completions=n, active=3, completed=f"0-{n - 4}", failed=""),
             _configmap(n=n),
             pods,
             CFG,
@@ -880,8 +880,108 @@ class TestVolumeProgress:
             fetch_progress=fetch,
         )
         asked_ids = {v for v, _ in asked}
-        assert {"vol37", "vol38", "vol39"} <= asked_ids
+        assert {f"vol{i}" for i in range(n - 3, n)} <= asked_ids
         assert len(asked) == projection.PROGRESS_FETCH_CAP
+
+    def test_the_totals_are_the_whole_campaigns_however_big_it_is(self):
+        """500 volumes, one of which -- far past the cap and the page --
+        lost pages. Summed over the <=32 rows fetched, the campaign's totals
+        jumped between polls and it read as clean (3076). Cached answers
+        cost nothing, so once every run volume has been read the totals
+        are every volume's, and the coverage says so."""
+        n = 500
+        known = {
+            f"vol{i}": _progress(done=10, total=10, failed=int(i == 300))
+            for i in range(n)
+        }
+        network: list[str] = []
+
+        def fetch(base, vol_id, state):
+            network.append(vol_id)
+            return known[vol_id]
+
+        def cached(base, vol_id, state):
+            return True, known[vol_id]
+
+        d = projection.detail(
+            _job(completions=n, active=0, completed=f"0-{n - 1}", failed=""),
+            _configmap(n=n),
+            [],
+            CFG,
+            limit=200,
+            warmup=MISSING_WARMUP,
+            fetch_progress=fetch,
+            cached_progress=cached,
+        )
+        assert network == [], "every answer was in the cache"
+        assert (d["pagesDone"], d["pagesTotal"], d["pagesFailed"]) == (
+            n * 10,
+            n * 10,
+            1,
+        )
+        assert d["pagesCoverage"] == {"counted": n, "of": n}
+
+    def test_only_network_misses_count_against_the_cap(self):
+        n = 4 * projection.PROGRESS_FETCH_CAP
+        cache = {f"vol{i}": _progress(done=1, total=1) for i in range(0, n, 2)}
+        network: list[str] = []
+
+        def fetch(base, vol_id, state):
+            network.append(vol_id)
+            return _progress(done=1, total=1)
+
+        def cached(base, vol_id, state):
+            return (True, cache[vol_id]) if vol_id in cache else (False, None)
+
+        d = projection.detail(
+            _job(completions=n, active=0, completed=f"0-{n - 1}", failed=""),
+            _configmap(n=n),
+            [],
+            CFG,
+            warmup=MISSING_WARMUP,
+            fetch_progress=fetch,
+            cached_progress=cached,
+        )
+        assert len(network) == projection.PROGRESS_FETCH_CAP
+        assert d["pagesCoverage"] == {
+            "counted": n // 2 + projection.PROGRESS_FETCH_CAP,
+            "of": n,
+        }
+        assert d["pagesTotal"] == d["pagesCoverage"]["counted"]
+
+    def test_a_bucket_that_answered_nothing_does_not_count_as_read(self):
+        """A GET that failed is not an answer: coverage must not reach the
+        whole campaign on a bucket that never replied, or the page would
+        call a campaign clean that nobody could read."""
+        d = projection.detail(
+            _job(),
+            _configmap(),
+            [],
+            CFG,
+            warmup=MISSING_WARMUP,
+            fetch_progress=lambda *_a: None,
+        )
+        assert d["pagesCoverage"] == {"counted": 0, "of": 5}
+
+    def test_the_deadline_is_spent_on_the_running_rows_first(self, monkeypatch):
+        """The deadline loop walked rows in page order, so a slow bucket
+        spent the budget on done rows while the running ones -- the numbers
+        actually moving -- got none (3076)."""
+        ticks = iter(range(100))
+        monkeypatch.setattr(projection.time, "monotonic", lambda: float(next(ticks)))
+        n = 40
+        fetch, asked = self._fetch({})
+        pods = [_pod(i, active=True) for i in range(n - 3, n)]
+        projection.detail(
+            _job(completions=n, active=3, completed=f"0-{n - 4}", failed=""),
+            _configmap(n=n),
+            pods,
+            CFG,
+            limit=n,
+            warmup=MISSING_WARMUP,
+            fetch_progress=fetch,
+        )
+        assert {v for v, _ in asked[:3]} == {"vol37", "vol38", "vol39"}
 
     def test_the_campaign_sums_the_pages_it_knows_about(self):
         fetch, _ = self._fetch(

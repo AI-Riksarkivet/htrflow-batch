@@ -349,6 +349,7 @@ def record_detail(
     offset: int = 0,
     limit: int = 200,
     fetch_progress=None,
+    cached_progress=None,
 ) -> dict:
     """``JobDetail`` for a campaign whose Job is gone.
 
@@ -389,14 +390,17 @@ def record_detail(
     failures = _failures(volumes)
     page = volumes[offset : offset + limit]
     latest = _latest(volumes)
-    known = _attach_progress(
-        [*page, *failures, *([latest] if latest else [])],
+    pages = _read_progress(
+        volumes,
+        page,
+        [*failures, *([latest] if latest else [])],
         _internal_results_base(row["namespace"], pipeline, cfg),
         fetch_progress or (lambda *_args: None),
+        cached_progress or _not_cached,
     )
     return {
         **row,
-        **_campaign_pages(known),
+        **pages,
         "pipelineSteps": _pipeline_steps(pipeline_yaml),
         "pipelineYaml": pipeline_yaml,
         "latest": latest,
@@ -789,12 +793,14 @@ def _latest(volumes: list[dict]) -> dict | None:
     return None
 
 
-#: Cost cap (finding 5): ProgressReader.fetch is one sequential GET, and a
-#: request's rows can otherwise run to `limit` (up to 1000) plus `failures`
-#: (up to 50) plus `latest`. Rows still running are asked first -- theirs is
-#: the progress actually changing -- and the rest (mostly done volumes,
-#: whose progress.json never changes again) fill whatever budget is left.
-PROGRESS_FETCH_CAP = 32
+#: Cost cap (finding 5): bucket GETs one request may make. Only a GET
+#: counts -- an answer already in ProgressReader's cache costs nothing (a
+#: finished volume's is kept for the hour), so the campaign's totals are
+#: every run volume's once each has been read once, however many there are,
+#: while no request ever makes more than this many sequential GETs. At the
+#: page's poll interval that reads a few thousand volumes' files in under an
+#: hour of one reader's polling (3076).
+PROGRESS_FETCH_CAP = 100
 
 #: Seconds the whole fan-out may take, cap or no cap. Each fetch is one
 #: sequential GET with progress.py's own short timeout, so an unreachable
@@ -806,36 +812,63 @@ PROGRESS_FETCH_CAP = 32
 PROGRESS_FETCH_BUDGET = 5.0
 
 
-def _attach_progress(rows: list[dict], results_base: str, fetch) -> list[dict]:
-    """Give every row the response actually carries its ``progress`` — the
-    page of volumes, plus ``latest`` and the failures, which are returned
-    from outside that page. Passed in rather than read here (progress.py does
-    the HTTP) so this module stays pure and testable without a bucket. One
-    row is fetched once even when it appears in two of the three lists, and
-    at most PROGRESS_FETCH_CAP rows are ever fetched at all (docs:
-    s3-layout), so a `limit=1000` request cannot turn into a thousand
-    sequential GETs -- ``pending`` rows cost nothing (fetch short-circuits
-    them) and are not worth budget either way."""
-    shown = list({id(row): row for row in rows}.values())
-    fetchable = [row for row in shown if row["state"] != "pending"]
-    running = [row for row in fetchable if row["state"] == "active"]
-    rest = [row for row in fetchable if row["state"] != "active"]
-    asked = {id(row) for row in (running + rest)[:PROGRESS_FETCH_CAP]}
+def _read_progress(
+    volumes: list[dict],
+    page: list[dict],
+    lead: list[dict],
+    results_base: str,
+    fetch,
+    cached,
+) -> dict:
+    """Give every run volume its ``progress``, and sum them into the
+    campaign's page totals (``_campaign_pages``) plus how many of the run
+    volumes those totals cover.
+
+    Summed over the rows the response carried, the totals were the page's,
+    not the campaign's: they moved between polls, and a lost page in a
+    volume past the page read as a clean campaign (3076). Every run volume
+    is read now, in this order -- running ones (theirs is the progress
+    actually changing), then the failures and ``latest`` (``lead``), then
+    the ``page``, then the rest -- from the cache when it has the answer, and over the
+    network only while the cap and the deadline allow. ``pagesCoverage``
+    says how many were read, so the page never calls a campaign clean on
+    totals that are not yet everyone's. ``fetch``/``cached`` are passed in
+    (progress.py does the HTTP) so this module stays pure."""
+    ahead, shown = {id(row) for row in lead}, {id(row) for row in page}
+    order = sorted(  # stable: by index within each band
+        (row for row in volumes if row["state"] != "pending"),
+        key=lambda r: (r["state"] != "active", id(r) not in ahead, id(r) not in shown),
+    )
     deadline = time.monotonic() + PROGRESS_FETCH_BUDGET
-    for row in shown:
-        wanted = id(row) in asked and time.monotonic() < deadline
-        row["progress"] = (
-            fetch(results_base, row["id"], row["state"]) if wanted else None
-        )
-    return [row for row in shown if row["progress"]]
+    misses = counted = 0
+    for row in order:
+        known, row["progress"] = cached(results_base, row["id"], row["state"])
+        if not known and misses < PROGRESS_FETCH_CAP and time.monotonic() < deadline:
+            misses += 1
+            row["progress"] = fetch(results_base, row["id"], row["state"])
+            # A GET that failed is not an answer; an absent file is.
+            known = (
+                row["progress"] is not None
+                or cached(results_base, row["id"], row["state"])[0]
+            )
+        counted += known
+    for row in [*page, *lead]:
+        row.setdefault("progress", None)  # pending: nothing to read
+    return {
+        **_campaign_pages([row for row in order if row["progress"]]),
+        "pagesCoverage": {"counted": counted, "of": len(order)},
+    }
+
+
+def _not_cached(*_args) -> tuple[bool, None]:
+    return False, None
 
 
 def _campaign_pages(rows: list[dict]) -> dict:
-    """What the card says above its table, summed over the volumes THIS
-    response covered -- all the campaign can know without one GET per volume
-    in the archive. ``lastError`` is the most recent page failure among them,
-    carrying the volume it happened in and that volume's run log: the row it
-    came from is often outside the page the reader is looking at."""
+    """What the card says above its table, summed over the volumes whose
+    progress was read. ``lastError`` is the most recent page failure among
+    them, carrying the volume it happened in and that volume's run log: the
+    row it came from is often outside the page the reader is looking at."""
     known = [row["progress"] for row in rows]
     last_errors = [
         (
@@ -865,12 +898,14 @@ def detail(
     *,
     warmup: dict,
     fetch_progress=None,
+    cached_progress=None,
 ) -> dict:
     """``JobDetail``: ``JobSummary`` plus per-index rows and top failures for
     ``GET /api/v1/jobs/{ns}/{name}``, paged by index. ``warmup`` passes
     through to ``summarize`` unchanged (Task 28); ``fetch_progress`` is
     ``(results_base, volume id, state) -> progress | None``
-    (``app.py`` wires ``progress.ProgressReader.fetch``) -- called with the
+    (``app.py`` wires ``progress.ProgressReader.fetch``, and its ``cached``
+    as ``cached_progress``, ``(...) -> (known, progress)``) -- called with the
     INTERNAL results base (this pod's own way to the bucket), never the
     public one every URL below is built from: on the PoC they are not the
     same address (docs: development/local-k3s)."""
@@ -898,16 +933,19 @@ def detail(
 
     failures = _failures(volumes)
     page = volumes[offset : offset + limit]
-    known = _attach_progress(
-        [*page, *failures, *([latest] if (latest := _latest(volumes)) else [])],
+    pages = _read_progress(
+        volumes,
+        page,
+        [*failures, *([latest] if (latest := _latest(volumes)) else [])],
         internal_base,
         fetch_progress or (lambda *_args: None),
+        cached_progress or _not_cached,
     )
 
     pipeline_yaml = _pipeline_yaml(pipeline_configmap)
     return {
         **summary,
-        **_campaign_pages(known),
+        **pages,
         # Detail only, never the list: one pipeline YAML per campaign row
         # would be most of the list response's bytes for a chip nobody has
         # clicked yet.

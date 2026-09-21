@@ -305,3 +305,74 @@ def test_an_ordinary_volume_id_is_left_as_it_is():
     r, asked = reader({})
     r.fetch(BASE, "R0001203", "active")
     assert asked == [f"{BASE}/R0001203/progress.json"]
+
+
+# --- what the campaign's totals are read from (3076) ----------------------
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+@pytest.fixture
+def clock(monkeypatch) -> _Clock:
+    c = _Clock()
+    monkeypatch.setattr(progress_mod.time, "monotonic", c)
+    return c
+
+
+def test_the_cache_is_asked_without_a_get():
+    """The campaign's totals read every run volume from the cache, and only
+    a miss may cost a GET -- so asking the cache must never make one."""
+    r, asked = reader(
+        {f"{BASE}/vol0/progress.json": httpx.Response(200, json=PROGRESS)}
+    )
+    assert r.cached(BASE, "vol0", "active") == (False, None)
+    assert asked == []
+    fetched = r.fetch(BASE, "vol0", "active")
+    assert r.cached(BASE, "vol0", "active") == (True, fetched)
+    assert len(asked) == 1
+
+
+def test_a_finished_volume_with_no_file_is_an_answer_kept_for_the_hour(clock):
+    """A done volume's pod wrote everything it ever will before it exited,
+    so a 404 then is final. Kept for the short window it was asked again on
+    every poll, and a campaign of such volumes spent the whole fetch cap on
+    them, starving the rest of the campaign's totals."""
+    r, asked = reader({})
+    assert r.fetch(BASE, "vol0", "done") is None
+    clock.now += progress_mod.RUNNING_TTL + 1
+    assert r.cached(BASE, "vol0", "done") == (True, None)
+    r.fetch(BASE, "vol0", "done")
+    assert len(asked) == 2, "progress.json and manifest.json, once each"
+
+
+def test_a_failed_volumes_file_is_final_too(clock):
+    r, asked = reader(
+        {f"{BASE}/vol0/progress.json": httpx.Response(200, json=PROGRESS)}
+    )
+    r.fetch(BASE, "vol0", "failed")
+    clock.now += progress_mod.RUNNING_TTL + 1
+    assert r.cached(BASE, "vol0", "failed")[0] is True
+    assert len(asked) == 1
+
+
+def test_a_bucket_that_did_not_answer_is_not_an_answer(clock):
+    r, _ = reader({f"{BASE}/vol0/progress.json": httpx.Response(503)})
+    assert r.fetch(BASE, "vol0", "done") is None
+    assert r.cached(BASE, "vol0", "done") == (False, None)
+
+
+def test_a_full_cache_drops_its_oldest_entry_not_everything(monkeypatch):
+    """Cleared whole, one campaign bigger than the cache emptied it for
+    every other campaign on every poll."""
+    monkeypatch.setattr(progress_mod, "MAX_ENTRIES", 3)
+    r, _ = reader({})
+    for i in range(4):
+        r.fetch(BASE, f"vol{i}", "active")
+    assert r.cached(BASE, "vol0", "active")[0] is False
+    assert all(r.cached(BASE, f"vol{i}", "active")[0] for i in (1, 2, 3))

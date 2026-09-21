@@ -445,6 +445,7 @@ def create_app(
             pipeline_cm,
             warmup=warmup,
             fetch_progress=progress.fetch if progress is not None else None,
+            cached_progress=progress.cached if progress is not None else None,
         )
         status_name = f"{cm_name or 'campaign-' + name}{projection.STATUS_SUFFIX}"
         live = reader.get_configmap(namespace, status_name)
@@ -482,6 +483,7 @@ def create_app(
             offset,
             limit,
             fetch_progress=progress.fetch if progress is not None else None,
+            cached_progress=progress.cached if progress is not None else None,
         )
 
     def _warmup_status(

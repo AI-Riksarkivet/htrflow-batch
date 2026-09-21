@@ -5,16 +5,16 @@ knows a volume is `active` and nothing more — "page 137 of 638" lives in the
 pod, and the wrapper puts it in the bucket as `progress.json`
 (docs: reference/s3-layout). This module is the only reader of it.
 
-The cost is bounded by what the response carries, not by the campaign: one
-GET per volume row the API is about to answer with, memoized for a few
-seconds so a page of 200 rows polled by ten browsers costs 200 GETs per
-window rather than 2 000 -- and further capped by the caller
-(projection._attach_progress: at most PROGRESS_FETCH_CAP rows, running ones
-first) so a `limit=1000` request cannot turn into a thousand sequential
-fetches through this one client. Anything unreadable — no file yet, a bucket
-that does not answer, a body that is not the object we wrote — is *no
-progress*, never an error: this is a decoration on a campaign page that has
-to keep working when the bucket does not.
+The cost is bounded per request, not by the campaign: every answer is
+memoized -- a few seconds for a running volume, the hour for a finished one,
+whose file never changes again -- and the caller (projection._read_progress)
+makes at most PROGRESS_FETCH_CAP GETs per request for what the cache does
+not hold, running volumes first, so a campaign's totals fill in over a few
+polls instead of costing a GET per volume on every one. Anything
+unreadable — no file yet, a bucket that does not answer, a body that is not
+the object we wrote — is *no progress*, never an error: this is a
+decoration on a campaign page that has to keep working when the bucket does
+not.
 """
 
 from __future__ import annotations
@@ -33,13 +33,18 @@ RUNNING_TTL = 5.0
 DONE_TTL = 3600.0
 
 #: Bounded so a long-lived process browsing a large archive cannot grow this
-#: without limit; the whole thing goes rather than evicting cleverly, since a
-#: refill is one cheap GET per row on screen.
-MAX_ENTRIES = 5000
+#: without limit: an entry is under 1 KB, so this is ~20 MB of the pod's
+#: memory. It is also the largest campaign whose page totals can be every
+#: volume's at once (3076) -- past it the oldest answers go first, and the
+#: page says how many volumes its totals cover.
+MAX_ENTRIES = 20_000
 
 #: States whose file will not change again: the volume is over, or its
 #: campaign's Job is gone and nothing is left to write one (`unknown`).
 _FINISHED = ("done", "unknown")
+#: ...and so whose answer is kept for the hour, an absent file included: a
+#: failed index is final too, and its pod wrote what it ever will.
+_OVER = (*_FINISHED, "failed")
 
 #: Short: a slow bucket must not hold the API's own response open.
 TIMEOUT = 2.0
@@ -167,18 +172,35 @@ def _aged(value: dict | None, now: float) -> dict | None:
     return {**value, "ageSeconds": _age_seconds(value["updatedAt"], now)}
 
 
+class _NoAnswer(Exception):
+    """The bucket did not answer: unreachable, timed out, busy, or a 5xx."""
+
+
 class ProgressReader:
     """One HTTP client and one small cache for the life of the app."""
 
     def __init__(self, client: httpx.Client | None = None) -> None:
         self._client = client or httpx.Client(timeout=TIMEOUT)
-        self._cache: dict[str, tuple[float, dict | None]] = {}
+        #: url -> (expiry, progress, whether the bucket answered at all)
+        self._cache: dict[str, tuple[float, dict | None, bool]] = {}
 
     def fetch(self, results_base: str, volume_id: str, state: str) -> dict | None:
         """This volume's progress, or ``None``. ``results_base`` is the row's
         own (``<public_results_base>/<namespace>/<pipeline>``)."""
+        return self._read(results_base, volume_id, state, network=True)[1]
+
+    def cached(
+        self, results_base: str, volume_id: str, state: str
+    ) -> tuple[bool, dict | None]:
+        """``(known, progress)`` from the cache alone, never a GET. Known is
+        an answer the bucket gave, an absent file included."""
+        return self._read(results_base, volume_id, state, network=False)
+
+    def _read(
+        self, results_base: str, volume_id: str, state: str, network: bool
+    ) -> tuple[bool, dict | None]:
         if state == "pending":
-            return None  # no pod has run: there is nothing in the bucket yet
+            return True, None  # no pod has run: there is nothing in the bucket
         # One clock read per call, not per cache miss -- and a cached hit
         # has its ageSeconds recomputed against it (`_aged`), so the counts
         # in a row can be as stale as the TTL but "updated N ago" never is.
@@ -188,12 +210,16 @@ class ProgressReader:
         # normalised by the client into a request for another key
         # (2026-09-14 audit).
         base = f"{results_base}/{quote(volume_id, safe='')}"
-        found = self._cached(f"{base}/progress.json", _from_progress, state, now)
-        if found is None and state in _FINISHED:
+        known, found = self._cached(
+            f"{base}/progress.json", _from_progress, state, now, network
+        )
+        if known and found is None and state in _FINISHED:
             # Written by a wrapper that predates progress.json. One GET more,
             # cached for the hour: a finished volume is finished.
-            found = self._cached(f"{base}/manifest.json", _from_manifest, state, now)
-        return found
+            known, found = self._cached(
+                f"{base}/manifest.json", _from_manifest, state, now, network
+            )
+        return known, found
 
     def _cached(
         self,
@@ -201,40 +227,54 @@ class ProgressReader:
         parse: Callable[[dict, float], dict | None],
         state: str,
         now: float,
-    ) -> dict | None:
+        network: bool,
+    ) -> tuple[bool, dict | None]:
         monotonic_now = time.monotonic()
         hit = self._cache.get(url)
         if hit is not None and hit[0] > monotonic_now:
-            return _aged(hit[1], now)
-        value = self._get(url, parse, now)
-        # A miss on a done volume is cached briefly, not for the hour: it may
-        # simply be a file that has not landed yet.
-        ttl = DONE_TTL if state in _FINISHED and value is not None else RUNNING_TTL
+            return hit[2], _aged(hit[1], now)
+        if not network:
+            return False, None
+        answered, value = self._get(url, parse, now)
+        # Only an answer about a volume that is over is kept for the hour --
+        # an absent file included, since its pod wrote what it ever will. A
+        # bucket that did not answer is asked again soon.
+        ttl = DONE_TTL if state in _OVER and answered else RUNNING_TTL
+        self._cache.pop(url, None)
         if len(self._cache) >= MAX_ENTRIES:
-            self._cache.clear()
-        self._cache[url] = (monotonic_now + ttl, value)
-        return value
+            del self._cache[next(iter(self._cache))]  # the oldest answer
+        self._cache[url] = (monotonic_now + ttl, value, answered)
+        return answered, value
 
     def _get(
         self, url: str, parse: Callable[[dict, float], dict | None], now: float
-    ) -> dict | None:
+    ) -> tuple[bool, dict | None]:
+        """``(answered, progress)``: a 404 is an answer, a 5xx or a
+        connection that failed is not."""
         try:
             doc = self._body(url)
+        except _NoAnswer:
+            return False, None
         except Exception:
-            return None  # unreachable, timed out, or not JSON at all
-        return parse(doc, now) if isinstance(doc, dict) else None
+            return True, None  # not JSON at all: the bucket did answer
+        return True, parse(doc, now) if isinstance(doc, dict) else None
 
     def _body(self, url: str) -> object:
         """The document at ``url``, read in chunks and abandoned past
         ``MAX_BODY``. Redirects are not followed: the URL is built from an
         operator's results base, and a bucket answering it with a Location
         is not somewhere this pod should go next."""
-        with self._client.stream("GET", url, follow_redirects=False) as response:
-            if response.status_code != 200:
-                return None
-            body = bytearray()
-            for chunk in response.iter_bytes():
-                body += chunk
-                if len(body) > MAX_BODY:
+        try:
+            with self._client.stream("GET", url, follow_redirects=False) as response:
+                if response.status_code >= 500 or response.status_code in (408, 429):
+                    raise _NoAnswer(response.status_code)
+                if response.status_code != 200:
                     return None
+                body = bytearray()
+                for chunk in response.iter_bytes():
+                    body += chunk
+                    if len(body) > MAX_BODY:
+                        return None
+        except httpx.HTTPError as e:
+            raise _NoAnswer from e
         return json.loads(body)
