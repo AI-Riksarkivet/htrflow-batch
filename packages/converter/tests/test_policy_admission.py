@@ -10,7 +10,8 @@ binary a campaigns repo's CI runs (`render.yml`, `KYVERNO_VERSION`).
 
 The CLI stands in for the admission request: `--userinfo` names the
 identity asking, and a values file sets `request.operation` and, for an
-UPDATE, `request.oldObject` -- the stored object the write replaces.
+UPDATE, `request.oldObject` -- the stored object the write replaces (see
+`_replacing` for how the CLI treats that value).
 """
 
 from __future__ import annotations
@@ -84,7 +85,7 @@ def admission(
     cmd = ["kyverno", "apply", str(policy), "--resource", str(res), "--remove-color"]
     global_values: dict = {"request.operation": operation}
     if old is not None:
-        global_values["request.oldObject"] = old
+        global_values["request.oldObject"] = _replacing(resource, old)
     values = tmp_path / "values.yaml"
     values.write_text(
         yaml.safe_dump(
@@ -123,6 +124,20 @@ def admission(
         return "refused", out
     assert result.returncode == 0, out
     return ("admitted" if passed else "not matched"), out
+
+
+def _replacing(new: dict, old: dict) -> dict:
+    """`old` as a values entry that turns `new` INTO `old`.
+
+    The CLI starts `request.oldObject` from the resource under test and
+    deep-merges the values over it, so a key `old` simply lacks -- a label
+    the update adds -- would survive the merge. Each such key is sent as
+    null, which the merge does apply."""
+    out: dict = {key: None for key in new if key not in old}
+    for key, value in old.items():
+        both = isinstance(value, dict) and isinstance(new.get(key), dict)
+        out[key] = _replacing(new[key], value) if both else value
+    return out
 
 
 def configmap(name: str, labels: dict | None = None, data: dict | None = None) -> dict:
@@ -318,3 +333,72 @@ def test_verification_alone_reaches_every_image(tmp_path: Path):
     verdict, out = admission(tmp_path, policy, foreign)
     assert verdict == "refused", out
     assert FOREIGN in out
+
+
+# --- 3066: the label the delete rule trusts is one the deleter can write ----
+
+
+@pytest.fixture
+def rbac_scope(tmp_path: Path) -> Path:
+    return render_policy(tmp_path, "rbac-scope", "apply.rbac.enabled=true")
+
+
+def test_the_apply_identity_cannot_adopt_a_foreign_object(
+    tmp_path: Path, rbac_scope: Path
+):
+    """The delete rule reads the object's `managed-by` label, and the same
+    identity may patch every Job and ConfigMap in the namespace. Relabel,
+    then delete: the first step is where it has to stop."""
+    foreign = configmap("team-settings", data={"a": "b"})
+    relabelled = configmap("team-settings", CONVERTER, data={"a": "b"})
+    verdict, out = admission(
+        tmp_path, rbac_scope, relabelled, user=APPLY_SA, operation="UPDATE", old=foreign
+    )
+    assert verdict == "refused", out
+
+
+def test_the_apply_identity_cannot_write_an_unlabelled_object(
+    tmp_path: Path, rbac_scope: Path
+):
+    """Creating one is not a way round it either: an object the apply
+    identity writes is one the converter rendered, and carries its label."""
+    verdict, out = admission(
+        tmp_path, rbac_scope, configmap("team-settings"), user=APPLY_SA
+    )
+    assert verdict == "refused", out
+    ours = configmap("campaign-kyrk", CONVERTER)
+    verdict, out = admission(
+        tmp_path,
+        rbac_scope,
+        configmap("campaign-kyrk", {}),
+        user=APPLY_SA,
+        operation="UPDATE",
+        old=ours,
+    )
+    assert verdict == "refused", out
+
+
+def test_the_apply_identity_still_writes_what_it_rendered(
+    tmp_path: Path, rbac_scope: Path
+):
+    ours = configmap("campaign-kyrk", CONVERTER, data={"volumes.txt": "R1\n"})
+    verdict, out = admission(tmp_path, rbac_scope, ours, user=APPLY_SA)
+    assert verdict == "admitted", out
+    verdict, out = admission(
+        tmp_path, rbac_scope, ours, user=APPLY_SA, operation="UPDATE", old=ours
+    )
+    assert verdict == "admitted", out
+
+
+def test_another_identity_is_not_held_to_the_apply_rules(
+    tmp_path: Path, rbac_scope: Path
+):
+    verdict, out = admission(
+        tmp_path,
+        rbac_scope,
+        configmap("team-settings", CONVERTER),
+        user="system:serviceaccount:other:deployer",
+        operation="UPDATE",
+        old=configmap("team-settings"),
+    )
+    assert verdict == "not matched", out
