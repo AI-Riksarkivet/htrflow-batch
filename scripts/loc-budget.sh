@@ -1259,5 +1259,7 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4822
 # 1084 -> 1093 (2026-09-21, B80): htrflow-batch.validate refuses
 # policies.enabled false without security.policies.allowDisabled -- the fail
 # and the paragraph saying why off has to be said out loud.)
+# The two rounds above were written in parallel from 973; together they are
+# 973 + 41 (3100/3064/3101) + 120 (3058/3061/3065/3066/B80) = 1134.
 check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1134
 exit $fail
