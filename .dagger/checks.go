@@ -145,8 +145,18 @@ var prodChartRenders = []chartRender{
 		// unauthenticated NodePort, and the chart refuses to render one
 		// silently. A render fixture says so out loud like any operator.
 		"network.web.allowPublicIngress=true",
+		// The defaults leave the Kyverno policies off, and the chart
+		// refuses that unless the render says it means it (B80).
+		"security.policies.allowDisabled=true",
 		"web.image=docker.io/riksarkivet/htrflow-web@" + digestZero,
 	}},
+	// The same render without that sentence: refused, or the guard is gone.
+	{name: "no-policies", sets: []string{
+		"publicResultsBase=https://x/",
+		"network.apiServer.cidr=10.16.51.10/32",
+		"network.web.allowPublicIngress=true",
+		"web.image=docker.io/riksarkivet/htrflow-web@" + digestZero,
+	}, mustFail: true},
 	{name: "full", values: "ci/full-values.yaml"},
 	// The profile docs/getting-started/deploy.md tells operators to start
 	// from. Its site-specific values are deliberately not in the file (a

@@ -22,6 +22,15 @@ but only when the schema is evaluated; this fires from any template.
 {{- end }}
 {{- end }}
 {{- /*
+The policies are off by default, because a policy nothing reconciles is
+worse than none -- so an install that followed no profile enforced nothing
+the repository built, and said nothing about it (B80). Off stays possible
+for a cluster without Kyverno; it has to be said out loud.
+*/}}
+{{- if and (not .Values.security.policies.enabled) (not .Values.security.policies.allowDisabled) }}
+{{- fail "security.policies.enabled is false, so nothing in this namespace refuses an image from any registry, a tag instead of a digest or an unpinned model: install Kyverno and set security.policies.enabled=true (values-prod.yaml does), or set security.policies.allowDisabled=true to accept that" }}
+{{- end }}
+{{- /*
 The web front is an unauthenticated NodePort, and its ingress list defaults
 to every address (2026-09-14, audit). The default stays -- the dev stack and
 the compose smoke rely on it and a narrowed default would cut them off on

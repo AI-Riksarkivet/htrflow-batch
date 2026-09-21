@@ -200,6 +200,7 @@ skeleton, never as a campaign setting.
 | `security.allowedImageRepos` | `values.yaml` | *(empty)* | — | enforced by a Kyverno ClusterPolicy — cluster |
 | `security.requireModelRevision` | `values.yaml` | `false` | — | enforced by a Kyverno ClusterPolicy — cluster |
 | `security.policies.enabled` | `values.yaml` | `false` | — | enforced by a Kyverno ClusterPolicy — cluster |
+| `security.policies.allowDisabled` | `values.yaml` | `false` | — | no admission policy at all — render |
 | `security.psaEnforce` | `values.yaml` | `baseline` | — | Pod Security Admission label — cluster |
 | `security.allowTagImages` | `values.yaml` | `false` | — | opens that digest gate — render |
 | `security.verifyImages.enabled` | `values.yaml` | `false` | — | enforced by a Kyverno ClusterPolicy — cluster |

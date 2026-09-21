@@ -327,7 +327,12 @@ def test_verification_alone_reaches_every_image(tmp_path: Path):
     while the images-allowed policy refuses everything outside the list; with
     `policies.enabled` off it is not rendered, and an unsigned image from
     any other registry was admitted unverified."""
-    policy = render_policy(tmp_path, "verify-images", "security.policies.enabled=false")
+    policy = render_policy(
+        tmp_path,
+        "verify-images",
+        "security.policies.enabled=false",
+        "security.policies.allowDisabled=true",
+    )
     foreign = pod(None)
     foreign["spec"]["containers"][0]["image"] = FOREIGN
     verdict, out = admission(tmp_path, policy, foreign)
