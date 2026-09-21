@@ -212,6 +212,20 @@ place on each one, the way they would in a table.
    other side of the arrow, and a `Queued`, `Paused` or `Unknown` campaign
    shows its created date alone. Both halves stay `<time>` elements carrying
    the exact timestamp in `datetime` and `title`.
+
+   The two partial endings are told apart at a glance, not only by their
+   words. **partially succeeded** (every volume finished, some pages lost)
+   and **partially failed** (whole volumes lost) share the chip's pale
+   amber fill and amber text. The chip's outline is split hard down the
+   middle, amber on the left half and green (`--success`) or red
+   (`--destructive`) on the right. It is a hard split on the edge rather
+   than a blend under the word, so the text's contrast is the plain amber
+   chip's in both themes. It is an outline rather than a two-colour dot
+   because the dot on this chip already means "running". The card's left
+   accent runs from amber at the top to the same green or red at the
+   bottom. Both come from the theme tokens, so dark mode follows, and the
+   words, the tooltip and the screen-reader sentence stay as they were:
+   the colour is a second cue, never the only one.
 2. **The body: one grid.** Everything the card counts is a row of the *same*
    four tracks, declared once as CSS custom properties on the card and
    repeated by every row, so they coincide exactly:
