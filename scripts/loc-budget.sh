@@ -642,7 +642,10 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 3321
 # 2747 -> 2759 (2026-09-21, audit 3098): validate refuses a pipeline file
 # with its own Export step, which the wrapper appends -- the author hears it
 # in the pull request instead of from a failed warm-up.
-check converter "$(count packages/converter/src -name '*.py')" 2917
+# 2905 -> 2911 (2026-09-21, audits 3075/3081): the status record names its
+# Job (`jobUid`) and strips a trailing slash off its resultsBase, each with
+# the comment saying which read-API rule it pairs with.
+check converter "$(count packages/converter/src -name '*.py')" 2923
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
