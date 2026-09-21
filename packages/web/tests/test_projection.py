@@ -975,6 +975,7 @@ class TestCampaignNotice:
 # --- the status ConfigMap the read API writes (B76) ----------------------
 
 STATUS_FIELDS = {
+    "jobUid",
     "phase",
     "volumesTotal",
     "volumesDone",
@@ -1551,3 +1552,126 @@ def test_an_oom_killed_volume_is_failed_live_and_after_the_reap():
     reaped = projection.record_detail(row, record, status, CFG, None)
     assert [v["state"] for v in reaped["volumes"]] == ["failed", "done", "done"]
     assert reaped["failures"][0]["reason"]["error"] == "OOMKilled (exit code 137)"
+
+
+# --- who owns which field of the record (3075, 3081) ---------------------
+
+
+def _managed(*keys: str, manager: str = "htrflow-campaigns") -> dict:
+    """One managedFields entry, as the API server records a server-side
+    apply: the data keys and labels that manager set."""
+    return {
+        "manager": manager,
+        "operation": "Apply",
+        "fieldsType": "FieldsV1",
+        "fieldsV1": {
+            "f:data": {f"f:{k}": {} for k in keys},
+            "f:metadata": {"f:labels": {"f:htrflow.riksarkivet.se/kind": {}}},
+        },
+    }
+
+
+APPLY_KEYS = (*sorted(STATUS_FIELDS),)
+
+
+def _running_row(**status) -> dict:
+    job = _job(completed="0-1", failed="", **status)
+    return projection.summarize(job, CFG, MISSING_WARMUP)
+
+
+def _stored_cm(data: dict, *managed: dict, rv: str = "41") -> dict:
+    return {
+        "metadata": {
+            "name": "campaign-kyrk-status",
+            "namespace": "htr-test",
+            "resourceVersion": rv,
+            "managedFields": list(managed),
+        },
+        "data": data,
+    }
+
+
+class TestRecordWrite:
+    def test_a_first_record_is_the_whole_observation_unforced(self):
+        row = _running_row()
+        fresh = projection.status_record(row, job_uid="uid-1")
+        body, force = projection.record_write(None, row, fresh)
+        assert body["data"] == projection.merge_record({}, fresh)
+        assert body["metadata"]["labels"]["htrflow.riksarkivet.se/kind"] == "status"
+        assert force is False
+
+    def test_an_unchanged_record_is_not_written(self):
+        row = _running_row()
+        fresh = projection.status_record(row, job_uid="uid-1")
+        assert projection.record_write(_stored_cm(dict(fresh)), row, fresh) is None
+
+    def test_once_apply_recorded_the_ending_only_failed_volumes_are_sent(self):
+        """`htrflow-campaigns apply` force-owns the ending it read off the
+        Job. Sending those fields again, unforced, with any value that
+        differs -- a trailing slash on resultsBase, a campaign label -- was a
+        409 on every poll, and failedVolumes, the one field only this API
+        can write, never landed (3081). Its keys and labels are left out of
+        the body; server-side apply keeps them, since apply still owns them."""
+        row = projection.summarize(_finished_job(), CFG, MISSING_WARMUP)
+        theirs = {
+            **projection.status_record(row, job_uid="uid-1"),
+            "resultsBase": "https://results.example.org//htr-test/demo-v1",
+        }
+        stored = _stored_cm(theirs, _managed(*APPLY_KEYS))
+        failures = [{"id": "vol2", "reason": {"error": "manifest 404"}}]
+        fresh = projection.status_record(row, failures, job_uid="uid-1")
+        body, force = projection.record_write(stored, row, fresh)
+        assert body["data"] == {
+            "failedVolumes": '[{"id":"vol2","reason":"manifest 404"}]'
+        }
+        assert "labels" not in body["metadata"]
+        assert force is False
+
+    def test_a_record_of_another_job_is_replaced_not_merged(self):
+        """The record carried no Job uid, so a Job recreated under the same
+        name inherited the old one's failures and finishedAt -- and never
+        shrinking, kept them (3075). A different uid is a different run:
+        nothing stored is about this one."""
+        old = {
+            **projection.status_record(
+                projection.summarize(_finished_job(), CFG, MISSING_WARMUP),
+                [{"id": "vol2", "reason": {"error": "manifest 404"}}],
+                job_uid="uid-old",
+            ),
+            "finishedAt": "2026-09-08T10:00:00Z",
+        }
+        row = _running_row()
+        fresh = projection.status_record(row, job_uid="uid-new")
+        body, _ = projection.record_write(_stored_cm(old), row, fresh)
+        assert body["data"] == fresh
+        assert "failedVolumes" not in body["data"]
+        assert body["data"]["finishedAt"] == ""
+
+    def test_taking_another_jobs_record_over_from_apply_is_forced_on_a_version(
+        self,
+    ):
+        """apply owns the old run's fields, and an unforced write of this
+        run's values would be refused for ever. Forced -- but only on the
+        version this request read, so an ending apply writes in between is
+        a 409 rather than overwritten."""
+        old = {"phase": "Succeeded", "jobUid": "uid-old"}
+        stored = _stored_cm(old, _managed("phase", "jobUid"), rv="99")
+        row = _running_row()
+        fresh = projection.status_record(row, job_uid="uid-new")
+        body, force = projection.record_write(stored, row, fresh)
+        assert force is True
+        assert body["metadata"]["resourceVersion"] == "99"
+        assert body["data"]["phase"] == "Running"
+
+    def test_a_record_written_before_the_uid_existed_is_this_jobs(self):
+        """Every record on a cluster upgraded to this has no jobUid. Read as
+        another Job's, each would be wiped along with the only copy of its
+        failure reasons; read as this one's, it is merged as before."""
+        kept = '[{"id":"vol1","reason":"manifest 404"}]'
+        row = _running_row()
+        fresh = projection.status_record(row, [], job_uid="uid-1")
+        stored = _stored_cm({"phase": "Running", "failedVolumes": kept})
+        body, force = projection.record_write(stored, row, fresh)
+        assert body["data"]["failedVolumes"] == kept
+        assert body["data"]["jobUid"] == "uid-1"
+        assert force is False

@@ -296,7 +296,9 @@ def create_app(
     # working again on its own. (Per app, so a restart tries immediately.)
     refused: dict[str, float] = {}
 
-    def _record(row: dict, live: dict | None, failures: list[dict] | None) -> bool:
+    def _record(
+        row: dict, job: dict, live: dict | None, failures: list[dict] | None
+    ) -> bool:
         """Write the campaign's status ConfigMap when this request saw
         something the stored one does not already say (B76).
 
@@ -305,27 +307,30 @@ def create_app(
         part (only the detail one reads pods, so only it knows the failed
         volumes, and even it stops seeing them once the pods are collected),
         and an unchanged body is not sent at all -- an idle status page
-        polls, and every poll would otherwise be a write. Never fatal: a
-        record the API could not write is a record a few minutes old, while
-        a 500 is a status page nobody can read."""
+        polls, and every poll would otherwise be a write. Which fields are
+        this API's to send and which are `apply`'s is
+        ``projection.record_write``'s. Never fatal: a record the API could
+        not write is a record a few minutes old, while a 500 is a status
+        page nobody can read."""
         if not hasattr(reader, "apply_configmap"):
             return False  # site-only: no cluster
         refused_at = refused.get(row["namespace"])
         if refused_at is not None and time.monotonic() - refused_at < REFUSAL_COOLDOWN:
             return False
-        stored = (live or {}).get("data") or {}
-        data = projection.merge_record(stored, projection.status_record(row, failures))
-        if data == stored:
+        uid = (job.get("metadata") or {}).get("uid", "")
+        fresh = projection.status_record(row, failures, job_uid=uid)
+        write = projection.record_write(live, row, fresh)
+        if write is None:
             return False
-        cm = projection.status_configmap(row, data)
+        cm, force = write
         namespace = row["namespace"]
         try:
-            reader.apply_configmap(cm)
+            reader.apply_configmap(cm, force=force)
         except ApplyConflict:
-            # `htrflow-campaigns apply` owns these fields now and its
-            # terminal values are the authoritative ones. Nothing is wrong
-            # with this service's grant, so the namespace does not go into
-            # the cooldown below (2026-09-14 review).
+            # `htrflow-campaigns apply` wrote the record since this request
+            # read it, and its ending is the authoritative one. Nothing is
+            # wrong with this service's grant, so the namespace does not go
+            # into the cooldown below (2026-09-14 review).
             return True
         except Exception as e:  # noqa: BLE001 - any client error, same answer
             if namespace not in refused:
@@ -373,10 +378,11 @@ def create_app(
         ]
         records, statuses = _campaign_configmaps()
         budget = RECORD_WRITES_PER_REQUEST
-        for row in rows:
+        for row, job in zip(rows, jobs):
             if budget <= 0:
                 break
-            budget -= _record(row, statuses.get((row["namespace"], row["name"])), None)
+            status = statuses.get((row["namespace"], row["name"]))
+            budget -= _record(row, job, status, None)
         # A campaign whose Job the TTL reaped is still a campaign: its two
         # ConfigMaps have no TTL, and this list is where an operator looks
         # for it (B76). Additive -- a live Job always wins over its record.
@@ -441,7 +447,8 @@ def create_app(
             fetch_progress=progress.fetch if progress is not None else None,
         )
         status_name = f"{cm_name or 'campaign-' + name}{projection.STATUS_SUFFIX}"
-        _record(body, reader.get_configmap(namespace, status_name), body["failures"])
+        live = reader.get_configmap(namespace, status_name)
+        _record(body, job, live, body["failures"])
         return body
 
     def _reaped_detail(namespace: str, name: str, offset: int, limit: int) -> dict:

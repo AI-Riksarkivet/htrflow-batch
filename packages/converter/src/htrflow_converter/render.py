@@ -461,6 +461,9 @@ def status_configmap(live: dict, cfg: ConverterConfig) -> dict | None:
         # Stripped the way the read API strips its own base: the two write
         # this field, and a slash apart they disagree about it (3081).
         "resultsBase": f"{base.rstrip('/')}/{namespace}/{pipeline}",
+        # Which Job ended so. A Job recreated under this name is another
+        # run, and this is how the read API tells (3075).
+        "jobUid": meta.get("uid", ""),
     }
     return cm
 
