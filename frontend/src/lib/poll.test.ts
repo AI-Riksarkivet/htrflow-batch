@@ -152,4 +152,51 @@ describe("startPolling", () => {
     pending.done(true);
     await vi.advanceTimersByTimeAsync(PERIOD * 10);
   });
+
+  test("`until` ends the poll after the tick that made it true", async () => {
+    let over = false;
+    const run = vi.fn(async () => {
+      if (run.mock.calls.length === 2) over = true;
+      return true;
+    });
+    startPolling(run, PERIOD, { until: () => over });
+    await vi.advanceTimersByTimeAsync(PERIOD * 10);
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  test("`until` never aborts the tick that is finishing", async () => {
+    // The tick that learns the poll is over still has work to do after it
+    // learns it (the run log's last line, then its manifest; 3077).
+    let over = false;
+    let abortedAtEnd: boolean | undefined;
+    startPolling(
+      async (signal) => {
+        over = true;
+        await Promise.resolve();
+        abortedAtEnd = signal.aborted;
+        return true;
+      },
+      PERIOD,
+      { until: () => over },
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(abortedAtEnd).toBe(false);
+  });
+
+  test("`until` is asked after a failed tick too", async () => {
+    const run = vi.fn(async () => false);
+    startPolling(run, PERIOD, { until: () => true });
+    await vi.advanceTimersByTimeAsync(MAX_POLL_MS * 2);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  test("an ended poll does not wake up when the tab comes back", async () => {
+    const run = vi.fn(async () => true);
+    startPolling(run, PERIOD, { until: () => true });
+    await vi.advanceTimersByTimeAsync(0);
+    setHidden(true);
+    setHidden(false);
+    await vi.advanceTimersByTimeAsync(PERIOD);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
 });

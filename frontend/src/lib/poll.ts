@@ -26,8 +26,18 @@ function hidden(): boolean {
  * Run `tick` now and then every `period` ms. Returns the stopper: it aborts
  * the tick in flight and schedules nothing more, which is exactly what a
  * Svelte `$effect` cleanup needs.
+ *
+ * `until` is asked after every tick, and `true` ends the poll there. It is
+ * how a poll whose own tick learns that nothing will change again -- a run
+ * log that reached its last line, a campaign that finished -- stops without
+ * the caller tearing it down from outside: an outside stop aborts the tick
+ * that is still finishing its work (the 2026-09-17 audit, 3077).
  */
-export function startPolling(tick: Tick, period: number): () => void {
+export function startPolling(
+  tick: Tick,
+  period: number,
+  { until }: { until?: () => boolean } = {},
+): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inflight: AbortController | null = null;
   let failures = 0;
@@ -60,6 +70,7 @@ export function startPolling(tick: Tick, period: number): () => void {
     } finally {
       inflight = null;
     }
+    if (!stopped && until?.()) stop();
     schedule();
   }
 
@@ -67,15 +78,17 @@ export function startPolling(tick: Tick, period: number): () => void {
     if (!hidden()) void run();
   }
 
-  if (typeof document !== "undefined")
-    document.addEventListener("visibilitychange", onVisible);
-  void run();
-
-  return () => {
+  function stop(): void {
     stopped = true;
     clearTimeout(timer);
     inflight?.abort();
     if (typeof document !== "undefined")
       document.removeEventListener("visibilitychange", onVisible);
-  };
+  }
+
+  if (typeof document !== "undefined")
+    document.addEventListener("visibilitychange", onVisible);
+  void run();
+
+  return stop;
 }
