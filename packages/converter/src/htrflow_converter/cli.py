@@ -295,6 +295,7 @@ def _refused(campaigns, pipelines: dict, cfg, record: Path) -> str | None:
     this, and nothing else. When only ``render`` held a rule, a change went
     green in review and then stopped every render on main (3086)."""
     for problem in (
+        *(render.last_pod_problem(c) for c in campaigns),
         _colliding_names(campaigns),
         _edited_pipeline(campaigns, pipelines, cfg, record),
         *(_moved_campaign(c, record) for c in campaigns),

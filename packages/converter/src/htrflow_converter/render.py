@@ -11,7 +11,9 @@ from importlib import resources
 import yaml
 
 from .models import (
+    DNS_LABEL,
     STATUS_SUFFIX,
+    WARMUP_PREFIX,
     Campaign,
     ConverterConfig,
     Pipeline,
@@ -22,11 +24,6 @@ from .models import (
 _LABEL_JUNK = re.compile(r"[^A-Za-z0-9_.-]")
 _PATH_RE = re.compile(r"[^.\[\]]+|\[\d+\]")
 MAX_VOLUMES_PER_JOB = 10_000
-#: What a pipeline's warm-up Job is called. ``cluster`` reads it too: a Job
-#: the API server refuses for an immutable field is told a different way
-#: out depending on whether it is a warm-up (deleted and created again) or a
-#: campaign (left exactly where it is).
-WARMUP_PREFIX = "htr-warmup-"
 #: Bytes of ``volumes.txt`` one part may carry. The API server sums the
 #: values under ``data`` and ``binaryData`` -- nothing else, not the keys,
 #: the metadata or the managed fields -- and refuses a ConfigMap over 1 MiB
@@ -351,7 +348,6 @@ def _campaign_job(
     return job
 
 
-_DNS_LABEL = 63  # the cap on a label value, and on a pod's name
 #: What is left of a DNS label once the WIDEST part suffix and the widest pod
 #: index are reserved: ``-9999`` because an Indexed Job's highest index is
 #: ``MAX_VOLUMES_PER_JOB - 1``, and ``-part999`` because 999 parts is 878 MiB
@@ -359,7 +355,7 @@ _DNS_LABEL = 63  # the cap on a label value, and on a pod's name
 #: reservation is constant on purpose: measuring THIS render instead would
 #: make a campaign's stem move when it grows from 9 parts to 10, renaming
 #: every part out from under the Jobs already applied under them.
-_SPLIT_STEM = _DNS_LABEL - len("-part999") - len("-9999")
+_SPLIT_STEM = DNS_LABEL - len("-part999") - len("-9999")
 
 
 def split_stem(name: str) -> str:
@@ -377,6 +373,28 @@ def campaign_names(c: Campaign, parts: list[list[Volume]]) -> list[str]:
     if len(parts) == 1:
         return [c.name]
     return [f"{split_stem(c.name)}-part{i}" for i in range(1, len(parts) + 1)]
+
+
+def last_pod_problem(c: Campaign) -> str | None:
+    """One sentence when the API server would refuse one of ``c``'s Jobs.
+
+    It holds an Indexed Job's name to a DNS-1123 subdomain and the hostname
+    of its LAST pod, ``<name>-<completions - 1>``, to a DNS-1123 label ("will
+    not able to create pod with invalid DNS label"). ``models`` refuses the
+    dots; the length depends on the volume count, so it is checked here, on
+    the names this render gives. A part's stem leaves room for any index, so
+    only a campaign that renders as one Job can fail it (3087)."""
+    parts = split(c.volumes)
+    for name, volumes in zip(campaign_names(c, parts), parts):
+        last = f"{name}-{len(volumes) - 1}"
+        if len(last) > DNS_LABEL:
+            return (
+                f"campaign {c.name} cannot be applied: its last pod would be "
+                f"{last}, {len(last)} characters, and a pod's hostname stops "
+                f"at {DNS_LABEL} — rename the file to at most "
+                f"{DNS_LABEL - len(last) + len(name)} characters"
+            )
+    return None
 
 
 #: The status ConfigMap's labels beside the campaign's own, and the one

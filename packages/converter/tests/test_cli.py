@@ -634,3 +634,70 @@ def test_the_render_carries_one_object_argo_cd_syncs(tmp_path):
     kyrk.write_text(kyrk.read_text() + "suspend: true\n")
     assert main(["render", str(repo), "--out", str(out)]) == 0
     assert _docs(out / "sync.yaml")[0]["data"]["sha256"] != first
+
+
+def _validate_with(tmp_path, capsys, files: dict[str, str]) -> tuple[int, str]:
+    """``validate`` over the good repo plus ``files`` (path -> text)."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    for rel, text in files.items():
+        (repo / rel).write_text(text)
+    capsys.readouterr()
+    rc = main(["validate", str(repo)])
+    return rc, capsys.readouterr().out
+
+
+def _campaign(volumes: int, pipeline: str = "demo-v1") -> str:
+    return f"pipeline: {pipeline}\nvolumes:\n" + "".join(
+        f"  - R{i:07d}\n" for i in range(volumes)
+    )
+
+
+# The API server's rules for a campaign's Indexed Job (3087): its name is a
+# DNS-1123 subdomain, AND `<name>-<completions - 1>` -- the hostname of its
+# last pod -- is a DNS-1123 label: no dots, at most 63 characters
+# ("will not able to create pod with invalid DNS label").
+@pytest.mark.parametrize(
+    ("name", "volumes", "ok"),
+    [
+        ("kyrk.1850", 1, False),  # a dot: every pod's hostname is refused
+        ("a" * 61, 10, True),  # a...a-9 is 63
+        ("a" * 61, 11, False),  # a...a-10 is 64
+        ("a" * 62, 1, False),  # a...a-0 is 64: refused with a single volume
+        ("htr-warmup-demo-v1", 1, False),  # the warm-up Job's own name
+    ],
+)
+def test_a_campaign_name_the_api_server_would_refuse_is_refused_here(
+    tmp_path, capsys, name, volumes, ok
+):
+    files = {f"campaigns/{name}.yaml": _campaign(volumes)}
+    rc, out = _validate_with(tmp_path, capsys, files)
+    assert (rc == 0) == ok, out
+
+
+def test_the_index_suffix_rule_names_the_last_pod(tmp_path, capsys):
+    name = "a" * 61
+    rc, out = _validate_with(
+        tmp_path, capsys, {f"campaigns/{name}.yaml": _campaign(11)}
+    )
+    assert rc == 1
+    assert f"{name}-10" in out and "63" in out, out
+
+
+def test_a_long_campaign_that_splits_is_still_fine(tmp_path, capsys):
+    """Its parts are named from a stem cut short enough for any index."""
+    rc, out = _validate_with(
+        tmp_path, capsys, {f"campaigns/{'a' * 63}.yaml": _split_campaign(10_001)}
+    )
+    assert rc == 0, out
+
+
+# The warm-up Job is `htr-warmup-<id>`, and the Job controller copies a Job's
+# name into its pods' `job-name` label, which stops at 63 characters.
+@pytest.mark.parametrize(("length", "ok"), [(52, True), (53, False)])
+def test_a_pipeline_id_leaves_room_for_its_warm_up_job(tmp_path, capsys, length, ok):
+    pid = "p" * length
+    pipeline = (GOOD / "pipelines" / "demo-v1.yaml").read_text()
+    files = {f"pipelines/{pid}.yaml": pipeline, "campaigns/x.yaml": _campaign(1, pid)}
+    rc, out = _validate_with(tmp_path, capsys, files)
+    assert (rc == 0) == ok, out
