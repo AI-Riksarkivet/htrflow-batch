@@ -117,6 +117,11 @@ class FakeProgress:
     def fetch(self, results_base: str, volume_id: str, state: str) -> dict | None:
         return self.known.get(volume_id)
 
+    def cached(
+        self, results_base: str, volume_id: str, state: str
+    ) -> tuple[bool, dict | None]:
+        return False, None
+
 
 @pytest.fixture
 def client() -> TestClient:
