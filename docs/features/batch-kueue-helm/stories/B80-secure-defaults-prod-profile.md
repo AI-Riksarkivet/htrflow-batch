@@ -39,4 +39,12 @@ batch-poddarna (X11, E10).
       `psaEnforce: restricted`. PSA-etiketterna sätts fortfarande av
       `make psa-labels`: Helm kan inte etikettera ett namespace det inte
       själv skapat, så det steget står kvar på installationssidan.
-- [ ] En installation utan opt-out och utan policies misslyckas med en mening.
+- [x] En installation utan opt-out och utan policies misslyckas med en mening.
+      `htrflow-batch.validate` gör `fail` när `security.policies.enabled` är
+      `false` och opt-out-värdet `security.policies.allowDisabled` (default
+      `false`) inte är satt; meningen namnger båda. Bevis:
+      `test_an_install_without_the_policies_has_to_say_so`
+      (`test_chart_render.py`), och renderingen `no-policies` med
+      `mustFail` i `.dagger/checks.go` samt motsvarande steg i
+      `make helm-template`. Dev-installationer sätter opt-out-värdet
+      uttryckligen (`try-it.md`, `deploy.md`, `chart.md`). (2026-09-21)

@@ -58,7 +58,9 @@ no requester to match.
 | **URL redaction** | Wrapper logs, the warm-up's logs, the termination log, `page_sources`, and the problem lines `validate` prints (userinfo, and a signing query parameter such as `X-Amz-Signature`, `X-Amz-Security-Token`, `X-Amz-Credential`, `signature`, `token`, `sig` or `key`) | A tokenised private IIIF URL ending up in a world-readable log or a pull request comment. It does **not** hide the URL itself — see [Source URLs are not secrets](#source-urls-are-not-secrets) |
 
 These policies are all off by default (`security.policies.enabled: false`),
-because a policy nothing reconciles is worse than none. They are the only
+because a policy nothing reconciles is worse than none. Off has to be said,
+though: the chart refuses to render with the policies off unless
+`security.policies.allowDisabled` is also set. They are the only
 thing that enforces the image allow-list and the model-revision rule. A rule
 inside the converter would only ever see what the converter rendered, and a
 Job made by hand would get straight past it. So if the policies stay

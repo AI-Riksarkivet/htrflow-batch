@@ -37,7 +37,10 @@ what the release publishes, model revisions required, image signatures
 verified, and Pod Security at `restricted`. The chart's own defaults leave
 all of those off, because a policy nothing reconciles is worse than no
 policy on a cluster without Kyverno — but that means a default install
-enforces none of it.
+enforces none of it. So the chart does not render that silently: an install
+with `security.policies.enabled` false fails with one sentence unless
+`security.policies.allowDisabled` is true, the explicit statement that the
+namespace is meant to run with no admission policy.
 
 Everything on the `--set` lines is what one cluster cannot know for
 another. The profile deliberately does not guess them, so an install that
@@ -212,7 +215,9 @@ The dev cluster's `rustfs-init` hook applies the same shape
   `security.policies.enabled`, the allow-list, `requireModelRevision` and
   `verifyImages`. The Kyverno policies are the only thing that enforces the
   allow-list and the model-revision rule, and an empty list lets any image
-  run on the GPU. Installing without the profile means setting each by hand.
+  run on the GPU. Installing without the profile means setting each by hand,
+  and leaving the policies off means setting `security.policies.allowDisabled`
+  as well: without either, the chart refuses to render.
   The subject is the signing workflow's own identity, and publishing is a
   manual dispatch, so it carries the branch the run started from and never a
   tag; `values.yaml` has the example to copy
@@ -251,6 +256,8 @@ make psa-labels
 Always use `--reset-then-reuse-values`, or pass a full values file. Plain
 `--reuse-values` keeps the old chart's defaults, so new values such as the
 `network.*` block never arrive, and the chart fails when `network` is
-missing. Breaking changes between chart releases, and what to do about each,
+missing. A release that runs with the policies off has to carry
+`security.policies.allowDisabled=true` from here on, or the upgrade fails
+with the sentence that names it. Breaking changes between chart releases, and what to do about each,
 are listed under "Upgrading" in the
 [chart README](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/charts/htrflow-batch/README.md).

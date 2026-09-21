@@ -105,7 +105,8 @@ helm upgrade --install htr charts/htrflow-batch -n <namespace> \
   --set network.apiServer.cidr=<apiserver-address>/32 \
   --set network.iiifCidrs='{<iiif-source-cidr>}' \
   --set network.clusterCidrs='{<pod-cidr>,<service-cidr>}' \
-  --set network.web.allowPublicIngress=true
+  --set network.web.allowPublicIngress=true \
+  --set security.policies.allowDisabled=true
 make psa-labels
 ```
 
@@ -123,6 +124,10 @@ make psa-labels
   every address: the web front has no authentication of its own, so the chart
   will not render that silently. On a dev cluster it is what you want; in
   front of anything real, list `network.web.ingressCidrs` instead.
+- `security.policies.allowDisabled` accepts running without the Kyverno
+  policies, which are off by default. The chart refuses to render with them
+  off unless this says so. Turn them on with `security.policies.enabled=true`
+  once Kyverno is running, as the [Deploy](deploy.md) profile does.
 
 The security policies stay off here. Kyverno is installed, but no policy is
 rendered. To turn them on, allow the images this namespace runs:
