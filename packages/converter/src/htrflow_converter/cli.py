@@ -478,6 +478,11 @@ def _finished(cluster, name: str, volumes: str, observed: dict | None) -> str | 
 
 
 _NO_RECORD = "could not record how campaign {name} ended, continuing without it: "
+#: Whether a campaign has finished is what keeps a reaped one from running
+#: again, so a read that fails is a check not made, never one passed (3093).
+_UNREAD = (
+    "could not tell whether campaign {name} has finished, so it was left as it was: {e}"
+)
 #: A campaign is rendered as a pair: the ConfigMap that carries its
 #: volumes.txt and the Job that mounts it. A directory where the pair has
 #: come apart -- a half-finished write, a hand edit, a bad merge of
@@ -744,6 +749,8 @@ def _apply(
                 if o["kind"] == "ConfigMap"
             }
             done: set[str] = set()
+            # Campaigns whose Job must not be sent, with the sentence why.
+            blocked: dict[str, ClusterError] = {}
             for obj in campaigns:
                 if obj["kind"] != "Job":
                     continue
@@ -759,17 +766,15 @@ def _apply(
                         file=sys.stderr,
                     )
                     return 1
-                # Reading the record, by contrast, is never a precondition
-                # for the apply. An identity whose Role predates this needs a
-                # `get` on Jobs that nothing needed before, and a human may
-                # be on a restricted kubeconfig -- refusing to apply anything
-                # over that would take the campaigns repo offline for a
-                # permission it never had. Warn once, and apply this campaign
-                # as any other.
+                # A read that fails skips this campaign, not the apply: the
+                # other campaigns and the pipelines still go out, and the
+                # summary names the pair left as it was.
                 try:
                     said = _record_and_decide(cluster, cfg, name, volumes_of[name])
+                except Unreachable:
+                    raise
                 except ClusterError as e:
-                    print(f"{_NO_RECORD.format(name=name)}{e}", file=sys.stderr)
+                    blocked[name] = ClusterError(_UNREAD.format(name=name, e=e))
                     continue
                 if said is not None:
                     done.add(name)
@@ -777,15 +782,16 @@ def _apply(
             # Each campaign Job is tried with dryRun=All before its pair is
             # sent: a ConfigMap applied under a Job the API server then
             # refuses is a volumes.txt the Job's unstarted indexes read (3084).
-            blocked: dict[str, ClusterError] = {}
             for obj in campaigns:
-                if obj["kind"] == "Job" and _campaign_of(obj) not in done:
-                    try:
-                        cluster.apply(obj, dry_run=True)
-                    except Unreachable:
-                        raise
-                    except ClusterError as e:
-                        blocked[_campaign_of(obj)] = e
+                campaign = _campaign_of(obj)
+                if obj["kind"] != "Job" or campaign in done or campaign in blocked:
+                    continue
+                try:
+                    cluster.apply(obj, dry_run=True)
+                except Unreachable:
+                    raise
+                except ClusterError as e:
+                    blocked[campaign] = e
             refused: list[str] = []
             applied = failed = 0
             for objects, is_campaign in ((pipelines, False), (campaigns, True)):

@@ -527,37 +527,63 @@ def test_a_running_job_is_not_recorded_by_the_apply(tmp_path, cluster):
     assert "kyrk" in [c[2] for c in cluster.of("apply")]
 
 
-def test_a_cluster_that_refuses_the_record_does_not_stop_the_apply(
-    tmp_path, cluster, capsys
-):
-    """Recording how a campaign ended is an improvement on the apply, never
-    a precondition for it. An identity whose Role predates B76 -- or a
-    human's restricted kubeconfig -- has no `get` on Jobs, and refusing to
-    apply anything at all over that would take the campaigns repo offline
-    for a permission it never needed before."""
+def _unreadable(cluster, kind: str, suffix: str = "") -> None:
+    """Make every read of ``kind`` (named ``*suffix``) fail as forbidden."""
 
-    def forbidden(kind, verb, name=""):
-        if verb == "read" and kind == "Job":
+    def forbidden(k, verb, name=""):
+        if verb == "read" and k == kind and name.endswith(suffix):
             raise cluster_mod.ClusterError(
-                f"not allowed to get {kind}/{name} in htr-test: Forbidden"
+                f"not allowed to get {k}/{name} in htr-test: Forbidden"
             )
-        return FakeCluster._method(cluster, kind, verb, name)
+        return FakeCluster._method(cluster, k, verb, name)
 
     cluster._method = forbidden
+
+
+def test_a_campaign_whose_job_cannot_be_read_is_left_as_it_was(
+    tmp_path, cluster, capsys
+):
+    """Whether a campaign has finished is what keeps a reaped one from being
+    run again, so a check that cannot be made is not a check that passed:
+    applying it anyway re-ran a finished campaign's every volume over a
+    transient 5xx or a missing `get` (3093). Each such campaign is skipped,
+    named, and the apply exits non-zero; the pipelines still go out."""
+    _unreadable(cluster, "Job")
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
     applied = [c[2] for c in cluster.of("apply")]
-    assert applied == [
-        "htr-pipeline-demo-v1",
-        "htr-warmup-demo-v1",
-        "campaign-kyrk",
-        "kyrk",
-        "campaign-loc",
-        "loc",
-    ]
+    assert applied == ["htr-pipeline-demo-v1", "htr-warmup-demo-v1"]
+    assert cluster.of("dry-run") == []
     err = capsys.readouterr().err
-    assert err.count("could not record how campaign kyrk ended") == 1
+    assert "could not tell whether campaign kyrk has finished" in err
     assert "Forbidden" in err
+    assert "Job/kyrk" in err.splitlines()[-1] and "Job/loc" in err.splitlines()[-1]
+
+
+def test_a_status_record_that_cannot_be_read_fails_closed(tmp_path, cluster, capsys):
+    """The same when the Job is gone and it is the stored record that cannot
+    be read -- exactly the reaped campaign the record exists to protect."""
+    _unreadable(cluster, "ConfigMap", "-status")
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
+    applied = [c[2] for c in cluster.of("apply")]
+    assert "kyrk" not in applied and "campaign-kyrk" not in applied
+    assert "could not tell whether campaign kyrk has finished" in (
+        capsys.readouterr().err
+    )
+
+
+def test_an_unread_paused_campaign_is_an_unenforced_pause(tmp_path, cluster, capsys):
+    """Skipped is not paused: a campaign git says is paused that this apply
+    could not look at never reaches the pause sync. Exit 1, like any other
+    pause that does not hold."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    path = repo / "campaigns" / "kyrk.yaml"
+    path.write_text(path.read_text() + "suspend: true\n")
+    _unreadable(cluster, "Job")
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 1
+    assert ("apply", "Job", "kyrk") not in cluster.calls
+    assert "kyrk: paused in git, but" in capsys.readouterr().err
 
 
 def test_a_refused_record_write_does_not_stop_the_apply(tmp_path, cluster, capsys):
