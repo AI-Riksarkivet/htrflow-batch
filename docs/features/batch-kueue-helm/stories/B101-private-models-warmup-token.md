@@ -43,9 +43,13 @@ ingen S3-hemlighet och den avslutas när nedladdningen är klar.
 ## Klart när
 
 - [ ] En pipeline som pekar på en privat modell warmar upp grönt när
-      `hf_token_secret` är satt, och kampanjen kör mot den fyllda cachen.
-- [ ] Samma pipeline utan Secreten misslyckas i warm-up, inte i kampanjen.
-- [ ] Ett test visar att kampanj-Jobbets podspec varken innehåller
-      `HF_TOKEN` eller Secret-namnet.
-- [ ] Warm-up-loggen säger att en token fanns, utan att avslöja något om
-      den.
+      `hf_token_secret` är satt, och kampanjen kör mot den fyllda cachen. — byggt
+      (`converter.yaml` `hf_token_secret`, bara warm-up-Jobbet får tokenen);
+      återstår att köra mot en privat modell på ett kluster.
+- [ ] Samma pipeline utan Secreten misslyckas i warm-up, inte i kampanjen. —
+      återstår att verifiera på ett kluster.
+- [x] Ett test visar att kampanj-Jobbets podspec varken innehåller
+      `HF_TOKEN` eller Secret-namnet. — `test_the_campaign_job_never_gets_the_hub_token`
+      i `packages/converter/tests/test_render.py`, över alla objekt en kampanj renderar.
+- [x] Warm-up-loggen säger att en token fanns, utan att avslöja något om
+      den. — `warmup.py` loggar bara att `HF_TOKEN` är satt, inte värdet eller längden.

@@ -50,6 +50,8 @@ how it behaves at archive scale, and how it is tested.
 | [B05](stories/B05-campaign-browser.md) | See progress and live logs in the browser |
 | [B32](stories/B32-audit-fixes-frontend.md) | Audit fixes — the status page degrades gracefully and is safe to link from |
 | [C10](stories/C10-status-page-dataflow-diagram.md) | Status page data-flow diagram |
+| [C11](stories/C11-campaign-table-volume-pages-log.md) | Kampanjtabellen — volym-id öppnar viewern, en kolumn för sidor, en logg-länk |
+| [C13](stories/C13-precise-lifecycle-stage.md) | Status-sidan säger exakt var i cykeln en kampanj och varje volym befinner sig |
 
 ### Partly implemented — named items still open
 
@@ -67,9 +69,7 @@ how it behaves at archive scale, and how it is tested.
 | [C06](stories/C06-download-results.md) | Download a volume's results |
 | [C07](stories/C07-filter-sort-find.md) | Filter, sort and find across campaigns |
 | [C09](stories/C09-notify-requester.md) | Notify the requester when a campaign finishes |
-| [C11](stories/C11-campaign-table-volume-pages-log.md) | Kampanjtabellen — volym-id öppnar viewern, en kolumn för sidor, en logg-länk |
 | [C12](stories/C12-alto-error-next-step.md) | Viewerns felmeddelanden för ALTO säger vad man gör härnäst |
-| [C13](stories/C13-precise-lifecycle-stage.md) | Status-sidan säger exakt var i cykeln en kampanj och varje volym befinner sig |
 | [C14](stories/C14-actionable-errors.md) | Varje fel på status-sidan säger vad som hände, var, och vad användaren gör åt det |
 | [C15](stories/C15-api-errors-sentence-and-headers.md) | Läs-API:t svarar med en mening och rätt headers även när något går sönder |
 | [C16](stories/C16-pods-fieldselector-paging-cache.md) | Hämta bara de Pods som behövs — fieldSelector, paging och kort cache |
