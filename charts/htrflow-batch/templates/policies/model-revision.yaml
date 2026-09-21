@@ -24,6 +24,16 @@
 # as pinned when either path matches the 40-hex pattern. Admission does not
 # know which loader a step uses, so a pin in the wrong place for its own
 # loader is admitted here and fails later, at load time in the warm-up.
+#
+# Both paths are only the pin if nothing overrides them (2026-09-17 audit,
+# 3058). htrflow's `Inference.from_config` pops `model`, `model_settings`
+# and `generation_settings` off a step's `settings` and passes
+# `model_settings | <whatever is left>` to the model, so a `revision: null`
+# or `model_kwargs: {}` BESIDE `model_settings` wins over the pinned one
+# inside it. The second rule refuses any other key under the `settings` of a
+# step that loads a model (`settings.model` names the loader) -- the same
+# rule the converter's `validate` applies, so the author meets it first in
+# the pull request.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -58,6 +68,33 @@ spec:
           conditions:
             all:
               - key: {{ `"{{ length(unpinned) }}"` }}
+                operator: GreaterThan
+                value: 0
+    - name: pipeline-model-settings-only
+      match:
+        any:
+          - resources:
+              kinds: [ConfigMap]
+              namespaces: [{{ .Release.Namespace | quote }}]
+      context:
+        - name: stray
+          variable:
+            jmesPath: >-
+              parse_yaml(request.object.data."pipeline.yaml" || 'steps: []').steps
+              | [?settings.model]
+              | [?length(keys(settings)[?!contains(['model', 'model_settings', 'generation_settings'], @)]) > `0`]
+              | [].join(': ', [step || '?', join(', ', keys(settings)[?!contains(['model', 'model_settings', 'generation_settings'], @)])])
+            default: []
+      validate:
+        message: >-
+          settings beside model_settings in a step that loads a model:
+          {{ `{{ join('; ', stray) }}` }} — htrflow merges them over
+          model_settings, so one there overrides a pinned revision; move
+          them under model_settings
+        deny:
+          conditions:
+            all:
+              - key: {{ `"{{ length(stray) }}"` }}
                 operator: GreaterThan
                 value: 0
 {{- end }}

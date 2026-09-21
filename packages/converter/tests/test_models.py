@@ -291,3 +291,69 @@ def test_a_query_parameter_that_merely_ends_in_a_redacted_name_is_left_alone():
         )
     (msg,) = [str(e["msg"]) for e in exc_info.value.errors()]
     assert "pagekey=7" in msg
+
+
+_REVISION = "0123456789abcdef0123456789abcdef01234567"
+
+
+@pytest.mark.parametrize(
+    "settings,stray",
+    [
+        (
+            {
+                "model": "yolo",
+                "model_settings": {"model": "o/yolo", "revision": _REVISION},
+                "revision": None,
+            },
+            "revision",
+        ),
+        (
+            {
+                "model": "TrOCR",
+                "model_settings": {
+                    "model": "o/trocr",
+                    "model_kwargs": {"revision": _REVISION},
+                },
+                "model_kwargs": {},
+            },
+            "model_kwargs",
+        ),
+    ],
+    ids=["yolo", "trocr"],
+)
+def test_a_model_step_may_not_carry_keys_beside_model_settings(settings, stray):
+    """htrflow builds a model's arguments as ``model_settings | settings``,
+    so a key beside ``model_settings`` overrides the same key inside it --
+    a pinned revision included (audit 2026-09-17, 3058)."""
+    with pytest.raises(ValidationError) as exc_info:
+        Pipeline.model_validate(
+            {
+                "id": "p",
+                "image": "ghcr.io/x/y@sha256:" + "a" * 64,
+                "steps": [{"step": "Segmentation", "settings": settings}],
+            }
+        )
+    message = " ".join(str(e["msg"]) for e in exc_info.value.errors())
+    assert stray in message
+    assert "model_settings" in message
+
+
+def test_steps_that_load_no_model_keep_their_own_settings():
+    pipeline = Pipeline.model_validate(
+        {
+            "id": "p",
+            "image": "ghcr.io/x/y@sha256:" + "a" * 64,
+            "steps": [
+                {
+                    "step": "TextRecognition",
+                    "settings": {
+                        "model": "TrOCR",
+                        "model_settings": {"model": "o/trocr"},
+                        "generation_settings": {"batch_size": 8},
+                    },
+                },
+                {"step": "Export", "settings": {"dest": "out", "format": "alto"}},
+            ],
+        }
+    )
+    assert len(pipeline.steps) == 2

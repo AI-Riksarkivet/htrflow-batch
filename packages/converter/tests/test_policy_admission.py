@@ -151,3 +151,66 @@ def test_the_apply_identity_still_may_not_delete_a_foreign_object(tmp_path: Path
     ours = configmap("campaign-kyrk", CONVERTER)
     verdict, out = admission(tmp_path, policy, ours, user=APPLY_SA, operation="DELETE")
     assert verdict == "admitted", out
+
+
+# --- 3058: keys beside model_settings override it -------------------------
+
+REVISION = "0123456789abcdef0123456789abcdef01234567"
+
+
+def pipeline(*steps: dict) -> dict:
+    return configmap(
+        "htr-pipeline-demo-v1",
+        data={"pipeline.yaml": yaml.safe_dump({"steps": list(steps)})},
+    )
+
+
+YOLO = {
+    "step": "Segmentation",
+    "settings": {
+        "model": "yolo",
+        "model_settings": {
+            "model": "Riksarkivet/yolov9-regions-1",
+            "revision": REVISION,
+        },
+    },
+}
+TROCR = {
+    "step": "TextRecognition",
+    "settings": {
+        "model": "TrOCR",
+        "model_settings": {
+            "model": "Riksarkivet/trocr-base-handwritten-hist-swe-2",
+            "model_kwargs": {"revision": REVISION},
+        },
+        "generation_settings": {"batch_size": 8},
+    },
+}
+EXPORT = {"step": "Export", "settings": {"dest": "out", "format": "alto"}}
+
+
+def test_a_pinned_pipeline_is_admitted(tmp_path: Path):
+    policy = render_policy(tmp_path, "model-revision")
+    verdict, out = admission(tmp_path, policy, pipeline(YOLO, TROCR, EXPORT))
+    assert verdict == "admitted", out
+
+
+@pytest.mark.parametrize(
+    "step,stray",
+    [
+        # htrflow builds a model's arguments as `model_settings | settings`,
+        # so a key beside model_settings wins: YOLO loads the head of the
+        # repo, and TrOCR's from_pretrained gets no revision at all.
+        (YOLO, {"revision": None}),
+        (TROCR, {"model_kwargs": {}}),
+    ],
+    ids=["yolo", "trocr"],
+)
+def test_a_key_beside_model_settings_cannot_unpin_the_model(
+    tmp_path: Path, step: dict, stray: dict
+):
+    policy = render_policy(tmp_path, "model-revision")
+    bypass = {**step, "settings": {**step["settings"], **stray}}
+    verdict, out = admission(tmp_path, policy, pipeline(bypass))
+    assert verdict == "refused", out
+    assert next(iter(stray)) in out
