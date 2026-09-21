@@ -833,7 +833,9 @@ check converter "$(count packages/converter/src -name '*.py')" 2582
 # 1870 -> 1891 (2026-09-21, audit 3059): the viewer's CSP is set by the file
 # served, not the request path -- /uv and /uv.html/ served the same page with
 # frame-ancestors only. BuiltSite.file_response and the docstring saying why.
-check web       "$(count packages/web/src -name '*.py')" 1891
+# 1891 -> 1892 (2026-09-21, audit 3059): StaticFiles.directory may be None,
+# and the type checker refused Path(None) -- one line to name it.
+check web       "$(count packages/web/src -name '*.py')" 1892
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
