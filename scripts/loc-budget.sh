@@ -1209,7 +1209,10 @@ check web       "$(count packages/web/src -name '*.py')" 2096
 # give from their empty icon and pill cells instead. The bar's track has a
 # floor now, and the leading spacer column is gone so line 2 has the whole
 # card to lay out in.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4822
+# 4822 -> 4839 (2026-09-21, audit 3076): the detail schema's pagesCoverage
+# and the pages row saying "counted in N of M volumes" while the API's
+# campaign-wide sums are still filling in.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4839
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
