@@ -125,7 +125,8 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | `window:` above `converter.yaml`'s `window` | Silently clamped to it at render time — `converter.yaml`'s value is the per-cluster cap and should be set to what the ClusterQueue's GPU quota can actually admit. Rendering more would let Kueue's partial admission shrink it on the live Job: Kueue then rewrites `spec.parallelism` and rejects every later apply of the unchanged rendered file (`cannot change when partial admission is enabled and the job is not suspended`) |
 | `suspend: true` | Renders `spec.suspend: true` — see [Pausing](#pausing) |
 | **A campaign whose rendered Job already exists in `rendered/` with a different volume list is rejected** | `render` prints `campaign <name> is append-only: create a new campaign` and exits non-zero — Job `completions` is immutable once created, so adding volumes means a new campaign file |
-| **A pipeline whose image or steps changed while a rendered campaign still names it is rejected** | `validate` and `render` print `pipeline <id> changed (…) but campaigns …` and exit non-zero — see [Immutability](#immutability) |
+| **A campaign whose ConfigMap in the cluster has a different volume list, pipeline or image is rejected** | `apply` prints `campaign <name> is in the cluster with different …` and exits `1` before it sends anything. `rendered/` can be missing or behind the cluster (a checkout whose render was never committed), so the live ConfigMap is held against too. A ConfigMap `apply` may not read stops it the same way: a check that cannot be made has not passed |
+| **A pipeline whose image or steps changed while a rendered campaign still runs it is rejected** — "runs" is what `rendered/` recorded, so a campaign moved to another pipeline in the same change still counts | `validate` and `render` print `pipeline <id> changed (…) but campaigns …` and exit non-zero — see [Immutability](#immutability) |
 | The file stem does not end in `-part<number>` | Validation error — that is what the converter calls the parts of a campaign it splits, so such a file would collide with one |
 | More than 10 000 volumes, or more than 900 KiB of `volumes.txt` (an `images:` volume is ONE line of space-joined URLs) | Split into `<name>-part1`, `-part2`, … — one Job and one ConfigMap each. The API server refuses a ConfigMap over 1 MiB; the rest is margin |
 | A campaign that splits and whose name is long | The name is cut short in the part names: a Job's name is also a label value and its pods' name prefix (`<job>-<index>`), and a DNS label stops at 63 characters. `rendered/` holds `<shortened>-partN.yaml` |
@@ -414,10 +415,15 @@ it from the code. See [refused objects](#when-the-api-server-refuses-an-object).
 `apply` sends each rendered object on its own, and **one refusal is one
 object's problem**: it is named on stderr in a sentence, everything else is
 still applied, and a summary line at the end lists what was left unchanged.
+A campaign is the exception that proves it: its ConfigMap and its Job are one
+change. Every campaign Job is first sent as a server-side dry run
+(`dryRun=All`, admission webhooks included), and a campaign whose Job would
+be refused keeps its ConfigMap as it was too — otherwise the indexes that
+have not started would read a `volumes.txt` their Job never agreed to.
 
 ```
 Job htr-warmup-demo: the pod template changed and a Job's pod template is immutable once the Job exists — a pipeline id is a permanent name for a recipe, so a changed recipe is a new pipeline file, and a Job that has to change is deleted and created again
-1 of 6 objects were refused by the API server and are unchanged: Job/kyrk — the other 5 were applied (exit 3)
+2 of 6 objects were refused by the API server and are unchanged: ConfigMap/campaign-kyrk, Job/kyrk — the other 4 were applied (exit 3)
 ```
 
 The codes are a precedence, highest first — `1` beats `3` beats `0` — so
@@ -484,5 +490,6 @@ Job's pod template differently without changing a recipe by a word, and
 for those.
 
 A campaign, separately, is append-only at the volume-list level (see the
-table above) — that one *is* enforced by `render`, because a running Job's
-`completions` cannot change.
+table above) — that one *is* enforced, by `render` against `rendered/` and by
+`apply` against the campaign's ConfigMap in the cluster, because a running
+Job's `completions` cannot change.

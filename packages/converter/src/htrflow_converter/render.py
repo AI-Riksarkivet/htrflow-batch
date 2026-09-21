@@ -10,7 +10,14 @@ from importlib import resources
 
 import yaml
 
-from .models import STATUS_SUFFIX, Campaign, ConverterConfig, Pipeline, Volume
+from .models import (
+    STATUS_SUFFIX,
+    Campaign,
+    ConverterConfig,
+    Pipeline,
+    Volume,
+    parse_source_line,
+)
 
 _LABEL_JUNK = re.compile(r"[^A-Za-z0-9_.-]")
 _PATH_RE = re.compile(r"[^.\[\]]+|\[\d+\]")
@@ -195,6 +202,22 @@ def recipe(objects: list[dict]) -> dict[str, object]:
     return {
         "image": containers[0].get("image", ""),
         "steps": parsed.get("steps") if isinstance(parsed, dict) else None,
+    }
+
+
+def campaign_record(cm: dict) -> dict[str, object]:
+    """What a campaign ConfigMap records about the campaign itself: its
+    volumes (parsed, so two spellings of one list compare equal), its
+    pipeline and its image -- ``None`` for what the object does not carry.
+    ``cli`` holds a render against the LIVE ConfigMap by these (3084)."""
+    meta = cm.get("metadata") or {}
+    text = (cm.get("data") or {}).get("volumes.txt")
+    return {
+        "volumes": None
+        if text is None
+        else [parse_source_line(line) for line in text.splitlines() if line],
+        "pipeline": (meta.get("labels") or {}).get(_PIPELINE_LABEL),
+        "image": (meta.get("annotations") or {}).get(_DIGEST_ANNOTATION),
     }
 
 

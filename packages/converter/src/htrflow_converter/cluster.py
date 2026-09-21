@@ -252,14 +252,17 @@ class Cluster:
         api, noun = _KINDS[kind]
         return getattr(getattr(self, api), f"{verb}_namespaced_{noun}")
 
-    def apply(self, obj: dict) -> dict:
+    def apply(self, obj: dict, dry_run: bool = False) -> dict:
         """Server-side apply ``obj``; returns what the server stored.
 
         ``force=True`` takes the fields back from whatever manager owns them
         -- a Job applied by `kubectl` before this change, a hand edit --
         which is the "git is the truth" rule the campaigns repo runs on.
+        ``dry_run`` asks the API server (admission webhooks included) whether
+        it would take ``obj``, and stores nothing.
         """
         kind, name = obj["kind"], obj["metadata"]["name"]
+        extra = {"dry_run": "All"} if dry_run else {}
         return _raw(
             "apply",
             kind,
@@ -272,6 +275,7 @@ class Cluster:
             field_manager=FIELD_MANAGER,
             force=True,
             _content_type=APPLY_PATCH,
+            **extra,
         )
 
     def replace_job(self, obj: dict) -> dict:

@@ -104,6 +104,18 @@ def test_apply_is_a_server_side_apply_patch(cluster, obj, path):
     assert call["body"] is obj, "the manifest itself is the patch"
 
 
+def test_a_dry_run_apply_is_the_same_patch_with_dry_run_all(cluster):
+    """What lets apply ask about a campaign's Job before its ConfigMap is
+    sent (3084): the API server, admission webhooks included, answers as it
+    would for the real apply and stores nothing."""
+    cluster.apply(JOB, dry_run=True)
+    cluster.apply(JOB)
+    dry, real = cluster.calls
+    assert dry["query"]["dryRun"] == "All"
+    assert "dryRun" not in real["query"]
+    assert dry["content_type"] == real["content_type"] == APPLY_PATCH
+
+
 def test_an_unknown_kind_is_a_sentence_not_a_keyerror(cluster):
     """The day a ``Service`` (or anything else this tool does not render)
     shows up in ``manifests/``, ``apply`` must not blow up with a bare
