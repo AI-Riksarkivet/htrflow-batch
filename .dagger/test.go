@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// withTestTools puts the four CLIs the suite shells out to on the PATH of
+// withTestTools puts the CLIs the suite shells out to on the PATH of
 // the pytest container. Without them the tests that use them do not fail —
 // they SKIP, which is worse: `test_apply.py` stopped exercising the commit
 // provenance it records, and `test_render.py` stopped validating the
@@ -17,12 +17,14 @@ import (
 // the same versions the chart render is checked with, and there is no second
 // version to keep in step. The Kyverno CLI is lifted the same way, for
 // `test_policy_admission.py`: without it every policy bypass test skips. git has no such image: it comes from Debian's
-// archive, the one unpinned input here, because a repo that cannot run `git
-// init` cannot test what `git rev-parse` returns.
+// archive, the unpinned input here, because a repo that cannot run `git
+// init` cannot test what `git rev-parse` returns. jq and make come the same
+// way, for `test_make_cluster_targets.py`: it drives the Makefile's cluster
+// targets and the scripts they call, which read kubectl's JSON with jq.
 func (m *HtrflowBatch) withTestTools(container *dagger.Container) *dagger.Container {
 	return container.
 		WithExec([]string{"sh", "-c",
-			"apt-get update -qq && apt-get install -y --no-install-recommends git " +
+			"apt-get update -qq && apt-get install -y --no-install-recommends git jq make " +
 				"&& rm -rf /var/lib/apt/lists/*"}).
 		WithFile("/usr/local/bin/kubeconform", dag.Container().From(kubeconformImage).File("/kubeconform")).
 		WithFile("/usr/local/bin/helm", dag.Container().From(helmImage).File("/usr/bin/helm")).
