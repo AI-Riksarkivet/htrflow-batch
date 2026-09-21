@@ -284,7 +284,16 @@ fail=0
 # painting bodies -- a P3 Choice, or the bare list manifests in the wild put
 # there -- is published with the first one that passes the URL check, instead
 # of losing its image because the shape was not a single object.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3156
+# 3156 -> 3321 (2026-09-21, audit 3098, 3058, 3096): build_pipeline reads
+# two rules off the parsed YAML before from_config builds a model -- no
+# Export step (18), and a pin under model_settings that htrflow's
+# `model_settings | <the rest>` merge would override (60: the merge
+# reproduced, the two pin paths, the sentence naming the model). Resume
+# reads the source digest each page's outputs now carry as S3 metadata
+# (HEADs, sixteen at a time), falls back to manifest.json for an older
+# page, and clears every page it is about to redo in DeleteObjects batches
+# (87). About half of each is the comments saying why.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3321
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
