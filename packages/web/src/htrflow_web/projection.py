@@ -336,12 +336,19 @@ def record_detail(
     reasons = _recorded_reasons(status)
     results_base, pipeline = row["resultsBase"], row["pipeline"]
     ending = _RECORD_STATE.get(row["phase"], UNKNOWN_STATE)
+    lines = _volume_lines(record)
+    named = {line.split("\t", 1)[0] for line in lines} & reasons.keys()
+    # The record counts more failures than it names -- pods collected
+    # before anyone opened the page, or more than it keeps. Which of the
+    # rest failed is written down nowhere, so none of them is `done` (3074).
+    if ending == "done" and len(named) < row["counts"]["failed"]:
+        ending = UNKNOWN_STATE
     volumes: list[dict] = []
-    for idx, line in enumerate(_volume_lines(record)):
+    for idx, line in enumerate(lines):
         vol_id = line.split("\t", 1)[0]
         state = "failed" if vol_id in reasons else ending
         volume = _volume_row(idx, line, state, results_base, pipeline, cfg)
-        if vol_id in reasons:
+        if reasons.get(vol_id):
             volume["reason"] = {
                 "stage": None,
                 "permanent": None,
@@ -349,11 +356,7 @@ def record_detail(
             }
         volumes.append(volume)
 
-    failures = sorted(
-        (v for v in volumes if v["state"] == "failed" and "reason" in v),
-        key=lambda v: v["index"],
-        reverse=True,
-    )[:_MAX_FAILURES]
+    failures = _failures(volumes)
     page = volumes[offset : offset + limit]
     latest = _latest(volumes)
     known = _attach_progress(
@@ -519,8 +522,31 @@ def wrapper_reason(pod: dict, container: str = "wrapper") -> dict | None:
     if message is None:
         message = _terminated_message(status.get("initContainerStatuses") or [], None)
     if message is None:
-        return None
+        return _stopped(status)
     return _name_the_deadline(_reason(message), status.get("reason"))
+
+
+def _stopped(status: dict) -> dict | None:
+    """Why a pod stopped when nothing in it left a message: an OOM kill, an
+    eviction, a kill before the wrapper could write one. The pod's own
+    ``status.reason`` first (`Evicted`, `DeadlineExceeded`: said about the
+    pod, and more telling than the exit code it caused), else the kubelet's
+    reason and exit code for a container that stopped non-zero. Without
+    this such an index was `failed` with no reason, and no reason kept it
+    out of ``failures`` and so out of the record (3074)."""
+    if status.get("reason"):
+        return {"stage": None, "permanent": None, "error": status["reason"]}
+    for cs in [
+        *(status.get("containerStatuses") or []),
+        *(status.get("initContainerStatuses") or []),
+    ]:
+        term = (cs.get("state") or {}).get("terminated") or (
+            cs.get("lastState") or {}
+        ).get("terminated")
+        if term and term.get("exitCode"):
+            said = f"{term.get('reason') or 'Error'} (exit code {term['exitCode']})"
+            return {"stage": None, "permanent": None, "error": said}
+    return None
 
 
 def _reason(message: str) -> dict:
@@ -659,6 +685,15 @@ def _pipeline_steps(text: str) -> list[str]:
     ]
 
 
+def _failures(volumes: list[dict]) -> list[dict]:
+    """The newest failed rows, newest index first -- every one of them,
+    with a reason or without: a failure nobody could explain is still a
+    failure, and the record written from this list is all a reaped campaign
+    has to tell its failed volumes from its done ones (3074)."""
+    failed = [v for v in volumes if v["state"] == "failed"]
+    return sorted(failed, key=lambda v: v["index"], reverse=True)[:_MAX_FAILURES]
+
+
 def _latest(volumes: list[dict]) -> dict | None:
     """The volume a folded card shows: the newest ``active`` one by index,
     else the newest ``done`` one, else nothing. Computed here over EVERY
@@ -779,12 +814,7 @@ def detail(
                 row["reason"] = reason
         volumes.append(row)
 
-    failures = sorted(
-        (v for v in volumes if v["state"] == "failed" and "reason" in v),
-        key=lambda v: v["index"],
-        reverse=True,
-    )[:_MAX_FAILURES]
-
+    failures = _failures(volumes)
     page = volumes[offset : offset + limit]
     known = _attach_progress(
         [*page, *failures, *([latest] if (latest := _latest(volumes)) else [])],

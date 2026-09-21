@@ -277,13 +277,46 @@ class TestDetail:
         )
         assert [f["index"] for f in d["failures"]] == [3]
 
-    def test_failures_excludes_failed_index_without_reason(self):
-        job = _job()
-        configmap = _configmap()
-        d = projection.detail(
-            job, configmap, [], CFG, offset=0, limit=200, warmup=MISSING_WARMUP
-        )
-        assert d["failures"] == []
+    def test_a_failed_index_whose_pod_is_gone_is_still_a_failure(self):
+        """The index is in failedIndexes; nothing is left to say why. It is
+        a failure all the same, and leaving it out of `failures` left it out
+        of the record too -- where a reaped campaign then called it done
+        (3074)."""
+        d = projection.detail(_job(), _configmap(), [], CFG, warmup=MISSING_WARMUP)
+        assert [f["index"] for f in d["failures"]] == [3]
+        assert "reason" not in d["failures"][0]
+
+    def test_a_pod_killed_without_a_message_says_how_it_was_killed(self):
+        """An OOM kill leaves no termination message: the wrapper never got
+        to write one. The kubelet's own reason and exit code are what there
+        is, and a failure with them is one a reader can act on (3074)."""
+        pod = _pod(3)
+        pod["status"]["containerStatuses"][0]["state"] = {
+            "terminated": {"exitCode": 137, "reason": "OOMKilled"}
+        }
+        d = projection.detail(_job(), _configmap(), [pod], CFG, warmup=MISSING_WARMUP)
+        assert d["failures"][0]["reason"] == {
+            "stage": None,
+            "permanent": None,
+            "error": "OOMKilled (exit code 137)",
+        }
+
+    def test_an_evicted_pod_is_named_by_the_pods_own_reason(self):
+        pod = _pod(3)
+        pod["status"]["reason"] = "Evicted"
+        pod["status"]["containerStatuses"][0]["state"] = {
+            "terminated": {"exitCode": 137, "reason": "ContainerStatusUnknown"}
+        }
+        d = projection.detail(_job(), _configmap(), [pod], CFG, warmup=MISSING_WARMUP)
+        assert d["failures"][0]["reason"]["error"] == "Evicted"
+
+    def test_a_pod_that_exited_cleanly_has_no_reason(self):
+        pod = _pod(0)
+        pod["status"]["containerStatuses"][0]["state"] = {
+            "terminated": {"exitCode": 0, "reason": "Completed"}
+        }
+        d = projection.detail(_job(), _configmap(), [pod], CFG, warmup=MISSING_WARMUP)
+        assert "reason" not in d["volumes"][0]
 
     def test_paging(self):
         job = _job()
@@ -771,7 +804,8 @@ class TestVolumeProgress:
     def test_only_the_rows_in_the_answer_are_fetched(self):
         """One GET per row shown, never one per volume in the campaign: the
         cost has to grow with the window, not with the archive (C08). The
-        seven-volume campaign answers with two rows plus `latest` (vol5)."""
+        seven-volume campaign answers with two rows plus its one failure
+        (vol3) and `latest` (vol5)."""
         fetch, asked = self._fetch({})
         projection.detail(
             _job(),
@@ -783,7 +817,7 @@ class TestVolumeProgress:
             warmup=MISSING_WARMUP,
             fetch_progress=fetch,
         )
-        assert [v for v, _ in asked] == ["vol0", "vol1", "vol5"]
+        assert [v for v, _ in asked] == ["vol0", "vol1", "vol3", "vol5"]
 
     def test_at_most_the_cap_is_fetched_even_when_the_page_is_bigger(self):
         """A `limit=1000` page must not turn into a thousand sequential GETs
@@ -1222,6 +1256,33 @@ class TestTheReapedDetailStillHasItsVolumes:
         assert body["pagesTotal"] == 8, "the two done volumes"
         assert body["volumes"][0]["progress"]["done"] == 4
 
+    def test_a_failure_nobody_could_name_leaves_the_other_rows_unknown(self):
+        """The record counts two failed volumes and names one. Which of the
+        other two failed is not written down anywhere, so neither is `done`
+        -- that claimed an OOM-killed volume had finished (3074)."""
+        status = _stored(
+            phase="PartiallyFailed",
+            volumesDone="1",
+            volumesFailed="2",
+            failedVolumes='[{"id":"vol2","reason":"manifest 404"}]',
+        )
+        states = [v["state"] for v in self._body(status)["volumes"]]
+        assert states == ["unknown", "unknown", "failed"]
+
+    def test_a_failure_recorded_without_a_reason_is_failed_with_none(self):
+        """The live page named it failed with no message; the record keeps
+        exactly that -- a failed row, not one with an empty sentence."""
+        status = _stored(
+            phase="PartiallyFailed",
+            volumesDone="2",
+            volumesFailed="1",
+            failedVolumes='[{"id":"vol0","reason":""}]',
+        )
+        body = self._body(status)
+        assert [v["state"] for v in body["volumes"]] == ["failed", "done", "done"]
+        assert "reason" not in body["volumes"][0]
+        assert [f["id"] for f in body["failures"]] == ["vol0"]
+
     def test_a_record_whose_failed_volumes_are_not_json_costs_nothing(self):
         body = self._body(_stored(failedVolumes="not json at all"))
         assert body["failures"] == []
@@ -1420,3 +1481,30 @@ def test_an_ordinary_volume_id_is_left_alone_in_its_urls():
     base = "https://results.example.org/htr-test/demo-v1"
     assert row["manifestUrl"] == f"{base}/vol0/manifest.json"
     assert row["logUrl"] == "https://results.example.org/status/logs/demo-v1/vol0.txt"
+
+
+def test_an_oom_killed_volume_is_failed_live_and_after_the_reap():
+    """The whole path of 3074: an index killed before its wrapper could say
+    why is a failure on the live page, is written into the record, and is
+    still a failure once the Job -- and every pod -- is gone."""
+    job = _job(
+        completions=3,
+        active=0,
+        completed="1-2",
+        failed="0",
+        conditions=[{"type": "Failed", "status": "True"}],
+    )
+    pod = _pod(0)
+    pod["status"]["containerStatuses"][0]["state"] = {
+        "terminated": {"exitCode": 137, "reason": "OOMKilled"}
+    }
+    live = projection.detail(job, _configmap(n=3), [pod], CFG, warmup=MISSING_WARMUP)
+    assert live["phase"] == "PartiallyFailed"
+    assert [f["id"] for f in live["failures"]] == ["vol0"]
+
+    status = {"data": projection.status_record(live, live["failures"])}
+    record = {**RECORD, "data": {"volumes.txt": _configmap(n=3)["data"]["volumes.txt"]}}
+    row = projection.record_summary(record, status, CFG, MISSING_WARMUP)
+    reaped = projection.record_detail(row, record, status, CFG, None)
+    assert [v["state"] for v in reaped["volumes"]] == ["failed", "done", "done"]
+    assert reaped["failures"][0]["reason"]["error"] == "OOMKilled (exit code 137)"
