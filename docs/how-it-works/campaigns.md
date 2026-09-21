@@ -279,6 +279,15 @@ Three things follow.
   Without it, an apply after the Job's TTL found no Job, created one, and
   re-ran every volume. There is deliberately **no `--force`**: a campaign
   that should run again is a new campaign file.
+- **A live Job outranks the stored record.** While the campaign's Job
+  exists, it alone says whether the campaign is over. A stored `Succeeded`
+  beside a Job that is still running is left over from something else — a
+  reused name, a prune that never tracked the record, a Job re-created by
+  hand — and the campaign is applied, and its pause synced, as usual.
+- **A check that cannot be made is not one that passed.** When the Job or
+  the record cannot be read (a refused `get`, a server error after the
+  retries), `apply` leaves that campaign exactly as it is, names it, and
+  exits non-zero, rather than risk re-running a finished campaign.
 - **A changed volume list is still refused** by the append-only rule, before
   any of this is reached.
 - **The status page still shows it.** `GET /api/v1/jobs` merges the Jobs

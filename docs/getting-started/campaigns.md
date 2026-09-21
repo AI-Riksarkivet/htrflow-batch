@@ -140,15 +140,18 @@ This one command does five things, in order:
 
 1. Renders the repo.
 2. **Records how each campaign stands, before anything is sent.** For every
-   campaign it is about to apply it reads the live Job, writes the campaign's
-   status ConfigMap from it, and then reads that record back: a campaign the
-   record says is finished, whose volume list has not moved, is left alone
-   and skipped for the rest of the run — it prints one line saying so instead
-   of an `applied:` line. That is what keeps a finished campaign from being
-   run again once its Job is past its TTL
+   campaign it is about to apply it reads the live Job. A running Job means
+   the campaign is not finished, whatever is stored; a finished one is
+   written into the campaign's status ConfigMap; with no Job left, the
+   stored record decides. A campaign that is finished and whose volume list
+   has not moved is left alone and skipped for the rest of the run — it
+   prints one line saying so instead of an `applied:` line. That is what
+   keeps a finished campaign from being run again once its Job is past its
+   TTL
    ([The record a campaign leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)).
-   None of this is a precondition: an identity whose Role cannot read Jobs
-   gets a warning on stderr and the campaign is applied as any other.
+   A campaign whose Job or record cannot be read is left exactly as it is
+   and named on stderr, and the apply exits non-zero: an unmade check is
+   never treated as a campaign still to run.
 3. Applies `rendered/pipelines`. Pipelines go first because a campaign's Job
    references its pipeline's ConfigMap.
 4. Applies `rendered/campaigns`.
