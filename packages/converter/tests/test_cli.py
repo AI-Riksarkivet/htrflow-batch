@@ -244,6 +244,22 @@ def test_append_only_still_finds_the_parts_of_a_cut_down_campaign_name(
     assert f"campaign {name} is append-only" in capsys.readouterr().out
 
 
+def test_a_campaign_named_like_a_part_of_another_is_not_taken_for_one(tmp_path, capsys):
+    """`loc-partner` begins with `loc-part`, and a glob for loc's parts
+    (`loc-part*.yaml`) found it: every render after the first held loc
+    against loc's volumes and loc-partner's together, and refused the repo
+    as append-only. A part is `-part` and a number, and nothing after."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    (repo / "campaigns" / "loc-partner.yaml").write_text(
+        "pipeline: demo-v1\nvolumes:\n  - R5555555\n"
+    )
+    out = repo / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    assert main(["render", str(repo), "--out", str(out)]) == 0, capsys.readouterr()
+    assert main(["validate", str(repo)]) == 0, capsys.readouterr()
+
+
 def _images_volumes(count: int, pages: int = 300) -> list[dict]:
     url = (
         "https://lbiiif.riksarkivet.se/arkis!R00012345/jp2/00000000000000000{:03d}.jpg"
