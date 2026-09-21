@@ -241,9 +241,13 @@ jobs:
             "${transformers[@]}" \
             -t "$ref" .
 
-      # Between the build and the push, the gate dagger's publish-docker
-      # runs for the other jobs: Trivy (finding 3060), which stops the
-      # release on a CRITICAL finding with a fix.
+      # Between the build and the push, the gates dagger's publish-docker
+      # runs for the other jobs, on this very image: the level-0 library-API
+      # pin (finding 3104) and Trivy (finding 3060), which stops the release
+      # on a CRITICAL finding with a fix.
+      - name: Library-API pin test, against the image about to be pushed
+        run: make test-driver-real WRAPPER_IMAGE="${IMAGE}:${TAG}-arm64"
+
       - name: Vulnerability scan (CRITICAL blocks)
         run: make scan-image SCAN_IMAGE="${IMAGE}:${TAG}-arm64"
 

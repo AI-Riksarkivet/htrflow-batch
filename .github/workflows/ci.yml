@@ -75,7 +75,7 @@ jobs:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
   # Also the amd64 half of the wrapper dockerfile's proof: this is the only
-  # job that builds its `base-amd64` stage.
+  # job that builds its `base-amd64` stage, and it runs the driver test on it.
   scan-wrapper:
     name: Vulnerability scan (wrapper, amd64)
     if: github.event_name != 'pull_request'
@@ -89,6 +89,15 @@ jobs:
 
       - name: Scan the wrapper image (CRITICAL blocks)
         run: dagger call --progress plain scan --severity CRITICAL --ignore-unfixed
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+
+      # The level-0 library-API pin against the amd64 image (finding 3104):
+      # it ran only against the arm64 image below, so the base that the
+      # amd64 image ships on was never driven. Same engine, same build as
+      # the scan above, so this costs the test and not a second build.
+      - name: Library-API pin test (wrapper, amd64)
+        run: dagger call --progress plain test-driver
         env:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
