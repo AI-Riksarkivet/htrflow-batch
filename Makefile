@@ -1,4 +1,4 @@
-.PHONY: install format lint check test typecheck test-driver-real ci build scan publish \
+.PHONY: install format lint check test typecheck test-driver-real ci build scan publish release-notes \
         compose-up compose-test compose-smoke compose-down helm-lint helm-template \
         install-devstack install-kyverno \
         docs-serve docs-build config-reference api-contract \
@@ -86,6 +86,12 @@ scan:
 publish:
 	dagger call publish-docker --component wrapper \
 	  --docker-username env:DOCKERHUB_USERNAME --docker-password env:DOCKERHUB_TOKEN $(DAGGER_CA)
+
+# What the next GitHub release will list: git-cliff over the commits since the
+# last v* tag (cliff.toml). The release workflow puts .github/release-notes.md
+# above the same list when a tag is pushed.
+release-notes:
+	uv run --only-group release git-cliff --unreleased --strip header
 
 compose-up:
 	cd .docker && docker compose up -d
