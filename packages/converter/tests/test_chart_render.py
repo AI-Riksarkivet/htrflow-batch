@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from htrflow_converter.models import _NAME_RE
+from htrflow_converter.models import _DNS_LABEL_RE, Campaign
 
 REPO = Path(__file__).resolve().parents[3]
 CHART = REPO / "charts" / "htrflow-batch"
@@ -125,7 +125,10 @@ def test_the_read_api_may_only_write_its_own_status_configmaps(full: list[dict])
     assert condition["operator"] == "Equals" and condition["value"] is False
     # A policy that refuses a legal name is an outage, not a control: the
     # status write would fail for that campaign and nothing would say why.
-    assert _status_name_pattern(web) == f"^campaign-{_NAME_RE.pattern[:-2]}-status$"
+    # The campaign-name rule is a DNS-1123 label (models.Campaign._check_name).
+    assert _status_name_pattern(web) == (
+        f"^campaign-{_DNS_LABEL_RE.pattern[:-2]}-status$"
+    )
     assert policy["spec"]["failurePolicy"] == "Fail"
 
 
@@ -136,19 +139,19 @@ def _status_name_pattern(rule_body: dict) -> str:
 
 @pytest.mark.parametrize(
     "campaign",
-    ["kyrk", "sdhk.1500", "a", "kyrk-1600-1700", "sdhk.1500.b-2"],
+    ["kyrk", "sdhk-1500", "a", "kyrk-1600-1700", "sdhk-1500-b-2", "k" * 61],
 )
 def test_every_campaign_name_the_converter_accepts_may_have_a_status(
     full: list[dict], campaign: str
 ):
-    """The converter's own name rule allows dots (`_NAME_RE`), and campaign
-    files are named after their archive references -- `sdhk.1500` is the
-    shape, not the exception. The first pattern here was a DNS *label* and
-    refused every dotted one, so with the policies on the read API's write
-    would have been denied for exactly the campaigns most likely to exist.
-    The rule mirrors `_NAME_RE` instead of approximating it.
+    """A policy that refused a name the converter renders would deny the
+    read API's status write for that campaign, with nothing saying why. The
+    first pattern here was narrower than the converter's rule; this one
+    mirrors it (3087 then narrowed both to a DNS label: the API server
+    refuses a dotted campaign's pods).
     """
-    assert _NAME_RE.match(campaign), "fixture is not a name the converter takes"
+    manifest = "https://example.org/manifest"
+    Campaign(name=campaign, pipeline="p", volumes=[{"id": "R1", "manifest": manifest}])
     policy = named(full, "ClusterPolicy", f"htrflow-batch-rbac-scope-{NAMESPACE}")
     pattern = _status_name_pattern(rule(policy, "web-writes-status-only"))
     assert re.match(pattern, f"campaign-{campaign}-status")
