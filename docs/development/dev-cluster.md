@@ -54,10 +54,9 @@ make poc-push          # build-wrapper + build-web for the host's architecture, 
 **When it does not**, build the base from an htrflow checkout first:
 
 ```bash
-# htrflow's lockfile is not committed: create it in that checkout yourself.
-# The target refuses to run without one rather than write into a working tree it does not own.
-(cd <htrflow-checkout> && uv lock)
-make build-htrflow-base-arm64 HTRFLOW_DIR=<htrflow-checkout>   # docker/htrflow.dockerfile from the checkout
+# The checkout is only the build context; the dockerfile and the lockfile are
+# this repository's (.docker/htrflow-base*), so nothing is written into it.
+make build-htrflow-base-arm64 HTRFLOW_DIR=<htrflow-checkout>
 make poc-push
 ```
 
@@ -66,11 +65,19 @@ dockerfile and stamps `HTRFLOW_BASE_REVISION` (`git -C $HTRFLOW_DIR describe
 --tags --always --dirty`) into the image, because `manifest.json` only knows
 htrflow's package version while a source-built base usually runs a later
 commit. CI builds the same recipe in a throwaway clone at a pinned htrflow
-commit, so the recipe here and the one that publishes images cannot drift.
-The resolved dependency set can: the pin fixes htrflow's source, not what
-`uv lock` resolves on the day. The explicit torch and torchvision pins in the
-wrapper dockerfile turn such a drift into a build failure instead of a silent
-change.
+commit, so the recipe here and the one that publishes images cannot drift,
+and both install the same dependencies: `uv sync --locked` from the lockfile
+committed in `.docker/htrflow-base/`. A checkout whose
+`pyproject.toml` no longer matches that lock fails the build instead of
+being resolved afresh. After moving the pinned htrflow commit, refresh the
+lock from a checkout at the new commit and review the diff:
+
+```bash
+make lock-htrflow-base HTRFLOW_DIR=<htrflow-checkout>   # UV_LOCK_ARGS=--upgrade moves every pin
+```
+
+The torch and torchvision checks in the wrapper dockerfile then catch a lock
+refresh that moves them.
 
 `poc-push` prints the wrapper and web digests. The wrapper's goes into
 `pipelines/<id>.yaml` in the campaigns repo, the web front's into
