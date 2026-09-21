@@ -411,7 +411,12 @@ place on each one, the way they would in a table.
   `counts.total` exceeds what has loaded. A poll re-fetches **every page
   currently open** (`offset 0`, the limit rounded up to whole pages and
   capped at the API's own `limit` ceiling of 1000, rows past that left as
-  last fetched), so a tick never undoes "load more".
+  last fetched), so a tick never undoes "load more". Only a campaign that
+  can still change is polled: a `Succeeded`, `Failed`, `PartiallyFailed` or
+  `Unknown` campaign, or one whose Job is removed, is read once — retried on
+  the poll's backoff until that one read lands — and then left alone, since
+  every detail call lists pods and reads ConfigMaps and progress files. A
+  change of phase, or the Job being removed, reads it once more.
 - **Accessibility** — campaign header is a disclosure button, carrying
   `aria-controls` only while the volume table is rendered (a folded card has
   no table, and a dangling IDREF is invalid ARIA — `aria-expanded` carries
