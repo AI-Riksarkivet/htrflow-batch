@@ -97,7 +97,10 @@ repo does the following:
 
 - On a pull request, it runs `htrflow-campaigns validate`, renders the repo,
   and runs the chart's Kyverno policies over the result with the Kyverno
-  CLI.
+  CLI. The CLI submits the manifests as the apply ServiceAccount
+  (`htrflow-campaigns` in `POLICY_NAMESPACE`), the identity that writes them
+  in the cluster, so a rule scoped to another identity is left out just as
+  admission would leave it out.
 - On every push to `main`, it renders and commits `rendered/`.
 
 Set the workflow's `CONVERTER_REF`, `POLICY_NAMESPACE`,
