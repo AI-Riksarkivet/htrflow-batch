@@ -216,6 +216,16 @@ one sentence per case and never shows the fields themselves.
 | Anything else, with a stage | "Failed while processing pages: `<error>`." plus either "It will be retried automatically." or "This volume will not be retried — fix the cause, then put the volume in a new campaign." | Depends on the error. The run log is one click away on the same row |
 | A termination message the API could not parse (raw JSON in `error`) | "The pod stopped without a message this page can read; open the run log to see what happened." | Open the run log |
 
+The sentences above that promise a retry are the ones for a volume that is
+still between attempts. A volume whose state is `failed` is in the Job's
+`failedIndexes`: its `backoffLimitPerIndex` is spent and nothing will run it
+again, however transient the cause. For those volumes the promise changes
+to what is true. For example, "The pod was stopped by the cluster (a node
+drain or a pause), and the volume has used all its retries — put it in a new
+campaign to run it again." The pod's own message is the same on its last
+attempt as on its first, so the card goes by the volume's state, not by
+`permanent`.
+
 The wrapper's `stage` tells a `config` failure apart from a `setup` failure,
 not matching on the error text. `config` covers everything `Config.from_env`
 rejects: a missing variable, or `IIIF_MANIFEST_URL` and `IMAGES` both set.
