@@ -124,10 +124,12 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | `window:`, when set, is a positive integer | Validation error |
 | `window:` above `converter.yaml`'s `window` | Silently clamped to it at render time — `converter.yaml`'s value is the per-cluster cap and should be set to what the ClusterQueue's GPU quota can actually admit. Rendering more would let Kueue's partial admission shrink it on the live Job: Kueue then rewrites `spec.parallelism` and rejects every later apply of the unchanged rendered file (`cannot change when partial admission is enabled and the job is not suspended`) |
 | `suspend: true` | Renders `spec.suspend: true` — see [Pausing](#pausing) |
-| **A campaign whose rendered Job already exists in `rendered/` with a different volume list is rejected** | `render` prints `campaign <name> is append-only: create a new campaign` and exits non-zero — Job `completions` is immutable once created, so adding volumes means a new campaign file |
+| **A campaign whose rendered Job already exists in `rendered/` with a different volume list is rejected** | `validate` and `render` print `campaign <name> is append-only: create a new campaign` and exits non-zero — Job `completions` is immutable once created, so adding volumes means a new campaign file |
 | **A campaign whose ConfigMap in the cluster has a different volume list, pipeline or image is rejected** | `apply` prints `campaign <name> is in the cluster with different …` and exits `1` before it sends anything. `rendered/` can be missing or behind the cluster (a checkout whose render was never committed), so the live ConfigMap is held against too. A ConfigMap `apply` may not read stops it the same way: a check that cannot be made has not passed |
 | **A pipeline whose image or steps changed while a rendered campaign still runs it is rejected** — "runs" is what `rendered/` recorded, so a campaign moved to another pipeline in the same change still counts | `validate` and `render` print `pipeline <id> changed (…) but campaigns …` and exit non-zero — see [Immutability](#immutability) |
-| The file stem does not end in `-part<number>` | Validation error — that is what the converter calls the parts of a campaign it splits, so such a file would collide with one |
+| The file stem does not end in `-part<number>` | Validation error — that is what the converter calls the parts of a campaign it splits, so such a file would collide with one. A stem that merely starts with another campaign's name and `-part` (`loc-partner` beside `loc`) is its own campaign |
+| The file stem is a DNS-1123 label: lower-case letters, digits and `-`, no dots, ≤63 characters, and does not start with `htr-warmup-` | Validation error. A campaign's Job is an Indexed Job, and the API server holds the hostname of every one of its pods, `<job>-<index>`, to a DNS-1123 label, so a dotted name is refused at apply time. `htr-warmup-<id>` is a pipeline's warm-up Job, in the same namespace |
+| The campaign's last pod, `<job>-<completions − 1>`, is at most 63 characters | `validate` and `render` print `campaign <name> cannot be applied: its last pod would be …` and exit non-zero. A long name therefore leaves room for its volume count: a 61-character name takes at most 10 volumes, and a 62-character one none. A campaign that splits never trips this — its parts are named from a stem short enough for any index |
 | More than 10 000 volumes, or more than 900 KiB of `volumes.txt` (an `images:` volume is ONE line of space-joined URLs) | Split into `<name>-part1`, `-part2`, … — one Job and one ConfigMap each. The API server refuses a ConfigMap over 1 MiB; the rest is margin |
 | A campaign that splits and whose name is long | The name is cut short in the part names: a Job's name is also a label value and its pods' name prefix (`<job>-<index>`), and a DNS label stops at 63 characters. `rendered/` holds `<shortened>-partN.yaml` |
 
@@ -178,7 +180,7 @@ validation error and blocks rendering for every campaign that uses it:
 
 | Rule | Why |
 |------|-----|
-| Pipeline id is a DNS-1123 label (lowercase, `[a-z0-9.-]` interior, ≤63 chars) | It becomes the ConfigMap name `htr-pipeline-<id>` |
+| Pipeline id is lowercase, `[a-z0-9.-]` inside, alphanumeric at both ends, ≤52 chars | It becomes the ConfigMap name `htr-pipeline-<id>` and the warm-up Job name `htr-warmup-<id>`. The Job controller copies a Job's name into its pods' `job-name` label, and a label value stops at 63 characters |
 | `image:` matches `<repository>@sha256:<64 hex>` | Digest pin — provenance is recorded per volume in `manifest.json` |
 | `max_seconds:`, when set, is a positive integer | It becomes `spec.template.spec.activeDeadlineSeconds` — the *pod's* deadline, so only the overrunning attempt is killed — for every campaign on this pipeline; unset falls back to `converter.yaml`. A sixty-page spread recipe and a single-page one do not want the same budget, and a budget the volume cannot meet costs `backoffLimitPerIndex` retries before the index is capped |
 | `ttl_seconds_after_finished:`, when set, is a positive integer | It becomes the campaign Job's `ttlSecondsAfterFinished`. The Job is an inspection window, not the campaign's record — that is the campaign's ConfigMap, which has no TTL ([The record a campaign leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)) — so this is only how long `completedIndexes` stays readable with `kubectl` |
@@ -204,7 +206,11 @@ this repo rendered.
 
 `validate` and `render` print one line per problem and then a count, and
 render nothing at all if there is one problem — a half-rendered `rendered/`
-would be worse than none. Every line is
+would be worse than none. Both hold a repo to the same rules, so a pull
+request that `validate` passes is one `render` on `main` takes. `render`
+writes the whole render beside `--out` first and moves it in only when it is
+complete: `--out`'s `pipelines/`, `campaigns/` and `sync.yaml` are replaced
+together, and anything else in `--out` is left alone. Every line is
 `path/to/file.yaml: <what is wrong> — <what to write instead>`; there are no
 Python tracebacks, no `volumes.0.id` paths and no pydantic phrasing in them,
 because the person reading them is looking at YAML, not at a parser.
