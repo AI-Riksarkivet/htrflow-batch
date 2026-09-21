@@ -14,7 +14,9 @@ wrapper writes beside its results as `progress.json` (below).
 ```
 <namespace>/<pipeline>/<volume>/
   page/<page>.xml            # per-page PAGE XML, uploaded FIRST (wrapper)
-  alto/<page>.xml            # per-page ALTO, uploaded second — "page done" (wrapper)
+  alto/<page>.xml            # per-page ALTO, uploaded second — "page done" (wrapper);
+                             # both carry x-amz-meta-source-digest, the digest of
+                             # the source image they were made from (resume reads it)
   iiif.json                  # IIIF v3 viewer manifest with ALTO links (wrapper);
                              # rewritten every 10 pages WHILE the run goes, so the
                              # volume opens in the viewer before it is finished
