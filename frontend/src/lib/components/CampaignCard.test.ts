@@ -5,7 +5,6 @@ import {
   screen,
   within,
 } from "@testing-library/svelte";
-import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { JobSummary } from "$lib/api.js";
 import { RELOAD_MS } from "$lib/config.js";
@@ -765,11 +764,10 @@ describe("CampaignCard", () => {
     expect(screen.queryByRole("button", { name: /more$/ })).toBeNull();
   });
 
-  test("no sentence on the card is clipped to one line (3080)", () => {
+  test("no sentence on the card is clipped to one line (3080)", async () => {
     // jsdom lays nothing out, so this reads the rules themselves: a line
     // of sentences, or one that holds links, must wrap rather than cut.
-    // vitest runs from the frontend directory (package.json's scripts).
-    const css = readFileSync("src/lib/components/CampaignCard.svelte", "utf8");
+    const css: string = (await import("./CampaignCard.svelte?raw")).default;
     for (const selector of [".problems-text", ".row-note-text", ".vreason"]) {
       const rule = new RegExp(`\\n  \\${selector} \\{([^}]*)\\}`).exec(
         css,
