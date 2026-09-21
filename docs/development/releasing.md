@@ -40,12 +40,13 @@ is never looked up on another.
   base is that image, pinned by tag and digest, with torch and torchvision
   swapped for pinned builds from the CUDA wheel index the dockerfile names.
 - **Where it does not**, the base is an htrflow image built from an htrflow
-  source checkout and passed in as a build argument, plus what that base
-  lacks at runtime: a C compiler and Python headers (triton JIT-compiles a
-  CPython extension on the GPU path) and `sentencepiece` (to convert
-  slow-only tokenizers). torch and torchvision are pinned
-  explicitly here too, so a base whose own resolution drifts fails the build
-  instead of changing silently. Building that base is described in
+  source checkout with this repository's `.docker/htrflow-base.dockerfile`
+  and the lockfile committed beside it, and passed in as a build argument,
+  plus what that base lacks at runtime: a C compiler and Python headers
+  (triton JIT-compiles a CPython extension on the GPU path). The wrapper
+  dockerfile checks the torch and torchvision versions that base carries,
+  so a refreshed base lock that moves them fails the build instead of
+  changing the image silently. Building that base is described in
   [Dev cluster](dev-cluster.md#the-gpu-wrapper-image).
 
 Every architecture-specific step sits behind a `TARGETARCH` test. The
@@ -70,11 +71,18 @@ architecture on a runner of its own.
 
 Every input is pinned ([CI → Dependency pins](ci.md#dependency-pins)): base
 images and the uv binary by digest, torch and torchvision by version per
-base, and the wrapper's own dependencies from the workspace lock with hashes
+base, and everything else Python from a lockfile. The wrapper's own
+dependencies, the transformers line (a `transformers-<major>` dependency
+group of the workspace, with the `sentencepiece` and `protobuf` it needs)
+and the leaf overrides are installed from the workspace lock with hashes
 (`uv export --locked … --require-hashes`, so a stale `uv.lock` fails the
-build). The pin on htrflow's source fixes its code, not its dependency
-resolution — htrflow's lockfile is not committed — which is why the explicit
-torch pins matter on the source-built base.
+build and nothing is resolved at build time); a `TRANSFORMERS_VERSION` the
+lock does not pin fails the build. The source-built base installs htrflow's
+dependencies with `uv sync --locked` from the lockfile committed in
+`.docker/htrflow-base/`: htrflow does not commit its own, and locking
+afresh on every build meant two builds of one commit could differ. The
+only unlocked Python install left is the torch swap from the CUDA wheel
+index on the upstream base.
 
 A source-built base is a local tag with no registry digest, so the build
 argument `HTRFLOW_BASE_REVISION` (`git describe --tags --always --dirty` of
@@ -110,10 +118,22 @@ dagger call publish-docker --component wrapper \
   --docker-username env:DOCKERHUB_USERNAME --docker-password env:DOCKERHUB_TOKEN
 ```
 
-`make publish` runs exactly this for the wrapper. `--component` is `wrapper`
-(default) or `web`. `publish-docker` runs the test suite first and aborts on
-failure — it does not push an image the tests do not pass — then builds and
-pushes, and returns the published reference with its digest.
+`make publish` runs exactly this for the wrapper — one unsigned image for
+the host's architecture under the bare version tag, so releases go through
+the publish workflow below instead. `--component` is `wrapper` (default) or
+`web`. `publish-docker` refuses a tag that is already on the registry (see
+below), runs the test suite and aborts on failure, builds, runs the
+library-API pin test on the wrapper image it is about to push and Trivy's
+CRITICAL gate on either image, and only then pushes and returns the
+published reference with its digest.
+
+**Tags are immutable.** Before its tests and again right before the push,
+`publish-docker` asks the registry for the tag it will push and, with
+`--tag-suffix`, for the bare tag as well. Only an answer of "no such
+manifest" or "no such repository" counts as free: a registry it cannot get
+an answer from refuses the publish rather than risk replacing a release.
+`dagger call check-tag-free --image-repository <repo> --tag <tag>` runs the
+check on its own.
 
 **Tag resolution.** An explicit `--tag` must equal the version in
 `packages/wrapper/pyproject.toml` (a leading `v` is ignored) unless
@@ -155,14 +175,36 @@ existing one.
 one required input, the tag (`v<version>`, equal to the wrapper's
 `pyproject.toml` version), and two optional ones: a base revision and a
 transformers version, which reaches the dagger-built architecture as the
-flag above and the other as a `docker build` argument. Registry
-credentials come from the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`
-repository secrets.
+flag above and the other as a `docker build` argument. Every job runs in
+the `release` environment and reads the registry credentials
+(`DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`) from there; the dagger CLI is
+installed before the registry login, from its release asset checked against
+a committed checksum, and starts its engine by digest
+(`.github/actions/setup-dagger`).
+
+**What the `release` environment must carry** (repository settings →
+Environments; a repository administrator sets it up once):
+
+- **Required reviewers**, with *Prevent self-review*, so a run waits for a
+  second maintainer before any job gets the credential. The three jobs
+  each wait; one reviewer can approve all pending ones at once.
+- **Deployment branches and tags: selected branches**, `main` only, so a
+  run dispatched on any other branch cannot reach the credential.
+- **`DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` as environment secrets**,
+  then removed from the repository secrets, and the organisation secrets of
+  the same name no longer shared with this repository — an environment
+  secret wins over one of the same name, but the others would stay
+  readable from every workflow.
+- The token itself scoped on Docker Hub to the two repositories, with read
+  and write only.
+
+Until that is done the environment exists (the first run creates it) but
+protects nothing, and the repository secrets keep the workflow running.
 
 1. **Tags are immutable.** Every job first checks that neither its own
    per-architecture tag nor the final tag exists on the registry, and
-   refuses to run if one does. To fix a release, bump the version and
-   publish a new tag.
+   refuses to run if one does; `publish-docker` checks again itself. To fix
+   a release, bump the version and publish a new tag.
 2. **Through dagger, one job per image and architecture.** A matrix runs
    `publish-docker` on a runner of the architecture it is building for and
    pushes `<version>-<arch>`: the wrapper for one architecture, the web
@@ -173,7 +215,9 @@ repository secrets.
    runner of that architecture builds the htrflow base from source at the
    pinned htrflow commit, runs `dagger call test` (the same gate
    `publish-docker` applies), then builds the wrapper with plain
-   `docker build` and pushes `<version>-<arch>`. It is not dagger because
+   `docker build`, runs the library-API pin test and the Trivy CRITICAL
+   gate on that image (`make test-driver-real`, `make scan-image`) and only
+   then pushes `<version>-<arch>`. It is not dagger because
    the dagger engine builds in its own cache and cannot see a base image
    that exists only in the runner's docker daemon.
 4. **One multi-architecture tag per image.** A final job joins each image's

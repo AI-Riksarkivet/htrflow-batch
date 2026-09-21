@@ -8,11 +8,13 @@
    that breaks the [driver](../how-it-works/wrapper.md). No model is
    loaded — a binarization step exercises the step, document and serializer
    path — so it runs offline in seconds. It needs the wrapper image, so it
-   runs in the one CI job that has already built one, straight after that
-   build (`make test-driver-real` against the image it just made);
-   `dagger call test-driver` builds its own and is the way to run it
-   anywhere else. All three run `packages/wrapper/tests/test_driver_real.py`
-   inside the image. `driver.py` keeps every htrflow import function-local, so the
+   runs where one has already been built, on both architectures: in CI's
+   source-built-base job straight after that build (`make test-driver-real`
+   against the image it just made) and in the dagger-built wrapper's scan job
+   (`dagger call test-driver`, sharing the scan's build); and at release on
+   the very image about to be pushed — inside `publish-docker`, and between
+   build and push in the other architecture's publish job. All of them run
+   `packages/wrapper/tests/test_driver_real.py` inside the image. `driver.py` keeps every htrflow import function-local, so the
    ordinary suite (level 1, `test_driver.py`) runs without torch against
    fakes.
 1. **Unit tests** — wrapper: manifest walking (IIIF Presentation 2 and 3,
@@ -109,15 +111,20 @@ make compose-smoke   # foreground: runs the wrapper to completion, then
 make compose-down
 ```
 
-`make compose-smoke` builds the web image from the checkout and tags it
-`riksarkivet/htrflow-web:latest`, builds the wrapper image and waits for it
-to exit, then brings the web service up and fetches its `/uv.html` — the
-default local check. The compose `web` service is deliberately image-only:
-`dagger call compose-test` drives the same stack but mounts only `.docker/`
-as the compose project, where a `build:` context of `..` cannot resolve, so
-it pulls the published web image the compose file pins by digest.
-`compose-smoke` builds that image locally instead. The stack itself is
-described in [Try it](../getting-started/try-it.md).
+`make compose-smoke` builds both images from the checkout with the same
+recipes as the images that ship (`build-wrapper`, `build-web`), runs the
+wrapper to completion on them, then brings the web service up and fetches
+its `/uv.html` — the default local check. The compose file takes the two
+images from `HTR_WRAPPER_IMAGE` and `HTR_WEB_IMAGE`, which is how the smoke
+runs what it built rather than the release the file pins. `make
+compose-smoke-run WRAPPER_IMAGE=<ref> WEB_IMAGE=<ref>` runs the same smoke
+on any two images, a published release by digest included. The stack is
+torn down, volumes included, however the run ends. The compose `web`
+service is deliberately image-only: `dagger call compose-test` drives the
+same stack but mounts only `.docker/` as the compose project, where a
+`build:` context of `..` cannot resolve, so it checks the published web
+image the compose file pins by digest. The stack itself is described in
+[Try it](../getting-started/try-it.md).
 
 The web service runs site-only in both (`HTRFLOW_WEB_SITE_ONLY=1`): a compose
 stack has no API server, so `/api/v1/…` answers 503 by design and the site is
