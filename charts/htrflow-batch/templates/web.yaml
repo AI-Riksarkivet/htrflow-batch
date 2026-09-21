@@ -151,7 +151,6 @@ spec:
       nodePort: {{ .Values.web.nodePort }}
 {{- if .Values.network.enabled }}
 ---
-{{- $api := include "htrflow-batch.apiServerCidr" . }}
 {{- /*
 Same S3 egress as the batch Job's own policy (network.yaml's `$s3` -- a
 separate template file, so it cannot share that file's local variable):
@@ -201,10 +200,7 @@ spec:
       ports:
         - { port: 53, protocol: UDP }
         - { port: 53, protocol: TCP }
-    - to:
-        - ipBlock: { cidr: {{ $api | quote }} }
-      ports:
-        - { port: {{ .Values.network.apiServer.port }} }
+    - {{ include "htrflow-batch.apiServerEgress" . }}
     {{- range $s3 }}
     - {{ toJson . }}
     {{- end }}
