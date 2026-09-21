@@ -1,5 +1,6 @@
 <script lang="ts">
   import { browser } from "$app/environment";
+  import { untrack } from "svelte";
   import RunSummaryCard from "$lib/components/RunSummaryCard.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   // LIVE_MS matches the wrapper's log-ship period (polling faster buys
@@ -131,26 +132,26 @@
   // cadence through $lib/poll — one request in flight at a time, nothing
   // fetched while the tab is in the background, and a run of failures
   // doubling the wait (2026-09-14 audit); a finished one is read once.
-  // `started` is why `live` going false re-runs this effect and reads
-  // nothing: the tick that saw the terminal line already has the text.
-  let started = false;
-
-  $effect(() => {
-    const tick = async (signal: AbortSignal): Promise<boolean> => {
-      const ok = await loadLog(signal);
-      if (manifest === null) await loadManifest(signal);
-      return ok;
-    };
-    if (live) {
-      started = true;
-      return startPolling(tick, LIVE_MS);
-    }
-    if (started) return;
-    started = true;
-    const controller = new AbortController();
-    void tick(controller.signal);
-    return () => controller.abort();
-  });
+  //
+  // Mounted once, and the poll ends itself (`until`) rather than being torn
+  // down when `live` flips: the tick that finds the terminal line is the one
+  // that still has the manifest to read — the wrapper writes manifest.json
+  // before it logs COMPLETE — and an effect keyed on `live` aborted it right
+  // there, so a volume that finished while someone watched never showed its
+  // summary (the 2026-09-17 audit, 3077).
+  $effect(() =>
+    untrack(() => {
+      const tick = async (signal: AbortSignal): Promise<boolean> => {
+        const ok = await loadLog(signal);
+        if (manifest === null) await loadManifest(signal);
+        return ok;
+      };
+      if (live) return startPolling(tick, LIVE_MS, { until: () => !live });
+      const controller = new AbortController();
+      void tick(controller.signal);
+      return () => controller.abort();
+    }),
+  );
 
   $effect(() => {
     // Re-runs on every log update; scrolls only while following.
