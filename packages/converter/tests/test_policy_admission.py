@@ -214,3 +214,90 @@ def test_a_key_beside_model_settings_cannot_unpin_the_model(
     verdict, out = admission(tmp_path, policy, pipeline(bypass))
     assert verdict == "refused", out
     assert next(iter(stray)) in out
+
+
+# --- 3061: an image volume is an image too ----------------------------------
+
+OURS = f"{ALLOWED}/htrflow-batch@{DIGEST}"
+FOREIGN = f"ghcr.io/attacker/weights@{DIGEST}"
+
+
+def pod_spec(volume_image: str | None) -> dict:
+    volumes: list[dict] = [{"name": "config", "configMap": {"name": "x"}}]
+    if volume_image is not None:
+        volumes.append({"name": "weights", "image": {"reference": volume_image}})
+    return {
+        "containers": [
+            {
+                "name": "main",
+                "image": OURS,
+                "volumeMounts": [{"name": "config", "mountPath": "/c"}],
+            }
+        ],
+        "volumes": volumes,
+    }
+
+
+def pod(volume_image: str | None) -> dict:
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": "p", "namespace": NAMESPACE},
+        "spec": pod_spec(volume_image),
+    }
+
+
+def job(volume_image: str | None) -> dict:
+    return {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {"name": "j", "namespace": NAMESPACE},
+        "spec": {
+            "template": {"spec": {**pod_spec(volume_image), "restartPolicy": "Never"}}
+        },
+    }
+
+
+@pytest.mark.parametrize("kind", [pod, job], ids=["pod", "job"])
+@pytest.mark.parametrize(
+    "template,image",
+    [
+        ("images-allowed", FOREIGN),
+        ("images-pinned", f"{ALLOWED}/weights:latest"),
+    ],
+    ids=["foreign", "unpinned"],
+)
+def test_an_image_volume_is_held_to_the_image_rules(
+    tmp_path: Path, kind, template: str, image: str
+):
+    """Kubernetes image volumes (`volumes[].image.reference`) are pulled by
+    the kubelet like any container image, over the node's network and
+    outside the pod's egress policy. The image rules walked containers only,
+    so a volume could mount an unpinned image from any registry."""
+    policy = render_policy(tmp_path, template)
+    verdict, out = admission(tmp_path, policy, kind(image))
+    assert verdict == "refused", out
+    assert image in out
+    verdict, out = admission(tmp_path, policy, kind(f"{ALLOWED}/weights@{DIGEST}"))
+    assert verdict == "admitted", out
+    verdict, out = admission(tmp_path, policy, kind(None))
+    assert verdict == "admitted", out
+
+
+def test_signature_verification_reaches_an_image_volume(tmp_path: Path):
+    """An image volume in the verified repositories is verified like a
+    container image -- and naming the volume path must not drop the
+    container images Kyverno extracts by default. Nothing here is signed,
+    so an image the rule reaches is refused; one it does not reach passes.
+    """
+    policy = render_policy(tmp_path, "verify-images")
+    unverified_volume = pod(f"{ALLOWED}/weights@{DIGEST}")
+    unverified_volume["spec"]["containers"][0]["image"] = (
+        f"docker.io/library/x@{DIGEST}"
+    )
+    verdict, out = admission(tmp_path, policy, unverified_volume)
+    assert verdict == "refused", out
+    assert f"{ALLOWED}/weights" in out
+    verdict, out = admission(tmp_path, policy, pod(None))
+    assert verdict == "refused", out
+    assert OURS in out

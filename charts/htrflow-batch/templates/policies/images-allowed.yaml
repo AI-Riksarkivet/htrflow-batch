@@ -17,6 +17,11 @@
 # rules do not, because Kubernetes forbids ephemeral containers in a pod
 # template -- there is nothing there to walk.
 #
+# Both walk image volumes too (`volumes[].image.reference`, 2026-09-17
+# audit, 3061): the kubelet pulls one like a container image, over the
+# node's network and outside the pod's egress policy, and mounts whatever it
+# holds -- weights included. An image volume is an image.
+#
 # This covers EVERY pod in the namespace, the platform's own included: an
 # image outside these prefixes cannot start here, so a supporting workload
 # from another registry (charts/htrflow-devstack's RustFS, say) needs its
@@ -43,8 +48,8 @@ spec:
         - name: foreign
           variable:
             jmesPath: >-
-              request.object.spec.template.spec.[containers, initContainers][] | [?image]
-              | [?!regex_match({{ $re | squote }}, split(image, '@')[0])].image
+              request.object.spec.template.spec.[[containers, initContainers][].image, volumes[].image.reference][]
+              | [?!regex_match({{ $re | squote }}, split(@, '@')[0])]
             default: []
       validate:
         message: >-
@@ -66,8 +71,8 @@ spec:
         - name: foreign
           variable:
             jmesPath: >-
-              request.object.spec.[containers, initContainers, ephemeralContainers][] | [?image]
-              | [?!regex_match({{ $re | squote }}, split(image, '@')[0])].image
+              request.object.spec.[[containers, initContainers, ephemeralContainers][].image, volumes[].image.reference][]
+              | [?!regex_match({{ $re | squote }}, split(@, '@')[0])]
             default: []
       validate:
         message: >-

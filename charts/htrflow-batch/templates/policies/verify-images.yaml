@@ -26,6 +26,16 @@ spec:
           - resources:
               kinds: [Pod]
               namespaces: [{{ .Release.Namespace | quote }}]
+      # Kyverno extracts a Pod's container images by itself, but not its
+      # image volumes (2026-09-17 audit, 3061) -- and naming ANY extractor
+      # for a kind replaces the built-in list for it, so the three container
+      # lists are spelt out beside the volume path rather than lost.
+      imageExtractors:
+        Pod:
+          - { name: containers, path: /spec/containers/*, value: image, key: name }
+          - { name: initContainers, path: /spec/initContainers/*, value: image, key: name }
+          - { name: ephemeralContainers, path: /spec/ephemeralContainers/*, value: image, key: name }
+          - { name: imageVolumes, path: /spec/volumes/*/image, value: reference }
       verifyImages:
         - imageReferences: {{ toJson $refs }}
           # Digest pinning is the chart's job (requireDigest); do not let the
