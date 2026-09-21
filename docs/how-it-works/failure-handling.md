@@ -43,8 +43,10 @@ through Kueue ([Queueing](queueing.md#failure-interplay)).
   volume for it would leave the bucket with the good pages and no marker to
   open them.
 - **Two cases still fail the volume.** The first is a page **missing** from
-  the results: neither uploaded nor recorded as failed, which is an
-  inconsistency a retry converges on. The second is a run where every page it
+  the results: neither uploaded nor recorded as failed. That is an upload
+  that never landed, or a page the IIIF source could not serve during this
+  attempt (a network error, a 429 or 5xx, the download deadline). A retry
+  converges on both. The second is a run where every page it
   processed failed and nothing was resumed, which points to a broken model or
   a dead GPU. Both report their page lists in the termination message.
 - **A campaign is append-only.** `completions` is fixed at creation from the
@@ -124,8 +126,8 @@ Resources, mounts and pod hardening are in
 
 **Transient:**
 
-- a 5xx, a 429 or a network error on the manifest
-- a page missing at verify
+- a 5xx, a 429, a network error or the download deadline on the manifest
+- a page missing at verify, including a page whose download was deferred
 - a run where every processed page failed and nothing was resumed
 - a model-load `OSError`, including a model missing from the read-only cache
 - five consecutive upload failures (`UploadOutage`)
@@ -208,7 +210,7 @@ one sentence per case and never shows the fields themselves.
 | `SIGTERM` | "The pod was stopped by the cluster (a node drain or a pause); the volume will be retried." | Nothing. The index is retried |
 | Stage `config` (the wrapper sets it around `Config.from_env`) | "The volume's settings are incomplete or wrong: `<error>`. This is a deployment problem, not a manifest problem — check the campaign's converter.yaml and the chart values." | Fix `converter.yaml` or the chart values, and re-render. Nothing in the campaign file is wrong |
 | A manifest or canvas error at stage `setup`, `permanent: true` | "The IIIF manifest could not be read: `<error>`. Fix the manifest URL in the campaign file — this volume will not be retried." | Fix the URL in `campaigns/<name>.yaml`, then put the volume in a new campaign |
-| `verify failed: N missing, M failed … missing=[…]` | "2 pages are missing from the results (p012, p045); the volume is retried automatically and only those pages are redone." | Nothing, unless the retries also fail. A missing page is an upload that never landed, and resume redoes only it. The `failed=[…]` pages beside it are *not* named here: they are accounted for and are not coming back |
+| `verify failed: N missing, M failed … missing=[…]` | "2 pages are missing from the results (p012, p045); the volume is retried automatically and only those pages are redone." | Nothing, unless the retries also fail. A missing page is an upload that never landed, or a download the source could not serve during that attempt (the run log says `page … deferred to the next attempt: …`). Resume redoes only it. The `failed=[…]` pages beside it are *not* named here: they are accounted for and are not coming back |
 | `verify failed: all N processed pages failed …` | "None of the 3 pages processed in this attempt produced a result; the volume is retried automatically — check the model and the GPU." | Look at the node and the pipeline before the retries run out. Nothing came out of this pod at all |
 | Stage `warmup` | The warm-up's own sentence, with whether it will be retried | See [Warm-ups fail the same way](#warm-ups-fail-the-same-way) |
 | Anything else, with a stage | "Failed while processing pages: `<error>`." plus either "It will be retried automatically." or "This volume will not be retried — fix the cause, then put the volume in a new campaign." | Depends on the error. The run log is one click away on the same row |

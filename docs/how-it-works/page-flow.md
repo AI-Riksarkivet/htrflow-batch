@@ -10,7 +10,8 @@ The volume-level view is [The Wrapper](wrapper.md).
 ## The source
 
 The `setup` stage fetches the campaign's IIIF manifest: Presentation 2 or 3,
-http(s) only, at most 5 redirects, capped at `MANIFEST_MAX_BYTES`.
+http(s) only, at most 5 redirects, capped at `MANIFEST_MAX_BYTES`, and
+within `DOWNLOAD_DEADLINE_SECONDS`.
 
 An `images:` volume has no manifest, so the wrapper **builds one**: a minimal
 Presentation 3 document with one canvas per URL and the bare URL as the
@@ -18,6 +19,13 @@ painting body. It publishes that manifest under `sources/`.
 
 Each canvas becomes a `PageRef` with three fields: a 1-based `index`, a
 zero-padded `name` (`0001`), and the URL to fetch.
+
+A canvas can offer more than one image: several painting annotations, a
+`Choice`, or a list of bodies. **One rule picks the image**, and both the
+fetch URL and the image in the published viewer manifest come from it. That
+way the ALTO is always drawn over the image it was read from. The rule takes
+the first image whose URLs are all http(s). If there is none, the page is
+still fetched and transcribed, but the viewer manifest shows no image for it.
 
 ## The width-capped GET
 
@@ -38,6 +46,26 @@ The body is checked before it is kept. A textual `Content-Type` is refused.
 The first chunk must start with a known raster signature. An empty or
 oversized body is rejected. Without these checks, a login page served with a
 200 would be saved as the image and waste a whole attempt inside htrflow.
+
+Two limits bound what one download can cost, whatever the host sends:
+
+- **Size is counted after decoding.** The wrapper asks only for `gzip` and
+  inflates it a chunk at a time, stopping at `FETCH_MAX_BYTES`. Any other
+  `Content-Encoding` is refused before it is decoded. A small compressed body
+  can no longer expand into gigabytes in memory.
+- **Time is wall-clock.** Each attempt has `DOWNLOAD_DEADLINE_SECONDS`. When
+  it runs out, the connection is cut, whether the host is still sending the
+  headers or the body. A read timeout alone would restart with every byte.
+
+A failure is either the page's or the source's:
+
+| Failure | Retried in the pod | If it persists |
+|---|---|---|
+| Network error, deadline, 408, 425, 429, 5xx except 501 and 505, an HTML or empty answer | Yes: 4 attempts, 2 s then doubling, or the `Retry-After` wait if longer (at most 60 s) | The page is **deferred**. Verify finds it missing, the index is retried, and resume fetches only that page |
+| Any other status, a body over a cap, an unrequested encoding, an image over `MAX_IMAGE_PIXELS` | No | The page is **failed** and recorded in `manifest.json`. The volume still completes |
+
+A 400 on a sized request is the one exception: it is retried once with
+`/full/max/` first, without spending an attempt.
 
 The image lands in `/work/input/`. That directory is on the memory-backed
 `emptyDir` (`sizeLimit: 2Gi`), which also holds `/work/outputs/{alto,page}/`
@@ -164,7 +192,8 @@ PAGE, then ALTO, and eventually `manifest.json` last.
   done page is never downloaded. A page that is not done loses whatever it
   has stored before the run starts.
 - **Verify** lists S3 once more after the loop. A page missing from either
-  format, and not recorded as failed, means exit 1 and a retry.
+  format, and not recorded as failed, means exit 1 and a retry. So does a
+  deferred page, even if an earlier run left files for it.
 - **The viewer** opens `uv.html#?manifest=…` on the volume's source manifest
   until an `iiif.json` has actually been published. After that it opens
   `iiif.json`. The campaign page switches on `progress.viewerPublished`,

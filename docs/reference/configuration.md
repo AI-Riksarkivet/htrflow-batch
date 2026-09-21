@@ -121,6 +121,7 @@ template` refuses it, **nobody** = convention only.
 | `LOG_SHIP_SECONDS` | env | `15.0` | — | no secret — nobody |
 | `MANIFEST_MAX_BYTES` | env | `16777216` | — | no secret — nobody |
 | `FETCH_MAX_BYTES` | env | `67108864` | — | no secret — nobody |
+| `DOWNLOAD_DEADLINE_SECONDS` | env | `300.0` | — | no secret — nobody |
 | `MAX_IMAGE_PIXELS` | env | `100000000` | — | no secret — nobody |
 | `IMAGE_DIGEST` | env | `unknown` | — | no secret — nobody |
 | `HTRFLOW_BASE_REVISION` | env | `unknown` | — | no secret — nobody |
