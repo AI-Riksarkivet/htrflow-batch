@@ -207,9 +207,11 @@ network:                   # NetworkPolicies (docs: development/security, D14)
     cidr: ""               # e.g. 10.16.51.56/32 — kube-apiserver as reached AFTER service DNAT; required by the read API's NetworkPolicy
     port: 6443
   web:
-    # Who may reach the web front's port (NodePort traffic arrives SNAT'd
-    # from the node, so the node range must be included — 0.0.0.0/0 keeps
-    # the PoC's "any browser that can reach the node" behaviour).
+    # Who may reach the web front's port, by the client's own address (the
+    # Service keeps it: externalTrafficPolicy Local). Do not list the node
+    # range for NodePort's sake; list it only if browsers run on the nodes.
+    # Anything wider than /8, or an empty list, needs allowPublicIngress.
+    # 0.0.0.0/0 keeps "any browser that can reach the node".
     ingressCidrs: ["0.0.0.0/0"]
     # The catch-all above is in front of a NodePort with no authentication
     # of its own, so the chart refuses to render it unless this says the

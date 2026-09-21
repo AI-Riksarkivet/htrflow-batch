@@ -254,7 +254,7 @@ on-premises IIIF origin or S3 endpoint keeps working by being named.
 |---|---|---|---|
 | campaign pod (`app=htrflow-batch`) | none | S3 (the in-namespace `app=rustfs` pod on 9000, or `network.s3Cidrs` on `network.s3Ports`); the IIIF origins in `network.iiifCidrs` on 443/80 | Hugging Face Hub, the API server, the registry, anything else in-cluster, the rest of the internet |
 | warm-up pod (`app=htrflow-warmup`) | none | the public internet on 443, minus the carve-out above (Hugging Face Hub is a CDN, so there is no CIDR to pin) | S3, the API server, anything in-cluster, link-local and private addresses |
-| web front (`app=htrflow-web`) | `network.web.ingressCidrs` on 8081 (NodePort traffic arrives SNAT'd from the node, so include the node range) | the API server (`network.apiServer.cidr`); S3 (same targets as the campaign pod) for its `progress.json` reader | the IIIF origin, Hugging Face Hub, anything else in-cluster |
+| web front (`app=htrflow-web`) | `network.web.ingressCidrs` on 8081, matched on the client's own address (the Service's `externalTrafficPolicy: Local` keeps it) | the API server (`network.apiServer.cidr`); S3 (same targets as the campaign pod) for its `progress.json` reader | the IIIF origin, Hugging Face Hub, anything else in-cluster |
 | apply pod (`app=htrflow-campaigns`, only with `apply.rbac.enabled`) | none | the API server (`network.apiServer.cidr`) | S3, the IIIF origin, Hugging Face Hub, anything else in-cluster. It reads its campaigns from a directory, never from a network |
 | RustFS (`app=rustfs`, devstack) | 9000 from anywhere (and 9001 when the console is on) | none | — |
 | rustfs-init hook (`app=rustfs-init`, devstack) | none | RustFS on 9000 | — |
@@ -263,8 +263,9 @@ The web front's ingress list defaults to every address, because the dev
 stack and the compose stack are reached from wherever the operator's browser
 is. That default is in front of a NodePort with no authentication, so the
 chart refuses to render it unless `network.web.allowPublicIngress` says the
-exposure is deliberate. Listing the ranges that may reach it needs no such
-flag.
+exposure is deliberate. So do an empty list, which a NetworkPolicy reads
+as every source, and any entry wider than `/8`. Listing the ranges that may
+reach it needs no such flag.
 
 Under the default deny, anything applied by hand in the namespace has no
 network access unless it gets its own policy. That includes the pod that
