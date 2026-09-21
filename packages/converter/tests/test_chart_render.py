@@ -194,6 +194,35 @@ def test_a_named_ingress_range_needs_no_opt_out():
     assert ingress[0]["from"] == [{"ipBlock": {"cidr": "10.16.0.0/16"}}]
 
 
+@pytest.fixture
+def empty_ingress(tmp_path: Path) -> Path:
+    """`--set` cannot spell an empty list, so the operator's values file."""
+    path = tmp_path / "empty-ingress.yaml"
+    path.write_text("network:\n  web:\n    ingressCidrs: []\n", encoding="utf-8")
+    return path
+
+
+def test_an_empty_ingress_list_is_refused_not_opened(empty_ingress: Path):
+    """An ingress rule with an empty `from` matches every source, so
+    `ingressCidrs: []` -- what an operator writes to shut the web front --
+    rendered exactly the catch-all the guard refuses, without the guard
+    noticing (finding 3100). It fails with a sentence that says so."""
+    refused = helm_template(values=str(empty_ingress), sets=REQUIRED_SETS)
+    assert refused.returncode != 0
+    assert "network.web.ingressCidrs is empty" in refused.stderr
+    assert "network.web.allowPublicIngress" in refused.stderr
+
+
+def test_an_empty_ingress_list_with_the_opt_in_is_the_catch_all_it_renders(
+    empty_ingress: Path,
+):
+    """With the flag the operator has accepted every address; the policy
+    says so in the same words the catch-all does."""
+    rendered = render(values=str(empty_ingress), sets=DEFAULT_SETS)
+    ingress = named(rendered, "NetworkPolicy", "htr-web")["spec"]["ingress"]
+    assert ingress[0]["from"] == [{"ipBlock": {"cidr": "0.0.0.0/0"}}]
+
+
 def test_the_catch_all_guard_is_silent_when_the_policies_are_not_rendered():
     """A campaigns repo's CI renders this chart with `network.enabled=false`
     to get at the policy objects alone. There is no web NetworkPolicy in
