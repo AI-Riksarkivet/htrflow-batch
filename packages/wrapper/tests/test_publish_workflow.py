@@ -45,20 +45,11 @@ _SCRIPTED = ["publish.yml", "ci.yml", "security.yml"]
 RUNNERS = {"-amd64": "ubuntu-24.04", "-arm64": "ubuntu-24.04-arm"}
 
 
-def _repository(image: str) -> str:
-    """`docker.io/riksarkivet/htrflow-web` -> `riksarkivet/htrflow-web`."""
-    return image.split("/", 1)[1]
-
-
 def _published() -> dict[str, set[str]]:
     """Per-architecture tags the run pushes, as {repository: {suffix, …}}."""
     pushed: dict[str, set[str]] = {}
     for entry in JOBS["publish"]["strategy"]["matrix"]["include"]:
         pushed.setdefault(entry["repository"], set()).add(entry["tag_suffix"])
-    # The wrapper's other architecture has a job of its own: it builds the
-    # base image the dagger engine cannot see, and pushes `<tag>-arm64`.
-    arm64 = JOBS["publish-wrapper-arm64"]
-    pushed.setdefault(_repository(arm64["env"]["IMAGE"]), set()).add("-arm64")
     return pushed
 
 
@@ -215,17 +206,11 @@ def _step_index(steps: list[dict], needle: str) -> int:
     return found[0]
 
 
-def test_the_arm64_wrapper_is_trivy_gated_before_it_is_pushed() -> None:
-    """Finding 3060: only the amd64 wrapper went through Trivy. The arm64
-    publish job now scans its image between the build and the push, and
-    publish-docker gates the dagger-built images the same way."""
-    steps = JOBS["publish-wrapper-arm64"]["steps"]
-    build = _step_index(steps, "docker build -f")
-    scan = _step_index(steps, "make scan-image")
-    push = _step_index(steps, "docker push")
-    assert build < scan < push
-    assert '"${IMAGE}:${TAG}-arm64"' in steps[scan]["run"]
-
+def test_every_image_is_trivy_gated_before_it_is_pushed() -> None:
+    """Finding 3060: only the amd64 wrapper went through Trivy, and only on
+    main. Every image and architecture is published through publish-docker,
+    which runs the CRITICAL gate on the container it is about to push."""
+    assert set(JOBS) == {"publish", "manifest"}
     publish_go = (REPO / ".dagger" / "publish.go").read_text()
     gate = publish_go.index('m.scanImage(ctx, container, "CRITICAL"')
     assert gate < publish_go.index(".Publish(ctx, imageRef)")
@@ -243,17 +228,13 @@ def test_the_arm64_wrapper_is_scanned_in_ci_and_every_week() -> None:
     assert any(r.strip() == "make scan-image" for r in runs)  # the CRITICAL gate
 
 
-def test_every_arm64_base_is_built_from_the_same_htrflow_commit() -> None:
-    refs = set()
-    for name in ("ci.yml", "publish.yml", "security.yml"):
-        workflow = yaml.safe_load((WORKFLOWS / name).read_text())
-        envs = [workflow.get("env", {})] + [
-            j.get("env", {}) for j in workflow["jobs"].values()
-        ]
-        refs |= {
-            e["HTRFLOW_ARM64_BASE_REF"] for e in envs if "HTRFLOW_ARM64_BASE_REF" in e
-        }
-    assert len(refs) == 1, refs
+def test_no_workflow_builds_an_htrflow_base_of_its_own() -> None:
+    """The wrapper dockerfile builds its htrflow base from the commit it pins;
+    a workflow that built one separately would be a second recipe."""
+    for name in _all_workflows():
+        text = (WORKFLOWS / name).read_text()
+        assert "HTRFLOW_ARM64_BASE" not in text, name
+        assert "build-htrflow-base" not in text, name
 
 
 def test_publish_docker_itself_refuses_an_existing_tag() -> None:
@@ -278,21 +259,21 @@ def test_publish_docker_itself_refuses_an_existing_tag() -> None:
 
 def test_the_driver_test_runs_on_the_images_that_ship() -> None:
     """Finding 3104: the level-0 pin ran only against an arm64 image built in
-    ci.yml. publish-docker now runs it on the container it pushes, the arm64
-    publish job on its image between build and push, and ci.yml on the amd64
-    build its scan job already has."""
+    ci.yml. publish-docker, which publishes the wrapper for both
+    architectures, now runs it on the container it pushes, and ci.yml on the
+    amd64 build its scan job already has."""
     go = (REPO / ".dagger" / "publish.go").read_text()
     body = go[go.index("func (m *HtrflowBatch) PublishDocker(") :]
     driver = body.index("m.driverTest(ctx, container, source, caBundle)")
     assert body.index("container, err = m.BuildWrapper(") < driver
     assert driver < body.index(".Publish(ctx, imageRef)")
 
-    steps = JOBS["publish-wrapper-arm64"]["steps"]
-    test = _step_index(steps, "make test-driver-real")
-    assert '"${IMAGE}:${TAG}-arm64"' in steps[test]["run"]
-    assert (
-        _step_index(steps, "docker build -f") < test < _step_index(steps, "docker push")
-    )
+    wrappers = [
+        e
+        for e in JOBS["publish"]["strategy"]["matrix"]["include"]
+        if e["component"] == "wrapper"
+    ]
+    assert {e["tag_suffix"] for e in wrappers} == set(RUNNERS)
 
     ci = yaml.safe_load((WORKFLOWS / "ci.yml").read_text())["jobs"]["scan-wrapper"]
     _step_index(ci["steps"], "dagger call --progress plain test-driver")

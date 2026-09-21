@@ -8,13 +8,6 @@ on:
 permissions:
   contents: read
 
-env:
-  # AI-Riksarkivet/htrflow commit the arm64 wrapper base is built from; the
-  # same pin publish.yml carries, tracked by renovate (git-refs). See
-  # .github/actions/build-htrflow-base-arm64.
-  HTRFLOW_ARM64_BASE_REF: 0ede4da5493cf01ac97024558a5e4f468d5f360f
-  HTRFLOW_ARM64_BASE: htrflow:v0.2.6-arm64
-
 # Every gate is a dagger function so `make ci` and this workflow run the same
 # thing (audit X11). `checks` = ruff + ty + campaign browser (svelte-check,
 # vitest, build) + chart (helm lint/template on defaults and ci/full-values,
@@ -75,7 +68,7 @@ jobs:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
   # Also the amd64 half of the wrapper dockerfile's proof: this is the only
-  # job that builds its `base-amd64` stage, and it runs the driver test on it.
+  # job that builds the wrapper on amd64, and it runs the driver test on it.
   scan-wrapper:
     name: Vulnerability scan (wrapper, amd64)
     if: github.event_name != 'pull_request'
@@ -92,24 +85,24 @@ jobs:
         env:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
-      # The level-0 library-API pin against the amd64 image (finding 3104):
-      # it ran only against the arm64 image below, so the base that the
-      # amd64 image ships on was never driven. Same engine, same build as
-      # the scan above, so this costs the test and not a second build.
+      # The level-0 library-API pin against the amd64 image (finding 3104).
+      # It used to run only against the arm64 image below, and the amd64
+      # image, then built on the upstream htrflow image, failed it. Same
+      # engine, same build as the scan above, so this costs the test and
+      # not a second build.
       - name: Library-API pin test (wrapper, amd64)
         run: dagger call --progress plain test-driver
         env:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
-  # The wrapper image on the OTHER architecture, built exactly the way the
-  # GB10 node and publish.yml build it: the htrflow base from source at the
-  # pinned commit, then the merged dockerfile's base-arm64 branch, on a
-  # native arm64 runner (free for public repositories). Nothing is pushed —
-  # this job exists so a break in either recipe shows up here instead of in
-  # a publish run or on the node.
+  # The wrapper image on the OTHER architecture, built exactly the way
+  # publish.yml builds it, with plain `docker build` on a native arm64
+  # runner (free for public repositories). Nothing is pushed — this job
+  # exists so a break in the recipe on this architecture shows up here
+  # instead of in a publish run or on the node.
   #
   # Unlike the scans it runs on pull requests too: measured at 2 m 51 s
-  # end to end (base 1 m 50 s, wrapper 40 s), which is cheaper than the
+  # end to end (the htrflow stages 1 m 50 s, the wrapper 40 s), cheaper than the
   # `checks` job. Both architectures of a dockerfile change are therefore
   # proven before it lands, not after.
   build-arm64:
@@ -120,23 +113,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Build the arm64 htrflow base
-        id: base
-        uses: ./.github/actions/build-htrflow-base-arm64
-        with:
-          ref: ${{ env.HTRFLOW_ARM64_BASE_REF }}
-          image: ${{ env.HTRFLOW_ARM64_BASE }}
-
-      - name: Build the wrapper on top of it (no push)
-        env:
-          # Through the environment, not into the script text: a step output
-          # is as much an outside value as a dispatch input (publish.yml).
-          BASE_REVISION: ${{ steps.base.outputs.revision }}
-        run: |
-          docker build -f .docker/htrflow-batch.dockerfile \
-            --build-arg "HTRFLOW_ARM64_BASE=${HTRFLOW_ARM64_BASE}" \
-            --build-arg "HTRFLOW_BASE_REVISION=${BASE_REVISION}" \
-            -t htrflow-batch:ci-arm64 .
+      - name: Build the wrapper, htrflow base included (no push)
+        run: docker build -f .docker/htrflow-batch.dockerfile -t htrflow-batch:ci-arm64 .
 
       # The level-0 library-API pin (packages/wrapper/tests/test_driver_real.py):
       # the real htrflow Pipeline.from_config / Export / auto_import on a
@@ -146,10 +124,9 @@ jobs:
       # to run.
       #
       # Here rather than in a job of its own, and through `make` rather than
-      # `dagger call test-driver`: this job already has the image, and the
-      # dagger engine builds in its own cache and cannot see a base image that
-      # exists only in this runner's docker daemon. No GPU and no Hub: the
-      # fixture pipeline is one binarization step and the run is offline.
+      # `dagger call test-driver`: this job already has the image in the
+      # runner's docker daemon. No GPU and no Hub: the fixture pipeline is one
+      # binarization step and the run is offline.
       - name: Library-API pin test, against the image just built
         run: make test-driver-real WRAPPER_IMAGE=htrflow-batch:ci-arm64
 
@@ -163,8 +140,7 @@ jobs:
         run: make scan-image SCAN_IMAGE=htrflow-batch:ci-arm64
 
       - name: What was built
-        # The provenance labels are inherited from the base stage the build
-        # selected — proof that TARGETARCH picked base-arm64, not base-amd64.
+        # The architecture and the htrflow commit the base stages were built from.
         run: |
           docker image inspect htrflow-batch:ci-arm64 --format \
-            'arch={{.Architecture}} base={{index .Config.Labels "org.opencontainers.image.base.name"}} revision={{index .Config.Labels "se.riksarkivet.htrflow.base.revision"}}'
+            'arch={{.Architecture}} revision={{index .Config.Labels "se.riksarkivet.htrflow.base.revision"}}'

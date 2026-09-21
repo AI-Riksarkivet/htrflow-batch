@@ -18,23 +18,18 @@ name: Publish
 # pipelines actually reference, and signs that too. The web image was
 # amd64-only until then, which is an ImagePullBackOff on an arm64 node.
 #
-# The arm64 job also builds the wrapper's BASE image, because there is no
-# published arm64 htrflow: it clones AI-Riksarkivet/htrflow at the pinned
-# HTRFLOW_ARM64_BASE_REF below, locks it (the lockfile is gitignored there)
-# and builds docker/htrflow.dockerfile — the same two commands
-# `make build-htrflow-base-arm64` runs on the GB10 node, in a throwaway
-# checkout. Renovate tracks that ref.
+# The wrapper builds its htrflow base itself, from htrflow at the commit the
+# dockerfile pins and the lock committed in .docker/htrflow-base/, on both
+# architectures, so every image goes through the same dagger function and
+# its gates. (Until then the arm64 wrapper needed a separately built base
+# the dagger engine could not see, and a job of its own; the amd64 one ran
+# on the upstream htrflow image, which failed the driver test.)
 on:
   workflow_dispatch:
     inputs:
       tag:
         description: "Image tag to publish (vX.Y.Z, = packages/wrapper/pyproject.toml version). Never reuse a published tag."
         required: true
-        type: string
-      base_revision:
-        description: "HTRFLOW_BASE_REVISION build arg for the amd64 wrapper: `git describe --tags --always --dirty` of the htrflow checkout the base image was built from (empty keeps the dockerfile default). The arm64 job derives its own from the pinned clone."
-        required: false
-        default: ""
         type: string
       transformers_version:
         description: "TRANSFORMERS_VERSION build arg for the wrapper (empty keeps the dockerfile default, the line upstream htrflow is tested on). Set it to publish the tag on the other transformers line, for models the default line cannot read; a pipeline pins the image digest it runs, so both lines can be in use at once."
@@ -53,21 +48,11 @@ permissions:
 # or the organisation (docs/development/releasing.md). Until those are set,
 # GitHub creates the environment on the first run with no rules, and the
 # repository secrets stay visible to it, so the workflow runs as before.
-env:
-  # AI-Riksarkivet/htrflow commit the arm64 base is built from: 0ede4da is
-  # main's tip on 2026-09-02; the last commit that touches anything the base
-  # image copies (src/, uv.lock, pyproject.toml) is ef0ed37, two docs-only
-  # commits earlier, so 0ede4da's tree of the image's inputs is identical to
-  # the base the GB10 node has been running since 2026-08-25.
-  HTRFLOW_ARM64_BASE_REF: 0ede4da5493cf01ac97024558a5e4f468d5f360f
-  HTRFLOW_ARM64_BASE: htrflow:v0.2.6-arm64
-
 jobs:
-  # Everything dagger can build by itself: the amd64 wrapper, and the web
-  # image for both architectures. The web image is a plain Node/Python build
-  # with no base of its own to prepare, so one matrix entry per architecture
-  # on a runner of that architecture is the whole change — same job body,
-  # same `<tag>-<arch>` scheme, same sign-and-attest step as the wrapper.
+  # Both images for both architectures, one matrix entry per image and
+  # architecture on a runner of that architecture: same job body, same
+  # `<tag>-<arch>` scheme, same gates in publish-docker (tag check, tests,
+  # the driver test for the wrapper, Trivy), same sign-and-attest step.
   # Never one runner with qemu: cross-building is what
   # test_publish_workflow.py and test_dockerfile_workspace.py forbid.
   publish:
@@ -87,6 +72,10 @@ jobs:
             repository: riksarkivet/htrflow-batch
             tag_suffix: "-amd64"
             runner: ubuntu-24.04
+          - component: wrapper
+            repository: riksarkivet/htrflow-batch
+            tag_suffix: "-arm64"
+            runner: ubuntu-24.04-arm
           - component: web
             repository: riksarkivet/htrflow-web
             tag_suffix: "-amd64"
@@ -150,7 +139,6 @@ jobs:
             --component "$COMPONENT" \
             --tag "$TAG" \
             --tag-suffix "$TAG_SUFFIX" \
-            --base-revision "$BASE_REVISION" \
             --transformers-version "$TRANSFORMERS_VERSION" \
             --docker-username env:DOCKERHUB_USERNAME \
             --docker-password env:DOCKERHUB_TOKEN)"
@@ -161,116 +149,10 @@ jobs:
           echo "published ${IMAGE}@${digest}"
         env:
           COMPONENT: ${{ matrix.component }}
-          BASE_REVISION: ${{ inputs.base_revision }}
           TRANSFORMERS_VERSION: ${{ inputs.transformers_version }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-
-      - uses: ./.github/actions/sign-attest
-        with:
-          image: ${{ env.IMAGE }}
-          digest: ${{ steps.digest.outputs.digest }}
-          registry-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          registry-password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-  # arm64 wrapper: its own base first, then plain `docker build`. Not dagger —
-  # the dagger engine builds in its own cache and cannot see an image tag that
-  # only exists in this runner's docker daemon, and pushing the base to a
-  # registry just to hand it back would publish an image nobody consumes.
-  # The gate dagger gives the other job (tests before push) is `test` here.
-  publish-wrapper-arm64:
-    name: Publish wrapper-arm64
-    runs-on: ubuntu-24.04-arm
-    environment: release
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-      packages: read
-    env:
-      REGISTRY: docker.io
-      IMAGE: docker.io/riksarkivet/htrflow-batch
-      TAG: ${{ inputs.tag }}   # as data, not as script text — see the publish job
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Validate the tag
-        run: |
-          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] \
-            || { echo "::error::tag must look like vX.Y.Z"; exit 1; }
-
-      - uses: ./.github/actions/setup-dagger # before the login, as above
-
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Refuse to overwrite a published tag
-        run: |
-          for ref in "${IMAGE}:${TAG}-arm64" "${IMAGE}:${TAG}"; do
-            if docker manifest inspect "$ref" >/dev/null 2>&1; then
-              echo "::error::$ref already exists; tags are immutable — bump the version and publish a new tag"
-              exit 1
-            fi
-          done
-
-      - name: Tests (pytest) — the gate dagger gives the amd64 job
-        run: dagger call --progress plain test
-        env:
-          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-
-      - name: Build the arm64 htrflow base
-        id: base
-        uses: ./.github/actions/build-htrflow-base-arm64
-        with:
-          ref: ${{ env.HTRFLOW_ARM64_BASE_REF }}
-          image: ${{ env.HTRFLOW_ARM64_BASE }}
-
-      - name: Build the arm64 wrapper
-        env:
-          # Only passed when the run asked for a line: an empty build arg
-          # would override the dockerfile's default with nothing.
-          TRANSFORMERS_VERSION: ${{ inputs.transformers_version }}
-          # A step output is as much an outside value as a dispatch input.
-          BASE_REVISION: ${{ steps.base.outputs.revision }}
-        run: |
-          ref="${IMAGE}:${TAG}-arm64"
-          transformers=()
-          if [ -n "$TRANSFORMERS_VERSION" ]; then
-            transformers=(--build-arg "TRANSFORMERS_VERSION=${TRANSFORMERS_VERSION}")
-          fi
-          docker build -f .docker/htrflow-batch.dockerfile \
-            --build-arg "HTRFLOW_ARM64_BASE=${HTRFLOW_ARM64_BASE}" \
-            --build-arg "HTRFLOW_BASE_REVISION=${BASE_REVISION}" \
-            --build-arg "HTRFLOW_BATCH_VERSION=${TAG}" \
-            "${transformers[@]}" \
-            -t "$ref" .
-
-      # Between the build and the push, the gates dagger's publish-docker
-      # runs for the other jobs, on this very image: the level-0 library-API
-      # pin (finding 3104) and Trivy (finding 3060), which stops the release
-      # on a CRITICAL finding with a fix.
-      - name: Library-API pin test, against the image about to be pushed
-        run: make test-driver-real WRAPPER_IMAGE="${IMAGE}:${TAG}-arm64"
-
-      - name: Vulnerability scan (CRITICAL blocks)
-        run: make scan-image SCAN_IMAGE="${IMAGE}:${TAG}-arm64"
-
-      - name: Push the arm64 wrapper
-        run: docker push "${IMAGE}:${TAG}-arm64"
-
-      - name: Extract the published digest
-        id: digest
-        run: |
-          digest="$(docker buildx imagetools inspect "${IMAGE}:${TAG}-arm64" --format '{{.Manifest.Digest}}')"
-          [[ "$digest" == sha256:* ]] || { echo "::error::no digest for the pushed image: $digest"; exit 1; }
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "published ${IMAGE}@${digest}"
 
       - uses: ./.github/actions/sign-attest
         with:
@@ -285,11 +167,11 @@ jobs:
   # themselves. Signed and provenance-attested like its members; no SBOM of
   # its own — the per-arch images carry the package lists, and an SBOM of an
   # index would only be an SBOM of whichever arch the runner happens to be.
-  # Both entries wait for both publish jobs: `needs` is per job, not per
+  # Both entries wait for every publish entry: `needs` is per job, not per
   # matrix entry, and one job here is cheaper than a second copy of it.
   manifest:
     name: Manifest list (${{ matrix.component }})
-    needs: [publish, publish-wrapper-arm64]
+    needs: [publish]
     runs-on: ubuntu-24.04
     environment: release
     permissions:

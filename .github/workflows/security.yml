@@ -76,10 +76,8 @@ jobs:
           GATE: ${{ matrix.gate }}
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
-  # The arm64 wrapper (finding 3060). dagger's scan-sarif builds for its
-  # engine's own platform and cannot see a base image that exists only in a
-  # runner's docker daemon, so this job builds the base and the wrapper the
-  # way ci.yml and publish.yml do, on a native arm64 runner, and runs Trivy
+  # The arm64 wrapper (finding 3060), built the way ci.yml and publish.yml
+  # build it -- plain `docker build` on a native arm64 runner -- and scanned
   # through `make scan-image`: the same report and the same gate as above.
   scan-wrapper-arm64:
     name: Scan image (wrapper, arm64)
@@ -88,29 +86,14 @@ jobs:
       contents: read
       security-events: write
     env:
-      HTRFLOW_ARM64_BASE_REF: 0ede4da5493cf01ac97024558a5e4f468d5f360f # = ci.yml / publish.yml
-      HTRFLOW_ARM64_BASE: htrflow:v0.2.6-arm64
       SCAN_IMAGE: htrflow-batch:scan-arm64
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - name: Build the arm64 htrflow base
-        id: base
-        uses: ./.github/actions/build-htrflow-base-arm64
-        with:
-          ref: ${{ env.HTRFLOW_ARM64_BASE_REF }}
-          image: ${{ env.HTRFLOW_ARM64_BASE }}
-
-      - name: Build the wrapper on top of it (no push)
-        env:
-          BASE_REVISION: ${{ steps.base.outputs.revision }}
-        run: |
-          docker build -f .docker/htrflow-batch.dockerfile \
-            --build-arg "HTRFLOW_ARM64_BASE=${HTRFLOW_ARM64_BASE}" \
-            --build-arg "HTRFLOW_BASE_REVISION=${BASE_REVISION}" \
-            -t "$SCAN_IMAGE" .
+      - name: Build the wrapper, htrflow base included (no push)
+        run: docker build -f .docker/htrflow-batch.dockerfile -t "$SCAN_IMAGE" .
 
       - name: Trivy report (SARIF)
         run: >-

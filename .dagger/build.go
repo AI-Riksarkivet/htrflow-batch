@@ -9,8 +9,8 @@ import (
 // HTRFLOW_BASE_REVISION (the wrapper's base provenance) and
 // HTRFLOW_BATCH_VERSION (the tag the image is published under, which it then
 // reports as its own version). An empty value is omitted, keeping the
-// dockerfile's default -- "dev" for the version, the upstream tag's own
-// revision suffix for the base.
+// dockerfile's default -- "dev" for the version, the pinned htrflow commit
+// for the base.
 func buildArgs(baseRevision, version string) []dagger.BuildArg {
 	var args []dagger.BuildArg
 	if baseRevision != "" {
@@ -23,24 +23,25 @@ func buildArgs(baseRevision, version string) []dagger.BuildArg {
 }
 
 // BuildWrapper creates the wrapper production image from
-// .docker/htrflow-batch.dockerfile. Heavy: the base (airiksarkivet/htrflow +
-// cu128 torch) is ~10 GB; first run populates the engine cache.
+// .docker/htrflow-batch.dockerfile, htrflow base included: the dockerfile
+// builds htrflow at the commit it pins against the lock in
+// .docker/htrflow-base/. Heavy (the CUDA runtime and torch are several GB);
+// the first run populates the engine cache.
 //
-// The dockerfile serves both architectures — it selects its base stage from
-// TARGETARCH — so the image this returns is the ENGINE's architecture unless
-// a platform is named. Naming a foreign one means qemu, and uv segfaults
+// The dockerfile serves both architectures with one recipe, so the image
+// this returns is the ENGINE's architecture unless a platform is named. Naming a foreign one means qemu, and uv segfaults
 // under qemu-x86_64 (docs/development/local-k3s.md), which is why every
 // caller in this repo leaves it empty and builds on a native runner instead:
-// ci.yml and publish.yml put the arm64 image on an ubuntu-24.04-arm runner.
+// publish.yml puts the arm64 image on an ubuntu-24.04-arm runner.
 // The argument exists for a caller that has an engine per platform and wants
 // to say which one it is talking to.
 func (m *HtrflowBatch) BuildWrapper(
 	ctx context.Context,
 	// +defaultPath="/"
 	source *dagger.Directory,
-	// `git describe --tags --always --dirty` of the htrflow checkout the base
-	// image was built from; stamped as the se.riksarkivet.htrflow.base.revision
-	// label (audit W8). Empty keeps the dockerfile default.
+	// What the image reports as its htrflow, stamped as the
+	// se.riksarkivet.htrflow.base.revision label (audit W8). Empty keeps the
+	// dockerfile default, the htrflow commit it builds.
 	// +optional
 	baseRevision string,
 	// Platform to build for, e.g. "linux/arm64". Empty (the default, and what
