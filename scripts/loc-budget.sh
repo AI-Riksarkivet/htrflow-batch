@@ -612,7 +612,13 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 3156
 # syncs, so a new render makes it OutOfSync and its apply hook runs.
 # The two rounds above were written in parallel from 2582; together they are
 # 2582 + 24 (3058) + 141 (3090/3084/3085) = 2747.
-check converter "$(count packages/converter/src -name '*.py')" 2747
+# 2747 -> 2812 (3083/3091/3092/3093, the apply path): a live Job outranks a
+# stale finished record; a transport error is retried and then stops the
+# apply as `Unreachable` instead of counting as a refused object; a Failed
+# warm-up Job is replaced; and a finished check that cannot read blocks its
+# campaign instead of applying it. About half is the sentences and the
+# comments saying why each one fails closed.
+check converter "$(count packages/converter/src -name '*.py')" 2812
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
