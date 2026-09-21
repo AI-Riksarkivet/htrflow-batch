@@ -427,16 +427,42 @@
     loadingMore = false;
   }
 
+  // A campaign that has finished -- or whose Job is gone -- cannot change,
+  // so its card reads the detail once rather than every minute for as long
+  // as the page is open: each call lists pods, reads the campaign's
+  // ConfigMaps and up to 32 progress files, and a page of old campaigns
+  // polling for ever was load that grew with the history and bought nothing
+  // (the 2026-09-17 audit, 3079). "Once" means once it has landed: a read
+  // that failed is still retried, on $lib/poll's backoff.
+  const settled = $derived(
+    job.jobGone ||
+      job.phase === "Succeeded" ||
+      job.phase === "Failed" ||
+      job.phase === "PartiallyFailed" ||
+      job.phase === "Unknown",
+  );
+
   $effect(() => {
+    // Tracked on purpose: a change of phase, or the Job being reaped, is
+    // news -- a campaign that finishes while shown is read in its final
+    // state, a reaped one from the record that replaced its Job, and one
+    // re-run under the same name starts polling again.
+    void [job.phase, job.jobGone];
+    const once = settled;
     // untrack: load() reads `volumes` to size its refresh and then writes it,
-    // and an effect that reads its own output re-runs forever. Nothing here
-    // needs re-subscribing anyway — the list keys each card by
-    // namespace/name, so a card never changes campaign under its own feet.
-    // $lib/poll is what keeps a page of cards from each queueing up requests
-    // against a slow API, and from polling at all while nobody is looking.
-    return untrack(() =>
-      startPolling((signal) => load(true, signal), RELOAD_MS),
-    );
+    // and an effect that reads its own output re-runs forever. The list
+    // keys each card by namespace/name, so a card never changes campaign
+    // under its own feet. $lib/poll is what keeps a page of cards from each
+    // queueing up requests against a slow API, and from polling at all
+    // while nobody is looking.
+    return untrack(() => {
+      let landed = false;
+      return startPolling(
+        async (signal) => (landed = await load(true, signal)),
+        RELOAD_MS,
+        { until: () => once && landed },
+      );
+    });
   });
 
   /**
