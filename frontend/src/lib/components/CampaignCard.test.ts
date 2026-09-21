@@ -170,6 +170,15 @@ describe("CampaignCard", () => {
     expect(
       done.getByRole("link", { name: "run log for vol0" }).querySelector("svg"),
     ).toHaveAttribute("aria-hidden", "true");
+    // The source first, then its run log: what the volume came from, then
+    // what happened to it.
+    expect(
+      done
+        .getByRole("link", { name: "manifest for vol0" })
+        .compareDocumentPosition(
+          done.getByRole("link", { name: "run log for vol0" }),
+        ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
 
     // not done, but it has a source: the id opens the source manifest
     const failed = within(rows[1] as HTMLElement);
