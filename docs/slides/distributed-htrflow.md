@@ -845,7 +845,7 @@ outline for every line on the page image.
 
 * **Queued.** Another campaign holds the GPUs. The status page shows the campaign with no pod, and says so.
 * **Running.** One pod, one GPU. The page count moves every few seconds, and the volume opens in the viewer at page ten.
-* **Done, with one failed page.** Page 44 failed and is recorded; the other 637 pages are in the viewer. The card turns amber, not green, and names the page.
+* **Done, with one failed page.** Page 44 failed and is recorded; the other 637 pages are in the viewer. The card turns amber into green, not plain green, and names the page.
 * **What you do about page 44:** nothing, or a new campaign later with a fixed image. Its failure is in `manifest.json` and on the card, and the 637 good pages are in the viewer now.
 
 <!--
