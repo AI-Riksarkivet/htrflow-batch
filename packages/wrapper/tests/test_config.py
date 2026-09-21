@@ -123,6 +123,14 @@ def test_byte_caps_default_and_override():
     assert cfg.fetch_max_bytes == 2048
 
 
+def test_download_deadline_default_and_override():
+    """3063: one download's wall-clock budget, separate from the per-read
+    timeouts and from the pod's own deadline."""
+    assert Config.from_env(REQUIRED).download_deadline_seconds == 300.0
+    cfg = Config.from_env(dict(REQUIRED, DOWNLOAD_DEADLINE_SECONDS="45"))
+    assert cfg.download_deadline_seconds == 45.0
+
+
 def test_max_seconds_is_not_a_wrapper_setting():
     """The per-volume budget is the pod's activeDeadlineSeconds now; a stray
     MAX_SECONDS in the env must be ignored, not resurrect a wrapper field."""

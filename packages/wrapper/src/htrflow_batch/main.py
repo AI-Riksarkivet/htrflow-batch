@@ -15,7 +15,7 @@ from typing import Callable, Mapping, Optional
 
 import httpx
 
-from . import provenance, publish
+from . import bounded, provenance, publish
 from .config import Config, ConfigError
 from .iiif import (
     ManifestError,
@@ -100,8 +100,7 @@ def _hard_exit(code: int) -> None:
 
 
 def _http_client() -> httpx.Client:
-    # S5: campaign data drives these fetches; bound redirect chains too.
-    return httpx.Client(max_redirects=5)
+    return bounded.http_client()
 
 
 def terminate(env: Mapping[str, str], reason: dict) -> None:
@@ -366,7 +365,10 @@ def _setup(
         source, url = _synthetic_source(cfg, store)
     else:
         source = fetch_manifest(
-            cfg.manifest_url, client, max_bytes=cfg.manifest_max_bytes
+            cfg.manifest_url,
+            client,
+            max_bytes=cfg.manifest_max_bytes,
+            deadline=cfg.download_deadline_seconds,
         )
         url = cfg.manifest_url
     pages = pages_from_manifest(source, cfg.max_image_width)
@@ -438,6 +440,7 @@ def _stream(
         max_bytes=cfg.fetch_max_bytes,
         max_pixels=cfg.max_image_pixels,
         stop=stop,
+        deadline=cfg.download_deadline_seconds,
     )
     try:
         # The first downloads are in flight, so the model load overlaps them

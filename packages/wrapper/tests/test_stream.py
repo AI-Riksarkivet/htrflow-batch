@@ -457,3 +457,17 @@ def test_workdir_holds_only_the_page_in_flight(tmp_path):
         [f"{i:04d}.jpg", f"{i:04d}.xml", f"{i:04d}.xml"] for i in range(1, 51)
     ]
     assert [p for p in workdir.rglob("*") if p.is_file()] == []
+
+
+def test_the_download_deadline_reaches_every_fetch(tmp_path, monkeypatch):
+    seen = []
+
+    def fake_fetch(page, **kw):
+        seen.append(kw["deadline"])
+        return FetchResult(page=page, path=None, error="x")
+
+    monkeypatch.setattr(stream_mod, "fetch_page", fake_fetch)
+    stream = PageStream(
+        _pages(2), tmp_path, _client(lambda r: None), lookahead=4, deadline=7.0
+    )
+    assert len(list(stream)) == 2 and seen == [7.0, 7.0]
