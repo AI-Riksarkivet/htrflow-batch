@@ -595,7 +595,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 3156
 # model. The frozenset, the check in _check_steps and the sentence naming
 # the steps and keys; half is the comment saying why the converter repeats a
 # rule the cluster also enforces.)
-check converter "$(count packages/converter/src -name '*.py')" 2606
+# 2582 -> 2600 (3090): the prune no longer stops at its first refusal.
+# `Cluster.prune` catches a refused list or delete per kind and per object
+# and hands back what it could not do, so the apply runs the pause sync for
+# every campaign and still names each object the prune left behind.
+check converter "$(count packages/converter/src -name '*.py')" 2624
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
