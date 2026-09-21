@@ -233,7 +233,7 @@ TTL at all:
 | Object | Written by | Holds |
 |---|---|---|
 | `ConfigMap campaign-<name>` | `render`, then `apply` | `volumes.txt`, and the provenance annotations below |
-| `ConfigMap campaign-<name>-status` | **both** the read API and `apply` | `phase`, `volumesTotal`, `volumesDone`, `volumesFailed`, `startedAt`, `finishedAt`, `resultsBase` — and, from one writer only, `failedVolumes` |
+| `ConfigMap campaign-<name>-status` | **both** the read API and `apply` | `phase`, `volumesTotal`, `volumesDone`, `volumesFailed`, `startedAt`, `finishedAt`, `resultsBase`, `jobUid` — and, from one writer only, `failedVolumes` |
 
 Two writers, on purpose. The read API observes the most, because it reads
 the pods and so is the only one that can say *why* a volume failed. But it
@@ -246,19 +246,37 @@ before it decides anything and writes the ending it can see.
 field they do not share. Only the read API's **detail** route writes it,
 because only that route reads the pods. The list route and `apply` leave the
 field out of their write entirely rather than send an empty one, which would
-wipe what the detail route observed. So a campaign nobody ever opened the
-page for keeps a record with counts and no ids, and so does one whose failed
-pods were collected before anyone looked.
+wipe what the detail route observed. Each detail request names the failures
+whose pods still exist, so the field is merged per volume id: a volume named
+once stays named, and a newer sentence for it replaces the older one. A
+failed volume whose pod left no message is named with an empty sentence —
+it is still a failure. So a campaign nobody ever opened the page for keeps a
+record with counts and no ids, and so does one whose failed pods were
+collected before anyone looked; its volumes that the record does not name
+read `unknown` rather than `done` whenever it counts more failures than it
+names.
 
-Both write the same field names, and neither ever shrinks the record: a
-value that says nothing never replaces one that says something, and
-`finishedAt` never moves backwards. That last rule is worth saying plainly.
-A Job recreated by hand under the same name keeps the *earlier* campaign's
-finish date until the record is removed with the campaign file — the record
-belongs to the campaign, not to the Job, and a campaign is append-only.
-Recording a second run means a new campaign file. `-status` is a reserved
-campaign-file ending for the same reason `-part<number>` is: `validate`
-refuses a campaign called `x-status`.
+Who owns which field is settled by server-side apply's field managers.
+`apply` writes the summary fields, `jobUid` and the labels **forced**, once
+the Job is over: that ending is authoritative. Until then the read API
+writes the whole record, merged over what is stored so that it never
+shrinks — a value that says nothing never replaces one that says
+something, and `finishedAt` never moves backwards. Once `apply` owns the
+record's `phase` for this Job, the read API sends only what `apply` does
+not own, which is `failedVolumes`; server-side apply keeps a field another
+manager still owns when one leaves it out, so nothing is lost and there is
+nothing left to conflict over.
+
+`jobUid` is the Job the record is about. A Job recreated under the same
+name — a reaped campaign whose file gained volumes, say — is another run,
+and its record starts over: the read API replaces the old record whole
+rather than merging into it, forcing the fields `apply` still owns from the
+old run but only on the version it read, so an ending `apply` writes in
+between wins; and `apply` never reads a record as the ending of a Job that
+is there and not over. A record written before `jobUid` existed is taken to
+be the current Job's. `-status` is a reserved campaign-file ending for the
+same reason `-part<number>` is: `validate` refuses a campaign called
+`x-status`.
 
 The provenance annotations on the record, all under the converter's label
 domain: `image-digest` is rendered, since it is a pure function of the repo

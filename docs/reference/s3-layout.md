@@ -41,8 +41,8 @@ Writers: the **wrapper** is the only writer in the whole tree — its own
 `<namespace>/sources/…`, not `sources/<namespace>/…`; `status/` alone is
 namespace-free, since the browser resolves run-log links against the bucket
 root. Nothing else in this system writes to S3 at all — the read API only
-*reads*, and only `progress.json`/`manifest.json`, for the volume rows it is
-about to answer with ([Live status](#live-status-the-read-api-not-a-file)).
+*reads*, and only `progress.json`/`manifest.json`, for the volumes of the
+campaign it is answering about ([Live status](#live-status-the-read-api-not-a-file)).
 
 The API pod does that reading itself, not the browser, so it needs its own
 path to the bucket: `HTRFLOW_INTERNAL_RESULTS_BASE` (chart
@@ -131,8 +131,8 @@ reads the resumed pages' ALTO back and always writes the complete one.
 
 `GET /api/v1/jobs` and `GET /api/v1/jobs/{namespace}/{name}` are the whole
 story: every response is computed live from the Job/Pod/ConfigMap state, plus
-the volumes' own `progress.json` for the rows it answers with (memoized 5 s
-for a running volume and an hour for a finished one, never persisted here). A
+the volumes' own `progress.json` (memoized 5 s for a running volume and an
+hour for one that is over, never persisted here). A
 stored status document would need a writer that stays in step with the
 cluster; computing it on each request cannot drift.
 
@@ -167,7 +167,10 @@ while the Job exists, and in each volume's own `manifest.json` afterwards.
   `{stage, permanent, error}`, present only while a pod for that index still
   exists. A pod that failed before the wrapper started (the `warmup-wait`
   gate) carries that init container's message instead, and a pod killed at
-  its deadline reads `"error": "DeadlineExceeded"`.
+  its deadline reads `"error": "DeadlineExceeded"`. A pod that left no
+  message at all — killed for memory, evicted — reads the pod's own reason
+  (`"Evicted"`), else the stopped container's reason and exit code
+  (`"OOMKilled (exit code 137)"`).
 - **Per-volume progress**: `progress` is `{done, total, failed, lastPage,
   stage, updatedAt, ageSeconds, lastError, errors, viewerPublished}`, or
   `null` when nothing is known — read by the API from that volume's
@@ -175,22 +178,31 @@ while the Job exists, and in each volume's own `manifest.json` afterwards.
   none. `ageSeconds` is computed by the API from its own clock at fetch time,
   not left for the browser to derive from `updatedAt`, so a reader's clock
   skew cannot make a row read "0 s ago". A `pending` volume is never fetched,
-  and a bucket that does not answer is `null`, never a 500. Fetched at most
-  `PROGRESS_FETCH_CAP` (32) rows per request, `active` ones first, so a large
-  `limit` cannot turn into hundreds of sequential GETs through the API's one
-  HTTP client — a row past the cap simply carries no `progress`.
-- **Failures**: up to 50 of the most recent failed-with-a-reason rows,
-  included in the detail response.
+  and a bucket that does not answer is `null`, never a 500. Every run volume
+  of the campaign is read, `active` ones first, then the failures and
+  `latest`, then the requested page, then the rest — from the API's cache
+  when it has the answer, which costs nothing, and otherwise with at most
+  `PROGRESS_FETCH_CAP` (100) GETs and five seconds per request, so no request
+  turns into hundreds of sequential GETs through the API's one HTTP client.
+  An answer about a volume that is over (`done`, `failed`, `unknown`) is
+  kept for the hour, an absent file included; a bucket that did not answer
+  is asked again on a later request. A row not read yet carries no
+  `progress`.
+- **Failures**: up to 50 of the most recent failed rows, with or without a
+  `reason`, included in the detail response.
 - **Detail-only, computed over every volume** (not just the requested page):
   `latest` — the volume a folded card shows, the newest `active` row else
   the newest `done` one — and `pipelineSteps` / `pipelineYaml`, read from
   the campaign's `htr-pipeline-<id>` ConfigMap.
-- **Detail-only, summed over the volumes whose `progress` was fetched**
-  (the capped set above, so at most 32 rows): `pagesDone`,
-  `pagesTotal`, `pagesFailed`, `errors`, and `lastError` — the most recent
-  page failure among them, with the `volume` it happened in and that volume's
-  `logUrl`, so the campaign card can link to a run log for a row that is not
-  on the page being shown.
+- **Detail-only, summed over every run volume whose `progress` has been
+  read**: `pagesDone`, `pagesTotal`, `pagesFailed`, `errors`, and
+  `lastError` — the most recent page failure among them, with the `volume`
+  it happened in and that volume's `logUrl`, so the campaign card can link to
+  a run log for a row that is not on the page being shown — and
+  `pagesCoverage` (`{counted, of}`), how many of the campaign's run volumes
+  those sums cover. The cache fills over a few polls, so `counted` reaches
+  `of` for any campaign whose run volumes fit in the cache (20 000); until
+  it does, a volume that lost pages may simply not be read yet.
 
 Full field derivation: [`packages/web/src/htrflow_web/projection.py`](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/packages/web/src/htrflow_web/projection.py).
 The frontend consumes this shape directly — see [Campaign Browser](frontend.md).

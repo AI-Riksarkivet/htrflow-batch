@@ -175,7 +175,9 @@ too.
   from its own clock at fetch time, never from comparing `updatedAt` against
   the browser's, so a reader's clock skew cannot show "0 s ago" for a row
   that has not actually just updated. `null` renders nothing at all. The
-  campaign header adds the API's summed `pagesDone`/`pagesTotal`.
+  campaign header adds the API's summed `pagesDone`/`pagesTotal`, which are
+  every run volume's once the API has read them all; until then the pages
+  row says "counted in N of M volumes" (`pagesCoverage`).
 - **Running motion.** Only what is running moves, so that a campaign still
   working cannot be mistaken for a finished one between polls: the state and
   phase chips carry a pulsing dot (`aria-hidden` — the chip's word is the
