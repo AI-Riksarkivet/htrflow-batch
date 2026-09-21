@@ -380,11 +380,12 @@ def _resume(
     cfg: Config, store: ResultStore, pages: list[PageRef], state: RunState
 ) -> tuple[list[PageRef], set[str]]:
     """The pages left to process, and the done ones (skipped in the results).
-    A page is done only when both formats are in S3 and its source image URL
-    is the one the last completed run recorded (W7)."""
+    A page is done only when both formats are in S3 and were made from the
+    source image the page has now (W7, 3096)."""
     state.stage = "resume"
-    done = store.done_pages() if cfg.resume else set()
-    done &= {p.name for p in pages}  # S3 can hold pages this run does not cover
+    names = {p.name for p in pages}  # S3 can hold pages this run does not cover
+    stored = store.stored_pages()
+    done = set.intersection(*stored.values()) & names if cfg.resume else set()
     changed = _changed_sources(store, pages, done) if done else set()
     if changed:
         log.info(
@@ -392,13 +393,17 @@ def _resume(
             cfg.volume_ref,
             len(changed),
         )
-        for name in sorted(changed):
-            # W3: before, not after -- a reprocessing that fails must leave
-            # the page with no stored outputs at all, else the stale pair
-            # answers for it at verify and in the viewer manifest.
-            store.delete_page(name)
         done -= changed
     todo = [p for p in pages if p.name not in done]
+    # W3, 3096: every page about to be redone loses what it has stored, and
+    # before the run, not after -- a changed source, RESUME=false, or half a
+    # pair from an attempt that died between its two PUTs. A reprocessing
+    # that then fails must leave the page with no outputs at all, else the
+    # stale pair answers for it at verify, in the viewer manifest, and as
+    # "done" to the next attempt.
+    stale = set().union(*stored.values()) & {p.name for p in todo}
+    if stale:
+        store.delete_pages(stale)
     log.info(
         "[%s] resume: %d done, %d to process", cfg.volume_ref, len(done), len(todo)
     )
@@ -441,10 +446,13 @@ def _stream(
         process = (factory or _default_factory)(cfg)
 
         state.stage = "stream"
+        # 3096: each page's outputs carry the source they were made from, so a
+        # later attempt can tell them from a page made from an older one.
+        sources = {p.name: source_digest(p.image_url) for p in todo}
         consume(
             stream,
             process,
-            store.upload_page,
+            lambda name, files: store.upload_page(name, files, sources[name]),
             stats=stats,
             on_page=tracker.after_page,
         )
@@ -542,34 +550,48 @@ def _synthetic_source(cfg: Config, store: ResultStore) -> tuple[dict, str]:
 
 
 def _changed_sources(store: ResultStore, pages, done: set[str]) -> set[str]:
-    """Done pages whose image URL differs from the one the previous completed
-    run recorded in manifest.json (W7). No previous manifest, or one with
-    neither field below (older wrapper), means nothing to compare: keep them
-    done.
+    """Done pages made from another source image than the one they have now.
+
+    The page's own record comes first (3096): the digest its outputs were
+    stamped with at upload. manifest.json is written only by a COMPLETED run,
+    so comparing against it alone meant that after a source change every
+    attempt deleted the pages the attempt before had redone from the new
+    source -- a volume that needed two attempts never completed.
+
+    A page an older wrapper stored carries no digest, and falls back to what
+    the previous completed run recorded in manifest.json (W7). No previous
+    manifest, or one with neither field below, means nothing to compare:
+    keep them done.
 
     ``page_source_digests`` is the comparison (W5): the published
     ``page_sources`` are REDACTED (S6, the bucket is public), and a redacted
     URL has lost its query -- so on a host that selects the image with
     ``?id=`` every page looked unchanged forever. The redacted form is still
     read from a manifest written before the digests existed."""
+    recorded = store.page_sources(done)
+    changed = _differs(pages, done, recorded, source_digest)
+    unstamped = {name for name, digest in recorded.items() if digest is None}
+    if not unstamped:
+        return changed
     previous = store.get_json_or_none("manifest.json") or {}
     digests = previous.get("page_source_digests")
     if isinstance(digests, dict):
-        return _differs(pages, done, digests, source_digest)
+        return changed | _differs(pages, unstamped, digests, source_digest)
     sources = previous.get("page_sources")
-    return (
-        _differs(pages, done, sources, redact_url)
-        if isinstance(sources, dict)
-        else set()
-    )
+    if isinstance(sources, dict):
+        return changed | _differs(pages, unstamped, sources, redact_url)
+    return changed
 
 
 def _differs(
     pages, done: set[str], stored: dict, form: Callable[[str], str]
 ) -> set[str]:
-    """The done pages the previous run recorded under a different identity."""
+    """The done pages recorded under a different identity (a page with no
+    record, or a None one, is not compared)."""
     return {
         p.name
         for p in pages
-        if p.name in done and p.name in stored and stored[p.name] != form(p.image_url)
+        if p.name in done
+        and stored.get(p.name) is not None
+        and stored[p.name] != form(p.image_url)
     }
