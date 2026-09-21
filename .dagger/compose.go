@@ -22,10 +22,11 @@ func (m *HtrflowBatch) ComposeUp(
 }
 
 // ComposeTest starts the compose stack and verifies the web image serves
-// uv.html. It needs riksarkivet/htrflow-web:latest to be pullable (see
-// ComposeUp); the service runs site-only — no apiserver in a compose stack —
-// and listens on 8081. `make compose-smoke` is the local twin that builds
-// and tags the image from this branch first.
+// uv.html. The web service runs the release pinned by digest in the compose
+// file (see ComposeUp), so this checks that release, not the checkout; the
+// service runs site-only — no apiserver in a compose stack — and listens on
+// 8081. `make compose-smoke` is the checkout's twin: it builds both images
+// with the recipes that ship them and runs the stack on those.
 func (m *HtrflowBatch) ComposeTest(
 	ctx context.Context,
 	// +defaultPath="/"

@@ -274,3 +274,42 @@ def test_publish_docker_itself_refuses_an_existing_tag() -> None:
     assert "cannot tell whether" in go
     # The Makefile's publish goes through the same function.
     assert "dagger call publish-docker" in (REPO / "Makefile").read_text()
+
+
+def test_the_driver_test_runs_on_the_images_that_ship() -> None:
+    """Finding 3104: the level-0 pin ran only against an arm64 image built in
+    ci.yml. publish-docker now runs it on the container it pushes, the arm64
+    publish job on its image between build and push, and ci.yml on the amd64
+    build its scan job already has."""
+    go = (REPO / ".dagger" / "publish.go").read_text()
+    body = go[go.index("func (m *HtrflowBatch) PublishDocker(") :]
+    driver = body.index("m.driverTest(ctx, container, source, caBundle)")
+    assert body.index("container, err = m.BuildWrapper(") < driver
+    assert driver < body.index(".Publish(ctx, imageRef)")
+
+    steps = JOBS["publish-wrapper-arm64"]["steps"]
+    test = _step_index(steps, "make test-driver-real")
+    assert '"${IMAGE}:${TAG}-arm64"' in steps[test]["run"]
+    assert (
+        _step_index(steps, "docker build -f") < test < _step_index(steps, "docker push")
+    )
+
+    ci = yaml.safe_load((WORKFLOWS / "ci.yml").read_text())["jobs"]["scan-wrapper"]
+    _step_index(ci["steps"], "dagger call --progress plain test-driver")
+
+
+def test_compose_smoke_runs_the_images_it_built() -> None:
+    """Finding 3104: compose-smoke built the web image as `:latest` while the
+    compose file pinned the published digest, so the smoke tested the last
+    release; and a failed curl skipped `down -v`."""
+    compose = yaml.safe_load((REPO / ".docker" / "docker-compose.yml").read_text())
+    services = compose["services"]
+    assert services["wrapper"]["image"].startswith("${HTR_WRAPPER_IMAGE:-")
+    assert services["web"]["image"].startswith("${HTR_WEB_IMAGE:-")
+
+    makefile = (REPO / "Makefile").read_text()
+    assert re.search(r"^compose-smoke: build-wrapper build-web$", makefile, re.M)
+    run = makefile[makefile.index("compose-smoke-run:") :].split("\n\n")[0]
+    assert "trap 'docker compose down -v' EXIT" in run
+    assert "HTR_WRAPPER_IMAGE=$(WRAPPER_IMAGE) HTR_WEB_IMAGE=$(WEB_IMAGE)" in run
+    assert run.count("--no-build") == 2  # never a third, differently built image

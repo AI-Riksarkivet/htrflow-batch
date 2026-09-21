@@ -246,6 +246,13 @@ func (m *HtrflowBatch) PublishDocker(
 	if err != nil {
 		return "", fmt.Errorf("build failed during publish: %w", err)
 	}
+	// The level-0 library-API pin, on the container about to be pushed and
+	// not on a second build of it (finding 3104).
+	if component == "wrapper" {
+		if _, err := m.driverTest(ctx, container, source, caBundle); err != nil {
+			return "", fmt.Errorf("driver test failed, aborting publish: %w", err)
+		}
+	}
 	// The CRITICAL gate ci.yml runs on main, on the image about to be pushed
 	// (finding 3060): the arm64 wrapper job in publish.yml runs the same one
 	// through `make scan-image`, so no architecture ships a critical finding

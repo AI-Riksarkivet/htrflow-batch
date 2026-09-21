@@ -1,5 +1,5 @@
 .PHONY: install format lint check test typecheck test-driver-real ci build scan publish release-notes \
-        compose-up compose-test compose-smoke compose-down helm-lint helm-template \
+        compose-up compose-test compose-smoke compose-smoke-run compose-down helm-lint helm-template \
         install-devstack install-kyverno \
         docs-serve docs-build config-reference api-contract \
         scan-image poc-push poc-push-arm64 build-wrapper build-htrflow-base-arm64 lock-htrflow-base-arm64 build-web scan-web clean install-kueue \
@@ -99,22 +99,29 @@ release-notes:
 compose-up:
 	cd .docker && docker compose up -d
 
-# NOTE: requires riksarkivet/htrflow-web:latest to be registry-pullable —
-# the dagger compose module mounts only .docker/, so the web service cannot
-# build from the repo root and is image-only. That image is not published
-# yet, so on this branch use `make compose-smoke`, which builds and tags it
-# locally first.
+# The web service runs the image pinned in .docker/docker-compose.yml (the
+# dagger module mounts only .docker/, so it cannot build one); this checks
+# that release, not the checkout. `make compose-smoke` is the checkout's.
 compose-test:
 	dagger call compose-test
 
-# The compose `web` service is image-only (see the note on compose-test), so
-# build it from this branch and tag it under the name compose expects first.
-compose-smoke:
-	$(MAKE) build-web WEB_IMAGE=riksarkivet/htrflow-web:latest
-	cd .docker && docker compose up --build --abort-on-container-exit --exit-code-from wrapper wrapper && \
-	docker compose up -d web && \
-	curl -fsS -o /dev/null http://localhost:8080/uv.html && \
-	docker compose down -v
+# The compose stack against images of THIS checkout, built by the same
+# recipes as the images that ship (build-wrapper, build-web) and run by name
+# through HTR_WRAPPER_IMAGE / HTR_WEB_IMAGE -- the compose file's own defaults
+# pinned the published web image, so this used to smoke the last release
+# instead of the branch (finding 3104).
+compose-smoke: build-wrapper build-web
+	$(MAKE) compose-smoke-run
+
+# The smoke on its own, against whatever WRAPPER_IMAGE and WEB_IMAGE name:
+# the images compose-smoke just built, or a published release by digest.
+# The stack comes down (volumes included) however the run ends.
+compose-smoke-run:
+	cd .docker && trap 'docker compose down -v' EXIT && \
+	export HTR_WRAPPER_IMAGE=$(WRAPPER_IMAGE) HTR_WEB_IMAGE=$(WEB_IMAGE) && \
+	docker compose up --no-build --abort-on-container-exit --exit-code-from wrapper wrapper && \
+	docker compose up --no-build -d web && \
+	curl -fsS --retry 15 --retry-delay 2 --retry-all-errors -o /dev/null http://localhost:8080/uv.html
 
 compose-down:
 	cd .docker && docker compose down -v

@@ -55,8 +55,9 @@ func (m *HtrflowBatch) Test(
 // TestDriver runs the Level 0 htrflow API pin (audit T4) — the real
 // Pipeline.from_config / Export / auto_import / run on a one-page CPU
 // fixture, packages/wrapper/tests/test_driver_real.py — inside the wrapper
-// image Build produces. Opt-in and not part of Checks: it needs the ~10 GB
-// wrapper image. `make test-driver-real` is the local twin against a
+// image Build produces. Not part of Checks: it needs the ~10 GB wrapper
+// image. ci.yml runs it in the amd64 scan job, sharing that job's build, and
+// publish-docker runs the same test on the image it pushes. `make test-driver-real` is the local twin against a
 // locally built image. pytest is installed into the image's venv at the
 // version uv.lock pins; the test file is mounted alone (no conftest: moto
 // is not in the image).
@@ -76,6 +77,19 @@ func (m *HtrflowBatch) TestDriver(
 	if err != nil {
 		return "", fmt.Errorf("wrapper build failed before the driver test: %w", err)
 	}
+	return m.driverTest(ctx, image, source, caBundle)
+}
+
+// driverTest runs test_driver_real.py inside a given wrapper image. It is
+// TestDriver's body, and what PublishDocker runs on the very container it is
+// about to push (finding 3104): the pin test used to run only against an
+// arm64 image built in ci.yml, never against the amd64 image that ships.
+func (m *HtrflowBatch) driverTest(
+	ctx context.Context,
+	image *dagger.Container,
+	source *dagger.Directory,
+	caBundle *dagger.File,
+) (string, error) {
 	container := image.
 		WithUser("0"). // the venv is root-owned; the test runs as root too
 		WithFile("/tmp/uv.lock", source.File("uv.lock")).
