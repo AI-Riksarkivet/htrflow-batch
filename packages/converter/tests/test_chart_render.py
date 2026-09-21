@@ -30,6 +30,7 @@ from htrflow_converter.models import _DNS_LABEL_RE, Campaign
 
 REPO = Path(__file__).resolve().parents[3]
 CHART = REPO / "charts" / "htrflow-batch"
+DEVSTACK_CHART = REPO / "charts" / "htrflow-devstack"
 NAMESPACE = "htr-batch"
 
 #: Values the chart `fail`s without and that no cluster is present to look
@@ -47,17 +48,32 @@ PUBLIC_INGRESS = "network.web.allowPublicIngress=true"
 POLICIES_OFF = "security.policies.allowDisabled=true"
 DEFAULT_SETS = REQUIRED_SETS + (PUBLIC_INGRESS, POLICIES_OFF)
 
+#: Two refusals several tests look for, verbatim: the chart's own sentence
+#: is what an operator reads, so a test that only saw a non-zero exit could
+#: not tell one guard from another (finding 3103).
+RESULTS_BASE_REFUSAL = (
+    "publicResultsBase is required (the read API serves S3 links built from it)"
+)
+API_SERVER_REFUSAL = (
+    "network.apiServer.cidr or network.apiServer.cidrs is required when the"
+    " kube-apiserver endpoints cannot be looked up (helm template / no RBAC);"
+    " list every API server of an HA control plane"
+)
+
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm not on PATH")
 
 
 def helm_template(
-    *, values: str | None = None, sets: tuple[str, ...] = ()
+    *,
+    values: str | None = None,
+    sets: tuple[str, ...] = (),
+    chart: Path = CHART,
 ) -> subprocess.CompletedProcess[str]:
     """Run `helm template` and hand back the result, failure included: the
     chart's guards are as much a part of it as its objects."""
-    cmd = ["helm", "template", "htr", str(CHART), "-n", NAMESPACE]
+    cmd = ["helm", "template", "htr", str(chart), "-n", NAMESPACE]
     if values:
-        cmd += ["-f", str(CHART / values)]
+        cmd += ["-f", str(chart / values)]
     for setting in sets:
         cmd += ["--set", setting]
     return subprocess.run(cmd, capture_output=True, text=True)
@@ -207,6 +223,7 @@ def test_the_catch_all_web_ingress_has_to_be_said_out_loud():
     operator can ship without noticing."""
     refused = helm_template(sets=REQUIRED_SETS + (POLICIES_OFF,))
     assert refused.returncode != 0
+    assert "network.web.ingressCidrs has 0.0.0.0/0, wider than /8" in refused.stderr
     assert "network.web.allowPublicIngress" in refused.stderr
 
     allowed = render(sets=DEFAULT_SETS)
@@ -299,7 +316,8 @@ def test_the_web_front_sees_its_clients_own_addresses(default: list[dict]):
 def test_the_refusal_no_longer_advises_listing_the_node_range():
     """Listing the node range is what defeated the list; the chart's own
     sentence must not tell anyone to do it."""
-    refused = helm_template(sets=REQUIRED_SETS)
+    refused = helm_template(sets=REQUIRED_SETS + (POLICIES_OFF,))
+    assert "wider than /8" in refused.stderr
     assert "node range" not in refused.stderr
     assert "SNAT" not in refused.stderr
 
@@ -561,9 +579,9 @@ def test_no_api_server_address_at_all_is_still_refused():
     sets = tuple(
         s for s in REQUIRED_SETS if not s.startswith("network.apiServer.cidr=")
     )
-    refused = helm_template(sets=sets + (PUBLIC_INGRESS,))
+    refused = helm_template(sets=sets + (PUBLIC_INGRESS, POLICIES_OFF))
     assert refused.returncode != 0
-    assert "network.apiServer.cidrs" in refused.stderr
+    assert API_SERVER_REFUSAL in refused.stderr
 
 
 def _from_endpoints(tmp_path: Path, endpoints: dict) -> dict:
@@ -751,12 +769,26 @@ def test_every_pod_the_profile_renders_passes_pod_security_restricted(
             assert security["capabilities"] == {"drop": ["ALL"]}
 
 
-def test_the_profile_leaves_the_site_specific_values_to_the_site():
+@pytest.mark.parametrize(
+    "left_out,reason",
+    [
+        ("publicResultsBase=", RESULTS_BASE_REFUSAL),
+        ("network.apiServer.cidr=", API_SERVER_REFUSAL),
+        ("network.web.ingressCidrs=", "network.web.ingressCidrs has 0.0.0.0/0"),
+    ],
+)
+def test_the_profile_leaves_the_site_specific_values_to_the_site(
+    left_out: str, reason: str
+):
     """A profile that guessed the results base, the API server address or
     the ingress ranges would be wrong on every cluster. It must fail asking
-    for them, not render something plausible."""
-    refused = helm_template(values="values-prod.yaml")
+    for each of them, not render something plausible -- one at a time, so
+    the profile guessing any one of them is caught, not just all three."""
+    sets = tuple(s for s in PROD_SETS if not s.startswith(left_out))
+    assert len(sets) == len(PROD_SETS) - 1
+    refused = helm_template(values="values-prod.yaml", sets=sets)
     assert refused.returncode != 0
+    assert reason in refused.stderr
 
 
 # --- Priority classes: the label the converter renders names a real class -
@@ -806,3 +838,220 @@ def test_an_empty_class_list_renders_none():
     assert objects(rendered, "WorkloadPriorityClass") == []
     # The queue itself is untouched by the list being empty.
     named(rendered, "ClusterQueue", "htr-batch-cq")
+
+
+# --- 3103: every guard, alone, refuses in its own words -------------------
+
+#: One case per `fail`/`required` in the two charts: a render that satisfies
+#: every other guard and breaks exactly this one, and the whole sentence the
+#: chart must refuse it with. A test that looked only at the exit code was
+#: satisfied by whichever guard happened to fire, so deleting any single one
+#: went unnoticed (finding 3103). `values` is a values file's text, for what
+#: `--set` cannot spell.
+BATCH_GUARDS = {
+    "policies-off": (
+        None,
+        REQUIRED_SETS + (PUBLIC_INGRESS,),
+        "security.policies.enabled is false, so nothing in this namespace"
+        " refuses an image from any registry, a tag instead of a digest or an"
+        " unpinned model: install Kyverno and set security.policies.enabled=true"
+        " (values-prod.yaml does), or set security.policies.allowDisabled=true"
+        " to accept that",
+    ),
+    "verify-images-no-identity": (
+        None,
+        DEFAULT_SETS + ("security.verifyImages.enabled=true",),
+        "security.verifyImages.issuer and .subject are required when"
+        " security.verifyImages.enabled",
+    ),
+    "verify-images-no-subject": (
+        None,
+        DEFAULT_SETS
+        + (
+            "security.verifyImages.enabled=true",
+            "security.verifyImages.issuer=https://token.actions.githubusercontent.com",
+        ),
+        "security.verifyImages.issuer and .subject are required when"
+        " security.verifyImages.enabled",
+    ),
+    "verify-images-no-issuer": (
+        None,
+        DEFAULT_SETS
+        + (
+            "security.verifyImages.enabled=true",
+            f"security.verifyImages.subject={SIGNING_SUBJECT}",
+        ),
+        "security.verifyImages.issuer and .subject are required when"
+        " security.verifyImages.enabled",
+    ),
+    "ingress-empty": (
+        "network:\n  web:\n    ingressCidrs: []\n",
+        REQUIRED_SETS + (POLICIES_OFF,),
+        "network.web.ingressCidrs is empty, and a NetworkPolicy rule with no"
+        " sources admits every address, so an empty list would open the"
+        " unauthenticated web front to everyone rather than close it: list the"
+        " ranges that may reach it, or set network.web.allowPublicIngress=true"
+        " to accept that any address may",
+    ),
+    "ingress-wider-than-8": (
+        None,
+        REQUIRED_SETS
+        + (POLICIES_OFF, "network.web.ingressCidrs={10.16.0.0/16,8.0.0.0/7}"),
+        "network.web.ingressCidrs has 8.0.0.0/7, wider than /8, and the web"
+        " front has no authentication of its own: list the ranges your clients'"
+        " addresses are in, or set network.web.allowPublicIngress=true to accept"
+        " that any address that can route to a node may open the campaign"
+        " browser, the viewer and the read API",
+    ),
+    "api-server": (
+        None,
+        tuple(s for s in DEFAULT_SETS if not s.startswith("network.apiServer.")),
+        API_SERVER_REFUSAL,
+    ),
+    "web-image-tag": (
+        None,
+        DEFAULT_SETS + ("web.image=docker.io/riksarkivet/htrflow-web:v1",),
+        "web.image must be pinned by digest (…@sha256:<64 hex>), got"
+        ' "docker.io/riksarkivet/htrflow-web:v1"; set security.allowTagImages=true'
+        " only for a PoC iteration loop",
+    ),
+    "results-base": (
+        None,
+        DEFAULT_SETS + ("publicResultsBase=",),
+        RESULTS_BASE_REFUSAL,
+    ),
+}
+DEVSTACK_GUARDS = {
+    "console-without-rustfs": (
+        None,
+        ("rustfs.console.enabled=true",),
+        "rustfs.console.enabled needs rustfs.enabled",
+    ),
+    "rustfs-generated-credentials": (
+        None,
+        ("rustfs.enabled=true",),
+        "rustfs.accessKey/secretKey is empty or a value published in this repo:"
+        " set credentials of your own, or set devStack.insecureDefaults: true to"
+        " accept generated or known ones (charts/htrflow-devstack/values.yaml"
+        " says why)",
+    ),
+    "rustfs-published-credentials": (
+        None,
+        (
+            "rustfs.enabled=true",
+            "rustfs.accessKey=site-key",
+            "rustfs.secretKey=minioadmin",
+        ),
+        "rustfs.accessKey/secretKey is empty or a value published in this repo:"
+        " set credentials of your own, or set devStack.insecureDefaults: true to"
+        " accept generated or known ones (charts/htrflow-devstack/values.yaml"
+        " says why)",
+    ),
+}
+#: Each chart's guards, and a render of it that none of them refuses.
+GUARDED_CHARTS = {
+    CHART: (BATCH_GUARDS, DEFAULT_SETS),
+    DEVSTACK_CHART: (DEVSTACK_GUARDS, ()),
+}
+
+
+def _guard_render(
+    chart: Path, values: str | None, sets: tuple[str, ...], tmp_path: Path
+) -> subprocess.CompletedProcess[str]:
+    path = None
+    if values is not None:
+        path = tmp_path / "values.yaml"
+        path.write_text(values, encoding="utf-8")
+    return helm_template(values=str(path) if path else None, sets=sets, chart=chart)
+
+
+@pytest.mark.parametrize(
+    "chart,case",
+    [(chart, case) for chart, (guards, _) in GUARDED_CHARTS.items() for case in guards],
+    ids=lambda v: v.name if isinstance(v, Path) else v,
+)
+def test_each_guard_refuses_in_its_own_words(chart: Path, case: str, tmp_path: Path):
+    values, sets, reason = GUARDED_CHARTS[chart][0][case]
+    refused = _guard_render(chart, values, sets, tmp_path)
+    assert refused.returncode != 0
+    assert reason in refused.stderr, refused.stderr
+
+
+@pytest.mark.parametrize("chart", list(GUARDED_CHARTS), ids=lambda c: c.name)
+def test_the_render_every_case_breaks_is_one_no_guard_refuses(chart: Path):
+    """Each case is this render with one thing broken; if this one were
+    refused, a case could pass on some other guard's sentence."""
+    result = helm_template(sets=GUARDED_CHARTS[chart][1], chart=chart)
+    assert result.returncode == 0, result.stderr
+
+
+#: `fail "…"`, `fail (printf "…" …)` and `required "…"`: the sentence's
+#: literal text, with `%s`/`%q` holes.
+_GUARD_RE = re.compile(r'\b(?:fail|required)\s+\(?(?:printf\s+)?"((?:[^"\\]|\\.)*)"')
+
+
+@pytest.mark.parametrize("chart", list(GUARDED_CHARTS), ids=lambda c: c.name)
+def test_every_guard_in_the_templates_has_a_case(chart: Path):
+    """The table above is only as good as its coverage: a guard added to a
+    template without a case here fails this test, not a review."""
+    sentences = [
+        m.group(1)
+        for tpl in sorted((chart / "templates").rglob("*"))
+        if tpl.suffix in {".tpl", ".yaml"}
+        for m in _GUARD_RE.finditer(tpl.read_text(encoding="utf-8"))
+    ]
+    assert sentences
+    reasons = [reason for _, _, reason in GUARDED_CHARTS[chart][0].values()]
+    # The network guard below is not in the table: see its own test.
+    if chart == CHART:
+        reasons.append(NETWORK_MISSING_REFUSAL)
+    for sentence in sentences:
+        pieces = [p for p in re.split(r"%[sqd]", sentence) if p]
+        assert any(all(p in r for p in pieces) for r in reasons), sentence
+
+
+NETWORK_MISSING_REFUSAL = (
+    "`.Values.network` is missing: upgrade with --reset-then-reuse-values (or a"
+    " full values file), never plain --reuse-values"
+)
+
+
+def test_a_values_tree_without_network_is_refused(tmp_path: Path):
+    """`helm upgrade --reuse-values` with a chart that added `network` once
+    rendered every NetworkPolicy away (audit O6). The schema refuses that
+    tree before any template runs; `htrflow-batch.validate` repeats it for a
+    render that skips the schema. With the schema skipped, though, web.yaml
+    dereferences `.Values.network` before validate.yaml is reached (helm
+    renders templates in reverse name order), so on the real chart that
+    render dies on a nil pointer -- still refused, never in these words. The
+    helper's own sentence is checked on it alone, the way the Endpoints
+    reader is."""
+    refused = helm_template(sets=DEFAULT_SETS + ("network=null",))
+    assert refused.returncode != 0
+    assert "missing property 'network'" in refused.stderr
+
+    chart = tmp_path / "probe"
+    (chart / "templates").mkdir(parents=True)
+    (chart / "Chart.yaml").write_text(
+        "apiVersion: v2\nname: probe\nversion: 0.0.0\n", encoding="utf-8"
+    )
+    shutil.copy(CHART / "templates" / "_helpers.tpl", chart / "templates")
+    (chart / "templates" / "probe.yaml").write_text(
+        '{{- include "htrflow-batch.validate" . }}\n', encoding="utf-8"
+    )
+    probe = subprocess.run(
+        ["helm", "template", "probe", str(chart)], capture_output=True, text=True
+    )
+    assert probe.returncode != 0
+    assert NETWORK_MISSING_REFUSAL in probe.stderr, probe.stderr
+
+
+def test_a_tag_is_taken_only_with_the_poc_switch():
+    """The digest guard's way out is the one its sentence names."""
+    assert render(
+        sets=DEFAULT_SETS
+        + (
+            "web.image=docker.io/riksarkivet/htrflow-web:v1",
+            "security.allowTagImages=true",
+        )
+    )
