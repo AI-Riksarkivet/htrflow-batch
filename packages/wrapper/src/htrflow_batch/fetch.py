@@ -10,7 +10,8 @@ and start with a known raster signature (JPEG/PNG/TIFF/GIF/BMP/WebP/JP2), and
 an obviously textual Content-Type (text/*, HTML, JSON, XML) is refused
 outright — a 200 login page used to be saved as the JPEG and burn a whole
 attempt inside htrflow. Bodies are streamed to disk under ``max_bytes``
-(``FETCH_MAX_BYTES``); a partial file is unlinked on any write failure (W5).
+(``FETCH_MAX_BYTES``), counted on the decoded bytes (``bounded``, 3062); a
+partial file is unlinked on any write failure (W5).
 
 Known limit — service-less canvases: ``MAX_IMAGE_WIDTH`` is applied through
 the IIIF Image API (``/full/<w>,/``). A canvas that carries no image service
@@ -30,6 +31,7 @@ from pathlib import Path
 import httpx
 from pydantic import BaseModel
 
+from .bounded import ACCEPT_ENCODING, BadEncoding, TooLarge, body_chunks
 from .iiif import PageRef
 
 #: Default cap on one image body (env ``FETCH_MAX_BYTES``; docs: wrapper).
@@ -43,8 +45,6 @@ MAX_IMAGE_PIXELS = 100_000_000
 #: Serialises the swap of Pillow's own limit in ``_check_pixels`` -- it is a
 #: module global and the download pool has a dozen threads.
 _PIXEL_GUARD = threading.Lock()
-
-_CHUNK = 256 * 1024
 
 #: Content types that can never be a raster image; refused before reading.
 _TEXTUAL_TYPES = ("text/", "application/json", "application/xml", "application/xhtml")
@@ -96,15 +96,17 @@ def _save(resp: httpx.Response, path: Path, max_bytes: int) -> int:
     checked = False
     try:
         with path.open("wb") as f:
-            for chunk in resp.iter_bytes(chunk_size=_CHUNK):
+            for chunk in body_chunks(resp, max_bytes):
                 if not checked:
                     checked = True
                     if not looks_like_image(chunk):
                         raise _Reject(f"not an image: body starts with {chunk[:16]!r}")
                 size += len(chunk)
-                if size > max_bytes:
-                    raise _Reject(f"too large: > {max_bytes} bytes", retry=False)
                 f.write(chunk)
+    except (TooLarge, BadEncoding) as e:  # 3062: the same body tomorrow
+        path.unlink(missing_ok=True)
+        why = f"too large: {e}" if isinstance(e, TooLarge) else str(e)
+        raise _Reject(why, retry=False) from e
     except BaseException:
         path.unlink(missing_ok=True)
         raise
@@ -194,7 +196,13 @@ def fetch_page(
         if stop is not None and stop.is_set():
             return FetchResult(page=page, path=None, error="stopped: run aborted")
         try:
-            with client.stream("GET", url, timeout=120, follow_redirects=True) as resp:
+            with client.stream(
+                "GET",
+                url,
+                headers={"Accept-Encoding": ACCEPT_ENCODING},
+                timeout=120,
+                follow_redirects=True,
+            ) as resp:
                 if resp.status_code == 200:
                     size = _save(resp, path, max_bytes)
                     _check_pixels(path, max_pixels)  # W14

@@ -9,6 +9,8 @@ import re
 import httpx
 from pydantic import BaseModel, ConfigDict
 
+from .bounded import ACCEPT_ENCODING, BadEncoding, TooLarge, body_chunks
+
 #: Default cap on manifest bytes (env ``MANIFEST_MAX_BYTES``; docs: wrapper).
 MANIFEST_MAX_BYTES = 16 * 1024 * 1024
 
@@ -106,14 +108,21 @@ def fetch_manifest(
     """GET a IIIF manifest as a JSON object, bounded by ``max_bytes``.
 
     Permanent (ManifestError): non-http(s) URL, 400/401/403/404/410, body
-    over the cap, non-JSON or non-object JSON. Transient
+    over the cap once decoded, a Content-Encoding other than gzip, non-JSON
+    or non-object JSON. Transient
     (TransientManifestError): connection/timeout errors, 5xx, 429 and any
     other non-200 status.
     """
     check_http_url(url, "manifest URL")
     shown = redact_url(url)
     try:
-        with client.stream("GET", url, timeout=60, follow_redirects=True) as resp:
+        with client.stream(
+            "GET",
+            url,
+            headers={"Accept-Encoding": ACCEPT_ENCODING},
+            timeout=60,
+            follow_redirects=True,
+        ) as resp:
             if resp.status_code in PERMANENT_STATUSES:
                 raise ManifestError(
                     f"manifest fetch failed: {shown}: HTTP {resp.status_code}"
@@ -127,15 +136,11 @@ def fetch_manifest(
                 raise ManifestError(
                     f"manifest too large: {shown}: {declared} bytes > {max_bytes}"
                 )
-            chunks: list[bytes] = []
-            size = 0
-            for chunk in resp.iter_bytes():
-                size += len(chunk)
-                if size > max_bytes:
-                    raise ManifestError(
-                        f"manifest too large: {shown}: > {max_bytes} bytes"
-                    )
-                chunks.append(chunk)
+            chunks = list(body_chunks(resp, max_bytes))  # 3062: decoded bytes
+    except TooLarge as e:
+        raise ManifestError(f"manifest too large: {shown}: {e}") from e
+    except BadEncoding as e:
+        raise ManifestError(f"manifest refused: {shown}: {e}") from e
     except httpx.HTTPError as e:
         raise TransientManifestError(
             f"manifest fetch failed: {shown}: {type(e).__name__}: {e}"

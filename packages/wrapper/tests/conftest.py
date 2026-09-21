@@ -118,3 +118,38 @@ def s3(cfg):
         client = boto3.client("s3", region_name="us-east-1")
         client.create_bucket(Bucket=cfg.s3_bucket)
         yield client
+
+
+def _gzip_bomb(decoded_mib: int, head: bytes = b"") -> bytes:
+    """A gzip body a few hundred KB long that decodes to ``decoded_mib`` MiB,
+    built a MiB at a time so the test itself never holds the decoded size."""
+    import zlib
+
+    packer = zlib.compressobj(9, zlib.DEFLATED, 16 + zlib.MAX_WBITS)
+    parts = [packer.compress(head)]
+    zeros = bytes(1 << 20)
+    parts += [packer.compress(zeros) for _ in range(decoded_mib)]
+    return b"".join(parts) + packer.flush()
+
+
+def _peak_mib(fn) -> float:
+    """What ``fn()`` allocated at its peak, in MiB (Python allocations: the
+    decoders' output buffers are among them)."""
+    import tracemalloc
+
+    tracemalloc.start()
+    try:
+        fn()
+        return tracemalloc.get_traced_memory()[1] / (1 << 20)
+    finally:
+        tracemalloc.stop()
+
+
+@pytest.fixture
+def gzip_bomb():
+    return _gzip_bomb
+
+
+@pytest.fixture
+def peak_mib():
+    return _peak_mib
