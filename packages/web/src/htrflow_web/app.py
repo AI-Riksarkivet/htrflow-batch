@@ -170,7 +170,8 @@ class BuiltSite(StaticFiles):
     def __init__(self, *args, viewer_csp: str | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.viewer_csp = viewer_csp
-        self.viewer = os.path.realpath(Path(self.directory) / UV_PATH.lstrip("/"))
+        d = self.directory  # None only for a packages-served StaticFiles: no viewer
+        self.viewer = d and os.path.realpath(Path(d) / UV_PATH.lstrip("/"))
 
     def file_response(self, full_path, stat_result, scope, status_code=200):
         response = super().file_response(full_path, stat_result, scope, status_code)
