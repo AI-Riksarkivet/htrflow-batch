@@ -426,7 +426,7 @@ The codes are a precedence, highest first — `1` beats `3` beats `0` — so
 | Exit | What it means |
 | --- | --- |
 | `1` | a pause is **not enforced** — a paused campaign's Workload never appeared, or its Job was refused — whatever else was applied; or nothing reached the cluster at all (no credentials, an unreachable API server, a render that did not pass, a server that refused every object) |
-| `3` | some objects were refused and are unchanged, everything else was applied, and every pause holds; the summary line names what was refused |
+| `3` | some objects were refused and are unchanged — or `--prune` could not delete some — everything else was applied, and every pause holds; the summary line names each of them |
 | `0` | everything was applied |
 
 A Job's **pod template cannot be edited** once the Job exists — that is
