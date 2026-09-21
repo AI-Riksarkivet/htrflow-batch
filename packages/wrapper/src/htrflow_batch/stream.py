@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 
 from .bounded import DOWNLOAD_DEADLINE_SECONDS
 from .fetch import (
+    FETCH_ATTEMPTS,
+    FETCH_BACKOFF,
     FETCH_MAX_BYTES,
     MAX_IMAGE_PIXELS,
     FetchResult,
@@ -30,7 +32,7 @@ log = logging.getLogger("htrflow_batch")
 
 
 class PageOutcome(BaseModel):
-    status: str  # "ok" | "failed" | "skipped"
+    status: str  # "ok" | "failed" | "skipped" | "deferred"
     seconds: float = 0.0
     error: str | None = None
 
@@ -54,6 +56,14 @@ def _failed(stats: "StreamStats", name: str, error: str | None) -> None:
     by the root handler's RedactingFormatter and by LogCapture (S6)."""
     log.warning("page %s failed: %s", name, error)
     stats.results[name] = PageOutcome(status="failed", error=error)
+
+
+def _deferred(stats: "StreamStats", name: str, error: str | None) -> None:
+    """A page the source could not serve TODAY (3095): kept out of `failed`,
+    which verify counts as accounted for, so the page is missing, the run
+    exits 1 and the index's retry redoes it."""
+    log.warning("page %s deferred to the next attempt: %s", name, error)
+    stats.results[name] = PageOutcome(status="deferred", error=error)
 
 
 def discard(path: Path) -> None:
@@ -104,8 +114,8 @@ class PageStream:
         *,
         lookahead: int,
         concurrency: int = 12,
-        retries: int = 3,
-        backoff: float = 0.5,
+        retries: int = FETCH_ATTEMPTS,
+        backoff: float = FETCH_BACKOFF,
         max_bytes: int = FETCH_MAX_BYTES,
         max_pixels: int = MAX_IMAGE_PIXELS,
         stop: threading.Event | None = None,
@@ -206,7 +216,7 @@ def consume(
         files: dict[str, Path] = {}
         try:
             if item.path is None:
-                _failed(stats, name, item.error)
+                (_deferred if item.transient else _failed)(stats, name, item.error)
                 continue
             t0 = time.monotonic()
             try:
