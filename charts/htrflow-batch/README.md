@@ -7,8 +7,8 @@ the read-only status API in one Deployment).
 **Campaigns are Kubernetes Indexed Jobs, not objects this chart renders.**
 `packages/converter` (`htrflow-campaigns render <repo-dir> --out <dir>`)
 turns a campaigns repo into pipeline/campaign ConfigMaps and Jobs; those are
-applied outside this chart (`htrflow-campaigns apply`, or Argo CD watching a
-`rendered/` directory) — see
+applied outside this chart by `htrflow-campaigns apply` alone — by hand, or
+as the Argo CD hook of a campaigns repo — see
 [docs/how-it-works/campaigns.md](../../docs/how-it-works/campaigns.md). This
 chart only renders what those Jobs and the status page need: the Kueue
 queue, the model-cache PVC, NetworkPolicies for `app: htrflow-batch` /

@@ -23,12 +23,19 @@ Two rules hold the design together:
   ([Queueing](queueing.md#pause)).
 - **Deleting a campaign's file cancels the campaign**, but only if the apply
   is asked to prune. The next `render` drops the campaign from `rendered/`,
-  and a pruning apply then deletes its Job and ConfigMap. In Argo CD, pruning
-  needs `syncPolicy.automated.prune: true` or a manual sync with `--prune`.
-  By hand it is `make campaigns-apply PRUNE=1`. A prune deletes every Job and
+  and a pruning apply then deletes its Job and ConfigMap: `htrflow-campaigns
+  apply --prune`, which is the Argo CD hook's command and, by hand,
+  `make campaigns-apply PRUNE=1`. A prune deletes every Job and
   ConfigMap carrying the converter's `managed-by: converter` label that the
   render did not produce. Without pruning, the deleted campaign's Job simply
   stays. **Nothing here ever touches results already in S3.**
+
+Both rules hold only because `htrflow-campaigns apply` is the one thing that
+applies `rendered/`. Every rendered object is a Skip hook to Argo CD, and
+Argo CD runs the command as a hook instead of applying the directory
+([`rendered/` with Argo CD](../reference/campaign-yaml.md#with-argo-cd)):
+an applier that makes the cluster match `rendered/` would create a finished
+campaign's reaped Job again and run every volume again.
 
 Everything else follows from those two rules and ordinary Kubernetes
 semantics. Nothing here runs on a timer, and nothing here has to stay alive
@@ -287,7 +294,7 @@ Three things follow.
 
 Delete the campaign file from `campaigns/` when the campaign is over and you
 no longer want it on the status page. That is what prunes both ConfigMaps —
-`apply --prune`, or Argo CD's own prune. Nothing else does, and nothing
+`apply --prune`. Nothing else does, and nothing
 expires them. **The results in the bucket are not touched.** Removing those
 is a separate, deliberate step, and the record says what there is to remove.
 Leaving the file in place costs two small ConfigMaps and keeps the campaign
@@ -396,8 +403,10 @@ gets `loose-scans`. The exact format is in the
   URL through `converter.yaml`'s `source_template`.
 - **The `images:` volume** becomes one line: `images:` followed by its URLs,
   space-joined, with no manifest anywhere.
-- **`managed-by: converter`** is how `apply --prune`, and Argo CD's own
-  prune, find this object again once its campaign file is deleted.
+- **`managed-by: converter`** is how `apply --prune` finds this object again
+  once its campaign file is deleted.
+- **`argocd.argoproj.io/hook: Skip`** keeps Argo CD from applying it: only
+  `htrflow-campaigns apply` does.
 - **`campaign` and `pipeline`** record where the object came from.
 
 ### The Indexed Job

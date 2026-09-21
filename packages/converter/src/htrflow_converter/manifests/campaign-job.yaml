@@ -9,6 +9,13 @@ metadata:
     htrflow.riksarkivet.se/campaign: CAMPAIGN
     htrflow.riksarkivet.se/pipeline: PIPELINE
     kueue.x-k8s.io/queue-name: QUEUE
+  annotations:
+    # A Skip hook to Argo CD: an Application syncing rendered/ never applies,
+    # re-creates or prunes this object. `htrflow-campaigns apply` is the one
+    # thing that applies it -- the finished-campaign guard, the live-record
+    # check and the pause sync live there, and a Job Argo CD re-created
+    # after its TTL would run every volume again.
+    argocd.argoproj.io/hook: Skip
 spec:
   suspend: false
   completionMode: Indexed

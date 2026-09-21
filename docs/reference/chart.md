@@ -7,7 +7,8 @@ policies. Its version is in `Chart.yaml`. The development support stack
 (RustFS, an in-cluster registry, the NVIDIA device plugin) is the separate
 `charts/htrflow-devstack` chart. Campaigns themselves are not rendered by
 either chart: they are Indexed Jobs rendered by `packages/converter` from a
-campaigns repo and applied by `htrflow-campaigns apply` or Argo CD.
+campaigns repo and applied by `htrflow-campaigns apply` (by hand, or as an
+Argo CD hook).
 Source: [`charts/htrflow-batch/values.yaml`](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/charts/htrflow-batch/values.yaml);
 every key is declared in `values.schema.json` (unknown keys and wrong types
 are rejected at install time). This page is the prose; the generated table of

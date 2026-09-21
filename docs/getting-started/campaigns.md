@@ -107,10 +107,16 @@ Set the workflow's `CONVERTER_REF`, `POLICY_NAMESPACE`,
 `POLICY_ALLOWED_IMAGE_REPOS` and `POLICY_REQUIRE_MODEL_REVISION` to match
 your release.
 
-To apply what CI committed, point a GitOps tool at `rendered/`. For Argo CD,
-that is an `Application` whose source is `rendered/`, with
-`syncPolicy.automated.prune: true` so that deleting a campaign file cancels
-the campaign. Nothing reaches the cluster except what CI committed.
+To apply what CI committed, run `htrflow-campaigns apply --prune` on it. Do
+not point a GitOps tool at `rendered/` to apply it: once a finished
+campaign's Job is reaped, a tool that makes the cluster match the directory
+creates it again and runs every volume again. With Argo CD, the Application
+syncs only `rendered/sync.yaml`, a digest of the render, and a `PostSync`
+hook runs the command
+([`rendered/` with Argo CD](../reference/campaign-yaml.md#with-argo-cd)).
+Every rendered campaign object is a Skip hook to Argo CD, so an Application
+pointed at the whole directory applies none of it. Nothing reaches the
+cluster except what CI committed.
 
 When `htrflow-campaigns apply` itself runs inside the cluster (a CI Job, or
 an Argo CD `PostSync` hook), it needs an identity that may write campaign
@@ -182,8 +188,8 @@ volume. There is no separate "enable" step and nothing to poll.
 - **Pausing is a Git change.** Put `suspend: true` in the campaign file, and
   the apply step puts the same intent on the Kueue Workload.
 - **Deleting a campaign's file cancels it.** Its Job and ConfigMap are
-  removed by an apply that is asked to prune: Argo CD with
-  `syncPolicy.automated.prune: true`, or `make campaigns-apply PRUNE=1`.
+  removed by an apply that is asked to prune: `htrflow-campaigns apply
+  --prune` (the Argo CD hook's command), or `make campaigns-apply PRUNE=1`.
   Pruning deletes every converter-labelled object that is not in this apply,
   so never run it against a partial checkout.
 

@@ -71,7 +71,8 @@ def test_campaign_job_fields_per_global_constraints():
         "operator": "In",
         "values": [13],
     }
-    assert "annotations" not in job["metadata"]  # no partial admission (B63)
+    # Only Argo CD's Skip (3085): no partial-admission annotation (B63).
+    assert job["metadata"]["annotations"] == {"argocd.argoproj.io/hook": "Skip"}
     labels = job["metadata"]["labels"]
     assert labels["app"] == "htrflow-batch"
     assert labels["kueue.x-k8s.io/queue-name"] == cfg.queue
@@ -662,7 +663,8 @@ def test_the_campaign_configmap_names_the_image_its_volumes_ran_on():
     kyrk, demo, cfg = _kyrk()
     cm = render.campaign_objects(kyrk, demo, cfg)[0]
     assert cm["metadata"]["annotations"] == {
-        "htrflow.riksarkivet.se/image-digest": demo.image
+        "htrflow.riksarkivet.se/image-digest": demo.image,
+        "argocd.argoproj.io/hook": "Skip",
     }
 
 

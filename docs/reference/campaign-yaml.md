@@ -260,14 +260,57 @@ is a deliberate edit there.
 rendered/
   pipelines/<id>.yaml     # ConfigMap htr-pipeline-<id> + Job htr-warmup-<id>
   campaigns/<name>.yaml   # ConfigMap campaign-<name> + the campaign's Indexed Job
+  sync.yaml               # ConfigMap htrflow-campaigns-render: the render's digest
 ```
 
-This directory is generated, committed by the campaigns repo's own CI on
-`main` (never hand-edited), and is what Argo CD or `htrflow-campaigns apply`
-(`make campaigns-apply DIR=<campaigns-repo-dir>`) applies — pipelines first,
-since a campaign's Job references its pipeline's ConfigMap.
-`htrflow-campaigns apply` does that ordering itself; by hand it is
-`kubectl apply -f rendered/pipelines -f rendered/campaigns`.
+This directory is generated and committed by the campaigns repo's own CI on
+`main` (never hand-edited). **Only `htrflow-campaigns apply` applies it**
+(`make campaigns-apply DIR=<campaigns-repo-dir>`), pipelines first, since a
+campaign's Job references its pipeline's ConfigMap. Never `kubectl apply` it,
+and never let Argo CD apply it: anything else that applies a campaign Job
+skips every check the command makes first. A finished campaign's Job is
+reaped after `ttlSecondsAfterFinished` while its file stays in `rendered/`,
+and an applier that makes the cluster match the directory creates that Job
+again and runs every volume again. The
+[finished-campaign check](../how-it-works/campaigns.md#the-record-a-campaign-leaves), the check against
+the campaign's live ConfigMap and the [pause sync](#pausing) all live in the
+command.
+
+So every object under `pipelines/` and `campaigns/` carries
+`argocd.argoproj.io/hook: Skip`: an Argo CD Application that syncs
+`rendered/` applies none of them, and so never re-creates, heals or prunes
+one either.
+
+### With Argo CD
+
+Argo CD syncs one object, and runs the command as a hook:
+
+- **The Application's source** is the campaigns repo with
+  `directory.recurse: true` and `directory.include` limited to
+  `rendered/sync.yaml` and the hook's manifest
+  (`{rendered/sync.yaml,argocd/*.yaml}`), with automated sync on.
+- **`rendered/sync.yaml`** is a ConfigMap holding a digest of the render.
+  A render that changes anything changes it, so the Application goes
+  OutOfSync and syncs. It is there because automated sync runs only on
+  OutOfSync, and an Application whose every other object is a Skip hook is
+  never OutOfSync. It carries no converter label, so `apply --prune` leaves
+  it alone.
+- **The hook** is a `PostSync` Job running `htrflow-campaigns apply --prune`
+  on a checkout of the campaigns repo ([manifest below](#pausing)).
+
+A refresh, a self-heal or a re-sync with no new render changes nothing: the
+digest has not moved, and no campaign object is Argo CD's to create again.
+Cancelling is the command's `--prune`, not Argo CD's: Argo CD never applied
+a campaign object, so it has none to prune.
+
+!!! warning "An Application that already applied `rendered/` itself"
+
+    Such an Application tracks every campaign object it applied. Once a
+    render makes them Skip hooks they leave its desired state, and with
+    pruning on its next sync may delete them. Switch its pruning off, or
+    delete it with `argocd app delete --cascade=false` (which leaves its
+    resources in place), before the first render with this converter
+    reaches it.
 
 `--out` says where a render is *written*. What it is held against is always
 the repo's own committed `rendered/`: that is the record of what has been
@@ -278,12 +321,9 @@ running into a new one.
 `render` also **removes** files under `--out` that this render did not
 produce, so deleting `campaigns/<name>.yaml` deletes
 `rendered/campaigns/<name>.yaml` too. Deleting the manifest is only half of
-cancelling: the apply has to prune as well, and **pruning is opt-in on both
-sides**. Argo CD's `syncPolicy.automated.prune` defaults to `false` and a
-manual sync does not prune unless asked, so an Application that manages this
-repo needs `syncPolicy.automated.prune: true` (or `argocd app sync --prune`);
-by hand it is `make campaigns-apply DIR=<campaigns-repo-dir> PRUNE=1`, which
-runs `htrflow-campaigns apply --prune` — that lists every Job and ConfigMap
+cancelling: the apply has to prune as well, and **pruning is opt-in**:
+`htrflow-campaigns apply --prune` — the Argo CD hook's command, and
+`make campaigns-apply DIR=<campaigns-repo-dir> PRUNE=1` by hand. It lists every Job and ConfigMap
 in the namespace carrying the converter's `managed-by=converter` label and
 deletes the ones this render did not produce. Every object the converter
 renders — both ConfigMaps and both Jobs — carries that label for exactly
@@ -360,15 +400,16 @@ apply and the campaign resumes at the next unfinished index. Git is the truth
 about what should be running; nothing on the cluster stays paused unless the
 campaign file says so.
 
-With Argo CD, run the same command as a `PostSync` hook so a merged
-`suspend: true` takes effect on sync. **The manifest below is illustrative,
+With Argo CD, the same command is the `PostSync` hook that applies
+`rendered/` at all ([With Argo CD](#with-argo-cd)), so a merged
+`suspend: true` takes effect on the sync its render triggers. **The manifest below is illustrative,
 not a tested manifest**: the image digest, the ref and the checkout are
 placeholders you have to fill in. No new image is needed: `uvx` installs the
 converter from this repo at the pinned ref, and the pod needs a checkout of
 the campaigns repo to render (the hook re-renders rather than trusting the
 synced `rendered/`):
 
-```yaml title="argocd/pause-sync-hook.yaml"
+```yaml title="argocd/apply.yaml"
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -378,6 +419,8 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: HookSucceeded
 spec:
   template:
+    metadata:
+      labels: {app: htrflow-campaigns}             # the chart's egress rule
     spec:
       restartPolicy: Never
       serviceAccountName: htrflow-campaigns        # helm ... --set
@@ -387,7 +430,7 @@ spec:
           image: ghcr.io/astral-sh/uv@sha256:…     # any pinned uv image
           command: ["uvx", "--from",
                     "git+https://github.com/AI-Riksarkivet/htrflow-batch@<ref>#subdirectory=packages/converter",
-                    "htrflow-campaigns", "apply", "/repo"]
+                    "htrflow-campaigns", "apply", "--prune", "/repo"]
           volumeMounts: [{name: repo, mountPath: /repo}]
       volumes: [ … ]                               # the campaigns repo checkout
 ```
@@ -399,8 +442,9 @@ with `list`/`create`/`patch`/`delete` on `jobs` and `configmaps` and
 only. `create` is not redundant next to `patch`: a server-side apply whose
 object does not exist yet is authorized as both. Nothing else has to be on
 the image — the converter carries its own Kubernetes client, so there is no
-`kubectl` to install. Add `--prune` to make a deleted campaign file cancel
-its campaign; leave it off and Argo CD's own prune does the same job.
+`kubectl` to install. `--prune` is what makes a deleted campaign file cancel
+its campaign; leave it off and a deleted campaign's Job simply stays, since
+Argo CD's own prune never sees a campaign object.
 
 The hook fails the sync on any non-zero exit, so treat exit `3` — some
 objects refused, everything else applied — as what it is: the sync did

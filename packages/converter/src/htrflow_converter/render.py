@@ -44,7 +44,7 @@ MAX_BYTES_PER_JOB = 900 * 1024
 # key), which ``_set``'s dotted-path parser would otherwise split on.
 _MANAGED_BY_LABEL = "htrflow.riksarkivet.se/managed-by"
 #: The label every rendered object carries and the one an ``apply --prune``
-#: (or Argo CD's own prune) deletes a cancelled campaign's leftovers by. The
+#: deletes a cancelled campaign's leftovers by. The
 #: only definition: ``cluster.py`` lists by it, the Makefile asks this
 #: module for it, and ``test_render.py`` asserts the renderer writes it.
 CAMPAIGN_SELECTOR = f"{_MANAGED_BY_LABEL}=converter"
@@ -243,8 +243,8 @@ _WARMUP_WAIT = (
 def _campaign_configmap(
     name: str, c: Campaign, p: Pipeline, volumes: list[Volume], cfg: ConverterConfig
 ) -> dict:
-    # The labels are not decoration: `htrflow-campaigns apply --prune` (and
-    # Argo CD's own prune) find a deleted campaign's leftovers by listing
+    # The labels are not decoration: `htrflow-campaigns apply --prune` finds
+    # a deleted campaign's leftovers by listing
     # `htrflow.riksarkivet.se/managed-by=converter`. An unlabelled ConfigMap
     # would outlive the Job it fed.
     cm = _load("configmap.yaml")
@@ -442,6 +442,22 @@ def status_configmap(live: dict, cfg: ConverterConfig) -> dict | None:
         "resultsBase": f"{cfg.public_results_base}/{namespace}/{pipeline}",
     }
     return cm
+
+
+#: The one object in `rendered/` Argo CD syncs (3085). Every other one is a
+#: Skip hook (manifests/campaign-job.yaml), so without this an Application
+#: would never go OutOfSync -- and automated sync runs only then, so the
+#: hook that runs `htrflow-campaigns apply` would never run. Unlabelled on
+#: purpose: `apply --prune` deletes by the converter's label, and this is
+#: Argo CD's to keep.
+SYNC_CONFIGMAP = "htrflow-campaigns-render"
+
+
+def sync_configmap(cfg: ConverterConfig, sha256: str) -> dict:
+    """The render's digest, as a ConfigMap: changes when the render does."""
+    meta = {"name": SYNC_CONFIGMAP, "namespace": cfg.namespace}
+    return {"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta,
+            "data": {"sha256": sha256}}  # fmt: skip
 
 
 def campaign_objects(c: Campaign, p: Pipeline, cfg: ConverterConfig) -> list[dict]:
