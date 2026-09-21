@@ -90,5 +90,55 @@ spec:
               - key: {{ `'{{ request.oldObject.metadata.labels."htrflow.riksarkivet.se/managed-by" || ''unlabelled'' }}'` }}
                 operator: NotEquals
                 value: converter
+    # The label the delete rule trusts is one this same identity may write
+    # (2026-09-17 audit, 3066): its `patch` covers every Job and ConfigMap
+    # in the namespace, so it could label a foreign object and then delete
+    # it -- or simply overwrite it. Every write it makes is therefore held
+    # to the label too: the object it writes must carry it, and on an UPDATE
+    # so must the object it replaces, which is what stops the adoption.
+    # Everything the converter renders is labelled, so its own applies and
+    # the warm-up replace pass untouched.
+    - name: apply-writes-only-what-it-renders
+      match:
+        any:
+          - resources:
+              kinds: [Job, ConfigMap]
+              namespaces: [{{ .Release.Namespace | quote }}]
+              operations: [CREATE, UPDATE]
+            subjects:
+              - kind: ServiceAccount
+                name: htrflow-campaigns
+                namespace: {{ .Release.Namespace }}
+      validate:
+        message: >-
+          the apply identity may only write objects labelled
+          htrflow.riksarkivet.se/managed-by: converter
+        deny:
+          conditions:
+            all:
+              - key: {{ `'{{ request.object.metadata.labels."htrflow.riksarkivet.se/managed-by" || ''unlabelled'' }}'` }}
+                operator: NotEquals
+                value: converter
+    - name: apply-adopts-nothing
+      match:
+        any:
+          - resources:
+              kinds: [Job, ConfigMap]
+              namespaces: [{{ .Release.Namespace | quote }}]
+              operations: [UPDATE]
+            subjects:
+              - kind: ServiceAccount
+                name: htrflow-campaigns
+                namespace: {{ .Release.Namespace }}
+      validate:
+        message: >-
+          the apply identity may not take over an object the converter did not
+          render (label htrflow.riksarkivet.se/managed-by: converter)
+        deny:
+          conditions:
+            all:
+              - key: {{ `'{{ request.oldObject.metadata.labels."htrflow.riksarkivet.se/managed-by" || ''unlabelled'' }}'` }}
+                operator: NotEquals
+                value: converter
 {{- end }}
 {{- end }}
