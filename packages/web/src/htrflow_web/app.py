@@ -19,6 +19,7 @@ import base64
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from importlib import metadata
@@ -150,14 +151,34 @@ GET_HEAD = ["GET", "HEAD"]
 
 
 class BuiltSite(StaticFiles):
-    """StaticFiles that also resolves ``/log`` to adapter-static's ``log.html``.
+    """StaticFiles that also resolves ``/log`` to adapter-static's ``log.html``,
+    and puts the viewer's policy on whatever response carries ``uv.html``.
 
     SvelteKit's static adapter emits one ``<route>.html`` per prerendered
     page, so a direct visit or a refresh of ``/log`` has to be mapped by the
     server (nginx did it with ``try_files /log.html =404``). Extensionless
     paths only: a request for ``config.js`` must stay a 404 when it is
     missing rather than become ``config.js.html``.
+
+    The viewer's CSP is chosen by the file served, not by the request path:
+    the retry above answers ``/uv`` with it and the normalised lookup answers
+    ``/uv.html/`` and ``//uv.html``, and a path match left all of those with
+    ``frame-ancestors 'none'`` alone (2026-09-17 audit, 3059). The middleware
+    in ``create_app`` keeps a CSP a response already has.
     """
+
+    def __init__(self, *args, viewer_csp: str | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.viewer_csp = viewer_csp
+        self.viewer = os.path.realpath(Path(self.directory) / UV_PATH.lstrip("/"))
+
+    def file_response(self, full_path, stat_result, scope, status_code=200):
+        response = super().file_response(full_path, stat_result, scope, status_code)
+        # lookup_path hands over a realpath, so an alias or a symlink to the
+        # viewer compares equal here. A 304 is still the viewer's response.
+        if self.viewer_csp and os.path.realpath(full_path) == self.viewer:
+            response.headers["Content-Security-Policy"] = self.viewer_csp
+        return response
 
     async def get_response(self, path: str, scope):
         try:
@@ -224,9 +245,8 @@ def create_app(
     @app.middleware("http")
     async def security_headers(request, call_next):
         response = await call_next(request)
-        response.headers.update(SECURITY_HEADERS)
-        if request.url.path == UV_PATH and viewer_csp is not None:
-            response.headers["Content-Security-Policy"] = viewer_csp
+        for name, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(name, value)
         return response
 
     @app.exception_handler(ClusterUnavailable)
@@ -484,6 +504,7 @@ def create_app(
     # is not an error: the API is then all there is.
     static = Path(static_dir or DEFAULT_STATIC_DIR)
     if static.is_dir():
-        app.mount("/", BuiltSite(directory=static, html=True), name="site")
+        site = BuiltSite(directory=static, html=True, viewer_csp=viewer_csp)
+        app.mount("/", site, name="site")
 
     return app
