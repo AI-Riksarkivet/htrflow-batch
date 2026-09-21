@@ -275,6 +275,9 @@
           "properties": {
             "enabled": {
               "type": "boolean"
+            },
+            "allowDisabled": {
+              "type": "boolean"
             }
           }
         },

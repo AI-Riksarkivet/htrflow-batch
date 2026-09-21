@@ -178,10 +178,14 @@ e2e:
 # web.image. CHART_DEFAULT_SETS mirrors ci/full-values.yaml's shape with a
 # placeholder digest/CIDR — never install with these.
 DEVSTACK_CHART := charts/htrflow-devstack
-CHART_DEFAULT_SETS := --set publicResultsBase=https://x/ \
+# The defaults also leave the Kyverno policies off, which the chart refuses
+# unless the render says so (B80) -- CHART_NO_POLICY_SETS is the render
+# that does not, and must fail.
+CHART_NO_POLICY_SETS := --set publicResultsBase=https://x/ \
                        --set network.apiServer.cidr=10.16.51.10/32 \
                        --set network.web.allowPublicIngress=true \
                        --set web.image=docker.io/riksarkivet/htrflow-web@sha256:0000000000000000000000000000000000000000000000000000000000000000
+CHART_DEFAULT_SETS := $(CHART_NO_POLICY_SETS) --set security.policies.allowDisabled=true
 # The production profile is rendered like any other input: it is the file
 # the deployment page tells operators to start from, so a change that stops
 # it rendering has to fail here. Its site-specific values are the operator's,
@@ -203,6 +207,9 @@ helm-template: helm-lint
 	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/values-prod.yaml $(CHART_PROD_SETS) > /dev/null
 	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) > /dev/null
 	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) -f $(DEVSTACK_CHART)/ci/full-values.yaml > /dev/null
+	@# An install with the policies off and no allowDisabled must be refused (B80).
+	@! helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_NO_POLICY_SETS) > /dev/null 2>&1 \
+	  || { echo "chart rendered with the policies off and no security.policies.allowDisabled: the B80 guard is gone"; exit 1; }
 	@# RustFS on credentials nobody chose must be refused (B63 Task 27).
 	@! helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) --set rustfs.enabled=true > /dev/null 2>&1 \
 	  || { echo "devstack rendered RustFS with no credentials: the devStack.insecureDefaults guard is gone"; exit 1; }

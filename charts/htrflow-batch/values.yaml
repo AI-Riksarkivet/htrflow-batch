@@ -136,6 +136,12 @@ security:
   # in the pull request rather than at apply time.
   policies:
     enabled: false
+    # Off is allowed, but not silently: with `enabled: false` the chart
+    # refuses to render unless this says the namespace is meant to run
+    # without admission policy — any registry, any tag, any unpinned model.
+    # A dev cluster without Kyverno sets it; values-prod.yaml turns the
+    # policies on instead.
+    allowDisabled: false
   # Pod Security Admission level `make psa-labels` enforces on the namespace
   # (warn/audit are always `restricted`). The platform pods are restricted-
   # clean. `baseline` was historically needed for charts/htrflow-devstack's

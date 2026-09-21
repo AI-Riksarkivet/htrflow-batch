@@ -42,7 +42,10 @@ REQUIRED_SETS = (
 #: The default ingress list is a catch-all, and the chart makes that an
 #: explicit choice rather than a silent default.
 PUBLIC_INGRESS = "network.web.allowPublicIngress=true"
-DEFAULT_SETS = REQUIRED_SETS + (PUBLIC_INGRESS,)
+#: So is an install that enforces nothing: the chart defaults leave the
+#: Kyverno policies off, and a render that keeps them off says so.
+POLICIES_OFF = "security.policies.allowDisabled=true"
+DEFAULT_SETS = REQUIRED_SETS + (PUBLIC_INGRESS, POLICIES_OFF)
 
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm not on PATH")
 
@@ -167,6 +170,29 @@ def test_the_rbac_scope_policy_follows_the_policies_switch(default: list[dict]):
     assert objects(default, "ClusterPolicy") == []
 
 
+# --- B80: an install that enforces nothing has to say so ------------------
+
+
+def test_an_install_without_the_policies_has_to_say_so():
+    """The chart's defaults leave every Kyverno policy off, because a policy
+    nothing reconciles is worse than none -- which also meant an install
+    that followed no profile enforced nothing the repository built, and
+    nothing said so. Off stays possible; silent stops being."""
+    refused = helm_template(sets=REQUIRED_SETS + (PUBLIC_INGRESS,))
+    assert refused.returncode != 0
+    assert "security.policies.allowDisabled" in refused.stderr
+    # One sentence: the error names the switch and the opt-out, nothing more.
+    reason = next(
+        line for line in refused.stderr.splitlines() if "allowDisabled" in line
+    ).split("): ", 1)[1]
+    assert ". " not in reason and reason.startswith("security.policies.enabled")
+
+    assert render(sets=DEFAULT_SETS)
+    assert render(
+        sets=REQUIRED_SETS + (PUBLIC_INGRESS, "security.policies.enabled=true")
+    )
+
+
 # --- D2: an unauthenticated NodePort open to every address by default -----
 
 
@@ -176,7 +202,7 @@ def test_the_catch_all_web_ingress_has_to_be_said_out_loud():
     dev stack and the compose smoke both rely on it, and narrowing it by
     guess would break them on upgrade -- but it stops being something an
     operator can ship without noticing."""
-    refused = helm_template(sets=REQUIRED_SETS)
+    refused = helm_template(sets=REQUIRED_SETS + (POLICIES_OFF,))
     assert refused.returncode != 0
     assert "network.web.allowPublicIngress" in refused.stderr
 
@@ -189,7 +215,9 @@ def test_a_named_ingress_range_needs_no_opt_out():
     """The flag is about the catch-all, not about ingress: an operator who
     lists the ranges that may reach the web front says enough by listing
     them."""
-    rendered = render(sets=REQUIRED_SETS + ("network.web.ingressCidrs={10.16.0.0/16}",))
+    rendered = render(
+        sets=REQUIRED_SETS + (POLICIES_OFF, "network.web.ingressCidrs={10.16.0.0/16}")
+    )
     ingress = named(rendered, "NetworkPolicy", "htr-web")["spec"]["ingress"]
     assert ingress[0]["from"] == [{"ipBlock": {"cidr": "10.16.0.0/16"}}]
 
@@ -271,7 +299,9 @@ def test_the_catch_all_guard_is_silent_when_the_policies_are_not_rendered():
     """A campaigns repo's CI renders this chart with `network.enabled=false`
     to get at the policy objects alone. There is no web NetworkPolicy in
     that render, so there is nothing for the guard to warn about."""
-    result = helm_template(sets=REQUIRED_SETS + ("network.enabled=false",))
+    result = helm_template(
+        sets=REQUIRED_SETS + ("network.enabled=false", "security.policies.enabled=true")
+    )
     assert result.returncode == 0, result.stderr
 
 

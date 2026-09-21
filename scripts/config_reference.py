@@ -56,6 +56,7 @@ SECURITY = {
     "web.image": "digest-pinned unless `security.allowTagImages` — render",
     "security.allowTagImages": "opens that digest gate — render",
     "security.psaEnforce": "Pod Security Admission label — cluster",
+    "security.policies.allowDisabled": "no admission policy at all — render",
     "network.web.ingressCidrs": "the only gate on the read API — cluster",
 }
 
