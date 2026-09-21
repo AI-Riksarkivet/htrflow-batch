@@ -26,6 +26,7 @@ const detail = {
   volumes: [],
   pagesDone: 0,
   pagesTotal: 0,
+  pagesCoverage: { counted: 0, of: 0 },
   pagesFailed: 0,
   errors: 0,
   lastError: null,

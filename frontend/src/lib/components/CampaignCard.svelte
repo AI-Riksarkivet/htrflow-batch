@@ -69,6 +69,8 @@
   // The pages of the volumes this response covered, summed by the API. Not
   // in JobSummary: the list endpoint reads no volumes at all.
   let pages = $state<{ done: number; total: number }>({ done: 0, total: 0 });
+  // How many run volumes those pages are summed over, of how many (3076).
+  let coverage = $state({ counted: 0, of: 0 });
   // What went wrong anywhere in the campaign: failed pages, errors, and the
   // most recent error with the run log it came from (the product owner,
   // 2026-09-08 — an exception in a log should show on the front page).
@@ -172,6 +174,9 @@
     done: pages.done,
     total: pages.total,
     failed: notice.pagesFailed,
+    // Said while the sums are not yet every volume's: a clean-looking total
+    // may only be one that has not read the volume that lost pages.
+    counting: coverage.counted < coverage.of ? coverage : undefined,
   });
 
   /** A volume's pages in the shape zone 2 uses for the campaign's. */
@@ -385,6 +390,7 @@
       // in-flight index is far past the loaded page.
       latest = detail.latest;
       pages = { done: detail.pagesDone, total: detail.pagesTotal };
+      coverage = detail.pagesCoverage;
       notice = {
         pagesFailed: detail.pagesFailed,
         errors: detail.errors,
@@ -656,13 +662,21 @@
      bar. -->
 {#snippet totalsRow(
   label: string,
-  cell: { done: number; total: number; failed: number; active?: number },
+  cell: {
+    done: number;
+    total: number;
+    failed: number;
+    active?: number;
+    counting?: { counted: number; of: number } | undefined;
+  },
   errors: number,
 )}
   <div class="row totals">
     <span class="c-label"
       >{label}{#if cell.active}<span class="quiet">
           {" · "}{cell.active} active</span
+        >{/if}{#if cell.counting}<span class="quiet">
+          {" · "}counted in {cell.counting.counted} of {cell.counting.of} volumes</span
         >{/if}</span
     >
     <span class="c-links"></span>
