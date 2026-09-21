@@ -274,11 +274,12 @@ place on each one, the way they would in a table.
 
    **What a volume has to say for itself** — why it failed, and the page
    error it reported — is a second line under its own row, spanning the whole
-   width and clipped with its title. A page error is one volume's (it is that
+   width and wrapping rather than clipping. A page error is one volume's (it is that
    volume's `progress.lastError`), so it belongs there rather than in a line
    about the campaign; the campaign's problems line keeps it only when the
-   volume it happened in is not on screen to say it under. On the folded row,
-   which is one line, a failed volume's sentence sits with its id instead.
+   volume it happened in is not on screen to say it under. On the folded row
+   a failed volume's sentence sits with its id instead, beside it when it
+   fits and on a line of its own when it does not.
 
    At phone width (≤520px) the tracks fold — the id and what failed in it
    across the first line, then the icons, the short bar, the fraction and the
@@ -291,17 +292,23 @@ place on each one, the way they would in a table.
    content has no width of its own. It collapsed to nothing while the totals
    rows, whose icon and pill cells are empty and could give instead, kept
    theirs.
-3. **Problems**, one line across the grid, and only when there is one: why
+3. **Problems**, across the grid, and only when there is one: why
    the warm-up could not run, and each failed volume as `id: sentence` with
    the id linking to that volume's run log. The most recent page error joins
    it only when the volume it happened in is not one of the rows on screen —
    otherwise it sits under that row (above), with a link to that volume's run
    log (the API sends its `logUrl`, since the row it happened in is usually
    outside the page being shown). It carries sentences and nothing else — the
-   counts are the totals' job and are not repeated here. Warning colour,
-   clipped to one line, with the whole of it in the `title` for the mouse —
-   the sentences are the line's own text, so clipping them with `overflow`
-   leaves them in the accessibility tree and no hidden second copy is needed.
+   counts are the totals' job and are not repeated here. Warning colour, and
+   it **wraps**: clipped to one line, the second failure on could not be read
+   on a phone or from a keyboard, and a Tab could land on a link inside the
+   clip that nobody could see. Past three sentences the rest wait behind a
+   "N more" button (`aria-expanded`, `aria-controls` on the line) rather than
+   burying the volumes under a paragraph; the sentences held back are not
+   rendered at all, so there is no hidden link to focus. The page error's
+   "log" link shows only while its sentence is one of those shown. The id
+   and the one-line label cell still cut an over-long id, but with `overflow:
+   clip` and a clip margin, so a focused link's ring is drawn whole.
    With the card open it drops the failed volumes that are already visible as
    rows and keeps the rest. `describeLastError` names the failing page once:
    the wrapper writes it into its own message as often as not, and the API
