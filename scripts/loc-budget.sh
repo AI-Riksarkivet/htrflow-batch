@@ -605,7 +605,12 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 3156
 # tried with dryRun=All before its ConfigMap goes, so a refused Job leaves
 # the pair as it was; and the pipeline guard counts the campaigns `rendered/`
 # recorded as running a pipeline, not only the ones whose file names it now.
-check converter "$(count packages/converter/src -name '*.py')" 2724
+# 2700 -> 2723 (3085): `htrflow-campaigns apply` is the only thing that
+# applies rendered/. Every rendered object is an Argo CD Skip hook (in the
+# YAML skeletons, no Python), so the render also writes rendered/sync.yaml,
+# a ConfigMap carrying the render's digest -- the one object an Application
+# syncs, so a new render makes it OutOfSync and its apply hook runs.
+check converter "$(count packages/converter/src -name '*.py')" 2747
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
