@@ -312,15 +312,30 @@ def _shape(paths: list[Path]) -> str:
     return f"{len(paths)} parts, {paths[0].name} … {paths[-1].name}"
 
 
-def _prune(out: Path, written: set[Path]) -> None:
-    """Deleting a campaign (or pipeline) file must take its rendered manifest
-    with it: that manifest is what an apply --prune compares the cluster
-    against, so a leftover would keep resurrecting a cancelled Job.
-    A shrinking `-partN` split is the same case."""
-    for path in sorted([*out.glob("*.yaml"), *out.glob("*.yml")]):
-        if path not in written:
-            path.unlink()
-            print(f"removed: {path}", file=sys.stderr)
+#: What a render owns in ``--out``. It replaces these whole, so a file
+#: nothing rendered this time -- a deleted campaign's, a split that shrank
+#: -- goes with them: a leftover would be applied again, and would keep a
+#: cancelled Job alive through every ``apply --prune``. Anything else in
+#: ``--out`` is left alone.
+_OWNED = ("pipelines", "campaigns", "sync.yaml")
+
+
+def _swap_in(new: Path, out: Path, old: Path) -> None:
+    """Move the render in ``new`` into ``out``, the one before it to ``old``.
+
+    Renames only, inside one directory's filesystem: every rule and every
+    write happened before this, so a refused or crashed render never
+    reaches ``out`` at all (3089)."""
+    for sub in _OWNED[:2]:
+        kept = {p.name for p in (new / sub).iterdir()}
+        for path in sorted((out / sub).glob("*.y*ml")):
+            if path.name not in kept:
+                print(f"removed: {path}", file=sys.stderr)
+    out.mkdir(exist_ok=True)
+    for name in _OWNED:
+        if (out / name).exists():
+            (out / name).rename(old / name)
+        (new / name).rename(out / name)
 
 
 def _unsafe_out(repo: Path, out: Path) -> str | None:
@@ -367,26 +382,32 @@ def _render(repo_dir: str, out_dir: str) -> int:
     if refused is not None:
         print(refused)
         return 1
-    pipelines_out, campaigns_out = out / "pipelines", out / "campaigns"
-    written: set[Path] = set()
-    for p in pipelines.values():
-        path = pipelines_out / f"{p.id}.yaml"
-        _write(path, render.pipeline_objects(p, cfg))
-        written.add(path)
-    for c in campaigns:
-        objects = render.campaign_objects(c, pipelines[c.pipeline], cfg)
-        paths = [campaigns_out / f"{o['metadata']['name']}.yaml" for o in objects[1::2]]
-        for path, i in zip(paths, range(0, len(objects), 2)):
-            _write(path, objects[i : i + 2])
+    # Written in full beside `--out` first (same filesystem, so the swap is
+    # renames), and swapped in only once the whole render exists.
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{out.name}-", dir=out.parent) as t:
+        new, old = Path(t) / "new", Path(t) / "old"
+        for sub in _OWNED[:2]:
+            (new / sub).mkdir(parents=True)
+        old.mkdir()
+        written: set[Path] = set()
+        for p in pipelines.values():
+            path = new / "pipelines" / f"{p.id}.yaml"
+            _write(path, render.pipeline_objects(p, cfg))
             written.add(path)
-    _prune(pipelines_out, written)
-    _prune(campaigns_out, written)
-    digest = hashlib.sha256()
-    for path in sorted(written):
-        digest.update(
-            f"{path.relative_to(out).as_posix()}\0".encode() + path.read_bytes()
-        )
-    _write(out / "sync.yaml", [render.sync_configmap(cfg, digest.hexdigest())])
+        for c in campaigns:
+            objects = render.campaign_objects(c, pipelines[c.pipeline], cfg)
+            for i in range(0, len(objects), 2):
+                path = new / "campaigns" / f"{objects[i + 1]['metadata']['name']}.yaml"
+                _write(path, objects[i : i + 2])
+                written.add(path)
+        digest = hashlib.sha256()
+        for path in sorted(written):
+            digest.update(
+                f"{path.relative_to(new).as_posix()}\0".encode() + path.read_bytes()
+            )
+        _write(new / "sync.yaml", [render.sync_configmap(cfg, digest.hexdigest())])
+        _swap_in(new, out, old)
     return 0
 
 
