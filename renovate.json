@@ -78,9 +78,9 @@
     },
     {
       "customType": "regex",
-      "description": "AI-Riksarkivet/htrflow commit the arm64 wrapper base is built from (.github/workflows/{ci,publish,security}.yml build it natively on an arm64 runner). Bumping it rebuilds that base, so it gets its own PR; keep the three workflows on the same commit, and when the new commit changes htrflow's pyproject.toml the base build fails until `make lock-htrflow-base` refreshes the committed lock in the same PR.",
-      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
-      "matchStrings": ["HTRFLOW_ARM64_BASE_REF: (?<currentDigest>[a-f0-9]{40})"],
+      "description": "AI-Riksarkivet/htrflow commit the wrapper image builds its htrflow base from (ARG HTRFLOW_REF in .docker/htrflow-batch.dockerfile), on both architectures. Bumping it rebuilds that base, so it gets its own PR; when the new commit changes htrflow's pyproject.toml the image build refuses it until `make lock-htrflow-base` refreshes .docker/htrflow-base/ in the same PR.",
+      "managerFilePatterns": ["/^\\.docker/htrflow-batch\\.dockerfile$/"],
+      "matchStrings": ["ARG HTRFLOW_REF=(?<currentDigest>[a-f0-9]{40})"],
       "depNameTemplate": "AI-Riksarkivet/htrflow",
       "packageNameTemplate": "https://github.com/AI-Riksarkivet/htrflow",
       "currentValueTemplate": "main",
@@ -102,22 +102,9 @@
       "pinDigests": true
     },
     {
-      "description": "The htrflow base is a deliberate, tested pin: tag bumps by hand, digest refreshes only",
-      "matchDatasources": ["docker"],
-      "matchPackageNames": ["airiksarkivet/htrflow"],
-      "matchUpdateTypes": ["major", "minor", "patch"],
-      "enabled": false
-    },
-    {
-      "description": "The arm64 wrapper base is a local tag built in the same job from source, not a registry image — there is nothing to look up",
-      "matchDatasources": ["docker"],
-      "matchPackageNames": ["htrflow"],
-      "enabled": false
-    },
-    {
-      "description": "The htrflow commit the arm64 base is built from: its own PR, the base and the wrapper on top of it must be re-verified",
+      "description": "The htrflow commit the wrapper's base is built from: its own PR, the lock and the wrapper on top of it must be re-verified",
       "matchPackageNames": ["AI-Riksarkivet/htrflow"],
-      "groupName": "htrflow arm64 base"
+      "groupName": "htrflow base"
     },
     {
       "description": "torch/torchvision follow the cu128 index by hand (dockerfile comment); uv itself is a pin",
