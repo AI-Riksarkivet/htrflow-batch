@@ -443,6 +443,7 @@ def status_configmap(live: dict, cfg: ConverterConfig) -> dict | None:
         ),
         None,
     )
+    base = cfg.public_results_base
     cm = _load("configmap.yaml")
     _set(cm, "metadata.name", f"campaign-{meta.get('name', '')}{STATUS_SUFFIX}")
     _set(cm, "metadata.namespace", namespace)
@@ -457,7 +458,9 @@ def status_configmap(live: dict, cfg: ConverterConfig) -> dict | None:
         "volumesFailed": str(max(total - done, 0)),
         "startedAt": status.get("startTime") or "",
         "finishedAt": finished or "",
-        "resultsBase": f"{cfg.public_results_base}/{namespace}/{pipeline}",
+        # Stripped the way the read API strips its own base: the two write
+        # this field, and a slash apart they disagree about it (3081).
+        "resultsBase": f"{base.rstrip('/')}/{namespace}/{pipeline}",
     }
     return cm
 

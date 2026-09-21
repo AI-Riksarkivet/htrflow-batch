@@ -676,6 +676,7 @@ def _live_job(conditions, **status) -> dict:
         "metadata": {
             "name": "kyrk",
             "namespace": "htr-test",
+            "uid": "uid-kyrk-1",
             "labels": {
                 "htrflow.riksarkivet.se/campaign": "kyrk",
                 "htrflow.riksarkivet.se/pipeline": "demo-v1",
@@ -719,6 +720,17 @@ def test_a_completed_job_is_recorded_by_the_apply_itself():
         "finishedAt": "2026-09-08T10:00:00Z",
         "resultsBase": f"{cfg.public_results_base}/htr-test/demo-v1",
     }
+
+
+def test_the_records_results_base_has_no_doubled_slash():
+    """The read API strips a trailing slash off its base; a converter.yaml
+    that ends in one wrote a different resultsBase for the same campaign,
+    and two managers disagreeing on a value is a conflict (3081)."""
+    _, _, cfg = _kyrk()
+    cfg = cfg.model_copy(update={"public_results_base": "http://x/htr-results/"})
+    job = _live_job([{"type": "Complete", "status": "True"}], succeeded=3)
+    data = render.status_configmap(job, cfg)["data"]
+    assert data["resultsBase"] == "http://x/htr-results/htr-test/demo-v1"
 
 
 def test_a_job_that_gave_up_with_some_indexes_done_is_partially_failed():
