@@ -1,0 +1,52 @@
+# git-cliff: a GitHub release's list of changes, written from the
+# conventional commits since the previous tag. .github/workflows/release.yml
+# runs it on every v* tag and puts .github/release-notes.md (install,
+# verify, image digests) above it; `make release-notes` previews the
+# unreleased part locally.
+#
+# Commits read as `type(scope): message`. The scope names the part of the
+# system -- chart, converter, wrapper, web, frontend -- and leads each line.
+# Slides, stories, specs and plans, line budgets, formatting and tests are
+# kept out: they are how the work was done, not what a release changes.
+
+[changelog]
+header = ""
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits -%}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}\
+{{ commit.message | upper_first | trim }}\
+{% if commit.breaking %} (**breaking**){% endif %} \
+([{{ commit.id | truncate(length=7, end="") }}](https://github.com/AI-Riksarkivet/htrflow-batch/commit/{{ commit.id }}))
+{% endfor %}
+{% endfor -%}
+"""
+footer = ""
+trim = true
+postprocessors = [{ pattern = "\n{3,}", replace = "\n\n" }]
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+protect_breaking_commits = true
+commit_parsers = [
+  # How the work was done, not what the release changes.
+  { message = "^Merge", skip = true },
+  { message = "^(style|test|release)", skip = true },
+  { message = "^chore", skip = true },
+  { message = "^docs\\((slides|stories|spec|plan|decision-log|superpowers)\\)", skip = true },
+  { message = "^(slides|stories|spec|plan)", skip = true },
+  # The <!-- n --> prefixes set the group order; the template strips them.
+  { message = "^feat", group = "<!-- 0 -->Added" },
+  { message = "^fix", group = "<!-- 1 -->Fixed" },
+  { message = "^perf", group = "<!-- 2 -->Performance" },
+  { message = "^refactor", group = "<!-- 3 -->Changed" },
+  { message = "^(build|ci)", group = "<!-- 4 -->Build and CI" },
+  { message = "^(docs?|readme)", group = "<!-- 5 -->Documentation" },
+  { message = "^revert", group = "<!-- 6 -->Reverted" },
+]
+filter_commits = true
+tag_pattern = "v[0-9].*"
+sort_commits = "oldest"
