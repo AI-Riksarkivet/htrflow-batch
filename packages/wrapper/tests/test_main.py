@@ -1700,3 +1700,70 @@ def test_a_second_sigterm_during_the_final_ship_is_ignored(env, cfg, s3, monkeyp
 
     assert (sys.stdout, sys.stderr) == streams
     assert signal.getsignal(signal.SIGTERM) is before
+
+
+def _source_down_for(monkeypatch, sample_manifest, page: str, fetched: list):
+    """Serve the manifest and every image, except ``page``'s, which answers
+    503 while the returned flag is set. The waits between attempts are not
+    slept."""
+    from htrflow_batch import fetch as fetch_mod
+
+    down = threading.Event()
+    down.set()
+
+    def handler(req):
+        if req.url.path.endswith("manifest.json"):
+            return httpx.Response(200, json=sample_manifest)
+        fetched.append(req.url.path)
+        if f"page-0{page}/" in req.url.path and down.is_set():
+            return httpx.Response(503)
+        return httpx.Response(200, content=b"\xff\xd8\xff\xe0JPEGDATA")
+
+    monkeypatch.setattr(
+        main_mod,
+        "_http_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    monkeypatch.setattr(fetch_mod, "_pause", lambda seconds, stop: None)
+    return down
+
+
+def test_a_page_the_source_could_not_serve_is_redone_by_the_retry(
+    env, cfg, s3, sample_manifest, monkeypatch
+):
+    """3095: a 503 that outlasted the in-pod attempts made the page `failed`,
+    which verify counts as accounted for -- exit 0, the volume complete, the
+    page lost although the source was back minutes later. It is missing now:
+    exit 1, and the index's retry redoes that page and only that page."""
+    fetched: list = []
+    down = _source_down_for(monkeypatch, sample_manifest, "0002", fetched)
+    assert main(env, process_page_factory=fake_factory) == EXIT_TRANSIENT
+    assert "demo-v1/SE-RA-1234/manifest.json" not in _keys(s3, cfg)
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["stage"] == "verify"
+    assert "missing=['0002']" in term["error"]
+
+    down.clear()  # the source is back for the retry
+    fetched.clear()
+    assert main(env, process_page_factory=fake_factory) == EXIT_OK
+    assert fetched == ["/mock-vol/page-00002/full/2500,/0/default.jpg"]
+    body = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert body["results"]["0002"]["status"] == "ok"
+    assert body["pages_failed"] == 0
+
+
+def test_a_deferred_page_is_missing_even_with_stale_outputs(
+    env, cfg, s3, sample_manifest, monkeypatch
+):
+    """With RESUME off a previous run's objects are still in the bucket; a
+    page this run could not fetch must not pass verify on them."""
+    _put_done(s3, cfg, "0002")
+    _source_down_for(monkeypatch, sample_manifest, "0002", [])
+    env = dict(env, RESUME="false")
+    assert main(env, process_page_factory=fake_factory) == EXIT_TRANSIENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert "missing=['0002']" in term["error"]

@@ -484,7 +484,10 @@ def _verify(
     state.stage = "verify"
     uploaded = store.uploaded_pages()
     failed = sorted(n for n, r in stats.results.items() if r.status == "failed")
-    missing = sorted({p.name for p in pages} - uploaded - set(failed))
+    # 3095: a page the source could not serve today is missing, whatever a
+    # previous run left in the bucket for it (RESUME off keeps those objects).
+    deferred = {n for n, r in stats.results.items() if r.status == "deferred"}
+    missing = sorted(({p.name for p in pages} - uploaded - set(failed)) | deferred)
     if failed:
         # The run log is now the only place this sentence appears while the
         # run still succeeds; manifest.json keeps the per-page copy.

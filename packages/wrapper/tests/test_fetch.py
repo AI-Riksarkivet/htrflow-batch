@@ -257,9 +257,9 @@ def test_the_unscaled_fallback_does_not_spend_an_attempt(tmp_path):
     ]
 
 
-def test_a_400_that_is_not_a_size_still_spends_its_attempts(tmp_path):
-    """The fallback is a one-off substitution; a 400 it cannot change is an
-    ordinary failure and must not loop."""
+def test_a_400_that_is_not_a_size_fails_the_page_at_once(tmp_path):
+    """The fallback is a one-off substitution; a 400 it cannot change is a
+    final answer (3095) and must not loop."""
     calls = []
 
     def handler(req):
@@ -268,13 +268,13 @@ def test_a_400_that_is_not_a_size_still_spends_its_attempts(tmp_path):
 
     page = PageRef(index=1, name="0001", image_url="https://img/a.jpg", canvas={})
     r = fetch_page(page, tmp_path, _client(handler), 3, 0.0)
-    assert r.error == "HTTP 400"
-    assert len(calls) == 3
+    assert r.error == "HTTP 400" and not r.transient
+    assert len(calls) == 1
 
 
 def test_a_400_after_the_fallback_does_not_loop(tmp_path):
     """Once the URL is unscaled the substitution is a no-op, so the second
-    400 falls through and spends the attempt like any other."""
+    400 is final like any other."""
     calls = []
 
     def handler(req):
@@ -289,7 +289,7 @@ def test_a_400_after_the_fallback_does_not_loop(tmp_path):
     )
     r = fetch_page(page, tmp_path, _client(handler), 2, 0.0)
     assert r.error == "HTTP 400"
-    assert len(calls) == 3  # the sized one, then the unscaled one twice
+    assert len(calls) == 2  # the sized one, then the unscaled one
 
 
 def _real_jpeg(width: int, height: int) -> bytes:
@@ -473,3 +473,120 @@ def test_a_slow_drip_is_cut_off_at_the_download_deadline(tmp_path, drip_server, 
     assert time.monotonic() - t0 < 5
     assert r.path is None and "deadline" in r.error
     assert list(tmp_path.iterdir()) == []
+
+
+# -- 3095: which failures are the page's, and which are the source's today --
+
+
+@pytest.fixture
+def pauses(monkeypatch):
+    """The waits between attempts, recorded instead of slept."""
+    from htrflow_batch import fetch as fetch_mod
+
+    waited: list[float] = []
+    monkeypatch.setattr(fetch_mod, "_pause", lambda s, stop: waited.append(s))
+    return waited
+
+
+def _statuses(*codes, headers=None):
+    """A handler answering with ``codes`` in turn, then with the image."""
+    queue = list(codes)
+    calls = []
+
+    def handler(req):
+        calls.append(1)
+        if queue:
+            return httpx.Response(queue.pop(0), headers=headers or {})
+        return httpx.Response(200, content=JPEG)
+
+    return handler, calls
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503, 504, 408])
+def test_a_short_outage_is_ridden_out_in_the_pod(tmp_path, pauses, status):
+    handler, calls = _statuses(status, status)
+    r = fetch_page(_pages(1)[0], tmp_path, _client(handler))
+    assert r.error is None and r.path is not None
+    assert len(calls) == 3
+    assert pauses == [2.0, 4.0]  # exponential, from the default backoff
+
+
+def test_an_outage_that_outlasts_the_attempts_is_transient(tmp_path, pauses):
+    """3095: it used to come back as an ordinary failure, which verify counts
+    as accounted for -- exit 0 and the page lost for good."""
+    handler, calls = _statuses(*[503] * 10)
+    r = fetch_page(_pages(1)[0], tmp_path, _client(handler))
+    assert r.path is None and r.error == "HTTP 503" and r.transient
+    assert len(calls) == 4 and len(pauses) == 3
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 410, 405, 501])
+def test_a_status_that_will_not_change_fails_the_page_at_once(tmp_path, pauses, status):
+    handler, calls = _statuses(*[status] * 10)
+    r = fetch_page(_pages(1)[0], tmp_path, _client(handler))
+    assert r.error == f"HTTP {status}" and not r.transient
+    assert len(calls) == 1 and pauses == []
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [("7", 7.0), ("0", 2.0), ("86400", 60.0), ("soon", 2.0)],
+)
+def test_retry_after_is_honoured_up_to_a_cap(tmp_path, pauses, value, expected):
+    handler, _ = _statuses(429, headers={"Retry-After": value})
+    r = fetch_page(_pages(1)[0], tmp_path, _client(handler))
+    assert r.error is None and pauses == [expected]
+
+
+def test_retry_after_as_an_http_date(tmp_path, pauses):
+    from datetime import datetime, timedelta, timezone
+    from email.utils import format_datetime
+
+    when = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=30), True)
+    handler, _ = _statuses(503, headers={"Retry-After": when})
+    fetch_page(_pages(1)[0], tmp_path, _client(handler))
+    assert len(pauses) == 1 and 25 <= pauses[0] <= 30
+
+
+@pytest.mark.parametrize(
+    "exc", [httpx.ConnectError("refused"), httpx.ReadTimeout("slow")]
+)
+def test_a_network_error_is_transient(tmp_path, pauses, exc):
+    def handler(req):
+        raise exc
+
+    r = fetch_page(_pages(1)[0], tmp_path, _client(handler))
+    assert r.path is None and r.transient and len(pauses) == 3
+
+
+def test_a_waf_page_is_transient(tmp_path, pauses):
+    """A 200 HTML answer is a challenge or login page more often than not:
+    retried, then left for the next attempt rather than recorded as lost."""
+
+    def handler(req):
+        return httpx.Response(200, headers={"Content-Type": "text/html"}, content=b"x")
+
+    r = fetch_page(_pages(1)[0], tmp_path, _client(handler))
+    assert r.transient and "text/html" in r.error
+
+
+def test_a_body_over_the_cap_is_not_transient(tmp_path, pauses):
+    def handler(req):
+        return httpx.Response(200, content=JPEG + b"x" * 1000)
+
+    r = _one(tmp_path, handler, max_bytes=100)
+    assert "too large" in r.error and not r.transient and pauses == []
+
+
+def test_the_wait_between_attempts_ends_when_the_run_aborts(tmp_path):
+    """A 60 s Retry-After must not hold a run that has already failed."""
+    stop = threading.Event()
+
+    def handler(req):
+        stop.set()  # the run fails while this page is waiting
+        return httpx.Response(503, headers={"Retry-After": "60"})
+
+    t0 = time.monotonic()
+    r = fetch_page(_pages(1)[0], tmp_path, _client(handler), stop=stop)
+    assert time.monotonic() - t0 < 5
+    assert r.error == "stopped: run aborted"

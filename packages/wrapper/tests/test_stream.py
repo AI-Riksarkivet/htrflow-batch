@@ -471,3 +471,16 @@ def test_the_download_deadline_reaches_every_fetch(tmp_path, monkeypatch):
         _pages(2), tmp_path, _client(lambda r: None), lookahead=4, deadline=7.0
     )
     assert len(list(stream)) == 2 and seen == [7.0, 7.0]
+
+
+def test_a_transient_fetch_failure_is_deferred_not_failed(tmp_path, caplog):
+    """3095: a page the source could not serve today is not an outcome; it
+    stays out of `failed` so verify reports it missing and the retry redoes
+    it."""
+    page = _pages(1)[0]
+    item = FetchResult(page=page, path=None, error="HTTP 503", transient=True)
+    with caplog.at_level("WARNING"):
+        stats = consume(_items([item]), lambda p: {}, lambda n, f: None)
+    assert stats.results["0001"].status == "deferred"
+    assert stats.results["0001"].error == "HTTP 503"
+    assert "deferred" in caplog.text
