@@ -6,11 +6,6 @@ requires-python = ">=3.10"
 
 [tool.uv]
 package = false          # virtual root: nothing to build, members do the work
-# The two transformers lines the wrapper image can carry (the groups at the
-# end of this file) cannot resolve together, so the lock forks for them.
-conflicts = [
-    [{ group = "transformers-4" }, { group = "transformers-5" }],
-]
 
 [tool.uv.workspace]
 members = ["packages/*"]
@@ -63,20 +58,4 @@ release = [
 wrapper-image = [
     "brotli>=1.2.0",
     "pillow>=12.3.0",
-]
-# The transformers line of the wrapper image, one group per line: the image's
-# TRANSFORMERS_VERSION build arg selects the group by its major version and
-# installs its locked, hashed closure (.docker/htrflow-batch.dockerfile), so
-# nothing in that step is resolved at build time. A version the build asks for
-# must be the one pinned here. protobuf and sentencepiece belong to the line:
-# transformers needs them to load and convert slow tokenizers.
-transformers-4 = [
-    "transformers==4.57.6",
-    "protobuf==7.36.1",
-    "sentencepiece==0.2.2; platform_machine == 'aarch64'",
-]
-transformers-5 = [
-    "transformers==5.9.0",
-    "protobuf==7.36.1",
-    "sentencepiece==0.2.2; platform_machine == 'aarch64'",
 ]

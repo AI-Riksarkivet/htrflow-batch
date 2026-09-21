@@ -24,7 +24,6 @@ import re
 from pathlib import Path
 
 import pytest
-import tomllib
 import yaml
 
 REPO = Path(__file__).resolve().parents[3]
@@ -155,7 +154,7 @@ def test_the_transformers_line_is_one_build_arg_every_build_path_can_set() -> No
     # nothing to do with this image, and they must not block its builds -- the
     # dockerfile's comment may say so, but no step may run it.
     assert not re.search(r"^\s*RUN.*uv pip check", text, re.M)
-    assert 'requires("htrflow-batch-wrapper")' in text
+    assert re.search(r'for dist in \("htrflow-batch-wrapper", "transformers"', text)
     assert "req.specifier.contains(have" in text
 
     makefile = (REPO / "Makefile").read_text()
@@ -228,28 +227,39 @@ def test_every_python_install_in_the_wrapper_image_is_locked() -> None:
         ), install
 
 
-def test_every_transformers_line_is_a_locked_group() -> None:
-    """The TRANSFORMERS_VERSION build arg selects `transformers-<major>`;
-    each such group pins transformers exactly and carries the two packages
-    the line needs, and the dockerfile's default is one of them."""
-    root = tomllib.loads((REPO / "pyproject.toml").read_text())
-    groups = {
-        name: deps
-        for name, deps in root["dependency-groups"].items()
-        if name.startswith("transformers-")
-    }
-    assert set(groups) == {"transformers-4", "transformers-5"}
-    conflicts = root["tool"]["uv"]["conflicts"]
-    assert [{"group": g} for g in sorted(groups)] in conflicts
-    for name, deps in groups.items():
-        pins = [d for d in deps if d.startswith("transformers==")]
-        assert len(pins) == 1 and pins[0].startswith(f"transformers=={name[-1]}.")
-        assert any(d.startswith("protobuf==") for d in deps), name
-        assert "sentencepiece==0.2.2; platform_machine == 'aarch64'" in deps, name
+def test_every_transformers_line_is_a_hashed_requirements_file() -> None:
+    """The TRANSFORMERS_VERSION build arg selects .docker/transformers/<major>.txt,
+    compiled with hashes from the .in file beside it (`make
+    transformers-requirements`). Each pins transformers exactly and carries
+    the packages the line needs, and the dockerfile's default is one of them."""
+    lines = REPO / ".docker" / "transformers"
+    majors = {p.stem for p in lines.glob("*.in")}
+    assert majors == {"4", "5"}
+    for major in majors:
+        compiled = (lines / f"{major}.txt").read_text()
+        pins = re.findall(r"^([a-z0-9-]+)==(\S+)", compiled, re.M)
+        names = {name for name, _ in pins}
+        assert {"transformers", "huggingface-hub", "protobuf", "sentencepiece"} <= names
+        assert dict(pins)["transformers"].startswith(f"{major}.")
+        # every pin carries its hashes, and the .txt is the .in compiled
+        for name, ver in pins:
+            assert re.search(
+                rf"^{re.escape(name)}=={re.escape(ver)}[^\n]*\\\n\s+--hash=sha256:",
+                compiled,
+                re.M,
+            ), name
+        wanted = re.findall(
+            r"^([a-z0-9-]+==\S+)", (lines / f"{major}.in").read_text(), re.M
+        )
+        assert sorted(wanted) == sorted(f"{n}=={v}" for n, v in pins)
+    assert (
+        "sentencepiece==0.2.2 ; platform_machine == 'aarch64'"
+        in (lines / "4.txt").read_text()
+    )
     default = re.search(
         r"^ARG TRANSFORMERS_VERSION=(\S+)", WRAPPER_DOCKERFILE.read_text(), re.M
     ).group(1)
-    assert f"transformers=={default}" in groups[f"transformers-{default[0]}"]
+    assert f"transformers=={default} " in (lines / f"{default[0]}.txt").read_text()
 
 
 def test_the_arm64_base_is_built_from_pinned_inputs() -> None:

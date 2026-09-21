@@ -2,7 +2,7 @@
         compose-up compose-test compose-smoke compose-smoke-run compose-down helm-lint helm-template \
         install-devstack install-kyverno \
         docs-serve docs-build config-reference api-contract \
-        scan-image poc-push poc-push-arm64 build-wrapper build-htrflow-base-arm64 lock-htrflow-base build-web scan-web clean install-kueue \
+        scan-image poc-push poc-push-arm64 build-wrapper build-htrflow-base-arm64 lock-htrflow-base transformers-requirements build-web scan-web clean install-kueue \
         campaigns-apply psa-labels e2e \
         frontend-install frontend-test frontend-check frontend-build frontend-dev
 
@@ -348,6 +348,15 @@ lock-htrflow-base:
 	  $(UV_LOCK_IMAGE) uv lock $(UV_LOCK_ARGS) && \
 	cp "$$tmp/uv.lock" $(HTRFLOW_BASE_LOCK_DIR)/uv.lock && \
 	git diff --stat -- $(HTRFLOW_BASE_LOCK_DIR)
+
+# The transformers lines of the wrapper image (.docker/transformers/<major>.in)
+# compiled into the pinned, hashed <major>.txt the dockerfile installs with
+# --no-deps. Rerun after editing an .in file and commit both.
+transformers-requirements:
+	docker run --rm --user $$(id -u):$$(id -g) -e HOME=/tmp -v $(CURDIR)/.docker/transformers:/w -w /w $(DOCKER_CA) \
+	  $(UV_LOCK_IMAGE) sh -c 'for f in *.in; do \
+	    uv pip compile --quiet --no-deps --generate-hashes --universal --python-version 3.10 \
+	      --custom-compile-command "make transformers-requirements" -o "$${f%.in}.txt" "$$f" || exit 1; done'
 
 # The web image builds the SPA and the Universal Viewer inside itself, so
 # this needs no pre-built dist/ and no UV checkout. The corp CA is passed as

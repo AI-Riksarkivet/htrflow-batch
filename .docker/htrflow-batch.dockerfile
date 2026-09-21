@@ -30,9 +30,9 @@
 #     swap is a no-op on that arch (no cp310 wheel newer than 2.9.1), so
 #     the arm64 branch only asserts the versions, and a refreshed base lock
 #     that moves them fails the build instead of changing the image;
-#   * the wrapper's dependencies, the transformers line and the leaf
-#     overrides come from the workspace lock (`uv export` with hashes), not
-#     a free resolution at build time;
+#   * the wrapper's dependencies and the leaf overrides come from the
+#     workspace lock (`uv export` with hashes), the transformers line from
+#     a hashed requirements file, never a free resolution at build time;
 #   * apt packages stay unpinned: Ubuntu's archive drops superseded
 #     versions, so an exact apt pin breaks the build on the next security
 #     update (a snapshot mirror is the real fix, out of scope here).
@@ -149,30 +149,24 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 # is tested on; `make build-wrapper TRANSFORMERS_VERSION=5.9.0` builds the
 # other.
 #
-# Each line is a dependency group of the workspace (`transformers-<major>`
-# in the root pyproject.toml), locked with its whole closure: sentencepiece
-# (arm64: TrOCR's slow tokenizer needs it to convert, and 5.x dropped that
-# conversion) and protobuf (transformers only imports it on the error path
-# of loading a slow tokenizer, and without it that path reports "requires
-# the protobuf library" INSTEAD of the real error). The build installs the
-# group's exported, hashed closure, so nothing here is resolved at build
-# time; a version the lock does not carry fails the build.
+# Each line is a hashed requirements file, .docker/transformers/<major>.txt,
+# compiled from the .in file beside it: transformers, the huggingface-hub
+# major that line needs, sentencepiece (arm64: TrOCR's slow tokenizer needs
+# it to convert, and 5.x dropped that conversion) and protobuf (transformers
+# only imports it on the error path of loading a slow tokenizer, and without
+# it that path reports "requires the protobuf library" INSTEAD of the real
+# error). They go in with --no-deps --require-hashes, so nothing here is
+# resolved at build time and nothing else in the base moves; the check at
+# the end of this file proves their own requirements are met. A
+# TRANSFORMERS_VERSION the file does not pin fails the build.
 ARG TRANSFORMERS_VERSION=4.57.6
-RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
-    --mount=type=bind,source=pyproject.toml,target=/opt/workspace/pyproject.toml \
-    --mount=type=bind,source=packages/wrapper/pyproject.toml,target=/opt/workspace/packages/wrapper/pyproject.toml \
-    --mount=type=bind,source=packages/converter/pyproject.toml,target=/opt/workspace/packages/converter/pyproject.toml \
-    --mount=type=bind,source=packages/web/pyproject.toml,target=/opt/workspace/packages/web/pyproject.toml \
-    cd /opt/workspace \
-    && uv export --locked --only-group "transformers-${TRANSFORMERS_VERSION%%.*}" --no-emit-project \
-         -o /tmp/transformers-requirements.txt \
-    && { grep -q "^transformers==${TRANSFORMERS_VERSION} " /tmp/transformers-requirements.txt \
-         || { echo "TRANSFORMERS_VERSION=${TRANSFORMERS_VERSION} is not the version uv.lock pins" \
-                   "for its line (pyproject.toml, group transformers-${TRANSFORMERS_VERSION%%.*})"; \
-              exit 1; }; } \
-    && uv pip install --python /app/.venv/bin/python --no-cache --require-hashes \
-         -r /tmp/transformers-requirements.txt \
-    && rm /tmp/transformers-requirements.txt
+RUN --mount=type=bind,source=.docker/transformers,target=/opt/transformers \
+    req="/opt/transformers/${TRANSFORMERS_VERSION%%.*}.txt" \
+    && { grep -q "^transformers==${TRANSFORMERS_VERSION} " "$req" \
+         || { echo "TRANSFORMERS_VERSION=${TRANSFORMERS_VERSION} is not the version" \
+                   ".docker/transformers/ pins for its line"; exit 1; }; } \
+    && uv pip install --python /app/.venv/bin/python --no-cache --no-deps --require-hashes \
+         -r "$req"
 
 # Packages of the base's venv with published fixes that htrflow's own lock
 # predates: pillow and Brotli. The `wrapper-image` group in uv.lock pins them
@@ -193,7 +187,9 @@ RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
     && rm /tmp/image-requirements.txt
 
 # What this image must guarantee, after the transformers line has had its say:
-# the WRAPPER's own declared requirements are satisfied by what is installed.
+# the WRAPPER's own declared requirements are satisfied by what is installed,
+# and so are those of the packages the transformers line installed without
+# their dependencies.
 # The newer transformers line requires a newer huggingface_hub than the wrapper
 # used to accept, and that mismatch belongs at build time, not in a warm-up pod
 # -- nothing in CI builds this image, so this is the only gate.
@@ -210,20 +206,21 @@ from importlib.metadata import PackageNotFoundError, requires, version
 from packaging.requirements import Requirement
 
 bad = []
-for spec in requires("htrflow-batch-wrapper") or []:
-    req = Requirement(spec)
-    if req.marker and not req.marker.evaluate({"extra": ""}):
-        continue
-    try:
-        have = version(req.name)
-    except PackageNotFoundError:
-        bad.append(f"{spec}: not installed")
-        continue
-    if not req.specifier.contains(have, prereleases=True):
-        bad.append(f"{spec}: installed {have}")
+for dist in ("htrflow-batch-wrapper", "transformers", "huggingface-hub"):
+    for spec in requires(dist) or []:
+        req = Requirement(spec)
+        if req.marker and not req.marker.evaluate({"extra": ""}):
+            continue
+        try:
+            have = version(req.name)
+        except PackageNotFoundError:
+            bad.append(f"{dist}: {spec}: not installed")
+            continue
+        if not req.specifier.contains(have, prereleases=True):
+            bad.append(f"{dist}: {spec}: installed {have}")
 if bad:
-    sys.exit("the wrapper's requirements are not satisfied:\n  " + "\n  ".join(bad))
-print("wrapper requirements satisfied")
+    sys.exit("requirements not satisfied:\n  " + "\n  ".join(bad))
+print("wrapper and transformers requirements satisfied")
 CHECK
 
 # The release this image is published under: the publish workflow passes its

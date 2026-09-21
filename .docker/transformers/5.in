@@ -1,0 +1,12 @@
+# The transformers 5.x line of the wrapper image: what it installs on top of
+# the base, compiled with hashes into 5.txt (`make transformers-requirements`)
+# and installed with --no-deps --require-hashes. Only these packages move; their
+# other dependencies are the base's and the wrapper's, and the image build
+# checks that those satisfy them. huggingface-hub is here because the line
+# needs a different major than the one the other line runs; protobuf and
+# sentencepiece because transformers needs them to load and convert slow
+# tokenizers.
+transformers==5.9.0
+huggingface-hub==1.32.0
+protobuf==7.36.1
+sentencepiece==0.2.2 ; platform_machine == 'aarch64'
