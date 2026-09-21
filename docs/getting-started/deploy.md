@@ -226,7 +226,9 @@ The dev cluster's `rustfs-init` hook applies the same shape
   the web front's port. The default allows every address, so the chart will
   not render it unless `network.web.allowPublicIngress` is also set — an
   install that says nothing about ingress fails with that sentence rather
-  than quietly opening the port. NodePort traffic arrives SNAT'd from the
+  than quietly opening the port. An empty list is refused the same way: a
+  rule with no sources admits every address, so it would open the port it
+  looks like it closes. NodePort traffic arrives SNAT'd from the
   node, so include the node range in whatever you list.
 
 ## Upgrading
