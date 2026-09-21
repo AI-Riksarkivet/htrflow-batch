@@ -141,9 +141,10 @@ def test_load_pipeline_dict_fallback(tmp_path, monkeypatch):
     assert str(out_dir / "page") in pipeline.steps[1].dest
 
 
-def test_load_pipeline_rejects_export_steps(tmp_path, monkeypatch):
-    """Test load_pipeline rejects pipelines that already contain Export steps."""
-    mock_export_class = type("Export", (), {})
+def _inject_recording_fake_htrflow(monkeypatch) -> list:
+    """A fake htrflow whose ``from_config`` records every call: the list it
+    returns is empty exactly when nothing was built -- no model loaded."""
+    built: list = []
 
     class MockPipeline:
         def __init__(self, steps=None):
@@ -151,36 +152,47 @@ def test_load_pipeline_rejects_export_steps(tmp_path, monkeypatch):
 
         @staticmethod
         def from_config(config):
-            # Pipeline with an existing Export step
-            return MockPipeline(steps=[mock_export_class()])
+            built.append(config)
+            return MockPipeline(steps=[])
 
-    # Inject fake modules
     fake_htrflow = ModuleType("htrflow")
     fake_pipeline_mod = ModuleType("htrflow.pipeline")
     fake_pipeline_pipeline = ModuleType("htrflow.pipeline.pipeline")
     fake_steps = ModuleType("htrflow.pipeline.steps")
-
     fake_pipeline_pipeline.Pipeline = MockPipeline
-    fake_steps.Export = mock_export_class
-
+    fake_steps.Export = type("Export", (), {"__init__": lambda self, d, f: None})
     monkeypatch.setitem(sys.modules, "htrflow", fake_htrflow)
     monkeypatch.setitem(sys.modules, "htrflow.pipeline", fake_pipeline_mod)
     monkeypatch.setitem(
         sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline
     )
     monkeypatch.setitem(sys.modules, "htrflow.pipeline.steps", fake_steps)
+    return built
 
-    out_dir = tmp_path / "output"
-    out_dir.mkdir()
+
+@pytest.mark.parametrize("name", ["Export", "export", "EXPORT"])
+def test_export_steps_are_refused_before_any_model_loads(tmp_path, monkeypatch, name):
+    """3098: the rule is read off the YAML, before ``from_config`` builds a
+    single step -- so the warm-up (which goes through build_pipeline too)
+    refuses it, instead of passing and leaving every index to load all the
+    weights onto a GPU just to exit 13. htrflow looks a step up by its
+    lower-cased name, so any spelling is the Export step."""
+    built = _inject_recording_fake_htrflow(monkeypatch)
     pipeline_yaml = tmp_path / "pipeline.yaml"
-    pipeline_yaml.write_text("steps: []")
+    pipeline_yaml.write_text(
+        "steps:\n"
+        "  - step: Segmentation\n"
+        "    settings: {model: yolo, model_settings: {model: a/b}}\n"
+        f"  - step: {name}\n"
+        "    settings: {dest: out, format: alto}\n"
+    )
 
-    # Import and run
-    from htrflow_batch.driver import load_pipeline
+    from htrflow_batch.driver import build_pipeline, load_pipeline
 
-    # Should raise ValueError because the pipeline already has Export steps
-    with pytest.raises(ValueError, match="must not contain Export steps"):
-        load_pipeline(str(pipeline_yaml), out_dir)
+    for build in (build_pipeline, lambda p: load_pipeline(p, tmp_path / "out")):
+        with pytest.raises(ValueError, match="must not contain Export steps"):
+            build(str(pipeline_yaml))
+    assert built == []
 
 
 def _inject_old_api_fake_htrflow(monkeypatch):
