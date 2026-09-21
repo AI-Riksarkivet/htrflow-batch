@@ -51,7 +51,10 @@ bundled into the built SPA, are MIT. Everything else in
 `/uv.html` is the universalviewer4 fork
 (<https://github.com/Riksarkivet/universalviewer4>, commit pinned as
 `UV4_REF` in `.docker/htrflow-web.dockerfile`), MIT like upstream Universal
-Viewer.
+Viewer. The image builds it with `.docker/uv4-uv-html.patch` applied, and the
+patch's preamble lists what it changes: the configuration fetch (from the
+viewer's own origin only), the text overlay's coordinates, and ALTO and
+search-hit text rendered as text rather than HTML.
 
 ## Images
 
