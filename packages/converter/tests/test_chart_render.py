@@ -223,6 +223,50 @@ def test_an_empty_ingress_list_with_the_opt_in_is_the_catch_all_it_renders(
     assert ingress[0]["from"] == [{"ipBlock": {"cidr": "0.0.0.0/0"}}]
 
 
+@pytest.mark.parametrize(
+    "cidrs",
+    ["{0.0.0.0/1,128.0.0.0/1}", "{10.16.0.0/16,0.0.0.0/7}", "{64.0.0.0/2}"],
+)
+def test_a_catch_all_split_into_halves_is_still_a_catch_all(cidrs: str):
+    """The guard compared strings, so `0.0.0.0/1` + `128.0.0.0/1` -- every
+    address, in two entries -- passed it (finding 3064). Anything wider than
+    a /8 is somebody's whole internet and needs the same opt-in."""
+    refused = helm_template(sets=REQUIRED_SETS + (f"network.web.ingressCidrs={cidrs}",))
+    assert refused.returncode != 0
+    assert "wider than /8" in refused.stderr
+    assert "network.web.allowPublicIngress" in refused.stderr
+
+    accepted = render(sets=DEFAULT_SETS + (f"network.web.ingressCidrs={cidrs}",))
+    assert named(accepted, "NetworkPolicy", "htr-web")
+
+
+def test_a_private_block_is_narrow_enough():
+    """A /8 is the widest range an operator can name without the flag -- the
+    `10.0.0.0/8` a site network commonly is."""
+    rendered = render(sets=REQUIRED_SETS + ("network.web.ingressCidrs={10.0.0.0/8}",))
+    ingress = named(rendered, "NetworkPolicy", "htr-web")["spec"]["ingress"]
+    assert ingress[0]["from"] == [{"ipBlock": {"cidr": "10.0.0.0/8"}}]
+
+
+def test_the_web_front_sees_its_clients_own_addresses(default: list[dict]):
+    """With `externalTrafficPolicy: Cluster` a NodePort connection is SNAT'd
+    to the node before the pod sees it, so the ingress list only ever
+    matched node addresses -- and the docs told operators to list the node
+    range, which every client reaching a node then matched (finding 3064).
+    `Local` keeps the client's address, so the list restricts clients."""
+    service = named(default, "Service", "htrflow-web")
+    assert service["spec"]["type"] == "NodePort"
+    assert service["spec"]["externalTrafficPolicy"] == "Local"
+
+
+def test_the_refusal_no_longer_advises_listing_the_node_range():
+    """Listing the node range is what defeated the list; the chart's own
+    sentence must not tell anyone to do it."""
+    refused = helm_template(sets=REQUIRED_SETS)
+    assert "node range" not in refused.stderr
+    assert "SNAT" not in refused.stderr
+
+
 def test_the_catch_all_guard_is_silent_when_the_policies_are_not_rendered():
     """A campaigns repo's CI renders this chart with `network.enabled=false`
     to get at the policy objects alone. There is no web NetworkPolicy in
