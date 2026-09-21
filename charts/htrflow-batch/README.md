@@ -77,11 +77,19 @@ ConfigMap the nginx viewer mounted, is describing the version it names — `api.
 here would make the upgrade notes wrong for anyone actually on that
 version.
 
+### From 0.10.0 to 0.11.0 — what can stop an upgrade
+
+| Change | What to do |
+|---|---|
+| **Policies off must be accepted explicitly.** With `security.policies.enabled: false` the chart refuses to render unless **`security.policies.allowDisabled: true`** says the namespace is meant to run without admission policy. | Production: install Kyverno and set `security.policies.enabled=true` (values-prod.yaml does). A dev cluster without Kyverno: `--set security.policies.allowDisabled=true`. |
+| **The web Service keeps client addresses** (`externalTrafficPolicy: Local`). `network.web.ingressCidrs` now matches the browser's own address, not the node's. | Replace the node range in `network.web.ingressCidrs` with the clients' ranges; keep it only if browsers run on the nodes. |
+| **An empty or wider-than-/8 `network.web.ingressCidrs` is refused** unless `network.web.allowPublicIngress: true`. An empty list used to admit every address. | List the clients' ranges, or set the flag if any address really may reach it. |
+
 ### From 0.7.0 to 0.8.0 — the one thing that stops an upgrade
 
 | Change | What to do |
 |---|---|
-| **A `0.0.0.0/0` web ingress must be accepted explicitly.** `helm upgrade` fails with a sentence naming `network.web.allowPublicIngress` unless the release either lists real ranges in `network.web.ingressCidrs` or sets that flag. | Decide which it is. A dev cluster reached from wherever a browser happens to be: `--set network.web.allowPublicIngress=true`. Anything else: `--set network.web.ingressCidrs='{<range>}'` (include the node range — NodePort traffic arrives SNAT'd from the node). *From the next chart release on, the Service keeps client addresses (`externalTrafficPolicy: Local`): list the clients' ranges, not the node range — see Web front ingress on the Deploy page.* |
+| **A `0.0.0.0/0` web ingress must be accepted explicitly.** `helm upgrade` fails with a sentence naming `network.web.allowPublicIngress` unless the release either lists real ranges in `network.web.ingressCidrs` or sets that flag. | Decide which it is. A dev cluster reached from wherever a browser happens to be: `--set network.web.allowPublicIngress=true`. Anything else: `--set network.web.ingressCidrs='{<range>}'` (include the node range — NodePort traffic arrives SNAT'd from the node). *From 0.11.0 on, the Service keeps client addresses (`externalTrafficPolicy: Local`): list the clients' ranges, not the node range — see Web front ingress on the Deploy page.* |
 | **New enforcing policies with `security.policies.enabled`.** The apply identity may delete only converter-labelled objects, and the web front may write only `campaign-<name>-status` ConfigMaps. | Nothing, unless something else in the namespace uses those ServiceAccounts. The policies need Kyverno; with `policies.enabled: false` they are not rendered. |
 | **Catch-all egress loses link-local and the private ranges.** | If a batch Job or warm-up legitimately reaches a private address, name that range in `network.iiifCidrs` / `network.s3Cidrs` — a named range is its own rule and stays reachable — or narrow `network.privateCidrs`. |
 | **S3 egress by CIDR is limited to `network.s3Ports` (default 443).** | Set `network.s3Ports` if your endpoint answers on another port. |
@@ -153,6 +161,44 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 `htrflow-web` / `templates/web.yaml` they became in 0.4.0. Renaming them
 here would make the upgrade notes wrong for anyone actually on that
 version.
+
+### 0.11.0 — 2026-09-21 (v0.4.0)
+
+**Breaking at render time, on purpose** — see *From 0.10.0 to 0.11.0*
+above.
+
+Added:
+- **`security.policies.allowDisabled`** (default `false`). Policies off now
+  fails the render with a sentence naming the flag, instead of silently
+  running a namespace where any registry, any tag and any unpinned model
+  is admitted.
+- **`network.apiServer.cidrs`** — every further API server of an HA
+  control plane, one /32 each, added to `cidr`. When both are empty the
+  chart looks up every address of the `kubernetes` Endpoints, not only the
+  first; `helm template` without cluster access still needs one of them.
+
+Changed:
+- **The web Service is `externalTrafficPolicy: Local`**, so
+  `network.web.ingressCidrs` is matched against the client's address.
+- **`network.web.ingressCidrs`**: an empty list, and any range wider than
+  /8, now need `network.web.allowPublicIngress: true`.
+- **`model-revision`** has a second rule: a step that loads a model may
+  carry only `model`, `model_settings` and `generation_settings` under
+  `settings`, since htrflow merges any other key over `model_settings`
+  and could unpin the model.
+- **`images-allowed` / `images-pinned`** also check image volumes, not only
+  containers.
+- **`verifyImages.imageReferences`** defaults to `"*"`; it narrows to
+  `allowedImageRepos` only while `policies.enabled` renders the allow-list
+  that refuses everything else.
+- **`rbac-scope`**: the apply identity's creates and updates of Jobs and
+  ConfigMaps must carry `managed-by: converter`, and on an update so must
+  the object replaced — it can no longer label a foreign object to delete
+  it.
+- **`web.image`** pins the `v0.4.0` web image
+  (`docker.io/riksarkivet/htrflow-web@sha256:d86f7466…`); campaign pipelines pin
+  the wrapper at `docker.io/riksarkivet/htrflow-batch@sha256:982d1651…`.
+  **`appVersion`** is `0.4.0`.
 
 ### 0.10.0 — 2026-09-17 (v0.3.0, the first GitHub release)
 
