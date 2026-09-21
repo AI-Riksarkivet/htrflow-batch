@@ -572,6 +572,23 @@ _REPLACED = (
 )
 
 
+#: A warm-up that spent its backoffLimit (a Secret not there yet, a Hub
+#: outage) stays Failed, and an unchanged apply is a no-op on it: every
+#: campaign on the pipeline fails each index on the missing marker, for ever
+#: (3092). Nothing but its marker is state, so the apply runs it again.
+_RETRIED = (
+    "replaced: Job/{name} — it had failed, and a failed Job never runs "
+    "again, so it was deleted and created again to retry the warm-up"
+)
+
+
+def _failed(job: dict) -> bool:
+    conditions = (job.get("status") or {}).get("conditions") or []
+    return any(
+        c.get("type") == "Failed" and c.get("status") == "True" for c in conditions
+    )
+
+
 def _apply_object(cluster, obj: dict, warmup: bool) -> dict:
     """Apply one rendered object, replacing a **warm-up** Job the API server
     refuses because its pod template changed.
@@ -594,12 +611,13 @@ def _apply_object(cluster, obj: dict, warmup: bool) -> dict:
 
     A warm-up that is running right now is left alone too: the delete would
     take the pod that is downloading with it, and every campaign waiting on
-    its marker with it.
+    its marker with it. One that has FAILED is replaced even when the apply
+    went through, since the API server will never run it again.
     """
     from .cluster import ClusterError, ImmutableField
 
     try:
-        return cluster.apply(obj)
+        live = cluster.apply(obj)
     except ImmutableField as e:
         if not warmup or ImmutableField.POD_TEMPLATE not in e.fields:
             raise
@@ -613,6 +631,10 @@ def _apply_object(cluster, obj: dict, warmup: bool) -> dict:
         replaced = cluster.replace_job(obj)
         print(_REPLACED.format(name=name))
         return replaced
+    if warmup and _failed(live):
+        live = cluster.replace_job(obj)
+        print(_RETRIED.format(name=obj["metadata"]["name"]))
+    return live
 
 
 #: `apply` exited 1 for everything, so a CI job could not tell "nothing

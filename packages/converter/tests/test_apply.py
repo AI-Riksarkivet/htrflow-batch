@@ -1204,3 +1204,37 @@ def test_a_running_job_outranks_a_stale_finished_record(tmp_path, cluster, capsy
     assert ("apply", "Job", "kyrk") in cluster.calls
     assert cluster.of("patch") == [("patch", "wl-kyrk", False)], "the pause holds"
     assert "left alone" not in capsys.readouterr().out
+
+
+def _warmup(condition: str) -> dict:
+    job = _object("Job", "htr-warmup-demo-v1")
+    job["status"] = {"conditions": [{"type": condition, "status": "True"}]}
+    return job
+
+
+def test_a_failed_warmup_is_replaced(tmp_path, cluster, capsys):
+    """A warm-up that spent its backoffLimit -- a Secret not there yet, a
+    Hub outage -- stays Failed, every campaign on the pipeline fails each
+    index on the missing marker, and an unchanged re-apply is a no-op on it
+    for ever: the only way out was a `kubectl delete` (3092). It holds no
+    state, so the apply runs it again."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    cluster.live = [_warmup("Failed")]
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    warmup = [c for c in cluster.calls if c[2] == "htr-warmup-demo-v1"]
+    assert warmup == [
+        ("apply", "Job", "htr-warmup-demo-v1"),
+        ("delete", "Job", "htr-warmup-demo-v1"),
+        ("apply", "Job", "htr-warmup-demo-v1"),
+    ]
+    assert "status" not in _live(cluster, "htr-warmup-demo-v1"), "a fresh Job"
+    assert "replaced: Job/htr-warmup-demo-v1 — it had failed" in (
+        capsys.readouterr().out
+    )
+
+
+def test_a_finished_warmup_is_left_alone(tmp_path, cluster):
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    cluster.live = [_warmup("Complete")]
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert cluster.of("delete") == []
