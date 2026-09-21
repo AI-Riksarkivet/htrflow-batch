@@ -50,6 +50,11 @@ dev = [
 docs = [
     "zensical==0.0.62",
 ]
+# git-cliff writes a GitHub release's notes from the conventional commits
+# since the previous tag (cliff.toml, .github/workflows/release.yml).
+release = [
+    "git-cliff==2.14.2",
+]
 wrapper-image = [
     "brotli>=1.2.0",
     "pillow>=12.3.0",
