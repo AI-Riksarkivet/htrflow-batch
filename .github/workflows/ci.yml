@@ -144,6 +144,15 @@ jobs:
       - name: Library-API pin test, against the image just built
         run: make test-driver-real WRAPPER_IMAGE=htrflow-batch:ci-arm64
 
+      # The Trivy gate for this architecture (finding 3060): the dagger
+      # `scan` job above builds only the amd64 image. Same severity and
+      # rules as that job, and like it on pushes to main and manual runs
+      # only, so an advisory published today fails main, not an unrelated
+      # pull request.
+      - name: Vulnerability scan (wrapper, arm64; CRITICAL blocks)
+        if: github.event_name != 'pull_request'
+        run: make scan-image SCAN_IMAGE=htrflow-batch:ci-arm64
+
       - name: What was built
         # The provenance labels are inherited from the base stage the build
         # selected — proof that TARGETARCH picked base-arm64, not base-amd64.
