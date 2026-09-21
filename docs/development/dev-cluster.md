@@ -275,7 +275,7 @@ the chart READMEs ([Releasing](releasing.md#chart-releases)).
   `FORCE=1` skips the check.
 - **Pausing is `suspend: true` in the campaign file plus the apply.** The
   rendered `spec.suspend` alone does not hold — Kueue owns that field for an
-  admitted Workload and undoes a change within seconds — so the last step of
+  admitted Workload and undoes a change within seconds — so the pause sync in
   `htrflow-campaigns apply` patches the Workload's `spec.active`. Never
   `kubectl edit` the Job
   ([Campaign & Pipeline YAML](../reference/campaign-yaml.md)).

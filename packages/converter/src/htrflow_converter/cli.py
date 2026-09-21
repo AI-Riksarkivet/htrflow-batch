@@ -736,14 +736,19 @@ def _apply(
                     print(f"applied: {name}")
                     if is_campaign and obj["kind"] == "Job":
                         jobs.append((live, obj["spec"].get("suspend", False)))
+            # The pause first: it is the one step whose absence burns GPU
+            # right now, and a prune problem used to end the apply before it
+            # ran for any campaign (3090).
+            for live, suspended in jobs:
+                failed |= cluster.sync_pause(live, suspended, pause_wait)
             if prune:
                 # What makes deleting a campaign file cancel the campaign.
                 # Both directories: see Cluster.prune.
-                cluster.prune(
+                for what, problem in cluster.prune(
                     {(o["kind"], o["metadata"]["name"]) for o in pipelines + campaigns}
-                )
-            for live, suspended in jobs:
-                failed |= cluster.sync_pause(live, suspended, pause_wait)
+                ):
+                    print(problem, file=sys.stderr)
+                    refused.append(what)
             if refused:
                 # Refused everything is not "some objects were refused", it
                 # is the total failure the old code always reported: a Role

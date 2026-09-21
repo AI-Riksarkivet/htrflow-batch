@@ -316,9 +316,12 @@ htrflow-campaigns apply <campaigns-repo>      # = make campaigns-apply DIR=…
 ```
 
 The command talks to the API server directly (the official Kubernetes
-client, server-side apply — there is no `kubectl` to install), and its last
-step patches `spec.active` on each campaign's Workload (`false` for a
-suspended campaign, `true` otherwise), idempotently. Deactivating a Workload
+client, server-side apply — there is no `kubectl` to install), and once the
+objects are applied it patches `spec.active` on each campaign's Workload
+(`false` for a suspended campaign, `true` otherwise), idempotently. It does
+that before `--prune` deletes anything, and whatever the prune meets: an
+object the prune may not delete is reported by name and counted as refused
+(exit `3`), and a Job the TTL controller reaped first is simply gone. Deactivating a Workload
 evicts its pods, keeps every finished index, and `kubectl get job` reports
 `suspend: true`; reactivating continues at the next index. Results already in
 S3 are never touched.

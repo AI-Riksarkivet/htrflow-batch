@@ -17,7 +17,7 @@ Two rules hold the design together:
 - **Pausing a campaign is a Git change** (`suspend: true` in the campaign
   file). The pause is declared in Git and enforced by the apply step. Kueue
   owns `spec.suspend` on a Job it has admitted and undoes any change within
-  seconds. So the last step of `htrflow-campaigns apply` puts the same intent
+  seconds. So the pause sync in `htrflow-campaigns apply` puts the same intent
   on the Workload's `spec.active`. `make campaigns-apply` and an Argo CD
   `PostSync` hook both run that command
   ([Queueing](queueing.md#pause)).

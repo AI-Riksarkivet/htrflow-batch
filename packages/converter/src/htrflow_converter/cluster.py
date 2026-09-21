@@ -191,17 +191,17 @@ def _errors(verb: str, kind: str, name: str, namespace: str):
 def _retrying(fn: Any, *args: Any, gone_is_done: bool = False, **kwargs: Any) -> Any:
     """``fn(*args, **kwargs)``, retried while the server says "not now".
 
-    ``gone_is_done`` is for a DELETE: a retry that finds the object gone
-    found the work of the attempt before it -- that one reached the API
-    server and only its answer was lost -- so the 404 is this call's own
-    success, not a missing object. A 404 on the FIRST attempt still stands:
-    nothing of ours deleted that, so the caller was wrong about it.
+    ``gone_is_done`` is for a DELETE, which wants the object gone: a 404
+    says it is, on any attempt. On a retry the attempt before reached the
+    API server and only its answer was lost; on the first, the TTL
+    controller reaped a finished Job between the prune's list and its
+    delete -- which used to fail the prune, and the pause sync with it.
     """
     for attempt in range(RETRIES + 1):
         try:
             return fn(*args, **kwargs)
         except ApiException as e:
-            if attempt and gone_is_done and e.status == 404:
+            if gone_is_done and e.status == 404:
                 return None
             if e.status not in RETRY_STATUSES or attempt == RETRIES:
                 raise
@@ -325,38 +325,51 @@ class Cluster:
             raise _unreachable(e) from e
         return json.loads(body.data)
 
-    def prune(self, rendered: set[tuple[str, str]]) -> None:
-        """Delete every labelled Job/ConfigMap not in ``rendered``.
+    def prune(self, rendered: set[tuple[str, str]]) -> list[tuple[str, str]]:
+        """Delete every labelled Job/ConfigMap not in ``rendered``; return
+        ``(what, sentence)`` for each object (or kind) it could not.
 
         ``rendered`` is ``(kind, name)`` for **all** rendered objects,
         pipelines included: pruning against the campaigns alone would delete
         the pipeline ConfigMaps and warm-up Jobs the same apply just wrote.
+        A refusal is that object's problem: the prune goes on, and the
+        caller reports what is left rather than stopping (3090).
         """
+        problems: list[tuple[str, str]] = []
         for kind in _KINDS:
-            listed = _raw(
-                "list",
-                kind,
-                "",
-                self.namespace,
-                self._method(kind, "list"),
-                self.namespace,
-                label_selector=CAMPAIGN_SELECTOR,
-            )
+            try:
+                listed = _raw(
+                    "list",
+                    kind,
+                    "",
+                    self.namespace,
+                    self._method(kind, "list"),
+                    self.namespace,
+                    label_selector=CAMPAIGN_SELECTOR,
+                )
+            except ClusterError as e:
+                problems.append((kind, str(e)))
+                continue
             for item in listed.get("items", []):
                 name = item["metadata"]["name"]
                 if (kind, name) in rendered or self._kept_status(kind, name, rendered):
                     continue
                 extra = {"propagation_policy": "Background"} if kind == "Job" else {}
-                with _errors("delete", kind, name, self.namespace):
-                    _retrying(
-                        self._method(kind, "delete"),
-                        name,
-                        self.namespace,
-                        gone_is_done=True,
-                        _request_timeout=REQUEST_TIMEOUT,
-                        **extra,
-                    )
+                try:
+                    with _errors("delete", kind, name, self.namespace):
+                        _retrying(
+                            self._method(kind, "delete"),
+                            name,
+                            self.namespace,
+                            gone_is_done=True,
+                            _request_timeout=REQUEST_TIMEOUT,
+                            **extra,
+                        )
+                except ClusterError as e:
+                    problems.append((f"{kind}/{name}", str(e)))
+                    continue
                 print(f"pruned: {kind}/{name}")
+        return problems
 
     @staticmethod
     def _kept_status(kind: str, name: str, rendered: set[tuple[str, str]]) -> bool:
