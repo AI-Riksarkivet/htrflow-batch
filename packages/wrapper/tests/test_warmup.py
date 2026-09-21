@@ -337,3 +337,36 @@ def test_warmup_refuses_an_export_step_without_loading_a_model(tmp_path, monkeyp
     assert reason["permanent"] is True
     assert "must not contain Export steps" in reason["error"]
     assert not (tmp_path / "warmup" / "demo-v1.done").exists()
+
+
+def test_warmup_refuses_a_pin_a_key_beside_model_settings_overrides(
+    tmp_path, monkeypatch
+):
+    """3058: htrflow gives the model ``model_settings | <the other keys>``, so
+    ``revision: null`` beside a pinned revision loads the repo's head. The
+    warm-up is the one pod that reaches the Hub, so it refuses before a single
+    file is fetched, permanently, and says which model and why."""
+    built = _fake_htrflow(monkeypatch)
+    term_path = tmp_path / "termination-log"
+    env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
+    pin = "7c44178d85926b4a096c55c89bf224855a201fbf"
+    Path(env["PIPELINE_PATH"]).write_text(
+        "steps:\n"
+        "  - step: Segmentation\n"
+        "    settings:\n"
+        "      model: yolo\n"
+        "      model_settings:\n"
+        "        model: Riksarkivet/yolov9-regions-1\n"
+        f"        revision: {pin}\n"
+        "      revision: null\n"
+    )
+
+    assert main(env) == EXIT_PERMANENT
+    assert built == []
+    error = json.loads(term_path.read_text())["error"]
+    assert error == (
+        "step 1 (Segmentation): model Riksarkivet/yolov9-regions-1 is not pinned "
+        f"to a commit — model_settings.revision is {pin}, but the revision key "
+        "beside model_settings overrides it and htrflow would load revision "
+        "None; move every model setting under model_settings"
+    )

@@ -195,6 +195,69 @@ def test_export_steps_are_refused_before_any_model_loads(tmp_path, monkeypatch, 
     assert built == []
 
 
+PIN = "7c44178d85926b4a096c55c89bf224855a201fbf"
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        # YOLO: pinned inside model_settings, unpinned by a key beside it
+        f"{{model: yolo, model_settings: {{model: a/b, revision: {PIN}}}, "
+        "revision: null}",
+        # TrOCR: the same through model_kwargs, which the merge replaces whole
+        "{model: TrOCR, model_settings: {model: a/b, model_kwargs: "
+        f"{{revision: {PIN}}}}}, model_kwargs: {{}}}}",
+        # a branch beside the pin is a moving target too
+        f"{{model: yolo, model_settings: {{model: a/b, revision: {PIN}}}, "
+        "revision: main}",
+    ],
+    ids=["yolo-null", "trocr-empty-kwargs", "yolo-branch"],
+)
+def test_a_pin_overridden_beside_model_settings_is_refused(
+    tmp_path, monkeypatch, settings
+):
+    """3058: htrflow hands the model ``model_settings | <the other keys>``, so
+    a key beside model_settings replaces the pin the policy and ``validate``
+    read. The revision the model will actually get is checked, before a
+    single weight is fetched, and the refusal is permanent (a ValueError)."""
+    built = _inject_recording_fake_htrflow(monkeypatch)
+    pipeline_yaml = tmp_path / "pipeline.yaml"
+    pipeline_yaml.write_text(
+        f"steps:\n  - step: Segmentation\n    settings: {settings}\n"
+    )
+
+    from htrflow_batch.driver import build_pipeline
+
+    with pytest.raises(ValueError, match="not pinned to a commit"):
+        build_pipeline(str(pipeline_yaml))
+    assert built == []
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        f"{{model: yolo, model_settings: {{model: a/b, revision: {PIN}}}}}",
+        "{model: TrOCR, model_settings: {model: a/b, model_kwargs: "
+        f"{{revision: {PIN}}}}}, generation_settings: {{batch_size: 2}}}}",
+        # Not pinned anywhere: whether that is allowed is the chart's
+        # requireModelRevision, which admission enforces -- off by default.
+        "{model: yolo, model_settings: {model: a/b}}",
+    ],
+    ids=["yolo-pinned", "trocr-pinned", "unpinned-everywhere"],
+)
+def test_a_pin_that_reaches_the_model_is_built(tmp_path, monkeypatch, settings):
+    built = _inject_recording_fake_htrflow(monkeypatch)
+    pipeline_yaml = tmp_path / "pipeline.yaml"
+    pipeline_yaml.write_text(
+        f"steps:\n  - step: Segmentation\n    settings: {settings}\n"
+    )
+
+    from htrflow_batch.driver import build_pipeline
+
+    build_pipeline(str(pipeline_yaml))
+    assert built == [str(pipeline_yaml)]
+
+
 def _inject_old_api_fake_htrflow(monkeypatch):
     """Old-API fake: from_config(path_str) raises TypeError, forcing the
     dict-fallback branch (which is what actually opens/parses the YAML)."""
