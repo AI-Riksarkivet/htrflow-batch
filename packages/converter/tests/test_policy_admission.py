@@ -1,0 +1,153 @@
+"""The chart's Kyverno policies, run against the objects they exist to refuse.
+
+test_chart_render.py asserts on the *shape* of a rendered policy -- which
+kinds a rule matches, which field a condition reads. That cannot say whether
+the JMESPath inside actually refuses a given object, and every bypass the
+2026-09-17 audit found was a policy of the right shape that let the wrong
+object through. So these render the policies exactly as an install does and
+put a refused object and an admitted one through the Kyverno CLI, the same
+binary a campaigns repo's CI runs (`render.yml`, `KYVERNO_VERSION`).
+
+The CLI stands in for the admission request: `--userinfo` names the
+identity asking, and a values file sets `request.operation` and, for an
+UPDATE, `request.oldObject` -- the stored object the write replaces.
+"""
+
+from __future__ import annotations
+
+import re
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+import yaml
+
+REPO = Path(__file__).resolve().parents[3]
+CHART = REPO / "charts" / "htrflow-batch"
+NAMESPACE = "htr-batch"
+DIGEST = "sha256:" + "a" * 64
+#: `ci/full-values.yaml`'s allow-list, which every render below starts from.
+ALLOWED = "ghcr.io/riksarkivet"
+APPLY_SA = f"system:serviceaccount:{NAMESPACE}:htrflow-campaigns"
+
+pytestmark = [
+    pytest.mark.skipif(shutil.which("helm") is None, reason="helm not on PATH"),
+    pytest.mark.skipif(shutil.which("kyverno") is None, reason="kyverno not on PATH"),
+]
+
+_COUNTS = re.compile(
+    r"pass: (\d+), fail: (\d+), warn: (\d+), error: (\d+), skip: (\d+)"
+)
+
+
+def render_policy(
+    tmp_path: Path, template: str, *sets: str, values: str = "ci/full-values.yaml"
+) -> Path:
+    """One policy template, rendered the way an install renders it."""
+    cmd = [
+        "helm",
+        "template",
+        "htr",
+        str(CHART),
+        "-n",
+        NAMESPACE,
+        "-f",
+        str(CHART / values),
+    ]
+    for setting in sets:
+        cmd += ["--set", setting]
+    cmd += ["--show-only", f"templates/policies/{template}.yaml"]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    path = tmp_path / f"policy-{template}.yaml"
+    path.write_text(result.stdout, encoding="utf-8")
+    return path
+
+
+def admission(
+    tmp_path: Path,
+    policy: Path,
+    resource: dict,
+    *,
+    user: str | None = None,
+    operation: str = "CREATE",
+    old: dict | None = None,
+) -> tuple[str, str]:
+    """("refused" | "admitted" | "not matched", CLI output) for one request.
+
+    An error is neither verdict -- a policy the CLI cannot evaluate would
+    otherwise read as "admitted" -- so it fails the test outright.
+    """
+    res = tmp_path / "resource.yaml"
+    res.write_text(yaml.safe_dump(resource), encoding="utf-8")
+    cmd = ["kyverno", "apply", str(policy), "--resource", str(res), "--remove-color"]
+    global_values: dict = {"request.operation": operation}
+    if old is not None:
+        global_values["request.oldObject"] = old
+    values = tmp_path / "values.yaml"
+    values.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "cli.kyverno.io/v1alpha1",
+                "kind": "Value",
+                "metadata": {"name": "request"},
+                "globalValues": global_values,
+            }
+        ),
+        encoding="utf-8",
+    )
+    cmd += ["--values-file", str(values)]
+    if user is not None:
+        info = tmp_path / "userinfo.yaml"
+        info.write_text(
+            yaml.safe_dump(
+                {
+                    "apiVersion": "cli.kyverno.io/v1alpha1",
+                    "kind": "UserInfo",
+                    "metadata": {"name": "asker"},
+                    "userInfo": {"username": user},
+                }
+            ),
+            encoding="utf-8",
+        )
+        cmd += ["--userinfo", str(info)]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    out = result.stdout + result.stderr
+    counts = _COUNTS.search(out)
+    assert counts, out
+    passed, failed, _, errored, _ = map(int, counts.groups())
+    assert errored == 0, out
+    if failed:
+        assert result.returncode != 0, out
+        return "refused", out
+    assert result.returncode == 0, out
+    return ("admitted" if passed else "not matched"), out
+
+
+def configmap(name: str, labels: dict | None = None, data: dict | None = None) -> dict:
+    meta: dict = {"name": name, "namespace": NAMESPACE}
+    if labels is not None:
+        meta["labels"] = labels
+    return {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": meta,
+        "data": data or {},
+    }
+
+
+CONVERTER = {"htrflow.riksarkivet.se/managed-by": "converter"}
+
+
+# --- the harness itself: the rule that was already right stays right -------
+
+
+def test_the_apply_identity_still_may_not_delete_a_foreign_object(tmp_path: Path):
+    policy = render_policy(tmp_path, "rbac-scope", "apply.rbac.enabled=true")
+    foreign = configmap("team-settings")
+    verdict, _ = admission(tmp_path, policy, foreign, user=APPLY_SA, operation="DELETE")
+    assert verdict == "refused"
+    ours = configmap("campaign-kyrk", CONVERTER)
+    verdict, out = admission(tmp_path, policy, ours, user=APPLY_SA, operation="DELETE")
+    assert verdict == "admitted", out
