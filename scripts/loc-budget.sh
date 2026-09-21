@@ -1251,5 +1251,10 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4822
 # 1029 -> 1034 (2026-09-21, audit 3065): verify-images narrows
 # imageReferences to the allow-list only while the allow-list policy is
 # rendered; the paragraph saying why is the five lines.)
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1075
+# 1034 -> 1084 (2026-09-21, audit 3066): rbac-scope holds the apply
+# identity's writes to the managed-by label as well as its deletes -- two
+# rules, one for the object written (CREATE and UPDATE) and one for the
+# object an UPDATE replaces, each with its own message, and the paragraph
+# saying why the delete rule alone was not enough.)
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1125
 exit $fail
