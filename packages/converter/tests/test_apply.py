@@ -99,12 +99,18 @@ class FakeCluster(Cluster):
             # the first one left (3084).
             stored = copy.deepcopy(obj)
             stored["metadata"]["uid"] = f"uid-{name}"
+            # An apply never touches `status` -- the API server keeps what
+            # the controllers wrote, and hands it back with the object.
+            for o in self.live:
+                if o["kind"] == kind and o["metadata"]["name"] == name:
+                    if "status" in o:
+                        stored["status"] = o["status"]
             self.live = [
                 o
                 for o in self.live
                 if not (o["kind"] == kind and o["metadata"]["name"] == name)
             ] + [stored]
-            return _Body({"metadata": {"name": name, "uid": f"uid-{name}"}})
+            return _Body(stored)
 
         def list_(ns, label_selector="", **kw):
             items = [
@@ -1118,3 +1124,29 @@ def test_a_live_record_it_may_not_read_stops_the_apply(tmp_path, cluster, capsys
     assert cli.main(["apply", str(_repo(tmp_path))]) == 1
     assert "not allowed to get ConfigMap/campaign-kyrk" in capsys.readouterr().err
     assert cluster.of("apply") == [] and cluster.of("dry-run") == []
+
+
+def test_a_server_lost_mid_apply_stops_it_rather_than_refusing_the_rest(
+    tmp_path, cluster, capsys
+):
+    """A read timeout on one object's apply is not that object refused: the
+    API server may well have taken it, and every object after it would pay
+    its own connect timeouts against a server that is not there. It is
+    retried, then the apply stops and says to re-run -- exit 1, never the
+    "refused and unchanged" of exit 3 (3091)."""
+    from urllib3.exceptions import ReadTimeoutError
+
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    _refuses(
+        cluster,
+        "campaign-kyrk",
+        ReadTimeoutError(pool=None, url="/", message="Read timed out."),
+    )
+    assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == 1
+    applied = [c[2] for c in cluster.of("apply")]
+    assert applied == ["htr-pipeline-demo-v1", "htr-warmup-demo-v1"]
+    assert cluster.of("delete") == [], "no prune after a lost server"
+    err = capsys.readouterr().err
+    assert "cannot reach the Kubernetes API server" in err
+    assert "stopped at ConfigMap/campaign-kyrk" in err
+    assert "refused by the API server" not in err
