@@ -182,7 +182,9 @@ def _kyverno_step(workflow: Path) -> str:
 
 def _service_account(template: str) -> str:
     text = (CHART / "templates" / template).read_text(encoding="utf-8")
-    return re.search(r"kind: ServiceAccount\nmetadata:\n  name: ([\w-]+)", text).group(1)
+    return re.search(r"kind: ServiceAccount\nmetadata:\n  name: ([\w-]+)", text).group(
+        1
+    )
 
 
 def test_the_campaigns_ci_checks_policies_as_the_apply_identity():
