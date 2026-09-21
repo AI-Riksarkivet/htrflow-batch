@@ -208,16 +208,32 @@ def _recorded_recipe(path: Path) -> dict[str, object]:
     return {}
 
 
+def _recorded_pipelines(paths: list[Path]) -> set[object]:
+    """The pipeline an earlier render recorded on each of these campaign
+    files' ConfigMaps. What the campaign's live Job runs, whatever its file
+    says now: one moved to another pipeline in the same change as an edit
+    to this one is still running this one (3084)."""
+    ids: set[object] = set()
+    for path in paths:
+        with contextlib.suppress(yaml.YAMLError, OSError):
+            for d in yaml.safe_load_all(path.read_text()):
+                if isinstance(d, dict) and d.get("kind") == "ConfigMap":
+                    ids.add(render.campaign_record(d)["pipeline"])
+    return ids
+
+
 def _edited_pipeline(campaigns, pipelines: dict, cfg, out: Path) -> str | None:
     """One sentence when a pipeline a live campaign runs has been edited.
 
     Live is: a campaign still in ``campaigns/`` that an earlier render
     already wrote to ``rendered/``. That one has been applied, its Job
-    carries this recipe and its results are keyed by this pipeline id. A
-    campaign whose file has been removed -- how a finished one is retired --
-    holds nothing, and neither does one this render is writing for the first
-    time.
+    carries the recipe that render recorded and its results are keyed by
+    that pipeline id. A campaign whose file has been removed -- how a
+    finished one is retired -- holds nothing, and neither does one this
+    render is writing for the first time.
     """
+    parts = {c.name: _existing_parts(out / "campaigns", c) for c in campaigns}
+    recorded = {c.name: _recorded_pipelines(parts[c.name]) for c in campaigns}
     for p in pipelines.values():
         before = _recorded_recipe(out / "pipelines" / f"{p.id}.yaml")
         after = render.recipe(render.pipeline_objects(p, cfg))
@@ -225,7 +241,8 @@ def _edited_pipeline(campaigns, pipelines: dict, cfg, out: Path) -> str | None:
         users = sorted(
             c.name
             for c in campaigns
-            if c.pipeline == p.id and _existing_parts(out / "campaigns", c)
+            if parts[c.name]
+            and (c.pipeline == p.id or render.label_value(p.id) in recorded[c.name])
         )
         if moved and users:
             return _PIPELINE_CHANGED.format(
@@ -425,10 +442,10 @@ def _finished(cluster, name: str, volumes: str, observed: dict | None) -> str | 
     read API wrote -- or, when the Job outlived every visit to the status
     page, the one THIS apply just wrote from it (``observed``) -- says how
     the campaign ended, and the campaign ConfigMap says on which volumes.
-    A volume list that has MOVED is not this
-    function's business, it is the append-only rule's, which ``_render``
-    already ran. There is deliberately no override flag: a campaign that
-    should run again is a new campaign.
+    A volume list that has MOVED is not this function's business, it is
+    the append-only rule's, which ``_render`` and ``_moved_live`` already
+    ran. There is deliberately no override flag: a campaign that should run
+    again is a new campaign.
 
     The two lists are compared parsed, never byte for byte, for the reason
     ``_render``'s own check is: a campaign applied before the ``images:``
@@ -488,6 +505,39 @@ def _record_and_decide(cluster, cfg, name: str, volumes: str) -> str | None:
             print(f"{_NO_RECORD.format(name=name)}{e}", file=sys.stderr)
             record = None
     return _finished(cluster, name, volumes, record)
+
+
+#: `rendered/` is the record a RENDER is held against, and it can be absent,
+#: fresh or behind the cluster: a checkout whose render was never committed,
+#: an `--out` somewhere new. The live campaign ConfigMap is the record the
+#: cluster keeps, so apply holds every campaign against it as well, before
+#: anything is sent (3084).
+_LIVE_MOVED = (
+    "campaign {name} is in the cluster with different {what}: a campaign is "
+    "append-only and runs one pipeline, so create a new campaign instead — "
+    "nothing was applied"
+)
+_KEPT_PAIR = "{name}: left as it was, since Job/{job} was refused"
+
+
+def _moved_live(cluster, campaigns: list[dict]) -> str | None:
+    """One sentence when a rendered campaign disagrees with its live record.
+
+    A key the live object does not carry (a record written before the key
+    existed) is not held against. A refused READ is not caught here: a
+    check that cannot be made is not a check that passed.
+    """
+    for obj in campaigns:
+        if obj["kind"] != "ConfigMap":
+            continue
+        live = cluster.get("ConfigMap", obj["metadata"]["name"])
+        if live is None:
+            continue
+        before, after = render.campaign_record(live), render.campaign_record(obj)
+        moved = [k for k, v in before.items() if v is not None and v != after[k]]
+        if moved:
+            return _LIVE_MOVED.format(name=_campaign_of(obj), what=", ".join(moved))
+    return None
 
 
 def _campaign_of(obj: dict) -> str:
@@ -653,6 +703,10 @@ def _apply(
             # has what git says. Warm-up Jobs are not campaigns and get no
             # pause sync.
             jobs: list[tuple[dict, bool]] = []
+            moved = _moved_live(cluster, campaigns)
+            if moved is not None:
+                print(moved, file=sys.stderr)
+                return 1
             prov = _provenance(repo)
             # Asked before anything is sent, so a finished campaign's
             # ConfigMap is not re-stamped with a new apply time either.
@@ -697,20 +751,39 @@ def _apply(
                 if said is not None:
                     done.add(name)
                     print(said)
+            # Each campaign Job is tried with dryRun=All before its pair is
+            # sent: a ConfigMap applied under a Job the API server then
+            # refuses is a volumes.txt the Job's unstarted indexes read (3084).
+            blocked: dict[str, ClusterError] = {}
+            for obj in campaigns:
+                if obj["kind"] == "Job" and _campaign_of(obj) not in done:
+                    try:
+                        cluster.apply(obj, dry_run=True)
+                    except ClusterError as e:
+                        blocked[_campaign_of(obj)] = e
             refused: list[str] = []
             applied = failed = 0
             for objects, is_campaign in ((pipelines, False), (campaigns, True)):
                 for obj in objects:
-                    if is_campaign and _campaign_of(obj) in done:
+                    campaign = _campaign_of(obj) if is_campaign else None
+                    if campaign in done:
                         continue
                     if is_campaign and obj["kind"] == "ConfigMap":
                         obj["metadata"].setdefault("annotations", {}).update(prov)
                     name = f"{obj['kind']}/{obj['metadata']['name']}"
+                    if campaign in blocked and obj["kind"] == "ConfigMap":
+                        print(
+                            _KEPT_PAIR.format(name=name, job=campaign), file=sys.stderr
+                        )
+                        refused.append(name)
+                        continue
                     # Per object, not per apply. One object the API server
                     # will not take used to abort the loop here, and every
                     # campaign behind it in the order was never applied at
                     # all -- a repo-wide outage over one changed Job.
                     try:
+                        if campaign in blocked:
+                            raise blocked[campaign]
                         live = _apply_object(
                             cluster, obj, not is_campaign and obj["kind"] == "Job"
                         )

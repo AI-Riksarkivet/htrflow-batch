@@ -15,6 +15,7 @@ server-side apply content type, the label selector, background propagation)
 is asserted in ``test_cluster.py`` against the real client.
 """
 
+import copy
 import json
 import shutil
 import subprocess
@@ -87,9 +88,22 @@ class FakeCluster(Cluster):
 
     def _method(self, kind: str, verb: str, name: str = ""):
         def patch(name, ns, obj, **kw):
+            if kw.get("dry_run"):
+                self.calls.append(("dry-run", kind, name))
+                return _Body(obj)
             self.calls.append(("apply", kind, name))
             self.applied[name] = obj
             self.managers[name] = kw.get("field_manager")
+            # What the next apply finds: the cluster keeps what it was sent,
+            # which is what lets a test run a second apply against the state
+            # the first one left (3084).
+            stored = copy.deepcopy(obj)
+            stored["metadata"]["uid"] = f"uid-{name}"
+            self.live = [
+                o
+                for o in self.live
+                if not (o["kind"] == kind and o["metadata"]["name"] == name)
+            ] + [stored]
             return _Body({"metadata": {"name": name, "uid": f"uid-{name}"}})
 
         def list_(ns, label_selector="", **kw):
@@ -288,7 +302,8 @@ def test_a_cluster_error_prints_the_sentence_and_exits_1(tmp_path, cluster, caps
     assert rc == 1
     captured = capsys.readouterr()
     lines = captured.err.strip().splitlines()
-    assert set(lines[:-1]) == {sentence}
+    # Each campaign's ConfigMap is held back with its refused Job (3084).
+    assert {line for line in lines[:-1] if "left as it was" not in line} == {sentence}
     assert lines[-1].endswith("the other 0 were applied (exit 1)")
     assert captured.out.count("Traceback") == 0
 
@@ -449,18 +464,23 @@ def test_a_campaign_with_no_record_at_all_is_applied(tmp_path, cluster):
     assert "kyrk" in [c[2] for c in cluster.of("apply")]
 
 
-def test_a_finished_campaign_whose_volumes_moved_is_still_applied(tmp_path, cluster):
-    """`rendered/` is what the append-only rule compares against, and this
-    repo's rendered/ was written by this very run -- so a live record whose
-    volumes.txt disagrees is a campaign that was changed outside it. Left to
-    the apply (and to the append-only rule the next render runs)."""
+def test_a_finished_campaign_whose_volumes_moved_is_refused(tmp_path, cluster, capsys):
+    """This repo has no committed `rendered/`, so the render has nothing to
+    hold the campaign against -- and the live record disagrees with it. That
+    record used to be overwritten with the new list while the finished Job
+    ran none of it, and the NEXT apply read the overwritten record, found it
+    matching, and left the campaign alone: volumes reported done that no pod
+    ever ran (3084). The live ConfigMap is the record; nothing is sent."""
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    cluster.live = [
-        _record("kyrk", "other\thttps://x/manifest\n"),
-        _status("kyrk", "Succeeded"),
-    ]
-    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
-    assert "kyrk" in [c[2] for c in cluster.of("apply")]
+    moved = "other\thttps://x/manifest\n"
+    cluster.live = [_record("kyrk", moved), _status("kyrk", "Succeeded")]
+    for _ in range(2):
+        assert cli.main(["apply", str(repo), "--out", str(out)]) == 1
+        assert "campaign kyrk is in the cluster with different volumes" in (
+            capsys.readouterr().err
+        )
+    assert cluster.of("apply") == [] and cluster.of("dry-run") == []
+    assert _live(cluster, "campaign-kyrk")["data"]["volumes.txt"] == moved
 
 
 def test_the_apply_records_a_finished_job_nobody_looked_at(tmp_path, cluster, capsys):
@@ -511,7 +531,7 @@ def test_a_cluster_that_refuses_the_record_does_not_stop_the_apply(
     for a permission it never needed before."""
 
     def forbidden(kind, verb, name=""):
-        if verb == "read":
+        if verb == "read" and kind == "Job":
             raise cluster_mod.ClusterError(
                 f"not allowed to get {kind}/{name} in htr-test: Forbidden"
             )
@@ -634,14 +654,15 @@ def test_a_stored_comma_line_is_the_same_volume_list_as_a_rendered_space_one(
     assert "campaign kyrk finished" in capsys.readouterr().out
 
 
-def test_a_volume_list_that_really_moved_is_still_applied(tmp_path, cluster):
+def test_a_volume_list_that_really_moved_is_not_swallowed(tmp_path, cluster):
     """The semantic compare must not swallow a real change: a different URL
-    is a different campaign, whatever the separator."""
+    is a different campaign, whatever the separator -- refused, since the
+    live record says otherwise (3084)."""
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     moved = VOLUMES.replace("scan2.jpg", "scan9.jpg")
     cluster.live = [_record("kyrk", moved), _status("kyrk", "Succeeded")]
-    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
-    assert "kyrk" in [c[2] for c in cluster.of("apply")]
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 1
+    assert cluster.of("apply") == []
 
 
 def _refuses(cluster, target: str, error: Exception, times: int = 99) -> None:
@@ -684,10 +705,12 @@ def test_one_refused_object_does_not_stop_the_apply(tmp_path, cluster, capsys):
     )
     rc = cli.main(["apply", str(repo), "--out", str(out)])
     assert rc == cli.REFUSED, "a refused object is not a total failure"
+    # campaign-kyrk is not among them: its Job was refused on the dry run,
+    # and a ConfigMap applied without its Job is a volumes.txt the Job's
+    # unstarted indexes would read (3084).
     assert [c[2] for c in cluster.of("apply")] == [
         "htr-pipeline-demo-v1",
         "htr-warmup-demo-v1",
-        "campaign-kyrk",
         "campaign-loc",
         "loc",
     ]
@@ -982,3 +1005,116 @@ def test_a_job_the_ttl_reaped_first_is_pruned_not_an_error(tmp_path, cluster, ca
     assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == 0
     assert cluster.of("patch") == [("patch", "job-pausy-c", False)]
     assert capsys.readouterr().err == ""
+
+
+# --- the live cluster, not rendered/ alone, is what apply answers to (3084)
+
+
+def _live(cluster, name: str) -> dict:
+    return next(o for o in cluster.live if o["metadata"]["name"] == name)
+
+
+def _edit(path: Path, **changes) -> None:
+    doc = yaml.safe_load(path.read_text())
+    doc.update(changes)
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+
+
+def test_a_second_apply_cannot_swap_the_volumes_the_first_applied(
+    tmp_path, cluster, capsys
+):
+    """No committed `rendered/` -- a fresh checkout, a repo whose render was
+    never pushed, a `rendered/` reset by a bad merge -- used to mean no
+    append-only rule at all: the second apply replaced the live volumes.txt
+    under a Job whose completions were fixed by the first."""
+    repo = _repo(tmp_path)
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "one")]) == 0
+    before = _live(cluster, "campaign-kyrk")["data"]["volumes.txt"]
+    kyrk = repo / "campaigns" / "kyrk.yaml"
+    _edit(kyrk, volumes=["R9999999", *yaml.safe_load(kyrk.read_text())["volumes"][1:]])
+    cluster.calls.clear()
+    capsys.readouterr()
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "two")]) == 1
+    err = capsys.readouterr().err
+    assert "campaign kyrk is in the cluster with different volumes" in err
+    assert "nothing was applied" in err
+    assert cluster.of("apply") == [], "refused before anything was sent"
+    assert _live(cluster, "campaign-kyrk")["data"]["volumes.txt"] == before
+
+
+def test_a_second_apply_cannot_move_a_live_campaign_to_another_pipeline(
+    tmp_path, cluster, capsys
+):
+    """The Job would be refused (its pod template is fixed), but only after
+    its ConfigMap had been re-labelled and the new pipeline's objects
+    written. Held against the live record, it is refused before any of it."""
+    repo = _repo(tmp_path)
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "one")]) == 0
+    v1 = repo / "pipelines" / "demo-v1.yaml"
+    (repo / "pipelines" / "demo-v2.yaml").write_text(v1.read_text())
+    _edit(repo / "campaigns" / "kyrk.yaml", pipeline="demo-v2")
+    cluster.calls.clear()
+    capsys.readouterr()
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "two")]) == 1
+    assert "campaign kyrk is in the cluster with different pipeline" in (
+        capsys.readouterr().err
+    )
+    assert cluster.of("apply") == []
+
+
+def test_a_moved_campaign_still_holds_the_pipeline_it_was_rendered_with(
+    tmp_path, cluster, capsys
+):
+    """Move every campaign off demo-v1 and edit demo-v1 in the same change:
+    the pipeline guard counted demo-v1's users from `campaigns/`, found none
+    and let the edit through -- rewriting the pipeline ConfigMap under Jobs
+    that are still running it. Its users are what `rendered/` recorded."""
+    repo = _repo(tmp_path)
+    assert cli.main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    assert cli.main(["apply", str(repo)]) == 0
+    v1 = repo / "pipelines" / "demo-v1.yaml"
+    (repo / "pipelines" / "demo-v2.yaml").write_text(v1.read_text())
+    for name in ("kyrk", "loc"):
+        _edit(repo / "campaigns" / f"{name}.yaml", pipeline="demo-v2")
+    _edit(v1, image="ghcr.io/riksarkivet/htrflow-batch@sha256:" + "b" * 64)
+    cluster.calls.clear()
+    capsys.readouterr()
+    assert cli.main(["validate", str(repo)]) == 1
+    assert cli.main(["apply", str(repo)]) == 1
+    out = capsys.readouterr().out
+    assert (
+        "pipeline demo-v1 changed (image) but campaigns kyrk, loc still run it" in out
+    )
+    assert cluster.calls == [], "the render refuses it; no cluster is asked"
+
+
+def test_a_refused_campaign_job_leaves_its_configmap_as_it_was(tmp_path, cluster):
+    """A Job the API server refuses must not have its ConfigMap applied
+    first: the indexes that have not started read volumes.txt, not the Job.
+    Every campaign Job is tried with dryRun=All before its pair is sent."""
+    repo = _repo(tmp_path)
+    _refuses(cluster, "kyrk", cluster_mod.ClusterError("apply Job/kyrk: 422"))
+    assert cli.main(["apply", str(repo)]) == cli.REFUSED
+    assert ("dry-run", "Job", "kyrk") not in cluster.calls, "refused, not recorded"
+    assert ("dry-run", "Job", "loc") in cluster.calls
+    applied = [c[2] for c in cluster.of("apply")]
+    assert "campaign-kyrk" not in applied and "kyrk" not in applied
+    assert applied.index("loc") > applied.index("campaign-loc")
+
+
+def test_a_live_record_it_may_not_read_stops_the_apply(tmp_path, cluster, capsys):
+    """The live ConfigMap is the one thing this apply holds a campaign
+    against. When it cannot be read, the check cannot be made, and applying
+    anyway is exactly the silent overwrite the check is there to stop."""
+
+    def forbidden(kind, verb, name=""):
+        if verb == "read" and kind == "ConfigMap":
+            raise cluster_mod.ClusterError(
+                f"not allowed to get {kind}/{name} in htr-test: Forbidden"
+            )
+        return FakeCluster._method(cluster, kind, verb, name)
+
+    cluster._method = forbidden
+    assert cli.main(["apply", str(_repo(tmp_path))]) == 1
+    assert "not allowed to get ConfigMap/campaign-kyrk" in capsys.readouterr().err
+    assert cluster.of("apply") == [] and cluster.of("dry-run") == []

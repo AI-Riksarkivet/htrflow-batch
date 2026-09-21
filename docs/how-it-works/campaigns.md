@@ -89,7 +89,9 @@ volumes:
 - **A campaign is append-only.** A Job's `completions` is set once, at
   creation, from the volume list, and Kubernetes cannot change it afterwards.
   `htrflow-campaigns render` refuses to re-render a campaign whose volume list
-  differs from what is already in `rendered/`. Put new volumes in a new
+  differs from what is already in `rendered/`, and `htrflow-campaigns apply`
+  refuses one whose ConfigMap in the cluster says otherwise: a different
+  volume list, pipeline or image. Put new volumes in a new
   campaign file (`example-2.yaml`). The old results stay untouched and
   comparable side by side.
 - **One pipeline per campaign.** A volume that needs different treatment
