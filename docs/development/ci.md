@@ -95,7 +95,7 @@ a misleading npm-internal crash rather than a certificate error unless
   `campaigns-apply` (render a campaigns repo, server-side apply its
   pipelines then its campaigns, sync each campaign's pause; `PRUNE=1` adds
   `--prune`), `e2e` (validate, apply, then block until every campaign Job
-  reaches a terminal condition).
+  reaches a terminal condition; a Failed Job fails the target).
 - **Documentation:** `docs-serve`, `docs-build` (through
   `scripts/docs-site.sh`), `config-reference` (regenerates
   `docs/reference/configuration.md`; a test asserts the committed page

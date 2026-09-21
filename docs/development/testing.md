@@ -140,7 +140,8 @@ and the campaign browser as described in
 [Run a campaign](../getting-started/campaigns.md) and
 [Dev cluster](dev-cluster.md). `make e2e DIR=<campaigns-repo>` automates the
 happy path: validate, render and apply, then block until every campaign Job
-reaches a terminal condition. Kill-and-resume (c) is by hand: once a few
+reaches a terminal condition. A Failed Job, or no campaign Job at all, fails
+the target. Kill-and-resume (c) is by hand: once a few
 ALTO files exist under a volume's prefix, force-delete the running pod and
 watch the retry pod log `resume: <n> done, <m> to process` and converge to
 `Complete`.

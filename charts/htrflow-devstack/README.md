@@ -89,8 +89,8 @@ by deleting them out from under it (`docs/development/e2e-indexed-jobs.md`,
 NVIDIA_DEVICE_PLUGIN=false` first checks the cluster for any pod (outside
 `kube-system`, so the device plugin's own pod doesn't block disabling
 itself) that is Running or Pending and uses `runtimeClassName: nvidia` or requests `nvidia.com/gpu`,
-and exits non-zero with one sentence if it finds one. `FORCE=1` skips the
-check.
+and exits non-zero with one sentence if it finds one, or if it cannot list
+the pods to find out. `FORCE=1` skips the check.
 
 ## Adopting hand-applied resources
 
