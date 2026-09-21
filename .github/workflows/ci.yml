@@ -28,21 +28,17 @@ jobs:
         with:
           persist-credentials: false # nothing here pushes; the token would outlive the step
 
+      - uses: ./.github/actions/setup-dagger
+
       - name: Checks (ruff, ty, frontend, chart)
-        uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77 # v8.4.1
-        with:
-          verb: call
-          args: checks
-          cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-          version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
+        run: dagger call --progress plain checks
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
       - name: Tests (pytest)
-        uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77 # v8.4.1
-        with:
-          verb: call
-          args: test
-          cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-          version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
+        run: dagger call --progress plain test
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
       # Non-test line budgets (spec §1); the current numbers and the reason
       # for each raise live in scripts/loc-budget.sh itself.
@@ -71,13 +67,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: ./.github/actions/setup-dagger
+
       - name: Scan the web image (CRITICAL blocks)
-        uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77 # v8.4.1
-        with:
-          verb: call
-          args: scan-web --severity CRITICAL --ignore-unfixed
-          cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-          version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
+        run: dagger call --progress plain scan-web --severity CRITICAL --ignore-unfixed
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
   # Also the amd64 half of the wrapper dockerfile's proof: this is the only
   # job that builds its `base-amd64` stage.
@@ -90,13 +85,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: ./.github/actions/setup-dagger
+
       - name: Scan the wrapper image (CRITICAL blocks)
-        uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77 # v8.4.1
-        with:
-          verb: call
-          args: scan --severity CRITICAL --ignore-unfixed
-          cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-          version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
+        run: dagger call --progress plain scan --severity CRITICAL --ignore-unfixed
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
   # The wrapper image on the OTHER architecture, built exactly the way the
   # GB10 node and publish.yml build it: the htrflow base from source at the

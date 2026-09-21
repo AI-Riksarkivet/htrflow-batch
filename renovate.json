@@ -57,11 +57,10 @@
     },
     {
       "customType": "regex",
-      "description": "dagger engine version: dagger.json engineVersion and the dagger-for-github `version:` input must stay equal",
-      "managerFilePatterns": ["/^dagger\\.json$/", "/^\\.github/workflows/.+\\.ya?ml$/"],
+      "description": "dagger engine version in dagger.json. The CLI checksums and engine digest in .github/actions/setup-dagger are refreshed by hand in the same PR: a test fails until the action's version equals engineVersion",
+      "managerFilePatterns": ["/^dagger\\.json$/"],
       "matchStrings": [
-        "\"engineVersion\":\\s*\"v(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
-        "version:\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"\\s*#\\s*= engineVersion"
+        "\"engineVersion\":\\s*\"v(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ],
       "depNameTemplate": "dagger/dagger",
       "datasourceTemplate": "github-releases",
@@ -137,7 +136,7 @@
       "groupName": "github actions"
     },
     {
-      "description": "dagger engine (dagger.json + workflow version input): its own PR, the module must be re-verified",
+      "description": "dagger engine (dagger.json; setup-dagger follows by hand): its own PR, the module must be re-verified",
       "matchPackageNames": ["dagger/dagger"],
       "groupName": "dagger engine"
     },

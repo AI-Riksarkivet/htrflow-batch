@@ -108,6 +108,10 @@ jobs:
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] \
             || { echo "::error::tag must look like vX.Y.Z"; exit 1; }
 
+      # Tools before credentials (finding 3070): nothing is downloaded after
+      # the login that is not pinned by checksum or digest.
+      - uses: ./.github/actions/setup-dagger
+
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -126,43 +130,33 @@ jobs:
             fi
           done
 
-      # `args` is not an argument list: the action pastes it, unquoted, into
-      # a `run:` of its own, so a dispatch input written here would be script
-      # text in a second shell. The shell variables below are read from this
-      # step's environment by that same shell, which is what keeps the value
-      # data. `--component` is the workflow's own matrix, not an input.
+      # Every value reaches the command through this step's environment,
+      # never as `${{ }}` in the script, so the shell treats it as data.
+      # dagger prints the function's return value -- the pushed reference
+      # with its digest -- on stdout and its progress on stderr.
       - name: Publish with Dagger (tests, builds, pushes)
-        id: publish
-        uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77 # v8.4.1
-        with:
-          verb: call
-          args: >-
-            publish-docker
-            --component ${{ matrix.component }}
-            --tag "$TAG"
-            --tag-suffix "$TAG_SUFFIX"
-            --base-revision "$BASE_REVISION"
-            --transformers-version "$TRANSFORMERS_VERSION"
-            --docker-username env:DOCKERHUB_USERNAME
-            --docker-password env:DOCKERHUB_TOKEN
-          cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-          version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
-        env:
-          BASE_REVISION: ${{ inputs.base_revision }}
-          TRANSFORMERS_VERSION: ${{ inputs.transformers_version }}
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Extract the published digest
         id: digest
         run: |
-          ref="$(printf '%s' "$PUBLISHED" | tr -d '[:space:]')"
+          ref="$(dagger call --progress plain publish-docker \
+            --component "$COMPONENT" \
+            --tag "$TAG" \
+            --tag-suffix "$TAG_SUFFIX" \
+            --base-revision "$BASE_REVISION" \
+            --transformers-version "$TRANSFORMERS_VERSION" \
+            --docker-username env:DOCKERHUB_USERNAME \
+            --docker-password env:DOCKERHUB_TOKEN)"
+          ref="$(printf '%s' "$ref" | tr -d '[:space:]')"
           digest="${ref##*@}"
           [[ "$digest" == sha256:* ]] || { echo "::error::no digest in dagger output: $ref"; exit 1; }
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "published ${IMAGE}@${digest}"
         env:
-          PUBLISHED: ${{ steps.publish.outputs.output }}
+          COMPONENT: ${{ matrix.component }}
+          BASE_REVISION: ${{ inputs.base_revision }}
+          TRANSFORMERS_VERSION: ${{ inputs.transformers_version }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
       - uses: ./.github/actions/sign-attest
         with:
@@ -198,6 +192,8 @@ jobs:
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] \
             || { echo "::error::tag must look like vX.Y.Z"; exit 1; }
 
+      - uses: ./.github/actions/setup-dagger # before the login, as above
+
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -214,12 +210,9 @@ jobs:
           done
 
       - name: Tests (pytest) — the gate dagger gives the amd64 job
-        uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77 # v8.4.1
-        with:
-          verb: call
-          args: test
-          cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-          version: "0.20.3" # = engineVersion in dagger.json (renovate: dagger-engine)
+        run: dagger call --progress plain test
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
       - name: Build the arm64 htrflow base
         id: base

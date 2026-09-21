@@ -1,0 +1,45 @@
+name: Set up Dagger
+description: >
+  The dagger CLI and the engine it starts, both pinned (finding 3070).
+  dagger/dagger-for-github installed the CLI with
+  `curl https://dl.dagger.io/dagger/install.sh | sh` and the CLI then pulled
+  the engine image by tag, in jobs that go on to hold the registry
+  credential and the keyless signing identity, so whoever controlled that
+  host or tag controlled both. Here the CLI is the GitHub release asset,
+  checked against the SHA-256 committed below, and the engine is started from
+  its multi-arch index digest. Workflow steps then run `dagger call …`
+  directly, with arguments passed through `env:` like every other script.
+  The version must equal dagger.json's engineVersion (a test asserts it); a
+  bump refreshes all three pins below from the release's checksums.txt and
+  `docker buildx imagetools inspect registry.dagger.io/engine:v<version>`.
+
+runs:
+  using: composite
+  steps:
+    - name: Install the dagger CLI (checksum-verified) and pin the engine
+      shell: bash
+      run: |
+        set -euo pipefail
+        case "$RUNNER_OS/$RUNNER_ARCH" in
+          Linux/X64)   arch=amd64 sha256="$SHA256_LINUX_AMD64" ;;
+          Linux/ARM64) arch=arm64 sha256="$SHA256_LINUX_ARM64" ;;
+          *) echo "::error::no pinned dagger build for $RUNNER_OS/$RUNNER_ARCH"; exit 1 ;;
+        esac
+        tarball="dagger_v${DAGGER_VERSION}_linux_${arch}.tar.gz"
+        dir="$RUNNER_TEMP/dagger-v${DAGGER_VERSION}"
+        mkdir -p "$dir"
+        curl -fsSL --retry 3 -o "$dir/$tarball" \
+          "https://github.com/dagger/dagger/releases/download/v${DAGGER_VERSION}/${tarball}"
+        echo "${sha256}  $dir/$tarball" | sha256sum --check --strict -
+        tar -xzf "$dir/$tarball" -C "$dir" dagger
+        rm "$dir/$tarball"
+        echo "$dir" >> "$GITHUB_PATH"
+        # The CLI starts its engine from this reference instead of the tag
+        # it would otherwise pull.
+        echo "_EXPERIMENTAL_DAGGER_RUNNER_HOST=docker-image://${ENGINE_IMAGE}" >> "$GITHUB_ENV"
+        "$dir/dagger" version
+      env:
+        DAGGER_VERSION: "0.20.3"
+        SHA256_LINUX_AMD64: 1a0a4779592c5136725c4839ae71dbfc3aaa59bb22cd4b01f2ca55a583f26b9d
+        SHA256_LINUX_ARM64: d14ae009238df34870b44761dcd93ab1e3e7abec7e2be96e98eef2c6fce80d28
+        ENGINE_IMAGE: registry.dagger.io/engine:v0.20.3@sha256:617b298ba587c3a0c3e2d8de6a9f385f7b1108ff844d0261f4abe82a954ed1f4
