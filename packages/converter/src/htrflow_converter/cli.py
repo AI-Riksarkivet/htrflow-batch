@@ -493,24 +493,30 @@ _INCOMPLETE_RENDER = (
 def _record_and_decide(cluster, cfg, name: str, volumes: str) -> str | None:
     """Write how this campaign ended, then say whether to leave it alone.
 
-    One step, because the record this apply just wrote is what the decision
-    reads. A refused WRITE is not a refused decision, though: whatever is
-    already stored still says whether this campaign is over, and re-running
-    a finished campaign costs the whole GPU bill over a permission the
-    decision never needed. So the write is caught here and the stored
-    record consulted anyway; only a refused READ (the caller's except)
-    leaves the campaign to be applied as any other.
+    A live Job is the truth about its campaign, and outranks any stored
+    record: a ``Succeeded`` record beside a Job that is still running is
+    left over from something else -- a reused name, an Argo CD prune that
+    never tracks ``-status``, a Job re-created by hand -- and trusting it
+    left a running campaign alone and its pause unenforced (3083). Only
+    when there is no Job does the stored record speak, which is the case it
+    exists for (B76). A refused WRITE is not a refused decision: the record
+    derived from the Job still decides, and re-running a finished campaign
+    costs the whole GPU bill over a permission the decision never needed.
     """
-    from .cluster import ClusterError  # lazy, like every other .cluster use
+    from .cluster import ClusterError, Unreachable
 
     live = cluster.get("Job", name)
-    record = render.status_configmap(live, cfg) if live else None
-    if record is not None:
-        try:
-            cluster.apply(record)
-        except ClusterError as e:
-            print(f"{_NO_RECORD.format(name=name)}{e}", file=sys.stderr)
-            record = None
+    if live is None:
+        return _finished(cluster, name, volumes, None)
+    record = render.status_configmap(live, cfg)
+    if record is None:
+        return None
+    try:
+        cluster.apply(record)
+    except Unreachable:
+        raise
+    except ClusterError as e:
+        print(f"{_NO_RECORD.format(name=name)}{e}", file=sys.stderr)
     return _finished(cluster, name, volumes, record)
 
 
