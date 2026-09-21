@@ -14,9 +14,6 @@ reference/chart.md	192\.121\.221\.27/32
 # The S3 bucket-policy language version is a fixed string, not a date.
 .md	"Version": "2012-10-17"
 
-# A real Makefile target whose name carries an architecture (renaming it is
-# a code change). Remove when the target is renamed.
-development/dev-cluster.md	make build-htrflow-base-arm64 
 
 # The slides that introduce ResourceFlavor and pod sizes use real GPU models
 # as the example of telling hardware apart; they describe no one site's cluster.

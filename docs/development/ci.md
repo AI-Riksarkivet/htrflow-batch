@@ -15,7 +15,7 @@ lists what the module exposes on your checkout.
 | `check-frontend` | `bun install --frozen-lockfile`, then `bun run check`, `bun run test` and `bun run build`, in a digest-pinned node container carrying the pinned bun binary (vitest needs a real node runtime) |
 | `check-chart` | `helm lint` and a render of both charts on their defaults and on each chart's `ci/full-values.yaml`, plus a render the devstack chart must refuse (RustFS without chosen credentials); asserts the production chart renders no `CronJob`, always renders the `htrflow-web` Deployment with a `/healthz` livenessProbe, and renders no devstack-labelled object; then `kubeconform -strict` on every render and on the converter's Job and ConfigMap skeletons |
 | `test` | the workspace pytest suite in a uv container (`uv run --no-sync pytest`, no GPU) — wrapper, converter, web |
-| `test-driver` | `packages/wrapper/tests/test_driver_real.py` against the real htrflow inside a wrapper image it builds itself — the level-0 pin test ([Testing](testing.md)); `ci.yml` runs it in the wrapper scan job. `make test-driver-real` runs the same test against an image that already exists, which is how the source-built-base jobs run it: the dagger engine builds in its own cache and cannot see a base image that exists only in the runner's docker daemon |
+| `test-driver` | `packages/wrapper/tests/test_driver_real.py` against the real htrflow inside a wrapper image it builds itself — the level-0 pin test ([Testing](testing.md)); `ci.yml` runs it in the wrapper scan job. `make test-driver-real` runs the same test against an image that already exists in the local docker daemon, which is how the second architecture's CI job runs it on the image it just built |
 | `build-wrapper` | the wrapper image from `.docker/htrflow-batch.dockerfile`, for the engine's own platform. The optional `--platform` exists for a caller with an engine per platform; nothing here passes it ([Releasing](releasing.md#one-dockerfile-every-architecture)). `--transformers-version` builds the image on the other transformers line; empty keeps the dockerfile's default ([Two transformers lines](../how-it-works/wrapper.md#model-handling)) |
 | `build-web` | the web image from `.docker/htrflow-web.dockerfile` (CPU-only, no torch): the campaign browser SPA, the Universal Viewer fork at the pinned `UV4_REF` with `.docker/uv4-uv-html.patch` applied, and the read API that serves both. A CA bundle goes in as the optional `ca` build secret |
 | `scan` | Trivy over the built wrapper image; table output, fails on findings (default `CRITICAL,HIGH`, unfixed findings ignored) |
@@ -85,7 +85,7 @@ a misleading npm-internal crash rather than a certificate error unless
   lock (`lock-htrflow-base`, [Dev cluster](dev-cluster.md#the-gpu-wrapper-image)), `scan` (dagger
   `scan-json`), `scan-web` (Trivy, HIGH/CRITICAL with a fix fails),
   `scan-image` (Trivy over an image in the local docker daemon, CRITICAL
-  with a fix fails; how CI gates the wrapper built on a source-built base),
+  with a fix fails; how CI gates the wrapper it builds with plain `docker build`),
   `publish` (manual, needs `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`; refuses
   an existing tag).
 - **Compose:** `compose-up`, `compose-test`, `compose-smoke` (both images
@@ -158,8 +158,8 @@ The cluster constants these targets use come from `.env`
   that change an image's inputs. One job per image: `scan-sarif` uploads the
   Trivy report to the Security tab, then the same CRITICAL gate as `ci.yml`
   runs, so an advisory published between changes fails a scheduled run. A
-  third job does the same for the wrapper on the source-built base, on a
-  native runner of that architecture, through `make scan-image`. On a
+  third job does the same for the wrapper on the second architecture, on a
+  native runner of it, through `make scan-image`. On a
   push the gate is skipped, since `ci.yml` has just run it.
 - **`codeql.yml`** ("CodeQL") — on push and pull request to `main` and weekly:
   static analysis of the Python packages, the campaign browser, the dagger
@@ -193,11 +193,10 @@ each kind of pin lives and how it moves.
 | Frontend dependencies | `frontend/bun.lock` | Renovate lockfile maintenance weekly; majors separate |
 | Dagger engine | `engineVersion` in `dagger.json`; the CLI version, its checksums and the engine digest in `.github/actions/setup-dagger` | Renovate bumps `dagger.json` in its own PR; the action's three pins follow by hand in that PR, and a test fails until they do |
 | Universal Viewer fork | `UV4_REF` commit in `.docker/htrflow-web.dockerfile` | Renovate, its own PR — `.docker/uv4-uv-html.patch` may need re-deriving |
-| htrflow source for the source-built base | the commit env var in `ci.yml`, `publish.yml` and `security.yml`, the same in all three | Renovate, its own PR — the base and the wrapper on it must be re-verified |
-| Dependencies of the source-built base | `.docker/htrflow-base/uv.lock`, installed with `uv sync --locked` | by hand with `make lock-htrflow-base`, when the htrflow commit moves |
+| htrflow source for the wrapper's base | `ARG HTRFLOW_REF` in the wrapper dockerfile | Renovate, its own PR — the lock, the base and the wrapper on it must be re-verified |
+| Dependencies of the wrapper's base, torch included | `.docker/htrflow-base/`: htrflow's `pyproject.toml` plus `overlay.toml`, and `uv.lock`, installed with `uv sync --locked` | by hand with `make lock-htrflow-base`, when the htrflow commit or the overlay moves |
 | transformers line | `.docker/transformers/<major>.in`, compiled with hashes into `<major>.txt` | by hand, `make transformers-requirements`; the dockerfile's `TRANSFORMERS_VERSION` default with it, and the build fails while they disagree |
-| Upstream htrflow base image | the `base-…` stage `FROM` in the wrapper dockerfile | by hand for tag bumps (a deliberate, tested pin); Renovate refreshes the digest only |
-| torch / torchvision | the version the upstream base's swap installs, and the version check on the source-built base, in the wrapper dockerfile | by hand, following the CUDA wheel index named there |
+| torch / torchvision | per architecture in `.docker/htrflow-base/overlay.toml` (`constraint-dependencies`, and the CUDA wheel index as a source) | by hand, then `make lock-htrflow-base` |
 | Kueue, Kyverno | `KUEUE_VERSION`, `KYVERNO_CHART_VERSION` in the `Makefile` | by hand |
 
 Inside the builds, dagger containers sync with `uv sync --frozen

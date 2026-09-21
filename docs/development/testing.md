@@ -9,11 +9,10 @@
    loaded — a binarization step exercises the step, document and serializer
    path — so it runs offline in seconds. It needs the wrapper image, so it
    runs where one has already been built, on both architectures: in CI's
-   source-built-base job straight after that build (`make test-driver-real`
-   against the image it just made) and in the dagger-built wrapper's scan job
-   (`dagger call test-driver`, sharing the scan's build); and at release on
-   the very image about to be pushed — inside `publish-docker`, and between
-   build and push in the other architecture's publish job. All of them run
+   second-architecture job straight after its build (`make test-driver-real`
+   against the image it just made) and in the wrapper scan job (`dagger call
+   test-driver`, sharing the scan's build); and at release on the very image
+   about to be pushed, inside `publish-docker`. All of them run
    `packages/wrapper/tests/test_driver_real.py` inside the image. `driver.py` keeps every htrflow import function-local, so the
    ordinary suite (level 1, `test_driver.py`) runs without torch against
    fakes.

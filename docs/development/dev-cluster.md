@@ -44,40 +44,31 @@ the GPU is unreachable and `uv` crashes, so the build always runs natively
 on a machine of the node's architecture
 ([Releasing](releasing.md#one-dockerfile-every-architecture)).
 
-**When upstream htrflow publishes a base for the node's architecture**, the
-wrapper dockerfile uses it and one target is enough:
+The wrapper dockerfile builds its htrflow base itself, from the htrflow
+commit it pins, so one target is enough on any architecture:
 
 ```bash
 make poc-push          # build-wrapper + build-web for the host's architecture, push both, print digests
 ```
 
-**When it does not**, build the base from an htrflow checkout first:
+To try an htrflow change before it is pinned, build from a local checkout
+instead; it replaces the pinned source and nothing is written into it:
 
 ```bash
-# The checkout is only the build context; the dockerfile and the lockfile are
-# this repository's (.docker/htrflow-base*), so nothing is written into it.
-make build-htrflow-base-arm64 HTRFLOW_DIR=<htrflow-checkout>
-make poc-push
+make poc-push HTRFLOW_SRC=<htrflow-checkout>
 ```
 
-On such a node `make build-wrapper` passes the locally built base to the
-dockerfile and stamps `HTRFLOW_BASE_REVISION` (`git -C $HTRFLOW_DIR describe
---tags --always --dirty`) into the image, because `manifest.json` only knows
-htrflow's package version while a source-built base usually runs a later
-commit. CI builds the same recipe in a throwaway clone at a pinned htrflow
-commit, so the recipe here and the one that publishes images cannot drift,
-and both install the same dependencies: `uv sync --locked` from the lockfile
-committed in `.docker/htrflow-base/`. A checkout whose
-`pyproject.toml` no longer matches that lock fails the build instead of
-being resolved afresh. After moving the pinned htrflow commit, refresh the
-lock from a checkout at the new commit and review the diff:
+The image then stamps the checkout's `git describe --tags --always --dirty`
+as `HTRFLOW_BASE_REVISION`, because `manifest.json` only knows htrflow's
+package version. The checkout's `pyproject.toml` must still be the one the
+committed lock in `.docker/htrflow-base/` was made for; the build refuses
+it otherwise rather than resolve afresh. After moving the pinned commit
+(`HTRFLOW_REF` in the wrapper dockerfile), refresh the lock and review the
+diff:
 
 ```bash
-make lock-htrflow-base HTRFLOW_DIR=<htrflow-checkout>   # UV_LOCK_ARGS=--upgrade moves every pin
+make lock-htrflow-base          # UV_LOCK_ARGS=--upgrade moves every pin
 ```
-
-The torch and torchvision checks in the wrapper dockerfile then catch a lock
-refresh that moves them.
 
 `poc-push` prints the wrapper and web digests. The wrapper's goes into
 `pipelines/<id>.yaml` in the campaigns repo, the web front's into
