@@ -472,7 +472,7 @@ class Pipeline(BaseModel):
                 '<Name>" entries under it'
             )
         stray = [
-            f"step {i} ({step.get('step', '?')}): {', '.join(sorted(extra))}"
+            f"step {i} ({step.get('step', '?')}): {', '.join(sorted(map(str, extra)))}"
             for i, step in enumerate(v, 1)
             if isinstance(step, dict)
             and isinstance(settings := step.get("settings"), dict)
