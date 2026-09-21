@@ -618,7 +618,17 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 3156
 # warm-up Job is replaced; and a finished check that cannot read blocks its
 # campaign instead of applying it. About half is the sentences and the
 # comments saying why each one fails closed.
-check converter "$(count packages/converter/src -name '*.py')" 2812
+# 2747 -> 2840 (3086-3089): the rules a repo is held to beyond its files'
+# shape are one function validate and render both call, so the append-only
+# and split-shape checks left render's write loop for a function of their
+# own (3086); the campaign-name rule is the API server's Indexed Job rule --
+# a DNS label, the last pod's hostname within 63, no htr-warmup- prefix --
+# and a pipeline id leaves its warm-up Job room (3087); a part is matched
+# whole, not globbed (3088); and the render is written beside --out and
+# swapped in by rename, replacing the prune (3089). Most of it is the
+# sentences each refusal prints and the comments that say which Kubernetes
+# rule each check mirrors.
+check converter "$(count packages/converter/src -name '*.py')" 2905
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
