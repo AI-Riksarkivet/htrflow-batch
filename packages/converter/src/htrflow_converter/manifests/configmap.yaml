@@ -12,5 +12,6 @@ metadata:
     # is still here to answer that once the Job -- and its `image:` -- is
     # reaped (B76).
     htrflow.riksarkivet.se/image-digest: IMAGE
+    argocd.argoproj.io/hook: Skip  # see campaign-job.yaml
 data:
   volumes.txt: ""

@@ -8,5 +8,6 @@ metadata:
     htrflow.riksarkivet.se/pipeline: PIPELINE
   annotations:
     htrflow.riksarkivet.se/pipeline-sha256: SHA256
+    argocd.argoproj.io/hook: Skip  # see campaign-job.yaml
 data:
   pipeline.yaml: ""

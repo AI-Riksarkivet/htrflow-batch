@@ -7,6 +7,8 @@ metadata:
     app: htrflow-warmup
     htrflow.riksarkivet.se/managed-by: converter
     htrflow.riksarkivet.se/pipeline: PIPELINE
+  annotations:
+    argocd.argoproj.io/hook: Skip  # see campaign-job.yaml
 spec:
   backoffLimit: 2
   podFailurePolicy:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import getpass
+import hashlib
 import os
 import re
 import subprocess
@@ -260,8 +261,8 @@ def _shape(paths: list[Path]) -> str:
 
 def _prune(out: Path, written: set[Path]) -> None:
     """Deleting a campaign (or pipeline) file must take its rendered manifest
-    with it: that manifest is what an apply --prune / Argo CD compares the
-    cluster against, so a leftover would keep resurrecting a cancelled Job.
+    with it: that manifest is what an apply --prune compares the cluster
+    against, so a leftover would keep resurrecting a cancelled Job.
     A shrinking `-partN` split is the same case."""
     for path in sorted([*out.glob("*.yaml"), *out.glob("*.yml")]):
         if path not in written:
@@ -363,6 +364,12 @@ def _render(repo_dir: str, out_dir: str) -> int:
             written.add(path)
     _prune(pipelines_out, written)
     _prune(campaigns_out, written)
+    digest = hashlib.sha256()
+    for path in sorted(written):
+        digest.update(
+            f"{path.relative_to(out).as_posix()}\0".encode() + path.read_bytes()
+        )
+    _write(out / "sync.yaml", [render.sync_configmap(cfg, digest.hexdigest())])
     return 0
 
 

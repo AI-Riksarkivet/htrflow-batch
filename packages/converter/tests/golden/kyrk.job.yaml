@@ -9,6 +9,8 @@ metadata:
     htrflow.riksarkivet.se/campaign: kyrk
     htrflow.riksarkivet.se/pipeline: demo-v1
     kueue.x-k8s.io/queue-name: htr-test
+  annotations:
+    argocd.argoproj.io/hook: Skip
 spec:
   completionMode: Indexed
   completions: 3

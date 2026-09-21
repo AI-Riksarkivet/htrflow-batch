@@ -42,9 +42,8 @@ campaign **is** one Kubernetes Indexed Job:
 > **Deleting a campaign's file cancels it** — *if the apply prunes*. The
 > next `render` removes its file from `rendered/`, and the apply that follows
 > deletes its Job and its `volumes.txt` ConfigMap only when pruning is turned
-> on: Argo CD needs `syncPolicy.automated.prune: true` (it defaults to
-> `false`, and a manual sync prunes only with `--prune`), and on a PoC it is
-> `make campaigns-apply PRUNE=1`, which deletes every Job and ConfigMap
+> on: `htrflow-campaigns apply --prune` (the Argo CD hook's command), or
+> `make campaigns-apply PRUNE=1` by hand, which deletes every Job and ConfigMap
 > labelled `htrflow.riksarkivet.se/managed-by=converter` that the render did
 > not produce (a plain apply never deletes anything). **Results already
 > published to S3 are never touched by anything in this system — not by
@@ -74,9 +73,9 @@ campaign **is** one Kubernetes Indexed Job:
    same sentence. Keep the job's `POLICY_*` env in step with the release's
    `security.*` values.
 4. Merge. CI on `main` runs `htrflow-campaigns render` and commits the
-   result under `rendered/` (see `.github/workflows/render.yml`). Whatever
-   applies `rendered/` to a cluster — Argo CD watching this repo, or
-   `make campaigns-apply` by hand on a PoC — picks it up from there.
+   result under `rendered/` (see `.github/workflows/render.yml`).
+   `htrflow-campaigns apply --prune` picks it up from there — run by an
+   Argo CD hook, or by `make campaigns-apply PRUNE=1` by hand.
 
 ## The append-only rule
 
@@ -98,24 +97,32 @@ which volumes.
 
 Generated, not hand-authored. `htrflow-campaigns render . --out rendered`
 writes `rendered/pipelines/<id>.yaml` (a ConfigMap + that pipeline's warm-up
-Job) and `rendered/campaigns/<name>.yaml` (a ConfigMap + that campaign's
-Indexed Job) for every pipeline and campaign in this repo. Apply pipelines
-before campaigns — a campaign's Job references its pipeline's ConfigMap by
-name:
+Job), `rendered/campaigns/<name>.yaml` (a ConfigMap + that campaign's
+Indexed Job) for every pipeline and campaign in this repo, and
+`rendered/sync.yaml` (a digest of the render, for Argo CD).
+
+**Only `htrflow-campaigns apply` applies it** — never `kubectl apply -f
+rendered/`, and never an Argo CD Application that applies the directory:
 
 ```bash
-htrflow-campaigns apply .                                   # renders, applies in order, syncs the pause
-kubectl apply -f rendered/pipelines -f rendered/campaigns   # or by hand, from rendered/
+htrflow-campaigns apply --prune .   # renders, applies pipelines then campaigns, syncs the pause, prunes
 ```
 
-`make campaigns-apply DIR=<this-repo>` (from an
+A finished campaign's Job is reaped after its TTL while its file stays in
+`rendered/`. Anything that makes the cluster match the directory creates
+that Job again and runs every volume again; the command checks first that
+the campaign is not finished, that it matches its ConfigMap in the cluster,
+and it enforces `suspend:`. That is why every rendered object carries
+`argocd.argoproj.io/hook: Skip`: Argo CD applies none of them.
+
+`make campaigns-apply DIR=<this-repo> PRUNE=1` (from an
 [htrflow-batch](https://github.com/AI-Riksarkivet/htrflow-batch) checkout)
-is the first command above, for the PoC — it renders, applies pipelines then
-campaigns through the Kubernetes API, and puts each campaign's `suspend:` on
-its Kueue Workload. Add `PRUNE=1` to cancel deleted campaigns. On a real
-deployment, an Argo CD `Application` watches this repo's `rendered/`
-directory instead — nothing applies to the cluster that this repo's own CI
-did not commit first.
+is that command by hand. With Argo CD, the Application syncs only
+`rendered/sync.yaml` (`directory.include: '{rendered/sync.yaml,argocd/*.yaml}'`,
+recursive), so each new render is a sync, and a `PostSync` hook in
+`argocd/` runs the command on a checkout of this repo — htrflow-batch's
+[`docs/reference/campaign-yaml.md#with-argo-cd`](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/docs/reference/campaign-yaml.md#with-argo-cd).
+Nothing applies to the cluster that this repo's own CI did not commit first.
 
 ## Results stay
 

@@ -542,3 +542,52 @@ def test_validate_refuses_a_repo_without_a_converter_yaml(tmp_path, capsys):
     assert "htrflow-campaigns init" in printed
     assert main(["render", str(repo), "--out", str(tmp_path / "rendered")]) == 1
     assert not (tmp_path / "rendered").exists()
+
+
+# --- only `htrflow-campaigns apply` applies rendered/ (3085) --------------
+
+ARGO_HOOK = "argocd.argoproj.io/hook"
+
+
+def _docs(path: Path) -> list[dict]:
+    return [d for d in yaml.safe_load_all(path.read_text()) if isinstance(d, dict)]
+
+
+def test_argo_cd_never_applies_a_rendered_object(tmp_path):
+    """An Argo CD Application syncing `rendered/` used to own every Job in
+    it: once the TTL reaped a finished campaign's Job, sync (or self-heal)
+    created it again and every volume ran again -- past the finished-campaign
+    guard, the live-record check and the pause sync, which all live in
+    `apply`. Every rendered object is a Skip hook to Argo CD, so it applies,
+    re-creates, heals and prunes none of them."""
+    out = tmp_path / "rendered"
+    assert main(["render", str(GOOD), "--out", str(out)]) == 0
+    objects = [d for p in sorted(out.glob("*/*.yaml")) for d in _docs(p)]
+    assert {o["kind"] for o in objects} == {"ConfigMap", "Job"}
+    for o in objects:
+        assert o["metadata"]["annotations"][ARGO_HOOK] == "Skip", o["metadata"]
+
+
+def test_the_render_carries_one_object_argo_cd_syncs(tmp_path):
+    """With every rendered object skipped, an Application would never go
+    OutOfSync, and automated sync -- which runs only on OutOfSync -- would
+    never run the hook that applies. `rendered/sync.yaml` is the one object
+    it syncs: a digest of the render, so each new render is a sync. It is
+    unlabelled, so `apply --prune` never deletes it, and it is the same
+    for the same repo (rendered/ is a pure function of the repo)."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    out = repo / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    (sync,) = _docs(out / "sync.yaml")
+    assert sync["kind"] == "ConfigMap"
+    assert sync["metadata"]["namespace"] == "htr-test"
+    assert "labels" not in sync["metadata"]
+    assert ARGO_HOOK not in (sync["metadata"].get("annotations") or {})
+    first = sync["data"]["sha256"]
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    assert _docs(out / "sync.yaml")[0]["data"]["sha256"] == first
+    kyrk = repo / "campaigns" / "kyrk.yaml"
+    kyrk.write_text(kyrk.read_text() + "suspend: true\n")
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    assert _docs(out / "sync.yaml")[0]["data"]["sha256"] != first

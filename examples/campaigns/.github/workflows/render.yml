@@ -1,9 +1,12 @@
 name: Render
 # On a pull request: validate campaigns/ + pipelines/ + converter.yaml,
 # nothing more — this never touches rendered/.
-# On main: render and commit rendered/, so what Argo CD (or `make
-# campaigns-apply` on a PoC) applies is always exactly what CI produced from
-# the merged commit, never something rendered by hand on a laptop.
+# On main: render and commit rendered/, so what `htrflow-campaigns apply`
+# applies (as an Argo CD hook, or `make campaigns-apply` by hand) is always
+# exactly what CI produced from the merged commit, never something rendered
+# by hand on a laptop. Nothing else applies rendered/: every object in it is
+# a Skip hook to Argo CD, and `kubectl apply` of it would re-create a
+# finished campaign's reaped Job.
 #
 # What this workflow does NOT do: apply anything. It renders; something else
 # applies. That something should be `htrflow-campaigns apply <repo> --prune`
@@ -15,7 +18,7 @@ name: Render
 # hook pod needs credentials (a kubeconfig, or a ServiceAccount token — the
 # htrflow-batch chart renders one behind `apply.rbac.enabled`) but no
 # `kubectl` binary. With Argo CD it is a PostSync hook — example manifest in
-# htrflow-batch's docs/reference/campaign-yaml.md#pausing; by hand it is
+# htrflow-batch's docs/reference/campaign-yaml.md#with-argo-cd; by hand it is
 # `make campaigns-apply DIR=<repo> PRUNE=1`.
 #
 # The converter is not an image: it is a plain Python package installed
