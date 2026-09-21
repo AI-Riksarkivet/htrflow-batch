@@ -235,7 +235,9 @@ def test_an_empty_ingress_list_is_refused_not_opened(empty_ingress: Path):
     `ingressCidrs: []` -- what an operator writes to shut the web front --
     rendered exactly the catch-all the guard refuses, without the guard
     noticing (finding 3100). It fails with a sentence that says so."""
-    refused = helm_template(values=str(empty_ingress), sets=REQUIRED_SETS)
+    refused = helm_template(
+        values=str(empty_ingress), sets=REQUIRED_SETS + (POLICIES_OFF,)
+    )
     assert refused.returncode != 0
     assert "network.web.ingressCidrs is empty" in refused.stderr
     assert "network.web.allowPublicIngress" in refused.stderr
@@ -259,7 +261,9 @@ def test_a_catch_all_split_into_halves_is_still_a_catch_all(cidrs: str):
     """The guard compared strings, so `0.0.0.0/1` + `128.0.0.0/1` -- every
     address, in two entries -- passed it (finding 3064). Anything wider than
     a /8 is somebody's whole internet and needs the same opt-in."""
-    refused = helm_template(sets=REQUIRED_SETS + (f"network.web.ingressCidrs={cidrs}",))
+    refused = helm_template(
+        sets=REQUIRED_SETS + (POLICIES_OFF, f"network.web.ingressCidrs={cidrs}")
+    )
     assert refused.returncode != 0
     assert "wider than /8" in refused.stderr
     assert "network.web.allowPublicIngress" in refused.stderr
@@ -271,7 +275,9 @@ def test_a_catch_all_split_into_halves_is_still_a_catch_all(cidrs: str):
 def test_a_private_block_is_narrow_enough():
     """A /8 is the widest range an operator can name without the flag -- the
     `10.0.0.0/8` a site network commonly is."""
-    rendered = render(sets=REQUIRED_SETS + ("network.web.ingressCidrs={10.0.0.0/8}",))
+    rendered = render(
+        sets=REQUIRED_SETS + (POLICIES_OFF, "network.web.ingressCidrs={10.0.0.0/8}")
+    )
     ingress = named(rendered, "NetworkPolicy", "htr-web")["spec"]["ingress"]
     assert ingress[0]["from"] == [{"ipBlock": {"cidr": "10.0.0.0/8"}}]
 
@@ -541,7 +547,8 @@ def test_the_list_alone_is_enough():
         s for s in REQUIRED_SETS if not s.startswith("network.apiServer.cidr=")
     )
     rendered = render(
-        sets=sets + (PUBLIC_INGRESS, "network.apiServer.cidrs={10.16.51.11/32}")
+        sets=sets
+        + (PUBLIC_INGRESS, POLICIES_OFF, "network.apiServer.cidrs={10.16.51.11/32}")
     )
     api = _api_rule(named(rendered, "NetworkPolicy", "htr-web"))
     assert api["to"] == [{"ipBlock": {"cidr": "10.16.51.11/32"}}]
