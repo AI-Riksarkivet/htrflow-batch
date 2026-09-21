@@ -479,7 +479,9 @@ def test_the_apply_pods_policy_comes_with_its_identity():
 
 
 def _api_rule(policy: dict) -> dict:
-    return next(r for r in policy["spec"]["egress"] if any("ipBlock" in to for to in r["to"]))
+    return next(
+        r for r in policy["spec"]["egress"] if any("ipBlock" in to for to in r["to"])
+    )
 
 
 @pytest.mark.parametrize("policy_name", ["htr-web", "htr-campaigns-apply"])
@@ -490,7 +492,10 @@ def test_every_api_server_address_is_let_out(policy_name: str):
     `network.apiServer.cidrs` names them all, beside the single `cidr`."""
     rendered = render(
         sets=DEFAULT_SETS
-        + ("apply.rbac.enabled=true", "network.apiServer.cidrs={10.16.51.11/32,10.16.51.12/32}")
+        + (
+            "apply.rbac.enabled=true",
+            "network.apiServer.cidrs={10.16.51.11/32,10.16.51.12/32}",
+        )
     )
     api = _api_rule(named(rendered, "NetworkPolicy", policy_name))
     assert api["to"] == [
@@ -502,14 +507,20 @@ def test_every_api_server_address_is_let_out(policy_name: str):
 
 
 def test_the_list_alone_is_enough():
-    sets = tuple(s for s in REQUIRED_SETS if not s.startswith("network.apiServer.cidr="))
-    rendered = render(sets=sets + (PUBLIC_INGRESS, "network.apiServer.cidrs={10.16.51.11/32}"))
+    sets = tuple(
+        s for s in REQUIRED_SETS if not s.startswith("network.apiServer.cidr=")
+    )
+    rendered = render(
+        sets=sets + (PUBLIC_INGRESS, "network.apiServer.cidrs={10.16.51.11/32}")
+    )
     api = _api_rule(named(rendered, "NetworkPolicy", "htr-web"))
     assert api["to"] == [{"ipBlock": {"cidr": "10.16.51.11/32"}}]
 
 
 def test_no_api_server_address_at_all_is_still_refused():
-    sets = tuple(s for s in REQUIRED_SETS if not s.startswith("network.apiServer.cidr="))
+    sets = tuple(
+        s for s in REQUIRED_SETS if not s.startswith("network.apiServer.cidr=")
+    )
     refused = helm_template(sets=sets + (PUBLIC_INGRESS,))
     assert refused.returncode != 0
     assert "network.apiServer.cidrs" in refused.stderr
@@ -524,9 +535,12 @@ def _from_endpoints(tmp_path: Path, endpoints: dict) -> dict:
     (chart / "Chart.yaml").write_text(
         "apiVersion: v2\nname: probe\nversion: 0.0.0\n", encoding="utf-8"
     )
-    shutil.copy(CHART / "templates" / "_helpers.tpl", chart / "templates" / "_helpers.tpl")
+    shutil.copy(
+        CHART / "templates" / "_helpers.tpl", chart / "templates" / "_helpers.tpl"
+    )
     (chart / "templates" / "probe.yaml").write_text(
-        "result: {{ include \"htrflow-batch.apiServerFromEndpoints\" .Values.endpoints }}\n",
+        "result: {{ include "
+        '"htrflow-batch.apiServerFromEndpoints" .Values.endpoints }}\n',
         encoding="utf-8",
     )
     values = tmp_path / "values.yaml"
