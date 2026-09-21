@@ -599,7 +599,13 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 3156
 # `Cluster.prune` catches a refused list or delete per kind and per object
 # and hands back what it could not do, so the apply runs the pause sync for
 # every campaign and still names each object the prune left behind.
-check converter "$(count packages/converter/src -name '*.py')" 2624
+# 2600 -> 2700 (3084): `apply` answers to the live cluster, not to
+# `rendered/` alone. Every campaign is held against its live ConfigMap
+# (volumes, pipeline, image) before anything is sent; every campaign Job is
+# tried with dryRun=All before its ConfigMap goes, so a refused Job leaves
+# the pair as it was; and the pipeline guard counts the campaigns `rendered/`
+# recorded as running a pipeline, not only the ones whose file names it now.
+check converter "$(count packages/converter/src -name '*.py')" 2724
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
