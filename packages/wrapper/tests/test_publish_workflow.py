@@ -313,3 +313,16 @@ def test_compose_smoke_runs_the_images_it_built() -> None:
     assert "trap 'docker compose down -v' EXIT" in run
     assert "HTR_WRAPPER_IMAGE=$(WRAPPER_IMAGE) HTR_WEB_IMAGE=$(WEB_IMAGE)" in run
     assert run.count("--no-build") == 2  # never a third, differently built image
+
+
+def test_every_job_with_the_registry_credential_runs_in_the_release_env() -> None:
+    """Finding 3068: DOCKERHUB_TOKEN was a repository and organisation secret
+    any workflow on any branch could read. Every publish job names the
+    `release` environment, whose reviewers, branch rule and secrets the
+    repository settings hold."""
+    for name, job in JOBS.items():
+        if "secrets.DOCKERHUB_" in yaml.safe_dump(job):
+            assert job.get("environment") == "release", name
+    for other in set(_all_workflows()) - {"publish.yml"}:
+        text = (WORKFLOWS / other).read_text()
+        assert "DOCKERHUB_" not in text, other
