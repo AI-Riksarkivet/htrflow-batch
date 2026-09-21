@@ -475,6 +475,106 @@ def test_the_apply_pods_policy_comes_with_its_identity():
     ] == []
 
 
+# --- 3101: an HA control plane is more than one API server ----------------
+
+
+def _api_rule(policy: dict) -> dict:
+    return next(r for r in policy["spec"]["egress"] if any("ipBlock" in to for to in r["to"]))
+
+
+@pytest.mark.parametrize("policy_name", ["htr-web", "htr-campaigns-apply"])
+def test_every_api_server_address_is_let_out(policy_name: str):
+    """Behind the `kubernetes` ClusterIP sit as many API servers as the
+    control plane has, and after DNAT a connection goes to any of them. A
+    rule naming one of three drops two calls in three (finding 3101), so
+    `network.apiServer.cidrs` names them all, beside the single `cidr`."""
+    rendered = render(
+        sets=DEFAULT_SETS
+        + ("apply.rbac.enabled=true", "network.apiServer.cidrs={10.16.51.11/32,10.16.51.12/32}")
+    )
+    api = _api_rule(named(rendered, "NetworkPolicy", policy_name))
+    assert api["to"] == [
+        {"ipBlock": {"cidr": "10.16.51.10/32"}},
+        {"ipBlock": {"cidr": "10.16.51.11/32"}},
+        {"ipBlock": {"cidr": "10.16.51.12/32"}},
+    ]
+    assert api["ports"] == [{"port": 6443}]
+
+
+def test_the_list_alone_is_enough():
+    sets = tuple(s for s in REQUIRED_SETS if not s.startswith("network.apiServer.cidr="))
+    rendered = render(sets=sets + (PUBLIC_INGRESS, "network.apiServer.cidrs={10.16.51.11/32}"))
+    api = _api_rule(named(rendered, "NetworkPolicy", "htr-web"))
+    assert api["to"] == [{"ipBlock": {"cidr": "10.16.51.11/32"}}]
+
+
+def test_no_api_server_address_at_all_is_still_refused():
+    sets = tuple(s for s in REQUIRED_SETS if not s.startswith("network.apiServer.cidr="))
+    refused = helm_template(sets=sets + (PUBLIC_INGRESS,))
+    assert refused.returncode != 0
+    assert "network.apiServer.cidrs" in refused.stderr
+
+
+def _from_endpoints(tmp_path: Path, endpoints: dict) -> dict:
+    """Run the chart's own Endpoints reader on a fixture: `helm template`
+    has no cluster to `lookup`, so a throwaway chart carries a copy of
+    `_helpers.tpl` and one template that calls the helper on a value."""
+    chart = tmp_path / "probe"
+    (chart / "templates").mkdir(parents=True)
+    (chart / "Chart.yaml").write_text(
+        "apiVersion: v2\nname: probe\nversion: 0.0.0\n", encoding="utf-8"
+    )
+    shutil.copy(CHART / "templates" / "_helpers.tpl", chart / "templates" / "_helpers.tpl")
+    (chart / "templates" / "probe.yaml").write_text(
+        "result: {{ include \"htrflow-batch.apiServerFromEndpoints\" .Values.endpoints }}\n",
+        encoding="utf-8",
+    )
+    values = tmp_path / "values.yaml"
+    values.write_text(yaml.safe_dump({"endpoints": endpoints}), encoding="utf-8")
+    result = subprocess.run(
+        ["helm", "template", "probe", str(chart), "-f", str(values)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return next(d for d in yaml.safe_load_all(result.stdout) if d)["result"]
+
+
+def test_auto_detection_reads_every_endpoint_address_and_port(tmp_path: Path):
+    """The `lookup` path took `index .subsets 0` and `index .addresses 0`:
+    one API server of an HA control plane. Every address of every subset,
+    and every port, is what the Endpoints object says the Service reaches."""
+    endpoints = {
+        "subsets": [
+            {
+                "addresses": [{"ip": "10.16.51.11"}, {"ip": "10.16.51.12"}],
+                "ports": [{"name": "https", "port": 6443, "protocol": "TCP"}],
+            },
+            {
+                "addresses": [{"ip": "10.16.51.13"}, {"ip": "10.16.51.11"}],
+                "ports": [{"name": "https", "port": 6443, "protocol": "TCP"}],
+            },
+        ]
+    }
+    assert _from_endpoints(tmp_path, endpoints) == {
+        "cidrs": ["10.16.51.11/32", "10.16.51.12/32", "10.16.51.13/32"],
+        "ports": [6443],
+    }
+
+
+@pytest.mark.parametrize(
+    "endpoints",
+    [{}, {"subsets": []}, {"subsets": [{"ports": [{"port": 6443}]}]}],
+)
+def test_auto_detection_of_an_endpoints_object_without_addresses_is_empty(
+    tmp_path: Path, endpoints: dict
+):
+    """An Endpoints object with no subsets used to stop the render with
+    `index of nil`; it is simply nothing detected, and the caller asks for
+    the value instead."""
+    assert _from_endpoints(tmp_path, endpoints)["cidrs"] == []
+
+
 # --- D8: a signing identity nothing ever signed as -------------------------
 
 #: The identity `publish.yml` actually gets from Sigstore: the repository is
