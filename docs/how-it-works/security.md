@@ -26,7 +26,11 @@ it. The campaigns repo's CI can run the same policies over its rendered output
 with the Kyverno CLI, so a bad change fails in the pull request, not at apply
 time. The two image rules apply to every Job and Pod, and on a Pod they
 cover the ephemeral containers a debugging session attaches as well as the
-ones it was created with. The revision rule
+ones it was created with. They also cover image volumes
+(`volumes[].image.reference`): the kubelet pulls one like a container image,
+over the node's network rather than the pod's, and mounts whatever it holds
+— model weights included — so it has to come from an allowed repository,
+pinned by digest, and signed when signatures are verified. The revision rule
 applies to every ConfigMap carrying a `pipeline.yaml` key — that key is what
 makes a ConfigMap a pipeline, where a label is only a claim about one — and
 reads the top-level `steps:` in it.
@@ -47,7 +51,7 @@ no requester to match.
 | **Model revision**: `security.requireModelRevision` (with `policies.enabled`) | Kyverno `ClusterPolicy` `htrflow-batch-model-revision-<namespace>`, at admission of any ConfigMap with a `pipeline.yaml` key, and in the CLI. Message: `models not pinned to a revision: <models> — add revision: <40-character commit hash> under model_settings (YOLO) or model_settings.model_kwargs (TrOCR and other Hugging Face models)`. The same policy refuses any key beside `model_settings` in a step that loads a model (only `model`, `model_settings` and `generation_settings` may sit under its `settings`), because htrflow merges such a key over `model_settings`: a `revision: null` there would unpin the model the rule just checked. Message: `settings beside model_settings in a step that loads a model: <step>: <keys>`. `htrflow-campaigns validate` refuses the same shape | An unpinned Hugging Face repo swapping its weights under the same pipeline id |
 | **Write scope of a ServiceAccount**: `security.policies.enabled` | Kyverno `ClusterPolicy` `htrflow-batch-rbac-scope-<namespace>`, at admission, on every ConfigMap write by the web ServiceAccount. Message: `the read API may only write a campaign's own status ConfigMap (campaign-<name>-status), not <name>` | The read API using a Role that cannot be scoped to one object name to overwrite a pipeline ConfigMap, and so choose the weights the next campaign loads |
 | **Delete scope of the apply identity**: `security.policies.enabled` with `apply.rbac.enabled` | Kyverno `ClusterPolicy` `htrflow-batch-rbac-scope-<namespace>`, at admission, on every Job or ConfigMap the apply ServiceAccount deletes. Message: `the apply identity may only delete objects the converter rendered` | A pruning identity reaching a Job or ConfigMap it never rendered — a running campaign's, or another workload's in the same namespace |
-| **Signed images**: `security.verifyImages.*` (Kyverno `ClusterPolicy`, cosign keyless) | At admission, for every Pod in the namespace | Images not built by the CI identity you name. Off by default. Needs the image to be signed at publish time ([CI](../development/ci.md)) |
+| **Signed images**: `security.verifyImages.*` (Kyverno `ClusterPolicy`, cosign keyless) | At admission, for every Pod in the namespace, its image volumes included | Images not built by the CI identity you name. Off by default. Needs the image to be signed at publish time ([CI](../development/ci.md)) |
 | **Control-plane digest gate**: `web.image` must be `@sha256:`-pinned unless `security.allowTagImages` is set | The chart template | Anyone with push access to the registry replacing the web front in place |
 | **http(s)-only sources, byte caps, redirect caps** | `parse_pipeline`/`parse_campaign`, and the wrapper (`MANIFEST_MAX_BYTES`, `FETCH_MAX_BYTES`, at most 5 redirects, raster images only) | SSRF and denial of service driven by campaign data |
 | **No runtime path to the campaigns repo** | The campaigns repo's own CI, outside this system | Nothing in the cluster clones the campaigns repo or holds a credential for it |

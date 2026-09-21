@@ -16,6 +16,10 @@
 # rules do not, because Kubernetes forbids ephemeral containers in a pod
 # template -- there is nothing there to walk.
 #
+# Both walk image volumes too (`volumes[].image.reference`, 2026-09-17
+# audit, 3061): the kubelet pulls one like a container image, and a tag
+# there is as mutable as a tag on a container.
+#
 # `context` + `deny`, not `foreach`: a message may not name a `foreach`
 # element (Kyverno rejects `element.image` outside the loop), and a message
 # that does not say WHICH image is wrong sends its reader hunting. The
@@ -43,8 +47,8 @@ spec:
         - name: unpinned
           variable:
             jmesPath: >-
-              request.object.spec.template.spec.[containers, initContainers][] | [?image]
-              | [?!regex_match('^\S+@sha256:[0-9a-f]{64}$', image)].image
+              request.object.spec.template.spec.[[containers, initContainers][].image, volumes[].image.reference][]
+              | [?!regex_match('^\S+@sha256:[0-9a-f]{64}$', @)]
             default: []
       validate:
         message: >-
@@ -65,8 +69,8 @@ spec:
         - name: unpinned
           variable:
             jmesPath: >-
-              request.object.spec.[containers, initContainers, ephemeralContainers][] | [?image]
-              | [?!regex_match('^\S+@sha256:[0-9a-f]{64}$', image)].image
+              request.object.spec.[[containers, initContainers, ephemeralContainers][].image, volumes[].image.reference][]
+              | [?!regex_match('^\S+@sha256:[0-9a-f]{64}$', @)]
             default: []
       validate:
         message: >-
