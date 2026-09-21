@@ -888,7 +888,20 @@ check converter "$(count packages/converter/src -name '*.py')" 2917
 # frame-ancestors only. BuiltSite.file_response and the docstring saying why.
 # 1891 -> 1892 (2026-09-21, audit 3059): StaticFiles.directory may be None,
 # and the type checker refused Path(None) -- one line to name it.
-check web       "$(count packages/web/src -name '*.py')" 1892
+# 1892 -> 2096 (2026-09-21, audits 3074/3075/3076/3081), the status record
+# and the campaign totals. +30 (3074): a pod that left no termination
+# message is named by its own status.reason or its container's reason and
+# exit code, every failed row is a failure, and a reaped record that counts
+# more failures than it names leaves the rest `unknown`. +27 (3075):
+# failedVolumes merged per volume id rather than replaced as one string.
+# +67 (3075/3081): record_write -- jobUid binds the record to its Job, a
+# record of another Job is replaced whole (forced on the version read), and
+# once apply owns the ending only failedVolumes is sent; kube's forced
+# apply. +80 (3076): _read_progress reads every run volume, cache first and
+# capped on network misses only, running rows first, with pagesCoverage;
+# ProgressReader.cached, answered-vs-unanswered, oldest-first eviction.
+# Most of it is the paragraphs saying who owns which field and why.
+check web       "$(count packages/web/src -name '*.py')" 2096
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
