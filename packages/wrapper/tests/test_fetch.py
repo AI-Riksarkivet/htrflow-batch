@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import httpx
+import pytest
 
 from htrflow_batch.fetch import FetchResult, fetch_page
 from htrflow_batch.iiif import PageRef
@@ -393,3 +394,63 @@ def test_a_page_under_the_cap_passes_without_a_warning(tmp_path, recwarn):
     r = fetch_page(page, tmp_path, _client(handler), 3, 0.0, max_pixels=150_000_000)
     assert r.error is None and r.path is not None
     assert [w for w in recwarn if "decompression" in str(w.message).lower()] == []
+
+
+def test_a_gzip_bomb_is_capped_on_its_decoded_size_in_bounded_memory(
+    tmp_path, gzip_bomb, peak_mib
+):
+    """3062: httpx inflated each network chunk whole before the cap was
+    counted, so ~250 KB of gzip became 256 MiB in one allocation -- and
+    brotli has no output limit at all. The cap is on DECODED bytes, counted
+    as they are inflated, a chunk at a time."""
+    bomb = gzip_bomb(256, head=JPEG)
+    calls = []
+
+    def handler(req):
+        calls.append(req.headers.get("Accept-Encoding"))
+        return httpx.Response(
+            200, headers={"Content-Encoding": "gzip"}, stream=httpx.ByteStream(bomb)
+        )
+
+    results: list = []
+    peak = peak_mib(lambda: results.append(_one(tmp_path, handler, max_bytes=1 << 20)))
+    r = results[0]
+    assert r.path is None and "too large" in r.error
+    assert len(calls) == 1  # permanent: the same bomb tomorrow
+    assert calls[0] == "gzip"  # nothing advertised that is not decoded bounded
+    assert peak < 16, f"peak {peak:.0f} MiB"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_gzip_image_under_the_cap_is_decoded(tmp_path):
+    import gzip
+
+    def handler(req):
+        return httpx.Response(
+            200,
+            headers={"Content-Encoding": "gzip"},
+            stream=httpx.ByteStream(gzip.compress(JPEG)),
+        )
+
+    r = _one(tmp_path, handler)
+    assert r.error is None and r.path is not None
+    assert r.path.read_bytes() == JPEG and r.size == len(JPEG)
+
+
+@pytest.mark.parametrize("encoding", ["br", "zstd", "deflate", "gzip, br"])
+def test_an_encoding_we_did_not_ask_for_is_refused_undecoded(tmp_path, encoding):
+    """3062: brotli (and zstd) decoders have no output bound; only gzip is
+    asked for, and anything else is refused before a byte is decoded."""
+    calls = []
+
+    def handler(req):
+        calls.append(1)
+        return httpx.Response(
+            200,
+            headers={"Content-Encoding": encoding},
+            stream=httpx.ByteStream(b"\x8b" * 64),
+        )
+
+    r = _one(tmp_path, handler)
+    assert r.path is None and "Content-Encoding" in r.error
+    assert len(calls) == 1

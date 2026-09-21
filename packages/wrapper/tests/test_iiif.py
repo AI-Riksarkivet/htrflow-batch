@@ -482,3 +482,51 @@ def test_p2_takes_the_first_publishable_image_for_both(p2_manifest):
     url, body = _fetched_and_published(canvas)
     assert url.startswith("http://ex/b/full/")
     assert body["id"] == "http://ex/b.jpg"
+
+
+def test_fetch_manifest_gzip_bomb_is_capped_in_bounded_memory(gzip_bomb, peak_mib):
+    """3062: the manifest cap is on the decoded JSON, counted while inflating."""
+    bomb = gzip_bomb(256, head=b'{"items": "')
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda req: httpx.Response(
+                200, headers={"Content-Encoding": "gzip"}, stream=httpx.ByteStream(bomb)
+            )
+        )
+    )
+
+    def fetch():
+        with pytest.raises(ManifestError, match="too large"):
+            fetch_manifest("https://x/manifest", client, max_bytes=1 << 20)
+
+    assert peak_mib(fetch) < 16
+
+
+def test_fetch_manifest_gzip_under_cap_ok(sample_manifest):
+    import gzip
+    import json
+
+    body = gzip.compress(json.dumps(sample_manifest).encode())
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda req: httpx.Response(
+                200, headers={"Content-Encoding": "gzip"}, stream=httpx.ByteStream(body)
+            )
+        )
+    )
+    assert fetch_manifest("https://x/manifest", client)["type"] == "Manifest"
+
+
+def test_fetch_manifest_refuses_an_encoding_it_did_not_ask_for():
+    seen = []
+
+    def handler(req):
+        seen.append(req.headers.get("Accept-Encoding"))
+        return httpx.Response(
+            200, headers={"Content-Encoding": "br"}, stream=httpx.ByteStream(b"x")
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(ManifestError, match="Content-Encoding"):
+        fetch_manifest("https://x/manifest", client)
+    assert seen == ["gzip"]
