@@ -293,7 +293,15 @@ fail=0
 # (HEADs, sixteen at a time), falls back to manifest.json for an older
 # page, and clears every page it is about to redo in DeleteObjects batches
 # (87). About half of each is the comments saying why.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3321
+# 3156 -> 3471 (2026-09-21, audit 3062/3063/3095/3097): what one download
+# may cost, in a module of its own (bounded.py, ~160): gzip-only bodies
+# inflated a chunk at a time under the byte caps, and a wall-clock Deadline
+# that cuts a download's connections through httpcore's trace extension.
+# In fetch.py (~90) the transient/permanent split of page failures, the
+# Retry-After parse and the abortable wait; in stream.py and main.py the
+# deferred outcome verify counts as missing; in iiif.py one rule choosing a
+# canvas's image for both the fetch and the viewer manifest.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3636
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
