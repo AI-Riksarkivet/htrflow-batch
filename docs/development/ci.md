@@ -195,7 +195,7 @@ each kind of pin lives and how it moves.
 | Universal Viewer fork | `UV4_REF` commit in `.docker/htrflow-web.dockerfile` | Renovate, its own PR — `.docker/uv4-uv-html.patch` may need re-deriving |
 | htrflow source for the source-built base | the commit env var in `ci.yml`, `publish.yml` and `security.yml`, the same in all three | Renovate, its own PR — the base and the wrapper on it must be re-verified |
 | Dependencies of the source-built base | `.docker/htrflow-base/uv.lock`, installed with `uv sync --locked` | by hand with `make lock-htrflow-base`, when the htrflow commit moves |
-| transformers line | `transformers-4` / `transformers-5` dependency groups in the root `pyproject.toml`, locked in `uv.lock` | with the workspace lock; the dockerfile's `TRANSFORMERS_VERSION` default by hand, and the build fails while they disagree |
+| transformers line | `.docker/transformers/<major>.in`, compiled with hashes into `<major>.txt` | by hand, `make transformers-requirements`; the dockerfile's `TRANSFORMERS_VERSION` default with it, and the build fails while they disagree |
 | Upstream htrflow base image | the `base-…` stage `FROM` in the wrapper dockerfile | by hand for tag bumps (a deliberate, tested pin); Renovate refreshes the digest only |
 | torch / torchvision | the version the upstream base's swap installs, and the version check on the source-built base, in the wrapper dockerfile | by hand, following the CUDA wheel index named there |
 | Kueue, Kyverno | `KUEUE_VERSION`, `KYVERNO_CHART_VERSION` in the `Makefile` | by hand |

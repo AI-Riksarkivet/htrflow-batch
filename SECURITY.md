@@ -46,7 +46,7 @@ Actions are pinned by commit SHA, images by digest, the dagger CLI by release ch
 and Python and frontend dependencies by lockfile. That includes the wrapper image's arm64
 base, which is built from htrflow's source with this repository's dockerfile and a lockfile
 committed here (`.docker/htrflow-base/`), and the packages the wrapper image adds on
-top, installed from `uv.lock` with hashes. The one unhashed install left is the torch swap
+top, installed from `uv.lock` or compiled requirement files, with hashes. The one unhashed install left is the torch swap
 from the CUDA wheel index on the amd64 base.
 
 Publishing needs the Docker Hub credential. Only the jobs of `publish.yml` use it, all in
