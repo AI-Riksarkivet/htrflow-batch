@@ -1220,7 +1220,18 @@ check web       "$(count packages/web/src -name '*.py')" 2096
 # 4822 -> 4839 (2026-09-21, audit 3076): the detail schema's pagesCoverage
 # and the pages row saying "counted in N of M volumes" while the API's
 # campaign-wide sums are still filling in.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4839
+# 4822 -> 4995 (2026-09-21, audit 3077-3080 and the partial-state colours):
+# poll.ts gains `until`, so a poll whose own tick learns nothing will change
+# ends itself without aborting that tick -- the run log's last poll then
+# still reads its manifest (3077), and a finished campaign's card reads its
+# detail once instead of every minute (3079). reasons.ts gains a second form
+# of every sentence that promised a retry, for a volume whose retries are
+# spent (3078). The problems line wraps and holds all but three sentences
+# behind a button, and its rules for that button's look and focus ring
+# (3080). The two partial endings mix the amber with green or red on the
+# chip's outline and the card's accent, with the comments that say why an
+# outline and why a hard split.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5012
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
