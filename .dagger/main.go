@@ -40,6 +40,7 @@ const (
 	kyvernoCliImage = "ghcr.io/kyverno/kyverno-cli:v1.19.0@sha256:f40718123e3eea8dc36960023e2af7a980bcc76dec24842ad8705c82f4c9172e"
 	trivyImage      = "aquasec/trivy:0.65.0@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436"
 	curlImage       = "curlimages/curl:8.16.0@sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6"
+	craneImage      = "gcr.io/go-containerregistry/crane:v0.22.1@sha256:1f968817b95790bed063f71175aa6b8ff879fa17064020415f3e18bb6e6a36e1"
 )
 
 // withUv adds uv/uvx binaries to a container (development/CI tasks only)

@@ -83,6 +83,9 @@ scan:
 	dagger call scan-json $(DAGGER_CA)
 
 # Publishing is manual and requires DOCKERHUB_USERNAME/DOCKERHUB_TOKEN env vars.
+# Releases go through publish.yml (both architectures, signed); this pushes
+# one unsigned image for the host's architecture under the bare version tag,
+# and publish-docker refuses when that tag already exists (finding 3069).
 publish:
 	dagger call publish-docker --component wrapper \
 	  --docker-username env:DOCKERHUB_USERNAME --docker-password env:DOCKERHUB_TOKEN $(DAGGER_CA)
