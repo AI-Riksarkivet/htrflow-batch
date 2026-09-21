@@ -71,6 +71,29 @@ def _tracked_steps(built: list):
         module.init_step = original
 
 
+def _steps(config) -> list[dict]:
+    """The step entries of a parsed pipeline YAML, as htrflow will read them.
+    A shape htrflow itself refuses (no ``steps`` list, a step that is not a
+    mapping) is left to its own validation, which fails as permanently."""
+    steps = config.get("steps") if isinstance(config, dict) else None
+    return [s for s in steps if isinstance(s, dict)] if isinstance(steps, list) else []
+
+
+def _check_steps(config) -> None:
+    """The rules a pipeline file breaks by its text alone, checked on the
+    parsed YAML BEFORE ``from_config`` builds anything (3098). Built, every
+    model step has put its weights on the GPU -- and the warm-up, which never
+    appended Exports, used to pass a pipeline every batch index then loaded
+    in full only to exit 13 on."""
+    for step in _steps(config):
+        # htrflow resolves a step by its lower-cased name (steps.STEPS)
+        if str(step.get("step", "")).lower() == "export":
+            raise ValueError(
+                "pipeline YAML must not contain Export steps; "
+                "the wrapper appends them (docs: wrapper)"
+            )
+
+
 def build_pipeline(pipeline_path: str):
     """The pipeline htrflow builds from the YAML, as both callers need it: the
     driver, which then appends the Export steps, and warm-up, where the
@@ -90,6 +113,7 @@ def build_pipeline(pipeline_path: str):
             config = yaml.safe_load(f)
     except (yaml.YAMLError, OSError) as e:
         raise ValueError(f"bad pipeline config: {e}") from e
+    _check_steps(config)
 
     built: list = []
     try:
@@ -124,14 +148,8 @@ def load_pipeline(pipeline_path: str, out_dir: Path):
     from htrflow.pipeline.pipeline import Pipeline  # ty: ignore[unresolved-import]
     from htrflow.pipeline.steps import Export  # ty: ignore[unresolved-import]
 
-    pipeline = build_pipeline(pipeline_path)
+    pipeline = build_pipeline(pipeline_path)  # refuses Export steps (3098)
     try:
-        for step in pipeline.steps:
-            if isinstance(step, Export):
-                raise ValueError(
-                    "pipeline YAML must not contain Export steps; "
-                    "the wrapper appends them (docs: wrapper)"
-                )
         exports = [Export(str(out_dir / fmt), fmt) for fmt in EXPECTED_FORMATS]
         # rebuild so Pipeline.__init__ wires the new steps the same way as the
         # originals (older htrflow sets parent_pipeline there; append leaves the

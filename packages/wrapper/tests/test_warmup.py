@@ -298,3 +298,42 @@ def test_warmup_redacts_urls_in_its_output(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "S3CRET" not in err
     assert "https://hf.co/api/models" in err
+
+
+def _fake_htrflow(monkeypatch) -> list:
+    """The real ``_load`` path (driver.build_pipeline) over a fake htrflow
+    whose ``from_config`` records the build: empty means no model loaded."""
+    import sys
+    from types import ModuleType
+
+    built: list = []
+    pipeline_mod = ModuleType("htrflow.pipeline.pipeline")
+    pipeline_mod.Pipeline = type(
+        "Pipeline", (), {"from_config": staticmethod(built.append)}
+    )
+    for name, module in (
+        ("htrflow", ModuleType("htrflow")),
+        ("htrflow.pipeline", ModuleType("htrflow.pipeline")),
+        ("htrflow.pipeline.pipeline", pipeline_mod),
+    ):
+        monkeypatch.setitem(sys.modules, name, module)
+    return built
+
+
+def test_warmup_refuses_an_export_step_without_loading_a_model(tmp_path, monkeypatch):
+    """3098: the warm-up is where a pipeline the batch Job would refuse must
+    fail, once, instead of going green and letting every index load the
+    weights first."""
+    built = _fake_htrflow(monkeypatch)
+    term_path = tmp_path / "termination-log"
+    env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
+    Path(env["PIPELINE_PATH"]).write_text(
+        "steps:\n  - step: Export\n    settings: {dest: out, format: alto}\n"
+    )
+
+    assert main(env) == EXIT_PERMANENT
+    assert built == []
+    reason = json.loads(term_path.read_text())
+    assert reason["permanent"] is True
+    assert "must not contain Export steps" in reason["error"]
+    assert not (tmp_path / "warmup" / "demo-v1.done").exists()
