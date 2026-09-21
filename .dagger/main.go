@@ -14,9 +14,9 @@ type HtrflowBatch struct{}
 // Go constants (they require inline literals) — these document the canonical
 // registry/repos that publish.go's inlined literals must stay in sync with.
 const (
-	DefaultRegistry   = "docker.io"
-	DefaultImageRepo  = "riksarkivet/htrflow-batch"
-	DefaultWebRepo    = "riksarkivet/htrflow-web"
+	DefaultRegistry  = "docker.io"
+	DefaultImageRepo = "riksarkivet/htrflow-batch"
+	DefaultWebRepo   = "riksarkivet/htrflow-web"
 )
 
 // Every image the pipeline pulls, pinned by tag AND multi-arch index digest
@@ -34,8 +34,12 @@ const (
 	frontendNodeImage = "node:22-bookworm@sha256:8a34c4ab3ea2c5cd194f07e317b2a8f09461d3c8b05c4e34c8ccd56d56024c4d"
 	helmImage         = "alpine/helm:3.19.0@sha256:aef9b56f64e866207d9591d0abd8f6d767b36aadd12edf68f8a719716d9d29c9"
 	kubeconformImage  = "ghcr.io/yannh/kubeconform:v0.7.0@sha256:85dbef6b4b312b99133decc9c6fc9495e9fc5f92293d4ff3b7e1b30f5611823c"
-	trivyImage        = "aquasec/trivy:0.65.0@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436"
-	curlImage         = "curlimages/curl:8.16.0@sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6"
+	// The same release a campaigns repo's CI installs (the converter
+	// template's render.yml, KYVERNO_VERSION): the policy tests run the CLI
+	// that repo will run.
+	kyvernoCliImage = "ghcr.io/kyverno/kyverno-cli:v1.19.0@sha256:f40718123e3eea8dc36960023e2af7a980bcc76dec24842ad8705c82f4c9172e"
+	trivyImage      = "aquasec/trivy:0.65.0@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436"
+	curlImage       = "curlimages/curl:8.16.0@sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6"
 )
 
 // withUv adds uv/uvx binaries to a container (development/CI tasks only)
