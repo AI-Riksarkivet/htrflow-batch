@@ -142,6 +142,8 @@ campaigns-apply:
 # validate the campaigns repo, render + apply it, then block until every
 # campaign Job reaches a terminal condition, printing completedIndexes as it
 # goes. DIR is the campaigns repo; CAMPAIGN_TIMEOUT caps the wait (seconds).
+# The wait is scripts/e2e-wait.sh, where it is tested: it fails on no Job, a
+# Failed Job or a kubectl that cannot read the cluster (finding 3102).
 # The failure-path steps (a 404 manifest, the pod deadline, pause/resume, prune)
 # are campaigns and kubectl in the run log, not this target.
 CAMPAIGN_TIMEOUT ?= 3600
@@ -149,23 +151,8 @@ e2e:
 	@test -n "$(DIR)" || (echo "usage: make e2e DIR=<campaigns-repo-dir>"; exit 2)
 	uv run htrflow-campaigns validate $(DIR)
 	$(MAKE) campaigns-apply DIR=$(DIR)
-	@kubectl -n $(HTR_NAMESPACE) wait --for=condition=complete --timeout=600s \
-	  job -l "$$(uv run python -c "from htrflow_converter.render import CAMPAIGN_SELECTOR; print(CAMPAIGN_SELECTOR)"),app=htrflow-warmup"
-	@sel=$$(uv run python -c "from htrflow_converter.render import CAMPAIGN_SELECTOR; print(CAMPAIGN_SELECTOR)"); \
-	deadline=$$(( $$(date +%s) + $(CAMPAIGN_TIMEOUT) )); \
-	while :; do \
-	  pending=""; \
-	  for j in $$(kubectl -n $(HTR_NAMESPACE) get job -l app=htrflow-batch,$$sel -o name); do \
-	    done_idx=$$(kubectl -n $(HTR_NAMESPACE) get $$j -o jsonpath='{.status.completedIndexes}'); \
-	    total=$$(kubectl -n $(HTR_NAMESPACE) get $$j -o jsonpath='{.spec.completions}'); \
-	    cond=$$(kubectl -n $(HTR_NAMESPACE) get $$j -o jsonpath='{.status.conditions[?(@.status=="True")].type}'); \
-	    echo "$$j completions=$$total completedIndexes=[$$done_idx] $$cond"; \
-	    case "$$cond" in *Complete*|*Failed*) ;; *) pending="$$pending $$j" ;; esac; \
-	  done; \
-	  [ -z "$$pending" ] && break; \
-	  [ $$(date +%s) -ge $$deadline ] && { echo "::error::still running:$$pending"; exit 1; }; \
-	  sleep 15; \
-	done
+	@sel=$$(uv run python -c "from htrflow_converter.render import CAMPAIGN_SELECTOR; print(CAMPAIGN_SELECTOR)") \
+	  && scripts/e2e-wait.sh $(HTR_NAMESPACE) "$$sel" $(CAMPAIGN_TIMEOUT)
 	@curl -fsS http://localhost:$(HTR_WEB_NODEPORT)/api/v1/jobs
 
 # Chart: lint + render on defaults and on ci/full-values.yaml (every feature
@@ -234,7 +221,8 @@ helm-template: helm-lint
 # device-plugin DaemonSet every GPU pod depends on -- doing that while GPU
 # pods are running deleted both from under them once (a 2-minute outage,
 # docs/development/e2e-indexed-jobs.md "A failed Helm install still owns
-# what it applied"). The guard below refuses that unless FORCE=1.
+# what it applied"). scripts/gpu-pods-guard.sh refuses that unless FORCE=1,
+# and refuses too when it cannot read the cluster's pods (finding 3102).
 NVIDIA_DEVICE_PLUGIN ?= true
 # Kyverno is the enforcement point for the chart's `security.policies`
 # (digest pins, the image allow-list, model revisions -- B63 Task 22). Its
@@ -257,10 +245,7 @@ install-kyverno:
 	  -n kyverno --create-namespace --version $(KYVERNO_CHART_VERSION) --wait
 
 install-devstack:
-	@if [ "$(NVIDIA_DEVICE_PLUGIN)" = "false" ] && [ "$(FORCE)" != "1" ] && \
-	  kubectl get pods -A -o json | jq -e '[.items[] | select(.metadata.namespace!="kube-system") | select(.status.phase=="Running" or .status.phase=="Pending") | select(.spec.runtimeClassName=="nvidia" or any(.spec.containers[]?; (.resources.requests["nvidia.com/gpu"]? // .resources.limits["nvidia.com/gpu"]?) != null))] | length > 0' >/dev/null; then \
-	  echo "install-devstack: refusing NVIDIA_DEVICE_PLUGIN=false -- GPU pods are running and depend on the RuntimeClass/DaemonSet this would delete; set FORCE=1 to override."; exit 1; \
-	fi
+	@if [ "$(NVIDIA_DEVICE_PLUGIN)" = "false" ] && [ "$(FORCE)" != "1" ]; then scripts/gpu-pods-guard.sh; fi
 	@if [ "$(KYVERNO)" = "true" ]; then $(MAKE) install-kyverno; fi
 	helm upgrade --install $(HTR_RELEASE)-devstack charts/htrflow-devstack -n $(HTR_NAMESPACE) --create-namespace \
 	  --set rustfs.enabled=true --set registry.enabled=true \
@@ -370,15 +355,12 @@ scan-web: build-web
 # historically because charts/htrflow-devstack's git daemon ran as root —
 # that daemon is gone as of B63, `psaEnforce` itself wasn't revisited here);
 # warn/audit are always restricted so the hardened pods stay provably
-# restricted. Override with PSA_ENFORCE=… before the first install.
-PSA_ENFORCE ?= $(shell helm get values $(HTR_RELEASE) -n $(HTR_NAMESPACE) --all -o json 2>/dev/null \
-                 | jq -r '.security.psaEnforce // "baseline"' 2>/dev/null || echo baseline)
+# restricted. Override with PSA_ENFORCE=… before the first install. The
+# script refuses a release it cannot read and a level that is not baseline
+# or restricted, where this target once wrote an empty `enforce=` (finding
+# 3102).
 psa-labels:
-	@echo "enforce=$(PSA_ENFORCE) (from release $(HTR_RELEASE)/$(HTR_NAMESPACE) security.psaEnforce)"
-	kubectl label ns $(HTR_NAMESPACE) --overwrite \
-	  pod-security.kubernetes.io/enforce=$(PSA_ENFORCE) \
-	  pod-security.kubernetes.io/warn=restricted \
-	  pod-security.kubernetes.io/audit=restricted
+	@PSA_ENFORCE="$(PSA_ENFORCE)" scripts/psa-labels.sh $(HTR_RELEASE) $(HTR_NAMESPACE)
 
 # Campaign browser (bun/SvelteKit). The CA bundle is what gets bun through the
 # RA proxy; TLS verification stays on.
