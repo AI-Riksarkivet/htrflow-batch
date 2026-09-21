@@ -182,26 +182,6 @@ def _int_or_none(value: object) -> int | None:
     return None
 
 
-def _image_url(canvas: dict, width: int) -> str | None:
-    for ap in canvas.get("items", []):  # P3
-        for anno in ap.get("items", []):
-            body = anno.get("body") or {}
-            sid = _service_id(body.get("service"))
-            if sid:
-                return _sized(sid, canvas, width)
-            if body.get("id"):
-                return body["id"]
-    for img in canvas.get("images", []):  # P2
-        res = img.get("resource") or {}
-        sid = _service_id(res.get("service"))
-        if sid:
-            return _sized(sid, canvas, width)
-        rid = res.get("@id") or res.get("id")
-        if rid:
-            return rid
-    return None
-
-
 def _publishable(body: dict) -> bool:
     """Whether a painting body may be copied into the manifest we publish
     (W6, 2026-09-14 audit).
@@ -245,39 +225,69 @@ def _body_candidates(body: object) -> list[dict]:
     return [item for item in candidates if isinstance(item, dict)]
 
 
-def painting_body(canvas: dict) -> dict:
-    """P3-style annotation body for a P3 or P2 canvas. P2 services are
-    emitted with v2-style keys (@id/@type/profile) — UV silently shows no
-    image otherwise (docs: wrapper). A body carrying a URL we would not fetch
-    is not published either (``_publishable``), and a canvas offering several
-    (``_body_candidates``) is published with the first that passes — one
-    image, not the Choice."""
-    for ap in canvas.get("items", []):
+def _p2_body(res: dict) -> dict:
+    """A P2 image resource as a P3-style body. The service keeps v2-style
+    keys (@id/@type/profile): UV silently shows no image otherwise (docs:
+    wrapper)."""
+    body = {
+        "id": res.get("@id") or res.get("id"),
+        "type": "Image",
+        "format": res.get("format", "image/jpeg"),
+    }
+    sid = _service_id(res.get("service"))
+    if sid:
+        body["service"] = [
+            {
+                "@id": sid,
+                "@type": "ImageService2",
+                "profile": "http://iiif.io/api/image/2/level2.json",
+            }
+        ]
+    return body
+
+
+def _fetch_url(body: dict, canvas: dict, width: int) -> str | None:
+    """Where a body's image is downloaded from: its image service, sized, or
+    the body itself when it has none."""
+    sid = _service_id(body.get("service"))
+    if sid:
+        return _sized(sid, canvas, width)
+    return _body_id(body)
+
+
+def _body_id(body: dict) -> str | None:
+    return body.get("id") or body.get("@id")
+
+
+def _canvas_image(canvas: dict) -> tuple[dict, bool]:
+    """THE image of a canvas, and whether it may be published (3097).
+
+    The one rule both halves use: ``pages_from_manifest`` fetches this body
+    and ``painting_body`` publishes it, so the ALTO drawn from the fetched
+    image always lands on the image the viewer shows. They were two rules
+    once, and a Choice or list body failed the volume, while a canvas whose
+    first body was unpublishable fetched one image and published another.
+    The first publishable body wins; if there is none the first one with a
+    URL is still fetched and transcribed (W6: an unpublishable body costs the
+    canvas its image in the viewer and nothing else)."""
+    bodies: list[dict] = []
+    for ap in canvas.get("items", []):  # P3
         for anno in ap.get("items", []):
-            for body in _body_candidates(anno.get("body")):
-                if _publishable(body):
-                    return body
-    for img in canvas.get("images", []):
-        res = img.get("resource") or {}
-        rid = res.get("@id") or res.get("id")
-        if not rid:
-            continue
-        body = {
-            "id": rid,
-            "type": "Image",
-            "format": res.get("format", "image/jpeg"),
-        }
-        sid = _service_id(res.get("service"))
-        if sid:
-            body["service"] = [
-                {
-                    "@id": sid,
-                    "@type": "ImageService2",
-                    "profile": "http://iiif.io/api/image/2/level2.json",
-                }
-            ]
-        return body if _publishable(body) else {}
-    return {}
+            bodies += _body_candidates(anno.get("body"))
+    for img in canvas.get("images", []):  # P2
+        bodies.append(_p2_body(img.get("resource") or {}))
+    for body in bodies:
+        if _publishable(body):
+            return body, True
+    fetchable = (b for b in bodies if _service_id(b.get("service")) or _body_id(b))
+    return next(fetchable, {}), False
+
+
+def painting_body(canvas: dict) -> dict:
+    """P3-style annotation body to publish for a P3 or P2 canvas: the image
+    ``_canvas_image`` chose, or nothing when it may not be published."""
+    body, publishable = _canvas_image(canvas)
+    return body if publishable else {}
 
 
 def pages_from_manifest(manifest: dict, width: int) -> list[PageRef]:
@@ -299,7 +309,8 @@ def pages_from_manifest(manifest: dict, width: int) -> list[PageRef]:
         # raised AttributeError/TypeError: exit 1 and three retries of a
         # condition that cannot change. Permanent, like a missing image.
         try:
-            url = _image_url(canvas, width) if isinstance(canvas, dict) else None
+            body = _canvas_image(canvas)[0] if isinstance(canvas, dict) else {}
+            url = _fetch_url(body, canvas, width) if body else None
         except (AttributeError, TypeError, KeyError, IndexError) as e:
             raise ManifestError(f"canvas {i} is malformed: {e!r}") from e
         if not isinstance(url, str) or not url:
