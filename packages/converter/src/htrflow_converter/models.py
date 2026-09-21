@@ -37,6 +37,9 @@ _MiB = 1024 * 1024
 _INT32_MAX = 2**31 - 1
 
 _VOLUME_ID_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?\Z")
+#: A pipeline id: a DNS-1123 label's length with a subdomain's dots, which
+#: its ConfigMap and warm-up Job names may carry (``Pipeline._check_id`` for
+#: what the warm-up takes off the length). A campaign's name is narrower.
 _NAME_RE = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?\Z")
 _IMAGE_RE = re.compile(r"[a-z0-9./:-]+@sha256:[0-9a-f]{64}\Z")
 #: A Kubernetes label VALUE, which is what ``_VOLUME_ID_RE`` already spells
@@ -100,6 +103,24 @@ STATUS_SUFFIX = "-status"
 _RENAME_THE_FILE = (
     "cannot be a Kubernetes object name — rename the file to lower-case "
     'letters, digits, "." and "-" only, at most 63 characters'
+)
+#: A DNS-1123 label's length: the cap on a label value, a pod's hostname and
+#: so -- through both -- on a Job's name (``render.campaign_names``).
+DNS_LABEL = 63
+#: What a pipeline's warm-up Job is called. ``cluster`` reads it too: a Job
+#: the API server refuses for an immutable field is told a different way
+#: out depending on whether it is a warm-up (deleted and created again) or a
+#: campaign (left exactly where it is).
+WARMUP_PREFIX = "htr-warmup-"
+#: A campaign's Job is an Indexed Job, and the API server holds the hostname
+#: of its last pod, ``<name>-<completions - 1>``, to a DNS-1123 *label*: no
+#: dots. A dotted campaign name passed here and was refused with a 422 at
+#: apply time (3087); the length half of the rule is ``render``'s, since it
+#: depends on how the campaign splits.
+_RENAME_THE_CAMPAIGN = (
+    "cannot name a campaign's Job — its pods are called <name>-<index> and "
+    "each of those is a hostname, so rename the file to lower-case letters, "
+    'digits and "-" only (no dots), at most 63 characters'
 )
 
 
@@ -370,8 +391,15 @@ class Campaign(BaseModel):
     @field_validator("name")
     @classmethod
     def _check_name(cls, v: str) -> str:
-        if not _NAME_RE.match(v):
-            raise ValueError(_RENAME_THE_FILE)
+        if not _DNS_LABEL_RE.match(v):
+            raise ValueError(_RENAME_THE_CAMPAIGN)
+        if v.startswith(WARMUP_PREFIX):
+            # Same kind, same namespace: it would BE the warm-up Job, and an
+            # apply that replaces a warm-up would delete the campaign.
+            raise ValueError(
+                f'starts with "{WARMUP_PREFIX}", which is what the converter '
+                "calls a pipeline's warm-up Job — rename the file"
+            )
         if _PART_RE.search(v):
             raise ValueError(
                 'ends in "-part<number>", which is what the converter calls '
@@ -451,6 +479,15 @@ class Pipeline(BaseModel):
     def _check_id(cls, v: str) -> str:
         if not _NAME_RE.match(v):
             raise ValueError(_RENAME_THE_FILE)
+        # The Job controller copies a Job's name into its pods' `job-name`
+        # label, and a label value stops at 63: past that the warm-up is
+        # refused, and every campaign on this pipeline waits for its marker.
+        if len(WARMUP_PREFIX + v) > DNS_LABEL:
+            raise ValueError(
+                f"is {len(v)} characters, and its warm-up Job, "
+                f"{WARMUP_PREFIX}<id>, has to fit in {DNS_LABEL} — rename the "
+                f"file to at most {DNS_LABEL - len(WARMUP_PREFIX)} characters"
+            )
         return v
 
     @field_validator("image")
