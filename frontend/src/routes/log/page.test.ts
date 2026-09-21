@@ -56,6 +56,48 @@ describe("/log live mode", () => {
     expect(fetchMock).toHaveBeenCalledTimes(LIVE_MAX_FAILURES);
   });
 
+  test("the poll that sees the last line still reads the manifest (3077)", async () => {
+    // The wrapper writes manifest.json before it logs COMPLETE, so the one
+    // poll that finds the terminal line finds the manifest too. Ending the
+    // live mode used to abort that same poll before its manifest fetch ran,
+    // and a volume that finished while someone watched never got its
+    // summary (the 2026-09-17 audit).
+    window.history.replaceState(
+      null,
+      "",
+      "/log?log=http://bucket/logs/v1.txt&manifest=http://bucket/v1/manifest.json&live=1",
+    );
+    const manifest = {
+      volume: "v1",
+      pipeline_id: "p",
+      htrflow_version: "0.2.6",
+      image_digest: "reg/img@sha256:abcdef0123456789",
+      pages: 1,
+      results: { "0001": { status: "ok", seconds: 1 } },
+    };
+    // Refuses an aborted signal the way a browser's fetch does.
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.signal?.aborted) throw new DOMException("", "AbortError");
+      return url.endsWith("manifest.json")
+        ? new Response(JSON.stringify(manifest))
+        : new Response(
+            "2026-09-08 09:00:00,000 INFO [v1] COMPLETE 1 pages " +
+              "(1 processed, 0 failed) in 1.0s, viewer: x\n",
+          );
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    render(LogPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(
+      screen.getByRole("heading", { name: "Run log · v1" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("finished");
+    // and it is over: nothing more is asked for.
+    const calls = fetchMock.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(LIVE_MS * 5);
+    expect(fetchMock).toHaveBeenCalledTimes(calls);
+  });
+
   test("a non-http log URL is refused before any fetch", async () => {
     window.history.replaceState(null, "", "/log?log=javascript:alert(1)");
     const fetchMock = fetch404();
