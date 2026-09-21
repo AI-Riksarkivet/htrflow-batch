@@ -302,20 +302,38 @@
       (collapsed ? latest === null : volumes.length === 0),
   );
 
+  // The two "partially" words shared one amber, on the chip and on the
+  // accent, so a campaign that lost a few pages and one that lost whole
+  // volumes looked the same at a glance (a maintainer request). Each now
+  // mixes the amber with where it ended: green when every volume finished,
+  // red when volumes were lost. The words and the tooltip still say it;
+  // the colour is the second cue, never the only one.
+  const mix = $derived(
+    job.phase === "PartiallyFailed"
+      ? "destructive"
+      : campaignLost
+        ? "success"
+        : undefined,
+  );
+
   // The card's left accent: worst-first, read straight off the Job phase now
   // that the API computes it server-side. `inTrouble` is $lib/order's --
   // the same question the campaign list sorts by, so the accent and the
-  // order can never disagree about what is wrong (2026-09-16 review).
+  // order can never disagree about what is wrong (2026-09-16 review). A
+  // partially failed campaign is in trouble too; it only says so in its
+  // own mix.
   const health = $derived(
-    inTrouble(job)
-      ? "failed"
-      : job.phase === "Running"
-        ? "active"
-        : campaignLost
-          ? "lost"
-          : job.phase === "Succeeded"
-            ? "done"
-            : "idle",
+    job.phase === "PartiallyFailed"
+      ? "partly-failed"
+      : inTrouble(job)
+        ? "failed"
+        : job.phase === "Running"
+          ? "active"
+          : campaignLost
+            ? "partly-succeeded"
+            : job.phase === "Succeeded"
+              ? "done"
+              : "idle",
   );
 
   // "warm-up pending" / "warm-up running" / "warm-up failed" / "no warm-up";
@@ -845,6 +863,7 @@
     <span
       class="chip phase {job.phase.toLowerCase()}"
       class:lost={campaignLost}
+      data-mix={mix}
       title={phaseTitle}
     >
       {#if beating}<span class="dot pulse" aria-hidden="true"
@@ -1036,7 +1055,8 @@
 <style>
   /* The left accent is the campaign's health at a glance: green = every
      index done, blue = a Job still running, red = a Job failed or carries a
-     failed index, grey = queued/paused/nothing moving. */
+     failed index, grey = queued/paused/nothing moving, and amber running
+     into green or red for the two partial endings (below). */
   .campaign {
     /* The card body's fixed tracks, in one place, so every row -- totals,
        the folded volume, every row of the open list -- is laid out on the
@@ -1071,10 +1091,26 @@
     border-left-color: var(--destructive);
   }
 
-  /* Published, but not all of it. The same warning token the phase chip
-     gives a partially failed campaign. */
-  .campaign[data-health="lost"] {
-    border-left-color: var(--warning);
+  /* Published, but not all of it: amber at the top running into where the
+     campaign ended at the bottom -- green when every volume finished and
+     pages were lost, red when whole volumes were. A border cannot take a
+     gradient and keep its radius, so the border goes transparent over a
+     second background layer painted out to the border box; the card's own
+     colour fills the padding box above it. No text sits on it, so the
+     blend can be smooth. */
+  .campaign[data-health="partly-succeeded"] {
+    --mix-to: var(--success);
+  }
+
+  .campaign[data-health="partly-failed"] {
+    --mix-to: var(--destructive);
+  }
+
+  .campaign[data-health^="partly-"] {
+    border-left-color: transparent;
+    background:
+      linear-gradient(var(--card), var(--card)) padding-box,
+      linear-gradient(to bottom, var(--warning), var(--mix-to)) border-box;
   }
 
   .camp {
@@ -1357,6 +1393,30 @@
   .chip.phase.partiallyfailed {
     background: var(--warning-soft);
     color: var(--warning);
+  }
+
+  /* The mix, on the chip: its outline, amber on the left half and green or
+     red on the right, meeting at one point. A hard split rather than a
+     blend, and on the edge rather than under the word, so the pale fill
+     and the text's contrast are exactly the amber chip's in both themes.
+     A border rather than a two-colour dot: the dot on this chip already
+     means "running", and at half an em a dot split in two is too small to
+     read as two colours. The border's width comes out of the padding, so
+     the chip is the size every other chip is. */
+  .chip.phase[data-mix="success"] {
+    --mix-to: var(--success);
+  }
+
+  .chip.phase[data-mix="destructive"] {
+    --mix-to: var(--destructive);
+  }
+
+  .chip.phase[data-mix] {
+    border: 1.5px solid transparent;
+    padding: calc(0.1rem - 1.5px) calc(0.5rem - 1.5px);
+    background:
+      linear-gradient(var(--warning-soft), var(--warning-soft)) padding-box,
+      linear-gradient(90deg, var(--warning) 50%, var(--mix-to) 50%) border-box;
   }
 
   .chip.phase.failed,
