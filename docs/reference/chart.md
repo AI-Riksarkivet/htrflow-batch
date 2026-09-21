@@ -88,7 +88,7 @@ exactly that. Always rendered — there is no `enabled` flag.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `web.image` | `docker.io/riksarkivet/htrflow-web@sha256:…` | **Must be digest-pinned** unless `security.allowTagImages`. The default is a published web image — the digest of its multi-architecture manifest list, so it resolves on a node of either kind; a single architecture's digest does not. To run your own build, set the digest you pushed (see [Releasing](../development/releasing.md)) |
-| `web.nodePort` | `30800` | NodePort; the container listens on 8081 |
+| `web.nodePort` | `30800` | NodePort; the container listens on 8081. Answered only on the node running the pod (`externalTrafficPolicy: Local`) |
 | `web.resources` | requests cpu 50m / 128Mi, limits cpu 500m / 256Mi | |
 | `web.internalResultsBase` | `""` | Where THIS POD reaches the results bucket, for `ProgressReader` — `""` (default) means the same address as `publicResultsBase`, correct whenever that URL also resolves to the bucket from inside the cluster (a public S3 endpoint). Set it whenever it does not: a browser-facing address reached through a tunnel or port-forward resolves, from inside the pod, to the pod itself, and the API then silently reads no progress at all. Use the in-cluster address instead, e.g. `http://rustfs.<namespace>.svc.cluster.local:9000/<bucket>` for the devstack's store (see [Dev cluster](../development/dev-cluster.md)) |
 
@@ -155,4 +155,4 @@ Hugging Face Hub egress at all — only the warm-up pod does.
 | `network.clusterCidrs` | `["10.42.0.0/16", "10.43.0.0/16"]` | Pod and service ranges that pods with *public* egress (the warm-up pod) must not reach. The default is a common pair of default pod and service ranges — set it to your cluster's |
 | `network.nodeCidrs` | `[]` | Node addresses (same purpose); auto-detected with Helm `lookup` when empty — set for `helm template` or a kubeconfig without list-nodes permission |
 | `network.apiServer.cidr` / `port` | `""` / `6443` | kube-apiserver as reached after service DNAT; auto-detected from the `kubernetes` Endpoints when empty. **The web front's NetworkPolicy fails to render without it under `helm template`** |
-| `network.web.ingressCidrs` | `["0.0.0.0/0"]` | Who may reach the web front's port 8081. NodePort traffic arrives SNAT'd from the node, so the node range must be included; the default is any client that can reach the node |
+| `network.web.ingressCidrs` | `["0.0.0.0/0"]` | Who may reach the web front's port 8081, matched on the client's own address (the Service sets `externalTrafficPolicy: Local`, so NodePort traffic is not SNAT'd; do not list the node range for its sake). The default is any client that can reach the node. The default, an empty list and any entry wider than `/8` all need `network.web.allowPublicIngress` |

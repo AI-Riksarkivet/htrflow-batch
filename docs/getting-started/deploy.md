@@ -77,14 +77,15 @@ chart cannot look these up.
 | `network.privateCidrs` | The private ranges no catch-all egress may reach, on top of the cluster and node ranges and the link-local and loopback blocks, which are always excluded. The default is the three private blocks; set it only if your network is planned differently. A range you name in `iiifCidrs` or `s3Cidrs` stays reachable. |
 | `network.nodeCidrs` | Node addresses. Looked up at install time, like the API server address. |
 | `web.internalResultsBase` | Where the read API pod itself reaches the bucket, whenever `publicResultsBase` does not resolve to the bucket from inside the cluster. See [Exposing the web front](viewing.md#exposing-the-web-front). |
-| `network.web.ingressCidrs` | The address ranges that may reach the web front. It defaults to every address, in front of a NodePort with no authentication of its own, and the chart refuses to render that default unless `network.web.allowPublicIngress` also says so. Either list your ranges here, or set that flag to accept the catch-all. |
+| `network.web.ingressCidrs` | The address ranges that may reach the web front. It defaults to every address, in front of a NodePort with no authentication of its own, and the chart refuses to render that default unless `network.web.allowPublicIngress` also says so. Either list your clients' ranges here (their own addresses, not the node range), or set that flag to accept the catch-all. An empty list, or any entry wider than `/8`, needs the flag too. |
 | `security.allowedImageRepos`, `security.policies.enabled` | Your registry prefixes, and the Kyverno policies on. See [Hardening](#hardening-the-chart-cannot-do-alone). |
 
 The web image carries the read API, the campaign browser and the Universal
 Viewer. Build it with `make build-web` or `dagger call build-web`, and
 publish it with `dagger call publish-docker --component web`
 ([Releasing](../development/releasing.md)). It runs unprivileged and listens
-on port 8081. The Service is a NodePort on `web.nodePort` (default 30800).
+on port 8081. The Service is a NodePort on `web.nodePort` (default 30800),
+answered on the node that runs the pod (see *Web front ingress* below).
 
 ### Queue quota
 
@@ -228,8 +229,17 @@ The dev cluster's `rustfs-init` hook applies the same shape
   install that says nothing about ingress fails with that sentence rather
   than quietly opening the port. An empty list is refused the same way: a
   rule with no sources admits every address, so it would open the port it
-  looks like it closes. NodePort traffic arrives SNAT'd from the
-  node, so include the node range in whatever you list.
+  looks like it closes, and so is any entry wider than `/8`
+  (`0.0.0.0/1` plus `128.0.0.0/1` is every address in two lines). List the
+  ranges your browsers are in. The Service uses
+  `externalTrafficPolicy: Local`, so the policy sees each client's own
+  address, not the node's: do not add the node range for the NodePort's
+  sake, because every client that reaches a node would then match it. Two
+  consequences. Only the node that runs the web front's pod answers on the
+  NodePort (`kubectl -n <namespace> get pod -l app=htrflow-web -o wide`
+  names it). And a browser that comes in through an SSH forward to the
+  node itself arrives from that node's own address, so list that
+  one address (`/32`) if that is how you reach it.
 
 ## Upgrading
 

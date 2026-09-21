@@ -136,6 +136,13 @@ metadata:
 spec:
   # The browser's way in (audit S4 headers are sent by the app itself now).
   type: NodePort
+  # Local, not the default Cluster: under Cluster a connection that lands on
+  # a node without the pod is forwarded AND SNAT'd to that node's address,
+  # so the pod -- and its NetworkPolicy -- never sees the client, and
+  # network.web.ingressCidrs could only ever match nodes (finding 3064).
+  # Local keeps the client's address. The price: only the node running the
+  # pod answers on the NodePort; the others drop the connection.
+  externalTrafficPolicy: Local
   selector: { app: htrflow-web }
   ports:
     - name: http
@@ -163,8 +170,8 @@ endpoint from network.s3Cidrs.
   {{- range .Values.network.s3Ports }}{{ $s3Ports = append $s3Ports (dict "port" .) }}{{ end }}
   {{- $s3 = append $s3 (dict "to" $blocks "ports" $s3Ports) }}
 {{- end }}
-# Web front: browsers in (NodePort traffic arrives SNAT'd from the node, so
-# the node range must be in network.web.ingressCidrs); egress to DNS, the
+# Web front: browsers in, matched on their own addresses (the Service's
+# externalTrafficPolicy: Local keeps them un-SNAT'd); egress to DNS, the
 # apiserver, and S3 -- this pod's own ProgressReader reads progress.json out
 # of the results bucket (docs: s3-layout); everything else it links to is
 # fetched by the browser, not by this pod.
