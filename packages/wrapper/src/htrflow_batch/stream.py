@@ -16,6 +16,7 @@ from typing import Callable, Iterable, Iterator
 import httpx
 from pydantic import BaseModel, Field
 
+from .bounded import DOWNLOAD_DEADLINE_SECONDS
 from .fetch import (
     FETCH_MAX_BYTES,
     MAX_IMAGE_PIXELS,
@@ -108,6 +109,7 @@ class PageStream:
         max_bytes: int = FETCH_MAX_BYTES,
         max_pixels: int = MAX_IMAGE_PIXELS,
         stop: threading.Event | None = None,
+        deadline: float = DOWNLOAD_DEADLINE_SECONDS,
     ) -> None:
         self.bytes_fetched = 0
         dest = Path(dest_dir)
@@ -120,6 +122,7 @@ class PageStream:
             max_bytes=max_bytes,
             max_pixels=max_pixels,
             stop=stop,
+            deadline=deadline,
         )
         self._queued = list(pages)
         self._lookahead = max(1, lookahead)

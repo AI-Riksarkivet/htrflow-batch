@@ -31,7 +31,14 @@ from pathlib import Path
 import httpx
 from pydantic import BaseModel
 
-from .bounded import ACCEPT_ENCODING, BadEncoding, TooLarge, body_chunks
+from .bounded import (
+    ACCEPT_ENCODING,
+    DOWNLOAD_DEADLINE_SECONDS,
+    BadEncoding,
+    Deadline,
+    TooLarge,
+    body_chunks,
+)
 from .iiif import PageRef
 
 #: Default cap on one image body (env ``FETCH_MAX_BYTES``; docs: wrapper).
@@ -187,6 +194,7 @@ def fetch_page(
     max_bytes: int = FETCH_MAX_BYTES,
     max_pixels: int = MAX_IMAGE_PIXELS,
     stop: threading.Event | None = None,
+    deadline: float = DOWNLOAD_DEADLINE_SECONDS,
 ) -> FetchResult:
     last = "unknown error"
     url = page.image_url
@@ -195,16 +203,24 @@ def fetch_page(
     while attempt < retries:
         if stop is not None and stop.is_set():
             return FetchResult(page=page, path=None, error="stopped: run aborted")
+        clock = Deadline(deadline)  # 3063: per attempt, whatever the reads do
         try:
-            with client.stream(
-                "GET",
-                url,
-                headers={"Accept-Encoding": ACCEPT_ENCODING},
-                timeout=120,
-                follow_redirects=True,
-            ) as resp:
+            with (
+                clock,
+                client.stream(
+                    "GET",
+                    url,
+                    headers={"Accept-Encoding": ACCEPT_ENCODING},
+                    timeout=120,
+                    follow_redirects=True,
+                    extensions=clock.extensions,
+                ) as resp,
+            ):
                 if resp.status_code == 200:
                     size = _save(resp, path, max_bytes)
+                    if clock.expired:  # cut short, but ended like a whole body
+                        path.unlink(missing_ok=True)
+                        raise _Reject(clock.reason)
                     _check_pixels(path, max_pixels)  # W14
                     return FetchResult(page=page, path=path, error=None, size=size)
                 last = f"HTTP {resp.status_code}"
@@ -226,7 +242,7 @@ def fetch_page(
             if not e.retry:
                 break
         except Exception as e:
-            last = describe(e)
+            last = clock.reason if clock.expired else describe(e)
         attempt += 1
         # Skip sleep after final attempt
         if attempt < retries:

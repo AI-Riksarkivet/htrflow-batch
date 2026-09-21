@@ -530,3 +530,19 @@ def test_fetch_manifest_refuses_an_encoding_it_did_not_ask_for():
     with pytest.raises(ManifestError, match="Content-Encoding"):
         fetch_manifest("https://x/manifest", client)
     assert seen == ["gzip"]
+
+
+def test_fetch_manifest_slow_drip_is_cut_off_and_transient(drip_server):
+    """3063: the manifest fetch has the same wall-clock deadline; a host
+    that is merely slow today may not be tomorrow, so it is retried."""
+    import time
+
+    from htrflow_batch.bounded import http_client
+
+    t0 = time.monotonic()
+    with (
+        http_client() as client,
+        pytest.raises(TransientManifestError, match="deadline"),
+    ):
+        fetch_manifest(f"{drip_server('head')}/manifest", client, deadline=0.5)
+    assert time.monotonic() - t0 < 5

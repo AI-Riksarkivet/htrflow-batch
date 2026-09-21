@@ -7,6 +7,9 @@ authors = [{ name = "Riksarkivet AI-labbet" }]
 requires-python = ">=3.10"
 dependencies = [
     "httpx>=0.27",
+    # bounded.Deadline reads the connections a request opens through
+    # httpcore's `trace` extension (3063); httpx 0.27+ pins httpcore 1.x.
+    "httpcore>=1.0",
     "boto3>=1.34",
     "pyyaml",
     "pydantic>=2.7",

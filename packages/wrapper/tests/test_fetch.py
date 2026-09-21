@@ -1,4 +1,5 @@
 import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -454,3 +455,21 @@ def test_an_encoding_we_did_not_ask_for_is_refused_undecoded(tmp_path, encoding)
     r = _one(tmp_path, handler)
     assert r.path is None and "Content-Encoding" in r.error
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("where", ["body", "head"])
+def test_a_slow_drip_is_cut_off_at_the_download_deadline(tmp_path, drip_server, where):
+    """3063: httpx's timeouts are per read, and every byte starts a new one --
+    a host sending a byte at a time held the pod and its GPU until the pod
+    deadline. The deadline is wall-clock, for headers and body alike."""
+    from htrflow_batch.bounded import http_client
+
+    page = PageRef(
+        index=1, name="0001", image_url=f"{drip_server(where)}/img", canvas={}
+    )
+    t0 = time.monotonic()
+    with http_client() as client:
+        r = fetch_page(page, tmp_path, client, 1, 0.0, deadline=0.5)
+    assert time.monotonic() - t0 < 5
+    assert r.path is None and "deadline" in r.error
+    assert list(tmp_path.iterdir()) == []

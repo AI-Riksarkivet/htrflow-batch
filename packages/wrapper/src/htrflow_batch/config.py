@@ -62,6 +62,9 @@ class Config(BaseModel):
     # S5 byte caps on fetches driven by campaign data (docs: wrapper)
     manifest_max_bytes: int = Field(16 * 1024 * 1024, alias="MANIFEST_MAX_BYTES")
     fetch_max_bytes: int = Field(64 * 1024 * 1024, alias="FETCH_MAX_BYTES")
+    #: 3063: wall-clock budget of one download (the manifest, or one attempt
+    #: at a page); the per-read timeouts restart with every byte.
+    download_deadline_seconds: float = Field(300.0, alias="DOWNLOAD_DEADLINE_SECONDS")
     #: W14: the byte cap bounds the download, this one bounds what decoding it
     #: costs -- a few MB of JPEG can carry a gigapixel image, and htrflow
     #: decodes every page into memory. 0 turns the check off.

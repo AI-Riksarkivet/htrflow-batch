@@ -153,3 +153,53 @@ def gzip_bomb():
 @pytest.fixture
 def peak_mib():
     return _peak_mib
+
+
+@pytest.fixture
+def drip_server():
+    """A real HTTP server that answers every request one byte at a time,
+    ``gap`` seconds apart, for ever: in the status line and headers
+    (``where="head"``) or in an endless body after them (``where="body"``).
+    Each byte resets a per-read timeout, so only a wall-clock deadline ends
+    the download. Yields a factory returning the base URL."""
+    import socket
+    import threading
+    import time
+
+    stop = threading.Event()
+    sockets: list = []
+
+    def serve(listener, where, gap):
+        while not stop.is_set():
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                return
+            sockets.append(conn)
+            threading.Thread(target=drip, args=(conn, where, gap), daemon=True).start()
+
+    def drip(conn, where, gap):
+        head = b"HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\n"
+        try:
+            conn.recv(65536)
+            if where == "body":
+                # no Content-Length: the body ends when the connection does
+                conn.sendall(head + b"Connection: close\r\n\r\n\xff\xd8\xff")
+            else:
+                conn.sendall(head[:9])
+            while not stop.is_set():
+                conn.sendall(b"\x00" if where == "body" else b"X")
+                time.sleep(gap)
+        except OSError:
+            pass
+
+    def start(where="body", gap=0.02):
+        listener = socket.create_server(("127.0.0.1", 0))
+        sockets.append(listener)
+        threading.Thread(target=serve, args=(listener, where, gap), daemon=True).start()
+        return f"http://127.0.0.1:{listener.getsockname()[1]}"
+
+    yield start
+    stop.set()
+    for s in sockets:
+        s.close()
