@@ -1227,5 +1227,13 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 4822
 # names a class that exists. Six lines of the sixteen are the paragraph
 # saying the fields sit at the top level and that nothing here turns
 # preemption on.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 973
+# 973 -> 1014 (findings 3100, 3064, 3101): the web ingress guard refuses an
+# empty list (a rule with no sources admits every address) and any entry
+# wider than /8 rather than the string 0.0.0.0/0; the web Service keeps
+# client addresses with externalTrafficPolicy: Local, so the ingress list
+# restricts clients rather than nodes; the API-server egress names every
+# endpoint address and port of an HA control plane, read by a nil-safe
+# helper split from the lookup so a test can feed it a fixture. More than
+# half of the lines are the comments saying why each of those is needed.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1014
 exit $fail
