@@ -246,6 +246,27 @@ The dev cluster's `rustfs-init` hook applies the same shape
   node itself arrives from that node's own address, so list that
   one address (`/32`) if that is how you reach it.
 
+### Behind an ingress controller
+
+An ingress-nginx controller in front of the web front is a ClusterIP
+Service and an Ingress instead of the NodePort above. Four values switch
+the mode on:
+
+- `web.service.type=ClusterIP` -- the Service the controller routes to.
+- `web.ingress.enabled=true` -- renders the Ingress.
+- `web.ingress.host` -- the hostname the Ingress routes.
+- `network.web.ingressFrom` -- the NetworkPolicy peers (namespaceSelector /
+  podSelector) allowed to reach the web port, in place of
+  `network.web.ingressCidrs`. Behind a controller the pod only ever sees
+  the controller's own address, never the browser's, so the client ranges
+  the section above describes belong on the controller's own allow-list
+  now, not here.
+
+`web.ingress.className` and `web.ingress.tlsSecretName` are optional; set
+the latter for TLS terminated at the Ingress. The chart refuses to render
+`web.ingress.enabled` without `web.service.type=ClusterIP`, `web.ingress.host`
+and `network.web.ingressFrom` all set, each with its own sentence.
+
 ## Upgrading
 
 ```bash
