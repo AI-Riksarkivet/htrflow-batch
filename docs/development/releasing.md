@@ -2,14 +2,18 @@
 
 ## Building images
 
-Two images: the GPU **wrapper** (`.docker/htrflow-batch.dockerfile`) and the
+Three images: the GPU **wrapper** (`.docker/htrflow-batch.dockerfile`), the
 CPU-only **web front** (`.docker/htrflow-web.dockerfile`) — the read API, the
-campaign browser and the Universal Viewer in one. Reproducibly, through the
-dagger module:
+campaign browser and the Universal Viewer in one — and the CPU-only
+**converter** (`.docker/htrflow-campaigns.dockerfile`), distroless like the
+web image, for the Argo CD hook Job that applies a campaigns repo
+([campaign-yaml.md, "With Argo CD"](../reference/campaign-yaml.md#with-argo-cd)).
+Reproducibly, through the dagger module:
 
 ```bash
 dagger call build-wrapper          # the wrapper image
 dagger call build-web              # the web image: bun-built SPA + patched viewer + the read API
+dagger call build-campaigns        # the converter image
 ```
 
 `build-wrapper` is heavy the first time — the CUDA base is several gigabytes —
@@ -21,8 +25,9 @@ browser into the read API's `/app/static` — the viewer first, the SPA on
 top, so `/` is the SPA and `/uv.html` is the viewer. [CI](ci.md) has the
 full function table.
 
-The **converter is not an image**. It is a plain Python package that runs in
-the campaigns repo's own CI or on a workstation, installed with `uvx`:
+The **converter package is also installable without an image** — a plain
+Python package that runs in the campaigns repo's own CI or on a workstation,
+installed with `uvx`:
 
 ```bash
 uvx --from "git+https://github.com/AI-Riksarkivet/htrflow-batch#subdirectory=packages/converter" \
@@ -60,11 +65,14 @@ architecture-specific: both architectures install it from the
 htrflow is tested on ([Two transformers
 lines](../how-it-works/wrapper.md#model-handling)).
 
-The web dockerfile needs none of this. Every image it builds on — the two
-Node toolchains, the Debian build stage and the distroless runtime — is
-published for both architectures under the digest it is pinned to, and
-nothing in the recipe names an architecture, so the same dockerfile produces
-either image with no branch in it.
+The web and converter dockerfiles need none of this. Every image they build
+on — the two Node toolchains for the web image, the Debian build stage and
+the distroless runtime shared by both — is published for both architectures
+under the digest it is pinned to, and nothing in either recipe names an
+architecture, so each dockerfile produces either architecture's image with no
+branch in it. The converter dockerfile is stages 3–4 of the web one on their
+own: same
+base digests, same uv workspace sync, no viewer or SPA stage in front of it.
 
 **Each architecture is built natively.** Nothing passes `--platform`:
 `uv` crashes in a cross-architecture build, and a GPU image built for a
@@ -109,6 +117,7 @@ credentials:
 make poc-push                  # build-wrapper + build-web, push both to $(HTR_REGISTRY), print their digests
 make build-wrapper             # just the wrapper image, for the host's architecture
 make build-web                 # just the web image
+make build-campaigns           # just the converter image
 make scan-web                  # Trivy over the web image; HIGH/CRITICAL with a fix fails
 ```
 
@@ -126,12 +135,12 @@ dagger call publish-docker --component wrapper \
 
 `make publish` runs exactly this for the wrapper — one unsigned image for
 the host's architecture under the bare version tag, so releases go through
-the publish workflow below instead. `--component` is `wrapper` (default) or
-`web`. `publish-docker` refuses a tag that is already on the registry (see
-below), runs the test suite and aborts on failure, builds, runs the
-library-API pin test on the wrapper image it is about to push and Trivy's
-CRITICAL gate on either image, and only then pushes and returns the
-published reference with its digest.
+the publish workflow below instead. `--component` is `wrapper` (default),
+`web` or `campaigns`. `publish-docker` refuses a tag that is already on the
+registry (see below), runs the test suite and aborts on failure, builds, runs
+the library-API pin test on the wrapper image it is about to push and
+Trivy's CRITICAL gate on every component, and only then pushes and returns
+the published reference with its digest.
 
 **Tags are immutable.** Before its tests and again right before the push,
 `publish-docker` asks the registry for the tag it will push and, with
@@ -144,8 +153,9 @@ check on its own.
 **Tag resolution.** An explicit `--tag` must equal the version in
 `packages/wrapper/pyproject.toml` (a leading `v` is ignored) unless
 `--skip-validation` is set; an empty tag becomes `v<version>`. The images are
-released as one set, so the web image takes the same tag. The resolved tag is
-baked into both images as the `HTRFLOW_BATCH_VERSION` build argument — kept
+released as one set, so the web and converter images take the same tag. The
+resolved tag is baked into every image as the `HTRFLOW_BATCH_VERSION` build
+argument — kept
 as an environment variable and as the `org.opencontainers.image.version`
 label — so the status page's header names what the operator deployed.
 `make build-*` bakes `IMAGE_TAG`; an unstamped build says `dev`.
@@ -158,6 +168,7 @@ per-architecture tags such as `<version>-<arch>`.
 |---|---|---|
 | wrapper | `riksarkivet/htrflow-batch` | `docker.io` |
 | web | `riksarkivet/htrflow-web` | `docker.io` |
+| campaigns | `riksarkivet/htrflow-campaigns` | `docker.io` |
 
 Override with `--image-repository` and `--registry`. `--base-revision` sets
 `HTRFLOW_BASE_REVISION` for the wrapper, and `--transformers-version` sets
@@ -194,8 +205,23 @@ Environments; a repository administrator sets it up once):
   the same name no longer shared with this repository — an environment
   secret wins over one of the same name, but the others would stay
   readable from every workflow.
-- The token itself scoped on Docker Hub to the two repositories, with read
+- The token itself scoped on Docker Hub to the three repositories, with read
   and write only.
+
+A repository the token can push to still has to exist first, and Docker Hub
+creates a new one private by default — which the publish workflow's own
+credential can then pull, but nobody else can. Before the first publish of a
+new component (`htrflow-campaigns`, the first time this repository gains
+one), make its Docker Hub repository public once:
+
+```
+POST /v2/repositories/riksarkivet/htrflow-campaigns/privacy/
+{"is_private": false}
+```
+
+(Docker Hub's UI does the same thing under the repository's Settings →
+Visibility.) Every later publish of that component pushes to the same,
+already-public repository.
 
 Until that is done the environment exists (the first run creates it) but
 protects nothing, and the repository secrets keep the workflow running.
@@ -206,18 +232,19 @@ protects nothing, and the repository secrets keep the workflow running.
    a release, bump the version and publish a new tag.
 2. **Through dagger, one job per image and architecture.** A matrix runs
    `publish-docker` on a runner of the architecture it is building for and
-   pushes `<version>-<arch>`: both images, both architectures, with the
+   pushes `<version>-<arch>`: every image, both architectures, with the
    same gates on each — the test suite, the library-API pin test on the
    wrapper, Trivy's CRITICAL gate.
 3. **One multi-architecture tag per image.** A final job joins each image's
-   pair into the manifest list `riksarkivet/htrflow-batch:<version>` and
-   `riksarkivet/htrflow-web:<version>` with `docker buildx imagetools
+   pair into the manifest list `riksarkivet/htrflow-batch:<version>`,
+   `riksarkivet/htrflow-web:<version>` and
+   `riksarkivet/htrflow-campaigns:<version>` with `docker buildx imagetools
    create`, so a pull by tag or by the list's digest resolves to the node's
    architecture. **The digests the chart pins are these lists'**: pinning a
    per-architecture image instead is an image the other kind of node cannot
    pull. The release commit sets `wrapper.image` and `web.image` in
    `charts/htrflow-batch/values.yaml` to the two digests the manifest job
-   printed, and campaign pipelines take the wrapper's.
+   printed for those images, and campaign pipelines take the wrapper's.
 
 ### Signing, SBOM and provenance
 
@@ -267,7 +294,7 @@ order is the one the images need:
 The workflow then writes the notes in two parts:
 
 - **`.github/release-notes.md`**, the same for every release: the not-for-use
-  warning, the two image digests (read from Docker Hub for the tag), how to
+  warning, the three image digests (read from Docker Hub for the tag), how to
   install from the tag and how to verify the images. A tag whose images are
   not on Docker Hub fails the workflow instead of publishing notes that point
   at nothing.
