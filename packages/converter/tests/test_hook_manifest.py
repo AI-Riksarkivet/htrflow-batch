@@ -62,3 +62,15 @@ def test_the_apply_prunes_the_checkout_the_clone_wrote():
     assert apply["args"] == ["apply", "--prune", "/repo"]
     mounts = {m["name"]: m["mountPath"] for m in apply["volumeMounts"]}
     assert mounts["repo"] == "/repo"
+
+
+def test_the_clone_names_a_user_for_its_reflog():
+    """dulwich writes a reflog entry for every ref a clone creates, and asks
+    for the local user's identity to do it: $LOGNAME/$USER/$LNAME/$USERNAME,
+    else the passwd entry of the uid. The pod runs as uid 1000, which the
+    distroless image has no passwd entry for, so without one of those set
+    the clone fetches everything and then dies on DefaultIdentityNotFound
+    (seen on a live cluster)."""
+    clone = job()["spec"]["template"]["spec"]["initContainers"][0]
+    env = {e["name"]: e.get("value") for e in clone["env"]}
+    assert env.get("USER"), clone["env"]
