@@ -31,6 +31,7 @@ REPO = Path(__file__).resolve().parents[3]
 DOCKERFILES = [
     "htrflow-batch.dockerfile",
     "htrflow-web.dockerfile",
+    "htrflow-campaigns.dockerfile",
 ]
 WRAPPER_DOCKERFILE = REPO / ".docker" / "htrflow-batch.dockerfile"
 _BIND = re.compile(r"--mount=type=bind,source=(packages/[^,]+/pyproject\.toml),")
@@ -89,6 +90,14 @@ def test_the_publish_tag_is_baked_into_both_images(name: str) -> None:
     assert "ARG HTRFLOW_BATCH_VERSION=dev" in text
     assert "ENV HTRFLOW_BATCH_VERSION=${HTRFLOW_BATCH_VERSION}" in text
     assert 'org.opencontainers.image.version="${HTRFLOW_BATCH_VERSION}"' in text
+
+
+def test_campaigns_image_is_distroless_nonroot_and_locked():
+    text = (REPO / ".docker/htrflow-campaigns.dockerfile").read_text()
+    assert "gcr.io/distroless/python3-debian13:nonroot@sha256:" in text
+    assert "uv sync --locked --package htrflow-converter --extra hook --no-editable" in text
+    assert "USER 1000:1000" in text
+    assert 'ENTRYPOINT ["/app/.venv/bin/htrflow-campaigns"]' in text
 
 
 def test_one_wrapper_dockerfile_one_base_for_both_arches() -> None:
