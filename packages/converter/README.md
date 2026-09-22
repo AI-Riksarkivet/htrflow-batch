@@ -18,7 +18,8 @@ a real deployment.
   (every field with its default)
 - A repo in shape: [`examples/campaigns/`](../../examples/campaigns/README.md)
   — `htrflow-campaigns init <dir>` writes exactly this, generated from
-  `src/htrflow_converter/template/`
+  `src/htrflow_converter/template/` plus the CI flavour from
+  `src/htrflow_converter/ci/` (`--ci github`, the default, or `--ci azure`)
 
 ## Commands
 
@@ -28,7 +29,7 @@ this directory prunes the shared venv down to the root.
 ```bash
 make install                                          # uv sync --all-packages
 uv run --all-packages pytest -q packages/converter    # this package's unit tests
-uv run htrflow-campaigns init <dir> [--force]         # write a new campaigns repo from the template
+uv run htrflow-campaigns init <dir> [--force] [--ci github|azure]  # write a new campaigns repo from the template
 uv run htrflow-campaigns validate <campaigns-repo>    # exit 1 and one line per problem
 uv run htrflow-campaigns render <campaigns-repo> --out <dir>
 make campaigns-apply DIR=<campaigns-repo> [PRUNE=1]   # = htrflow-campaigns apply: render + apply + Kueue pause sync

@@ -41,8 +41,13 @@ converter.yaml                 # namespace, queue, window, S3 secret, PVC, runti
 campaigns/<campaign>.yaml      # pipeline: <id> + volumes:
 pipelines/<id>.yaml            # image: <digest> + steps:
 .github/workflows/render.yml   # validate and policy-check on PR; render + commit rendered/ on main
+argocd/apply.yaml              # the Argo CD PostSync hook that applies rendered/
 README.md                      # the repo's two rules: append-only campaigns, pause and cancel as Git changes
 ```
+
+The CI is GitHub Actions. For a repo on Azure DevOps, pass `--ci azure`:
+`init` then writes `azure-pipelines.yml`, the same three stages, in place
+of `.github/`. Its header comment lists what the project must grant it.
 
 Set `converter.yaml` to agree with the chart: `namespace`, `queue`,
 `s3_secret`, `data_pvc` and `public_results_base`
