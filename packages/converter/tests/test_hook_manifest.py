@@ -1,7 +1,6 @@
 """The Argo CD PostSync hook `init` writes (template/argocd/apply.yaml)."""
 
 import re
-import tomllib
 from importlib import resources
 from pathlib import Path
 
@@ -91,11 +90,14 @@ def test_a_tagged_hook_image_is_never_an_older_release():
     tags every image `v` + the wrapper's version, so once that version
     moves past the tag the hook is a release behind: the release that bumped
     it forgot to pin, and this fails CI instead of shipping the old image."""
-    release = _version(
-        tomllib.loads(WRAPPER_PYPROJECT.read_text(encoding="utf-8"))["project"][
-            "version"
-        ]
+    # Read with a pattern, not tomllib: the workspace supports Python 3.10.
+    found = re.search(
+        r'^version = "([^"]+)"$',
+        WRAPPER_PYPROJECT.read_text(encoding="utf-8"),
+        re.MULTILINE,
     )
+    assert found, WRAPPER_PYPROJECT
+    release = _version(found.group(1))
     spec = job()["spec"]["template"]["spec"]
     for c in spec["initContainers"] + spec["containers"]:
         _, sep, tag = c["image"].partition(":v")
