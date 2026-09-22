@@ -332,6 +332,80 @@ def test_the_catch_all_guard_is_silent_when_the_policies_are_not_rendered():
     assert result.returncode == 0, result.stderr
 
 
+# --- T3: a ClusterIP + Ingress mode for the web front ----------------------
+
+#: A deployment behind an ingress-nginx controller: a ClusterIP Service, an
+#: Ingress with TLS, and a NetworkPolicy that admits the controller's pods
+#: (by namespaceSelector) rather than client address ranges -- behind a
+#: controller the pod only ever sees the controller's own address.
+INGRESS = (
+    "web.service.type=ClusterIP",
+    "web.ingress.enabled=true",
+    "web.ingress.className=nginx-test",
+    "web.ingress.host=htr.example.org",
+    "web.ingress.tlsSecretName=htr-tls",
+    "network.web.ingressFrom[0].namespaceSelector.matchLabels.kubernetes\\.io/metadata\\.name=ingress-test",
+)
+
+
+def test_the_default_web_service_is_still_a_nodeport():
+    svc = named(render(sets=DEFAULT_SETS), "Service", "htrflow-web")
+    assert svc["spec"]["type"] == "NodePort"
+    assert svc["spec"]["externalTrafficPolicy"] == "Local"
+    assert not objects(render(sets=DEFAULT_SETS), "Ingress")
+
+
+def test_ingress_mode_renders_a_clusterip_service_and_a_tls_ingress():
+    rendered = render(sets=REQUIRED_SETS + (POLICIES_OFF,) + INGRESS)
+    svc = named(rendered, "Service", "htrflow-web")
+    assert svc["spec"]["type"] == "ClusterIP"
+    assert "nodePort" not in svc["spec"]["ports"][0]
+    assert "externalTrafficPolicy" not in svc["spec"]
+    ing = named(rendered, "Ingress", "htrflow-web")
+    assert ing["spec"]["ingressClassName"] == "nginx-test"
+    assert ing["spec"]["tls"] == [
+        {"hosts": ["htr.example.org"], "secretName": "htr-tls"}
+    ]
+    rule = ing["spec"]["rules"][0]
+    assert rule["host"] == "htr.example.org"
+    backend = rule["http"]["paths"][0]["backend"]["service"]
+    assert backend == {"name": "htrflow-web", "port": {"number": 8081}}
+
+
+def test_ingress_mode_admits_the_controller_not_address_ranges():
+    rendered = render(sets=REQUIRED_SETS + (POLICIES_OFF,) + INGRESS)
+    rule = named(rendered, "NetworkPolicy", "htr-web")["spec"]["ingress"][0]
+    assert rule["from"] == [
+        {
+            "namespaceSelector": {
+                "matchLabels": {"kubernetes.io/metadata.name": "ingress-test"}
+            }
+        }
+    ]
+    assert rule["ports"] == [{"port": 8081}]
+
+
+@pytest.mark.parametrize(
+    "drop, sentence",
+    [
+        (
+            "web.service.type=ClusterIP",
+            "web.ingress.enabled needs web.service.type=ClusterIP",
+        ),
+        (
+            "web.ingress.host=htr.example.org",
+            "web.ingress.enabled needs web.ingress.host",
+        ),
+        (INGRESS[-1], "web.ingress.enabled needs network.web.ingressFrom"),
+    ],
+)
+def test_ingress_mode_refuses_what_it_cannot_serve(drop, sentence):
+    sets = tuple(s for s in INGRESS if s != drop)
+    result = helm_template(sets=REQUIRED_SETS + (POLICIES_OFF,) + sets)
+    assert result.returncode != 0
+    assert sentence in result.stderr
+
+
 # --- D3: what a catch-all egress still reaches ----------------------------
 
 #: k3s pod + service ranges (the chart's `clusterCidrs` default), loopback,
@@ -926,6 +1000,38 @@ BATCH_GUARDS = {
         " addresses are in, or set network.web.allowPublicIngress=true to accept"
         " that any address that can route to a node may open the campaign"
         " browser, the viewer and the read API",
+    ),
+    "ingress-not-clusterip": (
+        None,
+        DEFAULT_SETS
+        + (
+            "web.ingress.enabled=true",
+            "web.ingress.host=htr.example.org",
+            "network.web.ingressFrom[0].namespaceSelector.matchLabels"
+            ".kubernetes\\.io/metadata\\.name=ingress-test",
+        ),
+        "web.ingress.enabled needs web.service.type=ClusterIP",
+    ),
+    "ingress-no-host": (
+        None,
+        DEFAULT_SETS
+        + (
+            "web.service.type=ClusterIP",
+            "web.ingress.enabled=true",
+            "network.web.ingressFrom[0].namespaceSelector.matchLabels"
+            ".kubernetes\\.io/metadata\\.name=ingress-test",
+        ),
+        "web.ingress.enabled needs web.ingress.host",
+    ),
+    "ingress-no-ingress-from": (
+        None,
+        DEFAULT_SETS
+        + (
+            "web.service.type=ClusterIP",
+            "web.ingress.enabled=true",
+            "web.ingress.host=htr.example.org",
+        ),
+        "web.ingress.enabled needs network.web.ingressFrom",
     ),
     "api-server": (
         None,
