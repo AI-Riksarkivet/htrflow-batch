@@ -49,6 +49,9 @@ spec:
             - name: GIT_TOKEN
               valueFrom: {secretKeyRef: {name: htrflow-campaigns-git, key: token}}
             - {name: HOME, value: /tmp}
+            # dulwich writes a reflog entry for each ref it clones and needs a
+            # user name for it; uid 1000 has no passwd entry in the image.
+            - {name: USER, value: htrflow-campaigns}
           volumeMounts:
             - {name: repo, mountPath: /repo}
             - {name: tmp, mountPath: /tmp}
