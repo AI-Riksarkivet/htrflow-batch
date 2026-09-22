@@ -27,8 +27,11 @@ CRDs:
 make install-kueue
 ```
 
-This applies the upstream release manifests server-side, so it is safe to
-re-run. The version it installs is `KUEUE_VERSION` in the `Makefile`.
+This installs or upgrades Kueue's official Helm chart, so it is safe to
+re-run. The version it installs is `KUEUE_VERSION` in the `Makefile`. A
+cluster where Kueue came from the upstream release manifests instead has
+to be moved to the chart once: Helm will not adopt objects it did not
+create.
 [Queueing](../how-it-works/queueing.md) explains how a campaign is admitted.
 
 ## Kyverno

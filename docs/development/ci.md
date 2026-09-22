@@ -94,8 +94,8 @@ a misleading npm-internal crash rather than a certificate error unless
   `compose-down`.
 - **Charts:** `helm-lint`, `helm-template` (lint, render both charts on
   defaults and `ci/full-values.yaml`, kubeconform).
-- **Cluster:** `install-kueue` (the upstream release manifests at
-  `KUEUE_VERSION`, applied server-side), `install-kyverno` (the admission
+- **Cluster:** `install-kueue` (Kueue's Helm chart at `KUEUE_VERSION`),
+  `install-kyverno` (the admission
   controller `security.policies.enabled` needs, at
   `KYVERNO_CHART_VERSION`), `install-devstack`, `psa-labels`,
   `campaigns-apply` (render a campaigns repo, server-side apply its
