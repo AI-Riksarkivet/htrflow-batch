@@ -55,7 +55,8 @@ func trivyArgs(severity string, format string, exitCode int, ignoreUnfixed bool)
 // ScanSarif writes Trivy's findings for one image as SARIF, for the GitHub
 // Security tab (security.yml). It is a report, not a gate: it never fails on
 // findings, and it keeps the unfixed ones the gates skip, because a CVE with
-// no fix yet is still worth seeing. The gates stay Scan and ScanWeb.
+// no fix yet is still worth seeing. The gates stay Scan, ScanWeb and
+// ScanCampaigns.
 func (m *HtrflowBatch) ScanSarif(
 	ctx context.Context,
 	// +defaultPath="/"
@@ -146,6 +147,35 @@ func (m *HtrflowBatch) ScanWeb(
 	container, err := m.BuildWeb(ctx, source, caBundle, "")
 	if err != nil {
 		return "", fmt.Errorf("web build failed before scanning: %w", err)
+	}
+	return m.scanImage(ctx, container, severity, format, exitCode, ignoreUnfixed, caBundle)
+}
+
+// ScanCampaigns runs Trivy against the converter image the Argo CD hook runs
+// (BuildCampaigns). Distroless and CPU-only like the web image, and cheap
+// to build, so ci.yml gates it with --severity CRITICAL on pull requests as
+// well as on main.
+func (m *HtrflowBatch) ScanCampaigns(
+	ctx context.Context,
+	// +defaultPath="/"
+	// +optional
+	source *dagger.Directory,
+	// +default="CRITICAL,HIGH"
+	severity string,
+	// +default="table"
+	format string,
+	// +default=1
+	exitCode int,
+	// Skip findings without a distribution fix (will_not_fix); false gates on everything
+	// +default=true
+	ignoreUnfixed bool,
+	// CA bundle for TLS-intercepting networks (Trivy DB download)
+	// +optional
+	caBundle *dagger.File,
+) (string, error) {
+	container, err := m.BuildCampaigns(ctx, source, caBundle, "")
+	if err != nil {
+		return "", fmt.Errorf("campaigns build failed before scanning: %w", err)
 	}
 	return m.scanImage(ctx, container, severity, format, exitCode, ignoreUnfixed, caBundle)
 }
