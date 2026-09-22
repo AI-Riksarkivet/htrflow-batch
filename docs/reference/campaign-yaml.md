@@ -302,7 +302,12 @@ Argo CD syncs one object, and runs the command as a hook:
   never OutOfSync. It carries no converter label, so `apply --prune` leaves
   it alone.
 - **The hook** is a `PostSync` Job running `htrflow-campaigns apply --prune`
-  on a checkout of the campaigns repo ([manifest below](#pausing)).
+  on a checkout of the campaigns repo ([manifest below](#pausing)). It clones
+  that repo itself, over HTTPS, before the command runs — the chart's
+  default-deny `NetworkPolicy` for this pod only opens DNS and the API
+  server, so the clone needs `apply.gitCidrs` naming the git host (by
+  address: a `NetworkPolicy` cannot match a hostname) and, if it is not 443,
+  `apply.gitPorts`.
 
 A refresh, a self-heal or a re-sync with no new render changes nothing: the
 digest has not moved, and no campaign object is Argo CD's to create again.

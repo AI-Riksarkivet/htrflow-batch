@@ -198,6 +198,8 @@ skeleton, never as a campaign setting.
 | `web.resources.limits.memory` | `values.yaml` | `256Mi` | — | no secret — nobody |
 | `web.internalResultsBase` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `apply.rbac.enabled` | `values.yaml` | `false` | — | no secret — nobody |
+| `apply.gitCidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `apply.gitPorts` | `values.yaml` | `[443]` | — | no secret — nobody |
 | `security.allowedImageRepos` | `values.yaml` | *(empty)* | — | enforced by a Kyverno ClusterPolicy — cluster |
 | `security.requireModelRevision` | `values.yaml` | `false` | — | enforced by a Kyverno ClusterPolicy — cluster |
 | `security.policies.enabled` | `values.yaml` | `false` | — | enforced by a Kyverno ClusterPolicy — cluster |
