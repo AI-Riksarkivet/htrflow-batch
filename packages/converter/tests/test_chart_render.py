@@ -406,6 +406,30 @@ def test_ingress_mode_refuses_what_it_cannot_serve(drop, sentence):
     assert sentence in result.stderr
 
 
+def test_ingress_from_refuses_an_address_range():
+    """network.web.ingressFrom is selectors on the controller's own pods,
+    never an address range: the ingressCidrs guards are skipped whenever
+    ingressFrom is non-empty (T3), so an ipBlock peer would sail straight
+    past them -- reopening findings 3064/3100 on the unauthenticated web
+    front (fix round 1). The schema refuses it before any template runs."""
+    result = helm_template(
+        sets=REQUIRED_SETS + ("network.web.ingressFrom[0].ipBlock.cidr=0.0.0.0/0",)
+    )
+    assert result.returncode != 0
+    assert "additional properties 'ipBlock' not allowed" in result.stderr
+
+
+def test_ingress_from_refuses_an_empty_peer(tmp_path: Path):
+    """A NetworkPolicy peer naming neither selector matches nothing, not
+    everything, but an operator who wrote it meant to name one -- and
+    `--set` cannot spell `{}`, so the values file."""
+    path = tmp_path / "empty-peer.yaml"
+    path.write_text("network:\n  web:\n    ingressFrom: [{}]\n", encoding="utf-8")
+    result = helm_template(values=str(path), sets=REQUIRED_SETS)
+    assert result.returncode != 0
+    assert "minProperties" in result.stderr
+
+
 # --- D3: what a catch-all egress still reaches ----------------------------
 
 #: k3s pod + service ranges (the chart's `clusterCidrs` default), loopback,

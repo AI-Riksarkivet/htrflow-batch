@@ -61,14 +61,12 @@
     "networkPolicyPeer": {
       "type": "object",
       "additionalProperties": false,
+      "minProperties": 1,
       "properties": {
         "namespaceSelector": {
           "type": "object"
         },
         "podSelector": {
-          "type": "object"
-        },
-        "ipBlock": {
           "type": "object"
         }
       }
