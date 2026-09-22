@@ -132,6 +132,7 @@ apply:
   # host. Empty = the hook pod reaches only DNS and the API server, which is
   # all `htrflow-campaigns apply` itself needs.
   gitCidrs: []
+  # At least one: a rule with an empty port list matches every port.
   gitPorts: [443]
 
 security:

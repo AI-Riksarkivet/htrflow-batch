@@ -679,6 +679,20 @@ def test_the_apply_identity_reaches_the_listed_git_host_on_443():
     } in rules
 
 
+def test_an_empty_git_port_list_is_refused_not_opened(tmp_path: Path):
+    """A NetworkPolicy rule with `ports:` and nothing under it matches every
+    port, so an empty apply.gitPorts would open the git host wide."""
+    path = tmp_path / "no-git-ports.yaml"
+    path.write_text("apply:\n  gitPorts: []\n", encoding="utf-8")
+    result = helm_template(
+        values=str(path),
+        sets=DEFAULT_SETS + (APPLY_ON, "apply.gitCidrs={192.0.2.10/32}"),
+    )
+    assert result.returncode != 0
+    assert "at '/apply/gitPorts'" in result.stderr
+    assert "minItems: got 0, want 1" in result.stderr
+
+
 # --- 3101: an HA control plane is more than one API server ----------------
 
 
