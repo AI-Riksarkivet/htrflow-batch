@@ -1,0 +1,75 @@
+# The Argo CD PostSync hook that applies this repo (htrflow-batch docs:
+# reference/campaign-yaml.md, "With Argo CD"). Argo CD syncs only
+# rendered/sync.yaml and this file; a changed render changes sync.yaml, the
+# sync runs, and this Job re-renders from a fresh clone and applies.
+#
+# Edit REPO_URL and REPO_BRANCH below. The token is a read-only token for
+# this repo, in a Secret the cluster's operator creates once:
+#   kubectl -n <namespace> create secret generic htrflow-campaigns-git --from-literal=token=<token>
+# The chart must run with apply.rbac.enabled=true (the ServiceAccount and
+# its Role) and apply.gitCidrs naming the git host (the egress rule).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: htrflow-campaigns-apply
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels: {app: htrflow-campaigns}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: htrflow-campaigns
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        - name: clone
+          image: docker.io/riksarkivet/htrflow-campaigns:v0.5.0   # the release commit pins the digest
+          command: ["/app/.venv/bin/python", "-c"]
+          args:
+            - |
+              import os
+              from dulwich import porcelain
+              porcelain.clone(
+                  os.environ["REPO_URL"], "/repo", depth=1,
+                  branch=os.environ["REPO_BRANCH"].encode(),
+                  username="git", password=os.environ["GIT_TOKEN"],
+              )
+          env:
+            - {name: REPO_URL, value: "https://git.example.org/org/project/_git/htrflow-campaigns"}
+            - {name: REPO_BRANCH, value: main}
+            - name: GIT_TOKEN
+              valueFrom: {secretKeyRef: {name: htrflow-campaigns-git, key: token}}
+            - {name: HOME, value: /tmp}
+          volumeMounts:
+            - {name: repo, mountPath: /repo}
+            - {name: tmp, mountPath: /tmp}
+          securityContext: &restricted
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources: &small
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+      containers:
+        - name: apply
+          image: docker.io/riksarkivet/htrflow-campaigns:v0.5.0   # the release commit pins the digest
+          args: ["apply", "--prune", "/repo"]
+          env:
+            - {name: HOME, value: /tmp}
+          volumeMounts:
+            - {name: repo, mountPath: /repo}
+            - {name: tmp, mountPath: /tmp}
+          securityContext: *restricted
+          resources: *small
+      volumes:
+        - {name: repo, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
