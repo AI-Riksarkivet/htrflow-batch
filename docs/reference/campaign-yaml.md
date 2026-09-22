@@ -302,7 +302,7 @@ Argo CD syncs one object, and runs the command as a hook:
   never OutOfSync. It carries no converter label, so `apply --prune` leaves
   it alone.
 - **The hook** is a `PostSync` Job running `htrflow-campaigns apply --prune`
-  on a checkout of the campaigns repo ([manifest below](#pausing)). It clones
+  on a checkout of the campaigns repo ([its manifest](#the-hook-manifest)). It clones
   that repo itself, over HTTPS, before the command runs — the chart's
   default-deny `NetworkPolicy` for this pod only opens DNS and the API
   server, so the clone needs `apply.gitCidrs` naming the git host (by
@@ -413,38 +413,36 @@ campaign file says so.
 
 With Argo CD, the same command is the `PostSync` hook that applies
 `rendered/` at all ([With Argo CD](#with-argo-cd)), so a merged
-`suspend: true` takes effect on the sync its render triggers. **The manifest below is illustrative,
-not a tested manifest**: the image digest, the ref and the checkout are
-placeholders you have to fill in. No new image is needed: `uvx` installs the
-converter from this repo at the pinned ref, and the pod needs a checkout of
-the campaigns repo to render (the hook re-renders rather than trusting the
-synced `rendered/`):
+`suspend: true` takes effect on the sync its render triggers.
 
-```yaml title="argocd/apply.yaml"
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: htrflow-campaigns-apply
-  annotations:
-    argocd.argoproj.io/hook: PostSync
-    argocd.argoproj.io/hook-delete-policy: HookSucceeded
-spec:
-  template:
-    metadata:
-      labels: {app: htrflow-campaigns}             # the chart's egress rule
-    spec:
-      restartPolicy: Never
-      serviceAccountName: htrflow-campaigns        # helm ... --set
-                                                   # apply.rbac.enabled=true
-      containers:
-        - name: apply
-          image: ghcr.io/astral-sh/uv@sha256:…     # any pinned uv image
-          command: ["uvx", "--from",
-                    "git+https://github.com/AI-Riksarkivet/htrflow-batch@<ref>#subdirectory=packages/converter",
-                    "htrflow-campaigns", "apply", "--prune", "/repo"]
-          volumeMounts: [{name: repo, mountPath: /repo}]
-      volumes: [ … ]                               # the campaigns repo checkout
-```
+### The hook manifest
+
+`htrflow-campaigns init` writes it as `argocd/apply.yaml`
+([in the template](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/packages/converter/src/htrflow_converter/template/argocd/apply.yaml)),
+and the converter's tests hold it to the chart's policies. It is a
+`PostSync` Job on the `htrflow-campaigns` image: an init container clones
+the campaigns repo with dulwich (pure-Python git, so the image carries no
+git binary and no shell), and the Job's container runs
+`htrflow-campaigns apply --prune /repo` on that checkout. Argo CD deletes
+the previous run's Job before each sync and a succeeded one after it. Three
+things to set:
+
+- **`REPO_URL` and `REPO_BRANCH`**, the clone step's two env values: the
+  campaigns repo's HTTPS URL and the branch its CI renders on.
+- **The Secret** `htrflow-campaigns-git`, key `token`: a read-only token
+  for that repo, created once in the release namespace
+  (`kubectl -n <namespace> create secret generic htrflow-campaigns-git --from-literal=token=<token>`).
+  The clone reads it from its environment at run time; it is never on a
+  command line.
+- **The chart's `apply.rbac.enabled=true` and `apply.gitCidrs`**: the
+  ServiceAccount the Job runs as, and the egress rule that lets it reach
+  the git host ([With Argo CD](#with-argo-cd)).
+
+The Job clones the tracked branch, not the revision Argo CD synced: a hook
+Job has no reliable way to learn the Application's revision. A commit merged
+between the sync and the hook is applied now and synced again on the next
+sync, and `apply` is idempotent, so applying it early changes nothing the
+next run would not.
 
 The ServiceAccount is what the htrflow-batch chart renders behind
 `apply.rbac.enabled=true` (default `false`): a Role — never a ClusterRole —
