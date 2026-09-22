@@ -172,11 +172,17 @@ def test_the_priority_classes_the_converter_accepts_are_the_ones_the_chart_ships
 WORKFLOWS = [
     ROOT / "examples" / "campaigns" / ".github" / "workflows" / "render.yml",
     CONVERTER_SRC / "ci" / "github" / ".github" / "workflows" / "render.yml",
+    CONVERTER_SRC / "ci" / "azure" / "azure-pipelines.yml",
 ]
 
 
 def _kyverno_step(workflow: Path) -> str:
-    steps = _load(workflow)["jobs"]["policy"]["steps"]
+    doc = _load(workflow)
+    if "stages" in doc:  # Azure Pipelines: stage -> job -> `bash:` steps
+        policy = next(s for s in doc["stages"] if s["stage"] == "Policy")
+        steps = [step for job in policy["jobs"] for step in job["steps"]]
+        return next(s["bash"] for s in steps if s.get("displayName") == "Kyverno")
+    steps = doc["jobs"]["policy"]["steps"]
     return next(s["run"] for s in steps if s.get("name") == "Kyverno")
 
 
