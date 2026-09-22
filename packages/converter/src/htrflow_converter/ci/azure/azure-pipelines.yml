@@ -23,10 +23,11 @@
 # `kubectl` binary. With Argo CD it is a PostSync hook — this repo's
 # argocd/apply.yaml; by hand it is `make campaigns-apply DIR=<repo> PRUNE=1`.
 #
-# The converter is not an image: it is a plain Python package installed
-# with uv straight from the htrflow-batch repo (see "Install the converter"
-# below). Pin the ref (a tag or a commit SHA) once htrflow-batch cuts
-# releases; @main is fine for now while B63 is still landing.
+# CI installs the converter as a plain Python package, with uv straight
+# from the htrflow-batch repo at CONVERTER_REF (see "Install the converter"
+# below). An htrflow-batch release pins CONVERTER_REF to its own tag in the
+# copy of this file it ships; the converter image exists only for the Argo
+# CD hook (argocd/apply.yaml), which runs in the cluster.
 #
 # Setting it up on Azure DevOps:
 # - Pull requests. In Azure Repos the `pr:` block below is ignored: a pull
@@ -71,7 +72,7 @@ pool:
   vmImage: ubuntu-latest
 
 variables:
-  # Pin to a released htrflow-batch tag once one exists; a commit SHA also
+  # A released htrflow-batch tag (a release pins it here); a commit SHA also
   # works and is the most reproducible option. The Policy stage checks the
   # chart out at this same ref, so the policies CI runs are the ones that
   # shipped with the converter that rendered.
