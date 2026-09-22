@@ -1346,5 +1346,9 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5012
 # and the paragraph saying why off has to be said out loud.)
 # The two rounds above were written in parallel from 973; together they are
 # 973 + 41 (3100/3064/3101) + 120 (3058/3061/3065/3066/B80) = 1134.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1134
+# 1134 -> 1143 (2026-09-22, Task 2): apply-rbac.yaml's NetworkPolicy gains an
+# opt-in egress rule to apply.gitCidrs on apply.gitPorts, for the Argo CD
+# hook's clone of the campaigns repo over HTTPS. Nine lines, empty by
+# default so no existing install's egress changes.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1143
 exit $fail
