@@ -1,11 +1,16 @@
 """The Argo CD PostSync hook `init` writes (template/argocd/apply.yaml)."""
 
 import re
+import tomllib
 from importlib import resources
+from pathlib import Path
 
 import yaml
 
 HOOK = resources.files("htrflow_converter") / "template" / "argocd" / "apply.yaml"
+REPO = Path(__file__).resolve().parents[3]
+WRAPPER_PYPROJECT = REPO / "packages" / "wrapper" / "pyproject.toml"
+RELEASING = REPO / "docs" / "development" / "releasing.md"
 IMAGE = re.compile(
     r"^docker\.io/riksarkivet/htrflow-campaigns(@sha256:[0-9a-f]{64}|:v\d+\.\d+\.\d+)$"
 )
@@ -74,3 +79,41 @@ def test_the_clone_names_a_user_for_its_reflog():
     clone = job()["spec"]["template"]["spec"]["initContainers"][0]
     env = {e["name"]: e.get("value") for e in clone["env"]}
     assert env.get("USER"), clone["env"]
+
+
+def _version(text: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in text.split("."))
+
+
+def test_a_tagged_hook_image_is_never_an_older_release():
+    """Until a release commit pins its digest, the hook names the converter
+    image by the tag of the release it will ship in. The publish workflow
+    tags every image `v` + the wrapper's version, so once that version
+    moves past the tag the hook is a release behind: the release that bumped
+    it forgot to pin, and this fails CI instead of shipping the old image."""
+    release = _version(
+        tomllib.loads(WRAPPER_PYPROJECT.read_text(encoding="utf-8"))["project"][
+            "version"
+        ]
+    )
+    spec = job()["spec"]["template"]["spec"]
+    for c in spec["initContainers"] + spec["containers"]:
+        _, sep, tag = c["image"].partition(":v")
+        if sep and "@" not in c["image"]:
+            assert _version(tag) >= release, (
+                f"{c['name']} runs {c['image']}, older than the wrapper's "
+                f"{'.'.join(map(str, release))}: pin the converter digest the "
+                "release published (docs/development/releasing.md)"
+            )
+
+
+def test_the_release_procedure_names_every_pin_the_hook_and_ci_need():
+    """The release commit pins three manifest-list digests; the converter's
+    goes into this hook and its tag into the CI templates' CONVERTER_REF.
+    A procedure that forgot either would leave them on the previous
+    release."""
+    doc = RELEASING.read_text(encoding="utf-8")
+    assert "template/argocd/apply.yaml" in doc
+    assert "CONVERTER_REF" in doc
+    assert "ci/github/.github/workflows/render.yml" in doc
+    assert "ci/azure/azure-pipelines.yml" in doc

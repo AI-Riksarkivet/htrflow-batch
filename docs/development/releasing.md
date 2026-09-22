@@ -208,20 +208,28 @@ Environments; a repository administrator sets it up once):
 - The token itself scoped on Docker Hub to the three repositories, with read
   and write only.
 
-A repository the token can push to still has to exist first, and Docker Hub
-creates a new one private by default — which the publish workflow's own
-credential can then pull, but nobody else can. Before the first publish of a
-new component (`htrflow-campaigns`, the first time this repository gains
-one), make its Docker Hub repository public once:
+A new component's Docker Hub repository (`htrflow-campaigns`, the first time
+this repository gains one) needs two things **before its first publish**,
+both done once on Docker Hub:
 
-```
-POST /v2/repositories/riksarkivet/htrflow-campaigns/privacy/
-{"is_private": false}
-```
+- **It exists and is public.** Docker Hub creates a new repository private
+  by default, which the publish workflow's own credential can then pull but
+  nobody else can. Create it, or make it public afterwards:
 
-(Docker Hub's UI does the same thing under the repository's Settings →
-Visibility.) Every later publish of that component pushes to the same,
-already-public repository.
+  ```
+  POST /v2/repositories/riksarkivet/htrflow-campaigns/privacy/
+  {"is_private": false}
+  ```
+
+  (Docker Hub's UI does the same thing under the repository's Settings →
+  Visibility.)
+- **The release token covers it.** A token scoped to named repositories
+  sees nothing outside them, and the tag check below counts only "no such
+  manifest" or "no such repository" as free: a token that cannot see the
+  repository gets neither answer, so every publish job refuses to run.
+
+Every later publish of that component pushes to the same, already-public
+repository the token already covers.
 
 Until that is done the environment exists (the first run creates it) but
 protects nothing, and the repository secrets keep the workflow running.
@@ -242,9 +250,26 @@ protects nothing, and the repository secrets keep the workflow running.
    create`, so a pull by tag or by the list's digest resolves to the node's
    architecture. **The digests the chart pins are these lists'**: pinning a
    per-architecture image instead is an image the other kind of node cannot
-   pull. The release commit sets `wrapper.image` and `web.image` in
-   `charts/htrflow-batch/values.yaml` to the two digests the manifest job
-   printed for those images, and campaign pipelines take the wrapper's.
+   pull. The release commit pins all three digests the manifest job
+   printed:
+
+   | Digest | Pinned in |
+   |---|---|
+   | `htrflow-web` | `web.image` in `charts/htrflow-batch/values.yaml`, and the compose stack |
+   | `htrflow-batch` | `wrapper.image` in the same file, and the demo campaign pipelines |
+   | `htrflow-campaigns` | both containers of the Argo CD hook, `packages/converter/src/htrflow_converter/template/argocd/apply.yaml` |
+
+   The same commit sets `CONVERTER_REF` to the release tag in both CI
+   templates `init --ci` writes,
+   `packages/converter/src/htrflow_converter/ci/github/.github/workflows/render.yml`
+   and `packages/converter/src/htrflow_converter/ci/azure/azure-pipelines.yml`,
+   so a campaigns repository created from this release installs this
+   release's converter. Then `htrflow-campaigns init --force
+   examples/campaigns` regenerates the example repository from both.
+   Until a release pins it, the hook names its image by the coming
+   release's tag; a test fails CI once the wrapper's version passes that
+   tag, so a release that forgot the pin cannot ship a hook one release
+   behind.
 
 ### Signing, SBOM and provenance
 
@@ -286,9 +311,11 @@ order is the one the images need:
 1. **Bump and merge the version**: the wrapper's, the web's and the
    converter's `pyproject.toml`, and the chart's `appVersion`.
 2. **Publish the images** for the tag with the publish workflow above.
-3. **The release commit** pins the two manifest-list digests in
-   `charts/htrflow-batch/values.yaml`, the demo pipelines and the compose
-   stack, and bumps the chart's `version` with a changelog entry.
+3. **The release commit** pins the three manifest-list digests where the
+   table above says (`charts/htrflow-batch/values.yaml`, the demo
+   pipelines, the compose stack and the Argo CD hook), sets `CONVERTER_REF`
+   in both CI templates, regenerates `examples/campaigns/`, and bumps the
+   chart's `version` with a changelog entry.
 4. **Tag that commit** and push the tag.
 
 The workflow then writes the notes in two parts:
