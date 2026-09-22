@@ -242,13 +242,15 @@ NVIDIA_DEVICE_PLUGIN ?= true
 KYVERNO ?= true
 KYVERNO_CHART_VERSION ?= 3.9.0
 # Kueue is a prerequisite the chart does not install (it renders the queue
-# objects Kueue reconciles). The upstream release manifests, applied
-# server-side so re-running is idempotent. v0.18.1 is what the PoC runs.
-KUEUE_VERSION ?= v0.18.1
+# objects Kueue reconciles). Its official Helm chart, the same one a GitOps
+# deployment renders, so a cluster installed either way upgrades the same
+# way: the release manifests applied server-side fight Helm over the CRDs.
+# The chart's version is the release's without the leading v.
+KUEUE_VERSION ?= v0.19.5
 
 install-kueue:
-	kubectl apply --server-side -f https://github.com/kubernetes-sigs/kueue/releases/download/$(KUEUE_VERSION)/manifests.yaml
-	kubectl -n kueue-system rollout status deployment/kueue-controller-manager --timeout=180s
+	helm upgrade --install kueue oci://registry.k8s.io/kueue/charts/kueue \
+	  -n kueue-system --create-namespace --version $(KUEUE_VERSION:v%=%) --wait
 
 install-kyverno:
 	helm upgrade --install kyverno oci://ghcr.io/kyverno/charts/kyverno \
