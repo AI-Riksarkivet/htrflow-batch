@@ -64,10 +64,25 @@
       "minProperties": 1,
       "properties": {
         "namespaceSelector": {
-          "type": "object"
+          "$ref": "#/definitions/labelSelector"
         },
         "podSelector": {
-          "type": "object"
+          "$ref": "#/definitions/labelSelector"
+        }
+      }
+    },
+    "labelSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "matchLabels": {
+          "type": "object",
+          "minProperties": 1
+        },
+        "matchExpressions": {
+          "type": "array",
+          "minItems": 1
         }
       }
     }

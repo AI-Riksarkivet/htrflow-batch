@@ -252,5 +252,6 @@ network:                   # NetworkPolicies (docs: development/security, D14)
     # to reach the web port *instead of* ingressCidrs, for web.ingress mode:
     # behind an ingress controller the pod sees the controller's own
     # address, never the browser's, so the client ranges belong on the
-    # controller's own allow-list instead.
+    # controller's own allow-list instead. Every selector must name at
+    # least one label: an empty one selects every namespace or pod.
     ingressFrom: []

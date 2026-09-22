@@ -430,6 +430,31 @@ def test_ingress_from_refuses_an_empty_peer(tmp_path: Path):
     assert "minProperties" in result.stderr
 
 
+@pytest.mark.parametrize(
+    "peer, at",
+    [
+        ("{namespaceSelector: {}}", "0/namespaceSelector"),
+        ("{podSelector: {}}", "0/podSelector"),
+        ("{namespaceSelector: {matchLabels: {}}}", "0/namespaceSelector/matchLabels"),
+        ("{podSelector: {matchExpressions: []}}", "0/podSelector/matchExpressions"),
+    ],
+)
+def test_ingress_from_refuses_a_selector_that_selects_everything(
+    tmp_path: Path, peer: str, at: str
+):
+    """An empty *selector* is the opposite of an empty peer: `{}` (or an
+    empty matchLabels / matchExpressions) selects every namespace or every
+    pod, so `[{namespaceSelector: {}}]` admits every pod in the cluster to
+    the unauthenticated front -- with the ingressCidrs guards skipped, since
+    ingressFrom is set."""
+    path = tmp_path / "empty-selector.yaml"
+    path.write_text(f"network:\n  web:\n    ingressFrom: [{peer}]\n", encoding="utf-8")
+    result = helm_template(values=str(path), sets=REQUIRED_SETS + (POLICIES_OFF,))
+    assert result.returncode != 0
+    assert f"at '/network/web/ingressFrom/{at}'" in result.stderr
+    assert "got 0, want 1" in result.stderr
+
+
 # --- D3: what a catch-all egress still reaches ----------------------------
 
 #: k3s pod + service ranges (the chart's `clusterCidrs` default), loopback,
