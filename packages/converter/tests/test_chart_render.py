@@ -532,6 +532,30 @@ def test_the_apply_pods_policy_comes_with_its_identity():
     ] == []
 
 
+APPLY_ON = "apply.rbac.enabled=true"
+
+
+def _egress(policy: dict) -> list[dict]:
+    return policy["spec"]["egress"]
+
+
+def test_the_apply_identity_reaches_no_git_host_by_default():
+    rendered = render(sets=DEFAULT_SETS + (APPLY_ON,))
+    rules = _egress(named(rendered, "NetworkPolicy", "htr-campaigns-apply"))
+    assert all({"port": 443} not in r.get("ports", []) for r in rules), (
+        "no git egress unless apply.gitCidrs names the host"
+    )
+
+
+def test_the_apply_identity_reaches_the_listed_git_host_on_443():
+    rendered = render(sets=DEFAULT_SETS + (APPLY_ON, "apply.gitCidrs={192.0.2.10/32}"))
+    rules = _egress(named(rendered, "NetworkPolicy", "htr-campaigns-apply"))
+    assert {
+        "to": [{"ipBlock": {"cidr": "192.0.2.10/32"}}],
+        "ports": [{"port": 443}],
+    } in rules
+
+
 # --- 3101: an HA control plane is more than one API server ----------------
 
 

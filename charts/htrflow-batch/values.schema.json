@@ -227,7 +227,9 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "rbac"
+        "rbac",
+        "gitCidrs",
+        "gitPorts"
       ],
       "properties": {
         "rbac": {
@@ -240,6 +242,17 @@
             "enabled": {
               "type": "boolean"
             }
+          }
+        },
+        "gitCidrs": {
+          "$ref": "#/definitions/cidrList"
+        },
+        "gitPorts": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
           }
         }
       }

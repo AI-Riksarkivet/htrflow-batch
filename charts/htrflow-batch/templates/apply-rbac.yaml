@@ -89,5 +89,15 @@ spec:
         - { port: 53, protocol: UDP }
         - { port: 53, protocol: TCP }
     - {{ include "htrflow-batch.apiServerEgress" . }}
+    {{- with .Values.apply.gitCidrs }}
+    - to:
+        {{- range . }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
+      ports:
+        {{- range $.Values.apply.gitPorts }}
+        - { port: {{ . }} }
+        {{- end }}
+    {{- end }}
 {{- end }}
 {{- end }}
