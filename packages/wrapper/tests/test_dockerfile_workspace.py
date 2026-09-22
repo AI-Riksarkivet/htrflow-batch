@@ -95,7 +95,10 @@ def test_the_publish_tag_is_baked_into_both_images(name: str) -> None:
 def test_campaigns_image_is_distroless_nonroot_and_locked():
     text = (REPO / ".docker/htrflow-campaigns.dockerfile").read_text()
     assert "gcr.io/distroless/python3-debian13:nonroot@sha256:" in text
-    assert "uv sync --locked --package htrflow-converter --extra hook --no-editable" in text
+    assert (
+        "uv sync --locked --package htrflow-converter --extra hook --no-editable"
+        in text
+    )
     assert "USER 1000:1000" in text
     assert 'ENTRYPOINT ["/app/.venv/bin/htrflow-campaigns"]' in text
 

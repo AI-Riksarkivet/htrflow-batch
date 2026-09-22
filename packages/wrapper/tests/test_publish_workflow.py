@@ -70,7 +70,9 @@ def test_every_publish_component_has_both_arches_and_a_manifest_entry() -> None:
     components = {e["component"] for e in publish_include}
     assert components == {e["component"] for e in manifest_include}
     for component in components:
-        suffixes = {e["tag_suffix"] for e in publish_include if e["component"] == component}
+        suffixes = {
+            e["tag_suffix"] for e in publish_include if e["component"] == component
+        }
         assert suffixes == set(RUNNERS), component
 
 
