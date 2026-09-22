@@ -78,11 +78,12 @@ func (m *HtrflowBatch) BuildWrapper(
 // recipe lives in the dockerfile so `make build-web` and this build the same
 // image — there is no second copy of it here to drift.
 //
-// Light next to the wrapper: CPU-only, no torch. The converter is not built
-// into an image at all: it runs in CI/laptops via `uvx --from
+// Light next to the wrapper: CPU-only, no torch. The converter also runs in
+// CI/laptops via `uvx --from
 // "git+https://github.com/AI-Riksarkivet/htrflow-batch#subdirectory=packages/converter"
 // htrflow-campaigns` (or `uv tool install` from a checkout — see
-// examples/campaigns/.github/workflows/render.yml).
+// examples/campaigns/.github/workflows/render.yml); BuildCampaigns below is
+// the same converter as an image, for the Argo CD hook Job.
 func (m *HtrflowBatch) BuildWeb(
 	ctx context.Context,
 	// +defaultPath="/"
@@ -109,4 +110,31 @@ func (m *HtrflowBatch) BuildWeb(
 		opts.Secrets = []*dagger.Secret{dag.SetSecret("ca", contents)}
 	}
 	return source.DockerBuild(opts), nil
+}
+
+// BuildCampaigns creates the converter image from
+// .docker/htrflow-campaigns.dockerfile: the same converter package BuildWeb's
+// comment above describes as `uvx`-installable, built distroless instead for
+// the Argo CD PostSync hook Job (docs/reference/campaign-yaml.md, "With Argo
+// CD"), which needs no git binary or shell -- the hook's clone uses dulwich
+// from the same venv. CPU-only and light, like the web image; the same base
+// digests and uv workspace two-step sync as its stages 3-4.
+func (m *HtrflowBatch) BuildCampaigns(
+	ctx context.Context,
+	// +defaultPath="/"
+	source *dagger.Directory,
+	// CA bundle for TLS-intercepting networks. Unused today -- the dockerfile
+	// clones nothing -- kept for parity with BuildWeb's signature so publish.go
+	// can pass the same caBundle to every component uniformly.
+	// +optional
+	caBundle *dagger.File,
+	// The tag this image is published under, baked in as its version. Empty
+	// leaves "dev".
+	// +optional
+	version string,
+) (*dagger.Container, error) {
+	return source.DockerBuild(dagger.DirectoryDockerBuildOpts{
+		Dockerfile: ".docker/htrflow-campaigns.dockerfile",
+		BuildArgs:  buildArgs("", version),
+	}), nil
 }

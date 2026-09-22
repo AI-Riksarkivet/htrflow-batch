@@ -9,7 +9,7 @@ name: Publish
 # registry. Bump packages/wrapper/pyproject.toml and use a new tag instead of
 # re-pushing (the wrapper's version must equal the tag — see resolveTag).
 #
-# BOTH images ship for two architectures and are built NATIVELY for each: on
+# EVERY image ships for two architectures and is built NATIVELY for each: on
 # ubuntu-24.04 for amd64, on ubuntu-24.04-arm for arm64 (free for public
 # repositories). Never one runner with qemu — uv segfaults under qemu-x86_64,
 # and a cross-built GPU image cannot be smoke-tested anywhere. Each job
@@ -49,7 +49,7 @@ permissions:
 # GitHub creates the environment on the first run with no rules, and the
 # repository secrets stay visible to it, so the workflow runs as before.
 jobs:
-  # Both images for both architectures, one matrix entry per image and
+  # Every image for both architectures, one matrix entry per image and
   # architecture on a runner of that architecture: same job body, same
   # `<tag>-<arch>` scheme, same gates in publish-docker (tag check, tests,
   # the driver test for the wrapper, Trivy), same sign-and-attest step.
@@ -82,6 +82,14 @@ jobs:
             runner: ubuntu-24.04
           - component: web
             repository: riksarkivet/htrflow-web
+            tag_suffix: "-arm64"
+            runner: ubuntu-24.04-arm
+          - component: campaigns
+            repository: riksarkivet/htrflow-campaigns
+            tag_suffix: "-amd64"
+            runner: ubuntu-24.04
+          - component: campaigns
+            repository: riksarkivet/htrflow-campaigns
             tag_suffix: "-arm64"
             runner: ubuntu-24.04-arm
     env:
@@ -186,6 +194,8 @@ jobs:
             repository: riksarkivet/htrflow-batch
           - component: web
             repository: riksarkivet/htrflow-web
+          - component: campaigns
+            repository: riksarkivet/htrflow-campaigns
     env:
       REGISTRY: docker.io
       IMAGE: docker.io/${{ matrix.repository }}

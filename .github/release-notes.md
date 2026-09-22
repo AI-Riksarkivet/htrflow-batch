@@ -2,12 +2,13 @@
 
 ## Images
 
-Both images are multi-architecture (amd64, arm64), signed with cosign (keyless, Sigstore), and carry SLSA build provenance and an SPDX SBOM per architecture.
+All three images are multi-architecture (amd64, arm64), signed with cosign (keyless, Sigstore), and carry SLSA build provenance and an SPDX SBOM per architecture.
 
 | Image | Digest |
 |---|---|
 | `docker.io/riksarkivet/htrflow-batch:@TAG@` | `@WRAPPER_DIGEST@` |
 | `docker.io/riksarkivet/htrflow-web:@TAG@` | `@WEB_DIGEST@` |
+| `docker.io/riksarkivet/htrflow-campaigns:@TAG@` | `@CAMPAIGNS_DIGEST@` |
 
 ## Install
 
@@ -28,6 +29,6 @@ cosign verify docker.io/riksarkivet/htrflow-batch:@TAG@ \
 gh attestation verify oci://docker.io/riksarkivet/htrflow-batch:@TAG@ -R AI-Riksarkivet/htrflow-batch
 ```
 
-The same commands work for `htrflow-web`.
+The same commands work for `htrflow-web` and `htrflow-campaigns`.
 
 ## Changes

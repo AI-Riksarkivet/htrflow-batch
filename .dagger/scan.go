@@ -61,7 +61,7 @@ func (m *HtrflowBatch) ScanSarif(
 	// +defaultPath="/"
 	// +optional
 	source *dagger.Directory,
-	// Which image to scan: "wrapper" or "web"
+	// Which image to scan: "wrapper", "web" or "campaigns"
 	image string,
 	// +default="CRITICAL,HIGH"
 	severity string,
@@ -76,8 +76,10 @@ func (m *HtrflowBatch) ScanSarif(
 		container, err = m.BuildWrapper(ctx, source, "", "", "", "")
 	case "web":
 		container, err = m.BuildWeb(ctx, source, caBundle, "")
+	case "campaigns":
+		container, err = m.BuildCampaigns(ctx, source, caBundle, "")
 	default:
-		return nil, fmt.Errorf("image must be \"wrapper\" or \"web\", got %q", image)
+		return nil, fmt.Errorf("image must be \"wrapper\", \"web\" or \"campaigns\", got %q", image)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s build failed before scanning: %w", image, err)

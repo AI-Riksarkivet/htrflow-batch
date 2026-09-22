@@ -160,7 +160,7 @@ func publishRefs(registry, imageRepository, tag, tagSuffix string) []string {
 // PublishDocker tests, builds and publishes an image to a registry and
 // returns the published reference WITH its digest
 // (`<registry>/<repo>:<tag>@sha256:…`) — publish.yml signs and attests that
-// digest. component: "wrapper" (default) or "web". The image is built for the
+// digest. component: "wrapper" (default), "web" or "campaigns". The image is built for the
 // engine's own platform, so the runner's architecture decides what is pushed;
 // --tag-suffix is how one run's per-arch images get distinct tags.
 // Tags are immutable: a tag that already exists on the registry is refused
@@ -170,7 +170,8 @@ func (m *HtrflowBatch) PublishDocker(
 	// +default="wrapper"
 	component string,
 	// Image repository; empty selects the default for the component
-	// (riksarkivet/htrflow-batch or riksarkivet/htrflow-web)
+	// (riksarkivet/htrflow-batch, riksarkivet/htrflow-web or
+	// riksarkivet/htrflow-campaigns)
 	// +optional
 	imageRepository string,
 	// Image tag (empty: "v" + version from packages/wrapper/pyproject.toml)
@@ -219,6 +220,8 @@ func (m *HtrflowBatch) PublishDocker(
 			imageRepository = DefaultImageRepo
 		case "web":
 			imageRepository = DefaultWebRepo
+		case "campaigns":
+			imageRepository = DefaultCampaignsRepo
 		}
 	}
 	refs := publishRefs(registry, imageRepository, resolvedTag, tagSuffix)
@@ -240,8 +243,10 @@ func (m *HtrflowBatch) PublishDocker(
 		// package's own version, is what the image reports and the status
 		// page's header shows.
 		container, err = m.BuildWeb(ctx, source, caBundle, resolvedTag)
+	case "campaigns":
+		container, err = m.BuildCampaigns(ctx, source, caBundle, resolvedTag)
 	default:
-		return "", fmt.Errorf("unknown component %q (wrapper|web)", component)
+		return "", fmt.Errorf("unknown component %q (wrapper|web|campaigns)", component)
 	}
 	if err != nil {
 		return "", fmt.Errorf("build failed during publish: %w", err)

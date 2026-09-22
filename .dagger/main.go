@@ -14,9 +14,10 @@ type HtrflowBatch struct{}
 // Go constants (they require inline literals) — these document the canonical
 // registry/repos that publish.go's inlined literals must stay in sync with.
 const (
-	DefaultRegistry  = "docker.io"
-	DefaultImageRepo = "riksarkivet/htrflow-batch"
-	DefaultWebRepo   = "riksarkivet/htrflow-web"
+	DefaultRegistry      = "docker.io"
+	DefaultImageRepo     = "riksarkivet/htrflow-batch"
+	DefaultWebRepo       = "riksarkivet/htrflow-web"
+	DefaultCampaignsRepo = "riksarkivet/htrflow-campaigns"
 )
 
 // Every image the pipeline pulls, pinned by tag AND multi-arch index digest
