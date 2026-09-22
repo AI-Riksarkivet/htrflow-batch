@@ -18,20 +18,22 @@ lists what the module exposes on your checkout.
 | `test-driver` | `packages/wrapper/tests/test_driver_real.py` against the real htrflow inside a wrapper image it builds itself — the level-0 pin test ([Testing](testing.md)); `ci.yml` runs it in the wrapper scan job. `make test-driver-real` runs the same test against an image that already exists in the local docker daemon, which is how the second architecture's CI job runs it on the image it just built |
 | `build-wrapper` | the wrapper image from `.docker/htrflow-batch.dockerfile`, for the engine's own platform. The optional `--platform` exists for a caller with an engine per platform; nothing here passes it ([Releasing](releasing.md#one-dockerfile-every-architecture)). `--transformers-version` builds the image on the other transformers line; empty keeps the dockerfile's default ([Two transformers lines](../how-it-works/wrapper.md#model-handling)) |
 | `build-web` | the web image from `.docker/htrflow-web.dockerfile` (CPU-only, no torch): the campaign browser SPA, the Universal Viewer fork at the pinned `UV4_REF` with `.docker/uv4-uv-html.patch` applied, and the read API that serves both. A CA bundle goes in as the optional `ca` build secret |
+| `build-campaigns` | the converter image from `.docker/htrflow-campaigns.dockerfile` (distroless, CPU-only, no git binary or shell): the `htrflow-campaigns` CLI and dulwich, what the Argo CD hook in a campaigns repository runs ([Campaign YAML](../reference/campaign-yaml.md)) |
 | `scan` | Trivy over the built wrapper image; table output, fails on findings (default `CRITICAL,HIGH`, unfixed findings ignored) |
 | `scan-web` | the same over the built web image — a distroless Debian runtime with no shell or package manager, so a clean gate is realistic; `make scan-web` is the local twin |
+| `scan-campaigns` | the same over the built converter image, which `ci.yml` gates on pull requests too |
 | `scan-json` | `scan` with JSON output that never fails the call; what `make scan` runs |
-| `scan-sarif` | Trivy over one built image (`--image wrapper\|web`) as a SARIF report: `CRITICAL,HIGH`, unfixed findings included, never fails on findings; what `security.yml` uploads to the Security tab, while `scan` and `scan-web` stay the gates |
-| `publish-docker` | refuses a tag already on the registry, then tests, builds, runs the driver test (wrapper) and the Trivy CRITICAL gate on the image it will push, pushes it (`--component wrapper\|web`) and returns its reference with the digest; passes `--base-revision` and `--transformers-version` on to the wrapper build ([Releasing](releasing.md#publishing)) |
+| `scan-sarif` | Trivy over one built image (`--image wrapper\|web\|campaigns`) as a SARIF report: `CRITICAL,HIGH`, unfixed findings included, never fails on findings; what `security.yml` uploads to the Security tab, while `scan`, `scan-web` and `scan-campaigns` stay the gates |
+| `publish-docker` | refuses a tag already on the registry, then tests, builds, runs the driver test (wrapper) and the Trivy CRITICAL gate on the image it will push, pushes it (`--component wrapper\|web\|campaigns`) and returns its reference with the digest; passes `--base-revision` and `--transformers-version` on to the wrapper build ([Releasing](releasing.md#publishing)) |
 | `check-tag-free` | `publish-docker`'s "never overwrite a tag" check on its own: fails when the tag (or, with `--tag-suffix`, the suffixed or the bare tag) is on the registry or the registry gives no answer |
 | `compose-up` | starts the `web` service of the `.docker/docker-compose.yml` project as a dagger Service |
 | `compose-test` | brings up the compose stack and fetches the web service's `/uv.html`. The module mounts only `.docker/` as the compose project, so the `web` service is image-only: this checks the release the compose file pins; `make compose-smoke` runs the stack on images built from the checkout |
 
-The converter is not built by any dagger function — it is a pure Python
-package, installed with `uvx --from
+The converter is a pure Python package as well as an image. A campaigns
+repository's own CI and a workstation install it with `uvx --from
 "git+https://github.com/AI-Riksarkivet/htrflow-batch#subdirectory=packages/converter"
-htrflow-campaigns` wherever it runs (a campaigns repo's own CI, or a
-workstation).
+htrflow-campaigns`; the image (`build-campaigns`) is only for the Argo CD
+hook, which runs in the cluster where nothing can be installed.
 
 ## What the containers see: exclude, not include
 
@@ -79,8 +81,8 @@ a misleading npm-internal crash rather than a certificate error unless
   `test`, `typecheck`, `test-driver-real`, `ci` (typecheck, then dagger
   `checks` and `test`), `clean`.
 - **Images:** `build` (`dagger call build-wrapper`), `build-wrapper` and
-  `build-web` (plain `docker build`, tagged `$(HTR_REGISTRY)/…:$(IMAGE_TAG)`),
-  `poc-push` (both builds, pushed to the dev registry, digests printed),
+  `build-web` and `build-campaigns` (plain `docker build`, tagged `$(HTR_REGISTRY)/…:$(IMAGE_TAG)`),
+  `poc-push` (the wrapper and web builds, pushed to the dev registry, digests printed),
   the htrflow base built from a checkout and the refresh of its committed
   lock (`lock-htrflow-base`, [Dev cluster](dev-cluster.md#the-gpu-wrapper-image)), `scan` (dagger
   `scan-json`), `scan-web` (Trivy, HIGH/CRITICAL with a fix fails),
@@ -129,7 +131,9 @@ The cluster constants these targets use come from `.env`
 
 - **`ci.yml`** ("Tests") — on push to `main`, on pull requests and by hand.
   The `ci` job runs `dagger call checks`, `dagger call test` and the
-  `scripts/loc-budget.sh` line budgets. Two scan jobs, `scan-web` and
+  `scripts/loc-budget.sh` line budgets. A `scan-campaigns` job runs the
+  converter image's CRITICAL gate on every trigger, pull requests included:
+  it is a small distroless build with nothing to clone. Two scan jobs, `scan-web` and
   `scan-wrapper`, run `scan-web` and `scan` with `--severity CRITICAL
   --ignore-unfixed` on pushes to `main` and manual runs only (`scan-wrapper`
   then runs `test-driver` on the same build): each has to
@@ -137,7 +141,7 @@ The cluster constants these targets use come from `.env`
   base; the web image's viewer clone and npm and bun builds). A pull request
   that changes a dockerfile gets its scan when it lands on `main`, before
   any image is published from it; one job per image so a failure in one
-  still builds the other. A fourth job runs on every trigger, pull requests
+  still builds the other. Another job runs on every trigger, pull requests
   included, on a native runner of the second architecture the wrapper ships
   for: it builds the htrflow base from source at the pinned htrflow commit
   and the wrapper on top of it, runs the level-0 library-API pin test against
@@ -147,7 +151,7 @@ The cluster constants these targets use come from `.env`
   it lands, and the canary for an htrflow release that moves the library API
   finally runs on every push instead of waiting to be remembered.
 - **`publish.yml`** — manual, one explicit tag per run; tests, builds,
-  pushes, signs and attests both images for both of the CPU architectures
+  pushes, signs and attests all three images for both of the CPU architectures
   they ship for — each on a runner of its own architecture, joined into one
   manifest list per image ([Releasing](releasing.md#the-publish-workflow)).
 - **`docs.yml`** ("Documentation") — on push to `main` and by hand:
@@ -155,10 +159,11 @@ The cluster constants these targets use come from `.env`
   `uv.lock`), `scripts/docs-site.sh build --clean --strict` with that
   zensical, then deploy to GitHub Pages.
 - **`security.yml`** ("Security") — weekly, by hand, and on pushes to `main`
-  that change an image's inputs. One job per image: `scan-sarif` uploads the
+  that change an image's inputs. One job per image (wrapper, web and
+  campaigns): `scan-sarif` uploads the
   Trivy report to the Security tab, then the same CRITICAL gate as `ci.yml`
   runs, so an advisory published between changes fails a scheduled run. A
-  third job does the same for the wrapper on the second architecture, on a
+  further job does the same for the wrapper on the second architecture, on a
   native runner of it, through `make scan-image`. On a
   push the gate is skipped, since `ci.yml` has just run it.
 - **`codeql.yml`** ("CodeQL") — on push and pull request to `main` and weekly:
