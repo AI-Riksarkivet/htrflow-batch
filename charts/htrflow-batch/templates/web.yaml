@@ -134,8 +134,11 @@ metadata:
   labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
     app: htrflow-web
 spec:
-  # The browser's way in (audit S4 headers are sent by the app itself now).
-  type: NodePort
+  # The browser's way in directly (NodePort, the default), or from an
+  # ingress controller's own Service in front (ClusterIP, web.ingress mode
+  # below) -- audit S4 headers are sent by the app itself either way.
+  type: {{ .Values.web.service.type }}
+  {{- if eq .Values.web.service.type "NodePort" }}
   # Local, not the default Cluster: under Cluster a connection that lands on
   # a node without the pod is forwarded AND SNAT'd to that node's address,
   # so the pod -- and its NetworkPolicy -- never sees the client, and
@@ -143,12 +146,52 @@ spec:
   # Local keeps the client's address. The price: only the node running the
   # pod answers on the NodePort; the others drop the connection.
   externalTrafficPolicy: Local
+  {{- end }}
   selector: { app: htrflow-web }
   ports:
     - name: http
       port: 8081
       targetPort: 8081
+      {{- if eq .Values.web.service.type "NodePort" }}
       nodePort: {{ .Values.web.nodePort }}
+      {{- end }}
+{{- if .Values.web.ingress.enabled }}
+---
+# An ingress-nginx controller's own way in: a ClusterIP Service (above) is
+# not reachable from outside the cluster on its own, and this Ingress is
+# what the controller watches to route a host to it. No auth of its own --
+# the controller's allow-list (network.web.ingressFrom, this file's
+# NetworkPolicy) is the gate, same as the NodePort's ingressCidrs was.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: htrflow-web
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+  {{- with .Values.web.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.web.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- if .Values.web.ingress.tlsSecretName }}
+  tls:
+    - hosts: [{{ .Values.web.ingress.host | quote }}]
+      secretName: {{ .Values.web.ingress.tlsSecretName | quote }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.web.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: htrflow-web
+                port:
+                  number: 8081
+{{- end }}
 {{- if .Values.network.enabled }}
 ---
 {{- /*
@@ -186,10 +229,17 @@ spec:
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
+        {{- if .Values.network.web.ingressFrom }}
+        {{- /* Ingress mode (T3): the controller's own pods, not client
+             ranges -- behind a controller the pod only ever sees the
+             controller's own address. */}}
+        {{- toYaml .Values.network.web.ingressFrom | nindent 8 }}
+        {{- else }}
         {{- /* Empty only with allowPublicIngress (the guard in _helpers.tpl):
              spell the catch-all out rather than render a bare `from:`. */}}
         {{- range (.Values.network.web.ingressCidrs | default (list "0.0.0.0/0")) }}
         - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
         {{- end }}
       ports:
         - { port: 8081 }

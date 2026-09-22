@@ -57,6 +57,21 @@
       "additionalProperties": {
         "type": "string"
       }
+    },
+    "networkPolicyPeer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "namespaceSelector": {
+          "type": "object"
+        },
+        "podSelector": {
+          "type": "object"
+        },
+        "ipBlock": {
+          "type": "object"
+        }
+      }
     }
   },
   "properties": {
@@ -206,7 +221,9 @@
       "required": [
         "image",
         "nodePort",
-        "resources"
+        "resources",
+        "service",
+        "ingress"
       ],
       "properties": {
         "image": {
@@ -220,6 +237,53 @@
         },
         "internalResultsBase": {
           "type": "string"
+        },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "NodePort",
+                "ClusterIP"
+              ]
+            }
+          }
+        },
+        "ingress": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "className",
+            "host",
+            "tlsSecretName",
+            "annotations"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "className": {
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            },
+            "tlsSecretName": {
+              "type": "string"
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
         }
       }
     },
@@ -420,7 +484,8 @@
           "additionalProperties": false,
           "required": [
             "ingressCidrs",
-            "allowPublicIngress"
+            "allowPublicIngress",
+            "ingressFrom"
           ],
           "properties": {
             "ingressCidrs": {
@@ -428,6 +493,12 @@
             },
             "allowPublicIngress": {
               "type": "boolean"
+            },
+            "ingressFrom": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/networkPolicyPeer"
+              }
             }
           }
         }
