@@ -13,6 +13,11 @@ dependencies = [
     "pyyaml>=6",
 ]
 
+[project.optional-dependencies]
+# The Argo CD hook's clone step (template/argocd/apply.yaml): pure-Python git,
+# so the converter image needs no git binary and no shell.
+hook = ["dulwich>=1.2"]
+
 [project.scripts]
 htrflow-campaigns = "htrflow_converter.cli:main"
 
