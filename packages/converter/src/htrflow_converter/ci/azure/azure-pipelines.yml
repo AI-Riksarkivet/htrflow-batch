@@ -34,9 +34,16 @@
 #   policy on main that names it. Add one. (`pr:` does apply when the repo
 #   lives on GitHub or Bitbucket.)
 # - Pushing rendered/. The Render stage pushes to main as the project's
-#   build service identity ("<project> Build Service (<collection>)"). Grant
-#   that identity Contribute on this repository only — nothing wider — and,
-#   if main has branch policies, "Bypass policies when pushing" on main.
+#   build service identity ("<project> Build Service (<collection>)"). With
+#   no branch policy on main, Contribute on this repository — nothing
+#   wider — is all it needs. Any branch policy on main, the Build validation
+#   one above included, refuses that direct push. From then on the render
+#   push must use a dedicated credential held in a protected resource (a
+#   variable group or a service connection) whose branch-control check
+#   allows only refs/heads/main. Never grant the build service "Bypass
+#   policies when pushing": a pull request's run executes the pull
+#   request's own copy of this file as that same identity, so a bypass on
+#   main lets any branch author push to main through an edited pipeline.
 #   The commit carries [skip ci], so it does not start another run.
 # - Agents. See `pool:` below.
 # - Downloads. Every stage fetches from github.com (uv, helm, the Kyverno
