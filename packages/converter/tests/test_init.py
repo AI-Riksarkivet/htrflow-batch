@@ -105,8 +105,47 @@ def test_the_azure_pipeline_validates_on_prs_and_renders_on_main(tmp_path, capsy
         "htrflow-campaigns validate .",
         "kyverno apply",
         "htrflow-campaigns render . --out rendered",
-        "[skip ci]",
     ):
         assert step in text
     doc = yaml.safe_load(text)
     assert doc["trigger"]["branches"]["include"] == ["main"]
+
+
+def _azure_steps(doc, stage=None):
+    return [
+        step
+        for st in doc["stages"]
+        if stage is None or st["stage"] == stage
+        for job in st["jobs"]
+        for step in job["steps"]
+    ]
+
+
+def test_only_the_azure_push_step_holds_the_push_token(tmp_path, capsys):
+    """The build service token reaches the one step that pushes, on main
+    only. A persisted checkout credential would sit in .git/config while
+    the converter and its dependencies install from the network."""
+    dest = tmp_path / "c"
+    main(["init", str(dest), "--ci", "azure"])
+    text = (dest / "azure-pipelines.yml").read_text()
+    doc = yaml.safe_load(text)
+
+    render = next(s for s in doc["stages"] if s["stage"] == "Render")
+    assert render["condition"] == (
+        "and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))"
+    )
+    for step in _azure_steps(doc):
+        if "checkout" in step:
+            assert "persistCredentials" not in step, step
+
+    pushes = [
+        s for s in _azure_steps(doc, "Render") if " push origin " in s.get("bash", "")
+    ]
+    assert len(pushes) == 1
+    push = pushes[0]
+    assert push["env"] == {"SYSTEM_ACCESSTOKEN": "$(System.AccessToken)"}
+    assert text.count("System.AccessToken") == 1
+    others = [s for s in _azure_steps(doc) if s is not push]
+    assert not any("SYSTEM_ACCESSTOKEN" in str(s) for s in others)
+    assert "[skip ci]" in push["bash"]
+    assert "HEAD:main" in push["bash"]
