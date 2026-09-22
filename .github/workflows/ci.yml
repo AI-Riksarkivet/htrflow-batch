@@ -67,6 +67,24 @@ jobs:
         env:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
+  # The converter image the Argo CD hook runs. Unlike the web and wrapper it is
+  # a small distroless build with nothing to clone, so it is scanned on pull
+  # requests too: a change that brings in a critical fails before it lands.
+  scan-campaigns:
+    name: Vulnerability scan (campaigns)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-dagger
+
+      - name: Scan the campaigns image (CRITICAL blocks)
+        run: dagger call --progress plain scan-campaigns --severity CRITICAL --ignore-unfixed
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+
   # Also the amd64 half of the wrapper dockerfile's proof: this is the only
   # job that builds the wrapper on amd64, and it runs the driver test on it.
   scan-wrapper:
