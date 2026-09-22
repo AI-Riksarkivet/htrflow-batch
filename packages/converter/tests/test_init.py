@@ -149,3 +149,22 @@ def test_only_the_azure_push_step_holds_the_push_token(tmp_path, capsys):
     assert not any("SYSTEM_ACCESSTOKEN" in str(s) for s in others)
     assert "[skip ci]" in push["bash"]
     assert "HEAD:main" in push["bash"]
+
+
+def test_the_azure_stages_share_one_uv_install_template(tmp_path, capsys):
+    """The checksum-verified uv install is written once, as a steps template
+    `init --ci azure` lays down beside the pipeline, and every stage that
+    runs the converter includes it -- three copies drift."""
+    dest = tmp_path / "c"
+    main(["init", str(dest), "--ci", "azure"])
+    ref = ".azure-pipelines/install-uv.yml"
+    template = yaml.safe_load((dest / ref).read_text())
+    (install,) = template["steps"]
+    assert "sha256sum --check --strict" in install["bash"]
+    assert "System.AccessToken" not in (dest / ref).read_text()
+
+    doc = yaml.safe_load((dest / "azure-pipelines.yml").read_text())
+    for stage in doc["stages"]:
+        steps = _azure_steps(doc, stage["stage"])
+        assert {"template": ref} in steps, stage["stage"]
+        assert not any("uv-${arch}" in s.get("bash", "") for s in steps)

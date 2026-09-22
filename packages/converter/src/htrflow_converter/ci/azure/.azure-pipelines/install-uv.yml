@@ -1,0 +1,26 @@
+# The checksum-verified uv install every stage of azure-pipelines.yml
+# includes (`- template: .azure-pipelines/install-uv.yml`), written once so
+# the copies cannot drift. The version and both checksums are variables in
+# azure-pipelines.yml, next to the other tool pins; the release asset is
+# checked against them, never `curl … | sh`. uv itself and the directory
+# `uv tool install` puts its launchers in go on PATH for the later steps.
+steps:
+  - bash: |
+      set -euo pipefail
+      case "$AGENT_OS/$AGENT_OSARCHITECTURE" in
+        Linux/X64)   arch=x86_64  sha256="$UV_SHA256_LINUX_X64" ;;
+        Linux/ARM64) arch=aarch64 sha256="$UV_SHA256_LINUX_ARM64" ;;
+        *) echo "##vso[task.logissue type=error]no pinned uv for $AGENT_OS/$AGENT_OSARCHITECTURE"; exit 1 ;;
+      esac
+      tarball="uv-${arch}-unknown-linux-gnu.tar.gz"
+      dir="$AGENT_TEMPDIRECTORY/uv"
+      mkdir -p "$dir"
+      curl -fsSL --retry 3 -o "$dir/$tarball" \
+        "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${tarball}"
+      echo "${sha256}  $dir/$tarball" | sha256sum --check --strict -
+      tar -xzf "$dir/$tarball" -C "$dir" --strip-components=1
+      rm "$dir/$tarball"
+      "$dir/uv" --version
+      echo "##vso[task.prependpath]$dir"
+      echo "##vso[task.prependpath]$UV_TOOL_BIN_DIR"
+    displayName: Install uv (checksum-verified)
