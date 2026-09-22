@@ -266,6 +266,29 @@ the mode on:
 the latter for TLS terminated at the Ingress. The chart refuses to render
 `web.ingress.enabled` without `web.service.type=ClusterIP`, `web.ingress.host`
 and `network.web.ingressFrom` all set, each with its own sentence.
+`network.web.ingressFrom` takes selectors only: an address range is
+refused, and so is a selector that selects everything (`{}`, or an empty
+`matchLabels`).
+
+**In this mode the chart's address guards do not apply.**
+`network.web.ingressCidrs` and its refusals are skipped, and the
+NetworkPolicy admits the controller, not any address. The web front has no
+authentication of its own, so the Ingress is open to anyone who can reach
+the controller unless the controller is told who may use it. Set that on
+the Ingress, through `web.ingress.annotations`:
+
+```yaml
+web:
+  ingress:
+    annotations:
+      nginx.ingress.kubernetes.io/whitelist-source-range: "192.0.2.0/24,198.51.100.0/24"
+```
+
+or controller-wide, with the same key in the ingress-nginx controller's
+ConfigMap. Either way the controller must see the browser's own address
+(its Service with `externalTrafficPolicy: Local`, or the PROXY protocol
+from the load balancer in front of it); if it sees a node's or a load
+balancer's address instead, the allow-list matches that.
 
 ## Upgrading
 
