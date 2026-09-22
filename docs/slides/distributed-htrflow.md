@@ -750,7 +750,7 @@ nothing in htrflow-batch copies results anywhere else.
 <p class="filename">pipelines/demo-v1.yaml — the htrflow pipeline, plus the image that runs it</p>
 
 ```yaml
-image: docker.io/riksarkivet/htrflow-batch@sha256:982d16…
+image: docker.io/riksarkivet/htrflow-batch@sha256:637fbe…
 steps:
   - step: Segmentation
     settings:

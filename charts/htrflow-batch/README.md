@@ -77,6 +77,12 @@ ConfigMap the nginx viewer mounted, is describing the version it names — `api.
 here would make the upgrade notes wrong for anyone actually on that
 version.
 
+### From 0.11.0 to 0.12.0 — nothing stops an upgrade
+
+Every new key is optional and off by default: an install that sets none of
+them renders the same objects as 0.11.0. Upgrade with
+`--reset-then-reuse-values` as always.
+
 ### From 0.10.0 to 0.11.0 — what can stop an upgrade
 
 | Change | What to do |
@@ -161,6 +167,31 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 `htrflow-web` / `templates/web.yaml` they became in 0.4.0. Renaming them
 here would make the upgrade notes wrong for anyone actually on that
 version.
+
+### 0.12.0 — 2026-09-22 (v0.5.0)
+
+Added:
+- **`web.service.type`** (`NodePort`, the default, or `ClusterIP`) and
+  **`web.ingress.*`** (`enabled`, `className`, `host`, `tlsSecretName`,
+  `annotations`): the web front behind an ingress controller. In that mode
+  **`network.web.ingressFrom`** admits the controller's pods by selector
+  (never an address range, never an empty selector) instead of
+  `network.web.ingressCidrs`, and the chart's address guards do not apply:
+  the controller's own allow-list is the gate.
+- **`apply.gitCidrs`** / **`apply.gitPorts`** (default: none, and at least
+  one port when set): egress from the apply identity's pods to the git host,
+  for the Argo CD hook that clones the campaigns repo
+  (`htrflow-campaigns init` writes it as `argocd/apply.yaml`).
+
+Changed:
+- **`web.image`** pins the `v0.5.0` web image
+  (`docker.io/riksarkivet/htrflow-web@sha256:1fbabef5…`); campaign
+  pipelines pin the wrapper at
+  `docker.io/riksarkivet/htrflow-batch@sha256:637fbe4a…`, whose amd64
+  variant now runs the driver (htrflow built from the repo's own locked
+  base, not an older upstream image). The hook runs
+  `docker.io/riksarkivet/htrflow-campaigns@sha256:8c060603…`.
+  **`appVersion`** is `0.5.0`.
 
 ### 0.11.0 — 2026-09-21 (v0.4.0)
 

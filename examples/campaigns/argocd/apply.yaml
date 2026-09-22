@@ -32,7 +32,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       initContainers:
         - name: clone
-          image: docker.io/riksarkivet/htrflow-campaigns:v0.5.0   # the release commit pins the digest
+          image: docker.io/riksarkivet/htrflow-campaigns@sha256:8c060603a369abb219073b3a01883c70865a4223e46d5372a897bfd0686ee0d3   # v0.5.0
           command: ["/app/.venv/bin/python", "-c"]
           args:
             - |
@@ -64,7 +64,7 @@ spec:
             limits: {cpu: 500m, memory: 512Mi}
       containers:
         - name: apply
-          image: docker.io/riksarkivet/htrflow-campaigns:v0.5.0   # the release commit pins the digest
+          image: docker.io/riksarkivet/htrflow-campaigns@sha256:8c060603a369abb219073b3a01883c70865a4223e46d5372a897bfd0686ee0d3   # v0.5.0
           args: ["apply", "--prune", "/repo"]
           env:
             - {name: HOME, value: /tmp}
