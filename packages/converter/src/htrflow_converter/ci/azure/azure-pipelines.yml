@@ -271,11 +271,11 @@ stages:
       - job: Render
         displayName: Render and commit rendered/
         steps:
-          # persistCredentials keeps the build service identity's token in
-          # the checkout, so the push below authenticates as it.
+          # No persistCredentials: the build service token is handed to the
+          # push step alone (below), never left in .git/config while the
+          # converter and its dependencies install from the network.
           - checkout: self
             fetchDepth: 0
-            persistCredentials: true
           - bash: |
               set -euo pipefail
               case "$AGENT_OS/$AGENT_OSARCHITECTURE" in
@@ -301,7 +301,9 @@ stages:
           - bash: htrflow-campaigns render . --out rendered
             displayName: Render
           # The agent checks out a detached HEAD, hence HEAD:main. [skip ci]
-          # keeps this push from triggering the pipeline again.
+          # keeps this push from triggering the pipeline again. The token is
+          # mapped into this step's env only, and reaches git as a one-off
+          # header on the push itself, so nothing on disk holds it.
           - bash: |
               set -euo pipefail
               git config user.name "Azure Pipelines"
@@ -309,5 +311,7 @@ stages:
               git add rendered
               git diff --cached --quiet && exit 0
               git commit -m "render: $(git rev-parse --short HEAD) [skip ci]"
-              git push origin HEAD:main
+              git -c http.extraheader="AUTHORIZATION: bearer ${SYSTEM_ACCESSTOKEN}" push origin HEAD:main
             displayName: Commit rendered/ if it changed
+            env:
+              SYSTEM_ACCESSTOKEN: $(System.AccessToken)
