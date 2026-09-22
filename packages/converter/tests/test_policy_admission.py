@@ -407,3 +407,29 @@ def test_another_identity_is_not_held_to_the_apply_rules(
         old=configmap("team-settings"),
     )
     assert verdict == "not matched", out
+
+
+# --- the Argo CD hook `init` writes (template/argocd/apply.yaml) ------------
+
+HOOK = REPO / "packages/converter/src/htrflow_converter/template/argocd/apply.yaml"
+PINNED = "sha256:" + "0" * 64
+
+
+@pytest.mark.parametrize("template", ["images-allowed", "images-pinned"])
+def test_the_hook_job_init_writes_is_admitted(tmp_path: Path, template: str):
+    """The hook is a Job in the release namespace like any other, so the
+    image rules hold it too. A release pins the template's image by digest;
+    a tag in the source tree stands for that digest here."""
+    policy = render_policy(
+        tmp_path,
+        template,
+        "security.policies.enabled=true",
+        "security.allowedImageRepos={docker.io/riksarkivet/}",
+    )
+    hook = yaml.safe_load(HOOK.read_text(encoding="utf-8"))
+    hook["metadata"]["namespace"] = NAMESPACE
+    spec = hook["spec"]["template"]["spec"]
+    for c in spec["initContainers"] + spec["containers"]:
+        c["image"] = re.sub(r"(:[^/@]+|@sha256:[0-9a-f]+)$", f"@{PINNED}", c["image"])
+    verdict, out = admission(tmp_path, policy, hook)
+    assert verdict == "admitted", out
