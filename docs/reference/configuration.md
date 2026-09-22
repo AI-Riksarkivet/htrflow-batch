@@ -197,6 +197,12 @@ skeleton, never as a campaign setting.
 | `web.resources.limits.cpu` | `values.yaml` | `500m` | — | no secret — nobody |
 | `web.resources.limits.memory` | `values.yaml` | `256Mi` | — | no secret — nobody |
 | `web.internalResultsBase` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `web.service.type` | `values.yaml` | `NodePort` | — | no secret — nobody |
+| `web.ingress.enabled` | `values.yaml` | `false` | — | no secret — nobody |
+| `web.ingress.className` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `web.ingress.host` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `web.ingress.tlsSecretName` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `web.ingress.annotations` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `apply.rbac.enabled` | `values.yaml` | `false` | — | no secret — nobody |
 | `apply.gitCidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `apply.gitPorts` | `values.yaml` | `[443]` | — | no secret — nobody |
@@ -224,6 +230,7 @@ skeleton, never as a campaign setting.
 | `network.apiServer.port` | `values.yaml` | `6443` | — | no secret — nobody |
 | `network.web.ingressCidrs` | `values.yaml` | `[0.0.0.0/0]` | — | the only gate on the read API — cluster |
 | `network.web.allowPublicIngress` | `values.yaml` | `false` | — | no secret — nobody |
+| `network.web.ingressFrom` | `values.yaml` | *(empty)* | — | no secret — nobody |
 
 ## One-sided keys
 
