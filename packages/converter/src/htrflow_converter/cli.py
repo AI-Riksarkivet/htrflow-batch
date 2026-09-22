@@ -58,7 +58,7 @@ def _copy_tree(src, dst: Path) -> None:
             target.write_bytes(entry.read_bytes())
 
 
-def _init(dir_: str, force: bool) -> int:
+def _init(dir_: str, force: bool, ci: str = "github") -> int:
     dest = Path(dir_)
     if dest.exists():
         if not dest.is_dir():
@@ -67,11 +67,11 @@ def _init(dir_: str, force: bool) -> int:
         if any(dest.iterdir()) and not force:
             print(f"{dest} is not empty: pass --force to overwrite it", file=sys.stderr)
             return 2
-    # The repo itself, then the CI that renders it: kept apart so the
-    # template carries no CI of its own.
+    # The repo itself, then the CI that renders it: GitHub Actions or Azure
+    # Pipelines, one flavour per repo, so the template carries none.
     root = resources.files("htrflow_converter")
     _copy_tree(root / "template", dest)
-    _copy_tree(root / "ci" / "github", dest)
+    _copy_tree(root / "ci" / ci, dest)
     print(_NEXT_STEPS.format(dir=dir_))
     return 0
 
@@ -952,6 +952,12 @@ def main(argv: list[str] | None = None) -> int:
     init_p.add_argument(
         "--force", action="store_true", help="overwrite a non-empty directory"
     )
+    init_p.add_argument(
+        "--ci",
+        choices=["github", "azure"],
+        default="github",
+        help="which CI the repo gets: GitHub Actions or Azure Pipelines",
+    )
     validate_p = sub.add_parser(
         "validate",
         help="validate campaigns/ and pipelines/",
@@ -995,7 +1001,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     if args.command == "init":
-        return _init(args.dir, args.force)
+        return _init(args.dir, args.force, args.ci)
     if args.command == "render":
         return _render(args.repo_dir, args.out)
     if args.command == "apply":

@@ -1,0 +1,306 @@
+# Render — the Azure Pipelines sibling of the GitHub flavour's
+# .github/workflows/render.yml (`htrflow-campaigns init --ci github`). The two
+# run the same three steps with the same variables; keep them in step.
+#
+# On a pull request: validate campaigns/ + pipelines/ + converter.yaml,
+# nothing more — this never touches rendered/.
+# On main: render and commit rendered/, so what `htrflow-campaigns apply`
+# applies (as an Argo CD hook, or `make campaigns-apply` by hand) is always
+# exactly what CI produced from the merged commit, never something rendered
+# by hand on a laptop. Nothing else applies rendered/: every object in it is
+# a Skip hook to Argo CD, and `kubectl apply` of it would re-create a
+# finished campaign's reaped Job.
+#
+# What this pipeline does NOT do: apply anything. It renders; something else
+# applies. That something should be `htrflow-campaigns apply <repo> --prune`
+# — the same converter, one command: it renders, applies pipelines then
+# campaigns, prunes what a deleted campaign file left behind, and enforces
+# `suspend:` on the Kueue Workload (the rendered `spec.suspend` alone does
+# not hold, Kueue owns that field for a Workload it has admitted). It talks
+# to the API server through the official Kubernetes client, so an agent or
+# hook pod needs credentials (a kubeconfig, or a ServiceAccount token — the
+# htrflow-batch chart renders one behind `apply.rbac.enabled`) but no
+# `kubectl` binary. With Argo CD it is a PostSync hook — this repo's
+# argocd/apply.yaml; by hand it is `make campaigns-apply DIR=<repo> PRUNE=1`.
+#
+# The converter is not an image: it is a plain Python package installed
+# with uv straight from the htrflow-batch repo (see "Install the converter"
+# below). Pin the ref (a tag or a commit SHA) once htrflow-batch cuts
+# releases; @main is fine for now while B63 is still landing.
+#
+# Setting it up on Azure DevOps:
+# - Pull requests. In Azure Repos the `pr:` block below is ignored: a pull
+#   request runs this pipeline only through a Build validation branch
+#   policy on main that names it. Add one. (`pr:` does apply when the repo
+#   lives on GitHub or Bitbucket.)
+# - Pushing rendered/. The Render stage pushes to main as the project's
+#   build service identity ("<project> Build Service (<collection>)"). Grant
+#   that identity Contribute on this repository only — nothing wider — and,
+#   if main has branch policies, "Bypass policies when pushing" on main.
+#   The commit carries [skip ci], so it does not start another run.
+# - Agents. See `pool:` below.
+# - Downloads. Every stage fetches from github.com (uv, helm, the Kyverno
+#   CLI, and the converter itself) and from pypi.org, so the agent needs
+#   outbound access to both.
+trigger:
+  branches:
+    include: [main]
+
+pr:
+  branches:
+    include: ["*"]
+
+# The agent pool is the organisation's choice. `vmImage` selects a
+# Microsoft-hosted agent and works only where those are allowed (Azure
+# DevOps Services); Azure DevOps Server has none, so there replace the two
+# lines below with the organisation's own Linux pool:
+#
+#   pool:
+#     name: <your-linux-pool>
+#
+# Every job below runs on it; each tool install checks the agent is Linux
+# x64 or arm64 and fails otherwise.
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  # Pin to a released htrflow-batch tag once one exists; a commit SHA also
+  # works and is the most reproducible option. The Policy stage checks the
+  # chart out at this same ref, so the policies CI runs are the ones that
+  # shipped with the converter that rendered.
+  CONVERTER_REF: main
+  KYVERNO_VERSION: v1.19.0
+  # The cluster's own htrflow-batch values, repeated here because CI has no
+  # cluster to read them from (`helm get values <release> -n <namespace>`).
+  # Keep them in step: CI can only run the policies it is told about, and
+  # the cluster is the gate that actually holds.
+  POLICY_NAMESPACE: htr-batch
+  POLICY_ALLOWED_IMAGE_REPOS: "{docker.io/riksarkivet/}"
+  POLICY_REQUIRE_MODEL_REVISION: "false"
+  # Every tool is a release asset checked against the SHA-256 committed
+  # here, never `curl … | sh`. A bump changes the version and both of its
+  # checksums together, copied from the upstream release's own checksum file:
+  #   uv       https://github.com/astral-sh/uv/releases/download/<version>/sha256.sum
+  #   helm     https://get.helm.sh/helm-<version>-linux-<arch>.tar.gz.sha256sum
+  #   Kyverno  https://github.com/kyverno/kyverno/releases/download/<version>/checksums.txt
+  UV_VERSION: "0.12.17"
+  UV_SHA256_LINUX_X64: fa82fd8dde8e8eefdecada6aa0889666556cfceb690d06e0c3bca49eb3070a63
+  UV_SHA256_LINUX_ARM64: d636d1b678e9e7f367ecb22b46bd1cabbed234d6bc3b4d96365d2b507f72f86c
+  HELM_VERSION: v4.3.0
+  HELM_SHA256_LINUX_X64: 86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb
+  HELM_SHA256_LINUX_ARM64: 31c5794dd55c66a51e6b7d2e2ac7a114ae8b1de41ff1d9ba51748ac973b06a08
+  KYVERNO_SHA256_LINUX_X64: f5b4dc73c8e2f3f66e8e0034dc370e6eb6c4617eff7d5ae3838d2200034eb421
+  KYVERNO_SHA256_LINUX_ARM64: be3d7310a21dfb67181db5a1c3936db6b39d4df3c53c4462f3ffbbdf413a2707
+  # uv's tools and their launchers go in the job's temp directory, which the
+  # agent empties after every job: nothing carries over between runs on a
+  # self-hosted agent.
+  UV_TOOL_DIR: $(Agent.TempDirectory)/uv-tools
+  UV_TOOL_BIN_DIR: $(Agent.TempDirectory)/uv-bin
+
+stages:
+  - stage: Validate
+    jobs:
+      - job: Validate
+        displayName: Validate
+        steps:
+          - checkout: self
+          - bash: |
+              set -euo pipefail
+              case "$AGENT_OS/$AGENT_OSARCHITECTURE" in
+                Linux/X64)   arch=x86_64  sha256="$UV_SHA256_LINUX_X64" ;;
+                Linux/ARM64) arch=aarch64 sha256="$UV_SHA256_LINUX_ARM64" ;;
+                *) echo "##vso[task.logissue type=error]no pinned uv for $AGENT_OS/$AGENT_OSARCHITECTURE"; exit 1 ;;
+              esac
+              tarball="uv-${arch}-unknown-linux-gnu.tar.gz"
+              dir="$AGENT_TEMPDIRECTORY/uv"
+              mkdir -p "$dir"
+              curl -fsSL --retry 3 -o "$dir/$tarball" \
+                "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${tarball}"
+              echo "${sha256}  $dir/$tarball" | sha256sum --check --strict -
+              tar -xzf "$dir/$tarball" -C "$dir" --strip-components=1
+              rm "$dir/$tarball"
+              "$dir/uv" --version
+              echo "##vso[task.prependpath]$dir"
+              echo "##vso[task.prependpath]$UV_TOOL_BIN_DIR"
+            displayName: Install uv (checksum-verified)
+          - bash: |
+              uv tool install "git+https://github.com/AI-Riksarkivet/htrflow-batch@${CONVERTER_REF}#subdirectory=packages/converter"
+            displayName: Install the converter
+          - bash: htrflow-campaigns validate .
+            displayName: Validate
+
+  # The same Kyverno ClusterPolicies the cluster admits against, run over
+  # this repo's rendered output before anything is applied: digest pins, the
+  # image allow-list and (when the release requires it) a 40-hex revision on
+  # every model. `htrflow-campaigns validate` no longer checks any of that —
+  # it is cluster policy, and the cluster enforces it on everything it
+  # admits, not only on what this repo rendered. Failing here means the
+  # author sees the same sentence in the pull request that the API server
+  # would have shown at apply time.
+  #
+  # The policies come from `helm template` of the chart at CONVERTER_REF
+  # rather than a copy checked in here: a copy is a second source of truth
+  # and it drifts silently. On a pull request `rendered/` is not written
+  # (only main commits it), so this renders to a temp directory of its own.
+  - stage: Policy
+    dependsOn: Validate
+    jobs:
+      - job: Policy
+        displayName: Policy
+        steps:
+          - checkout: self
+          - bash: |
+              set -euo pipefail
+              git init -q "$AGENT_TEMPDIRECTORY/htrflow-batch"
+              cd "$AGENT_TEMPDIRECTORY/htrflow-batch"
+              git fetch -q --depth 1 https://github.com/AI-Riksarkivet/htrflow-batch "$CONVERTER_REF"
+              git checkout -q FETCH_HEAD
+            displayName: Check out htrflow-batch at CONVERTER_REF
+          - bash: |
+              set -euo pipefail
+              case "$AGENT_OS/$AGENT_OSARCHITECTURE" in
+                Linux/X64)   arch=x86_64  sha256="$UV_SHA256_LINUX_X64" ;;
+                Linux/ARM64) arch=aarch64 sha256="$UV_SHA256_LINUX_ARM64" ;;
+                *) echo "##vso[task.logissue type=error]no pinned uv for $AGENT_OS/$AGENT_OSARCHITECTURE"; exit 1 ;;
+              esac
+              tarball="uv-${arch}-unknown-linux-gnu.tar.gz"
+              dir="$AGENT_TEMPDIRECTORY/uv"
+              mkdir -p "$dir"
+              curl -fsSL --retry 3 -o "$dir/$tarball" \
+                "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${tarball}"
+              echo "${sha256}  $dir/$tarball" | sha256sum --check --strict -
+              tar -xzf "$dir/$tarball" -C "$dir" --strip-components=1
+              rm "$dir/$tarball"
+              "$dir/uv" --version
+              echo "##vso[task.prependpath]$dir"
+              echo "##vso[task.prependpath]$UV_TOOL_BIN_DIR"
+            displayName: Install uv (checksum-verified)
+          - bash: |
+              set -euo pipefail
+              case "$AGENT_OS/$AGENT_OSARCHITECTURE" in
+                Linux/X64)   arch=amd64 sha256="$HELM_SHA256_LINUX_X64" ;;
+                Linux/ARM64) arch=arm64 sha256="$HELM_SHA256_LINUX_ARM64" ;;
+                *) echo "##vso[task.logissue type=error]no pinned helm for $AGENT_OS/$AGENT_OSARCHITECTURE"; exit 1 ;;
+              esac
+              tarball="helm-${HELM_VERSION}-linux-${arch}.tar.gz"
+              dir="$AGENT_TEMPDIRECTORY/helm"
+              mkdir -p "$dir"
+              curl -fsSL --retry 3 -o "$dir/$tarball" "https://get.helm.sh/${tarball}"
+              echo "${sha256}  $dir/$tarball" | sha256sum --check --strict -
+              tar -xzf "$dir/$tarball" -C "$dir" --strip-components=1 "linux-${arch}/helm"
+              rm "$dir/$tarball"
+              "$dir/helm" version
+              echo "##vso[task.prependpath]$dir"
+            displayName: Install helm (checksum-verified)
+          - bash: |
+              uv tool install "git+https://github.com/AI-Riksarkivet/htrflow-batch@${CONVERTER_REF}#subdirectory=packages/converter"
+            displayName: Install the converter
+          - bash: |
+              set -euo pipefail
+              case "$AGENT_OS/$AGENT_OSARCHITECTURE" in
+                Linux/X64)   arch=x86_64 sha256="$KYVERNO_SHA256_LINUX_X64" ;;
+                Linux/ARM64) arch=arm64  sha256="$KYVERNO_SHA256_LINUX_ARM64" ;;
+                *) echo "##vso[task.logissue type=error]no pinned Kyverno CLI for $AGENT_OS/$AGENT_OSARCHITECTURE"; exit 1 ;;
+              esac
+              tarball="kyverno-cli_${KYVERNO_VERSION}_linux_${arch}.tar.gz"
+              dir="$AGENT_TEMPDIRECTORY/kyverno"
+              mkdir -p "$dir"
+              curl -fsSL --retry 3 -o "$dir/$tarball" \
+                "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/${tarball}"
+              echo "${sha256}  $dir/$tarball" | sha256sum --check --strict -
+              tar -xzf "$dir/$tarball" -C "$dir" kyverno
+              rm "$dir/$tarball"
+              "$dir/kyverno" version
+              echo "##vso[task.prependpath]$dir"
+            displayName: Install the Kyverno CLI (checksum-verified)
+          - bash: htrflow-campaigns render . --out "$AGENT_TEMPDIRECTORY/rendered"
+            displayName: Render
+          - bash: |
+              set -euo pipefail
+              helm template htrflow-batch "$AGENT_TEMPDIRECTORY/htrflow-batch/charts/htrflow-batch" \
+                -n "$POLICY_NAMESPACE" \
+                --set publicResultsBase=http://ci.invalid/ \
+                --set network.enabled=false \
+                --set security.policies.enabled=true \
+                --set "security.allowedImageRepos=$POLICY_ALLOWED_IMAGE_REPOS" \
+                --set "security.requireModelRevision=$POLICY_REQUIRE_MODEL_REVISION" \
+                --show-only 'templates/policies/*.yaml' > "$AGENT_TEMPDIRECTORY/policies.yaml"
+            displayName: Render the chart's policies
+          # One file, not one --resource per directory: `kyverno apply` v1.19
+          # honours a single --resource, so a second one is silently dropped
+          # and half the manifests go unchecked. The `---` keeps the documents
+          # of two files from merging into one.
+          #
+          # `--userinfo` says who is asking. The rbac-scope policy holds each
+          # ServiceAccount to its own objects, so it matches on the requester;
+          # with no requester the CLI cannot rule the web identity out, and
+          # that rule refuses every pipeline and campaign ConfigMap. What this
+          # repo renders reaches the cluster through `htrflow-campaigns apply`,
+          # so the check submits as the ServiceAccount the chart creates for
+          # it (`apply.rbac`). An operator's own kubeconfig is no different
+          # here: neither is the web identity, and a rule scoped to the apply
+          # identity only ever matches a delete, which this check never makes.
+          - bash: |
+              set -euo pipefail
+              for f in "$AGENT_TEMPDIRECTORY"/rendered/*/*.yaml; do echo '---'; cat "$f"; done \
+                > "$AGENT_TEMPDIRECTORY/all.yaml"
+              cat > "$AGENT_TEMPDIRECTORY/userinfo.yaml" <<EOF
+              apiVersion: cli.kyverno.io/v1alpha1
+              kind: UserInfo
+              metadata:
+                name: htrflow-campaigns-apply
+              userInfo:
+                username: system:serviceaccount:${POLICY_NAMESPACE}:htrflow-campaigns
+              EOF
+              kyverno apply "$AGENT_TEMPDIRECTORY/policies.yaml" --resource "$AGENT_TEMPDIRECTORY/all.yaml" \
+                --userinfo "$AGENT_TEMPDIRECTORY/userinfo.yaml"
+            displayName: Kyverno
+
+  - stage: Render
+    displayName: Render and commit rendered/
+    dependsOn: [Validate, Policy]
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: Render
+        displayName: Render and commit rendered/
+        steps:
+          # persistCredentials keeps the build service identity's token in
+          # the checkout, so the push below authenticates as it.
+          - checkout: self
+            fetchDepth: 0
+            persistCredentials: true
+          - bash: |
+              set -euo pipefail
+              case "$AGENT_OS/$AGENT_OSARCHITECTURE" in
+                Linux/X64)   arch=x86_64  sha256="$UV_SHA256_LINUX_X64" ;;
+                Linux/ARM64) arch=aarch64 sha256="$UV_SHA256_LINUX_ARM64" ;;
+                *) echo "##vso[task.logissue type=error]no pinned uv for $AGENT_OS/$AGENT_OSARCHITECTURE"; exit 1 ;;
+              esac
+              tarball="uv-${arch}-unknown-linux-gnu.tar.gz"
+              dir="$AGENT_TEMPDIRECTORY/uv"
+              mkdir -p "$dir"
+              curl -fsSL --retry 3 -o "$dir/$tarball" \
+                "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${tarball}"
+              echo "${sha256}  $dir/$tarball" | sha256sum --check --strict -
+              tar -xzf "$dir/$tarball" -C "$dir" --strip-components=1
+              rm "$dir/$tarball"
+              "$dir/uv" --version
+              echo "##vso[task.prependpath]$dir"
+              echo "##vso[task.prependpath]$UV_TOOL_BIN_DIR"
+            displayName: Install uv (checksum-verified)
+          - bash: |
+              uv tool install "git+https://github.com/AI-Riksarkivet/htrflow-batch@${CONVERTER_REF}#subdirectory=packages/converter"
+            displayName: Install the converter
+          - bash: htrflow-campaigns render . --out rendered
+            displayName: Render
+          # The agent checks out a detached HEAD, hence HEAD:main. [skip ci]
+          # keeps this push from triggering the pipeline again.
+          - bash: |
+              set -euo pipefail
+              git config user.name "Azure Pipelines"
+              git config user.email "azure-pipelines@localhost"
+              git add rendered
+              git diff --cached --quiet && exit 0
+              git commit -m "render: $(git rev-parse --short HEAD) [skip ci]"
+              git push origin HEAD:main
+            displayName: Commit rendered/ if it changed

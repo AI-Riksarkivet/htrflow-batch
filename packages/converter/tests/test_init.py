@@ -3,6 +3,8 @@ template so a new repo (I15) is one command away and never drifts from the
 docs' example (see ``test_packaging.py::test_examples_match_template`` for
 the drift guard)."""
 
+import yaml
+
 from htrflow_converter.cli import main
 
 
@@ -76,3 +78,35 @@ def test_init_into_an_existing_empty_dir_needs_no_force(tmp_path, capsys):
     capsys.readouterr()
     assert rc == 0
     assert (dest / "converter.yaml").exists()
+
+
+def test_init_defaults_to_github_ci(tmp_path, capsys):
+    dest = tmp_path / "c"
+    assert main(["init", str(dest)]) == 0
+    assert (dest / ".github" / "workflows" / "render.yml").exists()
+    assert not (dest / "azure-pipelines.yml").exists()
+    assert (dest / "argocd" / "apply.yaml").exists()
+
+
+def test_init_azure_writes_azure_pipelines_and_no_github(tmp_path, capsys):
+    dest = tmp_path / "c"
+    assert main(["init", str(dest), "--ci", "azure"]) == 0
+    assert (dest / "azure-pipelines.yml").exists()
+    assert not (dest / ".github").exists()
+    assert (dest / "argocd" / "apply.yaml").exists()
+    assert main(["validate", str(dest)]) == 0
+
+
+def test_the_azure_pipeline_validates_on_prs_and_renders_on_main(tmp_path, capsys):
+    dest = tmp_path / "c"
+    main(["init", str(dest), "--ci", "azure"])
+    text = (dest / "azure-pipelines.yml").read_text()
+    for step in (
+        "htrflow-campaigns validate .",
+        "kyverno apply",
+        "htrflow-campaigns render . --out rendered",
+        "[skip ci]",
+    ):
+        assert step in text
+    doc = yaml.safe_load(text)
+    assert doc["trigger"]["branches"]["include"] == ["main"]

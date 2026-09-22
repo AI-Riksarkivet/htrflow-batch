@@ -1,4 +1,8 @@
 name: Render
+# Its Azure Pipelines sibling is azure-pipelines.yml
+# (`htrflow-campaigns init --ci azure`): the same three steps with the same
+# variables. Keep them in step.
+#
 # On a pull request: validate campaigns/ + pipelines/ + converter.yaml,
 # nothing more — this never touches rendered/.
 # On main: render and commit rendered/, so what `htrflow-campaigns apply`
@@ -163,40 +167,3 @@ jobs:
           git commit -m "render: $(git rev-parse --short HEAD)"
           git push
 
-# --- Azure Pipelines equivalent (this repo's real home may be Azure Repos,
-# not GitHub — I15 decides). Uncomment and adapt into azure-pipelines.yml;
-# kept here as a reference so the two definitions stay in sync by review
-# rather than drifting silently apart.
-#
-# trigger:
-#   branches:
-#     include: [main]
-# pr:
-#   branches:
-#     include: ['*']
-# pool:
-#   vmImage: ubuntu-latest
-# variables:
-#   CONVERTER_REF: main
-# steps:
-#   - script: |
-#       curl -LsSf https://astral.sh/uv/install.sh | sh
-#       echo "$HOME/.local/bin" >> "$PATH"
-#     displayName: Install uv
-#   - script: |
-#       uv tool install "git+https://github.com/AI-Riksarkivet/htrflow-batch@$(CONVERTER_REF)#subdirectory=packages/converter"
-#     displayName: Install the converter
-#   - script: htrflow-campaigns validate .
-#     displayName: Validate
-#   # The Policy job above has no Azure equivalent written out yet: it is
-#   # `helm template` of the chart's templates/policies/* plus
-#   # `kyverno apply` over the rendered manifests, and it needs helm and the
-#   # Kyverno CLI on the agent.
-#   - script: |
-#       htrflow-campaigns render . --out rendered
-#       git config user.name "Azure Pipelines"
-#       git config user.email "azure-pipelines@localhost"
-#       git add rendered
-#       git diff --cached --quiet || (git commit -m "render: $(Build.SourceVersion)" && git push origin HEAD:main)
-#     displayName: Render and commit rendered/ (main only)
-#     condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')
