@@ -89,7 +89,13 @@ exactly that. Always rendered — there is no `enabled` flag.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `web.image` | `docker.io/riksarkivet/htrflow-web@sha256:…` | **Must be digest-pinned** unless `security.allowTagImages`. The default is a published web image — the digest of its multi-architecture manifest list, so it resolves on a node of either kind; a single architecture's digest does not. To run your own build, set the digest you pushed (see [Releasing](../development/releasing.md)) |
-| `web.nodePort` | `30800` | NodePort; the container listens on 8081. Answered only on the node running the pod (`externalTrafficPolicy: Local`) |
+| `web.nodePort` | `30800` | NodePort; the container listens on 8081. Answered only on the node running the pod (`externalTrafficPolicy: Local`). Unused with `web.service.type: ClusterIP` |
+| `web.service.type` | `NodePort` | `NodePort` is the browser's direct way in. `ClusterIP` is for an ingress controller in front (`web.ingress.*`): no node port and no `externalTrafficPolicy`, since the pod then sees only the controller's address |
+| `web.ingress.enabled` | `false` | Renders an Ingress for the web front. Refused unless `web.service.type` is `ClusterIP` and `web.ingress.host` and `network.web.ingressFrom` are set. The Ingress carries no authentication, and the `network.web.ingressCidrs` guards do not apply in this mode: set the controller's allow-list (see [Deploy → Behind an ingress controller](../getting-started/deploy.md#behind-an-ingress-controller)) |
+| `web.ingress.host` | `""` | The hostname the Ingress routes; required with `web.ingress.enabled` |
+| `web.ingress.className` | `""` | `ingressClassName`; `""` = the cluster's default IngressClass |
+| `web.ingress.tlsSecretName` | `""` | TLS Secret for `web.ingress.host`, terminated at the Ingress; `""` = no `tls` block |
+| `web.ingress.annotations` | `{}` | Annotations on the Ingress, e.g. the controller's source-range allow-list (`nginx.ingress.kubernetes.io/whitelist-source-range`) |
 | `web.resources` | requests cpu 50m / 128Mi, limits cpu 500m / 256Mi | |
 | `web.internalResultsBase` | `""` | Where THIS POD reaches the results bucket, for `ProgressReader` — `""` (default) means the same address as `publicResultsBase`, correct whenever that URL also resolves to the bucket from inside the cluster (a public S3 endpoint). Set it whenever it does not: a browser-facing address reached through a tunnel or port-forward resolves, from inside the pod, to the pod itself, and the API then silently reads no progress at all. Use the in-cluster address instead, e.g. `http://rustfs.<namespace>.svc.cluster.local:9000/<bucket>` for the devstack's store (see [Dev cluster](../development/dev-cluster.md)) |
 
@@ -105,6 +111,8 @@ serves both (see [Campaign Browser](frontend.md)).
 | Key | Default | Description |
 |-----|---------|-------------|
 | `apply.rbac.enabled` | `false` | Renders the ServiceAccount `htrflow-campaigns`, a Role and RoleBinding for `htrflow-campaigns apply` run *inside* the cluster (an Argo CD `PostSync` hook, a CI Job): `list`/`create`/`patch`/`delete` on `jobs` and `configmaps`, `list`/`patch` on `workloads.kueue.x-k8s.io`, release namespace only. Off by default: run from an operator's kubeconfig, the command needs no in-cluster identity, and an idle ServiceAccount that may delete Jobs is a liability. See [Campaign & Pipeline YAML → Pausing](campaign-yaml.md#pausing) |
+| `apply.gitCidrs` | `[]` | The git host the Argo CD hook clones the campaigns repo from, by address (a NetworkPolicy cannot name a host): an egress rule for the `app=htrflow-campaigns` pod. Empty = no git egress; the pod reaches only DNS and the API server, which is all `apply` on a local checkout needs. See [Campaign & Pipeline YAML → With Argo CD](campaign-yaml.md#with-argo-cd) |
+| `apply.gitPorts` | `[443]` | Ports of that egress rule. At least one: a rule with no ports would open every port |
 
 ## Trust boundary (`security.*`)
 
@@ -158,3 +166,4 @@ Hugging Face Hub egress at all — only the warm-up pod does.
 | `network.nodeCidrs` | `[]` | Node addresses (same purpose); auto-detected with Helm `lookup` when empty — set for `helm template` or a kubeconfig without list-nodes permission |
 | `network.apiServer.cidr` / `cidrs` / `port` | `""` / `[]` / `6443` | kube-apiserver as reached after service DNAT: `cidr` one address, `cidrs` every further API server of an HA control plane (the egress rule names them all, since DNAT may pick any). When both are empty, every address and port of the `kubernetes` Endpoints is looked up. **The web front's NetworkPolicy fails to render without one under `helm template`** |
 | `network.web.ingressCidrs` | `["0.0.0.0/0"]` | Who may reach the web front's port 8081, matched on the client's own address (the Service sets `externalTrafficPolicy: Local`, so NodePort traffic is not SNAT'd; do not list the node range for its sake). The default is any client that can reach the node. The default, an empty list and any entry wider than `/8` all need `network.web.allowPublicIngress` |
+| `network.web.ingressFrom` | `[]` | NetworkPolicy peers allowed to reach port 8081 *instead of* `network.web.ingressCidrs`, for `web.ingress.*` mode: `namespaceSelector` / `podSelector` objects naming the ingress controller's pods. Selectors only: an `ipBlock` is refused, and so is a selector that selects everything (`{}`, an empty `matchLabels` or `matchExpressions`). When set, the `ingressCidrs` guards are skipped, since the pod sees only the controller's address; who may reach the front is then the controller's allow-list |
