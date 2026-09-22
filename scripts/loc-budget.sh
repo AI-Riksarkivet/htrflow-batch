@@ -1350,5 +1350,13 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5012
 # opt-in egress rule to apply.gitCidrs on apply.gitPorts, for the Argo CD
 # hook's clone of the campaigns repo over HTTPS. Nine lines, empty by
 # default so no existing install's egress changes.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1143
+# 1143 -> 1221 (2026-09-22, Task 3): a ClusterIP + Ingress mode for the web
+# front -- web.yaml's Service gains conditional type/externalTrafficPolicy/
+# nodePort, a new Ingress object (TLS, one host rule), and the
+# NetworkPolicy's `from:` a toYaml branch for network.web.ingressFrom;
+# _helpers.tpl gains the three web.ingress.enabled guards plus the paragraph
+# saying why they run before, and independently of, the ingressCidrs ones.
+# Off by default (web.ingress.enabled: false, web.service.type: NodePort),
+# so no existing install's render changes.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1221
 exit $fail
