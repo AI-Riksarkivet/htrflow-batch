@@ -66,7 +66,8 @@ def test_manifests_are_readable_via_importlib_resources_from_an_installed_wheel(
 @pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
 def test_template_dotfile_is_readable_from_an_installed_wheel(tmp_path):
     """``init`` needs the whole template, dotfiles included --
-    ``.github/workflows/render.yml`` is the one dotted path in it. Verified
+    ``.github/workflows/render.yml`` is the one dotted path in it, and
+    ``argocd/apply.yaml`` the hook manifest a repo's Argo CD runs. Verified
     by hand that hatchling's ``artifacts`` glob does carry a dot-directory
     into both the sdist and the wheel (unzip -l'd the built wheel); this
     pins that against a regression the same way the manifests test above
@@ -97,16 +98,18 @@ def test_template_dotfile_is_readable_from_an_installed_wheel(tmp_path):
             "-I",
             "-c",
             "from importlib import resources\n"
-            "p = resources.files('htrflow_converter') / 'template' / '.github' / "
-            "'workflows' / 'render.yml'\n"
-            "print(len(p.read_text()))",
+            "t = resources.files('htrflow_converter') / 'template'\n"
+            "for p in (t / '.github' / 'workflows' / 'render.yml',\n"
+            "          t / 'argocd' / 'apply.yaml'):\n"
+            "    print(len(p.read_text()))",
         ],
         cwd=tmp_path,
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0, result.stderr
-    assert int(result.stdout.strip()) > 0
+    sizes = [int(n) for n in result.stdout.split()]
+    assert len(sizes) == 2 and all(sizes), result.stdout
 
 
 def test_examples_match_template():
