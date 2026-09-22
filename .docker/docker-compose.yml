@@ -118,7 +118,7 @@ services:
     # the wrapper above gets away with a build only because compose-test
     # never starts it. So this service is image-only: the pinned release, or
     # HTR_WEB_IMAGE — which is what `make compose-smoke` sets.
-    image: ${HTR_WEB_IMAGE:-riksarkivet/htrflow-web@sha256:d86f74665c3e704ec5a3a8e59ce1aa7010c30d437648242f00458b7fe2c8b40e}  # v0.4.0
+    image: ${HTR_WEB_IMAGE:-riksarkivet/htrflow-web@sha256:1fbabef550593f6d77da71bb7b9470fce5e8fdd41ccd494b6cb41b7cd5042bbb}  # v0.5.0
     # Site only: a compose stack has no apiserver, so the read API would have
     # nothing to read and the console script would exit on a missing
     # kubeconfig. In this mode /, /log and /uv.html are served and /api/v1/…
