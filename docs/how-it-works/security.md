@@ -18,7 +18,35 @@ and optional signature verification), the pod posture, and the
 NetworkPolicies described below. Give the campaigns repo the same care as CI
 configuration.
 
-The converter never runs in the cluster. That makes Kyverno the admission step
+With the Argo CD hook ([The hook manifest](../reference/campaign-yaml.md#the-hook-manifest))
+the boundary is wider. Argo CD syncs `argocd/*.yaml` from the campaigns
+repo, so its writers also write the hook Job's whole pod spec: which
+ServiceAccount it runs as, which Secrets in the namespace it mounts (the
+bucket's write credentials, the Hugging Face token, the git token) and what
+it runs. The image policies do not bound that. They check which image a pod
+runs, not what the manifest tells it to do, and the hook's own clone step is
+`python -c` with a script from the manifest: any allowed image with an
+interpreter runs whatever code the manifest gives it. Close it with one or
+more of:
+
+- **Review on the repo**: branch protection with required review on the
+  campaigns repo, and a required reviewer from the platform's operators for
+  `argocd/`.
+- **Admission on the hook**: an Argo CD AppProject that limits what the
+  Application may create, or a Kyverno rule on the hook Job that pins the
+  ServiceAccount, the Secrets and volumes it may reference, and its command.
+- **The hook out of the repo**: keep the hook manifest in the platform's own
+  deployment repo instead of the campaigns repo, so the campaigns repo's
+  writers write campaigns and nothing else.
+
+The hook's `REPO_URL` carries no credentials: the token lives only in the
+Secret, and the clone hands it to dulwich from its environment. A token in the
+URL would be written into the checkout's `.git/config`, where the apply
+container can read it.
+
+The converter renders in the campaigns repo's CI. In the cluster it runs
+only as the hook's `apply`, which sends that render to the API server like
+any other client. That makes Kyverno the admission step
 between a merged commit and a running pod. When `security.policies.enabled`
 is set, the chart ships `ClusterPolicy` objects, and the API server applies
 them to every Job, Pod and pipeline ConfigMap in the namespace, whoever wrote
@@ -54,7 +82,7 @@ no requester to match.
 | **Signed images**: `security.verifyImages.*` (Kyverno `ClusterPolicy`, cosign keyless) | At admission, for every Pod in the namespace, its image volumes included | Images not built by the CI identity you name. Off by default. Needs the image to be signed at publish time ([CI](../development/ci.md)) |
 | **Control-plane digest gate**: `web.image` must be `@sha256:`-pinned unless `security.allowTagImages` is set | The chart template | Anyone with push access to the registry replacing the web front in place |
 | **http(s)-only sources, byte caps, redirect caps** | `parse_pipeline`/`parse_campaign`, and the wrapper (`MANIFEST_MAX_BYTES`, `FETCH_MAX_BYTES` counted after decoding with only `gzip` accepted, a wall-clock `DOWNLOAD_DEADLINE_SECONDS` per download, at most 5 redirects, raster images only) | SSRF and denial of service driven by campaign data |
-| **No runtime path to the campaigns repo** | The campaigns repo's own CI, outside this system | Nothing in the cluster clones the campaigns repo or holds a credential for it |
+| **No runtime path to the campaigns repo**, except the Argo CD hook's | The campaigns repo's own CI, outside this system; with the hook, the chart's `apply.gitCidrs` egress rule and the `htrflow-campaigns-git` Secret | Without the hook, nothing in the cluster clones the campaigns repo or holds a credential for it. With it, only the hook pod does: a read-only token from a Secret, and egress to the git host alone |
 | **URL redaction** | Wrapper logs, the warm-up's logs, the termination log, `page_sources`, and the problem lines `validate` prints (userinfo, and a signing query parameter such as `X-Amz-Signature`, `X-Amz-Security-Token`, `X-Amz-Credential`, `signature`, `token`, `sig` or `key`) | A tokenised private IIIF URL ending up in a world-readable log or a pull request comment. It does **not** hide the URL itself — see [Source URLs are not secrets](#source-urls-are-not-secrets) |
 
 These policies are all off by default (`security.policies.enabled: false`),
@@ -265,8 +293,8 @@ on-premises IIIF origin or S3 endpoint keeps working by being named.
 |---|---|---|---|
 | campaign pod (`app=htrflow-batch`) | none | S3 (the in-namespace `app=rustfs` pod on 9000, or `network.s3Cidrs` on `network.s3Ports`); the IIIF origins in `network.iiifCidrs` on 443/80 | Hugging Face Hub, the API server, the registry, anything else in-cluster, the rest of the internet |
 | warm-up pod (`app=htrflow-warmup`) | none | the public internet on 443, minus the carve-out above (Hugging Face Hub is a CDN, so there is no CIDR to pin) | S3, the API server, anything in-cluster, link-local and private addresses |
-| web front (`app=htrflow-web`) | `network.web.ingressCidrs` on 8081, matched on the client's own address (the Service's `externalTrafficPolicy: Local` keeps it) | every API server (`network.apiServer.cidr` / `cidrs`, or all `kubernetes` Endpoints addresses); S3 (same targets as the campaign pod) for its `progress.json` reader | the IIIF origin, Hugging Face Hub, anything else in-cluster |
-| apply pod (`app=htrflow-campaigns`, only with `apply.rbac.enabled`) | none | every API server (`network.apiServer.cidr` / `cidrs`) | S3, the IIIF origin, Hugging Face Hub, anything else in-cluster. It reads its campaigns from a directory, never from a network |
+| web front (`app=htrflow-web`) | `network.web.ingressCidrs` on 8081, matched on the client's own address (the Service's `externalTrafficPolicy: Local` keeps it); in ingress mode (`web.ingress.enabled`), the peers in `network.web.ingressFrom` instead: selectors on the ingress controller's pods only, never an address range | every API server (`network.apiServer.cidr` / `cidrs`, or all `kubernetes` Endpoints addresses); S3 (same targets as the campaign pod) for its `progress.json` reader | the IIIF origin, Hugging Face Hub, anything else in-cluster |
+| apply pod (`app=htrflow-campaigns`, only with `apply.rbac.enabled`) | none | every API server (`network.apiServer.cidr` / `cidrs`); the git host in `apply.gitCidrs` on `apply.gitPorts` (443 by default), which the Argo CD hook clones the campaigns repo from over HTTPS. Empty by default | S3, the IIIF origin, Hugging Face Hub, anything else in-cluster |
 | RustFS (`app=rustfs`, devstack) | 9000 from anywhere (and 9001 when the console is on) | none | — |
 | rustfs-init hook (`app=rustfs-init`, devstack) | none | RustFS on 9000 | — |
 
@@ -276,13 +304,18 @@ is. That default is in front of a NodePort with no authentication, so the
 chart refuses to render it unless `network.web.allowPublicIngress` says the
 exposure is deliberate. So do an empty list, which a NetworkPolicy reads
 as every source, and any entry wider than `/8`. Listing the ranges that may
-reach it needs no such flag.
+reach it needs no such flag. In ingress mode none of these guards apply:
+the NetworkPolicy admits the controller, and who may reach the front is the
+controller's allow-list ([Behind an ingress controller](../getting-started/deploy.md#behind-an-ingress-controller)).
 
 Under the default deny, anything applied by hand in the namespace has no
-network access unless it gets its own policy. That includes the pod that
-runs `htrflow-campaigns apply` in-cluster: label it `app=htrflow-campaigns`
-and the chart's policy lets it reach the API server it was given an identity
-for. `images:` volumes hosted
+network access unless it gets its own policy. The Argo CD hook is not by
+hand: it is `argocd/apply.yaml`, which `htrflow-campaigns init` writes into
+the campaigns repo and Argo CD syncs. Its pod carries
+`app=htrflow-campaigns`, so the chart's policy lets it reach the API server
+it was given an identity for and, with `apply.gitCidrs`, the git host. Any
+other pod that runs `htrflow-campaigns apply` in-cluster gets the same by
+the same label. `images:` volumes hosted
 somewhere other than the IIIF origin need their host added to
 `network.iiifCidrs`. A catch-all range there still excludes everything in
 the carve-out above.
