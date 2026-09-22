@@ -41,7 +41,35 @@ An EMPTY list is the same catch-all in other words: an ingress rule whose
 `from` names no source matches every source, so the list an operator writes
 to shut the port would open it (finding 3100).
 */}}
-{{- if and .Values.network.enabled (not .Values.network.web.allowPublicIngress) }}
+{{- /*
+Ingress mode (T3): a ClusterIP Service behind an ingress-nginx controller
+(web.yaml's Ingress object), gated by the controller's own allow-list
+(network.web.ingressFrom) rather than client address ranges -- behind a
+controller the pod only ever sees the controller's own address, never the
+browser's. Checked before the ingressCidrs guards below, and independent of
+them: dropping ingressFrom must fail on ITS OWN sentence, not the catch-all
+one that network.web.ingressCidrs' still-default 0.0.0.0/0 would otherwise
+raise first.
+*/}}
+{{- if .Values.web.ingress.enabled }}
+{{- if ne .Values.web.service.type "ClusterIP" }}
+{{- fail "web.ingress.enabled needs web.service.type=ClusterIP" }}
+{{- end }}
+{{- if not .Values.web.ingress.host }}
+{{- fail "web.ingress.enabled needs web.ingress.host" }}
+{{- end }}
+{{- if and .Values.network.enabled (not .Values.network.web.ingressFrom) }}
+{{- fail "web.ingress.enabled needs network.web.ingressFrom" }}
+{{- end }}
+{{- end }}
+{{- /*
+The two guards below are about client address ranges reaching the web front
+directly; in ingress mode (or whenever an operator has already named the
+controller's peers in ingressFrom) the addresses they would be asked to
+police belong to the controller, not the browser, so they have nothing to
+check.
+*/}}
+{{- if and .Values.network.enabled (not .Values.network.web.allowPublicIngress) (not (or .Values.web.ingress.enabled .Values.network.web.ingressFrom)) }}
 {{- if not .Values.network.web.ingressCidrs }}
 {{- fail "network.web.ingressCidrs is empty, and a NetworkPolicy rule with no sources admits every address, so an empty list would open the unauthenticated web front to everyone rather than close it: list the ranges that may reach it, or set network.web.allowPublicIngress=true to accept that any address may" }}
 {{- end }}

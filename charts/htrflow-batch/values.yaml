@@ -105,6 +105,19 @@ web:
   # `localhost` URL the pod cannot resolve to anything but itself:
   # http://rustfs.<namespace>.svc.cluster.local:9000/<bucket>
   internalResultsBase: ""
+  service:
+    # ClusterIP is for an ingress controller in front (web.ingress below);
+    # NodePort is the browser's direct way in and stays the default.
+    type: NodePort
+  ingress:
+    # An Ingress in front of a ClusterIP Service (web.service.type above).
+    # The Ingress carries no auth of its own -- the controller's own
+    # allow-list is the gate, which is what network.web.ingressFrom names.
+    enabled: false
+    className: ""
+    host: ""
+    tlsSecretName: ""
+    annotations: {}
 
 # `htrflow-campaigns apply` (packages/converter) run INSIDE the cluster — an
 # Argo CD PostSync hook, a CI Job — needs an identity with write access to
@@ -235,3 +248,9 @@ network:                   # NetworkPolicies (docs: development/security, D14)
     # exposure is deliberate. Narrowing the default instead would break
     # every dev stack on upgrade; making it loud does not.
     allowPublicIngress: false
+    # NetworkPolicy peers (namespaceSelector / podSelector objects) allowed
+    # to reach the web port *instead of* ingressCidrs, for web.ingress mode:
+    # behind an ingress controller the pod sees the controller's own
+    # address, never the browser's, so the client ranges belong on the
+    # controller's own allow-list instead.
+    ingressFrom: []
