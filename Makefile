@@ -2,7 +2,7 @@
         compose-up compose-test compose-smoke compose-smoke-run compose-down helm-lint helm-template \
         install-devstack install-kyverno \
         docs-serve docs-build config-reference api-contract \
-        scan-image poc-push poc-push-arm64 build-wrapper lock-htrflow-base transformers-requirements build-web scan-web clean install-kueue \
+        scan-image poc-push poc-push-arm64 build-wrapper lock-htrflow-base transformers-requirements build-web build-campaigns scan-web clean install-kueue \
         campaigns-apply psa-labels e2e \
         frontend-install frontend-test frontend-check frontend-build frontend-dev
 
@@ -296,6 +296,7 @@ config-reference:
 WRAPPER_DOCKERFILE ?= .docker/htrflow-batch.dockerfile
 WRAPPER_IMAGE := $(HTR_REGISTRY)/htrflow-batch:$(IMAGE_TAG)
 WEB_IMAGE := $(HTR_REGISTRY)/htrflow-web:$(IMAGE_TAG)
+CAMPAIGNS_IMAGE := $(HTR_REGISTRY)/htrflow-campaigns:$(IMAGE_TAG)
 # The wrapper dockerfile builds its htrflow base itself, from htrflow at the
 # commit it pins (HTRFLOW_REF there). HTRFLOW_SRC=<checkout> builds it from a
 # local checkout instead (the dockerfile's `htrflow-src` stage) and stamps
@@ -358,6 +359,12 @@ transformers-requirements:
 DOCKER_SECRET_CA := $(shell test -f $(CA_BUNDLE) && echo --secret id=ca,src=$(CA_BUNDLE))
 build-web:
 	docker build -f .docker/htrflow-web.dockerfile $(DOCKER_SECRET_CA) $(VERSION_BUILD_ARG) -t $(WEB_IMAGE) .
+
+# The converter as the Argo CD hook runs it (docs/reference/campaign-yaml.md,
+# "With Argo CD"): distroless, uv-locked, no CA secret needed -- the recipe
+# clones nothing (same as htrflow-web's own venv stage).
+build-campaigns:
+	docker build -f .docker/htrflow-campaigns.dockerfile $(VERSION_BUILD_ARG) -t $(CAMPAIGNS_IMAGE) .
 
 poc-push: build-wrapper build-web
 	docker push $(WRAPPER_IMAGE)
