@@ -653,7 +653,11 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 3636
 # 2905 -> 2911 (2026-09-21, audits 3075/3081): the status record names its
 # Job (`jobUid`) and strips a trailing slash off its resultsBase, each with
 # the comment saying which read-API rule it pairs with.
-check converter "$(count packages/converter/src -name '*.py')" 2923
+# 2923 -> 2932 (2026-09-22, init --ci): `init --ci github|azure` lays one CI
+# flavour from ci/ over the template -- the argparse option, the parameter
+# threaded through `_init`, and the comment saying why the template carries
+# no CI of its own.
+check converter "$(count packages/converter/src -name '*.py')" 2932
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
