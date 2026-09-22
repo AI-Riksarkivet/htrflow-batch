@@ -67,8 +67,11 @@ def _init(dir_: str, force: bool) -> int:
         if any(dest.iterdir()) and not force:
             print(f"{dest} is not empty: pass --force to overwrite it", file=sys.stderr)
             return 2
-    template = resources.files("htrflow_converter") / "template"
-    _copy_tree(template, dest)
+    # The repo itself, then the CI that renders it: kept apart so the
+    # template carries no CI of its own.
+    root = resources.files("htrflow_converter")
+    _copy_tree(root / "template", dest)
+    _copy_tree(root / "ci" / "github", dest)
     print(_NEXT_STEPS.format(dir=dir_))
     return 0
 
