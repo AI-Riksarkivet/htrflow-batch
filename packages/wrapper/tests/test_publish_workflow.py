@@ -57,7 +57,21 @@ def test_every_image_is_published_for_both_architectures() -> None:
     assert _published() == {
         "riksarkivet/htrflow-batch": set(RUNNERS),
         "riksarkivet/htrflow-web": set(RUNNERS),
+        "riksarkivet/htrflow-campaigns": set(RUNNERS),
     }
+
+
+def test_every_publish_component_has_both_arches_and_a_manifest_entry() -> None:
+    """The general shape every component must have, not just the two named
+    above: whatever `publish.yml` adds to the publish matrix, it must add
+    both architectures for, and a matching entry in the manifest matrix."""
+    publish_include = JOBS["publish"]["strategy"]["matrix"]["include"]
+    manifest_include = JOBS["manifest"]["strategy"]["matrix"]["include"]
+    components = {e["component"] for e in publish_include}
+    assert components == {e["component"] for e in manifest_include}
+    for component in components:
+        suffixes = {e["tag_suffix"] for e in publish_include if e["component"] == component}
+        assert suffixes == set(RUNNERS), component
 
 
 @pytest.mark.parametrize("entry", JOBS["publish"]["strategy"]["matrix"]["include"])
