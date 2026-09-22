@@ -114,6 +114,12 @@ web:
 apply:
   rbac:
     enabled: false
+  # The git host the Argo CD hook clones the campaigns repo from
+  # (template/argocd/apply.yaml), by address: a NetworkPolicy cannot name a
+  # host. Empty = the hook pod reaches only DNS and the API server, which is
+  # all `htrflow-campaigns apply` itself needs.
+  gitCidrs: []
+  gitPorts: [443]
 
 security:
   # Image repositories a Job or Pod in this namespace may pin (prefix match
