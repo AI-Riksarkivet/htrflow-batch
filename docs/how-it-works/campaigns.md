@@ -54,8 +54,9 @@ legible: "new campaign" is a different kind of change from "new feature".
 Its CI runs `htrflow-campaigns validate` on every pull request. On `main` it
 runs `htrflow-campaigns render` and commits the result under `rendered/`.
 [`examples/campaigns/`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/main/examples/campaigns)
-shows the exact shape, in `.github/workflows/render.yml` with an Azure
-Pipelines equivalent as a commented block. Who may write to this repo, and
+shows the exact shape, in `.github/workflows/render.yml`;
+`htrflow-campaigns init --ci azure` writes the Azure Pipelines version,
+`azure-pipelines.yml`, instead. Who may write to this repo, and
 what that grants, is covered under
 [Security → Trust boundary](security.md#trust-boundary).
 
