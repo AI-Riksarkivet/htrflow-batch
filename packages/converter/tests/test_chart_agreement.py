@@ -171,7 +171,7 @@ def test_the_priority_classes_the_converter_accepts_are_the_ones_the_chart_ships
 
 WORKFLOWS = [
     ROOT / "examples" / "campaigns" / ".github" / "workflows" / "render.yml",
-    CONVERTER_SRC / "template" / ".github" / "workflows" / "render.yml",
+    CONVERTER_SRC / "ci" / "github" / ".github" / "workflows" / "render.yml",
 ]
 
 
