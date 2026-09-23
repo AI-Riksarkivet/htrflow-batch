@@ -47,6 +47,7 @@ _COMPILER_PACKAGES = re.compile(
 )
 BUILD_CONSTRAINTS = REPO / ".docker" / "build-constraints.txt"
 HTRFLOW_BASE = REPO / ".docker" / "htrflow-base"
+PYPI = "https://pypi.org/simple"
 
 # Build paths that must never cross-build: a `--platform` flag or a
 # qemu/binfmt setup step is exactly how the wrapper image ends up emulated.
@@ -463,16 +464,32 @@ def test_the_htrflow_base_is_built_from_pinned_inputs() -> None:
     assert pyproject.endswith(overlay)
     assert tomllib.loads(pyproject)["project"]["name"] == "htrflow"
     uv = tomllib.loads(overlay)["tool"]["uv"]
-    assert "torch==2.9.1; platform_machine == 'x86_64'" in uv["constraint-dependencies"]
-    assert uv["index"] == [
-        {
-            "name": "pytorch-cu128",
-            "url": "https://download.pytorch.org/whl/cu128",
-            "explicit": True,
-        }
+    [index] = uv["index"]
+    assert index["explicit"] is True and index["url"].endswith("/whl/cu128")
+    assert uv["sources"]["torch"] == [
+        {"index": index["name"], "marker": "platform_machine == 'x86_64'"}
     ]
-    lock = (HTRFLOW_BASE / "uv.lock").read_text()
-    assert 'version = "2.9.1+cu128"' in lock and 'version = "2.13.0"' in lock
+    pinned = dict(
+        (m[2], m[1])
+        for c in uv["constraint-dependencies"]
+        if (m := re.fullmatch(r"torch==(\S+); platform_machine == '(\w+)'", c))
+    )
+    assert set(pinned) == {"x86_64", "aarch64"}, "torch is pinned per architecture"
+    # ... and the lock holds exactly those: x86_64's from the cu128 index,
+    # aarch64's from PyPI, each for its own machine only.
+    lock = tomllib.loads((HTRFLOW_BASE / "uv.lock").read_text())
+    torches = [p for p in lock["package"] if p["name"] == "torch"]
+    assert len(torches) == 2
+    for machine, registry in (("x86_64", index["url"]), ("aarch64", PYPI)):
+        [torch] = [
+            t
+            for t in torches
+            if any(
+                f"platform_machine == '{machine}'" in m for m in t["resolution-markers"]
+            )
+        ]
+        assert torch["source"] == {"registry": registry}, machine
+        assert torch["version"].split("+")[0] == pinned[machine], machine
 
     # Nothing builds a base anywhere else any more: a second recipe.
     assert not (REPO / ".github" / "actions" / "build-htrflow-base-arm64").exists()
