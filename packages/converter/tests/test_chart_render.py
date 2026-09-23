@@ -138,33 +138,21 @@ def test_the_read_api_may_only_write_its_own_status_configmaps(full: list[dict])
     mounts as its pipeline -- overwrite it and the next campaign loads
     weights of someone else's choosing. Admission is the only place that
     sees who is asking, so the name scope lives there.
+
+    What the rule refuses and admits is proven through admission
+    (test_policy_admission.py); what the CLI cannot show is here: a
+    background scan has no requesting user, so a subject-matched rule cannot
+    run as one, and a webhook that cannot be reached must refuse the write.
+    And a policy that refuses a legal name is an outage, not a control, so
+    the pattern mirrors the campaign-name rule (a DNS-1123 label).
     """
     policy = named(full, "ClusterPolicy", f"htrflow-batch-rbac-scope-{NAMESPACE}")
-    assert policy["spec"]["validationFailureAction"] == "Enforce"
-    # A background scan has no requesting user, so a subject-matched rule
-    # cannot run as one; saying so here keeps the two from drifting apart.
     assert policy["spec"]["background"] is False
-
+    assert policy["spec"]["failurePolicy"] == "Fail"
     web = rule(policy, "web-writes-status-only")
-    match = web["match"]["any"][0]
-    assert match["resources"]["kinds"] == ["ConfigMap"]
-    assert match["resources"]["namespaces"] == [NAMESPACE]
-    # Every write: a `patch` arrives as UPDATE, a server-side apply of an
-    # absent object as CREATE.
-    assert sorted(match["resources"]["operations"]) == ["CREATE", "UPDATE"]
-    assert match["subjects"] == [
-        {"kind": "ServiceAccount", "name": "htrflow-web", "namespace": NAMESPACE}
-    ]
-    condition = web["validate"]["deny"]["conditions"]["all"][0]
-    assert "campaign-" in condition["key"] and "-status$" in condition["key"]
-    assert condition["operator"] == "Equals" and condition["value"] is False
-    # A policy that refuses a legal name is an outage, not a control: the
-    # status write would fail for that campaign and nothing would say why.
-    # The campaign-name rule is a DNS-1123 label (models.Campaign._check_name).
     assert _status_name_pattern(web) == (
         f"^campaign-{_DNS_LABEL_RE.pattern[:-2]}-status$"
     )
-    assert policy["spec"]["failurePolicy"] == "Fail"
 
 
 def _status_name_pattern(rule_body: dict) -> str:
@@ -190,15 +178,6 @@ def test_every_campaign_name_the_converter_accepts_may_have_a_status(
     policy = named(full, "ClusterPolicy", f"htrflow-batch-rbac-scope-{NAMESPACE}")
     pattern = _status_name_pattern(rule(policy, "web-writes-status-only"))
     assert re.match(pattern, f"campaign-{campaign}-status")
-
-
-@pytest.mark.parametrize("name", ["htr-pipeline-demo-v1", "campaign-kyrk", "x-status"])
-def test_the_objects_the_rule_exists_to_protect_are_still_refused(
-    full: list[dict], name: str
-):
-    policy = named(full, "ClusterPolicy", f"htrflow-batch-rbac-scope-{NAMESPACE}")
-    pattern = _status_name_pattern(rule(policy, "web-writes-status-only"))
-    assert not re.match(pattern, name)
 
 
 def test_the_rbac_scope_policy_follows_the_policies_switch(default: list[dict]):
