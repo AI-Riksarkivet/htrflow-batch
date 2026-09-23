@@ -1809,3 +1809,29 @@ def test_a_page_whose_upload_failed_once_is_redone_by_the_retry(
 
     assert main(env, process_page_factory=factory) == EXIT_OK
     assert calls == ["0002"]
+
+
+def test_a_re_signed_azure_url_does_not_undo_the_last_attempt(images_env, cfg, s3):
+    """Audit 0923 W-2: the source digest kept an Azure SAS's `se`/`st`/`sig`,
+    so every attempt saw every page it had not done itself as changed and
+    deleted it -- a volume that needed two attempts never completed."""
+    sas = (
+        "https://acct.blob.core.windows.net/c/0001.jpg"
+        "?sv=2022-11-02&sp=r&se={d}T10:00:00Z&st={d}T09:00:00Z&sr=b&sig={s}"
+    )
+    first = dict(images_env, IMAGES=sas.format(d="2026-09-23", s="AAA"))
+    assert main(first, process_page_factory=fake_factory) == EXIT_OK
+    calls = []
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            calls.append(path.stem)
+            return inner(path)
+
+        return process
+
+    second = dict(images_env, IMAGES=sas.format(d="2026-09-24", s="BBB"))
+    assert main(second, process_page_factory=factory) == EXIT_OK
+    assert calls == []

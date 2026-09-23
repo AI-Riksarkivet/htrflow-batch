@@ -61,10 +61,41 @@ def redact_url(url: str) -> str:
     return f"{u.scheme}://{host}{u.path}"
 
 
-#: Query parameters that carry a credential rather than name the image; they
-#: rotate, so they must not reach the digest below. ``X-Amz-*`` (presigned S3)
-#: is matched by prefix.
-_CREDENTIAL_PARAMS = frozenset({"token", "sig", "signature", "key"})
+#: Query parameters that authorise a request rather than name what it asks
+#: for; they rotate, so they must not reach the digest below. Each belongs to
+#: a signing scheme that defines it (audit 0923 W-2): the generic token
+#: names, Akamai's EdgeAuth, and the S3 SigV4 / GCS V4 prefixes.
+_CREDENTIAL_PARAMS = frozenset(
+    {"token", "access_token", "sig", "signature", "key", "__token__", "hdnts"}
+)
+_CREDENTIAL_PREFIXES = ("x-amz-", "x-goog-")
+
+#: Signing schemes whose other parameters have names too ordinary to drop on
+#: sight (`st`, `se`, `Expires`, `Policy` may name an image elsewhere): they
+#: go only beside the scheme's own marker. Azure SAS, CloudFront signed
+#: URLs, S3 SigV2 and GCS V2 query authentication.
+_SIGNED_FAMILIES = (
+    (
+        "sig",
+        frozenset(
+            "sv ss srt sp se st spr sr si sdd skoid sktid skt ske sks "
+            "skv saoid suoid scid ses rscc rscd rsce rscl rsct".split()
+        ),
+    ),
+    ("key-pair-id", frozenset({"expires", "policy", "signature"})),
+    ("awsaccesskeyid", frozenset({"expires", "signature"})),
+    ("googleaccessid", frozenset({"expires", "signature"})),
+)
+
+
+def _credentials(names: set[str]) -> set[str]:
+    """The lower-cased parameter names among ``names`` that authorise."""
+    drop = {n for n in names if n in _CREDENTIAL_PARAMS}
+    drop |= {n for n in names if n.startswith(_CREDENTIAL_PREFIXES)}
+    for marker, members in _SIGNED_FAMILIES:
+        if marker in names:
+            drop |= names & (members | {marker})
+    return drop
 
 
 def source_digest(url: str) -> str:
@@ -75,18 +106,21 @@ def source_digest(url: str) -> str:
     the public manifest may carry (S6) -- so on a host that selects the image
     with ``?id=`` every page of a volume looked identical and an edited
     manifest never triggered a reprocess. A digest keeps the query without
-    publishing it. The credentials come out first: userinfo, the ``X-Amz-*``
-    presign parameters and the token/sig/signature/key families rotate, and a
-    re-signed URL is not a new source image."""
+    publishing it.
+
+    What names the image is scheme, host, path and every query parameter
+    that is not a credential; a credential authorises the request, rotates
+    with every signing, and a re-signed URL is not a new source image. It is
+    the credentials that are enumerated, not the naming parameters: those
+    are the host's own (``?id=``, IIPImage's ``?IIIF=``, ...), while a
+    credential belongs to one of a handful of signing schemes, each of which
+    defines its names (``_credentials``). Userinfo goes too."""
     try:
         parsed = httpx.URL(url)
+        pairs = parsed.params.multi_items()
+        drop = _credentials({name.lower() for name, _ in pairs})
         # a tuple, not a list: httpx types the parameter pairs as invariant
-        kept = tuple(
-            (name, value)
-            for name, value in parsed.params.multi_items()
-            if name.lower() not in _CREDENTIAL_PARAMS
-            and not name.lower().startswith("x-amz-")
-        )
+        kept = tuple((n, v) for n, v in pairs if n.lower() not in drop)
         text = str(parsed.copy_with(userinfo=b"", params=httpx.QueryParams(kept)))
     except Exception:
         text = url.split("?", 1)[0]  # not a URL we can parse: path only

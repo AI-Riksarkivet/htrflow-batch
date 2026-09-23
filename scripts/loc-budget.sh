@@ -301,9 +301,11 @@ fail=0
 # Retry-After parse and the abortable wait; in stream.py and main.py the
 # deferred outcome verify counts as missing; in iiif.py one rule choosing a
 # canvas's image for both the fetch and the viewer manifest.
-# 3636 -> 3646 (audit 0923): an upload the store could not take defers the
-# page rather than failing it, and a half-stored pair is deleted (W-1).
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3646
+# 3636 -> 3680 (audit 0923): an upload the store could not take defers the
+# page rather than failing it, and a half-stored pair is deleted (W-1). The
+# source digest drops the credentials of every common signing scheme, the
+# ordinary-named ones only beside their scheme's marker (W-2).
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3680
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
