@@ -134,13 +134,13 @@ jobs:
   # included: on a push it is the release commit's new pins being checked,
   # and ci.yml scans nothing published.
   scan-published:
-    name: Scan published image (${{ matrix.image }}, ${{ matrix.platform }})
+    name: Scan published image (${{ matrix.image }}, ${{ matrix.arch }})
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         image: [web, wrapper, campaigns]
-        platform: [linux/amd64, linux/arm64]
+        arch: [amd64, arm64]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -151,10 +151,10 @@ jobs:
       - name: Trivy gate on the pinned digest (CRITICAL blocks)
         run: >-
           dagger call --progress plain scan-published --image "$IMAGE"
-          --platform "$PLATFORM" --severity CRITICAL --ignore-unfixed
+          --arch "$ARCH" --severity CRITICAL --ignore-unfixed
         env:
           IMAGE: ${{ matrix.image }}
-          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
   # The signatures on the same digests, through the chart's verify-images
