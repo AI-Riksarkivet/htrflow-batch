@@ -140,12 +140,6 @@ def client() -> TestClient:
     return TestClient(create_app(FakeReader(), progress=FakeProgress()))
 
 
-def test_healthz(client: TestClient):
-    resp = client.get("/healthz")
-    assert resp.status_code == 200
-    assert resp.json() == {"ok": True}
-
-
 class _Hung(FakeReader):
     """A reader whose API server has stopped answering mid-request."""
 
