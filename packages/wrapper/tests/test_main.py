@@ -535,9 +535,11 @@ def test_verify_failure_detail_is_bounded():
 
 def test_verify_detail_survives_the_termination_log_truncation(tmp_path):
     """terminate clips the error field at 3500 chars, and a page name costs
-    ~8 of them, so a volume with 500 missing pages overflows it on the names
+    ~8 of them, so a volume with 600 missing pages overflows it on the names
     alone. The cause has to be written before them — otherwise the operator
-    gets a truncated name list and no reason."""
+    gets a truncated name list and no reason. And the field is clipped, not
+    the serialized JSON: slicing json.dumps(reason) can cut mid-string and
+    leave the termination log unparseable."""
     from htrflow_batch.iiif import PageRef
 
     class _NothingUploaded:
@@ -546,7 +548,7 @@ def test_verify_detail_survives_the_termination_log_truncation(tmp_path):
 
     pages = [
         PageRef(index=i, name=f"{i:04d}", image_url="https://x/p.jpg", canvas={})
-        for i in range(1, 501)
+        for i in range(1, 601)
     ]
     stats = StreamStats(
         results={"0001": PageOutcome(status="failed", error="boom: disk full")}
@@ -554,16 +556,19 @@ def test_verify_detail_survives_the_termination_log_truncation(tmp_path):
     with pytest.raises(RuntimeError) as ei:
         main_mod._verify(_NothingUploaded(), pages, stats, main_mod.RunState())
     assert len(str(ei.value)) > 3500  # the names really do overflow the cap
+    assert len(json.dumps({"error": str(ei.value)})) > 4096  # and the kubelet's
 
     log_path = tmp_path / "term.log"
     main_mod.terminate(
         {"TERMINATION_LOG_PATH": str(log_path)},
         {"stage": "verify", "permanent": False, "error": str(ei.value)},
     )
-    term = json.loads(log_path.read_text())
+    assert len(log_path.read_bytes()) <= 4096
+    term = json.loads(log_path.read_text())  # whole, valid JSON
+    assert term["stage"] == "verify"
     assert term["error"].endswith("...(truncated)")
     # 0001 is recorded as failed, so it is accounted for and not missing
-    assert "499 missing, 1 failed" in term["error"]
+    assert "599 missing, 1 failed" in term["error"]
     assert "0001: boom: disk full" in term["error"]
 
 
@@ -773,27 +778,6 @@ def test_resume_failure_is_attributed_to_resume_stage(env, cfg, s3, monkeypatch)
     assert rc == EXIT_TRANSIENT
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
     assert term["stage"] == "resume"
-
-
-def test_terminate_with_long_error_writes_valid_json(tmp_path):
-    """A verify-stage failure with a huge missing/failed page list produces
-    an `error` string well past the old 4096-byte cutoff. Slicing the
-    *serialized* JSON (`json.dumps(reason)[:4096]`) can cut mid-string and
-    write invalid JSON to the termination log; the fix truncates the field
-    before serializing instead."""
-    log_path = tmp_path / "term.log"
-    huge_missing = [f"{i:04d}" for i in range(1000)]
-    long_error = f"verify failed: missing={huge_missing} failed=[]"
-    assert len(json.dumps({"error": long_error})) > 4096  # actually exercises the bug
-
-    main_mod.terminate(
-        {"TERMINATION_LOG_PATH": str(log_path)},
-        {"stage": "verify", "permanent": False, "error": long_error},
-    )
-
-    term = json.loads(log_path.read_text())  # must not raise
-    assert term["stage"] == "verify"
-    assert term["error"].startswith("verify failed: missing=")
 
 
 def test_publish_warns_when_viewer_manifest_incomplete(env, cfg, s3, caplog):
