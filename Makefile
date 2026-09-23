@@ -191,15 +191,21 @@ helm-lint:
 	helm lint $(DEVSTACK_CHART) -f $(DEVSTACK_CHART)/ci/full-values.yaml
 
 # kubeconform is required, not optional: a local twin that skips the schema
-# check when the binary is missing passes what CI refuses.
-helm-template: helm-lint
+# check when the binary is missing passes what CI refuses. The Kueue and
+# Kyverno kinds are validated against their CRDs' schemas
+# (scripts/crd-schemas.sh, pinned by sha256), not skipped.
+CRD_SCHEMAS ?= .cache/crd-schemas
+$(CRD_SCHEMAS)/.built: scripts/crd-schemas.sh
+	scripts/crd-schemas.sh $(CRD_SCHEMAS) && touch $@
+helm-template: helm-lint $(CRD_SCHEMAS)/.built
 	@command -v kubeconform >/dev/null || { echo "kubeconform is not on PATH: install it (the version .dagger/main.go pins) -- the schema check is part of this target"; exit 1; }
 	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_DEFAULT_SETS) | kubeconform $(KUBECONFORM_FLAGS)
 	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/ci/full-values.yaml | kubeconform $(KUBECONFORM_FLAGS)
 	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_PROD_SETS) | kubeconform $(KUBECONFORM_FLAGS)
 	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) | kubeconform $(KUBECONFORM_FLAGS)
 	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) -f $(DEVSTACK_CHART)/ci/full-values.yaml | kubeconform $(KUBECONFORM_FLAGS)
-KUBECONFORM_FLAGS := -strict -ignore-missing-schemas -summary
+KUBECONFORM_FLAGS := -strict -summary -schema-location default \
+                     -schema-location '$(CRD_SCHEMAS)/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
 
 # PoC-only support infrastructure (RustFS, registry, nvidia device plugin)
 # — its own chart, own release, same namespace as $(HTR_RELEASE)
