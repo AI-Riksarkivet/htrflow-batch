@@ -1524,6 +1524,28 @@ def test_unpausing_a_campaign_kueue_suspended_leaves_suspend_to_kueue(
     assert cluster.of("patch")[-1] == ("patch", "wl-pausy", True)
 
 
+def test_unpausing_a_campaign_kueue_never_admitted_does_not_start_it_unadmitted(
+    tmp_path, cluster
+):
+    """Paused before Kueue ever admitted it -- a full queue, the case a queue
+    exists for -- the apply alone owns ``spec.suspend: true``. Dropping the
+    field released it, the API server put the default back, and the Job
+    controller started the campaign's pods with no admission and no quota:
+    Kueue's reconciler stops such a Job again seconds later, mid-volume.
+    The field is handed to a manager of its own first, so the Job waits,
+    suspended, for Kueue to admit it like any other."""
+    repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
+    cluster.workloads = {"uid-pausy": _workload("wl-pausy", True)}
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    _unpause(repo)
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert cluster.find("Job", "pausy")["spec"]["suspend"] is True
+    # And admission still works: Kueue's write is not refused by the holder.
+    cluster.update("Job", "pausy", KUEUE_MANAGER, {"spec": {"suspend": False}})
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert cluster.find("Job", "pausy")["spec"]["suspend"] is False
+
+
 def test_the_web_and_the_apply_share_the_status_record_by_field(tmp_path, cluster):
     """Two writers, one record: the read API applies it unforced as
     ``htrflow-web`` while the campaign runs, the apply writes the ending it

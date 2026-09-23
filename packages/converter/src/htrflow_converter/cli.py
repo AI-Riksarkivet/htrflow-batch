@@ -536,8 +536,11 @@ _INCOMPLETE_RENDER = (
 )
 
 
-def _record_and_decide(cluster, cfg, name: str, volumes: str) -> str | None:
-    """Write how this campaign ended, then say whether to leave it alone.
+def _record_and_decide(
+    cluster, cfg, name: str, volumes: str
+) -> tuple[str | None, dict | None]:
+    """Write how this campaign ended, then say whether to leave it alone --
+    and hand back the live Job it read, which the apply needs again.
 
     A live Job is the truth about its campaign, and outranks any stored
     record: a ``Succeeded`` record beside a Job that is still running is
@@ -553,17 +556,17 @@ def _record_and_decide(cluster, cfg, name: str, volumes: str) -> str | None:
 
     live = cluster.get("Job", name)
     if live is None:
-        return _finished(cluster, name, volumes, None)
+        return _finished(cluster, name, volumes, None), None
     record = render.status_configmap(live, cfg)
     if record is None:
-        return None
+        return None, live
     try:
         cluster.apply(record)
     except Unreachable:
         raise
     except ClusterError as e:
         print(f"{_NO_RECORD.format(name=name)}{e}", file=sys.stderr)
-    return _finished(cluster, name, volumes, record)
+    return _finished(cluster, name, volumes, record), live
 
 
 #: `rendered/` is the record a RENDER is held against, and it can be absent,
@@ -676,6 +679,22 @@ def _apply_object(cluster, obj: dict, warmup: bool) -> dict:
         live = cluster.replace_job(obj)
         print(_RETRIED.format(name=obj["metadata"]["name"]))
     return live
+
+
+def _before_resume(cluster, obj: dict, live: dict | None) -> None:
+    """Keep a campaign Job suspended through the apply that resumes it.
+
+    A campaign paused before Kueue ever admitted it -- a full queue, the
+    case a queue exists for -- has ``spec.suspend: true`` owned by this
+    tool's field manager alone. The resuming render drops the field, the
+    server-side apply releases it, and the API server puts the default back:
+    ``false``, a Job the Job controller starts at once, with no admission
+    and no quota, until Kueue's reconciler stops it again mid-volume. Handed
+    to a manager of its own first, the field stays ``true`` until Kueue
+    admits the Workload the pause sync reactivates, and flips it itself.
+    """
+    if live is not None and not obj["spec"].get("suspend"):
+        cluster.hold_suspend(live)
 
 
 #: `apply` exited 1 for everything, so a CI job could not tell "nothing
@@ -817,6 +836,8 @@ def _apply(
                 if o["kind"] == "ConfigMap"
             }
             done: set[str] = set()
+            # The live campaign Jobs, as read before anything was sent.
+            lives: dict[str, dict | None] = {}
             # Campaigns whose Job must not be sent, with the sentence why.
             blocked: dict[str, ClusterError] = {}
             for obj in campaigns:
@@ -838,7 +859,9 @@ def _apply(
                 # other campaigns and the pipelines still go out, and the
                 # summary names the pair left as it was.
                 try:
-                    said = _record_and_decide(cluster, cfg, name, volumes_of[name])
+                    said, lives[name] = _record_and_decide(
+                        cluster, cfg, name, volumes_of[name]
+                    )
                 except Unreachable:
                     raise
                 except ClusterError as e:
@@ -886,6 +909,8 @@ def _apply(
                     try:
                         if campaign in blocked:
                             raise blocked[campaign]
+                        if is_campaign and obj["kind"] == "Job":
+                            _before_resume(cluster, obj, lives.get(campaign))
                         live = _apply_object(
                             cluster, obj, not is_campaign and obj["kind"] == "Job"
                         )
