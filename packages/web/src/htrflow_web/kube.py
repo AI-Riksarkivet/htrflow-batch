@@ -204,7 +204,7 @@ class ReaderLike(Protocol):
     def list_pods(self, namespace: str, job_name: str) -> list[dict]: ...
     def apply_configmap(
         self, body: dict, force: bool = False, manager: str = FIELD_MANAGER
-    ) -> None: ...
+    ) -> str | None: ...
 
 
 class Reader:
@@ -289,8 +289,9 @@ class Reader:
 
     def apply_configmap(
         self, body: dict, force: bool = False, manager: str = FIELD_MANAGER
-    ) -> None:
-        """The one write this service makes. Raises like any other client
+    ) -> str | None:
+        """The one write this service makes; the uid of the ConfigMap it
+        left. Raises like any other client
         call — ``app.py`` logs it and answers the request anyway, because a
         status page that 500s when it cannot write a record is worse than
         one whose record is a few minutes old.
@@ -312,7 +313,7 @@ class Reader:
         meta = body["metadata"]
         extra = {"force": True} if force else {}
         try:
-            self.core.patch_namespaced_config_map(
+            resp = self.core.patch_namespaced_config_map(
                 meta["name"],
                 meta["namespace"],
                 body,
@@ -322,6 +323,7 @@ class Reader:
                 _request_timeout=REQUEST_TIMEOUT,
                 **extra,
             )
+            return (json.loads(resp.data).get("metadata") or {}).get("uid")
         except client.ApiException as e:
             if e.status == 409:
                 raise ApplyConflict(meta["name"]) from e

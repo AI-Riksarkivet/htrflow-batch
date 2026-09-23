@@ -607,7 +607,14 @@ def _failures_write(
     when what is stored is another run's, this run's alone. Forced: no
     other manager has anything to say about the field, and one that owns it
     still -- this API's summary manager, from before the split -- has to
-    give it up."""
+    give it up.
+
+    Held to the ConfigMap this request read, by its uid: an apply with a
+    uid never creates an object, so a record `apply --prune` deleted in
+    between stays deleted -- sent bare, this write re-created it with no
+    labels, out of reach of the list and the prune (2026-09-23 review).
+    ``None`` when there was no record to read: the summary write before it
+    creates one, and ``app.py`` holds this write to that one's uid."""
     ours = data.get(_FAILED_RUN) or data.get("jobUid") or job_uid
     old = {_FAILED: data[_FAILED]} if ours == job_uid and _FAILED in data else {}
     value = merge_record(old, {_FAILED: failed})[_FAILED]
@@ -615,6 +622,7 @@ def _failures_write(
     if owned and (data.get(_FAILED), data.get(_FAILED_RUN)) == (value, job_uid):
         return None
     body = status_configmap(row, {_FAILED: value, _FAILED_RUN: job_uid}, labels=False)
+    body["metadata"]["uid"] = meta.get("uid")
     return RecordWrite(body, True, FAILURES_MANAGER)
 
 

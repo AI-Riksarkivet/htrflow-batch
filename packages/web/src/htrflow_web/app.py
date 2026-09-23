@@ -462,9 +462,14 @@ def create_app(
         fresh = projection.status_record(row, failures, job_uid=uid)
         writes = projection.record_write(live, row, fresh)
         namespace = row["namespace"]
+        uid = None  # of the record the last write left
         for cm, force, manager in writes:  # in order: each builds on the last
+            if cm["metadata"].get("uid", "") is None:
+                if uid is None:
+                    break  # held to a record nobody saw created: next poll
+                cm["metadata"]["uid"] = uid
             try:
-                reader.apply_configmap(cm, force=force, manager=manager)
+                uid = reader.apply_configmap(cm, force=force, manager=manager)
             except ApplyConflict:
                 # `htrflow-campaigns apply` wrote the record since this
                 # request read it, and its ending is the authoritative one.
