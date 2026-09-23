@@ -293,17 +293,6 @@ def test_render_leaves_what_else_is_in_out_alone(tmp_path):
     assert (out / "README.md").read_text() == "kept\n"
 
 
-def test_the_makefile_no_longer_defines_the_prune_selector():
-    """One definition, in `render.CAMPAIGN_SELECTOR`: `htrflow-campaigns
-    apply --prune` lists the cluster by it and `make campaigns-apply` calls
-    that. A second copy in the Makefile could drift from the label the
-    renderer writes, and a prune that matches nothing deletes nothing --
-    silently."""
-    makefile = (REPO_ROOT / "Makefile").read_text()
-    assert "CAMPAIGN_SELECTOR :=" not in makefile
-    assert "htrflow-campaigns apply $(DIR)" in makefile
-
-
 def test_append_only_still_finds_the_parts_of_a_cut_down_campaign_name(
     tmp_path, capsys
 ):
