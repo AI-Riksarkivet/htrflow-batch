@@ -7,7 +7,7 @@ CPU-only **web front** (`.docker/htrflow-web.dockerfile`) — the read API, the
 campaign browser and the Universal Viewer in one — and the CPU-only
 **converter** (`.docker/htrflow-campaigns.dockerfile`), distroless like the
 web image, for the Argo CD hook Job that applies a campaigns repo
-([campaign-yaml.md, "With Argo CD"](../reference/campaign-yaml.md#with-argo-cd)).
+([htrflow-campaigns CLI, "With Argo CD"](../reference/cli.md#with-argo-cd)).
 Reproducibly, through the dagger module:
 
 ```bash
