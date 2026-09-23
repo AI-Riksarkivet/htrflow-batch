@@ -361,6 +361,19 @@ export type JobList = {
  */
 export const REAPED_PAGE = 20;
 
+/** The most the API gives out in one list (packages/web `REAPED_MAX`). */
+export const REAPED_MAX = 10_000;
+
+/** One page more than `shown`, never past what the API allows. */
+export function moreReaped(shown: number): number {
+  return Math.min(shown + REAPED_PAGE, REAPED_MAX);
+}
+
+/** How many older campaigns are left to offer when `shown` are asked for. */
+export function reapedHidden(total: number, shown: number): number {
+  return Math.max(0, Math.min(total, REAPED_MAX) - shown);
+}
+
 /**
  * GET /api/v1/version — what is deployed: `version` is the tag both images
  * are published under, baked into the image at build time (`dev` for a local
