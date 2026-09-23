@@ -417,12 +417,9 @@ def test_render_refuses_to_re_split_a_campaign_that_is_already_rendered(
     assert main(["validate", str(repo)]) == 1  # and a pull request says so
 
 
-def _split_campaign(volumes: int, prefix: str = "v") -> str:
-    """Two campaigns on one pipeline may not share a volume (C-13), so two
-    of these side by side take a ``prefix`` each."""
+def _split_campaign(volumes: int) -> str:
     return "pipeline: demo-v1\nvolumes:\n" + "".join(
-        f"  - id: {prefix}{i}\n    manifest: https://example.org/{i}\n"
-        for i in range(volumes)
+        f"  - id: v{i}\n    manifest: https://example.org/{i}\n" for i in range(volumes)
     )
 
 
@@ -442,7 +439,7 @@ def test_render_refuses_two_campaigns_whose_split_names_collide(
     shared = "k" * 50
     for tail, count in zip(("alpha", "beta"), volumes):
         (repo / "campaigns" / f"{shared}-{tail}.yaml").write_text(
-            _split_campaign(count, tail)
+            _split_campaign(count)
         )
     out = repo / "rendered"
 
@@ -460,7 +457,7 @@ def test_validate_refuses_colliding_split_names_too(tmp_path, capsys):
     shutil.copytree(GOOD, repo)
     for tail in ("alpha", "beta"):
         (repo / "campaigns" / f"{'k' * 50}-{tail}.yaml").write_text(
-            _split_campaign(10_001, tail)
+            _split_campaign(10_001)
         )
     assert main(["validate", str(repo)]) == 1
     assert "rename one" in capsys.readouterr().out
@@ -799,11 +796,11 @@ def test_a_split_campaign_beside_a_single_one_sharing_its_stem_is_not_append_onl
     repo = tmp_path / "repo"
     shutil.copytree(GOOD, repo)
     stem = "k" * 50
-    (repo / "campaigns" / f"{stem}-b.yaml").write_text(_split_campaign(3, "b"))
+    (repo / "campaigns" / f"{stem}-b.yaml").write_text(_split_campaign(3))
     out = repo / "rendered"
     assert main(["render", str(repo), "--out", str(out)]) == 0
 
-    (repo / "campaigns" / f"{stem}-a.yaml").write_text(_split_campaign(10_001, "a"))
+    (repo / "campaigns" / f"{stem}-a.yaml").write_text(_split_campaign(10_001))
     assert main(["validate", str(repo)]) == 0, capsys.readouterr().out
     assert main(["render", str(repo), "--out", str(out)]) == 0
     assert (out / "campaigns" / f"{stem}-part2.yaml").is_file()
@@ -813,7 +810,7 @@ def test_a_split_campaign_beside_a_single_one_sharing_its_stem_is_not_append_onl
     assert main(["render", str(repo), "--out", str(out)]) == 0, capsys.readouterr()
 
     # and the rule still holds for each of them, on its own files
-    (repo / "campaigns" / f"{stem}-b.yaml").write_text(_split_campaign(4, "b"))
+    (repo / "campaigns" / f"{stem}-b.yaml").write_text(_split_campaign(4))
     assert main(["validate", str(repo)]) == 1
     assert f"campaign {stem}-b is append-only" in capsys.readouterr().out
 
