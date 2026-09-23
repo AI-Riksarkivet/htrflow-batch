@@ -380,6 +380,33 @@ def test_with_no_results_base_the_spa_is_not_narrowed(static_dir: Path):
         )
 
 
+@pytest.mark.parametrize(
+    ("path", "policy"),
+    [
+        ("/", SPA_CSP),
+        ("/log", SPA_CSP),
+        ("/examples/demo.html", STRICT_CSP),
+        ("/icon.svg", STRICT_CSP),
+        ("/uv.html", None),  # the viewer's own, compared below
+    ],
+)
+def test_a_revalidated_document_keeps_the_policy_of_the_file(static_dir, path, policy):
+    """A 304 carries none of the file's headers but a few, and a browser
+    updates what it stored from the 304 -- so a reload ran the page under
+    `frame-ancestors 'none'` alone: no connect-src, no sandbox (2026-09-23
+    review). The policy is the file's, on the 200 and the 304 alike."""
+    for name in ("examples/demo.html", "icon.svg"):
+        (static_dir / name).parent.mkdir(parents=True, exist_ok=True)
+        (static_dir / name).write_text("<html><body>x</body></html>")
+    client = TestClient(create_app(EmptyReader(), static_dir=static_dir))
+    first = client.get(path)
+    again = client.get(path, headers={"If-None-Match": first.headers["etag"]})
+    assert again.status_code == 304
+    expected = policy or uv_csp(static_dir)
+    assert first.headers["Content-Security-Policy"] == expected
+    assert again.headers["Content-Security-Policy"] == expected
+
+
 def test_scripts_and_styles_keep_the_plain_header(client: TestClient):
     assert client.get("/_app/start.js").headers["Content-Security-Policy"] == (
         "frame-ancestors 'none'"
