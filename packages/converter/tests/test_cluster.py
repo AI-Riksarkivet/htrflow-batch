@@ -129,7 +129,7 @@ def test_holding_suspend_is_an_unforced_apply_of_that_field_alone(cluster):
     assert call["path"] == "/apis/batch/v1/namespaces/htr-batch/jobs/kyrk"
     assert call["content_type"] == APPLY_PATCH
     assert call["query"]["fieldManager"] == SUSPEND_HOLDER
-    assert "force" not in call["query"]
+    assert call["query"]["force"] is False
     assert call["body"]["spec"] == {"suspend": True}
 
 
