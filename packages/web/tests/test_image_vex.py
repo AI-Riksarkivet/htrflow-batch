@@ -22,8 +22,10 @@ the static directory.
 from __future__ import annotations
 
 import ast
+import functools
 import json
 import re
+from collections.abc import Set
 from importlib import metadata
 from pathlib import Path
 
@@ -93,7 +95,7 @@ def _modules(text: str) -> set[str]:
     return found
 
 
-def _hits(modules: set[str], banned: tuple[str, ...]) -> set[str]:
+def _hits(modules: Set[str], banned: tuple[str, ...]) -> set[str]:
     return {m for m in modules for b in banned if m == b or m.startswith(b + ".")}
 
 
@@ -126,6 +128,7 @@ def _locked_closure(with_extras: bool = True) -> dict[str, list[str]]:
     return seen
 
 
+@functools.cache
 def _dependency_files() -> dict[str, str]:
     """relative path -> source, for every .py file of every locked dependency
     installed in this venv. The test venv (`uv sync --all-packages`) carries
@@ -163,29 +166,46 @@ def test_every_statement_has_a_basis_and_names_exact_package_versions() -> None:
             assert re.fullmatch(r"pkg:deb/debian/[a-z0-9.+-]+@[^@?]+", product["@id"])
 
 
-@pytest.mark.parametrize(
-    "cve", sorted(c for c, (k, m) in RULES.items() if k == ABSENT and m)
-)
-def test_no_code_in_the_images_imports_what_the_statement_says_is_unused(
-    cve: str,
+@functools.cache
+def _dependency_modules() -> dict[str, frozenset[str]]:
+    """relative path -> the modules it imports, for every dependency file:
+    parsed once for every check below."""
+    return {rel: frozenset(_modules(text)) for rel, text in _dependency_files().items()}
+
+
+#: Each set of modules a statement says is never imported, with the
+#: statements that rest on it. html.parser rests on another basis for the
+#: service's own code (checked further down), so only the dependencies are
+#: held to it here: a locked dependency parsing HTML would be input nobody
+#: has vetted.
+BANS: dict[tuple[str, ...], list[str]] = {}
+for _cve, (_kind, _banned) in sorted(RULES.items()):
+    if _banned:
+        BANS.setdefault(_banned, []).append(_cve)
+
+
+@pytest.mark.parametrize("banned", sorted(BANS), ids=lambda b: "+".join(b))
+def test_no_code_in_the_images_imports_what_a_statement_says_is_unused(
+    banned: tuple[str, ...],
 ) -> None:
-    _, banned = RULES[cve]
-    for path in _own_files():
-        text = path.read_text()
-        assert not _hits(_modules(text), banned), (
-            f"{path.relative_to(REPO)} breaks {cve}"
-        )
-        if "tarfile" in banned:
-            assert "unpack_archive" not in text, (
-                f"{path.relative_to(REPO)} breaks {cve}"
+    cves = ", ".join(BANS[banned])
+    tar = "tarfile" in banned
+    if RULES[BANS[banned][0]][0] == ABSENT:
+        for path in _own_files():
+            text = path.read_text()
+            assert not _hits(_modules(text), banned), (
+                f"{path.relative_to(REPO)} breaks {cves}"
             )
-    for rel, text in _dependency_files().items():
-        if "tarfile" in banned and rel in TARFILE_IN_DEPENDENCIES:
+            assert not (tar and "unpack_archive" in text), (
+                f"{path.relative_to(REPO)} breaks {cves}"
+            )
+    for rel, modules in _dependency_modules().items():
+        if tar and rel in TARFILE_IN_DEPENDENCIES:
             continue
-        assert not _hits(_modules(text), banned), f"dependency {rel} breaks {cve}"
-        if "tarfile" in banned:
-            assert not re.search(r"\bunpack_archive\(", text), (
-                f"dependency {rel} breaks {cve}"
+        assert not _hits(modules, banned), f"dependency {rel} breaks {cves}"
+        if tar:
+            assert not re.search(r"\bunpack_archive\(", _dependency_files()[rel]), (
+                f"dependency {rel} breaks {cves}"
             )
 
 
@@ -196,13 +216,6 @@ def test_the_tarfile_exceptions_still_exist() -> None:
         if rel.startswith("dulwich/") and rel not in files:
             continue  # the hook extra, absent from a default test venv
         assert rel in files and "tarfile" in _modules(files[rel]), rel
-
-
-def test_no_dependency_parses_html() -> None:
-    """The html.parser statement covers the service's own use; a locked
-    dependency parsing HTML would be input nobody has vetted."""
-    for rel, text in _dependency_files().items():
-        assert not _hits(_modules(text), ("html.parser",)), rel
 
 
 def _static_reads(module: ast.Module) -> None:
