@@ -104,7 +104,6 @@ ENV HTRFLOW_BASE_REVISION=${HTRFLOW_BASE_REVISION}
 
 FROM htrflow-base AS runtime
 LABEL org.opencontainers.image.licenses="EUPL-1.2"
-ARG TARGETARCH
 
 # uv 0.12.6 (multi-arch index digest)
 COPY --from=ghcr.io/astral-sh/uv:0.12.6@sha256:88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d /uv /bin/uv
@@ -143,15 +142,19 @@ RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
 COPY packages/wrapper /opt/wrapper
 RUN uv pip install --python /app/.venv/bin/python --no-cache --no-deps /opt/wrapper
 
-# arm64 only: triton JIT-compiles its CUDA utils (a CPython extension) at
-# runtime, so it needs a C compiler and Python headers or TrOCR generation
-# dies with "Failed to find C compiler" on the GPU path. The locally built
-# base does not carry them.
-RUN if [ "$TARGETARCH" = "arm64" ]; then \
-      apt-get update && apt-get install -y --no-install-recommends \
-        gcc libc6-dev python3.10-dev \
-      && rm -rf /var/lib/apt/lists/*; \
-    fi
+# No compiler in this image, and no code generated at run time. torch 2.13
+# (the arm64 build) routes some operators through its own Triton kernels
+# (torch._native: TrOCR's attention bmm is one), and the first such call
+# JIT-compiles Triton's CUDA launcher, a CPython extension, with the system C
+# compiler. Without one TrOCR generation dies with "Failed to find C
+# compiler"; with one the image carries gcc and the kernel headers for it
+# (linux-libc-dev, a steady stream of kernel CVEs). TORCH_DISABLE_NATIVE_JIT
+# keeps those operators on torch's precompiled ATen/cuBLAS kernels, the ones
+# the amd64 build (torch 2.9) runs anyway, so both architectures execute the
+# same kinds of kernels and nothing writes, compiles or loads new machine code
+# under the read-only root filesystem. Nothing else here JIT-compiles:
+# htrflow does not call torch.compile, and ultralytics leaves it off.
+ENV TORCH_DISABLE_NATIVE_JIT=1
 
 # The transformers line, both architectures, pinned here so the image says
 # which one it runs. Two lines exist because the models do not agree: a

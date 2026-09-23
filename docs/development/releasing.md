@@ -55,15 +55,20 @@ architecture, in three stages:
 
 There is no separate base image to build, pull or pass in, so every build
 path — `make build-wrapper`, the dagger functions, CI and the publish
-workflow — runs this one recipe. The only architecture-specific step left
-is the C compiler and Python headers one architecture's GPU path needs at
-runtime (triton JIT-compiles a CPython extension there).
-
-That step sits behind a `TARGETARCH` test. The transformers line is not
-architecture-specific: both architectures install it from the
+workflow — runs this one recipe, and no step in it is architecture-specific.
+The transformers line is not either: both architectures install it from the
 `TRANSFORMERS_VERSION` build argument, whose default is the line upstream
 htrflow is tested on ([Two transformers
 lines](../how-it-works/wrapper.md#model-handling)).
+
+**No compiler in the image.** Some torch builds route a few operators
+through Triton kernels of their own, and the first such call compiles
+Triton's CUDA launcher with the system C compiler — which would put a
+compiler and the kernel headers it needs into a runtime image. The image
+sets `TORCH_DISABLE_NATIVE_JIT=1` instead, so those operators run on
+torch's precompiled kernels, the same kinds the other torch builds run,
+and nothing compiles or loads new machine code at run time. Nothing else
+in the pipeline JIT-compiles: htrflow does not call `torch.compile`.
 
 The web and converter dockerfiles need none of this. Every image they build
 on — the two Node toolchains for the web image, the Debian build stage and

@@ -12,9 +12,9 @@ the gate.
 The wrapper has ONE dockerfile, and one recipe, for both architectures: it
 builds its own htrflow base from pinned sources, so the same bind-mount
 block serves both arches by construction — what needs guarding instead is
-that the base stays pinned, that the arm64 step keeps the hard-won extras
-the GB10 needs, and that nothing in the build path ever asks for a foreign
-platform: `uv` segfaults under `qemu-x86_64`, so both images are built on a
+that the base stays pinned, that the image carries no compiler and compiles
+nothing at run time, and that nothing in the build path ever asks for a
+foreign platform: `uv` segfaults under `qemu-x86_64`, so both images are built on a
 runner of their own architecture and never emulated.
 """
 
@@ -36,15 +36,12 @@ DOCKERFILES = [
 WRAPPER_DOCKERFILE = REPO / ".docker" / "htrflow-batch.dockerfile"
 _BIND = re.compile(r"--mount=type=bind,source=(packages/[^,]+/pyproject\.toml),")
 
-# The arm64 extras (see the dockerfile's own comments for why each exists):
-# triton JIT-compiles CUDA utils at runtime. sentencepiece, which TrOCR's slow
-# tokenizer needs to convert, is not here: it is locked with the transformers
-# line (see test_every_transformers_line_is_a_locked_group).
-ARM64_EXTRAS = [
-    "gcc",
-    "libc6-dev",
-    "python3.10-dev",
-]
+# What a runtime compiler looks like in an apt line. The runtime image had
+# gcc, libc6-dev and python3.10-dev for Triton's JIT, and libc6-dev drags in
+# linux-libc-dev, a steady stream of kernel CVEs (audit 0923).
+_COMPILER_PACKAGES = re.compile(
+    r"\b(gcc|g\+\+|clang|build-essential|libc6-dev|linux-libc-dev|python3[.\d]*-dev)\b"
+)
 HTRFLOW_BASE = REPO / ".docker" / "htrflow-base"
 
 # Build paths that must never cross-build: a `--platform` flag or a
@@ -116,15 +113,25 @@ def test_one_wrapper_dockerfile_one_base_for_both_arches() -> None:
     assert "base-${TARGETARCH}" not in text
 
 
-def test_arm64_branch_keeps_the_extras_the_gb10_needs() -> None:
+def _stage(text: str, name: str) -> str:
+    stages = re.split(r"^FROM ", text, flags=re.M)
+    [stage] = [s for s in stages if re.match(rf"\S+ AS {name}\n", s)]
+    return stage
+
+
+def test_the_wrapper_image_carries_no_compiler_and_compiles_nothing() -> None:
+    """torch's own Triton kernels compile Triton's CUDA launcher with the
+    system C compiler on first use, which is why the arm64 image used to
+    install one. The image switches that JIT off instead, and neither
+    runtime stage installs a compiler or headers; the builder stage, which
+    does not ship, may."""
     text = WRAPPER_DOCKERFILE.read_text()
-    guarded = "\n".join(
-        line for line in text.splitlines() if not line.lstrip().startswith("#")
-    )
-    for extra in ARM64_EXTRAS:
-        assert extra in guarded, f"arm64 extra missing from the wrapper image: {extra}"
-    # the arm64-only step sits behind the TARGETARCH guard
-    assert guarded.count('if [ "$TARGETARCH" = "arm64" ]') == 1
+    for name in ("htrflow-base", "runtime"):
+        for line in _logical_lines(_stage(text, name)):
+            if "apt-get install" in line:
+                assert not _COMPILER_PACKAGES.search(line), line
+    assert re.search(r"^ENV TORCH_DISABLE_NATIVE_JIT=1$", _stage(text, "runtime"), re.M)
+    assert "TARGETARCH" not in "\n".join(_logical_lines(text))
 
 
 def test_nothing_in_the_build_path_asks_for_a_foreign_platform() -> None:
