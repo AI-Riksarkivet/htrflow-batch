@@ -1191,3 +1191,76 @@ def test_the_apply_identity_cannot_pause_a_workload_it_did_not_render(
     )
     assert _workload_verdict(verdict, out) == "refused", out
     assert "apply-pauses-only-converter-workloads" in out
+
+
+# --- I-1: what a campaign or pipeline ConfigMap may hold -------------------
+
+
+@pytest.fixture
+def converter_configmaps() -> list[dict]:
+    from htrflow_converter import render
+    from htrflow_converter.parse import load
+
+    campaigns, pipelines, cfg = load(
+        FIXTURE / "campaigns", FIXTURE / "pipelines", FIXTURE / "converter.yaml"
+    )
+    cfg = cfg.model_copy(update={"namespace": NAMESPACE})
+    kyrk = next(c for c in campaigns if c.name == "kyrk")
+    demo = pipelines["demo-v1"]
+    objs = render.campaign_objects(kyrk, demo, cfg) + render.pipeline_objects(demo, cfg)
+    return [o for o in objs if o["kind"] == "ConfigMap"]
+
+
+def test_the_converters_configmaps_are_admitted(
+    tmp_path: Path, job_shape: Path, converter_configmaps: list[dict]
+):
+    assert {c["metadata"]["name"] for c in converter_configmaps} == {
+        "campaign-kyrk",
+        "htr-pipeline-demo-v1",
+    }
+    for cm in converter_configmaps:
+        verdict, out = admission(tmp_path, job_shape, cm, user=APPLY_SA)
+        assert verdict == "admitted", out
+
+
+@pytest.mark.parametrize(
+    "name,data,binary",
+    [
+        ("campaign-x", {"volumes.txt": "", "python": "#!/bin/sh\nid\n"}, None),
+        (
+            "htr-pipeline-x",
+            {"pipeline.yaml": "steps: []\n", "sitecustomize.py": "import os\n"},
+            None,
+        ),
+        ("htr-pipeline-x", {"pipeline.yaml": "steps: []\n"}, {"x.so": "AAAA"}),
+        # a pipeline id may end in -status; only campaign names may not
+        ("htr-pipeline-x-status", {"pipeline.yaml": "", "python": "id"}, None),
+    ],
+    ids=[
+        "campaign-executable",
+        "pipeline-sitecustomize",
+        "pipeline-binary",
+        "pipeline-named-status",
+    ],
+)
+def test_a_campaign_or_pipeline_configmap_holds_only_the_converters_keys(
+    tmp_path: Path, job_shape: Path, name: str, data: dict, binary: dict | None
+):
+    """A Job may mount these ConfigMaps whole, so a key beside the one the
+    converter writes is a file in the pod: an executable on a PATH, or a
+    sitecustomize.py Python imports first. Whoever writes them."""
+    cm = configmap(name, CONVERTER, data=data)
+    if binary:
+        cm["binaryData"] = binary
+    for user in (APPLY_SA, "kubernetes-admin"):
+        verdict, out = admission(tmp_path, job_shape, cm, user=user)
+        assert verdict == "refused", out
+        assert "ConfigMap holds only the keys the converter writes" in out
+
+
+def test_other_configmaps_are_not_held_to_those_keys(tmp_path: Path, job_shape: Path):
+    for name in ("campaign-kyrk-status", "team-settings", "htrflow-campaigns-render"):
+        verdict, out = admission(
+            tmp_path, job_shape, configmap(name, data={"anything": "x"}), user="someone"
+        )
+        assert verdict == "not matched", out

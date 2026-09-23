@@ -207,4 +207,49 @@ spec:
           "shape" $spec.warmup
           "spec" $spec
           "imageRe" $imageRe) | nindent 4 }}
+    # What a campaign or pipeline ConfigMap may hold (audit 0923 I-1). A
+    # campaign or warm-up Job mounts these whole, so a key beside the one
+    # the converter writes is a file in the pod -- an executable, or a
+    # sitecustomize.py Python imports first -- and a binaryData key is one
+    # no rule reads. Held by name, whoever writes them: a `campaign-*`
+    # ConfigMap carries volumes.txt, an `htr-pipeline-*` one pipeline.yaml,
+    # and nothing else. The read API's `campaign-<name>-status` records are
+    # not mounted by any Job (the rules above refuse it) and are not held
+    # here; no campaign name ends in `-status` (the converter refuses one).
+    {{- range list (list "campaign" "campaign-" "volumes.txt" "-status") (list "pipeline" "htr-pipeline-" "pipeline.yaml" "") }}
+    - name: {{ index . 0 }}-configmap-keys
+      match:
+        any:
+          - resources:
+              kinds: [ConfigMap]
+              namespaces: [{{ $ns | quote }}]
+              operations: [CREATE, UPDATE]
+      preconditions:
+        all:
+          - key: {{ printf "\"{{ starts_with(request.object.metadata.name, '%s') }}\"" (index . 1) }}
+            operator: Equals
+            value: true
+          {{- with index . 3 }}
+          - key: {{ printf "\"{{ ends_with(request.object.metadata.name, '%s') }}\"" . }}
+            operator: Equals
+            value: false
+          {{- end }}
+      context:
+        - name: strayKeys
+          variable:
+            jmesPath: >-
+              [keys(request.object.data || `{}`)[?@ != '{{ index . 2 }}'],
+              keys(request.object.binaryData || `{}`)][]
+            default: []
+      validate:
+        message: >-
+          a {{ index . 0 }} ConfigMap holds only the keys the converter
+          writes ({{ index . 2 }}), not {{ `{{ join(', ', strayKeys) }}` }}
+        deny:
+          conditions:
+            all:
+              - key: {{ `"{{ length(strayKeys) }}"` }}
+                operator: GreaterThan
+                value: 0
+    {{- end }}
 {{- end }}
