@@ -502,6 +502,16 @@ def test_head_on_a_page(client: TestClient):
     assert client.head("/log").status_code == 200
 
 
+def test_a_missing_file_with_an_extension_is_not_retried_as_html(static_dir: Path):
+    """Only an extensionless path is a prerendered page: a request for
+    `bundle.js` that is not there stays a 404 rather than becoming
+    `bundle.js.html`."""
+    (static_dir / "bundle.js.html").write_text(_spa("<h1>not the bundle</h1>"))
+    client = TestClient(create_app(EmptyReader(), static_dir=static_dir))
+    assert client.get("/bundle.js").status_code == 404
+    assert client.get("/bundle.js.html").status_code == 200
+
+
 def test_root_is_not_retried_as_html(tmp_path: Path):
     """The extensionless retry must never turn "/" into ".html": with no
     index.html the root is a plain 404, not a 500 from a nonsense lookup."""
