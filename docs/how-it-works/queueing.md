@@ -177,7 +177,14 @@ So `cluster.sync_pause` runs last in every apply:
    is exactly when Kueue would admit it. So the apply polls for
    `--pause-wait` seconds and exits non-zero if no Workload appears. A
    campaign that is not paused needs no wait.
-4. A Workload the apply cannot patch (deleted between the list and the
+4. A campaign Job the API server refuses, typically because a converter
+   release or a `converter.yaml` change moved every pod template and a
+   Job's template is fixed, is still paused or resumed. The pause needs
+   only the live Job's uid and its Workload, so the sync reads the live Job
+   and runs against it. Only when that Job cannot be read either is a
+   paused campaign's pause not enforced (exit `1`). A refused campaign that
+   has no Job at all has nothing running to stop.
+5. A Workload the apply cannot patch (deleted between the list and the
    patch, or a patch the Role does not allow) is that campaign's problem.
    The error is printed, the Workload is named in the closing summary as
    refused, and the other campaigns' pauses and the prune still run. For a

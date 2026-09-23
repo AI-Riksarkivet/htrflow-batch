@@ -688,13 +688,14 @@ _REFUSED_SUMMARY = (
     "{n} of {total} objects were refused by the API server and are "
     "unchanged: {names} — the other {ok} were applied (exit {code})"
 )
-#: A campaign Job the API server refused is a campaign the Kueue pause sync
-#: never sees -- and for a paused one that is the pause not being enforced:
-#: git says stopped, the live Job is running, and nothing in this apply is
-#: going to stop it. Exit 1, like a Workload that never appeared.
+#: A campaign Job the API server refused is paused through the live Job's
+#: Workload. When the live Job cannot be read either there is no uid to find
+#: that Workload by: git says stopped, the Job may be running, and nothing in
+#: this apply is going to stop it. Exit 1, like a Workload that never appeared.
 _REFUSED_PAUSE = (
-    "{name}: paused in git, but the API server refused its Job, so the pause "
-    "is NOT enforced; fix what the refusal says and re-run the apply"
+    "{name}: paused in git, but its Job was not applied and could not be "
+    "read, so its Kueue Workload was not found and the pause is NOT "
+    "enforced; fix what the error says and re-run the apply"
 )
 
 _UNSYNCED_PAUSE = (
@@ -860,6 +861,9 @@ def _apply(
                 except ClusterError as e:
                     blocked[campaign] = e
             refused: list[str] = []
+            # Campaign Jobs the API server refused (or this apply could not
+            # look at), which the pause sync still reaches -- see below.
+            held: list[dict] = []
             applied = failed = 0
             for objects, is_campaign in ((pipelines, False), (campaigns, True)):
                 for obj in objects:
@@ -890,20 +894,8 @@ def _apply(
                     except ClusterError as e:
                         print(e, file=sys.stderr)
                         refused.append(name)
-                        # A refused Job never reaches the Kueue sync below,
-                        # so a campaign git says is paused is running right
-                        # now with nothing about to stop it. That is the
-                        # unenforced pause, not a change still to make.
-                        if (
-                            is_campaign
-                            and obj["kind"] == "Job"
-                            and obj["spec"].get("suspend")
-                        ):
-                            print(
-                                _REFUSED_PAUSE.format(name=obj["metadata"]["name"]),
-                                file=sys.stderr,
-                            )
-                            failed = 1
+                        if is_campaign and obj["kind"] == "Job":
+                            held.append(obj)
                         continue
                     applied += 1
                     print(f"applied: {name}")
@@ -912,6 +904,31 @@ def _apply(
             # The pause first: it is the one step whose absence burns GPU
             # right now, and a prune problem used to end the apply before it
             # ran for any campaign (3090).
+            # A refused Job is still a live Job with a Workload, and pausing
+            # needs nothing else (C-2). A converter release or a
+            # converter.yaml change refuses every live campaign Job at once
+            # (its pod template is fixed), and a campaign git pauses then
+            # must stop all the same -- or resume, since a paused one could
+            # otherwise never finish, which is what the refusal asks for.
+            for obj in held:
+                job, suspended = (
+                    obj["metadata"]["name"],
+                    obj["spec"].get("suspend", False),
+                )
+                try:
+                    live = cluster.get("Job", job)
+                except Unreachable:
+                    raise
+                except ClusterError as e:
+                    print(e, file=sys.stderr)
+                    if suspended:
+                        print(_REFUSED_PAUSE.format(name=job), file=sys.stderr)
+                        failed = 1
+                    continue
+                # No Job: nothing runs, so a pause holds and an unpause has
+                # nothing to start.
+                if live is not None:
+                    jobs.append((live, suspended))
             # One Workload's problem is one campaign's (C-9): a Workload
             # deleted between the list and the patch, a patch the Role does
             # not allow. It used to leave through the outer handler, with
