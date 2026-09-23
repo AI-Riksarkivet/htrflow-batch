@@ -20,7 +20,6 @@ import functools
 import itertools
 import json
 import shutil
-import subprocess
 import tempfile
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
@@ -670,38 +669,14 @@ def _annotations(cluster, name: str) -> dict:
 
 
 def test_the_campaign_configmap_records_who_applied_what_and_when(
-    tmp_path, cluster, monkeypatch
+    tmp_path, cluster, monkeypatch, commit_all
 ):
     """The ConfigMap has no TTL and is pruned only when the campaign file
     leaves git, so it outlives the Job -- which makes it the place the
     provenance belongs (B76)."""
-    if shutil.which("git") is None:
-        pytest.skip("no git on PATH — the CI image has none; _git_head says unknown")
     monkeypatch.setenv("HTRFLOW_APPLIED_BY", "Nagon.Annan")
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
-    subprocess.run(
-        [
-            "git",
-            "-C",
-            str(repo),
-            "-c",
-            "user.email=t@e",
-            "-c",
-            "user.name=t",
-            "commit",
-            "-qm",
-            "x",
-        ],
-        check=True,
-    )
-    head = subprocess.run(
-        ["git", "-C", str(repo), "rev-parse", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
+    head = commit_all(repo)  # read back by git where there is one, else dulwich
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     ann = _annotations(cluster, "campaign-kyrk")
     assert ann["htrflow.riksarkivet.se/campaigns-commit"] == head
