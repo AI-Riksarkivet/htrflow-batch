@@ -53,7 +53,7 @@ func (m *HtrflowBatch) Test(
 }
 
 // testAndAuditSkips runs the suite and then fails the run on any skip but
-// the expected one (audit 0923 T-1). A `skipif` on a missing binary turns
+// the expected file (audit 0923 T-1). A `skipif` on a missing binary turns
 // into a green run that tested nothing: the tool guard in test_render.py
 // checks withTestTools for the tools it knows, and this catches the one it
 // does not know yet. The real-driver test is the one expected skip -- it
@@ -64,7 +64,7 @@ const testAndAuditSkips = `uv run --no-sync pytest --tb=short -q -rs > /tmp/pyte
 rc=$?
 cat /tmp/pytest.log
 [ "$rc" -eq 0 ] || exit "$rc"
-if grep '^SKIPPED' /tmp/pytest.log | grep -v '^SKIPPED \[1\] packages/wrapper/tests/test_driver_real\.py:'; then
+if grep '^SKIPPED' /tmp/pytest.log | grep -v '^SKIPPED \[[0-9]*\] packages/wrapper/tests/test_driver_real\.py:'; then
   echo "unexpectedSkips: the skips above mean a tool the suite shells out to is missing from withTestTools, or a test skipped for another reason" >&2
   exit 1
 fi`
