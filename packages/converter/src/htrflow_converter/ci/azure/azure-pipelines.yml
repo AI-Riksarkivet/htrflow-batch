@@ -23,11 +23,12 @@
 # `kubectl` binary. With Argo CD it is a PostSync hook — this repo's
 # argocd/apply.yaml; by hand it is `make campaigns-apply DIR=<repo> PRUNE=1`.
 #
-# CI installs the converter as a plain Python package, with uv straight
-# from the htrflow-batch repo at CONVERTER_REF (see "Install the converter"
-# below). An htrflow-batch release pins CONVERTER_REF to a commit of its own in the
-# copy of this file it ships; the converter image exists only for the Argo
-# CD hook (argocd/apply.yaml), which runs in the cluster.
+# CI installs the converter as a plain Python package, with uv, from the
+# htrflow-batch repo at CONVERTER_REF and with the dependency versions that
+# commit's uv.lock pins (.azure-pipelines/install-converter.yml). An htrflow-batch release
+# pins CONVERTER_REF to a commit of its own in the copy of this file it
+# ships; the converter image exists only for the Argo CD hook
+# (argocd/apply.yaml), which runs in the cluster.
 #
 # Setting it up on Azure DevOps:
 # - Pull requests. In Azure Repos the `pr:` block below is ignored: a pull
@@ -114,9 +115,7 @@ stages:
         steps:
           - checkout: self
           - template: .azure-pipelines/install-uv.yml
-          - bash: |
-              uv tool install "git+https://github.com/AI-Riksarkivet/htrflow-batch@${CONVERTER_REF}#subdirectory=packages/converter"
-            displayName: Install the converter
+          - template: .azure-pipelines/install-converter.yml
           - bash: htrflow-campaigns validate .
             displayName: Validate
 
@@ -140,13 +139,6 @@ stages:
         displayName: Policy
         steps:
           - checkout: self
-          - bash: |
-              set -euo pipefail
-              git init -q "$AGENT_TEMPDIRECTORY/htrflow-batch"
-              cd "$AGENT_TEMPDIRECTORY/htrflow-batch"
-              git fetch -q --depth 1 https://github.com/AI-Riksarkivet/htrflow-batch "$CONVERTER_REF"
-              git checkout -q FETCH_HEAD
-            displayName: Check out htrflow-batch at CONVERTER_REF
           - template: .azure-pipelines/install-uv.yml
           - bash: |
               set -euo pipefail
@@ -165,9 +157,7 @@ stages:
               "$dir/helm" version
               echo "##vso[task.prependpath]$dir"
             displayName: Install helm (checksum-verified)
-          - bash: |
-              uv tool install "git+https://github.com/AI-Riksarkivet/htrflow-batch@${CONVERTER_REF}#subdirectory=packages/converter"
-            displayName: Install the converter
+          - template: .azure-pipelines/install-converter.yml
           - bash: |
               set -euo pipefail
               case "$AGENT_OS/$AGENT_OSARCHITECTURE" in
@@ -243,9 +233,7 @@ stages:
           - checkout: self
             fetchDepth: 0
           - template: .azure-pipelines/install-uv.yml
-          - bash: |
-              uv tool install "git+https://github.com/AI-Riksarkivet/htrflow-batch@${CONVERTER_REF}#subdirectory=packages/converter"
-            displayName: Install the converter
+          - template: .azure-pipelines/install-converter.yml
           - bash: htrflow-campaigns render . --out rendered
             displayName: Render
           # The agent checks out a detached HEAD, hence HEAD:main. [skip ci]

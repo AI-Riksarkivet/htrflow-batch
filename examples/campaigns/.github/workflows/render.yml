@@ -24,11 +24,12 @@ name: Render
 # `kubectl` binary. With Argo CD it is a PostSync hook — this repo's
 # argocd/apply.yaml; by hand it is `make campaigns-apply DIR=<repo> PRUNE=1`.
 #
-# CI installs the converter as a plain Python package, with uvx straight
-# from the htrflow-batch repo at CONVERTER_REF (see "Install the converter"
-# below). An htrflow-batch release pins CONVERTER_REF to a commit of its own in the
-# copy of this file it ships; the converter image exists only for the Argo
-# CD hook (argocd/apply.yaml), which runs in the cluster.
+# CI installs the converter as a plain Python package, with uv, from the
+# htrflow-batch repo at CONVERTER_REF and with the dependency versions that
+# commit's uv.lock pins (.github/actions/install-converter). An htrflow-batch release
+# pins CONVERTER_REF to a commit of its own in the copy of this file it
+# ships; the converter image exists only for the Argo CD hook
+# (argocd/apply.yaml), which runs in the cluster.
 on:
   pull_request:
   push:
@@ -69,10 +70,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
-      - name: Install the converter
-        run: |
-          uv tool install "git+https://github.com/AI-Riksarkivet/htrflow-batch@${CONVERTER_REF}#subdirectory=packages/converter"
+      - uses: ./.github/actions/install-converter
+        with:
+          ref: ${{ env.CONVERTER_REF }}
       - name: Validate
         run: htrflow-campaigns validate .
 
@@ -95,16 +95,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/install-converter
         with:
-          repository: AI-Riksarkivet/htrflow-batch
           ref: ${{ env.CONVERTER_REF }}
-          path: .htrflow-batch
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-      - name: Install the converter
-        run: |
-          uv tool install "git+https://github.com/AI-Riksarkivet/htrflow-batch@${CONVERTER_REF}#subdirectory=packages/converter"
       - name: Install the Kyverno CLI (checksum-verified)
         run: |
           set -euo pipefail
@@ -175,10 +169,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
-      - name: Install the converter
-        run: |
-          uv tool install "git+https://github.com/AI-Riksarkivet/htrflow-batch@${CONVERTER_REF}#subdirectory=packages/converter"
+      - uses: ./.github/actions/install-converter
+        with:
+          ref: ${{ env.CONVERTER_REF }}
       - name: Render
         run: htrflow-campaigns render . --out rendered
       - name: Commit rendered/ if it changed
