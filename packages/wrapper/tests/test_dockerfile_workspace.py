@@ -467,7 +467,10 @@ def test_the_htrflow_base_is_built_from_pinned_inputs() -> None:
     assert tomllib.loads(pyproject)["project"]["name"] == "htrflow"
     uv = tomllib.loads(overlay)["tool"]["uv"]
     [index] = uv["index"]
-    assert index["explicit"] is True and index["url"].endswith("/whl/cu128")
+    # A CUDA 12 build on amd64: kernels for the newest cards on the drivers
+    # the CUDA 12 line supports (PyPI's x86_64 wheels bundle CUDA 13).
+    assert index["explicit"] is True
+    assert re.fullmatch(r"https://download\.pytorch\.org/whl/cu12\d", index["url"])
     assert uv["sources"]["torch"] == [
         {"index": index["name"], "marker": "platform_machine == 'x86_64'"}
     ]
@@ -477,7 +480,10 @@ def test_the_htrflow_base_is_built_from_pinned_inputs() -> None:
         if (m := re.fullmatch(r"torch==(\S+); platform_machine == '(\w+)'", c))
     )
     assert set(pinned) == {"x86_64", "aarch64"}, "torch is pinned per architecture"
-    # ... and the lock holds exactly those: x86_64's from the cu128 index,
+    # One torch release on both: the same operators, the same torch._native
+    # layer for the CHECK heredoc to guard, the same advisories.
+    assert pinned["x86_64"] == pinned["aarch64"], pinned
+    # ... and the lock holds exactly those: x86_64's from the CUDA 12 index,
     # aarch64's from PyPI, each for its own machine only.
     lock = tomllib.loads((HTRFLOW_BASE / "uv.lock").read_text())
     torches = [p for p in lock["package"] if p["name"] == "torch"]
