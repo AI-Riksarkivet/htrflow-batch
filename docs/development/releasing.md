@@ -48,7 +48,7 @@ architecture, in three stages:
   pinned build backend (see below): htrflow's own
   `pyproject.toml` with this repository's `overlay.toml` appended, and the
   lock both resolve to. The overlay pins torch and torchvision per
-  architecture — builds from PyTorch's CUDA 12.8 wheel index where those
+  architecture — builds from PyTorch's CUDA 12 wheel index where those
   carry the newest GPU kernels for CUDA 12 drivers, PyPI's elsewhere. The
   build refuses a checkout whose `pyproject.toml` is not the one the lock
   was made for.
