@@ -26,7 +26,7 @@ name: Render
 #
 # CI installs the converter as a plain Python package, with uvx straight
 # from the htrflow-batch repo at CONVERTER_REF (see "Install the converter"
-# below). An htrflow-batch release pins CONVERTER_REF to its own tag in the
+# below). An htrflow-batch release pins CONVERTER_REF to a commit of its own in the
 # copy of this file it ships; the converter image exists only for the Argo
 # CD hook (argocd/apply.yaml), which runs in the cluster.
 on:
