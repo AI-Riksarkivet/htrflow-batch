@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from htrflow_web import projection
 
 CFG = SimpleNamespace(public_results_base="https://results.example.org")
@@ -1869,3 +1871,51 @@ class TestRecordWrite:
         assert summary.body["data"]["failedVolumes"] == kept
         assert failed.body["data"] == {"failedVolumes": kept}
         assert failed.force is True
+
+
+# --- a source URL the browser could not parse is no source (audit F-7) ------
+
+#: Each rejected by the WHATWG URL parser -- `new URL(...)` throws in every
+#: browser (checked against the parser node and bun ship). The page parses a
+#: detail all or nothing, so one of these in volumes.txt used to sink the
+#: whole card, and the page re-polled it for ever (2026-09-23 audit).
+WHATWG_REJECTS = [
+    "https://example.org:99999/m",
+    "https://exa%mple.org/m",
+    "https://ex<ample.org/m",
+    "https://1.2.3.999/m",
+    "https://[::g]/m",
+    "https://xn--a.org/m",
+    "https://example.org:0x1/m",
+    "https://ex ample.org/m",
+    "https://example.123/m",
+    "https://ex^ample.org/",
+    "https://ex|ample.org/",
+    "https://ex%00ample.org/",
+]
+
+#: Accepted by it, and by this API.
+WHATWG_ACCEPTS = [
+    "https://example.org/m",
+    "https://example.org:443/m",
+    "http://user:pw@example.org/x",
+    "https://1.2.3.4/m",
+    "https://[::1]/m",
+    "https://xn--bcher-kva.example/m",
+    "https://bücher.example/m",
+    "https://a_b.example.org/m",
+    "https://example.org:/m",
+    "https://example.org./m",
+    "https://example.org/%zz",
+    "https://iiif.example.org/iiif/2/x/full/2500,/0/default.jpg",
+]
+
+
+@pytest.mark.parametrize("url", WHATWG_REJECTS)
+def test_a_source_the_browser_rejects_is_no_source(url: str):
+    assert projection._source_url(f"vol0\t{url}") is None
+
+
+@pytest.mark.parametrize("url", WHATWG_ACCEPTS)
+def test_a_source_the_browser_accepts_is_kept(url: str):
+    assert projection._source_url(f"vol0\t{url}") == url
