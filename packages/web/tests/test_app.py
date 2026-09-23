@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import re
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
+import anyio
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -132,6 +136,42 @@ def test_healthz(client: TestClient):
     resp = client.get("/healthz")
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
+
+
+class _Hung(FakeReader):
+    """A reader whose API server has stopped answering mid-request."""
+
+    def __init__(self) -> None:
+        self.release = threading.Event()
+
+    def get_job(self, namespace: str, name: str) -> dict | None:
+        self.release.wait(10)
+        return super().get_job(namespace, name)
+
+
+def test_healthz_answers_while_every_worker_is_stuck():
+    """Every sync route runs on one shared thread pool. With /healthz on it
+    too, requests stuck on a hung API server queued the probe behind them,
+    readiness failed, and the only replica left the Service (2026-09-23
+    audit). Here the pool has one thread and a request is holding it."""
+    reader = _Hung()
+    app = create_app(reader, progress=FakeProgress())
+
+    async def scenario() -> int:
+        anyio.to_thread.current_default_thread_limiter().total_tokens = 1
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            stuck = asyncio.ensure_future(c.get("/api/v1/jobs/htr-test/kyrk"))
+            await asyncio.sleep(0.1)
+            try:
+                with anyio.fail_after(2):
+                    status = (await c.get("/healthz")).status_code
+            finally:
+                reader.release.set()
+                await stuck
+        return status
+
+    assert asyncio.run(scenario()) == 200
 
 
 def test_version(client: TestClient):
