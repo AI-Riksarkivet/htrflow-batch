@@ -23,17 +23,17 @@ export const runManifestSchema = z
     results: z.record(pageResultSchema),
     pipeline_yaml: z.string().optional(),
     wall_seconds: z.number().optional(),
-    bytes_fetched: z.number().optional(),
-    pages_per_second: z.number().optional(),
-    // Newer wrappers: the image each page was fetched from and its canvas
-    // id; older runs have neither.
+    // Newer wrappers: the image each page was fetched from; older runs have
+    // none.
     page_sources: z.record(z.string()).optional(),
-    canvas_ids: z.record(z.string().nullable()).optional(),
     // publish.py: "<public_results_base>/<volume>/iiif.json" — the ALTO
     // viewer derives each page's ALTO URL from it (altoUrl). Absent on a
     // volume whose ALTO would not parse (build_viewer_manifest skipped).
     viewer_url: z.string().optional(),
   })
+  // Everything else the wrapper writes (bytes_fetched, canvas_ids, the
+  // digests resume compares...) is kept as it came and read by nothing here;
+  // wrapper-contract.test.ts checks the fields above against the real file.
   .passthrough();
 
 export type PageResult = z.infer<typeof pageResultSchema>;
