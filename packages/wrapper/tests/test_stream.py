@@ -106,6 +106,61 @@ def test_lookahead_bounds_downloads_in_flight_and_images_on_disk(tmp_path):
     assert peak[0] <= 2
 
 
+def test_lookahead_is_bounded_by_bytes_as_well_as_pages(tmp_path):
+    """Audit 0923 W-9: 64 pages of lookahead at up to FETCH_MAX_BYTES each is
+    4 GiB against a 2 Gi memory-backed workdir. A page that has not landed
+    holds FETCH_MAX_BYTES of the byte budget, one that has landed its own
+    size, so what can sit in the workdir never passes the budget."""
+    lock = threading.Lock()
+    started = []
+    body = JPEG  # 16 bytes
+
+    def handler(req):
+        with lock:
+            started.append(req.url.path)
+        return httpx.Response(200, content=body)
+
+    stream = PageStream(
+        _pages(8),
+        tmp_path,
+        _client(handler),
+        lookahead=64,
+        concurrency=8,
+        max_bytes=20,
+        lookahead_bytes=60,
+    )
+    try:
+        # three pages reserve 3 x 20 = 60; a fourth would pass the budget
+        _wait_for(lambda: len(started) == 3)
+        time.sleep(0.05)
+        assert len(started) == 3
+        pages = iter(stream)
+        first = next(pages)
+        first.path.unlink()
+        # landed at 16 bytes each: 16 + 16 + 20 (the new one) fits, and so
+        # does no more than that
+        assert next(pages).page.name == "0002"
+        _wait_for(lambda: len(started) == 4)
+        rest = [first, *pages]
+        assert len(started) == 8 and len(rest) == 7
+    finally:
+        stream.close()
+
+
+def test_a_page_larger_than_the_byte_budget_still_downloads(tmp_path):
+    """Alone in the window it is allowed through, else the stream would
+    stop: one page at a time is what a budget smaller than a page means."""
+    stream = PageStream(
+        _pages(3),
+        tmp_path,
+        _client(lambda r: httpx.Response(200, content=JPEG)),
+        lookahead=64,
+        max_bytes=100,
+        lookahead_bytes=50,
+    )
+    assert [r.page.name for r in stream] == ["0001", "0002", "0003"]
+
+
 def test_lookahead_one_downloads_a_single_page_ahead(tmp_path):
     """With lookahead=1 and a consumer that has not come back yet, exactly one
     page downloads; the next goes out only when the consumer asks again."""
@@ -198,6 +253,7 @@ def test_stop_event_short_circuits_pending_downloads(tmp_path):
         lookahead=64,
         concurrency=1,
         stop=stop,
+        max_bytes=1024,  # all 40 inside the byte budget too, as in the window
     )
     pages = iter(stream)
     first = next(pages)

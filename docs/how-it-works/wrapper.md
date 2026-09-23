@@ -34,7 +34,7 @@ once. It then runs a producer–consumer pipeline with three concurrent roles
 
 | Role | What it does |
 |---|---|
-| **downloader pool** (`stream.PageStream`: threads, with `DOWNLOAD_CONCURRENCY` in flight and never more than `LOOKAHEAD_PAGES` submitted ahead of the consumer) | Fetches pages into tmpfs, submitted in manifest order, retrying each page with backoff. Refuses anything that is not a raster image. Hands pages over in manifest order, so the consumer waits on the head of the window |
+| **downloader pool** (`stream.PageStream`: threads, with `DOWNLOAD_CONCURRENCY` in flight and never more than `LOOKAHEAD_PAGES`, or `LOOKAHEAD_BYTES`, submitted ahead of the consumer) | Fetches pages into tmpfs, submitted in manifest order, retrying each page with backoff. Refuses anything that is not a raster image. Hands pages over in manifest order, so the consumer waits on the head of the window |
 | **consumer** (a single thread, since the GPU serializes the work anyway) | Runs `pipeline.run(document)` on each page, in order, as soon as that page is available. A page's lookahead slot frees only when the consumer has finished with it and its image is deleted, and that is what bounds tmpfs. Keeps each page's result or exception itself |
 | **uploader** | Ships each page's PAGE XML and then its ALTO to S3 as soon as htrflow writes them (deterministic keys, blind overwrite). Deletes the source image and both output files once the page is done |
 
@@ -69,8 +69,9 @@ The full table, with defaults from `config.py`, is in the
 
 | Env | Meaning | Default |
 |---|---|---|
-| `MAX_IMAGE_WIDTH` | IIIF size cap (`/full/{w},/`). **Enforced**, and part of the fetched URL, so stored results always match the config. A canvas narrower than the cap asks for `max`, and a 400 falls back to `max` ([From image to transcription](page-flow.md#the-width-capped-get)). Canvases without an image service are fetched at native size | 2500 |
+| `MAX_IMAGE_WIDTH` | IIIF size cap (`/full/{w},/`). **Enforced**, and part of the fetched URL, so stored results always match the config. A canvas narrower than the cap asks for `max`, and a 400 falls back to the largest size the image's `info.json` offers within the cap, `max` only when it offers none ([From image to transcription](page-flow.md#the-width-capped-get)). Canvases without an image service are fetched at native size | 2500 |
 | `LOOKAHEAD_PAGES` | Maximum pages downloaded ahead of the consumer (bounds tmpfs) | 64 |
+| `LOOKAHEAD_BYTES` | Maximum bytes those pages may hold: a page that has landed counts its size, one still downloading counts `FETCH_MAX_BYTES` (bounds tmpfs whatever the images weigh) | 1 GiB |
 | `DOWNLOAD_CONCURRENCY` | Concurrent image downloads | 12 |
 | `RESUME` | Skip pages whose PAGE and ALTO already exist and whose source URL is unchanged | true |
 | `MANIFEST_MAX_BYTES` / `FETCH_MAX_BYTES` | Byte caps on the manifest and on one image body, because campaign data is untrusted. Counted on the **decoded** bytes, as they are decoded | 16 MiB / 64 MiB |
@@ -546,7 +547,7 @@ canvas back. The retry redoes only the publish.
 | Item | Bound |
 |---|---|
 | Model weights and the torch runtime | Set by the pipeline's models, not by the volume |
-| Page images in flight | `LOOKAHEAD_PAGES` (64) times one width-capped image |
+| Page images in flight | `LOOKAHEAD_PAGES` (64) pages, and at most `LOOKAHEAD_BYTES` (1 GiB) |
 | Outputs awaiting upload | One page's PAGE and ALTO |
 | The source manifest and its `PageRef` list | At most `MANIFEST_MAX_BYTES` (16 MiB) |
 | Per-page outcomes (`StreamStats.results`) and dimensions (`store.page_dims`) | A few hundred bytes per page |

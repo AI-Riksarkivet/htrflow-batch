@@ -192,9 +192,10 @@ so its settings are namespaced.
 | `S3_ENDPOINT` | `""` | From the S3 Secret's optional `S3_ENDPOINT` key. Empty = the boto3 provider default chain |
 | `AWS_SHARED_CREDENTIALS_FILE` | *(boto3 default)* | Read by boto3, not `Config`. Jobs set `/secrets/s3/credentials` — the mounted Secret file; credentials are never env |
 | `S3_PREFIX` | `""` | Extra prefix before `<pipeline>/<volume>/` (and before `sources/`); leading and trailing `/` are stripped. The converter always sets it to `<namespace>/`; empty only when the wrapper is run by hand |
-| `MAX_IMAGE_WIDTH` | `2500` | Downscale request sent to the IIIF Image API (`/full/{w},/`; `max` for narrower canvases; a 400 falls back to `max`). Service-less canvases are fetched at native size |
+| `MAX_IMAGE_WIDTH` | `2500` | Downscale request sent to the IIIF Image API (`/full/{w},/`; `max` for narrower canvases; a 400 falls back to the largest size the image's `info.json` offers within the cap — its full size, a listed `sizes` entry, or a `maxWidth` below the cap — and to `max` only when it offers none). Service-less canvases are fetched at native size |
 | `RESUME` | `true` | Skip pages that already have **both** PAGE and ALTO in S3 and were made from the source they have now: the ALTO's `source-digest` object metadata, or for a page stored without it, its `page_source_digests` entry in the previous `manifest.json`. Every page not skipped loses its stored PAGE and ALTO before the run, after the previous `manifest.json` and then `iiif.json` are deleted; `false` therefore clears the whole volume's page files first. The run log says `[<volume>] resume: <n> done, <m> to process` |
 | `LOOKAHEAD_PAGES` | `64` | Prefetch depth of the download pipeline |
+| `LOOKAHEAD_BYTES` | `1073741824` | Byte bound on the same window: a page that has landed counts its size, one still downloading counts `FETCH_MAX_BYTES`, and no page is submitted past it (a page alone in the window always is) |
 | `MAX_PAGES` | `0` | Truncate the volume (0 = all pages) — the knob for a fast end-to-end check of one or a handful of pages |
 | `WORKDIR_PATH` | `/work` | Scratch dir (Jobs mount a 2 Gi memory-backed emptyDir) |
 | `DOWNLOAD_CONCURRENCY` | `12` | Parallel page downloads |
@@ -226,14 +227,17 @@ the real volume with `MAX_PAGES=0`), `MAX_IMAGE_WIDTH`, `RESUME`,
 stack does exactly this without a cluster — see
 [Try it](../getting-started/try-it.md#without-a-cluster-docker-compose).
 
-**Workdir bound.** The images in flight are what sits in `WORKDIR_PATH`:
-`LOOKAHEAD_PAGES` × `FETCH_MAX_BYTES` — 64 × 64 MiB = 4 GiB worst case
-against the Job's 2 Gi memory-backed `emptyDir`, which the kubelet answers
-with eviction rather than a clean failure. Sized IIIF requests
-(`MAX_IMAGE_WIDTH`) land at ~1 MB a page, so the bound only bites volumes of
-service-less canvases fetched at native size (see `fetch.py`'s "Known limit").
-Pre-size such image lists, or lower `LOOKAHEAD_PAGES`/`FETCH_MAX_BYTES` for
-them.
+**Workdir bound.** The images in flight are what sits in `WORKDIR_PATH`, and
+`LOOKAHEAD_BYTES` bounds them: a page still downloading holds
+`FETCH_MAX_BYTES` of it, a landed page its own size, so the images never
+pass 1 GiB of the Job's 2 Gi memory-backed `emptyDir` (the rest holds the
+outputs, `HOME` and `TMPDIR`). Sized IIIF requests (`MAX_IMAGE_WIDTH`) land
+at ~1 MB a page, so the budget holds the whole `LOOKAHEAD_PAGES` window of
+them; heavier images — service-less canvases fetched at native size (see
+`fetch.py`'s "Known limit"), or `max` after a 400 from a service that
+offers no size within the cap — shorten the window instead of overflowing
+the workdir. A workdir smaller than the Job's 2 Gi wants `LOOKAHEAD_BYTES`
+lowered with it.
 
 ### Warm-up entrypoint
 

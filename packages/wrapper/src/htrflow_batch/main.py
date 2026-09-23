@@ -445,6 +445,7 @@ def _stream(
         Path(cfg.workdir) / "input",
         client,
         lookahead=cfg.lookahead_pages,
+        lookahead_bytes=cfg.lookahead_bytes,
         concurrency=cfg.download_concurrency,
         max_bytes=cfg.fetch_max_bytes,
         max_pixels=cfg.max_image_pixels,

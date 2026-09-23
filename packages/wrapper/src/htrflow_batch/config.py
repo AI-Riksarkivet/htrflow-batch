@@ -54,6 +54,8 @@ class Config(BaseModel):
     max_image_width: int = Field(2500, alias="MAX_IMAGE_WIDTH")
     resume: bool = Field(True, alias="RESUME")
     lookahead_pages: int = Field(64, alias="LOOKAHEAD_PAGES")
+    #: W-9: and by bytes, a page not yet landed counted at FETCH_MAX_BYTES
+    lookahead_bytes: int = Field(1024 * 1024 * 1024, alias="LOOKAHEAD_BYTES")
     max_pages: int = Field(0, alias="MAX_PAGES")
     workdir: str = Field("/work", alias="WORKDIR_PATH")
     download_concurrency: int = Field(12, alias="DOWNLOAD_CONCURRENCY")

@@ -48,6 +48,11 @@ UploadFn = Callable[[str, "dict[str, Path]"], None]
 #: Consecutive store failures after which the run is abandoned (W6).
 MAX_UPLOAD_FAILURES = 5
 
+#: Default cap on the bytes the lookahead may hold (env ``LOOKAHEAD_BYTES``;
+#: docs: wrapper): half the Job's 2 Gi memory-backed workdir, which also holds
+#: the outputs, HOME and TMPDIR.
+LOOKAHEAD_BYTES = 1024 * 1024 * 1024
+
 
 def _failed(stats: "StreamStats", name: str, error: str | None) -> None:
     """Record a page failure AND say why: the reason reaches manifest.json,
@@ -121,8 +126,10 @@ class PageStream:
         max_pixels: int = MAX_IMAGE_PIXELS,
         stop: threading.Event | None = None,
         deadline: float = DOWNLOAD_DEADLINE_SECONDS,
+        lookahead_bytes: int = LOOKAHEAD_BYTES,
     ) -> None:
         self.bytes_fetched = 0
+        self._max_bytes, self._lookahead_bytes = max_bytes, lookahead_bytes
         dest = Path(dest_dir)
         self._fetch = partial(
             fetch_page,
@@ -151,8 +158,22 @@ class PageStream:
         except Exception as e:
             self._abandon(e)
 
+    def _held(self) -> int:
+        """Bytes the pages not yet handed to the consumer may occupy in the
+        workdir: a landed page its size, one still downloading (or queued)
+        the most it can grow to (W-9, audit 0923)."""
+        held = 0
+        for fut, _ in self._live:
+            done = fut.done() and not fut.cancelled() and fut.exception() is None
+            held += fut.result().size if done else self._max_bytes
+        return held
+
     def _fill(self) -> None:
         while self._queued and self._outstanding < self._lookahead:
+            # Alone in the window a page always goes: a budget smaller than
+            # one page means one page at a time, not a stream that stops.
+            if self._live and self._held() + self._max_bytes > self._lookahead_bytes:
+                return
             if self._stop is not None and self._stop.is_set():
                 self._queued.clear()  # W10: an aborted run submits no more
                 return
