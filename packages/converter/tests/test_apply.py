@@ -796,17 +796,32 @@ def test_a_running_job_is_not_recorded_by_the_apply(tmp_path, cluster):
     assert "kyrk" in [c[2] for c in cluster.of("apply")]
 
 
+def _read_fails(cluster, fails, status: int = 403) -> None:
+    """Make the fake API server answer ``status`` to each read ``fails(kind,
+    name)`` picks. Raised by the fake's ``read`` itself -- below
+    ``Cluster.get`` -- so what the apply sees is the real mapping of that
+    answer, and a ``get`` that took a refused read for "no such object" is
+    caught here: a finished campaign re-run, a live check skipped."""
+    real = cluster._api  # composes with an injection already in place
+
+    def method(kind, verb, name=""):
+        inner = real(kind, verb, name)
+        if verb != "read":
+            return inner
+
+        def read(name, ns, **kw):
+            if fails(kind, name):
+                raise ApiException(status=status, reason="Forbidden")
+            return inner(name, ns, **kw)
+
+        return read
+
+    cluster._api = method
+
+
 def _unreadable(cluster, kind: str, suffix: str = "") -> None:
     """Make every read of ``kind`` (named ``*suffix``) fail as forbidden."""
-
-    def forbidden(k, verb, name=""):
-        if verb == "read" and k == kind and name.endswith(suffix):
-            raise cluster_mod.ClusterError(
-                f"not allowed to get {k}/{name} in htr-test: Forbidden"
-            )
-        return FakeCluster._api(cluster, k, verb, name)
-
-    cluster._api = forbidden
+    _read_fails(cluster, lambda k, name: k == kind and name.endswith(suffix))
 
 
 def test_a_campaign_whose_job_cannot_be_read_is_left_as_it_was(
@@ -1233,19 +1248,16 @@ def test_a_refused_paused_campaign_whose_job_cannot_be_read_is_unenforced(
     repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
     cluster.live = [_running_job("pausy")]
     _refuses(cluster, "pausy", cluster_mod.ClusterError("apply Job/pausy: 409"))
-    real = cluster._api
     reads = [0]
 
-    def method(kind, verb, name=""):
+    def second_read_of_pausy(kind, name):
         # The first read (whether it has finished) goes through; the second,
         # for the pause, is refused.
-        if verb == "read" and kind == "Job" and name == "pausy":
+        if (kind, name) == ("Job", "pausy"):
             reads[0] += 1
-            if reads[0] > 1:
-                raise cluster_mod.ClusterError("not allowed to get Job/pausy")
-        return real(kind, verb, name)
+        return (kind, name) == ("Job", "pausy") and reads[0] > 1
 
-    cluster._api = method
+    _read_fails(cluster, second_read_of_pausy)
     rc = cli.main(["apply", str(repo), "--out", str(out), "--pause-wait", "1"])
     assert rc == 1
     err = capsys.readouterr().err
@@ -1470,15 +1482,7 @@ def test_a_live_record_it_may_not_read_stops_the_apply(tmp_path, cluster, capsys
     """The live ConfigMap is the one thing this apply holds a campaign
     against. When it cannot be read, the check cannot be made, and applying
     anyway is exactly the silent overwrite the check is there to stop."""
-
-    def forbidden(kind, verb, name=""):
-        if verb == "read" and kind == "ConfigMap":
-            raise cluster_mod.ClusterError(
-                f"not allowed to get {kind}/{name} in htr-test: Forbidden"
-            )
-        return FakeCluster._api(cluster, kind, verb, name)
-
-    cluster._api = forbidden
+    _unreadable(cluster, "ConfigMap")
     assert cli.main(["apply", str(_repo(tmp_path))]) == 1
     assert "not allowed to get ConfigMap/campaign-kyrk" in capsys.readouterr().err
     assert cluster.of("apply") == [] and cluster.of("dry-run") == []
@@ -2299,17 +2303,14 @@ def test_a_running_campaigns_volumes_it_may_not_read_hold_the_newcomers(
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     _rerun(repo)
-    real = FakeCluster._api
     reads = [0]
 
-    def api(kind, verb, name=""):
-        if verb == "read" and name == "campaign-loc":
+    def second_read_of_loc(kind, name):
+        if name == "campaign-loc":
             reads[0] += 1
-            if reads[0] > 1:  # the first is the append-only check's
-                raise cluster_mod.ClusterError("not allowed to get ConfigMap/x")
-        return real(cluster, kind, verb, name)
+        return name == "campaign-loc" and reads[0] > 1  # the first: append-only
 
-    cluster._api = api
+    _read_fails(cluster, second_read_of_loc)
     cluster.calls.clear()
     assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
     assert ("apply", "Job", "rerun") not in cluster.calls
