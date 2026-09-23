@@ -226,3 +226,23 @@ def test_releasing_real_inference_steps_ends_their_threads(caplog):
     assert caplog.text == ""
     assert driver.leaked_threads(grace=5.0) == 0
     assert not any(t.is_alive() for t in threads)
+
+
+def test_the_watchdog_sees_a_real_inference_step_move():
+    """Review I-2: every batch the model finishes changes what
+    ``_progress_mark`` reads off the real BatchedQueue."""
+    import time
+
+    from htrflow.pipeline.steps import TextRecognition
+
+    from htrflow_batch import driver
+
+    step = TextRecognition(_SlowModel(gap=0.05))
+    pipeline = type("P", (), {"steps": [step]})()
+    futures = [step._queue.put(i) for i in range(20)]
+    marks = set()
+    while not all(f.done() for f in futures):
+        marks.add(driver._progress_mark(pipeline))
+        time.sleep(0.01)
+    driver.release_steps([step])
+    assert len(marks) > 5

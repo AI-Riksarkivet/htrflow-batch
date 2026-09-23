@@ -1104,7 +1104,7 @@ def test_a_worker_stuck_in_its_model_is_counted_as_leaked(abandoned):
     assert abandoned.leaked_threads(grace=2.0) == 0
 
 
-def test_a_page_that_runs_past_its_budget_is_a_dead_pipeline(
+def test_a_page_that_makes_no_progress_is_a_dead_pipeline(
     tmp_path, monkeypatch, abandoned
 ):
     """Audit 0923 W-8: there was no per-page bound, so a hung model held the
@@ -1122,13 +1122,79 @@ def test_a_page_that_runs_past_its_budget_is_a_dead_pipeline(
             hang.wait(30)
 
     try:
-        with pytest.raises(abandoned.PipelineDead, match="more than 0.2 s"):
+        with pytest.raises(abandoned.PipelineDead, match="no progress for 0.2 s"):
             abandoned.process_page(
                 _HungPipeline(), _image(tmp_path), tmp_path / "out", seconds=0.2
             )
         assert abandoned.leaked_threads(grace=0.1) == 1
     finally:
         hang.set()
+
+
+def _steady_queue_pipeline(batches: int, gap: float):
+    """An Inference step's queue as the watchdog sees it: every batch the
+    model finishes, its worker takes the next one off ``_out``."""
+    import queue
+
+    step = SimpleNamespace(
+        _queue=SimpleNamespace(_in=queue.Queue(), _out=queue.Queue())
+    )
+
+    class _Pipeline:
+        steps = [step]
+
+        def run(self, document):
+            for i in range(batches):
+                step._queue._out.put(i)
+            for _ in range(batches):
+                time.sleep(gap)
+                step._queue._out.get()
+
+    return _Pipeline()
+
+
+def test_a_slow_page_that_keeps_making_progress_completes(
+    tmp_path, monkeypatch, abandoned
+):
+    """Review I-2: the budget was a total per page, and a broadsheet page of
+    1 500 lines on TrOCR legitimately takes 300-1 000 s -- it was failed, and
+    its model, not hung at all, went on running beside the rebuilt one. The
+    budget is a no-progress window: every batch the model finishes restarts
+    it, so a page far longer than the window completes."""
+    _inject_process_fakes(monkeypatch)
+    monkeypatch.setattr(abandoned, "THREAD_POLL_SECONDS", 0.01)
+    out = tmp_path / "out"
+    for fmt in ("alto", "page"):
+        (out / fmt).mkdir(parents=True)
+        (out / fmt / "0044.xml").write_text("<x/>")
+    pipeline = _steady_queue_pipeline(batches=20, gap=0.05)  # ~1 s in all
+
+    files = abandoned.process_page(pipeline, _image(tmp_path), out, seconds=0.25)
+    assert set(files) == {"alto", "page"}
+    assert abandoned.leaked_threads(grace=0.1) == 0
+
+
+def test_a_step_that_finishes_is_progress_too(tmp_path, monkeypatch, abandoned):
+    """Steps with no worker queue (reading order, the Exports) show their
+    progress in htrflow's own registry: Pipeline.run records each step."""
+    _inject_process_fakes(monkeypatch)
+    progress = _inject_progress_fake(monkeypatch)
+    monkeypatch.setattr(abandoned, "THREAD_POLL_SECONDS", 0.01)
+    out = tmp_path / "out"
+    for fmt in ("alto", "page"):
+        (out / fmt).mkdir(parents=True)
+        (out / fmt / "0044.xml").write_text("<x/>")
+
+    class _ManySteps:
+        steps: list = []
+
+        def run(self, document):
+            for i in range(20):
+                time.sleep(0.05)
+                progress._steps.setdefault(document, []).append(f"step {i}")
+
+    files = abandoned.process_page(_ManySteps(), _image(tmp_path), out, seconds=0.25)
+    assert set(files) == {"alto", "page"}
 
 
 def test_a_step_missing_the_threads_it_should_have_is_loud(abandoned, caplog):
