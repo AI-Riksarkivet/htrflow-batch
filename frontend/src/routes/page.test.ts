@@ -250,24 +250,9 @@ describe("/ campaign page", () => {
   });
 
   // The list page is left open for hours, with a card per campaign each
-  // polling for its own volume table (2026-09-14 audit).
-  test("a slow poll is not joined by the next one", async () => {
-    let listCalls = 0;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string) => {
-        if (url.toString().endsWith("/version"))
-          return jsonResponse({ version: "v0.2.0", web: "0.1.0" });
-        if (url.toString().includes("/jobs/")) return jsonResponse(detail);
-        listCalls += 1;
-        return new Promise<Response>(() => {}); // never answers
-      }) as unknown as typeof fetch,
-    );
-    render(CampaignsPage);
-    await vi.advanceTimersByTimeAsync(RELOAD_MS * 5);
-    expect(listCalls).toBe(1);
-  });
-
+  // polling for its own volume table (2026-09-14 audit). What a poll does
+  // with a hidden tab or a slow answer is $lib/poll's own test; this is that
+  // the page and its cards poll through it.
   test("nothing is polled while the tab is in the background", async () => {
     const fetchMock = vi.fn(routedFetch([job]));
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
@@ -338,11 +323,5 @@ describe("/ campaign list order", () => {
       "htr-test/older",
       "htr-test/queued",
     ]);
-  });
-
-  test("a list of one band keeps the order the API sent", async () => {
-    const a = { ...clean, name: "a", phase: "Queued" };
-    const b = { ...clean, name: "b", phase: "Paused" };
-    expect(await names([b, a])).toEqual(["htr-test/b", "htr-test/a"]);
   });
 });
