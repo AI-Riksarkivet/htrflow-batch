@@ -76,7 +76,7 @@ the key prefixes and the CORS rule.
 Everything the namespace runs is pinned by digest. The published images are
 `docker.io/riksarkivet/htrflow-batch` (the wrapper),
 `docker.io/riksarkivet/htrflow-web` (the web front) and
-`docker.io/riksarkivet/htrflow-campaigns` (the converter, for CI or an Argo CD
+`docker.io/riksarkivet/htrflow-campaigns` (the converter, for the Argo CD
 apply hook). To build and push your own, see
 [Releasing](../development/releasing.md). Whichever registry you use goes
 into `security.allowedImageRepos`.
