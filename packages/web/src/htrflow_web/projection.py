@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import datetime, timezone
+from typing import NamedTuple
 from urllib.parse import quote
 
 import yaml
@@ -477,14 +478,32 @@ def status_configmap(row: dict, data: dict[str, str], labels: bool = True) -> di
 
 #: `htrflow-campaigns apply`'s field manager (converter ``cluster.FIELD_MANAGER``).
 APPLY_MANAGER = "htrflow-campaigns"
+#: This API's own two. ``failedVolumes`` has a manager of its own, written
+#: by the detail route alone -- the only one that reads pods and so the only
+#: one with anything new to say about it. Sent by both routes under one
+#: manager, a list request re-sent the value it had read and could apply it
+#: over reasons a detail request had written a moment before (2026-09-23
+#: audit).
+WEB_MANAGER = "htrflow-web"
+FAILURES_MANAGER = "htrflow-web-failures"
+_FAILED = "failedVolumes"
 
 
-def _applys_keys(meta: dict) -> set[str]:
-    """The ``data`` keys `htrflow-campaigns apply` owns in the stored record,
-    as the API server wrote them down in its ``managedFields``."""
+class RecordWrite(NamedTuple):
+    """One server-side apply of the status ConfigMap: the object, whether it
+    is forced, and the field manager it is sent as."""
+
+    body: dict
+    force: bool
+    manager: str
+
+
+def _owned_keys(meta: dict, manager: str) -> set[str]:
+    """The ``data`` keys ``manager`` owns in the stored record, as the API
+    server wrote them down in its ``managedFields``."""
     keys: set[str] = set()
     for entry in meta.get("managedFields") or []:
-        if entry.get("manager") == APPLY_MANAGER and entry.get("operation") == "Apply":
+        if entry.get("manager") == manager and entry.get("operation") == "Apply":
             data = (entry.get("fieldsV1") or {}).get("f:data") or {}
             keys |= {k.removeprefix("f:") for k in data}
     return keys
@@ -492,41 +511,101 @@ def _applys_keys(meta: dict) -> set[str]:
 
 def record_write(
     stored: dict | None, row: dict, fresh: dict[str, str]
-) -> tuple[dict, bool] | None:
-    """What to apply over the ``stored`` status ConfigMap, and whether to
-    force it -- or ``None`` when it already says all of it.
+) -> list[RecordWrite]:
+    """What to apply over the ``stored`` status ConfigMap, in order -- none
+    when it already says all of it. The summary first, then (detail route
+    only: ``fresh`` carries ``failedVolumes``) the failures.
 
     Who owns what (3075, 3081). ``jobUid`` names the Job the record is
     about. `htrflow-campaigns apply` writes the ending it reads off that
     Job -- the summary fields, ``jobUid`` and the labels -- forced, once the
     Job is over; that is authoritative, and once apply owns ``phase`` for
-    this Job this API sends only the keys apply does not own, which is
-    ``failedVolumes``: server-side apply keeps a field another manager still
-    owns when this one leaves it out, so nothing is lost by omission and
-    nothing is left to conflict over. Until then this API writes the whole
-    record, merged over what is stored (``merge_record``). A record of
-    ANOTHER Job -- one reaped, then recreated under the same name -- says
-    nothing about this run: it is replaced whole, and forced when apply
-    still owns some of the old run's fields, on the ``resourceVersion``
-    this request read, so an ending apply writes in between wins (a 409).
-    A record without a ``jobUid`` predates it and counts as this Job's.
+    this Job the summary sends only the keys apply does not own: server-side
+    apply keeps a field another manager still owns when this one leaves it
+    out, so nothing is lost by omission and nothing is left to conflict
+    over. Until then the summary is the whole observation, merged over what
+    is stored (``merge_record``). A record of ANOTHER Job -- one reaped, then
+    recreated under the same name -- says nothing about this run: it is
+    replaced whole, and forced when another manager still owns some of the
+    old run's fields, on the ``resourceVersion`` this request read, so an
+    ending apply writes in between wins (a 409). A record without a
+    ``jobUid`` predates it and counts as this Job's.
+
+    ``failedVolumes`` is ``FAILURES_MANAGER``'s alone (``_failures_write``).
+    The summary leaves it out -- except while ``WEB_MANAGER`` still owns it
+    from before it had a manager of its own: a manager that stops sending a
+    field releases it, and a field nobody owns is deleted, so the summary
+    keeps sending the stored value until the failures manager has taken the
+    field over (forced). A list request that read the value before that
+    take-over then conflicts rather than overwrites.
     """
     data = (stored or {}).get("data") or {}
     meta = (stored or {}).get("metadata") or {}
+    fresh = dict(fresh)
+    failed = fresh.pop(_FAILED, None)
     other_job = data.get("jobUid", "") not in ("", fresh["jobUid"])
-    body = fresh if other_job else merge_record(data, fresh)
-    theirs = _applys_keys(meta)
+    writes = []
+    summary = _summary_write(data, meta, row, fresh, other_job, failed is None)
+    if summary is not None:
+        writes.append(summary)
+    if failed is not None:
+        failures = _failures_write(data, meta, row, failed, other_job)
+        if failures is not None:
+            writes.append(failures)
+    return writes
+
+
+def _summary_write(
+    data: dict[str, str],
+    meta: dict,
+    row: dict,
+    fresh: dict[str, str],
+    other_job: bool,
+    alone: bool,
+) -> RecordWrite | None:
+    """``WEB_MANAGER``'s apply: every field but ``failedVolumes``. ``alone``
+    says no failures write follows it in this request -- a record of another
+    Job then has its old run's failures cleared here, forced, since nothing
+    else would clear them."""
+    kept = {k: v for k, v in data.items() if k != _FAILED}
+    body = fresh if other_job else merge_record(kept, fresh)
+    if _FAILED in data:
+        if other_job and alone:
+            body = {**body, _FAILED: "[]"}
+        elif not other_job and _FAILED in _owned_keys(meta, WEB_MANAGER):
+            body = {**body, _FAILED: data[_FAILED]}
+    theirs = _owned_keys(meta, APPLY_MANAGER)
     if not other_job and "phase" in theirs:
         body = {k: v for k, v in body.items() if k not in theirs}
         if all(data.get(k) == v for k, v in body.items()):
             return None
-        return status_configmap(row, body, labels=False), False
-    if not other_job and body == data:
+        return RecordWrite(
+            status_configmap(row, body, labels=False), False, WEB_MANAGER
+        )
+    if not other_job and all(data.get(k) == v for k, v in body.items()):
         return None
+    force = bool(theirs) or (other_job and _FAILED in body and _FAILED in data)
     cm = status_configmap(row, body)
-    if theirs:
+    if force:
         cm["metadata"]["resourceVersion"] = meta.get("resourceVersion", "")
-    return cm, bool(theirs)
+    return RecordWrite(cm, force, WEB_MANAGER)
+
+
+def _failures_write(
+    data: dict[str, str], meta: dict, row: dict, failed: str, other_job: bool
+) -> RecordWrite | None:
+    """``FAILURES_MANAGER``'s apply: ``failedVolumes`` and nothing else,
+    merged per volume with what is stored (``merge_record``) -- or, for a
+    record of another Job, this run's alone. Forced: no other manager has
+    anything to say about the field, and one that owns it still -- this
+    API's summary manager, from before the split -- has to give it up."""
+    old = {} if other_job or _FAILED not in data else {_FAILED: data[_FAILED]}
+    value = merge_record(old, {_FAILED: failed})[_FAILED]
+    owned = _FAILED in _owned_keys(meta, FAILURES_MANAGER)
+    if owned and data.get(_FAILED) == value:
+        return None
+    body = status_configmap(row, {_FAILED: value}, labels=False)
+    return RecordWrite(body, True, FAILURES_MANAGER)
 
 
 def match_warmup(job: dict, warmup_jobs: list[dict]) -> dict | None:

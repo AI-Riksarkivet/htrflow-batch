@@ -358,6 +358,11 @@ def test_the_record_is_applied_the_way_a_server_side_apply_is(reader: Reader):
     assert call["body"] == RECORD
 
 
+def test_the_failures_are_applied_as_their_own_manager(reader: Reader):
+    reader.apply_configmap(RECORD, force=True, manager=projection.FAILURES_MANAGER)
+    assert reader.calls[0]["query"]["fieldManager"] == "htrflow-web-failures"
+
+
 def test_the_apply_never_forces_another_managers_field(reader: Reader):
     """`htrflow-campaigns apply` writes this same record from the live Job
     once a campaign is over, and its terminal values are the authoritative

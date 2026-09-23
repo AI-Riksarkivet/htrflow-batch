@@ -366,26 +366,26 @@ def create_app(
             return False
         uid = (job.get("metadata") or {}).get("uid", "")
         fresh = projection.status_record(row, failures, job_uid=uid)
-        write = projection.record_write(live, row, fresh)
-        if write is None:
-            return False
-        cm, force = write
+        writes = projection.record_write(live, row, fresh)
         namespace = row["namespace"]
-        try:
-            reader.apply_configmap(cm, force=force)
-        except ApplyConflict:
-            # `htrflow-campaigns apply` wrote the record since this request
-            # read it, and its ending is the authoritative one. Nothing is
-            # wrong with this service's grant, so the namespace does not go
-            # into the cooldown below (2026-09-14 review).
-            return True
-        except Exception as e:  # noqa: BLE001 - any client error, same answer
-            if namespace not in refused:
-                _LOG.warning("could not write %s: %s", cm["metadata"]["name"], e)
-            refused[namespace] = time.monotonic()
-            return True
-        refused.pop(namespace, None)
-        return True
+        for cm, force, manager in writes:  # in order: each builds on the last
+            try:
+                reader.apply_configmap(cm, force=force, manager=manager)
+            except ApplyConflict:
+                # `htrflow-campaigns apply` wrote the record since this
+                # request read it, and its ending is the authoritative one.
+                # Nothing is wrong with this service's grant, so the
+                # namespace does not go into the cooldown below (2026-09-14
+                # review). The next poll reads what it wrote.
+                return True
+            except Exception as e:  # noqa: BLE001 - any client error, same answer
+                if namespace not in refused:
+                    _LOG.warning("could not write %s: %s", cm["metadata"]["name"], e)
+                refused[namespace] = time.monotonic()
+                return True
+        if writes:
+            refused.pop(namespace, None)
+        return bool(writes)
 
     def _campaign_configmaps() -> tuple[dict, dict]:
         """A campaign's two ConfigMaps, each by (namespace, campaign name):
