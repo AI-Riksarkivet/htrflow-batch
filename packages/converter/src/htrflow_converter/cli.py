@@ -7,7 +7,6 @@ import contextlib
 import getpass
 import hashlib
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -20,8 +19,7 @@ import yaml
 from . import render
 from .models import STATUS_SUFFIX, Campaign, parse_source_line
 from .parse import ValidationError, load
-
-_PART_RE = re.compile(r"-part(\d+)\.yaml\Z")
+from .record import CorruptRenderedFile, existing_parts, rendered, volumes_txt
 
 #: Where a campaigns repo keeps its committed render. The one source of
 #: truth for the RECORD a re-render is held against: `render --out` says
@@ -167,27 +165,6 @@ def _write(path: Path, docs: list[dict]) -> None:
     path.write_text(yaml.safe_dump_all(docs, sort_keys=False))
 
 
-class _CorruptRenderedFile(Exception):
-    def __init__(self, path: Path, reason: object) -> None:
-        super().__init__(f"{path}: cannot read existing campaign: {reason}")
-
-
-def _rendered(path: Path, kind: str) -> dict:
-    """The object of ``kind`` in one rendered campaign file."""
-    try:
-        docs = yaml.load_all(path.read_text(), Loader=_FAST_LOADER)
-        return next(d for d in docs if isinstance(d, dict) and d.get("kind") == kind)
-    except (yaml.YAMLError, StopIteration) as e:
-        raise _CorruptRenderedFile(path, e) from e
-
-
-def _volumes_txt(path: Path) -> str:
-    try:
-        return _rendered(path, "ConfigMap")["data"]["volumes.txt"].rstrip("\n")
-    except (KeyError, TypeError) as e:
-        raise _CorruptRenderedFile(path, e) from e
-
-
 def _pods_at_once(job: dict) -> tuple[int, bool]:
     """How many pods a campaign Job runs at once, as Kueue counts them for
     its Workload -- ``min(parallelism, completions)`` -- and whether the
@@ -197,57 +174,6 @@ def _pods_at_once(job: dict) -> tuple[int, bool]:
     return min(parallelism, spec.get("completions", parallelism)), bool(
         spec.get("suspend")
     )
-
-
-def _part_number(path: Path) -> int:
-    m = _PART_RE.search(path.name)
-    return int(m.group(1)) if m else 0
-
-
-#: libyaml where the platform has it: a part's ConfigMap is up to 900 KiB
-#: of ``volumes.txt``, read here once more than the append-only check does.
-_FAST_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
-
-
-def _rendered_campaign(path: Path) -> str | None:
-    """The campaign a rendered file says it belongs to: the converter's
-    campaign label on its objects. ``None`` when the file does not say --
-    unreadable, or written without the label -- which the caller counts
-    against every campaign it could be, so the check that reads it next
-    reports it rather than passing it by."""
-    try:
-        for doc in yaml.load_all(path.read_text(), Loader=_FAST_LOADER):
-            labels = ((doc or {}).get("metadata") or {}).get("labels") or {}
-            if render.CAMPAIGN_LABEL in labels:
-                return labels[render.CAMPAIGN_LABEL]
-    except (yaml.YAMLError, OSError, AttributeError):
-        pass
-    return None
-
-
-def _existing_parts(campaigns_out: Path, c: Campaign) -> list[Path]:
-    """Every file an earlier render of this campaign left in ``out``, in the
-    order it wrote them. A campaign that splits renders under a name cut
-    short of its own (see ``render.split_stem``), so the ``-partN`` files are
-    looked up under that stem, not under the campaign's own name. Matched
-    whole, never globbed: ``loc-part*`` also finds the campaign ``loc-partner``
-    (3088).
-
-    A stem is not an owner, though: two long names that agree on their first
-    50 characters share one, and ``<stem>-b`` rendered as a single Job used to
-    be handed ``<stem>-a``'s parts as its own -- "append-only", with nothing
-    changed (audit 0923 C-4). A part is this campaign's when its label says
-    so. ``<name>.yaml`` needs no such check: no other campaign renders there,
-    since a campaign name may not end in ``-part<number>``."""
-    part = re.compile(re.escape(render.split_stem(c.name)) + r"-part\d+\.yaml\Z")
-    paths = sorted(campaigns_out.glob(f"{c.name}.yaml"))
-    mine = render.label_value(c.name)
-    parts = [
-        p
-        for p in campaigns_out.glob("*.yaml")
-        if part.match(p.name) and _rendered_campaign(p) in (mine, None)
-    ]
-    return paths + sorted(parts, key=_part_number)
 
 
 def _colliding_names(campaigns: list[Campaign]) -> str | None:
@@ -321,7 +247,7 @@ def _edited_pipeline(campaigns, pipelines: dict, cfg, out: Path) -> str | None:
     finished one is retired -- holds nothing, and neither does one this
     render is writing for the first time.
     """
-    parts = {c.name: _existing_parts(out / "campaigns", c) for c in campaigns}
+    parts = {c.name: existing_parts(out / "campaigns", c.name) for c in campaigns}
     recorded = {c.name: _recorded_pipelines(parts[c.name]) for c in campaigns}
     for p in pipelines.values():
         before = _recorded_recipe(out / "pipelines" / f"{p.id}.yaml")
@@ -362,8 +288,8 @@ def _moved_window(c: Campaign, record: list[Path], cfg) -> str | None:
     the record paused runs no pods, so its count may move."""
     for path, volumes in zip(record, render.split(c.volumes)):
         try:
-            before, paused = _pods_at_once(_rendered(path, "Job"))
-        except _CorruptRenderedFile as e:
+            before, paused = _pods_at_once(rendered(path, "Job"))
+        except CorruptRenderedFile as e:
             return str(e)
         after = min(render.parallelism(c, cfg), len(volumes))
         if before != after and not paused:
@@ -373,7 +299,7 @@ def _moved_window(c: Campaign, record: list[Path], cfg) -> str | None:
 
 def _moved_campaign(c: Campaign, record: Path, cfg) -> str | None:
     """One sentence when ``c`` no longer renders as the record says it did."""
-    existing = _existing_parts(record / "campaigns", c)
+    existing = existing_parts(record / "campaigns", c.name)
     if not existing:
         return None
     # Parsed, never byte-for-byte: a rendered file written before the
@@ -383,9 +309,9 @@ def _moved_campaign(c: Campaign, record: Path, cfg) -> str | None:
         before = [
             parse_source_line(line)
             for p in existing
-            for line in _volumes_txt(p).splitlines()
+            for line in volumes_txt(p).splitlines()
         ]
-    except _CorruptRenderedFile as e:
+    except CorruptRenderedFile as e:
         return str(e)
     if before != [parse_source_line(v.source_line()) for v in c.volumes]:
         return f"campaign {c.name} is append-only: create a new campaign"
