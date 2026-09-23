@@ -4,10 +4,10 @@ Everything the system writes lands in one bucket (default `htr-results`).
 Results are namespaced `<namespace>/<pipeline>/<volume>/` — the namespace
 comes from `S3_PREFIX`, which the converter always sets to the campaign's
 namespace, and the pipeline id is part of the key, so re-running a volume
-under a new recipe never overwrites old results. Campaign state is derived
-live from the Kubernetes API by the read API (`packages/web`); the one thing
-the cluster cannot answer — how many pages a running volume has done — the
-wrapper writes beside its results as `progress.json` (below).
+under a new recipe never overwrites old results. Campaign state is computed
+live by the read API ([Web front & read API](web.md)); the one thing the
+cluster cannot answer, how far a running volume has got, the wrapper writes
+beside its results as `progress.json`.
 
 ## Key layout
 
@@ -40,18 +40,9 @@ Writers: the **wrapper** is the only writer in the whole tree — its own
 *front* of the `sources/` key, so the synthetic manifests sit at
 `<namespace>/sources/…`, not `sources/<namespace>/…`; `status/` alone is
 namespace-free, since the browser resolves run-log links against the bucket
-root. Nothing else in this system writes to S3 at all — the read API only
-*reads*, and only `progress.json`/`manifest.json`, for the volumes of the
-campaign it is answering about ([Live status](#live-status-the-read-api-not-a-file)).
-
-The API pod does that reading itself, not the browser, so it needs its own
-path to the bucket: `HTRFLOW_INTERNAL_RESULTS_BASE` (chart
-`web.internalResultsBase`), separate from `HTRFLOW_PUBLIC_RESULTS_BASE`, the
-address it hands the browser. The two differ whenever the browser reaches the
-bucket through an address the pod cannot — a tunnel or port-forward on the
-reader's machine, say, which the pod would resolve to itself. Confuse them
-there and the API silently reads no progress at all; see
-[Chart Values](chart.md).
+root. Nothing else in this system writes to S3 at all. The read API only
+reads `progress.json` and `manifest.json`, through its own address for the
+bucket ([View Results](../getting-started/viewing.md)).
 
 Anonymous read and listing are set by the bucket policy, described in
 [Security](../how-it-works/security.md#the-bucket-policy): with the
@@ -121,94 +112,16 @@ termination message and the pod's log instead.
 | `viewer_published` | `true` once an `iiif.json` PUT has actually succeeded — interim or final. What the frontend's "open in the viewer" link switches on, never a page count |
 | `started_at`, `updated_at` | ISO 8601 UTC |
 
-The **incremental `iiif.json`** is the other half of the same idea: every 10
-pages (`progress.PUBLISH_EVERY_PAGES`) the wrapper republishes the viewer
-manifest with the pages finished so far, so a 638-page volume is readable in
-the viewer at page 10 instead of at page 638. Only the dimensions this run
-holds in memory go into it — reading a resumed run's earlier ALTOs back would
-be one S3 GET per page in the middle of the page loop — so on a resumed run
-(whose `pages_done` counts pages this process never touched) the interim
-publish is skipped outright whenever those in-memory dimensions cover fewer
-pages than `pages_done` says are finished, rather than overwrite a complete
-`iiif.json` with one naming only the pages since resume; the final publish
-reads the resumed pages' ALTO back and always writes the complete one.
+The **interim `iiif.json`**: every 10 pages the wrapper republishes the
+viewer manifest with the pages finished so far, so a long volume opens in
+the viewer early. A resumed run skips the interim publish until it covers
+every finished page; the final publish always writes the complete one
+([From Image to Transcription](../how-it-works/page-flow.md)).
 
-## Live status: the read API, not a file
+## Live status
 
-`GET /api/v1/jobs` and `GET /api/v1/jobs/{namespace}/{name}` are the whole
-story: every response is computed live from the Job/Pod/ConfigMap state, plus
-the volumes' own `progress.json` (memoized 5 s for a running volume and an
-hour for one that is over, never persisted here). A
-stored status document would need a writer that stays in step with the
-cluster; computing it on each request cannot drift.
-
-Nothing campaign-level is written to **this bucket**. One summary *is*
-written, but as a cluster object rather than an S3 key: the ConfigMap
-`campaign-<name>-status`, by the read API and by `htrflow-campaigns apply`,
-so that a campaign's phase and counts survive the Job's TTL
-([The record a campaign leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)).
-It is a summary, not a mirror: the per-index detail still lives on the Job
-while the Job exists, and in each volume's own `manifest.json` afterwards.
-
-- **Campaign summary**: `namespace`, `name`, `pipeline`, `phase`
-  (`Queued`/`Paused`/`Running`/`Succeeded`/`PartiallyFailed`/`Failed`,
-  derived from the Job's `Complete`/`Failed` conditions and its `suspend`
-  flag — `PartiallyFailed` is the `Failed` condition with a non-empty
-  `completedIndexes`, and a suspended Job is `Queued` until an index has
-  completed, `Paused` after), `counts` (`total` = `completions`, `active`,
-  `done` = `|completedIndexes|`, `failed` = `|failedIndexes|`), `suspended`,
-  `createdAt`, `resultsBase` (`<public_results_base>/<namespace>/<pipeline>`),
-  and `warmup` (`{phase, reason?}` — the pipeline's warm-up Job, matched by
-  namespace + pipeline label).
-- **Per-volume detail** (paged by index, `offset`/`limit`, default 200, at
-  most 1000): one row per line of the campaign's `volumes.txt` ConfigMap —
-  `index`, `id`, `state` (`done`/`failed`/`active`/`pending`),
-  `manifestUrl`/`iiifUrl`/`altoPrefix` (built from `resultsBase`),
-  `sourceUrl` (the URL half of the `volumes.txt` line; absent for an
-  `images:` volume, which has no manifest), `progress` (below), `logUrl` —
-  an absolute URL (`<public_results_base>/status/logs/<pipeline>/<id>.txt`,
-  unconditional; bucket-root, no namespace/`S3_PREFIX` prefix, since the
-  browser has no bucket base URL to resolve a bare key against) — and
-  `reason`, the failed pod's own termination message parsed into
-  `{stage, permanent, error}`, present only while a pod for that index still
-  exists. A pod that failed before the wrapper started (the `warmup-wait`
-  gate) carries that init container's message instead, and a pod killed at
-  its deadline reads `"error": "DeadlineExceeded"`. A pod that left no
-  message at all — killed for memory, evicted — reads the pod's own reason
-  (`"Evicted"`), else the stopped container's reason and exit code
-  (`"OOMKilled (exit code 137)"`).
-- **Per-volume progress**: `progress` is `{done, total, failed, lastPage,
-  stage, updatedAt, ageSeconds, lastError, errors, viewerPublished}`, or
-  `null` when nothing is known — read by the API from that volume's
-  `progress.json`, falling back to `manifest.json`'s counts when a volume has
-  none. `ageSeconds` is computed by the API from its own clock at fetch time,
-  not left for the browser to derive from `updatedAt`, so a reader's clock
-  skew cannot make a row read "0 s ago". A `pending` volume is never fetched,
-  and a bucket that does not answer is `null`, never a 500. Every run volume
-  of the campaign is read, `active` ones first, then the failures and
-  `latest`, then the requested page, then the rest — from the API's cache
-  when it has the answer, which costs nothing, and otherwise with at most
-  `PROGRESS_FETCH_CAP` (100) GETs and five seconds per request, so no request
-  turns into hundreds of sequential GETs through the API's one HTTP client.
-  An answer about a volume that is over (`done`, `failed`, `unknown`) is
-  kept for the hour, an absent file included; a bucket that did not answer
-  is asked again on a later request. A row not read yet carries no
-  `progress`.
-- **Failures**: up to 50 of the most recent failed rows, with or without a
-  `reason`, included in the detail response.
-- **Detail-only, computed over every volume** (not just the requested page):
-  `latest` — the volume a folded card shows, the newest `active` row else
-  the newest `done` one — and `pipelineSteps` / `pipelineYaml`, read from
-  the campaign's `htr-pipeline-<id>` ConfigMap.
-- **Detail-only, summed over every run volume whose `progress` has been
-  read**: `pagesDone`, `pagesTotal`, `pagesFailed`, `errors`, and
-  `lastError` — the most recent page failure among them, with the `volume`
-  it happened in and that volume's `logUrl`, so the campaign card can link to
-  a run log for a row that is not on the page being shown — and
-  `pagesCoverage` (`{counted, of}`), how many of the campaign's run volumes
-  those sums cover. The cache fills over a few polls, so `counted` reaches
-  `of` for any campaign whose run volumes fit in the cache (20 000); until
-  it does, a volume that lost pages may simply not be read yet.
-
-Full field derivation: [`packages/web/src/htrflow_web/projection.py`](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/packages/web/src/htrflow_web/projection.py).
-The frontend consumes this shape directly — see [Campaign Browser](frontend.md).
+Nothing campaign-level is written to the bucket. The read API computes each
+campaign's phase, counts and per-volume rows live from the cluster, reading
+only `progress.json` (or `manifest.json`) here, and keeps a short summary in
+the cluster as the `campaign-<name>-status` ConfigMap. The fields are in
+[Web front & read API](web.md).
