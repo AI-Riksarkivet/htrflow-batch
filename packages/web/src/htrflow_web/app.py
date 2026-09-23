@@ -32,7 +32,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import projection
-from .kube import ApplyConflict, ClusterUnavailable
+from .kube import ApplyConflict, ClusterUnavailable, is_campaign
 from .progress import ProgressReader
 
 _LOG = logging.getLogger(__name__)
@@ -474,7 +474,9 @@ def create_app(
         if not _serves(namespace, name):
             raise HTTPException(status_code=404, detail="job not found")
         job = reader.get_job(namespace, name)
-        if job is None:
+        # A Job that is not a campaign is no campaign's Job: the name is
+        # answered as though it were absent, from a record or not at all.
+        if job is None or not is_campaign(job):
             return _reaped_detail(namespace, name, offset, limit)
         cm_name = projection.configmap_ref(job)
         configmap = reader.get_configmap(namespace, cm_name) if cm_name else None
