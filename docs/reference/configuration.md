@@ -115,6 +115,7 @@ template` refuses it, **nobody** = convention only.
 | `MAX_IMAGE_WIDTH` | env | `2500` | — | no secret — nobody |
 | `RESUME` | env | `true` | — | no secret — nobody |
 | `LOOKAHEAD_PAGES` | env | `64` | — | no secret — nobody |
+| `LOOKAHEAD_BYTES` | env | `1073741824` | — | no secret — nobody |
 | `MAX_PAGES` | env | `0` | — | no secret — nobody |
 | `WORKDIR_PATH` | env | `/work` | — | no secret — nobody |
 | `DOWNLOAD_CONCURRENCY` | env | `12` | — | no secret — nobody |
@@ -123,8 +124,11 @@ template` refuses it, **nobody** = convention only.
 | `FETCH_MAX_BYTES` | env | `67108864` | — | no secret — nobody |
 | `DOWNLOAD_DEADLINE_SECONDS` | env | `300.0` | — | no secret — nobody |
 | `MAX_IMAGE_PIXELS` | env | `100000000` | — | no secret — nobody |
+| `PAGE_TIMEOUT_SECONDS` | env | `600.0` | — | no secret — nobody |
 | `IMAGE_DIGEST` | env | `unknown` | — | no secret — nobody |
 | `HTRFLOW_BASE_REVISION` | env | `unknown` | — | no secret — nobody |
+| `INDEX_FAILURE_COUNT` | env | `0` | — | no secret — nobody |
+| `BACKOFF_LIMIT_PER_INDEX` | env | `-1` | — | no secret — nobody |
 
 `Config` is not the whole wrapper env: these 6
 names are read directly, by the warm-up entrypoint or by the Job

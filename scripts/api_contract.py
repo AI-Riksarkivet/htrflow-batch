@@ -19,11 +19,14 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
+
+import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "packages" / "web" / "src"))
 
-from htrflow_web import projection  # noqa: E402
+from htrflow_web import progress, projection  # noqa: E402
 
 FIXTURE = ROOT / "frontend" / "src" / "lib" / "fixtures" / "api-contract.json"
 
@@ -108,25 +111,42 @@ RUNNING_POD = {
     "status": {},
 }
 
-#: Every field the wrapper's progress.json contributes, so the schema sees
-#: a populated one rather than only nulls.
-PROGRESS = {
-    "done": 137,
-    "total": 638,
-    "failed": 1,
-    "lastPage": "0137",
+#: A volume's progress.json as the wrapper writes it (its
+#: ``ProgressTracker.body``), with every field set so the schema sees a
+#: populated row rather than only nulls.
+WRAPPER_PROGRESS = {
     "stage": "stream",
-    "updatedAt": "2026-09-14T07:31:00Z",
-    "ageSeconds": 12,
-    "lastError": {"page": "0044", "error": "the worker thread died"},
+    "pages_total": 638,
+    "pages_done": 137,
+    "pages_failed": 1,
+    "last_page": "0137",
+    "last_error": {"page": "0044", "error": "the worker thread died"},
     "errors": 3,
-    "viewerPublished": True,
+    "viewer_published": True,
+    "started_at": "2026-09-14T07:02:00+00:00",
+    "updated_at": "2026-09-14T07:31:00+00:00",
 }
 
+#: The API's clock when it read that file: 12 s after it was written.
+#: Frozen, so the fixture's ageSeconds is the same on every run.
+NOW = 1789371072.0  # 2026-09-14T07:31:12+00:00
 
-def _progress(_base: str, _volume_id: str, state: str) -> dict | None:
-    """Progress for the rows that can have it; `None` reads as "not known"."""
-    return None if state == "pending" else PROGRESS
+
+def _bucket(_request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, json=WRAPPER_PROGRESS)
+
+
+#: The read API's own reader, answered by a bucket that holds the file above
+#: for every volume: the progress rows below are what `htrflow_web.progress`
+#: makes of it, never a copy of its output that a renamed field would leave
+#: green (2026-09-23 audit).
+READER = progress.ProgressReader(httpx.Client(transport=httpx.MockTransport(_bucket)))
+
+
+def _progress(base: str, volume_id: str, state: str) -> dict | None:
+    """Progress for the rows that can have it, read through the reader."""
+    with mock.patch.object(progress.time, "time", return_value=NOW):
+        return READER.fetch(base, volume_id, state)
 
 
 def _record(name: str) -> dict:

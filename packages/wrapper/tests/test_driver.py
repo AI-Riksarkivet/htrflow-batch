@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -210,8 +211,26 @@ PIN = "7c44178d85926b4a096c55c89bf224855a201fbf"
         # a branch beside the pin is a moving target too
         f"{{model: yolo, model_settings: {{model: a/b, revision: {PIN}}}, "
         "revision: main}",
+        # another commit beside the pin is not the revision that was reviewed
+        f"{{model: yolo, model_settings: {{model: a/b, revision: {PIN}}}, "
+        f"revision: {'0' * 40}}}",
+        # audit 0923 S-3: TrOCR's processor (its tokenizer) is a second load
+        # from the Hub, pinned through processor_kwargs, and undone the same way
+        "{model: TrOCR, model_settings: {model: a/b, model_kwargs: "
+        f"{{revision: {PIN}}}, processor_kwargs: {{revision: {PIN}}}}}, "
+        "processor_kwargs: {}}",
+        "{model: TrOCR, model_settings: {model: a/b, processor: c/d, "
+        f"model_kwargs: {{revision: {PIN}}}, processor_kwargs: {{revision: {PIN}}}}}, "
+        "processor_kwargs: {revision: main}}",
     ],
-    ids=["yolo-null", "trocr-empty-kwargs", "yolo-branch"],
+    ids=[
+        "yolo-null",
+        "trocr-empty-kwargs",
+        "yolo-branch",
+        "yolo-other-commit",
+        "trocr-empty-processor-kwargs",
+        "trocr-processor-branch",
+    ],
 )
 def test_a_pin_overridden_beside_model_settings_is_refused(
     tmp_path, monkeypatch, settings
@@ -228,7 +247,7 @@ def test_a_pin_overridden_beside_model_settings_is_refused(
 
     from htrflow_batch.driver import build_pipeline
 
-    with pytest.raises(ValueError, match="not pinned to a commit"):
+    with pytest.raises(ValueError, match="does not load its pinned revision"):
         build_pipeline(str(pipeline_yaml))
     assert built == []
 
@@ -239,11 +258,19 @@ def test_a_pin_overridden_beside_model_settings_is_refused(
         f"{{model: yolo, model_settings: {{model: a/b, revision: {PIN}}}}}",
         "{model: TrOCR, model_settings: {model: a/b, model_kwargs: "
         f"{{revision: {PIN}}}}}, generation_settings: {{batch_size: 2}}}}",
+        # the processor pinned too, from a repo of its own
+        "{model: TrOCR, model_settings: {model: a/b, processor: c/d, "
+        f"model_kwargs: {{revision: {PIN}}}, processor_kwargs: {{revision: {PIN}}}}}}}",
         # Not pinned anywhere: whether that is allowed is the chart's
         # requireModelRevision, which admission enforces -- off by default.
         "{model: yolo, model_settings: {model: a/b}}",
     ],
-    ids=["yolo-pinned", "trocr-pinned", "unpinned-everywhere"],
+    ids=[
+        "yolo-pinned",
+        "trocr-pinned",
+        "trocr-processor-pinned",
+        "unpinned-everywhere",
+    ],
 )
 def test_a_pin_that_reaches_the_model_is_built(tmp_path, monkeypatch, settings):
     built = _inject_recording_fake_htrflow(monkeypatch)
@@ -794,7 +821,7 @@ def test_release_pipeline_drops_the_models_of_a_dead_pipeline(monkeypatch):
     from htrflow_batch import driver
 
     steps = [_FakeStep(), _FakeStep()]
-    pipeline = SimpleNamespace(steps=steps)
+    pipeline = SimpleNamespace(steps=list(steps))
     driver.release_pipeline(pipeline)
     assert [step.model for step in steps] == [None, None]
 
@@ -989,3 +1016,279 @@ def test_a_page_that_finished_is_not_failed_by_a_late_thread_death(
 
     assert sorted(files) == ["alto", "page"]
     assert files["alto"].exists() and files["page"].exists()
+
+
+class _HtrflowQueue:
+    """htrflow's BatchedQueue as it is (batched_queue.py): a daemon thread
+    polling ``_in`` every ``patience`` seconds, for ever."""
+
+    def __init__(self, patience=0.01):
+        import queue
+
+        self.patience = patience
+        self._in, self._out = queue.Queue(), queue.Queue()
+        self._thread = threading.Thread(target=self._process, daemon=True)
+        self._thread.start()
+
+    def _process(self):
+        import queue
+
+        while 1:
+            batch = []
+            while len(batch) < 1:
+                try:
+                    batch.append(self._in.get(timeout=self.patience))
+                except queue.Empty:
+                    continue
+            self._out.put(batch)
+
+    def get(self):
+        return self._out.get()
+
+
+class _HtrflowStep:
+    """htrflow's Inference as it is (steps.py): a daemon thread blocked on
+    the queue, calling the model on each batch, for ever."""
+
+    def __init__(self, model=lambda images: images):
+        self.model = model
+        self._queue = _HtrflowQueue()
+        self._thread = threading.Thread(target=self._process, daemon=True)
+        self._thread.start()
+
+    def _process(self):
+        while 1:
+            batch = self._queue.get()
+            self.model([item for item in batch])
+
+
+@pytest.fixture
+def abandoned(monkeypatch):
+    """The driver with an empty abandoned list, and the interpreter's own
+    thread excepthook in place of pytest's, which reports even SystemExit."""
+    from htrflow_batch import driver
+
+    monkeypatch.setattr(driver, "_ABANDONED", [])
+    monkeypatch.setattr(threading, "excepthook", threading.__excepthook__)
+    return driver
+
+
+def test_releasing_a_pipeline_ends_its_worker_threads(abandoned, capfd):
+    """Audit 0923 W-8: every rebuild after a dead worker thread left the old
+    pipeline's other threads running for the life of the process -- each
+    BatchedQueue polling ten times a second. Released, they end, and end
+    quietly: SystemExit is the one exception a thread dies of without a
+    traceback in the run log."""
+    steps = [_HtrflowStep(), _HtrflowStep()]
+    threads = [t for s in steps for t in (s._thread, s._queue._thread)]
+
+    abandoned.release_pipeline(SimpleNamespace(steps=steps))
+
+    assert abandoned.leaked_threads(grace=2.0) == 0
+    assert not any(t.is_alive() for t in threads)
+    assert "Traceback" not in capfd.readouterr().err
+
+
+def test_a_worker_stuck_in_its_model_is_counted_as_leaked(abandoned):
+    """What cannot be stopped is counted: a model call that never returns
+    keeps its thread, and whatever that holds on the GPU, for good."""
+    stuck = threading.Event()
+    step = _HtrflowStep(model=lambda images: stuck.wait(30))
+    step._queue._in.put("page")
+    time.sleep(0.1)  # the step's thread is inside the model now
+    try:
+        abandoned.release_pipeline(SimpleNamespace(steps=[step]))
+        assert abandoned.leaked_threads(grace=0.3) == 1
+    finally:
+        stuck.set()
+    assert abandoned.leaked_threads(grace=2.0) == 0
+
+
+def test_a_page_that_makes_no_progress_is_a_dead_pipeline(
+    tmp_path, monkeypatch, abandoned
+):
+    """Audit 0923 W-8: there was no per-page bound, so a hung model held the
+    GPU until activeDeadlineSeconds, and every retry hung the same way. Past
+    its budget the page fails as PipelineDead -- the pipeline is rebuilt --
+    and the run's helper thread, still inside htrflow, is counted."""
+    _inject_process_fakes(monkeypatch)
+    monkeypatch.setattr(abandoned, "THREAD_POLL_SECONDS", 0.01)
+    hang = threading.Event()
+
+    class _HungPipeline:
+        steps: list = []
+
+        def run(self, document):
+            hang.wait(30)
+
+    try:
+        with pytest.raises(abandoned.PipelineDead, match="no progress for 0.2 s"):
+            abandoned.process_page(
+                _HungPipeline(), _image(tmp_path), tmp_path / "out", seconds=0.2
+            )
+        assert abandoned.leaked_threads(grace=0.1) == 1
+    finally:
+        hang.set()
+
+
+def _steady_queue_pipeline(batches: int, gap: float):
+    """An Inference step's queue as the watchdog sees it: every batch the
+    model finishes, its worker takes the next one off ``_out``."""
+    import queue
+
+    step = SimpleNamespace(
+        _queue=SimpleNamespace(_in=queue.Queue(), _out=queue.Queue())
+    )
+
+    class _Pipeline:
+        steps = [step]
+
+        def run(self, document):
+            for i in range(batches):
+                step._queue._out.put(i)
+            for _ in range(batches):
+                time.sleep(gap)
+                step._queue._out.get()
+
+    return _Pipeline()
+
+
+def test_a_slow_page_that_keeps_making_progress_completes(
+    tmp_path, monkeypatch, abandoned
+):
+    """Review I-2: the budget was a total per page, and a broadsheet page of
+    1 500 lines on TrOCR legitimately takes 300-1 000 s -- it was failed, and
+    its model, not hung at all, went on running beside the rebuilt one. The
+    budget is a no-progress window: every batch the model finishes restarts
+    it, so a page far longer than the window completes."""
+    _inject_process_fakes(monkeypatch)
+    monkeypatch.setattr(abandoned, "THREAD_POLL_SECONDS", 0.01)
+    out = tmp_path / "out"
+    for fmt in ("alto", "page"):
+        (out / fmt).mkdir(parents=True)
+        (out / fmt / "0044.xml").write_text("<x/>")
+    pipeline = _steady_queue_pipeline(batches=20, gap=0.05)  # ~1 s in all
+
+    files = abandoned.process_page(pipeline, _image(tmp_path), out, seconds=0.25)
+    assert set(files) == {"alto", "page"}
+    assert abandoned.leaked_threads(grace=0.1) == 0
+
+
+def test_a_step_that_finishes_is_progress_too(tmp_path, monkeypatch, abandoned):
+    """Steps with no worker queue (reading order, the Exports) show their
+    progress in htrflow's own registry: Pipeline.run records each step."""
+    _inject_process_fakes(monkeypatch)
+    progress = _inject_progress_fake(monkeypatch)
+    monkeypatch.setattr(abandoned, "THREAD_POLL_SECONDS", 0.01)
+    out = tmp_path / "out"
+    for fmt in ("alto", "page"):
+        (out / fmt).mkdir(parents=True)
+        (out / fmt / "0044.xml").write_text("<x/>")
+
+    class _ManySteps:
+        steps: list = []
+
+        def run(self, document):
+            for i in range(20):
+                time.sleep(0.05)
+                progress._steps.setdefault(document, []).append(f"step {i}")
+
+    files = abandoned.process_page(_ManySteps(), _image(tmp_path), out, seconds=0.25)
+    assert set(files) == {"alto", "page"}
+
+
+class _ZombieExport:
+    """An Export as htrflow has it: writes the page's file, then registers
+    the path in the module-global progress registry."""
+
+    def __init__(self, dest, progress):
+        self.dest, self.progress = dest, progress
+
+    def __str__(self) -> str:
+        return "Export"
+
+    def run(self, document):
+        self.dest.mkdir(parents=True, exist_ok=True)
+        (self.dest / "0044.xml").write_text("<late/>")
+        self.progress._exports.setdefault(document, []).append("late")
+        return document
+
+
+def test_a_dead_pipeline_runs_no_further_step(tmp_path, monkeypatch, abandoned):
+    """Review I-3: the helper of a page past its no-progress window is not
+    stopped by stopping the worker threads -- when the slow call returns it
+    goes on to the next step, and the Exports the wrapper appends then wrote
+    outputs/<fmt>/<stem>.xml for a page already failed and cleaned up, and
+    touched htrflow's progress registry beside the live pipeline. A dead
+    pipeline refuses every step it has not started, before htrflow's
+    Pipeline.run can record it."""
+    _inject_process_fakes(monkeypatch)
+    progress = _inject_progress_fake(monkeypatch)
+    monkeypatch.setattr(abandoned, "THREAD_POLL_SECONDS", 0.01)
+    out = tmp_path / "out"
+    stalled = threading.Event()
+    returned = threading.Event()
+
+    class _Stall:
+        def __str__(self) -> str:
+            return "TextRecognition"
+
+        def run(self, document):
+            stalled.wait(30)
+            return document
+
+    class _HtrflowPipeline:
+        """htrflow's Pipeline.run, as it is (pipeline.py)."""
+
+        def __init__(self, steps):
+            self.steps = steps
+
+        def run(self, document):
+            try:
+                for step in self.steps:
+                    progress.step(document, step=step)
+                    document = step.run(document)
+                progress.done(document)
+            finally:
+                returned.set()
+
+    def step(document, step):
+        status = str(step)  # htrflow: update(document, status=str(step)) first
+        progress._steps.setdefault(document, []).append(status)
+
+    progress.step = step
+    progress.done = lambda document: progress._tasks.setdefault(document, "done")
+    pipeline = _HtrflowPipeline(
+        [
+            _Stall(),
+            _ZombieExport(out / "alto", progress),
+            _ZombieExport(out / "page", progress),
+        ]
+    )
+    with pytest.raises(abandoned.PipelineDead):
+        abandoned.process_page(pipeline, _image(tmp_path), out, seconds=0.1)
+    abandoned.release_pipeline(pipeline)
+    stalled.set()  # the slow call returns, and the zombie goes on
+    assert returned.wait(5)
+    assert not (out / "alto").exists() and not (out / "page").exists()
+    assert (progress._steps, progress._exports, progress._tasks) == ({}, {}, {})
+
+
+def test_a_step_missing_the_threads_it_should_have_is_loud(abandoned, caplog):
+    """Review M-5: an htrflow that renamed ``_queue``/``_in``/``_out``/
+    ``_thread`` made the stop a silent no-op, and its threads were never
+    counted. A step that holds a model is htrflow's Inference, and one not
+    shaped like it is logged at ERROR and counted as leaked."""
+    step = SimpleNamespace(model=object(), _worker=threading.Thread(target=print))
+    with caplog.at_level("ERROR"):
+        abandoned.release_steps([step])
+    assert "cannot stop" in caplog.text
+    assert abandoned.leaked_threads(grace=0.0) == 1
+
+
+def test_a_step_without_a_model_has_no_threads_to_stop(abandoned, caplog):
+    """An Export, a reading-order step: nothing to stop, nothing to say."""
+    with caplog.at_level("ERROR"):
+        abandoned.release_steps([SimpleNamespace(dest="out")])
+    assert caplog.text == ""
+    assert abandoned.leaked_threads(grace=0.0) == 0

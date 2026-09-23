@@ -181,3 +181,99 @@ def test_a_step_whose_worker_thread_dies_fails_the_page_instead_of_hanging(
         f"page {page.stem}: htrflow's Segmentation (model broken-test-model) "
         "worker thread died; the page is marked failed and the pipeline is rebuilt"
     )
+
+
+@pytest.fixture(autouse=True)
+def interpreter_thread_hook(monkeypatch):
+    """The interpreter's own thread excepthook, as in the pod: pytest's
+    reports even the SystemExit a stopped htrflow worker ends on."""
+    import threading
+
+    monkeypatch.setattr(threading, "excepthook", threading.__excepthook__)
+
+
+class _SlowModel:
+    """A model that answers each line after ``gap`` seconds, or waits on
+    ``hold`` first when one is given: a model on a big page, or a hung one."""
+
+    metadata = {"model": "slow-test-model"}
+
+    def __init__(self, gap: float = 0.0, hold=None):
+        self.gap, self.hold = gap, hold
+
+    def __call__(self, images, **kwargs):
+        import time
+
+        if self.hold is not None:
+            self.hold.wait(60)
+        time.sleep(self.gap)
+        return [[] for _ in images]
+
+
+def test_releasing_real_inference_steps_ends_their_threads(caplog):
+    """Review M-5: ``_stop_threads`` relies on htrflow's own names
+    (``_thread``, ``_queue._thread``, ``_queue._in``, ``_queue._out``); this
+    pins them against the real Inference and BatchedQueue, and that the stop
+    ends both threads without a word at ERROR."""
+    from htrflow.pipeline.steps import TextRecognition
+
+    from htrflow_batch import driver
+
+    steps = [TextRecognition(_SlowModel()), TextRecognition(_SlowModel())]
+    threads = [t for s in steps for t in (s._thread, s._queue._thread)]
+    with caplog.at_level("ERROR"):
+        driver.release_steps(steps)
+    assert caplog.text == ""
+    assert driver.leaked_threads(grace=5.0) == 0
+    assert not any(t.is_alive() for t in threads)
+
+
+def test_the_watchdog_sees_a_real_inference_step_move():
+    """Review I-2: every batch the model finishes changes what
+    ``_progress_mark`` reads off the real BatchedQueue."""
+    import time
+
+    from htrflow.pipeline.steps import TextRecognition
+
+    from htrflow_batch import driver
+
+    step = TextRecognition(_SlowModel(gap=0.05))
+    pipeline = type("P", (), {"steps": [step]})()
+    futures = [step._queue.put(i) for i in range(20)]
+    marks = set()
+    while not all(f.done() for f in futures):
+        marks.add(driver._progress_mark(pipeline))
+        time.sleep(0.01)
+    driver.release_steps([step])
+    assert len(marks) > 5
+
+
+def test_a_dead_real_pipeline_exports_nothing_late(tmp_path, page):
+    """Review I-3, against htrflow's own Pipeline.run and Export: once the
+    page is given up on and the stalled model returns, the helper must not
+    go on to the Exports -- no file for a page already failed, nothing in
+    htrflow's progress registry."""
+    import threading
+    import time
+
+    from htrflow import progress
+    from htrflow.pipeline.pipeline import Pipeline
+    from htrflow.pipeline.steps import Export, TextRecognition
+
+    from htrflow_batch import driver
+
+    hold = threading.Event()
+    out = tmp_path / "outputs"
+    step = TextRecognition(_SlowModel(hold=hold))
+    pipeline = Pipeline(
+        [step, Export(str(out / "alto"), "alto"), Export(str(out / "page"), "page")]
+    )
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(driver, "THREAD_POLL_SECONDS", 0.05)
+        with pytest.raises(driver.PipelineDead, match="no progress"):
+            process_page(pipeline, page, out, seconds=0.5)
+    driver.release_pipeline(pipeline)
+    hold.set()
+    time.sleep(1.0)  # the model returns; a live helper would export now
+    assert not list(out.rglob("*.xml"))
+    assert (progress._exports, progress._steps) == ({}, {})

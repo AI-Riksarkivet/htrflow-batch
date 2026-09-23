@@ -4,14 +4,18 @@ wrapper package imports cleanly on hosts without torch (docs: wrapper)."""
 from __future__ import annotations
 
 import gc
+import logging
 import re
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
 
 from .stream import discard
+
+log = logging.getLogger("htrflow_batch")
 
 #: Every format the wrapper appends an Export step for; process_page requires
 #: all of them and store.upload_page uploads them page-first.
@@ -86,9 +90,16 @@ def _steps(config) -> list[dict]:
 _MODEL_STEP_SETTINGS = ("model", "model_settings", "generation_settings")
 
 #: Where a revision reaches a loader: YOLO and PyLaia take ``revision``, the
-#: Hugging Face models (TrOCR, DiT, Donut) ``model_kwargs.revision`` -- the two
-#: paths the chart's model-revision policy accepts a pin on.
-_PIN_PATHS = (("revision",), ("model_kwargs", "revision"))
+#: Hugging Face models (TrOCR, DiT, Donut) ``model_kwargs.revision`` -- the
+#: paths the chart's model-revision policy accepts a pin on. Those three also
+#: load a processor (its tokenizer, for TrOCR and Donut) from the Hub in a
+#: second ``from_pretrained``, from ``processor`` or else the model's repo,
+#: at ``processor_kwargs.revision`` (audit 0923 S-3).
+_PIN_PATHS = (
+    ("revision",),
+    ("model_kwargs", "revision"),
+    ("processor_kwargs", "revision"),
+)
 
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
@@ -116,8 +127,9 @@ def _check_pins(index: int, step: dict) -> None:
     """3058: a pin under ``model_settings`` -- the one the model-revision
     policy and ``validate`` read -- must be the revision the model gets. A
     key beside it wins the merge (``revision: null`` for YOLO, an empty
-    ``model_kwargs`` for TrOCR) and loads the repo's head, which can be
-    pickled code. Both of those refuse the shape already; this is the layer
+    ``model_kwargs`` or ``processor_kwargs`` for TrOCR) and loads the repo's
+    head, which can be pickled code -- or another commit, which is not the
+    one that was reviewed. Both of those refuse the shape already; this is the layer
     that holds when a pipeline reached the pod past them. A step pinned
     nowhere is not this rule's to judge: whether that is allowed is the
     chart's ``requireModelRevision``, which admission enforces."""
@@ -127,11 +139,11 @@ def _check_pins(index: int, step: dict) -> None:
     written, used = _model_kwargs(settings)
     for path in _PIN_PATHS:
         pin, effective = _at(written, path), _at(used, path)
-        if _is_commit(pin) and not _is_commit(effective):
+        if _is_commit(pin) and effective != pin:
             where = ".".join(path)
             raise ValueError(
                 f"step {index} ({step.get('step', '?')}): model "
-                f"{written.get('model', '?')} is not pinned to a commit — "
+                f"{written.get('model', '?')} does not load its pinned revision — "
                 f"model_settings.{where} is {pin}, but the {path[0]} key beside "
                 f"model_settings overrides it and htrflow would load revision "
                 f"{effective!r}; move every model setting under model_settings"
@@ -265,6 +277,125 @@ class PipelineDead(RuntimeError):
 #: A page takes ~13 s, so a second costs nothing and bounds the stall.
 THREAD_POLL_SECONDS = 1.0
 
+#: Threads of work this process gave up on (W-8, audit 0923): a released
+#: step's workers, and the helper of a page that stopped making progress.
+#: Stopped ones end at once; what ``leaked_threads`` still finds alive is
+#: stuck -- and a step whose threads could not be found at all stays here as
+#: an ``_Unstoppable`` (review M-5).
+_ABANDONED: list = []
+
+
+class _Stop:
+    """Put where a released step's worker threads look for work: it raises
+    SystemExit wherever one touches it -- the one exception a thread ends on
+    without a traceback. htrflow's loops (``Inference._process``,
+    ``BatchedQueue._process``) have no way out of their own."""
+
+    def get(self, *args, **kwargs):
+        raise SystemExit
+
+    def __iter__(self):
+        raise SystemExit
+
+
+class _Unstoppable:
+    """A released step whose worker threads this wrapper could not find:
+    counted as leaked for good, since nothing can say they ended."""
+
+    def join(self, timeout: float | None = None) -> None:
+        pass
+
+    def is_alive(self) -> bool:
+        return True
+
+
+def _stop_threads(step) -> None:
+    """End a released step's two worker threads: the BatchedQueue's next
+    poll of ``_in`` (within its patience) and the step's thread, woken by a
+    batch that is the stop itself. Only htrflow's Inference holds a model,
+    and only it runs threads; one that does not have the attributes this
+    relies on -- an htrflow that renamed them -- is not quietly skipped
+    (review M-5): it is logged at ERROR and counted as leaked."""
+    if not hasattr(step, "model"):
+        return
+    queue = getattr(step, "_queue", None)
+    threads = [getattr(step, "_thread", None), getattr(queue, "_thread", None)]
+    shaped = all(isinstance(t, threading.Thread) for t in threads)
+    if queue is None or not shaped or not hasattr(queue, "_in"):
+        log.error(
+            "cannot stop the worker threads of htrflow's %s: it is not the "
+            "Inference shape this wrapper knows (_thread, _queue._thread, "
+            "_queue._in, _queue._out); counted as leaked",
+            step,
+        )
+        _ABANDONED.append(_Unstoppable())
+        return
+    _ABANDONED.extend(threads)
+    queue._in = _Stop()
+    queue._out.put(_Stop())
+
+
+def leaked_threads(grace: float = 1.0) -> int:
+    """How many abandoned threads are still running after ``grace`` seconds:
+    each is stuck inside htrflow, holding whatever it holds on the GPU."""
+    deadline = time.monotonic() + grace
+    for thread in _ABANDONED:
+        thread.join(max(0.0, deadline - time.monotonic()))
+    _ABANDONED[:] = [t for t in _ABANDONED if t.is_alive()]
+    return len(_ABANDONED)
+
+
+class _DeadStep:
+    """What a dead pipeline's steps are replaced with (review I-3). htrflow's
+    Pipeline.run takes each step off the live list and first hands it to
+    ``progress.step``, which calls ``str()`` on it -- so raising there stops
+    a late helper before it touches htrflow's progress registry, let alone
+    writes an Export's file for a page already failed and cleaned up."""
+
+    def __str__(self) -> str:
+        raise SystemExit
+
+    def run(self, document):
+        raise SystemExit
+
+
+def _bury(pipeline) -> list:
+    """Mark ``pipeline`` dead, once, and return the steps it had. Done where
+    the page is given up on, before the error is raised, so no step can
+    start in between; ``release_pipeline`` then frees the real ones."""
+    steps = getattr(pipeline, "_htrflow_batch_buried", None)
+    if steps is None:
+        steps = list(getattr(pipeline, "steps", ()))
+        try:
+            pipeline.steps[:] = [_DeadStep() for _ in steps]
+            pipeline._htrflow_batch_buried = steps
+        except Exception:
+            pass  # not a list we can reach: release_pipeline still frees it
+    return steps
+
+
+def _progress_mark(pipeline) -> tuple:
+    """What moves while htrflow works on a page (review I-2), read without
+    touching it: the steps Pipeline.run has recorded in htrflow's progress
+    registry, and each Inference step's queue -- its worker takes the next
+    batch off ``_out`` only once the model has finished the last one."""
+    try:
+        from htrflow import progress  # ty: ignore[unresolved-import]
+
+        recorded = sum(len(v) for v in list(progress._steps.values()))
+    except Exception:
+        recorded = -1
+    queued = []
+    for step in list(getattr(pipeline, "steps", ())):
+        queue = getattr(step, "_queue", None)
+        if queue is None:
+            continue
+        try:
+            queued.append((queue._in.qsize(), queue._out.qsize()))
+        except Exception:
+            pass
+    return recorded, tuple(queued)
+
 
 def _dead_step(pipeline):
     """The first step whose worker thread has died, if any.
@@ -306,13 +437,15 @@ def release_pipeline(pipeline) -> None:
     again, so the models go now and the parked thread keeps only itself and
     that page's Document.
     """
-    release_steps(getattr(pipeline, "steps", ()))
+    release_steps(_bury(pipeline))
 
 
 def release_steps(steps) -> None:
     """The same for a bare list of steps: what a pipeline that never finished
-    being constructed leaves behind (W1)."""
+    being constructed leaves behind (W1). Their worker threads are stopped
+    first (W-8), so none picks up a batch after its model has gone."""
     for step in steps:
+        _stop_threads(step)
         try:
             step.model = None
         except Exception:
@@ -326,7 +459,7 @@ def release_steps(steps) -> None:
         pass  # no torch, or a CPU-only run: nothing cached to give back
 
 
-def _run_guarded(pipeline, document, stem: str) -> None:
+def _run_guarded(pipeline, document, stem: str, seconds: float) -> None:
     """``pipeline.run`` with a watch on the steps' worker threads.
 
     An Inference step hands its batch to a daemon thread and waits on a
@@ -343,8 +476,17 @@ def _run_guarded(pipeline, document, stem: str) -> None:
 
     The helper is a daemon and is never joined: when a run IS stuck it stays
     parked on the dead queue for the life of the process, holding that one
-    page's document. Nothing waits on it, and the pod's activeDeadlineSeconds
-    is still the backstop for the process as a whole.
+    page's document. Nothing waits on it.
+
+    A run whose threads are all alive can hang too -- a model call that
+    never returns. One that makes no progress (``_progress_mark``) for
+    ``seconds`` is treated as dead (W-8, audit 0923): the page fails and the
+    pipeline is rebuilt, instead of the GPU being held until
+    activeDeadlineSeconds and every retry hanging the same way. It is a
+    no-progress window, not a total (review I-2): a broadsheet page of
+    thousands of lines takes many minutes and moves all the while. Its
+    helper, still inside htrflow, is counted by ``leaked_threads``, and the
+    pipeline is buried so the helper can start no further step.
     """
 
     failure: list[BaseException] = []
@@ -359,6 +501,7 @@ def _run_guarded(pipeline, document, stem: str) -> None:
         # check before its run, which is the same guarantee as the one this
         # function's docstring makes for a run that has already returned.
         if step is not None and not done.is_set():
+            _bury(pipeline)
             raise _dead(step, stem)
 
     check()  # never enqueue onto a dead queue: that is what blocks forever
@@ -371,9 +514,21 @@ def _run_guarded(pipeline, document, stem: str) -> None:
         finally:
             done.set()
 
-    threading.Thread(target=run, name=f"htrflow-page-{stem}", daemon=True).start()
+    helper = threading.Thread(target=run, name=f"htrflow-page-{stem}", daemon=True)
+    helper.start()
+    mark, quiet_since = _progress_mark(pipeline), time.monotonic()
     while not done.wait(THREAD_POLL_SECONDS):
         check()
+        now = _progress_mark(pipeline)
+        if now != mark:
+            mark, quiet_since = now, time.monotonic()
+        elif time.monotonic() - quiet_since > seconds and not done.is_set():
+            _ABANDONED.append(helper)
+            _bury(pipeline)
+            raise PipelineDead(
+                f"page {stem}: htrflow made no progress for {seconds:g} s; "
+                "the page is marked failed and the pipeline is rebuilt"
+            )
     if failure:
         raise failure[0]
 
@@ -392,13 +547,19 @@ def _outputs(out_dir: Path, stem: str) -> dict[str, Path]:
     return found
 
 
-def process_page(pipeline, image_path: Path, out_dir: Path) -> dict[str, Path]:
+#: Default no-progress window of one page (env ``PAGE_TIMEOUT_SECONDS``).
+PAGE_TIMEOUT_SECONDS = 600.0
+
+
+def process_page(
+    pipeline, image_path: Path, out_dir: Path, seconds: float = PAGE_TIMEOUT_SECONDS
+) -> dict[str, Path]:
     from htrflow.pipeline.steps import auto_import  # ty: ignore[unresolved-import]
 
     stem = image_path.stem
     try:
         for document in auto_import([str(image_path)]):
-            _run_guarded(pipeline, document, stem)
+            _run_guarded(pipeline, document, stem, seconds)
         files = _outputs(out_dir, stem)
         missing = [fmt for fmt in EXPECTED_FORMATS if fmt not in files]
         if missing:

@@ -16,6 +16,7 @@ import io
 import logging
 import sys
 import threading
+import time
 from typing import Callable, Optional, TextIO
 
 from .iiif import redact_urls
@@ -31,6 +32,13 @@ TAIL_BYTES = 2 * 1024 * 1024
 TRUNCATION_MARKER = (
     "\n... [log truncated: middle dropped by htrflow_batch.logship] ...\n"
 )
+
+#: The wall-clock budget of ``finish()``: waiting out a periodic upload in
+#: flight, then the final one (audit 0923 W-7). The campaign Job's
+#: terminationGracePeriodSeconds (120 s) has to cover it with room for the
+#: rest of the SIGTERM path; an upload still going when it runs out is
+#: abandoned, since the kubelet's SIGKILL would lose the exit code as well.
+FINAL_SHIP_SECONDS = 90.0
 
 
 class ErrorCounter(logging.Handler):
@@ -264,12 +272,20 @@ class LogCapture:
             self._warned = False  # a later outage warns again
             return True
 
-    def finish(self) -> None:
-        """Stop the thread, do the final upload, restore the streams."""
+    def finish(self, budget: float = FINAL_SHIP_SECONDS) -> None:
+        """Stop the thread, do the final upload, restore the streams -- all
+        of it inside ``budget`` seconds. The final upload runs on a daemon
+        thread of its own so it can be waited for with a limit; it still
+        takes the upload lock, so it lands after any periodic one."""
+        deadline = time.monotonic() + budget
         self._stop.set()
+        final = threading.Thread(target=self.ship, daemon=True, name="logship-final")
+        final.start()
+        final.join(timeout=budget)
+        if final.is_alive():
+            log.warning("final run-log upload abandoned after %.0f s", budget)
         if self._thread is not None:
-            self._thread.join(timeout=30)
-        self.ship()
+            self._thread.join(timeout=max(0.0, deadline - time.monotonic()))
         logging.getLogger().removeHandler(self._counter)
         if self._added_handler is not None:
             logging.getLogger().removeHandler(self._added_handler)

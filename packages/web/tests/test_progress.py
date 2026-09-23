@@ -6,6 +6,11 @@ an httpx MockTransport — no bucket, no network.
 
 from __future__ import annotations
 
+import gzip
+import json
+import threading
+import tracemalloc
+
 import httpx
 import pytest
 
@@ -260,6 +265,47 @@ def test_a_body_inside_the_cap_still_reads():
     assert r.fetch(BASE, "vol0", "active")["total"] == 638
 
 
+def _gzipped(doc: bytes) -> httpx.Response:
+    return httpx.Response(
+        200, content=gzip.compress(doc), headers={"content-encoding": "gzip"}
+    )
+
+
+def test_a_compressed_body_is_never_inflated(monkeypatch):
+    """Anything that can write to the bucket can store progress.json with
+    `Content-Encoding: gzip`, and the cap counted bytes after the client
+    had inflated them: 32 KiB on the wire became 32 MiB in the pod before
+    the cap looked (2026-09-23 audit). The file is asked for unencoded, and
+    one that comes back encoded anyway is not read at all."""
+    bomb = json.dumps({"pages_total": 1}).encode() + b" " * (32 * 1024 * 1024)
+    r, _ = reader({f"{BASE}/vol0/progress.json": _gzipped(bomb)})
+    tracemalloc.start()
+    try:
+        assert r.fetch(BASE, "vol0", "active") is None
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert peak < 4 * 1024 * 1024, f"inflated to {peak} bytes"
+
+
+def test_the_file_is_asked_for_unencoded():
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("accept-encoding"))
+        return httpx.Response(200, json=PROGRESS)
+
+    r = ProgressReader(httpx.Client(transport=httpx.MockTransport(handler)))
+    assert r.fetch(BASE, "vol0", "active")["total"] == 638
+    assert seen == ["identity"]
+
+
+def test_an_encoded_answer_is_unreadable_even_when_small():
+    small = json.dumps(PROGRESS).encode()
+    r, _ = reader({f"{BASE}/vol0/progress.json": _gzipped(small)})
+    assert r.fetch(BASE, "vol0", "active") is None
+
+
 def test_a_redirect_is_not_followed():
     """The URL is built from an operator's results base; a bucket that
     answers it with a redirect is not somewhere this pod should follow."""
@@ -376,3 +422,45 @@ def test_a_full_cache_drops_its_oldest_entry_not_everything(monkeypatch):
         r.fetch(BASE, f"vol{i}", "active")
     assert r.cached(BASE, "vol0", "active")[0] is False
     assert all(r.cached(BASE, f"vol{i}", "active")[0] for i in (1, 2, 3))
+
+
+class _Interleaved(dict):
+    """A cache that lets another request run in the middle of an eviction,
+    at the one point where two threads of the pool can meet: after this
+    request picked the oldest key and before it deleted it."""
+
+    def __init__(self, other) -> None:
+        super().__init__()
+        self.other = other
+        self.thread: threading.Thread | None = None
+
+    def __delitem__(self, key) -> None:
+        if self.thread is None:
+            self.thread = threading.Thread(target=self.other)
+            self.thread.start()
+            self.thread.join(timeout=0.2)  # blocked on the lock, or finished
+        super().__delitem__(key)
+
+
+def test_two_requests_evicting_at_once_do_not_trip_over_each_other(monkeypatch):
+    """The reader is shared by every thread of the pool, and a full cache is
+    the normal state at scale: two requests evicting the same oldest key
+    raised a KeyError -- a 500 for a page whose progress is decoration."""
+    monkeypatch.setattr(progress_mod, "MAX_ENTRIES", 2)
+    r, _ = reader({})
+    errors: list[BaseException] = []
+
+    def other() -> None:
+        try:
+            r.fetch(BASE, "vol-other", "active")
+        except BaseException as e:  # noqa: BLE001 - reported below
+            errors.append(e)
+
+    r._cache = _Interleaved(other)
+    r.fetch(BASE, "vol0", "active")
+    r.fetch(BASE, "vol1", "active")
+    r.fetch(BASE, "vol2", "active")  # full: evicts, and lets `other` in
+    assert r._cache.thread is not None
+    r._cache.thread.join()
+    assert errors == []
+    assert len(r._cache) == 2

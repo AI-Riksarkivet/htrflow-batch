@@ -17,9 +17,9 @@ import json
 
 import pytest
 from kubernetes import client, config
-from urllib3.exceptions import MaxRetryError
+from urllib3.exceptions import MaxRetryError, ReadTimeoutError
 
-from htrflow_web import kube
+from htrflow_web import kube, projection
 from htrflow_web.kube import (
     CAMPAIGN_CONFIGMAPS,
     FIELD_MANAGER,
@@ -151,6 +151,7 @@ def reader(monkeypatch) -> Reader:
                 "content_type": (header_params or {}).get("Content-Type"),
                 "accept": (header_params or {}).get("Accept"),
                 "body": kwargs.get("body"),
+                "timeout": kwargs.get("_request_timeout"),
             }
         )
         reply = answer.get(method, {})
@@ -229,6 +230,40 @@ def test_list_pods_asks_for_one_jobs_pods(reader: Reader):
     assert selector == "batch.kubernetes.io/job-name=kyrk"
 
 
+def test_list_pods_leaves_the_succeeded_ones_on_the_server(reader: Reader):
+    """A campaign keeps every pod of every index until its Job goes -- up
+    to four per index with three retries -- and a succeeded one belongs to
+    a done index, which the Job's own status already says. Asked for, a
+    campaign of thousands was tens of MB per poll in a 256Mi pod (2026-09-23
+    audit)."""
+    reader.answer["GET"] = {"items": []}
+    reader.list_pods("htr-a", "kyrk")
+    query = reader.calls[0]["query"]
+    assert query["fieldSelector"] == "status.phase!=Succeeded"
+    assert query["limit"] == kube.POD_PAGE
+
+
+def test_list_pods_follows_the_continue_token_to_the_last_page(reader: Reader):
+    page = {"metadata": {"name": "p"}, "status": {}}
+    reader.answer["GET"] = [
+        {"metadata": {"continue": "t1"}, "items": [page]},
+        {"metadata": {"continue": "t2"}, "items": [page]},
+        {"metadata": {}, "items": [page]},
+    ]
+    assert len(reader.list_pods("htr-a", "kyrk")) == 3
+    assert [c["query"].get("continue") for c in reader.calls] == [None, "t1", "t2"]
+
+
+def test_list_pods_keeps_only_what_the_projection_reads(reader: Reader):
+    pod = {
+        "metadata": {"name": "p", "managedFields": [{"manager": "kubelet"}]},
+        "spec": {"containers": [{"name": "wrapper"}]},
+        "status": {"phase": "Failed", "reason": "Evicted"},
+    }
+    reader.answer["GET"] = {"items": [pod]}
+    assert reader.list_pods("htr-a", "kyrk") == [projection.pod_fields(pod)]
+
+
 def test_a_missing_object_is_none_not_an_error(reader: Reader):
     """A campaign whose Job the TTL reaped is a 404, and the detail route
     falls back to its record on exactly this ``None`` (B76)."""
@@ -254,6 +289,54 @@ def test_a_connection_that_never_answers_is_the_same_exception(reader: Reader):
         reader.list_jobs()
 
 
+class _HungBody:
+    """A response whose headers arrived and whose body never does."""
+
+    @property
+    def data(self) -> bytes:
+        raise ReadTimeoutError(None, "http://apiserver", "read timed out")
+
+
+def test_a_body_that_never_arrives_is_the_same_exception(reader, monkeypatch):
+    """The body is read after the call returns, so a timeout there escaped
+    as a bare 500 rather than the 502 every other silence gets."""
+    monkeypatch.setattr(client.ApiClient, "call_api", lambda *a, **k: _HungBody())
+    with pytest.raises(ClusterUnavailable):
+        reader.get_job("htr-a", "kyrk")
+    with pytest.raises(ClusterUnavailable):
+        reader.list_configmaps()
+
+
+def _every_call(reader: Reader) -> None:
+    reader.list_jobs()
+    reader.list_warmups()
+    reader.get_job("htr-a", "kyrk")
+    reader.get_configmap("htr-a", "campaign-kyrk")
+    reader.list_configmaps()
+    reader.list_pods("htr-a", "kyrk")
+    reader.apply_configmap(RECORD)
+
+
+def test_no_call_can_wait_on_the_api_server_for_ever(reader: Reader):
+    """Without a timeout a connection that hangs holds its worker thread
+    until the process dies, and a detail request makes several calls in a
+    row: a few of those fill the pool (2026-09-23 audit)."""
+    reader.answer["GET"] = {"items": []}
+    _every_call(reader)
+    assert {c["method"] for c in reader.calls} == {"GET", "PATCH"}
+    assert all(c["timeout"] == kube.REQUEST_TIMEOUT for c in reader.calls)
+    connect, read = kube.REQUEST_TIMEOUT
+    assert 0 < connect <= read <= 30
+
+
+def test_an_apply_that_never_answers_is_the_cluster_being_unavailable(
+    reader: Reader,
+):
+    reader.answer["PATCH"] = MaxRetryError(None, "http://apiserver")
+    with pytest.raises(ClusterUnavailable):
+        reader.apply_configmap(RECORD)
+
+
 RECORD = {
     "apiVersion": "v1",
     "kind": "ConfigMap",
@@ -275,6 +358,11 @@ def test_the_record_is_applied_the_way_a_server_side_apply_is(reader: Reader):
     assert call["body"] == RECORD
 
 
+def test_the_failures_are_applied_as_their_own_manager(reader: Reader):
+    reader.apply_configmap(RECORD, force=True, manager=projection.FAILURES_MANAGER)
+    assert reader.calls[0]["query"]["fieldManager"] == "htrflow-web-failures"
+
+
 def test_the_apply_never_forces_another_managers_field(reader: Reader):
     """`htrflow-campaigns apply` writes this same record from the live Job
     once a campaign is over, and its terminal values are the authoritative
@@ -294,40 +382,21 @@ def test_a_forced_apply_says_so_and_sends_the_version_it_read(reader: Reader):
     assert call["body"]["metadata"]["resourceVersion"] == "7"
 
 
-def test_a_conflicted_apply_is_retried_once(reader: Reader):
-    """409 is what the API server says while another manager is mid-write."""
+def test_a_conflict_is_not_sent_again(reader: Reader):
+    """A 409 on a server-side apply is a field another manager owns, or a
+    precondition this request's read no longer meets -- the same request
+    sent again meets the same answer (2026-09-23 review). It stands as an
+    ``ApplyConflict``, and the next poll reads the record afresh."""
     reader.answer["PATCH"] = [_api_error(409), {}]
-    reader.apply_configmap(RECORD)
-    assert len(reader.calls) == 2
-
-
-def test_the_retry_waits_for_the_other_manager_to_finish(reader, monkeypatch):
-    """Retrying the same body in the same microsecond meets the same
-    half-finished write. A short pause is the whole point of the retry."""
-    slept: list[float] = []
-    monkeypatch.setattr(kube.time, "sleep", slept.append)
-    reader.answer["PATCH"] = [_api_error(409), {}]
-    reader.apply_configmap(RECORD)
-    assert slept == [kube.CONFLICT_PAUSE]
-
-
-def test_a_second_conflict_is_a_conflict_not_a_refusal(reader, monkeypatch):
-    """`apply` owns these fields now, and its terminal values are the
-    authoritative ones -- there is nothing wrong with this service's grant.
-    A distinct exception, so `app.py` does not put the namespace into the
-    cooldown it keeps for a denied one (2026-09-14 review)."""
-    monkeypatch.setattr(kube.time, "sleep", lambda _s: None)
-    reader.answer["PATCH"] = [_api_error(409), _api_error(409)]
     with pytest.raises(ApplyConflict):
         reader.apply_configmap(RECORD)
-    assert len(reader.calls) == 2
+    assert len(reader.calls) == 1
 
 
 def test_a_conflict_is_not_reported_as_the_cluster_being_unavailable(
     reader, monkeypatch
 ):
-    monkeypatch.setattr(kube.time, "sleep", lambda _s: None)
-    reader.answer["PATCH"] = [_api_error(409), _api_error(409)]
+    reader.answer["PATCH"] = _api_error(409)
     with pytest.raises(Exception) as caught:
         reader.apply_configmap(RECORD)
     assert not isinstance(caught.value, ClusterUnavailable)
@@ -347,3 +416,9 @@ def test_the_metadata_list_asks_for_the_list_form():
 
     first = PARTIAL_METADATA.split(",")[0]
     assert "as=PartialObjectMetadataList;" in first
+
+
+def test_the_apply_says_which_configmap_it_left(reader: Reader):
+    """The failures write is held to that uid (projection._failures_write)."""
+    reader.answer["PATCH"] = {"metadata": {"uid": "uid-cm-7"}}
+    assert reader.apply_configmap(RECORD) == "uid-cm-7"
