@@ -201,9 +201,22 @@ func (m *HtrflowBatch) CheckChart(
 		return "", fmt.Errorf("helm lint/template failed: %w", err)
 	}
 
-	kubeconform := dag.Container().From(kubeconformImage)
+	// The Kueue and Kyverno kinds against their CRDs' schemas, built by
+	// scripts/crd-schemas.sh from sha256-pinned release files -- the same
+	// script `make helm-template` runs -- instead of skipped as unknown.
+	schemas, err := m.buildWithUv(ctx, source, caBundle)
+	if err != nil {
+		return "", err
+	}
+	crds := schemas.
+		WithExec([]string{"scripts/crd-schemas.sh", "/crd-schemas"}).
+		Directory("/crd-schemas")
+	kubeconform := dag.Container().From(kubeconformImage).WithDirectory("/crd-schemas", crds)
 	kubeconform = m.withCaBundle(kubeconform, caBundle)
-	args := []string{"/kubeconform", "-strict", "-ignore-missing-schemas", "-summary"}
+	args := []string{
+		"/kubeconform", "-strict", "-summary", "-schema-location", "default",
+		"-schema-location", "/crd-schemas/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json",
+	}
 	for _, name := range outNames {
 		path := "/render/" + name + ".yaml"
 		kubeconform = kubeconform.WithFile(path, helm.File("/out/"+name+".yaml"))
