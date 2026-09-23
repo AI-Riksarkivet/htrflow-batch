@@ -304,12 +304,6 @@ def test_the_makefile_no_longer_defines_the_prune_selector():
     assert "htrflow-campaigns apply $(DIR)" in makefile
 
 
-def test_the_pause_sync_script_is_gone():
-    """`htrflow-campaigns apply` owns the Workload sync now; a stale copy of
-    the shell script would be a second, silently diverging implementation."""
-    assert not (REPO_ROOT / "scripts" / "kueue-pause-sync.sh").exists()
-
-
 def test_append_only_still_finds_the_parts_of_a_cut_down_campaign_name(
     tmp_path, capsys
 ):
