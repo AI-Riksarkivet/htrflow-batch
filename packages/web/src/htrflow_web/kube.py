@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from collections.abc import Mapping
 from typing import Protocol
 
@@ -155,10 +154,6 @@ REQUEST_TIMEOUT = (3.0, 10.0)
 #: Pods per list page. Small enough that one page of whole pod objects is a
 #: few MB at most; the API server hands out the next with a continue token.
 POD_PAGE = 250
-
-#: How long the retry waits for the other manager to finish writing.
-#: Retrying in the same microsecond meets the same half-finished write.
-CONFLICT_PAUSE = 0.2
 
 
 def _read(api: object, method: str, *args: object, **kwargs: object) -> dict | None:
@@ -304,40 +299,35 @@ class Reader:
         apply` writes this same record from the live Job once a campaign is
         over, and those terminal values are the authoritative ones; forcing
         would take the fields back off it on every poll of an open status
-        page. A 409 while the other manager is mid-write is retried once,
-        after a short pause, and a second one is left to stand as an
-        ``ApplyConflict`` -- contention, not a refusal. ``force`` is only
-        ever asked for a record of another Job (``projection.record_write``),
-        and then with the ``resourceVersion`` it read in ``body``: the API
-        server holds the apply to that version. ``manager`` is the field
-        manager sent: ``failedVolumes`` has one of its own
-        (``projection.FAILURES_MANAGER``).
+        page. A 409 stands as an ``ApplyConflict`` -- contention, not a
+        refusal -- and is never sent again as it is: it means a field another
+        manager owns or a precondition this request's read no longer meets,
+        and the same request meets the same answer (2026-09-23 review). The
+        next poll reads the record afresh. ``force`` is only ever asked for
+        a record of another Job (``projection.record_write``), and then with
+        the ``resourceVersion`` it read in ``body``: the API server holds
+        the apply to that version. ``manager`` is the field manager sent:
+        ``failedVolumes`` has one of its own (``projection.FAILURES_MANAGER``).
         """
         meta = body["metadata"]
         extra = {"force": True} if force else {}
-        for attempt in (1, 2):
-            try:
-                self.core.patch_namespaced_config_map(
-                    meta["name"],
-                    meta["namespace"],
-                    body,
-                    field_manager=manager,
-                    _content_type=_APPLY_PATCH,
-                    _preload_content=False,
-                    _request_timeout=REQUEST_TIMEOUT,
-                    **extra,
-                )
-                return
-            except client.ApiException as e:
-                if e.status != 409:
-                    raise ClusterUnavailable(f"apply {meta['name']}: {e.status}") from e
-                if attempt == 2:
-                    raise ApplyConflict(meta["name"]) from e
-                time.sleep(CONFLICT_PAUSE)
-            except HTTPError as e:
-                raise ClusterUnavailable(
-                    f"apply {meta['name']}: {type(e).__name__}"
-                ) from e
+        try:
+            self.core.patch_namespaced_config_map(
+                meta["name"],
+                meta["namespace"],
+                body,
+                field_manager=manager,
+                _content_type=_APPLY_PATCH,
+                _preload_content=False,
+                _request_timeout=REQUEST_TIMEOUT,
+                **extra,
+            )
+        except client.ApiException as e:
+            if e.status == 409:
+                raise ApplyConflict(meta["name"]) from e
+            raise ClusterUnavailable(f"apply {meta['name']}: {e.status}") from e
+        except HTTPError as e:
+            raise ClusterUnavailable(f"apply {meta['name']}: {type(e).__name__}") from e
 
     def list_pods(self, namespace: str, job_name: str) -> list[dict]:
         """One Job's pods that are not Succeeded, a page at a time, each
