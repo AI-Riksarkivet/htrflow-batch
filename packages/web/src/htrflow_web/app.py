@@ -205,6 +205,14 @@ DEV_VERSION = "dev"
 #: guarantees a terminal record exists.
 RECORD_WRITES_PER_REQUEST = 20
 
+#: How many campaigns whose Jobs are gone the list carries unless asked for
+#: more (``?reaped=``). Their records have no TTL, so without a window every
+#: campaign ever run was a row -- and on the page a card, each with requests
+#: of its own (2026-09-23 audit). Every live Job is always listed.
+REAPED_SHOWN = 20
+#: The most one request may ask for.
+REAPED_MAX = 10_000
+
 #: How long a namespace whose write was refused is left alone. Long enough
 #: that a denied grant costs one round trip per ten minutes rather than
 #: twenty per page load; short enough that renewing the grant is visible
@@ -493,7 +501,13 @@ def create_app(
         return records, statuses
 
     @app.api_route("/api/v1/jobs", methods=GET_HEAD)
-    def list_jobs() -> list[dict]:
+    def list_jobs(
+        response: Response,
+        reaped: int = Query(REAPED_SHOWN, ge=0, le=REAPED_MAX),
+    ) -> list[dict]:
+        """Every live campaign Job, and the ``reaped`` newest campaigns
+        whose Jobs are gone; ``X-Reaped-Total`` says how many of those there
+        are in all, so the page can offer the rest."""
         jobs = sorted(
             reader.list_jobs(),
             key=lambda j: (j.get("metadata") or {}).get("creationTimestamp", ""),
@@ -518,18 +532,21 @@ def create_app(
         # ConfigMaps have no TTL, and this list is where an operator looks
         # for it (B76). Additive -- a live Job always wins over its record.
         live = {(row["namespace"], row["name"]) for row in rows}
+        gone_rows = []
         for key, record in records.items():
             status = statuses.get(key)
             if key in live or status is None:
                 continue
-            gone = projection.record_summary(
-                record,
-                status,
-                reader.cfg,
-                _warmup_status(record, warmup_jobs, reasons),
-            )
+            gone = projection.record_summary(record, status, reader.cfg, {})
             if gone is not None:
-                rows.append(gone)
+                gone_rows.append((gone, record))
+        gone_rows.sort(key=lambda pair: pair[0]["createdAt"] or "", reverse=True)
+        response.headers["X-Reaped-Total"] = str(len(gone_rows))
+        for gone, record in gone_rows[:reaped]:
+            # Matched only for the rows sent: a failed warm-up costs a pod
+            # list, and the rows past the window are not anybody's to read.
+            gone["warmup"] = _warmup_status(record, warmup_jobs, reasons)
+            rows.append(gone)
         rows.sort(key=lambda row: row["createdAt"] or "", reverse=True)
         return rows
 
