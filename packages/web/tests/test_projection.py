@@ -1763,7 +1763,8 @@ class TestRecordWrite:
         fresh = projection.status_record(row, failures, job_uid="uid-1")
         ((body, force, manager),) = projection.record_write(stored, row, fresh)
         assert body["data"] == {
-            "failedVolumes": '[{"id":"vol2","reason":"manifest 404"}]'
+            "failedVolumes": '[{"id":"vol2","reason":"manifest 404"}]',
+            "failedVolumesJobUid": "uid-1",
         }
         assert "labels" not in body["metadata"]
         assert manager == projection.FAILURES_MANAGER
@@ -1784,11 +1785,10 @@ class TestRecordWrite:
         row = _running_row()
         fresh = projection.status_record(row, job_uid="uid-new")
         ((body, force, _),) = projection.record_write(_stored_cm(old), row, fresh)
-        # The old run's failures cleared, forced: under a manager of their
-        # own, a summary that left them out would leave them standing.
-        assert body["data"] == {**fresh, "failedVolumes": "[]"}
+        # The old run's failures left standing, tied to the old run.
+        assert body["data"] == fresh
         assert body["data"]["finishedAt"] == ""
-        assert force is True and body["metadata"]["resourceVersion"] == "41"
+        assert force is False
 
     def test_a_detail_of_another_jobs_record_writes_only_this_runs_failures(self):
         old = {"jobUid": "uid-old", "failedVolumes": '[{"id":"vol2","reason":"x"}]'}
@@ -1798,7 +1798,8 @@ class TestRecordWrite:
         summary, failed = projection.record_write(_stored_cm(old), row, fresh)
         assert "failedVolumes" not in summary.body["data"]
         assert failed.body["data"] == {
-            "failedVolumes": '[{"id":"vol1","reason":"OOM"}]'
+            "failedVolumes": '[{"id":"vol1","reason":"OOM"}]',
+            "failedVolumesJobUid": "uid-new",
         }
         assert failed.manager == projection.FAILURES_MANAGER
 
@@ -1851,7 +1852,7 @@ class TestRecordWrite:
         fresh = projection.status_record(row, [], job_uid="uid-1")
         data = {k: v for k, v in fresh.items() if k != "failedVolumes"}
         stored = _stored_cm(
-            {**data, "failedVolumes": kept},
+            {**data, "failedVolumes": kept, "failedVolumesJobUid": "uid-1"},
             _managed("failedVolumes", manager=projection.FAILURES_MANAGER),
         )
         assert projection.record_write(stored, row, fresh) == []
@@ -1869,7 +1870,10 @@ class TestRecordWrite:
         )
         summary, failed = projection.record_write(stored, row, fresh)
         assert summary.body["data"]["failedVolumes"] == kept
-        assert failed.body["data"] == {"failedVolumes": kept}
+        assert failed.body["data"] == {
+            "failedVolumes": kept,
+            "failedVolumesJobUid": "uid-1",
+        }
         assert failed.force is True
 
 
