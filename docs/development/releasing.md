@@ -86,13 +86,22 @@ base digests, same uv workspace sync, no viewer or SPA stage in front of it.
 **Findings that do not apply.** The distroless runtime's Debian packages
 can carry CVEs that Debian has not fixed and that nothing in these images
 can reach: a flaw in a command-line program when the image ships only that
-package's library, or in a parser nothing in the image calls. Those are
-recorded in `.docker/distroless.openvex.json` (OpenVEX), one statement per
-CVE with its justification, each scoped to the exact package version so the
-next package update retires it; the Trivy scans read it with `--vex`. A
-statement that nothing calls a parser holds only while that is true: a
-change that makes the web or converter image parse XML, HTML or tar archives
-removes the matching statements in the same change.
+package's library, in a parser nothing in the image calls, or in one that
+only ever reads the image's own build output. Those are recorded in
+`.docker/distroless.openvex.json` (OpenVEX), one statement per CVE with its
+justification, each scoped to the exact package version so the next package
+update retires it; the Trivy scans read it with `--vex`. A test ties every
+statement to the code: the web and converter packages and their locked
+dependencies may not import a module a statement calls unused, and the web
+service may parse HTML only from files in its static directory. A change
+that breaks a statement fails that test until the statement goes.
+
+The statements name the Debian packages, not the images: Trivy matches an
+image-scoped product (`pkg:oci/…` with the packages as subcomponents) only
+when the scanned image carries a registry digest, and the scans run on
+freshly built images that have none. So the file is meant for these images'
+scans only; passing it to a scan of another Debian 13 image would hide the
+same CVEs there.
 
 **Each architecture is built natively.** Nothing passes `--platform`:
 `uv` crashes in a cross-architecture build, and a GPU image built for a
