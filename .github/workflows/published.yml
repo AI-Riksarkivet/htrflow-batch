@@ -1,0 +1,72 @@
+name: Published images
+
+# What clusters run, not what main would build (audit 0923 D-5): the digests
+# this commit pins -- the chart's web image, the demo pipeline's wrapper, the
+# Argo CD hook's converter (.dagger/published.go, publishedPins) -- pulled
+# from the registry by reference on both architectures, and their
+# signatures checked against the chart's own verify-images rule. Nothing is
+# built, so a push that moves a pin runs only this, never security.yml's
+# ~10 GB wrapper build (audit 0923 M-7). Weekly too: an advisory published
+# after a release is in its digest whatever main says.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "charts/htrflow-batch/values.yaml"
+      - "packages/converter/src/htrflow_converter/template/pipelines/demo-v1.yaml"
+      - "packages/converter/src/htrflow_converter/template/argocd/apply.yaml"
+      - ".docker/distroless.openvex.json"
+      - ".github/workflows/published.yml"
+  schedule:
+    - cron: "0 5 * * 1" # Mondays 05:00 UTC, beside security.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The published digests, by reference. A gate on every event, push
+  # included: on a push it is the release commit's new pins being checked,
+  # and ci.yml scans nothing published.
+  scan-published:
+    name: Scan published image (${{ matrix.image }}, ${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [web, wrapper, campaigns]
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-dagger
+
+      - name: Trivy gate on the pinned digest (CRITICAL blocks)
+        run: >-
+          dagger call --progress plain scan-published --image "$IMAGE"
+          --arch "$ARCH" --severity CRITICAL --ignore-unfixed
+        env:
+          IMAGE: ${{ matrix.image }}
+          ARCH: ${{ matrix.arch }}
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+
+  # The signatures on the same digests, through the chart's verify-images
+  # rule as values-prod.yaml renders it. ci.yml runs it on every change; the
+  # schedule catches what moves outside this repository -- a registry that
+  # drops the referrers, a signing root that rotates.
+  verify-published:
+    name: Verify published signatures
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-dagger
+
+      - name: The chart's signature rule admits the pinned digests
+        run: dagger call --progress plain verify-published
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}

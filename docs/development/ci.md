@@ -170,11 +170,14 @@ The cluster constants these targets use come from `.env`
   runs, so an advisory published between changes fails a scheduled run. A
   further job does the same for the wrapper on the second architecture, on a
   native runner of it, through `make scan-image`. On a
-  push the gate is skipped, since `ci.yml` has just run it. The published
-  digests get jobs of their own: `scan-published` for each image on both
-  architectures, a gate on every trigger (a push that changes the pins is
-  the release commit), and `verify-published`, so a signature that stops
-  verifying fails a scheduled run too.
+  push the gate is skipped, since `ci.yml` has just run it.
+- **`published.yml`** ("Published images") — weekly, by hand, and on pushes
+  to `main` that move a pin (the chart's web image, the demo pipeline's
+  wrapper, the Argo CD hook's converter image). It builds nothing:
+  `scan-published` gates each pinned digest on both architectures, and
+  `verify-published` checks their signatures, so a signature that stops
+  verifying fails a scheduled run too. A pin change therefore never
+  rebuilds the wrapper image the way an input change to `security.yml` does.
 - **`codeql.yml`** ("CodeQL") — on push and pull request to `main` and weekly:
   static analysis of the Python packages, the campaign browser, the dagger
   module and the workflows themselves, with findings in the Security tab.
