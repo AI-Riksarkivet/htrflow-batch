@@ -342,9 +342,11 @@ Job htr-warmup-demo: the pod template changed and a Job's pod template is immuta
 2 of 6 objects were refused by the API server and are unchanged: ConfigMap/campaign-kyrk, Job/kyrk — the other 4 were applied (exit 3)
 ```
 
-A pause sync that did not reach a Workload has its own closing line:
+A pause sync that did not reach a Workload (the patch was refused, or a
+refused Job's live Job could not be read) has its own closing line:
 `the pause sync did not reach the Kueue Workload of Job/kyrk; see above
-(exit 1)`.
+(exit 1)`. The code is `1` when git says that campaign is paused, since the
+pause is not enforced, and `3` when it only had to stay running.
 
 A Job's pod template is fixed once the Job exists. Two different changes
 move it: a recipe edit, and a converter upgrade or `converter.yaml` setting
