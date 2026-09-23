@@ -160,6 +160,41 @@ def test_the_viewers_own_inline_script_is_allowed_by_its_hash(client: TestClient
     assert f"'sha256-{_sha256(script)}'" in csp
 
 
+def _hashes(csp: str) -> list[str]:
+    script_src = [d for d in csp.split(";") if d.strip().startswith("script-src")]
+    return [t.strip("'")[7:] for t in script_src[0].split() if "sha256-" in t]
+
+
+@pytest.mark.parametrize(
+    ("html", "bodies"),
+    [
+        # End tags a browser closes a script on, and a regex looking for
+        # exactly `</script>` did not (code scanning 117).
+        ("<script>a()</script >", ["a()"]),
+        ("<script>b()</script\n>", ["b()"]),
+        ("<SCRIPT>c()</SCRIPT foo>", ["c()"]),
+        ("<script>d()</script ><script>e()</script>", ["d()", "e()"]),
+        # Not end tags at all: they are text of the script they sit in.
+        ('<script>f("</scriptx>")</script>', ['f("</scriptx>")']),
+        ('<script>g("<b>x</b>")</script>', ['g("<b>x</b>")']),
+        # Only a `src` attribute makes a script a file -- `data-src` is not.
+        ("<script data-src=x>h()</script>", ["h()"]),
+        ('<script src="umd/UV.js"></script>', []),
+        ("<script src=umd/UV.js>ignored()</script>", []),
+    ],
+)
+def test_every_inline_script_is_hashed_as_the_browser_reads_it(
+    tmp_path: Path, html: str, bodies: list[str]
+):
+    """The hashes are taken over exactly the text a browser runs as each
+    inline script -- one it read differently is a script the policy blocks,
+    and a viewer that does not start."""
+    (tmp_path / "uv.html").write_text(f"<html><head>{html}</head></html>")
+    csp = uv_csp(tmp_path)
+    assert csp is not None
+    assert _hashes(csp) == [_sha256(b) for b in bodies]
+
+
 def test_the_viewers_styles_are_unsafe_inline_with_no_hash_beside_it(
     client: TestClient,
 ):
