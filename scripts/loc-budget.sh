@@ -301,7 +301,7 @@ fail=0
 # Retry-After parse and the abortable wait; in stream.py and main.py the
 # deferred outcome verify counts as missing; in iiif.py one rule choosing a
 # canvas's image for both the fetch and the viewer manifest.
-# 3636 -> 3963 (audit 0923): an upload the store could not take defers the
+# 3636 -> 3962 (audit 0923): an upload the store could not take defers the
 # page rather than failing it, and a half-stored pair is deleted (W-1). The
 # source digest drops the credentials of every common signing scheme, the
 # ordinary-named ones only beside their scheme's marker (W-2). A URL in
@@ -318,7 +318,7 @@ fail=0
 # cap before `max`, and the lookahead is bounded by bytes as well (W-9).
 # A page has a wall-clock budget; a released pipeline's worker threads are
 # stopped, and those stuck inside htrflow counted up to a limit (W-8).
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3963
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3962
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

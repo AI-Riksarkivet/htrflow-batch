@@ -65,9 +65,8 @@ def _failed(stats: "StreamStats", name: str, error: str | None) -> None:
 
 def _deferred(stats: "StreamStats", name: str, error: str | None) -> None:
     """A page the source could not serve TODAY (3095), or the store could not
-    take (W-1): kept out of `failed`,
-    which verify counts as accounted for, so the page is missing, the run
-    exits 1 and the index's retry redoes it."""
+    take (W-1): kept out of `failed`, which verify counts as accounted for,
+    so the page is missing, the run exits 1 and the index's retry redoes it."""
     log.warning("page %s deferred to the next attempt: %s", name, error)
     stats.results[name] = PageOutcome(status="deferred", error=error)
 
