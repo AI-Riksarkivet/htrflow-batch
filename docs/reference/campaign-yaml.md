@@ -17,6 +17,11 @@ rejected. Every field is optional; the values below are the defaults, except
 `source_template`, which is shown as a placeholder — set it to your IIIF
 source whenever a campaign lists bare volume ids.
 
+In all three kinds of file, a key written twice in one
+mapping is a validation error naming both lines. YAML itself keeps the last
+of the two without a word, so a second `volumes:` further down a campaign
+would silently replace the first.
+
 ```yaml title="converter.yaml"
 namespace: htr-batch              # Kubernetes namespace campaigns render into
 queue: htr-batch                  # Kueue LocalQueue name
@@ -27,7 +32,7 @@ hf_token_secret: ""               # optional: Secret with a `token` key, read by
 data_pvc: htr-test-data           # PVC mounted as the model cache
 runtime_class: nvidia             # RuntimeClass for GPU pods — on the warm-up Job too
 node_selector: {}
-tolerations: []
+tolerations: []                   # Kubernetes tolerations, each naming its taint's key (see below)
 public_results_base: ""           # public URL prefix results are served from (required for the read API)
 source_template: "https://<iiif-host>/<path>/{ref}/manifest"   # manifest URL for a bare volume id; {ref} is the id
 max_seconds: 21600                # each pod's activeDeadlineSeconds; a pipeline's own `max_seconds:` overrides it
@@ -49,6 +54,29 @@ here rather than by the cluster because Kueue does not refuse a Job naming a
 class that does not exist: no Workload is created, no event is raised, and
 the campaign reads "Queued" for ever. An empty list means the cluster offers
 no priority and every `priority:` is refused.
+
+`tolerations` are Kubernetes tolerations, spelt the Kubernetes way (`key`,
+`operator`, `value`, `effect`, `tolerationSeconds`, nothing else) and copied
+into every warm-up and campaign pod. Each one names the taint it is for: a
+toleration with no key tolerates every taint there is, so with a node
+selector the GPU pods could land on the control plane or on any node tainted
+to keep them away, and that is a validation error. So is a toleration for the
+control plane's own taint (`node-role.kubernetes.io/control-plane`, or the
+older `node-role.kubernetes.io/master`): that taint is what keeps workloads
+off the node that runs the cluster, and a campaign's pods run code a
+pipeline author chose. A single-node cluster whose one node is the control
+plane (a kubeadm install, say) therefore cannot run campaigns while the node
+carries it. The supported way to run there is to take the taint off the
+node, which makes the node an ordinary worker for every workload, not just
+this one:
+`kubectl taint nodes <node> node-role.kubernetes.io/control-plane:NoSchedule-`.
+
+`s3_secret`, `data_pvc` and `hf_token_secret` are checked here for their
+shape only: each has to be a Kubernetes object name. Which Secrets and PVCs a
+rendered pod may mount is the cluster's rule, not the converter's: the
+htrflow-batch chart's admission policies hold these names to an allow-list
+in its values, so a name the chart does not allow is refused at admission,
+and by the Kyverno CLI in the campaigns repo's CI.
 
 `hf_token_secret` names an object no chart creates — you make it yourself,
 like the S3 Secret. Leave it unset unless a pipeline pulls a **private or
@@ -112,12 +140,15 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | Rule | Consequence when violated |
 |------|---------------------------|
 | `pipeline:` is required and must name a file in `pipelines/` | Reported as a validation error; nothing renders |
+| No key a campaign file, or a volume in it, does not have | Validation error naming the key. A misspelt `suspended: true` or `priorty:` would otherwise be dropped, and the campaign would run unpaused at the default priority; a volume's `pages: 1-10` would run every page |
 | A campaign lists at least one volume | Validation error — no volumes renders a Job with `completions: 0`, which Kubernetes reports as Succeeded the moment it is created |
 | Every volume needs `manifest:` or a non-empty `images:` (unless it is a bare string) | Validation error |
 | `manifest:` and every `images:` entry are absolute `http://` or `https://` URLs | Validation error (`must be an http(s) URL`) |
+| …that a browser can open: no backslash or control character, a port from 0 to 65535, and a host that is a name (letters, digits, `_` and `-` between the dots, one trailing dot allowed; a non-ASCII label of left-to-right letters, such as `bücher`, as written or as the `xn--` label a browser would encode it to), a dotted IPv4 address, or a bracketed IPv6 address without a zone | Validation error naming the volume and what the browser would refuse. The viewer and the status page build every link with the browser's own URL parser, which throws on URLs Python's accepts |
 | No whitespace (space, tab, line break) inside a `manifest:` or `images:` URL | Validation error naming the volume and the image — percent-encode a space as `%20`. Whitespace separates the URLs of an `images:` volume in `volumes.txt`, which is why it cannot appear inside one; a comma can (a IIIF size such as `/full/2500,/`) |
 | An `images:` volume whose one line of `volumes.txt` is over 100 KiB | Validation error naming the volume and how many images it lists. The Job exports that line's URLs as a single `IMAGES` environment entry, and Linux stops one entry at 128 KiB — the pod would die with `Argument list too long` before the wrapper starts. Split the volume, or give it a IIIF manifest |
 | Volume ids match `[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?` — alphanumeric at both ends, ≤63 chars | Validation error (`unsafe volume id`). This is the Kubernetes **label-value** alphabet, not a DNS-1123 label: uppercase is allowed |
+| A volume id is text as written: one YAML reads as something else (`0012345` is octal, `1:20` base 60, `1.10` a number, `yes` true, `2024-01-31` a date) is quoted, `- "0012345"` or `id: "0012345"` | Validation error saying what YAML read. Unquoted, the volume would be fetched and published under an id nobody wrote (`5349`, `80`, `1.1`) |
 | Volume ids are unique within a campaign | Validation error (`duplicate volume id`) |
 | `priority:`, when set, is a class name (lower-case letters, digits, `-`, alphanumeric at both ends, ≤63) | Validation error naming the `kueue.x-k8s.io/priority-class` label it is rendered into — a case slip like `HTR-Bulk` is a legal label that names no class |
 | `priority:` is one of `converter.yaml`'s `priority_classes` (`htr-interactive`, `htr-bulk`, `htr-idle` by default, mirroring the chart's `queue.priorityClasses`) | Validation error naming the file, the classes there are and the chart value. **Checked here because the cluster will not**: Kueue does not refuse a Job naming a class that does not exist — no Workload, no event, and the campaign reads "Queued" for ever. Leaving the field out is `htr-bulk`; a higher class is admitted before every waiting campaign but never evicts a running one ([Queueing](../how-it-works/queueing.md)) |
@@ -125,13 +156,24 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | `window:` above `converter.yaml`'s `window` | Silently clamped to it at render time — `converter.yaml`'s value is the per-cluster cap and should be set to what the ClusterQueue's GPU quota can actually admit. Rendering more would let Kueue's partial admission shrink it on the live Job: Kueue then rewrites `spec.parallelism` and rejects every later apply of the unchanged rendered file (`cannot change when partial admission is enabled and the job is not suspended`) |
 | `suspend: true` | Renders `spec.suspend: true` — see [Pausing](#pausing) |
 | **A campaign whose rendered Job already exists in `rendered/` with a different volume list is rejected** | `validate` and `render` print `campaign <name> is append-only: create a new campaign` and exits non-zero — Job `completions` is immutable once created, so adding volumes means a new campaign file |
+| A change of `window:` — the campaign's, or `converter.yaml`'s cap — that changes how many pods a rendered, unpaused campaign runs at once | `validate` and `render` print `warning: campaign <name> runs <n> pods at a time and would now run <m>` and go on. Kueue compares a running Job's pod count, the smaller of its parallelism and its volume count, with the Workload it admitted, and when they differ it stops every running pod and queues the campaign again. Whether the campaign is still running only the cluster can say — a finished or never-admitted one loses nothing — so it is `apply` that holds a running campaign to its count. The safe way to change it: pause the campaign (`suspend: true`), change the window once the pause is applied, then resume it; a paused campaign runs no pods and its Workload holds no quota, which Kueue updates in place. A change that leaves the count where it was (a window above the volume count either way) says nothing |
 | **A campaign whose ConfigMap in the cluster has a different volume list, pipeline or image is rejected** | `apply` prints `campaign <name> is in the cluster with different …` and exits `1` before it sends anything. `rendered/` can be missing or behind the cluster (a checkout whose render was never committed), so the live ConfigMap is held against too. A ConfigMap `apply` may not read stops it the same way: a check that cannot be made has not passed |
 | **A pipeline whose image or steps changed while a rendered campaign still runs it is rejected** — "runs" is what `rendered/` recorded, so a campaign moved to another pipeline in the same change still counts | `validate` and `render` print `pipeline <id> changed (…) but campaigns …` and exit non-zero — see [Immutability](#immutability) |
 | The file stem does not end in `-part<number>` | Validation error — that is what the converter calls the parts of a campaign it splits, so such a file would collide with one. A stem that merely starts with another campaign's name and `-part` (`loc-partner` beside `loc`) is its own campaign |
 | The file stem is a DNS-1123 label: lower-case letters, digits and `-`, no dots, ≤63 characters, and does not start with `htr-warmup-` | Validation error. A campaign's Job is an Indexed Job, and the API server holds the hostname of every one of its pods, `<job>-<index>`, to a DNS-1123 label, so a dotted name is refused at apply time. `htr-warmup-<id>` is a pipeline's warm-up Job, in the same namespace |
 | The campaign's last pod, `<job>-<completions − 1>`, is at most 63 characters | `validate` and `render` print `campaign <name> cannot be applied: its last pod would be …` and exit non-zero. A long name therefore leaves room for its volume count: a 61-character name takes at most 10 volumes, and a 62-character one none. A campaign that splits never trips this — its parts are named from a stem short enough for any index |
 | More than 10 000 volumes, or more than 900 KiB of `volumes.txt` (an `images:` volume is ONE line of space-joined URLs) | Split into `<name>-part1`, `-part2`, … — one Job and one ConfigMap each. The API server refuses a ConfigMap over 1 MiB; the rest is margin |
-| A campaign that splits and whose name is long | The name is cut short in the part names: a Job's name is also a label value and its pods' name prefix (`<job>-<index>`), and a DNS label stops at 63 characters. `rendered/` holds `<shortened>-partN.yaml` |
+| A campaign that splits and whose name is long | The name is cut short in the part names: a Job's name is also a label value and its pods' name prefix (`<job>-<index>`), and a DNS label stops at 63 characters. `rendered/` holds `<shortened>-partN.yaml`. Two long names can share that shortened stem: the parts are told apart by the campaign label inside them, so a split campaign beside a single-Job one with the same first 50 characters is not mistaken for its parts. Two campaigns that would both split onto one stem are refused, since their parts would be the same files |
+
+**A rule added later does not reach a campaign already rendered.** A
+campaign whose volume list is exactly what the committed `rendered/`
+recorded for it keeps that rendering, even where a rule added since would
+refuse it: a volume id written unquoted that YAML reads as a number, or a
+source URL a browser cannot open. Its list is append-only, so it could never
+be brought to pass. `validate` and `render` print a `warning:` line for each
+such volume instead, which says the id the volume was rendered under (write
+it quoted, as that id) or what the browser would refuse. A new campaign, or
+a rendered one whose list changes, is held to every rule.
 
 The campaign file stem becomes the value of the converter's `campaign` label
 and, for a campaign that does not split, the Job name; a campaign that splits
@@ -184,7 +226,7 @@ validation error and blocks rendering for every campaign that uses it:
 | `image:` matches `<repository>@sha256:<64 hex>` | Digest pin — provenance is recorded per volume in `manifest.json` |
 | `max_seconds:`, when set, is a positive integer | It becomes `spec.template.spec.activeDeadlineSeconds` — the *pod's* deadline, so only the overrunning attempt is killed — for every campaign on this pipeline; unset falls back to `converter.yaml`. A sixty-page spread recipe and a single-page one do not want the same budget, and a budget the volume cannot meet costs `backoffLimitPerIndex` retries before the index is capped |
 | `ttl_seconds_after_finished:`, when set, is a positive integer | It becomes the campaign Job's `ttlSecondsAfterFinished`. The Job is an inspection window, not the campaign's record — that is the campaign's ConfigMap, which has no TTL ([The record a campaign leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)) — so this is only how long `completedIndexes` stays readable with `kubectl` |
-| `steps:` is present and a list | Only the `steps:` document goes into the ConfigMap; no `Export` steps (the wrapper appends them, and refuses a file with one before it loads any model) |
+| `steps:` is present, a list, and not empty, and every entry names its htrflow step (`- step: <Name>`) | Either mistake would otherwise surface only in the wrapper, failing every volume of every campaign on the pipeline. Only the `steps:` document goes into the ConfigMap; no `Export` steps (the wrapper appends them, and refuses a file with one before it loads any model) |
 | A step that loads a model (`settings.model` names the loader) has only `model`, `model_settings` and `generation_settings` under `settings` | htrflow passes `model_settings` merged with every other key under `settings` to the model, so a key beside `model_settings` overrides the same key inside it — `revision: null` there loads an unpinned model. The chart's model-revision policy refuses the same shape at admission |
 | No key the pipeline file does not have (a `model_revision:` key included — the pin lives in `steps`) | A stray key is a typo or a leftover, and both are cheaper to hear about at `validate` than to wonder about later |
 
@@ -422,13 +464,19 @@ With Argo CD, the same command is the `PostSync` hook that applies
 and the converter's tests hold it to the chart's policies. It is a
 `PostSync` Job on the `htrflow-campaigns` image: an init container clones
 the campaigns repo with dulwich (pure-Python git, so the image carries no
-git binary and no shell), and the Job's container runs
-`htrflow-campaigns apply --prune /repo` on that checkout. Argo CD deletes
-the previous run's Job before each sync and a succeeded one after it. Three
+git binary and no shell), a second one checks that the checkout is one CI
+rendered (below), and the Job's container runs
+`htrflow-campaigns apply --prune --namespace <the hook's namespace> /repo`
+on that checkout. Argo CD deletes
+the previous run's Job before each sync and a succeeded one after it. Four
 things to set:
 
 - **`REPO_URL` and `REPO_BRANCH`**, the clone step's two env values: the
   campaigns repo's HTTPS URL and the branch its CI renders on.
+- **`HTRFLOW_APPLIED_BY`**, the apply container's env value:
+  `argocd-hook/<application>`, naming the Argo CD Application. It is the
+  `applied-by` on every campaign record this hook writes; the hook runs as a
+  numeric user with no name, so without it the record would say `unknown`.
 - **The Secret** `htrflow-campaigns-git`, key `token`: a read-only token
   for that repo, created once in the release namespace
   (`kubectl -n <namespace> create secret generic htrflow-campaigns-git --from-literal=token=<token>`).
@@ -439,10 +487,17 @@ things to set:
   the git host ([With Argo CD](#with-argo-cd)).
 
 The Job clones the tracked branch, not the revision Argo CD synced: a hook
-Job has no reliable way to learn the Application's revision. A commit merged
-between the sync and the hook is applied now and synced again on the next
-sync, and `apply` is idempotent, so applying it early changes nothing the
-next run would not.
+Job has no reliable way to learn the Application's revision. So a second init
+container, between the clone and the apply, runs `htrflow-campaigns validate
+--rendered /repo`: it renders the checkout and refuses it unless the result
+says exactly what the `rendered/` the checkout carries says. The two are
+compared as parsed objects, file by file, so line endings and how a YAML
+library happens to spell them do not matter. A commit merged after CI's last render
+commit, and not rendered yet, fails the hook and applies nothing; CI's render
+commit for it changes `sync.yaml`, which starts the next sync. A commit that
+changes no rendered file passes, and applying it changes nothing. The check
+also fails when CI's `CONVERTER_REF` and the hook's image are converter
+releases that render different objects: keep them in step.
 
 The ServiceAccount is what the htrflow-batch chart renders behind
 `apply.rbac.enabled=true` (default `false`): a Role — never a ClusterRole —

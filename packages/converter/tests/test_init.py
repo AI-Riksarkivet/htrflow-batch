@@ -3,6 +3,10 @@ template so a new repo (I15) is one command away and never drifts from the
 docs' example (see ``test_packaging.py::test_examples_match_template`` for
 the drift guard)."""
 
+import re
+from importlib import resources
+
+import pytest
 import yaml
 
 from htrflow_converter.cli import main
@@ -168,3 +172,109 @@ def test_the_azure_stages_share_one_uv_install_template(tmp_path, capsys):
         steps = _azure_steps(doc, stage["stage"])
         assert {"template": ref} in steps, stage["stage"]
         assert not any("uv-${arch}" in s.get("bash", "") for s in steps)
+
+
+_CI = resources.files("htrflow_converter") / "ci"
+_GITHUB = _CI / "github" / ".github" / "workflows" / "render.yml"
+_AZURE = _CI / "azure" / "azure-pipelines.yml"
+
+
+def test_every_github_action_is_pinned_to_a_commit():
+    """audit 0923 S-4: tags move, and this workflow's Render job holds
+    `contents: write` on the campaigns repo's main branch. A pin is the full
+    commit SHA, with the tag it was taken from as a comment."""
+    action = _CI / "github" / ".github" / "actions" / "install-converter"
+    text = _GITHUB.read_text() + (action / "action.yml").read_text()
+    uses = re.findall(r"uses: (\S+)(.*)", text)
+    assert uses
+    for action, comment in uses:
+        if action.startswith("./"):  # this repo's own, shipped beside it
+            continue
+        assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", action), action
+        assert re.fullmatch(r" # v\d+\.\d+\.\d+", comment), (action, comment)
+
+
+def test_the_converter_is_installed_from_a_commit_in_both_ci_flavours():
+    """A tag like `v0.5.0` can be moved to other code; a commit cannot. The
+    two flavours install the same one."""
+    refs = {
+        str(ci): yaml.safe_load(ci.read_text())[key]["CONVERTER_REF"]
+        for ci, key in ((_GITHUB, "env"), (_AZURE, "variables"))
+    }
+    assert all(re.fullmatch(r"[0-9a-f]{40}", ref) for ref in refs.values()), refs
+    assert len(set(refs.values())) == 1, refs
+
+
+def test_the_github_flavour_checks_the_kyverno_tarball_like_the_azure_one():
+    """The Azure flavour verified the Kyverno CLI against a committed
+    SHA-256; the GitHub one piped curl into tar, in the job before the one
+    that pushes to main."""
+    github = yaml.safe_load(_GITHUB.read_text())
+    azure = yaml.safe_load(_AZURE.read_text())
+    for key in (
+        "KYVERNO_VERSION",
+        "KYVERNO_SHA256_LINUX_X64",
+        "KYVERNO_SHA256_LINUX_ARM64",
+    ):
+        assert github["env"][key] == azure["variables"][key], key
+    step = next(
+        s for s in github["jobs"]["policy"]["steps"]
+        if s.get("name", "").startswith("Install the Kyverno CLI")
+    )  # fmt: skip
+    assert "sha256sum --check --strict" in step["run"]
+    assert "| tar" not in step["run"]
+
+
+def _steps(ci) -> list[dict]:
+    """Every step of a CI flavour, the Azure steps template included."""
+    doc = yaml.safe_load(ci.read_text())
+    if "stages" in doc:
+        steps = [s for st in doc["stages"] for j in st["jobs"] for s in j["steps"]]
+        template = _CI / "azure" / ".azure-pipelines" / "install-converter.yml"
+        return steps + yaml.safe_load(template.read_text())["steps"]
+    action = _CI / "github" / ".github" / "actions" / "install-converter"
+    composite = yaml.safe_load((action / "action.yml").read_text())["runs"]["steps"]
+    return [s for job in doc["jobs"].values() for s in job["steps"]] + composite
+
+
+def _scripts(ci) -> list[str]:
+    return [s.get("run") or s.get("bash") or "" for s in _steps(ci)]
+
+
+@pytest.mark.parametrize("ci", [_GITHUB, _AZURE], ids=["github", "azure"])
+def test_the_converter_installs_with_the_versions_its_commit_locked(ci):
+    """audit 0923 review 5: `uv tool install git+…` resolved the converter's
+    dependencies afresh on every run, while its image uses the lock. The
+    install takes the lock of the commit it installs, as constraints."""
+    scripts = "\n".join(_scripts(ci))
+    assert "git+https://" not in scripts
+    installs = [s for s in _scripts(ci) if "uv tool install" in s]
+    assert len(installs) == 1, installs  # one step, shared by every job
+    (install,) = installs
+    assert "uv export --frozen --package htrflow-converter" in install
+    assert re.search(
+        r"uv tool install --constraints \S+ \S+/packages/converter", install
+    )
+
+
+@pytest.mark.parametrize("ci", [_GITHUB, _AZURE], ids=["github", "azure"])
+def test_the_policy_check_renders_the_chart_with_this_repos_names(ci):
+    """The chart's job-shape policy pins a Job's Secret and PVC names to its
+    values, so the chart CI renders its policies from has to carry the names
+    this repo's converter.yaml renders -- read with the converter's own
+    loader -- and the image allow-list is the three published repositories."""
+    doc = yaml.safe_load(ci.read_text())
+    env = doc.get("env") or doc.get("variables")
+    assert env["POLICY_ALLOWED_IMAGE_REPOS"] == (
+        "{docker.io/riksarkivet/htrflow-batch,docker.io/riksarkivet/htrflow-web,"
+        "docker.io/riksarkivet/htrflow-campaigns}"
+    )
+    (helm,) = [s for s in _scripts(ci) if "helm template" in s]
+    assert "from htrflow_converter.parse import load" in helm
+    for value, field in (
+        ("s3.existingSecret", "s3_secret"),
+        ("modelCache.name", "data_pvc"),
+        ("hfToken.existingSecret", "hf_token_secret"),
+    ):
+        assert f"{value}={{cfg.{field}}}" in helm, value
+    assert '"${sets[@]}"' in helm

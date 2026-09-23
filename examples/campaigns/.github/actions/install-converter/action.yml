@@ -1,0 +1,28 @@
+# The converter every job of workflows/render.yml runs, installed once, the
+# same way: from the htrflow-batch commit CONVERTER_REF names, with the
+# dependency versions that commit's uv.lock pins -- the versions the
+# converter image is built with, so CI renders what the Argo CD hook renders.
+# The checkout stays at .htrflow-batch: the Policy job renders the chart's
+# policies from it too.
+name: Install the converter
+description: htrflow-campaigns from htrflow-batch at a commit, with its locked dependencies
+inputs:
+  ref:
+    description: The htrflow-batch commit (CONVERTER_REF)
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        repository: AI-Riksarkivet/htrflow-batch
+        ref: ${{ inputs.ref }}
+        path: .htrflow-batch
+    - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+    - name: Install the converter (locked)
+      shell: bash
+      run: |
+        set -euo pipefail
+        (cd .htrflow-batch && uv export --frozen --package htrflow-converter \
+          --no-dev --no-emit-workspace --no-hashes -o "$RUNNER_TEMP/converter-constraints.txt")
+        uv tool install --constraints "$RUNNER_TEMP/converter-constraints.txt" .htrflow-batch/packages/converter
