@@ -408,6 +408,12 @@ def _resume(
     # "done" to the next attempt.
     stale = set().union(*stored.values()) & {p.name for p in todo}
     if stale:
+        # W-5 (audit 0923): the previous run's completion marker describes
+        # the pages about to go, so it goes first -- then the viewer manifest
+        # that points at their ALTO, so a reader never meets a manifest.json
+        # without its iiif.json. Publish writes both again at the end.
+        store.delete("manifest.json")
+        store.delete("iiif.json")
         store.delete_pages(stale)
     log.info(
         "[%s] resume: %d done, %d to process", cfg.volume_ref, len(done), len(todo)

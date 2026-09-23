@@ -202,6 +202,10 @@ class ResultStore:
                     f"first: {errors[0].get('Key')}: {errors[0].get('Message')}"
                 )
 
+    def delete(self, rel_key: str) -> None:
+        """One object under the volume prefix; a missing key is no error."""
+        self.client.delete_object(Bucket=self.bucket, Key=self._key(rel_key))
+
     def put_json(self, rel_key: str, obj: dict) -> None:
         self._put(self._key(rel_key), _json_bytes(obj), "application/json")
 

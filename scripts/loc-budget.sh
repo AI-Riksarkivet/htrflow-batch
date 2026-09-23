@@ -301,13 +301,14 @@ fail=0
 # Retry-After parse and the abortable wait; in stream.py and main.py the
 # deferred outcome verify counts as missing; in iiif.py one rule choosing a
 # canvas's image for both the fetch and the viewer manifest.
-# 3636 -> 3695 (audit 0923): an upload the store could not take defers the
+# 3636 -> 3705 (audit 0923): an upload the store could not take defers the
 # page rather than failing it, and a half-stored pair is deleted (W-1). The
 # source digest drops the credentials of every common signing scheme, the
 # ordinary-named ones only beside their scheme's marker (W-2). A URL in
 # free text runs to a character no URL may hold, trailing punctuation kept,
-# and httpx's per-request lines stay out of the run log (W-3).
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3695
+# and httpx's per-request lines stay out of the run log (W-3). A run that
+# deletes stored pages deletes the completion marker and iiif.json first (W-5).
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3705
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

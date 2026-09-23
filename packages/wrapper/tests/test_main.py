@@ -1851,3 +1851,53 @@ def test_a_re_signed_azure_url_does_not_undo_the_last_attempt(images_env, cfg, s
     second = dict(images_env, IMAGES=sas.format(d="2026-09-24", s="BBB"))
     assert main(second, process_page_factory=factory) == EXIT_OK
     assert calls == []
+
+
+def test_a_run_that_deletes_stored_pages_takes_the_completion_marker_first(
+    env, cfg, s3, monkeypatch
+):
+    """Audit 0923 W-5: a run that deleted stored pages left the previous
+    run's manifest.json and iiif.json standing, so a run that then died left
+    a completion marker (and a viewer manifest) describing outputs that no
+    longer exist. The marker goes first, the viewer manifest next, the pages
+    last -- a reader never sees a manifest.json without its iiif.json."""
+    for name in ("0001", "0002", "0003"):
+        _put_done(s3, cfg, name)
+    for rel in ("manifest.json", "iiif.json"):
+        s3.put_object(Bucket=cfg.s3_bucket, Key=f"demo-v1/SE-RA-1234/{rel}", Body=b"{}")
+    order = []
+    real_one, real_many = ResultStore.delete, ResultStore.delete_pages
+    monkeypatch.setattr(
+        ResultStore,
+        "delete",
+        lambda self, rel: order.append(rel) or real_one(self, rel),
+    )
+    monkeypatch.setattr(
+        ResultStore,
+        "delete_pages",
+        lambda self, names: order.append("pages") or real_many(self, names),
+    )
+
+    def factory(c):
+        raise RuntimeError("the model load died")
+
+    env = dict(env, RESUME="false")
+    assert main(env, process_page_factory=factory) == EXIT_TRANSIENT
+    assert order == ["manifest.json", "iiif.json", "pages"]
+    keys = _keys(s3, cfg)
+    assert "demo-v1/SE-RA-1234/manifest.json" not in keys
+    assert "demo-v1/SE-RA-1234/iiif.json" not in keys
+
+
+def test_a_resume_that_deletes_nothing_keeps_the_completion_marker(
+    env, cfg, s3, monkeypatch
+):
+    """A run with nothing stale to delete leaves the marker alone until
+    publish replaces it: what it describes is still there."""
+    for name in ("0001", "0002", "0003"):
+        _put_done(s3, cfg, name)
+    deleted = []
+    monkeypatch.setattr(ResultStore, "delete", lambda self, rel: deleted.append(rel))
+
+    assert main(env, process_page_factory=fake_factory) == EXIT_OK
+    assert deleted == []
