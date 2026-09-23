@@ -81,29 +81,6 @@ def test_non_httpx_exception_caught(tmp_path):
     assert results["0002"].error == "OSError: Disk full"
 
 
-def test_upscale_400_falls_back_to_max(tmp_path):
-    """lbiiif (IIIF level1) returns 400 for sized requests wider than the
-    original image (no upscaling). On 400 the fetcher retries with full/max
-    instead of failing the page (R0001203 page 0002, 1281px wide)."""
-
-    def handler(req):
-        if "/full/2500,/" in req.url.path:
-            return httpx.Response(400)
-        if "/full/max/" in req.url.path:
-            return httpx.Response(200, content=JPEG + b"narrow-image")
-        return httpx.Response(404)
-
-    page = PageRef(
-        index=1,
-        name="0001",
-        image_url="https://img/iiif/full/2500,/0/default.jpg",
-        canvas={},
-    )
-    r = fetch_page(page, tmp_path, _client(handler), 3, 0.0)
-    assert r.error is None
-    assert r.path is not None and r.path.read_bytes() == JPEG + b"narrow-image"
-
-
 def _one(tmp_path, handler, retries=3, max_bytes=None, stop=None):
     kw = {} if max_bytes is None else {"max_bytes": max_bytes}
     return fetch_page(
@@ -261,7 +238,9 @@ def test_the_unscaled_fallback_does_not_spend_an_attempt(tmp_path):
 
 def _after_a_400(tmp_path, info, url="https://img/iiif/full/2500,/0/default.jpg"):
     """The image request that follows a 400 on the sized one, when the
-    service's info.json answers ``info`` (a dict, or a status code)."""
+    service's info.json answers ``info`` (a dict, or a status code). Level 1
+    servers 400 a sized request wider than the original (no upscaling); the
+    page is what the fallback answered, not a failure."""
     seen = []
 
     def handler(req):
@@ -272,11 +251,12 @@ def _after_a_400(tmp_path, info, url="https://img/iiif/full/2500,/0/default.jpg"
             return httpx.Response(200, json=info)
         if "/full/2500,/" in req.url.path:
             return httpx.Response(400)
-        return httpx.Response(200, content=JPEG)
+        return httpx.Response(200, content=JPEG + b"fallback")
 
     page = PageRef(index=1, name="0001", image_url=url, canvas={})
     r = fetch_page(page, tmp_path, _client(handler), 1, 0.0)
     assert r.error is None
+    assert r.path is not None and r.path.read_bytes() == JPEG + b"fallback"
     return seen
 
 
