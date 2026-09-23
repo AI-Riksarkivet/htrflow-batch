@@ -705,52 +705,27 @@ def test_an_endpoint_on_another_port_is_a_value_not_a_fork():
     assert by_cidr["ports"] == [{"port": 9000}, {"port": 443}]
 
 
-# --- D5: a label is not what makes a ConfigMap a pipeline -----------------
-
-
-def test_the_model_revision_rule_reaches_any_configmap_carrying_a_pipeline(
-    full: list[dict],
-):
-    """The rule matched `managed-by: converter`, a label anyone who can
-    create a ConfigMap can leave off. The rule exists because unpinned
-    Hugging Face weights are mutable pickles, and a hand-written pipeline
-    ConfigMap is exactly the case it should catch. What makes a ConfigMap a
-    pipeline is the `pipeline.yaml` key, so that is what it matches on."""
-    policy = named(full, "ClusterPolicy", f"htrflow-batch-model-revision-{NAMESPACE}")
-    pinned = rule(policy, "pipeline-models-pinned")
-    resources = pinned["match"]["any"][0]["resources"]
-    assert resources["kinds"] == ["ConfigMap"]
-    assert resources["namespaces"] == [NAMESPACE]
-    assert "selector" not in resources
-    assert 'data."pipeline.yaml"' in pinned["context"][0]["variable"]["jmesPath"]
-
-
 # --- D6: the apply identity's delete is namespace-wide --------------------
 
 
 def test_the_apply_identity_may_only_delete_what_the_converter_rendered(
     full: list[dict],
 ):
-    """`--prune` is a delete, so the Role grants one -- and RBAC grants it
-    over the whole resource type: every Job and every ConfigMap in the
-    namespace, a running campaign's Job and another team's ConfigMap
-    included. The prune itself only ever selects converter-labelled objects;
-    this makes that the limit rather than the intention."""
+    """`--prune` is a delete, so the Role grants one -- over every Job and
+    ConfigMap in the namespace. The rule that holds it to converter-labelled
+    objects must read `request.oldObject`: a DELETE admission review carries
+    the object there, and `request.object` is null, so a rule reading it
+    would compare against nothing and admit every delete.
+
+    This is the only test of that choice. The Kyverno CLI cannot tell the
+    two apart -- it fills both from the resource it is given -- so the
+    admission test of the delete rule passes whichever one the rule reads.
+    The rest of the rule is proven through admission there."""
     policy = named(full, "ClusterPolicy", f"htrflow-batch-rbac-scope-{NAMESPACE}")
     prune = rule(policy, "apply-deletes-only-what-it-rendered")
-    match = prune["match"]["any"][0]
-    assert sorted(match["resources"]["kinds"]) == ["ConfigMap", "Job"]
-    assert match["resources"]["operations"] == ["DELETE"]
-    assert match["subjects"] == [
-        {"kind": "ServiceAccount", "name": "htrflow-campaigns", "namespace": NAMESPACE}
-    ]
     condition = prune["validate"]["deny"]["conditions"]["all"][0]
-    # A DELETE admission review carries the object as `oldObject`; reading
-    # `request.object` there would compare against nothing at all.
     assert "request.oldObject.metadata.labels" in condition["key"]
-    assert "htrflow.riksarkivet.se/managed-by" in condition["key"]
-    assert condition["operator"] == "NotEquals"
-    assert condition["value"] == "converter"
+    assert "request.object." not in condition["key"]
 
 
 def test_the_prune_rule_is_rendered_with_the_identity_it_scopes():
@@ -1021,36 +996,6 @@ def test_verification_reads_the_sigstore_bundles_the_release_writes(
     policy = named(prod, "ClusterPolicy", f"htrflow-batch-verify-images-{NAMESPACE}")
     for entry in policy["spec"]["rules"][0]["verifyImages"]:
         assert entry["type"] == "SigstoreBundle"
-
-
-# --- D10: the container list the image rules walk -------------------------
-
-
-@pytest.mark.parametrize(
-    "policy,rule_name",
-    [
-        ("images-pinned", "pod-images-pinned"),
-        ("images-allowed", "pod-images-allowed"),
-    ],
-)
-def test_the_image_rules_see_an_ephemeral_container_too(
-    full: list[dict], policy: str, rule_name: str
-):
-    """`kubectl debug` attaches an ephemeral container to a running pod, and
-    it runs an image of the debugger's choosing on the GPU node, sharing the
-    target's namespaces. Both image rules walked `containers` and
-    `initContainers` and stopped there, so that image needed neither a
-    digest nor an allowed repository.
-
-    Only the Pod rules: Kubernetes forbids `ephemeralContainers` in a pod
-    TEMPLATE, so there is nothing for the Job rules to walk.
-    """
-    rendered = named(full, "ClusterPolicy", f"htrflow-batch-{policy}-{NAMESPACE}")
-    pod = rule(rendered, rule_name)["context"][0]["variable"]["jmesPath"]
-    assert "[containers, initContainers, ephemeralContainers][]" in pod
-
-    job = rule(rendered, rule_name.replace("pod-", "job-"))
-    assert "ephemeralContainers" not in job["context"][0]["variable"]["jmesPath"]
 
 
 # --- D14: defaults called production-shaped that enforce nothing ----------

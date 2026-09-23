@@ -255,6 +255,29 @@ def test_a_pinned_pipeline_is_admitted(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
+    "step,unpin",
+    [(YOLO, ("revision",)), (TROCR, ("model_kwargs", "revision"))],
+    ids=["yolo", "trocr"],
+)
+def test_a_model_pinned_nowhere_is_refused_in_any_configmap(
+    tmp_path: Path, step: dict, unpin: tuple
+):
+    """The pipeline's own label is a claim anyone may leave off: the rule
+    reads every ConfigMap carrying `pipeline.yaml`, labelled or not."""
+    policy = render_policy(tmp_path, "model-revision")
+    unpinned = yaml.safe_load(yaml.safe_dump(step))
+    holder = unpinned["settings"]["model_settings"]
+    for key in unpin[:-1]:
+        holder = holder[key]
+    del holder[unpin[-1]]
+    cm = pipeline(unpinned)
+    assert "labels" not in cm["metadata"]
+    verdict, out = admission(tmp_path, policy, cm)
+    assert verdict == "refused", out
+    assert "models not pinned to a revision" in out
+
+
+@pytest.mark.parametrize(
     "step,stray",
     [
         # htrflow builds a model's arguments as `model_settings | settings`,
@@ -450,6 +473,35 @@ def test_signature_verification_reaches_an_image_volume(tmp_path: Path):
     verdict, out = admission(tmp_path, policy, pod(None))
     assert verdict == "refused", out
     assert OURS in out
+
+
+# --- D10: a debug container is a container too ---------------------------
+
+
+@pytest.mark.parametrize(
+    "template,image",
+    [("images-allowed", FOREIGN), ("images-pinned", f"{ALLOWED}/debug:latest")],
+    ids=["foreign", "unpinned"],
+)
+def test_a_debug_container_is_held_to_the_image_rules(
+    tmp_path: Path, template: str, image: str
+):
+    """`kubectl debug` attaches an ephemeral container running an image of
+    the debugger's choosing to a pod on the GPU node, in the target's
+    namespaces. The Pod rules walk `ephemeralContainers`; a rule on kind
+    Pod also sees the `pods/ephemeralcontainers` subresource request that
+    adds one, which Kyverno includes by itself (its conformance test
+    validate/clusterpolicy/standard/debug/with-pod). The CLI sends no
+    subresource request, so this puts the resulting Pod through."""
+    policy = render_policy(tmp_path, template)
+    debugged = pod(None)
+    debugged["spec"]["ephemeralContainers"] = [{"name": "debug", "image": image}]
+    verdict, out = admission(tmp_path, policy, debugged)
+    assert verdict == "refused", out
+    assert image in out
+    debugged["spec"]["ephemeralContainers"][0]["image"] = f"{ALLOWED}/debug@{DIGEST}"
+    verdict, out = admission(tmp_path, policy, debugged)
+    assert verdict == "admitted", out
 
 
 # --- 3065: verification scoped to a list nothing enforces -----------------
