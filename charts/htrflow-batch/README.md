@@ -79,9 +79,28 @@ version.
 
 ### From 0.12.0 to 0.13.0 — what can stop an upgrade
 
-The chart and the converter must come from the same release from here on:
-the `job-shape` policy compares a campaign or warm-up Job's scripts with the
-ones the converter renders, character for character.
+**Chart and converter versions.** The `job-shape` policy compares a
+campaign or warm-up Job's scripts, env vars and mounts with the ones the
+converter renders. Each campaigns repo pins its own converter (the Argo CD
+hook's image, and `CONVERTER_REF` in its CI), and upgrading this chart does
+not move that pin. So whenever a release changes what the converter renders:
+
+1. Upgrade the chart first.
+2. In the same change window, bump the hook image (and `CONVERTER_REF`) in
+   every campaigns repo that applies to this namespace.
+
+In between, an apply whose renders the chart does not recognise exits
+non-zero, naming the refused Job in the policy's message. Nothing already
+running is touched: live Jobs keep running, since only the apply identity's
+creates and updates (and any new Job) are checked again.
+
+For this release, 0.13.0 admits what the v0.5.0 converter renders: the
+scripts are the same, and it takes a campaign Job without the new
+`INDEX_FAILURE_COUNT` / `BACKOFF_LIMIT_PER_INDEX` env vars and a cache mount
+without `subPath`. The reverse does not hold: the new converter's apply
+holds a coordination Lease that only 0.13.0's apply Role grants, so an
+in-cluster apply (the hook) with the new image fails closed on 0.12.0. Chart
+first, then the hook images.
 
 | Change | What to do |
 |---|---|
