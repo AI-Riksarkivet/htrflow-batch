@@ -176,6 +176,17 @@ any more (a finished campaign's file is
 id whose results are published out of reuse is again **a convention enforced
 by review**.
 
+`rendered/` can be missing or edited: a checkout applied without a committed
+render, or a change that deletes `rendered/pipelines/<id>.yaml`. So `apply`
+also holds each rendered pipeline against the cluster before it sends
+anything. When a campaign Job that has not ended still mounts
+`htr-pipeline-<id>`, the steps in the live ConfigMap must be the rendered
+ones, compared parsed. If they are not, nothing is applied:
+
+```
+pipeline demo-v1 is in the cluster with different steps and campaigns kyrk, loc still run it: a pipeline id is a permanent name for a recipe, so add a new pipeline file instead — nothing was applied
+```
+
 The guard is about the *recipe*, not about the rendered manifest. Upgrading
 the converter, or changing a `converter.yaml` setting, renders every warm-up
 Job's pod template differently without touching a recipe — `apply`
