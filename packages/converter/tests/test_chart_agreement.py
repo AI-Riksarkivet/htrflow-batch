@@ -20,6 +20,7 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 from htrflow_converter.models import ConverterConfig
@@ -385,3 +386,63 @@ def test_the_apply_role_grants_every_call_cluster_py_makes():
                 and "resourceNames" not in r
                 for r in rules
             ), (group, resource)
+
+
+def _job_shape_spec() -> dict:
+    policy = (CHART / "templates" / "policies" / "job-shape.yaml").read_text(
+        encoding="utf-8"
+    )
+    return yaml.safe_load(re.search(r"\{\{- \$spec := `([^`]*)`", policy).group(1))
+
+
+@pytest.mark.parametrize(
+    "role,skeleton,added",
+    [
+        ("batch", "campaign-job.yaml", set()),
+        ("warmup", "warmup-job.yaml", {"HF_TOKEN"}),
+    ],
+)
+def test_the_job_shape_policy_holds_the_skeletons_env_mounts_and_security(
+    role: str, skeleton: str, added: set
+):
+    """job-shape allows a campaign or warm-up Job exactly the env vars,
+    mounts, Secret file mode and securityContexts of the converter's
+    skeletons, from a copy in the chart. A skeleton that gains an env var or
+    a mount without the chart would have every Job refused at admission;
+    one that changes a pinned value, the same (audit 0923 I-1). `added` is
+    what render.py adds on top of the skeleton (the Hub token, when
+    converter.yaml names its Secret)."""
+    spec = _job_shape_spec()
+    shape = spec[role]
+    pod = _load(CONVERTER_SRC / "manifests" / skeleton)["spec"]["template"]["spec"]
+    main = pod["containers"][0]
+    env = {e["name"]: e for e in main["env"]}
+    named = set(shape["pinned"]) | set(shape["free"]) | set(shape["secretEnv"])
+    named |= set(shape["fieldEnv"])
+    assert named == set(env) | added
+    for name, value in shape["pinned"].items():
+        assert env[name] == {"name": name, "value": value}, name
+    for name in shape["free"]:
+        assert "valueFrom" not in env[name], name
+    for name in set(shape["secretEnv"]) - added:
+        assert list(env[name]["valueFrom"]) == ["secretKeyRef"], name
+    for name, path in shape["fieldEnv"].items():
+        assert env[name]["valueFrom"] == {"fieldRef": {"fieldPath": path}}, name
+    assert [[m["name"], m["mountPath"]] for m in main["volumeMounts"]] == shape[
+        "mounts"
+    ]
+    inits = [
+        [m["name"], m["mountPath"]]
+        for c in pod.get("initContainers", [])
+        for m in c["volumeMounts"]
+    ]
+    assert inits == shape["initMounts"]
+    assert all("env" not in c for c in pod.get("initContainers", []))
+    assert pod["securityContext"] == spec["podSecurity"]
+    for c in [*pod["containers"], *pod.get("initContainers", [])]:
+        assert c["securityContext"] == spec["containerSecurity"], c["name"]
+    for v in pod["volumes"]:
+        if "secret" in v:
+            assert v["secret"].get("defaultMode") == spec["secretMode"]
+        if "configMap" in v:
+            assert "defaultMode" not in v["configMap"] and "items" not in v["configMap"]

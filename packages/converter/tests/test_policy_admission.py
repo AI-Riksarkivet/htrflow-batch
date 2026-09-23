@@ -628,7 +628,11 @@ def converter_jobs(**config) -> tuple[dict, dict]:
     campaigns, pipelines, cfg = load(
         FIXTURE / "campaigns", FIXTURE / "pipelines", FIXTURE / "converter.yaml"
     )
-    cfg = cfg.model_copy(update={"namespace": NAMESPACE, **config})
+    from htrflow_converter.models import ConverterConfig
+
+    cfg = ConverterConfig.model_validate(
+        {**cfg.model_dump(by_alias=True), "namespace": NAMESPACE, **config}
+    )
     kyrk = next(c for c in campaigns if c.name == "kyrk")
     demo = pipelines["demo-v1"]
     batch = next(
@@ -686,9 +690,8 @@ def test_what_the_converter_renders_is_admitted(
         ({"s3_secret": GIT_SECRET}, "batch", GIT_SECRET),
         ({"data_pvc": "team-archive"}, "batch", "team-archive"),
         ({"data_pvc": "team-archive"}, "warmup", "team-archive"),
-        ({"tolerations": [{"operator": "Exists"}]}, "batch", "Exists"),
     ],
-    ids=["hub-token-git", "s3-git", "pvc-batch", "pvc-warmup", "tolerate-all"],
+    ids=["hub-token-git", "s3-git", "pvc-batch", "pvc-warmup"],
 )
 def test_converter_yaml_cannot_hand_a_job_another_secret_or_volume(
     tmp_path: Path, job_shape: Path, config: dict, role: str, said: str
@@ -737,6 +740,37 @@ def _add_volume(name: str, source: dict, mount: str):
     def change(job: dict) -> None:
         _pod(job)["volumes"].append({"name": name, **source})
         _main(job)["volumeMounts"].append({"name": name, "mountPath": mount})
+
+    return change
+
+
+def _set_env(name: str, entry: dict, container: str = "main"):
+    """Replace env `name` (or add it) with `entry`, in the main container
+    or the init container."""
+
+    def change(job: dict) -> None:
+        c = _main(job) if container == "main" else _pod(job)["initContainers"][0]
+        env = c.setdefault("env", [])
+        found = [e for e in env if e["name"] == name]
+        if found:
+            found[0].clear()
+            found[0].update({"name": name, **entry})
+        else:
+            env.append({"name": name, **entry})
+
+    return change
+
+
+def _volume(name: str, change_source):
+    def change(job: dict) -> None:
+        change_source(next(v for v in _pod(job)["volumes"] if v["name"] == name))
+
+    return change
+
+
+def _mount(name: str, **fields):
+    def change(job: dict) -> None:
+        next(m for m in _main(job)["volumeMounts"] if m["name"] == name).update(fields)
 
     return change
 
@@ -850,6 +884,62 @@ MUTATIONS = {
             },
         ),
     ),
+    # I-1: an env var, a file mode or a mount point is a way to run code
+    # out of a ConfigMap the apply identity may write
+    "path-env": ("batch", _set_env("PATH", {"value": "/campaign:/usr/bin:/bin"})),
+    "ld-preload": ("batch", _set_env("LD_PRELOAD", {"value": "/campaign/x.so"})),
+    "pythonpath": ("warmup", _set_env("PYTHONPATH", {"value": "/config"})),
+    "pinned-value": ("batch", _set_env("HOME", {"value": "/campaign"})),
+    "free-from-field": (
+        "batch",
+        _set_env(
+            "PIPELINE_ID", {"valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}}
+        ),
+    ),
+    "field-path": (
+        "batch",
+        _set_env(
+            "INDEX_FAILURE_COUNT",
+            {"valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}},
+        ),
+    ),
+    "init-env": ("batch", _set_env("PATH", {"value": "/data"}, container="init")),
+    "campaign-mode": (
+        "batch",
+        _volume("campaign", lambda v: v["configMap"].update(defaultMode=0o755)),
+    ),
+    "secret-mode": (
+        "batch",
+        _volume("s3", lambda v: v["secret"].update(defaultMode=0o777)),
+    ),
+    "secret-items": (
+        "batch",
+        _volume(
+            "s3",
+            lambda v: v["secret"].update(
+                items=[{"key": "credentials", "path": "python"}]
+            ),
+        ),
+    ),
+    "mount-elsewhere": ("batch", _mount("campaign", mountPath="/usr/local/bin")),
+    "sub-path-campaign": ("batch", _mount("campaign", subPath="volumes.txt")),
+    "status-configmap": (
+        "batch",
+        _set_volume("campaign", {"configMap": {"name": "campaign-kyrk-status"}}),
+    ),
+    # M-4: the converter's securityContext, exactly
+    "root": ("warmup", lambda j: _pod(j)["securityContext"].update(runAsUser=0)),
+    "capabilities": (
+        "batch",
+        lambda j: _main(j)["securityContext"].update(
+            capabilities={"add": ["SYS_ADMIN"]}
+        ),
+    ),
+    "host-network": ("batch", lambda j: _pod(j).update(hostNetwork=True)),
+    "tolerate-all": (
+        "batch",
+        lambda j: _pod(j).update(tolerations=[{"operator": "Exists"}]),
+    ),
     "pipeline-shadowed": (
         "batch",
         _add_volume("shadow", {"emptyDir": {}}, "/config/pipeline.yaml"),
@@ -866,7 +956,7 @@ SAID = {
     "warmup-s3-volume": "Secrets this pod may not read: htr-batch-s3",
     "warmup-s3-env": "Secrets this pod may not read: htr-batch-s3",
     "env-from-secret": "envFrom",
-    "field-ref": "env from something other than a Secret key: X",
+    "field-ref": "env the converter never renders: X",
     "writable-cache": "the model cache mounted writable",
     "host-path": "volumes other than configMap",
     "warmup-label-on-batch": "a warm-up Job is named htr-warmup-",
@@ -882,8 +972,25 @@ SAID = {
     "pipeline-path": "PIPELINE_PATH is not /config/pipeline.yaml",
     "pipeline-emptydir": "the pipeline volume is not an htr-pipeline-* ConfigMap",
     "pipeline-other-configmap": "ConfigMaps this pod may not mount: team-settings",
-    "pipeline-items": "remapping its keys with items",
+    "pipeline-items": "a volume with a file mode or items the converter never renders",
     "pipeline-shadowed": "the pipeline volume is not the one mount at /config",
+    "path-env": "env the converter never renders: PATH",
+    "ld-preload": "env the converter never renders: LD_PRELOAD",
+    "pythonpath": "env the converter never renders: PYTHONPATH",
+    "pinned-value": "env not at the converter's value: HOME",
+    "free-from-field": "env from somewhere the converter never reads: PIPELINE_ID",
+    "field-path": "env from somewhere the converter never reads: INDEX_FAILURE_COUNT",
+    "init-env": "the init container carries env",
+    "campaign-mode": "a volume with a file mode or items the converter never renders",
+    "secret-mode": "a volume with a file mode or items the converter never renders",
+    "secret-items": "a volume with a file mode or items the converter never renders",
+    "mount-elsewhere": "mounts are not the converter's",
+    "sub-path-campaign": "mounts are not the converter's",
+    "status-configmap": "ConfigMaps this pod may not mount: campaign-kyrk-status",
+    "root": "securityContext is not the converter's",
+    "capabilities": "securityContext is not the converter's",
+    "host-network": "host namespaces or aliases",
+    "tolerate-all": "a toleration with operator Exists and no key",
 }
 
 

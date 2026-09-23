@@ -21,6 +21,60 @@ exec python -m htrflow_batch
 mkdir -p "$HOME" "$TMPDIR" "$YOLO_CONFIG_DIR" "$HF_HOME"
 exec python -m htrflow_batch.warmup
 ` }}
+{{- /*
+The rest of the two skeletons, as the converter renders them: every env var
+by name -- `pinned` at the skeleton's own value, `free` set by render.py per
+campaign (a plain value), `secretEnv` from a Secret key, `fieldEnv` from
+that one field -- the mounts of each container, the Secret volume's file
+mode and the two securityContexts. An env var, a file mode or a mount point
+is enough to run code out of a ConfigMap the apply identity may write
+(PATH, LD_PRELOAD, PYTHONPATH, an executable key), so none is left open
+(audit 0923 I-1, M-4). test_chart_agreement.py holds this block to the
+manifests.
+*/}}
+{{- $spec := `
+batch:
+  pinned:
+    PIPELINE_PATH: /config/pipeline.yaml
+    HF_HUB_OFFLINE: "1"
+    HF_HOME: /data/hf
+    WORKDIR_PATH: /work
+    HOME: /work/home
+    TMPDIR: /work/tmp
+    YOLO_CONFIG_DIR: /work/ultralytics
+    AWS_SHARED_CREDENTIALS_FILE: /secrets/s3/credentials
+  free: [PIPELINE_ID, S3_PREFIX, PUBLIC_RESULTS_BASE, IMAGE_DIGEST, BACKOFF_LIMIT_PER_INDEX, MANIFEST_MAX_BYTES, FETCH_MAX_BYTES]
+  secretEnv: [S3_ENDPOINT, S3_BUCKET]
+  fieldEnv:
+    INDEX_FAILURE_COUNT: metadata.annotations['batch.kubernetes.io/job-index-failure-count']
+  mounts: [[campaign, /campaign], [pipeline, /config], [data, /data], [work, /work], [s3, /secrets/s3]]
+  initMounts: [[data, /data]]
+warmup:
+  pinned:
+    PIPELINE_PATH: /config/pipeline.yaml
+    CUDA_VISIBLE_DEVICES: ""
+    HF_HOME: /data/hf
+    WORKDIR_PATH: /work
+    HOME: /work/home
+    TMPDIR: /work/tmp
+    YOLO_CONFIG_DIR: /work/ultralytics
+  free: [PIPELINE_ID]
+  secretEnv: [HF_TOKEN]
+  fieldEnv: {}
+  mounts: [[pipeline, /config], [data, /data], [work, /work]]
+  initMounts: []
+secretMode: 288
+podSecurity:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile: {type: RuntimeDefault}
+containerSecurity:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: {drop: [ALL]}
+` | fromYaml }}
 {{- $ns := .Release.Namespace }}
 {{- $imageRe := "" }}
 {{- with .Values.security.jobImageRepos }}
@@ -139,6 +193,8 @@ spec:
           "containers" (list "wrapper")
           "initContainers" (list "warmup-wait")
           "args" $batchArgs
+          "shape" $spec.batch
+          "spec" $spec
           "imageRe" $imageRe) | nindent 4 }}
     {{- include "htrflow-batch.jobShapeRule" (dict
           "root" .
@@ -148,5 +204,7 @@ spec:
           "containers" (list "warmup")
           "initContainers" (list)
           "args" $warmupArgs
+          "shape" $spec.warmup
+          "spec" $spec
           "imageRe" $imageRe) | nindent 4 }}
 {{- end }}

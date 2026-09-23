@@ -53,6 +53,17 @@ containers, initContainers, args, imageRe.
 {{- $root := .root }}
 {{- $prefixes := list }}
 {{- range .configMaps }}{{ $prefixes = append $prefixes (printf "starts_with(configMap.name, '%s')" .) }}{{ end }}
+{{- $shape := .shape }}
+{{- $envNames := concat (keys $shape.pinned | sortAlpha) $shape.free $shape.secretEnv (keys $shape.fieldEnv | sortAlpha) }}
+{{- $fromNames := concat $shape.secretEnv (keys $shape.fieldEnv | sortAlpha) }}
+{{- $pinnedChecks := list }}
+{{- range $k, $v := $shape.pinned }}
+{{- $pinnedChecks = append $pinnedChecks (printf "pod.containers[0].env[?name == '%s'].[value || '', valueFrom] != `%s` && '%s'" $k (toJson (list (list $v nil))) $k) }}
+{{- end }}
+{{- $fieldChecks := list }}
+{{- range $k, $v := $shape.fieldEnv }}
+{{- $fieldChecks = append $fieldChecks (printf "pod.containers[0].env[?name == '%s'].valueFrom.fieldRef.fieldPath != `%s` && '%s'" $k (toJson (list $v)) $k) }}
+{{- end }}
 {{- $allowedKeys := "['name', 'image', 'command', 'args', 'env', 'volumeMounts', 'securityContext', 'resources', 'imagePullPolicy', 'terminationMessagePath', 'terminationMessagePolicy']" }}
 - name: {{ trimPrefix "htrflow-" .role }}-job-shape
   {{- include "htrflow-batch.jobShapeMatch" $root | nindent 2 }}
@@ -93,14 +104,37 @@ containers, initContainers, args, imageRe.
           join(', ', [ctrs[].env[].valueFrom.secretKeyRef.name, (pod.volumes || `[]`)[].secret.secretName][] | [?!contains(`{{ toJson .secrets }}`, @)]),
           ' (allowed: {{ join ", " .secrets | default "none" }})']),
           length(ctrs[].envFrom[]) > `0` && 'envFrom, which the converter never renders',
-          length(ctrs[].env[] | [?valueFrom && keys(valueFrom) != ['secretKeyRef']]) > `0`
-          && join('', ['env from something other than a Secret key: ',
-          join(', ', ctrs[].env[] | [?valueFrom && keys(valueFrom) != ['secretKeyRef']].name)]),
-          length((pod.volumes || `[]`)[?configMap && !({{ join " || " $prefixes }})]) > `0`
+          length(pod.containers[0].env[?!contains(`{{ toJson $envNames }}`, name)]) > `0`
+          && join('', ['env the converter never renders: ',
+          join(', ', pod.containers[0].env[?!contains(`{{ toJson $envNames }}`, name)].name)]),
+          length([{{ join ", " $pinnedChecks }}][?@]) > `0`
+          && join('', ['env not at the converter\'s value: ', join(', ', [{{ join ", " $pinnedChecks }}][?@])]),
+          length([pod.containers[0].env[?contains(`{{ toJson $fromNames }}`, name) && !valueFrom].name,
+          pod.containers[0].env[?valueFrom && !(contains(`{{ toJson $shape.secretEnv }}`, name) && keys(valueFrom) == ['secretKeyRef'])
+          && !(contains(`{{ toJson (keys $shape.fieldEnv) }}`, name) && keys(valueFrom) == ['fieldRef'])].name,
+          [{{ join ", " (default (list "`false`") $fieldChecks) }}][?@]][]) > `0`
+          && join('', ['env from somewhere the converter never reads: ',
+          join(', ', [pod.containers[0].env[?contains(`{{ toJson $fromNames }}`, name) && !valueFrom].name,
+          pod.containers[0].env[?valueFrom && !(contains(`{{ toJson $shape.secretEnv }}`, name) && keys(valueFrom) == ['secretKeyRef'])
+          && !(contains(`{{ toJson (keys $shape.fieldEnv) }}`, name) && keys(valueFrom) == ['fieldRef'])].name,
+          [{{ join ", " (default (list "`false`") $fieldChecks) }}][?@]][])]),
+          length((pod.initContainers || `[]`)[].env[]) > `0` && 'the init container carries env',
+          (pod.containers[0].volumeMounts[].[name, mountPath] != `{{ toJson $shape.mounts }}`
+          || (pod.initContainers || `[]`)[].volumeMounts[].[name, mountPath] != `{{ toJson $shape.initMounts }}`
+          || length(ctrs[].volumeMounts[] | [?subPathExpr || (subPath && name != 'data')]) > `0`)
+          && 'mounts are not the converter\'s',
+          (pod.securityContext != `{{ toJson .spec.podSecurity }}`
+          || length(ctrs[?securityContext != `{{ toJson .spec.containerSecurity }}`]) > `0`)
+          && 'securityContext is not the converter\'s',
+          (pod.hostNetwork || pod.hostPID || pod.hostIPC || pod.shareProcessNamespace || pod.hostAliases)
+          && 'host namespaces or aliases, which the converter never renders',
+          length((pod.volumes || `[]`)[?configMap && (!({{ join " || " $prefixes }}) || (starts_with(configMap.name, 'campaign-') && ends_with(configMap.name, '-status')))]) > `0`
           && join('', ['ConfigMaps this pod may not mount: ',
-          join(', ', (pod.volumes || `[]`)[?configMap && !({{ join " || " $prefixes }})].configMap.name)]),
-          length((pod.volumes || `[]`)[?configMap.items]) > `0`
-          && 'a ConfigMap volume remapping its keys with items',
+          join(', ', (pod.volumes || `[]`)[?configMap && (!({{ join " || " $prefixes }}) || (starts_with(configMap.name, 'campaign-') && ends_with(configMap.name, '-status')))].configMap.name)]),
+          length((pod.volumes || `[]`)[?configMap.items || secret.items
+          || (configMap && !contains(`[null, 420]`, configMap.defaultMode))
+          || (secret && secret.defaultMode != `{{ .spec.secretMode }}`)]) > `0`
+          && 'a volume with a file mode or items the converter never renders',
           length((pod.volumes || `[]`)[?persistentVolumeClaim && persistentVolumeClaim.claimName != '{{ $root.Values.modelCache.name }}']) > `0`
           && join('', ['PVCs other than the model cache ({{ $root.Values.modelCache.name }}): ',
           join(', ', (pod.volumes || `[]`)[?persistentVolumeClaim && persistentVolumeClaim.claimName != '{{ $root.Values.modelCache.name }}'].persistentVolumeClaim.claimName)]),
