@@ -713,7 +713,9 @@ def _moved_recipe(cluster, pipelines: list[dict]) -> str | None:
     users: dict[str, list[str]] = {}
     for job in cluster.labelled("Job"):
         name = job["metadata"]["name"]
-        if name.startswith(render.WARMUP_PREFIX) or _ended(job):
+        if name.startswith(render.WARMUP_PREFIX) or _condition(
+            job, "Complete", "Failed"
+        ):
             continue
         pod = ((job.get("spec") or {}).get("template") or {}).get("spec") or {}
         for volume in pod.get("volumes") or []:
@@ -756,13 +758,9 @@ _RETRIED = (
 )
 
 
-def _failed(job: dict, types: tuple[str, ...] = ("Failed",)) -> bool:
+def _condition(job: dict, *types: str) -> bool:
     conditions = (job.get("status") or {}).get("conditions") or []
     return any(c.get("type") in types and c.get("status") == "True" for c in conditions)
-
-
-def _ended(job: dict) -> bool:
-    return _failed(job, ("Complete", "Failed"))
 
 
 def _apply_object(cluster, obj: dict, warmup: bool) -> dict:
@@ -807,7 +805,7 @@ def _apply_object(cluster, obj: dict, warmup: bool) -> dict:
         replaced = cluster.replace_job(obj)
         print(_REPLACED.format(name=name))
         return replaced
-    if warmup and _failed(live):
+    if warmup and _condition(live, "Failed"):
         live = cluster.replace_job(obj)
         print(_RETRIED.format(name=obj["metadata"]["name"]))
     return live
@@ -839,19 +837,18 @@ _REFUSED_SUMMARY = (
     "{n} of {total} objects were refused by the API server and are "
     "unchanged: {names} — the other {ok} were applied (exit {code})"
 )
-#: A campaign Job the API server refused is paused through the live Job's
-#: Workload. When the live Job cannot be read either there is no uid to find
-#: that Workload by: git says stopped, the Job may be running, and nothing in
-#: this apply is going to stop it. Exit 1, like a Workload that never appeared.
-_REFUSED_PAUSE = (
-    "{name}: paused in git, but its Job was not applied and could not be "
-    "read, so its Kueue Workload was not found and the pause is NOT "
-    "enforced; fix what the error says and re-run the apply"
-)
-
+#: A pause the sync could not reach: the refused Job's live one could not be
+#: read (no uid to find its Workload by), or the Workload patch failed. Git
+#: says stopped, the Job may be running, and nothing in this apply is going
+#: to stop it. Exit 1, like a Workload that never appeared.
 _UNSYNCED_PAUSE = (
-    "{name}: paused in git, but its Kueue Workload could not be deactivated, "
-    "so the pause is NOT enforced; fix what the error says and re-run the apply"
+    "{name}: paused in git, but its Kueue Workload was not deactivated, so the "
+    "pause is NOT enforced; fix what the error above says and re-run the apply"
+)
+#: Not objects this apply renders, so not in the refused count (C-9).
+_UNSYNCED = (
+    "the pause sync did not reach the Kueue Workload of {names}; see above "
+    "(exit {code})"
 )
 
 #: The API server stopped answering part-way through: what came before is
@@ -1047,6 +1044,7 @@ def _apply(
             # Campaign Jobs the API server refused (or this apply could not
             # look at), which the pause sync still reaches -- see below.
             held: list[dict] = []
+            unsynced: list[str] = []
             applied = failed = 0
             for objects, is_campaign in ((pipelines, False), (campaigns, True)):
                 for obj in objects:
@@ -1111,8 +1109,9 @@ def _apply(
                     raise
                 except ClusterError as e:
                     print(e, file=sys.stderr)
+                    unsynced.append(f"Job/{job}")
                     if suspended:
-                        print(_REFUSED_PAUSE.format(name=job), file=sys.stderr)
+                        print(_UNSYNCED_PAUSE.format(name=job), file=sys.stderr)
                         failed = 1
                     continue
                 # No Job: nothing runs, so a pause holds and an unpause has
@@ -1132,7 +1131,7 @@ def _apply(
                 except ClusterError as e:
                     job = live["metadata"]["name"]
                     print(e, file=sys.stderr)
-                    refused.append(f"Workload of Job/{job}")
+                    unsynced.append(f"Job/{job}")
                     if suspended:
                         print(_UNSYNCED_PAUSE.format(name=job), file=sys.stderr)
                         failed = 1
@@ -1145,15 +1144,20 @@ def _apply(
                 ):
                     print(problem, file=sys.stderr)
                     refused.append(what)
+            if not (refused or unsynced):
+                return failed
+            # Refused everything is not "some objects were refused", it is
+            # the total failure the old code always reported: a Role without
+            # apply, a webhook rejecting the lot. Same exit 1. A pause that
+            # is not enforced is exit 1 too, and it outranks a refused
+            # object: a campaign git says is paused that is running anyway is
+            # burning GPU right now, while a refused object is a change still
+            # to make.
+            code = 1 if failed or (refused and not applied) else REFUSED
+            if unsynced:
+                names = ", ".join(unsynced)
+                print(_UNSYNCED.format(names=names, code=code), file=sys.stderr)
             if refused:
-                # Refused everything is not "some objects were refused", it
-                # is the total failure the old code always reported: a Role
-                # without apply, a webhook rejecting the lot. Same exit 1.
-                # A pause that is not enforced is exit 1 too, and it outranks
-                # a refused object: a campaign git says is paused that is
-                # running anyway is burning GPU right now, while a refused
-                # object is a change still to make.
-                code = REFUSED if applied and not failed else 1
                 print(
                     _REFUSED_SUMMARY.format(
                         n=len(refused),
@@ -1164,8 +1168,7 @@ def _apply(
                     ),
                     file=sys.stderr,
                 )
-                return code
-            return failed
+            return code
         except ClusterError as e:
             print(e, file=sys.stderr)
             return 1

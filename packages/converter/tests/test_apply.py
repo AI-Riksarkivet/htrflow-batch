@@ -1667,8 +1667,11 @@ def test_a_pause_sync_error_is_one_campaigns_problem(tmp_path, cluster, capsys):
     assert "patch Workload/wl-kyrk: 404" in err
     assert "not allowed to patch Workload/wl-pausy" in err
     assert "pausy: paused in git, but" in err
-    summary = err.splitlines()[-1]
-    assert "Workload of Job/kyrk" in summary and "Workload of Job/pausy" in summary
+    # Their own line, not the refused-objects summary: a Workload is not an
+    # object this apply renders, and nothing here was refused (C-9).
+    (line,) = [x for x in err.splitlines() if x.startswith("the pause sync")]
+    assert "Job/kyrk, Job/pausy" in line and line.endswith("(exit 1)")
+    assert "objects were refused" not in err
 
 
 def test_an_unpause_that_did_not_take_is_a_change_still_to_make(
@@ -1680,7 +1683,10 @@ def test_an_unpause_that_did_not_take_is_a_change_still_to_make(
     cluster.workloads = {"uid-kyrk": _workload("wl-kyrk", False)}
     cluster.workload_errors = {"wl-kyrk": 404}
     assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
-    assert "Workload of Job/kyrk" in capsys.readouterr().err.splitlines()[-1]
+    assert capsys.readouterr().err.splitlines()[-1] == (
+        "the pause sync did not reach the Kueue Workload of Job/kyrk; see above "
+        "(exit 3)"
+    )
 
 
 # --- the live pipeline ConfigMap is a record too (C-7) --------------------
