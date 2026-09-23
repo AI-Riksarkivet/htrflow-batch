@@ -68,3 +68,16 @@ def test_the_fixture_carries_what_the_routes_add_to_the_projection():
         },
     }
 
+
+def test_the_reaped_window_is_read_off_the_route():
+    """The page asks for reaped campaigns a page at a time and never past the
+    API's cap; the vitest holds its REAPED_PAGE/REAPED_MAX to these. They
+    are what the route does -- the rows it sends unasked, the last
+    ``?reaped=`` it answers -- so they are checked against its constants
+    here only to prove the probe found the edge, not to restate them."""
+    from htrflow_web import app
+
+    assert build()["reapedLimits"] == {
+        "default": app.REAPED_SHOWN,
+        "max": app.REAPED_MAX,
+    }

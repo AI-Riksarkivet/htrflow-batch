@@ -307,6 +307,54 @@ class UnavailableReader(ContractReader):
         raise ClusterUnavailable("jobs: 403 Forbidden")
 
 
+class ManyReapedReader(ContractReader):
+    """A namespace holding more reaped campaigns than a list shows unless
+    asked: how many rows come back without ``?reaped=`` is the route's
+    default window, read off its answer rather than off the constant."""
+
+    RECORDS = 100
+
+    def list_jobs(self) -> list[dict]:
+        return []
+
+    def list_configmaps(self) -> list[dict]:
+        rows = []
+        for i in range(self.RECORDS):
+            name = f"old{i:03d}"
+            rows.append({"metadata": _record(name, "demo-v0")["metadata"]})
+            rows.append(_status(name, "demo-v0"))
+        return rows
+
+
+def _reaped_limits() -> dict:
+    """What ``/api/v1/jobs?reaped=`` does at its edges: how many reaped rows
+    come back when the parameter is left out, and the largest value it
+    answers 200 to (one more is a 422). The page's own window and cap
+    (REAPED_PAGE, REAPED_MAX) are asserted equal to these by the vitest, so
+    a limit moved on either side fails there."""
+    with tempfile.TemporaryDirectory() as site:
+        client = TestClient(create(ManyReapedReader(), site))
+        rows = _answer(client, "/api/v1/jobs").json()
+        if len(rows) >= ManyReapedReader.RECORDS:
+            raise SystemExit("the default reaped window is not below the probe's size")
+
+        def admitted(n: int) -> bool:
+            status = client.get(f"/api/v1/jobs?reaped={n}").status_code
+            if status not in (200, 422):
+                raise SystemExit(f"?reaped={n}: {status}, neither 200 nor 422")
+            return status == 200
+
+        low, high = 0, 2**31  # admitted, refused
+        if not admitted(low) or admitted(high):
+            raise SystemExit("?reaped= has no 200/422 boundary to find")
+        while high - low > 1:
+            middle = (low + high) // 2
+            low, high = (middle, high) if admitted(middle) else (low, middle)
+        if admitted(-1):
+            raise SystemExit("?reaped=-1 was answered: no lower bound")
+    return {"default": len(rows), "max": low}
+
+
 def _answer(client: TestClient, path: str, status: int = 200) -> httpx.Response:
     resp = client.get(path)
     if resp.status_code != status:
@@ -361,6 +409,7 @@ def build() -> dict:
         "details": details,
         "version": version,
         "errors": errors,
+        "reapedLimits": _reaped_limits(),
     }
 
 

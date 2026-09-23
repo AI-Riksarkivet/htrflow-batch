@@ -13,6 +13,8 @@ import {
   fetchJobs,
   jobDetailSchema,
   jobSummarySchema,
+  REAPED_MAX,
+  REAPED_PAGE,
   versionSchema,
 } from "$lib/api.js";
 import { describeApiError } from "$lib/reasons.js";
@@ -78,6 +80,15 @@ describe("the read API's contract", () => {
     });
     expect(volumes.some((v) => v.sourceUrl !== null)).toBe(true);
     expect(volumes.some((v) => v.reason !== undefined)).toBe(true);
+  });
+
+  // The page asks for reaped campaigns REAPED_PAGE at a time and never past
+  // REAPED_MAX; the numbers are the route's own -- how many it sends unasked,
+  // and the last `?reaped=` it answers 200 to. A page asking past the cap
+  // gets a 422 and shows the service as unreachable.
+  test("the page's reaped window and cap are the API's", () => {
+    expect(REAPED_PAGE).toBe(contract.reapedLimits.default);
+    expect(REAPED_MAX).toBe(contract.reapedLimits.max);
   });
 
   describe("what the routes add around the rows", () => {
