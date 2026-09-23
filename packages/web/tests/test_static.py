@@ -313,17 +313,30 @@ def test_no_static_dir_still_serves_the_api(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
-    "path", ["/healthz", "/api/v1/version", "/api/v1/jobs", "/api/v1/jobs/ns/name"]
+    ("path", "status"),
+    [
+        ("/healthz", 200),
+        ("/api/v1/version", 200),
+        ("/api/v1/jobs", 200),
+        # The route's own 404 -- no such campaign -- not the mount's.
+        ("/api/v1/jobs/ns/name", 404),
+    ],
 )
 def test_head_is_answered_by_the_route_not_the_static_mount(
-    client: TestClient, path: str
+    client: TestClient, path: str, status: int
 ):
     """FastAPI does not add HEAD to a GET route; without it these fall through
-    to the mount and 404 (or, for the decoy, serve a file)."""
+    to the mount and 404 (or, for the decoy, serve a file). The mount's 404
+    is JSON with an empty HEAD body too, so the status alone is not enough:
+    HEAD must describe the very body GET sends."""
     resp = client.head(path)
-    assert resp.status_code in (200, 404)
+    get = client.get(path)
+    assert resp.status_code == status == get.status_code
     assert resp.headers["content-type"] == "application/json"
     assert resp.text == ""
+    assert resp.headers["content-length"] == get.headers["content-length"]
+    if status == 404:
+        assert get.json() == {"detail": "job not found"}
 
 
 def test_head_on_a_page(client: TestClient):
