@@ -34,10 +34,12 @@ nav = [
     {"Overview" = "reference/index.md"},
     {"Configuration" = "reference/configuration.md"},
     {"Campaign & Pipeline YAML" = "reference/campaign-yaml.md"},
+    {"htrflow-campaigns CLI" = "reference/cli.md"},
+    {"Rendered Objects" = "reference/rendered.md"},
     {"Wrapper" = "reference/wrapper.md"},
     {"Chart Values" = "reference/chart.md"},
     {"S3 Layout" = "reference/s3-layout.md"},
-    {"Campaign Browser" = "reference/frontend.md"},
+    {"Web Front & Read API" = "reference/web.md"},
   ]},
   { "Presentations" = ["presentations.md"] },
   { "Roadmap" = [
