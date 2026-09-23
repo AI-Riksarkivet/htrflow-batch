@@ -116,6 +116,18 @@ spec:
           value: IMAGE
         - name: HF_HUB_OFFLINE
           value: "1"
+        # Which attempt of its index this pod is, and how many the index
+        # gets: the wrapper fails a page it still defers on the last one.
+        # The Job controller sets the annotation on every pod of an Indexed
+        # Job with backoffLimitPerIndex (absent reads as "", which the
+        # wrapper takes as 0); render.py copies the limit from
+        # spec.backoffLimitPerIndex above, so the two cannot drift.
+        - name: INDEX_FAILURE_COUNT
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['batch.kubernetes.io/job-index-failure-count']
+        - name: BACKOFF_LIMIT_PER_INDEX
+          value: "0"
         - name: MANIFEST_MAX_BYTES
           value: "0"
         - name: FETCH_MAX_BYTES
