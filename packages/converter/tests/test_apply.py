@@ -2220,3 +2220,100 @@ def test_the_seeded_job_specs_are_the_rendered_ones(tmp_path):
         docs = yaml.safe_load_all((out / "campaigns" / f"{name}.yaml").read_text())
         (job,) = [d for d in docs if d["kind"] == "Job"]
         assert {k: job["spec"][k] for k in spec} == spec, name
+
+
+# --- two running campaigns on one pipeline never share a volume (C-13) ---
+
+
+def _rerun(repo: Path, name: str = "rerun", *volumes: str) -> None:
+    listed = "".join(f"  - {v}\n" for v in volumes or ("R0001203", "R4444444"))
+    (repo / "campaigns" / f"{name}.yaml").write_text(
+        f"pipeline: demo-v1\nvolumes:\n{listed}"
+    )
+
+
+def test_a_volume_a_running_campaign_on_the_pipeline_has_is_refused(
+    tmp_path, cluster, capsys
+):
+    """Results are keyed `<pipeline>/<volume>/`, so two campaigns running one
+    volume on one pipeline race on the same progress and manifest objects.
+    `validate` cannot see what is running; the apply can, and refuses the
+    newcomer's pair -- the other campaigns go out as usual."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    _rerun(repo)
+    cluster.calls.clear()
+    capsys.readouterr()
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
+    applied = [c[2] for c in cluster.of("apply")]
+    assert "rerun" not in applied and "campaign-rerun" not in applied
+    assert "kyrk" in applied
+    err = capsys.readouterr().err
+    assert "campaign rerun shares volume R0001203 with campaign kyrk" in err
+    assert "Job/rerun" in err.splitlines()[-1]
+
+
+def test_a_rerun_after_the_old_campaign_ended_is_applied(tmp_path, cluster):
+    """The documented way to run a failed volume again is a new campaign on
+    the same pipeline, once the old one is over."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    _live(cluster, "kyrk")["status"] = {
+        "conditions": [{"type": "Failed", "status": "True"}]
+    }
+    _rerun(repo)
+    cluster.calls.clear()
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert ("apply", "Job", "rerun") in cluster.calls
+
+
+def test_two_new_campaigns_sharing_a_volume_are_not_both_started(
+    tmp_path, cluster, capsys
+):
+    """Neither is running yet, and both would be by the end of this apply:
+    the first in the render goes out, the second is refused."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    _rerun(repo, "zz-second", *[f"R00{n}" for n in range(10, 16)], "R0001203")
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
+    assert ("apply", "Job", "kyrk") in cluster.calls
+    assert ("apply", "Job", "zz-second") not in cluster.calls
+    err = capsys.readouterr().err
+    assert "campaign zz-second shares volume R0001203 with campaign kyrk" in err
+
+
+def test_many_shared_volumes_are_named_first_few_then_counted(
+    tmp_path, cluster, capsys
+):
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    _rerun(repo, "zz-all", "R0001203", "R0009999", "R0009998", "dodsbok-1698",
+           "loose-scans")  # fmt: skip
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
+    assert "and 2 more" in capsys.readouterr().err
+
+
+def test_a_running_campaigns_volumes_it_may_not_read_hold_the_newcomers(
+    tmp_path, cluster, capsys
+):
+    """A check that cannot be made is not one that passed: the campaigns it
+    was for are left as they were, and the pipelines still go out."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    _rerun(repo)
+    real = FakeCluster._api
+    reads = [0]
+
+    def api(kind, verb, name=""):
+        if verb == "read" and name == "campaign-loc":
+            reads[0] += 1
+            if reads[0] > 1:  # the first is the append-only check's
+                raise cluster_mod.ClusterError("not allowed to get ConfigMap/x")
+        return real(cluster, kind, verb, name)
+
+    cluster._api = api
+    cluster.calls.clear()
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
+    assert ("apply", "Job", "rerun") not in cluster.calls
+    assert ("apply", "ConfigMap", "htr-pipeline-demo-v1") in cluster.calls
+    assert "could not tell whether campaign rerun shares a volume" in (
+        capsys.readouterr().err
+    )

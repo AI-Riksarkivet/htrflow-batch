@@ -202,6 +202,17 @@ ones, compared parsed. If they are not, nothing is applied:
 pipeline demo-v1 is in the cluster with different steps and campaigns kyrk, loc still run it: a pipeline id is a permanent name for a recipe, so add a new pipeline file instead — nothing was applied
 ```
 
+Results are keyed by pipeline and volume, so two campaigns on one pipeline
+must not run the same volume at the same time: both would write the same
+progress and manifest objects. A volume listed again in a new campaign is
+how a failed volume is run again, so this is not a rule about files but
+about what is running. Before it sends a campaign's Job, `apply` compares
+the campaign's volume ids with those of every other campaign on the same
+pipeline whose Job has not ended, read from their live ConfigMaps, and
+with the campaigns earlier in the same apply. A campaign that shares one is
+left as it was, reported with the other campaign and the volumes, and the
+apply exits `3`. Once the other campaign has ended, the next apply sends it.
+
 The guard is about the *recipe*, not about the rendered manifest. Upgrading
 the converter, or changing a `converter.yaml` setting, renders every warm-up
 Job's pod template differently without touching a recipe — `apply`
