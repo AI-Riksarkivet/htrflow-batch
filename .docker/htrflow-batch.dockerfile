@@ -43,8 +43,9 @@
 # `make lock-htrflow-base` after moving HTRFLOW_REF or the overlay.
 #
 # Build args:
-#   HTRFLOW_REF            the htrflow commit the base is built from. Renovate
-#                          tracks it; a new one needs `make lock-htrflow-base`
+#   HTRFLOW_REF            the htrflow commit the base is built from, moved by
+#                          hand (renovate.json covers it once the app is
+#                          installed); a new one needs `make lock-htrflow-base`
 #                          in the same change, or the build refuses it.
 #   HTRFLOW_BASE_REVISION  what the image says it runs, stamped into the
 #                          `se.riksarkivet.htrflow.base.revision` label and
