@@ -45,6 +45,8 @@ first, higher first, and by creation time within a value, so a campaign on
 None of this evicts a running campaign: with `withinClusterQueue: Never` a
 higher class goes ahead of what is *waiting*, never of what is *running*.
 
+### What the converter puts on a Job
+
 The converter puts two Kueue **labels** on each campaign Job
 (`render._campaign_job`), and no annotations:
 
