@@ -27,7 +27,7 @@ talks to is the process serving the page.
 
 ```bash
 bun install
-bun run dev        # http://localhost:5173, LAN-reachable; static/ is served at /
+bun run dev        # Vite dev server on :5173, LAN-reachable; static/ is served at /
 bun run test       # vitest (pure + component tests, jsdom)
 bun run coverage   # vitest with @vitest/coverage-v8
 bun run check      # svelte-check, strict TypeScript
