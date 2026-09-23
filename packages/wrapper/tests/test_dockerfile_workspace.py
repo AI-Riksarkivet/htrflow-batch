@@ -408,3 +408,16 @@ def test_the_htrflow_base_is_built_from_pinned_inputs() -> None:
     assert not (REPO / ".github" / "actions" / "build-htrflow-base-arm64").exists()
     for path in BUILD_PATHS:
         assert "HTRFLOW_ARM64_BASE" not in path.read_text(), path.name
+
+
+def test_the_web_image_ships_only_the_viewer_page_and_what_it_references() -> None:
+    """UV's build also emits its demo pages and sample collections. The web
+    image copies the site a build step derives from uv.html's own
+    references, and that step fails on a reference the build did not
+    produce."""
+    text = (REPO / ".docker" / "htrflow-web.dockerfile").read_text()
+    assert "COPY --from=uv4 /src/site/ /app/static/" in text
+    assert "COPY --from=uv4 /src/dist/" not in text
+    site = text[text.index("<<'SITE'") : text.index("\nSITE\n")]
+    assert "which UV's build did not produce" in site
+    assert "pages.join() !== page" in site
