@@ -4,6 +4,7 @@ import re
 from importlib import resources
 from pathlib import Path
 
+import pytest
 import yaml
 
 HOOK = resources.files("htrflow_converter") / "template" / "argocd" / "apply.yaml"
@@ -152,3 +153,64 @@ def test_the_apply_runs_only_on_a_checkout_ci_rendered():
     assert check["args"] == ["validate", "--rendered", "/repo"]
     mounts = {m["name"]: m["mountPath"] for m in check["volumeMounts"]}
     assert mounts == {"repo": "/repo", "tmp": "/tmp"}
+
+
+CONVERTER_PYPROJECT = REPO / "packages" / "converter" / "pyproject.toml"
+
+
+def _converter_containers() -> list[dict]:
+    """Every hook container that runs the `htrflow-campaigns` CLI -- all but
+    the clone, which runs Python on dulwich."""
+    spec = job()["spec"]["template"]["spec"]
+    return [c for c in spec["initContainers"] + spec["containers"] if "args" in c
+            and "command" not in c]  # fmt: skip
+
+
+def _substituted(args: list[str]) -> list[str]:
+    """What the kubelet hands the process: `$(VAR)` expanded from the env."""
+    return [re.sub(r"\$\(([A-Za-z_][A-Za-z0-9_]*)\)", "dummy-value", a) for a in args]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "check",
+        pytest.param(
+            "apply",
+            marks=pytest.mark.skip(
+                reason="apply --namespace lands with fix/audit-0923-converter-apply; "
+                "remove this skip once that branch is merged"
+            ),
+        ),
+    ],
+)
+def test_each_hook_container_parses_under_the_real_cli(monkeypatch, name):
+    """A list compare of `args` passes a flag the CLI does not have; the
+    parser does not. Each command is stubbed, so nothing runs."""
+    from htrflow_converter import cli
+
+    called = []
+    for command in ("_validate", "_apply", "_render", "_init"):
+        monkeypatch.setattr(cli, command, lambda *a, **k: called.append(a) or 0)
+    (container,) = [c for c in _converter_containers() if c["name"] == name]
+    assert cli.main(_substituted(container["args"])) == 0
+    assert len(called) == 1
+
+
+def test_the_hook_runs_the_converter_release_its_template_ships_in():
+    """The hook's containers run flags of the converter that wrote the hook
+    (`validate --rendered`, `apply --namespace`), so they must run THAT
+    release's image, all of them the same one: pinned by digest with the
+    converter's own version beside it, or -- until the release commit pins
+    the digest -- named by that version's tag (docs/development/
+    releasing.md). A release that bumped the version and forgot the pin
+    fails here."""
+    version = re.search(
+        r'^version = "([^"]+)"', CONVERTER_PYPROJECT.read_text(), re.M
+    ).group(1)
+    lines = re.findall(r"image: (\S+)(.*)", HOOK.read_text())
+    assert len(lines) == 3 and len(set(lines)) == 1, lines
+    ((image, rest),) = set(lines)
+    pinned = "@sha256:" in image and rest.strip() == f"# v{version}"
+    tagged = image.endswith(f":v{version}")
+    assert pinned or tagged, (image, rest, version)
