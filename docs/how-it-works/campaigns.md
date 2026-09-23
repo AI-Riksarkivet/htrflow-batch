@@ -600,6 +600,11 @@ What each field is for, and where its value comes from:
     the S3 keys.
   - `IMAGE_DIGEST` is the pipeline's own `image:` pin, stamped into every
     ALTO's provenance block.
+  - `INDEX_FAILURE_COUNT` (the Job controller's
+    `batch.kubernetes.io/job-index-failure-count` annotation on the pod,
+    through the downward API) and `BACKOFF_LIMIT_PER_INDEX` (copied from
+    `spec.backoffLimitPerIndex`) tell the wrapper which attempt of its index
+    it is on, so it can fail a page it still defers on the last one.
   - `HF_HUB_OFFLINE=1` and `HF_HOME=/data/hf` let the wrapper find the
     pre-warmed cache without ever contacting Hugging Face
     ([The model cache](wrapper.md#the-model-cache)).

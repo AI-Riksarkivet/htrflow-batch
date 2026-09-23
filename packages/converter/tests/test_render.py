@@ -946,3 +946,36 @@ def test_the_warmup_pod_template_names_its_recipe():
     _, demo, cfg = _kyrk()
     annotations = _warmup_pod(demo, cfg)["metadata"]["annotations"]
     assert annotations["htrflow.riksarkivet.se/recipe-sha256"] == demo.recipe_sha256
+
+
+def _wrapper_env(job: dict) -> dict:
+    return {e["name"]: e for e in job["spec"]["template"]["spec"]["containers"][0]["env"]}
+
+
+def test_the_wrapper_is_told_which_attempt_of_its_index_it_is(monkeypatch):
+    """audit 0923 W-4 (the wrapper's request): the wrapper fails a page it
+    still defers on its index's LAST attempt, so it needs the attempt it is
+    on and how many there are. The Job controller annotates every pod of an
+    Indexed Job with `backoffLimitPerIndex` set with
+    `batch.kubernetes.io/job-index-failure-count` (kubernetes
+    pkg/controller/job: `addIndexFailureCountAnnotation`), which the
+    downward API reads; the limit is rendered from the very field the Job
+    carries, so the two cannot drift."""
+    kyrk, demo, cfg = _kyrk()
+    job = render.campaign_objects(kyrk, demo, cfg)[1]
+    env = _wrapper_env(job)
+    assert env["INDEX_FAILURE_COUNT"]["valueFrom"] == {
+        "fieldRef": {
+            "fieldPath": "metadata.annotations"
+            "['batch.kubernetes.io/job-index-failure-count']"
+        }
+    }
+    assert env["BACKOFF_LIMIT_PER_INDEX"]["value"] == str(
+        job["spec"]["backoffLimitPerIndex"]
+    )
+
+    skeleton = render._base("campaign-job.yaml")
+    monkeypatch.setitem(skeleton["spec"], "backoffLimitPerIndex", 5)
+    job = render.campaign_objects(kyrk, demo, cfg)[1]
+    assert job["spec"]["backoffLimitPerIndex"] == 5
+    assert _wrapper_env(job)["BACKOFF_LIMIT_PER_INDEX"]["value"] == "5"

@@ -332,6 +332,8 @@ def _campaign_job(
         "IMAGE_DIGEST": p.image,
         "MANIFEST_MAX_BYTES": str(cfg.manifest_max_bytes),
         "FETCH_MAX_BYTES": str(cfg.fetch_max_bytes),
+        # The same field the Job controller counts attempts against.
+        "BACKOFF_LIMIT_PER_INDEX": str(job["spec"]["backoffLimitPerIndex"]),
     }
     for e in job["spec"]["template"]["spec"]["containers"][0]["env"]:
         if e["name"] in dynamic_env:
