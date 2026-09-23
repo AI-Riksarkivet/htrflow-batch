@@ -536,8 +536,8 @@ def _dulwich_head(repo: Path) -> str:
     so without this every campaign the hook applied -- the production path
     -- recorded its commit as ``unknown`` (audit 0923 C-10)."""
     try:
-        from dulwich.errors import NotGitRepository  # ty: ignore[unresolved-import]
-        from dulwich.repo import Repo  # ty: ignore[unresolved-import]
+        from dulwich.errors import NotGitRepository
+        from dulwich.repo import Repo
     except ImportError:
         return "unknown"
     try:
