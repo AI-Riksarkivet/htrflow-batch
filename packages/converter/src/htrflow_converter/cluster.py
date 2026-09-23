@@ -37,7 +37,12 @@ FIELD_MANAGER = "htrflow-campaigns"
 APPLY_PATCH = "application/apply-patch+yaml"
 MERGE_PATCH = "application/merge-patch+json"
 
-_KUEUE = ("kueue.x-k8s.io", "v1beta1")
+#: The Kueue API version the chart creates its queue objects in, and the one
+#: Kueue stores Workloads in: v1beta1 is served deprecated, and on the day it
+#: is not, a list in it 404s and every pause goes unenforced. ``spec.active``
+#: is the same field, with the same meaning, in both. ``test_cluster.py``
+#: holds this to the chart's ``templates/kueue.yaml``.
+_KUEUE = ("kueue.x-k8s.io", "v1beta2")
 _WORKLOADS = "workloads"
 _JOB_UID_LABEL = "kueue.x-k8s.io/job-uid"
 #: The two kinds this tool renders -> (client attribute, method noun).
@@ -155,9 +160,12 @@ def _api_error(
             "apply.rbac.enabled"
         )
     if e.status == 404 and kind == "Workload" and verb == "list":
+        # Named with its version: a Kueue too old or too new to serve this
+        # one answers the same 404 as no Kueue at all.
         return ClusterError(
-            "Kueue is not installed in this cluster (no workloads.kueue.x-k8s.io) "
-            "— htrflow-campaigns apply needs it to honour suspend:"
+            "Kueue is not installed in this cluster (no workloads in "
+            f"{'/'.join(_KUEUE)}) — htrflow-campaigns apply needs it to "
+            "honour suspend:"
         )
     fields = _immutable_fields(e)
     if fields:

@@ -16,12 +16,15 @@ them, and never removes a field this tool stopped rendering.
 """
 
 import json
+import re
+from pathlib import Path
 
 import pytest
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 from urllib3.exceptions import MaxRetryError, ReadTimeoutError
 
+from htrflow_converter import cluster as cluster_mod
 from htrflow_converter.cluster import (
     APPLY_PATCH,
     FIELD_MANAGER,
@@ -200,6 +203,7 @@ def test_the_other_api_error_sentences():
 
     missing = _api_error("list", "Workload", "", "htr-batch", ApiException(status=404))
     assert str(missing).startswith("Kueue is not installed in this cluster")
+    assert "kueue.x-k8s.io/v1beta2" in str(missing), "a version not served 404s too"
     # a 404 on the patch means the Workload went away, not that Kueue did
     gone = _api_error(
         "patch", "Workload", "wl-x", "htr-batch", ApiException(status=404)
@@ -306,9 +310,22 @@ def test_the_workload_is_found_by_the_jobs_uid(cluster):
     assert cluster.sync_pause({"metadata": {"name": "k", "uid": "u9"}}, False, 0) == 0
     (call,) = cluster.calls
     assert call["path"] == (
-        "/apis/kueue.x-k8s.io/v1beta1/namespaces/htr-batch/workloads"
+        "/apis/kueue.x-k8s.io/v1beta2/namespaces/htr-batch/workloads"
     )
     assert call["query"]["labelSelector"] == "kueue.x-k8s.io/job-uid=u9"
+
+
+def test_the_pause_sync_speaks_the_kueue_version_the_chart_installs_objects_in():
+    """The chart creates the queue in one Kueue API version and the pause
+    sync patched Workloads in another, older one. Kueue serves a deprecated
+    version only until it drops it, and on that day the list 404s -- read as
+    "Kueue is not installed" -- and a campaign git says is paused keeps
+    running. One version, and a rename on either side fails here."""
+    template = Path(__file__).parents[3] / "charts/htrflow-batch/templates/kueue.yaml"
+    versions = set(
+        re.findall(r"^apiVersion:\s*(kueue\.x-k8s\.io/\S+)", template.read_text(), re.M)
+    )
+    assert versions == {"/".join(cluster_mod._KUEUE)}
 
 
 def _immutable_refusal(field: str = "spec.template") -> ApiException:
