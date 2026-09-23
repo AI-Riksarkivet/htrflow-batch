@@ -175,8 +175,12 @@ RUN --mount=type=bind,source=.docker/build-constraints.txt,target=/tmp/build-con
 # keeps those operators on torch's precompiled ATen/cuBLAS kernels, the ones
 # the amd64 build (torch 2.9) runs anyway, so both architectures execute the
 # same kinds of kernels and nothing writes, compiles or loads new machine code
-# under the read-only root filesystem. Nothing else here JIT-compiles:
-# htrflow does not call torch.compile, and ultralytics leaves it off.
+# under the read-only root filesystem; the check at the end of this file
+# proves the switch still works. Nothing else JIT-compiles by default:
+# htrflow does not call torch.compile, and ultralytics leaves it off. A
+# pipeline that opts into compilation (ultralytics' `compile`, a static
+# cache in transformers' generation settings) is unsupported: it fails for
+# want of a compiler, on every architecture.
 ENV TORCH_DISABLE_NATIVE_JIT=1
 
 # The transformers line, both architectures, pinned here so the image says
@@ -263,6 +267,25 @@ for dist in ("htrflow-batch-wrapper", "transformers", "huggingface-hub"):
 if bad:
     sys.exit("requirements not satisfied:\n  " + "\n  ".join(bad))
 print("wrapper and transformers requirements satisfied")
+
+# TORCH_DISABLE_NATIVE_JIT (above) is read by torch's private torch._native
+# layer, so a torch bump could rename it, or register a JIT-compiled
+# override some other way, and nothing would notice until a GPU job died
+# for want of a compiler. The overrides register at import, with no GPU, so
+# this asserts the outcome: none but the precompiled "native" kind. A torch
+# without the layer at all (the amd64 build's 2.9) has nothing to check; a
+# layer that no longer has this table fails, so the check cannot go stale.
+try:
+    from torch._native import registry
+except ModuleNotFoundError as exc:
+    if exc.name != "torch._native":
+        raise
+    print("torch has no torch._native layer: no JIT-compiled operators")
+else:
+    jit = set(registry._dsl_name_to_lib_graph) - {"native"}
+    if jit:
+        sys.exit(f"torch registers JIT-compiled operator overrides: {sorted(jit)}")
+    print("torch registers no JIT-compiled operator overrides")
 CHECK
 
 # The release this image is published under: the publish workflow passes its
