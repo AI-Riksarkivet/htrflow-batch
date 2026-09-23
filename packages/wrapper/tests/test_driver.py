@@ -758,8 +758,6 @@ def test_a_page_that_finished_is_not_failed_by_a_late_thread_death(
     waiting. A thread that dies in the same tick the run completes made it
     fail a page whose outputs were already written -- and the failure path
     then deleted them, so the page was redone on the retry for nothing."""
-    import time
-
     _inject_process_fakes(fake_htrflow)
     from htrflow_batch import driver
 
@@ -785,9 +783,8 @@ def test_a_page_that_finished_is_not_failed_by_a_late_thread_death(
         if len(looks) == 1:
             return None  # the check before the run: everything alive
         blocked.set()  # the run finishes while this check is still going
-        while not (out_dir / "page" / "0044.xml").exists():
-            time.sleep(0.005)
-        time.sleep(0.05)  # ... and long enough to be recorded as done
+        (helper,) = [t for t in threading.enumerate() if t.name == "htrflow-page-0044"]
+        helper.join(5)  # ... and is recorded as done
         return step  # only now is the dead thread visible
 
     monkeypatch.setattr(driver, "_dead_step", dead_step)
