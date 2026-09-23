@@ -909,32 +909,6 @@ def test_a_refused_record_write_does_not_stop_the_apply(tmp_path, cluster, capsy
     assert "could not record how campaign kyrk ended" in capsys.readouterr().err
 
 
-def test_the_applys_record_cannot_erase_the_failed_volumes_the_api_wrote(
-    tmp_path, cluster
-):
-    """Server-side apply owns fields per manager. The apply writes under
-    `htrflow-campaigns` and never sets `failedVolumes` at all, so the
-    sentences the read API wrote under its own manager stay: one record,
-    two writers, no field either of them can take from the other by
-    omission (B76)."""
-    from htrflow_web.kube import FIELD_MANAGER as WEB_MANAGER
-
-    live_job = _object("Job", "kyrk")
-    live_job["metadata"]["namespace"] = NS
-    live_job["spec"] = dict(JOB_SPECS["kyrk"])
-    live_job["status"] = {
-        "conditions": [{"type": "Complete", "status": "True"}],
-        "succeeded": 3,
-    }
-    cluster.live = [live_job]
-    repo, out = _repo(tmp_path), tmp_path / "rendered"
-    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
-    written = cluster.applied["campaign-kyrk-status"]
-    assert "failedVolumes" not in written["data"]
-    assert cluster.managers["campaign-kyrk-status"] == cluster_mod.FIELD_MANAGER
-    assert cluster_mod.FIELD_MANAGER != WEB_MANAGER
-
-
 def test_a_refused_record_write_still_lets_the_live_job_decide(
     tmp_path, cluster, capsys
 ):
@@ -1713,6 +1687,9 @@ def test_the_web_and_the_apply_share_the_status_record_by_field(tmp_path, cluste
     cluster.live.append(live_job)
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert cluster_mod.FIELD_MANAGER != WEB_MANAGER
+    assert cluster.managers["campaign-kyrk-status"] == cluster_mod.FIELD_MANAGER
+    assert "failedVolumes" not in cluster.applied["campaign-kyrk-status"]["data"]
     stored = cluster.find("ConfigMap", "campaign-kyrk-status")
     assert stored["data"]["phase"] == "PartiallyFailed"
     assert stored["data"]["failedVolumes"] == "R1: fetch failed"
