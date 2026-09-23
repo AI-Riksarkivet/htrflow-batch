@@ -292,8 +292,12 @@ def _recorded_reasons(status: dict) -> dict[str, str]:
     """``{volume id: reason}`` from the status record's ``failedVolumes``.
     Those sentences are the detail endpoint's, observed while the pods still
     existed; anything finer is in the volume's own ``manifest.json`` in the
-    bucket (docs: reference/s3-layout)."""
-    return _parse_failed((status.get("data") or {}).get("failedVolumes") or "")
+    bucket (docs: reference/s3-layout). None when they are another run's
+    than the record's (``_FAILED_RUN``)."""
+    data = status.get("data") or {}
+    if data.get(_FAILED_RUN, "") not in ("", data.get("jobUid", "")):
+        return {}
+    return _parse_failed(data.get(_FAILED) or "")
 
 
 def _parse_failed(text: str) -> dict[str, str]:
@@ -490,6 +494,12 @@ APPLY_MANAGER = "htrflow-campaigns"
 WEB_MANAGER = "htrflow-web"
 FAILURES_MANAGER = "htrflow-web-failures"
 _FAILED = "failedVolumes"
+#: The Job ``failedVolumes`` is about, written beside it by the same manager.
+#: A summary can move to a recreated Job without the failures moving with it
+#: -- an older pod mid rolling update does exactly that -- and failures of
+#: another run are neither read as this one's nor merged into them
+#: (2026-09-23 review).
+_FAILED_RUN = "failedVolumesJobUid"
 
 
 class RecordWrite(NamedTuple):
@@ -534,7 +544,9 @@ def record_write(
     ending apply writes in between wins (a 409). A record without a
     ``jobUid`` predates it and counts as this Job's.
 
-    ``failedVolumes`` is ``FAILURES_MANAGER``'s alone (``_failures_write``).
+    ``failedVolumes`` is ``FAILURES_MANAGER``'s alone (``_failures_write``),
+    with the Job it is about beside it (``_FAILED_RUN``), so a record that
+    moved to another Job leaves the old run's failures standing and unread.
     The summary leaves it out -- except while ``WEB_MANAGER`` still owns it
     from before it had a manager of its own: a manager that stops sending a
     field releases it, and a field nobody owns is deleted, so the summary
@@ -548,11 +560,11 @@ def record_write(
     failed = fresh.pop(_FAILED, None)
     other_job = data.get("jobUid", "") not in ("", fresh["jobUid"])
     writes = []
-    summary = _summary_write(data, meta, row, fresh, other_job, failed is None)
+    summary = _summary_write(data, meta, row, fresh, other_job)
     if summary is not None:
         writes.append(summary)
     if failed is not None:
-        failures = _failures_write(data, meta, row, failed, other_job)
+        failures = _failures_write(data, meta, row, failed, fresh["jobUid"])
         if failures is not None:
             writes.append(failures)
     return writes
@@ -564,19 +576,12 @@ def _summary_write(
     row: dict,
     fresh: dict[str, str],
     other_job: bool,
-    alone: bool,
 ) -> RecordWrite | None:
-    """``WEB_MANAGER``'s apply: every field but ``failedVolumes``. ``alone``
-    says no failures write follows it in this request -- a record of another
-    Job then has its old run's failures cleared here, forced, since nothing
-    else would clear them."""
-    kept = {k: v for k, v in data.items() if k != _FAILED}
+    """``WEB_MANAGER``'s apply: every field but the failures."""
+    kept = {k: v for k, v in data.items() if k not in (_FAILED, _FAILED_RUN)}
     body = fresh if other_job else merge_record(kept, fresh)
-    if _FAILED in data:
-        if other_job and alone:
-            body = {**body, _FAILED: "[]"}
-        elif not other_job and _FAILED in _owned_keys(meta, WEB_MANAGER):
-            body = {**body, _FAILED: data[_FAILED]}
+    if not other_job and _FAILED in _owned_keys(meta, WEB_MANAGER) & data.keys():
+        body = {**body, _FAILED: data[_FAILED]}
     theirs = _owned_keys(meta, APPLY_MANAGER)
     if not other_job and "phase" in theirs:
         body = {k: v for k, v in body.items() if k not in theirs}
@@ -587,7 +592,7 @@ def _summary_write(
         )
     if not other_job and all(data.get(k) == v for k, v in body.items()):
         return None
-    force = bool(theirs) or (other_job and _FAILED in body and _FAILED in data)
+    force = bool(theirs)
     cm = status_configmap(row, body)
     if force:
         cm["metadata"]["resourceVersion"] = meta.get("resourceVersion", "")
@@ -595,19 +600,21 @@ def _summary_write(
 
 
 def _failures_write(
-    data: dict[str, str], meta: dict, row: dict, failed: str, other_job: bool
+    data: dict[str, str], meta: dict, row: dict, failed: str, job_uid: str
 ) -> RecordWrite | None:
-    """``FAILURES_MANAGER``'s apply: ``failedVolumes`` and nothing else,
-    merged per volume with what is stored (``merge_record``) -- or, for a
-    record of another Job, this run's alone. Forced: no other manager has
-    anything to say about the field, and one that owns it still -- this
-    API's summary manager, from before the split -- has to give it up."""
-    old = {} if other_job or _FAILED not in data else {_FAILED: data[_FAILED]}
+    """``FAILURES_MANAGER``'s apply: ``failedVolumes`` and the Job it is
+    about, merged per volume with what is stored (``merge_record``) -- or,
+    when what is stored is another run's, this run's alone. Forced: no
+    other manager has anything to say about the field, and one that owns it
+    still -- this API's summary manager, from before the split -- has to
+    give it up."""
+    ours = data.get(_FAILED_RUN) or data.get("jobUid") or job_uid
+    old = {_FAILED: data[_FAILED]} if ours == job_uid and _FAILED in data else {}
     value = merge_record(old, {_FAILED: failed})[_FAILED]
     owned = _FAILED in _owned_keys(meta, FAILURES_MANAGER)
-    if owned and data.get(_FAILED) == value:
+    if owned and (data.get(_FAILED), data.get(_FAILED_RUN)) == (value, job_uid):
         return None
-    body = status_configmap(row, {_FAILED: value}, labels=False)
+    body = status_configmap(row, {_FAILED: value, _FAILED_RUN: job_uid}, labels=False)
     return RecordWrite(body, True, FAILURES_MANAGER)
 
 

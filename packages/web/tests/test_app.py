@@ -538,7 +538,10 @@ def test_the_detail_endpoint_records_the_failed_volumes():
     summary, failures = reader.written
     assert "failedVolumes" not in summary["data"]
     assert summary["metadata"]["labels"]
-    assert failures["data"] == {"failedVolumes": "[]"}
+    assert failures["data"] == {
+        "failedVolumes": "[]",
+        "failedVolumesJobUid": "uid-kyrk",
+    }
     assert reader.forced[1] is True, "no other manager has a say in the field"
 
 
@@ -840,7 +843,7 @@ def test_failed_volumes_land_when_apply_owns_every_other_field():
     client = TestClient(create_app(reader, progress=FakeProgress()))
     assert client.get("/api/v1/jobs/htr-test/kyrk").status_code == 200
     written = _status_of(reader)
-    assert written["data"] == {"failedVolumes": "[]"}
+    assert written["data"] == {"failedVolumes": "[]", "failedVolumesJobUid": "uid-kyrk"}
     assert "labels" not in written["metadata"]
     assert reader.managers == [FAILURES_MANAGER]
 
@@ -864,10 +867,10 @@ def test_a_recreated_job_does_not_inherit_the_last_runs_record():
     assert written["jobUid"] == "uid-kyrk"
     assert written["phase"] == "Running"
     assert written["finishedAt"] == ""
-    # Cleared, forced: the failures manager owns the old run's list, and
-    # left out it would stay.
-    assert written["failedVolumes"] == "[]"
-    assert reader.forced == [True]
+    # Left out: the old run's list is tied to the old run and read as
+    # nobody's (test_a_recreated_jobs_record_never_counts_...).
+    assert "failedVolumes" not in written
+    assert reader.forced == [False]
 
 
 class _Refusing(RecordingReader):
@@ -1337,3 +1340,56 @@ def test_the_ssa_store_behaves_like_the_api_server(ssa):
             {"metadata": {"name": "y", "namespace": "n", "uid": uid}}, manager="one"
         )
     assert ssa.get("y") is None
+
+
+def _old_run(store) -> None:
+    """A record of the Job this name had before, as this API writes it: the
+    summary under its manager, the failures, tied to that run, under theirs."""
+    meta = {"name": STATUS, "namespace": "htr-test"}
+    store.apply(
+        {
+            "metadata": {**meta, "labels": LABELS},
+            "data": {"phase": "Failed", "jobUid": "uid-old"},
+        },
+        manager=FIELD_MANAGER,
+    )
+    store.apply(
+        {
+            "metadata": meta,
+            "data": {"failedVolumes": OLD_REASONS, "failedVolumesJobUid": "uid-old"},
+        },
+        force=True,
+        manager=FAILURES_MANAGER,
+    )
+
+
+def _reaped_reasons(store) -> dict:
+    return projection._recorded_reasons(store.get(STATUS))
+
+
+@pytest.mark.parametrize("writer", ["this API", "an older pod of it"])
+def test_a_recreated_jobs_record_never_counts_the_last_runs_failures(ssa, writer):
+    """The Job was recreated under the same name, and the summary moved to
+    it -- written by this API, or, mid rolling update, by an older pod that
+    knows nothing of the failures manager and leaves its field standing.
+    The old run's failures are tied to the old run: never read as this
+    run's, and never merged into them (2026-09-23 review)."""
+    _old_run(ssa)
+    reader = SsaReader(ssa)
+    client_ = TestClient(create_app(reader, progress=FakeProgress()))
+    if writer == "this API":
+        client_.get("/api/v1/jobs")
+    else:
+        ssa.apply(
+            {
+                "metadata": {"name": STATUS, "namespace": "htr-test", "labels": LABELS},
+                "data": {"phase": "Running", "jobUid": "uid-kyrk"},
+            },
+            manager=FIELD_MANAGER,
+        )
+    assert ssa.get(STATUS)["data"]["jobUid"] == "uid-kyrk"
+    assert _reaped_reasons(ssa) == {}, "the old run's list is not this run's"
+    client_.get("/api/v1/jobs/htr-test/kyrk")
+    assert _reasons(ssa) == {"vol1": "boom"}
+    assert ssa.get(STATUS)["data"]["failedVolumesJobUid"] == "uid-kyrk"
+    assert _reaped_reasons(ssa) == {"vol1": "boom"}
