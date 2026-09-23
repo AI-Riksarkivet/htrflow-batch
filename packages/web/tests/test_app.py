@@ -112,6 +112,11 @@ class FakeReader:
     def list_pods(self, namespace: str, job_name: str) -> list[dict]:
         return []
 
+    def apply_configmap(
+        self, body: dict, force: bool = False, manager: str = FIELD_MANAGER
+    ) -> None:
+        pass  # RecordingReader keeps what is written; this fake drops it
+
 
 class FakeProgress:
     """Stands in for the bucket: create_app's real one would make an HTTP
@@ -591,15 +596,6 @@ def test_site_only_mode_answers_honestly_instead_of_writing():
     assert "HTRFLOW_WEB_SITE_ONLY" in resp.json()["detail"]
 
 
-def test_a_reader_that_cannot_write_still_answers_the_list():
-    """The other half of the same branch: a reader with no
-    `apply_configmap` (every fake in this file) lists campaigns normally."""
-    reader = FakeReader()
-    assert not hasattr(reader, "apply_configmap")
-    client = TestClient(create_app(reader, progress=FakeProgress()))
-    assert len(client.get("/api/v1/jobs").json()) == 1
-
-
 def _owns(manager: str, *keys: str) -> dict:
     return {
         "manager": manager,
@@ -997,6 +993,26 @@ def test_every_reader_double_answers_the_calls_the_routes_make(double):
         assert impl is not None, f"{double.__name__} has no {name}()"
         args = [f"<{p}>" for p in list(declared.parameters)[1:]]
         inspect.signature(impl).bind(double, *args)
+        if impl is NoCluster._no_cluster:
+            continue  # the catch-all takes anything, and refuses it
+        # By name and kind too: `app.py` passes `force=` and `manager=` by
+        # keyword, and a renamed parameter still binds positionally.
+        assert _shape(impl) == _shape(declared), f"{double.__name__}.{name}"
+
+
+def _shape(fn) -> list[tuple[str, object]]:
+    sig = fn if isinstance(fn, inspect.Signature) else inspect.signature(fn)
+    return [(p.name, p.kind) for p in sig.parameters.values()]
+
+
+def test_the_status_write_is_the_protocols_own_call():
+    """The write used to be missing from the protocol and asked for with
+    `hasattr`: renamed on the real adapter, every status write stopped and
+    every test still passed (2026-09-23 audit)."""
+    assert "apply_configmap" in READER_METHODS
+    assert _shape(Reader.apply_configmap) == _shape(READER_METHODS["apply_configmap"])
+    src = (Path(__file__).parent.parent / "src" / "htrflow_web" / "app.py").read_text()
+    assert "hasattr(reader" not in src
 
 
 # --- the detail route only answers for names that could exist (F8) -------

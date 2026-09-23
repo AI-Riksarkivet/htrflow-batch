@@ -245,10 +245,7 @@ class NoCluster:
         )
 
     list_jobs = list_warmups = get_job = get_configmap = list_pods = _no_cluster
-    list_configmaps = _no_cluster
-    # Deliberately no `apply_configmap`: site-only mode has no cluster to
-    # write the campaign record to, and `_record` below asks for the
-    # attribute rather than calling into a 503 on every request (B76).
+    list_configmaps = apply_configmap = _no_cluster
 
 
 def create_app(
@@ -359,8 +356,6 @@ def create_app(
         ``projection.record_write``'s. Never fatal: a record the API could
         not write is a record a few minutes old, while a 500 is a status
         page nobody can read."""
-        if not hasattr(reader, "apply_configmap"):
-            return False  # site-only: no cluster
         refused_at = refused.get(row["namespace"])
         if refused_at is not None and time.monotonic() - refused_at < REFUSAL_COOLDOWN:
             return False
@@ -394,8 +389,6 @@ def create_app(
         rather than a get per campaign."""
         records: dict[tuple[str, str], dict] = {}
         statuses: dict[tuple[str, str], dict] = {}
-        if not hasattr(reader, "list_configmaps"):
-            return records, statuses
         for cm in reader.list_configmaps():
             meta = cm.get("metadata") or {}
             name, ns = meta.get("name", ""), meta.get("namespace", "")

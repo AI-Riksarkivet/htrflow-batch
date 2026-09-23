@@ -54,6 +54,17 @@ class EmptyReader:
     def get_configmap(self, namespace: str, name: str) -> dict | None:
         return None  # no record either: the campaign really is a 404
 
+    def list_configmaps(self) -> list[dict]:
+        return []
+
+    def list_pods(self, namespace: str, job_name: str) -> list[dict]:
+        return []
+
+    def apply_configmap(
+        self, body: dict, force: bool = False, manager: str = ""
+    ) -> None:
+        raise AssertionError("nothing here is a campaign to write about")
+
 
 @pytest.fixture
 def static_dir(tmp_path: Path) -> Path:
