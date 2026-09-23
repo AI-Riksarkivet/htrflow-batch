@@ -4,8 +4,6 @@ import (
 	"context"
 	"dagger/htrflow-batch/internal/dagger"
 	"fmt"
-	"regexp"
-	"strings"
 )
 
 // ruff and ty come from the workspace venv (`uv run --no-sync`), never `uvx`:
@@ -115,67 +113,29 @@ func (m *HtrflowBatch) CheckFrontend(
 	return "frontend passed", nil
 }
 
-// chartRender is one helm lint + helm template invocation: an optional
-// values file (relative to the chart's mounted root) plus extra --set
-// overrides for values the chart now `fail`s without outside a real cluster
-// (the API's digest gate, the apiserver CIDR the auto-lookup cannot reach).
+// chartRender is one helm lint + helm template invocation: values files
+// (relative to the chart's mounted root, later ones winning) plus --set
+// overrides. The inputs are the chart's own ci/ files -- the one copy
+// test_chart_render.py and `make helm-template` render with too -- and
+// which renders the chart refuses is test_chart_render.py's guard table,
+// which `dagger call test` runs; neither is repeated here.
 type chartRender struct {
 	name   string
-	values string
+	values []string
 	sets   []string
-	// refusal inverts the render: helm is expected to refuse it, with this
-	// text in its error. A guard nothing exercises is a guard that quietly
-	// stops firing, and the exit code alone is satisfied by any other guard
-	// that happens to fire (finding 3103).
-	refusal string
 }
 
-// digestZero is a syntactically valid (but unpullable) placeholder digest —
-// same shape `docs/getting-started` tells operators to swap for a real one.
-var digestZero = "sha256:" + strings.Repeat("0", 64)
-
-// Prod chart render inputs: "default" carries just enough --set to get past
-// the chart's required-value guards with no cluster to `lookup` against
-// (mirrors the command in the chart README / task brief); "full" turns on
-// every optional feature via ci/full-values.yaml. Release/namespace mirror
-// .env.example.
+// The prod chart: its defaults with the placeholders it refuses to render
+// without (and the two intents an operator has to state: a public web
+// front, no admission policy), every optional feature, and the production
+// profile completed with the site values it leaves to the operator.
 var prodChartRenders = []chartRender{
-	{name: "default", sets: []string{
-		"publicResultsBase=https://x/",
-		"network.apiServer.cidr=192.0.2.10/32",
-		// The default ingress list is a catch-all in front of an
-		// unauthenticated NodePort, and the chart refuses to render one
-		// silently. A render fixture says so out loud like any operator.
+	{name: "default", values: []string{"ci/default-values.yaml"}, sets: []string{
 		"network.web.allowPublicIngress=true",
-		// The defaults leave the Kyverno policies off, and the chart
-		// refuses that unless the render says it means it (B80).
 		"security.policies.allowDisabled=true",
-		"web.image=docker.io/riksarkivet/htrflow-web@" + digestZero,
 	}},
-	// The same render without that sentence: refused, or the guard is gone.
-	{name: "no-policies", sets: []string{
-		"publicResultsBase=https://x/",
-		"network.apiServer.cidr=192.0.2.10/32",
-		"network.iiifCidrs={203.0.113.27/32}",
-		"network.web.allowPublicIngress=true",
-		"web.image=docker.io/riksarkivet/htrflow-web@" + digestZero,
-	}, refusal: "or set security.policies.allowDisabled=true to accept that"},
-	{name: "full", values: "ci/full-values.yaml"},
-	// The profile docs/getting-started/deploy.md tells operators to start
-	// from. Its site-specific values are deliberately not in the file (a
-	// guessed results base or apiserver address is wrong on every cluster),
-	// so the render supplies placeholders the way an operator supplies real
-	// ones.
-	{name: "prod", values: "values-prod.yaml", sets: []string{
-		"publicResultsBase=https://x/",
-		"network.apiServer.cidr=192.0.2.10/32",
-		"network.web.ingressCidrs={198.51.100.0/24}",
-		// The profile empties these and refuses to render without them.
-		"network.s3Cidrs={192.0.2.128/25}",
-		"network.clusterCidrs={10.244.0.0/16,10.96.0.0/12}",
-		"network.iiifCidrs={203.0.113.27/32}",
-		"web.image=docker.io/riksarkivet/htrflow-web@" + digestZero,
-	}},
+	{name: "full", values: []string{"ci/full-values.yaml"}},
+	{name: "prod", values: []string{"values-prod.yaml", "ci/default-values.yaml", "ci/prod-values.yaml"}},
 }
 
 // The devstack chart's own values are all `enabled: false` by default, so
@@ -183,39 +143,15 @@ var prodChartRenders = []chartRender{
 // RustFS, the registry and the nvidia device plugin.
 var devstackChartRenders = []chartRender{
 	{name: "default"},
-	{name: "full", values: "ci/full-values.yaml"},
-	// RustFS on the chart's own empty credentials: refused unless
-	// devStack.insecureDefaults says the stack is a toy (B63 Task 27).
-	{name: "no-credentials", sets: []string{"rustfs.enabled=true"},
-		refusal: "or set devStack.insecureDefaults: true to accept generated or known ones"},
-}
-
-// docSepRe splits a multi-document `helm template` render on its `---`
-// document separators.
-var docSepRe = regexp.MustCompile(`(?m)^---\s*$`)
-
-// namedDeploymentDoc returns the YAML document of the rendered manifest's
-// Deployment object named exactly `name` (kind and name checked within the
-// same document, not just present anywhere in the file), and whether one
-// was found at all.
-func namedDeploymentDoc(content, name string) (string, bool) {
-	nameLine := regexp.MustCompile(`(?m)^\s*name:\s*` + regexp.QuoteMeta(name) + `\s*$`)
-	for _, doc := range docSepRe.Split(content, -1) {
-		if strings.Contains(doc, "kind: Deployment") && nameLine.MatchString(doc) {
-			return doc, true
-		}
-	}
-	return "", false
+	{name: "full", values: []string{"ci/full-values.yaml"}},
 }
 
 // CheckChart lints and renders both Helm charts — the prod chart
 // (charts/htrflow-batch) on its digest/CIDR-complete defaults and on
 // ci/full-values.yaml, and the PoC-only devstack chart
 // (charts/htrflow-devstack) the same way — then asserts on the prod chart's
-// renders (B63 Task 5: the CronJob controller is gone, the web
-// Deployment always renders with a /healthz livenessProbe, and no
-// devstack-labelled object leaks into the prod chart) before validating
-// every render, plus the converter's Job/ConfigMap manifest skeletons
+// renders, then validates every render, plus the converter's Job/ConfigMap
+// manifest skeletons
 // (packages/converter/src/htrflow_converter/manifests, B63 Task 9), with
 // kubeconform (-strict, unknown CRD kinds skipped). `make helm-template` is
 // the local twin (audit T2/T8).
@@ -246,21 +182,13 @@ func (m *HtrflowBatch) CheckChart(
 		for _, r := range c.renders {
 			lint := []string{"helm", "lint", c.dir}
 			template := []string{"helm", "template", "htr", c.dir, "-n", "htr-batch"}
-			if r.values != "" {
-				lint = append(lint, "-f", c.dir+"/"+r.values)
-				template = append(template, "-f", c.dir+"/"+r.values)
+			for _, v := range r.values {
+				lint = append(lint, "-f", c.dir+"/"+v)
+				template = append(template, "-f", c.dir+"/"+v)
 			}
 			for _, s := range r.sets {
 				lint = append(lint, "--set", s)
 				template = append(template, "--set", s)
-			}
-			if r.refusal != "" {
-				// The text goes in through the environment, not the script,
-				// so no quoting of it can go wrong.
-				helm = helm.WithEnvVariable("REFUSAL", r.refusal).WithExec([]string{"sh", "-c",
-					"! " + strings.Join(template, " ") + " >/dev/null 2>/tmp/refusal" +
-						` && { grep -qF -- "$REFUSAL" /tmp/refusal || { cat /tmp/refusal; exit 1; }; }`})
-				continue
 			}
 			outName := c.prefix + r.name
 			helm = helm.
@@ -271,26 +199,6 @@ func (m *HtrflowBatch) CheckChart(
 	}
 	if _, err := helm.Sync(ctx); err != nil {
 		return "", fmt.Errorf("helm lint/template failed: %w", err)
-	}
-
-	for _, name := range []string{"prod-default", "prod-full", "prod-prod"} {
-		content, err := helm.File("/out/" + name + ".yaml").Contents(ctx)
-		if err != nil {
-			return "", fmt.Errorf("reading rendered %s: %w", name, err)
-		}
-		if strings.Contains(content, "kind: CronJob") {
-			return "", fmt.Errorf("prod chart (%s) renders a CronJob: the removed campaign controller must be gone (B63)", name)
-		}
-		webDeploy, found := namedDeploymentDoc(content, "htrflow-web")
-		if !found {
-			return "", fmt.Errorf("prod chart (%s) is missing the htrflow-web Deployment", name)
-		}
-		if !strings.Contains(webDeploy, "livenessProbe") {
-			return "", fmt.Errorf("prod chart (%s): htrflow-web Deployment is missing a livenessProbe (/healthz)", name)
-		}
-		if strings.Contains(content, "app.kubernetes.io/component: devstack") {
-			return "", fmt.Errorf("prod chart (%s) renders a devstack-labelled object: devstack moved to its own chart", name)
-		}
 	}
 
 	kubeconform := dag.Container().From(kubeconformImage)

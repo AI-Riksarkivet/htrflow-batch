@@ -1,0 +1,12 @@
+# What the chart refuses to render without and no cluster is present to
+# look up, as placeholders from the documentation address ranges (RFC 5737).
+# The one copy of these inputs: packages/converter/tests/test_chart_render.py,
+# the Makefile's helm targets and `dagger call check-chart` all render with
+# this file. Never an install.
+publicResultsBase: https://results.example.org/htr-results
+web:
+  image: docker.io/riksarkivet/htrflow-web@sha256:0000000000000000000000000000000000000000000000000000000000000000
+network:
+  apiServer:
+    cidr: 192.0.2.10/32
+  iiifCidrs: ["203.0.113.27/32"]

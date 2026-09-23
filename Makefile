@@ -169,64 +169,37 @@ e2e:
 # on, no cluster lookups), then kubeconform when it is installed. The local
 # twin of `dagger call check-chart` (.dagger/checks.go).
 #
-# The prod chart's "defaults" render needs three --set overrides no cluster
-# is present to `lookup`: the web front is always rendered (no enabled flag)
-# and requires publicResultsBase + network.apiServer.cidr + a digest-pinned
-# web.image. CHART_DEFAULT_SETS mirrors ci/full-values.yaml's shape with a
-# placeholder digest/CIDR — never install with these.
+# The render inputs are files, one copy each, which test_chart_render.py and
+# `dagger call check-chart` read too: ci/default-values.yaml holds the
+# placeholders the chart refuses to render without (never an install), and
+# ci/prod-values.yaml the site values the production profile leaves to the
+# operator. The default render also says out loud that the web front is
+# public and that no policy is enforced, as any operator has to. Which
+# renders the chart refuses, and in which words, is the guard table in
+# test_chart_render.py.
 DEVSTACK_CHART := charts/htrflow-devstack
-# The defaults also leave the Kyverno policies off, which the chart refuses
-# unless the render says so (B80) -- CHART_NO_POLICY_SETS is the render
-# that does not, and must fail.
-CHART_NO_POLICY_SETS := --set publicResultsBase=https://x/ \
-                       --set network.apiServer.cidr=192.0.2.10/32 \
-                       --set network.iiifCidrs='{203.0.113.27/32}' \
+CHART_DEFAULT_SETS := -f $(CHART)/ci/default-values.yaml \
                        --set network.web.allowPublicIngress=true \
-                       --set web.image=docker.io/riksarkivet/htrflow-web@sha256:0000000000000000000000000000000000000000000000000000000000000000
-CHART_DEFAULT_SETS := $(CHART_NO_POLICY_SETS) --set security.policies.allowDisabled=true
-# The production profile is rendered like any other input: it is the file
-# the deployment page tells operators to start from, so a change that stops
-# it rendering has to fail here. Its site-specific values are the operator's,
-# so the fixture supplies placeholders for them.
-CHART_PROD_SETS := --set publicResultsBase=https://x/ \
-                       --set network.apiServer.cidr=192.0.2.10/32 \
-                       --set network.web.ingressCidrs='{198.51.100.0/24}' \
-                       --set network.s3Cidrs='{192.0.2.128/25}' \
-                       --set network.clusterCidrs='{10.244.0.0/16,10.96.0.0/12}' \
-                       --set network.iiifCidrs='{203.0.113.27/32}' \
-                       --set web.image=docker.io/riksarkivet/htrflow-web@sha256:0000000000000000000000000000000000000000000000000000000000000000
+                       --set security.policies.allowDisabled=true
+CHART_PROD_SETS := -f $(CHART)/values-prod.yaml -f $(CHART)/ci/default-values.yaml \
+                   -f $(CHART)/ci/prod-values.yaml
 helm-lint:
 	helm lint $(CHART) $(CHART_DEFAULT_SETS)
 	helm lint $(CHART) -f $(CHART)/ci/full-values.yaml
-	helm lint $(CHART) -f $(CHART)/values-prod.yaml $(CHART_PROD_SETS)
+	helm lint $(CHART) $(CHART_PROD_SETS)
 	helm lint $(DEVSTACK_CHART)
 	helm lint $(DEVSTACK_CHART) -f $(DEVSTACK_CHART)/ci/full-values.yaml
 
+# kubeconform is required, not optional: a local twin that skips the schema
+# check when the binary is missing passes what CI refuses.
 helm-template: helm-lint
-	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_DEFAULT_SETS) > /dev/null
-	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/ci/full-values.yaml > /dev/null
-	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/values-prod.yaml $(CHART_PROD_SETS) > /dev/null
-	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) > /dev/null
-	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) -f $(DEVSTACK_CHART)/ci/full-values.yaml > /dev/null
-	@# An install with the policies off and no allowDisabled must be refused
-	@# (B80) -- by that guard: every other refusal also exits non-zero, so the
-	@# exit code alone would pass with this guard deleted (finding 3103).
-	@out=$$(helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_NO_POLICY_SETS) 2>&1) \
-	  && { echo "chart rendered with the policies off and no security.policies.allowDisabled: the B80 guard is gone"; exit 1; }; \
-	  printf '%s\n' "$$out" | grep -qF 'or set security.policies.allowDisabled=true to accept that' \
-	  || { printf '%s\n' "$$out"; echo "chart refused the policies-off render, but not with the B80 guard's sentence"; exit 1; }
-	@# RustFS on credentials nobody chose must be refused (B63 Task 27), same rule.
-	@out=$$(helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) --set rustfs.enabled=true 2>&1) \
-	  && { echo "devstack rendered RustFS with no credentials: the devStack.insecureDefaults guard is gone"; exit 1; }; \
-	  printf '%s\n' "$$out" | grep -qF 'or set devStack.insecureDefaults: true to accept generated or known ones' \
-	  || { printf '%s\n' "$$out"; echo "devstack refused RustFS with no credentials, but not with the insecureDefaults guard's sentence"; exit 1; }
-	@if command -v kubeconform >/dev/null; then \
-	  helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_DEFAULT_SETS) | kubeconform -strict -ignore-missing-schemas -summary && \
-	  helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/ci/full-values.yaml | kubeconform -strict -ignore-missing-schemas -summary && \
-	  helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/values-prod.yaml $(CHART_PROD_SETS) | kubeconform -strict -ignore-missing-schemas -summary && \
-	  helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) | kubeconform -strict -ignore-missing-schemas -summary && \
-	  helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) -f $(DEVSTACK_CHART)/ci/full-values.yaml | kubeconform -strict -ignore-missing-schemas -summary; \
-	else echo "kubeconform not installed — schema validation skipped"; fi
+	@command -v kubeconform >/dev/null || { echo "kubeconform is not on PATH: install it (the version .dagger/main.go pins) -- the schema check is part of this target"; exit 1; }
+	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_DEFAULT_SETS) | kubeconform $(KUBECONFORM_FLAGS)
+	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/ci/full-values.yaml | kubeconform $(KUBECONFORM_FLAGS)
+	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_PROD_SETS) | kubeconform $(KUBECONFORM_FLAGS)
+	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) | kubeconform $(KUBECONFORM_FLAGS)
+	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) -f $(DEVSTACK_CHART)/ci/full-values.yaml | kubeconform $(KUBECONFORM_FLAGS)
+KUBECONFORM_FLAGS := -strict -ignore-missing-schemas -summary
 
 # PoC-only support infrastructure (RustFS, registry, nvidia device plugin)
 # — its own chart, own release, same namespace as $(HTR_RELEASE)

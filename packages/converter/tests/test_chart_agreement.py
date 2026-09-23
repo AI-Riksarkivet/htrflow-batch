@@ -79,12 +79,9 @@ def test_the_example_campaigns_repo_agrees_with_the_chart_defaults():
     assert _disagreements(_load(EXAMPLE)) == []
 
 
-#: What `helm template` of the chart needs and no cluster is here to supply:
-#: placeholders, from the documentation address ranges.
+#: The chart's own placeholder file (what it refuses to render without) and
+#: the intents a render has to state; the apply identity on, for its Role.
 HELM_SETS = (
-    "publicResultsBase=https://results.example.org/htr",
-    "network.apiServer.cidr=192.0.2.10/32",
-    "network.iiifCidrs={203.0.113.27/32}",
     "network.web.allowPublicIngress=true",
     "security.policies.allowDisabled=true",
     "apply.rbac.enabled=true",
@@ -98,6 +95,7 @@ def _helm_objects(*sets: str) -> list[dict]:
     if shutil.which("helm") is None:
         pytest.skip("helm not on PATH")
     cmd = ["helm", "template", "htr", str(CHART), "-n", "htr-batch"]
+    cmd += ["-f", str(CHART / "ci" / "default-values.yaml")]
     for setting in (*HELM_SETS, *sets):
         cmd += ["--set", setting]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -122,7 +120,9 @@ def test_the_results_base_reaches_both_of_its_consumers():
     from htrflow_converter import render as render_objects
     from htrflow_converter.parse import load
 
-    base = "https://results.example.org/htr"
+    base = yaml.safe_load((CHART / "ci" / "default-values.yaml").read_text())[
+        "publicResultsBase"
+    ]
     fixture = ROOT / "packages" / "converter" / "tests" / "fixtures" / "good"
     campaigns, pipelines, cfg = load(
         fixture / "campaigns", fixture / "pipelines", fixture / "converter.yaml"
