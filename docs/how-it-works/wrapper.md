@@ -143,9 +143,12 @@ Every stage name can appear in the termination message.
      call that never returns) is failed and the pipeline rebuilt the same
      way. Progress is any step finishing or any batch a model finishes, so a
      page of thousands of lines that takes many minutes is never cut off
-     while it moves. The released pipeline's worker threads are stopped; those that cannot be, because
-     they are stuck inside htrflow, are counted, and at eight the run ends
-     (exit 1) so the retry starts on a fresh pod.
+     while it moves. The dead pipeline runs no further step: every step it
+     has not started is refused, the Exports included, and each pipeline
+     built exports into a directory of its own under `outputs/`. Its worker
+     threads are stopped; those that cannot be, because they are stuck
+     inside htrflow, are counted, and at eight the run ends (exit 1) so the
+     retry starts on a fresh pod.
    - **An upload the store could not take is deferred too.** A PUT that
      still fails after the S3 client's own retries is the store's condition,
      not the page's, so the page is deferred like a download and any half of

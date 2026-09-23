@@ -821,7 +821,7 @@ def test_release_pipeline_drops_the_models_of_a_dead_pipeline(monkeypatch):
     from htrflow_batch import driver
 
     steps = [_FakeStep(), _FakeStep()]
-    pipeline = SimpleNamespace(steps=steps)
+    pipeline = SimpleNamespace(steps=list(steps))
     driver.release_pipeline(pipeline)
     assert [step.model for step in steps] == [None, None]
 
@@ -1195,6 +1195,83 @@ def test_a_step_that_finishes_is_progress_too(tmp_path, monkeypatch, abandoned):
 
     files = abandoned.process_page(_ManySteps(), _image(tmp_path), out, seconds=0.25)
     assert set(files) == {"alto", "page"}
+
+
+class _ZombieExport:
+    """An Export as htrflow has it: writes the page's file, then registers
+    the path in the module-global progress registry."""
+
+    def __init__(self, dest, progress):
+        self.dest, self.progress = dest, progress
+
+    def __str__(self) -> str:
+        return "Export"
+
+    def run(self, document):
+        self.dest.mkdir(parents=True, exist_ok=True)
+        (self.dest / "0044.xml").write_text("<late/>")
+        self.progress._exports.setdefault(document, []).append("late")
+        return document
+
+
+def test_a_dead_pipeline_runs_no_further_step(tmp_path, monkeypatch, abandoned):
+    """Review I-3: the helper of a page past its no-progress window is not
+    stopped by stopping the worker threads -- when the slow call returns it
+    goes on to the next step, and the Exports the wrapper appends then wrote
+    outputs/<fmt>/<stem>.xml for a page already failed and cleaned up, and
+    touched htrflow's progress registry beside the live pipeline. A dead
+    pipeline refuses every step it has not started, before htrflow's
+    Pipeline.run can record it."""
+    _inject_process_fakes(monkeypatch)
+    progress = _inject_progress_fake(monkeypatch)
+    monkeypatch.setattr(abandoned, "THREAD_POLL_SECONDS", 0.01)
+    out = tmp_path / "out"
+    stalled = threading.Event()
+    returned = threading.Event()
+
+    class _Stall:
+        def __str__(self) -> str:
+            return "TextRecognition"
+
+        def run(self, document):
+            stalled.wait(30)
+            return document
+
+    class _HtrflowPipeline:
+        """htrflow's Pipeline.run, as it is (pipeline.py)."""
+
+        def __init__(self, steps):
+            self.steps = steps
+
+        def run(self, document):
+            try:
+                for step in self.steps:
+                    progress.step(document, step=step)
+                    document = step.run(document)
+                progress.done(document)
+            finally:
+                returned.set()
+
+    def step(document, step):
+        status = str(step)  # htrflow: update(document, status=str(step)) first
+        progress._steps.setdefault(document, []).append(status)
+
+    progress.step = step
+    progress.done = lambda document: progress._tasks.setdefault(document, "done")
+    pipeline = _HtrflowPipeline(
+        [
+            _Stall(),
+            _ZombieExport(out / "alto", progress),
+            _ZombieExport(out / "page", progress),
+        ]
+    )
+    with pytest.raises(abandoned.PipelineDead):
+        abandoned.process_page(pipeline, _image(tmp_path), out, seconds=0.1)
+    abandoned.release_pipeline(pipeline)
+    stalled.set()  # the slow call returns, and the zombie goes on
+    assert returned.wait(5)
+    assert not (out / "alto").exists() and not (out / "page").exists()
+    assert (progress._steps, progress._exports, progress._tasks) == ({}, {}, {})
 
 
 def test_a_step_missing_the_threads_it_should_have_is_loud(abandoned, caplog):

@@ -1335,16 +1335,20 @@ def test_default_factory_rebuilds_the_pipeline_after_a_dead_worker_thread(
             def __str__(self):
                 return type(self).__name__
 
-        def __init__(self):
+        def __init__(self, out_dir):
+            self.out_dir = out_dir  # where its Exports write, as htrflow's do
             self.thread = SimpleNamespace(alive=True)
             self.thread.is_alive = lambda: self.thread.alive
-            self.steps = [self.Segmentation(self.thread)]
+            self.segmentation = self.Segmentation(self.thread)
+            self.steps = [self.segmentation]  # a dead pipeline's list is emptied
 
         def run(self, document):
             if Path(document).stem == "0002":
                 self.thread.alive = False
                 blocked.wait(30)
-            _write_outputs(cfg, Path(document).stem, alto=ALTO_STAMPABLE)
+            for fmt, text in (("alto", ALTO_STAMPABLE), ("page", PAGE_OK)):
+                (self.out_dir / fmt).mkdir(parents=True, exist_ok=True)
+                (self.out_dir / fmt / f"{Path(document).stem}.xml").write_text(text)
 
     built = []
 
@@ -1353,8 +1357,8 @@ def test_default_factory_rebuilds_the_pipeline_after_a_dead_worker_thread(
     def load_pipeline(path, out_dir):
         # what the dead pipeline still holds when the new one is built: the
         # models must be gone BEFORE a second set is loaded onto the same GPU
-        held.append(built[0].steps[0].model if built else "first build")
-        built.append(_Pipeline())
+        held.append(built[0].segmentation.model if built else "first build")
+        built.append(_Pipeline(out_dir))
         return built[-1]
 
     monkeypatch.setattr(driver, "load_pipeline", load_pipeline)
@@ -1656,6 +1660,32 @@ def test_threads_left_behind_past_the_limit_replace_the_pod(cfg, tmp_path, monke
             items, main_mod._default_factory(cfg), lambda name, files: None, stats=stats
         )
     assert [r.status for r in stats.results.values()] == ["failed"] * 2
+
+
+def test_a_rebuilt_pipeline_exports_into_a_directory_of_its_own(cfg, monkeypatch):
+    """Review I-3: a dead pipeline's helper that is already inside one of its
+    Exports when the page is given up on cannot be stopped mid-write. It
+    writes where that pipeline was built to, and the rebuilt pipeline --
+    whose outputs are what gets uploaded -- never exports or looks there."""
+    from htrflow_batch import driver
+
+    built, used = [], []
+    monkeypatch.setattr(
+        driver, "load_pipeline", lambda path, out_dir: built.append(out_dir) or out_dir
+    )
+
+    def process_page(pipeline, image_path, out_dir, seconds):
+        used.append(out_dir)
+        raise driver.PipelineDead("stalled")
+
+    monkeypatch.setattr(driver, "process_page", process_page)
+    monkeypatch.setattr(driver, "release_pipeline", lambda pipeline: None)
+    process = main_mod._default_factory(cfg)
+    for _ in range(2):
+        with pytest.raises(driver.PipelineDead):
+            process(Path("/img/0001.jpg"))
+    assert used == built and len(set(built)) == 2
+    assert all(d.parent == Path(cfg.workdir) / "outputs" for d in built)
 
 
 def test_the_page_budget_reaches_the_driver(cfg, monkeypatch):

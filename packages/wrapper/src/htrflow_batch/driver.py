@@ -345,6 +345,35 @@ def leaked_threads(grace: float = 1.0) -> int:
     return len(_ABANDONED)
 
 
+class _DeadStep:
+    """What a dead pipeline's steps are replaced with (review I-3). htrflow's
+    Pipeline.run takes each step off the live list and first hands it to
+    ``progress.step``, which calls ``str()`` on it -- so raising there stops
+    a late helper before it touches htrflow's progress registry, let alone
+    writes an Export's file for a page already failed and cleaned up."""
+
+    def __str__(self) -> str:
+        raise SystemExit
+
+    def run(self, document):
+        raise SystemExit
+
+
+def _bury(pipeline) -> list:
+    """Mark ``pipeline`` dead, once, and return the steps it had. Done where
+    the page is given up on, before the error is raised, so no step can
+    start in between; ``release_pipeline`` then frees the real ones."""
+    steps = getattr(pipeline, "_htrflow_batch_buried", None)
+    if steps is None:
+        steps = list(getattr(pipeline, "steps", ()))
+        try:
+            pipeline.steps[:] = [_DeadStep() for _ in steps]
+            pipeline._htrflow_batch_buried = steps
+        except Exception:
+            pass  # not a list we can reach: release_pipeline still frees it
+    return steps
+
+
 def _progress_mark(pipeline) -> tuple:
     """What moves while htrflow works on a page (review I-2), read without
     touching it: the steps Pipeline.run has recorded in htrflow's progress
@@ -408,7 +437,7 @@ def release_pipeline(pipeline) -> None:
     again, so the models go now and the parked thread keeps only itself and
     that page's Document.
     """
-    release_steps(getattr(pipeline, "steps", ()))
+    release_steps(_bury(pipeline))
 
 
 def release_steps(steps) -> None:
@@ -456,7 +485,8 @@ def _run_guarded(pipeline, document, stem: str, seconds: float) -> None:
     activeDeadlineSeconds and every retry hanging the same way. It is a
     no-progress window, not a total (review I-2): a broadsheet page of
     thousands of lines takes many minutes and moves all the while. Its
-    helper, still inside htrflow, is counted by ``leaked_threads``.
+    helper, still inside htrflow, is counted by ``leaked_threads``, and the
+    pipeline is buried so the helper can start no further step.
     """
 
     failure: list[BaseException] = []
@@ -471,6 +501,7 @@ def _run_guarded(pipeline, document, stem: str, seconds: float) -> None:
         # check before its run, which is the same guarantee as the one this
         # function's docstring makes for a run that has already returned.
         if step is not None and not done.is_set():
+            _bury(pipeline)
             raise _dead(step, stem)
 
     check()  # never enqueue onto a dead queue: that is what blocks forever
@@ -493,6 +524,7 @@ def _run_guarded(pipeline, document, stem: str, seconds: float) -> None:
             mark, quiet_since = now, time.monotonic()
         elif time.monotonic() - quiet_since > seconds and not done.is_set():
             _ABANDONED.append(helper)
+            _bury(pipeline)
             raise PipelineDead(
                 f"page {stem}: htrflow made no progress for {seconds:g} s; "
                 "the page is marked failed and the pipeline is rebuilt"
