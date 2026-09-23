@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import inspect
 import re
 import threading
@@ -117,7 +118,7 @@ class FakeReader:
 
     def apply_configmap(
         self, body: dict, force: bool = False, manager: str = FIELD_MANAGER
-    ) -> None:
+    ) -> str | None:
         pass  # RecordingReader keeps what is written; this fake drops it
 
 
@@ -480,7 +481,7 @@ class RecordingReader(FakeReader):
 
     def apply_configmap(
         self, body: dict, force: bool = False, manager: str = "htrflow-web"
-    ) -> None:
+    ) -> str | None:
         # The API server refuses a name no object could carry, and a fake
         # that accepts one proves nothing about what the cluster would do
         # with the names this package builds (2026-09-14 audit).
@@ -492,6 +493,7 @@ class RecordingReader(FakeReader):
         self.written.append(body)
         self.forced.append(force)
         self.managers.append(manager)
+        return "uid-recorded"
 
 
 def _status_of(reader: RecordingReader) -> dict:
@@ -815,6 +817,7 @@ def test_failed_volumes_land_when_apply_owns_every_other_field():
         "metadata": {
             "name": "campaign-kyrk-status",
             "namespace": "htr-test",
+            "uid": "uid-cm",
             "labels": {"htrflow.riksarkivet.se/campaign": ""},
             "managedFields": [
                 {
@@ -882,7 +885,7 @@ class _Refusing(RecordingReader):
 
     def apply_configmap(
         self, body: dict, force: bool = False, manager: str = "htrflow-web"
-    ) -> None:
+    ) -> str | None:
         self.attempts += 1
         raise RuntimeError("configmaps is forbidden")
 
@@ -897,7 +900,7 @@ class _Contested(RecordingReader):
 
     def apply_configmap(
         self, body: dict, force: bool = False, manager: str = "htrflow-web"
-    ) -> None:
+    ) -> str | None:
         self.attempts += 1
         raise ApplyConflict(body["metadata"]["name"])
 
@@ -1237,6 +1240,7 @@ class SsaReader(FakeReader):
 
     def __init__(self, store, job: dict = FAILING_JOB) -> None:
         self.store, self.job = store, job
+        self.pods = [FAILED_POD]
         self.stale: dict | None = None
         self.conflicts = 0
 
@@ -1247,7 +1251,7 @@ class SsaReader(FakeReader):
         return [self.job]
 
     def list_pods(self, namespace: str, job_name: str) -> list[dict]:
-        return [FAILED_POD]
+        return self.pods
 
     def _status(self) -> dict | None:
         return self.stale if self.stale is not None else self.store.get(STATUS)
@@ -1262,9 +1266,9 @@ class SsaReader(FakeReader):
 
     def apply_configmap(
         self, body: dict, force: bool = False, manager: str = FIELD_MANAGER
-    ) -> None:
+    ) -> str | None:
         try:
-            self.store.apply(body, force=force, manager=manager)
+            return self.store.apply(body, force=force, manager=manager)
         except ApiException as e:
             self.conflicts += 1
             raise ApplyConflict(body["metadata"]["name"]) from e
@@ -1393,3 +1397,36 @@ def test_a_recreated_jobs_record_never_counts_the_last_runs_failures(ssa, writer
     assert _reasons(ssa) == {"vol1": "boom"}
     assert ssa.get(STATUS)["data"]["failedVolumesJobUid"] == "uid-kyrk"
     assert _reaped_reasons(ssa) == {"vol1": "boom"}
+
+
+def test_the_failures_write_never_creates_the_record(ssa):
+    """`apply --prune` deleted the record between this request's read and
+    its failures write. Sent as it was, that write created it again with no
+    labels -- invisible to the list and to the next prune, for ever, and
+    with no jobUid, so read as the next Job's (2026-09-23 review). It is
+    held to the record it read, and a record that is gone stays gone."""
+    reader = SsaReader(ssa)
+    client_ = TestClient(create_app(reader, progress=FakeProgress()))
+    client_.get("/api/v1/jobs/htr-test/kyrk")
+    assert _reasons(ssa) == {"vol1": "boom"}
+    reader.stale = ssa.get(STATUS)
+    ssa.delete(STATUS)
+    pod = copy.deepcopy(FAILED_POD)
+    pod["status"]["containerStatuses"][0]["state"]["terminated"]["message"] = (
+        "boom again"
+    )
+    reader.pods = [pod]
+    assert client_.get("/api/v1/jobs/htr-test/kyrk").status_code == 200
+    assert ssa.get(STATUS) is None
+    assert reader.conflicts == 1
+
+
+def test_a_first_record_gets_its_failures_in_the_same_request(ssa):
+    """No record yet: the summary creates it, and the failures are held to
+    the one it created."""
+    reader = SsaReader(ssa)
+    TestClient(create_app(reader, progress=FakeProgress())).get(
+        "/api/v1/jobs/htr-test/kyrk"
+    )
+    assert _reasons(ssa) == {"vol1": "boom"}
+    assert ssa.get(STATUS)["metadata"]["labels"] == LABELS

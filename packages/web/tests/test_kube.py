@@ -416,3 +416,9 @@ def test_the_metadata_list_asks_for_the_list_form():
 
     first = PARTIAL_METADATA.split(",")[0]
     assert "as=PartialObjectMetadataList;" in first
+
+
+def test_the_apply_says_which_configmap_it_left(reader: Reader):
+    """The failures write is held to that uid (projection._failures_write)."""
+    reader.answer["PATCH"] = {"metadata": {"uid": "uid-cm-7"}}
+    assert reader.apply_configmap(RECORD) == "uid-cm-7"

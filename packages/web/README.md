@@ -82,7 +82,9 @@ manager `htrflow-web`; `failedVolumes` — the failure reasons, which only the
 detail route can see because only it reads pods — goes under a manager of its
 own, `htrflow-web-failures`, and only the detail route writes it, with the
 Job it is about beside it (`failedVolumesJobUid`): the failures of an earlier
-Job of the same name are never read or merged as this one's. Once
+Job of the same name are never read or merged as this one's. That write is
+held to the ConfigMap the request read, by its uid, so it can never re-create
+a record a prune has deleted. Once
 `htrflow-campaigns apply` has recorded a campaign's ending, those fields are
 its, and this service sends only the ones it does not own.
 

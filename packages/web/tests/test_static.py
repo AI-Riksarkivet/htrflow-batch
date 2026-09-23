@@ -80,7 +80,7 @@ class EmptyReader:
 
     def apply_configmap(
         self, body: dict, force: bool = False, manager: str = ""
-    ) -> None:
+    ) -> str | None:
         raise AssertionError("nothing here is a campaign to write about")
 
 
