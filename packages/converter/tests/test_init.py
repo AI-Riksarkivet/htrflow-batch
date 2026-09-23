@@ -4,7 +4,9 @@ docs' example (see ``test_packaging.py::test_examples_match_template`` for
 the drift guard)."""
 
 import re
+import subprocess
 from importlib import resources
+from pathlib import Path
 
 import pytest
 import yaml
@@ -277,3 +279,53 @@ def test_the_policy_check_renders_the_chart_with_this_repos_names(ci):
     ):
         assert f"{value}={{cfg.{field}}}" in helm, value
     assert '"${sets[@]}"' in helm
+
+
+def _shell_steps() -> list[tuple[str, str]]:
+    """(where, script) for every shell script in either CI flavour: each
+    GitHub `run:` (bash, the runner's default and the composite action's
+    `shell:`) and each Azure `bash:` step, templates included."""
+    found: list[tuple[str, str]] = []
+
+    def walk(node, scripts: list[str]) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in ("run", "bash") and isinstance(value, str):
+                    scripts.append(value)
+                else:
+                    walk(value, scripts)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item, scripts)
+
+    for flavour in ("github", "azure"):
+        root = _CI / flavour
+        for path in sorted(Path(str(root)).rglob("*.y*ml")):
+            scripts: list[str] = []
+            walk(yaml.safe_load(path.read_text()), scripts)
+            where = str(path.relative_to(str(_CI)))
+            found += [(f"{where}#{n}", script) for n, script in enumerate(scripts)]
+    return found
+
+
+def test_every_ci_template_has_shell_steps_to_check():
+    wheres = {where.split("#")[0] for where, _ in _shell_steps()}
+    assert wheres == {
+        "github/.github/workflows/render.yml",
+        "github/.github/actions/install-converter/action.yml",
+        "azure/azure-pipelines.yml",
+        "azure/.azure-pipelines/install-converter.yml",
+        "azure/.azure-pipelines/install-uv.yml",
+    }
+
+
+@pytest.mark.parametrize(
+    ("where", "script"), [pytest.param(*step, id=step[0]) for step in _shell_steps()]
+)
+def test_every_ci_shell_step_parses_under_bash(where, script):
+    """Nothing else runs these scripts before a campaigns repo does: a
+    quote left open in a template is found by that repo's first CI run.
+    ``bash -n`` parses without running; ``${{ }}`` and ``$(var)`` are
+    expansions to bash, substituted by the CI before it ever sees them."""
+    done = subprocess.run(["bash", "-n"], input=script, capture_output=True, text=True)
+    assert done.returncode == 0, f"{where}: {done.stderr}"
