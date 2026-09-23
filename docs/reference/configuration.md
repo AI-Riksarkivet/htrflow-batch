@@ -180,7 +180,7 @@ skeleton, never as a campaign setting.
 |---|---|---|---|---|
 | `s3.bucket` | `values.yaml` | `htr-results` | — | no secret — nobody |
 | `s3.existingSecret` | `values.yaml` | `htr-batch-s3` | converter `s3_secret` | names that Secret; no template creates it — nobody |
-| `hfToken.existingSecret` | `values.yaml` | *(empty)* | converter `hf_token_secret` | the one Secret a warm-up may read (job-shape policy) — cluster |
+| `hfToken.existingSecret` | `values.yaml` | *(empty)* | converter `hf_token_secret` | the one Secret a warm-up may read (job-shape) — cluster |
 | `publicResultsBase` | `values.yaml` | *(empty)* | converter `public_results_base`, web `HTRFLOW_PUBLIC_RESULTS_BASE`, wrapper `PUBLIC_RESULTS_BASE` | the public-read results base; `required` — render |
 | `modelCache.create` | `values.yaml` | `true` | — | no secret — nobody |
 | `modelCache.name` | `values.yaml` | `htr-test-data` | converter `data_pvc` | no secret — nobody |
@@ -212,7 +212,7 @@ skeleton, never as a campaign setting.
 | `apply.gitCidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `apply.gitPorts` | `values.yaml` | `[443]` | — | no secret — nobody |
 | `security.allowedImageRepos` | `values.yaml` | *(empty)* | — | enforced by a Kyverno ClusterPolicy — cluster |
-| `security.jobImageRepos` | `values.yaml` | *(empty)* | — | the repositories a campaign or warm-up Job may run — cluster |
+| `security.jobImageRepos` | `values.yaml` | *(empty)* | — | what a campaign or warm-up Job may run — cluster |
 | `security.requireModelRevision` | `values.yaml` | `false` | — | enforced by a Kyverno ClusterPolicy — cluster |
 | `security.policies.enabled` | `values.yaml` | `false` | — | enforced by a Kyverno ClusterPolicy — cluster |
 | `security.policies.allowDisabled` | `values.yaml` | `false` | — | no admission policy at all — render |
