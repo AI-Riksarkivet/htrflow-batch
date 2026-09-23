@@ -1,8 +1,8 @@
 # htrflow-batch (Helm chart)
 
-Kueue-gated batch HTR platform around the htrflow image: queues, the
-model-cache PVC and the web front (campaign browser, Universal Viewer and
-the read-only status API in one Deployment).
+Kueue-gated batch HTR platform around htrflow: queues, the model-cache PVC
+and the web front (campaign browser, Universal Viewer and the status API in
+one Deployment).
 
 **Campaigns are Kubernetes Indexed Jobs, not objects this chart renders.**
 `packages/converter` (`htrflow-campaigns render <repo-dir> --out <dir>`)
@@ -182,13 +182,14 @@ adoption recipe.)
 `htrflow-web` (Deployment, Service `htrflow-web:8081` on NodePort
 `web.nodePort`) is the whole browser-facing surface: the campaign browser at
 `/`, Universal Viewer at `/uv.html`, and `GET /api/v1/jobs[/{ns}/{name}]`
-read-only over the Indexed Jobs a campaign renders to — Role/RoleBinding
+over the Indexed Jobs a campaign renders to — Role/RoleBinding
 scoped to `get`/`list` on `jobs`/`pods`/`configmaps` (plus `create`/`patch`
 on `configmaps`, for the per-campaign status record it writes) in the release
 namespace, never a ClusterRole. It is the one pod in this chart with
 `automountServiceAccountToken: true` (everything else has it off) because it
 *is* a Kubernetes API client. NetworkPolicy `htr-web` lets browsers in from
-`network.web.ingressCidrs` and lets it out to DNS, the apiserver and the
+`network.web.ingressCidrs` (behind an ingress controller, `web.ingress`, the
+controller named by `network.web.ingressFrom` instead) and lets it out to DNS, the apiserver and the
 results bucket. The pod also **serves `/config.js` itself**, written from its
 own environment: `window.API_BASE = "/api/v1"` (same-origin, no proxy) and
 `window.RESULTS_BASE` from `publicResultsBase`. There is nothing for an
