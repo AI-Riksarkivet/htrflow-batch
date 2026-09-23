@@ -181,3 +181,48 @@ def test_a_step_whose_worker_thread_dies_fails_the_page_instead_of_hanging(
         f"page {page.stem}: htrflow's Segmentation (model broken-test-model) "
         "worker thread died; the page is marked failed and the pipeline is rebuilt"
     )
+
+
+@pytest.fixture(autouse=True)
+def interpreter_thread_hook(monkeypatch):
+    """The interpreter's own thread excepthook, as in the pod: pytest's
+    reports even the SystemExit a stopped htrflow worker ends on."""
+    import threading
+
+    monkeypatch.setattr(threading, "excepthook", threading.__excepthook__)
+
+
+class _SlowModel:
+    """A model that answers each line after ``gap`` seconds, or waits on
+    ``hold`` first when one is given: a model on a big page, or a hung one."""
+
+    metadata = {"model": "slow-test-model"}
+
+    def __init__(self, gap: float = 0.0, hold=None):
+        self.gap, self.hold = gap, hold
+
+    def __call__(self, images, **kwargs):
+        import time
+
+        if self.hold is not None:
+            self.hold.wait(60)
+        time.sleep(self.gap)
+        return [[] for _ in images]
+
+
+def test_releasing_real_inference_steps_ends_their_threads(caplog):
+    """Review M-5: ``_stop_threads`` relies on htrflow's own names
+    (``_thread``, ``_queue._thread``, ``_queue._in``, ``_queue._out``); this
+    pins them against the real Inference and BatchedQueue, and that the stop
+    ends both threads without a word at ERROR."""
+    from htrflow.pipeline.steps import TextRecognition
+
+    from htrflow_batch import driver
+
+    steps = [TextRecognition(_SlowModel()), TextRecognition(_SlowModel())]
+    threads = [t for s in steps for t in (s._thread, s._queue._thread)]
+    with caplog.at_level("ERROR"):
+        driver.release_steps(steps)
+    assert caplog.text == ""
+    assert driver.leaked_threads(grace=5.0) == 0
+    assert not any(t.is_alive() for t in threads)

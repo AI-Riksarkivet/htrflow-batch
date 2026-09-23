@@ -4,6 +4,7 @@ wrapper package imports cleanly on hosts without torch (docs: wrapper)."""
 from __future__ import annotations
 
 import gc
+import logging
 import re
 import threading
 import time
@@ -13,6 +14,8 @@ from pathlib import Path
 import yaml
 
 from .stream import discard
+
+log = logging.getLogger("htrflow_batch")
 
 #: Every format the wrapper appends an Export step for; process_page requires
 #: all of them and store.upload_page uploads them page-first.
@@ -275,9 +278,11 @@ class PipelineDead(RuntimeError):
 THREAD_POLL_SECONDS = 1.0
 
 #: Threads of work this process gave up on (W-8, audit 0923): a released
-#: step's workers, and the helper of a page that ran out of time. Stopped
-#: ones end at once; what ``leaked_threads`` still finds alive is stuck.
-_ABANDONED: list[threading.Thread] = []
+#: step's workers, and the helper of a page that ran out of time.
+#: Stopped ones end at once; what ``leaked_threads`` still finds alive is
+#: stuck -- and a step whose threads could not be found at all stays here as
+#: an ``_Unstoppable`` (review M-5).
+_ABANDONED: list = []
 
 
 class _Stop:
@@ -293,22 +298,41 @@ class _Stop:
         raise SystemExit
 
 
+class _Unstoppable:
+    """A released step whose worker threads this wrapper could not find:
+    counted as leaked for good, since nothing can say they ended."""
+
+    def join(self, timeout: float | None = None) -> None:
+        pass
+
+    def is_alive(self) -> bool:
+        return True
+
+
 def _stop_threads(step) -> None:
     """End a released step's two worker threads: the BatchedQueue's next
     poll of ``_in`` (within its patience) and the step's thread, woken by a
-    batch that is the stop itself. A step that is not htrflow's Inference
-    shape is left alone; either way its threads are watched from here on."""
-    queue = getattr(step, "_queue", None)
-    for thread in (getattr(step, "_thread", None), getattr(queue, "_thread", None)):
-        if isinstance(thread, threading.Thread):
-            _ABANDONED.append(thread)
-    if queue is None:
+    batch that is the stop itself. Only htrflow's Inference holds a model,
+    and only it runs threads; one that does not have the attributes this
+    relies on -- an htrflow that renamed them -- is not quietly skipped
+    (review M-5): it is logged at ERROR and counted as leaked."""
+    if not hasattr(step, "model"):
         return
-    try:
-        queue._in = _Stop()
-        queue._out.put(_Stop())
-    except Exception:
-        pass
+    queue = getattr(step, "_queue", None)
+    threads = [getattr(step, "_thread", None), getattr(queue, "_thread", None)]
+    shaped = all(isinstance(t, threading.Thread) for t in threads)
+    if queue is None or not shaped or not hasattr(queue, "_in"):
+        log.error(
+            "cannot stop the worker threads of htrflow's %s: it is not the "
+            "Inference shape this wrapper knows (_thread, _queue._thread, "
+            "_queue._in, _queue._out); counted as leaked",
+            step,
+        )
+        _ABANDONED.append(_Unstoppable())
+        return
+    _ABANDONED.extend(threads)
+    queue._in = _Stop()
+    queue._out.put(_Stop())
 
 
 def leaked_threads(grace: float = 1.0) -> int:
