@@ -1888,6 +1888,38 @@ def test_a_finished_record_naming_the_applys_job_is_believed(tmp_path, cluster):
     assert ("apply", "Job", "kyrk") not in cluster.calls
 
 
+def test_a_record_of_the_job_before_a_recreated_one_is_not_believed(
+    tmp_path, cluster, capsys
+):
+    """A Job deleted mid-run is created again by the next apply, under the
+    same name and a new uid. A finished record the read API wrote about the
+    OLD Job says nothing about the new one: once the new Job is reaped, that
+    record must not keep the campaign from running."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    old = _live(cluster, "kyrk")["metadata"]["uid"]
+    _drop_job(cluster, "kyrk")
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    new = _live(cluster, "kyrk")["metadata"]["uid"]
+    assert new != old, "the fake hands out a fresh uid, as the API server does"
+    record = _live(cluster, "campaign-kyrk")
+    assert record["metadata"]["annotations"][JOB_UID] == new
+    _drop_job(cluster, "kyrk")
+    _web_writes(cluster, "kyrk", "Succeeded", old)
+    cluster.calls.clear()
+    capsys.readouterr()
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert ("apply", "Job", "kyrk") in cluster.calls
+    assert "not the Job this apply created" in capsys.readouterr().err
+    # And the new Job's own record is believed.
+    newest = _live(cluster, "kyrk")["metadata"]["uid"]
+    _drop_job(cluster, "kyrk")
+    _web_writes(cluster, "kyrk", "Succeeded", newest)
+    cluster.calls.clear()
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert ("apply", "Job", "kyrk") not in cluster.calls
+
+
 def test_a_record_for_a_job_that_was_never_created_is_not_believed(tmp_path, cluster):
     """The pair came apart: the ConfigMap went out and its Job did not. No
     Job exists for any record to be about, so none is believed."""
