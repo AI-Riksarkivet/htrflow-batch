@@ -7,7 +7,6 @@ import contextlib
 import getpass
 import hashlib
 import os
-import re
 import signal
 import subprocess
 import sys
@@ -21,14 +20,14 @@ import yaml
 from . import render
 from .models import STATUS_SUFFIX, Campaign, parse_source_line
 from .parse import ValidationError, load
-
-_PART_RE = re.compile(r"-part(\d+)\.yaml\Z")
-
-#: Where a campaigns repo keeps its committed render. The one source of
-#: truth for the RECORD a re-render is held against: `render --out` says
-#: where this render goes, and the repo's own `rendered/` is what the
-#: previous one left (docs: reference/campaign-yaml.md).
-RENDERED = "rendered"
+from .record import (
+    FAST_LOADER,
+    RENDERED,
+    CorruptRenderedFile,
+    existing_parts,
+    rendered,
+    volumes_txt,
+)
 
 _NEXT_STEPS = """\
 Your campaigns repo is ready at {dir}.
@@ -109,16 +108,78 @@ def _missing_config(repo: Path) -> str | None:
     )
 
 
-def _validate(repo_dir: str) -> int:
+#: What the Argo CD hook checks before it applies (audit 0923 S-9). It
+#: clones the branch's HEAD, not the commit CI rendered -- a hook cannot
+#: learn the Application's revision -- so a push that landed after CI's
+#: render commit would otherwise be applied unrendered, and unchecked by
+#: the campaigns repo's Policy job.
+_NOT_RENDERED = (
+    "{rendered} is not what this checkout renders: CI has not rendered this "
+    "commit yet (its render commit starts another sync), or CI renders with "
+    "a different converter release from this one (CONVERTER_REF against "
+    "this image) — refusing, so that nothing CI did not render and check is "
+    "applied"
+)
+
+
+@contextlib.contextmanager
+def _quiet_stderr():
+    with open(os.devnull, "w") as sink, contextlib.redirect_stderr(sink):
+        yield
+
+
+def _rendered_objects(out: Path) -> dict[str, list]:
+    """Every rendered file under ``out``, parsed: what the render SAYS. Its
+    bytes are not the point -- a checkout with CRLF line endings, or a
+    PyYAML release that spells the same objects differently, says the same
+    thing -- and neither is ``sync.yaml``, which is a digest of them."""
+    return {
+        p.relative_to(out).as_posix(): list(
+            yaml.load_all(p.read_text(), Loader=FAST_LOADER)
+        )
+        for sub in _OWNED[:2]
+        for p in sorted((out / sub).glob("*.yaml"))
+    }
+
+
+def _unrendered(repo: Path) -> str | None:
+    """One sentence unless ``rendered/`` holds exactly this checkout's
+    render."""
+    committed = repo / RENDERED
+    with tempfile.TemporaryDirectory(prefix="htr-check-") as t:
+        # Its refusals to stderr; its warnings validate has already said.
+        with contextlib.redirect_stdout(sys.stderr), _quiet_stderr():
+            if _render(str(repo), str(Path(t) / RENDERED)):
+                return _NOT_RENDERED.format(rendered=committed)
+        fresh = _rendered_objects(Path(t) / RENDERED)
+    try:
+        same = _rendered_objects(committed) == fresh
+    except (yaml.YAMLError, OSError):
+        same = False
+    return None if same else _NOT_RENDERED.format(rendered=committed)
+
+
+def _load(repo: Path):
+    """``parse.load`` of the repo, saying on stderr what a campaign kept as
+    its earlier render recorded would be refused for if it were new."""
+    warnings: list[str] = []
+    try:
+        return load(
+            repo / "campaigns", repo / "pipelines", repo / "converter.yaml", warnings
+        )
+    finally:
+        for warning in warnings:
+            print(f"warning: {warning}", file=sys.stderr)
+
+
+def _validate(repo_dir: str, rendered: bool = False) -> int:
     repo = Path(repo_dir)
     missing = _missing_config(repo)
     if missing is not None:
         print(missing)
         return 1
     try:
-        campaigns, pipelines, cfg = load(
-            repo / "campaigns", repo / "pipelines", repo / "converter.yaml"
-        )
+        campaigns, pipelines, cfg = _load(repo)
     except ValidationError as e:
         return _report(e, "")
     # `rendered/` is committed, so a pull request has the previous render
@@ -126,6 +187,11 @@ def _validate(repo_dir: str) -> int:
     refused = _refused(campaigns, pipelines, cfg, repo / RENDERED)
     if refused is not None:
         print(refused)
+        return 1
+    _window_warnings(campaigns, cfg, repo / RENDERED)
+    unrendered = _unrendered(repo) if rendered else None
+    if unrendered is not None:
+        print(unrendered)
         return 1
     return 0
 
@@ -135,38 +201,15 @@ def _write(path: Path, docs: list[dict]) -> None:
     path.write_text(yaml.safe_dump_all(docs, sort_keys=False))
 
 
-class _CorruptRenderedFile(Exception):
-    def __init__(self, path: Path, reason: object) -> None:
-        super().__init__(f"{path}: cannot read existing campaign: {reason}")
-
-
-def _volumes_txt(path: Path) -> str:
-    try:
-        docs = list(yaml.safe_load_all(path.read_text()))
-        cm = next(
-            d for d in docs if isinstance(d, dict) and d.get("kind") == "ConfigMap"
-        )
-        return cm["data"]["volumes.txt"].rstrip("\n")
-    except (yaml.YAMLError, StopIteration, KeyError, TypeError) as e:
-        raise _CorruptRenderedFile(path, e) from e
-
-
-def _part_number(path: Path) -> int:
-    m = _PART_RE.search(path.name)
-    return int(m.group(1)) if m else 0
-
-
-def _existing_parts(campaigns_out: Path, c: Campaign) -> list[Path]:
-    """Every file an earlier render of this campaign left in ``out``, in the
-    order it wrote them. A campaign that splits renders under a name cut
-    short of its own (see ``render.split_stem``), so the ``-partN`` files are
-    looked up under that stem, not under the campaign's own name. Matched
-    whole, never globbed: ``loc-part*`` also finds the campaign ``loc-partner``
-    (3088)."""
-    part = re.compile(re.escape(render.split_stem(c.name)) + r"-part\d+\.yaml\Z")
-    paths = sorted(campaigns_out.glob(f"{c.name}.yaml"))
-    parts = [p for p in campaigns_out.glob("*.yaml") if part.match(p.name)]
-    return paths + sorted(parts, key=_part_number)
+def _pods_at_once(job: dict) -> tuple[int, bool]:
+    """How many pods a campaign Job runs at once, as Kueue counts them for
+    its Workload -- ``min(parallelism, completions)`` -- and whether the
+    campaign was paused."""
+    spec = job.get("spec") or {}
+    parallelism = spec.get("parallelism", 1)
+    return min(parallelism, spec.get("completions", parallelism)), bool(
+        spec.get("suspend")
+    )
 
 
 def _colliding_names(campaigns: list[Campaign]) -> str | None:
@@ -240,7 +283,7 @@ def _edited_pipeline(campaigns, pipelines: dict, cfg, out: Path) -> str | None:
     finished one is retired -- holds nothing, and neither does one this
     render is writing for the first time.
     """
-    parts = {c.name: _existing_parts(out / "campaigns", c) for c in campaigns}
+    parts = {c.name: existing_parts(out / "campaigns", c.name) for c in campaigns}
     recorded = {c.name: _recorded_pipelines(parts[c.name]) for c in campaigns}
     for p in pipelines.values():
         before = _recorded_recipe(out / "pipelines" / f"{p.id}.yaml")
@@ -259,9 +302,50 @@ def _edited_pipeline(campaigns, pipelines: dict, cfg, out: Path) -> str | None:
     return None
 
 
+#: Kueue compares a running Job's pod count with its admitted Workload's and,
+#: when they differ, suspends the Job -- every running pod stopped --
+#: deletes the Workload and queues the campaign again (jobframework
+#: ``ensureOneWorkload``, "No matching Workload"; Kueue v0.19). A Workload
+#: holding no quota, a paused campaign's, is updated in place instead
+#: (audit 0923 C-11). Whether the campaign is still running is the
+#: cluster's to say: offline this is a warning, and the apply, which sees
+#: the Job, holds a running one to its count.
+_WINDOW_MOVED = (
+    "campaign {name} runs {before} pods at a time and would now run {after}: "
+    "if it is still running, Kueue stops every running pod of a Job whose "
+    "parallelism changes and queues the campaign again — to change it safely, "
+    "pause it first (suspend: true), change the window once the pause is "
+    "applied, then resume it"
+)
+
+
+def _moved_window(c: Campaign, record: Path, cfg) -> str | None:
+    """A warning when a rendered campaign's pod count moves. Held against the
+    record part by part: each Job there is what was last applied. A part the
+    record paused runs no pods, so its count may move without one; so may a
+    campaign whose parts are not the ones recorded (the append-only rules
+    report that)."""
+    existing = existing_parts(record / "campaigns", c.name)
+    for path, volumes in zip(existing, render.split(c.volumes)):
+        try:
+            before, paused = _pods_at_once(rendered(path, "Job"))
+        except CorruptRenderedFile:
+            return None  # the append-only check has said so
+        after = min(render.parallelism(c, cfg), len(volumes))
+        if before != after and not paused:
+            return _WINDOW_MOVED.format(name=c.name, before=before, after=after)
+    return None
+
+
+def _window_warnings(campaigns, cfg, record: Path) -> None:
+    for c in campaigns:
+        if (said := _moved_window(c, record, cfg)) is not None:
+            print(f"warning: {said}", file=sys.stderr)
+
+
 def _moved_campaign(c: Campaign, record: Path) -> str | None:
     """One sentence when ``c`` no longer renders as the record says it did."""
-    existing = _existing_parts(record / "campaigns", c)
+    existing = existing_parts(record / "campaigns", c.name)
     if not existing:
         return None
     # Parsed, never byte-for-byte: a rendered file written before the
@@ -271,9 +355,9 @@ def _moved_campaign(c: Campaign, record: Path) -> str | None:
         before = [
             parse_source_line(line)
             for p in existing
-            for line in _volumes_txt(p).splitlines()
+            for line in volumes_txt(p).splitlines()
         ]
-    except _CorruptRenderedFile as e:
+    except CorruptRenderedFile as e:
         return str(e)
     if before != [parse_source_line(v.source_line()) for v in c.volumes]:
         return f"campaign {c.name} is append-only: create a new campaign"
@@ -368,9 +452,7 @@ def _render(repo_dir: str, out_dir: str) -> int:
         print(missing)
         return 1
     try:
-        campaigns, pipelines, cfg = load(
-            repo / "campaigns", repo / "pipelines", repo / "converter.yaml"
-        )
+        campaigns, pipelines, cfg = _load(repo)
     except ValidationError as e:
         return _report(e, " — nothing was rendered")
     out = Path(out_dir)
@@ -386,6 +468,7 @@ def _render(repo_dir: str, out_dir: str) -> int:
     if refused is not None:
         print(refused)
         return 1
+    _window_warnings(campaigns, cfg, repo / RENDERED)
     # Written in full beside `--out` first (same filesystem, so the swap is
     # renames), and swapped in only once the whole render exists.
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -431,7 +514,8 @@ _APPLIED_AT_ANNOTATION = "htrflow.riksarkivet.se/applied-at"
 
 def _git_head(repo: Path) -> str:
     """The campaigns repo's commit, or ``unknown`` outside a checkout (a
-    tarball, a test's tmp_path) -- the record says so rather than guessing."""
+    tarball, a test's tmp_path) -- the record says so rather than guessing.
+    Where there is no git binary, dulwich reads it (``_dulwich_head``)."""
     try:
         done = subprocess.run(
             ["git", "-C", str(repo), "rev-parse", "HEAD"],
@@ -439,9 +523,28 @@ def _git_head(repo: Path) -> str:
             text=True,
             timeout=10,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError:
+        return _dulwich_head(repo)
+    except subprocess.SubprocessError:
         return "unknown"
     return done.stdout.strip() if done.returncode == 0 else "unknown"
+
+
+def _dulwich_head(repo: Path) -> str:
+    """HEAD by dulwich, the pure-Python git the Argo CD hook's clone already
+    uses (the ``hook`` extra). Its image is distroless, with no git binary,
+    so without this every campaign the hook applied -- the production path
+    -- recorded its commit as ``unknown`` (audit 0923 C-10)."""
+    try:
+        from dulwich.errors import NotGitRepository  # ty: ignore[unresolved-import]
+        from dulwich.repo import Repo  # ty: ignore[unresolved-import]
+    except ImportError:
+        return "unknown"
+    try:
+        with Repo.discover(str(repo)) as found:
+            return found.head().decode()
+    except (NotGitRepository, KeyError, OSError):  # KeyError: no commit yet
+        return "unknown"
 
 
 def _applied_by() -> str:
@@ -765,7 +868,7 @@ def _claim_volumes(cluster, campaigns, volumes_of, done, blocked, running) -> No
             labels = job["metadata"].get("labels") or {}
             cm = cluster.get("ConfigMap", f"campaign-{job['metadata']['name']}")
             owner = claimed.setdefault(labels.get(render._PIPELINE_LABEL, ""), {})
-            owner.setdefault(labels.get(render._CAMPAIGN_LABEL, ""), set()).update(
+            owner.setdefault(labels.get(render.CAMPAIGN_LABEL, ""), set()).update(
                 ids(((cm or {}).get("data") or {}).get("volumes.txt") or "")
             )
     except Unreachable:
@@ -784,7 +887,7 @@ def _claim_volumes(cluster, campaigns, volumes_of, done, blocked, running) -> No
             continue
         labels = obj["metadata"]["labels"]
         pipeline = labels.get(render._PIPELINE_LABEL, "")
-        campaign = labels.get(render._CAMPAIGN_LABEL, "")
+        campaign = labels.get(render.CAMPAIGN_LABEL, "")
         owners = claimed.setdefault(pipeline, {})
         mine = ids(volumes_of[name])
         others = {c: mine & v for c, v in owners.items() if c != campaign and mine & v}
@@ -1318,6 +1421,12 @@ def main(argv: list[str] | None = None) -> int:
         "The Kyverno CLI runs them over rendered/ in this repo's CI.",
     )
     validate_p.add_argument("repo_dir")
+    validate_p.add_argument(
+        "--rendered",
+        action="store_true",
+        help="also refuse unless rendered/ is exactly what this checkout "
+        "renders: what the Argo CD hook checks before it applies",
+    )
     render_p = sub.add_parser("render", help="render ConfigMaps and Jobs")
     render_p.add_argument("repo_dir")
     render_p.add_argument("--out", required=True)
@@ -1367,7 +1476,7 @@ def main(argv: list[str] | None = None) -> int:
             args.allow_empty,
             args.namespace,
         )
-    return _validate(args.repo_dir)
+    return _validate(args.repo_dir, args.rendered)
 
 
 if __name__ == "__main__":

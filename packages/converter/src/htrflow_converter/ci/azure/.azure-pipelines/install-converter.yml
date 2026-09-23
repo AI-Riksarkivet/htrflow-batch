@@ -1,0 +1,17 @@
+# The converter every stage of azure-pipelines.yml runs, installed once, the
+# same way: from the htrflow-batch commit CONVERTER_REF names, with the
+# dependency versions that commit's uv.lock pins -- the versions the
+# converter image is built with, so CI renders what the Argo CD hook renders.
+# Needs uv (install-uv.yml) first. The checkout stays in the job's temp
+# directory: the Policy stage renders the chart's policies from it too.
+steps:
+  - bash: |
+      set -euo pipefail
+      src="$AGENT_TEMPDIRECTORY/htrflow-batch"
+      git init -q "$src"
+      git -C "$src" fetch -q --depth 1 https://github.com/AI-Riksarkivet/htrflow-batch "$CONVERTER_REF"
+      git -C "$src" checkout -q FETCH_HEAD
+      (cd "$src" && uv export --frozen --package htrflow-converter \
+        --no-dev --no-emit-workspace --no-hashes -o "$AGENT_TEMPDIRECTORY/converter-constraints.txt")
+      uv tool install --constraints "$AGENT_TEMPDIRECTORY/converter-constraints.txt" "$src/packages/converter"
+    displayName: Install the converter (locked)
