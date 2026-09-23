@@ -1,0 +1,9 @@
+# The build backend of every package the images build from source: the three
+# workspace members and htrflow all declare `requires = ["hatchling"]`.
+# uv.lock and the htrflow base lock pin what gets INSTALLED, not what builds
+# it, so this is the lock for the build step: compiled with hashes into
+# build-constraints.txt (`make build-constraints`) and passed to
+# `uv build --build-constraints … --require-hashes`, which refuses any build
+# requirement that is not pinned and hashed here. Rerun after editing and
+# commit both files.
+hatchling

@@ -17,9 +17,10 @@ at a pinned commit, on the CUDA runtime image
 ([Releasing](../development/releasing.md#one-dockerfile-every-architecture)).
 On top of it the build adds:
 
-- the `htrflow_batch` package (`packages/wrapper/`), installed from the
+- the `htrflow_batch` package (`packages/wrapper/`), built with a pinned,
+  hashed build backend
+- its runtime dependencies, `httpx` and `boto3`, installed from the
   workspace lock with hashes
-- its runtime dependencies, `httpx` and `boto3`
 
 The image carries no C compiler and compiles nothing at run time: torch's
 own Triton kernels are switched off (`TORCH_DISABLE_NATIVE_JIT=1`), so every

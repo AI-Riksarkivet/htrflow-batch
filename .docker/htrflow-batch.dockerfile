@@ -33,7 +33,9 @@
 #     cu128 index on amd64, for Blackwell sm_120 kernels on CUDA 12 drivers;
 #     2.13.0/0.28.0 from PyPI on arm64, CUDA 13), the wrapper's dependencies
 #     and the leaf overrides from the workspace lock, the transformers line
-#     from a hashed requirements file. Nothing is resolved at build time;
+#     from a hashed requirements file, and the build backend of the packages
+#     built here (htrflow, the wrapper) from .docker/build-constraints.txt.
+#     Nothing is resolved at build time;
 #   * apt packages stay unpinned: Ubuntu's archive drops superseded
 #     versions, so an exact apt pin breaks the build on the next security
 #     update (a snapshot mirror is the real fix, out of scope here).
@@ -78,10 +80,23 @@ COPY --from=htrflow-src pyproject.toml /tmp/htrflow-pyproject.toml
 RUN cat /tmp/htrflow-pyproject.toml /tmp/overlay.toml | cmp -s - /app/pyproject.toml \
     || { echo "htrflow's pyproject.toml is not the one .docker/htrflow-base/uv.lock was made" \
               "for: run make lock-htrflow-base for this HTRFLOW_REF"; exit 1; }
-RUN uv sync --locked --no-install-project
+# The dependencies come from the lock, hashed, as wheels: --no-build fails
+# the step instead of building an sdist whose build requirements no lock
+# pins.
+RUN uv sync --locked --no-install-project --no-build
+# htrflow itself is built here, and its build backend is not in uv.lock
+# (a lock pins what is installed, not what builds it). `uv build` takes it
+# from .docker/build-constraints.txt with --require-hashes, which refuses any
+# build requirement that is not pinned and hashed there (audit 0923 D-11).
+# A wheel, not an editable install: the image runs the installed package, so
+# the source tree stays in this stage.
 COPY --from=htrflow-src src/ /app/src/
 COPY --from=htrflow-src LICENSE README.md /app/
-RUN uv sync --locked
+RUN --mount=type=bind,source=.docker/build-constraints.txt,target=/tmp/build-constraints.txt \
+    uv build --wheel --python /app/.venv/bin/python --require-hashes \
+         --build-constraints /tmp/build-constraints.txt -o /tmp/dist . \
+    && uv pip install --python /app/.venv/bin/python --no-deps /tmp/dist/*.whl \
+    && rm -rf /tmp/dist
 
 FROM nvidia/cuda:12.1.0-base-ubuntu22.04@sha256:40042016a816cbbe0504dd0a396e7cfc036a8aa43f5694af60dd6f8f87d24e52 AS htrflow-base
 ARG DEBIAN_FRONTEND=noninteractive
@@ -91,7 +106,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=htrflow-builder /app/.venv /app/.venv
-COPY --from=htrflow-builder /app/src /app/src
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH="/app:"
 ARG HTRFLOW_REF
@@ -139,8 +153,14 @@ RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
     && uv pip install --python /app/.venv/bin/python --no-cache --require-hashes \
          -r /tmp/wrapper-requirements.txt \
     && rm /tmp/wrapper-requirements.txt
+# The package itself is built with its build backend pinned and hashed, the
+# same way as htrflow in the builder stage (audit 0923 D-11).
 COPY packages/wrapper /opt/wrapper
-RUN uv pip install --python /app/.venv/bin/python --no-cache --no-deps /opt/wrapper
+RUN --mount=type=bind,source=.docker/build-constraints.txt,target=/tmp/build-constraints.txt \
+    uv build --wheel --python /app/.venv/bin/python --no-cache --require-hashes \
+         --build-constraints /tmp/build-constraints.txt -o /tmp/dist /opt/wrapper \
+    && uv pip install --python /app/.venv/bin/python --no-cache --no-deps /tmp/dist/*.whl \
+    && rm -rf /tmp/dist
 
 # No compiler in this image, and no code generated at run time. torch 2.13
 # (the arm64 build) routes some operators through its own Triton kernels
