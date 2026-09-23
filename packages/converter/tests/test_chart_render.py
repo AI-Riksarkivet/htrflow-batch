@@ -617,6 +617,26 @@ def test_without_in_namespace_s3_no_pod_labelled_rustfs_is_a_route(policy_name: 
     assert any({"ipBlock": {"cidr": "52.95.0.0/16"}} in r.get("to", []) for r in egress)
 
 
+@pytest.mark.parametrize(
+    "cidr",
+    ["10.0.0.0/33", "10.0.0.0/99", "300.0.0.0/8", "10.256.0.0/16", "01.2.3.4/32"],
+)
+def test_the_schema_refuses_an_address_range_that_is_not_one(cidr: str):
+    """A prefix past /32 or an octet past 255 is no IPv4 range; the carve-out
+    helper does integer arithmetic on both, and the API server would refuse
+    the NetworkPolicy only at install."""
+    result = helm_template(sets=DEFAULT_SETS + (f"network.iiifCidrs={{{cidr}}}",))
+    assert result.returncode != 0
+    assert "/network/iiifCidrs/0" in result.stderr
+
+
+def test_the_schema_takes_every_real_address_range():
+    render(
+        sets=DEFAULT_SETS
+        + ("network.iiifCidrs={0.0.0.0/0,255.255.255.255/32,10.9.199.250/29}",)
+    )
+
+
 # --- D4: all-port egress to the S3 range ----------------------------------
 
 
