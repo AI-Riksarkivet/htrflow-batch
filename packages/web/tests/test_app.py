@@ -708,6 +708,24 @@ def test_older_reaped_campaigns_are_asked_for_by_count():
     assert none.headers["X-Reaped-Total"] == "25"
 
 
+def test_the_reaped_window_ranks_by_when_a_campaign_ended():
+    """A long campaign created weeks ago and reaped today is news; ranked by
+    its record's creation date it hid behind "show older" (2026-09-23
+    review). When it finished decides, and creation only when that was
+    never written."""
+    reader = _many_reaped(25)
+    for cm in reader.live:
+        if cm["metadata"]["name"] == "campaign-gamla0-status":
+            cm["data"] = {**cm["data"], "finishedAt": "2026-09-23T10:00:00+02:00"}
+        elif cm["metadata"]["name"].endswith("-status"):
+            cm["data"] = {**cm["data"], "finishedAt": ""}
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    gone = [
+        r["name"] for r in client.get("/api/v1/jobs?reaped=2").json() if r["jobGone"]
+    ]
+    assert set(gone) == {"gamla0", "gamla24"}
+
+
 @pytest.mark.parametrize("bad", ["-1", "100001", "x"])
 def test_a_reaped_count_out_of_range_is_refused(bad: str):
     client = TestClient(create_app(_many_reaped(1), progress=FakeProgress()))

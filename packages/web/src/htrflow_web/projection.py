@@ -440,7 +440,7 @@ def merge_record(stored: dict[str, str], fresh: dict[str, str]) -> dict[str, str
     return merged
 
 
-def _instant(text: str) -> datetime | None:
+def instant(text: str) -> datetime | None:
     """An RFC 3339 timestamp as a moment in time. A value without an offset
     is read as UTC -- which is what every writer of this field means."""
     try:
@@ -456,7 +456,7 @@ def _is_later(value: str, old: str) -> bool:
     need not write the same offset, and `09:00Z` sorts before `10:00+02:00`
     as a string while being an hour after it (2026-09-14 audit). A fresh
     value that is not a timestamp at all never replaces one that is."""
-    fresh, stored = _instant(value), _instant(old)
+    fresh, stored = instant(value), instant(old)
     if fresh is None:
         return False
     return stored is None or fresh >= stored
