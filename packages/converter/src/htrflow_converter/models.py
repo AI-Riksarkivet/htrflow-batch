@@ -674,6 +674,17 @@ class Pipeline(BaseModel):
                 f'has a step with no "step:" name (step {", ".join(unnamed)}) — '
                 'every entry starts "- step: <Name>", the htrflow step it runs'
             )
+        unnamable = [
+            str(i)
+            for i, step in enumerate(v, 1)
+            if isinstance(step, dict) and not isinstance(step["step"], str)
+        ]
+        if unnamable:
+            raise ValueError(
+                f'has a step whose "step:" is not a name (step '
+                f'{", ".join(unnamable)}) — every entry starts "- step: <Name>", '
+                "the htrflow step it runs"
+            )
         # 3098: the wrapper appends its own Export steps and refuses a file
         # that has one; htrflow resolves a step by its lower-cased name.
         exports = [

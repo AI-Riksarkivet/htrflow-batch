@@ -871,6 +871,11 @@ def test_a_merge_key_may_still_override_what_it_merges(tmp_path):
             'and then "- step: <Name>" entries under it',
         ),
         (
+            "steps:\n  - step: [x]\n",
+            '"steps" has a step whose "step:" is not a name (step 1) — every '
+            'entry starts "- step: <Name>", the htrflow step it runs',
+        ),
+        (
             "steps:\n  - settings: {model: yolo}\n  - step: TextRecognition\n",
             '"steps" has a step with no "step:" name (step 1) — every entry '
             'starts "- step: <Name>", the htrflow step it runs',
