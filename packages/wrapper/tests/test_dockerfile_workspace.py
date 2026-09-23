@@ -136,6 +136,15 @@ def test_the_wrapper_image_carries_no_compiler_and_compiles_nothing() -> None:
     assert "TARGETARCH" not in "\n".join(_logical_lines(text))
 
 
+def test_the_wrapper_source_stays_out_of_the_image() -> None:
+    """The runtime stage builds the wrapper's wheel from a bind mount; a
+    COPY would leave its source tree and tests in the image beside the
+    installed package."""
+    runtime = _stage(WRAPPER_DOCKERFILE.read_text(), "runtime")
+    assert not re.search(r"^COPY\s+packages/", runtime, re.M)
+    assert "--mount=type=bind,source=packages/wrapper,target=/opt/wrapper" in runtime
+
+
 def test_nothing_in_the_build_path_asks_for_a_foreign_platform() -> None:
     for path in BUILD_PATHS:
         for n, line in enumerate(path.read_text().splitlines(), 1):

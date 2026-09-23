@@ -156,9 +156,10 @@ RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
          -r /tmp/wrapper-requirements.txt \
     && rm /tmp/wrapper-requirements.txt
 # The package itself is built with its build backend pinned and hashed, the
-# same way as htrflow in the builder stage (audit 0923 D-11).
-COPY packages/wrapper /opt/wrapper
+# same way as htrflow in the builder stage (audit 0923 D-11), from a bind
+# mount: only the wheel goes into the image, not the source and its tests.
 RUN --mount=type=bind,source=.docker/build-constraints.txt,target=/tmp/build-constraints.txt \
+    --mount=type=bind,source=packages/wrapper,target=/opt/wrapper \
     uv build --wheel --python /app/.venv/bin/python --no-cache --require-hashes \
          --build-constraints /tmp/build-constraints.txt -o /tmp/dist /opt/wrapper \
     && uv pip install --python /app/.venv/bin/python --no-cache --no-deps /tmp/dist/*.whl \
