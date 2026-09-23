@@ -19,7 +19,7 @@ import hashlib
 import re
 from datetime import date, datetime
 from string import Formatter
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import yaml
@@ -609,6 +609,78 @@ class Pipeline(BaseModel):
         return hashlib.sha256(self.pipeline_yaml().encode()).hexdigest()
 
 
+#: Taints that keep workloads off the control plane. A GPU batch pod has no
+#: business on a node that carries one, so a toleration for either is
+#: refused rather than copied into every pod.
+_CONTROL_PLANE_TAINTS = frozenset(
+    {"node-role.kubernetes.io/control-plane", "node-role.kubernetes.io/master"}
+)
+
+
+class Toleration(BaseModel):
+    """One of ``converter.yaml``'s ``tolerations``: the Kubernetes
+    ``Toleration`` shape, spelt the Kubernetes way (``tolerationSeconds``),
+    known keys only.
+
+    It was ``list[dict]``, copied into every warm-up and campaign pod as
+    written (audit 0923 S-1). ``{operator: Exists}`` with no key tolerates
+    every taint there is, so with a node selector a campaign's GPU pods could
+    land on the control plane, or on any node tainted to keep them away.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    key: str | None = None
+    operator: Literal["Exists", "Equal"] | None = None
+    value: str | None = None
+    effect: Literal["NoSchedule", "PreferNoSchedule", "NoExecute"] | None = None
+    toleration_seconds: int | None = Field(default=None, alias="tolerationSeconds")
+
+    @model_validator(mode="after")
+    def _check_shape(self) -> "Toleration":
+        if not self.key:
+            raise ValueError(
+                "has no key — a toleration without one tolerates every taint "
+                "on every node, the control plane's included; name the taint "
+                "it is for"
+            )
+        if not _label_key(self.key):
+            raise ValueError(
+                "has a key that is not a Kubernetes taint key (got "
+                f"{shown(self.key)}) — a key is a name, optionally after a "
+                '"<dns-prefix>/"; letters, digits, ".", "_" and "-", at most '
+                "63 characters"
+            )
+        if self.key in _CONTROL_PLANE_TAINTS:
+            raise ValueError(
+                f"tolerates {self.key} — that taint keeps workloads off the "
+                "control plane, and a GPU batch pod has no business there; "
+                "remove it"
+            )
+        if self.operator == "Exists" and self.value:
+            raise ValueError(
+                "has a value with operator: Exists, which matches the key "
+                "alone — drop the value, or use operator: Equal"
+            )
+        if self.value and not _LABEL_VALUE_RE.match(self.value):
+            raise ValueError(
+                f"has a value that is not a Kubernetes label value (got "
+                f'{shown(self.value)}) — letters, digits, ".", "_" and "-", '
+                "at most 63 characters"
+            )
+        if self.toleration_seconds is not None and self.effect != "NoExecute":
+            raise ValueError(
+                "has tolerationSeconds without effect: NoExecute, the only "
+                "effect it applies to"
+            )
+        return self
+
+    def manifest(self) -> dict[str, object]:
+        """What the pod spec carries: the keys the author wrote, spelt as
+        Kubernetes spells them."""
+        return self.model_dump(by_alias=True, exclude_none=True)
+
+
 #: Settings that were converter policy and are now Kyverno ClusterPolicies
 #: the htrflow-batch chart ships (B63 Task 22) -> the chart value that
 #: replaces each. ``extra="forbid"`` would reject them as a misspelt
@@ -648,7 +720,7 @@ class ConverterConfig(BaseModel):
     data_pvc: str = "htr-test-data"
     runtime_class: str = "nvidia"
     node_selector: dict[str, str] = Field(default_factory=dict)
-    tolerations: list[dict] = Field(default_factory=list)
+    tolerations: list[Toleration] = Field(default_factory=list)
     public_results_base: str = ""
     source_template: str = "https://lbiiif.riksarkivet.se/arkis!{ref}/manifest"
     max_seconds: int = Field(default=21600, ge=1, le=_INT32_MAX)
