@@ -199,7 +199,7 @@ Nothing else does, and nothing expires them. **The results in the bucket
 are not touched**: removing those is a separate, deliberate step. Leaving
 the file costs two small ConfigMaps and keeps the campaign on the page.
 
-## The web front
+## The web front and status page
 
 `packages/web` serves the read API and the status page from one image. It
 computes every answer live from the Jobs, Pods and ConfigMaps, reads each
