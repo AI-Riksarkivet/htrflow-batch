@@ -130,6 +130,12 @@ def terminate(env: Mapping[str, str], reason: dict) -> None:
 #: would publish a manifest of 600 failures and leave the index green.
 MAX_REBUILD_FAILURES = 3
 
+#: Threads a released pipeline could not stop -- workers stuck in a model
+#: call, the helpers of pages that ran out of time -- past which the pod is
+#: replaced (W-8, audit 0923): each may hold a model's weights on the GPU
+#: the rebuild is loading another set onto. About four hung pages.
+MAX_LEAKED_THREADS = 8
+
 
 def _default_factory(cfg: Config):
     from . import driver  # htrflow imports stay function-local
@@ -158,13 +164,21 @@ def _default_factory(cfg: Config):
                 raise
             rebuild_failures = 0
         try:
-            files = driver.process_page(pipeline, image_path, out_dir)
-        except driver.PipelineDead:
+            files = driver.process_page(
+                pipeline, image_path, out_dir, seconds=cfg.page_timeout_seconds
+            )
+        except driver.PipelineDead as e:
             # Every later page would wait on the dead queue, so this pipeline
             # goes -- weights first: the thread parked in its run() keeps the
             # steps alive, and the rebuild loads a second set onto the same GPU.
             dead, pipeline = pipeline, None
             driver.release_pipeline(dead)
+            leaked = driver.leaked_threads()
+            if leaked >= MAX_LEAKED_THREADS:
+                raise Unrecoverable(
+                    f"{leaked} htrflow threads left running by released "
+                    f"pipelines, last: {e}"
+                ) from e
             raise
         provenance.stamp_alto(
             files["alto"],

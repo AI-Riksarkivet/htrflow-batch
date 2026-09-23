@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -1015,3 +1016,116 @@ def test_a_page_that_finished_is_not_failed_by_a_late_thread_death(
 
     assert sorted(files) == ["alto", "page"]
     assert files["alto"].exists() and files["page"].exists()
+
+
+class _HtrflowQueue:
+    """htrflow's BatchedQueue as it is (batched_queue.py): a daemon thread
+    polling ``_in`` every ``patience`` seconds, for ever."""
+
+    def __init__(self, patience=0.01):
+        import queue
+
+        self.patience = patience
+        self._in, self._out = queue.Queue(), queue.Queue()
+        self._thread = threading.Thread(target=self._process, daemon=True)
+        self._thread.start()
+
+    def _process(self):
+        import queue
+
+        while 1:
+            batch = []
+            while len(batch) < 1:
+                try:
+                    batch.append(self._in.get(timeout=self.patience))
+                except queue.Empty:
+                    continue
+            self._out.put(batch)
+
+    def get(self):
+        return self._out.get()
+
+
+class _HtrflowStep:
+    """htrflow's Inference as it is (steps.py): a daemon thread blocked on
+    the queue, calling the model on each batch, for ever."""
+
+    def __init__(self, model=lambda images: images):
+        self.model = model
+        self._queue = _HtrflowQueue()
+        self._thread = threading.Thread(target=self._process, daemon=True)
+        self._thread.start()
+
+    def _process(self):
+        while 1:
+            batch = self._queue.get()
+            self.model([item for item in batch])
+
+
+@pytest.fixture
+def abandoned(monkeypatch):
+    """The driver with an empty abandoned list, and the interpreter's own
+    thread excepthook in place of pytest's, which reports even SystemExit."""
+    from htrflow_batch import driver
+
+    monkeypatch.setattr(driver, "_ABANDONED", [])
+    monkeypatch.setattr(threading, "excepthook", threading.__excepthook__)
+    return driver
+
+
+def test_releasing_a_pipeline_ends_its_worker_threads(abandoned, capfd):
+    """Audit 0923 W-8: every rebuild after a dead worker thread left the old
+    pipeline's other threads running for the life of the process -- each
+    BatchedQueue polling ten times a second. Released, they end, and end
+    quietly: SystemExit is the one exception a thread dies of without a
+    traceback in the run log."""
+    steps = [_HtrflowStep(), _HtrflowStep()]
+    threads = [t for s in steps for t in (s._thread, s._queue._thread)]
+
+    abandoned.release_pipeline(SimpleNamespace(steps=steps))
+
+    assert abandoned.leaked_threads(grace=2.0) == 0
+    assert not any(t.is_alive() for t in threads)
+    assert "Traceback" not in capfd.readouterr().err
+
+
+def test_a_worker_stuck_in_its_model_is_counted_as_leaked(abandoned):
+    """What cannot be stopped is counted: a model call that never returns
+    keeps its thread, and whatever that holds on the GPU, for good."""
+    stuck = threading.Event()
+    step = _HtrflowStep(model=lambda images: stuck.wait(30))
+    step._queue._in.put("page")
+    time.sleep(0.1)  # the step's thread is inside the model now
+    try:
+        abandoned.release_pipeline(SimpleNamespace(steps=[step]))
+        assert abandoned.leaked_threads(grace=0.3) == 1
+    finally:
+        stuck.set()
+    assert abandoned.leaked_threads(grace=2.0) == 0
+
+
+def test_a_page_that_runs_past_its_budget_is_a_dead_pipeline(
+    tmp_path, monkeypatch, abandoned
+):
+    """Audit 0923 W-8: there was no per-page bound, so a hung model held the
+    GPU until activeDeadlineSeconds, and every retry hung the same way. Past
+    its budget the page fails as PipelineDead -- the pipeline is rebuilt --
+    and the run's helper thread, still inside htrflow, is counted."""
+    _inject_process_fakes(monkeypatch)
+    monkeypatch.setattr(abandoned, "THREAD_POLL_SECONDS", 0.01)
+    hang = threading.Event()
+
+    class _HungPipeline:
+        steps: list = []
+
+        def run(self, document):
+            hang.wait(30)
+
+    try:
+        with pytest.raises(abandoned.PipelineDead, match="more than 0.2 s"):
+            abandoned.process_page(
+                _HungPipeline(), _image(tmp_path), tmp_path / "out", seconds=0.2
+            )
+        assert abandoned.leaked_threads(grace=0.1) == 1
+    finally:
+        hang.set()

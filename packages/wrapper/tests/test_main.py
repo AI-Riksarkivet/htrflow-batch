@@ -87,7 +87,7 @@ def test_default_factory_stamps_provenance_into_each_alto(cfg, monkeypatch):
     monkeypatch.setattr(
         driver,
         "process_page",
-        lambda pipeline, image_path, out_dir: _write_outputs(
+        lambda pipeline, image_path, out_dir, seconds: _write_outputs(
             cfg, image_path.stem, alto=alto
         ),
     )
@@ -1585,7 +1585,7 @@ def _dead_pipeline_pages(cfg, tmp_path, monkeypatch, rebuilds: list, pages: int)
             raise OSError("CUDA error: out of memory")
         return object()
 
-    def process_page(pipeline, image_path, out_dir):
+    def process_page(pipeline, image_path, out_dir, seconds=None):
         raise driver.PipelineDead(f"page {image_path.stem}: worker thread died")
 
     monkeypatch.setattr(driver, "load_pipeline", load_pipeline)
@@ -1637,6 +1637,43 @@ def test_a_rebuild_that_works_starts_the_count_again(cfg, tmp_path, monkeypatch)
             items, main_mod._default_factory(cfg), lambda name, files: None, stats=stats
         )
     assert len(stats.results) == 6  # the run reached page 7 before it gave up
+
+
+def test_threads_left_behind_past_the_limit_replace_the_pod(cfg, tmp_path, monkeypatch):
+    """Audit 0923 W-8: what a released pipeline cannot stop -- a worker
+    stuck in its model, the helper of a page that ran out of time -- stays
+    for the life of the process, holding what it holds on the GPU. Past a
+    limit the run ends transient and the retry gets a fresh pod."""
+    from htrflow_batch import driver
+    from htrflow_batch.stream import Unrecoverable, consume
+
+    items = _dead_pipeline_pages(cfg, tmp_path, monkeypatch, [True] * 4, 4)
+    leaked = iter([2, 4, main_mod.MAX_LEAKED_THREADS, 99])
+    monkeypatch.setattr(driver, "leaked_threads", lambda: next(leaked))
+    stats = StreamStats()
+    with pytest.raises(Unrecoverable, match="left running"):
+        consume(
+            items, main_mod._default_factory(cfg), lambda name, files: None, stats=stats
+        )
+    assert [r.status for r in stats.results.values()] == ["failed"] * 2
+
+
+def test_the_page_budget_reaches_the_driver(cfg, monkeypatch):
+    from htrflow_batch import driver
+
+    seen = []
+
+    def process_page(pipeline, image_path, out_dir, seconds):
+        seen.append(seconds)
+        raise driver.PipelineDead("stop here")
+
+    monkeypatch.setattr(driver, "load_pipeline", lambda path, out_dir: "pipeline")
+    monkeypatch.setattr(driver, "process_page", process_page)
+    monkeypatch.setattr(driver, "release_pipeline", lambda pipeline: None)
+    cfg = cfg.model_copy(update={"page_timeout_seconds": 42.0})
+    with pytest.raises(driver.PipelineDead):
+        main_mod._default_factory(cfg)(Path("/img/0001.jpg"))
+    assert seen == [42.0]
 
 
 def _recording_client(monkeypatch) -> list:

@@ -6,6 +6,7 @@ from __future__ import annotations
 import gc
 import re
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -273,6 +274,52 @@ class PipelineDead(RuntimeError):
 #: A page takes ~13 s, so a second costs nothing and bounds the stall.
 THREAD_POLL_SECONDS = 1.0
 
+#: Threads of work this process gave up on (W-8, audit 0923): a released
+#: step's workers, and the helper of a page that ran out of time. Stopped
+#: ones end at once; what ``leaked_threads`` still finds alive is stuck.
+_ABANDONED: list[threading.Thread] = []
+
+
+class _Stop:
+    """Put where a released step's worker threads look for work: it raises
+    SystemExit wherever one touches it -- the one exception a thread ends on
+    without a traceback. htrflow's loops (``Inference._process``,
+    ``BatchedQueue._process``) have no way out of their own."""
+
+    def get(self, *args, **kwargs):
+        raise SystemExit
+
+    def __iter__(self):
+        raise SystemExit
+
+
+def _stop_threads(step) -> None:
+    """End a released step's two worker threads: the BatchedQueue's next
+    poll of ``_in`` (within its patience) and the step's thread, woken by a
+    batch that is the stop itself. A step that is not htrflow's Inference
+    shape is left alone; either way its threads are watched from here on."""
+    queue = getattr(step, "_queue", None)
+    for thread in (getattr(step, "_thread", None), getattr(queue, "_thread", None)):
+        if isinstance(thread, threading.Thread):
+            _ABANDONED.append(thread)
+    if queue is None:
+        return
+    try:
+        queue._in = _Stop()
+        queue._out.put(_Stop())
+    except Exception:
+        pass
+
+
+def leaked_threads(grace: float = 1.0) -> int:
+    """How many abandoned threads are still running after ``grace`` seconds:
+    each is stuck inside htrflow, holding whatever it holds on the GPU."""
+    deadline = time.monotonic() + grace
+    for thread in _ABANDONED:
+        thread.join(max(0.0, deadline - time.monotonic()))
+    _ABANDONED[:] = [t for t in _ABANDONED if t.is_alive()]
+    return len(_ABANDONED)
+
 
 def _dead_step(pipeline):
     """The first step whose worker thread has died, if any.
@@ -319,8 +366,10 @@ def release_pipeline(pipeline) -> None:
 
 def release_steps(steps) -> None:
     """The same for a bare list of steps: what a pipeline that never finished
-    being constructed leaves behind (W1)."""
+    being constructed leaves behind (W1). Their worker threads are stopped
+    first (W-8), so none picks up a batch after its model has gone."""
     for step in steps:
+        _stop_threads(step)
         try:
             step.model = None
         except Exception:
@@ -334,7 +383,7 @@ def release_steps(steps) -> None:
         pass  # no torch, or a CPU-only run: nothing cached to give back
 
 
-def _run_guarded(pipeline, document, stem: str) -> None:
+def _run_guarded(pipeline, document, stem: str, seconds: float) -> None:
     """``pipeline.run`` with a watch on the steps' worker threads.
 
     An Inference step hands its batch to a daemon thread and waits on a
@@ -351,8 +400,13 @@ def _run_guarded(pipeline, document, stem: str) -> None:
 
     The helper is a daemon and is never joined: when a run IS stuck it stays
     parked on the dead queue for the life of the process, holding that one
-    page's document. Nothing waits on it, and the pod's activeDeadlineSeconds
-    is still the backstop for the process as a whole.
+    page's document. Nothing waits on it.
+
+    A run whose threads are all alive can hang too -- a model call that
+    never returns. Past ``seconds`` it is treated as dead (W-8, audit 0923):
+    the page fails and the pipeline is rebuilt, instead of the GPU being
+    held until activeDeadlineSeconds and every retry hanging the same way.
+    Its helper, still inside htrflow, is counted by ``leaked_threads``.
     """
 
     failure: list[BaseException] = []
@@ -379,9 +433,17 @@ def _run_guarded(pipeline, document, stem: str) -> None:
         finally:
             done.set()
 
-    threading.Thread(target=run, name=f"htrflow-page-{stem}", daemon=True).start()
+    helper = threading.Thread(target=run, name=f"htrflow-page-{stem}", daemon=True)
+    helper.start()
+    started = time.monotonic()
     while not done.wait(THREAD_POLL_SECONDS):
         check()
+        if time.monotonic() - started > seconds and not done.is_set():
+            _ABANDONED.append(helper)
+            raise PipelineDead(
+                f"page {stem}: htrflow ran for more than {seconds:g} s; "
+                "the page is marked failed and the pipeline is rebuilt"
+            )
     if failure:
         raise failure[0]
 
@@ -400,13 +462,19 @@ def _outputs(out_dir: Path, stem: str) -> dict[str, Path]:
     return found
 
 
-def process_page(pipeline, image_path: Path, out_dir: Path) -> dict[str, Path]:
+#: Default wall-clock budget of one page (env ``PAGE_TIMEOUT_SECONDS``).
+PAGE_TIMEOUT_SECONDS = 600.0
+
+
+def process_page(
+    pipeline, image_path: Path, out_dir: Path, seconds: float = PAGE_TIMEOUT_SECONDS
+) -> dict[str, Path]:
     from htrflow.pipeline.steps import auto_import  # ty: ignore[unresolved-import]
 
     stem = image_path.stem
     try:
         for document in auto_import([str(image_path)]):
-            _run_guarded(pipeline, document, stem)
+            _run_guarded(pipeline, document, stem, seconds)
         files = _outputs(out_dir, stem)
         missing = [fmt for fmt in EXPECTED_FORMATS if fmt not in files]
         if missing:
