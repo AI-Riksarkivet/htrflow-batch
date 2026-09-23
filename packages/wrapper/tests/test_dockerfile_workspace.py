@@ -400,10 +400,12 @@ def test_the_htrflow_base_is_built_from_pinned_inputs() -> None:
     lock = (HTRFLOW_BASE / "uv.lock").read_text()
     assert 'version = "2.9.1+cu128"' in lock and 'version = "2.13.0"' in lock
 
-    # Nothing builds a base anywhere else any more.
+    # Nothing builds a base anywhere else any more: a second recipe.
     assert not (REPO / ".github" / "actions" / "build-htrflow-base-arm64").exists()
     for path in BUILD_PATHS:
-        assert "HTRFLOW_ARM64_BASE" not in path.read_text(), path.name
+        text = path.read_text()
+        assert "HTRFLOW_ARM64_BASE" not in text, path.name
+        assert "build-htrflow-base" not in text, path.name
 
 
 def test_the_web_image_ships_only_the_viewer_page_and_what_it_references() -> None:

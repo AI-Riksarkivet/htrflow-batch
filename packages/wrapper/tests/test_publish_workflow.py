@@ -245,15 +245,6 @@ def test_the_arm64_wrapper_is_scanned_in_ci_and_every_week() -> None:
     assert any(r.strip() == "make scan-image" for r in runs)  # the CRITICAL gate
 
 
-def test_no_workflow_builds_an_htrflow_base_of_its_own() -> None:
-    """The wrapper dockerfile builds its htrflow base from the commit it pins;
-    a workflow that built one separately would be a second recipe."""
-    for name in _all_workflows():
-        text = (WORKFLOWS / name).read_text()
-        assert "HTRFLOW_ARM64_BASE" not in text, name
-        assert "build-htrflow-base" not in text, name
-
-
 def test_make_publish_goes_through_publish_docker() -> None:
     """Finding 3069: only publish.yml checked the registry, so `make
     publish` replaced a signed release's manifest list with an unsigned
