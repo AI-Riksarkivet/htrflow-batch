@@ -16,10 +16,11 @@ is asserted in ``test_cluster.py`` against the real client.
 """
 
 import copy
+import functools
 import itertools
 import json
 import shutil
-import subprocess
+import tempfile
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from pathlib import Path
@@ -133,6 +134,22 @@ def _fields_v1(paths: set[tuple]) -> dict:
     return tree
 
 
+def _immutable(kind: str, name: str, field: str) -> ApiException:
+    """The API server's answer to a change of a field fixed at create: 422
+    Invalid, the rejected value quoted back, the field named in
+    ``details.causes`` -- which is where ``Cluster`` reads it from."""
+    e = ApiException(status=422, reason="Unprocessable Entity")
+    why = "Invalid value: core.PodTemplateSpec{…}: field is immutable"
+    e.body = json.dumps({
+        "kind": "Status", "reason": "Invalid", "code": 422,
+        "message": f'{kind}.batch "{name}" is invalid: {field}: {why}',
+        "details": {"name": name, "group": "batch", "kind": kind, "causes": [
+            {"reason": "FieldValueInvalid", "message": why, "field": field},
+        ]},
+    })  # fmt: skip
+    return e
+
+
 class _Kueue:
     """``CustomObjectsApi``, over a ``{job-uid: workload}`` map."""
 
@@ -208,8 +225,10 @@ class FakeCluster(Cluster):
 
     ``live`` is what the cluster already holds (each entry ``kind``, ``name``
     and its labels — an object with no converter label must survive a prune);
-    ``workloads`` maps a Job uid to its Kueue Workload. An applied Job gets
-    the uid ``uid-<name>``, which is how a test wires the two together.
+    ``workloads`` maps a Job uid to its Kueue Workload. Every create gets a
+    uid never used before, as the API server gives it: ``uid-<name>`` the
+    first time, which is how a test wires the two together, and
+    ``uid-<name>-2`` and on for the same name created again.
 
     Server-side apply is modelled as far as this code leans on it (C16):
     each ``(manager, operation)`` owns a set of fields, written back as
@@ -218,7 +237,9 @@ class FakeCluster(Cluster):
     over; a field two managers set to the same value is theirs jointly; a
     field a manager stops sending is released, and removed -- or put back to
     its default -- once nobody owns it. ``update`` is a controller's write
-    (Kueue flipping ``spec.suspend``): it takes whatever it changes.
+    (Kueue flipping ``spec.suspend``): it takes whatever it changes. A
+    live Job's ``spec.template`` is fixed: an apply that would change it is
+    the API server's 422, whoever sends it.
     """
 
     def __init__(self) -> None:
@@ -235,6 +256,19 @@ class FakeCluster(Cluster):
         self.server_time: datetime | None = None
         self.versions = itertools.count(1)
         self.calls: list[tuple] = []
+        self.uids: set[str] = set()
+
+    def _new_uid(self, name: str) -> str:
+        """A uid no object has had: the API server never hands one out
+        twice, and a Job created again under its old name is a new Job."""
+        self.uids |= {o["metadata"]["uid"] for o in self.live if "uid" in o["metadata"]}
+        uid = f"uid-{name}"
+        for n in itertools.count(2):
+            if uid not in self.uids:
+                break
+            uid = f"uid-{name}-{n}"
+        self.uids.add(uid)
+        return uid
 
     def made(self, namespace: str) -> "FakeCluster":
         self.namespace = namespace
@@ -249,8 +283,8 @@ class FakeCluster(Cluster):
             ),
             None,
         )
-        if found is not None:  # every stored object has one, seeded or not
-            found["metadata"].setdefault("uid", f"uid-{name}")
+        if found is not None and "uid" not in found["metadata"]:
+            found["metadata"]["uid"] = self._new_uid(name)  # seeded without one
         return found
 
     def _store(self, kind: str, name: str, obj: dict, owners: dict) -> None:
@@ -275,11 +309,12 @@ class FakeCluster(Cluster):
             e = ApiException(status=422, reason="Unprocessable Entity")
             e.body = json.dumps({"message": "spec.template: Required value"})
             raise e
+        # A dry-run create answers with a uid the write would not keep.
+        uid = f"uid-{name}-dry-run" if dry_run else None
         stored = copy.deepcopy(current) if current else {
             "apiVersion": obj.get("apiVersion"), "kind": kind,
-            "metadata": {"name": name, "uid": f"uid-{name}"},
+            "metadata": {"name": name, "uid": uid or self._new_uid(name)},
         }  # fmt: skip
-        stored["metadata"].setdefault("uid", f"uid-{name}")
         for key in ("namespace",):
             if key in obj["metadata"]:
                 stored["metadata"][key] = obj["metadata"][key]
@@ -313,6 +348,12 @@ class FakeCluster(Cluster):
             for (k, path), default in _DEFAULTS.items():
                 if k == kind and _at(stored, path) is _MISSING:
                     _put(stored, path, default)
+        if (
+            current is not None
+            and kind == "Job"
+            and _at(current, _TEMPLATE) != _at(stored, _TEMPLATE)
+        ):
+            raise _immutable(kind, name, ".".join(_TEMPLATE))
         owners[mine] = set(sent)
         if not dry_run:
             self._store(kind, name, stored, owners)
@@ -393,22 +434,39 @@ class FakeCluster(Cluster):
         return [c for c in self.calls if c[0] == verb]
 
 
-#: A live campaign Job's parallelism and completions, as the fixtures render
-#: them (checked by test_the_seeded_job_specs_are_the_rendered_ones): apply
-#: holds a live Job's pod count against the render.
-JOB_SPECS = {
-    "kyrk": {"parallelism": 10, "completions": 3},
-    "loc": {"parallelism": 5, "completions": 2},
-    "pausy": {"parallelism": 10, "completions": 1},
-}
+@functools.cache
+def _rendered() -> dict[tuple[str, str], dict]:
+    """What the fixture repo renders -- with the paused campaign ``pausy``
+    the tests add -- by ``(kind, name)``, from the renderer itself: a live
+    Job is seeded as the Job the apply would send, pod template and all,
+    so the fake's immutable template holds it the way the API server does."""
+    with tempfile.TemporaryDirectory() as t:
+        repo = _repo(Path(t), paused="pausy")
+        campaigns, pipelines, cfg = load(
+            repo / "campaigns", repo / "pipelines", repo / "converter.yaml"
+        )
+    objects = [o for p in pipelines.values() for o in render.pipeline_objects(p, cfg)]
+    for c in campaigns:
+        objects += render.campaign_objects(c, pipelines[c.pipeline], cfg)
+    return {(o["kind"], o["metadata"]["name"]): o for o in objects}
 
 
 def _object(kind: str, name: str, labelled: bool = True) -> dict:
+    """A live object: a rendered Job as it was rendered, anything else a
+    stub carrying the converter's label (or not)."""
+    if kind == "Job" and (kind, name) in _rendered():
+        return copy.deepcopy(_rendered()[(kind, name)])
     labels = dict([CAMPAIGN_SELECTOR.split("=")]) if labelled else {}
-    obj = {"kind": kind, "metadata": {"name": name, "labels": labels}}
-    if kind == "Job" and name in JOB_SPECS:
-        obj["spec"] = dict(JOB_SPECS[name])
-    return obj
+    return {"kind": kind, "metadata": {"name": name, "labels": labels}}
+
+
+def _stale(job: dict) -> dict:
+    """``job`` as an earlier converter release rendered it: its container
+    another image, so the rendered pod template is one the live Job cannot
+    be changed to."""
+    container = job["spec"]["template"]["spec"]["containers"][0]
+    container["image"] = container["image"].rsplit("@", 1)[0] + "@sha256:" + "0" * 64
+    return job
 
 
 def _workload(name: str, active: bool | None) -> dict:
@@ -454,10 +512,25 @@ def test_pipelines_are_applied_before_campaigns(tmp_path, cluster):
     assert cluster.namespace == NS, "the namespace comes from converter.yaml"
 
 
+def _tree(root: Path) -> dict[str, bytes | None]:
+    """Every path under ``root`` -> its bytes (``None`` for a directory)."""
+    return {
+        p.relative_to(root).as_posix(): None if p.is_dir() else p.read_bytes()
+        for p in sorted(root.rglob("*"))
+    }
+
+
 def test_apply_without_out_renders_into_a_temp_dir(tmp_path, cluster):
+    """`rendered/` is the committed record the render is held against, so an
+    apply with no `--out` must leave it -- and the rest of the checkout --
+    exactly as it found it, even with a new campaign the record lacks."""
     repo = _repo(tmp_path)
+    assert cli.main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    _rerun(repo, "fresh", "R7777777")
+    before = _tree(repo)
     assert cli.main(["apply", str(repo)]) == 0
-    assert len(cluster.of("apply")) == 8
+    assert ("apply", "Job", "fresh") in cluster.calls
+    assert _tree(repo) == before
 
 
 def test_nothing_is_deleted_without_prune(tmp_path, cluster):
@@ -596,38 +669,14 @@ def _annotations(cluster, name: str) -> dict:
 
 
 def test_the_campaign_configmap_records_who_applied_what_and_when(
-    tmp_path, cluster, monkeypatch
+    tmp_path, cluster, monkeypatch, commit_all
 ):
     """The ConfigMap has no TTL and is pruned only when the campaign file
     leaves git, so it outlives the Job -- which makes it the place the
     provenance belongs (B76)."""
-    if shutil.which("git") is None:
-        pytest.skip("no git on PATH — the CI image has none; _git_head says unknown")
     monkeypatch.setenv("HTRFLOW_APPLIED_BY", "Nagon.Annan")
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
-    subprocess.run(
-        [
-            "git",
-            "-C",
-            str(repo),
-            "-c",
-            "user.email=t@e",
-            "-c",
-            "user.name=t",
-            "commit",
-            "-qm",
-            "x",
-        ],
-        check=True,
-    )
-    head = subprocess.run(
-        ["git", "-C", str(repo), "rev-parse", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
+    head = commit_all(repo)  # read back by git where there is one, else dulwich
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     ann = _annotations(cluster, "campaign-kyrk")
     assert ann["htrflow.riksarkivet.se/campaigns-commit"] == head
@@ -663,21 +712,11 @@ def test_the_provenance_is_not_written_into_the_rendered_files(tmp_path, cluster
 # --- a finished campaign is not re-run once its Job is reaped (B76) ------
 
 
-def _rendered_volumes(name: str = "kyrk") -> str:
-    """What the converter writes into this campaign's ConfigMap, taken from
-    the renderer rather than spelled out here: `apply` leaves a campaign
-    alone only when the stored `volumes.txt` matches the rendered one byte
-    for byte, so a test that hardcoded the line format would go quietly
-    green the day that format changed."""
-    campaigns, pipelines, cfg = load(
-        GOOD / "campaigns", GOOD / "pipelines", GOOD / "converter.yaml"
-    )
-    c = next(campaign for campaign in campaigns if campaign.name == name)
-    objects = render.campaign_objects(c, pipelines[c.pipeline], cfg)
-    return objects[0]["data"]["volumes.txt"]
-
-
-VOLUMES = _rendered_volumes()
+#: What the converter writes into kyrk's ConfigMap, taken from the renderer:
+#: `apply` leaves a campaign alone only when the stored `volumes.txt` matches
+#: the rendered one, so a hardcoded line format would go quietly green the
+#: day that format changed.
+VOLUMES = _rendered()[("ConfigMap", "campaign-kyrk")]["data"]["volumes.txt"]
 
 
 def _record(name: str, volumes: str = VOLUMES) -> dict:
@@ -767,7 +806,6 @@ def test_the_apply_records_a_finished_job_nobody_looked_at(tmp_path, cluster, ca
     live_job["metadata"]["namespace"] = NS
     live_job["metadata"]["labels"]["htrflow.riksarkivet.se/campaign"] = "kyrk"
     live_job["metadata"]["labels"]["htrflow.riksarkivet.se/pipeline"] = "demo-v1"
-    live_job["spec"] = dict(JOB_SPECS["kyrk"])
     live_job["status"] = {
         "conditions": [{"type": "Complete", "status": "True"}],
         "succeeded": 3,
@@ -788,7 +826,6 @@ def test_the_apply_records_a_finished_job_nobody_looked_at(tmp_path, cluster, ca
 def test_a_running_job_is_not_recorded_by_the_apply(tmp_path, cluster):
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     live_job = _object("Job", "kyrk")
-    live_job["spec"] = dict(JOB_SPECS["kyrk"])
     live_job["status"] = {"conditions": [], "active": 1}
     cluster.live = [_record("kyrk"), live_job]
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
@@ -796,17 +833,32 @@ def test_a_running_job_is_not_recorded_by_the_apply(tmp_path, cluster):
     assert "kyrk" in [c[2] for c in cluster.of("apply")]
 
 
+def _read_fails(cluster, fails, status: int = 403) -> None:
+    """Make the fake API server answer ``status`` to each read ``fails(kind,
+    name)`` picks. Raised by the fake's ``read`` itself -- below
+    ``Cluster.get`` -- so what the apply sees is the real mapping of that
+    answer, and a ``get`` that took a refused read for "no such object" is
+    caught here: a finished campaign re-run, a live check skipped."""
+    real = cluster._api  # composes with an injection already in place
+
+    def method(kind, verb, name=""):
+        inner = real(kind, verb, name)
+        if verb != "read":
+            return inner
+
+        def read(name, ns, **kw):
+            if fails(kind, name):
+                raise ApiException(status=status, reason="Forbidden")
+            return inner(name, ns, **kw)
+
+        return read
+
+    cluster._api = method
+
+
 def _unreadable(cluster, kind: str, suffix: str = "") -> None:
     """Make every read of ``kind`` (named ``*suffix``) fail as forbidden."""
-
-    def forbidden(k, verb, name=""):
-        if verb == "read" and k == kind and name.endswith(suffix):
-            raise cluster_mod.ClusterError(
-                f"not allowed to get {k}/{name} in htr-test: Forbidden"
-            )
-        return FakeCluster._api(cluster, k, verb, name)
-
-    cluster._api = forbidden
+    _read_fails(cluster, lambda k, name: k == kind and name.endswith(suffix))
 
 
 def test_a_campaign_whose_job_cannot_be_read_is_left_as_it_was(
@@ -860,7 +912,6 @@ def test_a_refused_record_write_does_not_stop_the_apply(tmp_path, cluster, capsy
     what is refused."""
     live_job = _object("Job", "kyrk")
     live_job["metadata"]["namespace"] = NS
-    live_job["spec"] = dict(JOB_SPECS["kyrk"])
     live_job["status"] = {
         "conditions": [{"type": "Complete", "status": "True"}],
         "succeeded": 3,
@@ -879,32 +930,6 @@ def test_a_refused_record_write_does_not_stop_the_apply(tmp_path, cluster, capsy
     assert "could not record how campaign kyrk ended" in capsys.readouterr().err
 
 
-def test_the_applys_record_cannot_erase_the_failed_volumes_the_api_wrote(
-    tmp_path, cluster
-):
-    """Server-side apply owns fields per manager. The apply writes under
-    `htrflow-campaigns` and never sets `failedVolumes` at all, so the
-    sentences the read API wrote under its own manager stay: one record,
-    two writers, no field either of them can take from the other by
-    omission (B76)."""
-    from htrflow_web.kube import FIELD_MANAGER as WEB_MANAGER
-
-    live_job = _object("Job", "kyrk")
-    live_job["metadata"]["namespace"] = NS
-    live_job["spec"] = dict(JOB_SPECS["kyrk"])
-    live_job["status"] = {
-        "conditions": [{"type": "Complete", "status": "True"}],
-        "succeeded": 3,
-    }
-    cluster.live = [live_job]
-    repo, out = _repo(tmp_path), tmp_path / "rendered"
-    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
-    written = cluster.applied["campaign-kyrk-status"]
-    assert "failedVolumes" not in written["data"]
-    assert cluster.managers["campaign-kyrk-status"] == cluster_mod.FIELD_MANAGER
-    assert cluster_mod.FIELD_MANAGER != WEB_MANAGER
-
-
 def test_a_refused_record_write_still_lets_the_live_job_decide(
     tmp_path, cluster, capsys
 ):
@@ -914,7 +939,6 @@ def test_a_refused_record_write_still_lets_the_live_job_decide(
     need (B76)."""
     live_job = _object("Job", "kyrk")
     live_job["metadata"]["namespace"] = NS
-    live_job["spec"] = dict(JOB_SPECS["kyrk"])
     live_job["status"] = {
         "conditions": [{"type": "Complete", "status": "True"}],
         "succeeded": 3,
@@ -990,12 +1014,6 @@ def _refuses(cluster, target: str, error: Exception, times: int = 99) -> None:
     cluster._api = method
 
 
-def _immutable_template(name: str) -> Exception:
-    from htrflow_converter.cluster import ImmutableField
-
-    return ImmutableField("Job", name, (ImmutableField.POD_TEMPLATE,))
-
-
 def test_one_refused_object_does_not_stop_the_apply(tmp_path, cluster, capsys):
     """The live failure this exists for: one object the API server would not
     take aborted the whole loop, and the campaign behind it in the order was
@@ -1040,19 +1058,19 @@ def test_a_warmup_whose_pod_template_changed_is_replaced(tmp_path, cluster, caps
     on the cache PVC) and holds no campaign state, so the answer is to
     delete it and create it again rather than to report it forever."""
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    cluster.live = [_object("Job", "htr-warmup-demo-v1")]
-    _refuses(
-        cluster, "htr-warmup-demo-v1", _immutable_template("htr-warmup-demo-v1"), 1
-    )
+    cluster.live = [_stale(_object("Job", "htr-warmup-demo-v1"))]
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     assert cluster.of("delete") == [("delete", "Job", "htr-warmup-demo-v1")]
-    # The fake refuses before it records the call, so the one apply of the
-    # warm-up in `calls` is the re-create -- and it comes after the delete.
+    # The refused apply is recorded before the fake refuses it; the second
+    # is the re-create, after the delete.
     warmup = [c for c in cluster.calls if c[2] == "htr-warmup-demo-v1"]
     assert warmup == [
+        ("apply", "Job", "htr-warmup-demo-v1"),
         ("delete", "Job", "htr-warmup-demo-v1"),
         ("apply", "Job", "htr-warmup-demo-v1"),
     ]
+    template = _live(cluster, "htr-warmup-demo-v1")["spec"]["template"]
+    assert template == _object("Job", "htr-warmup-demo-v1")["spec"]["template"]
     printed = capsys.readouterr().out
     assert "replaced: Job/htr-warmup-demo-v1" in printed
     # Not "a file check" for every replacement: a changed recipe warms a
@@ -1065,10 +1083,9 @@ def test_a_running_warmup_is_reported_and_left_alone(tmp_path, cluster, capsys):
     away and, worse, takes the pod with it while campaigns wait on its
     marker. That one is reported and re-run on the next apply."""
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    running = _object("Job", "htr-warmup-demo-v1")
+    running = _stale(_object("Job", "htr-warmup-demo-v1"))
     running["status"] = {"active": 1}
     cluster.live = [running]
-    _refuses(cluster, "htr-warmup-demo-v1", _immutable_template("htr-warmup-demo-v1"))
     assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
     assert cluster.of("delete") == []
     assert "running right now" in capsys.readouterr().err
@@ -1079,10 +1096,11 @@ def test_a_campaign_job_is_never_deleted_to_change_its_template(tmp_path, cluste
     deleting it to take a new pod template would start every volume over.
     A changed pipeline under a live campaign is `render`'s to refuse."""
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    cluster.live = [_object("Job", "kyrk")]
-    _refuses(cluster, "kyrk", _immutable_template("kyrk"))
+    cluster.live = [_stale(_object("Job", "kyrk"))]
     assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
     assert cluster.of("delete") == []
+    template = _live(cluster, "kyrk")["spec"]["template"]
+    assert template == _stale(_object("Job", "kyrk"))["spec"]["template"]
 
 
 def test_apply_without_out_holds_pipelines_against_the_committed_render(
@@ -1187,9 +1205,8 @@ def test_a_campaign_whose_job_is_refused_can_still_be_paused(tmp_path, cluster, 
     got exit 1, "NOT enforced" and zero Workload patches, with kubectl as
     the only way to stop the campaign (C-2)."""
     repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
-    cluster.live = [_running_job("pausy")]
+    cluster.live = [_stale(_running_job("pausy"))]
     cluster.workloads = {"uid-pausy": _workload("wl-pausy", True)}
-    _refuses(cluster, "pausy", _immutable_template("pausy"))
     rc = cli.main(["apply", str(repo), "--out", str(out), "--pause-wait", "1"])
     assert cluster.of("patch") == [("patch", "wl-pausy", False)], "paused"
     assert rc == cli.REFUSED, "the pause holds; the refused Job is a change to make"
@@ -1204,9 +1221,8 @@ def test_a_campaign_whose_job_is_refused_can_still_be_unpaused(tmp_path, cluster
     that refuses its Job could otherwise never be resumed -- and so never
     finish, which is what the refusal asks for."""
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    cluster.live = [_running_job("kyrk")]
+    cluster.live = [_stale(_running_job("kyrk"))]
     cluster.workloads = {"uid-kyrk": _workload("wl-kyrk", False)}
-    _refuses(cluster, "kyrk", _immutable_template("kyrk"))
     assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
     assert cluster.of("patch") == [("patch", "wl-kyrk", True)]
 
@@ -1233,19 +1249,16 @@ def test_a_refused_paused_campaign_whose_job_cannot_be_read_is_unenforced(
     repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
     cluster.live = [_running_job("pausy")]
     _refuses(cluster, "pausy", cluster_mod.ClusterError("apply Job/pausy: 409"))
-    real = cluster._api
     reads = [0]
 
-    def method(kind, verb, name=""):
+    def second_read_of_pausy(kind, name):
         # The first read (whether it has finished) goes through; the second,
         # for the pause, is refused.
-        if verb == "read" and kind == "Job" and name == "pausy":
+        if (kind, name) == ("Job", "pausy"):
             reads[0] += 1
-            if reads[0] > 1:
-                raise cluster_mod.ClusterError("not allowed to get Job/pausy")
-        return real(kind, verb, name)
+        return (kind, name) == ("Job", "pausy") and reads[0] > 1
 
-    cluster._api = method
+    _read_fails(cluster, second_read_of_pausy)
     rc = cli.main(["apply", str(repo), "--out", str(out), "--pause-wait", "1"])
     assert rc == 1
     err = capsys.readouterr().err
@@ -1470,15 +1483,7 @@ def test_a_live_record_it_may_not_read_stops_the_apply(tmp_path, cluster, capsys
     """The live ConfigMap is the one thing this apply holds a campaign
     against. When it cannot be read, the check cannot be made, and applying
     anyway is exactly the silent overwrite the check is there to stop."""
-
-    def forbidden(kind, verb, name=""):
-        if verb == "read" and kind == "ConfigMap":
-            raise cluster_mod.ClusterError(
-                f"not allowed to get {kind}/{name} in htr-test: Forbidden"
-            )
-        return FakeCluster._api(cluster, kind, verb, name)
-
-    cluster._api = forbidden
+    _unreadable(cluster, "ConfigMap")
     assert cli.main(["apply", str(_repo(tmp_path))]) == 1
     assert "not allowed to get ConfigMap/campaign-kyrk" in capsys.readouterr().err
     assert cluster.of("apply") == [] and cluster.of("dry-run") == []
@@ -1610,9 +1615,19 @@ def test_a_field_manager_owns_what_it_applies_and_conflicts_are_409s(cluster):
     assert cluster.find("Job", "j")["spec"] == {"template": 1, "x": 1, "suspend": False}
     # Set to the same value by two managers, it is theirs jointly.
     cluster.server_side_apply(job, "a")
-    cluster.server_side_apply({**job, "spec": {"suspend": True}}, "b")
+    cluster.server_side_apply({**job, "spec": {"template": 1, "suspend": True}}, "b")
     cluster.server_side_apply({**job, "spec": {"x": 1}}, "a")
     assert cluster.find("Job", "j")["spec"]["suspend"] is True
+    # A Job's pod template is fixed at create: changing it -- forced, as a
+    # dry run, or by letting it go -- is a 422 naming the field.
+    for kw in ({"force": True}, {"dry_run": True}):
+        with pytest.raises(ApiException) as e:
+            cluster.server_side_apply({**job, "spec": {"template": 2}}, "b", **kw)
+        assert e.value.status == 422
+        assert cluster_mod._immutable_fields(e.value) == ("spec.template",)
+    with pytest.raises(ApiException):
+        cluster.server_side_apply({**job, "spec": {"suspend": True}}, "b")
+    assert cluster.find("Job", "j")["spec"]["template"] == 1
 
 
 def test_unpausing_a_campaign_kueue_suspended_leaves_suspend_to_kueue(
@@ -1686,7 +1701,6 @@ def test_the_web_and_the_apply_share_the_status_record_by_field(tmp_path, cluste
     cluster.server_side_apply(record, WEB_MANAGER)
     live_job = _object("Job", "kyrk")
     live_job["metadata"]["namespace"] = NS
-    live_job["spec"] = dict(JOB_SPECS["kyrk"])
     live_job["status"] = {
         "conditions": [{"type": "Failed", "status": "True"}],
         "succeeded": 2,
@@ -1694,6 +1708,9 @@ def test_the_web_and_the_apply_share_the_status_record_by_field(tmp_path, cluste
     cluster.live.append(live_job)
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert cluster_mod.FIELD_MANAGER != WEB_MANAGER
+    assert cluster.managers["campaign-kyrk-status"] == cluster_mod.FIELD_MANAGER
+    assert "failedVolumes" not in cluster.applied["campaign-kyrk-status"]["data"]
     stored = cluster.find("ConfigMap", "campaign-kyrk-status")
     assert stored["data"]["phase"] == "PartiallyFailed"
     assert stored["data"]["failedVolumes"] == "R1: fetch failed"
@@ -1876,6 +1893,38 @@ def test_a_finished_record_naming_the_applys_job_is_believed(tmp_path, cluster):
     assert ("apply", "Job", "kyrk") not in cluster.calls
 
 
+def test_a_record_of_the_job_before_a_recreated_one_is_not_believed(
+    tmp_path, cluster, capsys
+):
+    """A Job deleted mid-run is created again by the next apply, under the
+    same name and a new uid. A finished record the read API wrote about the
+    OLD Job says nothing about the new one: once the new Job is reaped, that
+    record must not keep the campaign from running."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    old = _live(cluster, "kyrk")["metadata"]["uid"]
+    _drop_job(cluster, "kyrk")
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    new = _live(cluster, "kyrk")["metadata"]["uid"]
+    assert new != old, "the fake hands out a fresh uid, as the API server does"
+    record = _live(cluster, "campaign-kyrk")
+    assert record["metadata"]["annotations"][JOB_UID] == new
+    _drop_job(cluster, "kyrk")
+    _web_writes(cluster, "kyrk", "Succeeded", old)
+    cluster.calls.clear()
+    capsys.readouterr()
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert ("apply", "Job", "kyrk") in cluster.calls
+    assert "not the Job this apply created" in capsys.readouterr().err
+    # And the new Job's own record is believed.
+    newest = _live(cluster, "kyrk")["metadata"]["uid"]
+    _drop_job(cluster, "kyrk")
+    _web_writes(cluster, "kyrk", "Succeeded", newest)
+    cluster.calls.clear()
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert ("apply", "Job", "kyrk") not in cluster.calls
+
+
 def test_a_record_for_a_job_that_was_never_created_is_not_believed(tmp_path, cluster):
     """The pair came apart: the ConfigMap went out and its Job did not. No
     Job exists for any record to be about, so none is believed."""
@@ -2044,11 +2093,15 @@ def test_the_lease_is_released_when_the_apply_fails(tmp_path, cluster):
 
 
 def _during(cluster, name: str, act) -> None:
-    """Run ``act()`` as the apply sends object ``name``."""
+    """Run ``act()`` as the apply first sends object ``name`` -- once: a new
+    campaign's ConfigMap is sent again after its Job, and one event is not
+    two."""
     real = FakeCluster._api
+    left = [1]
 
     def api(kind, verb, n=""):
-        if verb == "patch" and n == name:
+        if verb == "patch" and n == name and left[0]:
+            left[0] -= 1
             act()
         return real(cluster, kind, verb, n)
 
@@ -2164,18 +2217,38 @@ def test_sigterm_releases_the_lease(tmp_path, cluster):
     """Argo CD terminates a hook with SIGTERM, and Python's default action
     skips every `finally`: the Lease stayed held, and the next hook
     (backoffLimit 0) failed on it. The apply turns SIGTERM into an exit
-    that unwinds, 143 as the shell reports it."""
+    that unwinds, 143 as the shell reports it.
+
+    A handler of the test's own stands in for the default while it runs:
+    without it, an apply that installed nothing would let the test's own
+    signal end pytest itself, and every test after this one with it."""
     import os
     import signal
 
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    before = signal.getsignal(signal.SIGTERM)
-    _during(cluster, "campaign-kyrk", lambda: os.kill(os.getpid(), signal.SIGTERM))
-    with pytest.raises(SystemExit) as e:
-        cli.main(["apply", str(repo), "--out", str(out)])
-    assert e.value.code == 143
-    assert cluster.leases["htrflow-campaigns-apply"]["spec"]["holderIdentity"] is None
-    assert signal.getsignal(signal.SIGTERM) is before, "the handler is put back"
+    caught: list[int] = []
+    installed: list[object] = []
+
+    def sentinel(signum, frame):
+        caught.append(signum)
+
+    def terminate():
+        installed.append(signal.getsignal(signal.SIGTERM))
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    before = signal.signal(signal.SIGTERM, sentinel)
+    try:
+        _during(cluster, "campaign-kyrk", terminate)
+        with pytest.raises(SystemExit) as e:
+            cli.main(["apply", str(repo), "--out", str(out)])
+        assert installed == [cli._terminated], "the apply's handler was in place"
+        assert caught == []
+        assert e.value.code == 143
+        lease = cluster.leases["htrflow-campaigns-apply"]
+        assert lease["spec"]["holderIdentity"] is None
+        assert signal.getsignal(signal.SIGTERM) is sentinel, "the handler is put back"
+    finally:
+        signal.signal(signal.SIGTERM, before)
 
 
 # --- a window change under a running campaign, held against the cluster --
@@ -2209,17 +2282,8 @@ def test_a_window_change_under_a_paused_campaign_is_applied(tmp_path, cluster):
     _live(cluster, "kyrk")["spec"]["suspend"] = True
     _edit(repo / "campaigns" / "kyrk.yaml", window=1)
     cluster.calls.clear()
-    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "two")]) != 1
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "two")]) == 0
     assert ("dry-run", "Job", "kyrk") in cluster.calls
-
-
-def test_the_seeded_job_specs_are_the_rendered_ones(tmp_path):
-    repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
-    assert cli.main(["render", str(repo), "--out", str(out)]) == 0
-    for name, spec in JOB_SPECS.items():
-        docs = yaml.safe_load_all((out / "campaigns" / f"{name}.yaml").read_text())
-        (job,) = [d for d in docs if d["kind"] == "Job"]
-        assert {k: job["spec"][k] for k in spec} == spec, name
 
 
 # --- two running campaigns on one pipeline never share a volume (C-13) ---
@@ -2299,17 +2363,14 @@ def test_a_running_campaigns_volumes_it_may_not_read_hold_the_newcomers(
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     _rerun(repo)
-    real = FakeCluster._api
     reads = [0]
 
-    def api(kind, verb, name=""):
-        if verb == "read" and name == "campaign-loc":
+    def second_read_of_loc(kind, name):
+        if name == "campaign-loc":
             reads[0] += 1
-            if reads[0] > 1:  # the first is the append-only check's
-                raise cluster_mod.ClusterError("not allowed to get ConfigMap/x")
-        return real(cluster, kind, verb, name)
+        return name == "campaign-loc" and reads[0] > 1  # the first: append-only
 
-    cluster._api = api
+    _read_fails(cluster, second_read_of_loc)
     cluster.calls.clear()
     assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
     assert ("apply", "Job", "rerun") not in cluster.calls

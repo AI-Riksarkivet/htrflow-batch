@@ -91,35 +91,6 @@ def test_the_clone_names_a_user_for_its_reflog():
     assert env.get("USER"), clone["env"]
 
 
-def _version(text: str) -> tuple[int, ...]:
-    return tuple(int(part) for part in text.split("."))
-
-
-def test_a_tagged_hook_image_is_never_an_older_release():
-    """Until a release commit pins its digest, the hook names the converter
-    image by the tag of the release it will ship in. The publish workflow
-    tags every image `v` + the wrapper's version, so once that version
-    moves past the tag the hook is a release behind: the release that bumped
-    it forgot to pin, and this fails CI instead of shipping the old image."""
-    # Read with a pattern, not tomllib: the workspace supports Python 3.10.
-    found = re.search(
-        r'^version = "([^"]+)"$',
-        WRAPPER_PYPROJECT.read_text(encoding="utf-8"),
-        re.MULTILINE,
-    )
-    assert found, WRAPPER_PYPROJECT
-    release = _version(found.group(1))
-    spec = job()["spec"]["template"]["spec"]
-    for c in spec["initContainers"] + spec["containers"]:
-        _, sep, tag = c["image"].partition(":v")
-        if sep and "@" not in c["image"]:
-            assert _version(tag) >= release, (
-                f"{c['name']} runs {c['image']}, older than the wrapper's "
-                f"{'.'.join(map(str, release))}: pin the converter digest the "
-                "release published (docs/development/releasing.md)"
-            )
-
-
 def test_the_release_procedure_names_every_pin_the_hook_and_ci_need():
     """The release commit pins three manifest-list digests; the converter's
     goes into this hook and its tag into the CI templates' CONVERTER_REF.
@@ -202,6 +173,11 @@ def test_the_hook_runs_the_converter_release_its_template_ships_in():
     version = re.search(
         r'^version = "([^"]+)"', CONVERTER_PYPROJECT.read_text(), re.M
     ).group(1)
+    # The publish workflow tags every image `v` + the WRAPPER's version, so
+    # the converter's own version is a tag that exists only while the two
+    # are the same release.
+    wrapper = re.search(r'^version = "([^"]+)"', WRAPPER_PYPROJECT.read_text(), re.M)
+    assert wrapper and wrapper.group(1) == version, (wrapper, version)
     lines = re.findall(r"image: (\S+)(.*)", HOOK.read_text())
     assert len(lines) == 3 and len(set(lines)) == 1, lines
     ((image, rest),) = set(lines)

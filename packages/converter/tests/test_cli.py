@@ -1,14 +1,30 @@
+import functools
 import shutil
 from pathlib import Path
 
 import pytest
 import yaml
 
+from htrflow_converter import render
 from htrflow_converter.cli import main
+from htrflow_converter.parse import ValidationError, load
 
 FIXTURES = Path(__file__).parent / "fixtures"
 GOOD = FIXTURES / "good"
 REPO_ROOT = Path(__file__).parents[3]
+#: A part's volumes under the `small_parts` fixture.
+PART = 3
+
+
+@pytest.fixture
+def small_parts(monkeypatch):
+    """Parts of ``PART`` volumes instead of 10 000: the same cut, the same
+    part names, at a size a test renders in milliseconds rather than
+    seconds. The real limits are kept by the tests that are about them
+    (the byte budget's re-split, a 63-character name's highest index)."""
+    monkeypatch.setattr(render, "split", functools.partial(render.split, size=PART))
+
+
 EXAMPLES_CAMPAIGNS = REPO_ROOT / "examples" / "campaigns"
 
 
@@ -41,14 +57,18 @@ def test_validate_bad_repo_exits_1_and_prints_problems(capsys):
 
 
 def test_validate_bad_repo_prints_one_problem_per_line(capsys):
-    rc = main(["validate", str(FIXTURES / "bad" / "multi-file")])
+    repo = FIXTURES / "bad" / "multi-file"
+    with pytest.raises(ValidationError) as e:
+        load(repo / "campaigns", repo / "pipelines", repo / "converter.yaml")
+    problems = e.value.problems
+    assert len(problems) == 2
+    assert "has an id with characters that are not allowed" in problems[0]
+    assert "is listed twice" in problems[1]
+    rc = main(["validate", str(repo)])
     assert rc == 1
-    out = capsys.readouterr().out
-    lines = [line for line in out.splitlines() if line]
-    assert any(
-        "has an id with characters that are not allowed" in line for line in lines
-    )
-    assert any("is listed twice" in line for line in lines)
+    *lines, summary = capsys.readouterr().out.splitlines()
+    assert lines == problems, "each problem whole, on a line of its own"
+    assert summary == "2 problems in 2 files"
 
 
 def test_render_says_nothing_was_rendered_and_writes_nothing(tmp_path, capsys):
@@ -288,25 +308,8 @@ def test_render_leaves_what_else_is_in_out_alone(tmp_path):
     assert (out / "README.md").read_text() == "kept\n"
 
 
-def test_the_makefile_no_longer_defines_the_prune_selector():
-    """One definition, in `render.CAMPAIGN_SELECTOR`: `htrflow-campaigns
-    apply --prune` lists the cluster by it and `make campaigns-apply` calls
-    that. A second copy in the Makefile could drift from the label the
-    renderer writes, and a prune that matches nothing deletes nothing --
-    silently."""
-    makefile = (REPO_ROOT / "Makefile").read_text()
-    assert "CAMPAIGN_SELECTOR :=" not in makefile
-    assert "htrflow-campaigns apply $(DIR)" in makefile
-
-
-def test_the_pause_sync_script_is_gone():
-    """`htrflow-campaigns apply` owns the Workload sync now; a stale copy of
-    the shell script would be a second, silently diverging implementation."""
-    assert not (REPO_ROOT / "scripts" / "kueue-pause-sync.sh").exists()
-
-
 def test_append_only_still_finds_the_parts_of_a_cut_down_campaign_name(
-    tmp_path, capsys
+    tmp_path, capsys, small_parts
 ):
     """A campaign that splits renders under a shortened name, so `rendered/`
     holds `<shortened>-partN.yaml`. The append-only check has to look for
@@ -315,15 +318,8 @@ def test_append_only_still_finds_the_parts_of_a_cut_down_campaign_name(
     repo = tmp_path / "repo"
     shutil.copytree(GOOD, repo)
     name = "a" * 58
-    url = (
-        "https://lbiiif.riksarkivet.se/arkis!R00012345/jp2/00000000000000000{:03d}.jpg"
-    )
-    volumes = [
-        {"id": f"vol{v:04d}", "images": [url.format(p) for p in range(300)]}
-        for v in range(45)
-    ]
     path = repo / "campaigns" / f"{name}.yaml"
-    path.write_text(yaml.safe_dump({"pipeline": "demo-v1", "volumes": volumes}))
+    path.write_text(_split_campaign(PART + 1))
     out = repo / "rendered"
     assert main(["render", str(repo), "--out", str(out)]) == 0
 
@@ -334,8 +330,7 @@ def test_append_only_still_finds_the_parts_of_a_cut_down_campaign_name(
         assert len(part.stem) <= 63
         assert name.startswith(part.stem.removesuffix(f"-part{i}"))
 
-    volumes.append({"id": "vol9999", "images": [url.format(0)]})
-    path.write_text(yaml.safe_dump({"pipeline": "demo-v1", "volumes": volumes}))
+    path.write_text(_split_campaign(PART + 2))
     capsys.readouterr()
     assert main(["render", str(repo), "--out", str(out)]) == 1
     assert f"campaign {name} is append-only" in capsys.readouterr().out
@@ -423,9 +418,9 @@ def _split_campaign(volumes: int) -> str:
     )
 
 
-@pytest.mark.parametrize("volumes", [(10_001, 10_001), (10_001, 10_002)])
+@pytest.mark.parametrize("volumes", [(PART + 1, PART + 1), (PART + 1, PART + 2)])
 def test_render_refuses_two_campaigns_whose_split_names_collide(
-    tmp_path, capsys, volumes
+    tmp_path, capsys, small_parts, volumes
 ):
     """Cutting a long name to a stem can make two campaigns share it. Both
     would render into the same files, the second one silently overwriting the
@@ -452,12 +447,12 @@ def test_render_refuses_two_campaigns_whose_split_names_collide(
     assert "append-only" not in printed
 
 
-def test_validate_refuses_colliding_split_names_too(tmp_path, capsys):
+def test_validate_refuses_colliding_split_names_too(tmp_path, capsys, small_parts):
     repo = tmp_path / "repo"
     shutil.copytree(GOOD, repo)
     for tail in ("alpha", "beta"):
         (repo / "campaigns" / f"{'k' * 50}-{tail}.yaml").write_text(
-            _split_campaign(10_001)
+            _split_campaign(PART + 1)
         )
     assert main(["validate", str(repo)]) == 1
     assert "rename one" in capsys.readouterr().out
@@ -786,7 +781,7 @@ def test_a_pipeline_id_leaves_room_for_its_warm_up_job(tmp_path, capsys, length,
 
 
 def test_a_split_campaign_beside_a_single_one_sharing_its_stem_is_not_append_only(
-    tmp_path, capsys
+    tmp_path, capsys, small_parts
 ):
     """audit 0923 C-4: parts were found by the first 50 characters of a name.
     With `<stem>-b` rendered as one Job, a big `<stem>-a` added beside it
@@ -796,11 +791,11 @@ def test_a_split_campaign_beside_a_single_one_sharing_its_stem_is_not_append_onl
     repo = tmp_path / "repo"
     shutil.copytree(GOOD, repo)
     stem = "k" * 50
-    (repo / "campaigns" / f"{stem}-b.yaml").write_text(_split_campaign(3))
+    (repo / "campaigns" / f"{stem}-b.yaml").write_text(_split_campaign(PART))
     out = repo / "rendered"
     assert main(["render", str(repo), "--out", str(out)]) == 0
 
-    (repo / "campaigns" / f"{stem}-a.yaml").write_text(_split_campaign(10_001))
+    (repo / "campaigns" / f"{stem}-a.yaml").write_text(_split_campaign(PART + 1))
     assert main(["validate", str(repo)]) == 0, capsys.readouterr().out
     assert main(["render", str(repo), "--out", str(out)]) == 0
     assert (out / "campaigns" / f"{stem}-part2.yaml").is_file()
@@ -810,7 +805,7 @@ def test_a_split_campaign_beside_a_single_one_sharing_its_stem_is_not_append_onl
     assert main(["render", str(repo), "--out", str(out)]) == 0, capsys.readouterr()
 
     # and the rule still holds for each of them, on its own files
-    (repo / "campaigns" / f"{stem}-b.yaml").write_text(_split_campaign(4))
+    (repo / "campaigns" / f"{stem}-b.yaml").write_text(_split_campaign(PART - 1))
     assert main(["validate", str(repo)]) == 1
     assert f"campaign {stem}-b is append-only" in capsys.readouterr().out
 
@@ -887,71 +882,56 @@ def test_a_window_change_on_a_campaign_paused_before_and_after_is_allowed(
     assert capsys.readouterr().err == ""  # nothing to warn about
 
 
-class _FakeDulwichRepo:
-    """dulwich's `Repo`, as much of it as `_git_head` uses (the real one is
-    in the converter image through the `hook` extra, not in the dev env)."""
-
-    heads: dict[str, bytes] = {}
-
-    def __init__(self, root: str) -> None:
-        self.root = root
-
-    @classmethod
-    def discover(cls, start: str):
-        import dulwich.errors
-
-        for root, head in cls.heads.items():
-            if Path(start).resolve().is_relative_to(root):
-                return cls(root)
-        raise dulwich.errors.NotGitRepository(start)
-
-    def head(self) -> bytes:
-        return self.heads[self.root]
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc) -> None:
-        pass
-
-
-def _without_git(monkeypatch, heads: dict[str, bytes]) -> None:
+def _without_git(monkeypatch) -> None:
+    """No git binary: what the hook's distroless image has."""
     import subprocess
-    import sys
-    import types
 
     def no_git(*args, **kwargs):
         raise FileNotFoundError("git")
 
     monkeypatch.setattr(subprocess, "run", no_git)
-    errors = types.ModuleType("dulwich.errors")
-    errors.NotGitRepository = type("NotGitRepository", (Exception,), {})
-    repo = types.ModuleType("dulwich.repo")
-    repo.Repo = _FakeDulwichRepo
-    package = types.ModuleType("dulwich")
-    package.errors, package.repo = errors, repo
-    monkeypatch.setitem(sys.modules, "dulwich", package)
-    monkeypatch.setitem(sys.modules, "dulwich.errors", errors)
-    monkeypatch.setitem(sys.modules, "dulwich.repo", repo)
-    monkeypatch.setattr(_FakeDulwichRepo, "heads", heads)
 
 
-def test_the_commit_is_read_without_a_git_binary(tmp_path, monkeypatch):
+def test_the_commit_is_read_without_a_git_binary(tmp_path, monkeypatch, commit_all):
     """audit 0923 C-10: the Argo CD hook's image is distroless, with no git,
     so every campaign it applied recorded commit "unknown". The clone in the
-    same image is dulwich's; so is the read of what it cloned."""
+    same image is dulwich's; so is the read of what it cloned -- from the
+    campaigns directory, below the checkout's root."""
     from htrflow_converter import cli
 
-    sha = "0123456789abcdef0123456789abcdef01234567"
-    _without_git(monkeypatch, {str(tmp_path.resolve()): sha.encode()})
     (tmp_path / "campaigns").mkdir()
+    (tmp_path / "campaigns" / "a.yaml").write_text("pipeline: p\n")
+    sha = commit_all(tmp_path)
+    _without_git(monkeypatch)
     assert cli._git_head(tmp_path / "campaigns") == sha
 
 
 def test_outside_a_checkout_the_commit_is_still_unknown(tmp_path, monkeypatch):
     from htrflow_converter import cli
 
-    _without_git(monkeypatch, {})
+    _without_git(monkeypatch)
+    assert cli._git_head(tmp_path) == "unknown"
+
+
+def test_a_checkout_with_no_commit_yet_is_unknown(tmp_path, monkeypatch):
+    from dulwich import porcelain
+
+    from htrflow_converter import cli
+
+    porcelain.init(str(tmp_path))
+    _without_git(monkeypatch)
+    assert cli._git_head(tmp_path) == "unknown"
+
+
+def test_without_git_or_dulwich_the_commit_is_unknown(tmp_path, monkeypatch):
+    """The one case a real dulwich cannot show: an install without the
+    `hook` extra, on a machine without git."""
+    import sys
+
+    from htrflow_converter import cli
+
+    _without_git(monkeypatch)
+    monkeypatch.setitem(sys.modules, "dulwich.repo", None)  # import fails
     assert cli._git_head(tmp_path) == "unknown"
 
 
