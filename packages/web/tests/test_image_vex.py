@@ -211,8 +211,9 @@ def test_no_code_in_the_images_imports_what_a_statement_says_is_unused(
         if tar and rel in TARFILE_IN_DEPENDENCIES:
             continue
         assert not _hits(modules, banned), f"dependency {rel} breaks {cves}"
-        if tar:
-            assert not re.search(r"\bunpack_archive\(", _dependency_files()[rel]), (
+        text = _dependency_files()[rel]
+        if tar and "unpack_archive" in text:  # rare: skip the pattern
+            assert not re.search(r"\bunpack_archive\(", text), (
                 f"dependency {rel} breaks {cves}"
             )
 
