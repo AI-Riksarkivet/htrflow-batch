@@ -16,7 +16,7 @@ from .models import Campaign, parse_source_line
 #: Where a campaigns repo keeps its committed render. The one source of
 #: truth for the RECORD a re-render is held against: `render --out` says
 #: where this render goes, and the repo's own `rendered/` is what the
-#: previous one left (docs: reference/campaign-yaml.md).
+#: previous one left (docs: reference/cli.md).
 RENDERED = "rendered"
 
 _PART_RE = re.compile(r"-part(\d+)\.yaml\Z")
