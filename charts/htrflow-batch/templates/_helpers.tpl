@@ -192,7 +192,8 @@ seccompProfile: { type: RuntimeDefault }
 
 {{/*
 What an egress rule to an address range must NOT reach (2026-09-14 audit,
-then 0923 D-3): the pod and service ranges, every node address,
+then 0923 D-3): the pod and service ranges, every node address, the API
+server,
 link-local 169.254.0.0/16 -- where a cloud serves instance credentials to
 whoever asks -- loopback, and `network.privateCidrs`, the ranges the
 cluster's own network is carved out of. Node addresses are
@@ -209,7 +210,13 @@ cluster's own network is carved out of. Node addresses are
     {{- end }}
   {{- end }}
 {{- end }}
-{{- toJson (concat .Values.network.clusterCidrs $nodes (list "169.254.0.0/16" "127.0.0.0/8") .Values.network.privateCidrs | uniq) }}
+{{- /* The API server by its own values, or its looked-up endpoints (0923 M-3):
+     carved out even on a public address, not only as a node or a private one. */}}
+{{- $api := concat (compact (list .Values.network.apiServer.cidr)) (.Values.network.apiServer.cidrs | default list) }}
+{{- if not $api }}
+  {{- $api = (include "htrflow-batch.apiServerFromEndpoints" (lookup "v1" "Endpoints" "default" "kubernetes") | fromJson).cidrs }}
+{{- end }}
+{{- toJson (concat .Values.network.clusterCidrs $nodes $api (list "169.254.0.0/16" "127.0.0.0/8") .Values.network.privateCidrs | uniq) }}
 {{- end }}
 
 {{/*

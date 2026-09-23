@@ -283,7 +283,7 @@ service ranges, because the warm-up pod's public egress excludes them.
 A wide egress range is never the whole internet. Every egress range the
 chart renders — the warm-up's `0.0.0.0/0`, and whatever `network.iiifCidrs`,
 `network.s3Cidrs` and `apply.gitCidrs` name — carves out each of these that
-lies inside it: the pod, service and node ranges, link-local
+lies inside it: the pod, service and node ranges, the API server (by `network.apiServer`, or the looked-up endpoints), link-local
 (`169.254.0.0/16`, where a cloud serves instance credentials to any process
 that asks), loopback, and `network.privateCidrs` — the three private blocks
 by default, which is where the cluster's own network lives. Set that value
