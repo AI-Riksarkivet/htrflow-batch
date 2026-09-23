@@ -710,7 +710,7 @@ def _moved_live(cluster, pipelines: list[dict], campaigns: list[dict]) -> str | 
     for obj in campaigns:
         live_job = live_jobs.get(obj["metadata"]["name"])
         if obj["kind"] == "Job" and live_job is not None:
-            before, after = _pods_at_once(live_job), _pods_at_once(obj)
+            before, after = _pod_count(live_job), _pod_count(obj)
             if before != after and not live_job["spec"].get("suspend"):
                 return _LIVE_WINDOW.format(
                     name=obj["metadata"]["name"], before=before, after=after
@@ -727,7 +727,7 @@ def _moved_live(cluster, pipelines: list[dict], campaigns: list[dict]) -> str | 
     return None
 
 
-def _pods_at_once(job: dict) -> int:
+def _pod_count(job: dict) -> int:
     """How many pods a campaign Job runs at once, as Kueue counts them for
     its Workload."""
     spec = job.get("spec") or {}
