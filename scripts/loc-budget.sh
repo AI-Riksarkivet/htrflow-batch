@@ -1385,5 +1385,31 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5012
 # saying why they run before, and independently of, the ingressCidrs ones.
 # Off by default (web.ingress.enabled: false, web.service.type: NodePort),
 # so no existing install's render changes.
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1221
+# 1221 -> 1729 (2026-09-23, audit 0923, the deployment round):
+# policies/job-shape.yaml + _job-shape.tpl (+286, D-2/S-1/S-6): the apply
+# identity's `create` on Jobs is any pod spec and converter.yaml names any
+# Secret or PVC, so admission holds a campaign or warm-up Job to the shape
+# the converter renders -- identity, Secrets per role, volumes, containers,
+# the two scripts (character for character, as the copies Helm cannot read
+# from the converter) and the pipeline source. The per-role rule is one
+# helper rendered twice; about a third of it is the comment saying who is
+# held to it and why Kueue's own updates are not. rbac-scope +54 (D-2): the
+# Workload rule, `spec.active` only and only on a converter Job's Workload,
+# looked up at admission. model-revision +69 (D-6, D-7): the processor pin
+# for the four loaders that download one, and the binaryData refusal.
+# _helpers.tpl +110 net of network.yaml/web.yaml -54 (D-3, D-8): one
+# carve-out for every egress range instead of a literal 0.0.0.0/0 -- an
+# IPv4 containment test Helm has no function for, written once -- the S3
+# rule as one helper instead of a copy per template, and the three
+# production range guards. kueue.yaml +17 (D-9), apply-rbac.yaml +13 (the
+# run Lease), verify-images +9 (D-1).
+# 1729 -> 1882 (2026-09-23, audit 0923 review round): job-shape holds the
+# rest of the converter's shape -- every env var by name with the fixed
+# values pinned (a PATH, LD_PRELOAD or PYTHONPATH of anyone's choosing is a
+# way to run a ConfigMap), the index-failure-count fieldRef the converter now
+# renders, mounts, file modes, both securityContexts and host namespaces
+# (C-1, I-1, M-4) -- as one spec block the agreement test reads, plus the
+# two ConfigMap-key rules that keep a mounted ConfigMap to the key the
+# converter writes (I-1); the API server joins the egress carve-out (M-3).
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1882
 exit $fail

@@ -35,7 +35,8 @@ network:
   # default and says so, which is also what exercises the opt-out.
   web:
     allowPublicIngress: true
-  nodeCidrs: ["10.16.51.56/32"]
+  iiifCidrs: ["203.0.113.27/32"]
+  nodeCidrs: ["192.0.2.56/32"]
   apiServer:
-    cidr: 10.16.51.56/32
+    cidr: 192.0.2.56/32
   s3Cidrs: ["10.0.0.5/32"]

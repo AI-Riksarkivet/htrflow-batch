@@ -195,23 +195,12 @@ spec:
 {{- if .Values.network.enabled }}
 ---
 {{- /*
-Same S3 egress as the batch Job's own policy (network.yaml's `$s3` -- a
-separate template file, so it cannot share that file's local variable):
+Same S3 egress as the batch Job's own policy (_helpers.tpl's s3Egress):
 this pod's ProgressReader (HTRFLOW_INTERNAL_RESULTS_BASE below) has to reach
 the bucket too, on the PoC's in-namespace `app: rustfs` pod or a real
 endpoint from network.s3Cidrs.
 */}}
-{{- $s3 := list (dict "to" (list (dict "podSelector" (dict "matchLabels" (dict "app" "rustfs")))) "ports" (list (dict "port" 9000))) }}
-{{- if .Values.network.s3Cidrs }}
-  {{- $blocks := list }}
-  {{- range .Values.network.s3Cidrs }}{{ $blocks = append $blocks (dict "ipBlock" (dict "cidr" .)) }}{{ end }}
-  {{- /* Named ports, not the whole range (2026-09-14, audit): a
-       self-hosted endpoint's CIDR is a slice of the operator's own
-       network, and this rule used to open every port of it. */}}
-  {{- $s3Ports := list }}
-  {{- range .Values.network.s3Ports }}{{ $s3Ports = append $s3Ports (dict "port" .) }}{{ end }}
-  {{- $s3 = append $s3 (dict "to" $blocks "ports" $s3Ports) }}
-{{- end }}
+{{- $s3 := include "htrflow-batch.s3Egress" . | fromJsonArray }}
 # Web front: browsers in, matched on their own addresses (the Service's
 # externalTrafficPolicy: Local keeps them un-SNAT'd); egress to DNS, the
 # apiserver, and S3 -- this pod's own ProgressReader reads progress.json out

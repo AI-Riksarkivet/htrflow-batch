@@ -22,9 +22,9 @@ const (
 
 // Every image the pipeline pulls, pinned by tag AND multi-arch index digest
 // (audit T9/S7): a floating tag made `checks` depend on whatever alpine/helm
-// or uv shipped that morning. Renovate tracks these lines (renovate.json,
-// customManagers "dagger-images"); refresh by hand with
-// `docker buildx imagetools inspect <ref>`.
+// or uv shipped that morning. renovate.json's regex manager covers these
+// lines for when the Renovate app is installed on the repository; until
+// then refresh them by hand with `docker buildx imagetools inspect <ref>`.
 const (
 	pythonImage = "python:3.13-slim@sha256:7e3a6aca9d74f93cca21a91d86a8dad8c34749afd5b4a98ee481c9c47b9f5ed4"
 	uvImage     = "ghcr.io/astral-sh/uv:0.12.6@sha256:88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d"

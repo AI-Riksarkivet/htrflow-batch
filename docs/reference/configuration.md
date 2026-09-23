@@ -173,7 +173,7 @@ skeleton, never as a campaign setting.
 | `max_seconds` | `converter.yaml` | `21600` | — | no secret — nobody |
 | `warmup_wait_seconds` | `converter.yaml` | `900` | — | no secret — nobody |
 | `ttl_seconds_after_finished` | `converter.yaml` | `604800` | — | no secret — nobody |
-| `hf_token_secret` | `converter.yaml` | *(empty)* | — | names the Secret the warm-up reads `HF_TOKEN` from — cluster |
+| `hf_token_secret` | `converter.yaml` | *(empty)* | chart `hfToken.existingSecret` | names the Secret the warm-up reads `HF_TOKEN` from — cluster |
 | `manifest_max_bytes` | `converter.yaml` | `16777216` | — | no secret — nobody |
 | `fetch_max_bytes` | `converter.yaml` | `67108864` | — | no secret — nobody |
 | `priority_classes` | `converter.yaml` | `[htr-interactive, htr-bulk, htr-idle]` | chart `queue.priorityClasses[].name` | no secret — nobody |
@@ -184,6 +184,7 @@ skeleton, never as a campaign setting.
 |---|---|---|---|---|
 | `s3.bucket` | `values.yaml` | `htr-results` | — | no secret — nobody |
 | `s3.existingSecret` | `values.yaml` | `htr-batch-s3` | converter `s3_secret` | names that Secret; no template creates it — nobody |
+| `hfToken.existingSecret` | `values.yaml` | *(empty)* | converter `hf_token_secret` | the one Secret a warm-up may read (job-shape) — cluster |
 | `publicResultsBase` | `values.yaml` | *(empty)* | converter `public_results_base`, web `HTRFLOW_PUBLIC_RESULTS_BASE`, wrapper `PUBLIC_RESULTS_BASE` | the public-read results base; `required` — render |
 | `modelCache.create` | `values.yaml` | `true` | — | no secret — nobody |
 | `modelCache.name` | `values.yaml` | `htr-test-data` | converter `data_pvc` | no secret — nobody |
@@ -192,7 +193,11 @@ skeleton, never as a campaign setting.
 | `modelCache.accessModes` | `values.yaml` | `[ReadWriteOnce]` | — | no secret — nobody |
 | `queue.name` | `values.yaml` | `htr-batch` | converter `queue` | no secret — nobody |
 | `queue.flavor` | `values.yaml` | `default-flavor` | — | no secret — nobody |
+| `queue.createFlavor` | `values.yaml` | `true` | — | no secret — nobody |
+| `queue.clusterQueueName` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `queue.createClusterQueue` | `values.yaml` | `true` | — | no secret — nobody |
 | `queue.resources` | `values.yaml` | `[{name: cpu, quota: 4}, {name: memory, quota: 8Gi}, {name: …` | — | no secret — nobody |
+| `queue.createPriorityClasses` | `values.yaml` | `true` | — | no secret — nobody |
 | `queue.priorityClasses` | `values.yaml` | `[{description: a handful of volumes someone is waiting for,…` | converter `priority_classes` | no secret — nobody |
 | `web.image` | `values.yaml` | `docker.io/riksarkivet/htrflow-web@sha256:1fbabef550593f6d77…` | — | digest-pinned unless `security.allowTagImages` — render |
 | `web.nodePort` | `values.yaml` | `30800` | — | no secret — nobody |
@@ -211,6 +216,7 @@ skeleton, never as a campaign setting.
 | `apply.gitCidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `apply.gitPorts` | `values.yaml` | `[443]` | — | no secret — nobody |
 | `security.allowedImageRepos` | `values.yaml` | *(empty)* | — | enforced by a Kyverno ClusterPolicy — cluster |
+| `security.jobImageRepos` | `values.yaml` | *(empty)* | — | what a campaign or warm-up Job may run — cluster |
 | `security.requireModelRevision` | `values.yaml` | `false` | — | enforced by a Kyverno ClusterPolicy — cluster |
 | `security.policies.enabled` | `values.yaml` | `false` | — | enforced by a Kyverno ClusterPolicy — cluster |
 | `security.policies.allowDisabled` | `values.yaml` | `false` | — | no admission policy at all — render |
@@ -223,12 +229,13 @@ skeleton, never as a campaign setting.
 | `security.verifyImages.rekorUrl` | `values.yaml` | `https://rekor.sigstore.dev` | — | enforced by a Kyverno ClusterPolicy — cluster |
 | `network.enabled` | `values.yaml` | `true` | — | no secret — nobody |
 | `network.defaultDeny` | `values.yaml` | `true` | — | no secret — nobody |
-| `network.iiifCidrs` | `values.yaml` | `[192.121.221.27/32]` | — | no secret — nobody |
+| `network.iiifCidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `network.s3Cidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `network.s3InNamespace` | `values.yaml` | `true` | — | no secret — nobody |
 | `network.s3Ports` | `values.yaml` | `[443]` | — | no secret — nobody |
 | `network.clusterCidrs` | `values.yaml` | `[10.42.0.0/16, 10.43.0.0/16]` | — | no secret — nobody |
 | `network.nodeCidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
-| `network.privateCidrs` | `values.yaml` | `[10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]` | — | no secret — nobody |
+| `network.privateCidrs` | `values.yaml` | `[10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10]` | — | no secret — nobody |
 | `network.apiServer.cidr` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `network.apiServer.cidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `network.apiServer.port` | `values.yaml` | `6443` | — | no secret — nobody |

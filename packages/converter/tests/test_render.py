@@ -464,15 +464,24 @@ def test_the_ci_test_image_carries_the_tools_this_suite_shells_out_to():
     manifest validation and the commit provenance were never checked in CI
     while the suite reported green.
 
-    The dagger test container installs git and copies kubeconform and helm
-    out of the same digest-pinned images the chart render uses. This asserts
-    it still does, because the skip cannot.
+    The dagger test container installs git, jq and make from Debian and
+    copies kubeconform, helm and the Kyverno CLI out of the digest-pinned
+    images the chart render uses. This asserts it still does, because the
+    skip cannot -- every tool a `skipif` or `pytest.skip` here waits for,
+    not only the first three: without kyverno the whole policy-admission
+    file skipped while the run stayed green.
+
+    The list can still fall behind a NEW tool, so the dagger run also
+    refuses any skip but the one it expects (the real-driver test, which
+    needs the wrapper image): a tool that goes missing fails CI by name.
     """
     dagger = (Path(__file__).resolve().parents[3] / ".dagger" / "test.go").read_text()
-    assert "--no-install-recommends git" in dagger
-    assert '"/usr/local/bin/kubeconform"' in dagger
-    assert '"/usr/local/bin/helm"' in dagger
+    assert "--no-install-recommends git jq make" in dagger
+    for tool in ("kubeconform", "helm", "kyverno"):
+        assert f'"/usr/local/bin/{tool}"' in dagger, tool
     assert "m.withTestTools(container)." in dagger
+    assert "pytest --tb=short -q -rs" in dagger, "the audit reads -rs's report"
+    assert "unexpectedSkips" in dagger
 
 
 def test_window_is_capped_by_the_converter_window():

@@ -145,8 +145,8 @@ compose-down:
 # is the point.
 campaigns-apply:
 	@test -n "$(DIR)" || (echo "usage: make campaigns-apply DIR=<campaigns-repo-dir>"; exit 2)
-	uv run htrflow-campaigns apply $(DIR) --out $(DIR)/rendered $(if $(PRUNE),--prune) \
-	  $(if $(ALLOW_EMPTY),--allow-empty)
+	uv run htrflow-campaigns apply $(DIR) --out $(DIR)/rendered --namespace $(HTR_NAMESPACE) \
+	  $(if $(PRUNE),--prune) $(if $(ALLOW_EMPTY),--allow-empty)
 
 # The reproducible core of the Indexed Jobs E2E (docs/development/e2e-indexed-jobs.md):
 # validate the campaigns repo, render + apply it, then block until every
@@ -169,60 +169,43 @@ e2e:
 # on, no cluster lookups), then kubeconform when it is installed. The local
 # twin of `dagger call check-chart` (.dagger/checks.go).
 #
-# The prod chart's "defaults" render needs three --set overrides no cluster
-# is present to `lookup`: the web front is always rendered (no enabled flag)
-# and requires publicResultsBase + network.apiServer.cidr + a digest-pinned
-# web.image. CHART_DEFAULT_SETS mirrors ci/full-values.yaml's shape with a
-# placeholder digest/CIDR — never install with these.
+# The render inputs are files, one copy each, which test_chart_render.py and
+# `dagger call check-chart` read too: ci/default-values.yaml holds the
+# placeholders the chart refuses to render without (never an install), and
+# ci/prod-values.yaml the site values the production profile leaves to the
+# operator. The default render also says out loud that the web front is
+# public and that no policy is enforced, as any operator has to. Which
+# renders the chart refuses, and in which words, is the guard table in
+# test_chart_render.py.
 DEVSTACK_CHART := charts/htrflow-devstack
-# The defaults also leave the Kyverno policies off, which the chart refuses
-# unless the render says so (B80) -- CHART_NO_POLICY_SETS is the render
-# that does not, and must fail.
-CHART_NO_POLICY_SETS := --set publicResultsBase=https://x/ \
-                       --set network.apiServer.cidr=10.16.51.10/32 \
+CHART_DEFAULT_SETS := -f $(CHART)/ci/default-values.yaml \
                        --set network.web.allowPublicIngress=true \
-                       --set web.image=docker.io/riksarkivet/htrflow-web@sha256:0000000000000000000000000000000000000000000000000000000000000000
-CHART_DEFAULT_SETS := $(CHART_NO_POLICY_SETS) --set security.policies.allowDisabled=true
-# The production profile is rendered like any other input: it is the file
-# the deployment page tells operators to start from, so a change that stops
-# it rendering has to fail here. Its site-specific values are the operator's,
-# so the fixture supplies placeholders for them.
-CHART_PROD_SETS := --set publicResultsBase=https://x/ \
-                       --set network.apiServer.cidr=10.16.51.10/32 \
-                       --set network.web.ingressCidrs='{10.16.0.0/16}' \
-                       --set web.image=docker.io/riksarkivet/htrflow-web@sha256:0000000000000000000000000000000000000000000000000000000000000000
+                       --set security.policies.allowDisabled=true
+CHART_PROD_SETS := -f $(CHART)/values-prod.yaml -f $(CHART)/ci/default-values.yaml \
+                   -f $(CHART)/ci/prod-values.yaml
 helm-lint:
 	helm lint $(CHART) $(CHART_DEFAULT_SETS)
 	helm lint $(CHART) -f $(CHART)/ci/full-values.yaml
-	helm lint $(CHART) -f $(CHART)/values-prod.yaml $(CHART_PROD_SETS)
+	helm lint $(CHART) $(CHART_PROD_SETS)
 	helm lint $(DEVSTACK_CHART)
 	helm lint $(DEVSTACK_CHART) -f $(DEVSTACK_CHART)/ci/full-values.yaml
 
-helm-template: helm-lint
-	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_DEFAULT_SETS) > /dev/null
-	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/ci/full-values.yaml > /dev/null
-	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/values-prod.yaml $(CHART_PROD_SETS) > /dev/null
-	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) > /dev/null
-	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) -f $(DEVSTACK_CHART)/ci/full-values.yaml > /dev/null
-	@# An install with the policies off and no allowDisabled must be refused
-	@# (B80) -- by that guard: every other refusal also exits non-zero, so the
-	@# exit code alone would pass with this guard deleted (finding 3103).
-	@out=$$(helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_NO_POLICY_SETS) 2>&1) \
-	  && { echo "chart rendered with the policies off and no security.policies.allowDisabled: the B80 guard is gone"; exit 1; }; \
-	  printf '%s\n' "$$out" | grep -qF 'or set security.policies.allowDisabled=true to accept that' \
-	  || { printf '%s\n' "$$out"; echo "chart refused the policies-off render, but not with the B80 guard's sentence"; exit 1; }
-	@# RustFS on credentials nobody chose must be refused (B63 Task 27), same rule.
-	@out=$$(helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) --set rustfs.enabled=true 2>&1) \
-	  && { echo "devstack rendered RustFS with no credentials: the devStack.insecureDefaults guard is gone"; exit 1; }; \
-	  printf '%s\n' "$$out" | grep -qF 'or set devStack.insecureDefaults: true to accept generated or known ones' \
-	  || { printf '%s\n' "$$out"; echo "devstack refused RustFS with no credentials, but not with the insecureDefaults guard's sentence"; exit 1; }
-	@if command -v kubeconform >/dev/null; then \
-	  helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_DEFAULT_SETS) | kubeconform -strict -ignore-missing-schemas -summary && \
-	  helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/ci/full-values.yaml | kubeconform -strict -ignore-missing-schemas -summary && \
-	  helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/values-prod.yaml $(CHART_PROD_SETS) | kubeconform -strict -ignore-missing-schemas -summary && \
-	  helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) | kubeconform -strict -ignore-missing-schemas -summary && \
-	  helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) -f $(DEVSTACK_CHART)/ci/full-values.yaml | kubeconform -strict -ignore-missing-schemas -summary; \
-	else echo "kubeconform not installed — schema validation skipped"; fi
+# kubeconform is required, not optional: a local twin that skips the schema
+# check when the binary is missing passes what CI refuses. The Kueue and
+# Kyverno kinds are validated against their CRDs' schemas
+# (scripts/crd-schemas.sh, pinned by sha256), not skipped.
+CRD_SCHEMAS ?= .cache/crd-schemas
+$(CRD_SCHEMAS)/.built: scripts/crd-schemas.sh
+	scripts/crd-schemas.sh $(CRD_SCHEMAS) && touch $@
+helm-template: helm-lint $(CRD_SCHEMAS)/.built
+	@command -v kubeconform >/dev/null || { echo "kubeconform is not on PATH: install it (the version .dagger/main.go pins) -- the schema check is part of this target"; exit 1; }
+	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_DEFAULT_SETS) | kubeconform $(KUBECONFORM_FLAGS)
+	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) -f $(CHART)/ci/full-values.yaml | kubeconform $(KUBECONFORM_FLAGS)
+	helm template $(HTR_RELEASE) $(CHART) -n $(HTR_NAMESPACE) $(CHART_PROD_SETS) | kubeconform $(KUBECONFORM_FLAGS)
+	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) | kubeconform $(KUBECONFORM_FLAGS)
+	helm template $(HTR_RELEASE) $(DEVSTACK_CHART) -n $(HTR_NAMESPACE) -f $(DEVSTACK_CHART)/ci/full-values.yaml | kubeconform $(KUBECONFORM_FLAGS)
+KUBECONFORM_FLAGS := -strict -summary -schema-location default \
+                     -schema-location '$(CRD_SCHEMAS)/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
 
 # PoC-only support infrastructure (RustFS, registry, nvidia device plugin)
 # — its own chart, own release, same namespace as $(HTR_RELEASE)
@@ -392,11 +375,13 @@ poc-push-arm64:
 
 # Vulnerability scan of the web image (the wrapper goes through
 # `make scan` / dagger). Trivy pinned; HIGH/CRITICAL with a fix fail the target.
-# Same Trivy release and digest as .dagger/main.go.
+# Same Trivy release and digest as .dagger/main.go, and the same VEX
+# statements (.docker/distroless.openvex.json) as every dagger scan.
 TRIVY_IMAGE ?= aquasec/trivy:0.65.0@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436
 scan-web: build-web
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-	  -v trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image \
+	  -v trivy-cache:/root/.cache/trivy -v $(CURDIR):/out:ro $(TRIVY_IMAGE) image \
+	  --vex /out/.docker/distroless.openvex.json \
 	  --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 $(WEB_IMAGE)
 
 # Trivy over an image that exists only in the local docker daemon: the arm64
@@ -412,7 +397,8 @@ SCAN_FLAGS ?= --ignore-unfixed --exit-code 1
 scan-image:
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
 	  -v trivy-cache:/root/.cache/trivy -v $(CURDIR):/out $(DOCKER_CA) $(TRIVY_IMAGE) image \
-	  --skip-version-check --severity $(SCAN_SEVERITY) $(SCAN_FLAGS) $(SCAN_IMAGE)
+	  --skip-version-check --vex /out/.docker/distroless.openvex.json \
+	  --severity $(SCAN_SEVERITY) $(SCAN_FLAGS) $(SCAN_IMAGE)
 
 # Helm cannot label a namespace it did not create. The enforce level comes
 # from the installed release's `security.psaEnforce` (baseline by default;

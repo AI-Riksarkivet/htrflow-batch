@@ -1,0 +1,11 @@
+# The site-specific values values-prod.yaml leaves to the operator, as
+# placeholders (RFC 5737 documentation ranges; the kubeadm pod and service
+# defaults). Rendered on top of ci/default-values.yaml and values-prod.yaml
+# by test_chart_render.py, the Makefile and `dagger call check-chart`, the
+# way an operator's `--set` lines complete the profile. Never an install.
+network:
+  web:
+    ingressCidrs: ["198.51.100.0/24"]
+  s3Cidrs: ["192.0.2.128/25"]
+  clusterCidrs: ["10.244.0.0/16", "10.96.0.0/12"]
+  iiifCidrs: ["203.0.113.27/32"]
