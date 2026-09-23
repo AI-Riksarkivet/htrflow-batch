@@ -63,7 +63,45 @@ spec:
           models not pinned to a revision: {{ `{{ join(', ', unpinned) }}` }}
           — add revision: <40-character commit hash> under model_settings
           (YOLO) or model_settings.model_kwargs (TrOCR and other Hugging
-          Face models)
+          Face models, which also need it under
+          model_settings.processor_kwargs)
+        deny:
+          conditions:
+            all:
+              - key: {{ `"{{ length(unpinned) }}"` }}
+                operator: GreaterThan
+                value: 0
+    # A Hugging Face model with a processor is two downloads (audit 0923
+    # D-6). htrflow's TrOCR, WordLevelTrOCR, Donut and DiT load the model
+    # with `model_kwargs` and then the processor -- tokenizer, image
+    # processor -- with `processor or model` and `processor_kwargs`, never
+    # `model_kwargs`. A pin under model_kwargs alone leaves the processor on
+    # the repo's mutable head, so for those loaders processor_kwargs needs
+    # its own 40-hex revision. htrflow finds the loader by its lower-cased
+    # class name (`get_model_by_name`), and so does this rule. YOLO and
+    # PyLaia download one repo with the top-level revision and have no
+    # processor.
+    - name: pipeline-processors-pinned
+      match:
+        any:
+          - resources:
+              kinds: [ConfigMap]
+              namespaces: [{{ .Release.Namespace | quote }}]
+      context:
+        - name: unpinned
+          variable:
+            jmesPath: >-
+              parse_yaml(request.object.data."pipeline.yaml" || 'steps: []').steps
+              | [?settings.model_settings.model]
+              | [?contains(['trocr', 'wordleveltrocr', 'donut', 'dit'], to_lower(to_string(settings.model)))]
+              | [?!regex_match('^[0-9a-f]{40}$', settings.model_settings.processor_kwargs.revision || '')].settings.model_settings.model
+            default: []
+      validate:
+        message: >-
+          processors not pinned to a revision: {{ `{{ join(', ', unpinned) }}` }}
+          — TrOCR, WordLevelTrOCR, Donut and DiT load their processor
+          separately, with model_settings.processor_kwargs: add revision:
+          <40-character commit hash> there as well as under model_kwargs
         deny:
           conditions:
             all:
