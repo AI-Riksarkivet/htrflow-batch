@@ -27,6 +27,7 @@ AGREEMENTS = [
     ("queue", "queue.name"),
     ("s3_secret", "s3.existingSecret"),
     ("data_pvc", "modelCache.name"),
+    ("hf_token_secret", "hfToken.existingSecret"),
 ]
 #: (ConverterConfig list field, chart list path, the key of each entry):
 #: the names on both sides must be the same list, in order.
@@ -52,6 +53,8 @@ SECURITY = {
     "s3_secret": "names the Secret mounted at `/secrets/s3` — cluster",
     "hf_token_secret": "names the Secret the warm-up reads `HF_TOKEN` from — cluster",
     "s3.existingSecret": "names that Secret; no template creates it — nobody",
+    "hfToken.existingSecret": "the one Secret a warm-up may read (job-shape) — cluster",
+    "security.jobImageRepos": "what a campaign or warm-up Job may run — cluster",
     "publicResultsBase": "the public-read results base; `required` — render",
     "web.image": "digest-pinned unless `security.allowTagImages` — render",
     "security.allowTagImages": "opens that digest gate — render",

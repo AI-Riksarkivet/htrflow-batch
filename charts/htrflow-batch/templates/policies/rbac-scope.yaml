@@ -139,5 +139,59 @@ spec:
               - key: {{ `'{{ request.oldObject.metadata.labels."htrflow.riksarkivet.se/managed-by" || ''unlabelled'' }}'` }}
                 operator: NotEquals
                 value: converter
+    # The pause sync's `patch` on Workloads covers every Workload in the
+    # namespace and every field of one (audit 0923 D-2). What the command
+    # issues is a merge patch of `spec.active` on the Workload of a Job it
+    # rendered (cluster.py, sync_pause), so that is the limit: nothing else
+    # in the spec, the labels or the annotations may change, and the Job
+    # that owns the Workload must carry the converter's label. The owner is
+    # read from the API server at admission -- a Workload's own labels are
+    # Kueue's, and name no campaign. A Workload no Job owns, or whose Job is
+    # gone, is refused: nothing the converter renders leaves one behind.
+    - name: apply-pauses-only-converter-workloads
+      match:
+        any:
+          - resources:
+              kinds: [kueue.x-k8s.io/*/Workload]
+              namespaces: [{{ .Release.Namespace | quote }}]
+              operations: [UPDATE]
+            subjects:
+              - kind: ServiceAccount
+                name: htrflow-campaigns
+                namespace: {{ .Release.Namespace }}
+      context:
+        - name: changed
+          variable:
+            jmesPath: >-
+              merge(request.object.spec, `{"active": null}`) != merge(request.oldObject.spec, `{"active": null}`)
+              || request.object.metadata.labels != request.oldObject.metadata.labels
+              || request.object.metadata.annotations != request.oldObject.metadata.annotations
+            default: true
+        - name: ownerJob
+          variable:
+            jmesPath: >-
+              request.object.metadata.ownerReferences[?kind == 'Job' && starts_with(apiVersion, 'batch/')] | [0].name || '-'
+            # `-` is no object's name: a Workload no Job owns looks up a Job
+            # that is not there, rather than listing every Job.
+            default: "-"
+        - name: ownerManaged
+          apiCall:
+            urlPath: {{ `"/apis/batch/v1/namespaces/{{ request.namespace }}/jobs/{{ ownerJob }}"` }}
+            jmesPath: >-
+              metadata.labels."htrflow.riksarkivet.se/managed-by" || ''
+            default: ""
+      validate:
+        message: >-
+          the apply identity may only pause or resume (spec.active) the
+          Workload of a Job the converter rendered
+        deny:
+          conditions:
+            any:
+              - key: {{ `"{{ changed }}"` }}
+                operator: Equals
+                value: true
+              - key: {{ `"{{ ownerManaged }}"` }}
+                operator: NotEquals
+                value: converter
 {{- end }}
 {{- end }}

@@ -30,13 +30,28 @@ s3:
   bucket: htr-results
   existingSecret: htr-batch-s3
 
+# The Hugging Face token the warm-up Job reads (converter.yaml's
+# `hf_token_secret`), for a private or gated model. Convention only, like
+# `s3.existingSecret`: nothing here creates it. It is the ONE Secret a
+# warm-up pod may read under `security.policies` (the job-shape policy) --
+# the warm-up reaches the internet and unpickles models, so a converter.yaml
+# naming any other Secret there is refused. Keep it equal to
+# `hf_token_secret`; empty = the warm-up reads no Secret at all.
+hfToken:
+  existingSecret: ""
+
 publicResultsBase: ""      # browser-reachable URL base for published results (REQUIRED: every result URL is built from it)
 
-# Model cache shared by warm-up Jobs (writer) and batch Jobs (read-only).
+# Model cache: one PVC holding one directory per pipeline recipe
+# (`<pipeline-id>-<recipe sha256>`). A pipeline's warm-up Job mounts its own
+# directory read-write (subPath) and fills it; that pipeline's campaign Jobs
+# mount the same directory read-only. Size it for every recipe at once: two
+# pipelines that load the same model keep a copy each, and a recipe's
+# directory stays after its last campaign -- nothing evicts it; remove old
+# directories by hand, or drop the PVC.
 # Single-node PoC note (O16): ReadWriteOnce pins every Job to the node that
 # holds the volume — fine on one GPU node, a scheduling constraint on more.
-# Use an RWX class (or a per-node cache strategy) before scaling out. The cache
-# is never evicted: a pipeline's models stay until the PVC is dropped.
+# Use an RWX class (or a per-node cache strategy) before scaling out.
 modelCache:
   create: true             # false = a PVC named `name` already exists (hand-made or another release)
   name: htr-test-data
@@ -45,8 +60,17 @@ modelCache:
   accessModes: [ReadWriteOnce]
 
 queue:
-  name: htr-batch
-  flavor: default-flavor
+  name: htr-batch          # the LocalQueue, in the release namespace
+  # The three cluster-scoped kinds below are created by this release, or --
+  # when another release or the cluster's own Kueue setup already has them
+  # -- only referenced by name. A second release in another namespace needs
+  # names of its own, or create* false and the names of the first's.
+  flavor: default-flavor   # ResourceFlavor the ClusterQueue's quota is in
+  createFlavor: true
+  clusterQueueName: ""     # "" = <name>-cq
+  # Created here, the ClusterQueue admits only this release's namespace
+  # (namespaceSelector). One referenced from elsewhere must admit it itself.
+  createClusterQueue: true
   # Covered resources and quotas for the ClusterQueue. EVERY resource a Job
   # requests must be covered or Kueue marks it inadmissible. The converter's
   # default Job config admits one volume at cpu 4 / 8Gi / 1 GPU — raise the
@@ -72,7 +96,10 @@ queue:
   # Workload, raises no event, and the Job stays suspended and reads
   # "Queued" for ever. So converter.yaml's `priority_classes` mirrors this
   # list and `htrflow-campaigns validate` refuses a name outside it. An
-  # empty list renders no class at all.
+  # empty list renders no class at all. With createPriorityClasses false the
+  # classes are the cluster's, not this release's, and the list is only the
+  # names converter.yaml must repeat -- they must still exist.
+  createPriorityClasses: true
   priorityClasses:
     - name: htr-interactive
       value: 1000
@@ -143,6 +170,12 @@ security:
   # and then also the default for `verifyImages.imageReferences` — with
   # `policies.enabled: false` this value is documentation only.
   allowedImageRepos: []      # e.g. ["ghcr.io/riksarkivet/", "127.0.0.1:30500/"]
+  # The repositories a campaign or warm-up Job's images may come from, on top
+  # of allowedImageRepos (exact repositories, the part before `@sha256:`).
+  # allowedImageRepos admits every repository the namespace runs, the web
+  # and converter images included; this narrows the converter's Jobs to the
+  # wrapper. Empty = no narrowing. Enforced by the job-shape policy.
+  jobImageRepos: []          # e.g. ["docker.io/riksarkivet/htrflow-batch"]
   # Require a 40-hex `revision:` on every pipeline step's model (HF Hub
   # weights are pickles; an unpinned repo is mutable). Same: enforced by
   # `policies` below.
@@ -200,17 +233,22 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   # charts/htrflow-devstack's pods) loses network access unless it gets its
   # own policy — charts/htrflow-devstack renders one for each of its pods.
   defaultDeny: true
-  # What a batch Job may reach besides DNS and S3: the IIIF origin(s).
-  # Default: lbiiif.riksarkivet.se (a single stable address).
-  # Where Jobs may fetch page images from (80/443): the IIIF origin. Volumes
-  # declared with images: hosted elsewhere (the htr_demo examples on Hugging
-  # Face) need their host here too; "0.0.0.0/0" is the PoC catch-all and still
-  # carves out the cluster, node and apiserver ranges.
-  iiifCidrs: ["192.121.221.27/32"]
-  # S3 endpoint(s) for batch Jobs, besides the always-allowed in-namespace
-  # `app: rustfs` pod (a no-op unless charts/htrflow-devstack's RustFS is
-  # installed). A real endpoint goes here.
+  # Where campaign pods may fetch page images from (80/443): your IIIF
+  # origin(s), by address -- no default, since any address here would be one
+  # site's; an empty list is refused. Volumes declared with images: hosted
+  # elsewhere need their host here too; "0.0.0.0/0" is the catch-all. Every
+  # range here, in s3Cidrs and in apply.gitCidrs loses the internal ranges
+  # that lie inside it (the ones below, link-local and loopback).
+  iiifCidrs: []
+  # S3 endpoint(s) for batch Jobs and the web front's progress reader. A
+  # real endpoint goes here.
   s3Cidrs: []
+  # The results bucket is the in-namespace RustFS of charts/htrflow-devstack:
+  # the batch Job and the web front may reach any `app: rustfs` pod here on
+  # 9000. Off, that rule is not rendered -- any pod carrying the label would
+  # otherwise be a destination -- and s3Cidrs must name the endpoint, since
+  # a campaign pod with no route to S3 fails every volume after its GPU time.
+  s3InNamespace: true
   # Ports those endpoints answer on. A real endpoint is 443; a self-hosted
   # one often is not, and the answer to that is this value rather than a
   # rule with no ports at all. The in-namespace RustFS pod is matched by
@@ -223,15 +261,18 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   # kubeconfig without list-nodes permission.
   clusterCidrs: ["10.42.0.0/16", "10.43.0.0/16"]
   nodeCidrs: []
-  # Also carved out of every catch-all egress, on top of the ranges above
-  # and link-local (169.254.0.0/16, where a cloud serves instance
-  # credentials) and loopback, which are always excluded. The default is the
-  # three private blocks: whatever your cluster sits inside is one of them,
-  # and neither a warm-up nor a batch Job has any business there. A range
-  # listed in iiifCidrs or s3Cidrs stays reachable — it is its own rule.
-  privateCidrs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+  # Also carved out of every egress range that holds one, on top of the
+  # ranges above and link-local (169.254.0.0/16, where a cloud serves
+  # instance credentials) and loopback, which are always excluded. The
+  # default is the three private blocks: whatever your cluster sits inside
+  # is one of them, and neither a warm-up nor a batch Job has any business
+  # there. A range listed in iiifCidrs or s3Cidrs that lies inside one of
+  # them stays reachable — it holds nothing to carve out.
+  # 100.64.0.0/10 is carrier-grade NAT space, which some clouds and overlay
+  # networks hand out as their own internal addresses.
+  privateCidrs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"]
   apiServer:
-    cidr: ""               # e.g. 10.16.51.56/32 — kube-apiserver as reached AFTER service DNAT; required by the read API's NetworkPolicy
+    cidr: ""               # e.g. 192.0.2.56/32 — kube-apiserver as reached AFTER service DNAT; required by the read API's NetworkPolicy
     # Every further API server of an HA control plane (one /32 each): after
     # DNAT a connection may land on any of them. Added to `cidr`; when both
     # are empty, every address of the `kubernetes` Endpoints is looked up.

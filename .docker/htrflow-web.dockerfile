@@ -6,8 +6,9 @@
 # stages 1 and 2 build the two front ends, stage 3 is the Python service that
 # serves them out of /app/static (packages/web, HTRFLOW_WEB_STATIC).
 #
-# Every FROM is tag+digest pinned (audit S7); Renovate tracks them, and the
-# universalviewer4 commit below, from this file.
+# Every FROM is tag+digest pinned (audit S7), and so is the universalviewer4
+# commit below. renovate.json covers both, for when the Renovate app is
+# installed; until then they move by hand.
 #
 # RA hosts intercept TLS, so `git clone` and `npm/bun install` need the corp
 # CA. Pass it as a build secret (`make build-web` does when the file exists):
