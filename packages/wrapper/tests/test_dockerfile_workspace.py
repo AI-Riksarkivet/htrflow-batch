@@ -364,6 +364,9 @@ def test_the_htrflow_base_is_built_from_pinned_inputs() -> None:
     syncs = re.findall(r"^RUN uv sync.*$", text, re.M)
     assert syncs == ["RUN uv sync --locked --no-install-project --no-build"], syncs
     assert "cmp -s - /app/pyproject.toml" in text
+    # htrflow is an installed wheel, so nothing may be put on sys.path by
+    # hand: /app/src is gone, and an empty PYTHONPATH entry is the cwd.
+    assert "PYTHONPATH" not in "\n".join(_logical_lines(text))
 
     # The committed pyproject.toml is htrflow's plus the overlay, and the
     # overlay locks torch per architecture from the right index.
