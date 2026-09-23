@@ -189,12 +189,14 @@ class ReaderLike(Protocol):
     ``NoCluster`` in site-only mode, a fake in the tests. Written down so the
     doubles cannot drift from the real adapter -- a fake that answers with
     one fewer argument passes its own tests and proves nothing about the
-    route (2026-09-14 audit); a test binds every signature below against
-    each of them.
+    route (2026-09-14 audit); a test holds every signature below against
+    each of them, parameter names included.
 
-    ``apply_configmap`` is deliberately absent: site-only mode has no cluster
-    to write to, and ``app.py`` asks for the attribute rather than calling
-    into a 503 on every request.
+    ``apply_configmap`` is part of it like any other call. Left out, with
+    ``app.py`` asking for the attribute instead, a rename of the real one
+    passed every test and silently stopped every status write (2026-09-23
+    audit). Site-only mode answers it with the same 503 as everything else,
+    and never gets that far: its first read already refused.
     """
 
     cfg: Config | None
@@ -205,6 +207,9 @@ class ReaderLike(Protocol):
     def get_configmap(self, namespace: str, name: str) -> dict | None: ...
     def list_configmaps(self) -> list[dict]: ...
     def list_pods(self, namespace: str, job_name: str) -> list[dict]: ...
+    def apply_configmap(
+        self, body: dict, force: bool = False, manager: str = FIELD_MANAGER
+    ) -> None: ...
 
 
 class Reader:
