@@ -949,7 +949,9 @@ def test_outside_a_checkout_the_commit_is_still_unknown(tmp_path, monkeypatch):
     assert cli._git_head(tmp_path) == "unknown"
 
 
-def test_validate_rendered_passes_a_checkout_whose_render_is_committed(tmp_path, capsys):
+def test_validate_rendered_passes_a_checkout_whose_render_is_committed(
+    tmp_path, capsys
+):
     repo = tmp_path / "repo"
     shutil.copytree(GOOD, repo)
     assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0

@@ -207,7 +207,11 @@ def test_the_github_flavour_checks_the_kyverno_tarball_like_the_azure_one():
     that pushes to main."""
     github = yaml.safe_load(_GITHUB.read_text())
     azure = yaml.safe_load(_AZURE.read_text())
-    for key in ("KYVERNO_VERSION", "KYVERNO_SHA256_LINUX_X64", "KYVERNO_SHA256_LINUX_ARM64"):
+    for key in (
+        "KYVERNO_VERSION",
+        "KYVERNO_SHA256_LINUX_X64",
+        "KYVERNO_SHA256_LINUX_ARM64",
+    ):
         assert github["env"][key] == azure["variables"][key], key
     step = next(
         s for s in github["jobs"]["policy"]["steps"]
