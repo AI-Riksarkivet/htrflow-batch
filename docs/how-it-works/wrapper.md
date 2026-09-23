@@ -99,7 +99,11 @@ Every stage name can appear in the termination message.
    from the digest of the URL the manifest gives now. A page stored without
    that metadata is compared with its `page_source_digests` entry in the
    previous `manifest.json` instead. Credentials are taken out of both sides,
-   so a re-signed URL is not a new source image. Because each page carries
+   so a re-signed URL is not a new source image: userinfo, and the query
+   parameters of the common signing schemes (S3 and GCS presigned URLs,
+   Azure SAS, CloudFront signed URLs, Akamai tokens, and plain `token`,
+   `sig`, `signature` and `key`). Every other query parameter still names
+   the image, so a changed `?id=` is a changed source. Because each page carries
    its own record, a page an interrupted attempt redid from a changed source
    stays done on the next attempt. `RESUME=false` forces everything to be
    reprocessed. Every page about to be reprocessed loses its stored PAGE and
