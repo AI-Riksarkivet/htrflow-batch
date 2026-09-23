@@ -389,6 +389,30 @@ def test_the_results_base_is_one_well_formed_source(static_dir, base, source):
     assert csp == f"frame-ancestors 'none'; connect-src 'self' {source}"
 
 
+@pytest.mark.parametrize(
+    "base",
+    [
+        "http://[::1]:9000/htr-results",  # an IPv6 literal
+        "https://s3_bucket.example.org/b",  # `_` is no DNS label character
+        "https://bücher.example.org/b",  # not ASCII
+        "ftp://s3.example.org/b",  # nothing a fetch can use
+        "https://s3.example.org:99999/b",  # no such port
+    ],
+)
+def test_a_results_base_no_csp_source_can_name_does_not_narrow_the_spa(
+    static_dir: Path, base: str
+):
+    """A connect-src built from such a base would be malformed, and a
+    browser drops a source it cannot parse -- leaving `'self'` alone, and
+    every result the page reads blocked. The page is left un-narrowed."""
+    reader = EmptyReader()
+    reader.cfg = SimpleNamespace(public_results_base=base)
+    client = TestClient(create_app(reader, static_dir=static_dir))
+    assert client.get("/log").headers["Content-Security-Policy"] == (
+        "frame-ancestors 'none'"
+    )
+
+
 def test_with_no_results_base_the_spa_is_not_narrowed(static_dir: Path):
     """Site-only mode names no base, and the run log then reads any http(s)
     URL, as it did before there was one -- a connect-src would break that."""
