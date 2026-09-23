@@ -198,6 +198,7 @@ TROCR = {
         "model_settings": {
             "model": "Riksarkivet/trocr-base-handwritten-hist-swe-2",
             "model_kwargs": {"revision": REVISION},
+            "processor_kwargs": {"revision": REVISION},
         },
         "generation_settings": {"batch_size": 8},
     },
@@ -230,6 +231,49 @@ def test_a_key_beside_model_settings_cannot_unpin_the_model(
     verdict, out = admission(tmp_path, policy, pipeline(bypass))
     assert verdict == "refused", out
     assert next(iter(stray)) in out
+
+
+# --- D-6: a Hugging Face model's processor is a second download -----------
+
+
+@pytest.mark.parametrize("loader", ["TrOCR", "WordLevelTrOCR", "Donut", "DiT", "trocr"])
+@pytest.mark.parametrize(
+    "processor_kwargs",
+    [None, {}, {"revision": "main"}],
+    ids=["absent", "empty", "branch"],
+)
+def test_a_processor_loaded_from_the_hub_is_pinned_too(
+    tmp_path: Path, loader: str, processor_kwargs: dict | None
+):
+    """htrflow's TrOCR, WordLevelTrOCR, Donut and DiT load the processor
+    (tokenizer, image processor) with `processor or model` and
+    `processor_kwargs` -- never `model_kwargs`. A pin under model_kwargs
+    alone left the processor on the repo's mutable head. htrflow resolves
+    the loader by its lower-cased name, so the rule does too."""
+    policy = render_policy(tmp_path, "model-revision")
+    model_settings = {
+        "model": "Riksarkivet/trocr-base-handwritten-hist-swe-2",
+        "model_kwargs": {"revision": REVISION},
+    }
+    if processor_kwargs is not None:
+        model_settings["processor_kwargs"] = processor_kwargs
+    step = {
+        "step": "TextRecognition",
+        "settings": {"model": loader, "model_settings": model_settings},
+    }
+    verdict, out = admission(tmp_path, policy, pipeline(step))
+    assert verdict == "refused", out
+    assert "processor_kwargs" in out
+    model_settings["processor_kwargs"] = {"revision": REVISION}
+    verdict, out = admission(tmp_path, policy, pipeline(step))
+    assert verdict == "admitted", out
+
+
+def test_a_loader_without_a_processor_needs_no_processor_pin(tmp_path: Path):
+    """YOLO downloads one weights file; it has no processor to pin."""
+    policy = render_policy(tmp_path, "model-revision")
+    verdict, out = admission(tmp_path, policy, pipeline(YOLO))
+    assert verdict == "admitted", out
 
 
 # --- D-7: a pipeline in binaryData is a pipeline the rule cannot read ------
