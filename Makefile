@@ -179,7 +179,8 @@ DEVSTACK_CHART := charts/htrflow-devstack
 # unless the render says so (B80) -- CHART_NO_POLICY_SETS is the render
 # that does not, and must fail.
 CHART_NO_POLICY_SETS := --set publicResultsBase=https://x/ \
-                       --set network.apiServer.cidr=10.16.51.10/32 \
+                       --set network.apiServer.cidr=192.0.2.10/32 \
+                       --set network.iiifCidrs='{203.0.113.27/32}' \
                        --set network.web.allowPublicIngress=true \
                        --set web.image=docker.io/riksarkivet/htrflow-web@sha256:0000000000000000000000000000000000000000000000000000000000000000
 CHART_DEFAULT_SETS := $(CHART_NO_POLICY_SETS) --set security.policies.allowDisabled=true
@@ -188,11 +189,11 @@ CHART_DEFAULT_SETS := $(CHART_NO_POLICY_SETS) --set security.policies.allowDisab
 # it rendering has to fail here. Its site-specific values are the operator's,
 # so the fixture supplies placeholders for them.
 CHART_PROD_SETS := --set publicResultsBase=https://x/ \
-                       --set network.apiServer.cidr=10.16.51.10/32 \
-                       --set network.web.ingressCidrs='{10.16.0.0/16}' \
-                       --set network.s3Cidrs='{52.95.0.0/16}' \
+                       --set network.apiServer.cidr=192.0.2.10/32 \
+                       --set network.web.ingressCidrs='{198.51.100.0/24}' \
+                       --set network.s3Cidrs='{192.0.2.128/25}' \
                        --set network.clusterCidrs='{10.244.0.0/16,10.96.0.0/12}' \
-                       --set network.iiifCidrs='{192.121.221.27/32}' \
+                       --set network.iiifCidrs='{203.0.113.27/32}' \
                        --set web.image=docker.io/riksarkivet/htrflow-web@sha256:0000000000000000000000000000000000000000000000000000000000000000
 helm-lint:
 	helm lint $(CHART) $(CHART_DEFAULT_SETS)

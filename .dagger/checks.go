@@ -142,7 +142,7 @@ var digestZero = "sha256:" + strings.Repeat("0", 64)
 var prodChartRenders = []chartRender{
 	{name: "default", sets: []string{
 		"publicResultsBase=https://x/",
-		"network.apiServer.cidr=10.16.51.10/32",
+		"network.apiServer.cidr=192.0.2.10/32",
 		// The default ingress list is a catch-all in front of an
 		// unauthenticated NodePort, and the chart refuses to render one
 		// silently. A render fixture says so out loud like any operator.
@@ -155,7 +155,8 @@ var prodChartRenders = []chartRender{
 	// The same render without that sentence: refused, or the guard is gone.
 	{name: "no-policies", sets: []string{
 		"publicResultsBase=https://x/",
-		"network.apiServer.cidr=10.16.51.10/32",
+		"network.apiServer.cidr=192.0.2.10/32",
+		"network.iiifCidrs={203.0.113.27/32}",
 		"network.web.allowPublicIngress=true",
 		"web.image=docker.io/riksarkivet/htrflow-web@" + digestZero,
 	}, refusal: "or set security.policies.allowDisabled=true to accept that"},
@@ -167,12 +168,12 @@ var prodChartRenders = []chartRender{
 	// ones.
 	{name: "prod", values: "values-prod.yaml", sets: []string{
 		"publicResultsBase=https://x/",
-		"network.apiServer.cidr=10.16.51.10/32",
-		"network.web.ingressCidrs={10.16.0.0/16}",
+		"network.apiServer.cidr=192.0.2.10/32",
+		"network.web.ingressCidrs={198.51.100.0/24}",
 		// The profile empties these and refuses to render without them.
-		"network.s3Cidrs={52.95.0.0/16}",
+		"network.s3Cidrs={192.0.2.128/25}",
 		"network.clusterCidrs={10.244.0.0/16,10.96.0.0/12}",
-		"network.iiifCidrs={192.121.221.27/32}",
+		"network.iiifCidrs={203.0.113.27/32}",
 		"web.image=docker.io/riksarkivet/htrflow-web@" + digestZero,
 	}},
 }

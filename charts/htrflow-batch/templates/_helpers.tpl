@@ -85,7 +85,7 @@ network.enabled=false to get at the policy objects alone.
 {{- fail "network.clusterCidrs is empty, so no egress range the chart renders would carve the cluster's own pod and service ranges out of itself: list your cluster's pod and service CIDRs" }}
 {{- end }}
 {{- if not .Values.network.iiifCidrs }}
-{{- fail "network.iiifCidrs is empty, so campaign pods could fetch a page image from nowhere: list your IIIF origins' ranges (0.0.0.0/0 for any origin, which still reaches no internal range)" }}
+{{- fail "network.iiifCidrs is empty and has no default: name the address ranges of the IIIF servers your campaigns fetch page images from, e.g. --set network.iiifCidrs='{<cidr>}' (0.0.0.0/0 admits any origin and still reaches no cluster or private address)" }}
 {{- end }}
 {{- end }}
 {{- if and .Values.network.enabled (not .Values.network.web.allowPublicIngress) (not (or .Values.web.ingress.enabled .Values.network.web.ingressFrom)) }}

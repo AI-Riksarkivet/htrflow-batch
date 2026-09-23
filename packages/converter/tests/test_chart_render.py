@@ -37,7 +37,8 @@ NAMESPACE = "htr-batch"
 #: up. Mirrors the Makefile's CHART_DEFAULT_SETS -- never an install.
 REQUIRED_SETS = (
     "publicResultsBase=https://x/",
-    "network.apiServer.cidr=10.16.51.10/32",
+    "network.apiServer.cidr=192.0.2.10/32",
+    "network.iiifCidrs={203.0.113.27/32}",
     "web.image=docker.io/riksarkivet/htrflow-web@sha256:" + "0" * 64,
 )
 #: The default ingress list is a catch-all, and the chart makes that an
@@ -64,9 +65,10 @@ CLUSTER_CIDRS_REFUSAL = (
     " cluster's pod and service CIDRs"
 )
 IIIF_NOWHERE_REFUSAL = (
-    "network.iiifCidrs is empty, so campaign pods could fetch a page image from"
-    " nowhere: list your IIIF origins' ranges (0.0.0.0/0 for any origin, which"
-    " still reaches no internal range)"
+    "network.iiifCidrs is empty and has no default: name the address ranges of"
+    " the IIIF servers your campaigns fetch page images from, e.g. --set"
+    " network.iiifCidrs='{<cidr>}' (0.0.0.0/0 admits any origin and still"
+    " reaches no cluster or private address)"
 )
 RESULTS_BASE_REFUSAL = (
     "publicResultsBase is required (the read API serves S3 links built from it)"
@@ -253,10 +255,11 @@ def test_a_named_ingress_range_needs_no_opt_out():
     lists the ranges that may reach the web front says enough by listing
     them."""
     rendered = render(
-        sets=REQUIRED_SETS + (POLICIES_OFF, "network.web.ingressCidrs={10.16.0.0/16}")
+        sets=REQUIRED_SETS
+        + (POLICIES_OFF, "network.web.ingressCidrs={198.51.100.0/24}")
     )
     ingress = named(rendered, "NetworkPolicy", "htr-web")["spec"]["ingress"]
-    assert ingress[0]["from"] == [{"ipBlock": {"cidr": "10.16.0.0/16"}}]
+    assert ingress[0]["from"] == [{"ipBlock": {"cidr": "198.51.100.0/24"}}]
 
 
 @pytest.fixture
@@ -292,7 +295,7 @@ def test_an_empty_ingress_list_with_the_opt_in_is_the_catch_all_it_renders(
 
 @pytest.mark.parametrize(
     "cidrs",
-    ["{0.0.0.0/1,128.0.0.0/1}", "{10.16.0.0/16,0.0.0.0/7}", "{64.0.0.0/2}"],
+    ["{0.0.0.0/1,128.0.0.0/1}", "{198.51.100.0/24,0.0.0.0/7}", "{64.0.0.0/2}"],
 )
 def test_a_catch_all_split_into_halves_is_still_a_catch_all(cidrs: str):
     """The guard compared strings, so `0.0.0.0/1` + `128.0.0.0/1` -- every
@@ -478,7 +481,7 @@ def test_ingress_from_refuses_a_selector_that_selects_everything(
 #: the link-local block every cloud serves instance credentials from, and
 #: the three private ranges a VPC is built out of.
 CATCH_ALL_EXCEPT = {
-    "10.16.51.10/32",  # the API server REQUIRED_SETS names
+    "192.0.2.10/32",  # the API server REQUIRED_SETS names
     "10.42.0.0/16",
     "10.43.0.0/16",
     "169.254.0.0/16",
@@ -564,7 +567,6 @@ def test_a_catch_all_split_in_halves_is_carved_out_half_by_half():
     )
     blocks = _blocks(named(rendered, "NetworkPolicy", "htr-batch-job"))
     assert set(blocks["0.0.0.0/1"]) == {
-        "10.16.51.10/32",
         "10.42.0.0/16",
         "10.43.0.0/16",
         "10.0.0.0/8",
@@ -572,6 +574,7 @@ def test_a_catch_all_split_in_halves_is_carved_out_half_by_half():
         "127.0.0.0/8",
     }
     assert set(blocks["128.0.0.0/1"]) == {
+        "192.0.2.10/32",
         "169.254.0.0/16",
         "172.16.0.0/12",
         "192.168.0.0/16",
@@ -611,16 +614,10 @@ def test_a_named_range_inside_a_private_block_is_left_whole():
     their own network: it holds no internal range, so it has nothing to
     carve out and stays reachable. A private block named whole still loses
     the pod and service ranges inside it."""
-    rendered = render(
-        sets=DEFAULT_SETS + ("network.s3Cidrs={10.16.5.5/32,10.0.0.0/8}",)
-    )
+    rendered = render(sets=DEFAULT_SETS + ("network.s3Cidrs={10.9.5.5/32,10.0.0.0/8}",))
     blocks = _blocks(named(rendered, "NetworkPolicy", "htr-batch-job"))
-    assert blocks["10.16.5.5/32"] == []
-    assert set(blocks["10.0.0.0/8"]) == {
-        "10.16.51.10/32",
-        "10.42.0.0/16",
-        "10.43.0.0/16",
-    }
+    assert blocks["10.9.5.5/32"] == []
+    assert set(blocks["10.0.0.0/8"]) == {"10.42.0.0/16", "10.43.0.0/16"}
 
 
 @pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-web"])
@@ -630,7 +627,7 @@ def test_without_in_namespace_s3_no_pod_labelled_rustfs_is_a_route(policy_name: 
     the web front may send to, so a production profile drops the rule."""
     rendered = render(
         sets=DEFAULT_SETS
-        + ("network.s3InNamespace=false", "network.s3Cidrs={52.95.0.0/16}")
+        + ("network.s3InNamespace=false", "network.s3Cidrs={192.0.2.128/25}")
     )
     egress = named(rendered, "NetworkPolicy", policy_name)["spec"]["egress"]
     assert not any(
@@ -638,7 +635,9 @@ def test_without_in_namespace_s3_no_pod_labelled_rustfs_is_a_route(policy_name: 
         for r in egress
         for to in r.get("to", [])
     )
-    assert any({"ipBlock": {"cidr": "52.95.0.0/16"}} in r.get("to", []) for r in egress)
+    assert any(
+        {"ipBlock": {"cidr": "192.0.2.128/25"}} in r.get("to", []) for r in egress
+    )
 
 
 @pytest.mark.parametrize(
@@ -789,7 +788,7 @@ def test_the_apply_pod_can_reach_the_api_server_it_was_given_an_identity_for(
     ]
     api = next(r for r in egress if any("ipBlock" in to for to in r["to"]))
     # ci/full-values.yaml states the endpoint, as `helm template` must.
-    assert api["to"] == [{"ipBlock": {"cidr": "10.16.51.56/32"}}]
+    assert api["to"] == [{"ipBlock": {"cidr": "192.0.2.56/32"}}]
     assert api["ports"] == [{"port": 6443}]
     # Nothing else: it reads its campaigns from a directory, not a network.
     assert len(egress) == 2
@@ -821,10 +820,12 @@ def test_the_apply_identity_reaches_no_git_host_by_default():
 
 
 def test_the_apply_identity_reaches_the_listed_git_host_on_443():
-    rendered = render(sets=DEFAULT_SETS + (APPLY_ON, "apply.gitCidrs={192.0.2.10/32}"))
+    rendered = render(
+        sets=DEFAULT_SETS + (APPLY_ON, "apply.gitCidrs={198.51.100.10/32}")
+    )
     rules = _egress(named(rendered, "NetworkPolicy", "htr-campaigns-apply"))
     assert {
-        "to": [{"ipBlock": {"cidr": "192.0.2.10/32"}}],
+        "to": [{"ipBlock": {"cidr": "198.51.100.10/32"}}],
         "ports": [{"port": 443}],
     } in rules
 
@@ -836,7 +837,7 @@ def test_an_empty_git_port_list_is_refused_not_opened(tmp_path: Path):
     path.write_text("apply:\n  gitPorts: []\n", encoding="utf-8")
     result = helm_template(
         values=str(path),
-        sets=DEFAULT_SETS + (APPLY_ON, "apply.gitCidrs={192.0.2.10/32}"),
+        sets=DEFAULT_SETS + (APPLY_ON, "apply.gitCidrs={198.51.100.10/32}"),
     )
     assert result.returncode != 0
     assert "at '/apply/gitPorts'" in result.stderr
@@ -884,14 +885,14 @@ def test_every_api_server_address_is_let_out(policy_name: str):
         sets=DEFAULT_SETS
         + (
             "apply.rbac.enabled=true",
-            "network.apiServer.cidrs={10.16.51.11/32,10.16.51.12/32}",
+            "network.apiServer.cidrs={192.0.2.11/32,192.0.2.12/32}",
         )
     )
     api = _api_rule(named(rendered, "NetworkPolicy", policy_name))
     assert api["to"] == [
-        {"ipBlock": {"cidr": "10.16.51.10/32"}},
-        {"ipBlock": {"cidr": "10.16.51.11/32"}},
-        {"ipBlock": {"cidr": "10.16.51.12/32"}},
+        {"ipBlock": {"cidr": "192.0.2.10/32"}},
+        {"ipBlock": {"cidr": "192.0.2.11/32"}},
+        {"ipBlock": {"cidr": "192.0.2.12/32"}},
     ]
     assert api["ports"] == [{"port": 6443}]
 
@@ -902,10 +903,10 @@ def test_the_list_alone_is_enough():
     )
     rendered = render(
         sets=sets
-        + (PUBLIC_INGRESS, POLICIES_OFF, "network.apiServer.cidrs={10.16.51.11/32}")
+        + (PUBLIC_INGRESS, POLICIES_OFF, "network.apiServer.cidrs={192.0.2.11/32}")
     )
     api = _api_rule(named(rendered, "NetworkPolicy", "htr-web"))
-    assert api["to"] == [{"ipBlock": {"cidr": "10.16.51.11/32"}}]
+    assert api["to"] == [{"ipBlock": {"cidr": "192.0.2.11/32"}}]
 
 
 def test_no_api_server_address_at_all_is_still_refused():
@@ -952,17 +953,17 @@ def test_auto_detection_reads_every_endpoint_address_and_port(tmp_path: Path):
     endpoints = {
         "subsets": [
             {
-                "addresses": [{"ip": "10.16.51.11"}, {"ip": "10.16.51.12"}],
+                "addresses": [{"ip": "192.0.2.11"}, {"ip": "192.0.2.12"}],
                 "ports": [{"name": "https", "port": 6443, "protocol": "TCP"}],
             },
             {
-                "addresses": [{"ip": "10.16.51.13"}, {"ip": "10.16.51.11"}],
+                "addresses": [{"ip": "192.0.2.13"}, {"ip": "192.0.2.11"}],
                 "ports": [{"name": "https", "port": 6443, "protocol": "TCP"}],
             },
         ]
     }
     assert _from_endpoints(tmp_path, endpoints) == {
-        "cidrs": ["10.16.51.11/32", "10.16.51.12/32", "10.16.51.13/32"],
+        "cidrs": ["192.0.2.11/32", "192.0.2.12/32", "192.0.2.13/32"],
         "ports": [6443],
     }
 
@@ -1059,10 +1060,9 @@ def test_the_image_rules_see_an_ephemeral_container_too(
 #: front. A profile that guessed any of them would be wrong on every
 #: cluster, so they stay the operator's to pass.
 PROD_SETS = REQUIRED_SETS + (
-    "network.web.ingressCidrs={10.16.0.0/16}",
-    "network.s3Cidrs={52.95.0.0/16}",
+    "network.web.ingressCidrs={198.51.100.0/24}",
+    "network.s3Cidrs={192.0.2.128/25}",
     "network.clusterCidrs={10.244.0.0/16,10.96.0.0/12}",
-    "network.iiifCidrs={192.121.221.27/32}",
 )
 
 
@@ -1301,7 +1301,7 @@ BATCH_GUARDS = {
     "ingress-wider-than-8": (
         None,
         REQUIRED_SETS
-        + (POLICIES_OFF, "network.web.ingressCidrs={10.16.0.0/16,8.0.0.0/7}"),
+        + (POLICIES_OFF, "network.web.ingressCidrs={198.51.100.0/24,8.0.0.0/7}"),
         "network.web.ingressCidrs has 8.0.0.0/7, wider than /8, and the web"
         " front has no authentication of its own: list the ranges your clients'"
         " addresses are in, or set network.web.allowPublicIngress=true to accept"
@@ -1368,8 +1368,8 @@ BATCH_GUARDS = {
         CLUSTER_CIDRS_REFUSAL,
     ),
     "iiif-empty": (
-        "network:\n  iiifCidrs: []\n",
-        DEFAULT_SETS,
+        None,
+        tuple(s for s in DEFAULT_SETS if not s.startswith("network.iiifCidrs=")),
         IIIF_NOWHERE_REFUSAL,
     ),
 }

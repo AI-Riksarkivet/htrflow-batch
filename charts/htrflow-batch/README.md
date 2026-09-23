@@ -104,6 +104,7 @@ first, then the hook images.
 
 | Change | What to do |
 |---|---|
+| **`network.iiifCidrs` has no default any more** (it named one institution's IIIF server), and an empty list is refused. | Pass your IIIF origins' ranges: `--set network.iiifCidrs='{<cidr>}'`. |
 | **`values-prod.yaml` empties `network.s3Cidrs`, `network.clusterCidrs` and `network.iiifCidrs` and refuses to render without them**, as its header always said it did; it also sets **`network.s3InNamespace: false`**, so no pod labelled `app: rustfs` is a route. An empty `network.clusterCidrs` or `network.iiifCidrs` is refused on any values file, and so is an empty `network.s3Cidrs` with `s3InNamespace: false`. | Pass your S3 endpoint's, your cluster's pod and service, and your IIIF origins' ranges with `--set`, as the deploy page's install command does. |
 | **`job-shape`, a new policy with `security.policies.enabled`.** A campaign Job may read only `s3.existingSecret`, a warm-up Job only `hfToken.existingSecret` (new, default empty), both only the `modelCache.name` PVC, with no ServiceAccount token and the converter's commands. | If `converter.yaml` sets `hf_token_secret`, set `hfToken.existingSecret` to the same name, or the warm-up is refused. Keep `s3_secret` and `data_pvc` equal to `s3.existingSecret` and `modelCache.name`, as before. |
 | **`rbac-scope` holds the apply identity's Workload patches** to `spec.active`, on the Workload of a converter-labelled Job. | Nothing, unless something else uses the `htrflow-campaigns` ServiceAccount on Workloads. |

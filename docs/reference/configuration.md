@@ -229,7 +229,7 @@ skeleton, never as a campaign setting.
 | `security.verifyImages.rekorUrl` | `values.yaml` | `https://rekor.sigstore.dev` | — | enforced by a Kyverno ClusterPolicy — cluster |
 | `network.enabled` | `values.yaml` | `true` | — | no secret — nobody |
 | `network.defaultDeny` | `values.yaml` | `true` | — | no secret — nobody |
-| `network.iiifCidrs` | `values.yaml` | `[192.121.221.27/32]` | — | no secret — nobody |
+| `network.iiifCidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `network.s3Cidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `network.s3InNamespace` | `values.yaml` | `true` | — | no secret — nobody |
 | `network.s3Ports` | `values.yaml` | `[443]` | — | no secret — nobody |
