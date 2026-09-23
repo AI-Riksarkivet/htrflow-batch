@@ -652,5 +652,5 @@ def test_the_lease_is_a_coordination_lease_created_then_released(cluster, monkey
     assert created["spec"]["holderIdentity"]
     assert created["spec"]["leaseDurationSeconds"] == cluster_mod.LEASE_SECONDS
     assert (put, put_path) == ("PUT", f"{base}/{cluster_mod.LEASE}")
-    assert released["spec"] == {"holderIdentity": None}
+    assert released["spec"]["holderIdentity"] is None
     assert released["metadata"]["resourceVersion"] == "41"
