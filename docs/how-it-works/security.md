@@ -18,19 +18,14 @@ and optional signature verification), the pod posture, and the
 NetworkPolicies described below. Give the campaigns repo the same care as CI
 configuration.
 
-With the Argo CD hook ([The hook manifest](../reference/campaign-yaml.md#the-hook-manifest))
+With the Argo CD hook ([htrflow-campaigns CLI](../reference/cli.md))
 the boundary is wider. Argo CD syncs `argocd/*.yaml` from the campaigns
-repo, so its writers also write the hook Job's whole pod spec: which
-ServiceAccount it runs as, which Secrets in the namespace it mounts (the
-bucket's write credentials, the Hugging Face token, the git token) and what
-it runs. The image policies do not bound that. They check which image a pod
-runs, not what the manifest tells it to do, and the hook's own clone step is
-`python -c` with a script from the manifest: any allowed image with an
-interpreter runs whatever code the manifest gives it. The chart's job-shape
-policy does not reach it either: that policy holds campaign and warm-up Jobs
-and whatever the apply identity creates, and Argo CD creates the hook Job
-under its own identity. So closing this is a requirement of running the
-hook, not an option, and it takes one or more of:
+repo, so its writers also write the hook Job's whole pod spec: its
+ServiceAccount, the Secrets it mounts (bucket credentials, Hugging Face
+token, git token) and what it runs. Neither the image policies (they check
+which image runs, not what it is told to do) nor the job-shape policy (Argo
+CD creates the hook under its own identity) bound that. So closing this is a
+requirement of running the hook, and it takes one or more of:
 
 - **Review on the repo**: branch protection with required review on the
   campaigns repo, and a required reviewer from the platform's operators for
@@ -53,68 +48,44 @@ container can read it.
 
 The converter renders in the campaigns repo's CI. In the cluster it runs
 only in the hook's Job: `validate --rendered`, which refuses a checkout whose
-`rendered/` is not its own render, and then `apply`, which sends that render
-to the API server like any other client and only into the namespace the
-hook runs in. That makes Kyverno the admission step
-between a merged commit and a running pod. When `security.policies.enabled`
-is set, the chart ships `ClusterPolicy` objects, and the API server applies
-them to every Job, Pod and pipeline ConfigMap in the namespace, whoever wrote
-it. The campaigns repo's CI can run the same policies over its rendered output
-with the Kyverno CLI, so a bad change fails in the pull request, not at apply
-time. The two image rules apply to every Job and Pod, and on a Pod they
-cover the ephemeral containers a debugging session attaches as well as the
-ones it was created with. They also cover image volumes
-(`volumes[].image.reference`): the kubelet pulls one like a container image,
-over the node's network rather than the pod's, and mounts whatever it holds
-— model weights included — so it has to come from an allowed repository,
-pinned by digest, and signed when signatures are verified. The revision rule
-applies to every ConfigMap carrying a `pipeline.yaml` key — that key is what
-makes a ConfigMap a pipeline, where a label is only a claim about one — and
-reads the top-level `steps:` in it.
+`rendered/` is not its own render, and then `apply`, into the hook's own
+namespace. That makes Kyverno the admission step between a merged commit and
+a running pod. With `security.policies.enabled`, the API server applies the
+chart's `ClusterPolicy` objects to every Job, Pod and pipeline ConfigMap in
+the namespace, whoever wrote it, and the campaigns repo's CI can run the same
+policies over `rendered/` with the Kyverno CLI. The image rules also cover
+ephemeral containers and image volumes (`volumes[].image.reference`), which
+the kubelet pulls like a container image and which can carry model weights.
+The revision rule applies to every ConfigMap with a `pipeline.yaml` key.
 
-Admission is also where the platform's own identities are scoped. RBAC
-grants a verb over a resource *type* and has no way to name one object, so
-two grants the code needs are necessarily wider than the code: the read
-API's `create`/`patch` on ConfigMaps, and the apply identity's `create`,
-`patch` and `delete` on Jobs and ConfigMaps. The `rbac-scope` policy narrows both by matching on the
-requesting ServiceAccount, which only the API server can see. It runs with
-`background: false`, because a background scan replays stored objects with
-no requester to match.
-
-Some checks in `apply` are about correctness, not trust. The
-finished-campaign check believes a status record only when it names the uid
-of the Job the apply created: that guards against a stale record from an
-earlier run under the same name, not against a forged one, since anything
-that can read the Job's uid and write the record can name it. What bounds
-who writes status records is the RBAC and the `rbac-scope` policy above.
+RBAC grants a verb over a resource *type*, not one object, so two grants are
+wider than the code needs: the read API's `create`/`patch` on ConfigMaps, and
+the apply identity's `create`, `patch` and `delete` on Jobs and ConfigMaps.
+The `rbac-scope` policy narrows both by matching on the requesting
+ServiceAccount (`background: false`, since a background scan has no
+requester to match).
 
 | Control | Where | What it closes |
 |---|---|---|
-| **Digest pin**: `security.policies.enabled` | Kyverno `ClusterPolicy` `htrflow-batch-images-pinned-<namespace>`, at admission for every Job and Pod in the namespace, and in the campaigns repo's CI through the Kyverno CLI. Message: `image must be pinned by digest: <image>` | A mutable tag changing what a pipeline id means. `htrflow-campaigns validate` also refuses a pipeline whose `image:` is not `@sha256:`-pinned, because the renderer needs the digest, but it only sees what it renders |
-| **Image allow-list**: `security.allowedImageRepos` (with `policies.enabled`) | Kyverno `ClusterPolicy` `htrflow-batch-images-allowed-<namespace>`, in the same two places. Message: `image is not from an allowed repository: <image> — allowed: <list>` | Images from any registry. With an empty list the policy is not rendered and nothing is checked. The match is a prefix on a path boundary, so an organisation-wide prefix admits every repository in that organisation, including one created after you wrote the list — name the exact repositories if that organisation has more writers than this platform does |
-| **Model revision**: `security.requireModelRevision` (with `policies.enabled`) | Kyverno `ClusterPolicy` `htrflow-batch-model-revision-<namespace>`, at admission of any ConfigMap with a `pipeline.yaml` key, and in the CLI. Message: `models not pinned to a revision: <models> — add revision: <40-character commit hash> under model_settings (YOLO) or model_settings.model_kwargs (TrOCR and other Hugging Face models, which also need it under model_settings.processor_kwargs)`. TrOCR, WordLevelTrOCR, Donut and DiT load their processor (tokenizer, image processor) as a second download with `processor_kwargs`, so for those loaders the policy also requires a 40-hex `model_settings.processor_kwargs.revision`. Message: `processors not pinned to a revision: <models> — …`. The same policy refuses any key beside `model_settings` in a step that loads a model (only `model`, `model_settings` and `generation_settings` may sit under its `settings`), because htrflow merges such a key over `model_settings`: a `revision: null` there would unpin the model the rule just checked. Message: `settings beside model_settings in a step that loads a model: <step>: <keys>`. A pipeline carried under `binaryData` is refused as well, since the rule reads only `data`: no ConfigMap may carry a binary `pipeline.yaml`, and an `htr-pipeline-*` ConfigMap no `binaryData` at all. `htrflow-campaigns validate` refuses the same shape. The wrapper checks it a third time, whether or not the policies are on: the warm-up and the batch Job apply htrflow's merge to the parsed YAML before building anything, and a 40-hex pin written under `model_settings` — `revision`, `model_kwargs.revision` or `processor_kwargs.revision` — that the merge replaces with anything else, another commit included, is exit 13 with `step <n> (<Step>): model <repo> does not load its pinned revision — …`. A model pinned nowhere is left to this policy | An unpinned Hugging Face repo swapping its weights under the same pipeline id |
-| **Write scope of a ServiceAccount**: `security.policies.enabled` | Kyverno `ClusterPolicy` `htrflow-batch-rbac-scope-<namespace>`, at admission, on every ConfigMap write by the web ServiceAccount. Message: `the read API may only write a campaign's own status ConfigMap (campaign-<name>-status), not <name>` | The read API using a Role that cannot be scoped to one object name to overwrite a pipeline ConfigMap, and so choose the weights the next campaign loads |
-| **Write and delete scope of the apply identity**: `security.policies.enabled` with `apply.rbac.enabled` | Kyverno `ClusterPolicy` `htrflow-batch-rbac-scope-<namespace>`, at admission, on every Job or ConfigMap the apply ServiceAccount creates, updates or deletes. The object it writes must carry the converter's `managed-by` label, and so must the object an update or a delete replaces. Messages: `the apply identity may only write objects labelled …`, `the apply identity may not take over an object the converter did not render …`, `the apply identity may only delete objects the converter rendered …`. On a Kueue Workload it may change `spec.active` and nothing else, and only on the Workload of a Job carrying the converter's label, which the policy looks up at admission. Message: `the apply identity may only pause or resume (spec.active) the Workload of a Job the converter rendered` | A pruning identity reaching a Job or ConfigMap it never rendered — a running campaign's, or another workload's in the same namespace — either directly or by first writing the label the delete rule trusts onto it. Its `patch` on Workloads reaching another workload's queue, or any field but the pause |
-| **Job shape**: `security.policies.enabled`, with `s3.existingSecret`, `hfToken.existingSecret`, `modelCache.name` and `security.jobImageRepos` | Kyverno `ClusterPolicy` `htrflow-batch-job-shape-<namespace>`, at admission of every Job created in the namespace that carries the converter's `managed-by` label or a campaign or warm-up pod label (`app: htrflow-batch`, `app: htrflow-warmup`), whoever creates it, and of every Job the apply identity creates or updates; and in the CLI. A campaign Job may read only the S3 Secret and mounts the model cache read-only; a warm-up Job, named `htr-warmup-*`, may read only the Hub token Secret and never the S3 one. Both run as the namespace default ServiceAccount with no token, mount only ConfigMap, Secret, PVC and emptyDir volumes (the one PVC is the model cache), run the converter's containers and scripts with no probe or lifecycle hook, carry exactly the converter's env vars (its fixed values pinned, so no `PATH`, `LD_PRELOAD` or `PYTHONPATH` of anyone's choosing), mounts, file modes and securityContexts (a `subPath` only on the model-cache mount, where the converter narrows it to the pipeline's own directory), and read their pipeline from `/config/pipeline.yaml`, mounted whole from an `htr-pipeline-*` ConfigMap. A toleration with `operator: Exists` and no key is refused, and so are host namespaces; `validate` also refuses a toleration for a control-plane taint. A `campaign-*` ConfigMap may hold only `volumes.txt` and an `htr-pipeline-*` one only `pipeline.yaml`, with no `binaryData`, whoever writes them: every key would be a file in the pod. Messages: `not a Job the converter renders: …`, `not a batch Job as the converter renders it: …`, `not a warmup Job as the converter renders it: …`, each listing what is wrong. The scripts are compared character for character, so the chart and the converter must come from the same release | A stolen apply token running a pod of its own choosing — another command, the web identity, the S3 credentials in the pod that reaches the internet, or the warm-up label that opens that route. A `converter.yaml` whose `hf_token_secret`, `s3_secret` or `data_pvc` names another Secret or volume, such as the git token. A pipeline read from somewhere the model-revision rules never looked |
-| **Signed images**: `security.verifyImages.*` (Kyverno `ClusterPolicy`, cosign keyless) | At admission, for every Pod in the namespace, its image volumes included. The rule reads Sigstore bundles (`type: SigstoreBundle`), the form cosign 3 signs in: attached to the image as an OCI referrer, with no `.sig` tag beside it. CI runs this rule, as the production profile renders it, against the published digests the repository pins, through the Kyverno CLI and the real registry (`dagger call verify-published`), on every change and weekly | Images not built by the CI identity you name. Off by default. Needs the image to be signed at publish time ([CI](../development/ci.md)) |
+| **Digest pin**: `security.policies.enabled` | Kyverno `htrflow-batch-images-pinned-<namespace>`, at admission for every Job and Pod, and in CI | A mutable tag changing what a pipeline id means. `validate` also refuses an `image:` that is not `@sha256:`-pinned |
+| **Image allow-list**: `security.allowedImageRepos` | Kyverno `htrflow-batch-images-allowed-<namespace>`, in the same places. An empty list renders no policy | Images from any registry. The match is a path prefix, so an organisation-wide prefix admits every repository in it; name exact repositories when that organisation has other writers |
+| **Model revision**: `security.requireModelRevision` | Kyverno `htrflow-batch-model-revision-<namespace>`, on any ConfigMap with a `pipeline.yaml` key, and in CI; `validate` and the wrapper check the same shape ([Pipeline file](../reference/campaign-yaml.md)) | An unpinned Hugging Face repo swapping its weights, or its processor's, under the same pipeline id |
+| **Read API write scope**: `security.policies.enabled` | Kyverno `htrflow-batch-rbac-scope-<namespace>`, on every ConfigMap write by the web ServiceAccount | The read API overwriting a pipeline ConfigMap, and so choosing the weights the next campaign loads |
+| **Apply identity scope**: `security.policies.enabled` with `apply.rbac.enabled` | The same policy, on every Job or ConfigMap the apply ServiceAccount writes or deletes (it must carry the converter's `managed-by` label, before and after), and on Workloads (only `spec.active`, only on a converter Job's Workload) | A pruning identity reaching an object it never rendered, or patching any Workload field but the pause |
+| **Job shape**: `security.policies.enabled` | Kyverno `htrflow-batch-job-shape-<namespace>` (`charts/htrflow-batch/templates/policies/_job-shape.tpl`), on every converter-labelled or campaign/warm-up-labelled Job and every Job the apply identity writes, and in CI. A Job must match the converter's render exactly, so the chart and the converter must come from the same release. It also refuses a keyless `operator: Exists` toleration and host namespaces, and any key but `volumes.txt` / `pipeline.yaml` in the converter's ConfigMaps | A stolen apply token running a pod of its own choosing, a `converter.yaml` naming another Secret or volume, or a pipeline read from where the revision rule never looked |
+| **Signed images**: `security.verifyImages.*` (cosign keyless, Sigstore bundles) | Kyverno, at admission for every Pod, image volumes included. CI runs the rule against the published digests ([CI](../development/ci.md)) | Images not built by the CI identity you name. Needs the image signed at publish time |
 | **Control-plane digest gate**: `web.image` must be `@sha256:`-pinned unless `security.allowTagImages` is set | The chart template | Anyone with push access to the registry replacing the web front in place |
-| **http(s)-only sources, byte caps, redirect caps** | `parse_pipeline`/`parse_campaign`, and the wrapper (`MANIFEST_MAX_BYTES`, `FETCH_MAX_BYTES` counted after decoding with only `gzip` accepted, a wall-clock `DOWNLOAD_DEADLINE_SECONDS` per download, at most 5 redirects, raster images only) | SSRF and denial of service driven by campaign data |
+| **http(s)-only sources, byte caps, redirect caps** | `parse_pipeline`/`parse_campaign`, and the wrapper ([From image to transcription](page-flow.md#the-width-capped-get)) | SSRF and denial of service driven by campaign data |
 | **No runtime path to the campaigns repo**, except the Argo CD hook's | The campaigns repo's own CI, outside this system; with the hook, the chart's `apply.gitCidrs` egress rule and the `htrflow-campaigns-git` Secret | Without the hook, nothing in the cluster clones the campaigns repo or holds a credential for it. With it, only the hook pod does: a read-only token from a Secret, and egress to the git host alone |
-| **URL redaction** | Wrapper logs, the warm-up's logs, the termination log, `page_sources`, and the problem lines `validate` prints (userinfo, and a signing query parameter such as `X-Amz-Signature`, `X-Amz-Security-Token`, `X-Amz-Credential`, `signature`, `token`, `sig` or `key`) | A tokenised private IIIF URL ending up in a world-readable log or a pull request comment. It does **not** hide the URL itself — see [Source URLs are not secrets](#source-urls-are-not-secrets) |
+| **URL redaction** | Wrapper and warm-up logs, the termination log, `page_sources`, and `validate`'s problem lines: userinfo and signing query parameters are removed | A tokenised private IIIF URL ending up in a world-readable log or a pull request comment. It does **not** hide the URL itself — see [Source URLs are not secrets](#source-urls-are-not-secrets) |
 
 These policies are all off by default (`security.policies.enabled: false`),
-because a policy nothing reconciles is worse than none. Off has to be said,
-though: the chart refuses to render with the policies off unless
-`security.policies.allowDisabled` is also set. They are the only
-thing that enforces the image allow-list and the model-revision rule. A rule
-inside the converter would only ever see what the converter rendered, and a
-Job made by hand would get straight past it. So if the policies stay
-disabled, or are enabled in a cluster without Kyverno, any registry and any
-unpinned model is admitted. Without Kyverno, the one check left is on the
-*shape* of a pipeline's `image:`, which `htrflow-campaigns validate` still
-makes. `make install-kyverno` installs Kyverno for a dev cluster. Newer
-Kyverno releases deprecate the `kyverno.io` `ClusterPolicy` kind in favour of
-the CEL-based `ValidatingPolicy`. The chart still ships `ClusterPolicy`.
+because a policy nothing reconciles is worse than none, and the chart refuses
+to render with them off unless `security.policies.allowDisabled` says so
+([Deploy](../getting-started/deploy.md) has the switch). They are the only
+thing that enforces the allow-list and the revision rule: with them off, or
+without Kyverno, any registry and any unpinned model is admitted, and only
+`validate`'s check on the shape of `image:` remains.
 
 Beyond admission, the posture and policies below bound what a pod can do. It
 runs as non-root, with no capabilities, a read-only root filesystem and a
@@ -129,7 +100,7 @@ keys they may read. Listing is never allowed.
 
 | Keys | Anonymous read |
 |---|---|
-| `[<namespace>/]<pipeline>/<volume>/*` (results, `iiif.json`, `manifest.json`, `progress.json`), `sources/*` | Always. The browser fetches these directly from the results base, never through the platform |
+| `[<namespace>/]<pipeline>/<volume>/*` (results, `iiif.json`, `manifest.json`, `progress.json`), `[<namespace>/]sources/*` | Always. The browser fetches these directly from the results base, never through the platform |
 | `status/logs/*` (run logs) | Only if your policy allows it. The campaign browser links to run logs, but a log can carry the redacted form of a private IIIF URL and anything htrflow prints. Keep them private once the run-log view sits behind an authenticated proxy |
 
 That is the complete list. `status/logs/<pipeline>/<volume>.txt` is the only
@@ -161,13 +132,9 @@ can read the repo, everyone who can read the namespace, and everyone who can
 read the results.
 
 Treat a source URL as public. If the source needs a credential, give it one
-the platform holds — not one written into the URL — or accept that the URL
-is as public as the campaigns repo. What the converter does do is keep a
-credential out of the *problem lines* it prints: a URL echoed back in a
-validation error loses its userinfo and the value of a signing query
-parameter, because those lines travel further than the file does (into CI
-logs and pull request comments). That is redaction of the echo, not of the
-stored value.
+the platform holds, not one written into the URL. The converter redacts a URL
+only when it echoes one back in a problem line (CI logs, pull request
+comments), never the stored value.
 
 ### Who holds S3 credentials
 
@@ -183,17 +150,10 @@ covers the bucket.
 
 ### Who holds a Hugging Face token
 
-Nobody, unless a pipeline needs one. A private or gated model is downloaded
-by the warm-up pod, which is the only pod with egress to the Hub, and the
-only pod that can hold the token: `converter.yaml`'s `hf_token_secret` names
-a Secret with a `token` key, and the converter renders it as `HF_TOKEN` on
-the warm-up container alone
-([The model cache](wrapper.md#the-model-cache)). The token needs **read**
-scope and nothing more. Campaign pods get neither the env nor the Secret
-name — they run `HF_HUB_OFFLINE=1` against the filled cache — so the
-credential never reaches the long-lived pod that runs model code over
-fetched images. No chart template creates or reads this Secret; it is the
-operator's object, like the S3 one.
+Nobody, unless a pipeline needs one. Then only the warm-up pod, the one pod
+with egress to the Hub, gets it as `HF_TOKEN`, with **read** scope; campaign
+pods run `HF_HUB_OFFLINE=1` and never see it. The Secret is the operator's
+object ([Deploy](../getting-started/deploy.md#hugging-face-token-for-a-private-model)).
 
 ## Pod security posture
 
@@ -226,21 +186,15 @@ data volume.
   execs. The web front gets an emptyDir at `/tmp`.
 - **Service account tokens.** `automountServiceAccountToken: false` is set
   on every pod except the **web front**. It is the one pod that needs an API
-  credential: a namespace-scoped Role, nothing cluster-wide. It reads `jobs`,
-  `pods` and `configmaps` — and it is no longer only a reader. It also holds
-  `create` and `patch` on ConfigMaps, because the per-campaign status record
-  it writes is what still answers for a campaign once the Job behind it is
-  past its TTL
-  ([The record a campaign leaves](campaigns.md#the-record-a-campaign-leaves)). RBAC cannot scope a verb to one object name, so that grant
-  covers every ConfigMap in the namespace; the name scope is the `rbac-scope`
-  policy above instead. The web front is also the pod browsers reach, and it
-  has no authentication of its own. Remote code execution in that process
-  would read the token and could then write ConfigMaps as far as admission
-  allows: one campaign's status object with the policies on, any ConfigMap in
-  the namespace — the pipelines a Job mounts included — without them. So the
-  web front belongs behind an authenticated proxy before anyone outside a
-  trusted network can reach it, and `security.policies.enabled` counts for
-  more now that this pod writes at all.
+  credential: a namespace-scoped Role that reads `jobs`, `pods` and
+  `configmaps` and may `create` and `patch` ConfigMaps, for the per-campaign
+  status record ([The record a campaign leaves](campaigns.md#the-record-a-campaign-leaves)).
+  The name scope on that grant is the `rbac-scope` policy. The web front has
+  no authentication of its own, and code execution in it could write
+  ConfigMaps as far as admission allows: one status object with the policies
+  on, any ConfigMap (pipelines included) without them. So it belongs behind
+  an authenticated proxy before anyone outside a trusted network can reach
+  it, with `security.policies.enabled` on.
 - **Secrets are files, not environment variables.** The S3 Secret's
   `credentials` key (AWS ini format) is mounted at `/secrets/s3` (mode `0440`)
   and reaches boto3 through `AWS_SHARED_CREDENTIALS_FILE`. Only the non-secret
@@ -250,16 +204,10 @@ data volume.
   it is confined to the warm-up pod, which mounts no S3 Secret, holds no
   campaign data and exits when its download is done.
 - **The model cache is read-only for campaign pods, and split by recipe.**
-  They mount the cache PVC `readOnly` and run with `HF_HUB_OFFLINE=1`. The
-  per-pipeline warm-up pod is the only writer
-  ([The Wrapper](wrapper.md#the-model-cache)), so a compromised campaign pod
-  cannot poison the weights that every later run loads. Each recipe has a
-  directory of its own on the volume, `<pipeline>-<recipe sha256>`, and every
-  mount of the PVC is narrowed to it with a `subPath`: a warm-up runs its
-  pipeline author's model code (a YOLO `.pt` file is a pickle), so it can
-  write only its own recipe's directory, and no other pipeline's campaign
-  pods read what it wrote. Two pipelines that load the same model keep a
-  copy each.
+  The warm-up is the only writer, so a compromised campaign pod cannot
+  poison later runs' weights, and each recipe's directory is mounted alone
+  (`subPath`), so one pipeline's model code (a YOLO `.pt` file is a pickle)
+  cannot touch another's ([The Wrapper](wrapper.md#the-model-cache)).
 
 `security.psaEnforce` defaults to `baseline`. Every pod in `htrflow-batch`,
 and every campaign and warm-up pod, is restricted-clean, so `restricted` also
@@ -363,15 +311,9 @@ wider internet should all be refused.
 
 ## Cache PVC ownership
 
-The warm-up pod runs as uid 1000 and writes into the model cache PVC.
-`fsGroup: 1000` normally makes a fresh volume writable. Some provisioners,
-hostPath-based local provisioners among them, do not apply `fsGroup`. On
-those, a volume that anything wrote as root stays root-owned, and the warm-up
-fails when it tries to write. The fix is to run `chown -R 1000:1000` over the
-PVC once, from a throwaway pod, before the first warm-up, or to start with a
-fresh PVC. The devstack registry's data PVC has the same problem, and the
-registry's root `fix-ownership` init container (above) re-chowns that PVC on
-every start.
+The warm-up writes the cache as uid 1000. On a provisioner that ignores
+`fsGroup`, the PVC needs a one-time `chown` first
+([Deploy](../getting-started/deploy.md#model-cache)).
 
 ## devstack caveats
 

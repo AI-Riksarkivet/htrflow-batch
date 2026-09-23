@@ -13,7 +13,6 @@ Failure handling has two layers and one authority:
 
 ![One index: queued, running, then done, a retry that resumes, or a failed index; a pod disruption replaces the pod without charging a retry](../assets/diagrams/index-failure.svg)
 
-
 A `failed_index` appears in the Job's `failedIndexes` field and as
 `state: "failed"` on the read API's volume row. The wrapper's termination
 message appears as the row's `reason` for as long as the pod that produced it
@@ -25,11 +24,9 @@ through Kueue ([Queueing](queueing.md#failure-interplay)).
 ## Invariants
 
 - **Done means verified means `manifest.json` exists** (per pipeline id).
-  An exit code alone is never trusted. htrflow's own CLI submits pages to a
-  thread pool without collecting the futures, so a page that throws can vanish
-  while the process still exits 0. The wrapper runs each page itself and keeps
-  its outcome. After the loop it also lists `page/` and `alto/`, and publishes
-  the marker only when every page is accounted for.
+  An exit code alone is never trusted: the wrapper keeps each page's outcome,
+  lists `page/` and `alto/` after the loop, and publishes the marker only
+  when every page is accounted for.
 - **Retries converge.** A resumed run skips pages that already have both
   files and were made from the source image the page has now (per the
   `source-digest` each page's ALTO carries). Every other page loses its
@@ -42,61 +39,38 @@ through Kueue ([Queueing](queueing.md#failure-interplay)).
   fails deterministically fails the same way on every retry. Failing the whole
   volume for it would leave the bucket with the good pages and no marker to
   open them.
-- **Two cases still fail the volume.** The first is a page **missing** from
-  the results: neither uploaded nor recorded as failed. That is a page whose
-  upload the store would not take after its retries, or a page the IIIF
-  source could not serve during this attempt (a network error, a 429 or 5xx,
-  the download deadline). Both are *deferred* to the next attempt, and a
-  retry converges on them. The second is a run where every page it
-  processed failed and nothing was resumed, which points to a broken model or
-  a dead GPU. Both report their page lists in the termination message.
+- **Two cases still fail the volume.** A page **missing** from the results
+  (neither uploaded nor recorded as failed, usually a download or upload
+  *deferred* to the next attempt), and a run where every processed page
+  failed and nothing was resumed. Both are transient and report their page
+  lists in the termination message.
 - **The last attempt does not defer.** A page still deferred on the index's
-  last attempt is recorded as failed instead, with the reason and
-  `(still failing on the index's last attempt)`: a file the image server
-  answers 500 for every time would otherwise fail the index and leave every
-  other page without its completion marker. The wrapper knows which attempt
-  it is on from the Job: the pod's index-failure-count annotation and the
-  Job's `backoffLimitPerIndex`, which the converter renders into its
-  environment.
+  last attempt is recorded as failed instead, with
+  `(still failing on the index's last attempt)`, so one page the source never
+  serves cannot cost the others their completion marker.
 - **A campaign is append-only.** `completions` is fixed at creation from the
-  volume list. Nothing can add volumes to a running campaign, and a new
-  campaign file is the only way to add them
-  ([Campaigns](campaigns.md#campaign-file)).
+  volume list, and a new campaign file is the only way to add volumes
+  ([Campaign & Pipeline YAML](../reference/campaign-yaml.md#immutability)).
 
 ## The Job contract
 
-`render._campaign_job` renders the Job. The full rendered object is in
-[Campaigns → A worked example](campaigns.md#a-worked-example).
+`render._campaign_job` renders the Job. The fields that decide what a
+failure costs are below; the full rendered object is in
+[Rendered objects](../reference/rendered.md).
 
 | Field | Value | Why |
 |---|---|---|
-| `completionMode` | `Indexed` | One index per volume. `$JOB_COMPLETION_INDEX` selects the `volumes.txt` line a pod runs |
-| `completions` | the number of volumes in the campaign | Fixed at render time, which is what makes a campaign append-only |
-| `parallelism` | `min(campaign window, converter.yaml window)` | How many volumes run at once, subject to Kueue's quota |
-| `backoffLimitPerIndex` | `3` | The per-index retry budget. It is Kubernetes' own bookkeeping, so there is nothing to reconcile |
+| `backoffLimitPerIndex` | `3` | The per-index retry budget, kept by Kubernetes, so there is nothing to reconcile |
 | `maxFailedIndexes` | equal to `completions` | A campaign never stops early because of failures. Every index gets its own verdict |
-| `podFailurePolicy` | `Ignore` on pod condition `DisruptionTarget`. `FailIndex` on container `wrapper` exit 13. `FailIndex` on init container `warmup-wait` exit 13 | A node drain, preemption or eviction replaces the pod without failing the index or charging a retry. Exit 13 fails the index at once. Exit 143 (SIGTERM) matches no rule, so it is retried like exit 1. Rules apply in order, so `Ignore` stays first |
-| `ttlSecondsAfterFinished` | `converter.yaml`'s `ttl_seconds_after_finished`, or the pipeline's own | The campaign Job stays inspectable that long after its last index finishes, then cleans itself up. By then the wrapper has put everything durable in S3, and the campaign's own ConfigMaps — which have no TTL — keep the record ([The record a campaign leaves](campaigns.md#the-record-a-campaign-leaves)) |
-| `terminationGracePeriodSeconds` | `120` | Covers the wrapper's SIGTERM path, whose final log upload has a budget of its own below it (see below) |
+| `podFailurePolicy` | `Ignore` on `DisruptionTarget`, then `FailIndex` on exit 13 from `wrapper` or `warmup-wait` | A drain, preemption or eviction replaces the pod without charging a retry. Exit 143 matches no rule, so it is retried like exit 1 |
+| `terminationGracePeriodSeconds` | `120` | Covers the wrapper's SIGTERM path |
 
 **Why the grace period is 120 s.** On SIGTERM the wrapper writes its
-termination message and then ships the run log one last time, inside one
-90 s budget:
-
-1. The final upload waits for the upload lock, so a periodic PUT already in
-   flight lands first.
-2. Then the final PUT goes out through the same bounded client: 5 s to
-   connect, 15 s to read, two attempts in all, about 40 s at worst.
-3. An upload still going when the 90 s are up is abandoned, and the wrapper
-   exits 143.
-
-A periodic upload in flight plus the final one fit in the 90 s, and the
-90 s leave room inside the 120 s for the rest of the exit, so the kubelet's
-SIGKILL never arrives first. The common case is a fraction of a second. Only
-an S3 endpoint that answers nothing uses the whole budget, and then no
-larger grace period would save the log either. Kubernetes' default of 30 s,
-by contrast, would SIGKILL the pod mid-cleanup on a merely slow endpoint,
-losing both the complete run log and the clean exit 143.
+termination message and ships the run log one last time inside a 90 s budget
+(the log client: 5 s connect, 15 s read, two attempts). An upload still going
+at 90 s is abandoned, so the SIGKILL at 120 s never arrives first.
+Kubernetes' default of 30 s would kill the pod mid-cleanup on a merely slow
+endpoint.
 
 **The per-volume time limit is the pod's deadline**,
 `spec.template.spec.activeDeadlineSeconds`, not the Job's. It is rendered from
@@ -113,7 +87,7 @@ The `Ignore` rule therefore does not swallow it. The attempt is counted, and
 `backoffLimitPerIndex` retries the index.
 
 Resources, mounts and pod hardening are in
-[Campaigns → A worked example](campaigns.md#a-worked-example) and
+[Rendered objects](../reference/rendered.md) and
 [Security](security.md#pod-security-posture).
 
 ## Exit codes and what each one costs
@@ -152,157 +126,48 @@ The full table is in the [Wrapper reference](../reference/wrapper.md).
 
 ## A dead htrflow worker thread
 
-htrflow's `Inference` steps (Segmentation, TextRecognition) hand each batch
-to a daemon thread and wait on a `Future`. An exception inside that thread
-kills it, and `pipeline.run` then waits for a future nobody will ever
-complete. One known trigger is a YOLO detection whose mask is too small to
-become a polygon: htrflow puts `None` in its polygon list, and the thread
-dies with `TypeError: 'NoneType' object is not iterable`. Without a guard, the
-pod would stand still with its GPU reserved until the pod deadline, then retry
-onto the same page and stall again.
+htrflow's `Inference` steps hand each batch to a daemon thread and wait on a
+`Future`. An exception inside that thread kills it, and `pipeline.run` then
+waits for ever. One known trigger is a YOLO mask too small to become a
+polygon (`TypeError: 'NoneType' object is not iterable`). Unguarded, the pod
+would hold its GPU until the pod deadline, then retry onto the same page.
 
-The wrapper does not wait for that. `driver` runs each page's `pipeline.run`
-in a helper thread. It checks every step's worker threads before the run and
-once a second (`THREAD_POLL_SECONDS`) while it waits. That includes each
-step's own thread and its batching queue's thread. A step whose thread is gone
-raises `PipelineDead`, which is a **page** failure like any other:
+So `driver` runs each page's `pipeline.run` in a helper thread and checks
+every step's worker threads once a second (`THREAD_POLL_SECONDS`). A dead
+thread, or a page with no progress for `PAGE_TIMEOUT_SECONDS` (default 600 s,
+a window without progress, not a total), raises `PipelineDead`, a **page**
+failure:
 
 ```
 WARNING page 0044 failed: PipelineDead("page 0044: htrflow's Segmentation (model Riksarkivet/yolov9-regions-1) worker thread died; the page is marked failed and the pipeline is rebuilt")
 WARNING rebuilding the htrflow pipeline after a dead worker thread
 ```
 
-A run whose threads are all alive can hang too: a model call that never
-returns. So the same guard also watches for progress. A page that makes no
-progress through htrflow for `PAGE_TIMEOUT_SECONDS` (default 600 s) is
-treated the same way as a dead thread: the page fails and the pipeline is
-rebuilt. It is a window without progress, not a total, so a broadsheet page
-of thousands of lines that takes many minutes but keeps moving is not cut
-off.
-
-A pipeline built from scratch processes the next page. Its models come back
-from the cache PVC, not the Hub. The rest of the volume runs, and the volume
-**completes** with that one page recorded as failed:
-
-- `manifest.json` names the page and its reason.
-- `progress.json` carries the count and the sentence.
-- The campaign row reads, for example, "637 / 638 pages · 1 failed".
-- The viewer opens on the pages that came out.
-
-It is not exit 1. The cause is in the image, so the page would die the same
-way on every attempt, and the volume would end as a failed index with no
-marker at all.
-
-Before the rebuild, the dead pipeline's models are dropped and the CUDA cache
-is emptied (`driver.release_pipeline`). The stuck run's helper thread is a
-daemon that is never joined, and its frame holds the steps. Without that
-release, the new pipeline would load a second set of weights onto the same
-GPU. What stays parked for the life of the process is the thread itself and
-that one page's document, not the models.
-
-A thread stuck inside a model call cannot be stopped, though, and it may
-still hold that model's weights. The wrapper counts the threads released
-pipelines left running, and at eight (about four hung pages) it stops the
-run as a transient failure, so the retry gets a fresh pod and a clean GPU
-instead of a slow slide towards running out of GPU memory.
+The dead pipeline's models are released and the CUDA cache emptied
+(`driver.release_pipeline`), a fresh pipeline loads from the cache PVC, and
+the volume **completes** with that page recorded as failed. It is not exit 1:
+the cause is in the image, so every attempt would die the same way. A thread
+stuck inside a model call cannot be stopped and may still hold weights, so at
+eight such threads (about four hung pages) the run stops as transient and the
+retry gets a fresh pod.
 
 ## What a person is told
 
-The machine-readable forms above are for Kubernetes, the read API and the run
-viewer's stop rule:
-
-- exit codes
-- the termination JSON
-- the `permanent failure in <stage>:` prefix
-
-None of them is a message, and none of them reaches a person unedited. Every
-surface that talks to people says three things in plain sentences: **what
-happened, where, and what to do next**. No surface shows JSON, Python reprs,
-stage names or `loc` paths.
-
-Each surface translates in exactly one place:
+Exit codes, the termination JSON and the `permanent failure in <stage>:`
+prefix are for machines. Every surface that talks to people says instead,
+in plain sentences, **what happened, where, and what to do next**, and each
+translates in one place:
 
 | Surface | Where the sentence is written |
 |---|---|
-| Campaign page (volume rows, failures block, banners) | `frontend/src/lib/reasons.ts`: `describeReason`, `describeApiError`. Wording pinned in `reasons.test.ts` |
+| Campaign page | `frontend/src/lib/reasons.ts` (`describeReason`, `describeApiError`), pinned in `reasons.test.ts` |
 | Run log | `packages/wrapper/src/htrflow_batch/main.py`: `_advice`, appended after the prefix |
-| Converter CLI | `packages/converter/…/parse.py` and the models' validators. See [Campaign & Pipeline YAML](../reference/campaign-yaml.md) |
+| Converter CLI | `parse.py` and the models' validators ([Campaign & Pipeline YAML](../reference/campaign-yaml.md)) |
 
-### A failed volume, on the campaign page
-
-`reason` reaches the browser as `{stage, permanent, error}`. The card renders
-one sentence per case and never shows the fields themselves.
-
-| `error` | What the reader is told | What the operator does |
-|---|---|---|
-| `DeadlineExceeded` (also `MAX_SECONDS`, from an older wrapper) | "Stopped when this volume's time budget ran out; the next attempt resumes from the pages already finished." | Nothing, unless it keeps happening. Then raise `max_seconds` on the pipeline |
-| `SIGTERM` | "The pod was stopped by the cluster (a node drain or a pause); the volume will be retried." | Nothing. The index is retried |
-| Stage `config` (the wrapper sets it around `Config.from_env`) | "The volume's settings are incomplete or wrong: `<error>`. This is a deployment problem, not a manifest problem — check the campaign's converter.yaml and the chart values." | Fix `converter.yaml` or the chart values, and re-render. Nothing in the campaign file is wrong |
-| A manifest or canvas error at stage `setup`, `permanent: true` | "The IIIF manifest could not be read: `<error>`. Fix the manifest URL in the campaign file — this volume will not be retried." | Fix the URL in `campaigns/<name>.yaml`, then put the volume in a new campaign |
-| `verify failed: N missing, M failed … missing=[…]` | "2 pages are missing from the results (p012, p045); the volume is retried automatically and only those pages are redone." | Nothing, unless the retries also fail. A missing page is an upload that never landed, or a download the source could not serve during that attempt (the run log says `page … deferred to the next attempt: …`). Resume redoes only it. The `failed=[…]` pages beside it are *not* named here: they are accounted for and are not coming back |
-| `verify failed: all N processed pages failed …` | "None of the 3 pages processed in this attempt produced a result; the volume is retried automatically — check the model and the GPU." | Look at the node and the pipeline before the retries run out. Nothing came out of this pod at all |
-| Stage `warmup` | The warm-up's own sentence, with whether it will be retried | See [Warm-ups fail the same way](#warm-ups-fail-the-same-way) |
-| Anything else, with a stage | "Failed while processing pages: `<error>`." plus either "It will be retried automatically." or "This volume will not be retried — fix the cause, then put the volume in a new campaign." | Depends on the error. The run log is one click away on the same row |
-| A termination message the API could not parse (raw JSON in `error`) | "The pod stopped without a message this page can read; open the run log to see what happened." | Open the run log |
-
-The sentences above that promise a retry are the ones for a volume that is
-still between attempts. A volume whose state is `failed` is in the Job's
-`failedIndexes`: its `backoffLimitPerIndex` is spent and nothing will run it
-again, however transient the cause. For those volumes the promise changes
-to what is true. For example, "The pod was stopped by the cluster (a node
-drain or a pause), and the volume has used all its retries — put it in a new
-campaign to run it again." The pod's own message is the same on its last
-attempt as on its first, so the card goes by the volume's state, not by
-`permanent`.
-
-The wrapper's `stage` tells a `config` failure apart from a `setup` failure,
-not matching on the error text. `config` covers everything `Config.from_env`
-rejects: a missing variable, or `IIIF_MANIFEST_URL` and `IMAGES` both set.
-Only what follows it is `setup`.
-
-Stage names turn into what the pod was doing:
-
-| Stage | Shown as |
-|---|---|
-| `setup` | reading the manifest |
-| `resume` | checking earlier results |
-| `load` | loading the model |
-| `stream` | processing pages |
-| `verify` | checking results |
-| `publish` | publishing results |
-
-### The campaign page itself
-
-| What went wrong | What the reader is told |
-|---|---|
-| A non-2xx or a network error, with a list already on screen | "Can't reach the campaign service right now (HTTP 503). Showing the list we last received. Retrying every 60 seconds." |
-| The same, with nothing on screen yet | "Can't reach the campaign service right now (HTTP 500). Retrying every 60 seconds." |
-| `404` on a campaign's detail | "This campaign is gone: its campaign file has been removed from the campaigns repo." A campaign whose Job its TTL reaped is not a 404 — it is still served from [the record](campaigns.md#the-record-a-campaign-leaves) |
-| A 200 whose shape does not parse | "The campaign service answered in a form this page doesn't understand. Reload the page; if it keeps happening, the page and the service are running different versions." |
-
-### The run log
-
-The wrapper's terminal lines keep their prefix, because that is the contract
-the run viewer's stop rule keys on. After an em dash, each line adds a
-sentence:
-
-```
-ERROR permanent failure in setup: manifest is not JSON — a retry changes nothing — fix the campaign or pipeline file
-ERROR transient failure in verify: verify failed: 1 missing, 0 failed missing=['0002'] failed=[] — some pages produced no result; the retry redoes only those
-ERROR transient failure in stream: SIGTERM — stopped by the cluster (drain, pause, or time budget); retried
-```
-
-| Failure | The sentence |
-|---|---|
-| `verify failed: all …` | "no page produced a result — check the model and the GPU" |
-| `verify failed: …` (a page missing from the results) | "some pages produced no result; the retry redoes only those" |
-| `SIGTERM` | "stopped by the cluster (drain, pause, or time budget); retried" |
-| Any permanent failure | "a retry changes nothing — fix the campaign or pipeline file" |
-| Any other transient failure | "the index is retried, resuming from the pages already done" |
-
-The sentences change nothing machine-readable. The wrapper still writes
-`{"stage", "permanent", "error"}` with the bare error in it, and the read API
-still parses that.
+What each failed-volume sentence on the card means, and what the operator
+does about it, is in [Troubleshooting](../getting-started/troubleshooting.md).
+The page-level errors and stage names the card shows are in
+[Web front & read API](../reference/web.md).
 
 ## Evidence that survives the Job
 
@@ -314,42 +179,23 @@ Everything an operator needs is in the bucket well before the Job's
 | `status/logs/<pipeline>/<volume>.txt` | While the volume runs, every 15 s, and once on exit (also on SIGTERM) | The wrapper's own stdout and stderr: the complete log ([The run log](signals.md#the-run-log)) |
 | `<pipeline>/<volume>/progress.json` | After every page outcome and at every stage change, except in the `config` stage (see below) | The last stage reached, page counts and the most recent page failure |
 
-A run that fails in the `config` stage writes no `progress.json` at all: the
-bucket, the prefix and the volume's own name are settings, so until they
-parse there is nowhere to write it to. That failure is permanent and its
-evidence is the termination message and the pod's log, both of which name the
-setting; the campaign page shows it from the pod.
-
-The read API shows a failed pod's termination message as `reason` only while
-that pod still exists. Once the pod is garbage-collected, the log above is
-the remaining evidence for that attempt.
-
-One field is rewritten on the way out. When a pod's `status.reason` is
-`DeadlineExceeded` and its message's `error` is exactly `"SIGTERM"`, the API
-shows `"error": "DeadlineExceeded"` instead. The wrapper cannot tell a deadline
-kill from a node drain, since both arrive as SIGTERM. The pod can, and an
-operator reading the card needs the difference.
+A run that fails in the `config` stage writes no `progress.json`: until the
+settings parse there is nowhere to write it. Its evidence is the termination
+message and the pod's log. The read API shows a termination message as
+`reason` only while the pod exists; after that the run log is what remains.
+When a pod's `status.reason` is `DeadlineExceeded` and its `error` is
+`"SIGTERM"`, the API shows `"error": "DeadlineExceeded"`, since only the pod
+can tell a deadline kill from a drain.
 
 ## Retries, natively
 
 There is no retry budget file and nothing to clear by hand.
-`backoffLimitPerIndex` and `maxFailedIndexes` are read straight off the Job,
-by `kubectl describe job` and by the read API. A volume that exhausts its
-retries under one pipeline id gets a fresh budget when it is declared under a
-new pipeline id, as a new Job, from scratch. Re-running under a new pipeline
-id is the natural upgrade path, and there is no shared state to reset.
-
-To re-run a permanently failed (`FailIndex`) volume:
-
-1. Fix the cause: a model, a manifest URL, or a pipeline bug.
-2. Add the volume to a new campaign file.
-
-A campaign Job's indexes are not re-run in place. On the same pipeline id
-the new campaign waits for the old one to finish: `apply` holds back a
-campaign that shares a volume with a campaign still running on that
-pipeline, since both would write the same results
-([Campaign & Pipeline YAML](../reference/campaign-yaml.md#campaign-file-campaignsnameyaml)). Under a
-new pipeline id it can start at once.
+`backoffLimitPerIndex` and `maxFailedIndexes` are read straight off the Job.
+A failed index is never re-run in place: the volume goes into a new
+campaign. On the same pipeline id, `apply` holds that campaign back while
+the old one still runs, since both would write the same results; under a new
+pipeline id it starts at once
+([Troubleshooting](../getting-started/troubleshooting.md)).
 
 ## Warm-ups fail the same way
 
@@ -357,89 +203,33 @@ A pipeline's `htr-warmup-<id>` Job fails independently of any campaign. It
 has `backoffLimit: 2`, a 1 h pod deadline, and a `podFailurePolicy` of the
 same shape on its `warmup` container. Exit 13 there is `FailJob`.
 
-- **The deadline is the pod's, not the Job's**, for the same reason a
-  volume's is. The Job controller deletes a pod it kills on a Job-level
-  deadline, and the termination message goes with it. On the pod template, the
-  kubelet kills the pod instead: `status.reason` reads `DeadlineExceeded`, the
-  message survives, and the attempt counts against `backoffLimit`. So a
-  warm-up that ran out of time on a slow first download is retried, not
-  terminally failed.
-- **There is no warm-up log.** The pod mounts no S3 secret. It is the one pod
-  that mounts the cache PVC read-write, and the only one the NetworkPolicy
-  lets reach Hugging Face Hub. Its termination message
-  (`{stage: "warmup", permanent, error}`) is read off the warm-up Job's pod
-  and shown on the campaign card's warm-up chip
-  ([Campaigns](campaigns.md#the-web-front-and-status-page)).
-- **A transient failure** (a network or disk error) is retried by Kubernetes
-  up to `backoffLimit`.
-- **A permanent failure** is exit 13. The causes are a bad model id or
-  revision, an unknown step, a setting a step does not take, invalid YAML,
-  or a marker that could not be written. It leaves the warm-up Job failed
-  until the next `apply`, which deletes and re-creates a failed warm-up, so
-  fixing the cause (a missing Secret, a Hub outage) and re-applying is the
-  whole recovery.
-- **The marker is written before the success log line**, and failing to write
-  it is fatal. A warm-up that exits `0` without a marker would be a green Job
-  whose campaigns then wait for nothing.
-- **A kill leaves a message.** The warm-up installs the batch wrapper's
-  SIGTERM handler, so a node drain, a preemption or the pod deadline leaves
-  `{stage: "warmup", permanent: false, error: "SIGTERM"}`, not an empty
-  message.
+- **The deadline is the pod's, not the Job's**, so a kill keeps its
+  termination message and counts against `backoffLimit`: a warm-up that ran
+  out of time on a slow first download is retried.
+- **There is no warm-up log.** The pod mounts no S3 Secret. Its termination
+  message (`{stage: "warmup", permanent, error}`) is shown on the campaign
+  card's warm-up chip ([Web front & read API](../reference/web.md)), and a
+  kill leaves `error: "SIGTERM"` there rather than nothing.
+- **A transient failure** (a network or disk error) is retried up to
+  `backoffLimit`.
+- **A permanent failure** is exit 13: a bad model id or revision, an unknown
+  step, a setting a step does not take, invalid YAML, or a marker that could
+  not be written.
+- **Recovery is a re-apply.** The next `apply` deletes and recreates a
+  failed warm-up, so fixing the cause (a missing Secret, a Hub outage) and
+  re-applying is the whole recovery.
+- **The marker is written before the success log line**, and failing to
+  write it is fatal, so a green warm-up always left a marker.
 
 **The campaign side is bounded.** Every batch pod waits for the marker in its
 `warmup-wait` init container, which gives up after `converter.yaml`'s
-`warmup_wait_seconds` (default 900). It prints one line naming the marker it
-waited for and exits 13. The campaign Job's `podFailurePolicy` turns that into
-`FailIndex`, so the index fails once instead of being retried. The init
-container reports with `terminationMessagePolicy: FallbackToLogsOnError`, so
-that line becomes the row's `reason` on the campaign card. The wait has to be
-bounded. A batch pod reserves `nvidia.com/gpu: 1` for its whole lifetime,
-init containers included, and Kueue holds the quota through them. An endless
-wait would cost one GPU for the pod's entire `activeDeadlineSeconds`, once per
-retry, without a word anywhere.
+`warmup_wait_seconds` (default 900), prints one line naming the marker, and
+exits 13. The `podFailurePolicy` turns that into `FailIndex`, and
+`terminationMessagePolicy: FallbackToLogsOnError` makes the line the row's
+`reason`. The wait is bounded because a batch pod holds its GPU and Kueue's
+quota through its init containers.
 
-### Why is the marker missing?
-
-Look in three places, in this order:
-
-1. **The index that gave up** says *which* marker it waited for.
-2. **The warm-up Job** says *why* it never wrote one.
-3. **The cache PVC** shows what is actually on disk.
-
-```bash
-# 1. The failed index's own pod, and the init container's one line.
-kubectl -n <namespace> get pods -l batch.kubernetes.io/job-name=<campaign> \
-  -L batch.kubernetes.io/job-completion-index
-kubectl -n <namespace> logs <pod> -c warmup-wait
-# no warm-up marker at /data/warmup/<pipeline>.done after 900s: …
-
-# 2. The warm-up Job for that pipeline: did it run, and what did it say?
-kubectl -n <namespace> get job htr-warmup-<pipeline>
-kubectl -n <namespace> logs job/htr-warmup-<pipeline> --tail=50
-kubectl -n <namespace> get pods -l batch.kubernetes.io/job-name=htr-warmup-<pipeline> \
-  -o jsonpath='{.items[*].status.containerStatuses[*].state.terminated.message}'
-# {"stage": "warmup", "permanent": true, "error": "…"}  (the chip's tooltip)
-
-# 3. The marker directory. Every pod mounts only its own recipe's
-#    directory of the cache PVC at /data, so look from a running pod of
-#    the SAME pipeline (campaign pods mount it read-only, which is enough).
-kubectl -n <namespace> exec <running-pod> -- ls -l /data/warmup
-```
-
-On the volume itself the marker is `<pipeline>-<recipe sha256>/warmup/<pipeline>.done`,
-the recipe hash being that of the pipeline's steps and image. A debug pod
-that mounts the whole PVC sees one such directory per recipe ever warmed
-([The Wrapper → The model cache](wrapper.md#the-model-cache)).
-
-A `Complete` warm-up Job with no marker on the PVC means the two are not
-looking at the same volume. First check that the warm-up Job carries the same
-`runtimeClassName`, `nodeSelector` and `tolerations` as the campaign Job. The
-converter renders both from `converter.yaml`, and matching values put both in
-the same node pool. A pool is not a node, though. With two or more GPU nodes,
-a `ReadWriteOnce` cache can be filled on one node and read on another
-([The Wrapper → The model cache](wrapper.md#the-model-cache)).
-
-Once the cause is fixed, run
-`kubectl delete job -n <namespace> htr-warmup-<pipeline>` and re-apply the
-campaigns repo to run the warm-up again. The Job has no TTL, and the apply
-does not recreate it while it still exists.
+Only a **completed** warm-up whose marker is gone (a replaced or wiped cache
+PVC) needs a manual step: delete the Job, and the next apply runs it again.
+How to find out why a marker is missing is in
+[Troubleshooting](../getting-started/troubleshooting.md).
