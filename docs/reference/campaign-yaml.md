@@ -17,6 +17,11 @@ rejected. Every field is optional; the values below are the defaults, except
 `source_template`, which is shown as a placeholder — set it to your IIIF
 source whenever a campaign lists bare volume ids.
 
+In all three kinds of file, a key written twice in one
+mapping is a validation error naming both lines. YAML itself keeps the last
+of the two without a word, so a second `volumes:` further down a campaign
+would silently replace the first.
+
 ```yaml title="converter.yaml"
 namespace: htr-batch              # Kubernetes namespace campaigns render into
 queue: htr-batch                  # Kueue LocalQueue name
