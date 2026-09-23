@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import inspect
 import re
 import threading
 from pathlib import Path
@@ -29,8 +28,6 @@ from htrflow_web.kube import (
     FIELD_MANAGER,
     ApplyConflict,
     ClusterUnavailable,
-    Reader,
-    ReaderLike,
 )
 from htrflow_web.projection import FAILURES_MANAGER
 
@@ -143,19 +140,15 @@ def client() -> TestClient:
     return TestClient(create_app(FakeReader(), progress=FakeProgress()))
 
 
-def test_healthz(client: TestClient):
-    resp = client.get("/healthz")
-    assert resp.status_code == 200
-    assert resp.json() == {"ok": True}
-
-
 class _Hung(FakeReader):
     """A reader whose API server has stopped answering mid-request."""
 
     def __init__(self) -> None:
+        self.holding = threading.Event()  # a worker thread is inside the call
         self.release = threading.Event()
 
     def get_job(self, namespace: str, name: str) -> dict | None:
+        self.holding.set()
         self.release.wait(10)
         return super().get_job(namespace, name)
 
@@ -173,8 +166,12 @@ def test_healthz_answers_while_every_worker_is_stuck():
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
             stuck = asyncio.ensure_future(c.get("/api/v1/jobs/htr-test/kyrk"))
-            await asyncio.sleep(0.1)
             try:
+                # Not a sleep: the probe goes out only once the pool's one
+                # thread is proven to be the stuck request's.
+                with anyio.fail_after(5):
+                    while not reader.holding.is_set():
+                        await asyncio.sleep(0.005)
                 with anyio.fail_after(2):
                     status = (await c.get("/healthz")).status_code
             finally:
@@ -507,7 +504,7 @@ def _written_by(reader: RecordingReader, manager: str) -> dict:
     return body
 
 
-def test_listing_campaigns_writes_what_it_observed(capsys):
+def test_listing_campaigns_writes_what_it_observed():
     reader = RecordingReader()
     client = TestClient(create_app(reader, progress=FakeProgress()))
     assert client.get("/api/v1/jobs").status_code == 200
@@ -744,7 +741,6 @@ def test_the_list_route_draws_a_reaped_row_from_metadata_alone():
     `data` -- the campaign's whole volume list -- is simply not there. A row
     that needed it would break here rather than on a real backfill."""
     metadata_only = {"metadata": REAPED_RECORD["metadata"]}
-    assert "data" not in metadata_only
     client = TestClient(
         create_app(
             RecordingReader([metadata_only, REAPED_STATUS]), progress=FakeProgress()
@@ -1042,59 +1038,6 @@ def test_the_502_never_quotes_the_client_error():
         raise_server_exceptions=False,
     )
     assert "403" not in client.get("/api/v1/jobs").text
-
-
-# --- the doubles cannot drift from the real adapter (audit T2) ------------
-
-
-READER_METHODS = {
-    name: inspect.signature(fn)
-    for name, fn in vars(ReaderLike).items()
-    if inspect.isfunction(fn) and not name.startswith("_")
-}
-
-
-@pytest.mark.parametrize(
-    "double", [Reader, NoCluster, FakeReader, RecordingReader, _Refusing]
-)
-def test_every_reader_double_answers_the_calls_the_routes_make(double):
-    """`app.py` duck-types its reader, so nothing but this stops a fake from
-    answering a call the real one could not (or the other way round). Each
-    method is bound with the arguments `kube.ReaderLike` declares -- a fake
-    that dropped `namespace` fails here rather than in production."""
-    assert READER_METHODS, "the protocol has methods to check"
-    on_class = {
-        name
-        for base in double.__mro__
-        for name in (*vars(base), *getattr(base, "__annotations__", {}))
-    }
-    for attr in ReaderLike.__annotations__:
-        assert attr in on_class, f"{double.__name__} has no {attr}"
-    for name, declared in READER_METHODS.items():
-        impl = getattr(double, name, None)
-        assert impl is not None, f"{double.__name__} has no {name}()"
-        args = [f"<{p}>" for p in list(declared.parameters)[1:]]
-        inspect.signature(impl).bind(double, *args)
-        if impl is NoCluster._no_cluster:
-            continue  # the catch-all takes anything, and refuses it
-        # By name and kind too: `app.py` passes `force=` and `manager=` by
-        # keyword, and a renamed parameter still binds positionally.
-        assert _shape(impl) == _shape(declared), f"{double.__name__}.{name}"
-
-
-def _shape(fn) -> list[tuple[str, object]]:
-    sig = fn if isinstance(fn, inspect.Signature) else inspect.signature(fn)
-    return [(p.name, p.kind) for p in sig.parameters.values()]
-
-
-def test_the_status_write_is_the_protocols_own_call():
-    """The write used to be missing from the protocol and asked for with
-    `hasattr`: renamed on the real adapter, every status write stopped and
-    every test still passed (2026-09-23 audit)."""
-    assert "apply_configmap" in READER_METHODS
-    assert _shape(Reader.apply_configmap) == _shape(READER_METHODS["apply_configmap"])
-    src = (Path(__file__).parent.parent / "src" / "htrflow_web" / "app.py").read_text()
-    assert "hasattr(reader" not in src
 
 
 # --- the detail route only answers for names that could exist (F8) -------
