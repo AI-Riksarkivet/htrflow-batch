@@ -1,0 +1,30 @@
+# Advisories OSV-Scanner (and OpenSSF Scorecard's Vulnerabilities check,
+# which reads this file next to go.mod) does not report for this module.
+# Scoped to .dagger/go.mod: the dagger CI module, which never ships in an
+# image. Each entry expires; on its date, check whether a Dagger release
+# has raised the pins, and move to it or renew the entry with the reason.
+#
+# Both are in otel log exporters that the Dagger Go SDK pins to v0.16.0 with
+# replace directives in the go.mod it generates: `dagger develop` rewrites a
+# hand-raised replace back to v0.16.0, and no Dagger release up to v0.21.9
+# (nor its main branch) raises them. The exporters only run when the engine
+# points OTEL_EXPORTER_OTLP_LOGS_ENDPOINT at itself, over the engine's own
+# connection to the module container.
+
+[[IgnoredVulns]]
+id = "GHSA-w34q-cm8f-9c5x"
+ignoreUntil = 2026-12-23
+reason = """otlploggrpc v0.16.0 (fixed 0.21.0) is pinned by the Dagger Go SDK's \
+replace directive, which `dagger develop` restores. The flaw drops the TLS \
+settings of OTEL_EXPORTER_OTLP_*_CERTIFICATE; nothing in this repository or \
+its CI sets them, and the module's OTLP environment comes from the dagger \
+engine, which is also the endpoint."""
+
+[[IgnoredVulns]]
+id = "GO-2026-4985"
+ignoreUntil = 2026-12-23
+reason = """otlploghttp v0.16.0 (fixed 0.19.0) is pinned by the Dagger Go SDK's \
+replace directive, which `dagger develop` restores. The flaw is an unbounded \
+response body from a malicious collector; the only collector is the dagger \
+engine running the module. The other packages this advisory names \
+(otlptracehttp, otlpmetrichttp) are at fixed versions."""
