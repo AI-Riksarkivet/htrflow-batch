@@ -39,6 +39,9 @@ an **alto** column:
   - A **raw** link opens the untouched file.
   - If a page's ALTO cannot be read, is not XML, or has no text at all, the
     view says so in one sentence.
+  - It reads only a file under the results base URL, like the run viewer:
+    `/alto?src=` with any other address is refused before anything is
+    fetched, so a link cannot make the page show someone else's text.
 - **download** fetches the same XML and saves it as `<page>.xml`. The results
   bucket is a different origin from the campaign browser, and browsers
   silently ignore a plain `<a download>` across origins, so the download goes
@@ -59,7 +62,9 @@ A browser needs two addresses:
 - **The results base URL** (`publicResultsBase`), for manifests, page
   images, ALTO and run logs, which the browser fetches straight from the
   bucket. The bucket's CORS rule must allow the web front's origin
-  ([Deploy](deploy.md#s3-secret-bucket-policy-and-cors)).
+  ([Deploy](deploy.md#s3-secret-bucket-policy-and-cors)). The campaign
+  browser's pages may fetch from nowhere else: the web front sends them a
+  `connect-src` limited to its own origin and this base.
 
 How the three sides use these URLs:
 
