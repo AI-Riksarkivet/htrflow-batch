@@ -958,29 +958,41 @@ def test_auto_detection_of_an_endpoints_object_without_addresses_is_empty(
 
 # --- D8: a signing identity nothing ever signed as -------------------------
 
-#: The identity `publish.yml` actually gets from Sigstore: the repository is
-#: under the AI- organisation, and the workflow is `workflow_dispatch`, so
-#: the certificate carries the branch it ran from -- never a tag ref.
-SIGNING_SUBJECT = (
-    "https://github.com/AI-Riksarkivet/htrflow-batch"
-    "/.github/workflows/publish.yml@refs/heads/main"
-)
+#: The repository the release is published from (SECURITY.md's reporting
+#: link names it): the one part of the signing identity no workflow file says.
+REPOSITORY = "AI-Riksarkivet/htrflow-batch"
 
 
-def test_the_signing_identity_example_is_one_a_release_can_produce(
-    full: list[dict],
-):
-    """Both copies of the cosign subject named the wrong organisation, and
-    the render fixture also asked for `@refs/tags/*`. An operator who copies
-    either gets a policy that refuses every image the release publishes --
-    and finds out at admission, on a cluster, not here."""
-    policy = named(full, "ClusterPolicy", f"htrflow-batch-verify-images-{NAMESPACE}")
-    keyless = policy["spec"]["rules"][0]["verifyImages"][0]["attestors"][0]
-    assert keyless["entries"][0]["keyless"]["subject"] == SIGNING_SUBJECT
+def _signing_subject() -> str:
+    """The identity Sigstore certifies for a release signature, derived from
+    the workflow that signs: the file whose jobs run the sign-attest action,
+    triggered only by `workflow_dispatch` -- so its certificate names the
+    branch it ran from, which the release process runs on main, never a
+    tag."""
+    signing = [
+        w
+        for w in sorted((REPO / ".github" / "workflows").glob("*.yml"))
+        if "./.github/actions/sign-attest" in w.read_text(encoding="utf-8")
+    ]
+    assert len(signing) == 1, signing
+    triggers = yaml.safe_load(signing[0].read_text(encoding="utf-8"))[True]
+    assert set(triggers) == {"workflow_dispatch"}, triggers
+    path = signing[0].relative_to(REPO).as_posix()
+    return f"https://github.com/{REPOSITORY}/{path}@refs/heads/main"
 
+
+SIGNING_SUBJECT = _signing_subject()
+
+
+def test_the_signing_identity_the_profile_verifies_is_the_one_the_release_signs_as():
+    """Both copies of the cosign subject once named the wrong organisation,
+    and a fixture asked for `@refs/tags/*`. An operator who copies either
+    gets a policy that refuses every image the release publishes -- and
+    finds out at admission, on a cluster (test audit TA-infra-8)."""
+    prod = yaml.safe_load((CHART / "values-prod.yaml").read_text(encoding="utf-8"))
+    assert prod["security"]["verifyImages"]["subject"] == SIGNING_SUBJECT
     values = (CHART / "values.yaml").read_text(encoding="utf-8")
-    assert SIGNING_SUBJECT in values
-    assert "github.com/Riksarkivet/" not in values
+    assert f"e.g. {SIGNING_SUBJECT}" in values
 
 
 def test_verification_reads_the_sigstore_bundles_the_release_writes(
@@ -1047,7 +1059,6 @@ def test_the_production_profile_turns_on_what_the_defaults_leave_off(
         "docker.io/riksarkivet/htrflow-web",
         "docker.io/riksarkivet/htrflow-campaigns",
     ]
-    assert values["security"]["verifyImages"]["subject"] == SIGNING_SUBJECT
 
 
 def test_every_pod_the_profile_renders_passes_pod_security_restricted(
