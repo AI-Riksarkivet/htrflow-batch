@@ -56,14 +56,19 @@ def test_init_refuses_a_nonempty_dir_without_force(tmp_path, capsys):
 
 
 def test_init_force_overwrites_a_nonempty_dir(tmp_path, capsys):
+    """A stale file the template also has is replaced by the template's;
+    anything else in the directory is left where it is."""
     dest = tmp_path / "my-campaigns"
     dest.mkdir()
+    (dest / "converter.yaml").write_text("namespace: stale\n")
     (dest / "stale.txt").write_text("old\n")
 
     rc = main(["init", str(dest), "--force"])
     capsys.readouterr()
     assert rc == 0
-    assert (dest / "converter.yaml").exists()
+    template = resources.files("htrflow_converter") / "template" / "converter.yaml"
+    assert (dest / "converter.yaml").read_bytes() == template.read_bytes()
+    assert (dest / "stale.txt").read_text() == "old\n"
     assert main(["validate", str(dest)]) == 0
 
 
