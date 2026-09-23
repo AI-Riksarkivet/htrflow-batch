@@ -6,6 +6,8 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from htrflow_converter import render
+from htrflow_converter.models import ConverterConfig
 
 from htrflow_web import projection
 
@@ -120,18 +122,17 @@ def _pod(
     }
 
 
-class TestParseIndexRanges:
-    def test_mixed_ranges_and_singles(self):
-        assert projection.parse_index_ranges("0-2,5,7-9") == {0, 1, 2, 5, 7, 8, 9}
-
-    def test_empty_string(self):
-        assert projection.parse_index_ranges("") == set()
-
-    def test_none(self):
-        assert projection.parse_index_ranges(None) == set()
-
-    def test_single_value(self):
-        assert projection.parse_index_ranges("3") == {3}
+@pytest.mark.parametrize(
+    ("spec", "indexes"),
+    [
+        ("0-2,5,7-9", {0, 1, 2, 5, 7, 8, 9}),
+        ("3", {3}),
+        ("", set()),
+        (None, set()),
+    ],
+)
+def test_parse_index_ranges(spec: str | None, indexes: set[int]):
+    assert projection.parse_index_ranges(spec) == indexes
 
 
 class TestSummarize:
@@ -154,38 +155,26 @@ class TestSummarize:
         summary = projection.summarize(job, CFG, MISSING_WARMUP)
         assert summary["resultsBase"] == "https://results.example.org/htr-batch/demo-v1"
 
-    def test_phase_queued(self):
-        job = _job(suspend=True, completed="", failed="")
-        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Queued"
+    COMPLETE = {"type": "Complete", "status": "True"}
+    FAILED = {"type": "Failed", "status": "True"}
 
-    def test_phase_paused(self):
-        job = _job(suspend=True, completed="0", failed="")
-        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Paused"
-
-    def test_phase_succeeded(self):
-        job = _job(conditions=[{"type": "Complete", "status": "True"}])
-        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Succeeded"
-
-    def test_phase_failed(self):
-        """Nothing completed: the campaign produced nothing."""
-        job = _job(completed="", conditions=[{"type": "Failed", "status": "True"}])
-        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Failed"
-
-    def test_phase_partially_failed(self):
-        """The Job gave up, but four indexes had already published."""
-        job = _job(conditions=[{"type": "Failed", "status": "True"}])
-        assert (
-            projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "PartiallyFailed"
-        )
-
-    def test_phase_succeeded_wins_over_failed(self):
-        job = _job(
-            conditions=[
-                {"type": "Complete", "status": "True"},
-                {"type": "Failed", "status": "True"},
-            ]
-        )
-        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Succeeded"
+    @pytest.mark.parametrize(
+        ("status", "phase"),
+        [
+            ({"suspend": True, "completed": "", "failed": ""}, "Queued"),
+            ({"suspend": True, "completed": "0", "failed": ""}, "Paused"),
+            ({"conditions": [COMPLETE]}, "Succeeded"),
+            # Nothing completed: the campaign produced nothing.
+            ({"completed": "", "conditions": [FAILED]}, "Failed"),
+            # The Job gave up, but four indexes had already published.
+            ({"conditions": [FAILED]}, "PartiallyFailed"),
+            ({"conditions": [COMPLETE, FAILED]}, "Succeeded"),
+        ],
+        ids=["queued", "paused", "succeeded", "failed", "partial", "complete-wins"],
+    )
+    def test_phase(self, status: dict, phase: str):
+        job = _job(**status)
+        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == phase
 
 
 class TestDetail:
@@ -720,20 +709,17 @@ class TestMatchWarmup:
         assert projection.match_warmup(job, [no_pipeline_warmup]) is None
 
 
-class TestWarmupPhase:
-    def test_pending_before_any_pod(self):
-        assert projection.warmup_phase(_warmup_job()) == "pending"
-
-    def test_running_while_active(self):
-        assert projection.warmup_phase(_warmup_job(active=1)) == "running"
-
-    def test_succeeded_on_complete_condition(self):
-        job = _warmup_job(conditions=[{"type": "Complete", "status": "True"}])
-        assert projection.warmup_phase(job) == "succeeded"
-
-    def test_failed_on_failed_condition(self):
-        job = _warmup_job(conditions=[{"type": "Failed", "status": "True"}])
-        assert projection.warmup_phase(job) == "failed"
+@pytest.mark.parametrize(
+    ("status", "phase"),
+    [
+        ({}, "pending"),  # before any pod
+        ({"active": 1}, "running"),
+        ({"conditions": [{"type": "Complete", "status": "True"}]}, "succeeded"),
+        ({"conditions": [{"type": "Failed", "status": "True"}]}, "failed"),
+    ],
+)
+def test_warmup_phase(status: dict, phase: str):
+    assert projection.warmup_phase(_warmup_job(**status)) == phase
 
 
 class TestWrapperReasonOnAWarmupPod:
@@ -1173,17 +1159,31 @@ def test_a_failed_job_finishes_at_its_condition_transition():
 
 def test_status_record_field_names_are_the_ones_apply_reads():
     """`htrflow-campaigns apply` parses these back to decide whether to leave
-    a finished campaign alone, so the names are a contract, not a detail."""
-    job = _finished_job(completionTime="2026-09-08T10:00:00Z")
+    a finished campaign alone, so the names are a contract, not a detail --
+    and it writes the same record itself once the Job has ended. Held to
+    the converter's own writer: for one finished Job the two records are
+    the same, name for name and value for value; a slash apart on one field
+    was a 409 on every poll (3081)."""
+    job = _finished_job(completionTime="2026-09-08T10:00:00Z", succeeded=2)
+    job["metadata"]["uid"] = "uid-kyrk"
     row = projection.summarize(job, CFG, {"phase": "succeeded"})
-    data = projection.status_record(row)
+    data = projection.status_record(row, job_uid="uid-kyrk")
+    theirs = render.status_configmap(
+        job, ConverterConfig(public_results_base=CFG.public_results_base)
+    )
+    assert theirs is not None
+    assert data == theirs["data"]
     assert set(data) == STATUS_FIELDS
-    assert data["phase"] == "PartiallyFailed"
-    assert (data["volumesTotal"], data["volumesDone"]) == ("3", "2")
-    assert data["volumesFailed"] == "1"
-    assert data["finishedAt"] == "2026-09-08T10:00:00Z"
-    assert data["resultsBase"].endswith("/htr-test/demo-v1")
-    assert all(isinstance(v, str) for v in data.values())
+    assert data == {
+        "phase": "PartiallyFailed",
+        "volumesTotal": "3",
+        "volumesDone": "2",
+        "volumesFailed": "1",
+        "startedAt": "2026-09-08T08:00:00Z",
+        "finishedAt": "2026-09-08T10:00:00Z",
+        "resultsBase": "https://results.example.org/htr-test/demo-v1",
+        "jobUid": "uid-kyrk",
+    }
 
 
 def test_the_list_endpoints_record_leaves_the_failed_volumes_alone():
@@ -1457,12 +1457,10 @@ def test_a_reaped_campaign_that_was_paused_is_unknown_too():
     assert row["phase"] == "Unknown"
 
 
-def test_a_terminal_record_keeps_its_own_phase():
-    for phase in projection.FINISHED_PHASES:
-        row = projection.record_summary(
-            RECORD, _stored(phase=phase), CFG, MISSING_WARMUP
-        )
-        assert row["phase"] == phase
+@pytest.mark.parametrize("phase", ["Succeeded", "Failed", "PartiallyFailed"])
+def test_a_terminal_record_keeps_its_own_phase(phase: str):
+    row = projection.record_summary(RECORD, _stored(phase=phase), CFG, MISSING_WARMUP)
+    assert row["phase"] == phase
 
 
 # --- the record only ever gains (B76 review) ----------------------------
@@ -1736,7 +1734,16 @@ class TestRecordWrite:
         row = _running_row()
         fresh = projection.status_record(row, job_uid="uid-1")
         ((body, force, manager),) = projection.record_write(None, row, fresh)
-        assert body["data"] == projection.merge_record({}, fresh)
+        # No finishedAt: a campaign still running has none to say.
+        assert body["data"] == {
+            "phase": "Running",
+            "volumesTotal": "7",
+            "volumesDone": "2",
+            "volumesFailed": "0",
+            "startedAt": "",
+            "resultsBase": "https://results.example.org/htr-test/demo-v1",
+            "jobUid": "uid-1",
+        }
         assert body["metadata"]["labels"]["htrflow.riksarkivet.se/kind"] == "status"
         assert force is False
         assert manager == projection.WEB_MANAGER
