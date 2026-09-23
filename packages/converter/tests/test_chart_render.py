@@ -51,6 +51,23 @@ DEFAULT_SETS = REQUIRED_SETS + (PUBLIC_INGRESS, POLICIES_OFF)
 #: Two refusals several tests look for, verbatim: the chart's own sentence
 #: is what an operator reads, so a test that only saw a non-zero exit could
 #: not tell one guard from another (finding 3103).
+S3_NOWHERE_REFUSAL = (
+    "network.s3Cidrs is empty and network.s3InNamespace is false, so campaign"
+    " pods and the web front have no route to the results bucket and every"
+    " volume would fail after its GPU time: list the S3 endpoint's ranges in"
+    " network.s3Cidrs, or set network.s3InNamespace=true when the bucket is the"
+    " in-namespace RustFS of charts/htrflow-devstack"
+)
+CLUSTER_CIDRS_REFUSAL = (
+    "network.clusterCidrs is empty, so no egress range the chart renders would"
+    " carve the cluster's own pod and service ranges out of itself: list your"
+    " cluster's pod and service CIDRs"
+)
+IIIF_NOWHERE_REFUSAL = (
+    "network.iiifCidrs is empty, so campaign pods could fetch a page image from"
+    " nowhere: list your IIIF origins' ranges (0.0.0.0/0 for any origin, which"
+    " still reaches no internal range)"
+)
 RESULTS_BASE_REFUSAL = (
     "publicResultsBase is required (the read API serves S3 links built from it)"
 )
@@ -468,6 +485,7 @@ CATCH_ALL_EXCEPT = {
     "10.0.0.0/8",
     "172.16.0.0/12",
     "192.168.0.0/16",
+    "100.64.0.0/10",
 }
 
 
@@ -548,6 +566,7 @@ def test_a_catch_all_split_in_halves_is_carved_out_half_by_half():
         "10.42.0.0/16",
         "10.43.0.0/16",
         "10.0.0.0/8",
+        "100.64.0.0/10",
         "127.0.0.0/8",
     }
     assert set(blocks["128.0.0.0/1"]) == {
@@ -578,6 +597,24 @@ def test_a_named_range_inside_a_private_block_is_left_whole():
     blocks = _blocks(named(rendered, "NetworkPolicy", "htr-batch-job"))
     assert blocks["10.16.5.5/32"] == []
     assert set(blocks["10.0.0.0/8"]) == {"10.42.0.0/16", "10.43.0.0/16"}
+
+
+@pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-web"])
+def test_without_in_namespace_s3_no_pod_labelled_rustfs_is_a_route(policy_name: str):
+    """The in-namespace `app: rustfs` rule is the dev stack's bucket. Off
+    it, any pod that carries the label is a destination the batch Job and
+    the web front may send to, so a production profile drops the rule."""
+    rendered = render(
+        sets=DEFAULT_SETS
+        + ("network.s3InNamespace=false", "network.s3Cidrs={52.95.0.0/16}")
+    )
+    egress = named(rendered, "NetworkPolicy", policy_name)["spec"]["egress"]
+    assert not any(
+        "podSelector" in to and "namespaceSelector" not in to
+        for r in egress
+        for to in r.get("to", [])
+    )
+    assert any({"ipBlock": {"cidr": "52.95.0.0/16"}} in r.get("to", []) for r in egress)
 
 
 # --- D4: all-port egress to the S3 range ----------------------------------
@@ -977,7 +1014,12 @@ def test_the_image_rules_see_an_ephemeral_container_too(
 #: server as pods reach it, the image digest, and who may reach the web
 #: front. A profile that guessed any of them would be wrong on every
 #: cluster, so they stay the operator's to pass.
-PROD_SETS = REQUIRED_SETS + ("network.web.ingressCidrs={10.16.0.0/16}",)
+PROD_SETS = REQUIRED_SETS + (
+    "network.web.ingressCidrs={10.16.0.0/16}",
+    "network.s3Cidrs={52.95.0.0/16}",
+    "network.clusterCidrs={10.244.0.0/16,10.96.0.0/12}",
+    "network.iiifCidrs={192.121.221.27/32}",
+)
 
 
 @pytest.fixture(scope="module")
@@ -1047,6 +1089,12 @@ def test_every_pod_the_profile_renders_passes_pod_security_restricted(
         ("publicResultsBase=", RESULTS_BASE_REFUSAL),
         ("network.apiServer.cidr=", API_SERVER_REFUSAL),
         ("network.web.ingressCidrs=", "network.web.ingressCidrs has 0.0.0.0/0"),
+        # 0923 D-8: the profile's comment said these three were asked for,
+        # and the render went through without them -- a production batch
+        # Job with no route to S3 fails every volume after its GPU time.
+        ("network.s3Cidrs=", S3_NOWHERE_REFUSAL),
+        ("network.clusterCidrs=", CLUSTER_CIDRS_REFUSAL),
+        ("network.iiifCidrs=", IIIF_NOWHERE_REFUSAL),
     ],
 )
 def test_the_profile_leaves_the_site_specific_values_to_the_site(
@@ -1223,6 +1271,21 @@ BATCH_GUARDS = {
         None,
         DEFAULT_SETS + ("publicResultsBase=",),
         RESULTS_BASE_REFUSAL,
+    ),
+    "s3-nowhere": (
+        None,
+        DEFAULT_SETS + ("network.s3InNamespace=false",),
+        S3_NOWHERE_REFUSAL,
+    ),
+    "cluster-cidrs-empty": (
+        "network:\n  clusterCidrs: []\n",
+        DEFAULT_SETS,
+        CLUSTER_CIDRS_REFUSAL,
+    ),
+    "iiif-empty": (
+        "network:\n  iiifCidrs: []\n",
+        DEFAULT_SETS,
+        IIIF_NOWHERE_REFUSAL,
     ),
 }
 DEVSTACK_GUARDS = {

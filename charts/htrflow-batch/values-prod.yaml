@@ -7,11 +7,14 @@
 # installation enforces it" was the whole of it.
 #
 # This file is only the switches. What it deliberately does NOT set is
-# everything one cluster cannot know for another — `publicResultsBase`, the
-# web image digest, `network.apiServer.cidr`, `network.clusterCidrs`,
-# `network.iiifCidrs`, `network.s3Cidrs` and who may reach the web front.
-# A render with this file alone fails asking for them, which is the point:
-# a guessed value would be wrong on every cluster and look right on none.
+# everything one cluster cannot know for another — `publicResultsBase`,
+# `network.apiServer.cidr`, `network.clusterCidrs`, `network.iiifCidrs`,
+# `network.s3Cidrs` and who may reach the web front — and it empties the
+# network lists values.yaml fills with one site's or one distribution's
+# addresses. A render with this file alone fails asking for each of them,
+# one at a time, which is the point: a guessed value would be wrong on every
+# cluster and look right on none. The web image digest defaults to the
+# published release's.
 #
 #   helm install htr charts/htrflow-batch -n <namespace> --create-namespace \
 #     -f charts/htrflow-batch/values-prod.yaml --set …
@@ -44,3 +47,11 @@ security:
     # dispatch, so the certificate carries the branch it ran from, never a
     # tag ref. Change this to your own workflow if you republish the images.
     subject: https://github.com/AI-Riksarkivet/htrflow-batch/.github/workflows/publish.yml@refs/heads/main
+
+network:
+  # The results bucket is an S3 endpoint named in s3Cidrs, not the dev
+  # stack's in-namespace RustFS, so no pod labelled `app: rustfs` is a route.
+  s3InNamespace: false
+  s3Cidrs: []
+  clusterCidrs: []
+  iiifCidrs: []

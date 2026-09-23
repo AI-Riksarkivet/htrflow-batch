@@ -448,6 +448,7 @@
         "defaultDeny",
         "iiifCidrs",
         "s3Cidrs",
+        "s3InNamespace",
         "s3Ports",
         "clusterCidrs",
         "privateCidrs",
@@ -467,6 +468,9 @@
         },
         "s3Cidrs": {
           "$ref": "#/definitions/cidrList"
+        },
+        "s3InNamespace": {
+          "type": "boolean"
         },
         "s3Ports": {
           "type": "array",
