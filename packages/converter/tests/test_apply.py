@@ -350,13 +350,17 @@ def test_pipelines_are_applied_before_campaigns(tmp_path, cluster):
     pipeline's warm-up Job, so the order is not cosmetic."""
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    # A new campaign's ConfigMap is sent twice: once before its Job, and
+    # once after, with the uid the new Job got (S-11).
     assert cluster.of("apply") == [
         ("apply", "ConfigMap", "htr-pipeline-demo-v1"),
         ("apply", "Job", "htr-warmup-demo-v1"),
         ("apply", "ConfigMap", "campaign-kyrk"),
         ("apply", "Job", "kyrk"),
+        ("apply", "ConfigMap", "campaign-kyrk"),
         ("apply", "ConfigMap", "campaign-loc"),
         ("apply", "Job", "loc"),
+        ("apply", "ConfigMap", "campaign-loc"),
     ]
     assert cluster.namespace == NS, "the namespace comes from converter.yaml"
 
@@ -364,7 +368,7 @@ def test_pipelines_are_applied_before_campaigns(tmp_path, cluster):
 def test_apply_without_out_renders_into_a_temp_dir(tmp_path, cluster):
     repo = _repo(tmp_path)
     assert cli.main(["apply", str(repo)]) == 0
-    assert len(cluster.of("apply")) == 6
+    assert len(cluster.of("apply")) == 8
 
 
 def test_nothing_is_deleted_without_prune(tmp_path, cluster):
@@ -923,6 +927,7 @@ def test_one_refused_object_does_not_stop_the_apply(tmp_path, cluster, capsys):
         "htr-warmup-demo-v1",
         "campaign-loc",
         "loc",
+        "campaign-loc",
     ]
     err = capsys.readouterr().err
     assert "apply Job/kyrk: 409 Conflict" in err
@@ -1671,3 +1676,131 @@ def test_a_steps_edit_once_every_campaign_on_it_has_ended_is_applied(tmp_path, c
         "SomethingElse"
         in _live(cluster, "htr-pipeline-demo-v1")["data"]["pipeline.yaml"]
     )
+
+
+# --- a finished record counts only when it names apply's own Job (S-11) ---
+
+JOB_UID = "htrflow.riksarkivet.se/job-uid"
+
+
+def _web_writes(cluster, name: str, phase: str, job_uid: str) -> None:
+    """The read API's write -- or anything that holds its ServiceAccount:
+    the chart lets it write every `campaign-<x>-status` name."""
+    from htrflow_web.kube import FIELD_MANAGER as WEB_MANAGER
+
+    record = _status(name, phase, jobUid=job_uid)
+    record["apiVersion"] = "v1"
+    cluster.server_side_apply(record, WEB_MANAGER, force=True)
+
+
+def _drop_job(cluster, name: str) -> None:
+    cluster.live = [
+        o
+        for o in cluster.live
+        if not (o["kind"] == "Job" and o["metadata"]["name"] == name)
+    ]
+
+
+def test_the_campaign_record_names_the_job_the_apply_created(tmp_path, cluster):
+    """The campaign ConfigMap is written by the apply identity alone (the
+    read API may write only `-status` names), so it is where the apply
+    keeps which Job it made -- the uid a record has to name to be believed."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    record = _live(cluster, "campaign-kyrk")
+    assert (
+        record["metadata"]["annotations"][JOB_UID]
+        == _live(cluster, "kyrk")["metadata"]["uid"]
+    )
+
+
+def test_a_finished_record_naming_another_job_is_not_believed(
+    tmp_path, cluster, capsys
+):
+    """A status record whose Job is gone says how the campaign ended, and the
+    apply leaves a finished one alone. Anything holding the read API's
+    ServiceAccount can write that record, for any campaign: a `Succeeded`
+    beside a Job removed by hand kept the campaign from ever running again.
+    The record has to name the Job the apply itself created."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    _drop_job(cluster, "kyrk")
+    _web_writes(cluster, "kyrk", "Succeeded", "uid-somebody-elses")
+    cluster.calls.clear()
+    capsys.readouterr()
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert ("apply", "Job", "kyrk") in cluster.calls
+    captured = capsys.readouterr()
+    assert "left alone" not in captured.out
+    assert "not the Job this apply created" in captured.err
+
+
+def test_a_finished_record_naming_the_applys_job_is_believed(tmp_path, cluster):
+    """The read API's own legitimate record -- the case it exists for: the
+    campaign finished while the status page was open and the TTL reaped
+    the Job before the next apply."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    uid = _live(cluster, "kyrk")["metadata"]["uid"]
+    _drop_job(cluster, "kyrk")
+    _web_writes(cluster, "kyrk", "Succeeded", uid)
+    cluster.calls.clear()
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert ("apply", "Job", "kyrk") not in cluster.calls
+
+
+def test_a_record_for_a_job_that_was_never_created_is_not_believed(tmp_path, cluster):
+    """The pair came apart: the ConfigMap went out and its Job did not. No
+    Job exists for any record to be about, so none is believed."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    real = FakeCluster._method
+
+    def method(kind, verb, name=""):
+        inner = real(cluster, kind, verb, name)
+        if verb == "patch" and kind == "Job" and name == "kyrk":
+
+            def patch(name, ns, obj, **kw):
+                if not kw.get("dry_run"):
+                    raise cluster_mod.ClusterError("apply Job/kyrk: 500")
+                return inner(name, ns, obj, **kw)
+
+            return patch
+        return inner
+
+    cluster._method = method
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
+    assert _live(cluster, "campaign-kyrk")["metadata"]["annotations"][JOB_UID] == ""
+    _web_writes(cluster, "kyrk", "Succeeded", "uid-anything")
+    cluster._method = lambda kind, verb, name="": real(cluster, kind, verb, name)
+    cluster.calls.clear()
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert ("apply", "Job", "kyrk") in cluster.calls
+
+
+def test_a_refused_uid_write_costs_a_rerun_later_never_the_apply(
+    tmp_path, cluster, capsys
+):
+    """The second write of a new campaign's ConfigMap only records which Job
+    it runs. Refused, the campaign still runs; its record will simply not be
+    believed once the Job is reaped, and the campaign is applied again."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    real = FakeCluster._method
+    sent = [0]
+
+    def method(kind, verb, name=""):
+        inner = real(cluster, kind, verb, name)
+        if verb == "patch" and name == "campaign-kyrk":
+
+            def patch(name, ns, obj, **kw):
+                sent[0] += 1
+                if sent[0] > 1:
+                    raise cluster_mod.ClusterError("apply ConfigMap/campaign-kyrk: 500")
+                return inner(name, ns, obj, **kw)
+
+            return patch
+        return inner
+
+    cluster._method = method
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert "could not record which Job campaign kyrk runs" in capsys.readouterr().err
+    assert _live(cluster, "campaign-kyrk")["metadata"]["annotations"][JOB_UID] == ""

@@ -510,6 +510,8 @@ def _finished(cluster, name: str, volumes: str, observed: dict | None) -> str | 
     stored = ((record or {}).get("data") or {}).get("volumes.txt") or ""
     if _volume_list(stored) != _volume_list(volumes):
         return None
+    if observed is None and not _believed(name, record, data):
+        return None
     when = (data.get("finishedAt") or "")[:10] or "earlier"
     done, total = data.get("volumesDone", "?"), data.get("volumesTotal", "?")
     return (
@@ -534,6 +536,62 @@ _INCOMPLETE_RENDER = (
     "volumes.txt, so this render is incomplete — re-render the repo and "
     "apply that"
 )
+
+
+#: Which Job the apply made for a campaign, on the campaign ConfigMap (S-11).
+#: A status record is written by the read API too, and the chart lets that
+#: ServiceAccount write every `campaign-<x>-status` name -- so a record
+#: alone is anybody's word that a campaign ended. The campaign ConfigMap is
+#: the apply identity's alone (the chart's rbac-scope policy), so a record
+#: is believed only when it names the Job recorded here. ``""``: the Job
+#: has not been created. A ConfigMap without the key was applied before it
+#: existed, and its record is believed as it always was.
+_JOB_UID = "htrflow.riksarkivet.se/job-uid"
+_UNBELIEVED = (
+    "campaign {name}: its status record says {phase} of Job {theirs}, not the "
+    "Job this apply created ({ours}), so it is not believed and the campaign "
+    "is applied"
+)
+_NO_UID = "could not record which Job campaign {name} runs, continuing without it: "
+
+
+def _uid(job: dict | None) -> str:
+    return ((job or {}).get("metadata") or {}).get("uid", "")
+
+
+def _believed(name: str, record: dict | None, data: dict) -> bool:
+    ours = ((record or {}).get("metadata") or {}).get("annotations") or {}
+    if _JOB_UID not in ours:
+        return True
+    if ours[_JOB_UID] and data.get("jobUid") == ours[_JOB_UID]:
+        return True
+    print(
+        _UNBELIEVED.format(
+            name=name,
+            phase=data.get("phase"),
+            theirs=data.get("jobUid") or "(none)",
+            ours=ours[_JOB_UID] or "none yet",
+        ),
+        file=sys.stderr,
+    )
+    return False
+
+
+def _restamp(cluster, record: dict | None, live: dict) -> None:
+    """Put the uid of the Job just applied on its campaign ConfigMap, when
+    the ConfigMap went out before that Job existed. A failure costs a
+    re-run once the Job is reaped, never a record believed wrongly."""
+    from .cluster import ClusterError, Unreachable
+
+    if record is None or record["metadata"]["annotations"][_JOB_UID] == _uid(live):
+        return
+    record["metadata"]["annotations"][_JOB_UID] = _uid(live)
+    try:
+        cluster.apply(record)
+    except Unreachable:
+        raise
+    except ClusterError as e:
+        print(f"{_NO_UID.format(name=_campaign_of(record))}{e}", file=sys.stderr)
 
 
 def _record_and_decide(
@@ -882,8 +940,10 @@ def _apply(
                 if o["kind"] == "ConfigMap"
             }
             done: set[str] = set()
-            # The live campaign Jobs, as read before anything was sent.
+            # The live campaign Jobs, as read before anything was sent, and
+            # the campaign ConfigMaps as this apply sent them.
             lives: dict[str, dict | None] = {}
+            records: dict[str, dict] = {}
             # Campaigns whose Job must not be sent, with the sentence why.
             blocked: dict[str, ClusterError] = {}
             for obj in campaigns:
@@ -940,7 +1000,10 @@ def _apply(
                     if campaign in done:
                         continue
                     if is_campaign and obj["kind"] == "ConfigMap":
-                        obj["metadata"].setdefault("annotations", {}).update(prov)
+                        ann = obj["metadata"].setdefault("annotations", {})
+                        ann.update(prov)
+                        ann[_JOB_UID] = _uid(lives.get(campaign))
+                        records[_campaign_of(obj)] = obj
                     name = f"{obj['kind']}/{obj['metadata']['name']}"
                     if campaign in blocked and obj["kind"] == "ConfigMap":
                         print(
@@ -972,6 +1035,7 @@ def _apply(
                     print(f"applied: {name}")
                     if is_campaign and obj["kind"] == "Job":
                         jobs.append((live, obj["spec"].get("suspend", False)))
+                        _restamp(cluster, records.get(campaign), live)
             # The pause first: it is the one step whose absence burns GPU
             # right now, and a prune problem used to end the apply before it
             # ran for any campaign (3090).

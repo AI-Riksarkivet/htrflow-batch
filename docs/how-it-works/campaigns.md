@@ -302,7 +302,7 @@ running it moves every time; it is not the campaign's start time, which is
 `startedAt` in the status ConfigMap. Once the campaign is finished `apply`
 leaves it alone and it stops moving.
 
-Three things follow.
+These things follow.
 
 - **A finished campaign is not run again.** `apply` reads the status
   ConfigMap beside the append-only check. A campaign the record says is
@@ -312,6 +312,16 @@ Three things follow.
   Without it, an apply after the Job's TTL found no Job, created one, and
   re-ran every volume. There is deliberately **no `--force`**: a campaign
   that should run again is a new campaign file.
+- **A stored record counts only when it names the apply's own Job.** The
+  read API may write every `campaign-<name>-status` ConfigMap, so a record
+  on its own is only a claim. `apply` stamps the uid of the Job it created
+  on the campaign ConfigMap, which only the apply identity may write, as
+  `htrflow.riksarkivet.se/job-uid`. For a new campaign that is a second
+  write of the ConfigMap, once its Job exists. A record whose `jobUid` is
+  a different Job, or a record where no Job was ever created, is not
+  believed. `apply` says so on stderr and applies the campaign. A campaign
+  ConfigMap written before the annotation existed carries no uid, and its
+  record is believed as before.
 - **A live Job outranks the stored record.** While the campaign's Job
   exists, it alone says whether the campaign is over. A stored `Succeeded`
   beside a Job that is still running is left over from something else — a
