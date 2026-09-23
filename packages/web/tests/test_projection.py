@@ -326,6 +326,44 @@ class TestDetail:
         )
         assert [v["index"] for v in d["volumes"]] == [5, 6]
 
+    def test_a_done_volume_never_carries_an_earlier_attempts_reason(self):
+        """The read API lists no Succeeded pods (kube.list_pods), so the
+        newest pod left for an index that failed once and then published is
+        the failed attempt. Its sentence is history, not why the volume is
+        anything: a done row says nothing (2026-09-23 audit)."""
+        pods = [_pod(0, terminated_message='{"permanent": false, "error": "OOM"}')]
+        d = projection.detail(_job(), _configmap(), pods, CFG, warmup=MISSING_WARMUP)
+        row0 = next(v for v in d["volumes"] if v["index"] == 0)
+        assert row0["state"] == "done"
+        assert "reason" not in row0
+
+    def test_a_pod_trimmed_to_its_read_fields_projects_the_same(self):
+        """kube.list_pods keeps only `projection.pod_fields` of each pod, so
+        anything this module reads off a pod has to survive the trim."""
+        pod = _pod(3, terminated_message='{"permanent": true, "error": "x"}')
+        pod["status"]["reason"] = "DeadlineExceeded"
+        pod["status"]["initContainerStatuses"] = [
+            {"name": "warmup-wait", "state": {"terminated": {"exitCode": 13}}}
+        ]
+        pod["status"]["containerStatuses"][0]["lastState"] = {
+            "terminated": {"exitCode": 1, "message": "earlier"}
+        }
+        pod["spec"] = {"containers": [{"name": "wrapper", "env": ["x" * 1000]}]}
+        pod["metadata"]["managedFields"] = [{"manager": "kubelet"}]
+        slim = projection.pod_fields(pod)
+        assert "spec" not in slim and "managedFields" not in slim["metadata"]
+        full = projection.detail(
+            _job(), _configmap(), [pod], CFG, warmup=MISSING_WARMUP
+        )
+        trimmed = projection.detail(
+            _job(), _configmap(), [slim], CFG, warmup=MISSING_WARMUP
+        )
+        assert trimmed == full
+        for container in ("wrapper", "warmup"):
+            assert projection.wrapper_reason(slim, container) == (
+                projection.wrapper_reason(pod, container)
+            )
+
     def test_newest_pod_wins_reason(self):
         job = _job()
         configmap = _configmap()
