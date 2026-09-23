@@ -211,3 +211,19 @@ def test_the_campaigns_ci_checks_policies_as_the_apply_identity():
         assert usernames == [
             f"system:serviceaccount:${{POLICY_NAMESPACE}}:{apply_sa}"
         ], workflow
+
+
+def test_the_policy_tests_run_the_kyverno_release_a_campaigns_repo_runs():
+    """test_policy_admission.py stands in for a campaigns repo's policy job,
+    and says so; that is only true while the CLI the dagger test container
+    lifts is the release every campaigns CI template installs. Kyverno's
+    JMESPath and its CLI's admission stand-in both move between releases,
+    so a bump on one side alone would prove the policies against a binary
+    no pull request runs (audit 0923 T-8)."""
+    main_go = (ROOT / ".dagger" / "main.go").read_text(encoding="utf-8")
+    ours = re.search(r'kyvernoCliImage\s*=\s*"[^":]+:(v[\d.]+)@sha256:', main_go)
+    assert ours, "kyvernoCliImage is not a tag-and-digest reference"
+    for workflow in WORKFLOWS:
+        doc = _load(workflow)
+        pinned = doc["variables" if "stages" in doc else "env"]["KYVERNO_VERSION"]
+        assert pinned == ours.group(1), workflow
