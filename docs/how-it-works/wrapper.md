@@ -12,13 +12,22 @@ The full environment, stage and exit-code contract is in the
 
 ## The image
 
-The `htrflow-batch` image is built `FROM` the upstream htrflow image, pinned
-by digest, or from an htrflow base built for your node's architecture
-([Dev cluster](../development/dev-cluster.md)). On top of it the build adds:
+The `htrflow-batch` image builds its own htrflow base, from htrflow's source
+at a pinned commit, on the CUDA runtime image
+([Releasing](../development/releasing.md#one-dockerfile-every-architecture)).
+On top of it the build adds:
 
-- the `htrflow_batch` package (`packages/wrapper/`), installed from the
+- the `htrflow_batch` package (`packages/wrapper/`), built with a pinned,
+  hashed build backend
+- its runtime dependencies, `httpx` and `boto3`, installed from the
   workspace lock with hashes
-- its runtime dependencies, `httpx` and `boto3`
+
+The image carries no C compiler and compiles nothing at run time: torch's
+own Triton kernels are switched off (`TORCH_DISABLE_NATIVE_JIT=1`), so every
+operator runs on torch's precompiled kernels. That holds for the defaults.
+A pipeline config that opts into compilation, such as ultralytics'
+`compile` setting or a static cache in the transformers generation
+settings, is unsupported: it fails for want of a compiler.
 
 The base revision travels with the image, both as an OCI label and as the
 environment variable `HTRFLOW_BASE_REVISION`, so the wrapper can read it at

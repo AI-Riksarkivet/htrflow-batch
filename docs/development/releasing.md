@@ -42,8 +42,10 @@ architecture, in three stages:
 - **`htrflow-src`** — htrflow's source at the commit the dockerfile pins
   (`HTRFLOW_REF`), fetched by BuildKit. A local checkout can stand in for
   it ([Dev cluster](dev-cluster.md#the-gpu-wrapper-image)).
-- **`htrflow-builder`** — htrflow's virtual environment, installed with
-  `uv sync --locked` against `.docker/htrflow-base/`: htrflow's own
+- **`htrflow-builder`** — htrflow's virtual environment, its dependencies
+  installed with `uv sync --locked --no-build` against
+  `.docker/htrflow-base/` and htrflow itself built into a wheel with a
+  pinned build backend (see below): htrflow's own
   `pyproject.toml` with this repository's `overlay.toml` appended, and the
   lock both resolve to. The overlay pins torch and torchvision per
   architecture — builds from PyTorch's CUDA 12.8 wheel index where those
@@ -55,15 +57,22 @@ architecture, in three stages:
 
 There is no separate base image to build, pull or pass in, so every build
 path — `make build-wrapper`, the dagger functions, CI and the publish
-workflow — runs this one recipe. The only architecture-specific step left
-is the C compiler and Python headers one architecture's GPU path needs at
-runtime (triton JIT-compiles a CPython extension there).
-
-That step sits behind a `TARGETARCH` test. The transformers line is not
-architecture-specific: both architectures install it from the
+workflow — runs this one recipe, and no step in it is architecture-specific.
+The transformers line is not either: both architectures install it from the
 `TRANSFORMERS_VERSION` build argument, whose default is the line upstream
 htrflow is tested on ([Two transformers
 lines](../how-it-works/wrapper.md#model-handling)).
+
+**No compiler in the image.** Some torch builds route a few operators
+through Triton kernels of their own, and the first such call compiles
+Triton's CUDA launcher with the system C compiler — which would put a
+compiler and the kernel headers it needs into a runtime image. The image
+sets `TORCH_DISABLE_NATIVE_JIT=1` instead, so those operators run on
+torch's precompiled kernels, the same kinds the other torch builds run,
+and nothing compiles or loads new machine code at run time. The image
+build checks that the switch still holds: it fails if torch registers any
+JIT-compiled operator. Nothing else JIT-compiles by default: htrflow does
+not call `torch.compile`, and ultralytics leaves it off.
 
 The web and converter dockerfiles need none of this. Every image they build
 on — the two Node toolchains for the web image, the Debian build stage and
@@ -73,6 +82,26 @@ architecture, so each dockerfile produces either architecture's image with no
 branch in it. The converter dockerfile is stages 3–4 of the web one on their
 own: same
 base digests, same uv workspace sync, no viewer or SPA stage in front of it.
+
+**Findings that do not apply.** The distroless runtime's Debian packages
+can carry CVEs that Debian has not fixed and that nothing in these images
+can reach: a flaw in a command-line program when the image ships only that
+package's library, in a parser nothing in the image calls, or in one that
+only ever reads the image's own build output. Those are recorded in
+`.docker/distroless.openvex.json` (OpenVEX), one statement per CVE with its
+justification, each scoped to the exact package version so the next package
+update retires it; the Trivy scans read it with `--vex`. A test ties every
+statement to the code: the web and converter packages and their locked
+dependencies may not import a module a statement calls unused, and the web
+service may parse HTML only from files in its static directory. A change
+that breaks a statement fails that test until the statement goes.
+
+The statements name the Debian packages, not the images: Trivy matches an
+image-scoped product (`pkg:oci/…` with the packages as subcomponents) only
+when the scanned image carries a registry digest, and the scans run on
+freshly built images that have none. So the file is meant for these images'
+scans only; passing it to a scan of another Debian 13 image would hide the
+same CVEs there.
 
 **Each architecture is built natively.** Nothing passes `--platform`:
 `uv` crashes in a cross-architecture build, and a GPU image built for a
@@ -96,8 +125,17 @@ own requirements are met. A `TRANSFORMERS_VERSION` those files do not pin
 fails the build. The htrflow base installs htrflow, torch and the rest of
 its dependencies with `uv sync --locked` from the lock committed in
 `.docker/htrflow-base/`: htrflow does not commit its own, and locking
-afresh on every build meant two builds of one commit could differ. Nothing
-is resolved at build time. Refresh that lock with `make lock-htrflow-base`
+afresh on every build meant two builds of one commit could differ.
+
+The packages the images build from source — htrflow and the three workspace
+members — need a build backend, and a lock pins what gets installed, not
+what builds it. That backend and its dependencies are the hashed
+`.docker/build-constraints.txt`, compiled from the `.in` file beside it with
+`make build-constraints`. Every image builds its packages with `uv build
+--build-constraints … --require-hashes`, which refuses a build requirement
+that file does not pin and hash, and installs the dependencies with
+`--no-build`, which refuses to build any of them from source. Nothing is
+resolved at build time. Refresh that lock with `make lock-htrflow-base`
 after moving `HTRFLOW_REF` or editing the overlay, and review the diff.
 
 The build argument `HTRFLOW_BASE_REVISION` records which htrflow the image
