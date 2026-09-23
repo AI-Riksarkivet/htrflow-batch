@@ -63,7 +63,15 @@ make test                       # uv run --all-packages pytest -q
 cd frontend && bun run test     # vitest
 # or, reproducibly, the way CI runs it:
 dagger call test                # add --ca-bundle <file> behind a TLS-inspecting proxy
+cd .dagger && go vet ./publishcheck/ && go test ./publishcheck/   # the dagger module's Go test
 ```
+
+The Go test reads the order of `publish-docker`'s gates (the free-tag check,
+tests, build, driver test, Trivy, the free-tag check again, push) from the
+dagger module's syntax tree, so a gate that is commented out or moved after
+the push fails it, and it checks that only a registry's "unknown manifest"
+answer counts as a free tag. It imports only the standard
+library and runs without an engine; `ci.yml` runs it in a job of its own.
 
 ## The two generated files CI checks are current
 

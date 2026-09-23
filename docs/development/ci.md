@@ -158,7 +158,10 @@ The cluster constants these targets use come from `.env`
   manifest list per image ([Releasing](releasing.md#the-publish-workflow)).
 - **`ci.yml`** also runs, on every trigger: a `docs` job, the lint and the
   strict site build below without the deploy, so a pull request that breaks
-  the site fails before it lands; and `verify-published`.
+  the site fails before it lands; `verify-published`; and a `dagger-go` job,
+  `go vet` and `go test` over `.dagger/publishcheck`, the one Go test of the
+  dagger module (it reads the order of `publish-docker`'s gates from the
+  module's syntax tree, and needs neither an engine nor the generated SDK).
 - **`docs.yml`** ("Documentation") — on push to `main` and by hand:
   `uv sync --locked --only-group docs` (zensical pinned and hash-checked in
   `uv.lock`), `scripts/docs-site.sh build --clean --strict` with that

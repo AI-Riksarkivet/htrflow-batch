@@ -38,6 +38,29 @@ jobs:
       - name: LOC budget
         run: scripts/loc-budget.sh
 
+  # The Go tests of the dagger module that need no engine: publishcheck reads
+  # PublishDocker's gate order from the syntax tree (a commented-out gate is
+  # not in the tree). It imports only the standard library, so it runs
+  # without the generated dagger SDK and without downloading a module; the
+  # dagger jobs above never run `go test`, so without this job it ran nowhere.
+  dagger-go:
+    name: Dagger module (go vet, go test)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # The toolchain the module declares; no cache -- nothing is downloaded.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .dagger/go.mod
+          cache: false
+
+      - name: go vet and go test (publishcheck)
+        working-directory: .dagger
+        run: go vet ./publishcheck/ && go test ./publishcheck/
+
   # The documentation site, the way docs.yml publishes it -- docs_lint (no
   # ids, dates, versions or hosts in the site) and the strict zensical
   # build -- but on every pull request, and without deploying. docs.yml ran
