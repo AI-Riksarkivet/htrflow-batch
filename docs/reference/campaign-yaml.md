@@ -216,12 +216,19 @@ Two more rules are the **cluster's**, enforced by Kyverno at admission and
 by the Kyverno CLI in the campaigns repo's CI:
 
 - The image's repository is one `security.allowedImageRepos` names.
-- With `security.requireModelRevision`, every `model_settings.model` has a
-  40-hex `revision:` in the place its loader reads: `model_settings.revision`
-  for YOLO, `model_settings.model_kwargs.revision` for Hugging Face models
-  (TrOCR, Donut, DiT). TrOCR, WordLevelTrOCR, Donut and DiT also need
-  `model_settings.processor_kwargs.revision`, since the processor is a
-  second download (refused as `processors not pinned to a revision`).
+- With `security.requireModelRevision`, the model-revision policy holds
+  every pipeline ConfigMap to these rules:
+
+| Rule | Refused as |
+|---|---|
+| Every `model_settings.model` has a 40-hex `revision:` where its loader reads it: `model_settings.revision` for YOLO, `model_settings.model_kwargs.revision` for Hugging Face models (TrOCR, Donut, DiT) | `models not pinned to a revision: <models> — add revision: <40-character commit hash> under model_settings (YOLO) or model_settings.model_kwargs …` |
+| TrOCR, WordLevelTrOCR, Donut and DiT also pin `model_settings.processor_kwargs.revision`: the processor is a second download | `processors not pinned to a revision: <models> — …` |
+| No key beside `model_settings` in a step that loads a model | `settings beside model_settings in a step that loads a model: … — move them under model_settings` |
+| The pipeline is under `data`, never `binaryData` | `a pipeline may not be carried in binaryData, where the revision rule cannot read it …` |
+
+Either revision placement satisfies the policy, but a model reads only the
+one its own loader expects, so a pin in the wrong place still fails to
+load.
 
 Only top-level `steps:` are walked. The wrapper holds the same three paths
 when it loads a pipeline, and fails the volume permanently when a key
