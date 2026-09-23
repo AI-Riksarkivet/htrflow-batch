@@ -212,8 +212,10 @@ version.
 Added:
 - **`job-shape`** ClusterPolicy (with `security.policies.enabled`): a
   campaign or warm-up Job is the shape the converter renders — its
-  ServiceAccount and token, Secrets, volumes, containers, scripts, pod
-  labels and pipeline source.
+  ServiceAccount and token, Secrets, volumes, containers, scripts, env vars,
+  mounts, file modes, securityContexts, pod labels and pipeline source; a
+  `campaign-*` or `htr-pipeline-*` ConfigMap holds only the key the
+  converter writes. It admits what the v0.5.0 converter renders.
 - **`hfToken.existingSecret`**: the one Secret a warm-up may read; must equal
   `converter.yaml`'s `hf_token_secret`.
 - **`security.jobImageRepos`**: narrows campaign and warm-up Jobs to the
@@ -233,8 +235,12 @@ Changed:
   refused.
 - **`rbac-scope`**: the apply identity may change only `spec.active` on the
   Workload of a converter-labelled Job.
-- Every egress range carves out the internal ranges inside it;
-  `network.privateCidrs` adds `100.64.0.0/10`.
+- Every egress range carves out the internal ranges inside it, the API
+  server included whatever its address; `network.privateCidrs` adds
+  `100.64.0.0/10`.
+- **`network.iiifCidrs`** has no default (it was one institution's IIIF
+  server) and must be set.
+- The schema takes only real IPv4 ranges: octets to 255, prefixes to /32.
 - **`values-prod.yaml`**: `allowedImageRepos` names the three published
   repositories instead of the organisation; the network lists are emptied
   and required; `network.s3InNamespace: false`.
