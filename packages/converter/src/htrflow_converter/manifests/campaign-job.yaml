@@ -67,10 +67,11 @@ spec:
       # the Ignore rule above does not swallow it -- the attempt is counted and
       # backoffLimitPerIndex retries the index, resuming from published pages.
       activeDeadlineSeconds: 0
-      # The wrapper's SIGTERM path (join the log-shipping thread, then one
-      # final run-log PUT through a bounded S3 client) can take ~100 s on a
-      # slow endpoint; the default 30 s would SIGKILL the pod mid-cleanup and
-      # lose both the complete run log and the clean exit 143.
+      # The wrapper's final run-log ship has a hard 90 s wall-clock budget
+      # (logship.FINAL_SHIP_SECONDS), and 120 s covers it plus the rest of
+      # the SIGTERM path; the default 30 s would SIGKILL the pod mid-cleanup
+      # and lose both the complete run log and the clean exit 143. Keep it
+      # at 110 or more: a wrapper test reads this manifest and enforces it.
       terminationGracePeriodSeconds: 120
       automountServiceAccountToken: false
       securityContext:
