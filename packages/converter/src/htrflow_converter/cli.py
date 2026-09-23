@@ -187,6 +187,7 @@ def _validate(repo_dir: str, rendered: bool = False) -> int:
     if refused is not None:
         print(refused)
         return 1
+    _window_warnings(campaigns, cfg, repo / RENDERED)
     unrendered = _unrendered(repo) if rendered else None
     if unrendered is not None:
         print(unrendered)
@@ -305,33 +306,43 @@ def _edited_pipeline(campaigns, pipelines: dict, cfg, out: Path) -> str | None:
 #: deletes the Workload and queues the campaign again (jobframework
 #: ``ensureOneWorkload``, "No matching Workload"; Kueue v0.19). A Workload
 #: holding no quota, a paused campaign's, is updated in place instead
-#: (audit 0923 C-11).
+#: (audit 0923 C-11). Whether the campaign is still running is the
+#: cluster's to say: offline this is a warning, and the apply, which sees
+#: the Job, holds a running one to its count.
 _WINDOW_MOVED = (
     "campaign {name} runs {before} pods at a time and would now run {after}: "
-    "Kueue stops every running pod of an admitted Job whose parallelism "
-    "changes and queues the campaign again — put its window back (the "
-    "campaign's window:, or the window cap in converter.yaml), or pause the "
-    "campaign first (suspend: true), change the window once it is paused, "
-    "then resume it"
+    "if it is still running, Kueue stops every running pod of a Job whose "
+    "parallelism changes and queues the campaign again — to change it safely, "
+    "pause it first (suspend: true), change the window once the pause is "
+    "applied, then resume it"
 )
 
 
-def _moved_window(c: Campaign, record: list[Path], cfg) -> str | None:
-    """One sentence when a live campaign's pod count moves. Held against the
-    record part by part: each Job there is what the cluster admitted. A part
-    the record paused runs no pods, so its count may move."""
-    for path, volumes in zip(record, render.split(c.volumes)):
+def _moved_window(c: Campaign, record: Path, cfg) -> str | None:
+    """A warning when a rendered campaign's pod count moves. Held against the
+    record part by part: each Job there is what was last applied. A part the
+    record paused runs no pods, so its count may move without one; so may a
+    campaign whose parts are not the ones recorded (the append-only rules
+    report that)."""
+    existing = existing_parts(record / "campaigns", c.name)
+    for path, volumes in zip(existing, render.split(c.volumes)):
         try:
             before, paused = _pods_at_once(rendered(path, "Job"))
-        except CorruptRenderedFile as e:
-            return str(e)
+        except CorruptRenderedFile:
+            return None  # the append-only check has said so
         after = min(render.parallelism(c, cfg), len(volumes))
         if before != after and not paused:
             return _WINDOW_MOVED.format(name=c.name, before=before, after=after)
     return None
 
 
-def _moved_campaign(c: Campaign, record: Path, cfg) -> str | None:
+def _window_warnings(campaigns, cfg, record: Path) -> None:
+    for c in campaigns:
+        if (said := _moved_window(c, record, cfg)) is not None:
+            print(f"warning: {said}", file=sys.stderr)
+
+
+def _moved_campaign(c: Campaign, record: Path) -> str | None:
     """One sentence when ``c`` no longer renders as the record says it did."""
     existing = existing_parts(record / "campaigns", c.name)
     if not existing:
@@ -362,7 +373,7 @@ def _moved_campaign(c: Campaign, record: Path, cfg) -> str | None:
             "that have already run it and start every volume over — create a "
             "new campaign instead"
         )
-    return _moved_window(c, existing, cfg)
+    return None
 
 
 def _refused(campaigns, pipelines: dict, cfg, record: Path) -> str | None:
@@ -374,7 +385,7 @@ def _refused(campaigns, pipelines: dict, cfg, record: Path) -> str | None:
         *(render.last_pod_problem(c) for c in campaigns),
         _colliding_names(campaigns),
         _edited_pipeline(campaigns, pipelines, cfg, record),
-        *(_moved_campaign(c, record, cfg) for c in campaigns),
+        *(_moved_campaign(c, record) for c in campaigns),
     ):
         if problem is not None:
             return problem
@@ -456,6 +467,7 @@ def _render(repo_dir: str, out_dir: str) -> int:
     if refused is not None:
         print(refused)
         return 1
+    _window_warnings(campaigns, cfg, repo / RENDERED)
     # Written in full beside `--out` first (same filesystem, so the swap is
     # renames), and swapped in only once the whole render exists.
     out.parent.mkdir(parents=True, exist_ok=True)
