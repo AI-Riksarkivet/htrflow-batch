@@ -3,7 +3,7 @@
   "@id": "https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/.docker/distroless.openvex.json",
   "author": "htrflow-batch maintainers",
   "timestamp": "2026-09-23T00:00:00Z",
-  "version": 1,
+  "version": 2,
   "statements": [
     {
       "vulnerability": {
@@ -114,8 +114,8 @@
         }
       ],
       "status": "not_affected",
-      "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "Only html.parser.HTMLParser is affected. Nothing in the image imports html.parser: the service returns JSON and static files and parses no HTML."
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "Only html.parser.HTMLParser is affected, and the only HTML either image parses is its own build output: the web service reads the pages baked into its static directory (the viewer and the campaign browser) to hash their inline scripts for its Content-Security-Policy, one feed() per page. No request data or other outside input reaches the parser; the converter image does not use it."
     },
     {
       "vulnerability": {
