@@ -169,10 +169,29 @@ _NUMERIC_LABEL_RE = re.compile(r"(?:[0-9]+|0[xX][0-9A-Fa-f]*)\Z")
 _BAD_HOST = "its host is not a host name or an IP address"
 
 
-def _idn_label(label: str) -> bool:
-    """An ``xn--`` label a browser takes as written: it decodes to letters,
-    some of them not ASCII, all written left to right, and it is the one
-    encoding of them (NFC, lower case)."""
+def _letters(label: str) -> bool:
+    """ASCII letters, digits and ``-``, and non-ASCII letters written left to
+    right: a right-to-left letter brings in IDNA's bidi rule, which a
+    browser enforces and this does not try to."""
+    return all(
+        (ch.isascii() and (ch.isalnum() or ch == "-"))
+        or (ch.isalpha() and unicodedata.bidirectional(ch) == "L")
+        for ch in label
+    )
+
+
+def _host_label(label: str) -> bool:
+    """One label of a host name a browser takes as written. An ``xn--``
+    label has to be the one encoding a browser would itself have made of
+    what it decodes to -- mapped (case-folded, NFKC) and non-ASCII -- so
+    ``xn--bung-fna`` ("Übung") is refused; a raw non-ASCII label is letters
+    and digits, which the browser encodes."""
+    if not label.isascii():
+        return not label.lower().startswith("xn--") and _letters(label)
+    if not _HOST_LABEL_RE.match(label):
+        return False
+    if not label.lower().startswith("xn--"):
+        return True
     try:
         decoded = label[4:].encode("ascii").decode("punycode")
         encoded = decoded.encode("punycode").decode("ascii")
@@ -180,33 +199,33 @@ def _idn_label(label: str) -> bool:
         return False
     return (
         not decoded.isascii()
-        and all(
-            unicodedata.category(ch).startswith("L")
-            and unicodedata.bidirectional(ch) == "L"
-            for ch in decoded
-        )
-        and unicodedata.normalize("NFC", decoded) == decoded
+        and _letters(decoded)
+        and decoded == unicodedata.normalize("NFKC", decoded.casefold())
         and encoded == label[4:].lower()
     )
 
 
-def _browser_host(host: str, bracketed: bool) -> bool:
-    if bracketed:  # an IPv6 literal, and no zone id: browsers have none
+def _browser_host(netloc: str) -> bool:
+    """The host in ``netloc`` is a bracketed IPv6 literal with no zone, a
+    dotted IPv4 address when its last label is a number, or host-name
+    labels; one trailing dot is the root, as a browser reads it."""
+    host = netloc.rpartition("@")[2]
+    if host.startswith("["):
+        literal, _, port = host[1:].partition("]")
         try:
-            return "%" not in host and bool(ipaddress.IPv6Address(host))
+            ipaddress.IPv6Address(literal)
         except ValueError:
             return False
-    labels = host.split(".")
+        return "%" not in literal and (port == "" or port.startswith(":"))
+    labels = host.partition(":")[0].removesuffix(".").split(".")
+    if "" in labels:
+        return False
     if _NUMERIC_LABEL_RE.match(labels[-1]):
         try:
-            return bool(ipaddress.IPv4Address(host))
+            return bool(ipaddress.IPv4Address(".".join(labels)))
         except ValueError:
             return False
-    return all(
-        _HOST_LABEL_RE.match(label)
-        and (not label.lower().startswith("xn--") or _idn_label(label))
-        for label in labels
-    )
+    return all(_host_label(label) for label in labels)
 
 
 def _unopenable(value: str) -> str | None:
@@ -221,9 +240,7 @@ def _unopenable(value: str) -> str | None:
         u.port  # the read is the check: it raises past 65535
     except ValueError:
         return "its port is not a number from 0 to 65535"
-    host = u.netloc.rpartition("@")[2]
-    bracketed = host.startswith("[")
-    if not _browser_host(u.hostname or "", bracketed):
+    if not _browser_host(u.netloc):
         return _BAD_HOST
     return None
 

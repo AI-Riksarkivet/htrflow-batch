@@ -995,6 +995,13 @@ def test_a_well_formed_toleration_is_kept_as_written(tmp_path):
             "its host is not a host name or an IP address",
         ),
         ("https://example.org:x/m", "its port is not a number from 0 to 65535"),
+        # decodes to "Übung": a browser would have encoded "übung" instead
+        (
+            "https://xn--bung-fna.example/m",
+            "its host is not a host name or an IP address",
+        ),
+        ("https://.example.org/m", "its host is not a host name or an IP address"),
+        ("https://example.org../m", "its host is not a host name or an IP address"),
     ],
 )
 def test_a_url_a_browser_cannot_open_is_refused(tmp_path, url, why):
@@ -1032,6 +1039,10 @@ def test_a_url_a_browser_cannot_open_is_refused(tmp_path, url, why):
         "https://xn--rksarkivet-z5a.se/m",
         "https://lbiiif.riksarkivet.se/arkis!R0001203/manifest",
         "https://example.org/full/2500,/0/default.jpg",
+        # what browsers take and the read API's browser_http_url does too
+        "https://example.org./m",
+        "https://bücher.example/m",
+        "https://xn--bcher-kva.example/m",
     ],
 )
 def test_a_url_a_browser_opens_is_kept(tmp_path, url):
