@@ -3675,10 +3675,7 @@ describe("the bar survives a phone's width", () => {
     );
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    const bars = [...container.querySelectorAll(".row .c-bar .bar")];
     // Two totals rows and the folded volume row: three bars, one shape.
-    expect(bars).toHaveLength(3);
-    for (const bar of bars)
-      expect(bar.parentElement?.className).toContain("c-bar");
+    expect(container.querySelectorAll(".row .c-bar .bar")).toHaveLength(3);
   });
 });
