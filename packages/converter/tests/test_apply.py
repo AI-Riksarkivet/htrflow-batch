@@ -2183,18 +2183,38 @@ def test_sigterm_releases_the_lease(tmp_path, cluster):
     """Argo CD terminates a hook with SIGTERM, and Python's default action
     skips every `finally`: the Lease stayed held, and the next hook
     (backoffLimit 0) failed on it. The apply turns SIGTERM into an exit
-    that unwinds, 143 as the shell reports it."""
+    that unwinds, 143 as the shell reports it.
+
+    A handler of the test's own stands in for the default while it runs:
+    without it, an apply that installed nothing would let the test's own
+    signal end pytest itself, and every test after this one with it."""
     import os
     import signal
 
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    before = signal.getsignal(signal.SIGTERM)
-    _during(cluster, "campaign-kyrk", lambda: os.kill(os.getpid(), signal.SIGTERM))
-    with pytest.raises(SystemExit) as e:
-        cli.main(["apply", str(repo), "--out", str(out)])
-    assert e.value.code == 143
-    assert cluster.leases["htrflow-campaigns-apply"]["spec"]["holderIdentity"] is None
-    assert signal.getsignal(signal.SIGTERM) is before, "the handler is put back"
+    caught: list[int] = []
+    installed: list[object] = []
+
+    def sentinel(signum, frame):
+        caught.append(signum)
+
+    def terminate():
+        installed.append(signal.getsignal(signal.SIGTERM))
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    before = signal.signal(signal.SIGTERM, sentinel)
+    try:
+        _during(cluster, "campaign-kyrk", terminate)
+        with pytest.raises(SystemExit) as e:
+            cli.main(["apply", str(repo), "--out", str(out)])
+        assert installed == [cli._terminated], "the apply's handler was in place"
+        assert caught == []
+        assert e.value.code == 143
+        lease = cluster.leases["htrflow-campaigns-apply"]
+        assert lease["spec"]["holderIdentity"] is None
+        assert signal.getsignal(signal.SIGTERM) is sentinel, "the handler is put back"
+    finally:
+        signal.signal(signal.SIGTERM, before)
 
 
 # --- a window change under a running campaign, held against the cluster --
