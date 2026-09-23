@@ -192,19 +192,20 @@ def build_pipeline(pipeline_path: str):
 
 
 def load_pipeline(pipeline_path: str, out_dir: Path):
-    from htrflow.pipeline.pipeline import Pipeline  # ty: ignore[unresolved-import]
     from htrflow.pipeline.steps import Export  # ty: ignore[unresolved-import]
 
     pipeline = build_pipeline(pipeline_path)  # refuses Export steps (3098)
     try:
-        exports = [Export(str(out_dir / fmt), fmt) for fmt in EXPECTED_FORMATS]
-        # rebuild so Pipeline.__init__ wires the new steps the same way as the
-        # originals (older htrflow sets parent_pipeline there; append leaves the
-        # Export orphaned and its metadata None)
-        return Pipeline(list(pipeline.steps) + exports)
+        # appended the way htrflow's own CLI adds its --output Export: the
+        # pinned Pipeline.__init__ only stores the list, so there is nothing
+        # a rebuild would wire
+        pipeline.steps.extend(
+            Export(str(out_dir / fmt), fmt) for fmt in EXPECTED_FORMATS
+        )
     except BaseException:
         release_pipeline(pipeline)  # W1: the same leak, one construction later
         raise
+    return pipeline
 
 
 def release_documents() -> None:
