@@ -14,16 +14,16 @@ back to its record.
 from __future__ import annotations
 
 import json
+from importlib import resources
 
 import pytest
+import yaml
 from kubernetes import client, config
 from urllib3.exceptions import MaxRetryError, ReadTimeoutError
 
 from htrflow_web import kube, projection
 from htrflow_web.kube import (
-    CAMPAIGN_CONFIGMAPS,
     FIELD_MANAGER,
-    LABEL_SELECTOR,
     PARTIAL_METADATA,
     ApplyConflict,
     ClusterUnavailable,
@@ -174,6 +174,34 @@ def reader(monkeypatch) -> Reader:
     return r
 
 
+def _selects(selector: str, labels: dict) -> bool:
+    """Whether a label selector of `k=v`, `k!=v` and bare-`k` terms selects
+    an object carrying ``labels`` -- the subset of the grammar this adapter
+    sends, evaluated the way the API server does."""
+    for term in selector.split(","):
+        if "!=" in term:
+            key, value = term.split("!=", 1)
+            if labels.get(key) == value:
+                return False
+        elif "=" in term:
+            key, value = term.split("=", 1)
+            if labels.get(key) != value:
+                return False
+        elif term not in labels:
+            return False
+    return True
+
+
+def _converter_labels(manifest: str) -> dict:
+    """The labels the converter really puts on one kind of object, read off
+    its packaged skeleton -- the objects these selectors have to tell apart."""
+    path = resources.files("htrflow_converter") / "manifests" / manifest
+    return yaml.safe_load(path.read_text())["metadata"]["labels"]
+
+
+CAMPAIGN_JOB = "app=htrflow-batch,htrflow.riksarkivet.se/managed-by=converter"
+
+
 def test_list_jobs_asks_every_namespace_with_the_campaign_selector(reader: Reader):
     """One list per configured namespace -- the warm-up Jobs carry
     `managed-by=converter` too, so the selector is what keeps them out."""
@@ -183,7 +211,15 @@ def test_list_jobs_asks_every_namespace_with_the_campaign_selector(reader: Reade
         "/apis/batch/v1/namespaces/htr-a/jobs",
         "/apis/batch/v1/namespaces/htr-b/jobs",
     ]
-    assert {c["query"]["labelSelector"] for c in reader.calls} == {LABEL_SELECTOR}
+    assert {c["query"]["labelSelector"] for c in reader.calls} == {CAMPAIGN_JOB}
+
+
+def test_the_campaign_selector_lists_campaign_jobs_and_no_warmups(reader: Reader):
+    reader.answer["GET"] = {"items": []}
+    reader.list_jobs()
+    selector = reader.calls[0]["query"]["labelSelector"]
+    assert _selects(selector, _converter_labels("campaign-job.yaml"))
+    assert not _selects(selector, _converter_labels("warmup-job.yaml"))
 
 
 def test_list_warmups_asks_for_the_warmup_jobs_instead(reader: Reader):
@@ -195,6 +231,16 @@ def test_list_warmups_asks_for_the_warmup_jobs_instead(reader: Reader):
     }
 
 
+RECORDS = (
+    "htrflow.riksarkivet.se/managed-by=converter,htrflow.riksarkivet.se/campaign,"
+    "htrflow.riksarkivet.se/kind!=status"
+)
+STATUSES = (
+    "htrflow.riksarkivet.se/managed-by=converter,htrflow.riksarkivet.se/campaign,"
+    "htrflow.riksarkivet.se/kind=status"
+)
+
+
 def test_the_campaign_record_is_listed_without_its_volumes(reader: Reader):
     """`volumes.txt` is the whole campaign -- one line per volume, megabytes
     for a real backfill -- and the list route reads nothing but the record's
@@ -202,12 +248,37 @@ def test_the_campaign_record_is_listed_without_its_volumes(reader: Reader):
     bytes off the wire on every poll of every open status page."""
     reader.answer["GET"] = {"items": []}
     reader.list_configmaps()
-    records = [c for c in reader.calls if "!=status" in c["query"]["labelSelector"]]
-    assert len(records) == len(reader.cfg.namespaces)
-    for call in records:
-        assert call["path"].endswith("/configmaps")
-        assert call["accept"] == PARTIAL_METADATA
-        assert call["query"]["labelSelector"].startswith(CAMPAIGN_CONFIGMAPS)
+    records = [c for c in reader.calls if c["query"]["labelSelector"] == RECORDS]
+    assert [c["path"] for c in records] == [
+        "/api/v1/namespaces/htr-a/configmaps",
+        "/api/v1/namespaces/htr-b/configmaps",
+    ]
+    assert all(call["accept"] == PARTIAL_METADATA for call in records)
+
+
+def test_the_configmap_lists_select_the_campaigns_two_and_nothing_else(
+    reader: Reader,
+):
+    """The record and the status ConfigMap; never a pipeline's ConfigMap,
+    which carries `managed-by=converter` too."""
+    reader.answer["GET"] = {"items": []}
+    reader.list_configmaps()
+    by_accept = {c["accept"] == PARTIAL_METADATA: c for c in reader.calls}
+    records = by_accept[True]["query"]["labelSelector"]
+    statuses = by_accept[False]["query"]["labelSelector"]
+    record = _converter_labels("configmap.yaml")
+    status = {**record, "htrflow.riksarkivet.se/kind": "status"}
+    pipeline = _converter_labels("pipeline-configmap.yaml")
+    assert [_selects(records, x) for x in (record, status, pipeline)] == [
+        True,
+        False,
+        False,
+    ]
+    assert [_selects(statuses, x) for x in (record, status, pipeline)] == [
+        False,
+        True,
+        False,
+    ]
 
 
 def test_the_status_record_is_listed_with_its_data(reader: Reader):
@@ -215,9 +286,7 @@ def test_the_status_record_is_listed_with_its_data(reader: Reader):
     of short fields, and the page cannot draw the row without them."""
     reader.answer["GET"] = {"items": []}
     reader.list_configmaps()
-    statuses = [
-        c for c in reader.calls if "!=status" not in c["query"]["labelSelector"]
-    ]
+    statuses = [c for c in reader.calls if c["query"]["labelSelector"] == STATUSES]
     assert len(statuses) == len(reader.cfg.namespaces)
     assert all(c["accept"] != PARTIAL_METADATA for c in statuses)
 
