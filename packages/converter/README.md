@@ -18,7 +18,8 @@ checkout once it has checked that CI rendered that checkout.
   §3 for the objects rendered here
 - Narrative: [How it works → Campaigns](../../docs/how-it-works/campaigns.md)
 - Reference: [Campaign & Pipeline YAML](../../docs/reference/campaign-yaml.md)
-  (every field with its default)
+  (every field with its default), [htrflow-campaigns CLI](../../docs/reference/cli.md)
+  and [Rendered objects](../../docs/reference/rendered.md)
 - A repo in shape: [`examples/campaigns/`](../../examples/campaigns/README.md)
   — `htrflow-campaigns init <dir>` writes exactly this, generated from
   `src/htrflow_converter/template/` plus the CI flavour from
@@ -45,22 +46,31 @@ manifest with it. It refuses an `--out` that is, or contains, the campaigns
 repo itself. Campaigns are append-only: changing the volume list of a campaign
 that has already been rendered is an error. Create a new campaign instead.
 
-`apply` renders into a temporary directory (or `--out`), then, against the
-namespace in `converter.yaml` (refused, with nothing applied, when
-`--namespace <ns>` names another — the Argo CD hook passes its own), takes
-the Lease `htrflow-campaigns-apply` so that one apply runs at a time per
-namespace, and holds it for the whole run: server-side applies every
-pipeline object and then every campaign object (field manager
-`htrflow-campaigns`; a resuming campaign's `spec.suspend: true` is first
-handed to a second manager, `htrflow-campaigns-suspend`, so that Kueue and
-not the API server's default decides when the Job starts); with
-`--prune`, deletes every Job and ConfigMap carrying the converter's
-`managed-by=converter` label (`render.CAMPAIGN_SELECTOR`) that this render
-did not produce; and finally puts each campaign's `suspend:` on its Kueue Workload's
-`spec.active`, waiting up to `--pause-wait` seconds for a brand-new paused
-campaign's Workload to appear. Every action is one printed line. A second
-apply while the Lease is held is refused and exits 1; the exit codes are in
-[Campaign & Pipeline YAML](../../docs/reference/campaign-yaml.md#when-the-api-server-refuses-an-object). `--dry-run`
+`apply` renders into a temporary directory (or `--out`), then works against
+the namespace in `converter.yaml` (refused, with nothing applied, when
+`--namespace <ns>` names another). In order, holding the Lease
+`htrflow-campaigns-apply` throughout so that one apply runs at a time:
+
+1. checks the render against the live cluster (a campaign's live
+   ConfigMap, a running campaign's pipeline steps and window);
+2. reads each campaign's live Job and status record, records the ending it
+   sees, and leaves a finished, unchanged campaign alone;
+3. holds back a campaign sharing a volume with a running one, and dry-runs
+   each campaign Job;
+4. server-side applies every pipeline object, then every campaign object
+   (field manager `htrflow-campaigns`; a resuming campaign's
+   `spec.suspend: true` is first handed to `htrflow-campaigns-suspend`, so
+   Kueue and not the API server's default decides when the Job starts);
+5. puts each campaign's `suspend:` on its Kueue Workload's `spec.active`,
+   waiting up to `--pause-wait` seconds for a new paused campaign's
+   Workload;
+6. with `--prune`, deletes every Job and ConfigMap carrying the
+   converter's `managed-by=converter` label (`render.CAMPAIGN_SELECTOR`)
+   that this render did not produce.
+
+The pause sync runs before the prune, so a prune problem never leaves a
+pause unenforced. Every action is one printed line; the exit codes are in
+[htrflow-campaigns CLI](../../docs/reference/cli.md#exit-codes). `--dry-run`
 renders and prints what would be applied without opening a connection. It
 authenticates from `$KUBECONFIG` or, in a pod, from the mounted
 ServiceAccount token — the htrflow-batch chart renders a suitable

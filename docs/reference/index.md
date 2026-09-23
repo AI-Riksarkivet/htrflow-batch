@@ -10,11 +10,13 @@ signature reference.
 | Page | Description |
 |------|-------------|
 | [Configuration](configuration.md) | Every setting of every surface, generated from the three config models and the chart values |
-| [Campaign & Pipeline YAML](campaign-yaml.md) | The files in a campaigns repo — what the converter parses, renders and rejects |
-| [Wrapper](wrapper.md) | The batch Job's contract — `volumes.txt`, environment, exit codes — and the modules behind a batch pod |
-| [Chart Values](chart.md) | `charts/htrflow-batch` — every `values.yaml` key and the objects it renders |
-| [S3 Layout](s3-layout.md) | Every key the system writes to the results bucket, and the live status the read API computes |
-| [Campaign Browser](frontend.md) | The SvelteKit SPA — configuration, derivation rules, build and test commands |
+| [Campaign & Pipeline YAML](campaign-yaml.md) | The files in a campaigns repo: what the converter parses and refuses |
+| [htrflow-campaigns CLI](cli.md) | `init`, `validate`, `render`, `apply`: what `apply` does in order, Argo CD, pausing, pruning, exit codes |
+| [Rendered objects](rendered.md) | A worked render, field by field |
+| [Wrapper](wrapper.md) | The batch pod's contract: `volumes.txt`, environment, exit codes |
+| [Chart Values](chart.md) | `charts/htrflow-batch` values and the objects they render |
+| [S3 Layout](s3-layout.md) | Every key the system writes to the results bucket |
+| [Web front & read API](web.md) | Routes, API fields, phases, what a campaign card shows, configuration |
 
 ## Packages
 

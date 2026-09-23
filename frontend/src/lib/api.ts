@@ -1,5 +1,5 @@
 // The read API boundary (packages/web, GET /api/v1/jobs — docs:
-// reference/frontend.md). This is our own API, not a document we found: a
+// reference/web.md). This is our own API, not a document we found: a
 // response of the wrong shape is a bug on our side and parsing fails hard
 // (Zod .parse). One campaign row the page cannot read is still a bug, but
 // not a reason to hide every other campaign (B32): that row is left out,
