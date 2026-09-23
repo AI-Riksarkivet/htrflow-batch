@@ -228,7 +228,9 @@ S3 sits behind a single seam, `ResultStore`:
   The pipeline YAML is also uploaded next to it.
 - **Timeouts.** The S3 client uses a 10 s connect timeout, a 60 s read
   timeout and 3 standard retries, so a dead bucket cannot pin a run for hours.
-  The run-log client is tighter: 5 s, 30 s and 2 attempts.
+  The run-log client is tighter: 5 s, 15 s and 2 attempts in all, and the
+  final upload on exit has a 90 s wall-clock budget that fits the pod's
+  120 s grace period.
 - **Other storage.** A filesystem store (NFS, say) could keep the same
   contract with write-to-temp plus an atomic rename. Only the store
   implementation would change.

@@ -91,9 +91,15 @@ class ResultStore:
         )
         # Run-log uploads are best-effort and periodic: a dead S3 must not
         # pin a shipping thread (or the final upload at exit) for the default
-        # minutes of connect/read timeouts times legacy retries.
+        # minutes of connect/read timeouts times legacy retries. Two attempts
+        # in all -- `max_attempts` would count retries, and 2 was three (W-7)
+        # -- so one upload is ~42 s at worst, and logship.FINAL_SHIP_SECONDS
+        # holds a periodic one in flight plus the final one.
         self._log_client = _s3_client(
-            cfg, connect_timeout=5, read_timeout=30, retries={"max_attempts": 2}
+            cfg,
+            connect_timeout=5,
+            read_timeout=15,
+            retries={"total_max_attempts": 2, "mode": "standard"},
         )
 
     def _key(self, rel: str) -> str:

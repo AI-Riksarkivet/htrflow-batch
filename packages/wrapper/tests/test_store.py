@@ -178,6 +178,14 @@ def test_the_clients_send_what_an_s3_compatible_store_accepts(cfg, s3, tmp_path)
     assert store.done_pages() == set()
 
 
+def test_the_log_client_makes_two_attempts_not_three(cfg, s3):
+    """Audit 0923 W-7: `max_attempts` counts RETRIES, so the log client's
+    `max_attempts: 2` was three attempts -- the SIGTERM budget assumed two."""
+    c = ResultStore(cfg)._log_client.meta.config
+    assert c.retries == {"mode": "standard", "total_max_attempts": 2}
+    assert (c.connect_timeout, c.read_timeout) == (5, 15)
+
+
 def test_get_json_or_none(cfg, s3):
     store = ResultStore(cfg)
     assert store.get_json_or_none("manifest.json") is None

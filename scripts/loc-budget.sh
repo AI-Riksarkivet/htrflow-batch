@@ -301,7 +301,7 @@ fail=0
 # Retry-After parse and the abortable wait; in stream.py and main.py the
 # deferred outcome verify counts as missing; in iiif.py one rule choosing a
 # canvas's image for both the fetch and the viewer manifest.
-# 3636 -> 3724 (audit 0923): an upload the store could not take defers the
+# 3636 -> 3746 (audit 0923): an upload the store could not take defers the
 # page rather than failing it, and a half-stored pair is deleted (W-1). The
 # source digest drops the credentials of every common signing scheme, the
 # ordinary-named ones only beside their scheme's marker (W-2). A URL in
@@ -309,8 +309,10 @@ fail=0
 # and httpx's per-request lines stay out of the run log (W-3). A run that
 # deletes stored pages deletes the completion marker and iiif.json first (W-5).
 # Both S3 clients come from one factory that sends checksums only where S3
-# requires them, and DeleteObjects its Content-MD5 (W-10).
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3724
+# requires them, and DeleteObjects its Content-MD5 (W-10). The final run-log
+# ship has one wall-clock budget, on a thread of its own, that fits the grace
+# period, and the log client makes two attempts in all (W-7).
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3746
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
