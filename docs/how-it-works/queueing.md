@@ -225,6 +225,14 @@ The converter clamps at render time instead:
 must fit the quota, or nothing starts. Set `converter.yaml`'s `window` so
 that `window × per-pod requests` fits `nominalQuota`.
 
+Changing the window of a campaign that is running restarts it. Kueue counts
+an admitted Job's pods as `min(parallelism, completions)`, and a Job whose
+count no longer matches its Workload has every pod stopped and is queued
+again. So `apply` compares that count on each live campaign Job that is not
+suspended and has not ended with the render's, and when they differ it sends
+nothing. The way through is to pause the campaign, change its window, then
+resume it: a suspended Job's Workload is updated in place.
+
 ## Many campaigns at once
 
 Submit fifty campaigns against a one-GPU quota and you get fifty Jobs and
