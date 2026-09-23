@@ -371,8 +371,11 @@ def test_the_campaign_configmap_records_who_applied_what_and_when(
     # who ran it, which is a different claim under a different key (B94).
     assert "htrflow.riksarkivet.se/submitter" not in ann
     assert ann["htrflow.riksarkivet.se/applied-at"].endswith("Z")
-    # Rendered, not stamped here: it is a pure function of the repo.
-    assert ann["htrflow.riksarkivet.se/image-digest"].startswith("ghcr.io/")
+    # Rendered, not stamped here: it is a pure function of the repo -- the
+    # very image reference the campaign's pipeline file pins, compared whole
+    # rather than by a registry prefix that could sit anywhere in it.
+    pipelines = load(repo / "campaigns", repo / "pipelines", repo / "converter.yaml")[1]
+    assert ann["htrflow.riksarkivet.se/image-digest"] == pipelines["demo-v1"].image
 
 
 def test_a_campaigns_directory_outside_git_records_an_unknown_commit(tmp_path, cluster):
