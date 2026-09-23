@@ -200,18 +200,31 @@ def test_the_log_client_makes_two_attempts_not_three(cfg, s3):
     assert (c.connect_timeout, c.read_timeout) == (5, 15)
 
 
-def test_deleting_a_missing_key_is_no_error_on_any_store(cfg, s3, monkeypatch):
+def test_deleting_a_missing_key_is_no_error_on_any_store(cfg, s3):
     """Review M-2: a single-object DELETE of a key that is not there answers
     204 on AWS, MinIO and Ceph, but a store that answers 404 made resume
     raise on every attempt after a SIGTERM before publish. DeleteObjects
     reports per key and treats a missing one as deleted, so every delete
-    goes through it."""
+    goes through it -- here against a store that 404s the single-object
+    DELETE on the wire."""
+    from botocore.awsrequest import AWSResponse
+
+    class _Body:
+        def __init__(self, data):
+            self._data = data
+
+        def stream(self, **_):
+            yield self._data
+
+        def read(self, *_):
+            return self._data
+
+    def missing(request, **_):
+        body = b"<Error><Code>NoSuchKey</Code><Message>gone</Message></Error>"
+        return AWSResponse(request.url, 404, {}, _Body(body))
+
     store = ResultStore(cfg)
-
-    def refuse(**kw):
-        raise AssertionError("single-object DELETE used")
-
-    monkeypatch.setattr(store.client, "delete_object", refuse)
+    store.client.meta.events.register("before-send.s3.DeleteObject", missing)
     store.delete(["manifest.json"])
     store.delete(["iiif.json"])
 
