@@ -1820,12 +1820,13 @@ def test_a_record_for_a_job_that_was_never_created_is_not_believed(tmp_path, clu
     assert ("apply", "Job", "kyrk") in cluster.calls
 
 
-def test_a_refused_uid_write_costs_a_rerun_later_never_the_apply(
-    tmp_path, cluster, capsys
-):
+def test_a_refused_uid_write_is_repaired_by_the_next_apply(tmp_path, cluster, capsys):
     """The second write of a new campaign's ConfigMap only records which Job
-    it runs. Refused, the campaign still runs; its record will simply not be
-    believed once the Job is reaped, and the campaign is applied again."""
+    it runs. Refused, the campaign still runs -- and the next apply, which
+    finds the Job finished and leaves the campaign alone, still sends the
+    missing uid. Without it the finished campaign's record would not be
+    believed once the Job is reaped, and the whole campaign would run
+    again."""
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     real = FakeCluster._method
     sent = [0]
@@ -1836,7 +1837,7 @@ def test_a_refused_uid_write_costs_a_rerun_later_never_the_apply(
 
             def patch(name, ns, obj, **kw):
                 sent[0] += 1
-                if sent[0] > 1:
+                if sent[0] == 2:
                     raise cluster_mod.ClusterError("apply ConfigMap/campaign-kyrk: 500")
                 return inner(name, ns, obj, **kw)
 
@@ -1847,6 +1848,22 @@ def test_a_refused_uid_write_costs_a_rerun_later_never_the_apply(
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     assert "could not record which Job campaign kyrk runs" in capsys.readouterr().err
     assert _live(cluster, "campaign-kyrk")["metadata"]["annotations"][JOB_UID] == ""
+    job = _live(cluster, "kyrk")
+    job["metadata"]["namespace"] = NS
+    job["status"] = {
+        "conditions": [{"type": "Complete", "status": "True"}],
+        "succeeded": job["spec"]["completions"],
+    }
+    applied_at = "htrflow.riksarkivet.se/applied-at"
+    before = _live(cluster, "campaign-kyrk")["metadata"]["annotations"][applied_at]
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    record = _live(cluster, "campaign-kyrk")
+    assert record["metadata"]["annotations"][JOB_UID] == job["metadata"]["uid"]
+    assert record["metadata"]["annotations"][applied_at] == before, "not re-applied"
+    _drop_job(cluster, "kyrk")
+    cluster.calls.clear()
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert ("apply", "Job", "kyrk") not in cluster.calls, "the record is believed"
 
 
 # --- the namespace the caller meant, said out loud (S-7) ------------------
