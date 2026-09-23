@@ -185,29 +185,58 @@ def test_start_shipping_ships_immediately():
 
 
 def test_uploads_are_serialised_and_finish_waits_for_the_slow_one():
+    """A periodic upload still in flight when finish runs: the final one must
+    wait for it, never run beside it, and carry everything appended since.
+    The slow upload is held until the final-ship thread has reached the
+    upload lock (or, with the lock gone, the upload itself), so the overlap
+    is forced, not left to the scheduler."""
     import threading
 
     order: list[str] = []
-    release = threading.Event()
+    inside, most_inside = [0], [0]
+    first_in, final_arrived, release = (threading.Event() for _ in range(3))
 
     def slow(text: str) -> None:
+        inside[0] += 1
+        most_inside[0] = max(most_inside[0], inside[0])
         order.append("start:" + text.strip())
-        release.wait(2)
+        if threading.current_thread().name == "logship-final":
+            final_arrived.set()
+        else:
+            first_in.set()
+            release.wait(5)
         order.append("end:" + text.strip())
+        inside[0] -= 1
+
+    class _SeenLock:
+        """The upload lock, telling when the final ship comes for it."""
+
+        def __init__(self, lock):
+            self._lock = lock
+
+        def __enter__(self):
+            if threading.current_thread().name == "logship-final":
+                final_arrived.set()
+            self._lock.acquire()
+
+        def __exit__(self, *exc):
+            self._lock.release()
 
     capture = LogCapture()
+    capture._upload_lock = _SeenLock(capture._upload_lock)
     capture.start_shipping(slow, interval=0)
     capture._append("a\n")
-    t = threading.Thread(target=capture.ship)
-    t.start()
-    while not order:
-        pass
+    periodic = threading.Thread(target=capture.ship)
+    periodic.start()
+    assert first_in.wait(5)
     capture._append("b\n")
     fin = threading.Thread(target=capture.finish)
     fin.start()
+    assert final_arrived.wait(5)
     release.set()
-    t.join(3)
-    fin.join(3)
+    periodic.join(5)
+    fin.join(5)
+    assert most_inside[0] == 1
     assert order == ["start:a", "end:a", "start:a\nb", "end:a\nb"]
 
 
