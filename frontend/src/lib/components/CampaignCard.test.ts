@@ -1314,20 +1314,6 @@ describe("CampaignCard", () => {
     expect(screen.getByText("demo-v1")).toBeInTheDocument();
   });
 
-  test("a partially failed campaign says so in words, in the warning colour", async () => {
-    const partly: JobSummary = { ...job, phase: "PartiallyFailed" };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        jsonResponse({ ...partly, ...detailBase, failures: [], volumes: [] }),
-      ),
-    );
-    render(CampaignCard, { job: partly });
-    await vi.advanceTimersByTimeAsync(0);
-    const chip = screen.getByText("partially failed");
-    expect(chip).toHaveClass("partiallyfailed"); // warning, not destructive
-  });
-
   describe("warm-up status chip", () => {
     function stubDetail(j: JobSummary): void {
       vi.stubGlobal(
@@ -1968,70 +1954,6 @@ describe("a reaped campaign's volumes are still openable", () => {
     expect(
       row.getByRole("link", { name: "run log for vol0" }),
     ).toBeInTheDocument();
-  });
-});
-
-// A volume that finished but lost pages read exactly like a clean one: the
-// same green chip, with "1 failed" buried in the progress line beside it
-// (the product owner, 2026-09-15). Amber is the colour the header already
-// uses for a campaign that published some of itself and not the rest.
-describe("done, but with pages missing", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    stubStorage();
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-  });
-
-  async function card(body: Record<string, unknown>, row: JobSummary = job) {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => jsonResponse({ ...detail0, ...row, ...body })),
-    );
-    return render(CampaignCard, { job: row });
-  }
-
-  describe("the campaign header", () => {
-    async function header(pagesFailed: number) {
-      const succeeded: JobSummary = {
-        ...job,
-        phase: "Succeeded",
-        counts: { total: 3, active: 0, done: 3, failed: 0 },
-      };
-      const { container } = await card(
-        { failures: [], volumes: [], pagesDone: 2, pagesTotal: 3, pagesFailed },
-        succeeded,
-      );
-      await vi.advanceTimersByTimeAsync(0);
-      return {
-        chip: container.querySelector(".chip.phase") as HTMLElement,
-        section: container.querySelector(".campaign") as HTMLElement,
-      };
-    }
-
-    test("a campaign that succeeded with failed pages is not plain green", async () => {
-      const { chip, section } = await header(1);
-      expect(chip).toHaveClass("lost");
-      expect(section).toHaveAttribute("data-health", "partly-succeeded");
-      // The word matches the colour now (2026-09-16); the tooltip says how
-      // many, and the screen-reader sentence is the one it always was.
-      expect(chip).toHaveTextContent("partially succeeded");
-      expect(chip).toHaveAttribute(
-        "title",
-        "every volume finished, 1 page failed",
-      );
-      expect(chip).toHaveTextContent("done with 1 failed page");
-    });
-
-    test("a campaign that succeeded cleanly stays green", async () => {
-      const { chip, section } = await header(0);
-      expect(chip).not.toHaveClass("lost");
-      expect(section).toHaveAttribute("data-health", "done");
-      expect(chip).not.toHaveAttribute("title");
-      expect(chip).toHaveTextContent("Succeeded");
-    });
   });
 });
 
@@ -2683,10 +2605,7 @@ describe("what the phase chip calls a campaign", () => {
     vi.unstubAllGlobals();
   });
 
-  async function chip(
-    phase: JobSummary["phase"],
-    pagesFailed = 0,
-  ): Promise<HTMLElement> {
+  async function chip(phase: JobSummary["phase"], pagesFailed = 0) {
     cleanup();
     const row: JobSummary = {
       ...job,
@@ -2709,44 +2628,70 @@ describe("what the phase chip calls a campaign", () => {
     );
     const { container } = render(CampaignCard, { job: row });
     await vi.advanceTimersByTimeAsync(0);
-    return container.querySelector(".chip.phase") as HTMLElement;
+    return {
+      chip: container.querySelector(".chip.phase") as HTMLElement,
+      accent: container.querySelector(".campaign") as HTMLElement,
+    };
   }
 
-  test("a clean success is Succeeded, in green", async () => {
-    const el = await chip("Succeeded");
-    expect(el).toHaveTextContent("Succeeded");
-    expect(el).not.toHaveClass("lost");
-    expect(el).not.toHaveAttribute("title");
-  });
-
-  test("every volume finished but pages were lost: partially succeeded", async () => {
-    const el = await chip("Succeeded", 3);
-    expect(el).toHaveTextContent("partially succeeded");
-    expect(el).toHaveClass("lost");
-    expect(el).toHaveAttribute(
-      "title",
-      "every volume finished, 3 pages failed",
-    );
-    // The sentence a screen reader gets is the one it always was.
-    expect(el.querySelector(".sr-only")).toHaveTextContent(
-      "done with 3 failed pages",
-    );
-  });
-
-  test("one lost page is singular", async () => {
-    expect(await chip("Succeeded", 1)).toHaveAttribute(
-      "title",
+  // The two "partially" words are a pair and mean different losses:
+  // PartiallyFailed is whole VOLUMES that never published, "partially
+  // succeeded" every volume finishing without some of its PAGES. Each mixes
+  // the amber with where it ended -- on the chip and on the card's accent --
+  // and the tooltip and the screen-reader sentence say how many.
+  test.each([
+    ["Succeeded", 0, "Succeeded", null, null, "succeeded", null, "done"],
+    [
+      "Succeeded",
+      1,
+      "partially succeeded",
       "every volume finished, 1 page failed",
-    );
-  });
-
-  test("whole volumes failed: partially failed, as before", async () => {
-    expect(await chip("PartiallyFailed")).toHaveTextContent("partially failed");
-  });
-
-  test("nothing came out: Failed", async () => {
-    expect(await chip("Failed")).toHaveTextContent("Failed");
-  });
+      "done with 1 failed page",
+      "lost",
+      "success",
+      "partly-succeeded",
+    ],
+    [
+      "Succeeded",
+      3,
+      "partially succeeded",
+      "every volume finished, 3 pages failed",
+      "done with 3 failed pages",
+      "lost",
+      "success",
+      "partly-succeeded",
+    ],
+    [
+      "PartiallyFailed",
+      0,
+      "partially failed",
+      null,
+      null,
+      "partiallyfailed",
+      "destructive",
+      "partly-failed",
+    ],
+    ["Failed", 0, "Failed", null, null, "failed", null, "failed"],
+  ] as const)(
+    "%s with %i failed pages reads %s",
+    async (phase, pagesFailed, word, title, spoken, cls, mix, health) => {
+      const { chip: el, accent } = await chip(phase, pagesFailed);
+      const shown = [...el.childNodes]
+        .filter((n) => !(n instanceof Element && n.matches(".sr-only")))
+        .map((n) => n.textContent)
+        .join("")
+        .trim();
+      expect(shown).toBe(word);
+      expect(el).toHaveClass(cls);
+      expect(el.classList.contains("lost")).toBe(cls === "lost");
+      if (title === null) expect(el).not.toHaveAttribute("title");
+      else expect(el).toHaveAttribute("title", title);
+      expect(el.querySelector(".sr-only")?.textContent ?? null).toBe(spoken);
+      if (mix === null) expect(el).not.toHaveAttribute("data-mix");
+      else expect(el).toHaveAttribute("data-mix", mix);
+      expect(accent).toHaveAttribute("data-health", health);
+    },
+  );
 });
 
 // A campaign that has finished cannot change, and every detail call lists
@@ -2944,73 +2889,10 @@ describe("a finished card reads its detail only once someone can see it", () => 
 // chip and on the card's left accent, and a reader scanning the list could
 // not tell a campaign that lost a few pages from one that lost whole volumes
 // (a maintainer request). Each now mixes the amber with where it ended:
-// green for every volume finished, red for volumes lost. The colours are CSS
-// and jsdom computes none, so the DOM half checks which mix each state asks
-// for and the source half checks what each mix is drawn with.
+// green for every volume finished, red for volumes lost. Which mix each
+// state asks for is the phase-chip table's; this checks what each mix is
+// drawn with.
 describe("the two partial states are told apart by colour", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    stubStorage();
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-  });
-
-  async function card(phase: JobSummary["phase"], pagesFailed: number) {
-    cleanup();
-    const row: JobSummary = {
-      ...job,
-      phase,
-      counts: {
-        total: 3,
-        active: 0,
-        done: phase === "Failed" ? 0 : 3,
-        failed: 0,
-      },
-    };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        jsonResponse({
-          ...detail0,
-          ...row,
-          failures: [],
-          volumes: [],
-          pagesFailed,
-        }),
-      ),
-    );
-    const { container } = render(CampaignCard, { job: row });
-    await vi.advanceTimersByTimeAsync(0);
-    return {
-      chip: container.querySelector(".chip.phase") as HTMLElement,
-      accent: container.querySelector(".campaign") as HTMLElement,
-    };
-  }
-
-  test.each([
-    ["Succeeded", 2, "partially succeeded", "success", "partly-succeeded"],
-    ["PartiallyFailed", 0, "partially failed", "destructive", "partly-failed"],
-  ] as const)(
-    "%s with %i lost pages: %s mixes amber with %s",
-    async (phase, pagesFailed, word, mix, health) => {
-      const { chip, accent } = await card(phase, pagesFailed);
-      expect(chip).toHaveTextContent(word); // the words stay
-      expect(chip).toHaveAttribute("data-mix", mix);
-      expect(accent).toHaveAttribute("data-health", health);
-    },
-  );
-
-  test.each([
-    ["Succeeded", "done"],
-    ["Failed", "failed"],
-  ] as const)("%s is one colour, as before", async (phase, health) => {
-    const { chip, accent } = await card(phase, 0);
-    expect(chip).not.toHaveAttribute("data-mix");
-    expect(accent).toHaveAttribute("data-health", health);
-  });
-
   test("each mix is drawn with its own tokens: a hard split on the chip, a gradient on the accent", () => {
     for (const [mix, health, token] of [
       ["success", "partly-succeeded", "var(--success)"],
