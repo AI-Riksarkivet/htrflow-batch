@@ -7,7 +7,6 @@
   import {
     clockTime,
     fetchJob,
-    isHttpUrl,
     sameDay,
     shortDate,
     type CampaignNotice,
@@ -568,15 +567,6 @@
           : shortDate(job.finishedAt)) ?? job.finishedAt),
   );
 
-  // Defence in depth. `sourceUrl` is the API's copy of a line from a
-  // campaign's volumes.txt, which is a file humans edit in a git repo — so
-  // it is checked here too, at the last step before it becomes an href, the
-  // way the old card checked every URL the status document carried. Anything
-  // but an absolute http(s) URL is no link at all.
-  function sourceOf(v: VolumeView): string | null {
-    return v.sourceUrl !== null && isHttpUrl(v.sourceUrl) ? v.sourceUrl : null;
-  }
-
   // The published result once there is one, the source manifest before that
   // (the old derive.viewerHref) — so "open" is a live link from the first
   // tick, not only after the volume publishes. Switches on viewerPublished,
@@ -587,12 +577,14 @@
   function openHref(v: VolumeView): string | null {
     const published =
       v.state === "done" || (v.progress?.viewerPublished ?? false);
-    const manifest = published ? v.iiifUrl : sourceOf(v);
-    // Checked and encoded like every other URL this card turns into an
-    // href: `iiifUrl` is built by the API from a volume id that came off a
-    // campaign's volumes.txt, and it went into the fragment unread and
-    // unescaped (2026-09-14 audit).
-    if (manifest === null || !isHttpUrl(manifest)) return null;
+    const manifest = published ? v.iiifUrl : v.sourceUrl;
+    // Every URL this card turns into an href has been through $lib/api's
+    // httpUrlSchema, the one gate: a detail whose API-built URL is not an
+    // absolute http(s) one is refused whole, and a `sourceUrl` -- a line of
+    // a volumes.txt people edit -- that is not one arrives as null. Encoded,
+    // since `iiifUrl` is built from a volume id and went into the fragment
+    // unescaped once (2026-09-14 audit).
+    if (manifest === null) return null;
     return `uv.html#?manifest=${encodeURIComponent(manifest)}`;
   }
 
@@ -614,7 +606,7 @@
   // the API sent rather than from a row. Live, because a campaign showing a
   // notice is nearly always still running.
   const noticeHref = $derived(
-    notice.lastError === null || !isHttpUrl(notice.lastError.logUrl)
+    notice.lastError === null
       ? null
       : `log?log=${encodeURIComponent(notice.lastError.logUrl)}&live=1`,
   );
@@ -698,7 +690,7 @@
      what happened), so a volume with no source leaves a gap, not a shift. One snippet, so the folded strip and
      the table row can never drift apart. -->
 {#snippet links(v: VolumeView)}
-  {@const source = sourceOf(v)}
+  {@const source = v.sourceUrl}
   <span class="slot"
     >{#if source !== null}<a
         class="vicon"
