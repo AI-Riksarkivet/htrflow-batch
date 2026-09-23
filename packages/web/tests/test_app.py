@@ -144,9 +144,11 @@ class _Hung(FakeReader):
     """A reader whose API server has stopped answering mid-request."""
 
     def __init__(self) -> None:
+        self.holding = threading.Event()  # a worker thread is inside the call
         self.release = threading.Event()
 
     def get_job(self, namespace: str, name: str) -> dict | None:
+        self.holding.set()
         self.release.wait(10)
         return super().get_job(namespace, name)
 
@@ -164,8 +166,12 @@ def test_healthz_answers_while_every_worker_is_stuck():
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
             stuck = asyncio.ensure_future(c.get("/api/v1/jobs/htr-test/kyrk"))
-            await asyncio.sleep(0.1)
             try:
+                # Not a sleep: the probe goes out only once the pool's one
+                # thread is proven to be the stuck request's.
+                with anyio.fail_after(5):
+                    while not reader.holding.is_set():
+                        await asyncio.sleep(0.005)
                 with anyio.fail_after(2):
                     status = (await c.get("/healthz")).status_code
             finally:
