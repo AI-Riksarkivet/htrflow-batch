@@ -19,7 +19,7 @@ import pytest
 from kubernetes import client, config
 from urllib3.exceptions import MaxRetryError, ReadTimeoutError
 
-from htrflow_web import kube
+from htrflow_web import kube, projection
 from htrflow_web.kube import (
     CAMPAIGN_CONFIGMAPS,
     FIELD_MANAGER,
@@ -228,6 +228,40 @@ def test_list_pods_asks_for_one_jobs_pods(reader: Reader):
     assert reader.calls[0]["path"] == "/api/v1/namespaces/htr-a/pods"
     selector = reader.calls[0]["query"]["labelSelector"]
     assert selector == "batch.kubernetes.io/job-name=kyrk"
+
+
+def test_list_pods_leaves_the_succeeded_ones_on_the_server(reader: Reader):
+    """A campaign keeps every pod of every index until its Job goes -- up
+    to four per index with three retries -- and a succeeded one belongs to
+    a done index, which the Job's own status already says. Asked for, a
+    campaign of thousands was tens of MB per poll in a 256Mi pod (2026-09-23
+    audit)."""
+    reader.answer["GET"] = {"items": []}
+    reader.list_pods("htr-a", "kyrk")
+    query = reader.calls[0]["query"]
+    assert query["fieldSelector"] == "status.phase!=Succeeded"
+    assert query["limit"] == kube.POD_PAGE
+
+
+def test_list_pods_follows_the_continue_token_to_the_last_page(reader: Reader):
+    page = {"metadata": {"name": "p"}, "status": {}}
+    reader.answer["GET"] = [
+        {"metadata": {"continue": "t1"}, "items": [page]},
+        {"metadata": {"continue": "t2"}, "items": [page]},
+        {"metadata": {}, "items": [page]},
+    ]
+    assert len(reader.list_pods("htr-a", "kyrk")) == 3
+    assert [c["query"].get("continue") for c in reader.calls] == [None, "t1", "t2"]
+
+
+def test_list_pods_keeps_only_what_the_projection_reads(reader: Reader):
+    pod = {
+        "metadata": {"name": "p", "managedFields": [{"manager": "kubelet"}]},
+        "spec": {"containers": [{"name": "wrapper"}]},
+        "status": {"phase": "Failed", "reason": "Evicted"},
+    }
+    reader.answer["GET"] = {"items": [pod]}
+    assert reader.list_pods("htr-a", "kyrk") == [projection.pod_fields(pod)]
 
 
 def test_a_missing_object_is_none_not_an_error(reader: Reader):

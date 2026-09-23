@@ -25,7 +25,7 @@ from kubernetes import client, config
 from pydantic import BaseModel, ConfigDict, Field
 from urllib3.exceptions import HTTPError
 
-from .projection import KIND_LABEL, STATUS_KIND
+from .projection import KIND_LABEL, STATUS_KIND, pod_fields
 
 #: Selects campaign progress Jobs only — excludes the per-pipeline warm-up
 #: Jobs, which carry ``managed-by=converter`` too but not ``app`` or
@@ -137,6 +137,10 @@ class ApplyConflict(Exception):
 #: per socket read, so it bounds a body that stops arriving too. A list of a
 #: few thousand objects answers in well under it.
 REQUEST_TIMEOUT = (3.0, 10.0)
+
+#: Pods per list page. Small enough that one page of whole pod objects is a
+#: few MB at most; the API server hands out the next with a continue token.
+POD_PAGE = 250
 
 #: How long the retry waits for the other manager to finish writing.
 #: Retrying in the same microsecond meets the same half-finished write.
@@ -313,10 +317,31 @@ class Reader:
                 ) from e
 
     def list_pods(self, namespace: str, job_name: str) -> list[dict]:
-        body = _read(
-            self.core,
-            "list_namespaced_pod",
-            namespace,
-            label_selector=f"batch.kubernetes.io/job-name={job_name}",
-        )
-        return (body or {}).get("items", [])
+        """One Job's pods that are not Succeeded, a page at a time, each
+        trimmed to ``projection.pod_fields`` before the next page is read.
+
+        A Job keeps every pod of every index until it is deleted -- up to
+        ``backoffLimitPerIndex + 1`` per index -- and read whole, a campaign
+        of a few thousand volumes was tens of MB of JSON per poll against
+        the pod's memory limit (2026-09-23 audit). A succeeded pod belongs
+        to a done index, which the Job's ``completedIndexes`` already says,
+        so the API server keeps those; what is left is running and failed
+        pods, the ones a row's state and reason are read from, and a page
+        of them is the most this process ever holds whole."""
+        pods: list[dict] = []
+        token: str | None = None
+        while True:
+            paging = {"_continue": token} if token else {}
+            body = _read(
+                self.core,
+                "list_namespaced_pod",
+                namespace,
+                label_selector=f"batch.kubernetes.io/job-name={job_name}",
+                field_selector="status.phase!=Succeeded",
+                limit=POD_PAGE,
+                **paging,
+            )
+            pods.extend(pod_fields(p) for p in (body or {}).get("items", []))
+            token = ((body or {}).get("metadata") or {}).get("continue")
+            if not token:
+                return pods
