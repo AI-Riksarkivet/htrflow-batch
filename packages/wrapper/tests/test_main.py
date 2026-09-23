@@ -935,13 +935,11 @@ def test_streams_are_restored_after_main(env, cfg, s3):
 
 
 def test_sigterm_writes_termination_log_ships_final_log_and_exits_143(
-    env, cfg, s3, monkeypatch
+    env, cfg, s3, hard_exits
 ):
     """O2/X5: the Job deadline (or a drain) SIGTERMs the pod. The wrapper
     must leave a termination message naming the stage, ship the final run
     log, and exit 143 promptly — instead of dying with no evidence."""
-    exits = []
-    monkeypatch.setattr(main_mod, "_hard_exit", lambda code: exits.append(code))
     before = signal.getsignal(signal.SIGTERM)
 
     def factory(c):
@@ -956,7 +954,7 @@ def test_sigterm_writes_termination_log_ships_final_log_and_exits_143(
 
     rc = main(env, process_page_factory=factory)
     assert rc == EXIT_SIGTERM == 143
-    assert exits == [143]
+    assert hard_exits == [143]
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
     assert term == {"stage": "stream", "permanent": False, "error": "SIGTERM"}
     body = (
@@ -971,10 +969,9 @@ def test_sigterm_writes_termination_log_ships_final_log_and_exits_143(
     assert signal.getsignal(signal.SIGTERM) is before  # handler restored
 
 
-def test_sigterm_is_not_swallowed_by_the_per_page_handler(env, cfg, s3, monkeypatch):
+def test_sigterm_is_not_swallowed_by_the_per_page_handler(env, cfg, s3):
     """stream.consume records any Exception as a failed page and carries on;
     the SIGTERM unwind must pass straight through it."""
-    monkeypatch.setattr(main_mod, "_hard_exit", lambda code: None)
     seen = []
 
     def factory(c):
