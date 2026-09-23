@@ -19,6 +19,7 @@ import {
 } from "$lib/api.js";
 import { describeApiError } from "$lib/reasons.js";
 import contract from "./api-contract.json";
+import { dropped } from "./dropped.js";
 
 describe("the read API's contract", () => {
   test("every campaign row parses", () => {
@@ -40,25 +41,6 @@ describe("the read API's contract", () => {
   // page shows. Anything else appearing here is a field somebody added to
   // the API for this page and the page is quietly dropping.
   const IGNORED = ["campaign", "startedAt"];
-
-  /** Every key of `raw` missing from `parsed`, as a path with `[]` for arrays. */
-  function dropped(raw: unknown, parsed: unknown, path = ""): string[] {
-    if (Array.isArray(raw) && Array.isArray(parsed))
-      return [
-        ...new Set(raw.flatMap((r, i) => dropped(r, parsed[i], `${path}[]`))),
-      ];
-    if (!isObject(raw) || !isObject(parsed)) return [];
-    return Object.keys(raw)
-      .flatMap((k) => {
-        const at = path === "" ? k : `${path}.${k}`;
-        return k in parsed ? dropped(raw[k], parsed[k], at) : [at];
-      })
-      .sort();
-  }
-
-  function isObject(v: unknown): v is Record<string, unknown> {
-    return typeof v === "object" && v !== null && !Array.isArray(v);
-  }
 
   test("the only fields the page drops, at any depth, are the ones it means to", () => {
     for (const row of contract.summaries)
