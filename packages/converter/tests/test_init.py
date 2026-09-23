@@ -3,6 +3,9 @@ template so a new repo (I15) is one command away and never drifts from the
 docs' example (see ``test_packaging.py::test_examples_match_template`` for
 the drift guard)."""
 
+import re
+from importlib import resources
+
 import yaml
 
 from htrflow_converter.cli import main
@@ -168,3 +171,47 @@ def test_the_azure_stages_share_one_uv_install_template(tmp_path, capsys):
         steps = _azure_steps(doc, stage["stage"])
         assert {"template": ref} in steps, stage["stage"]
         assert not any("uv-${arch}" in s.get("bash", "") for s in steps)
+
+
+_CI = resources.files("htrflow_converter") / "ci"
+_GITHUB = _CI / "github" / ".github" / "workflows" / "render.yml"
+_AZURE = _CI / "azure" / "azure-pipelines.yml"
+
+
+def test_every_github_action_is_pinned_to_a_commit():
+    """audit 0923 S-4: tags move, and this workflow's Render job holds
+    `contents: write` on the campaigns repo's main branch. A pin is the full
+    commit SHA, with the tag it was taken from as a comment."""
+    text = _GITHUB.read_text()
+    uses = re.findall(r"uses: (\S+)(.*)", text)
+    assert uses
+    for action, comment in uses:
+        assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", action), action
+        assert re.fullmatch(r" # v\d+\.\d+\.\d+", comment), (action, comment)
+
+
+def test_the_converter_is_installed_from_a_commit_in_both_ci_flavours():
+    """A tag like `v0.5.0` can be moved to other code; a commit cannot. The
+    two flavours install the same one."""
+    refs = {
+        str(ci): yaml.safe_load(ci.read_text())[key]["CONVERTER_REF"]
+        for ci, key in ((_GITHUB, "env"), (_AZURE, "variables"))
+    }
+    assert all(re.fullmatch(r"[0-9a-f]{40}", ref) for ref in refs.values()), refs
+    assert len(set(refs.values())) == 1, refs
+
+
+def test_the_github_flavour_checks_the_kyverno_tarball_like_the_azure_one():
+    """The Azure flavour verified the Kyverno CLI against a committed
+    SHA-256; the GitHub one piped curl into tar, in the job before the one
+    that pushes to main."""
+    github = yaml.safe_load(_GITHUB.read_text())
+    azure = yaml.safe_load(_AZURE.read_text())
+    for key in ("KYVERNO_VERSION", "KYVERNO_SHA256_LINUX_X64", "KYVERNO_SHA256_LINUX_ARM64"):
+        assert github["env"][key] == azure["variables"][key], key
+    step = next(
+        s for s in github["jobs"]["policy"]["steps"]
+        if s.get("name", "").startswith("Install the Kyverno CLI")
+    )  # fmt: skip
+    assert "sha256sum --check --strict" in step["run"]
+    assert "| tar" not in step["run"]
