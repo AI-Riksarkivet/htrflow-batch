@@ -105,17 +105,18 @@ def client(static_dir: Path) -> TestClient:
     return TestClient(create_app(EmptyReader(), static_dir=static_dir))
 
 
-@pytest.mark.parametrize(
-    ("path", "marker"),
-    [
-        ("/", "campaign browser"),
-        ("/log", "run log"),
-        ("/alto", "alto viewer"),
-        ("/uv.html", "universal viewer"),
-        ("/config.js", "API_BASE"),
-        ("/_app/start.js", "bundle"),
-    ],
-)
+#: A page of the built site, and a string only that page's body carries.
+SITE_PAGES = [
+    ("/", "campaign browser"),
+    ("/log", "run log"),
+    ("/alto", "alto viewer"),
+    ("/uv.html", "universal viewer"),
+    ("/config.js", "API_BASE"),
+    ("/_app/start.js", "bundle"),
+]
+
+
+@pytest.mark.parametrize(("path", "marker"), SITE_PAGES)
 def test_serves_the_built_site(client: TestClient, path: str, marker: str):
     resp = client.get(path)
     assert resp.status_code == 200
@@ -475,9 +476,11 @@ class TestSiteOnly:
     def client(self, static_dir: Path) -> TestClient:
         return TestClient(create_app(NoCluster(), static_dir=static_dir))
 
-    @pytest.mark.parametrize("path", ["/", "/log", "/alto", "/uv.html", "/config.js"])
-    def test_site_still_served(self, client: TestClient, path: str):
-        assert client.get(path).status_code == 200
+    @pytest.mark.parametrize(("path", "marker"), SITE_PAGES)
+    def test_site_still_served(self, client: TestClient, path: str, marker: str):
+        resp = client.get(path)
+        assert resp.status_code == 200
+        assert marker in resp.text
 
     @pytest.mark.parametrize("path", ["/api/v1/jobs", "/api/v1/jobs/htr-batch/kyrk"])
     def test_api_is_a_clean_503(self, client: TestClient, path: str):
