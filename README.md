@@ -73,7 +73,9 @@ changes too. There is no CRD, no controller and no database.
 
 - **A pure converter** (`htrflow-campaigns`) checks the campaign and renders it
   into one Kubernetes **Indexed Job**, one index per volume, plus a warm-up Job
-  that fills the model cache. It runs in CI, never in the cluster.
+  that fills the model cache. It renders in the campaigns repo's CI; the
+  apply runs by hand or in the cluster, as an Argo CD hook on the converter
+  image.
 - **Kyverno** decides which images and model revisions may run. **Kueue** holds
   a campaign until its GPUs are free, and lets higher priority go first.
 - **A web front** shows every campaign and volume live, with each volume's run

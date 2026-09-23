@@ -63,13 +63,13 @@ The transformers line is not either: both architectures install it from the
 htrflow is tested on ([Two transformers
 lines](../how-it-works/wrapper.md#model-handling)).
 
-**No compiler in the image.** Some torch builds route a few operators
-through Triton kernels of their own, and the first such call compiles
-Triton's CUDA launcher with the system C compiler — which would put a
-compiler and the kernel headers it needs into a runtime image. The image
+**No compiler in the image.** The torch builds the image carries route a
+few operators through Triton kernels of their own, and the first such call
+compiles Triton's CUDA launcher with the system C compiler — which would put
+a compiler and the kernel headers it needs into a runtime image. The image
 sets `TORCH_DISABLE_NATIVE_JIT=1` instead, so those operators run on
-torch's precompiled kernels, the same kinds the other torch builds run,
-and nothing compiles or loads new machine code at run time. The image
+torch's precompiled kernels on every architecture, and nothing compiles or
+loads new machine code at run time. The image
 build checks that the switch still holds: it fails if torch registers any
 JIT-compiled operator. Nothing else JIT-compiles by default: htrflow does
 not call `torch.compile`, and ultralytics leaves it off.
@@ -294,20 +294,34 @@ protects nothing, and the repository secrets keep the workflow running.
    | Digest | Pinned in |
    |---|---|
    | `htrflow-web` | `web.image` in `charts/htrflow-batch/values.yaml`, and the compose stack |
-   | `htrflow-batch` | `wrapper.image` in the same file, and the demo campaign pipelines |
-   | `htrflow-campaigns` | both containers of the Argo CD hook, `packages/converter/src/htrflow_converter/template/argocd/apply.yaml` |
+   | `htrflow-batch` | the demo pipeline `init` writes, `packages/converter/src/htrflow_converter/template/pipelines/demo-v1.yaml`, and so its copy in `examples/campaigns/` |
+   | `htrflow-campaigns` | all three containers of the Argo CD hook (the clone, the check and the apply), `packages/converter/src/htrflow_converter/template/argocd/apply.yaml`, with the release's tag as a comment beside it |
 
-   The same commit sets `CONVERTER_REF` to the release tag in both CI
-   templates `init --ci` writes,
+   `.dagger/published.go` (`publishedPins`) names the file each of the
+   three is pinned in: the published-image checks (`scan-published`,
+   `verify-published`) read the digest from there, so a pin that moves to
+   another file moves there too.
+
+   The hook digest has to move with every release, not only when the
+   converter changes: the hook runs flags of the converter that wrote it
+   (`validate --rendered`, `apply --namespace`), and an older image does not
+   have them. A test fails CI when the hook's digest is not beside a comment
+   naming the converter's own version, or the image is not that version's
+   tag, so a release that bumped the version and forgot the pin cannot ship
+   a hook one release behind.
+
+   The same commit sets `CONVERTER_REF` in both CI templates `init --ci`
+   writes,
    `packages/converter/src/htrflow_converter/ci/github/.github/workflows/render.yml`
    and `packages/converter/src/htrflow_converter/ci/azure/azure-pipelines.yml`,
-   so a campaigns repository created from this release installs this
-   release's converter. Then `htrflow-campaigns init --force
-   examples/campaigns` regenerates the example repository from both.
-   Until a release pins it, the hook names its image by the coming
-   release's tag; a test fails CI once the wrapper's version passes that
-   tag, so a release that forgot the pin cannot ship a hook one release
-   behind.
+   to a **full commit SHA**, with the tag as a comment beside it: the SHA of
+   the release's version-bump commit (step 1 of
+   [The GitHub release](#the-github-release)). By then the converter's code
+   and the chart's policies are final for the release, and a SHA, unlike a
+   tag, cannot be moved later. A campaigns repository created from this
+   release then installs exactly this release's converter and renders the
+   chart's policies from the same commit. Then `htrflow-campaigns init
+   --force examples/campaigns` regenerates the example repository from both.
 
 ### Signing, SBOM and provenance
 
@@ -327,9 +341,10 @@ drift:
 Verify a published image against the workflow identity:
 
 ```bash
-# signature (a current cosign; old releases report "no signatures found")
+# signature (cosign 3 or later; older versions report "no signatures found").
+# Anchored to main, the only ref publishing runs from.
 cosign verify docker.io/riksarkivet/htrflow-batch:<version> \
-  --certificate-identity-regexp '^https://github\.com/AI-Riksarkivet/htrflow-batch/\.github/workflows/publish\.yml@' \
+  --certificate-identity-regexp '^https://github\.com/AI-Riksarkivet/htrflow-batch/\.github/workflows/publish\.yml@refs/heads/main$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 # build provenance
@@ -352,8 +367,9 @@ order is the one the images need:
 3. **The release commit** pins the three manifest-list digests where the
    table above says (`charts/htrflow-batch/values.yaml`, the demo
    pipelines, the compose stack and the Argo CD hook), sets `CONVERTER_REF`
-   in both CI templates, regenerates `examples/campaigns/`, and bumps the
-   chart's `version` with a changelog entry.
+   in both CI templates to the SHA of step 1's commit, regenerates
+   `examples/campaigns/`, and bumps the chart's `version` with a changelog
+   entry.
 4. **Tag that commit** and push the tag.
 
 The workflow then writes the notes in two parts:

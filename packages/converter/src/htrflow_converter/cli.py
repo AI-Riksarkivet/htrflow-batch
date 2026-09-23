@@ -299,8 +299,10 @@ def _edited_pipeline(campaigns, pipelines: dict, cfg, out: Path) -> str | None:
 #: (audit 0923 C-11). Whether the campaign is still running is the
 #: cluster's to say: offline this is a warning, and the apply, which sees
 #: the Job, holds a running one to its count.
-_WINDOW_MOVED = (
+_WINDOW_CHANGE = (
     "campaign {name} runs {before} pods at a time and would now run {after}: "
+)
+_WINDOW_MOVED = _WINDOW_CHANGE + (
     "if it is still running, Kueue stops every running pod of a Job whose "
     "parallelism changes and queues the campaign again — to change it safely, "
     "pause it first (suspend: true), change the window once the pause is "
@@ -539,8 +541,8 @@ def _dulwich_head(repo: Path) -> str:
 
 
 def _applied_by() -> str:
-    """``HTRFLOW_APPLIED_BY`` (what CI sets from the actor that triggered
-    it), else the OS user. Lower-cased: one person, one spelling."""
+    """``HTRFLOW_APPLIED_BY`` (what the Argo CD hook's Job sets, naming its
+    Application), else the OS user. Lower-cased: one person, one spelling."""
     name = os.environ.get("HTRFLOW_APPLIED_BY", "").strip()
     if not name:
         with contextlib.suppress(Exception):
@@ -764,8 +766,7 @@ _KEPT_PAIR = "{name}: left as it was, since Job/{job} was refused"
 #: cluster. Kueue v0.19 (``ensureOneWorkload``) stops every pod of an
 #: admitted Job whose pod count no longer matches its Workload and queues it
 #: again; a suspended Job's Workload is updated in place.
-_LIVE_WINDOW = (
-    "campaign {name} runs {before} pods at a time and would now run {after}: "
+_LIVE_WINDOW = _WINDOW_CHANGE + (
     "Kueue stops every running pod of an admitted Job whose parallelism "
     "changes and queues the campaign again — put its window back (the "
     "campaign's window:, or the window cap in converter.yaml), or pause the "

@@ -542,6 +542,10 @@
       "status": 503
     }
   ],
+  "reapedLimits": {
+    "default": 20,
+    "max": 10000
+  },
   "reapedTotal": "2",
   "summaries": [
     {

@@ -63,12 +63,20 @@ make test                       # uv run --all-packages pytest -q
 cd frontend && bun run test     # vitest
 # or, reproducibly, the way CI runs it:
 dagger call test                # add --ca-bundle <file> behind a TLS-inspecting proxy
+cd .dagger && go vet ./publishcheck/ && go test ./publishcheck/   # the dagger module's Go test
 ```
 
-## The two generated files CI checks are current
+The Go test reads the order of `publish-docker`'s gates (the free-tag check,
+tests, build, driver test, Trivy, the free-tag check again, push) from the
+dagger module's syntax tree, so a gate that is commented out or moved after
+the push fails it, and it checks that only a registry's "unknown manifest"
+answer counts as a free tag. It imports only the standard
+library and runs without an engine; `ci.yml` runs it in a job of its own.
 
-Two files in this repository are printed by a script and committed, and in
-both cases a test in the normal suite fails when the committed copy is not
+## The generated files CI checks are current
+
+Three files in this repository are printed by a script and committed, and in
+each case a test in the normal suite fails when the committed copy is not
 what the script prints — so `dagger call test` (and therefore `make ci`)
 catches a stale one without a job of its own.
 
@@ -76,11 +84,14 @@ catches a stale one without a job of its own.
 | --- | --- | --- |
 | `docs/reference/configuration.md` | `make config-reference` | `packages/converter/tests/test_chart_agreement.py` |
 | `frontend/src/lib/fixtures/api-contract.json` | `make api-contract` | `packages/web/tests/test_contract.py` |
+| `frontend/src/lib/fixtures/wrapper-contract.json` | `make wrapper-contract` | `packages/wrapper/tests/test_contract.py` |
 
 The contract fixture is the one thing tying the read API to the page that
-parses it. `scripts/api_contract.py` calls `projection.py` itself — the same
-functions the routes call — and writes a document covering the rows the two
-sides have historically disagreed about: a live campaign, one whose Job the
+parses it. `scripts/api_contract.py` builds the read API's app over a fake
+cluster and asks its routes over HTTP, so the list's `X-Reaped-Total` header,
+the version route and the error bodies are in it along with the rows, and
+writes a document covering the rows the two sides have historically
+disagreed about: a live campaign, one whose Job the
 TTL reaped, one whose ending nobody recorded (`Unknown` phase, `unknown`
 volume rows), a `finishedAt` of `null`, a failed volume with its reason, and
 a volume with progress read out of the bucket.
@@ -88,7 +99,19 @@ a volume with progress read out of the bucket.
 `jobSummarySchema`/`jobDetailSchema` and also asserts that the only fields
 the page drops are the two it means to drop — so a field added to the API
 for this page, and then not read by it, shows up here rather than in a
-campaign nobody can open.
+campaign nobody can open. The fixture also carries the list route's reaped
+window as it behaves — how many reaped campaigns it sends unasked, and the
+largest `?reaped=` it answers — and the vitest holds the page's own window
+and cap to those numbers.
+
+The wrapper fixture does the same for what the wrapper writes and the page
+reads with no API in between. `scripts/wrapper_contract.py` calls the
+wrapper's own functions: the `manifest.json` body of a small run with a done,
+a failed and a skipped page, and the termination messages of a stopped pod
+and of the verify failures, long ones clipped the way the termination log
+clips them. `wrapper-contract.test.ts` parses the manifest with the run
+viewer's schema (no key dropped at any depth), and the failure-sentence tests
+in `reasons.test.ts` read their messages from it rather than from copies.
 
 Change a projection and the pytest fails; run `make api-contract` and the
 vitest tells you whether the schemas can still read what you changed.

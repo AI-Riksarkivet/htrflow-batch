@@ -2,7 +2,7 @@
 
 `charts/htrflow-batch` deploys everything the platform runs besides the
 campaigns: the Kueue queue objects, the model-cache PVC, the web front (the
-campaign browser, Universal Viewer and the read-only status API in one
+campaign browser, Universal Viewer and the status API in one
 Deployment), the Kyverno policies and the NetworkPolicies. Campaigns are not
 part of the chart. The converter renders them from a campaigns repo, and
 `htrflow-campaigns apply` or a GitOps tool applies them

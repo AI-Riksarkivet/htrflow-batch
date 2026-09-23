@@ -21,7 +21,10 @@ done
 cp zensical.toml "$stage/zensical.toml"
 # The site documents the system in general: no project ids, dates, versions,
 # hardware or one site's hosts (scripts/docs_lint.py, scripts/docs-lint.allow).
-python3 scripts/docs_lint.py "$stage/docs" README.md
+# The repository's own READMEs and SECURITY.md are held to the same rules;
+# the charts' READMEs are not, since their upgrade notes and changelog are
+# history keyed by version and date on purpose.
+python3 scripts/docs_lint.py "$stage/docs" README.md SECURITY.md packages/*/README.md
 cd "$stage"
 ${ZENSICAL:-uvx zensical} "$cmd" "$@"
 [ "$cmd" = build ] && mv site ../site

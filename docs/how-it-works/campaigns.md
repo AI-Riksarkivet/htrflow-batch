@@ -224,7 +224,7 @@ for that, and never a campaign Job.
 For each pipeline, `pipelines/<id>.yaml`:
 
 - `ConfigMap htr-pipeline-<id>`, holding `pipeline.yaml: {steps: …}`.
-- `Job htr-warmup-<id>`, which fills the model cache once per pipeline.
+- `Job htr-warmup-<id>`, which fills its recipe's directory of the model cache once.
 
 For each campaign, `campaigns/<name>.yaml`:
 

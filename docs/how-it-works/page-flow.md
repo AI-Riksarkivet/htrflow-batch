@@ -37,7 +37,11 @@ shape it:
   best-fit form, and every compliant server supports the width form.
 - **`max` when the canvas is already narrower than the cap.** Level 1
   servers refuse upscaling with a 400.
-- **A 400 anyway retries once with `/full/max/`** before the page fails.
+- **A 400 anyway asks the image what it has** before the page fails: the
+  wrapper reads the image's `info.json` and asks once more, for the full
+  size if that is within the cap, else the largest size the service lists
+  within it (all a level 0 service offers), else its `maxWidth` when that is
+  below the cap, and `/full/max/` only when none of these is known.
 
 A canvas with **no** image service cannot be resized on the server. It is
 fetched at native size, bounded only by `FETCH_MAX_BYTES`.
@@ -64,8 +68,17 @@ A failure is either the page's or the source's:
 | Network error, deadline, 408, 425, 429, 5xx except 501 and 505, an HTML or empty answer | Yes: 4 attempts, 2 s then doubling, or the `Retry-After` wait if longer (at most 60 s) | The page is **deferred**. Verify finds it missing, the index is retried, and resume fetches only that page |
 | Any other status, a body over a cap, an unrequested encoding, an image over `MAX_IMAGE_PIXELS` | No | The page is **failed** and recorded in `manifest.json`. The volume still completes |
 
-A 400 on a sized request is the one exception: it is retried once with
-`/full/max/` first, without spending an attempt.
+A 400 on a sized request is the one exception: it is asked once more, at
+the size its `info.json` offers within the cap (above), without spending an
+attempt.
+
+Uploads fail the same two ways. Outputs the store refuses as bad (a missing
+format, XML that does not parse) fail the page. A PUT that still fails after
+the S3 client's own retries is the store's condition, not the page's: the
+page is **deferred** like an unreachable source, and five in a row end the
+run as transient. On the index's last attempt a page still deferred is
+recorded as **failed** instead, so the volume completes with every other
+page.
 
 The image lands in `/work/input/`. That directory is on the memory-backed
 `emptyDir` (`sizeLimit: 2Gi`), which also holds `/work/outputs/{alto,page}/`

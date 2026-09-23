@@ -40,6 +40,10 @@ def test_the_fixture_covers_the_rows_the_page_has_to_draw():
     assert {"done", "failed", "unknown"} <= states
     assert any(v["sourceUrl"] is None for d in doc["details"] for v in d["volumes"])
     assert any(v["progress"] is not None for d in doc["details"] for v in d["volumes"])
+    # A reaped campaign's detail is drawn from its record, and its latest
+    # volume is a row the page renders: a fixture with only a live `latest`
+    # would leave the reaped one's shape unchecked.
+    assert any(d["jobGone"] and d["latest"] is not None for d in doc["details"])
 
 
 def test_the_fixture_carries_what_the_routes_add_to_the_projection():
@@ -62,4 +66,18 @@ def test_the_fixture_carries_what_the_routes_add_to_the_projection():
             "phase": "failed",
             "reason": {"stage": "warmup", "permanent": True, "error": "bad model id"},
         },
+    }
+
+
+def test_the_reaped_window_is_read_off_the_route():
+    """The page asks for reaped campaigns a page at a time and never past the
+    API's cap; the vitest holds its REAPED_PAGE/REAPED_MAX to these. They
+    are what the route does -- the rows it sends unasked, the last
+    ``?reaped=`` it answers -- so they are checked against its constants
+    here only to prove the probe found the edge, not to restate them."""
+    from htrflow_web import app
+
+    assert build()["reapedLimits"] == {
+        "default": app.REAPED_SHOWN,
+        "max": app.REAPED_MAX,
     }
