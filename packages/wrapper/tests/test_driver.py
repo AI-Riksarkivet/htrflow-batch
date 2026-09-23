@@ -944,9 +944,9 @@ def test_a_slow_page_that_keeps_making_progress_completes(
     for fmt in ("alto", "page"):
         (out / fmt).mkdir(parents=True)
         (out / fmt / "0044.xml").write_text("<x/>")
-    pipeline = _steady_queue_pipeline(batches=20, gap=0.05)  # ~1 s in all
+    pipeline = _steady_queue_pipeline(batches=10, gap=0.02)  # twice the window
 
-    files = abandoned.process_page(pipeline, _image(tmp_path), out, seconds=0.25)
+    files = abandoned.process_page(pipeline, _image(tmp_path), out, seconds=0.1)
     assert set(files) == {"alto", "page"}
     assert abandoned.leaked_threads(grace=0.1) == 0
 
@@ -968,11 +968,11 @@ def test_a_step_that_finishes_is_progress_too(
         steps: list = []
 
         def run(self, document):
-            for i in range(20):
-                time.sleep(0.05)
+            for i in range(10):  # twice the window in all
+                time.sleep(0.02)
                 progress._steps.setdefault(document, []).append(f"step {i}")
 
-    files = abandoned.process_page(_ManySteps(), _image(tmp_path), out, seconds=0.25)
+    files = abandoned.process_page(_ManySteps(), _image(tmp_path), out, seconds=0.1)
     assert set(files) == {"alto", "page"}
 
 
