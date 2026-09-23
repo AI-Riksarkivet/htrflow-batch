@@ -186,8 +186,10 @@ So `cluster.sync_pause` runs last in every apply:
    has no Job at all has nothing running to stop.
 5. A Workload the apply cannot patch (deleted between the list and the
    patch, or a patch the Role does not allow) is that campaign's problem.
-   The error is printed, the Workload is named in the closing summary as
-   refused, and the other campaigns' pauses and the prune still run. For a
+   The error is printed, a closing line names each Job whose Workload the
+   sync did not reach (apart from the refused-objects summary, since a
+   Workload is not a rendered object), and the other campaigns' pauses and
+   the prune still run. For a
    paused campaign that is a pause not enforced, and the apply exits `1`.
    For one that is not paused it exits `3`, like any refused object.
 
