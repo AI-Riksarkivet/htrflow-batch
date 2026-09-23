@@ -31,8 +31,8 @@ enforces.
 ## What the automated checks already cover
 
 - **Trivy** gates CRITICAL findings in all three images (the wrapper, the web image and
-  the converter image the Argo CD hook runs): on every push to `main`
-  (`.github/workflows/ci.yml`), before every image is pushed at release, on each
+  the converter image the Argo CD hook runs): on every push to `main`, and for the
+  converter image on every pull request too (`.github/workflows/ci.yml`), before every image is pushed at release, on each
   architecture (`.github/workflows/publish.yml`), and every week, both rebuilt from `main`,
   with the report in the Security tab, and as the published digests the repository pins,
   pulled from the registry on both architectures (`.github/workflows/security.yml` and
@@ -62,8 +62,8 @@ itself belong ([Releasing](https://ai-riksarkivet.github.io/htrflow-batch/develo
 ## Verifying a release
 
 Every image `publish.yml` pushes is signed keylessly with cosign and carries a SLSA
-build-provenance attestation; the per-architecture wrapper images and the web image also
-carry an SPDX SBOM attestation (the multi-architecture index does not — an SBOM of an index
+build-provenance attestation; the per-architecture images of all three (wrapper, web and
+converter) also carry an SPDX SBOM attestation (the multi-architecture index does not — an SBOM of an index
 would describe only one architecture).
 
 ```bash
