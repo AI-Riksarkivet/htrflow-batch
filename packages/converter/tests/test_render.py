@@ -132,27 +132,57 @@ def test_init_container_present_with_pipeline_marker_path():
     assert "nvidia.com/gpu" not in init[0]["resources"]["requests"]
 
 
-def test_the_warmup_wait_is_bounded_and_fails_the_index():
+def _run_gate(tmp_path, pod: dict, marker: str, after: int | None = None):
+    """Run a pod's rendered ``warmup-wait`` command under its own shell,
+    with the marker at a path under ``tmp_path`` and ``sleep`` a shell
+    function that logs its seconds instead of waiting -- creating the marker
+    once ``after`` sleeps are logged. -> (exit code, stderr, seconds slept,
+    the marker's stand-in path)."""
+    command = pod["initContainers"][0]["command"]
+    here, log = tmp_path / "warmup.done", tmp_path / "slept"
+    log.write_text("")
+    here.unlink(missing_ok=True)
+    if after == 0:
+        here.touch()
+    stub = (
+        f'sleep() {{ echo "$1" >> {log}; '
+        f'[ "$(wc -l < {log})" -lt {after or 10**9} ] || touch {here}; }}; '
+    )
+    done = subprocess.run(
+        [*command[:-1], stub + command[-1].replace(marker, str(here))],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    slept = sum(int(n) for n in log.read_text().split())
+    return done.returncode, done.stderr, slept, str(here)
+
+
+def test_the_warmup_wait_is_bounded_and_fails_the_index(tmp_path):
     """An unbounded `until [ -f … ]` holds `nvidia.com/gpu: 1` for the pod's
     whole deadline, once per retry, whenever a pipeline's warm-up never wrote
     its marker (audit X3). The init container now gives up after
     `warmup_wait_seconds`, says on stderr which marker it waited for, and
     exits 13 -- which the Job's podFailurePolicy turns into a failed index
-    instead of three more six-hour waits."""
+    instead of three more six-hour waits. The rendered script is run, not
+    read: a counter that steps too fast, or a test that exits on the first
+    pass, reads the same as the right one."""
     kyrk, demo, cfg = _kyrk()
     cfg = cfg.model_copy(update={"warmup_wait_seconds": 120})
     job = render.campaign_objects(kyrk, demo, cfg)[1]
-    init = job["spec"]["template"]["spec"]["initContainers"][0]
-    script = init["command"][-1]
+    pod = job["spec"]["template"]["spec"]
+    init = pod["initContainers"][0]
     marker = f"/data/warmup/{demo.id}.done"
 
-    assert f"[ -f {marker} ]" in script
-    # `-le`, not `-lt`: the check runs BEFORE each sleep, so `-lt` gives up
-    # one step early -- at 110 s here, while printing "after 120s".
-    assert '[ "$n" -le 120 ]' in script
-    assert "exit 13" in script
-    message = script.split("echo ", 1)[1].split(" >&2", 1)[0]
-    assert marker in message
+    # Never there: the whole 120 s is waited -- not one step less, which a
+    # `-lt` would give while printing "after 120s" -- and then exit 13,
+    # naming the marker.
+    rc, err, slept, here = _run_gate(tmp_path, pod, marker)
+    assert (rc, slept) == (13, 120)
+    assert here in err and "after 120s" in err
+    # There from the start: through at once. Arriving late: through then.
+    assert _run_gate(tmp_path, pod, marker, after=0)[:3] == (0, "", 0)
+    assert _run_gate(tmp_path, pod, marker, after=3)[:3] == (0, "", 30)
 
     # The default policy (`File`) reads /dev/termination-log, which a shell
     # script never writes: without this the index fails with an EMPTY
@@ -173,7 +203,7 @@ def test_the_warmup_wait_is_bounded_and_fails_the_index():
     }
 
 
-def test_the_warmup_wait_never_outlasts_the_pods_own_deadline():
+def test_the_warmup_wait_never_outlasts_the_pods_own_deadline(tmp_path):
     """A pipeline whose `max_seconds:` is shorter than `warmup_wait_seconds`
     would have its pod killed by the kubelet -- exit 143, matched by no
     `FailIndex` rule -- before the gate could ever give up, so the index
@@ -185,30 +215,31 @@ def test_the_warmup_wait_never_outlasts_the_pods_own_deadline():
     a `FailIndex` and a sentence. A tie would hand it back to the kubelet."""
     _, demo, cfg = _kyrk()
     cfg = cfg.model_copy(update={"warmup_wait_seconds": 900})
-    short = demo.model_copy(update={"max_seconds": 600})
+    marker = f"/data/warmup/{demo.id}.done"
     c = Campaign(
         name="kyrk",
         pipeline="demo-v1",
         volumes=[Volume(id="v1", manifest="https://x/y")],
     )
-    spec = render.campaign_objects(c, short, cfg)[1]["spec"]["template"]["spec"]
-    script = spec["initContainers"][0]["command"][-1]
 
-    assert spec["activeDeadlineSeconds"] == 600
-    assert '[ "$n" -le 590 ]' in script
-    assert "after 590s" in script
+    def gate(pipeline):
+        """(the pod's deadline, seconds the gate waits before exit 13)."""
+        pod = render.campaign_objects(c, pipeline, cfg)[1]["spec"]["template"]["spec"]
+        rc, err, slept, _ = _run_gate(tmp_path, pod, marker)
+        assert rc == 13 and f"after {slept}s" in err
+        return pod["activeDeadlineSeconds"], slept
+
+    deadline, waited = gate(demo.model_copy(update={"max_seconds": 600}))
+    assert deadline == 600
+    assert waited == deadline - render._WAIT_STEP, "gives up one step early"
 
     # A deadline under one step still has to render a runnable script: the
-    # gate cannot win that race, but it must not render `-le -5` either.
-    tiny = demo.model_copy(update={"max_seconds": 5})
-    spec = render.campaign_objects(c, tiny, cfg)[1]["spec"]["template"]["spec"]
-    assert '[ "$n" -le 10 ]' in spec["initContainers"][0]["command"][-1]
+    # gate cannot win that race, but it must not give up before it starts.
+    assert gate(demo.model_copy(update={"max_seconds": 5})) == (5, render._WAIT_STEP)
 
     # The other way round, the pipeline's deadline is none of the gate's
     # business: 900 s of waiting inside a 6 h budget is what it is for.
-    spec = render.campaign_objects(c, demo, cfg)[1]["spec"]["template"]["spec"]
-    assert spec["activeDeadlineSeconds"] == 21600
-    assert '[ "$n" -le 900 ]' in spec["initContainers"][0]["command"][-1]
+    assert gate(demo) == (21600, 900)
 
 
 def test_the_warmup_deadline_is_the_pods_and_not_the_jobs():
