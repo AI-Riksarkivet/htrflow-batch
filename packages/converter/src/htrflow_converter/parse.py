@@ -52,16 +52,20 @@ class _StrictLoader(yaml.SafeLoader):
 
     PyYAML keeps the last of two equal keys without a word, so ``volumes:
     [R1]`` followed by ``volumes: [R2]`` rendered R2 alone (audit 0923 C-6).
-    Only the keys the mapping itself writes are compared: a ``<<:`` merge
-    supplies defaults that an explicit key is meant to override."""
+    Only the keys the mapping itself writes are compared, ``<<`` among them:
+    what a merge supplies is defaults that an explicit key is meant to
+    override."""
 
     def construct_mapping(self, node, deep=False):
         if isinstance(node, yaml.MappingNode):
             seen: dict[object, yaml.Node] = {}
             for key_node, _ in node.value:
-                if key_node.tag == "tag:yaml.org,2002:merge":
-                    continue
-                key = self.construct_object(key_node, deep=True)
+                # `<<` is compared as written: two of them are two keys.
+                key = (
+                    "<<"
+                    if key_node.tag == "tag:yaml.org,2002:merge"
+                    else self.construct_object(key_node, deep=True)
+                )
                 try:
                     first = seen.setdefault(key, key_node)
                 except TypeError:  # an unhashable key: SafeLoader refuses it
