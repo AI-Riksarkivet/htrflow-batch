@@ -270,6 +270,42 @@ def test_stop_event_short_circuits_pending_downloads(tmp_path):
     assert len(started) == 2  # page 1, and the one already in flight
 
 
+def _spy_fetch(monkeypatch, raise_for=()):
+    """fetch_page as the stream binds it, recording each page it is handed
+    (and raising, like a bug in it would, for the names in ``raise_for``)."""
+    handed: list[str] = []
+    real = stream_mod.fetch_page
+
+    def fetch(page, **kw):
+        handed.append(page.name)
+        if page.name in raise_for:
+            raise RuntimeError(f"bug fetching {page.name}")
+        return real(page, **kw)
+
+    monkeypatch.setattr(stream_mod, "fetch_page", fetch)
+    return handed
+
+
+def test_a_set_stop_submits_no_further_page(tmp_path, monkeypatch):
+    """W10: once the run has failed nothing more is handed to the download
+    pool. The pages behind the window are not reported as "stopped" one by
+    one -- they are never submitted, and verify reports them missing."""
+    handed = _spy_fetch(monkeypatch)
+    stop = threading.Event()
+    stream = PageStream(
+        _pages(6),
+        tmp_path,
+        _client(lambda req: httpx.Response(200, content=JPEG)),
+        lookahead=2,
+        stop=stop,
+    )
+    pages = iter(stream)
+    assert next(pages).page.name == "0001"
+    stop.set()
+    assert [r.page.name for r in pages] == ["0002"]  # already in the window
+    assert handed == ["0001", "0002"]
+
+
 # -- the consumer ----------------------------------------------------------
 
 
