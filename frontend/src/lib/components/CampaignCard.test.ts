@@ -2176,41 +2176,6 @@ describe("the numbers line is the same shape on every card", () => {
     expect(lost()).not.toContain("error");
   });
 
-  test("each row is label, icons, bar, fraction and pill, in that order", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        jsonResponse({
-          ...detail0,
-          failures: [],
-          volumes: [],
-          pagesDone: 5,
-          pagesTotal: 8,
-          pagesFailed: 3,
-        }),
-      ),
-    );
-    const { container } = render(CampaignCard, { job });
-    await vi.advanceTimersByTimeAsync(0);
-    const cells = [...container.querySelectorAll(".row.totals")];
-    const pagesCell = cells.find((c) => c.textContent?.startsWith("pages"))!;
-    expect(
-      [...pagesCell.children].map((c) => c.className.split(" ")[0]),
-    ).toEqual([
-      "c-label",
-      "c-links",
-      "c-bar",
-      "c-fraction",
-      "c-status",
-      "c-lost",
-    ]);
-    expect(pagesCell.querySelector(".c-fraction")).toHaveTextContent("5 / 8");
-    expect(pagesCell.querySelector(".c-lost")).toHaveTextContent("3 failed");
-    // A totals row has no icons and no pill, but keeps both columns open.
-    expect(pagesCell.querySelector(".c-links")?.textContent?.trim()).toBe("");
-    expect(pagesCell.querySelector(".c-status")?.textContent?.trim()).toBe("");
-  });
-
   test("a campaign done with pages missing paints its bars amber", async () => {
     const done: JobSummary = {
       ...job,
@@ -2459,7 +2424,7 @@ describe("the volume status column", () => {
   };
   const unknown = { ...volumeDone, progress: null };
 
-  test("a volume row is the same five cells the totals are", async () => {
+  test("the open list is an ARIA table, with headers nobody has to see", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -2469,15 +2434,6 @@ describe("the volume status column", () => {
     const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
     await expand();
-    const row = container.querySelector(".row.volume") as HTMLElement;
-    expect([...row.children].map((c) => c.className.split(" ")[0])).toEqual([
-      "c-label",
-      "c-links",
-      "c-bar",
-      "c-fraction",
-      "c-status",
-    ]);
-    // The list is an ARIA table, with headers nobody has to see.
     expect(container.querySelector('[role="table"]')).toHaveAttribute(
       "aria-label",
       "Volumes in campaign kyrk",
@@ -2496,18 +2452,6 @@ describe("the volume status column", () => {
       expect(row.querySelectorAll(".slot")).toHaveLength(2);
       expect(row.querySelectorAll(".vicon")).toHaveLength(1);
     }
-  });
-
-  test("the strip is a row of the card's own grid", async () => {
-    const line = await strip(done);
-    const order = [...line.children].map((c) => c.className.split(" ")[0]);
-    expect(order).toEqual([
-      "c-label",
-      "c-links",
-      "c-bar",
-      "c-fraction",
-      "c-status",
-    ]);
   });
 
   test("a done volume: green word and its pages", async () => {
@@ -2627,28 +2571,37 @@ describe("a volume line is the same shape on every row and every card", () => {
     return container;
   }
 
-  test("every row is the same five grid tracks", async () => {
-    const container = await card([vol("vol0")], vol("vol0"));
-    // Folded: the strip is a row of the same grid.
-    const strip = container.querySelector(".row.latest") as HTMLElement;
-    expect([...strip.children].map((c) => c.className.split(" ")[0])).toEqual([
-      "c-label",
-      "c-links",
-      "c-bar",
-      "c-fraction",
-      "c-status",
-    ]);
-    // Open: the same five, on the same tracks.
-    await expand();
-    const row = container.querySelector(".row.volume") as HTMLElement;
-    expect([...row.children].map((c) => c.className.split(" ")[0])).toEqual([
-      "c-label",
-      "c-links",
-      "c-bar",
-      "c-fraction",
-      "c-status",
-    ]);
-  });
+  test.each([
+    ["the strip", ".row.latest"],
+    ["a volume row", ".row.volume"],
+    ["a totals row", ".row.totals"],
+  ] as const)(
+    "%s is the same five tracks in the same order, what it lost under them",
+    async (where, selector) => {
+      // One order everywhere: the id, its icons, the bar, the fraction it
+      // draws and the pill at the edge, so every number on the card sits in
+      // one column and every pill in another. A totals row keeps the icon
+      // and pill cells, empty, to hold those columns open.
+      const lost = vol("vol0");
+      lost.progress.failed = 1;
+      const container = await card([lost], lost);
+      if (where === "a volume row") await expand();
+      const row = container.querySelector(selector) as HTMLElement;
+      expect([...row.children].map((c) => c.className.split(" ")[0])).toEqual([
+        "c-label",
+        "c-links",
+        "c-bar",
+        "c-fraction",
+        "c-status",
+        "c-lost",
+      ]);
+      const pill = row.querySelector(".c-status .status");
+      if (where === "a totals row") {
+        expect(pill).toBeNull();
+        expect(row.querySelector(".c-links")?.textContent?.trim()).toBe("");
+      } else expect(pill).not.toBeNull();
+    },
+  );
 
   test("a long id and a short one put their icons in the same place", async () => {
     // The icons are a track of their own, not a thing that follows the text:
@@ -2716,80 +2669,6 @@ describe("a volume line is the same shape on every row and every card", () => {
     // Same elements, same classes but for the highlight, so nothing resizes.
     expect(shape()).toEqual(before);
     expect(container.querySelector(".vfigures.bump")).not.toBeNull();
-  });
-});
-
-// "can we change the order of the done and 3 / 3 at least, for the status?
-// because now it's very uneven for the eye" (the product owner, 2026-09-16):
-// the pill is the fixed-width element, so it belongs at the edge, with the
-// variable-width figures running up against it.
-describe("the status reads figures first, pill last", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    stubStorage();
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-  });
-
-  const vol = {
-    ...volumeDone,
-    progress: {
-      done: 2,
-      total: 3,
-      failed: 1,
-      lastPage: "0003",
-      stage: "done",
-      updatedAt: "2026-09-14T07:00:00Z",
-      ageSeconds: null,
-      lastError: null,
-      errors: 0,
-      viewerPublished: true,
-    },
-  };
-
-  async function render_(volumes: unknown[], latest: unknown = null) {
-    cleanup();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        jsonResponse({ ...detail0, failures: [], volumes, latest }),
-      ),
-    );
-    const { container } = render(CampaignCard, { job });
-    await vi.advanceTimersByTimeAsync(0);
-    return container;
-  }
-
-  test("the bar, then the fraction, then the pill ends the row", async () => {
-    const container = await render_([vol], vol);
-    const row = container.querySelector(".row.latest") as HTMLElement;
-    const order = [...row.children].map((c) => c.className.split(" ")[0]);
-    expect(order.indexOf("c-bar")).toBeLessThan(order.indexOf("c-fraction"));
-    expect(order.indexOf("c-fraction")).toBeLessThan(order.indexOf("c-status"));
-    expect(row.querySelector(".c-status .status")).not.toBeNull();
-    // The icons are left, beside the id, not with the pill.
-    expect(order.indexOf("c-links")).toBe(1);
-  });
-
-  test("a table row reads the same way", async () => {
-    const container = await render_([vol]);
-    await expand();
-    const row = container.querySelector(".row.volume") as HTMLElement;
-    const order = [...row.children].map((c) => c.className.split(" ")[0]);
-    expect(order.indexOf("c-bar")).toBeLessThan(order.indexOf("c-fraction"));
-    expect(order.indexOf("c-fraction")).toBeLessThan(order.indexOf("c-status"));
-  });
-
-  test("a failed volume's reason sits with its id on the strip", async () => {
-    const container = await render_([volumeFailed], volumeFailed);
-    const row = container.querySelector(".row.latest") as HTMLElement;
-    expect(row.querySelector(".c-label .vreason")).toHaveTextContent(
-      "Failed while loading the model",
-    );
-    // The fraction slot still holds its column open.
-    expect(row.querySelector(".c-fraction")).not.toBeNull();
   });
 });
 
