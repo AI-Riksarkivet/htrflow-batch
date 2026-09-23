@@ -498,7 +498,7 @@ def _written_by(reader: RecordingReader, manager: str) -> dict:
     return body
 
 
-def test_listing_campaigns_writes_what_it_observed(capsys):
+def test_listing_campaigns_writes_what_it_observed():
     reader = RecordingReader()
     client = TestClient(create_app(reader, progress=FakeProgress()))
     assert client.get("/api/v1/jobs").status_code == 200
@@ -735,7 +735,6 @@ def test_the_list_route_draws_a_reaped_row_from_metadata_alone():
     `data` -- the campaign's whole volume list -- is simply not there. A row
     that needed it would break here rather than on a real backfill."""
     metadata_only = {"metadata": REAPED_RECORD["metadata"]}
-    assert "data" not in metadata_only
     client = TestClient(
         create_app(
             RecordingReader([metadata_only, REAPED_STATUS]), progress=FakeProgress()
