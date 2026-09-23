@@ -113,7 +113,6 @@ describe("page_sources", () => {
     const parsed = runManifestSchema.parse({
       ...base,
       page_sources: { "0001": "https://iiif/0001.jpg", "0002": "javascript:x" },
-      canvas_ids: { "0001": "https://iiif/canvas/1", "0002": null },
     });
     const stats = pageStats(parsed.results, parsed.page_sources);
     expect(stats[0]?.source).toBe("https://iiif/0001.jpg");
