@@ -539,13 +539,13 @@ _INCOMPLETE_RENDER = (
 
 
 #: Which Job the apply made for a campaign, on the campaign ConfigMap (S-11).
-#: A status record is written by the read API too, and the chart lets that
-#: ServiceAccount write every `campaign-<x>-status` name -- so a record
-#: alone is anybody's word that a campaign ended. The campaign ConfigMap is
-#: the apply identity's alone (the chart's rbac-scope policy), so a record
-#: is believed only when it names the Job recorded here. ``""``: the Job
-#: has not been created. A ConfigMap without the key was applied before it
-#: existed, and its record is believed as it always was.
+#: A status record whose Job is gone can be about some other run: an earlier
+#: Job under the same name, or none at all when the ConfigMap went out and
+#: its Job never did. It is believed only when it names the Job recorded
+#: here. Not a trust boundary: whatever can read that Job's uid and write
+#: the record (the read API's ServiceAccount can do both) can still name
+#: it. ``""``: the Job has not been created. A ConfigMap without the key was
+#: applied before it existed, and its record is believed as it always was.
 _JOB_UID = "htrflow.riksarkivet.se/job-uid"
 _UNBELIEVED = (
     "campaign {name}: its status record says {phase} of Job {theirs}, not the "

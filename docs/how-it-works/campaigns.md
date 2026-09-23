@@ -322,16 +322,20 @@ These things follow.
   Without it, an apply after the Job's TTL found no Job, created one, and
   re-ran every volume. There is deliberately **no `--force`**: a campaign
   that should run again is a new campaign file.
-- **A stored record counts only when it names the apply's own Job.** The
-  read API may write every `campaign-<name>-status` ConfigMap, so a record
-  on its own is only a claim. `apply` stamps the uid of the Job it created
-  on the campaign ConfigMap, which only the apply identity may write, as
-  the annotation `job-uid` under the converter's label domain. For a new
-  campaign that is a second write of the ConfigMap, once its Job exists. A
-  record whose `jobUid` is a different Job, or a record where no Job was
-  ever created, is not believed. `apply` says so on stderr and applies the campaign. A campaign
-  ConfigMap written before the annotation existed carries no uid, and its
-  record is believed as before.
+- **A stored record counts only when it names the apply's own Job.** A
+  record whose Job is gone can be about another run: an earlier Job under
+  the same name, or no Job at all when a campaign's ConfigMap went out and
+  its Job never did. `apply` stamps the uid of the Job it created on the
+  campaign ConfigMap, as the annotation `job-uid` under the converter's
+  label domain. For a new campaign that is a second write of the
+  ConfigMap, once its Job exists. A stamp that write missed is sent by the
+  next apply that still finds the Job. A record whose `jobUid` is a
+  different Job, or a record where no Job was ever created, is not
+  believed. `apply` says so on stderr and applies the campaign. This
+  guards against stale and foreign records, not against a forged one:
+  anything that can read the Job's uid and write the record can name it.
+  A campaign ConfigMap written before the annotation existed carries no
+  uid, and its record is believed as before.
 - **A live Job outranks the stored record.** While the campaign's Job
   exists, it alone says whether the campaign is over. A stored `Succeeded`
   beside a Job that is still running is left over from something else — a
