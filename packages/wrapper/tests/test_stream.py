@@ -306,6 +306,46 @@ def test_a_set_stop_submits_no_further_page(tmp_path, monkeypatch):
     assert handed == ["0001", "0002"]
 
 
+def test_a_fetch_that_raises_is_that_pages_failure_not_the_streams(
+    tmp_path, monkeypatch
+):
+    """fetch_page catches its own errors; should one escape anyway, it is
+    recorded against that page and the stream goes on to the next."""
+    _spy_fetch(monkeypatch, raise_for={"0002"})
+    stream = PageStream(
+        _pages(3),
+        tmp_path,
+        _client(lambda req: httpx.Response(200, content=JPEG)),
+        lookahead=1,
+    )
+    results = list(stream)
+    assert [r.page.name for r in results] == ["0001", "0002", "0003"]
+    assert results[1].path is None and "bug fetching 0002" in results[1].error
+    assert results[0].path is not None and results[2].path is not None
+
+
+def test_a_downloader_that_fails_mid_stream_ends_it_quietly(
+    tmp_path, monkeypatch, caplog
+):
+    """A failure submitting the next window ends the stream -- the consumer
+    finishes the pages it has and the verify gate reports the rest missing --
+    instead of raising into the page loop."""
+    stream = PageStream(
+        _pages(3),
+        tmp_path,
+        _client(lambda req: httpx.Response(200, content=JPEG)),
+        lookahead=1,
+    )
+
+    def broken():
+        raise RuntimeError("cannot schedule new futures after shutdown")
+
+    monkeypatch.setattr(stream, "_fill", broken)
+    with caplog.at_level("ERROR"):
+        assert [r.page.name for r in stream] == ["0001"]
+    assert "downloader failed" in caplog.text and "after shutdown" in caplog.text
+
+
 # -- the consumer ----------------------------------------------------------
 
 
