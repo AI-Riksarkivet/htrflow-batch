@@ -105,17 +105,18 @@ def client(static_dir: Path) -> TestClient:
     return TestClient(create_app(EmptyReader(), static_dir=static_dir))
 
 
-@pytest.mark.parametrize(
-    ("path", "marker"),
-    [
-        ("/", "campaign browser"),
-        ("/log", "run log"),
-        ("/alto", "alto viewer"),
-        ("/uv.html", "universal viewer"),
-        ("/config.js", "API_BASE"),
-        ("/_app/start.js", "bundle"),
-    ],
-)
+#: A page of the built site, and a string only that page's body carries.
+SITE_PAGES = [
+    ("/", "campaign browser"),
+    ("/log", "run log"),
+    ("/alto", "alto viewer"),
+    ("/uv.html", "universal viewer"),
+    ("/config.js", "API_BASE"),
+    ("/_app/start.js", "bundle"),
+]
+
+
+@pytest.mark.parametrize(("path", "marker"), SITE_PAGES)
 def test_serves_the_built_site(client: TestClient, path: str, marker: str):
     resp = client.get(path)
     assert resp.status_code == 200
@@ -147,8 +148,15 @@ def test_api_routes_win_over_static(client: TestClient):
     assert resp.json() == []
 
 
-def test_healthz_still_wins(client: TestClient):
-    assert client.get("/healthz").json() == {"ok": True}
+@pytest.mark.parametrize("mode", ["api-only", "with-the-site", "site-only"])
+def test_healthz_answers_in_every_mode(static_dir: Path, tmp_path: Path, mode: str):
+    """With no site built, with the site mounted at / behind the routes, and
+    with no cluster at all: the probe answers the same."""
+    reader = NoCluster() if mode == "site-only" else EmptyReader()
+    site = tmp_path / "absent" if mode == "api-only" else static_dir
+    resp = TestClient(create_app(reader, static_dir=site)).get("/healthz")
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
 
 
 def test_unknown_page_is_404_not_the_spa(client: TestClient):
@@ -340,6 +348,17 @@ def test_a_page_with_no_policy_of_its_own_gets_the_strictest(static_dir, name):
 SPA_CSP = "frame-ancestors 'none'; connect-src 'self' https://results.example.org/"
 
 
+def test_a_policy_stated_in_the_body_is_not_the_pages_own(static_dir: Path):
+    """Browsers act on a <meta http-equiv> CSP only in the head; one in the
+    body is ignored. A page whose only policy sits in its body states none,
+    and gets the strictest header rather than the SPA's narrow addition."""
+    (static_dir / "late.html").write_text(
+        f"<html><head></head><body>{SPA_META}<script>alert(1)</script></body></html>"
+    )
+    client = TestClient(create_app(EmptyReader(), static_dir=static_dir))
+    assert client.get("/late.html").headers["Content-Security-Policy"] == STRICT_CSP
+
+
 def test_the_spas_pages_may_fetch_only_the_api_and_the_results_bucket(
     client: TestClient,
 ):
@@ -368,6 +387,30 @@ def test_the_results_base_is_one_well_formed_source(static_dir, base, source):
     client = TestClient(create_app(reader, static_dir=static_dir))
     csp = client.get("/log").headers["Content-Security-Policy"]
     assert csp == f"frame-ancestors 'none'; connect-src 'self' {source}"
+
+
+@pytest.mark.parametrize(
+    "base",
+    [
+        "http://[::1]:9000/htr-results",  # an IPv6 literal
+        "https://s3_bucket.example.org/b",  # `_` is no DNS label character
+        "https://bücher.example.org/b",  # not ASCII
+        "ftp://s3.example.org/b",  # nothing a fetch can use
+        "https://s3.example.org:99999/b",  # no such port
+    ],
+)
+def test_a_results_base_no_csp_source_can_name_does_not_narrow_the_spa(
+    static_dir: Path, base: str
+):
+    """A connect-src built from such a base would be malformed, and a
+    browser drops a source it cannot parse -- leaving `'self'` alone, and
+    every result the page reads blocked. The page is left un-narrowed."""
+    reader = EmptyReader()
+    reader.cfg = SimpleNamespace(public_results_base=base)
+    client = TestClient(create_app(reader, static_dir=static_dir))
+    assert client.get("/log").headers["Content-Security-Policy"] == (
+        "frame-ancestors 'none'"
+    )
 
 
 def test_with_no_results_base_the_spa_is_not_narrowed(static_dir: Path):
@@ -459,6 +502,16 @@ def test_head_on_a_page(client: TestClient):
     assert client.head("/log").status_code == 200
 
 
+def test_a_missing_file_with_an_extension_is_not_retried_as_html(static_dir: Path):
+    """Only an extensionless path is a prerendered page: a request for
+    `bundle.js` that is not there stays a 404 rather than becoming
+    `bundle.js.html`."""
+    (static_dir / "bundle.js.html").write_text(_spa("<h1>not the bundle</h1>"))
+    client = TestClient(create_app(EmptyReader(), static_dir=static_dir))
+    assert client.get("/bundle.js").status_code == 404
+    assert client.get("/bundle.js.html").status_code == 200
+
+
 def test_root_is_not_retried_as_html(tmp_path: Path):
     """The extensionless retry must never turn "/" into ".html": with no
     index.html the root is a plain 404, not a 500 from a nonsense lookup."""
@@ -475,18 +528,17 @@ class TestSiteOnly:
     def client(self, static_dir: Path) -> TestClient:
         return TestClient(create_app(NoCluster(), static_dir=static_dir))
 
-    @pytest.mark.parametrize("path", ["/", "/log", "/alto", "/uv.html", "/config.js"])
-    def test_site_still_served(self, client: TestClient, path: str):
-        assert client.get(path).status_code == 200
+    @pytest.mark.parametrize(("path", "marker"), SITE_PAGES)
+    def test_site_still_served(self, client: TestClient, path: str, marker: str):
+        resp = client.get(path)
+        assert resp.status_code == 200
+        assert marker in resp.text
 
     @pytest.mark.parametrize("path", ["/api/v1/jobs", "/api/v1/jobs/htr-batch/kyrk"])
     def test_api_is_a_clean_503(self, client: TestClient, path: str):
         resp = client.get(path)
         assert resp.status_code == 503
         assert "HTRFLOW_WEB_SITE_ONLY" in resp.json()["detail"]
-
-    def test_healthz_still_ok(self, client: TestClient):
-        assert client.get("/healthz").json() == {"ok": True}
 
     def test_version_still_answers(self, client: TestClient):
         """The header shows a version on the compose stack too: it is this

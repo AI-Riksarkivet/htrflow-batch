@@ -192,12 +192,12 @@
       "errors": 9,
       "failures": [
         {
-          "altoPrefix": "https://results.example.org/htr-test/demo-v1/vol2/alto/",
+          "altoPrefix": "https://results.example.org/htr-test/demo-v0/vol2/alto/",
           "id": "vol2",
-          "iiifUrl": "https://results.example.org/htr-test/demo-v1/vol2/iiif.json",
+          "iiifUrl": "https://results.example.org/htr-test/demo-v0/vol2/iiif.json",
           "index": 2,
-          "logUrl": "https://results.example.org/status/logs/demo-v1/vol2.txt",
-          "manifestUrl": "https://results.example.org/htr-test/demo-v1/vol2/manifest.json",
+          "logUrl": "https://results.example.org/status/logs/demo-v0/vol2.txt",
+          "manifestUrl": "https://results.example.org/htr-test/demo-v0/vol2/manifest.json",
           "progress": {
             "ageSeconds": 12,
             "done": 137,
@@ -226,17 +226,17 @@
       "jobGone": true,
       "lastError": {
         "error": "the worker thread died",
-        "logUrl": "https://results.example.org/status/logs/demo-v1/vol1.txt",
+        "logUrl": "https://results.example.org/status/logs/demo-v0/vol1.txt",
         "page": "0044",
         "volume": "vol1"
       },
       "latest": {
-        "altoPrefix": "https://results.example.org/htr-test/demo-v1/vol1/alto/",
+        "altoPrefix": "https://results.example.org/htr-test/demo-v0/vol1/alto/",
         "id": "vol1",
-        "iiifUrl": "https://results.example.org/htr-test/demo-v1/vol1/iiif.json",
+        "iiifUrl": "https://results.example.org/htr-test/demo-v0/vol1/iiif.json",
         "index": 1,
-        "logUrl": "https://results.example.org/status/logs/demo-v1/vol1.txt",
-        "manifestUrl": "https://results.example.org/htr-test/demo-v1/vol1/manifest.json",
+        "logUrl": "https://results.example.org/status/logs/demo-v0/vol1.txt",
+        "manifestUrl": "https://results.example.org/htr-test/demo-v0/vol1/manifest.json",
         "progress": {
           "ageSeconds": 12,
           "done": 137,
@@ -265,23 +265,23 @@
       "pagesFailed": 3,
       "pagesTotal": 1914,
       "phase": "Succeeded",
-      "pipeline": "demo-v1",
+      "pipeline": "demo-v0",
       "pipelineSteps": [
         "Segmentation",
         "Export"
       ],
       "pipelineYaml": "steps:\n- step: Segmentation\n- step: Export\n",
-      "resultsBase": "https://results.example.org/htr-test/demo-v1",
+      "resultsBase": "https://results.example.org/htr-test/demo-v0",
       "startedAt": "2026-09-01T08:00:00Z",
       "suspended": false,
       "volumes": [
         {
-          "altoPrefix": "https://results.example.org/htr-test/demo-v1/vol0/alto/",
+          "altoPrefix": "https://results.example.org/htr-test/demo-v0/vol0/alto/",
           "id": "vol0",
-          "iiifUrl": "https://results.example.org/htr-test/demo-v1/vol0/iiif.json",
+          "iiifUrl": "https://results.example.org/htr-test/demo-v0/vol0/iiif.json",
           "index": 0,
-          "logUrl": "https://results.example.org/status/logs/demo-v1/vol0.txt",
-          "manifestUrl": "https://results.example.org/htr-test/demo-v1/vol0/manifest.json",
+          "logUrl": "https://results.example.org/status/logs/demo-v0/vol0.txt",
+          "manifestUrl": "https://results.example.org/htr-test/demo-v0/vol0/manifest.json",
           "progress": {
             "ageSeconds": 12,
             "done": 137,
@@ -301,12 +301,12 @@
           "state": "done"
         },
         {
-          "altoPrefix": "https://results.example.org/htr-test/demo-v1/vol1/alto/",
+          "altoPrefix": "https://results.example.org/htr-test/demo-v0/vol1/alto/",
           "id": "vol1",
-          "iiifUrl": "https://results.example.org/htr-test/demo-v1/vol1/iiif.json",
+          "iiifUrl": "https://results.example.org/htr-test/demo-v0/vol1/iiif.json",
           "index": 1,
-          "logUrl": "https://results.example.org/status/logs/demo-v1/vol1.txt",
-          "manifestUrl": "https://results.example.org/htr-test/demo-v1/vol1/manifest.json",
+          "logUrl": "https://results.example.org/status/logs/demo-v0/vol1.txt",
+          "manifestUrl": "https://results.example.org/htr-test/demo-v0/vol1/manifest.json",
           "progress": {
             "ageSeconds": 12,
             "done": 137,
@@ -326,12 +326,12 @@
           "state": "done"
         },
         {
-          "altoPrefix": "https://results.example.org/htr-test/demo-v1/vol2/alto/",
+          "altoPrefix": "https://results.example.org/htr-test/demo-v0/vol2/alto/",
           "id": "vol2",
-          "iiifUrl": "https://results.example.org/htr-test/demo-v1/vol2/iiif.json",
+          "iiifUrl": "https://results.example.org/htr-test/demo-v0/vol2/iiif.json",
           "index": 2,
-          "logUrl": "https://results.example.org/status/logs/demo-v1/vol2.txt",
-          "manifestUrl": "https://results.example.org/htr-test/demo-v1/vol2/manifest.json",
+          "logUrl": "https://results.example.org/status/logs/demo-v0/vol2.txt",
+          "manifestUrl": "https://results.example.org/htr-test/demo-v0/vol2/manifest.json",
           "progress": {
             "ageSeconds": 12,
             "done": 137,
@@ -372,12 +372,12 @@
       "errors": 9,
       "failures": [
         {
-          "altoPrefix": "https://results.example.org/htr-test/demo-v1/vol2/alto/",
+          "altoPrefix": "https://results.example.org/htr-test/demo-v2/vol2/alto/",
           "id": "vol2",
-          "iiifUrl": "https://results.example.org/htr-test/demo-v1/vol2/iiif.json",
+          "iiifUrl": "https://results.example.org/htr-test/demo-v2/vol2/iiif.json",
           "index": 2,
-          "logUrl": "https://results.example.org/status/logs/demo-v1/vol2.txt",
-          "manifestUrl": "https://results.example.org/htr-test/demo-v1/vol2/manifest.json",
+          "logUrl": "https://results.example.org/status/logs/demo-v2/vol2.txt",
+          "manifestUrl": "https://results.example.org/htr-test/demo-v2/vol2/manifest.json",
           "progress": {
             "ageSeconds": 12,
             "done": 137,
@@ -406,7 +406,7 @@
       "jobGone": true,
       "lastError": {
         "error": "the worker thread died",
-        "logUrl": "https://results.example.org/status/logs/demo-v1/vol2.txt",
+        "logUrl": "https://results.example.org/status/logs/demo-v2/vol2.txt",
         "page": "0044",
         "volume": "vol2"
       },
@@ -421,23 +421,23 @@
       "pagesFailed": 3,
       "pagesTotal": 1914,
       "phase": "Unknown",
-      "pipeline": "demo-v1",
+      "pipeline": "demo-v2",
       "pipelineSteps": [
         "Segmentation",
         "Export"
       ],
       "pipelineYaml": "steps:\n- step: Segmentation\n- step: Export\n",
-      "resultsBase": "https://results.example.org/htr-test/demo-v1",
+      "resultsBase": "https://results.example.org/htr-test/demo-v2",
       "startedAt": "2026-09-01T08:00:00Z",
       "suspended": false,
       "volumes": [
         {
-          "altoPrefix": "https://results.example.org/htr-test/demo-v1/vol0/alto/",
+          "altoPrefix": "https://results.example.org/htr-test/demo-v2/vol0/alto/",
           "id": "vol0",
-          "iiifUrl": "https://results.example.org/htr-test/demo-v1/vol0/iiif.json",
+          "iiifUrl": "https://results.example.org/htr-test/demo-v2/vol0/iiif.json",
           "index": 0,
-          "logUrl": "https://results.example.org/status/logs/demo-v1/vol0.txt",
-          "manifestUrl": "https://results.example.org/htr-test/demo-v1/vol0/manifest.json",
+          "logUrl": "https://results.example.org/status/logs/demo-v2/vol0.txt",
+          "manifestUrl": "https://results.example.org/htr-test/demo-v2/vol0/manifest.json",
           "progress": {
             "ageSeconds": 12,
             "done": 137,
@@ -457,12 +457,12 @@
           "state": "unknown"
         },
         {
-          "altoPrefix": "https://results.example.org/htr-test/demo-v1/vol1/alto/",
+          "altoPrefix": "https://results.example.org/htr-test/demo-v2/vol1/alto/",
           "id": "vol1",
-          "iiifUrl": "https://results.example.org/htr-test/demo-v1/vol1/iiif.json",
+          "iiifUrl": "https://results.example.org/htr-test/demo-v2/vol1/iiif.json",
           "index": 1,
-          "logUrl": "https://results.example.org/status/logs/demo-v1/vol1.txt",
-          "manifestUrl": "https://results.example.org/htr-test/demo-v1/vol1/manifest.json",
+          "logUrl": "https://results.example.org/status/logs/demo-v2/vol1.txt",
+          "manifestUrl": "https://results.example.org/htr-test/demo-v2/vol1/manifest.json",
           "progress": {
             "ageSeconds": 12,
             "done": 137,
@@ -482,12 +482,12 @@
           "state": "unknown"
         },
         {
-          "altoPrefix": "https://results.example.org/htr-test/demo-v1/vol2/alto/",
+          "altoPrefix": "https://results.example.org/htr-test/demo-v2/vol2/alto/",
           "id": "vol2",
-          "iiifUrl": "https://results.example.org/htr-test/demo-v1/vol2/iiif.json",
+          "iiifUrl": "https://results.example.org/htr-test/demo-v2/vol2/iiif.json",
           "index": 2,
-          "logUrl": "https://results.example.org/status/logs/demo-v1/vol2.txt",
-          "manifestUrl": "https://results.example.org/htr-test/demo-v1/vol2/manifest.json",
+          "logUrl": "https://results.example.org/status/logs/demo-v2/vol2.txt",
+          "manifestUrl": "https://results.example.org/htr-test/demo-v2/vol2/manifest.json",
           "progress": {
             "ageSeconds": 12,
             "done": 137,
@@ -522,6 +522,27 @@
       }
     }
   ],
+  "errors": [
+    {
+      "body": {
+        "detail": "job not found"
+      },
+      "status": 404
+    },
+    {
+      "body": {
+        "detail": "the Kubernetes API did not answer this request - the page retries on its own"
+      },
+      "status": 502
+    },
+    {
+      "body": {
+        "detail": "site-only mode (HTRFLOW_WEB_SITE_ONLY): no cluster to read"
+      },
+      "status": 503
+    }
+  ],
+  "reapedTotal": "2",
   "summaries": [
     {
       "campaign": "kyrk",
@@ -559,8 +580,8 @@
       "name": "gamla",
       "namespace": "htr-test",
       "phase": "Succeeded",
-      "pipeline": "demo-v1",
-      "resultsBase": "https://results.example.org/htr-test/demo-v1",
+      "pipeline": "demo-v0",
+      "resultsBase": "https://results.example.org/htr-test/demo-v0",
       "startedAt": "2026-09-01T08:00:00Z",
       "suspended": false,
       "warmup": {
@@ -581,8 +602,8 @@
       "name": "okand",
       "namespace": "htr-test",
       "phase": "Unknown",
-      "pipeline": "demo-v1",
-      "resultsBase": "https://results.example.org/htr-test/demo-v1",
+      "pipeline": "demo-v2",
+      "resultsBase": "https://results.example.org/htr-test/demo-v2",
       "startedAt": "2026-09-01T08:00:00Z",
       "suspended": false,
       "warmup": {
@@ -594,5 +615,9 @@
         }
       }
     }
-  ]
+  ],
+  "version": {
+    "version": "v0.0.0-contract",
+    "web": "0.0.0"
+  }
 }

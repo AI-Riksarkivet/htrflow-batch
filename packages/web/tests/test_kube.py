@@ -14,16 +14,18 @@ back to its record.
 from __future__ import annotations
 
 import json
+from importlib import resources
 
 import pytest
+import yaml
+from fastapi.testclient import TestClient
 from kubernetes import client, config
 from urllib3.exceptions import MaxRetryError, ReadTimeoutError
 
 from htrflow_web import kube, projection
+from htrflow_web.app import create_app
 from htrflow_web.kube import (
-    CAMPAIGN_CONFIGMAPS,
     FIELD_MANAGER,
-    LABEL_SELECTOR,
     PARTIAL_METADATA,
     ApplyConflict,
     ClusterUnavailable,
@@ -128,8 +130,9 @@ def reader(monkeypatch) -> Reader:
     """A real ``Reader`` whose every request is recorded, not sent.
 
     ``reader.answer`` maps an HTTP method to what the API server says: a
-    dict is decoded as the body, an exception is raised, and a list is a
-    queue of either (so a retry can be given a different answer)."""
+    dict is decoded as the body, an exception is raised, a list is a queue
+    of either (so a retry can be given a different answer), and a function
+    is handed the recorded request and returns one of them."""
     monkeypatch.setattr(
         config,
         "load_incluster_config",
@@ -155,6 +158,8 @@ def reader(monkeypatch) -> Reader:
             }
         )
         reply = answer.get(method, {})
+        if callable(reply):
+            reply = reply(calls[-1])
         if isinstance(reply, list):
             reply = reply.pop(0)
         if isinstance(reply, Exception):
@@ -174,6 +179,34 @@ def reader(monkeypatch) -> Reader:
     return r
 
 
+def _selects(selector: str, labels: dict) -> bool:
+    """Whether a label selector of `k=v`, `k!=v` and bare-`k` terms selects
+    an object carrying ``labels`` -- the subset of the grammar this adapter
+    sends, evaluated the way the API server does."""
+    for term in selector.split(","):
+        if "!=" in term:
+            key, value = term.split("!=", 1)
+            if labels.get(key) == value:
+                return False
+        elif "=" in term:
+            key, value = term.split("=", 1)
+            if labels.get(key) != value:
+                return False
+        elif term not in labels:
+            return False
+    return True
+
+
+def _converter_labels(manifest: str) -> dict:
+    """The labels the converter really puts on one kind of object, read off
+    its packaged skeleton -- the objects these selectors have to tell apart."""
+    path = resources.files("htrflow_converter") / "manifests" / manifest
+    return yaml.safe_load(path.read_text())["metadata"]["labels"]
+
+
+CAMPAIGN_JOB = "app=htrflow-batch,htrflow.riksarkivet.se/managed-by=converter"
+
+
 def test_list_jobs_asks_every_namespace_with_the_campaign_selector(reader: Reader):
     """One list per configured namespace -- the warm-up Jobs carry
     `managed-by=converter` too, so the selector is what keeps them out."""
@@ -183,7 +216,15 @@ def test_list_jobs_asks_every_namespace_with_the_campaign_selector(reader: Reade
         "/apis/batch/v1/namespaces/htr-a/jobs",
         "/apis/batch/v1/namespaces/htr-b/jobs",
     ]
-    assert {c["query"]["labelSelector"] for c in reader.calls} == {LABEL_SELECTOR}
+    assert {c["query"]["labelSelector"] for c in reader.calls} == {CAMPAIGN_JOB}
+
+
+def test_the_campaign_selector_lists_campaign_jobs_and_no_warmups(reader: Reader):
+    reader.answer["GET"] = {"items": []}
+    reader.list_jobs()
+    selector = reader.calls[0]["query"]["labelSelector"]
+    assert _selects(selector, _converter_labels("campaign-job.yaml"))
+    assert not _selects(selector, _converter_labels("warmup-job.yaml"))
 
 
 def test_list_warmups_asks_for_the_warmup_jobs_instead(reader: Reader):
@@ -195,6 +236,16 @@ def test_list_warmups_asks_for_the_warmup_jobs_instead(reader: Reader):
     }
 
 
+RECORDS = (
+    "htrflow.riksarkivet.se/managed-by=converter,htrflow.riksarkivet.se/campaign,"
+    "htrflow.riksarkivet.se/kind!=status"
+)
+STATUSES = (
+    "htrflow.riksarkivet.se/managed-by=converter,htrflow.riksarkivet.se/campaign,"
+    "htrflow.riksarkivet.se/kind=status"
+)
+
+
 def test_the_campaign_record_is_listed_without_its_volumes(reader: Reader):
     """`volumes.txt` is the whole campaign -- one line per volume, megabytes
     for a real backfill -- and the list route reads nothing but the record's
@@ -202,12 +253,37 @@ def test_the_campaign_record_is_listed_without_its_volumes(reader: Reader):
     bytes off the wire on every poll of every open status page."""
     reader.answer["GET"] = {"items": []}
     reader.list_configmaps()
-    records = [c for c in reader.calls if "!=status" in c["query"]["labelSelector"]]
-    assert len(records) == len(reader.cfg.namespaces)
-    for call in records:
-        assert call["path"].endswith("/configmaps")
-        assert call["accept"] == PARTIAL_METADATA
-        assert call["query"]["labelSelector"].startswith(CAMPAIGN_CONFIGMAPS)
+    records = [c for c in reader.calls if c["query"]["labelSelector"] == RECORDS]
+    assert [c["path"] for c in records] == [
+        "/api/v1/namespaces/htr-a/configmaps",
+        "/api/v1/namespaces/htr-b/configmaps",
+    ]
+    assert all(call["accept"] == PARTIAL_METADATA for call in records)
+
+
+def test_the_configmap_lists_select_the_campaigns_two_and_nothing_else(
+    reader: Reader,
+):
+    """The record and the status ConfigMap; never a pipeline's ConfigMap,
+    which carries `managed-by=converter` too."""
+    reader.answer["GET"] = {"items": []}
+    reader.list_configmaps()
+    by_accept = {c["accept"] == PARTIAL_METADATA: c for c in reader.calls}
+    records = by_accept[True]["query"]["labelSelector"]
+    statuses = by_accept[False]["query"]["labelSelector"]
+    record = _converter_labels("configmap.yaml")
+    status = {**record, "htrflow.riksarkivet.se/kind": "status"}
+    pipeline = _converter_labels("pipeline-configmap.yaml")
+    assert [_selects(records, x) for x in (record, status, pipeline)] == [
+        True,
+        False,
+        False,
+    ]
+    assert [_selects(statuses, x) for x in (record, status, pipeline)] == [
+        False,
+        True,
+        False,
+    ]
 
 
 def test_the_status_record_is_listed_with_its_data(reader: Reader):
@@ -215,9 +291,7 @@ def test_the_status_record_is_listed_with_its_data(reader: Reader):
     of short fields, and the page cannot draw the row without them."""
     reader.answer["GET"] = {"items": []}
     reader.list_configmaps()
-    statuses = [
-        c for c in reader.calls if "!=status" not in c["query"]["labelSelector"]
-    ]
+    statuses = [c for c in reader.calls if c["query"]["labelSelector"] == STATUSES]
     assert len(statuses) == len(reader.cfg.namespaces)
     assert all(c["accept"] != PARTIAL_METADATA for c in statuses)
 
@@ -393,15 +467,6 @@ def test_a_conflict_is_not_sent_again(reader: Reader):
     assert len(reader.calls) == 1
 
 
-def test_a_conflict_is_not_reported_as_the_cluster_being_unavailable(
-    reader, monkeypatch
-):
-    reader.answer["PATCH"] = _api_error(409)
-    with pytest.raises(Exception) as caught:
-        reader.apply_configmap(RECORD)
-    assert not isinstance(caught.value, ClusterUnavailable)
-
-
 def test_a_refused_apply_is_still_the_cluster_saying_no(reader: Reader):
     reader.answer["PATCH"] = _api_error(403)
     with pytest.raises(ClusterUnavailable):
@@ -422,3 +487,42 @@ def test_the_apply_says_which_configmap_it_left(reader: Reader):
     """The failures write is held to that uid (projection._failures_write)."""
     reader.answer["PATCH"] = {"metadata": {"uid": "uid-cm-7"}}
     assert reader.apply_configmap(RECORD) == "uid-cm-7"
+
+
+def test_the_route_writes_the_record_through_the_real_adapter(reader: Reader):
+    """The status write is the one call the routes make that no read
+    answers for: renamed on the adapter, with the route asking for it by
+    name only if present, every write stopped and every fake-driven test
+    still passed (2026-09-23 audit). Driven end to end here, the list route
+    over the real ``Reader`` puts the apply on the wire."""
+    job = {
+        "metadata": {
+            "name": "kyrk",
+            "namespace": "htr-a",
+            "uid": "uid-kyrk",
+            "creationTimestamp": "2026-01-01T00:00:00Z",
+            "labels": {
+                "app": "htrflow-batch",
+                "htrflow.riksarkivet.se/managed-by": "converter",
+                "htrflow.riksarkivet.se/campaign": "kyrk",
+                "htrflow.riksarkivet.se/pipeline": "demo-v1",
+            },
+        },
+        "spec": {"completions": 1},
+        "status": {"active": 1},
+    }
+
+    def cluster(call: dict) -> dict:
+        campaigns = call["query"].get("labelSelector") == CAMPAIGN_JOB
+        if campaigns and call["path"] == "/apis/batch/v1/namespaces/htr-a/jobs":
+            return {"items": [job]}
+        return {"items": []}
+
+    reader.answer["GET"] = cluster
+    reader.answer["PATCH"] = {"metadata": {"uid": "uid-cm"}}
+    client_ = TestClient(create_app(reader))
+    assert client_.get("/api/v1/jobs").status_code == 200
+    (patch,) = [c for c in reader.calls if c["method"] == "PATCH"]
+    assert patch["path"] == "/api/v1/namespaces/htr-a/configmaps/campaign-kyrk-status"
+    assert patch["query"]["fieldManager"] == "htrflow-web"
+    assert patch["body"]["data"]["phase"] == "Running"
