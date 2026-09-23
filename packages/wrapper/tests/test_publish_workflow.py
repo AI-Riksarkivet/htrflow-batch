@@ -98,6 +98,39 @@ def test_every_image_ends_as_one_manifest_list_under_the_plain_tag() -> None:
         assert f'"${{IMAGE}}:${{TAG}}{suffix}"' in create
 
 
+def test_the_manifest_list_joins_the_digests_the_publish_entries_signed() -> None:
+    """A per-arch tag re-pushed between the two jobs would make the signed
+    list name an image nobody signed. So each publish entry hands the digest
+    it signed over as an artifact named for its component and arch, the
+    manifest job downloads exactly its component's, and the list is created
+    from ``IMAGE@digest`` -- the tags only read back to refuse a mismatch."""
+    publish = JOBS["publish"]["steps"]
+    upload = next(s for s in publish if "upload-artifact" in s.get("uses", ""))
+    name = "digest-${{ matrix.component }}${{ matrix.tag_suffix }}"
+    assert upload["with"]["name"] == upload["with"]["path"] == name
+    record = next(s for s in publish if s.get("name") == "Record the signed digest")
+    assert record["env"]["DIGEST"] == "${{ steps.digest.outputs.digest }}"
+    # the digest recorded is the one the sign-attest step was given
+    signing = next(
+        s for s in publish if s.get("uses") == "./.github/actions/sign-attest"
+    )
+    assert signing["with"]["digest"] == record["env"]["DIGEST"]
+
+    steps = JOBS["manifest"]["steps"]
+    download = next(s for s in steps if "download-artifact" in s.get("uses", ""))
+    assert download["with"]["pattern"] == "digest-${{ matrix.component }}-*"
+    create = next(s["run"] for s in steps if "imagetools create" in s.get("run", ""))
+    line = create[create.index("imagetools create") :].split("\n")
+    joined = " ".join(part.strip().rstrip("\\") for part in line[:2])
+    target = 'imagetools create -t "${IMAGE}:${TAG}" '
+    assert joined.startswith(target), joined
+    members = re.findall(r'"\$\{IMAGE\}([@:])\$\{(\w+)\}"', joined[len(target) :])
+    assert members == [("@", suffix.strip("-")) for suffix in RUNNERS], joined
+    for suffix in RUNNERS:
+        arch = suffix.strip("-")
+        assert f'{arch}="$(cat "digests/digest-${{COMPONENT}}-{arch}")"' in create
+
+
 def test_every_pushed_digest_is_signed_and_attested() -> None:
     """Signature, provenance and SBOM come from the one composite action, so
     a new build job cannot quietly publish an unsigned image."""
