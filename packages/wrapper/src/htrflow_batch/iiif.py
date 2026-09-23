@@ -127,12 +127,18 @@ def source_digest(url: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-#: A URL in free text runs to the first character no URL may contain
-#: unencoded (RFC 3986): whitespace, `"`, `<`, `>`, a backtick. `)`, `]` and
-#: `'` are legal inside one -- stopping at them left the query after
-#: `img(1).jpg` unredacted (audit 0923 W-3) -- so they are only trimmed off
-#: the END, as the text's punctuation, below.
-_URL_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s\"<>`]+")
+#: A URL in free text (audit 0923 W-3, review M-3). It never holds what RFC
+#: 3986 leaves out of a URL unencoded -- whitespace, `"<>` and backtick,
+#: `{}|^`. A `'`, `]`, `)` or `,` may be inside one (`img(1).jpg`,
+#: IIIF's `/full/2500,/`), so each ends it only where it closes it:
+#: followed by whitespace, a separator, another closer, the end, or the
+#: next URL. Stopping at any of them left the query after `img(1).jpg`
+#: unredacted; running to whitespace swallowed the rest of a list.
+_SCHEME = r"[A-Za-z][A-Za-z0-9+.-]*://"
+_URL_RE = re.compile(
+    _SCHEME + r"(?:[^\s\"<>`{}|^'\]),]"
+    r"|['\]),](?![\s,;'\"\])}]|$|" + _SCHEME + r"))+"
+)
 _TRAILING = ")]}'.,;:!?"
 
 
