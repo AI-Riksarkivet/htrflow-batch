@@ -108,7 +108,10 @@ Every stage name can appear in the termination message.
    stays done on the next attempt. `RESUME=false` forces everything to be
    reprocessed. Every page about to be reprocessed loses its stored PAGE and
    ALTO first, so a reprocessing that fails, or dies between the two PUTs,
-   never leaves an older file answering for the page. Skipped pages are never
+   never leaves an older file answering for the page. When there is any such
+   page, the previous run's `manifest.json` is deleted before them, and its
+   `iiif.json` next: a completion marker never describes outputs that are
+   gone, and a `manifest.json` is never there without its `iiif.json`. Skipped pages are never
    downloaded.
 3. **load**: starts `stream.PageStream(...)` downloading, **then** calls
    `Pipeline.from_config($PIPELINE_PATH)`. The model load overlaps the first
