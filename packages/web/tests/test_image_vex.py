@@ -16,20 +16,28 @@ Content-Security-Policy, so that statement says the parser's input cannot be
 controlled by an adversary instead. What is checked for it is that claim:
 every `feed()` in the service's own code parses text read from a file, and
 every such file is one the static-file server resolved or a path built from
-the static directory.
+the static directory -- traced through the code, not taken on a name -- and,
+at run time, that everything the parser is fed is a file of that directory.
 """
 
 from __future__ import annotations
 
 import ast
+import functools
 import json
 import re
+from collections.abc import Set
+from html.parser import HTMLParser
 from importlib import metadata
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import tomllib
+from fastapi.testclient import TestClient
 from packaging.markers import Marker
+
+from htrflow_web.app import NoCluster, create_app
 
 REPO = Path(__file__).resolve().parents[3]
 VEX = REPO / ".docker" / "distroless.openvex.json"
@@ -80,10 +88,18 @@ def _statements() -> list[dict]:
     return json.loads(VEX.read_text())["statements"]
 
 
+#: A module imported by name at run time: `importlib.import_module("x")`,
+#: `import_module("x")` or `__import__("x")`, the name a string literal.
+_DYNAMIC_IMPORT = re.compile(r"""\b(?:import_module|__import__)\(\s*["']([\w.]+)["']""")
+
+
 def _modules(text: str) -> set[str]:
     """Every module a Python file imports, dotted, including the submodules
-    named in `from x import y` (which may be modules)."""
+    named in `from x import y` (which may be modules) and the ones imported
+    by a literal name at run time."""
     found: set[str] = set()
+    if "import_module" in text or "__import__" in text:  # rare: skip the scan
+        found.update(_DYNAMIC_IMPORT.findall(text))
     for frm, names, plain in _IMPORT.findall(text):
         if frm:
             found.add(frm)
@@ -93,7 +109,7 @@ def _modules(text: str) -> set[str]:
     return found
 
 
-def _hits(modules: set[str], banned: tuple[str, ...]) -> set[str]:
+def _hits(modules: Set[str], banned: tuple[str, ...]) -> set[str]:
     return {m for m in modules for b in banned if m == b or m.startswith(b + ".")}
 
 
@@ -126,6 +142,7 @@ def _locked_closure(with_extras: bool = True) -> dict[str, list[str]]:
     return seen
 
 
+@functools.cache
 def _dependency_files() -> dict[str, str]:
     """relative path -> source, for every .py file of every locked dependency
     installed in this venv. The test venv (`uv sync --all-packages`) carries
@@ -163,30 +180,63 @@ def test_every_statement_has_a_basis_and_names_exact_package_versions() -> None:
             assert re.fullmatch(r"pkg:deb/debian/[a-z0-9.+-]+@[^@?]+", product["@id"])
 
 
-@pytest.mark.parametrize(
-    "cve", sorted(c for c, (k, m) in RULES.items() if k == ABSENT and m)
-)
-def test_no_code_in_the_images_imports_what_the_statement_says_is_unused(
-    cve: str,
+@functools.cache
+def _dependency_modules() -> dict[str, frozenset[str]]:
+    """relative path -> the modules it imports, for every dependency file:
+    parsed once for every check below."""
+    return {rel: frozenset(_modules(text)) for rel, text in _dependency_files().items()}
+
+
+#: Each set of modules a statement says is never imported, with the
+#: statements that rest on it. html.parser rests on another basis for the
+#: service's own code (checked further down), so only the dependencies are
+#: held to it here: a locked dependency parsing HTML would be input nobody
+#: has vetted.
+BANS: dict[tuple[str, ...], list[str]] = {}
+for _cve, (_kind, _banned) in sorted(RULES.items()):
+    if _banned:
+        BANS.setdefault(_banned, []).append(_cve)
+
+
+@pytest.mark.parametrize("banned", sorted(BANS), ids=lambda b: "+".join(b))
+def test_no_code_in_the_images_imports_what_a_statement_says_is_unused(
+    banned: tuple[str, ...],
 ) -> None:
-    _, banned = RULES[cve]
-    for path in _own_files():
-        text = path.read_text()
-        assert not _hits(_modules(text), banned), (
-            f"{path.relative_to(REPO)} breaks {cve}"
-        )
-        if "tarfile" in banned:
-            assert "unpack_archive" not in text, (
-                f"{path.relative_to(REPO)} breaks {cve}"
+    cves = ", ".join(BANS[banned])
+    tar = "tarfile" in banned
+    if RULES[BANS[banned][0]][0] == ABSENT:
+        for path in _own_files():
+            text = path.read_text()
+            assert not _hits(_modules(text), banned), (
+                f"{path.relative_to(REPO)} breaks {cves}"
             )
-    for rel, text in _dependency_files().items():
-        if "tarfile" in banned and rel in TARFILE_IN_DEPENDENCIES:
+            assert not (tar and "unpack_archive" in text), (
+                f"{path.relative_to(REPO)} breaks {cves}"
+            )
+    for rel, modules in _dependency_modules().items():
+        if tar and rel in TARFILE_IN_DEPENDENCIES:
             continue
-        assert not _hits(_modules(text), banned), f"dependency {rel} breaks {cve}"
-        if "tarfile" in banned:
+        assert not _hits(modules, banned), f"dependency {rel} breaks {cves}"
+        text = _dependency_files()[rel]
+        if tar and "unpack_archive" in text:  # rare: skip the pattern
             assert not re.search(r"\bunpack_archive\(", text), (
-                f"dependency {rel} breaks {cve}"
+                f"dependency {rel} breaks {cves}"
             )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'importlib.import_module("xml.etree.ElementTree")',
+        "import_module('xml.dom.minidom')",
+        '__import__("pyexpat")',
+        'mod = __import__( "xml" )',
+    ],
+)
+def test_a_module_imported_by_name_counts_as_imported(source: str) -> None:
+    """An import statement is not the only way in: a module loaded by name
+    reaches libexpat just the same."""
+    assert _hits(_modules(source), EXPAT)
 
 
 def test_the_tarfile_exceptions_still_exist() -> None:
@@ -198,22 +248,26 @@ def test_the_tarfile_exceptions_still_exist() -> None:
         assert rel in files and "tarfile" in _modules(files[rel]), rel
 
 
-def test_no_dependency_parses_html() -> None:
-    """The html.parser statement covers the service's own use; a locked
-    dependency parsing HTML would be input nobody has vetted."""
-    for rel, text in _dependency_files().items():
-        assert not _hits(_modules(text), ("html.parser",)), rel
+#: Where the static directory enters the service: the directory the app is
+#: created with, and the file a StaticFiles subclass resolved inside it
+#: (``file_response``'s ``full_path``). A value is from the static directory
+#: only if it is built from one of these.
+STATIC_ROOTS = {("create_app", "static_dir")}
+RESOLVED_FILE = ("file_response", "full_path")
+
+_FUNCTION = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 
 def _static_reads(module: ast.Module) -> None:
     """Every `feed()` parses text read from a file under the static directory.
 
-    A feeder is a function that calls `.feed(x)`, where x is its own
-    parameter or text it read itself. Every call of a feeder, and every
-    feed of text read in place, must pass a name bound in the calling
-    function from `.read_text()`/`.read_bytes()`, whose receiver either
-    names the static directory or runs in a StaticFiles subclass (which
-    only resolves files inside its directory)."""
+    A feeder is a function that calls `.feed(x)` with x its own parameter.
+    Every call of a feeder, and every feed of anything else, must pass a
+    name bound in the calling function from `.read_text()`/`.read_bytes()`
+    whose receiver is built from the static directory: from a
+    ``STATIC_ROOTS`` parameter or ``RESOLVED_FILE``, through local names,
+    string constants, imported callables and parameters whose every caller
+    in the module passes such a value. Nothing is taken on its name."""
     parents: dict[ast.AST, ast.AST] = {}
     for node in ast.walk(module):
         for child in ast.iter_child_nodes(node):
@@ -226,32 +280,118 @@ def _static_reads(module: ast.Module) -> None:
                 return node
         return None
 
-    def read_source(name: str, fn: ast.AST):
-        for node in ast.walk(fn):
-            if (
-                isinstance(node, ast.Assign)
-                and any(isinstance(t, ast.Name) and t.id == name for t in node.targets)
-                and isinstance(node.value, ast.Call)
-                and isinstance(node.value.func, ast.Attribute)
-                and node.value.func.attr in ("read_text", "read_bytes")
-            ):
-                return node.value.func.value
-        return None
+    imported: set[str] = set()
+    constants: set[str] = set()
+    for node in module.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            imported |= {(a.asname or a.name).split(".")[0] for a in node.names}
+        elif (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            constants |= {t.id for t in node.targets if isinstance(t, ast.Name)}
 
-    def check_read(arg: ast.AST, call: ast.AST) -> None:
-        fn = enclosing(call, (ast.FunctionDef, ast.AsyncFunctionDef))
-        assert isinstance(arg, ast.Name) and fn is not None, ast.unparse(call)
-        receiver = read_source(arg.id, fn)
-        assert receiver is not None, (
-            f"parses text not read from a file: {ast.unparse(call)}"
-        )
+    def serves_static(fn) -> bool:
         cls = enclosing(fn, ast.ClassDef)
-        serves_static = cls is not None and any(
+        return cls is not None and any(
             "StaticFiles" in ast.unparse(base) for base in cls.bases
         )
-        assert "static" in ast.unparse(receiver).lower() or serves_static, (
-            f"parses a file outside the static directory: {ast.unparse(call)}"
+
+    def params(fn) -> list[str]:
+        return [a.arg for a in fn.args.args]
+
+    def callers(fn):
+        """Every call of ``fn`` in the module, as (call, the argument
+        expression per parameter name)."""
+        method = enclosing(fn, ast.ClassDef) is not None
+        for call in ast.walk(module):
+            if not isinstance(call, ast.Call):
+                continue
+            func = call.func
+            if isinstance(func, ast.Name) and func.id == fn.name and not method:
+                names = params(fn)
+            elif isinstance(func, ast.Attribute) and func.attr == fn.name and method:
+                names = params(fn)[1:]  # bound: self is not passed
+            else:
+                continue
+            bound = dict(zip(names, call.args))
+            bound |= {k.arg: k.value for k in call.keywords if k.arg}
+            yield call, bound
+
+    def from_static(expr, fn, seen: frozenset = frozenset()) -> bool:
+        if isinstance(expr, ast.Constant):
+            return isinstance(expr.value, str)
+        if isinstance(expr, ast.Name):
+            if fn is not None and expr.id in params(fn):
+                return param_from_static(fn, expr.id, seen)
+            if fn is not None:
+                values = [
+                    n.value
+                    for n in ast.walk(fn)
+                    if isinstance(n, ast.Assign)
+                    and any(
+                        isinstance(t, ast.Name) and t.id == expr.id for t in n.targets
+                    )
+                ]
+                if values:
+                    return all(from_static(v, fn, seen) for v in values)
+            return expr.id in constants
+        if isinstance(expr, ast.BinOp):
+            return from_static(expr.left, fn, seen) and from_static(
+                expr.right, fn, seen
+            )
+        if isinstance(expr, ast.BoolOp):
+            return all(from_static(v, fn, seen) for v in expr.values)
+        if isinstance(expr, ast.Call):
+            func = expr.func
+            if isinstance(func, ast.Attribute):
+                # A method of a static value (`UV_PATH.lstrip("/")`), or a
+                # function of an imported module (`os.path.realpath`).
+                root = func
+                while isinstance(root, ast.Attribute):
+                    root = root.value
+                callee = isinstance(root, ast.Name) and root.id in imported
+                if not callee and not from_static(func.value, fn, seen):
+                    return False
+            elif not (isinstance(func, ast.Name) and func.id in imported):
+                return False
+            args = [*expr.args, *(k.value for k in expr.keywords)]
+            return all(from_static(a, fn, seen) for a in args)
+        return False
+
+    def param_from_static(fn, name: str, seen: frozenset) -> bool:
+        if (fn.name, name) in STATIC_ROOTS and not serves_static(fn):
+            return True
+        if (fn.name, name) == RESOLVED_FILE and serves_static(fn):
+            return True
+        if (fn.name, name) in seen:
+            return False  # a cycle proves nothing
+        seen = seen | {(fn.name, name)}
+        calls = list(callers(fn))
+        return bool(calls) and all(
+            name in bound and from_static(bound[name], enclosing(call, _FUNCTION), seen)
+            for call, bound in calls
         )
+
+    def check_read(arg: ast.AST, call: ast.AST) -> None:
+        fn = enclosing(call, _FUNCTION)
+        assert isinstance(arg, ast.Name) and fn is not None, ast.unparse(call)
+        reads = [
+            n.value.func.value
+            for n in ast.walk(fn)
+            if isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == arg.id for t in n.targets)
+            and isinstance(n.value, ast.Call)
+            and isinstance(n.value.func, ast.Attribute)
+            and n.value.func.attr in ("read_text", "read_bytes")
+        ]
+        assert reads, f"parses text not read from a file: {ast.unparse(call)}"
+        for receiver in reads:
+            assert from_static(receiver, fn), (
+                f"parses a file not proven to be under the static directory: "
+                f"{ast.unparse(call)}"
+            )
 
     feeders: set[str] = set()
     for call in ast.walk(module):
@@ -259,11 +399,10 @@ def _static_reads(module: ast.Module) -> None:
             continue
         if call.func.attr != "feed" or len(call.args) != 1:
             continue
-        fn = enclosing(call, (ast.FunctionDef, ast.AsyncFunctionDef))
+        fn = enclosing(call, _FUNCTION)
         assert fn is not None, ast.unparse(call)
         arg = call.args[0]
-        params = {a.arg for a in fn.args.args}
-        if isinstance(arg, ast.Name) and arg.id in params:
+        if isinstance(arg, ast.Name) and arg.id in params(fn):
             feeders.add(fn.name)
         else:
             check_read(arg, call)
@@ -312,3 +451,108 @@ def any_file(path):
 """
     with pytest.raises(AssertionError):
         _static_reads(ast.parse(elsewhere))
+    # Named for the static directory, and handed a path from the request.
+    by_name = """
+from html.parser import HTMLParser
+from pathlib import Path
+def _page(html):
+    HTMLParser().feed(html)
+def _evil(untrusted_static):
+    text = untrusted_static.read_text()
+    return _page(text)
+def create_app(static_dir):
+    def route(path):
+        return _evil(Path(path))
+"""
+    with pytest.raises(AssertionError, match="not proven"):
+        _static_reads(ast.parse(by_name))
+
+
+def test_the_static_only_check_follows_the_directory_it_is_given() -> None:
+    """...and as good as what it lets through: the shapes the service uses,
+    a path built from the app's static directory and a file the static
+    server resolved, pass."""
+    good = """
+from html.parser import HTMLParser
+from pathlib import Path
+import os
+from fastapi.staticfiles import StaticFiles
+DEFAULT = "/app/static"
+PAGE = "/uv.html"
+def _page(html):
+    HTMLParser().feed(html)
+def hashes(static):
+    html = (static / PAGE.lstrip("/")).read_text()
+    return _page(html)
+class Site(StaticFiles):
+    def file_response(self, full_path):
+        real = os.path.realpath(full_path)
+        return self._policy(real)
+    def _policy(self, real):
+        text = Path(real).read_text()
+        return _page(text)
+def create_app(static_dir):
+    return hashes(Path(static_dir or DEFAULT))
+"""
+    _static_reads(ast.parse(good))
+
+
+class _SiteReader(NoCluster):
+    """A reader with a results base, so the SPA's own policy is built too;
+    every API call is refused, which is all this test asks of it."""
+
+    cfg = SimpleNamespace(
+        public_results_base="https://results.example.org", namespaces=("htr-a",)
+    )
+
+
+def test_every_html_parsed_at_run_time_is_a_file_of_the_static_directory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The claim itself, at run time: the app is started over a built site
+    and asked for every kind of thing a client can ask for -- pages, the
+    viewer and its aliases, documents with and without a policy, a 304,
+    the API, a miss, markup in the path, the query and the body -- and
+    everything the parser was ever fed is the text of a file in the static
+    directory."""
+    meta = '<meta http-equiv="content-security-policy" content="base-uri \'self\'">'
+    site = {
+        "index.html": f"<html><head>{meta}</head><body>browser</body></html>",
+        "log.html": f"<html><head>{meta}</head><body>log</body></html>",
+        "uv.html": "<html><head><script>UV.init()</script></head></html>",
+        "other.html": "<html><body><script>alert(1)</script></body></html>",
+        "icon.svg": "<svg xmlns='http://www.w3.org/2000/svg'></svg>",
+        "examples/page.htm": "<html><body>example</body></html>",
+        "_app/start.js": "// bundle",
+    }
+    static = tmp_path / "static"
+    for name, text in site.items():
+        (static / name).parent.mkdir(parents=True, exist_ok=True)
+        (static / name).write_text(text)
+        # The same names one level up: a read that left the directory
+        # parses one of these.
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text(f"<html>outside the site: {name}</html>")
+    fed: list[str] = []
+    feed = HTMLParser.feed
+
+    def recording(self, data: str) -> None:
+        fed.append(data)
+        feed(self, data)
+
+    monkeypatch.setattr(HTMLParser, "feed", recording)
+    client = TestClient(create_app(_SiteReader(), static_dir=static))
+    evil = "<meta http-equiv=content-security-policy content=x>"
+    for path in (
+        "/", "/log", "/log.html", "/uv", "/uv.html", "/uv.html/", "/other.html",
+        "/icon.svg", "/examples/page.htm", "/_app/start.js", "/config.js",
+        "/healthz", "/api/v1/version", "/api/v1/jobs", "/api/v1/jobs/htr-a/kyrk",
+        "/nope", f"/{evil}", f"/log?x={evil}",
+    ):  # fmt: skip
+        client.get(path)
+    etag = client.get("/other.html").headers["etag"]
+    client.get("/other.html", headers={"If-None-Match": etag})
+    client.post("/log", content=evil, headers={"Content-Type": "text/html"})
+    assert fed, "the app parsed nothing: the check would prove nothing"
+    assert set(fed) <= set(site.values())
+    assert len(set(fed)) == 6, "every document in the site, the bundle not"
