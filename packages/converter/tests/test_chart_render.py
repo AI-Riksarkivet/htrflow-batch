@@ -693,6 +693,28 @@ def test_an_empty_git_port_list_is_refused_not_opened(tmp_path: Path):
     assert "minItems: got 0, want 1" in result.stderr
 
 
+def test_the_apply_identity_may_hold_its_run_lease_and_no_other():
+    """`htrflow-campaigns apply` holds the coordination Lease
+    `htrflow-campaigns-apply` for its whole run, so two applies never
+    interleave, and fails closed without it. `create` cannot be scoped by
+    name in RBAC; reading and renewing can, and are."""
+    rendered = render(sets=DEFAULT_SETS + (APPLY_ON,))
+    rules = named(rendered, "Role", "htrflow-campaigns")["rules"]
+    leases = [r for r in rules if r["resources"] == ["leases"]]
+    assert {
+        "apiGroups": ["coordination.k8s.io"],
+        "resources": ["leases"],
+        "verbs": ["create"],
+    } in leases
+    assert {
+        "apiGroups": ["coordination.k8s.io"],
+        "resources": ["leases"],
+        "resourceNames": ["htrflow-campaigns-apply"],
+        "verbs": ["get", "update"],
+    } in leases
+    assert len(leases) == 2
+
+
 # --- 3101: an HA control plane is more than one API server ----------------
 
 

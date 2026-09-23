@@ -249,3 +249,139 @@ def test_the_job_shape_policy_holds_the_scripts_the_converter_renders():
         assert (
             copies[var] == job["spec"]["template"]["spec"]["containers"][0]["args"][0]
         ), var
+
+
+#: The Kubernetes client classes cluster.py builds, by the API group their
+#: methods reach. A class not listed fails the test by name: add its group.
+_CLIENT_GROUPS = {
+    "CoreV1Api": "",
+    "BatchV1Api": "batch",
+    "CoordinationV1Api": "coordination.k8s.io",
+    "CustomObjectsApi": None,  # the group is an argument of each call
+}
+#: A client method's verb -> the RBAC verb the API server checks.
+_RBAC_VERB = {
+    "read": "get",
+    "list": "list",
+    "create": "create",
+    "patch": "patch",
+    "replace": "update",
+    "delete": "delete",
+}
+_CLIENT_METHOD = re.compile(r"(read|list|create|patch|replace|delete)_namespaced_(\w+)")
+
+
+def _calls_cluster_py_makes() -> set[tuple[str, str, str]]:
+    """(API group, resource, RBAC verb) for every call cluster.py makes,
+    read off its syntax tree: `self._method(kind, verb)` through `_KINDS`,
+    and every `self.<client>.<verb>_namespaced_<noun>` it calls or hands to
+    a retry helper. A server-side apply (`_content_type=APPLY_PATCH`) of an
+    object that does not exist yet is authorized as a create as well."""
+    import ast
+
+    from htrflow_converter import cluster
+
+    tree = ast.parse((CONVERTER_SRC / "cluster.py").read_text(encoding="utf-8"))
+    parent = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
+    clients: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and isinstance(node.targets[0], ast.Attribute)
+        ):
+            clients[node.targets[0].attr] = node.value.func.attr
+
+    def group_of(client_attr: str) -> str | None:
+        cls = clients[client_attr]
+        assert cls in _CLIENT_GROUPS, f"cluster.py uses {cls}: add its API group"
+        return _CLIENT_GROUPS[cls]
+
+    def module_value(node: ast.AST) -> object:
+        return getattr(cluster, node.id, None) if isinstance(node, ast.Name) else None
+
+    def applies(node: ast.AST) -> bool:
+        call = parent.get(node)
+        return isinstance(call, ast.Call) and any(
+            k.arg == "_content_type"
+            and isinstance(k.value, ast.Name)
+            and k.value.id == "APPLY_PATCH"
+            for k in call.keywords
+        )
+
+    found: set[tuple[str, str, str]] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "_method"
+        ):
+            kind, verb = node.args[0], node.args[1].value
+            kinds = (
+                [kind.value] if isinstance(kind, ast.Constant) else list(cluster._KINDS)
+            )
+            for k in kinds:
+                api, noun = cluster._KINDS[k]
+                resource = noun.replace("_", "") + "s"
+                found.add((group_of(api), resource, _RBAC_VERB[verb]))
+                if verb == "patch" and applies(node):
+                    found.add((group_of(api), resource, "create"))
+        elif (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Attribute)
+            and isinstance(node.value.value, ast.Name)
+            and node.value.value.id == "self"
+            and (m := _CLIENT_METHOD.fullmatch(node.attr))
+        ):
+            verb, noun = m.groups()
+            group = group_of(node.value.attr)
+            resource = noun.replace("_", "") + "s"
+            if noun == "custom_object":
+                call = parent[node]
+                args = [
+                    module_value(a.value if isinstance(a, ast.Starred) else a)
+                    for a in call.args
+                ]
+                group = next(a[0] for a in args if isinstance(a, tuple))
+                resource = next(a for a in args if isinstance(a, str))
+            found.add((group, resource, _RBAC_VERB[verb]))
+    return found
+
+
+def _apply_role_grants() -> list[dict]:
+    text = (CHART / "templates" / "apply-rbac.yaml").read_text(encoding="utf-8")
+    role = text.split("kind: Role\n", 1)[1].split("---", 1)[0]
+    return yaml.safe_load("rules:" + role.split("\nrules:", 1)[1])["rules"]
+
+
+def test_the_apply_role_grants_every_call_cluster_py_makes():
+    """`htrflow-campaigns apply` run in the cluster has only this Role: a
+    call it makes that the Role does not grant is a 403 halfway through an
+    apply -- a Lease it cannot take fails every run closed. The calls are
+    read off cluster.py itself, so a new one fails here before a cluster
+    sees it. A create is never scoped by name in RBAC, so it must come from
+    a rule without `resourceNames`."""
+    calls = _calls_cluster_py_makes()
+    rules = _apply_role_grants()
+    granted = {
+        (g, r, v)
+        for rule in rules
+        for g in rule["apiGroups"]
+        for r in rule["resources"]
+        for v in rule["verbs"]
+    }
+    assert {
+        ("batch", "jobs", "delete"),
+        ("kueue.x-k8s.io", "workloads", "patch"),
+    } <= calls
+    assert calls - granted == set()
+    for group, resource, verb in calls:
+        if verb == "create":
+            assert any(
+                group in r["apiGroups"]
+                and resource in r["resources"]
+                and "create" in r["verbs"]
+                and "resourceNames" not in r
+                for r in rules
+            ), (group, resource)
