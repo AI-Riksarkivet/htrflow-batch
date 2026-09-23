@@ -17,13 +17,10 @@ ConfigMaps (a server-side apply of an object that does not exist yet is a
 create), no watch; a test greps the source for any other create, patch,
 replace or delete call. There is no authentication.
 
-The site used to be a separate nginx image proxying `/api/` here; one
-Deployment, one Service and one image do it now.
-
 - Design: [Campaigns as Indexed Jobs](../../docs/superpowers/specs/2026-09-01-indexed-jobs-design.md),
   its decision on the read API
 - Consumer: [Campaign browser](../../frontend/README.md) and the
-  [frontend reference](../../docs/reference/frontend.md)
+  [Web front & read API](../../docs/reference/web.md) reference
 - Deployment: the `htrflow-web` Deployment and Service (NodePort) in
   [`charts/htrflow-batch`](../../charts/htrflow-batch/README.md)
 
@@ -75,18 +72,54 @@ Every call to the API server has a connect and read timeout, and `/healthz`
 is answered on the event loop, so requests stuck on a hung API server cannot
 fail the readiness probe.
 
-**The status ConfigMap.** Both routes write what they observed into
-`campaign-<name>-status` (merged over what is stored, never shrinking it, and
-not sent at all when nothing changed). The summary fields go under the field
-manager `htrflow-web`; `failedVolumes` — the failure reasons, which only the
-detail route can see because only it reads pods — goes under a manager of its
-own, `htrflow-web-failures`, and only the detail route writes it, with the
-Job it is about beside it (`failedVolumesJobUid`): the failures of an earlier
-Job of the same name are never read or merged as this one's. That write is
-held to the ConfigMap the request read, by its uid, so it can never re-create
-a record a prune has deleted. Once
-`htrflow-campaigns apply` has recorded a campaign's ending, those fields are
-its, and this service sends only the ones it does not own.
+## The status record
+
+Both routes write what they observed into `campaign-<name>-status`, the
+record that keeps a campaign on the page past its Job's TTL
+([Campaigns → The record](../../docs/how-it-works/campaigns.md#the-record-a-campaign-leaves)).
+`htrflow-campaigns apply` writes the same record, from the live Job, since
+this service writes only while someone has the page open. The rules live in
+`projection.py` (`status_record`, `merge_record`, `record_write`):
+
+- **Field managers.** The summary fields (`phase`, `volumesTotal`,
+  `volumesDone`, `volumesFailed`, `startedAt`, `finishedAt`, `resultsBase`,
+  `jobUid`) go under `htrflow-web`. `failedVolumes` and
+  `failedVolumesJobUid` go under `htrflow-web-failures`, written by the
+  detail route alone, since only it reads pods. `apply` writes under
+  `htrflow-campaigns`.
+- **Never shrinking.** A write is merged over what is stored: a value that
+  says nothing never replaces one that says something, and `finishedAt`
+  never moves backwards (compared as moments, not text). `failedVolumes` is
+  merged per volume id: each detail request names the failures whose pods
+  still exist, a newer sentence replaces an older one, and a blank one never
+  erases a sentence. It keeps up to 50 ids, each clipped to 300 characters,
+  and drops the oldest past 200 KiB.
+- **Nothing when nothing changed.** An idle page polls, and every poll
+  would otherwise be a write. The list route writes at most 20 records per
+  request (`RECORD_WRITES_PER_REQUEST`); a write it cannot make is logged
+  and never fails the request.
+- **`apply`'s ending wins.** Once `apply` has written the ending of the Job
+  (forced), it owns `phase` and the other summary fields for that Job, and
+  this service sends only the keys it does not own. Server-side apply keeps
+  a field another manager owns when one leaves it out, so nothing is lost.
+- **`jobUid` names the run.** A record about another Job of the same name
+  (one reaped, then recreated) is replaced whole, forced on the
+  `resourceVersion` this request read, so an ending `apply` wrote in
+  between wins with a 409. Failures of another run are neither read nor
+  merged as this one's. A record without `jobUid` counts as the current
+  Job's.
+- **Never re-created by a failures write.** That write is held to the
+  ConfigMap the request read, by its uid, so a record a prune deleted stays
+  deleted.
+
+On the converter side, `apply` stamps the Job's uid on the campaign
+ConfigMap (`job-uid`) and believes a record only when it names that Job
+(`cli.py`, `_believed`). Provenance on the campaign ConfigMap:
+`image-digest` is rendered (a pure function of the repo, so two renders are
+byte-identical); `campaigns-commit` (the checkout's `HEAD`, read with git,
+or with dulwich where there is no git binary), `applied-by`
+(`HTRFLOW_APPLIED_BY`, else the OS user, lower-cased) and `applied-at` (the
+last apply, frozen once the campaign has finished) are stamped by `apply`.
 
 ## Configuration
 
@@ -106,14 +139,13 @@ of their own. The chart sets the first from `publicResultsBase` and the second
 from `web.internalResultsBase`; `HTRFLOW_WEB_STATIC` empty means the directory
 the image bakes in.
 
-**Why the `HTRFLOW_` prefix here and bare names in the wrapper.** The first
-five are an operator's settings for a long-lived service that shares a pod
-environment with whatever the platform sets, so they are namespaced. The
+**Why the `HTRFLOW_` prefix here and bare names in the wrapper.** These are
+an operator's settings for a long-lived service, so they are namespaced. The
 wrapper's (`PUBLIC_RESULTS_BASE`, `S3_BUCKET`, …) are an in-pod contract
 written by the rendered Job itself
-(`packages/converter/src/htrflow_converter/manifests/campaign-job.yaml`):
-nothing else writes that pod's environment, and renaming them would break
-every campaign Job in flight. Neither surface ever carries a secret — see
+(`packages/converter/src/htrflow_converter/manifests/campaign-job.yaml`),
+and renaming them would break every campaign Job in flight. Neither surface
+ever carries a secret — see
 [Configuration reference](../../docs/reference/configuration.md).
 
 ## Modules
@@ -123,7 +155,7 @@ every campaign Job in flight. Neither surface ever carries a secret — see
 | `app.py` | `create_app(reader, static_dir=None)` (`__main__` passes `cfg.static_dir`): the routes over a reader that meets `kube.ReaderLike` (so tests wire a fake), the security headers — on every response, errors included — and the Content-Security-Policy each served document gets (the viewer's own, the SPA's `connect-src`, a strict one for any other page), then the static mount. `NoCluster` is the site-only reader |
 | `kube.py` | `Config` (the whole env contract) and `Reader`: raw-JSON get/list against Jobs, ConfigMaps and Pods, and the status ConfigMap's server-side apply, in-cluster or kubeconfig |
 | `projection.py` | Pure functions from API-server dicts to `JobSummary` and `JobDetail`, and what to write to the status ConfigMap under which field manager; `parse_index_ranges` for `completedIndexes` |
-| `progress.py` | `ProgressReader`: each volume's `progress.json` (or, for an older run, `manifest.json`) from the results bucket, size-capped, never inflated, cached a few seconds for a running volume and an hour for a finished one |
+| `progress.py` | `ProgressReader`: each volume's `progress.json` (or, for an older run, `manifest.json`) from the results bucket, size-capped, never inflated, cached 5 s for a running volume and an hour for a finished one |
 | `__main__.py` | The `htrflow-web` console script: uvicorn on `0.0.0.0:8081`; picks the reader (`kube.Reader`, or `NoCluster` under `HTRFLOW_WEB_SITE_ONLY`) |
 
 ## Tests

@@ -1,19 +1,12 @@
 # Chart Values
 
-`charts/htrflow-batch` — one chart for the Kueue queue objects, the
-model-cache PVC, the web front (campaign browser, Universal Viewer and the
-status API in one Deployment), the NetworkPolicies and the Kyverno
-policies. Its version is in `Chart.yaml`. The development support stack
-(RustFS, an in-cluster registry, the NVIDIA device plugin) is the separate
-`charts/htrflow-devstack` chart. Campaigns themselves are not rendered by
-either chart: they are Indexed Jobs rendered by `packages/converter` from a
-campaigns repo and applied by `htrflow-campaigns apply` (by hand, or as an
-Argo CD hook).
-Source: [`charts/htrflow-batch/values.yaml`](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/charts/htrflow-batch/values.yaml);
-every key is declared in `values.schema.json` (unknown keys and wrong types
-are rejected at install time). This page is the prose; the generated table of
-every key, its default, what it must agree with elsewhere and what it exposes
-is [Configuration](configuration.md).
+`charts/htrflow-batch` holds the Kueue queue objects, the model-cache PVC,
+the web front, the NetworkPolicies and the Kyverno policies. Campaigns are
+not in it: `htrflow-campaigns apply` applies them. The development stack is
+the separate `charts/htrflow-devstack` chart. Every key is declared in
+`values.schema.json`, so unknown keys and wrong types are refused; the
+generated table of every key is [Configuration](configuration.md). Source:
+[`values.yaml`](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/charts/htrflow-batch/values.yaml).
 
 !!! warning "Upgrading: `--reset-then-reuse-values`"
 
@@ -30,10 +23,10 @@ is [Configuration](configuration.md).
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `s3.existingSecret` | `htr-batch-s3` | Secret in the release namespace; no template in this chart creates it. Pods read the key **`credentials`** (AWS ini: `[default] aws_access_key_id / aws_secret_access_key`) as a file mounted at `/secrets/s3/credentials` via `AWS_SHARED_CREDENTIALS_FILE`, plus the non-secret `S3_BUCKET` and optional `S3_ENDPOINT` as env. **Nothing is injected with `envFrom`**; only tooling (compose, the devstack's bucket-setup Job, the RustFS server) reads `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` keys directly. Must match `converter.yaml`'s `s3_secret`: with `security.policies.enabled` it is the one Secret a campaign pod may read. See [Security](../how-it-works/security.md) |
-| `hfToken.existingSecret` | `""` | The Hugging Face token Secret the warm-up Job reads (key `token`), for a private or gated model; no template creates it. Must match `converter.yaml`'s `hf_token_secret`: with `security.policies.enabled` it is the one Secret a warm-up pod may read, and a warm-up naming any other is refused. Empty = the warm-up reads no Secret |
-| `s3.bucket` | `htr-results` | Results bucket name. No template in this chart reads it — pods take the bucket from the Secret's `S3_BUCKET` — so keep it equal to that key, and to the devstack chart's own `s3.bucket` when the devstack creates the bucket |
-| `publicResultsBase` | `""` | **Required** — browser-reachable URL base for published results (viewer manifests and the read API's `resultsBase` embed it). Must match `converter.yaml`'s `public_results_base` |
+| `s3.existingSecret` | `htr-batch-s3` | The S3 Secret you create in the release namespace: key `credentials` (AWS ini), mounted as a file, plus `S3_BUCKET` and optional `S3_ENDPOINT`. Must match `converter.yaml`'s `s3_secret` ([Deploy](../getting-started/deploy.md)) |
+| `hfToken.existingSecret` | `""` | The Hugging Face token Secret (key `token`) a warm-up may read, for a private or gated model. Must match `converter.yaml`'s `hf_token_secret`. Empty = none |
+| `s3.bucket` | `htr-results` | Not read by any template: pods take the bucket from the Secret's `S3_BUCKET`. Keep the two equal |
+| `publicResultsBase` | `""` | **Required.** The browser-reachable base of the results bucket. Must match `converter.yaml`'s `public_results_base` ([View Results](../getting-started/viewing.md)) |
 
 ## Model cache (`modelCache.*`)
 
@@ -59,41 +52,25 @@ models stay until the PVC is dropped.
 | `queue.clusterQueueName` | `""` | The ClusterQueue the LocalQueue points at; `""` = `<name>-cq` |
 | `queue.createClusterQueue` | `true` | Create that ClusterQueue, admitting LocalQueues from the release namespace only. `false` = it exists already (another release's, or the cluster's own) and must admit this namespace itself |
 | `queue.flavor` | `default-flavor` | The ResourceFlavor the created ClusterQueue's quota is in |
-| `queue.createFlavor` | `true` | Create that ResourceFlavor. `false` = reference one the cluster's Kueue already has — a flavor, the ClusterQueue and the priority classes are cluster-scoped, so a second release, or a cluster that already has one of these names, needs other names or `create…: false` |
+| `queue.createFlavor` | `true` | Create that ResourceFlavor. The flavor, the ClusterQueue and the priority classes are cluster-scoped, so a second release needs other names or `create…: false` |
 | `queue.createPriorityClasses` | `true` | Create one `WorkloadPriorityClass` per `queue.priorityClasses` entry. `false` = the classes are the cluster's; the list then only names them, and `converter.yaml`'s `priority_classes` must still repeat it |
-| `queue.priorityClasses` | `htr-interactive` 1000, `htr-bulk` 0, `htr-idle` -10 | One cluster-scoped `WorkloadPriorityClass` per entry (`name`, integer `value`, `description`); these are the names a campaign's `priority:` may use, and an empty list renders none. Kueue orders the queue by value first (higher first), then by creation time; preemption stays off, so a higher class goes ahead of waiting campaigns but never evicts a running one. A Job with no label ranks at 0, which is why `htr-bulk` is 0: leaving `priority:` out is `htr-bulk`. Kueue does not refuse a Job naming a class that does not exist (no Workload, no event, "Queued" for ever), so `converter.yaml`'s `priority_classes` mirrors these names and `validate` refuses a `priority:` outside them |
-| `queue.resources` | cpu 4 / memory 8Gi / nvidia.com/gpu 1 | Covered quotas — every resource an index's pod requests must be listed, or Kueue marks it inadmissible. The default admits exactly one campaign index as the converter renders it (requests cpu 4 / 8 Gi / 1 GPU); raise it to run more volumes in parallel. Indexes stuck `queued` with an idle GPU usually mean a dead Kueue controller, not a busy GPU |
+| `queue.priorityClasses` | `htr-interactive` 1000, `htr-bulk` 0, `htr-idle` -10 | One `WorkloadPriorityClass` per entry: the names a campaign's `priority:` may use. `converter.yaml`'s `priority_classes` must repeat them ([Queueing](../how-it-works/queueing.md)) |
+| `queue.resources` | cpu 4 / memory 8Gi / nvidia.com/gpu 1 | The ClusterQueue's quota. Every resource a pod requests must be listed. The default admits one campaign index at a time; raise it to run more volumes in parallel |
 
 ## Web front (`web.*`)
 
-Renders a ServiceAccount, a Role and RoleBinding, and the `htrflow-web`
-Deployment + Service (NodePort). The Role is this namespace only, never
-cluster-wide: `get`/`list`/`watch` on `jobs`, `pods` and `configmaps`, and on
-`configmaps` also **`create` and `patch`**. Those two are one privilege, not
-two — a server-side apply of an object that does not exist yet is a create —
-and they exist for the one write this service makes: the campaign's
-`campaign-<name>-status` ConfigMap
-([The record a campaign leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)).
-RBAC's `resourceNames` cannot express a name *pattern*, and does not apply to
-`create` at all, so the grant covers every ConfigMap in the namespace; what
-keeps the service to the one object is the service, and a test that greps its
-source for any other write. Nothing here may delete anything, or write a Job
-or a Pod.
-
-One container serves the campaign browser at `/`, Universal Viewer at
-`/uv.html` and the read API at `/api/v1/…`; it is the one pod in this chart
-that keeps its ServiceAccount token, because it is the Kubernetes API client
-the browser reads through, computing every answer live from Jobs, Pods and
-ConfigMaps. It also reads the results bucket directly, for one thing the
-Kubernetes API cannot answer: a running volume's `progress.json`
-(`ProgressReader`, see [Events and signals](../how-it-works/signals.md)) — so
-this pod must reach the results bucket, not only the API server, and its
-NetworkPolicy carries an S3 egress rule (the same shape as a batch Job's) for
-exactly that. Always rendered — there is no `enabled` flag.
+Renders the `htrflow-web` Deployment and Service, and its ServiceAccount
+with a namespaced Role: `get`/`list` on `jobs` and `pods`, and
+`get`/`list`/`create`/`patch` on `configmaps` for the one write it makes,
+each campaign's status record. No `watch`, no `delete`, no write to a Job or
+Pod. It is the one pod here that keeps its ServiceAccount token, and it
+also reads the results bucket for progress, so its NetworkPolicy has an S3
+egress rule. Always rendered. What it serves is in
+[Web front & read API](web.md).
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `web.image` | `docker.io/riksarkivet/htrflow-web@sha256:…` | **Must be digest-pinned** unless `security.allowTagImages`. The default is a published web image — the digest of its multi-architecture manifest list, so it resolves on a node of either kind; a single architecture's digest does not. To run your own build, set the digest you pushed (see [Releasing](../development/releasing.md)) |
+| `web.image` | `docker.io/riksarkivet/htrflow-web@sha256:…` | **Must be digest-pinned** unless `security.allowTagImages`. Pin a manifest-list digest, so it resolves on any architecture ([Releasing](../development/releasing.md)) |
 | `web.nodePort` | `30800` | NodePort; the container listens on 8081. Answered only on the node running the pod (`externalTrafficPolicy: Local`). Unused with `web.service.type: ClusterIP` |
 | `web.service.type` | `NodePort` | `NodePort` is the browser's direct way in. `ClusterIP` is for an ingress controller in front (`web.ingress.*`): no node port and no `externalTrafficPolicy`, since the pod then sees only the controller's address |
 | `web.ingress.enabled` | `false` | Renders an Ingress for the web front. Refused unless `web.service.type` is `ClusterIP` and `web.ingress.host` and `network.web.ingressFrom` are set. The Ingress carries no authentication, and the `network.web.ingressCidrs` guards do not apply in this mode: set the controller's allow-list (see [Deploy → Behind an ingress controller](../getting-started/deploy.md#behind-an-ingress-controller)) |
@@ -102,35 +79,28 @@ exactly that. Always rendered — there is no `enabled` flag.
 | `web.ingress.tlsSecretName` | `""` | TLS Secret for `web.ingress.host`, terminated at the Ingress; `""` = no `tls` block |
 | `web.ingress.annotations` | `{}` | Annotations on the Ingress, e.g. the controller's source-range allow-list (`nginx.ingress.kubernetes.io/whitelist-source-range`) |
 | `web.resources` | requests cpu 50m / 128Mi, limits cpu 500m / 256Mi | |
-| `web.internalResultsBase` | `""` | Where THIS POD reaches the results bucket, for `ProgressReader` — `""` (default) means the same address as `publicResultsBase`, correct whenever that URL also resolves to the bucket from inside the cluster (a public S3 endpoint). Set it whenever it does not: a browser-facing address reached through a tunnel or port-forward resolves, from inside the pod, to the pod itself, and the API then silently reads no progress at all. Use the in-cluster address instead, e.g. `http://rustfs.<namespace>.svc.cluster.local:9000/<bucket>` for the devstack's store (see [Dev cluster](../development/dev-cluster.md)) |
+| `web.internalResultsBase` | `""` | Where this pod reaches the bucket to read progress. Empty = `publicResultsBase`. Set it when that address does not work from inside the cluster, or the page shows no progress ([View Results](../getting-started/viewing.md)) |
 
-The app sends `X-Content-Type-Options: nosniff`, `Referrer-Policy:
-strict-origin-when-cross-origin` and `Content-Security-Policy:
-frame-ancestors 'none'` on every response (script/style/connect sources stay
-governed by the build's own CSP meta). `/config.js` is not a file in the
-image: the read API builds it from its own environment on each request. It
-sets `window.API_BASE = "/api/v1"` — same-origin, because the same process
-serves both — and `window.RESULTS_BASE` from `HTRFLOW_PUBLIC_RESULTS_BASE`,
-so the page and the API cannot disagree about the results base (see
-[Campaign Browser](frontend.md)).
+Its security headers and `/config.js` are described in
+[Web front & read API](web.md#content-security-policy).
 
 ## Apply identity (`apply.*`)
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `apply.rbac.enabled` | `false` | Renders the ServiceAccount `htrflow-campaigns`, a Role and RoleBinding for `htrflow-campaigns apply` run *inside* the cluster (an Argo CD `PostSync` hook, a CI Job): `get`/`list`/`create`/`patch`/`delete` on `jobs` and `configmaps`, `list`/`patch` on `workloads.kueue.x-k8s.io`, and the coordination Lease `htrflow-campaigns-apply` it holds for the whole run so that two applies never interleave (`create` on leases, which RBAC cannot scope by name, and `get`/`update` on that one), release namespace only. Off by default: run from an operator's kubeconfig, the command needs no in-cluster identity, and an idle ServiceAccount that may delete Jobs is a liability. See [Campaign & Pipeline YAML → Pausing](campaign-yaml.md#pausing) |
-| `apply.gitCidrs` | `[]` | The git host the Argo CD hook clones the campaigns repo from, by address (a NetworkPolicy cannot name a host): an egress rule for the `app=htrflow-campaigns` pod. Empty = no git egress; the pod reaches only DNS and the API server, which is all `apply` on a local checkout needs. See [Campaign & Pipeline YAML → With Argo CD](campaign-yaml.md#with-argo-cd) |
+| `apply.rbac.enabled` | `false` | Renders the ServiceAccount `htrflow-campaigns` and a namespaced Role for an in-cluster apply (the Argo CD hook): write and delete on `jobs` and `configmaps`, `list`/`patch` on Kueue Workloads, and the apply Lease. Off by default, since an idle account that may delete Jobs is a liability. See [htrflow-campaigns CLI](cli.md#with-argo-cd) |
+| `apply.gitCidrs` | `[]` | The git host the Argo CD hook clones the campaigns repo from, by address (a NetworkPolicy cannot name a host): an egress rule for the `app=htrflow-campaigns` pod. Empty = no git egress; the pod reaches only DNS and the API server, which is all `apply` on a local checkout needs. See [htrflow-campaigns CLI → The hook manifest](cli.md#the-hook-manifest) |
 | `apply.gitPorts` | `[443]` | Ports of that egress rule. At least one: a rule with no ports would open every port |
 
 ## Trust boundary (`security.*`)
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `security.allowedImageRepos` | `[]` | Repository prefixes a Job or Pod in the namespace may pin, matched on a path boundary before `@sha256:`. Enforced by the `htrflow-batch-images-allowed-<ns>` ClusterPolicy when `security.policies.enabled`; empty = the policy is not rendered. Also the default for `verifyImages.imageReferences` while the policies are enabled. The rule is namespace-wide on purpose, not scoped to this chart's own labels — any supporting workload sharing the namespace (`charts/htrflow-devstack`'s RustFS and its `rustfs-init` hook Job included) needs its image's prefix on this list too, or a label-scoped rule would be one any Job author could opt out of |
+| `security.allowedImageRepos` | `[]` | Repository prefixes any Job or Pod in the namespace may pin, enforced by a ClusterPolicy when `security.policies.enabled`; empty = no policy. Namespace-wide on purpose, so supporting workloads (the devstack's RustFS) need their prefix here too |
 | `security.jobImageRepos` | `[]` | The exact repositories (the part before `@sha256:`) a campaign or warm-up Job's images may come from, enforced by the `job-shape` policy. `allowedImageRepos` admits every repository the namespace runs, the web and converter images included; this narrows the converter's Jobs to the wrapper's. Empty = no narrowing |
-| `security.requireModelRevision` | `false` | Every `model_settings.model` in a converter-rendered pipeline ConfigMap carries a 40-hex `revision:` (Hugging Face Hub weights can be pickles, and an unpinned repo is mutable) — and for TrOCR, WordLevelTrOCR, Donut and DiT, which load a processor as a second download, a 40-hex `model_settings.processor_kwargs.revision` too. Enforced by the `htrflow-batch-model-revision-<ns>` ClusterPolicy when `security.policies.enabled`, which also refuses any key beside `model_settings` in a step that loads a model — htrflow merges such a key over `model_settings`, so it could unpin the model — and a pipeline carried in `binaryData` |
-| `security.policies.enabled` | `false` | Render the `templates/policies/` ClusterPolicies, all `Enforce`: the digest pin, the allow-list and the model revision rules, `rbac-scope` (what the web and apply ServiceAccounts may write, delete and pause) and `job-shape` (a campaign or warm-up Job is the shape the converter renders: its identity, Secrets, volumes, command and pipeline source — see [Security](../how-it-works/security.md)). The chart and the converter must come from the same release, since `job-shape` compares the Jobs' scripts with the converter's. **Kyverno must be installed** (see [Prerequisites](../getting-started/index.md)) — without it these are objects nothing reads, and nothing enforces the allow-list or the revision rule at all. Off by default for exactly that reason |
-| `security.policies.allowDisabled` | `false` | The explicit opt-out. With `policies.enabled` false the chart refuses to render unless this is true, so an install that enforces nothing says so instead of doing it silently. Set it on a cluster without Kyverno; `values-prod.yaml` turns the policies on instead |
+| `security.requireModelRevision` | `false` | Every model in a pipeline ConfigMap must carry a 40-hex revision, enforced by a ClusterPolicy when `security.policies.enabled`. The rules and messages are in [Campaign & Pipeline YAML](campaign-yaml.md#pipeline-file-pipelinesidyaml) |
+| `security.policies.enabled` | `false` | Render the Kyverno ClusterPolicies, all `Enforce`: digest pin, allow-list, model revision, `rbac-scope` and `job-shape` ([Security](../how-it-works/security.md)). **Kyverno must be installed.** The chart and converter must be the same release, since `job-shape` compares the Jobs' scripts |
+| `security.policies.allowDisabled` | `false` | With the policies off, the chart refuses to render unless this is `true`, so an install that enforces nothing says so |
 | `security.psaEnforce` | `baseline` | Pod Security level `make psa-labels` enforces on the namespace (warn/audit are always `restricted`). Every pod in both charts is restricted-clean — `restricted` is worth trying |
 | `security.allowTagImages` | `false` | Accept a `:tag` reference for `web.image` instead of an `@sha256:` pin. Tag images get `imagePullPolicy: Always` so a re-pushed `:dev` lands on the next rollout |
 | `security.verifyImages.enabled` | `false` | Renders a Kyverno `ClusterPolicy` that refuses any Pod in the namespace whose image is not cosign keyless-signed |

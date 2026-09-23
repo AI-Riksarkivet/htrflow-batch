@@ -689,7 +689,7 @@ class Cluster:
         that moment is exactly the window in which Kueue would admit and
         start it -- so a paused campaign waits and then fails loudly. One
         that is not paused needs no wait: a Workload that does not exist is
-        not admitted either. (docs/reference/campaign-yaml.md#pausing)
+        not admitted either. (docs/reference/cli.md#pausing)
         """
         name, uid = job["metadata"]["name"], job["metadata"]["uid"]
         wl = self._workload(uid)
