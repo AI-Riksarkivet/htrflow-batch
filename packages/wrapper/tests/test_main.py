@@ -1284,24 +1284,21 @@ ALTO_STAMPABLE = (
 
 
 def test_default_factory_rebuilds_the_pipeline_after_a_dead_worker_thread(
-    cfg, tmp_path, monkeypatch
+    cfg, tmp_path, monkeypatch, fake_htrflow
 ):
     """B88: the page whose model killed htrflow's worker thread is recorded
     failed with the sentence that names step and model, and the NEXT page is
     processed by a pipeline built from scratch -- the run goes on instead of
     the pod standing still with a reserved GPU until its deadline."""
-    from types import ModuleType, SimpleNamespace
+    from types import SimpleNamespace
 
     from htrflow_batch import driver
     from htrflow_batch.fetch import FetchResult
     from htrflow_batch.iiif import PageRef
     from htrflow_batch.stream import consume
 
-    fake_steps = ModuleType("htrflow.pipeline.steps")
-    fake_steps.auto_import = lambda paths: list(paths)  # the page's own path
-    monkeypatch.setitem(sys.modules, "htrflow", ModuleType("htrflow"))
-    monkeypatch.setitem(sys.modules, "htrflow.pipeline", ModuleType("htrflow.pipeline"))
-    monkeypatch.setitem(sys.modules, "htrflow.pipeline.steps", fake_steps)
+    # the page's own path
+    fake_htrflow(steps={"auto_import": lambda paths: list(paths)})
     monkeypatch.setattr(driver, "THREAD_POLL_SECONDS", 0.01)
     blocked = threading.Event()
 
