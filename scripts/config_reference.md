@@ -31,14 +31,15 @@ described in [Wrapper](wrapper.md).
 environment variable of its own, `HTRFLOW_APPLIED_BY`. It is lower-cased and
 stamped as the `applied-by` annotation on every campaign ConfigMap the
 command applies ([The record a campaign
-leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)), and CI
-sets it from whoever triggered the run; unset, the apply uses its own OS
-user. It is not a `converter.yaml` key — it says who is running this apply,
+leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)). The
+Argo CD hook's Job sets it to `argocd-hook/<Application>`, since the hook's
+own account is no one's; unset, as in an apply run by hand, the apply uses
+its own OS user. It is not a `converter.yaml` key — it says who is running this apply,
 not how the cluster is configured — so it is not in the converter table
 below. It is deliberately not the `submitter` annotation either: that key is
-reserved for the authenticated forge login CI stamps as a label at render
-time, which is evidence, where this is only the account the command ran
-under.
+reserved for an authenticated forge login stamped as a label at render
+time, which would be evidence, where this is only the account the command
+ran under.
 
 **What the browser is told.** The campaign browser has no environment of its
 own: it reads `window.API_BASE` and `window.RESULTS_BASE` out of `/config.js`,
@@ -80,15 +81,19 @@ turns the second check off.
   entrypoint still fails. The devstack's own S3 store refuses to render on
   credentials nobody chose (`devStack.insecureDefaults`).
 - **The read API is unauthenticated**: `GET /api/v1/jobs[/…]` and the
-  campaign browser are open to anyone who can reach the port —
-  `network.web.ingressCidrs` is the only gate.
-- **The read API's RBAC is get/list/watch, plus one write**: `create` and
+  campaign browser are open to anyone who can reach the port. The network
+  is the only gate: on a NodePort, `network.web.ingressCidrs` (the clients'
+  own addresses); behind an ingress controller (`web.ingress`),
+  `network.web.ingressFrom` names the controller and the controller's own
+  allow-list is what keeps browsers out.
+- **The read API's RBAC is get and list, plus one write**: `create` and
   `patch` on ConfigMaps in its own namespace, for the per-campaign status
   ConfigMap it writes from what it observes
   ([The record a campaign leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)).
-  It is a namespaced `Role`, it grants no `delete`, and it may not write a
-  Job or a Pod — `packages/web/tests/test_app.py` greps the package's source
-  to keep the one write the only one.
+  It is a namespaced `Role`; it grants no `watch` or `delete` and no write to
+  a Job or a Pod, and `test_chart_agreement.py` holds the rendered Role to
+  exactly that. With `security.policies.enabled`, a Kyverno rule also holds
+  its ConfigMap writes to names of the form `campaign-<name>-status`.
 - **The results bucket is public-read**: everything under
   `publicResultsBase` — with the devstack's store, except `status/logs/*`
   when `rustfs.publicLogs` is off. The run log is the only key anything
