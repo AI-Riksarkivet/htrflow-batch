@@ -454,10 +454,25 @@ def test_pipelines_are_applied_before_campaigns(tmp_path, cluster):
     assert cluster.namespace == NS, "the namespace comes from converter.yaml"
 
 
+def _tree(root: Path) -> dict[str, bytes | None]:
+    """Every path under ``root`` -> its bytes (``None`` for a directory)."""
+    return {
+        p.relative_to(root).as_posix(): None if p.is_dir() else p.read_bytes()
+        for p in sorted(root.rglob("*"))
+    }
+
+
 def test_apply_without_out_renders_into_a_temp_dir(tmp_path, cluster):
+    """`rendered/` is the committed record the render is held against, so an
+    apply with no `--out` must leave it -- and the rest of the checkout --
+    exactly as it found it, even with a new campaign the record lacks."""
     repo = _repo(tmp_path)
+    assert cli.main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    _rerun(repo, "fresh", "R7777777")
+    before = _tree(repo)
     assert cli.main(["apply", str(repo)]) == 0
-    assert len(cluster.of("apply")) == 8
+    assert ("apply", "Job", "fresh") in cluster.calls
+    assert _tree(repo) == before
 
 
 def test_nothing_is_deleted_without_prune(tmp_path, cluster):
