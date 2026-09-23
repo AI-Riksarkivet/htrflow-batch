@@ -107,7 +107,7 @@
       "groupName": "htrflow base"
     },
     {
-      "description": "torch/torchvision follow the cu128 index by hand (dockerfile comment); uv itself is a pin",
+      "description": "torch/torchvision follow the cu129 index by hand (dockerfile comment); uv itself is a pin",
       "matchDatasources": ["pypi"],
       "matchPackageNames": ["torch", "torchvision"],
       "enabled": false
