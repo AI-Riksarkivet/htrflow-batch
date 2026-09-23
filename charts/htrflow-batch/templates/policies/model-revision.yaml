@@ -97,4 +97,35 @@ spec:
               - key: {{ `"{{ length(stray) }}"` }}
                 operator: GreaterThan
                 value: 0
+    # `data."pipeline.yaml"` is the only place the two rules above read
+    # (audit 0923 D-7). A ConfigMap carrying the key under `binaryData`
+    # instead parsed as `steps: []` and was admitted, while a Job mounting
+    # it sees the same file. Nothing the converter renders uses binaryData,
+    # so a pipeline ConfigMap (by name) carries none at all, and no
+    # ConfigMap carries a binary `pipeline.yaml`.
+    - name: pipeline-not-in-binary-data
+      match:
+        any:
+          - resources:
+              kinds: [ConfigMap]
+              namespaces: [{{ .Release.Namespace | quote }}]
+      context:
+        - name: hidden
+          variable:
+            jmesPath: >-
+              [contains(keys(request.object.binaryData || `{}`), 'pipeline.yaml'),
+              starts_with(request.object.metadata.name || '', 'htr-pipeline-')
+              && length(keys(request.object.binaryData || `{}`)) > `0`][?@]
+            default: []
+      validate:
+        message: >-
+          a pipeline may not be carried in binaryData, where the revision
+          rule cannot read it: put pipeline.yaml under data, and nothing
+          under binaryData in an htr-pipeline-* ConfigMap
+        deny:
+          conditions:
+            all:
+              - key: {{ `"{{ length(hidden) }}"` }}
+                operator: GreaterThan
+                value: 0
 {{- end }}

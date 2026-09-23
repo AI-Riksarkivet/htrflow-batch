@@ -16,6 +16,7 @@ UPDATE, `request.oldObject` -- the stored object the write replaces (see
 
 from __future__ import annotations
 
+import base64
 import re
 import shutil
 import subprocess
@@ -229,6 +230,53 @@ def test_a_key_beside_model_settings_cannot_unpin_the_model(
     verdict, out = admission(tmp_path, policy, pipeline(bypass))
     assert verdict == "refused", out
     assert next(iter(stray)) in out
+
+
+# --- D-7: a pipeline in binaryData is a pipeline the rule cannot read ------
+
+
+@pytest.mark.parametrize(
+    "name,binary",
+    [
+        ("htr-pipeline-demo-v1", {"pipeline.yaml"}),
+        ("htr-pipeline-demo-v1", {"weights.bin"}),
+        ("team-settings", {"pipeline.yaml"}),
+    ],
+    ids=["pipeline-key", "pipeline-configmap-other-key", "pipeline-key-elsewhere"],
+)
+def test_a_pipeline_cannot_hide_in_binary_data(tmp_path: Path, name: str, binary: set):
+    """The rule reads `data."pipeline.yaml"`. A ConfigMap carrying the same
+    key under `binaryData` parsed as `steps: []` and was admitted, and a
+    Job mounting it sees the same file -- unpinned models and all."""
+    policy = render_policy(tmp_path, "model-revision")
+    unpinned = yaml.safe_dump(
+        {
+            "steps": [
+                {
+                    **YOLO,
+                    "settings": {
+                        "model": "yolo",
+                        "model_settings": {"model": "Riksarkivet/yolov9-regions-1"},
+                    },
+                }
+            ]
+        }
+    )
+    hidden = configmap(name)
+    hidden["binaryData"] = {
+        key: base64.b64encode(unpinned.encode()).decode() for key in binary
+    }
+    verdict, out = admission(tmp_path, policy, hidden)
+    assert verdict == "refused", out
+    assert "binaryData" in out
+
+
+def test_other_binary_data_is_still_admitted(tmp_path: Path):
+    policy = render_policy(tmp_path, "model-revision")
+    other = configmap("team-settings")
+    other["binaryData"] = {"logo.png": "iVBORw0KGgo="}
+    verdict, out = admission(tmp_path, policy, other)
+    assert verdict == "admitted", out
 
 
 # --- 3061: an image volume is an image too ----------------------------------
@@ -458,12 +506,16 @@ def test_the_production_allow_list_admits_the_release_and_nothing_else(
     )
     for repo in PUBLISHED:
         admitted = pod(None)
-        admitted["spec"]["containers"][0]["image"] = f"docker.io/riksarkivet/{repo}@{DIGEST}"
+        admitted["spec"]["containers"][0]["image"] = (
+            f"docker.io/riksarkivet/{repo}@{DIGEST}"
+        )
         verdict, out = admission(tmp_path, policy, admitted)
         assert verdict == "admitted", out
-    for sibling in ("docker.io/riksarkivet/other", "docker.io/riksarkivet/htrflow-batch-x"):
+    for sibling in (
+        "docker.io/riksarkivet/other",
+        "docker.io/riksarkivet/htrflow-batch-x",
+    ):
         refused = pod(None)
         refused["spec"]["containers"][0]["image"] = f"{sibling}@{DIGEST}"
         verdict, out = admission(tmp_path, policy, refused)
         assert verdict == "refused", out
-
