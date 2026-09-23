@@ -42,11 +42,16 @@ hfToken:
 
 publicResultsBase: ""      # browser-reachable URL base for published results (REQUIRED: every result URL is built from it)
 
-# Model cache shared by warm-up Jobs (writer) and batch Jobs (read-only).
+# Model cache: one PVC holding one directory per pipeline recipe
+# (`<pipeline-id>-<recipe sha256>`). A pipeline's warm-up Job mounts its own
+# directory read-write (subPath) and fills it; that pipeline's campaign Jobs
+# mount the same directory read-only. Size it for every recipe at once: two
+# pipelines that load the same model keep a copy each, and a recipe's
+# directory stays after its last campaign -- nothing evicts it; remove old
+# directories by hand, or drop the PVC.
 # Single-node PoC note (O16): ReadWriteOnce pins every Job to the node that
 # holds the volume — fine on one GPU node, a scheduling constraint on more.
-# Use an RWX class (or a per-node cache strategy) before scaling out. The cache
-# is never evicted: a pipeline's models stay until the PVC is dropped.
+# Use an RWX class (or a per-node cache strategy) before scaling out.
 modelCache:
   create: true             # false = a PVC named `name` already exists (hand-made or another release)
   name: htr-test-data

@@ -77,6 +77,22 @@ ConfigMap the nginx viewer mounted, is describing the version it names — `api.
 here would make the upgrade notes wrong for anyone actually on that
 version.
 
+### From 0.12.0 to 0.13.0 — what can stop an upgrade
+
+The chart and the converter must come from the same release from here on:
+the `job-shape` policy compares a campaign or warm-up Job's scripts with the
+ones the converter renders, character for character.
+
+| Change | What to do |
+|---|---|
+| **`values-prod.yaml` empties `network.s3Cidrs`, `network.clusterCidrs` and `network.iiifCidrs` and refuses to render without them**, as its header always said it did; it also sets **`network.s3InNamespace: false`**, so no pod labelled `app: rustfs` is a route. An empty `network.clusterCidrs` or `network.iiifCidrs` is refused on any values file, and so is an empty `network.s3Cidrs` with `s3InNamespace: false`. | Pass your S3 endpoint's, your cluster's pod and service, and your IIIF origins' ranges with `--set`, as the deploy page's install command does. |
+| **`job-shape`, a new policy with `security.policies.enabled`.** A campaign Job may read only `s3.existingSecret`, a warm-up Job only `hfToken.existingSecret` (new, default empty), both only the `modelCache.name` PVC, with no ServiceAccount token and the converter's commands. | If `converter.yaml` sets `hf_token_secret`, set `hfToken.existingSecret` to the same name, or the warm-up is refused. Keep `s3_secret` and `data_pvc` equal to `s3.existingSecret` and `modelCache.name`, as before. |
+| **`rbac-scope` holds the apply identity's Workload patches** to `spec.active`, on the Workload of a converter-labelled Job. | Nothing, unless something else uses the `htrflow-campaigns` ServiceAccount on Workloads. |
+| **The apply Role gains the coordination Lease** `htrflow-campaigns-apply` (`create` on leases, `get`/`update` on that one), which `htrflow-campaigns apply` holds for its whole run. | Nothing: without it an in-cluster apply of this release fails closed. |
+| **`security.verifyImages` reads Sigstore bundles** (`type: SigstoreBundle`), the form cosign 3 signs in. The 0.12.0 policy looked for `.sig` tags the release no longer writes and refused every published image. | Nothing: an install that had turned verification on starts admitting the signed release. |
+| **The model cache is one directory per pipeline recipe** (converter): every campaign Job's pod template mounts it by `subPath`. A campaign Job the v0.5.0 converter rendered and that is still live cannot take the new pod template (a Job's template is immutable), so `apply` leaves it as it was (exit 3) until it finishes; pausing still works through its Workload. Warm-ups download into the new directories. | Let running campaigns finish. Once no v0.5.0 Job is live, the old `/data/hf` and `/data/warmup` on the PVC are orphaned and can be deleted. Size `modelCache.size` for a copy of each recipe's models. |
+| **Wide egress ranges lose the internal ranges inside them**, not only a literal `0.0.0.0/0`: `s3Cidrs: [0.0.0.0/0]`, `iiifCidrs` split into halves and `apply.gitCidrs` now carve out the cluster, node, link-local, loopback and private ranges. `network.privateCidrs` adds `100.64.0.0/10`. | Name a private host you need in `iiifCidrs` / `s3Cidrs` by its own range, which stays reachable, or narrow `network.privateCidrs`. |
+
 ### From 0.11.0 to 0.12.0 — nothing stops an upgrade
 
 Every new key is optional and off by default: an install that sets none of
@@ -167,6 +183,41 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 `htrflow-web` / `templates/web.yaml` they became in 0.4.0. Renaming them
 here would make the upgrade notes wrong for anyone actually on that
 version.
+
+### 0.13.0 — unreleased (deployment audit fixes)
+
+**Breaking at render time for the production profile, on purpose** — see
+*From 0.12.0 to 0.13.0* above.
+
+Added:
+- **`job-shape`** ClusterPolicy (with `security.policies.enabled`): a
+  campaign or warm-up Job is the shape the converter renders — its
+  ServiceAccount and token, Secrets, volumes, containers, scripts, pod
+  labels and pipeline source.
+- **`hfToken.existingSecret`**: the one Secret a warm-up may read; must equal
+  `converter.yaml`'s `hf_token_secret`.
+- **`security.jobImageRepos`**: narrows campaign and warm-up Jobs to the
+  wrapper's repositories.
+- **`network.s3InNamespace`** (default `true`): the in-namespace RustFS
+  route; `false` drops it and needs `network.s3Cidrs`.
+- **`queue.createFlavor`**, **`queue.createClusterQueue`**,
+  **`queue.clusterQueueName`**, **`queue.createPriorityClasses`**: each
+  cluster-scoped Kueue object is created or only referenced by name, so a
+  second release or an existing Kueue setup installs.
+- The apply Role's coordination Lease rules.
+
+Changed:
+- **`verify-images`** reads Sigstore bundles (`type: SigstoreBundle`).
+- **`model-revision`**: TrOCR, WordLevelTrOCR, Donut and DiT also need
+  `model_settings.processor_kwargs.revision`; a pipeline in `binaryData` is
+  refused.
+- **`rbac-scope`**: the apply identity may change only `spec.active` on the
+  Workload of a converter-labelled Job.
+- Every egress range carves out the internal ranges inside it;
+  `network.privateCidrs` adds `100.64.0.0/10`.
+- **`values-prod.yaml`**: `allowedImageRepos` names the three published
+  repositories instead of the organisation; the network lists are emptied
+  and required; `network.s3InNamespace: false`.
 
 ### 0.12.0 — 2026-09-22 (v0.5.0)
 
