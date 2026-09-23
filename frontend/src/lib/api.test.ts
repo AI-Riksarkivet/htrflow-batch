@@ -8,6 +8,7 @@ import {
   isResultUrl,
   jobDetailSchema,
   jobSummarySchema,
+  REAPED_PAGE,
   sameDay,
   shortDate,
   volumeStateSchema,
@@ -85,11 +86,43 @@ describe("fetchJobs", () => {
     const fetchMock = vi.fn(async () => jsonResponse([summary]));
     vi.stubGlobal("fetch", fetchMock);
     const list = await fetchJobs();
-    expect(list).toEqual({ jobs: [summary], unreadable: 0 });
+    expect(list).toEqual({ jobs: [summary], unreadable: 0, reapedTotal: 0 });
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/jobs",
+      `/api/v1/jobs?reaped=${REAPED_PAGE}`,
       expect.objectContaining({ cache: "no-store" }),
     );
+  });
+
+  // The API carries every live Job but only the newest campaigns whose Jobs
+  // are gone, and says how many of those there are in all (2026-09-23
+  // audit): the page asks for more by count.
+  test("asks for as many reaped campaigns as it is told, and reads their total", async () => {
+    const gone = { ...summary, name: "gamla", jobGone: true };
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify([summary, gone]), {
+          headers: {
+            "content-type": "application/json",
+            "x-reaped-total": "57",
+          },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const list = await fetchJobs(undefined, 40);
+    expect(list.reapedTotal).toBe(57);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/jobs?reaped=40",
+      expect.anything(),
+    );
+  });
+
+  test("an API that sends no total has no more to offer than it sent", async () => {
+    const gone = { ...summary, name: "gamla", jobGone: true };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse([summary, gone])),
+    );
+    expect((await fetchJobs()).reapedTotal).toBe(1);
   });
 
   test("honours window.API_BASE, resolved per call", async () => {
@@ -98,7 +131,7 @@ describe("fetchJobs", () => {
     vi.stubGlobal("fetch", fetchMock);
     await fetchJobs();
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://elsewhere/api/v1/jobs",
+      `http://elsewhere/api/v1/jobs?reaped=${REAPED_PAGE}`,
       expect.anything(),
     );
   });
@@ -142,7 +175,11 @@ describe("fetchJobs", () => {
         jsonResponse([summary, { ...summary, name: "broken", phase: "Bogus" }]),
       ),
     );
-    expect(await fetchJobs()).toEqual({ jobs: [summary], unreadable: 1 });
+    expect(await fetchJobs()).toEqual({
+      jobs: [summary],
+      unreadable: 1,
+      reapedTotal: 0,
+    });
     expect(consoleError).toHaveBeenCalledTimes(1); // the bug stays visible to the operator
     consoleError.mockRestore();
   });

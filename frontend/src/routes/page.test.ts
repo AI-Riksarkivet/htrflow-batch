@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { RELOAD_MS } from "$lib/config.js";
 import CampaignsPage from "./+page.svelte";
@@ -64,7 +64,7 @@ describe("/ campaign page", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/jobs",
+      "/api/v1/jobs?reaped=20",
       expect.objectContaining({ cache: "no-store" }),
     );
     expect(screen.getByText("htr-test/kyrk")).toBeInTheDocument();
@@ -135,7 +135,7 @@ describe("/ campaign page", () => {
     // calls are asserted below.
     let listCalls = 0;
     const fetchMock = vi.fn(async (url: string) => {
-      if (url === "/api/v1/jobs") {
+      if (url === "/api/v1/jobs?reaped=20") {
         listCalls += 1;
         return listCalls === 1
           ? jsonResponse([job])
@@ -183,6 +183,55 @@ describe("/ campaign page", () => {
     expect(names).toEqual(["htr-test/kyrk", "htr-test/gamla"]);
     expect(container.querySelectorAll("section.campaign")).toHaveLength(2);
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  // Records have no TTL, so the API sends only the newest campaigns whose
+  // Jobs are gone and says how many there are (2026-09-23 audit). The rest
+  // are one click away, a page at a time.
+  test("older reaped campaigns wait behind a button, a page at a time", async () => {
+    const gone = (i: number) => ({
+      ...job,
+      name: `gamla${i}`,
+      phase: "Succeeded",
+      jobGone: true,
+    });
+    const asked: string[] = [];
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/version"))
+        return jsonResponse({ version: "v", web: "w" });
+      if (url.includes("/jobs/")) return jsonResponse(detail);
+      asked.push(url);
+      const n = Number(new URL(url, "http://x").searchParams.get("reaped"));
+      const rows = [
+        job,
+        ...Array.from({ length: Math.min(n, 25) }, (_, i) => gone(i)),
+      ];
+      return new Response(JSON.stringify(rows), {
+        headers: { "content-type": "application/json", "x-reaped-total": "25" },
+      });
+    }) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelectorAll("section.campaign")).toHaveLength(21);
+
+    const more = screen.getByRole("button", { name: /5 older campaigns/ });
+    await fireEvent.click(more);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(asked.at(-1)).toBe("/api/v1/jobs?reaped=40");
+    expect(container.querySelectorAll("section.campaign")).toHaveLength(26);
+    expect(
+      screen.queryByRole("button", { name: /older campaigns/ }),
+    ).toBeNull();
+  });
+
+  test("with every reaped campaign shown there is no button", async () => {
+    vi.stubGlobal("fetch", routedFetch([job]));
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(
+      screen.queryByRole("button", { name: /older campaigns/ }),
+    ).toBeNull();
   });
 
   test("a malformed 200 body says the versions differ, not 'unreachable'", async () => {
