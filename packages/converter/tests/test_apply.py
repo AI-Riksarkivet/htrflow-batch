@@ -393,9 +393,22 @@ class FakeCluster(Cluster):
         return [c for c in self.calls if c[0] == verb]
 
 
+#: A live campaign Job's parallelism and completions, as the fixtures render
+#: them (checked by test_the_seeded_job_specs_are_the_rendered_ones): apply
+#: holds a live Job's pod count against the render.
+JOB_SPECS = {
+    "kyrk": {"parallelism": 10, "completions": 3},
+    "loc": {"parallelism": 5, "completions": 2},
+    "pausy": {"parallelism": 10, "completions": 1},
+}
+
+
 def _object(kind: str, name: str, labelled: bool = True) -> dict:
     labels = dict([CAMPAIGN_SELECTOR.split("=")]) if labelled else {}
-    return {"kind": kind, "metadata": {"name": name, "labels": labels}}
+    obj = {"kind": kind, "metadata": {"name": name, "labels": labels}}
+    if kind == "Job" and name in JOB_SPECS:
+        obj["spec"] = dict(JOB_SPECS[name])
+    return obj
 
 
 def _workload(name: str, active: bool | None) -> dict:
@@ -754,7 +767,7 @@ def test_the_apply_records_a_finished_job_nobody_looked_at(tmp_path, cluster, ca
     live_job["metadata"]["namespace"] = NS
     live_job["metadata"]["labels"]["htrflow.riksarkivet.se/campaign"] = "kyrk"
     live_job["metadata"]["labels"]["htrflow.riksarkivet.se/pipeline"] = "demo-v1"
-    live_job["spec"] = {"completions": 3}
+    live_job["spec"] = dict(JOB_SPECS["kyrk"])
     live_job["status"] = {
         "conditions": [{"type": "Complete", "status": "True"}],
         "succeeded": 3,
@@ -775,7 +788,7 @@ def test_the_apply_records_a_finished_job_nobody_looked_at(tmp_path, cluster, ca
 def test_a_running_job_is_not_recorded_by_the_apply(tmp_path, cluster):
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     live_job = _object("Job", "kyrk")
-    live_job["spec"] = {"completions": 3}
+    live_job["spec"] = dict(JOB_SPECS["kyrk"])
     live_job["status"] = {"conditions": [], "active": 1}
     cluster.live = [_record("kyrk"), live_job]
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
@@ -847,7 +860,7 @@ def test_a_refused_record_write_does_not_stop_the_apply(tmp_path, cluster, capsy
     what is refused."""
     live_job = _object("Job", "kyrk")
     live_job["metadata"]["namespace"] = NS
-    live_job["spec"] = {"completions": 3}
+    live_job["spec"] = dict(JOB_SPECS["kyrk"])
     live_job["status"] = {
         "conditions": [{"type": "Complete", "status": "True"}],
         "succeeded": 3,
@@ -878,7 +891,7 @@ def test_the_applys_record_cannot_erase_the_failed_volumes_the_api_wrote(
 
     live_job = _object("Job", "kyrk")
     live_job["metadata"]["namespace"] = NS
-    live_job["spec"] = {"completions": 3}
+    live_job["spec"] = dict(JOB_SPECS["kyrk"])
     live_job["status"] = {
         "conditions": [{"type": "Complete", "status": "True"}],
         "succeeded": 3,
@@ -901,7 +914,7 @@ def test_a_refused_record_write_still_lets_the_live_job_decide(
     need (B76)."""
     live_job = _object("Job", "kyrk")
     live_job["metadata"]["namespace"] = NS
-    live_job["spec"] = {"completions": 3}
+    live_job["spec"] = dict(JOB_SPECS["kyrk"])
     live_job["status"] = {
         "conditions": [{"type": "Complete", "status": "True"}],
         "succeeded": 3,
@@ -1498,7 +1511,6 @@ def test_a_server_lost_mid_apply_stops_it_rather_than_refusing_the_rest(
 def _running_job(name: str) -> dict:
     job = _object("Job", name)
     job["metadata"]["uid"] = f"uid-{name}"
-    job["spec"] = {"completions": 3}
     job["status"] = {"conditions": [], "active": 1}
     return job
 
@@ -1672,7 +1684,7 @@ def test_the_web_and_the_apply_share_the_status_record_by_field(tmp_path, cluste
     cluster.server_side_apply(record, WEB_MANAGER)
     live_job = _object("Job", "kyrk")
     live_job["metadata"]["namespace"] = NS
-    live_job["spec"] = {"completions": 3}
+    live_job["spec"] = dict(JOB_SPECS["kyrk"])
     live_job["status"] = {
         "conditions": [{"type": "Failed", "status": "True"}],
         "succeeded": 2,
@@ -2162,3 +2174,47 @@ def test_sigterm_releases_the_lease(tmp_path, cluster):
     assert e.value.code == 143
     assert cluster.leases["htrflow-campaigns-apply"]["spec"]["holderIdentity"] is None
     assert signal.getsignal(signal.SIGTERM) is before, "the handler is put back"
+
+
+# --- a window change under a running campaign, held against the cluster --
+
+
+def test_a_window_change_under_a_running_campaign_is_refused_by_the_live_job(
+    tmp_path, cluster, capsys
+):
+    """Kueue stops every pod of an admitted Job whose pod count --
+    min(parallelism, completions) -- no longer matches its Workload, and
+    queues the campaign again. `validate` holds that against `rendered/`,
+    which can lag the cluster; the live Job is the record apply holds it
+    against, before anything is sent."""
+    repo = _repo(tmp_path)
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "one")]) == 0
+    _edit(repo / "campaigns" / "kyrk.yaml", window=1)
+    cluster.calls.clear()
+    capsys.readouterr()
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "two")]) == 1
+    err = capsys.readouterr().err
+    assert "campaign kyrk runs 3 pods at a time and would now run 1" in err
+    assert "pause the campaign first" in err
+    assert cluster.of("apply") == [] and cluster.of("dry-run") == []
+
+
+def test_a_window_change_under_a_paused_campaign_is_applied(tmp_path, cluster):
+    """The way the sentence says: a suspended Job holds no quota, and Kueue
+    updates its Workload in place."""
+    repo = _repo(tmp_path)
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "one")]) == 0
+    _live(cluster, "kyrk")["spec"]["suspend"] = True
+    _edit(repo / "campaigns" / "kyrk.yaml", window=1)
+    cluster.calls.clear()
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "two")]) != 1
+    assert ("dry-run", "Job", "kyrk") in cluster.calls
+
+
+def test_the_seeded_job_specs_are_the_rendered_ones(tmp_path):
+    repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
+    assert cli.main(["render", str(repo), "--out", str(out)]) == 0
+    for name, spec in JOB_SPECS.items():
+        docs = yaml.safe_load_all((out / "campaigns" / f"{name}.yaml").read_text())
+        (job,) = [d for d in docs if d["kind"] == "Job"]
+        assert {k: job["spec"][k] for k in spec} == spec, name

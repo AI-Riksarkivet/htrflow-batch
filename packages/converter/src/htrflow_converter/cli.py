@@ -666,6 +666,18 @@ _LIVE_MOVED = (
     "nothing was applied"
 )
 _KEPT_PAIR = "{name}: left as it was, since Job/{job} was refused"
+#: `validate` holds a window change against `rendered/`, which can lag the
+#: cluster. Kueue v0.19 (``ensureOneWorkload``) stops every pod of an
+#: admitted Job whose pod count no longer matches its Workload and queues it
+#: again; a suspended Job's Workload is updated in place.
+_LIVE_WINDOW = (
+    "campaign {name} runs {before} pods at a time and would now run {after}: "
+    "Kueue stops every running pod of an admitted Job whose parallelism "
+    "changes and queues the campaign again — put its window back (the "
+    "campaign's window:, or the window cap in converter.yaml), or pause the "
+    "campaign first (suspend: true), change the window once it is paused, "
+    "then resume it — nothing was applied"
+)
 #: The pipeline half of the same backstop (C-7). A pipeline ConfigMap is
 #: mutable, and a live campaign Job mounts it by name: an edited recipe
 #: applied under one runs every index not yet started on different steps,
@@ -685,10 +697,24 @@ def _moved_live(cluster, pipelines: list[dict], campaigns: list[dict]) -> str | 
     existed) is not held against. A refused READ is not caught here: a
     check that cannot be made is not a check that passed.
     """
-    moved = _moved_recipe(cluster, pipelines)
+    running = [
+        j
+        for j in cluster.labelled("Job")
+        if not j["metadata"]["name"].startswith(render.WARMUP_PREFIX)
+        and not _condition(j, "Complete", "Failed")
+    ]
+    moved = _moved_recipe(cluster, pipelines, running)
     if moved is not None:
         return moved
+    live_jobs = {j["metadata"]["name"]: j for j in running}
     for obj in campaigns:
+        live_job = live_jobs.get(obj["metadata"]["name"])
+        if obj["kind"] == "Job" and live_job is not None:
+            before, after = _pods_at_once(live_job), _pods_at_once(obj)
+            if before != after and not live_job["spec"].get("suspend"):
+                return _LIVE_WINDOW.format(
+                    name=obj["metadata"]["name"], before=before, after=after
+                )
         if obj["kind"] != "ConfigMap":
             continue
         live = cluster.get("ConfigMap", obj["metadata"]["name"])
@@ -701,22 +727,24 @@ def _moved_live(cluster, pipelines: list[dict], campaigns: list[dict]) -> str | 
     return None
 
 
-def _moved_recipe(cluster, pipelines: list[dict]) -> str | None:
+def _pods_at_once(job: dict) -> int:
+    """How many pods a campaign Job runs at once, as Kueue counts them for
+    its Workload."""
+    spec = job.get("spec") or {}
+    parallelism = spec.get("parallelism", 1)
+    return min(parallelism, spec.get("completions", parallelism))
+
+
+def _moved_recipe(cluster, pipelines: list[dict], running: list[dict]) -> str | None:
     """The render's own rule -- an id is held while a campaign runs it --
-    held against the cluster: which campaign Jobs still mount each pipeline
-    ConfigMap is read off the live Jobs, and a Job that has ended runs
-    nothing more. The steps are compared parsed, as ``render.recipe`` reads
-    them, so a YAML spelling change is not an edit."""
+    held against the cluster: which campaign Jobs that have not ended still
+    mount each pipeline ConfigMap is read off ``running``. The steps are
+    compared parsed, as ``render.recipe`` reads them, so a YAML spelling
+    change is not an edit."""
     rendered = [o for o in pipelines if o["kind"] == "ConfigMap"]
-    if not rendered:
-        return None
     users: dict[str, list[str]] = {}
-    for job in cluster.labelled("Job"):
+    for job in running if rendered else []:
         name = job["metadata"]["name"]
-        if name.startswith(render.WARMUP_PREFIX) or _condition(
-            job, "Complete", "Failed"
-        ):
-            continue
         pod = ((job.get("spec") or {}).get("template") or {}).get("spec") or {}
         for volume in pod.get("volumes") or []:
             mounted = (volume.get("configMap") or {}).get("name")
