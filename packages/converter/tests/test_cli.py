@@ -834,7 +834,7 @@ def _window_repo(tmp_path, campaign: str):
         (("converter.yaml", "window: 10\n", "window: 2\n"), 3, 2),
     ],
 )
-def test_a_window_change_under_a_rendered_campaign_is_refused(
+def test_a_window_change_under_a_rendered_campaign_is_warned_about(
     tmp_path, capsys, edit, before, after
 ):
     """audit 0923 C-11: Kueue (v0.19, the version the Makefile installs)
@@ -842,19 +842,24 @@ def test_a_window_change_under_a_rendered_campaign_is_refused(
     its admitted Workload's; when they differ it suspends the Job -- every
     running pod stopped -- deletes the Workload and queues the campaign
     again (jobframework `EquivalentToWorkload` / `ensureOneWorkload`: "No
-    matching Workload"). A window edit on a live campaign did exactly that."""
+    matching Workload"). Whether the campaign is running is the cluster's to
+    say, not the repo's -- a finished or never-admitted one changes nothing
+    -- so offline this is a warning with the safe way, and the apply, which
+    sees the cluster, holds a running one (review 6)."""
     repo = _window_repo(tmp_path, "window: 3\n")
     rel, old, new = edit
     path = repo / rel
     path.write_text(path.read_text().replace(old, new))
     capsys.readouterr()
-    assert main(["validate", str(repo)]) == 1
-    said = capsys.readouterr().out
-    assert said.startswith(
-        f"campaign big runs {before} pods at a time and would now run {after}"
-    ), said
-    assert "pause the campaign first" in said
-    assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 1
+    assert main(["validate", str(repo)]) == 0
+    said = capsys.readouterr()
+    assert said.out == ""
+    assert said.err.startswith(
+        f"warning: campaign big runs {before} pods at a time and would now run {after}"
+    ), said.err
+    assert "pause it first" in said.err
+    assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    assert "warning: campaign big runs" in capsys.readouterr().err
 
 
 def test_a_window_change_that_moves_no_pod_count_is_allowed(tmp_path, capsys):
@@ -863,7 +868,9 @@ def test_a_window_change_that_moves_no_pod_count_is_allowed(tmp_path, capsys):
     repo = _window_repo(tmp_path, "window: 10\n")
     path = repo / "campaigns" / "big.yaml"
     path.write_text(path.read_text().replace("window: 10\n", "window: 8\n"))
-    assert main(["validate", str(repo)]) == 0, capsys.readouterr().out
+    capsys.readouterr()
+    assert main(["validate", str(repo)]) == 0
+    assert capsys.readouterr().err == ""
 
 
 def test_a_window_change_on_a_campaign_paused_before_and_after_is_allowed(
@@ -875,7 +882,9 @@ def test_a_window_change_on_a_campaign_paused_before_and_after_is_allowed(
     repo = _window_repo(tmp_path, "window: 3\nsuspend: true\n")
     path = repo / "campaigns" / "big.yaml"
     path.write_text(path.read_text().replace("window: 3\n", "window: 4\n"))
-    assert main(["validate", str(repo)]) == 0, capsys.readouterr().out
+    capsys.readouterr()
+    assert main(["validate", str(repo)]) == 0
+    assert capsys.readouterr().err == ""  # nothing to warn about
 
 
 class _FakeDulwichRepo:
