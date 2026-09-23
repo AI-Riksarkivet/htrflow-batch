@@ -290,7 +290,8 @@ Verify a published image against the workflow identity:
 
 ```bash
 # signature (cosign 3 or later; older versions report "no signatures found").
-# Anchored to main, the only ref publishing runs from.
+# Anchored to main, the only ref publishing runs from: an unanchored
+# `publish\.yml@` would also accept a signature made from any other ref.
 cosign verify docker.io/riksarkivet/htrflow-batch:<version> \
   --certificate-identity-regexp '^https://github\.com/AI-Riksarkivet/htrflow-batch/\.github/workflows/publish\.yml@refs/heads/main$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
