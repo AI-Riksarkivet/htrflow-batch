@@ -35,6 +35,10 @@ from .render import CAMPAIGN_SELECTOR, WARMUP_PREFIX
 #: `last-applied-configuration` annotation played, kept by the API server.
 FIELD_MANAGER = "htrflow-campaigns"
 APPLY_PATCH = "application/apply-patch+yaml"
+#: Holds a resuming campaign Job's ``spec.suspend: true`` for Kueue
+#: (``Cluster.hold_suspend``). A manager of its own, so that the apply's
+#: own manager can stop sending the field without the field going away.
+SUSPEND_HOLDER = "htrflow-campaigns-suspend"
 MERGE_PATCH = "application/merge-patch+json"
 
 #: The Kueue API version the chart creates its queue objects in, and the one
@@ -244,6 +248,15 @@ def _raw(
         )
 
 
+def _suspend_owners(meta: dict) -> set[str]:
+    """The field managers that own ``spec.suspend``, per ``managedFields``."""
+    return {
+        entry.get("manager", "")
+        for entry in meta.get("managedFields") or []
+        if "f:suspend" in ((entry.get("fieldsV1") or {}).get("f:spec") or {})
+    }
+
+
 class Cluster:
     """One namespace, reached through the kubeconfig or the pod's own token."""
 
@@ -298,6 +311,44 @@ class Cluster:
             _content_type=APPLY_PATCH,
             **extra,
         )
+
+    def hold_suspend(self, live: dict) -> None:
+        """Hand a Job's ``spec.suspend: true`` to ``SUSPEND_HOLDER`` when
+        ``FIELD_MANAGER`` alone owns it (``cli._before_resume`` says why).
+
+        Server-side apply's own way to move a field between managers: the
+        new one applies the same value, which is shared ownership and no
+        conflict, and the old one may then stop sending it. Never forced: a
+        409 means Kueue changed the field in between, so it is Kueue's, and
+        there is nothing left to hold.
+        """
+        meta = live.get("metadata") or {}
+        if (live.get("spec") or {}).get("suspend") is not True:
+            return
+        if _suspend_owners(meta) != {FIELD_MANAGER}:
+            return
+        name = meta["name"]
+        body = {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {"name": name, "namespace": self.namespace},
+            "spec": {"suspend": True},
+        }
+        with _errors("apply", "Job", name, self.namespace):
+            try:
+                _retrying(
+                    self._method("Job", "patch", name),
+                    name,
+                    self.namespace,
+                    body,
+                    field_manager=SUSPEND_HOLDER,
+                    _content_type=APPLY_PATCH,
+                    _preload_content=False,
+                    _request_timeout=REQUEST_TIMEOUT,
+                )
+            except ApiException as e:
+                if e.status != 409:
+                    raise
 
     def replace_job(self, obj: dict) -> dict:
         """Delete Job ``obj`` and apply it again -- the only way to give a

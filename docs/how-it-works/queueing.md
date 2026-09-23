@@ -193,6 +193,16 @@ So `cluster.sync_pause` runs last in every apply:
 
 Deactivating a Workload evicts its pods and keeps every completed index. The
 Job then reads `suspend: true`. Reactivating continues from the next index.
+
+Resuming has one trap in server-side apply. A campaign paused before Kueue
+ever admitted it (a full queue) has `spec.suspend: true` owned by the
+apply's field manager alone. The resuming render no longer carries the
+field, and a field its last owner stops sending is removed, so the API
+server would put the default back: `false`, a Job that starts at once with
+no admission. The apply therefore hands the field to a second field manager
+of its own, `htrflow-campaigns-suspend`, first. That apply sends the same
+value and is never forced, so the field stays `true` until Kueue admits the
+reactivated Workload and flips it.
 Pausing costs `list` and `patch` on `workloads` (`templates/apply-rbac.yaml`,
 when the apply runs in-cluster). It also relies on Kueue behaviour that Kueue
 does not promise to keep. The campaign-file side is in
@@ -251,7 +261,7 @@ does not do is turn preemption on.
 
 | Field | Owner | Note |
 |---|---|---|
-| `job.spec.suspend` | **Kueue** | Set `true` by the webhook at CREATE, and `false` by the reconciler at admission |
+| `job.spec.suspend` | **Kueue** | Set `true` by the webhook at CREATE, and `false` by the reconciler at admission. The apply sets it `true` for a paused campaign, and holds it there through a resume (see [Pause](#pause)) |
 | Job label `kueue.x-k8s.io/queue-name` | converter | Effectively immutable once admitted: removing it releases no quota and blocks resuming |
 | `completions`, `parallelism`, `backoffLimitPerIndex`, `maxFailedIndexes`, `podFailurePolicy`, `ttlSecondsAfterFinished` | converter | Kueue reads `parallelism` into the podSet and ignores the rest |
 | `pod.spec.containers[*].resources.requests` | converter | The numbers quota is counted in |

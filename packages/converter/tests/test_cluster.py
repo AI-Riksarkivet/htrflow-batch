@@ -29,6 +29,7 @@ from htrflow_converter.cluster import (
     APPLY_PATCH,
     FIELD_MANAGER,
     REQUEST_TIMEOUT,
+    SUSPEND_HOLDER,
     Cluster,
     ClusterError,
     Unreachable,
@@ -106,6 +107,44 @@ def test_apply_is_a_server_side_apply_patch(cluster, obj, path):
     assert call["query"]["fieldManager"] == FIELD_MANAGER
     assert call["query"]["force"] is True
     assert call["body"] is obj, "the manifest itself is the patch"
+
+
+def _suspended(*managers: str) -> dict:
+    fields = {"f:spec": {"f:suspend": {}}}
+    return {
+        "metadata": {
+            "name": "kyrk",
+            "managedFields": [{"manager": m, "fieldsV1": fields} for m in managers],
+        },
+        "spec": {"suspend": True},
+    }
+
+
+def test_holding_suspend_is_an_unforced_apply_of_that_field_alone(cluster):
+    """The hand-over server-side apply prescribes: the same value, under a
+    manager of its own, never forced -- so it can never take the field from
+    Kueue, only share it with the apply's own manager."""
+    cluster.hold_suspend(_suspended(FIELD_MANAGER))
+    (call,) = cluster.calls
+    assert call["path"] == "/apis/batch/v1/namespaces/htr-batch/jobs/kyrk"
+    assert call["content_type"] == APPLY_PATCH
+    assert call["query"]["fieldManager"] == SUSPEND_HOLDER
+    assert "force" not in call["query"]
+    assert call["body"]["spec"] == {"suspend": True}
+
+
+def test_suspend_is_held_only_when_the_apply_alone_owns_it(cluster):
+    cluster.hold_suspend(_suspended(FIELD_MANAGER, "kueue"))  # Kueue holds it
+    cluster.hold_suspend({**_suspended(FIELD_MANAGER), "spec": {"suspend": False}})
+    assert cluster.calls == []
+
+
+def test_a_conflict_while_holding_suspend_means_kueue_has_it(cluster, monkeypatch):
+    def conflict(*args, **kwargs):
+        raise ApiException(status=409, reason="Conflict")
+
+    monkeypatch.setattr(client.ApiClient, "call_api", conflict)
+    cluster.hold_suspend(_suspended(FIELD_MANAGER))  # no exception
 
 
 def test_a_dry_run_apply_is_the_same_patch_with_dry_run_all(cluster):
