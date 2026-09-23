@@ -75,30 +75,32 @@ def admission(
     user: str | None = None,
     operation: str = "CREATE",
     old: dict | None = None,
+    cluster: list[dict] | None = None,
 ) -> tuple[str, str]:
     """("refused" | "admitted" | "not matched", CLI output) for one request.
 
     An error is neither verdict -- a policy the CLI cannot evaluate would
     otherwise read as "admitted" -- so it fails the test outright.
+
+    ``cluster`` is what a rule's `apiCall` finds on the API server: the CLI
+    answers those from the resources it was given, so these go into the
+    same file after ``resource``. They are checked too; a test on
+    ``resource`` alone reads the lines that name it.
     """
     res = tmp_path / "resource.yaml"
-    res.write_text(yaml.safe_dump(resource), encoding="utf-8")
+    res.write_text(yaml.safe_dump_all([resource, *(cluster or [])]), encoding="utf-8")
     cmd = ["kyverno", "apply", str(policy), "--resource", str(res), "--remove-color"]
     global_values: dict = {"request.operation": operation}
     if old is not None:
         global_values["request.oldObject"] = _replacing(resource, old)
+    doc: dict = {
+        "apiVersion": "cli.kyverno.io/v1alpha1",
+        "kind": "Value",
+        "metadata": {"name": "request"},
+        "globalValues": global_values,
+    }
     values = tmp_path / "values.yaml"
-    values.write_text(
-        yaml.safe_dump(
-            {
-                "apiVersion": "cli.kyverno.io/v1alpha1",
-                "kind": "Value",
-                "metadata": {"name": "request"},
-                "globalValues": global_values,
-            }
-        ),
-        encoding="utf-8",
-    )
+    values.write_text(yaml.safe_dump(doc), encoding="utf-8")
     cmd += ["--values-file", str(values)]
     if user is not None:
         info = tmp_path / "userinfo.yaml"
@@ -972,3 +974,99 @@ def test_the_job_image_can_be_held_to_the_wrapper_repository(tmp_path: Path):
         verdict, out = admission(tmp_path, policy, j, user=APPLY_SA)
         assert verdict == "refused", out
         assert "htrflow-web" in out
+
+
+# --- D-2: the pause sync patches spec.active of a converter Job's Workload -
+
+WORKLOAD = f"{NAMESPACE}/Workload/job-kyrk-1a2b3"
+
+
+def workload(active: bool = True, owner: str | None = "kyrk") -> dict:
+    meta: dict = {
+        "name": "job-kyrk-1a2b3",
+        "namespace": NAMESPACE,
+        "labels": {"kueue.x-k8s.io/job-uid": "u-1"},
+    }
+    if owner is not None:
+        meta["ownerReferences"] = [
+            {"apiVersion": "batch/v1", "kind": "Job", "name": owner, "uid": "u-1"}
+        ]
+    return {
+        "apiVersion": "kueue.x-k8s.io/v1beta2",
+        "kind": "Workload",
+        "metadata": meta,
+        "spec": {"active": active, "queueName": "htr-batch", "priority": 0},
+    }
+
+
+def owner_job(name: str, labels: dict) -> dict:
+    """The Job the admission-time lookup finds."""
+    found = job(None)
+    found["metadata"] = {"name": name, "namespace": NAMESPACE, "labels": labels}
+    return found
+
+
+def _workload_verdict(verdict: str, out: str) -> str:
+    """The Workload's own verdict: its line, not the owner Job's, which the
+    CLI checks too."""
+    if verdict == "refused" and f"resource {WORKLOAD} failed" not in out:
+        return "admitted"
+    return verdict
+
+
+@pytest.mark.parametrize("active", [False, True])
+def test_the_apply_identity_pauses_and_resumes_a_converter_workload(
+    tmp_path: Path, rbac_scope: Path, active: bool
+):
+    verdict, out = admission(
+        tmp_path,
+        rbac_scope,
+        workload(active=active),
+        user=APPLY_SA,
+        operation="UPDATE",
+        old=workload(active=not active),
+        cluster=[owner_job("kyrk", CONVERTER)],
+    )
+    assert verdict == "admitted", out
+
+
+def test_the_apply_identity_changes_nothing_but_spec_active(
+    tmp_path: Path, rbac_scope: Path
+):
+    moved = workload()
+    moved["spec"]["queueName"] = "elsewhere"
+    verdict, out = admission(
+        tmp_path,
+        rbac_scope,
+        moved,
+        user=APPLY_SA,
+        operation="UPDATE",
+        old=workload(),
+        cluster=[owner_job("kyrk", CONVERTER)],
+    )
+    assert _workload_verdict(verdict, out) == "refused", out
+
+
+@pytest.mark.parametrize(
+    "owner,cluster",
+    [
+        ("team-job", [owner_job("team-job", {"team": "other"})]),
+        ("gone", [owner_job("kyrk", CONVERTER)]),
+        (None, [owner_job("kyrk", CONVERTER)]),
+    ],
+    ids=["foreign-job", "job-gone", "no-job"],
+)
+def test_the_apply_identity_cannot_pause_a_workload_it_did_not_render(
+    tmp_path: Path, rbac_scope: Path, owner: str | None, cluster: list
+):
+    verdict, out = admission(
+        tmp_path,
+        rbac_scope,
+        workload(active=False, owner=owner),
+        user=APPLY_SA,
+        operation="UPDATE",
+        old=workload(active=True, owner=owner),
+        cluster=cluster,
+    )
+    assert _workload_verdict(verdict, out) == "refused", out
+    assert "apply-pauses-only-converter-workloads" in out
