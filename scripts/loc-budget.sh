@@ -2,7 +2,7 @@
 # Non-test line budgets from the spec (§1). Fails the build when exceeded.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-count() { find "$1" -type f \( "${@:2}" \) -not -path '*/tests/*' -not -name '*.test.ts' -not -path '*/node_modules/*' -print0 | xargs -0 cat 2>/dev/null | wc -l; }
+count() { find "$1" -type f \( "${@:2}" \) -not -path '*/tests/*' -not -path '*/fixtures/*' -not -name '*.test.ts' -not -path '*/node_modules/*' -print0 | xargs -0 cat 2>/dev/null | wc -l; }
 check() { local name=$1 got=$2 max=$3; printf '%-10s %6d / %d\n' "$name" "$got" "$max"; [ "$got" -le "$max" ] || { echo "::error::$name over budget ($got > $max)"; fail=1; }; }
 fail=0
 # raised for the Task 11 stage split + publish.py, then again for the
@@ -1284,7 +1284,12 @@ check web       "$(count packages/web/src -name '*.py')" 2583
 # maximum (F-3), the per-field sourceUrl parse (F-7), /alto held to the
 # results base (F-6); the test round's dead-code removal and the verify-count
 # fix net to zero.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5158
+# 5158 -> 5176: the models line reads a processor's revision separately from
+# the model's, so a processor_kwargs pin written first is never shown as the
+# model's revision. Test fixtures (src/lib/fixtures: the generated contract
+# JSON and the dropped-key helper the contract tests share) are test support,
+# like *.test.ts, and are not counted.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5176
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
