@@ -16,10 +16,12 @@ is asserted in ``test_cluster.py`` against the real client.
 """
 
 import copy
+import functools
 import itertools
 import json
 import shutil
 import subprocess
+import tempfile
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from pathlib import Path
@@ -131,6 +133,22 @@ def _fields_v1(paths: set[tuple]) -> dict:
         for key in path:
             node = node.setdefault(f"f:{key}", {})
     return tree
+
+
+def _immutable(kind: str, name: str, field: str) -> ApiException:
+    """The API server's answer to a change of a field fixed at create: 422
+    Invalid, the rejected value quoted back, the field named in
+    ``details.causes`` -- which is where ``Cluster`` reads it from."""
+    e = ApiException(status=422, reason="Unprocessable Entity")
+    why = "Invalid value: core.PodTemplateSpec{…}: field is immutable"
+    e.body = json.dumps({
+        "kind": "Status", "reason": "Invalid", "code": 422,
+        "message": f'{kind}.batch "{name}" is invalid: {field}: {why}',
+        "details": {"name": name, "group": "batch", "kind": kind, "causes": [
+            {"reason": "FieldValueInvalid", "message": why, "field": field},
+        ]},
+    })  # fmt: skip
+    return e
 
 
 class _Kueue:
@@ -329,6 +347,12 @@ class FakeCluster(Cluster):
             for (k, path), default in _DEFAULTS.items():
                 if k == kind and _at(stored, path) is _MISSING:
                     _put(stored, path, default)
+        if (
+            current is not None
+            and kind == "Job"
+            and _at(current, _TEMPLATE) != _at(stored, _TEMPLATE)
+        ):
+            raise _immutable(kind, name, ".".join(_TEMPLATE))
         owners[mine] = set(sent)
         if not dry_run:
             self._store(kind, name, stored, owners)
@@ -409,22 +433,38 @@ class FakeCluster(Cluster):
         return [c for c in self.calls if c[0] == verb]
 
 
-#: A live campaign Job's parallelism and completions, as the fixtures render
-#: them (checked by test_the_seeded_job_specs_are_the_rendered_ones): apply
-#: holds a live Job's pod count against the render.
-JOB_SPECS = {
-    "kyrk": {"parallelism": 10, "completions": 3},
-    "loc": {"parallelism": 5, "completions": 2},
-    "pausy": {"parallelism": 10, "completions": 1},
-}
+@functools.cache
+def _rendered() -> dict[tuple[str, str], dict]:
+    """What the fixture repo renders -- with the paused campaign ``pausy``
+    the tests add -- by ``(kind, name)``, from the renderer itself: a live
+    Job is seeded as the Job the apply would send, pod template and all,
+    so the fake's immutable template holds it the way the API server does."""
+    with tempfile.TemporaryDirectory() as t:
+        repo = _repo(Path(t), paused="pausy")
+        campaigns, pipelines, cfg = load(
+            repo / "campaigns", repo / "pipelines", repo / "converter.yaml"
+        )
+    objects = [o for p in pipelines.values() for o in render.pipeline_objects(p, cfg)]
+    for c in campaigns:
+        objects += render.campaign_objects(c, pipelines[c.pipeline], cfg)
+    return {(o["kind"], o["metadata"]["name"]): o for o in objects}
 
 
 def _object(kind: str, name: str, labelled: bool = True) -> dict:
+    """A live object: a rendered Job as it was rendered, anything else a
+    stub carrying the converter's label (or not)."""
+    if kind == "Job" and (kind, name) in _rendered():
+        return copy.deepcopy(_rendered()[(kind, name)])
     labels = dict([CAMPAIGN_SELECTOR.split("=")]) if labelled else {}
-    obj = {"kind": kind, "metadata": {"name": name, "labels": labels}}
-    if kind == "Job" and name in JOB_SPECS:
-        obj["spec"] = dict(JOB_SPECS[name])
-    return obj
+    return {"kind": kind, "metadata": {"name": name, "labels": labels}}
+
+
+def _stale(job: dict) -> dict:
+    """``job`` as an earlier converter release rendered it: another pod
+    template, which the live Job cannot be changed to."""
+    meta = job["spec"]["template"].setdefault("metadata", {})
+    meta.setdefault("annotations", {})["rendered-by"] = "an earlier release"
+    return job
 
 
 def _workload(name: str, active: bool | None) -> dict:
@@ -694,21 +734,11 @@ def test_the_provenance_is_not_written_into_the_rendered_files(tmp_path, cluster
 # --- a finished campaign is not re-run once its Job is reaped (B76) ------
 
 
-def _rendered_volumes(name: str = "kyrk") -> str:
-    """What the converter writes into this campaign's ConfigMap, taken from
-    the renderer rather than spelled out here: `apply` leaves a campaign
-    alone only when the stored `volumes.txt` matches the rendered one byte
-    for byte, so a test that hardcoded the line format would go quietly
-    green the day that format changed."""
-    campaigns, pipelines, cfg = load(
-        GOOD / "campaigns", GOOD / "pipelines", GOOD / "converter.yaml"
-    )
-    c = next(campaign for campaign in campaigns if campaign.name == name)
-    objects = render.campaign_objects(c, pipelines[c.pipeline], cfg)
-    return objects[0]["data"]["volumes.txt"]
-
-
-VOLUMES = _rendered_volumes()
+#: What the converter writes into kyrk's ConfigMap, taken from the renderer:
+#: `apply` leaves a campaign alone only when the stored `volumes.txt` matches
+#: the rendered one, so a hardcoded line format would go quietly green the
+#: day that format changed.
+VOLUMES = _rendered()[("ConfigMap", "campaign-kyrk")]["data"]["volumes.txt"]
 
 
 def _record(name: str, volumes: str = VOLUMES) -> dict:
@@ -798,7 +828,6 @@ def test_the_apply_records_a_finished_job_nobody_looked_at(tmp_path, cluster, ca
     live_job["metadata"]["namespace"] = NS
     live_job["metadata"]["labels"]["htrflow.riksarkivet.se/campaign"] = "kyrk"
     live_job["metadata"]["labels"]["htrflow.riksarkivet.se/pipeline"] = "demo-v1"
-    live_job["spec"] = dict(JOB_SPECS["kyrk"])
     live_job["status"] = {
         "conditions": [{"type": "Complete", "status": "True"}],
         "succeeded": 3,
@@ -819,7 +848,6 @@ def test_the_apply_records_a_finished_job_nobody_looked_at(tmp_path, cluster, ca
 def test_a_running_job_is_not_recorded_by_the_apply(tmp_path, cluster):
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     live_job = _object("Job", "kyrk")
-    live_job["spec"] = dict(JOB_SPECS["kyrk"])
     live_job["status"] = {"conditions": [], "active": 1}
     cluster.live = [_record("kyrk"), live_job]
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
@@ -906,7 +934,6 @@ def test_a_refused_record_write_does_not_stop_the_apply(tmp_path, cluster, capsy
     what is refused."""
     live_job = _object("Job", "kyrk")
     live_job["metadata"]["namespace"] = NS
-    live_job["spec"] = dict(JOB_SPECS["kyrk"])
     live_job["status"] = {
         "conditions": [{"type": "Complete", "status": "True"}],
         "succeeded": 3,
@@ -934,7 +961,6 @@ def test_a_refused_record_write_still_lets_the_live_job_decide(
     need (B76)."""
     live_job = _object("Job", "kyrk")
     live_job["metadata"]["namespace"] = NS
-    live_job["spec"] = dict(JOB_SPECS["kyrk"])
     live_job["status"] = {
         "conditions": [{"type": "Complete", "status": "True"}],
         "succeeded": 3,
@@ -1619,9 +1645,19 @@ def test_a_field_manager_owns_what_it_applies_and_conflicts_are_409s(cluster):
     assert cluster.find("Job", "j")["spec"] == {"template": 1, "x": 1, "suspend": False}
     # Set to the same value by two managers, it is theirs jointly.
     cluster.server_side_apply(job, "a")
-    cluster.server_side_apply({**job, "spec": {"suspend": True}}, "b")
+    cluster.server_side_apply({**job, "spec": {"template": 1, "suspend": True}}, "b")
     cluster.server_side_apply({**job, "spec": {"x": 1}}, "a")
     assert cluster.find("Job", "j")["spec"]["suspend"] is True
+    # A Job's pod template is fixed at create: changing it -- forced, as a
+    # dry run, or by letting it go -- is a 422 naming the field.
+    for kw in ({"force": True}, {"dry_run": True}):
+        with pytest.raises(ApiException) as e:
+            cluster.server_side_apply({**job, "spec": {"template": 2}}, "b", **kw)
+        assert e.value.status == 422
+        assert cluster_mod._immutable_fields(e.value) == ("spec.template",)
+    with pytest.raises(ApiException):
+        cluster.server_side_apply({**job, "spec": {"suspend": True}}, "b")
+    assert cluster.find("Job", "j")["spec"]["template"] == 1
 
 
 def test_unpausing_a_campaign_kueue_suspended_leaves_suspend_to_kueue(
@@ -1695,7 +1731,6 @@ def test_the_web_and_the_apply_share_the_status_record_by_field(tmp_path, cluste
     cluster.server_side_apply(record, WEB_MANAGER)
     live_job = _object("Job", "kyrk")
     live_job["metadata"]["namespace"] = NS
-    live_job["spec"] = dict(JOB_SPECS["kyrk"])
     live_job["status"] = {
         "conditions": [{"type": "Failed", "status": "True"}],
         "succeeded": 2,
@@ -2279,15 +2314,6 @@ def test_a_window_change_under_a_paused_campaign_is_applied(tmp_path, cluster):
     cluster.calls.clear()
     assert cli.main(["apply", str(repo), "--out", str(tmp_path / "two")]) == 0
     assert ("dry-run", "Job", "kyrk") in cluster.calls
-
-
-def test_the_seeded_job_specs_are_the_rendered_ones(tmp_path):
-    repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
-    assert cli.main(["render", str(repo), "--out", str(out)]) == 0
-    for name, spec in JOB_SPECS.items():
-        docs = yaml.safe_load_all((out / "campaigns" / f"{name}.yaml").read_text())
-        (job,) = [d for d in docs if d["kind"] == "Job"]
-        assert {k: job["spec"][k] for k in spec} == spec, name
 
 
 # --- two running campaigns on one pipeline never share a volume (C-13) ---
