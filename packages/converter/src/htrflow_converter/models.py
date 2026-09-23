@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import date, datetime
 from string import Formatter
 from typing import Any
 from urllib.parse import urlsplit
@@ -273,6 +274,32 @@ def parse_source_line(line: str) -> tuple[str, tuple[str, ...]]:
     return vid, (source,)
 
 
+#: A volume id is text, and only a YAML *string* is text as written: YAML
+#: 1.1 reads an unquoted ``0012345`` as octal, ``1:20`` as base 60, ``1.10``
+#: as a float and ``yes`` as true. ``str()`` of that result is an id the
+#: author never wrote (``5349``, ``80``, ``1.1``, ``True``), under which the
+#: volume would be fetched and its results published (audit 0923 C-5).
+_NOT_TEXT_ID = (
+    "has an id that YAML reads as {kind}, not as text — put it in quotes so "
+    'it stays as written: - "R0012345", or id: "R0012345"'
+)
+
+
+def _not_text(value: object) -> str | None:
+    """What YAML made of an id that is not a string, in the author's words;
+    ``None`` for a string. A list or a mapping is left to pydantic, whose
+    sentence for that already fits."""
+    if value is None:
+        return "nothing at all"
+    if isinstance(value, bool):
+        return f"true or false ({str(value).lower()})"
+    if isinstance(value, (int, float)):
+        return f"a number ({value})"
+    if isinstance(value, (date, datetime)):
+        return f"a date ({value.isoformat()})"
+    return None
+
+
 class Volume(BaseModel):
     #: Unknown keys rejected, as on every other model: a volume's stray
     #: ``pages: 1-10`` read as a page range to its author and was dropped
@@ -286,6 +313,9 @@ class Volume(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _expand(cls, data: Any, info: ValidationInfo) -> Any:
+        kind = _not_text(data.get("id") if isinstance(data, dict) else data)
+        if kind is not None and (not isinstance(data, dict) or "id" in data):
+            raise ValueError(_NOT_TEXT_ID.format(kind=kind))
         if isinstance(data, str):
             template = (info.context or {}).get("source_template", "")
             try:
@@ -299,7 +329,7 @@ class Volume(BaseModel):
                 'has no id — write the entry as "- R1", or as "- id: R1" '
                 "with manifest: or images:"
             )
-        return {**data, "id": str(data["id"])}
+        return data
 
     @field_validator("id")
     @classmethod

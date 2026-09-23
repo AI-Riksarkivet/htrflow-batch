@@ -741,3 +741,49 @@ def test_a_stray_volume_setting_is_refused_not_dropped(tmp_path):
         'campaigns/kyrk.yaml: volume 1 has "pages", which is not a setting a '
         "volume has — remove it, or fix the spelling"
     ]
+
+
+@pytest.mark.parametrize(
+    "entry,kind",
+    [
+        ("- id: 0012345\n    manifest: https://x.example/m", "a number (5349)"),
+        ("- id: 1:20\n    manifest: https://x.example/m", "a number (80)"),
+        ("- id: 1.10\n    manifest: https://x.example/m", "a number (1.1)"),
+        ("- id: 12_000\n    manifest: https://x.example/m", "a number (12000)"),
+        ("- id: 0x1F\n    manifest: https://x.example/m", "a number (31)"),
+        ("- id: yes\n    manifest: https://x.example/m", "true or false (true)"),
+        ("- id: 2024-01-31\n    manifest: https://x.example/m", "a date (2024-01-31)"),
+        ("- id:\n    manifest: https://x.example/m", "nothing at all"),
+        ("- 0012345", "a number (5349)"),
+        ("- 1.10", "a number (1.1)"),
+        ("- yes", "true or false (true)"),
+    ],
+)
+def test_a_volume_id_yaml_reads_as_something_else_is_refused(tmp_path, entry, kind):
+    """audit 0923 C-5: a mapping id went through YAML 1.1's number rules and
+    then str() -- `0012345` became volume `5349`, `1:20` became `80` -- and
+    the bare form said the entry "has no id". Both forms need a string."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "campaigns" / "kyrk.yaml").write_text(
+        f"pipeline: demo-v1\nvolumes:\n  {entry}\n"
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [
+        f"campaigns/kyrk.yaml: volume 1 has an id that YAML reads as {kind}, "
+        'not as text — put it in quotes so it stays as written: - "R0012345", '
+        'or id: "R0012345"'
+    ]
+
+
+def test_a_quoted_numeric_volume_id_stays_as_written(tmp_path):
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "campaigns" / "kyrk.yaml").write_text(
+        'pipeline: demo-v1\nvolumes:\n  - "0012345"\n'
+        '  - id: "1.10"\n    manifest: https://x.example/m\n'
+    )
+    campaigns, _, _ = _load(root)
+    kyrk = next(c for c in campaigns if c.name == "kyrk")
+    assert [v.id for v in kyrk.volumes] == ["0012345", "1.10"]
