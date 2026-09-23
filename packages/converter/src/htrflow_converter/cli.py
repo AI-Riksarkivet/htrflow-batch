@@ -869,6 +869,17 @@ _EMPTY_PRUNE = (
 )
 
 
+#: The repo names its namespace, and every policy the chart ships matches
+#: the release namespace alone: from a kubeconfig with wider rights than the
+#: chart's Role, a repo naming another namespace would put Jobs where none
+#: applies (S-7). ``--namespace`` is the caller saying which one it means.
+_OTHER_NAMESPACE = (
+    "{path} says namespace: {ns}, but this apply was run with --namespace "
+    "{want} — nothing was applied; apply this repo where it says, or fix its "
+    "converter.yaml"
+)
+
+
 def _apply(
     repo_dir: str,
     out_dir: str | None,
@@ -876,6 +887,7 @@ def _apply(
     pause_wait: int,
     dry_run: bool,
     allow_empty: bool = False,
+    namespace: str | None = None,
 ) -> int:
     with contextlib.ExitStack() as stack:
         if out_dir is None:
@@ -888,6 +900,19 @@ def _apply(
         # and waits on its warm-up Job's marker file.
         pipelines, campaigns = _objects(out / "pipelines"), _objects(out / "campaigns")
         empty_prune = prune and not campaigns and not allow_empty
+        # The namespace comes from converter.yaml, not from the rendered
+        # objects: a repo whose last campaign was deleted renders nothing at
+        # all, which is exactly when --prune has work to do. (_render just
+        # loaded this, so it cannot fail here.)
+        cfg = load(repo / "campaigns", repo / "pipelines", repo / "converter.yaml")[2]
+        if namespace is not None and namespace != cfg.namespace:
+            print(
+                _OTHER_NAMESPACE.format(
+                    path=repo / "converter.yaml", ns=cfg.namespace, want=namespace
+                ),
+                file=sys.stderr,
+            )
+            return 1
         if dry_run:
             for obj in pipelines + campaigns:
                 print(f"would apply: {obj['kind']}/{obj['metadata']['name']}")
@@ -905,11 +930,6 @@ def _apply(
         if empty_prune:
             print(_EMPTY_PRUNE.format(dir=repo / "campaigns"), file=sys.stderr)
             return 1
-        # The namespace comes from converter.yaml, not from the rendered
-        # objects: a repo whose last campaign was deleted renders nothing at
-        # all, which is exactly when --prune has work to do. (_render just
-        # loaded this, so it cannot fail here.)
-        cfg = load(repo / "campaigns", repo / "pipelines", repo / "converter.yaml")[2]
         # Imported here, not at module level, for the same reason `_cluster`
         # imports `.cluster` lazily: `validate`/`render` must never pay for
         # importing `kubernetes`.
@@ -1165,6 +1185,11 @@ def main(argv: list[str] | None = None) -> int:
         help="seconds to wait for a new paused campaign's Kueue Workload",
     )
     apply_p.add_argument(
+        "--namespace",
+        help="the namespace this apply is meant for; refused unless the "
+        "repo's converter.yaml names the same one",
+    )
+    apply_p.add_argument(
         "--dry-run",
         action="store_true",
         help="render and print what would be applied, without a cluster",
@@ -1182,6 +1207,7 @@ def main(argv: list[str] | None = None) -> int:
             args.pause_wait,
             args.dry_run,
             args.allow_empty,
+            args.namespace,
         )
     return _validate(args.repo_dir)
 
