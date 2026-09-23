@@ -7,6 +7,7 @@ import {
   describeProgress,
   describeUnreadable,
 } from "./reasons.js";
+import wrapper from "./fixtures/wrapper-contract.json";
 
 /**
  * The wording of every sentence a reader can meet is pinned here, verbatim.
@@ -33,10 +34,14 @@ describe("describeReason", () => {
     },
   );
 
+  // The messages below are the wrapper's own, as its termination log carries
+  // them: scripts/wrapper_contract.py writes them from `sigterm_reason`,
+  // `_verify` and `terminate` (with its 3500-character clip) into the
+  // fixture, and a pytest keeps the fixture current.
+  const { terminations } = wrapper;
+
   test("a drain or a pause", () => {
-    expect(
-      reasonOf({ stage: "stream", permanent: false, error: "SIGTERM" }),
-    ).toBe(
+    expect(reasonOf(terminations.sigterm)).toBe(
       "The pod was stopped by the cluster (a node drain or a pause); the " +
         "volume will be retried.",
     );
@@ -57,34 +62,23 @@ describe("describeReason", () => {
   });
 
   test("pages that failed the verify gate, with the page names", () => {
-    expect(
-      reasonOf({
-        stage: "verify",
-        permanent: false,
-        error:
-          "verify failed: 2 missing, 1 failed errors: p101: boom " +
-          "missing=['p012', 'p045'] failed=['p101']",
-      }),
-    ).toBe(
-      "2 pages are missing from the results (p012, p045); the volume is " +
+    // The failed page is accounted for and not named: only the missing ones
+    // come back.
+    expect(reasonOf(terminations.verifyMissing)).toBe(
+      "2 pages are missing from the results (0002, 0003); the volume is " +
         "retried automatically and only those pages are redone.",
     );
   });
 
   test("every page in the attempt failed: a broken model, not a volume", () => {
-    expect(
-      reasonOf({
-        stage: "verify",
-        error:
-          "verify failed: all 3 processed pages failed errors: p101: boom " +
-          "failed=['p101', 'p102', 'p103']",
-      }),
-    ).toBe(
+    expect(reasonOf(terminations.verifyAllFailed)).toBe(
       "None of the 3 pages processed in this attempt produced a result; the " +
         "volume is retried automatically — check the model and the GPU.",
     );
   });
 
+  // The two below are messages of an older wrapper, which wrote the page
+  // lists with no counts in front: the names are all there is to count.
   test("more failed pages than the sentence spells out", () => {
     expect(
       reasonOf({
@@ -124,42 +118,23 @@ describe("describeReason", () => {
     );
   });
 
-  // What the wrapper writes, in its own format: `_verify` builds both
-  // messages (packages/wrapper/src/htrflow_batch/main.py:550 and :561) and
-  // `terminate` clips the field at 3500 characters (main.py:115), which a
-  // few hundred page names fill on their own. The counts come first so the
-  // clip only ever takes names; the sentence must read them, not count the
-  // names that survived.
-  const pageList = (n: number) =>
-    Array.from({ length: n }, (_, i) => `'p${String(i + 1).padStart(4, "0")}'`);
-  const clipped = (message: string) =>
-    message.length > 3500 ? `${message.slice(0, 3500)}...(truncated)` : message;
-  const detail = (n: number) =>
-    " errors: " +
-    pageList(Math.min(n, 10))
-      .map((p) => `${p.slice(1, -1)}: CUDA error: out of memory`)
-      .join("; ") +
-    (n > 10 ? ` (+${n - 10} more)` : "");
-
-  test("main.py:550, clipped: the missing count is the wrapper's, not the names left", () => {
-    const error = clipped(
-      `verify failed: 600 missing, 0 failed missing=[${pageList(600).join(", ")}] failed=[]`,
-    );
+  // A few hundred page names fill the clip on their own. The counts come
+  // first so the clip only ever takes names; the sentence must read them,
+  // not count the names that survived.
+  test("clipped: the missing count is the wrapper's, not the names left", () => {
+    const error = terminations.verifyMissingClipped.error;
     expect(error).toMatch(/\.\.\.\(truncated\)$/);
-    expect(reasonOf({ stage: "verify", permanent: false, error })).toBe(
-      "600 pages are missing from the results (p0001, p0002, p0003 and 597 " +
+    expect(reasonOf(terminations.verifyMissingClipped)).toBe(
+      "600 pages are missing from the results (0001, 0002, 0003 and 597 " +
         "more); the volume is retried automatically and only those pages " +
         "are redone.",
     );
   });
 
-  test("main.py:561, clipped: every page failed, however many names were cut", () => {
-    const error = clipped(
-      `verify failed: all 400 processed pages failed${detail(400)} ` +
-        `failed=[${pageList(400).join(", ")}]`,
-    );
+  test("clipped: every page failed, however many names were cut", () => {
+    const error = terminations.verifyAllFailedClipped.error;
     expect(error).toMatch(/\.\.\.\(truncated\)$/);
-    expect(reasonOf({ stage: "verify", permanent: false, error })).toBe(
+    expect(reasonOf(terminations.verifyAllFailedClipped)).toBe(
       "None of the 400 pages processed in this attempt produced a result; " +
         "the volume is retried automatically — check the model and the GPU.",
     );
