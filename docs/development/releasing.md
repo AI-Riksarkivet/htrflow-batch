@@ -63,13 +63,13 @@ The transformers line is not either: both architectures install it from the
 htrflow is tested on ([Two transformers
 lines](../how-it-works/wrapper.md#model-handling)).
 
-**No compiler in the image.** Some torch builds route a few operators
-through Triton kernels of their own, and the first such call compiles
-Triton's CUDA launcher with the system C compiler — which would put a
-compiler and the kernel headers it needs into a runtime image. The image
+**No compiler in the image.** The torch builds the image carries route a
+few operators through Triton kernels of their own, and the first such call
+compiles Triton's CUDA launcher with the system C compiler — which would put
+a compiler and the kernel headers it needs into a runtime image. The image
 sets `TORCH_DISABLE_NATIVE_JIT=1` instead, so those operators run on
-torch's precompiled kernels, the same kinds the other torch builds run,
-and nothing compiles or loads new machine code at run time. The image
+torch's precompiled kernels on every architecture, and nothing compiles or
+loads new machine code at run time. The image
 build checks that the switch still holds: it fails if torch registers any
 JIT-compiled operator. Nothing else JIT-compiles by default: htrflow does
 not call `torch.compile`, and ultralytics leaves it off.
