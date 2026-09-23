@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 
 class ConfigError(ValueError):
@@ -74,6 +74,28 @@ class Config(BaseModel):
     #: into every ALTO (provenance.py) and the run manifest (publish.py).
     image_digest: str = Field("unknown", alias="IMAGE_DIGEST")
     htrflow_base_revision: str = Field("unknown", alias="HTRFLOW_BASE_REVISION")
+    #: Audit 0923 W-4: which attempt this is. The Job controller writes the
+    #: index's failure count on each pod (annotation ``batch.kubernetes.io/
+    #: job-index-failure-count``, through the downward API) and the Job its
+    #: ``backoffLimitPerIndex``; -1 is "not told", and then no attempt is
+    #: taken for the last one.
+    index_failure_count: int = Field(0, alias="INDEX_FAILURE_COUNT")
+    backoff_limit_per_index: int = Field(-1, alias="BACKOFF_LIMIT_PER_INDEX")
+
+    @field_validator("index_failure_count", "backoff_limit_per_index", mode="before")
+    @classmethod
+    def _unset_when_blank(cls, v: Any, info: ValidationInfo) -> Any:
+        """A downward-API variable whose annotation is absent is empty, and
+        must read as unset rather than fail the run as a bad setting."""
+        if isinstance(v, str) and not v.strip():
+            return cls.model_fields[str(info.field_name)].default
+        return v
+
+    @property
+    def last_attempt(self) -> bool:
+        """No retry follows this pod if it fails."""
+        limit = self.backoff_limit_per_index
+        return limit >= 0 and self.index_failure_count >= limit
 
     @field_validator("volume_ref", "pipeline_id")
     @classmethod

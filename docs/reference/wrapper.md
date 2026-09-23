@@ -204,6 +204,8 @@ so its settings are namespaced.
 | `MAX_IMAGE_PIXELS` | `100000000` | Cap on one image's decoded size, `width × height`, read from its header after the download (over it: the page fails without retry, and the file is deleted). The byte cap above bounds the transfer, this one bounds the memory the page costs. `0` turns it off |
 | `IMAGE_DIGEST` | `unknown` | Provenance only — Jobs set the pipeline's digest-pinned image; recorded verbatim in `manifest.json` and in every ALTO's `htrflow-batch` Processing block |
 | `HTRFLOW_BASE_REVISION` | `unknown` | Provenance only — set by the image itself (ENV next to its OCI label), stamped into every ALTO |
+| `INDEX_FAILURE_COUNT` | `0` | How many times this index has failed before this pod: the Job controller's `batch.kubernetes.io/job-index-failure-count` pod annotation, through the downward API. Empty (annotation absent) reads as unset |
+| `BACKOFF_LIMIT_PER_INDEX` | `-1` | The Job's `backoffLimitPerIndex`. When `INDEX_FAILURE_COUNT` has reached it this pod is the index's last attempt, and a page still deferred at verify is recorded as failed, with its reason, instead of missing. `-1` (or empty) = not told: no attempt is taken for the last |
 | `LOG_SHIP_SECONDS` | `15` | How often the run's own stdout/stderr is uploaded to `status/logs/<pipeline>/<volume>.txt` while it runs (`0` = final upload only) |
 | `TERMINATION_LOG_PATH` | `/dev/termination-log` | Read by `main.py`, not `Config`: where the exit reason is written |
 | `HOME`, `TMPDIR`, `YOLO_CONFIG_DIR` | *(unset)* | The Job points them into the tmpfs workdir (`/work/home`, `/work/tmp`, `/work/ultralytics`) because the root filesystem is read-only, and its `sh -c` prologue creates them before exec'ing the wrapper |

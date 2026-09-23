@@ -1901,3 +1901,41 @@ def test_a_resume_that_deletes_nothing_keeps_the_completion_marker(
 
     assert main(env, process_page_factory=fake_factory) == EXIT_OK
     assert deleted == []
+
+
+@pytest.mark.parametrize("failures, expected", [("2", EXIT_TRANSIENT), ("3", EXIT_OK)])
+def test_a_page_deferred_on_the_last_attempt_is_failed_not_missing(
+    env, cfg, s3, sample_manifest, monkeypatch, failures, expected
+):
+    """Audit 0923 W-4: a page that fails the same way on every attempt, in a
+    class read as transient -- an image server answering 500 for a corrupt
+    file, a soft-404 page served with a 200 -- was deferred on all four, the
+    index failed and the other pages got no completion marker. On the
+    index's last attempt (the pod's failure count has reached
+    backoffLimitPerIndex) a deferred page is recorded as failed, with its
+    reason, and the volume completes."""
+    _source_down_for(monkeypatch, sample_manifest, "0002", [])
+    env = dict(env, INDEX_FAILURE_COUNT=failures, BACKOFF_LIMIT_PER_INDEX="3")
+    assert main(env, process_page_factory=fake_factory) == expected
+    if expected == EXIT_TRANSIENT:
+        assert "demo-v1/SE-RA-1234/manifest.json" not in _keys(s3, cfg)
+        return
+    body = json.loads(
+        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
+            "Body"
+        ].read()
+    )
+    assert body["results"]["0002"]["status"] == "failed"
+    assert "HTTP 503" in body["results"]["0002"]["error"]
+    assert "last attempt" in body["results"]["0002"]["error"]
+    assert (body["pages_ok"], body["pages_failed"]) == (2, 1)
+
+
+def test_without_the_retry_budget_a_deferred_page_stays_missing(
+    env, cfg, s3, sample_manifest, monkeypatch
+):
+    """A Job that does not say how many attempts it has (the annotation
+    absent, so the variable is empty) never takes an attempt for its last."""
+    _source_down_for(monkeypatch, sample_manifest, "0002", [])
+    env = dict(env, INDEX_FAILURE_COUNT="", BACKOFF_LIMIT_PER_INDEX="")
+    assert main(env, process_page_factory=fake_factory) == EXIT_TRANSIENT

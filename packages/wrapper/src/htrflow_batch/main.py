@@ -297,7 +297,7 @@ def _main(
                 stop,
                 tracker,
             )
-        uploaded = _verify(store, pages, stats, state)
+        uploaded = _verify(store, pages, stats, state, cfg.last_attempt)
         state.stage = "publish"
         wrote_iiif = publish.run(
             cfg, store, source, source_url, pages, stats, uploaded, t_start, nbytes
@@ -474,7 +474,11 @@ def _stream(
 
 
 def _verify(
-    store: ResultStore, pages: list[PageRef], stats: StreamStats, state: RunState
+    store: ResultStore,
+    pages: list[PageRef],
+    stats: StreamStats,
+    state: RunState,
+    last_attempt: bool = False,
 ) -> set[str]:
     """D8: every page is accounted for — in S3 with its PAGE and ALTO, skipped
     by resume, or recorded as failed with a reason (the product owner,
@@ -489,8 +493,19 @@ def _verify(
     off there is no `changed` set for `_resume` to delete from, so a page
     reprocessed and failed still has the previous run's objects -- and publish
     would read that ALTO back into iiif.json for a page manifest.json records
-    as failed."""
+    as failed.
+
+    On the index's last attempt a deferred page is failed instead (audit
+    0923 W-4): "not now" that lasted every attempt is, for this volume, a
+    page that did not come out -- a corrupt file an image server answers 500
+    for, a soft-404 served with a 200 -- and missing it would fail the index
+    and leave every other page without its completion marker."""
     state.stage = "verify"
+    if last_attempt:
+        for name, r in list(stats.results.items()):
+            if r.status == "deferred":
+                why = f"{r.error} (still failing on the index's last attempt)"
+                stats.results[name] = PageOutcome(status="failed", error=why)
     uploaded = store.uploaded_pages()
     failed = sorted(n for n, r in stats.results.items() if r.status == "failed")
     # 3095: a page the source could not serve today is missing, whatever a
