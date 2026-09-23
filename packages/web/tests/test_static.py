@@ -348,6 +348,17 @@ def test_a_page_with_no_policy_of_its_own_gets_the_strictest(static_dir, name):
 SPA_CSP = "frame-ancestors 'none'; connect-src 'self' https://results.example.org/"
 
 
+def test_a_policy_stated_in_the_body_is_not_the_pages_own(static_dir: Path):
+    """Browsers act on a <meta http-equiv> CSP only in the head; one in the
+    body is ignored. A page whose only policy sits in its body states none,
+    and gets the strictest header rather than the SPA's narrow addition."""
+    (static_dir / "late.html").write_text(
+        f"<html><head></head><body>{SPA_META}<script>alert(1)</script></body></html>"
+    )
+    client = TestClient(create_app(EmptyReader(), static_dir=static_dir))
+    assert client.get("/late.html").headers["Content-Security-Policy"] == STRICT_CSP
+
+
 def test_the_spas_pages_may_fetch_only_the_api_and_the_results_bucket(
     client: TestClient,
 ):
