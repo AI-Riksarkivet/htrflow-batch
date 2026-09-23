@@ -163,6 +163,61 @@ describe("/log with a very large log", () => {
   });
 });
 
+// A volume's log is mostly httpx's one line per request; they are folded
+// into one closed disclosure per run of them, so the lines a reader came
+// for are not buried (grouping itself is $lib/runlog's).
+describe("/log folds the HTTP request lines", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    window.history.replaceState(null, "", "/log?log=http://bucket/logs/v1.txt");
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    window.history.replaceState(null, "", "/");
+  });
+
+  const at = (msg: string) => `2026-09-08 09:00:00,000 ${msg}`;
+  const http = (n: number) =>
+    at(
+      `INFO HTTP Request: GET https://iiif.example.org/${n} "HTTP/1.1 200 OK"`,
+    );
+
+  test("each run of them is one closed group that says how many it holds", async () => {
+    const log = [
+      at("INFO starting"),
+      http(1),
+      http(2),
+      http(3),
+      at("WARNING manifest covers 3/4 pages"),
+      http(4),
+    ].join("\n");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(log)) as typeof fetch,
+    );
+    const { container } = render(LogPage);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const groups = [...container.querySelectorAll(".log .group")];
+    expect(groups.map((g) => [g.tagName, g.className.split(" ")[1]])).toEqual([
+      ["DIV", "info"],
+      ["DETAILS", "http"],
+      ["DIV", "warning"],
+      ["DETAILS", "http"],
+    ]);
+    const folds = groups.filter((g) => g instanceof HTMLDetailsElement);
+    expect(folds.map((d) => d.querySelector("summary")?.textContent)).toEqual([
+      "3 HTTP requests",
+      "1 HTTP request",
+    ]);
+    for (const fold of folds) expect(fold).not.toHaveAttribute("open");
+    expect(folds[0]?.querySelectorAll(".log-line")).toHaveLength(3);
+    // What is not a request is out in the open.
+    expect(screen.getByText("manifest covers 3/4 pages")).toBeVisible();
+  });
+});
+
 describe("/log only opens this deployment's own results", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => {

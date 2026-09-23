@@ -28,7 +28,7 @@ describe("PagesTable alto column", () => {
     );
   });
 
-  test("download fetches the ALTO XML and triggers a Blob save via an object URL", async () => {
+  test("download fetches the ALTO XML and saves it as <page>.xml via an object URL", async () => {
     const xml = "<alto/>";
     const fetchMock = vi.fn(
       async () =>
@@ -38,12 +38,15 @@ describe("PagesTable alto column", () => {
         }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    const createObjectURL = vi.fn(() => "blob:fake");
+    const createObjectURL = vi.fn((_: Blob) => "blob:fake");
     const revokeObjectURL = vi.fn();
     vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+    const saved: { name: string; href: string }[] = [];
     const clickSpy = vi
       .spyOn(HTMLAnchorElement.prototype, "click")
-      .mockImplementation(() => {});
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        saved.push({ name: this.download, href: this.href });
+      });
 
     render(PagesTable, {
       pages: [page({ alto: "https://bucket/v1/vol/alto/0001.xml" })],
@@ -54,7 +57,9 @@ describe("PagesTable alto column", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "https://bucket/v1/vol/alto/0001.xml",
     );
+    expect(saved).toEqual([{ name: "0001.xml", href: "blob:fake" }]);
     expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(await createObjectURL.mock.calls[0]?.[0].text()).toBe(xml);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:fake");
     expect(screen.queryByRole("alert")).toBeNull();
 

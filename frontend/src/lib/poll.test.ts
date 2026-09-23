@@ -77,16 +77,17 @@ describe("startPolling", () => {
     const stop = startPolling(run, PERIOD);
     await vi.advanceTimersByTimeAsync(0);
     expect(run).toHaveBeenCalledTimes(1);
-    // The first failure doubles the wait: the period alone buys nothing.
-    await vi.advanceTimersByTimeAsync(PERIOD);
-    expect(run).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(PERIOD);
-    expect(run).toHaveBeenCalledTimes(2);
-    // Long enough for the ceiling to have been reached many times over.
-    await vi.advanceTimersByTimeAsync(MAX_POLL_MS * 20);
-    const calls = run.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(MAX_POLL_MS);
-    expect(run.mock.calls.length).toBe(calls + 1);
+    // Each wait to the millisecond: nothing a millisecond early, one call on
+    // time. The first failure already doubles it -- the period alone buys
+    // nothing -- and the ceiling, once reached, is the wait from then on.
+    const waits = [2, 4, 8, 16, 32, 64, 128, 256].map((n) => n * PERIOD);
+    for (const wait of [...waits, MAX_POLL_MS, MAX_POLL_MS]) {
+      const calls = run.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(wait - 1);
+      expect(run.mock.calls.length, `before ${wait} ms`).toBe(calls);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(run.mock.calls.length, `at ${wait} ms`).toBe(calls + 1);
+    }
     stop();
   });
 

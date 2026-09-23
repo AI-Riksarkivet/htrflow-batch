@@ -60,14 +60,43 @@ describe("/alto", () => {
     expect(screen.getByRole("heading")).toHaveTextContent("ALTO · 0001");
   });
 
-  test("the legend names the confidence buckets", async () => {
-    vi.stubGlobal("fetch", fetchOk(XML));
+  test("the legend names the confidence buckets, and each line lands in the one it names", async () => {
+    const line = (text: string, wc?: string) =>
+      `<TextLine><String CONTENT="${text}"${
+        wc === undefined ? "" : ` WC="${wc}"`
+      }/></TextLine>`;
+    vi.stubGlobal(
+      "fetch",
+      fetchOk(
+        `<alto><Layout><Page><PrintSpace><TextBlock>${[
+          line("exactly09", "0.9"),
+          line("point8", "0.8"),
+          line("exactly07", "0.7"),
+          line("point69", "0.69"),
+          line("nowc"),
+        ].join("")}</TextBlock></PrintSpace></Page></Layout></alto>`,
+      ),
+    );
     render(AltoPage);
-    await screen.findByText("Confident");
-    expect(screen.getByText(/high \(≥0\.9\)/)).toBeInTheDocument();
-    expect(screen.getByText(/medium \(0\.7–0\.9\)/)).toBeInTheDocument();
-    expect(screen.getByText(/low \(<0\.7\)/)).toBeInTheDocument();
-    expect(screen.getByText("unknown")).toBeInTheDocument();
+    await screen.findByText("point8");
+    const legend = [...document.querySelectorAll(".legend .chip")].map((c) => [
+      c.classList[1],
+      c.textContent,
+    ]);
+    expect(legend).toEqual([
+      ["high", "high (≥0.9)"],
+      ["medium", "medium (0.7–0.9)"],
+      ["low", "low (<0.7)"],
+      ["unknown", "unknown"],
+    ]);
+    for (const [text, cls] of [
+      ["exactly09", "high"],
+      ["point8", "medium"],
+      ["exactly07", "medium"],
+      ["point69", "low"],
+      ["nowc", "unknown"],
+    ] as const)
+      expect(screen.getByText(text), text).toHaveClass("line", cls);
   });
 
   test("the raw-XML toggle shows the pretty-printed source and back again", async () => {
