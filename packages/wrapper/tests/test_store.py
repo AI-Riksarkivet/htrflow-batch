@@ -145,6 +145,39 @@ def test_main_client_has_bounded_timeouts_and_retries(cfg, s3):
     assert c.retries == {"mode": "standard", "total_max_attempts": 4}
 
 
+def test_the_clients_send_what_an_s3_compatible_store_accepts(cfg, s3, tmp_path):
+    """Audit 0923 W-10: botocore's default flexible checksums send PutObject
+    as `aws-chunked` with a CRC32 trailer and DeleteObjects with a CRC32 in
+    place of the Content-MD5 the S3 API first required -- which several
+    S3-compatible stores (HCP, older MinIO and Ceph) refuse. Checksums only
+    where an operation requires one, and DeleteObjects carries Content-MD5."""
+    store = ResultStore(cfg)
+    for client in (store.client, store._log_client):
+        c = client.meta.config
+        assert c.request_checksum_calculation == "when_required"
+        assert c.response_checksum_validation == "when_required"
+    sent = {}
+
+    def record(request, **_):
+        op = "delete" if "delete" in request.url else "put"
+        sent.setdefault(op, dict(request.headers))
+
+    store.client.meta.events.register("before-send", record)
+    store._log_client.meta.events.register("before-send", record)
+    store.upload_page(
+        "0001",
+        {
+            "alto": _mk(tmp_path, "alto/0001.xml", "<alto/>"),
+            "page": _mk(tmp_path, "page/0001.xml", "<PcGts/>"),
+        },
+    )
+    store.delete_pages(["0001"])
+    assert "aws-chunked" not in str(sent["put"].get("Content-Encoding", b""))
+    assert not any(k.lower().startswith("x-amz-trailer") for k in sent["put"])
+    assert "Content-MD5" in sent["delete"]
+    assert store.done_pages() == set()
+
+
 def test_get_json_or_none(cfg, s3):
     store = ResultStore(cfg)
     assert store.get_json_or_none("manifest.json") is None

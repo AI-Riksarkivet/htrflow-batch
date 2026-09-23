@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
@@ -32,6 +34,31 @@ HEAD_CONCURRENCY = 16
 DELETE_BATCH = 1000
 
 
+def _content_md5(params, **_) -> None:
+    """DeleteObjects as the S3 API first defined it, with a Content-MD5:
+    botocore sends a CRC32 in its place, which S3-compatible stores that
+    predate flexible checksums refuse (audit 0923 W-10)."""
+    digest = hashlib.md5(params["body"], usedforsecurity=False).digest()
+    params["headers"]["Content-MD5"] = base64.b64encode(digest).decode()
+
+
+def _s3_client(cfg: Config, **settings):
+    """An S3 client that sends a checksum only where an operation requires
+    one (W-10): botocore's default streams every PutObject `aws-chunked` with
+    a CRC32 trailer, which HCP and older MinIO or Ceph refuse."""
+    client = boto3.client(
+        "s3",
+        endpoint_url=cfg.s3_endpoint or None,
+        config=BotoConfig(
+            request_checksum_calculation="when_required",
+            response_checksum_validation="when_required",
+            **settings,
+        ),
+    )
+    client.meta.events.register("before-call.s3.DeleteObjects", _content_md5)
+    return client
+
+
 def _json_bytes(obj: dict) -> bytes:
     return json.dumps(obj, ensure_ascii=False).encode()
 
@@ -56,24 +83,17 @@ class ResultStore:
         # W6: default boto timeouts (60 s connect/read, legacy retries) let an
         # S3 outage pin every PUT for minutes and the run for hours. Bounded
         # here; stream.consume aborts after N consecutive upload failures.
-        self.client = boto3.client(
-            "s3",
-            endpoint_url=cfg.s3_endpoint or None,
-            config=BotoConfig(
-                connect_timeout=10,
-                read_timeout=60,
-                retries={"max_attempts": 3, "mode": "standard"},
-            ),
+        self.client = _s3_client(
+            cfg,
+            connect_timeout=10,
+            read_timeout=60,
+            retries={"max_attempts": 3, "mode": "standard"},
         )
         # Run-log uploads are best-effort and periodic: a dead S3 must not
         # pin a shipping thread (or the final upload at exit) for the default
         # minutes of connect/read timeouts times legacy retries.
-        self._log_client = boto3.client(
-            "s3",
-            endpoint_url=cfg.s3_endpoint or None,
-            config=BotoConfig(
-                connect_timeout=5, read_timeout=30, retries={"max_attempts": 2}
-            ),
+        self._log_client = _s3_client(
+            cfg, connect_timeout=5, read_timeout=30, retries={"max_attempts": 2}
         )
 
     def _key(self, rel: str) -> str:
