@@ -880,9 +880,7 @@ def test_the_campaign_job_never_gets_the_hub_token():
 
 def _cache_mounts(pod_spec: dict) -> list[dict]:
     """Every mount of the model-cache volume, init containers included."""
-    cache = next(
-        v["name"] for v in pod_spec["volumes"] if "persistentVolumeClaim" in v
-    )
+    cache = next(v["name"] for v in pod_spec["volumes"] if "persistentVolumeClaim" in v)
     return [
         m
         for c in pod_spec.get("initContainers", []) + pod_spec["containers"]
@@ -914,7 +912,9 @@ def test_a_recipe_edit_replaces_the_warmup_and_moves_the_cache_it_fills():
         after = render.campaign_objects(kyrk, edited, cfg)[1]["spec"]["template"]
         paths = {m["subPath"] for m in _cache_mounts(after["spec"])}
         assert paths.isdisjoint(m["subPath"] for m in _cache_mounts(before["spec"]))
-        assert paths == {m["subPath"] for m in _cache_mounts(_warmup_pod(edited, cfg)["spec"])}
+        assert paths == {
+            m["subPath"] for m in _cache_mounts(_warmup_pod(edited, cfg)["spec"])
+        }
 
 
 def test_each_pipeline_warms_and_reads_a_cache_directory_of_its_own():

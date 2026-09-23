@@ -139,15 +139,31 @@ class _CorruptRenderedFile(Exception):
         super().__init__(f"{path}: cannot read existing campaign: {reason}")
 
 
+def _rendered(path: Path, kind: str) -> dict:
+    """The object of ``kind`` in one rendered campaign file."""
+    try:
+        docs = yaml.load_all(path.read_text(), Loader=_FAST_LOADER)
+        return next(d for d in docs if isinstance(d, dict) and d.get("kind") == kind)
+    except (yaml.YAMLError, StopIteration) as e:
+        raise _CorruptRenderedFile(path, e) from e
+
+
 def _volumes_txt(path: Path) -> str:
     try:
-        docs = list(yaml.safe_load_all(path.read_text()))
-        cm = next(
-            d for d in docs if isinstance(d, dict) and d.get("kind") == "ConfigMap"
-        )
-        return cm["data"]["volumes.txt"].rstrip("\n")
-    except (yaml.YAMLError, StopIteration, KeyError, TypeError) as e:
+        return _rendered(path, "ConfigMap")["data"]["volumes.txt"].rstrip("\n")
+    except (KeyError, TypeError) as e:
         raise _CorruptRenderedFile(path, e) from e
+
+
+def _pods_at_once(job: dict) -> tuple[int, bool]:
+    """How many pods a campaign Job runs at once, as Kueue counts them for
+    its Workload -- ``min(parallelism, completions)`` -- and whether the
+    campaign was paused."""
+    spec = job.get("spec") or {}
+    parallelism = spec.get("parallelism", 1)
+    return min(parallelism, spec.get("completions", parallelism)), bool(
+        spec.get("suspend")
+    )
 
 
 def _part_number(path: Path) -> int:
@@ -291,7 +307,38 @@ def _edited_pipeline(campaigns, pipelines: dict, cfg, out: Path) -> str | None:
     return None
 
 
-def _moved_campaign(c: Campaign, record: Path) -> str | None:
+#: Kueue compares a running Job's pod count with its admitted Workload's and,
+#: when they differ, suspends the Job -- every running pod stopped --
+#: deletes the Workload and queues the campaign again (jobframework
+#: ``ensureOneWorkload``, "No matching Workload"; Kueue v0.19). A Workload
+#: holding no quota, a paused campaign's, is updated in place instead
+#: (audit 0923 C-11).
+_WINDOW_MOVED = (
+    "campaign {name} runs {before} pods at a time and would now run {after}: "
+    "Kueue stops every running pod of an admitted Job whose parallelism "
+    "changes and queues the campaign again — put its window back (the "
+    "campaign's window:, or the window cap in converter.yaml), or pause the "
+    "campaign first (suspend: true), change the window once it is paused, "
+    "then resume it"
+)
+
+
+def _moved_window(c: Campaign, record: list[Path], cfg) -> str | None:
+    """One sentence when a live campaign's pod count moves. Held against the
+    record part by part: each Job there is what the cluster admitted. A part
+    the record paused runs no pods, so its count may move."""
+    for path, volumes in zip(record, render.split(c.volumes)):
+        try:
+            before, paused = _pods_at_once(_rendered(path, "Job"))
+        except _CorruptRenderedFile as e:
+            return str(e)
+        after = min(render.parallelism(c, cfg), len(volumes))
+        if before != after and not paused:
+            return _WINDOW_MOVED.format(name=c.name, before=before, after=after)
+    return None
+
+
+def _moved_campaign(c: Campaign, record: Path, cfg) -> str | None:
     """One sentence when ``c`` no longer renders as the record says it did."""
     existing = _existing_parts(record / "campaigns", c)
     if not existing:
@@ -322,7 +369,7 @@ def _moved_campaign(c: Campaign, record: Path) -> str | None:
             "that have already run it and start every volume over — create a "
             "new campaign instead"
         )
-    return None
+    return _moved_window(c, existing, cfg)
 
 
 def _refused(campaigns, pipelines: dict, cfg, record: Path) -> str | None:
@@ -334,7 +381,7 @@ def _refused(campaigns, pipelines: dict, cfg, record: Path) -> str | None:
         *(render.last_pod_problem(c) for c in campaigns),
         _colliding_names(campaigns),
         _edited_pipeline(campaigns, pipelines, cfg, record),
-        *(_moved_campaign(c, record) for c in campaigns),
+        *(_moved_campaign(c, record, cfg) for c in campaigns),
     ):
         if problem is not None:
             return problem

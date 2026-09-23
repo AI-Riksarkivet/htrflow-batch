@@ -283,16 +283,21 @@ def _campaign_configmap(
     return cm
 
 
+def parallelism(c: Campaign, cfg: ConverterConfig) -> int:
+    """A campaign Job's ``spec.parallelism``. ``cfg.window`` is the
+    per-cluster CAP: a campaign may ask for less, never more. Kueue partial
+    admission would shrink an oversized parallelism on the live Job instead
+    -- and then reject every later apply of the unchanged rendered file
+    (docs: development/e2e-indexed-jobs.md). ``cli`` holds a live
+    campaign's to what it was (audit 0923 C-11)."""
+    return min(c.window or cfg.window, cfg.window)
+
+
 def _campaign_job(
     name: str, c: Campaign, p: Pipeline, volumes: list[Volume], cfg: ConverterConfig
 ) -> dict:
     job = _load("campaign-job.yaml")
     completions = len(volumes)
-    # cfg.window is the per-cluster CAP: a campaign may ask for less, never
-    # more. Kueue partial admission would shrink an oversized parallelism on
-    # the live Job instead -- and then reject every later apply of the
-    # unchanged rendered file (docs: development/e2e-indexed-jobs.md).
-    parallelism = min(c.window or cfg.window, cfg.window)
 
     # ``name`` is the Job's own metadata.name (and the campaign ConfigMap's
     # name suffix). An object name is a DNS-1123 *subdomain* (<=253 chars),
@@ -309,7 +314,7 @@ def _campaign_job(
         labels[_PRIORITY_LABEL] = c.priority
 
     _set(job, "spec.completions", completions)
-    _set(job, "spec.parallelism", parallelism)
+    _set(job, "spec.parallelism", parallelism(c, cfg))
     _set(job, "spec.maxFailedIndexes", completions)
     # The skeleton carries `spec.suspend: false` as spec's first key so a
     # paused campaign's rendered Job keeps `suspend` in the same place a
