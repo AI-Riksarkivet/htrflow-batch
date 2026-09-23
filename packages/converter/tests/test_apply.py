@@ -238,7 +238,9 @@ class FakeCluster(Cluster):
     over; a field two managers set to the same value is theirs jointly; a
     field a manager stops sending is released, and removed -- or put back to
     its default -- once nobody owns it. ``update`` is a controller's write
-    (Kueue flipping ``spec.suspend``): it takes whatever it changes.
+    (Kueue flipping ``spec.suspend``): it takes whatever it changes. A
+    live Job's ``spec.template`` is fixed: an apply that would change it is
+    the API server's 422, whoever sends it.
     """
 
     def __init__(self) -> None:
@@ -460,10 +462,11 @@ def _object(kind: str, name: str, labelled: bool = True) -> dict:
 
 
 def _stale(job: dict) -> dict:
-    """``job`` as an earlier converter release rendered it: another pod
-    template, which the live Job cannot be changed to."""
-    meta = job["spec"]["template"].setdefault("metadata", {})
-    meta.setdefault("annotations", {})["rendered-by"] = "an earlier release"
+    """``job`` as an earlier converter release rendered it: its container
+    another image, so the rendered pod template is one the live Job cannot
+    be changed to."""
+    container = job["spec"]["template"]["spec"]["containers"][0]
+    container["image"] = container["image"].rsplit("@", 1)[0] + "@sha256:" + "0" * 64
     return job
 
 
@@ -1036,12 +1039,6 @@ def _refuses(cluster, target: str, error: Exception, times: int = 99) -> None:
     cluster._api = method
 
 
-def _immutable_template(name: str) -> Exception:
-    from htrflow_converter.cluster import ImmutableField
-
-    return ImmutableField("Job", name, (ImmutableField.POD_TEMPLATE,))
-
-
 def test_one_refused_object_does_not_stop_the_apply(tmp_path, cluster, capsys):
     """The live failure this exists for: one object the API server would not
     take aborted the whole loop, and the campaign behind it in the order was
@@ -1086,19 +1083,19 @@ def test_a_warmup_whose_pod_template_changed_is_replaced(tmp_path, cluster, caps
     on the cache PVC) and holds no campaign state, so the answer is to
     delete it and create it again rather than to report it forever."""
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    cluster.live = [_object("Job", "htr-warmup-demo-v1")]
-    _refuses(
-        cluster, "htr-warmup-demo-v1", _immutable_template("htr-warmup-demo-v1"), 1
-    )
+    cluster.live = [_stale(_object("Job", "htr-warmup-demo-v1"))]
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     assert cluster.of("delete") == [("delete", "Job", "htr-warmup-demo-v1")]
-    # The fake refuses before it records the call, so the one apply of the
-    # warm-up in `calls` is the re-create -- and it comes after the delete.
+    # The refused apply is recorded before the fake refuses it; the second
+    # is the re-create, after the delete.
     warmup = [c for c in cluster.calls if c[2] == "htr-warmup-demo-v1"]
     assert warmup == [
+        ("apply", "Job", "htr-warmup-demo-v1"),
         ("delete", "Job", "htr-warmup-demo-v1"),
         ("apply", "Job", "htr-warmup-demo-v1"),
     ]
+    template = _live(cluster, "htr-warmup-demo-v1")["spec"]["template"]
+    assert template == _object("Job", "htr-warmup-demo-v1")["spec"]["template"]
     printed = capsys.readouterr().out
     assert "replaced: Job/htr-warmup-demo-v1" in printed
     # Not "a file check" for every replacement: a changed recipe warms a
@@ -1111,10 +1108,9 @@ def test_a_running_warmup_is_reported_and_left_alone(tmp_path, cluster, capsys):
     away and, worse, takes the pod with it while campaigns wait on its
     marker. That one is reported and re-run on the next apply."""
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    running = _object("Job", "htr-warmup-demo-v1")
+    running = _stale(_object("Job", "htr-warmup-demo-v1"))
     running["status"] = {"active": 1}
     cluster.live = [running]
-    _refuses(cluster, "htr-warmup-demo-v1", _immutable_template("htr-warmup-demo-v1"))
     assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
     assert cluster.of("delete") == []
     assert "running right now" in capsys.readouterr().err
@@ -1125,10 +1121,11 @@ def test_a_campaign_job_is_never_deleted_to_change_its_template(tmp_path, cluste
     deleting it to take a new pod template would start every volume over.
     A changed pipeline under a live campaign is `render`'s to refuse."""
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    cluster.live = [_object("Job", "kyrk")]
-    _refuses(cluster, "kyrk", _immutable_template("kyrk"))
+    cluster.live = [_stale(_object("Job", "kyrk"))]
     assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
     assert cluster.of("delete") == []
+    template = _live(cluster, "kyrk")["spec"]["template"]
+    assert template == _stale(_object("Job", "kyrk"))["spec"]["template"]
 
 
 def test_apply_without_out_holds_pipelines_against_the_committed_render(
@@ -1233,9 +1230,8 @@ def test_a_campaign_whose_job_is_refused_can_still_be_paused(tmp_path, cluster, 
     got exit 1, "NOT enforced" and zero Workload patches, with kubectl as
     the only way to stop the campaign (C-2)."""
     repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
-    cluster.live = [_running_job("pausy")]
+    cluster.live = [_stale(_running_job("pausy"))]
     cluster.workloads = {"uid-pausy": _workload("wl-pausy", True)}
-    _refuses(cluster, "pausy", _immutable_template("pausy"))
     rc = cli.main(["apply", str(repo), "--out", str(out), "--pause-wait", "1"])
     assert cluster.of("patch") == [("patch", "wl-pausy", False)], "paused"
     assert rc == cli.REFUSED, "the pause holds; the refused Job is a change to make"
@@ -1250,9 +1246,8 @@ def test_a_campaign_whose_job_is_refused_can_still_be_unpaused(tmp_path, cluster
     that refuses its Job could otherwise never be resumed -- and so never
     finish, which is what the refusal asks for."""
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    cluster.live = [_running_job("kyrk")]
+    cluster.live = [_stale(_running_job("kyrk"))]
     cluster.workloads = {"uid-kyrk": _workload("wl-kyrk", False)}
-    _refuses(cluster, "kyrk", _immutable_template("kyrk"))
     assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
     assert cluster.of("patch") == [("patch", "wl-kyrk", True)]
 
