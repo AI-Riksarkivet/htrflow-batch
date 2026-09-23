@@ -19,6 +19,7 @@ import base64
 import hashlib
 import json
 import logging
+import mimetypes
 import os
 import re
 import time
@@ -287,22 +288,20 @@ class BuiltSite(StaticFiles):
     def file_response(self, full_path, stat_result, scope, status_code=200):
         response = super().file_response(full_path, stat_result, scope, status_code)
         # lookup_path hands over a realpath, so an alias or a symlink to the
-        # viewer compares equal here. A 304 is still the viewer's response,
-        # and carries the content type it would have had.
+        # viewer compares equal here. Every decision is made from the file
+        # served, never from the response: a 304 keeps none of the file's
+        # headers but a few (not its content type), and a browser updates
+        # what it stored from it -- so a policy decided off the response was
+        # gone after a reload (2026-09-23 review).
         real = os.path.realpath(full_path)
         if self.viewer_csp and real == self.viewer:
             response.headers["Content-Security-Policy"] = self.viewer_csp
-        elif self._document(response):
+        elif mimetypes.guess_type(real)[0] in _DOCUMENTS:
             if not self._states_policy(real):
                 response.headers["Content-Security-Policy"] = STRICT_CSP
             elif self.page_csp:
                 response.headers["Content-Security-Policy"] = self.page_csp
         return response
-
-    @staticmethod
-    def _document(response) -> bool:
-        media = response.headers.get("content-type", "").split(";")[0]
-        return media.strip().lower() in _DOCUMENTS
 
     def _states_policy(self, real: str) -> bool:
         if real not in self._own_policy:
