@@ -5,11 +5,10 @@
 # The compose smoke stack runs on the reader's own machine.
 getting-started/try-it.md	localhost
 
-# Code defaults that still name one institution's IIIF source and address
-# (converter source_template, chart network.iiifCidrs). Remove these two
-# entries when the defaults are made neutral in code.
-reference/configuration.md	arkis!\{ref\}|192\.121\.221\.27/32
-reference/chart.md	192\.121\.221\.27/32
+# A code default that still names one institution's IIIF source (the
+# converter's source_template). Remove this entry when that default is made
+# neutral in code.
+reference/configuration.md	arkis!\{ref\}
 
 # The S3 bucket-policy language version is a fixed string, not a date.
 .md	"Version": "2012-10-17"

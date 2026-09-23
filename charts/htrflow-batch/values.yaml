@@ -233,14 +233,13 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   # charts/htrflow-devstack's pods) loses network access unless it gets its
   # own policy — charts/htrflow-devstack renders one for each of its pods.
   defaultDeny: true
-  # What a batch Job may reach besides DNS and S3: the IIIF origin(s).
-  # Default: lbiiif.riksarkivet.se (a single stable address).
-  # Where Jobs may fetch page images from (80/443): the IIIF origin. Volumes
-  # declared with images: hosted elsewhere (the htr_demo examples on Hugging
-  # Face) need their host here too; "0.0.0.0/0" is the PoC catch-all. Every
+  # Where campaign pods may fetch page images from (80/443): your IIIF
+  # origin(s), by address -- no default, since any address here would be one
+  # site's; an empty list is refused. Volumes declared with images: hosted
+  # elsewhere need their host here too; "0.0.0.0/0" is the catch-all. Every
   # range here, in s3Cidrs and in apply.gitCidrs loses the internal ranges
   # that lie inside it (the ones below, link-local and loopback).
-  iiifCidrs: ["192.121.221.27/32"]
+  iiifCidrs: []
   # S3 endpoint(s) for batch Jobs and the web front's progress reader. A
   # real endpoint goes here.
   s3Cidrs: []
@@ -273,7 +272,7 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   # networks hand out as their own internal addresses.
   privateCidrs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"]
   apiServer:
-    cidr: ""               # e.g. 10.16.51.56/32 — kube-apiserver as reached AFTER service DNAT; required by the read API's NetworkPolicy
+    cidr: ""               # e.g. 192.0.2.56/32 — kube-apiserver as reached AFTER service DNAT; required by the read API's NetworkPolicy
     # Every further API server of an HA control plane (one /32 each): after
     # DNAT a connection may land on any of them. Added to `cidr`; when both
     # are empty, every address of the `kubernetes` Endpoints is looked up.
