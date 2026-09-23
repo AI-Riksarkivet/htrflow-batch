@@ -71,8 +71,8 @@ class Config(BaseModel):
     #: costs -- a few MB of JPEG can carry a gigapixel image, and htrflow
     #: decodes every page into memory. 0 turns the check off.
     max_image_pixels: int = Field(100_000_000, alias="MAX_IMAGE_PIXELS")
-    #: W-8: wall-clock budget of one page in htrflow; past it the page fails
-    #: and the pipeline is rebuilt (driver.PAGE_TIMEOUT_SECONDS).
+    #: W-8, review I-2: how long a page may make no progress in htrflow; past
+    #: it the page fails and the pipeline is rebuilt (driver.PAGE_TIMEOUT_SECONDS).
     page_timeout_seconds: float = Field(600.0, alias="PAGE_TIMEOUT_SECONDS")
     #: Provenance the Job skeleton stamps: the pipeline's digest-pinned image
     #: and, from the image's own ENV, the htrflow it was built on. Both go
