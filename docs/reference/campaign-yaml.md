@@ -157,6 +157,8 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | `suspend: true` | Renders `spec.suspend: true` — see [Pausing](#pausing) |
 | **A campaign whose rendered Job already exists in `rendered/` with a different volume list is rejected** | `validate` and `render` print `campaign <name> is append-only: create a new campaign` and exits non-zero — Job `completions` is immutable once created, so adding volumes means a new campaign file |
 | A change of `window:` — the campaign's, or `converter.yaml`'s cap — that changes how many pods a rendered, unpaused campaign runs at once | `validate` and `render` print `warning: campaign <name> runs <n> pods at a time and would now run <m>` and go on. Kueue compares a running Job's pod count, the smaller of its parallelism and its volume count, with the Workload it admitted, and when they differ it stops every running pod and queues the campaign again. Whether the campaign is still running only the cluster can say — a finished or never-admitted one loses nothing — so it is `apply` that holds a running campaign to its count. The safe way to change it: pause the campaign (`suspend: true`), change the window once the pause is applied, then resume it; a paused campaign runs no pods and its Workload holds no quota, which Kueue updates in place. A change that leaves the count where it was (a window above the volume count either way) says nothing |
+| **A campaign whose window change would restart it is rejected** — the rendered Job's pod count differs from a live, unpaused campaign Job's | `apply` prints `campaign <name> runs <n> pods at a time and would now run <m>: … — nothing was applied` and exits `1` before it sends anything. Put the window back, or pause the campaign, change it once the pause is applied, and resume it |
+| **A campaign that shares a volume with another campaign on the same pipeline, still running or starting in this apply, is held back** | `apply` prints `campaign <name> shares volume <id> with campaign <other> on pipeline <id>, still running or starting in this apply: both would write the same results …`, leaves that campaign's Job and ConfigMap as they were, applies the rest and exits `3`. Results are keyed by pipeline and volume, so the two would race on the same objects. Running a failed volume again in a new campaign on the same pipeline is fine once the old campaign is over. When the running campaigns cannot be read, each new campaign is held back the same way rather than applied unchecked |
 | **A campaign whose ConfigMap in the cluster has a different volume list, pipeline or image is rejected** | `apply` prints `campaign <name> is in the cluster with different …` and exits `1` before it sends anything. `rendered/` can be missing or behind the cluster (a checkout whose render was never committed), so the live ConfigMap is held against too. A ConfigMap `apply` may not read stops it the same way: a check that cannot be made has not passed |
 | **A pipeline whose image or steps changed while a rendered campaign still runs it is rejected** — "runs" is what `rendered/` recorded, so a campaign moved to another pipeline in the same change still counts | `validate` and `render` print `pipeline <id> changed (…) but campaigns …` and exit non-zero — see [Immutability](#immutability) |
 | The file stem does not end in `-part<number>` | Validation error — that is what the converter calls the parts of a campaign it splits, so such a file would collide with one. A stem that merely starts with another campaign's name and `-part` (`loc-partner` beside `loc`) is its own campaign |
@@ -215,6 +217,10 @@ steps:                     # htrflow pipeline steps, passed through verbatim
           revision: …          # Hugging Face models (TrOCR, Donut, DiT):
                                # under model_kwargs, forwarded to
                                # from_pretrained -- NOT top-level
+        processor_kwargs:
+          revision: …          # TrOCR, WordLevelTrOCR, Donut, DiT: the
+                               # processor is a second download, pinned
+                               # on its own
 ```
 
 Rules enforced by `parse_pipeline` — a broken pipeline is reported as a
@@ -239,7 +245,14 @@ under `model_settings` (YOLO) or under `model_settings.model_kwargs` (TrOCR
 and other Hugging Face-backed models, whose loader forwards `model_kwargs`
 straight to `from_pretrained`). Either placement satisfies the rule, but a
 model only reads the one its own loader expects, so pinning it the wrong way
-for that model still fails to load. Only **top-level** `steps:` are walked; a
+for that model still fails to load. TrOCR, WordLevelTrOCR, Donut and DiT
+load their processor (the tokenizer or image processor) in a second
+download, with `model_settings.processor_kwargs` and never `model_kwargs`,
+so with the rule on they need a 40-hex `revision:` there as well; the
+refusal says `processors not pinned to a revision`. The wrapper holds the
+same three paths when it loads a pipeline: a key beside `model_settings`
+that would make htrflow load another revision than the one pinned fails the
+volume permanently, naming the step, the model and both revisions. Only **top-level** `steps:` are walked; a
 step nested inside a conditional or composite construct is not. Both rules
 are checked against everything the namespace admits, not only against what
 this repo rendered.
@@ -501,8 +514,10 @@ releases that render different objects: keep them in step.
 
 The ServiceAccount is what the htrflow-batch chart renders behind
 `apply.rbac.enabled=true` (default `false`): a Role — never a ClusterRole —
-with `get`/`list`/`create`/`patch`/`delete` on `jobs` and `configmaps` and
-`list`/`patch` on `workloads.kueue.x-k8s.io`, in the release namespace
+with `get`/`list`/`create`/`patch`/`delete` on `jobs` and `configmaps`,
+`list`/`patch` on `workloads.kueue.x-k8s.io`, and `create` on `leases` with
+`get`/`update` on the one Lease `htrflow-campaigns-apply`
+([One apply at a time](#one-apply-at-a-time)), in the release namespace
 only. `create` is not redundant next to `patch`: a server-side apply whose
 object does not exist yet is authorized as both. Nothing else has to be on
 the image — the converter carries its own Kubernetes client, so there is no
@@ -517,6 +532,36 @@ still to fix. Exit `1` outranks it: nothing reached the cluster at all, or a
 campaign git says is paused is not actually paused — which can be true while
 other objects *were* applied, so read the summary line rather than inferring
 it from the code. See [refused objects](#when-the-api-server-refuses-an-object).
+
+## One apply at a time
+
+Two applies at once — the Argo CD hook and an apply run by hand, say —
+interleave, and a prune from the older checkout deletes the Job and
+ConfigMap the newer one has just created. So `apply` holds a
+coordination.k8s.io Lease, `htrflow-campaigns-apply`, in the namespace for
+its whole run. A second apply while the Lease is held is refused before
+anything is sent, naming the holder, and exits `1`; re-run it once the first
+is done. The Lease is renewed as the apply goes, and a holder that stopped
+renewing it (a pod killed outright) is taken to be dead after ten minutes,
+when the next apply may take it over. An apply that can no longer renew it
+stops and exits `1`, since another may already be running. The apply
+releases the Lease however it ends, SIGTERM included. Both sides of the
+comparison read the API server's clock, never the machine the apply runs on.
+
+`--namespace <ns>` says which namespace the caller means: a
+`converter.yaml` naming another one is refused, nothing is applied, and the
+apply exits `1`. The chart's policies match the release namespace only, so
+an apply from a kubeconfig with wider rights than the chart's Role could
+otherwise put Jobs where none of them applies. The Argo CD hook passes its
+own namespace.
+
+A campaign paused before Kueue ever admitted it has `spec.suspend: true`
+owned by the apply's field manager alone. When git resumes it, the render
+drops the field, and the API server would put its default back — `false`, a
+Job that starts at once with no admission and no quota. So the resuming
+apply first hands the field to a second field manager,
+`htrflow-campaigns-suspend`, which keeps it `true` until Kueue admits the
+Workload the pause sync reactivates and unsuspends the Job itself.
 
 ## When the API server refuses an object
 
@@ -539,8 +584,8 @@ The codes are a precedence, highest first — `1` beats `3` beats `0` — so
 
 | Exit | What it means |
 | --- | --- |
-| `1` | a pause is **not enforced** — a paused campaign's Workload never appeared, or its Job was refused or could not be checked — whatever else was applied; or nothing reached the cluster at all (no credentials, an unreachable API server, a render that did not pass, a server that refused every object); or the API server stopped answering part-way, after the retries — the line names the object the apply stopped at, and a re-run finishes the job |
-| `3` | some objects were refused and are unchanged — or `--prune` could not delete some, or a campaign's Job or status record could not be read, so whether it had finished could not be checked — everything else was applied, and every pause holds; the summary line names each of them |
+| `1` | a pause is **not enforced** — a paused campaign's Workload never appeared, or its Job was refused and its live Job could not be read either, or the Workload patch failed — whatever else was applied; or nothing reached the cluster at all (no credentials, an unreachable API server, a render that did not pass, a server that refused every object, another apply holding the Lease, a `converter.yaml` naming another namespace than `--namespace`, a change the live cluster refuses before anything is sent); or the API server stopped answering part-way, after the retries, or this apply lost the Lease — the line names the object the apply stopped at, and a re-run finishes the job |
+| `3` | some objects were refused and are unchanged — or `--prune` could not delete some, or a campaign's Job or status record could not be read, so whether it had finished could not be checked, or a campaign was held back for sharing a volume with a running one — everything else was applied, and every pause holds; the summary line names each of them |
 | `0` | everything was applied |
 
 A Job's **pod template cannot be edited** once the Job exists — that is
@@ -561,8 +606,12 @@ token's environment variable). They get different answers:
   `replaced: Job/htr-warmup-<id> — it had failed …`.
 - **A campaign Job never is.** Its completed indexes and its results *are*
   the campaign, and deleting it would start every volume over. It is
-  reported, left exactly as it is, and the apply exits 3. A pipeline edit
-  under a live campaign is caught earlier than this, by `validate` — see
+  reported, left exactly as it is, and the apply exits 3. Its pause still
+  follows git: the pause sync reads the live Job and sets its Workload's
+  `spec.active` whether or not the rendered Job was taken, so a campaign
+  paused in git stops even while a converter upgrade has every live Job
+  refused, and a resumed one can finish. A pipeline edit under a live
+  campaign is caught earlier than this, by `validate` — see
   [Immutability](#immutability).
 
 ## Immutability
