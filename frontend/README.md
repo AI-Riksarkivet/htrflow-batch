@@ -119,7 +119,9 @@ check: every response is computed live.
   "pipelineSteps": ["Segmentation", "TextRecognition"], // the chip's tooltip
   "pipelineYaml": "steps:\n  - step: Segmentation\n…", // the chip's toggle
   "latest": {/* the VolumeView a folded card shows, or null */},
-  "failures": [/* up to 50 newest failed VolumeView rows, with a reason or without */],
+  "failures": [
+    /* up to 50 newest failed VolumeView rows, with a reason or without */
+  ],
   "volumes": [
     {
       "index": 3,
@@ -177,14 +179,13 @@ order, so ten cards scan like ten rows of one table.
    (headers present but not drawn) when open. Every row uses the same five
    tracks, declared once as custom properties on the card:
 
-   | track | holds |
-   | --- | --- |
-   | 1 (`minmax(6rem, 1fr)`) | the row's words or the volume id — the one flexible track |
-   | 2 (`--icons`) | the two icon links; empty on a totals row |
-   | 3 (`--bar`) | the 3px progress bar |
-   | 4 (`--fraction`) | `X / Y`, right-aligned, tabular figures (an em dash when the total is unknown) |
-   | 5 (`--pill`) | the state pill, fixed width so it anchors the right edge; empty on a totals row |
-
+   | track                   | holds                                                                           |
+   | ----------------------- | ------------------------------------------------------------------------------- |
+   | 1 (`minmax(6rem, 1fr)`) | the row's words or the volume id — the one flexible track                       |
+   | 2 (`--icons`)           | the two icon links; empty on a totals row                                       |
+   | 3 (`--bar`)             | the 3px progress bar                                                            |
+   | 4 (`--fraction`)        | `X / Y`, right-aligned, tabular figures (an em dash when the total is unknown)  |
+   | 5 (`--pill`)            | the state pill, fixed width so it anchors the right edge; empty on a totals row |
    - A row that lost something carries a second line under its bar
      (`1 failed`, `3 failed · 2 errors`); a clean row is one line.
      `errors` counts ERROR-and-worse only.
@@ -203,6 +204,7 @@ order, so ten cards scan like ten rows of one table.
    - At ≤520px the tracks fold onto two lines (id and failure first, then
      icons, bar, fraction, pill); words wrap, and the bar may shrink
      between a floor and its full width.
+
 3. **Problems**, across the grid, only when there is one: the warm-up's
    failure, each failed volume as `id: sentence` (the id links to its run
    log), and the latest page error only when its volume is not on screen
@@ -213,7 +215,7 @@ order, so ten cards scan like ten rows of one table.
    `describeLastError` names the failing page once, even when the wrapper's
    message already names it.
 4. **Provenance**, the footer: the pipeline chip (a button once the detail
-   has loaded: `title` is `pipelineSteps` joined by ` → `, click toggles
+   has loaded: `title` is `pipelineSteps` joined by `→`, click toggles
    `pipelineYaml` in a `<pre>`), and the models line. `src/lib/pipeline.ts`
    reads the YAML line by line for `model_settings.model` and its revision
    (`model_settings.revision` or `model_settings.model_kwargs.revision`,
