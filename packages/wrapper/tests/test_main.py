@@ -617,21 +617,6 @@ def test_publish_tolerates_unparseable_previously_uploaded_alto(env, cfg, s3):
     assert {c["id"].rsplit("/", 1)[-1] for c in iiif["items"]} == {"0002", "0003"}
 
 
-def test_bad_manifest_is_permanent(env, cfg, s3, monkeypatch):
-    def handler(req):
-        return httpx.Response(404)
-
-    monkeypatch.setattr(
-        main_mod,
-        "_http_client",
-        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
-    )
-    rc = main(env, process_page_factory=fake_factory)
-    assert rc == EXIT_PERMANENT
-    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
-    assert term["stage"] == "setup"
-
-
 @pytest.mark.parametrize(
     "permanent,error,sentence",
     [
@@ -682,8 +667,11 @@ def test_a_missing_env_is_reported_as_the_config_stage(env, cfg, s3):
     assert "VOLUME_REF" in term["error"]
 
 
-def test_a_manifest_failure_is_still_the_setup_stage(env, cfg, s3, monkeypatch):
-    """The counterpart: `config` must not swallow what follows it."""
+def test_a_manifest_failure_is_permanent_and_still_the_setup_stage(
+    env, cfg, s3, monkeypatch
+):
+    """A manifest the source refuses (404) is permanent, and the counterpart
+    of the test above: `config` must not swallow what follows it."""
     monkeypatch.setattr(
         main_mod,
         "_http_client",
@@ -693,7 +681,7 @@ def test_a_manifest_failure_is_still_the_setup_stage(env, cfg, s3, monkeypatch):
     )
     assert main(env, process_page_factory=fake_factory) == EXIT_PERMANENT
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
-    assert term["stage"] == "setup"
+    assert term["stage"] == "setup" and term["permanent"] is True
 
 
 def test_a_permanent_failure_line_keeps_its_prefix_and_gains_a_sentence(
