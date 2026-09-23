@@ -2115,3 +2115,21 @@ def test_a_release_whose_last_renewal_answer_was_lost_still_releases(
     _during(cluster, "loc", lost_answer)
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     assert cluster.leases[lease]["spec"]["holderIdentity"] is None
+
+
+def test_sigterm_releases_the_lease(tmp_path, cluster):
+    """Argo CD terminates a hook with SIGTERM, and Python's default action
+    skips every `finally`: the Lease stayed held, and the next hook
+    (backoffLimit 0) failed on it. The apply turns SIGTERM into an exit
+    that unwinds, 143 as the shell reports it."""
+    import os
+    import signal
+
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    before = signal.getsignal(signal.SIGTERM)
+    _during(cluster, "campaign-kyrk", lambda: os.kill(os.getpid(), signal.SIGTERM))
+    with pytest.raises(SystemExit) as e:
+        cli.main(["apply", str(repo), "--out", str(out)])
+    assert e.value.code == 143
+    assert cluster.leases["htrflow-campaigns-apply"]["spec"]["holderIdentity"] is None
+    assert signal.getsignal(signal.SIGTERM) is before, "the handler is put back"

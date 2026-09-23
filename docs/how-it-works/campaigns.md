@@ -42,7 +42,7 @@ hand-run `make campaigns-apply`, would interleave, and a prune from the
 older checkout would delete the Job and ConfigMap the newer one had just
 created. So an apply holds the `coordination.k8s.io` Lease
 `htrflow-campaigns-apply` in the namespace for its whole run, and releases
-it at the end. A second apply that finds the Lease held
+it at the end, SIGTERM included. A second apply that finds the Lease held
 sends nothing, names the holder and exits `1`. A Lease left unrenewed for
 ten minutes belongs to an apply that died, and the next one takes it over.
 Both the renewal times and that judgement use the API server's clock (its

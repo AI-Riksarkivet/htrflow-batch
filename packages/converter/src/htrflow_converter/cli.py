@@ -8,6 +8,7 @@ import getpass
 import hashlib
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -860,6 +861,10 @@ _STOPPED = (
 )
 
 
+def _terminated(signum: int, frame: object) -> None:
+    raise SystemExit(128 + signum)
+
+
 def _cluster(namespace: str):
     """The API-server adapter, behind a function: `validate` and `render`
     never touch a cluster (nor pay the client's import), and a test swaps
@@ -960,6 +965,13 @@ def _apply(
         from .cluster import ClusterError, LeaseLost, Unreachable
 
         try:
+            # SIGTERM -- how Argo CD stops a hook -- would end the process
+            # without a single `finally`, and leave the Lease held for its
+            # whole duration: the next hook fails on it. Turned into an exit
+            # that unwinds, with the code the shell gives it.
+            with contextlib.suppress(ValueError):  # not the main thread
+                previous = signal.signal(signal.SIGTERM, _terminated)
+                stack.callback(signal.signal, signal.SIGTERM, previous)
             cluster = _cluster(cfg.namespace)
             # One apply at a time, for the whole run: released when this
             # function returns, however it returns (C-12).
