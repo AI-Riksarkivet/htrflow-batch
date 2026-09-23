@@ -62,7 +62,7 @@ func publishedImage(ctx context.Context, source *dagger.Directory, image string)
 // you about the next release and nothing about the one installed: a CVE
 // published after the release is in the pinned digest whatever main says.
 // Trivy reads the image straight from the registry, one layer at a time,
-// for the given platform of the multi-architecture index.
+// for one architecture of the multi-architecture index.
 func (m *HtrflowBatch) ScanPublished(
 	ctx context.Context,
 	// +defaultPath="/"
@@ -70,9 +70,9 @@ func (m *HtrflowBatch) ScanPublished(
 	source *dagger.Directory,
 	// Which image: "wrapper", "web" or "campaigns"
 	image string,
-	// Platform of the multi-architecture index to scan
-	// +default="linux/amd64"
-	platform string,
+	// Architecture of the multi-architecture index to scan: "amd64" or "arm64"
+	// +default="amd64"
+	arch string,
 	// +default="CRITICAL,HIGH"
 	severity string,
 	// +default="table"
@@ -90,16 +90,23 @@ func (m *HtrflowBatch) ScanPublished(
 	if err != nil {
 		return "", err
 	}
-	args := append(trivyArgs(severity, format, exitCode, ignoreUnfixed),
-		"--image-src", "remote", "--platform", platform, ref)
-	output, err := m.trivy(source, caBundle).WithExec(args).Stdout(ctx)
+	if arch != "amd64" && arch != "arm64" {
+		return "", fmt.Errorf("arch must be \"amd64\" or \"arm64\", got %q", arch)
+	}
+	// Which image of the index Trivy reads, by its own environment variable:
+	// this selects a published image to read, it builds nothing.
+	args := append(trivyArgs(severity, format, exitCode, ignoreUnfixed), "--image-src", "remote", ref)
+	output, err := m.trivy(source, caBundle).
+		WithEnvVariable("TRIVY_PLATFORM", "linux/"+arch).
+		WithExec(args).
+		Stdout(ctx)
 	if err != nil {
 		if output == "" {
 			return "", fmt.Errorf("trivy scan of %s failed: %w", ref, err)
 		}
 		return output, fmt.Errorf("vulnerabilities found in %s: %w", ref, err)
 	}
-	return fmt.Sprintf("%s (%s)\n%s", ref, platform, output), nil
+	return fmt.Sprintf("%s (linux/%s)\n%s", ref, arch, output), nil
 }
 
 // VerifyPublished runs the chart's own signature rule -- the verify-images
