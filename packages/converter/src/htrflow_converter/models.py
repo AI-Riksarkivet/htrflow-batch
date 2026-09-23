@@ -544,6 +544,23 @@ class Pipeline(BaseModel):
                 'must be a list of steps — write steps: and then "- step: '
                 '<Name>" entries under it'
             )
+        # audit 0923 C-8: neither of these reached anything but the wrapper,
+        # which then failed every volume of every campaign on the pipeline.
+        if not v:
+            raise ValueError(
+                "is empty — a pipeline runs at least one step; write steps: "
+                'and then "- step: <Name>" entries under it'
+            )
+        unnamed = [
+            str(i)
+            for i, step in enumerate(v, 1)
+            if isinstance(step, dict) and not step.get("step")
+        ]
+        if unnamed:
+            raise ValueError(
+                f'has a step with no "step:" name (step {", ".join(unnamed)}) — '
+                'every entry starts "- step: <Name>", the htrflow step it runs'
+            )
         # 3098: the wrapper appends its own Export steps and refuses a file
         # that has one; htrflow resolves a step by its lower-cased name.
         exports = [
