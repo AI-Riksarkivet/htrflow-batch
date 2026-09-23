@@ -20,7 +20,12 @@ runner of their own architecture and never emulated.
 
 from __future__ import annotations
 
+import ast
+import json
+import os
 import re
+import shlex
+import shutil
 from pathlib import Path
 
 import pytest
@@ -44,6 +49,7 @@ _COMPILER_PACKAGES = re.compile(
 )
 BUILD_CONSTRAINTS = REPO / ".docker" / "build-constraints.txt"
 HTRFLOW_BASE = REPO / ".docker" / "htrflow-base"
+PYPI = "https://pypi.org/simple"
 
 # Build paths that must never cross-build: a `--platform` flag or a
 # qemu/binfmt setup step is exactly how the wrapper image ends up emulated.
@@ -90,16 +96,54 @@ def test_the_publish_tag_is_baked_into_both_images(name: str) -> None:
     assert 'org.opencontainers.image.version="${HTRFLOW_BATCH_VERSION}"' in text
 
 
+def _commands(text: str) -> list[list[str]]:
+    """The shell commands of every RUN, as argument lists: continuation
+    lines joined, --mount options dropped, one list per `&&` part."""
+    commands = []
+    for line in _logical_lines(text):
+        if line.startswith("RUN ") and "<<" not in line:
+            for part in line[4:].split("&&"):
+                words = [w for w in shlex.split(part) if not w.startswith("--mount=")]
+                if words:
+                    commands.append(words)
+    return commands
+
+
+def _option(words: list[str], name: str) -> str | None:
+    return words[words.index(name) + 1] if name in words else None
+
+
 def test_campaigns_image_is_distroless_nonroot_and_locked():
     text = (REPO / ".docker/htrflow-campaigns.dockerfile").read_text()
-    assert "gcr.io/distroless/python3-debian13:nonroot@sha256:" in text
-    assert (
-        "uv sync --locked --no-install-workspace --no-build"
-        " --package htrflow-converter --extra hook" in text
+    final = re.split(r"^FROM ", text, flags=re.M)[-1]
+    assert re.match(
+        r"gcr\.io/distroless/python3-debian13:nonroot@sha256:[0-9a-f]{64}\s", final
     )
-    assert "uv build --wheel --package htrflow-converter --require-hashes" in text
-    assert "USER 1000:1000" in text
-    assert 'ENTRYPOINT ["/app/.venv/bin/htrflow-campaigns"]' in text
+    commands = _commands(text)
+    installs = [
+        c
+        for c in commands
+        if c[:2] == ["uv", "sync"]
+        and {"--locked", "--no-install-workspace", "--no-build"} <= set(c)
+        and _option(c, "--package") == "htrflow-converter"
+        and _option(c, "--extra") == "hook"
+    ]
+    assert installs, "the converter's dependencies are not synced --locked"
+    builds = [
+        c
+        for c in commands
+        if c[:2] == ["uv", "build"]
+        and {"--wheel", "--require-hashes"} <= set(c)
+        and _option(c, "--package") == "htrflow-converter"
+    ]
+    assert builds, "the converter is not built with a hashed build backend"
+    instructions = dict(
+        line.split(" ", 1) for line in _logical_lines(final) if " " in line
+    )
+    assert instructions["USER"] == "1000:1000"
+    assert json.loads(instructions["ENTRYPOINT"]) == [
+        "/app/.venv/bin/htrflow-campaigns"
+    ]
 
 
 def test_one_wrapper_dockerfile_one_base_for_both_arches() -> None:
@@ -136,9 +180,34 @@ def test_the_wrapper_image_carries_no_compiler_and_compiles_nothing() -> None:
     assert "TARGETARCH" not in "\n".join(_logical_lines(text))
     # The switch lives in a private torch module: the build proves it still
     # works (no JIT-compiled override registered), not just that it is set.
-    check = text[text.index("<<'CHECK'") :]
-    assert "registry._dsl_name_to_lib_graph" in check
-    assert '- {"native"}' in check
+    # The CHECK heredoc is Python, so it is read as Python: it imports
+    # torch._native's registry, reads it, and a finding exits the build.
+    check = ast.parse(_heredoc(text, "CHECK"))
+    [guard] = [
+        node
+        for node in ast.walk(check)
+        if isinstance(node, ast.Try)
+        and any(
+            isinstance(s, ast.ImportFrom)
+            and s.module == "torch._native"
+            and [a.name for a in s.names] == ["registry"]
+            for s in node.body
+        )
+    ]
+    found = [n for s in guard.orelse for n in ast.walk(s)]
+    assert any(
+        isinstance(n, ast.Attribute) and ast.unparse(n.value) == "registry"
+        for n in found
+    ), "the registry is imported but never read"
+    assert any(
+        isinstance(n, ast.If)
+        and any(
+            isinstance(c, ast.Call) and ast.unparse(c.func) == "sys.exit"
+            for b in n.body
+            for c in ast.walk(b)
+        )
+        for n in found
+    ), "what the registry holds never fails the build"
 
 
 def test_the_wrapper_source_stays_out_of_the_image() -> None:
@@ -200,11 +269,7 @@ def test_the_transformers_line_is_one_build_arg_every_build_path_can_set() -> No
     makefile = (REPO / "Makefile").read_text()
     assert "--build-arg TRANSFORMERS_VERSION=$(TRANSFORMERS_VERSION)" in makefile
 
-    dagger = (REPO / ".dagger" / "build.go").read_text()
-    assert 'Name: "TRANSFORMERS_VERSION"' in dagger
-    publish_go = (REPO / ".dagger" / "publish.go").read_text()
-    assert "transformersVersion string" in publish_go  # the function's own arg
-    assert "resolvedTag, transformersVersion)" in publish_go  # reaches the build
+    # publish-docker and build-wrapper hand it on: .dagger/publishcheck
 
     publish = (REPO / ".github" / "workflows" / "publish.yml").read_text()
     assert "transformers_version:" in publish  # the dispatch input
@@ -234,6 +299,14 @@ def test_the_library_api_pin_runs_against_the_image_ci_builds() -> None:
     # Against the image this job built, not one it would have to pull.
     assert f"WRAPPER_IMAGE={tag}" in driver[0]["run"]
     assert job["steps"].index(driver[0]) > job["steps"].index(built[0])
+
+
+def _heredoc(text: str, name: str) -> str:
+    """The body of the dockerfile heredoc ``<<'name'`` ... ``name``."""
+    lines = text.splitlines()
+    start = next(i for i, line in enumerate(lines) if f"<<'{name}'" in line)
+    end = lines.index(name, start)
+    return "\n".join(lines[start + 1 : end])
 
 
 def _logical_lines(text: str) -> list[str]:
@@ -393,31 +466,118 @@ def test_the_htrflow_base_is_built_from_pinned_inputs() -> None:
     assert pyproject.endswith(overlay)
     assert tomllib.loads(pyproject)["project"]["name"] == "htrflow"
     uv = tomllib.loads(overlay)["tool"]["uv"]
-    assert "torch==2.9.1; platform_machine == 'x86_64'" in uv["constraint-dependencies"]
-    assert uv["index"] == [
-        {
-            "name": "pytorch-cu128",
-            "url": "https://download.pytorch.org/whl/cu128",
-            "explicit": True,
-        }
+    [index] = uv["index"]
+    assert index["explicit"] is True and index["url"].endswith("/whl/cu128")
+    assert uv["sources"]["torch"] == [
+        {"index": index["name"], "marker": "platform_machine == 'x86_64'"}
     ]
-    lock = (HTRFLOW_BASE / "uv.lock").read_text()
-    assert 'version = "2.9.1+cu128"' in lock and 'version = "2.13.0"' in lock
+    pinned = dict(
+        (m[2], m[1])
+        for c in uv["constraint-dependencies"]
+        if (m := re.fullmatch(r"torch==(\S+); platform_machine == '(\w+)'", c))
+    )
+    assert set(pinned) == {"x86_64", "aarch64"}, "torch is pinned per architecture"
+    # ... and the lock holds exactly those: x86_64's from the cu128 index,
+    # aarch64's from PyPI, each for its own machine only.
+    lock = tomllib.loads((HTRFLOW_BASE / "uv.lock").read_text())
+    torches = [p for p in lock["package"] if p["name"] == "torch"]
+    assert len(torches) == 2
+    for machine, registry in (("x86_64", index["url"]), ("aarch64", PYPI)):
+        [torch] = [
+            t
+            for t in torches
+            if any(
+                f"platform_machine == '{machine}'" in m for m in t["resolution-markers"]
+            )
+        ]
+        assert torch["source"] == {"registry": registry}, machine
+        assert torch["version"].split("+")[0] == pinned[machine], machine
 
-    # Nothing builds a base anywhere else any more.
+    # Nothing builds a base anywhere else any more: a second recipe.
     assert not (REPO / ".github" / "actions" / "build-htrflow-base-arm64").exists()
     for path in BUILD_PATHS:
-        assert "HTRFLOW_ARM64_BASE" not in path.read_text(), path.name
+        text = path.read_text()
+        assert "HTRFLOW_ARM64_BASE" not in text, path.name
+        assert "build-htrflow-base" not in text, path.name
 
 
-def test_the_web_image_ships_only_the_viewer_page_and_what_it_references() -> None:
+def test_the_web_image_ships_only_the_site_step_output() -> None:
     """UV's build also emits its demo pages and sample collections. The web
-    image copies the site a build step derives from uv.html's own
-    references, and that step fails on a reference the build did not
-    produce."""
+    image copies only the site a build step in the viewer's stage derives
+    from uv.html's own references -- never UV's build output itself."""
     text = (REPO / ".docker" / "htrflow-web.dockerfile").read_text()
-    assert "COPY --from=uv4 /src/site/ /app/static/" in text
-    assert "COPY --from=uv4 /src/dist/" not in text
-    site = text[text.index("<<'SITE'") : text.index("\nSITE\n")]
-    assert "which UV's build did not produce" in site
-    assert "pages.join() !== page" in site
+    assert re.search(r"^RUN node <<'SITE'$", _stage(text, "uv4"), re.M)
+    final = re.split(r"^FROM ", text, flags=re.M)[-1]
+    assert re.findall(r"^COPY --from=uv4 (\S+) ", final, re.M) == ["/src/site/"]
+
+
+#: Runs the SITE step with its /src paths under SITE_ROOT, so the script the
+#: image builds with is the one tested.
+_SITE_ROOT_PRELOAD = """
+const fs = require("fs");
+const root = process.env.SITE_ROOT;
+const at = (p) => (typeof p === "string" && p.startsWith("/src/") ? root + p : p);
+for (const name of ["readFileSync", "existsSync", "mkdirSync", "readdirSync"]) {
+  const real = fs[name];
+  fs[name] = (p, ...rest) => real.call(fs, at(p), ...rest);
+}
+const cp = fs.cpSync;
+fs.cpSync = (from, to, ...rest) => cp.call(fs, at(from), at(to), ...rest);
+"""
+
+
+def _run_site_step(tmp_path: Path, files: dict[str, str]):
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    for rel, body in files.items():
+        (tmp_path / "src" / "dist" / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "src" / "dist" / rel).write_text(body)
+    (tmp_path / "preload.js").write_text(_SITE_ROOT_PRELOAD)
+    script = _heredoc((REPO / ".docker" / "htrflow-web.dockerfile").read_text(), "SITE")
+    return subprocess.run(
+        [node, "--require", str(tmp_path / "preload.js"), "-"],
+        input=script,
+        capture_output=True,
+        text=True,
+        env={"SITE_ROOT": str(tmp_path), "PATH": os.environ.get("PATH", "")},
+        timeout=60,
+    )
+
+
+def test_the_site_step_copies_the_viewer_page_and_what_it_references(tmp_path):
+    page = (
+        '<link href="uv.css"><script src="uv-assets/js/UV.js"></script>'
+        '<script>fetch("uv-config.json")</script><a href="https://x.org/">x</a>'
+    )
+    done = _run_site_step(
+        tmp_path,
+        {
+            "uv.html": page,
+            "uv.css": "",
+            "uv-config.json": "{}",
+            "uv-assets/js/UV.js": "",
+            "uv-assets/js/chunk-1.js": "",  # loaded by UV.js at run time
+            "index.html": "the demo page",
+            "collections/sample.json": "{}",
+        },
+    )
+    assert done.returncode == 0, done.stderr
+    site = tmp_path / "src" / "site"
+    assert sorted(str(p.relative_to(site)) for p in site.rglob("*") if p.is_file()) == [
+        "uv-assets/js/UV.js",
+        "uv-assets/js/chunk-1.js",
+        "uv-config.json",
+        "uv.css",
+        "uv.html",
+    ]
+
+
+def test_the_site_step_fails_on_a_reference_the_build_did_not_produce(tmp_path):
+    done = _run_site_step(
+        tmp_path, {"uv.html": '<script src="uv-assets/js/missing.js"></script>'}
+    )
+    assert done.returncode != 0
+    assert "uv-assets/js/missing.js" in done.stderr

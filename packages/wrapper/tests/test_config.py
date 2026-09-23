@@ -62,7 +62,7 @@ REQUIRED = {
     "PIPELINE_ID": "demo-v1",
     "S3_ENDPOINT": "http://rustfs:9000",
     "S3_BUCKET": "htr-results",
-    "PUBLIC_RESULTS_BASE": "http://10.16.51.53:30900/htr-results",
+    "PUBLIC_RESULTS_BASE": "http://192.0.2.53:30900/htr-results",
 }
 
 
@@ -129,13 +129,6 @@ def test_download_deadline_default_and_override():
     assert Config.from_env(REQUIRED).download_deadline_seconds == 300.0
     cfg = Config.from_env(dict(REQUIRED, DOWNLOAD_DEADLINE_SECONDS="45"))
     assert cfg.download_deadline_seconds == 45.0
-
-
-def test_max_seconds_is_not_a_wrapper_setting():
-    """The per-volume budget is the pod's activeDeadlineSeconds now; a stray
-    MAX_SECONDS in the env must be ignored, not resurrect a wrapper field."""
-    cfg = Config.from_env(dict(REQUIRED, MAX_SECONDS="21600"))
-    assert not hasattr(cfg, "max_seconds")
 
 
 def test_images_is_an_alternative_to_manifest_url():

@@ -222,14 +222,15 @@ def _step_index(steps: list[dict], needle: str) -> int:
     return found[0]
 
 
-def test_every_image_is_trivy_gated_before_it_is_pushed() -> None:
+def test_every_image_is_published_through_publish_docker() -> None:
     """Finding 3060: only the amd64 wrapper went through Trivy, and only on
     main. Every image and architecture is published through publish-docker,
-    which runs the CRITICAL gate on the container it is about to push."""
+    which runs the CRITICAL gate on the container it is about to push -- the
+    order of its gates is asserted on its syntax tree by
+    .dagger/publishcheck (`go test ./publishcheck/`)."""
     assert set(JOBS) == {"publish", "manifest"}
-    publish_go = (REPO / ".dagger" / "publish.go").read_text()
-    gate = publish_go.index('m.scanImage(ctx, container, "CRITICAL"')
-    assert gate < publish_go.index(".Publish(ctx, imageRef)")
+    runs = [step.get("run", "") for step in JOBS["publish"]["steps"]]
+    assert sum("dagger call --progress plain publish-docker" in r for r in runs) == 1
 
 
 def test_the_arm64_wrapper_is_scanned_in_ci_and_every_week() -> None:
@@ -244,46 +245,21 @@ def test_the_arm64_wrapper_is_scanned_in_ci_and_every_week() -> None:
     assert any(r.strip() == "make scan-image" for r in runs)  # the CRITICAL gate
 
 
-def test_no_workflow_builds_an_htrflow_base_of_its_own() -> None:
-    """The wrapper dockerfile builds its htrflow base from the commit it pins;
-    a workflow that built one separately would be a second recipe."""
-    for name in _all_workflows():
-        text = (WORKFLOWS / name).read_text()
-        assert "HTRFLOW_ARM64_BASE" not in text, name
-        assert "build-htrflow-base" not in text, name
-
-
-def test_publish_docker_itself_refuses_an_existing_tag() -> None:
+def test_make_publish_goes_through_publish_docker() -> None:
     """Finding 3069: only publish.yml checked the registry, so `make
-    publish` (and any other caller) replaced a signed release's manifest list
-    with an unsigned single-arch image. publish-docker now asks the registry
-    before its tests and again right before the push, and a registry it
-    cannot get an answer from refuses rather than passes."""
-    go = (REPO / ".dagger" / "publish.go").read_text()
-    body = go[go.index("func (m *HtrflowBatch) PublishDocker(") :]
-    checks = [m.start() for m in re.finditer(r"m\.refuseExistingTags\(", body)]
-    assert len(checks) == 2
-    assert checks[0] < body.index("m.Test(ctx") < checks[1]
-    assert checks[1] < body.index(".Publish(ctx, imageRef)")
-    assert "imageRef := refs[0]" in body  # the ref pushed is the ref checked
-    # Only "no such manifest/repository" means free.
-    assert '"MANIFEST_UNKNOWN"' in go and '"NAME_UNKNOWN"' in go
-    assert "cannot tell whether" in go
-    # The Makefile's publish goes through the same function.
+    publish` replaced a signed release's manifest list with an unsigned
+    single-arch image. The registry check lives in publish-docker itself
+    (.dagger/publishcheck asserts it runs before the tests and again right
+    before the push), and the Makefile goes through the same function."""
     assert "dagger call publish-docker" in (REPO / "Makefile").read_text()
 
 
 def test_the_driver_test_runs_on_the_images_that_ship() -> None:
     """Finding 3104: the level-0 pin ran only against an arm64 image built in
     ci.yml. publish-docker, which publishes the wrapper for both
-    architectures, now runs it on the container it pushes, and ci.yml on the
-    amd64 build its scan job already has."""
-    go = (REPO / ".dagger" / "publish.go").read_text()
-    body = go[go.index("func (m *HtrflowBatch) PublishDocker(") :]
-    driver = body.index("m.driverTest(ctx, container, source, caBundle)")
-    assert body.index("container, err = m.BuildWrapper(") < driver
-    assert driver < body.index(".Publish(ctx, imageRef)")
-
+    architectures, now runs it on the container it pushes (asserted by
+    .dagger/publishcheck), and ci.yml on the amd64 build its scan job
+    already has."""
     wrappers = [
         e
         for e in JOBS["publish"]["strategy"]["matrix"]["include"]
