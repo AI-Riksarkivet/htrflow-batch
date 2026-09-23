@@ -323,7 +323,12 @@ def create_app(
         )
 
     @app.api_route("/healthz", methods=GET_HEAD)
-    def healthz() -> dict:
+    async def healthz() -> dict:
+        """Answered on the event loop, never the thread pool every sync
+        route shares: with requests stuck on a hung API server holding every
+        worker, a pooled probe queued behind them, readiness failed, and the
+        only replica left the Service (2026-09-23 audit). Liveness of the
+        process is the question; the cluster's is each route's own 502."""
         return {"ok": True}
 
     @app.api_route("/api/v1/version", methods=GET_HEAD)
