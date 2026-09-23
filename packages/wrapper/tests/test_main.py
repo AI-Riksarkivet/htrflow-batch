@@ -622,41 +622,66 @@ def test_publish_tolerates_unparseable_previously_uploaded_alto(env, cfg, s3):
     assert {c["id"].rsplit("/", 1)[-1] for c in iiif["items"]} == {"0002", "0003"}
 
 
+class _Uploaded:
+    def __init__(self, *names):
+        self.names = set(names)
+
+    def uploaded_pages(self):
+        return self.names
+
+
+def _pages(*names):
+    from htrflow_batch.iiif import PageRef
+
+    return [
+        PageRef(index=i, name=n, image_url="https://x/p.jpg", canvas={})
+        for i, n in enumerate(names, 1)
+    ]
+
+
 @pytest.mark.parametrize(
-    "permanent,error,sentence",
+    "store,results,sentence",
     [
         (
-            False,
-            "verify failed: 2 missing, 0 failed missing=['0002']",
+            _Uploaded("0001"),
+            {"0001": PageOutcome(status="ok")},
             "some pages produced no result; the retry redoes only those",
         ),
         (
-            False,
-            "verify failed: all 3 processed pages failed failed=['0001']",
+            _Uploaded(),
+            {n: PageOutcome(status="failed", error="CUDA") for n in ("0001", "0002")},
             "no page produced a result — check the model and the GPU",
         ),
-        (
-            False,
-            "SIGTERM",
-            "stopped by the cluster (drain, pause, or time budget); retried",
-        ),
-        (
-            True,
-            "manifest is not JSON",
-            "a retry changes nothing — fix the campaign or pipeline file",
-        ),
-        (
-            False,
-            "connection reset",
-            "the index is retried, resuming from the pages already done",
-        ),
+    ],
+    ids=["missing-pages", "all-failed"],
+)
+def test_a_verify_failure_gets_the_advice_for_its_outcome(store, results, sentence):
+    """B63 Task 20G: the advice is chosen from the verify error's wording, so
+    it is checked against the error _verify really raises for each outcome,
+    not a copy of it."""
+    with pytest.raises(RuntimeError) as ei:
+        main_mod._verify(
+            store,
+            _pages("0001", "0002"),
+            StreamStats(results=results),
+            main_mod.RunState(),
+        )
+    assert main_mod._advice(False, str(ei.value)) == sentence
+
+
+@pytest.mark.parametrize(
+    "permanent,sentence",
+    [
+        (True, "a retry changes nothing — fix the campaign or pipeline file"),
+        (False, "the index is retried, resuming from the pages already done"),
     ],
 )
-def test_every_failure_line_ends_in_plain_language(permanent, error, sentence):
+def test_every_failure_line_ends_in_plain_language(permanent, sentence):
     """B63 Task 20G: the machine-readable prefix stays (the run viewer's
     terminal-line rule and the read API key on it); what follows the em dash
-    is for whoever opened the log."""
-    assert main_mod._advice(permanent, error) == sentence
+    is for whoever opened the log. Any other failure is advised by whether a
+    retry can change it."""
+    assert main_mod._advice(permanent, "connection reset") == sentence
 
 
 def test_a_missing_env_is_reported_as_the_config_stage(env, cfg, s3):
@@ -907,6 +932,7 @@ def test_sigterm_writes_termination_log_ships_final_log_and_exits_143(
         .decode()
     )
     assert "SIGTERM" in body  # final ship carried the shutdown line
+    assert "stopped by the cluster (drain, pause, or time budget); retried" in body
     assert "demo-v1/SE-RA-1234/manifest.json" not in _keys(s3, cfg)
     assert signal.getsignal(signal.SIGTERM) is before  # handler restored
 
