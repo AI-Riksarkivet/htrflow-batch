@@ -158,6 +158,16 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | More than 10 000 volumes, or more than 900 KiB of `volumes.txt` (an `images:` volume is ONE line of space-joined URLs) | Split into `<name>-part1`, `-part2`, … — one Job and one ConfigMap each. The API server refuses a ConfigMap over 1 MiB; the rest is margin |
 | A campaign that splits and whose name is long | The name is cut short in the part names: a Job's name is also a label value and its pods' name prefix (`<job>-<index>`), and a DNS label stops at 63 characters. `rendered/` holds `<shortened>-partN.yaml`. Two long names can share that shortened stem: the parts are told apart by the campaign label inside them, so a split campaign beside a single-Job one with the same first 50 characters is not mistaken for its parts. Two campaigns that would both split onto one stem are refused, since their parts would be the same files |
 
+**A rule added later does not reach a campaign already rendered.** A
+campaign whose volume list is exactly what the committed `rendered/`
+recorded for it keeps that rendering, even where a rule added since would
+refuse it: a volume id written unquoted that YAML reads as a number, or a
+source URL a browser cannot open. Its list is append-only, so it could never
+be brought to pass. `validate` and `render` print a `warning:` line for each
+such volume instead, which says the id the volume was rendered under (write
+it quoted, as that id) or what the browser would refuse. A new campaign, or
+a rendered one whose list changes, is held to every rule.
+
 The campaign file stem becomes the value of the converter's `campaign` label
 and, for a campaign that does not split, the Job name; a campaign that splits
 is `<stem cut to 50 characters>-partN` instead, one Job per part. The exact
