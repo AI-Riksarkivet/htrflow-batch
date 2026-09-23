@@ -62,7 +62,7 @@ REQUIRED = {
     "PIPELINE_ID": "demo-v1",
     "S3_ENDPOINT": "http://rustfs:9000",
     "S3_BUCKET": "htr-results",
-    "PUBLIC_RESULTS_BASE": "http://10.16.51.53:30900/htr-results",
+    "PUBLIC_RESULTS_BASE": "http://192.0.2.53:30900/htr-results",
 }
 
 
