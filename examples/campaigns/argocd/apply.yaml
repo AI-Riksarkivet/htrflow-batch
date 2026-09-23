@@ -82,10 +82,14 @@ spec:
       containers:
         - name: apply
           image: docker.io/riksarkivet/htrflow-campaigns@sha256:8c060603a369abb219073b3a01883c70865a4223e46d5372a897bfd0686ee0d3   # v0.5.0
-          args: ["apply", "--prune", "/repo"]
+          args: ["apply", "--prune", "--namespace", "$(POD_NAMESPACE)", "/repo"]
           env:
             - {name: HOME, value: /tmp}
             - {name: HTRFLOW_APPLIED_BY, value: argocd-hook/htrflow-campaigns}
+            # The namespace this hook runs in; apply refuses a converter.yaml
+            # naming another one.
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
           volumeMounts:
             - {name: repo, mountPath: /repo}
             - {name: tmp, mountPath: /tmp}
