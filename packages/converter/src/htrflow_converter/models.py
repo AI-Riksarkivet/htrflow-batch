@@ -274,7 +274,10 @@ def parse_source_line(line: str) -> tuple[str, tuple[str, ...]]:
 
 
 class Volume(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    #: Unknown keys rejected, as on every other model: a volume's stray
+    #: ``pages: 1-10`` read as a page range to its author and was dropped
+    #: without a word, so every page ran (audit 0923 C-1).
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str
     manifest: str | None = None
@@ -378,7 +381,10 @@ _NOT_A_PRIORITY = (
 
 
 class Campaign(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    #: Unknown keys rejected: ``suspended: true`` or ``priorty:`` was dropped
+    #: without a word, and the campaign rendered -- and ran -- at the
+    #: defaults, unpaused (audit 0923 C-1).
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str
     pipeline: str

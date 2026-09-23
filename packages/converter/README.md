@@ -61,7 +61,7 @@ ServiceAccount behind `apply.rbac.enabled`.
 |---|---|---|
 | `converter.yaml` | `ConverterConfig` (unknown keys rejected, all fields optional) | Namespace, queue, window cap, S3 Secret, model-cache PVC, runtime class, node selector and tolerations, the IIIF source template, wrapper byte caps, and the default pod deadline (`max_seconds` → `activeDeadlineSeconds`). Not the image allow-list or the model-revision rule: both are chart values enforced by Kyverno since B63 Task 22, and a `converter.yaml` still carrying either key is a validation error saying so |
 | `pipelines/<id>.yaml` | `Pipeline` (digest-pinned `image`, htrflow `steps`, optional `max_seconds`; unknown keys rejected) | ConfigMap `htr-pipeline-<id>` with the pipeline YAML and its sha256; Job `htr-warmup-<id>` |
-| `campaigns/<name>.yaml` | `Campaign` (`pipeline`, `volumes`, optional `priority`, `window`, `suspend`) | ConfigMap `campaign-<name>` with `volumes.txt`; Indexed Job `<name>` with `completions = len(volumes)` |
+| `campaigns/<name>.yaml` | `Campaign` (`pipeline`, `volumes`, optional `priority`, `window`, `suspend`; unknown keys rejected, on the campaign and on each volume) | ConfigMap `campaign-<name>` with `volumes.txt`; Indexed Job `<name>` with `completions = len(volumes)` |
 
 A volume is either a bare id (the manifest URL comes from
 `source_template`) or a mapping with `id` and exactly one of `manifest` or

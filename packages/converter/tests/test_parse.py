@@ -702,3 +702,42 @@ def test_a_namespace_is_a_label_not_a_subdomain(tmp_path, bad):
         'converter.yaml: "namespace" is not a Kubernetes namespace'
     )
     assert "63" in problem
+
+
+@pytest.mark.parametrize(
+    "line,key",
+    [("suspended: true", "suspended"), ("priorty: htr-idle", "priorty")],
+)
+def test_a_misspelt_campaign_setting_is_refused_not_dropped(tmp_path, line, key):
+    """audit 0923 C-1: a pause or a priority under a misspelt key was dropped
+    without a word, and the campaign rendered -- and ran -- at the defaults."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    campaign = root / "campaigns" / "kyrk.yaml"
+    campaign.write_text(campaign.read_text() + f"\n{line}\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [
+        f'campaigns/kyrk.yaml: "{key}" is not a setting this file has — '
+        "remove it, or fix the spelling"
+    ]
+
+
+def test_a_stray_volume_setting_is_refused_not_dropped(tmp_path):
+    """audit 0923 C-1: `pages: 1-10` on a volume read as a page range to its
+    author and as nothing to the converter, which ran every page."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "campaigns" / "kyrk.yaml").write_text(
+        "pipeline: demo-v1\n"
+        "volumes:\n"
+        "  - id: R1\n"
+        "    manifest: https://iiif.example.org/r1/manifest\n"
+        "    pages: 1-10\n"
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [
+        'campaigns/kyrk.yaml: volume 1 has "pages", which is not a setting a '
+        "volume has — remove it, or fix the spelling"
+    ]
