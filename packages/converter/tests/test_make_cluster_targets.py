@@ -250,6 +250,50 @@ def test_the_plugin_stays_while_a_gpu_pod_runs(stubs: Stubs):
     assert stubs.calls("helm") == []
 
 
+RUNTIME_ONLY_POD = {
+    "metadata": {"namespace": "htr-batch", "name": "warm-gpu"},
+    "spec": {"runtimeClassName": "nvidia", "containers": [{"resources": {}}]},
+    "status": {"phase": "Running"},
+}
+PENDING_GPU_POD = {
+    **GPU_POD,
+    "metadata": {"namespace": "htr-batch", "name": "queued-0"},
+}
+PENDING_GPU_POD["status"] = {"phase": "Pending"}
+SYSTEM_GPU_POD = {
+    **GPU_POD,
+    "metadata": {"namespace": "kube-system", "name": "nvidia-device-plugin-x"},
+}
+FINISHED_GPU_POD = {**GPU_POD, "metadata": {"namespace": "htr-batch", "name": "done-0"}}
+FINISHED_GPU_POD["status"] = {"phase": "Succeeded"}
+
+
+@pytest.mark.parametrize(
+    "pod",
+    [RUNTIME_ONLY_POD, PENDING_GPU_POD],
+    ids=["nvidia-runtime-no-request", "pending"],
+)
+def test_the_plugin_stays_for_every_pod_that_needs_it(stubs: Stubs, pod: dict):
+    """A pod on the nvidia RuntimeClass needs it with no GPU request of its
+    own, and a Pending pod is about to start on it (test audit TA-infra-16)."""
+    stubs.stub("kubectl", _pods(CPU_POD, pod))
+    result = _install_devstack(stubs)
+    assert result.returncode != 0
+    assert pod["metadata"]["name"] in result.stdout + result.stderr
+    assert stubs.calls("helm") == []
+
+
+@pytest.mark.parametrize(
+    "pod", [SYSTEM_GPU_POD, FINISHED_GPU_POD], ids=["kube-system", "finished"]
+)
+def test_the_plugin_goes_past_pods_that_do_not_need_it(stubs: Stubs, pod: dict):
+    """kube-system's own GPU pods (the device plugin itself) go with the
+    chart, and a finished pod needs nothing."""
+    stubs.stub("kubectl", _pods(CPU_POD, pod))
+    result = _install_devstack(stubs)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_a_failed_pod_list_is_not_an_empty_one(stubs: Stubs):
     """The guard piped kubectl into jq with no pipefail: a kubectl that
     could not reach the cluster produced no pods, and helm went on to
