@@ -177,9 +177,34 @@ So `cluster.sync_pause` runs last in every apply:
    is exactly when Kueue would admit it. So the apply polls for
    `--pause-wait` seconds and exits non-zero if no Workload appears. A
    campaign that is not paused needs no wait.
+4. A campaign Job the API server refuses, typically because a converter
+   release or a `converter.yaml` change moved every pod template and a
+   Job's template is fixed, is still paused or resumed. The pause needs
+   only the live Job's uid and its Workload, so the sync reads the live Job
+   and runs against it. Only when that Job cannot be read either is a
+   paused campaign's pause not enforced (exit `1`). A refused campaign that
+   has no Job at all has nothing running to stop.
+5. A Workload the apply cannot patch (deleted between the list and the
+   patch, or a patch the Role does not allow) is that campaign's problem.
+   The error is printed, a closing line names each Job whose Workload the
+   sync did not reach (apart from the refused-objects summary, since a
+   Workload is not a rendered object), and the other campaigns' pauses and
+   the prune still run. For a
+   paused campaign that is a pause not enforced, and the apply exits `1`.
+   For one that is not paused it exits `3`, like any refused object.
 
 Deactivating a Workload evicts its pods and keeps every completed index. The
 Job then reads `suspend: true`. Reactivating continues from the next index.
+
+Resuming has one trap in server-side apply. A campaign paused before Kueue
+ever admitted it (a full queue) has `spec.suspend: true` owned by the
+apply's field manager alone. The resuming render no longer carries the
+field, and a field its last owner stops sending is removed, so the API
+server would put the default back: `false`, a Job that starts at once with
+no admission. The apply therefore hands the field to a second field manager
+of its own, `htrflow-campaigns-suspend`, first. That apply sends the same
+value and is never forced, so the field stays `true` until Kueue admits the
+reactivated Workload and flips it.
 Pausing costs `list` and `patch` on `workloads` (`templates/apply-rbac.yaml`,
 when the apply runs in-cluster). It also relies on Kueue behaviour that Kueue
 does not promise to keep. The campaign-file side is in
@@ -199,6 +224,14 @@ The converter clamps at render time instead:
 `converter.yaml`'s `window` as the per-cluster cap. The whole podSet `count`
 must fit the quota, or nothing starts. Set `converter.yaml`'s `window` so
 that `window × per-pod requests` fits `nominalQuota`.
+
+Changing the window of a campaign that is running restarts it. Kueue counts
+an admitted Job's pods as `min(parallelism, completions)`, and a Job whose
+count no longer matches its Workload has every pod stopped and is queued
+again. So `apply` compares that count on each live campaign Job that is not
+suspended and has not ended with the render's, and when they differ it sends
+nothing. The way through is to pause the campaign, change its window, then
+resume it: a suspended Job's Workload is updated in place.
 
 ## Many campaigns at once
 
@@ -238,7 +271,7 @@ does not do is turn preemption on.
 
 | Field | Owner | Note |
 |---|---|---|
-| `job.spec.suspend` | **Kueue** | Set `true` by the webhook at CREATE, and `false` by the reconciler at admission |
+| `job.spec.suspend` | **Kueue** | Set `true` by the webhook at CREATE, and `false` by the reconciler at admission. The apply sets it `true` for a paused campaign, and holds it there through a resume (see [Pause](#pause)) |
 | Job label `kueue.x-k8s.io/queue-name` | converter | Effectively immutable once admitted: removing it releases no quota and blocks resuming |
 | `completions`, `parallelism`, `backoffLimitPerIndex`, `maxFailedIndexes`, `podFailurePolicy`, `ttlSecondsAfterFinished` | converter | Kueue reads `parallelism` into the podSet and ignores the rest |
 | `pod.spec.containers[*].resources.requests` | converter | The numbers quota is counted in |

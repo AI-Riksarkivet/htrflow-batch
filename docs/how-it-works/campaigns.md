@@ -37,6 +37,21 @@ Argo CD runs the command as a hook instead of applying the directory
 an applier that makes the cluster match `rendered/` would create a finished
 campaign's reaped Job again and run every volume again.
 
+It is also one apply at a time. Two at once, such as the Argo CD hook and a
+hand-run `make campaigns-apply`, would interleave, and a prune from the
+older checkout would delete the Job and ConfigMap the newer one had just
+created. So an apply holds the `coordination.k8s.io` Lease
+`htrflow-campaigns-apply` in the namespace for its whole run, and releases
+it at the end, SIGTERM included. A second apply that finds the Lease held
+sends nothing, names the holder and exits `1`. A Lease left unrenewed for
+ten minutes belongs to an apply that died, and the next one takes it over.
+Both the renewal times and that judgement use the API server's clock (its
+`Date` header), so a machine whose clock is off cannot take over a live
+apply's Lease. The holder renews before any request once half a minute has
+passed. It stops where it is when a renewal is refused, when the Lease was
+taken over, or when it went too long without one, because another apply
+may be running by then.
+
 Everything else follows from those two rules and ordinary Kubernetes
 semantics. Nothing here runs on a timer, and nothing here has to stay alive
 for a submitted campaign to keep running.
@@ -176,6 +191,28 @@ any more (a finished campaign's file is
 id whose results are published out of reuse is again **a convention enforced
 by review**.
 
+`rendered/` can be missing or edited: a checkout applied without a committed
+render, or a change that deletes `rendered/pipelines/<id>.yaml`. So `apply`
+also holds each rendered pipeline against the cluster before it sends
+anything. When a campaign Job that has not ended still mounts
+`htr-pipeline-<id>`, the steps in the live ConfigMap must be the rendered
+ones, compared parsed. If they are not, nothing is applied:
+
+```
+pipeline demo-v1 is in the cluster with different steps and campaigns kyrk, loc still run it: a pipeline id is a permanent name for a recipe, so add a new pipeline file instead — nothing was applied
+```
+
+Results are keyed by pipeline and volume, so two campaigns on one pipeline
+must not run the same volume at the same time: both would write the same
+progress and manifest objects. A volume listed again in a new campaign is
+how a failed volume is run again, so this is not a rule about files but
+about what is running. Before it sends a campaign's Job, `apply` compares
+the campaign's volume ids with those of every other campaign on the same
+pipeline whose Job has not ended, read from their live ConfigMaps, and
+with the campaigns earlier in the same apply. A campaign that shares one is
+left as it was, reported with the other campaign and the volumes, and the
+apply exits `3`. Once the other campaign has ended, the next apply sends it.
+
 The guard is about the *recipe*, not about the rendered manifest. Upgrading
 the converter, or changing a `converter.yaml` setting, renders every warm-up
 Job's pod template differently without touching a recipe — `apply`
@@ -291,7 +328,7 @@ running it moves every time; it is not the campaign's start time, which is
 `startedAt` in the status ConfigMap. Once the campaign is finished `apply`
 leaves it alone and it stops moving.
 
-Three things follow.
+These things follow.
 
 - **A finished campaign is not run again.** `apply` reads the status
   ConfigMap beside the append-only check. A campaign the record says is
@@ -301,6 +338,20 @@ Three things follow.
   Without it, an apply after the Job's TTL found no Job, created one, and
   re-ran every volume. There is deliberately **no `--force`**: a campaign
   that should run again is a new campaign file.
+- **A stored record counts only when it names the apply's own Job.** A
+  record whose Job is gone can be about another run: an earlier Job under
+  the same name, or no Job at all when a campaign's ConfigMap went out and
+  its Job never did. `apply` stamps the uid of the Job it created on the
+  campaign ConfigMap, as the annotation `job-uid` under the converter's
+  label domain. For a new campaign that is a second write of the
+  ConfigMap, once its Job exists. A stamp that write missed is sent by the
+  next apply that still finds the Job. A record whose `jobUid` is a
+  different Job, or a record where no Job was ever created, is not
+  believed. `apply` says so on stderr and applies the campaign. This
+  guards against stale and foreign records, not against a forged one:
+  anything that can read the Job's uid and write the record can name it.
+  A campaign ConfigMap written before the annotation existed carries no
+  uid, and its record is believed as before.
 - **A live Job outranks the stored record.** While the campaign's Job
   exists, it alone says whether the campaign is over. A stored `Succeeded`
   beside a Job that is still running is left over from something else — a
