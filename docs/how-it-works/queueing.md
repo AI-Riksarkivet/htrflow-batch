@@ -15,7 +15,6 @@ decides where.** The Kueue release the Makefile installs is `KUEUE_VERSION`.
 
 ![The objects: LocalQueue, ClusterQueue and ResourceFlavor from the chart, the campaign Job from the converter, its Workload in Kueue, and the pods](../assets/diagrams/queue-objects.svg)
 
-
 The chart renders three queue objects from `queue.*`, plus one priority
 class per `queue.priorityClasses` entry
 ([Chart Values](../reference/chart.md)):
@@ -42,109 +41,65 @@ Everything else on the ClusterQueue is Kueue's own default:
 
 Priority is where the classes come in. Kueue orders the queue by class value
 first, higher first, and by creation time within a value, so a campaign on
-`htr-interactive` is admitted before every waiting campaign on `htr-bulk`
-however long those have waited. A Job with no `priority-class` label ranks
-at 0, and the converter renders no label when a campaign leaves `priority:`
-out, which is why `htr-bulk` sits at 0: naming it is the same as leaving the
-field out. `htr-idle` sits below both, for work that may wait behind anything
-that turns up. None of this evicts a running campaign: with
-`withinClusterQueue: Never` a higher class goes ahead of what is *waiting*,
-never ahead of what is *running*, and the next admission happens when the
-running campaign's quota comes back.
+`htr-interactive` is admitted before every waiting campaign on `htr-bulk`.
+None of this evicts a running campaign: with `withinClusterQueue: Never` a
+higher class goes ahead of what is *waiting*, never of what is *running*.
+
+The converter puts two Kueue **labels** on each campaign Job
+(`render._campaign_job`), and no annotations:
+
+- `kueue.x-k8s.io/queue-name: <queue from converter.yaml>`, always.
+- `kueue.x-k8s.io/priority-class: <priority>`, only when the campaign sets
+  `priority:`. A Job with no label ranks at 0, which is why `htr-bulk` sits
+  at 0: naming it is the same as leaving the field out.
 
 A cluster with several kinds of GPU node gives each group its own flavor with
 `nodeLabels` and covers the flavors separately. That is a values change, not
 a chart change.
 
-## What the converter puts on a Job
-
-`render._campaign_job` sets two Kueue **labels** on the Job and no
-annotations:
-
-- `kueue.x-k8s.io/queue-name: <queue from converter.yaml>`, always.
-- `kueue.x-k8s.io/priority-class: <priority from the campaign>`, only when
-  the campaign file sets `priority:`. The name must be one of the
-  `WorkloadPriorityClass` objects the chart ships (`queue.priorityClasses`),
-  and `validate` holds it to `converter.yaml`'s `priority_classes`, which
-  mirrors that list; leaving `priority:` out is `htr-bulk`.
-
 ## What a Workload holds
 
-Kueue creates one Workload per Job, named `job-<campaign>-<hash>`:
+Kueue creates one Workload per Job, named `job-<campaign>-<hash>`, owned by
+the Job. Its label `kueue.x-k8s.io/job-uid` is the link `cluster.py` selects
+it by. `spec.active` is the pause lever. `spec.podSets[0]` copies the pod
+template with a `count` equal to the Job's **`parallelism`**, not its
+`completions`: a podSet describes the pods that exist at once. Quota counts
+pod **requests**: the wrapper requests 8 Gi of memory with a 16 Gi limit, and
+8 Gi is what the quota sees.
 
-- `ownerReferences` naming the Job (`controller: true`,
-  `blockOwnerDeletion: true`), plus the finalizer
-  `kueue.x-k8s.io/resource-in-use`.
-- The label `kueue.x-k8s.io/job-uid`. It is the one link that survives a
-  delete and recreate of the Job, and `cluster.py` selects by it.
-- `spec.queueName`, `spec.priority`, `spec.active`.
-- `spec.podSets[0]`: `name: main`, a `count`, and a verbatim copy of the
-  Job's pod template.
+## The webhooks and reconcilers Kueue adds
 
-`count` is the Job's **`parallelism`**, not its `completions`. A podSet
-describes the pods that exist at once, not the work items. For example, a
-campaign with `completions: 2` and `parallelism: 1` reserves quota for a
-podSet of one.
-
-`status.admission` records the decision: the ClusterQueue, and one
-`podSetAssignments` entry mapping each resource to a flavor with its
-`resourceUsage`. Quota counts pod **requests**. The wrapper container
-requests 8 Gi of memory with a 16 Gi limit, and 8 Gi is what the quota sees.
-
-## The controllers and webhooks Kueue adds
-
-**Mutating webhook `mjob.kb.io`** (`/mutate-batch-v1-job`, `CREATE` only,
-`failurePolicy: Fail`) sets `spec.suspend: true` on a Job with a queue label
-at creation, so the Job cannot run before Kueue has seen it. After that,
-keeping `suspend` right is the reconciler's job.
-
-**Validating webhook `vjob.kb.io`** (`/validate-batch-v1-job`, `CREATE` and
-`UPDATE`) rejects changes Kueue cannot honour on a managed Job. It does
-**not** look at the `priority-class` label: a Job naming a
-`WorkloadPriorityClass` that does not exist passes the webhook, the
-reconciler then cannot resolve the class, creates no Workload and raises no
-event, and the Job stays suspended — "Queued" for ever, with nothing to say
-why. That is why `htrflow-campaigns validate` refuses a `priority:` outside
-`converter.yaml`'s `priority_classes`, the list that mirrors the chart's.
-`vworkload.kb.io` guards `workloads` and `workloads/status` the same way.
-
-**The Job reconciler** owns the Job-and-Workload pair. It:
-
-- creates the Workload (Job event `CreatedWorkload`)
-- sets `spec.suspend: false` on admission (Job events `Started` and
-  `Resumed`; condition `Suspended=False` with reason `JobResumed`)
-- writes the `kueue.x-k8s.io/workload` pod-template annotation, plus the
-  `cluster-queue-name`, `local-queue-name` and `podset` labels
-- marks the Workload `Finished` when the Job ends
-
-**The scheduler/quota reconciler** walks each ClusterQueue, picks the next
-Workload, assigns flavors and reserves quota. It keeps `flavorsUsage`,
-`pendingWorkloads`, `reservingWorkloads` and `admittedWorkloads` current on
-the ClusterQueue and LocalQueue.
+- **`mjob.kb.io`** (mutating, CREATE, `failurePolicy: Fail`) sets
+  `spec.suspend: true` on a Job with a queue label, so it cannot run before
+  Kueue has seen it.
+- **`vjob.kb.io`** (validating) rejects changes Kueue cannot honour on a
+  managed Job. It does **not** check the `priority-class` label: a Job naming
+  a class that does not exist gets no Workload and no event, and stays
+  "Queued" for ever. That is why `htrflow-campaigns validate` refuses a
+  `priority:` outside `converter.yaml`'s `priority_classes`, the list that
+  mirrors the chart's.
+- **The Job reconciler** creates the Workload, sets `spec.suspend: false` on
+  admission, and marks the Workload `Finished` when the Job ends.
+- **The scheduler/quota reconciler** picks the next Workload per
+  ClusterQueue, assigns flavors and reserves quota.
 
 ## The admission cycle
 
 ![A campaign's life: rendered, applied, queued, running, then done or failed, and paused and back to queued](../assets/diagrams/campaign-lifecycle.svg)
 
-
 Step by step, with the controller that acts at each step:
 
 ![The admission cycle: apply, the webhook suspends the Job, Kueue creates and admits the Workload, the Job controller creates pods, the scheduler binds them, the kubelet runs them, and the quota is released](../assets/diagrams/seq-admission.svg)
 
+Notes on the steps that are not obvious from the diagram:
 
-| # | What changes |
-|---|---|
-| 1 | `cluster.apply` server-side applies the Job, with field manager `htrflow-campaigns` |
-| 2 | `mjob.kb.io` writes `spec.suspend: true` (Job event `Suspended`) |
-| 3 | Kueue creates the Workload with no `status.admission`, and counts it in `status.pendingWorkloads` |
-| 4 | Queue order: with `BestEffortFIFO`, an older Workload that cannot be admitted does **not** block a newer one that fits |
-| 5 | Kueue picks a flavor per resource, takes the requests off `nominalQuota`, and sets condition `QuotaReserved` |
-| 6 | Condition `Admitted`. Quota reservation is the scheduling decision, and admission is the authorisation that follows it |
-| 7 | Kueue patches `spec.suspend: false` (Job condition `Suspended=False`, reason `JobResumed`) |
-| 8 | The Job controller creates pods labelled `batch.kubernetes.io/job-completion-index`, at most `parallelism` at once |
-| 9 | `kube-scheduler` binds each pod, using `runtimeClassName`, the GPU request, and any `nodeSelector` and `tolerations` that `render._scheduling` wrote. The empty flavor adds nothing |
-| 10 | The kubelet runs `warmup-wait` until the cache marker exists, then the wrapper |
-| 11 | Exit 0 lands in `status.completedIndexes`. The last index gives the Job `Complete`, the Workload `Finished`, and the quota back |
+- **Queue order.** With `BestEffortFIFO`, an older Workload that cannot be
+  admitted does **not** block a newer one that fits.
+- **`QuotaReserved`, then `Admitted`.** Quota reservation is the scheduling
+  decision, and admission is the authorisation that follows it.
+- **Binding.** `kube-scheduler` places each pod using `runtimeClassName`, the
+  GPU request, and any `nodeSelector` and `tolerations` that
+  `render._scheduling` wrote. The empty flavor adds nothing.
 
 **Admission is per Job, not per index.** Steps 8 to 11 repeat without asking
 Kueue again: Kubernetes replaces each finished pod with the next index. The
@@ -167,7 +122,8 @@ and sets it back within seconds. The lever that holds is the Workload's
 `spec.active`. Setting it to `false` evicts a running Workload and stops it
 being requeued.
 
-So `cluster.sync_pause` runs last in every apply:
+So every apply runs `cluster.sync_pause` after it has applied the objects
+and before it prunes:
 
 1. It finds the Workload by `kueue.x-k8s.io/job-uid`.
 2. Where `spec.active` disagrees with the intent in git, it sends the merge
@@ -175,23 +131,11 @@ So `cluster.sync_pause` runs last in every apply:
    no patch, so re-applying an unchanged repo changes nothing.
 3. A brand-new paused campaign has no Workload for a moment, and that moment
    is exactly when Kueue would admit it. So the apply polls for
-   `--pause-wait` seconds and exits non-zero if no Workload appears. A
-   campaign that is not paused needs no wait.
-4. A campaign Job the API server refuses, typically because a converter
-   release or a `converter.yaml` change moved every pod template and a
-   Job's template is fixed, is still paused or resumed. The pause needs
-   only the live Job's uid and its Workload, so the sync reads the live Job
-   and runs against it. Only when that Job cannot be read either is a
-   paused campaign's pause not enforced (exit `1`). A refused campaign that
-   has no Job at all has nothing running to stop.
-5. A Workload the apply cannot patch (deleted between the list and the
-   patch, or a patch the Role does not allow) is that campaign's problem.
-   The error is printed, a closing line names each Job whose Workload the
-   sync did not reach (apart from the refused-objects summary, since a
-   Workload is not a rendered object), and the other campaigns' pauses and
-   the prune still run. For a
-   paused campaign that is a pause not enforced, and the apply exits `1`.
-   For one that is not paused it exits `3`, like any refused object.
+   `--pause-wait` seconds and exits non-zero if no Workload appears.
+
+How the apply pauses a Job the API server refused, and what it does when a
+Workload cannot be patched, is in
+[htrflow-campaigns CLI](../reference/cli.md).
 
 Deactivating a Workload evicts its pods and keeps every completed index. The
 Job then reads `suspend: true`. Reactivating continues from the next index.
@@ -205,6 +149,7 @@ no admission. The apply therefore hands the field to a second field manager
 of its own, `htrflow-campaigns-suspend`, first. That apply sends the same
 value and is never forced, so the field stays `true` until Kueue admits the
 reactivated Workload and flips it.
+
 Pausing costs `list` and `patch` on `workloads` (`templates/apply-rbac.yaml`,
 when the apply runs in-cluster). It also relies on Kueue behaviour that Kueue
 does not promise to keep. The campaign-file side is in
@@ -235,28 +180,17 @@ resume it: a suspended Job's Workload is updated in place.
 
 ## Many campaigns at once
 
-Submit fifty campaigns against a one-GPU quota and you get fifty Jobs and
-fifty Workloads. One is admitted, and the other forty-nine have no
-`QuotaReserved` condition and are counted in `pendingWorkloads`.
-`BestEffortFIFO` skips a Workload that does not fit, so it cannot block the
-rest. With one GPU and a podSet of one, though, nothing smaller can slip
-through, and it behaves as a plain queue. Nothing jumps the line, because
-preemption is off. And because admission covers the entire Job, the campaign
-at the front owns the GPU until its last index finishes, whether that takes
-minutes or weeks.
+Fifty campaigns against a one-GPU quota make fifty Jobs and fifty
+Workloads: one admitted, forty-nine counted in `pendingWorkloads`. With a
+podSet of one nothing smaller can slip through, so it behaves as a plain
+queue, and the campaign at the front owns the GPU until its last index
+finishes, whether that takes minutes or weeks.
 
 ## Preemption and cohorts
 
-Both are off. The ClusterQueue carries Kueue's defaults:
-
-```yaml
-preemption: {withinClusterQueue: Never, reclaimWithinCohort: Never,
-             borrowWithinCohort: {policy: Never}}
-flavorFungibility: {whenCanBorrow: MayStopSearch, whenCanPreempt: TryNextFlavor}
-stopPolicy: None
-```
-
-The ClusterQueue has no `spec.cohort`, so there is no quota to borrow or lend.
+Both are off. The ClusterQueue keeps Kueue's defaults (every preemption
+policy `Never`, `stopPolicy: None`) and has no `spec.cohort`, so there is no
+quota to borrow or lend.
 
 With preemption on, a higher-priority Workload can evict an admitted one. The
 victim gets `Evicted` with reason `Preempted`, and a `Preempted` condition
@@ -300,77 +234,22 @@ Kueue watches a Job's completion and failure, and nothing finer.
 
 The whole failure model is in [Failure Handling](failure-handling.md).
 
-## The operator's reading
+## Reading the queue
 
-```bash
-kubectl get workloads -n <namespace>              # QUEUE, RESERVED IN, ADMITTED, FINISHED
-kubectl describe workload <workload> -n <namespace>
-kubectl get clusterqueue <queue>-cq -o yaml       # pendingWorkloads, flavorsUsage, Active
-kubectl get events -n <namespace> --sort-by=.lastTimestamp
-JOB_UID=$(kubectl get job -n <namespace> <campaign> -o jsonpath='{.metadata.uid}')
-kubectl get workloads -n <namespace> -l "kueue.x-k8s.io/job-uid=$JOB_UID"
-```
-
-The last two lines are Kueue's own recipe for finding a Job's Workload.
-
-An admitted Workload has the conditions `QuotaReserved` and `Admitted`, and
-`Finished` (reason `Succeeded`) once the Job completes. A waiting Workload has
-none of them: its `ADMITTED` column is empty, and the ClusterQueue counts it
-in `status.pendingWorkloads`. Other conditions worth knowing:
-
-- `PodsReady`, which appears only under `waitForPodsReady`
-- `Evicted`, with reason `Preempted`, `PodsReadyTimeout` or `Deactivated`.
-  `Deactivated` is what a pause produces.
-
-Kueue's controller exports metrics labelled by `cluster_queue`:
-
-- `kueue_pending_workloads`
-- `kueue_admitted_active_workloads`
-- `kueue_admission_wait_time_seconds`
-- `kueue_evicted_workloads_total`
-
-The per-resource pair `kueue_cluster_queue_resource_usage` and
-`kueue_cluster_queue_nominal_quota` is exported only when Kueue's manager
-config sets `metrics.enableClusterQueueResources`.
-
-**If Workloads sit pending while the GPU is idle, check the Kueue controller
-before the GPU.** From outside, a dead Kueue and a busy GPU look the same.
-
-### What "Queued" means on a campaign card
-
-The status page derives a campaign's phase from the Job alone
-(`projection._phase`), checking in this order:
-
-1. `Complete` condition: **Succeeded**.
-2. `Failed` condition: **PartiallyFailed** if any index completed, else
-   **Failed**.
-3. `spec.suspend` true: **Queued** when nothing has completed, else
-   **Paused**.
-4. Anything else: **Running**.
-
-So "Queued" is not a Kueue state. It means the Job is suspended and no volume
-has finished yet. A campaign paused in git before its first volume completed
-also reads "Queued". So does a campaign that can never be admitted, such as
-one whose `window` the quota cannot cover, and it reads "Queued" forever.
+The commands for a campaign that is not admitted, the Workload conditions to
+look for, and what "Queued" means on a campaign card are in
+[Troubleshooting](../getting-started/troubleshooting.md).
 
 ## Known limits
 
 - **The pause patches Kueue's Workload directly.** `sync_pause` needs
-  `patch` on `workloads`. It relies on eviction by `spec.active`, which Kueue
-  does not promise to keep. It also talks to a Workload API version the
-  chart does not render: `cluster.py` (`_KUEUE`) asks for the older beta
-  version, while the chart's own ClusterQueue, LocalQueue and ResourceFlavor
-  are written against the newer one. Kueue serves both today, so the pause
-  works; it stops working on the release that drops the older version, and
-  the symptom is a campaign git says is paused that keeps running.
-- **Priority orders the queue; preemption is off.** The chart ships three
-  `WorkloadPriorityClass` objects and `withinClusterQueue` stays `Never`, so
-  a campaign's `priority:` decides who is admitted *next* and never evicts
-  a running campaign. While one campaign holds the whole quota, "next" is
-  when that campaign's quota comes back. A `priority:` naming a class the
-  cluster does not have is not refused by Kueue: the Job reads "Queued" for
-  ever with no event, which is why `validate` checks the name against
-  `converter.yaml`'s `priority_classes`. Preemption stops a running volume
+  `patch` on `workloads` and relies on eviction by `spec.active`, which Kueue
+  does not promise to keep. If a Kueue release changes that, the symptom is a
+  campaign git says is paused that keeps running.
+- **Priority orders the queue; preemption is off.** A campaign's
+  `priority:` decides who is admitted *next* and never evicts a running
+  campaign. While one campaign holds the whole quota, "next" is when that
+  campaign's quota comes back. Preemption would stop a running volume
   mid-transcription (resume makes that survivable), and turning it on is a
   product decision rather than a switch.
 - **`window` is not checked against the quota.** Without partial admission
@@ -381,11 +260,7 @@ one whose `window` the quota cannot cover, and it reads "Queued" forever.
   Workload is deleted with the Job, so the queue itself remembers nothing.
   What stops the next apply from running every index again is the campaign's
   status ConfigMap: `apply` writes how the Job ended before it applies
-  anything, and then leaves a campaign alone when that record says it
-  finished and its volume list has not moved
-  ([The record a campaign leaves](campaigns.md#the-record-a-campaign-leaves)).
-  Append a volume and it is a changed campaign, which is applied: past the
-  TTL that is a new Job over the whole list, and re-running the volumes that
-  already finished is what resume makes cheap rather than free — each still
-  takes a GPU slot and a model load, and rewrites its viewer manifest and
-  `manifest.json`.
+  anything, and then leaves a finished campaign alone
+  ([Campaigns](campaigns.md#the-record-a-campaign-leaves)). A campaign's
+  volume list is append-only, so a finished campaign is never run again: new
+  volumes go in a new campaign.
