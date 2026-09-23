@@ -23,6 +23,7 @@ import mimetypes
 import os
 import re
 import time
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 from importlib import metadata
 from pathlib import Path
@@ -539,7 +540,12 @@ def create_app(
             gone = projection.record_summary(record, status, reader.cfg, {})
             if gone is not None:
                 gone_rows.append((gone, record))
-        gone_rows.sort(key=lambda pair: pair[0]["createdAt"] or "", reverse=True)
+        # Newest ending first: a long campaign created weeks ago and reaped
+        # today is the news, not the one created last (2026-09-23 review).
+        gone_rows.sort(
+            key=lambda pair: (_ended(pair[0]), pair[0]["createdAt"] or ""),
+            reverse=True,
+        )
         response.headers["X-Reaped-Total"] = str(len(gone_rows))
         for gone, record in gone_rows[:reaped]:
             # Matched only for the rows sent: a failed warm-up costs a pod
@@ -548,6 +554,15 @@ def create_app(
             rows.append(gone)
         rows.sort(key=lambda row: row["createdAt"] or "", reverse=True)
         return rows
+
+    def _ended(row: dict) -> datetime:
+        """When a campaign ended, as a moment -- its record's finishedAt, or
+        its creation when no ending was written."""
+        for stamp in (row["finishedAt"], row["createdAt"]):
+            moment = projection.instant(stamp or "")
+            if moment is not None:
+                return moment
+        return datetime.min.replace(tzinfo=timezone.utc)
 
     def _serves(namespace: str, name: str) -> bool:
         """Whether this API could have a campaign by this name at all.
