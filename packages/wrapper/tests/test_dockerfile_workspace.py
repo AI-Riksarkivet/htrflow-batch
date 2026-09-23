@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
 import shlex
+import shutil
 from pathlib import Path
 
 import pytest
@@ -499,14 +501,83 @@ def test_the_htrflow_base_is_built_from_pinned_inputs() -> None:
         assert "build-htrflow-base" not in text, path.name
 
 
-def test_the_web_image_ships_only_the_viewer_page_and_what_it_references() -> None:
+def test_the_web_image_ships_only_the_site_step_output() -> None:
     """UV's build also emits its demo pages and sample collections. The web
-    image copies the site a build step derives from uv.html's own
-    references, and that step fails on a reference the build did not
-    produce."""
+    image copies only the site a build step in the viewer's stage derives
+    from uv.html's own references -- never UV's build output itself."""
     text = (REPO / ".docker" / "htrflow-web.dockerfile").read_text()
-    assert "COPY --from=uv4 /src/site/ /app/static/" in text
-    assert "COPY --from=uv4 /src/dist/" not in text
-    site = text[text.index("<<'SITE'") : text.index("\nSITE\n")]
-    assert "which UV's build did not produce" in site
-    assert "pages.join() !== page" in site
+    assert re.search(r"^RUN node <<'SITE'$", _stage(text, "uv4"), re.M)
+    final = re.split(r"^FROM ", text, flags=re.M)[-1]
+    assert re.findall(r"^COPY --from=uv4 (\S+) ", final, re.M) == ["/src/site/"]
+
+
+#: Runs the SITE step with its /src paths under SITE_ROOT, so the script the
+#: image builds with is the one tested.
+_SITE_ROOT_PRELOAD = """
+const fs = require("fs");
+const root = process.env.SITE_ROOT;
+const at = (p) => (typeof p === "string" && p.startsWith("/src/") ? root + p : p);
+for (const name of ["readFileSync", "existsSync", "mkdirSync", "readdirSync"]) {
+  const real = fs[name];
+  fs[name] = (p, ...rest) => real.call(fs, at(p), ...rest);
+}
+const cp = fs.cpSync;
+fs.cpSync = (from, to, ...rest) => cp.call(fs, at(from), at(to), ...rest);
+"""
+
+
+def _run_site_step(tmp_path: Path, files: dict[str, str]):
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    for rel, body in files.items():
+        (tmp_path / "src" / "dist" / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "src" / "dist" / rel).write_text(body)
+    (tmp_path / "preload.js").write_text(_SITE_ROOT_PRELOAD)
+    script = _heredoc((REPO / ".docker" / "htrflow-web.dockerfile").read_text(), "SITE")
+    return subprocess.run(
+        [node, "--require", str(tmp_path / "preload.js"), "-"],
+        input=script,
+        capture_output=True,
+        text=True,
+        env={"SITE_ROOT": str(tmp_path), "PATH": os.environ.get("PATH", "")},
+        timeout=60,
+    )
+
+
+def test_the_site_step_copies_the_viewer_page_and_what_it_references(tmp_path):
+    page = (
+        '<link href="uv.css"><script src="uv-assets/js/UV.js"></script>'
+        '<script>fetch("uv-config.json")</script><a href="https://x.org/">x</a>'
+    )
+    done = _run_site_step(
+        tmp_path,
+        {
+            "uv.html": page,
+            "uv.css": "",
+            "uv-config.json": "{}",
+            "uv-assets/js/UV.js": "",
+            "uv-assets/js/chunk-1.js": "",  # loaded by UV.js at run time
+            "index.html": "the demo page",
+            "collections/sample.json": "{}",
+        },
+    )
+    assert done.returncode == 0, done.stderr
+    site = tmp_path / "src" / "site"
+    assert sorted(str(p.relative_to(site)) for p in site.rglob("*") if p.is_file()) == [
+        "uv-assets/js/UV.js",
+        "uv-assets/js/chunk-1.js",
+        "uv-config.json",
+        "uv.css",
+        "uv.html",
+    ]
+
+
+def test_the_site_step_fails_on_a_reference_the_build_did_not_produce(tmp_path):
+    done = _run_site_step(
+        tmp_path, {"uv.html": '<script src="uv-assets/js/missing.js"></script>'}
+    )
+    assert done.returncode != 0
+    assert "uv-assets/js/missing.js" in done.stderr
