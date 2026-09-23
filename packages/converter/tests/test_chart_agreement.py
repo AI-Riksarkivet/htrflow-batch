@@ -7,11 +7,11 @@ word, and `examples/campaigns/converter.yaml` asked a human to keep it that
 way in a comment. A rename on one side now fails here.
 
 Only keys both sides have are checked: `namespace` is the release namespace
-(a `helm -n` argument, not a value), `runtime_class` has no chart key at all,
-and neither has `hf_token_secret` — the Hub-token Secret is the operator's
-own object, like the S3 one, and no chart template creates or reads it, so
-there is no twin to drift from. docs/reference/configuration.md lists what
-is one-sided.
+(a `helm -n` argument, not a value) and `runtime_class` has no chart key at
+all. `hf_token_secret` has one since the job-shape policy: the Hub-token
+Secret is still the operator's own object, but `hfToken.existingSecret` is
+the one Secret a warm-up pod may read, so the two must name the same one.
+docs/reference/configuration.md lists what is one-sided.
 """
 
 from __future__ import annotations
@@ -58,6 +58,8 @@ def _at(values: dict, path: str) -> object:
 
 def _disagreements(config: dict) -> list[str]:
     values = _load(CHART / "values.yaml")
+    # A key a converter.yaml leaves out is the converter's default.
+    config = {f: config.get(f, getattr(ConverterConfig(), f)) for f, _ in AGREEMENTS}
     return [
         f"`{field}` is {config[field]!r} but the chart's `{path}` is "
         f"{_at(values, path)!r} — they name one cluster object"
@@ -227,3 +229,23 @@ def test_the_policy_tests_run_the_kyverno_release_a_campaigns_repo_runs():
         doc = _load(workflow)
         pinned = doc["variables" if "stages" in doc else "env"]["KYVERNO_VERSION"]
         assert pinned == ours.group(1), workflow
+
+
+def test_the_job_shape_policy_holds_the_scripts_the_converter_renders():
+    """The job-shape policy compares a Job's script with the converter's,
+    character for character, from a copy in the chart (Helm cannot read the
+    converter's manifests). A script changed on one side alone would refuse
+    every campaign or warm-up Job at admission; this fails first, without a
+    Kyverno CLI (audit 0923 D-2)."""
+    policy = (CHART / "templates" / "policies" / "job-shape.yaml").read_text(
+        encoding="utf-8"
+    )
+    copies = dict(re.findall(r"\{\{- \$(\w+) := `([^`]*)` \}\}", policy))
+    for var, skeleton in (
+        ("batchArgs", "campaign-job.yaml"),
+        ("warmupArgs", "warmup-job.yaml"),
+    ):
+        job = _load(CONVERTER_SRC / "manifests" / skeleton)
+        assert (
+            copies[var] == job["spec"]["template"]["spec"]["containers"][0]["args"][0]
+        ), var

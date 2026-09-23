@@ -1,0 +1,152 @@
+{{- if .Values.security.policies.enabled }}
+{{- /*
+The two scripts the converter's Job skeletons run (packages/converter
+/src/htrflow_converter/manifests), character for character. Compared as
+base64: the text holds `$(`, which Kyverno reads as a reference to another
+field, and quotes that JMESPath would need escaped. The chart and the
+converter must come from the same release: test_chart_agreement.py fails
+when the two copies part, and test_policy_admission.py puts the converter's
+own renders through this policy.
+*/}}
+{{- $batchArgs := `set -eu
+mkdir -p "$HOME" "$TMPDIR" "$YOLO_CONFIG_DIR"
+line=$(sed -n "$((JOB_COMPLETION_INDEX + 1))p" /campaign/volumes.txt)
+[ -n "$line" ] || { echo "no volume for index $JOB_COMPLETION_INDEX" >&2; exit 13; }
+id=${line%%	*}; src=${line#*	}
+export VOLUME_REF="$id"
+case "$src" in images:*) export IMAGES="${src#images:}" ;; *) export IIIF_MANIFEST_URL="$src" ;; esac
+exec python -m htrflow_batch
+` }}
+{{- $warmupArgs := `set -eu
+mkdir -p "$HOME" "$TMPDIR" "$YOLO_CONFIG_DIR" "$HF_HOME"
+exec python -m htrflow_batch.warmup
+` }}
+{{- $ns := .Release.Namespace }}
+{{- $imageRe := "" }}
+{{- with .Values.security.jobImageRepos }}
+{{- $repos := list }}
+{{- range . }}
+{{- $repos = append $repos (regexReplaceAll `([.+*?()|\[\]{}^$\\])` (trimAll "/" (trim .)) `\${1}`) }}
+{{- end }}
+{{- $imageRe = printf "^(?:%s)$" (join "|" $repos) }}
+{{- end }}
+# What a campaign or warm-up Job may be (audit 0923 D-2, S-1, S-6): the
+# shape the converter renders, and nothing else in that shape's place.
+#
+# The apply identity's `create` on Jobs is any pod spec at all, and
+# rbac-scope only asks for a label this same identity writes. With its
+# token, a Job could run the signed wrapper image with a command of its
+# own, as the web ServiceAccount, with the S3 credentials, under the
+# warm-up's pod label -- which the htr-warmup NetworkPolicy lets out to the
+# internet. converter.yaml alone could do part of it: `hf_token_secret`,
+# `s3_secret` and `data_pvc` name any Secret or PVC in the namespace, so
+# `hf_token_secret: htrflow-campaigns-git` handed the git token to a pod
+# that reaches the internet and unpickles models.
+#
+# Who is held to it: every Job CREATED in the namespace that claims to be
+# the converter's (its `managed-by` label) or claims one of its two network
+# roles (pod label `app: htrflow-batch` / `htrflow-warmup`), whoever creates
+# it; and everything the apply identity creates or updates. A Job's pod
+# template cannot change once it runs, so creation is where its shape is
+# fixed. An update from another identity is not re-checked: Kueue starts a
+# Job by updating it, merging its podset's labels and scheduling into the
+# template, and that is not this policy's to refuse. The apply identity's
+# own updates are, since a suspended Job's labels and scheduling can still
+# change.
+#
+# Per role, what each pod needs and nothing more:
+#   batch   (`app: htrflow-batch`) the S3 Secret (s3.existingSecret), the
+#           model cache read-only, its campaign and pipeline ConfigMaps
+#   warm-up (`app: htrflow-warmup`, named htr-warmup-*) the Hub token
+#           Secret (hfToken.existingSecret) if one is named, the model
+#           cache, its pipeline ConfigMap -- never the S3 credentials: it is
+#           the one pod with a route to the internet
+# Both: no ServiceAccount but the default and no token, only configMap,
+# secret, persistentVolumeClaim and emptyDir volumes, the converter's
+# containers with the converter's commands and no probes or hooks (each an
+# exec of its own), and the pipeline read from /config/pipeline.yaml out of
+# an htr-pipeline-* ConfigMap -- the object the model-revision rules check,
+# not an emptyDir or a remapped key beside it (S-6).
+#
+# `background: false`: the rules match on who is asking, which a background
+# scan does not know.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: htrflow-batch-job-shape-{{ $ns }}
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+spec:
+  validationFailureAction: Enforce
+  failurePolicy: Fail
+  background: false
+  rules:
+    - name: job-identity
+      {{- include "htrflow-batch.jobShapeMatch" . | nindent 6 }}
+      preconditions:
+        any:
+          - key: {{ `'{{ request.object.metadata.labels."htrflow.riksarkivet.se/managed-by" || '''' }}'` }}
+            operator: Equals
+            value: converter
+          - key: {{ `"{{ request.object.spec.template.metadata.labels.app || '' }}"` }}
+            operator: AnyIn
+            value: [htrflow-batch, htrflow-warmup]
+          - key: {{ `"{{ request.userInfo.username }}"` }}
+            operator: Equals
+            value: system:serviceaccount:{{ $ns }}:htrflow-campaigns
+      context:
+        {{- include "htrflow-batch.jobShapeContext" . | nindent 8 }}
+        - name: extraLabels
+          variable:
+            jmesPath: >-
+              keys(labels)[?!contains(['app', 'batch.kubernetes.io/controller-uid',
+              'batch.kubernetes.io/job-name', 'controller-uid', 'job-name'], @)
+              && !starts_with(@, 'kueue.x-k8s.io/')]
+            default: []
+        - name: bad
+          variable:
+            jmesPath: >-
+              [!contains(['htrflow-batch', 'htrflow-warmup'], role)
+              && join('', ['pod label app is "', role, '", not htrflow-batch or htrflow-warmup']),
+              !contains(['', 'default'], pod.serviceAccountName || '')
+              && join('', ['serviceAccountName is ', pod.serviceAccountName, ', not the default']),
+              !contains(['', 'default'], pod.serviceAccount || '')
+              && join('', ['serviceAccount is ', pod.serviceAccount, ', not the default']),
+              pod.automountServiceAccountToken != `false`
+              && 'automountServiceAccountToken is not false',
+              length(extraLabels) > `0`
+              && join('', ['pod labels beyond app: ', join(', ', extraLabels)]),
+              role == 'htrflow-warmup' && !starts_with(request.object.metadata.name, 'htr-warmup-')
+              && join('', ['a warm-up Job is named htr-warmup-<pipeline>, not ', request.object.metadata.name]),
+              length((pod.tolerations || `[]`)[?operator == 'Exists' && !key]) > `0`
+              && 'a toleration with operator Exists and no key tolerates every taint'][?@]
+            default: []
+      validate:
+        message: >-
+          not a Job the converter renders: {{ `{{ join('; ', bad) }}` }}
+        deny:
+          conditions:
+            all:
+              - key: {{ `"{{ length(bad) }}"` }}
+                operator: GreaterThan
+                value: 0
+    {{- include "htrflow-batch.jobShapeRule" (dict
+          "root" .
+          "role" "htrflow-batch"
+          "secrets" (list .Values.s3.existingSecret)
+          "configMaps" (list "campaign-" "htr-pipeline-")
+          "containers" (list "wrapper")
+          "initContainers" (list "warmup-wait")
+          "args" $batchArgs
+          "imageRe" $imageRe) | nindent 4 }}
+    {{- include "htrflow-batch.jobShapeRule" (dict
+          "root" .
+          "role" "htrflow-warmup"
+          "secrets" (compact (list .Values.hfToken.existingSecret))
+          "configMaps" (list "htr-pipeline-")
+          "containers" (list "warmup")
+          "initContainers" (list)
+          "args" $warmupArgs
+          "imageRe" $imageRe) | nindent 4 }}
+{{- end }}

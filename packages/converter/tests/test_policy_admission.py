@@ -603,3 +603,372 @@ def test_the_production_allow_list_admits_the_release_and_nothing_else(
         refused["spec"]["containers"][0]["image"] = f"{sibling}@{DIGEST}"
         verdict, out = admission(tmp_path, policy, refused)
         assert verdict == "refused", out
+
+
+# --- D-2 / S-1 / S-6: a Job the converter renders is the only Job shape ---
+#
+# The apply identity's `create` on Jobs is any pod spec, and converter.yaml
+# names Secrets and a PVC the Jobs mount. The job-shape policy holds a Job
+# to what the converter renders -- the renders themselves, straight from
+# the converter, are the admitted cases.
+
+FIXTURE = REPO / "packages" / "converter" / "tests" / "fixtures" / "good"
+HF_SECRET = "htr-hf-token"
+GIT_SECRET = "htrflow-campaigns-git"
+
+
+def converter_jobs(**config) -> tuple[dict, dict]:
+    """The campaign Job and the warm-up Job the converter renders for the
+    good fixture, in this namespace, with converter.yaml settings changed."""
+    from htrflow_converter import render
+    from htrflow_converter.parse import load
+
+    campaigns, pipelines, cfg = load(
+        FIXTURE / "campaigns", FIXTURE / "pipelines", FIXTURE / "converter.yaml"
+    )
+    cfg = cfg.model_copy(update={"namespace": NAMESPACE, **config})
+    kyrk = next(c for c in campaigns if c.name == "kyrk")
+    demo = pipelines["demo-v1"]
+    batch = next(
+        o for o in render.campaign_objects(kyrk, demo, cfg) if o["kind"] == "Job"
+    )
+    warmup = next(o for o in render.pipeline_objects(demo, cfg) if o["kind"] == "Job")
+    return batch, warmup
+
+
+@pytest.fixture
+def job_shape(tmp_path: Path) -> Path:
+    return render_policy(
+        tmp_path,
+        "job-shape",
+        "apply.rbac.enabled=true",
+        f"hfToken.existingSecret={HF_SECRET}",
+    )
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {},
+        {"hf_token_secret": HF_SECRET},
+        {
+            "node_selector": {"nvidia.com/gpu.present": "true"},
+            "tolerations": [
+                {"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"}
+            ],
+        },
+    ],
+    ids=["defaults", "hub-token", "scheduling"],
+)
+@pytest.mark.parametrize("role", ["batch", "warmup"])
+def test_what_the_converter_renders_is_admitted(
+    tmp_path: Path, job_shape: Path, config: dict, role: str
+):
+    job = dict(zip(("batch", "warmup"), converter_jobs(**config)))[role]
+    verdict, out = admission(tmp_path, job_shape, job, user=APPLY_SA)
+    assert verdict == "admitted", out
+    verdict, out = admission(
+        tmp_path, job_shape, job, user=APPLY_SA, operation="UPDATE", old=job
+    )
+    assert verdict == "admitted", out
+    verdict, out = admission(tmp_path, job_shape, job, user="kubernetes-admin")
+    assert verdict == "admitted", out
+
+
+@pytest.mark.parametrize(
+    "config,role,said",
+    [
+        # S-1: converter.yaml names the Secret, and a warm-up has egress to
+        # the internet and runs pickled models.
+        ({"hf_token_secret": GIT_SECRET}, "warmup", GIT_SECRET),
+        ({"s3_secret": GIT_SECRET}, "batch", GIT_SECRET),
+        ({"data_pvc": "team-archive"}, "batch", "team-archive"),
+        ({"data_pvc": "team-archive"}, "warmup", "team-archive"),
+        ({"tolerations": [{"operator": "Exists"}]}, "batch", "Exists"),
+    ],
+    ids=["hub-token-git", "s3-git", "pvc-batch", "pvc-warmup", "tolerate-all"],
+)
+def test_converter_yaml_cannot_hand_a_job_another_secret_or_volume(
+    tmp_path: Path, job_shape: Path, config: dict, role: str, said: str
+):
+    """Whoever applies it: the operator's own kubeconfig as much as the
+    apply identity."""
+    job = dict(zip(("batch", "warmup"), converter_jobs(**config)))[role]
+    for user in (APPLY_SA, "kubernetes-admin"):
+        verdict, out = admission(tmp_path, job_shape, job, user=user)
+        assert verdict == "refused", out
+        assert said in out
+
+
+def _pod(job: dict) -> dict:
+    return job["spec"]["template"]["spec"]
+
+
+def _main(job: dict) -> dict:
+    return _pod(job)["containers"][0]
+
+
+def _env(name: str, value: str):
+    def change(job: dict) -> None:
+        env = _main(job)["env"]
+        found = [e for e in env if e["name"] == name]
+        if found:
+            found[0].clear()
+            found[0].update({"name": name, "value": value})
+        else:
+            env.append({"name": name, "value": value})
+
+    return change
+
+
+def _set_volume(name: str, source: dict):
+    def change(job: dict) -> None:
+        for v in _pod(job)["volumes"]:
+            if v["name"] == name:
+                v.clear()
+                v.update({"name": name, **source})
+
+    return change
+
+
+def _add_volume(name: str, source: dict, mount: str):
+    def change(job: dict) -> None:
+        _pod(job)["volumes"].append({"name": name, **source})
+        _main(job)["volumeMounts"].append({"name": name, "mountPath": mount})
+
+    return change
+
+
+MUTATIONS = {
+    # D-2: another identity's token, or any token at all
+    "web-identity": (
+        "batch",
+        lambda j: _pod(j).update(serviceAccountName="htrflow-web"),
+    ),
+    "token": ("warmup", lambda j: _pod(j).update(automountServiceAccountToken=True)),
+    "projected-token": (
+        "warmup",
+        _add_volume(
+            "t",
+            {"projected": {"sources": [{"serviceAccountToken": {"path": "t"}}]}},
+            "/t",
+        ),
+    ),
+    # D-2 / S-1: the S3 credentials in the pod that reaches the internet
+    "warmup-s3-volume": (
+        "warmup",
+        _add_volume("s3", {"secret": {"secretName": "htr-batch-s3"}}, "/s3"),
+    ),
+    "warmup-s3-env": (
+        "warmup",
+        lambda j: _main(j)["env"].append(
+            {
+                "name": "S3_BUCKET",
+                "valueFrom": {"secretKeyRef": {"name": "htr-batch-s3", "key": "k"}},
+            }
+        ),
+    ),
+    "env-from-secret": (
+        "batch",
+        lambda j: _main(j).update(envFrom=[{"secretRef": {"name": GIT_SECRET}}]),
+    ),
+    "field-ref": (
+        "batch",
+        lambda j: _main(j)["env"].append(
+            {"name": "X", "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}}
+        ),
+    ),
+    "writable-cache": (
+        "batch",
+        lambda j: [
+            m.update(readOnly=False)
+            for m in _main(j)["volumeMounts"]
+            if m["name"] == "data"
+        ],
+    ),
+    "host-path": ("batch", _add_volume("h", {"hostPath": {"path": "/"}}, "/h")),
+    # D-2: a pod label is a network role
+    "warmup-label-on-batch": (
+        "batch",
+        lambda j: j["spec"]["template"]["metadata"]["labels"].update(
+            app="htrflow-warmup"
+        ),
+    ),
+    "web-label": (
+        "batch",
+        lambda j: j["spec"]["template"]["metadata"]["labels"].update(app="htrflow-web"),
+    ),
+    "extra-label": (
+        "warmup",
+        lambda j: j["spec"]["template"]["metadata"]["labels"].update(role="api"),
+    ),
+    "warmup-name": ("warmup", lambda j: j["metadata"].update(name="demo-v1")),
+    # D-2: the command is the converter's
+    "python-c": (
+        "warmup",
+        lambda j: _main(j).update(command=["python", "-c", "print(1)"]),
+    ),
+    "args": ("batch", lambda j: _main(j).update(args=["exec python -c 'print(1)'"])),
+    "init-command": (
+        "batch",
+        lambda j: _pod(j)["initContainers"][0].update(command=["/bin/sh", "-c", "id"]),
+    ),
+    "second-container": (
+        "warmup",
+        lambda j: _pod(j)["containers"].append({**_main(j), "name": "side"}),
+    ),
+    "probe": (
+        "batch",
+        lambda j: _main(j).update(
+            livenessProbe={"exec": {"command": ["/bin/sh", "-c", "id"]}}
+        ),
+    ),
+    "post-start": (
+        "warmup",
+        lambda j: _main(j).update(
+            lifecycle={"postStart": {"exec": {"command": ["/bin/sh", "-c", "id"]}}}
+        ),
+    ),
+    # S-6: the pipeline the Job runs is the ConfigMap the policy read
+    "pipeline-path": ("batch", _env("PIPELINE_PATH", "/work/pipeline.yaml")),
+    "pipeline-emptydir": ("warmup", _set_volume("pipeline", {"emptyDir": {}})),
+    "pipeline-other-configmap": (
+        "batch",
+        _set_volume("pipeline", {"configMap": {"name": "team-settings"}}),
+    ),
+    "pipeline-items": (
+        "warmup",
+        _set_volume(
+            "pipeline",
+            {
+                "configMap": {
+                    "name": "htr-pipeline-demo-v1",
+                    "items": [{"key": "other", "path": "pipeline.yaml"}],
+                }
+            },
+        ),
+    ),
+    "pipeline-shadowed": (
+        "batch",
+        _add_volume("shadow", {"emptyDir": {}}, "/config/pipeline.yaml"),
+    ),
+}
+
+
+#: The sentence each mutation is refused with -- a refusal for some other
+#: reason would pass a bare verdict check and prove nothing.
+SAID = {
+    "web-identity": "serviceAccountName is htrflow-web",
+    "token": "automountServiceAccountToken is not false",
+    "projected-token": "volumes other than configMap",
+    "warmup-s3-volume": "Secrets this pod may not read: htr-batch-s3",
+    "warmup-s3-env": "Secrets this pod may not read: htr-batch-s3",
+    "env-from-secret": "envFrom",
+    "field-ref": "env from something other than a Secret key: X",
+    "writable-cache": "the model cache mounted writable",
+    "host-path": "volumes other than configMap",
+    "warmup-label-on-batch": "a warm-up Job is named htr-warmup-",
+    "web-label": 'pod label app is "htrflow-web"',
+    "extra-label": "pod labels beyond app: role",
+    "warmup-name": "a warm-up Job is named htr-warmup-",
+    "python-c": "the command is",
+    "args": "the script is not the one the converter renders",
+    "init-command": "the init container is not the warm-up gate",
+    "second-container": "containers are",
+    "probe": "a probe or a hook is a command of its own",
+    "post-start": "a probe or a hook is a command of its own",
+    "pipeline-path": "PIPELINE_PATH is not /config/pipeline.yaml",
+    "pipeline-emptydir": "the pipeline volume is not an htr-pipeline-* ConfigMap",
+    "pipeline-other-configmap": "ConfigMaps this pod may not mount: team-settings",
+    "pipeline-items": "remapping its keys with items",
+    "pipeline-shadowed": "the pipeline volume is not the one mount at /config",
+}
+
+
+@pytest.mark.parametrize("case", list(MUTATIONS))
+def test_a_job_that_is_not_the_converters_shape_is_refused(
+    tmp_path: Path, job_shape: Path, case: str
+):
+    role, change = MUTATIONS[case]
+    job = dict(zip(("batch", "warmup"), converter_jobs()))[role]
+    change(job)
+    verdict, out = admission(tmp_path, job_shape, job, user=APPLY_SA)
+    assert verdict == "refused", out
+    assert SAID[case] in out
+
+
+def test_a_job_claiming_the_warmup_network_role_is_held_to_it_whoever_asks(
+    tmp_path: Path, job_shape: Path
+):
+    """`app: htrflow-warmup` is what the warm-up NetworkPolicy lets out to
+    the internet. A Job carrying it is held to the warm-up's shape even
+    without the converter's label, from any identity."""
+    _, warmup = converter_jobs()
+    del warmup["metadata"]["labels"]["htrflow.riksarkivet.se/managed-by"]
+    _main(warmup)["command"] = ["python", "-c", "print(1)"]
+    verdict, out = admission(tmp_path, job_shape, warmup, user="kubernetes-admin")
+    assert verdict == "refused", out
+
+
+def test_other_jobs_in_the_namespace_are_not_this_policys(
+    tmp_path: Path, job_shape: Path
+):
+    other = job(None)
+    other["spec"]["template"]["metadata"] = {"labels": {"app": "rustfs-init"}}
+    verdict, out = admission(tmp_path, job_shape, other, user="kubernetes-admin")
+    assert verdict == "not matched", out
+    verdict, out = admission(tmp_path, job_shape, other, user=APPLY_SA)
+    assert verdict == "refused", out
+
+
+def test_what_kueue_adds_on_admission_is_not_refused(tmp_path: Path, job_shape: Path):
+    """Kueue starts a Job by updating it -- under its own identity -- and
+    merges its podset's labels and scheduling into the template. The shape
+    is fixed at creation (a Job's pod template is immutable once it runs),
+    so another identity's update is not re-checked, and the apply
+    identity's next server-side apply carries Kueue's fields through."""
+    batch, _ = converter_jobs()
+    started = yaml.safe_load(yaml.safe_dump(batch))
+    started["spec"]["template"]["metadata"]["labels"]["kueue.x-k8s.io/podset"] = "main"
+    _pod(started)["nodeSelector"] = {"topology.kubernetes.io/zone": "a"}
+    kueue = "system:serviceaccount:kueue-system:kueue-controller-manager"
+    verdict, out = admission(
+        tmp_path, job_shape, started, user=kueue, operation="UPDATE", old=batch
+    )
+    assert verdict == "not matched", out
+    verdict, out = admission(
+        tmp_path, job_shape, started, user=APPLY_SA, operation="UPDATE", old=started
+    )
+    assert verdict == "admitted", out
+    # The apply identity's second field manager hands `spec.suspend` to
+    # Kueue on an unpause: a patch of that one field, admitted as is.
+    resumed = yaml.safe_load(yaml.safe_dump(started))
+    resumed["spec"]["suspend"] = False
+    started["spec"]["suspend"] = True
+    verdict, out = admission(
+        tmp_path, job_shape, resumed, user=APPLY_SA, operation="UPDATE", old=started
+    )
+    assert verdict == "admitted", out
+
+
+def test_the_job_image_can_be_held_to_the_wrapper_repository(tmp_path: Path):
+    """images-allowed admits every repository the release publishes, the
+    web and converter images included. `security.jobImageRepos` narrows a
+    campaign or warm-up Job to the wrapper's."""
+    policy = render_policy(
+        tmp_path,
+        "job-shape",
+        "apply.rbac.enabled=true",
+        "security.jobImageRepos={ghcr.io/riksarkivet/htrflow-batch}",
+    )
+    batch, warmup = converter_jobs()
+    image = "ghcr.io/riksarkivet/htrflow-batch@" + DIGEST
+    for j in (batch, warmup):
+        for c in [*_pod(j)["containers"], *_pod(j).get("initContainers", [])]:
+            c["image"] = image
+        verdict, out = admission(tmp_path, policy, j, user=APPLY_SA)
+        assert verdict == "admitted", out
+        _main(j)["image"] = "ghcr.io/riksarkivet/htrflow-web@" + DIGEST
+        verdict, out = admission(tmp_path, policy, j, user=APPLY_SA)
+        assert verdict == "refused", out
+        assert "htrflow-web" in out

@@ -911,6 +911,7 @@ def test_the_production_profile_turns_on_what_the_defaults_leave_off(
             "model-revision",
             "verify-images",
             "rbac-scope",
+            "job-shape",
         )
     }
     for policy in objects(prod, "ClusterPolicy"):

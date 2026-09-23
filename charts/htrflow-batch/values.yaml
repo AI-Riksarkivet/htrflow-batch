@@ -30,6 +30,16 @@ s3:
   bucket: htr-results
   existingSecret: htr-batch-s3
 
+# The Hugging Face token the warm-up Job reads (converter.yaml's
+# `hf_token_secret`), for a private or gated model. Convention only, like
+# `s3.existingSecret`: nothing here creates it. It is the ONE Secret a
+# warm-up pod may read under `security.policies` (the job-shape policy) --
+# the warm-up reaches the internet and unpickles models, so a converter.yaml
+# naming any other Secret there is refused. Keep it equal to
+# `hf_token_secret`; empty = the warm-up reads no Secret at all.
+hfToken:
+  existingSecret: ""
+
 publicResultsBase: ""      # browser-reachable URL base for published results (REQUIRED: every result URL is built from it)
 
 # Model cache shared by warm-up Jobs (writer) and batch Jobs (read-only).
@@ -143,6 +153,12 @@ security:
   # and then also the default for `verifyImages.imageReferences` — with
   # `policies.enabled: false` this value is documentation only.
   allowedImageRepos: []      # e.g. ["ghcr.io/riksarkivet/", "127.0.0.1:30500/"]
+  # The repositories a campaign or warm-up Job's images may come from, on top
+  # of allowedImageRepos (exact repositories, the part before `@sha256:`).
+  # allowedImageRepos admits every repository the namespace runs, the web
+  # and converter images included; this narrows the converter's Jobs to the
+  # wrapper. Empty = no narrowing. Enforced by the job-shape policy.
+  jobImageRepos: []          # e.g. ["docker.io/riksarkivet/htrflow-batch"]
   # Require a 40-hex `revision:` on every pipeline step's model (HF Hub
   # weights are pickles; an unpinned repo is mutable). Same: enforced by
   # `policies` below.
