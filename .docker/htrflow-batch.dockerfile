@@ -272,20 +272,15 @@ print("wrapper and transformers requirements satisfied")
 # layer, so a torch bump could rename it, or register a JIT-compiled
 # override some other way, and nothing would notice until a GPU job died
 # for want of a compiler. The overrides register at import, with no GPU, so
-# this asserts the outcome: none but the precompiled "native" kind. A torch
-# without the layer at all (the amd64 build's 2.9) has nothing to check; a
-# layer that no longer has this table fails, so the check cannot go stale.
-try:
-    from torch._native import registry
-except ModuleNotFoundError as exc:
-    if exc.name != "torch._native":
-        raise
-    print("torch has no torch._native layer: no JIT-compiled operators")
-else:
-    jit = set(registry._dsl_name_to_lib_graph) - {"native"}
-    if jit:
-        sys.exit(f"torch registers JIT-compiled operator overrides: {sorted(jit)}")
-    print("torch registers no JIT-compiled operator overrides")
+# this asserts the outcome: none but the precompiled "native" kind. Both
+# architectures run a torch with the layer, so a torch without it, or a
+# layer that no longer has this table, fails: the check cannot go stale.
+from torch._native import registry
+
+jit = set(registry._dsl_name_to_lib_graph) - {"native"}
+if jit:
+    sys.exit(f"torch registers JIT-compiled operator overrides: {sorted(jit)}")
+print("torch registers no JIT-compiled operator overrides")
 CHECK
 
 # The release this image is published under: the publish workflow passes its

@@ -182,31 +182,37 @@ def test_the_wrapper_image_carries_no_compiler_and_compiles_nothing() -> None:
     # works (no JIT-compiled override registered), not just that it is set.
     # The CHECK heredoc is Python, so it is read as Python: it imports
     # torch._native's registry, reads it, and a finding exits the build.
+    # Both architectures run a torch with the layer, so the import is not
+    # guarded: a torch that drops or renames it fails the build instead of
+    # passing a check that no longer looks at anything.
     check = ast.parse(_heredoc(text, "CHECK"))
-    [guard] = [
-        node
-        for node in ast.walk(check)
-        if isinstance(node, ast.Try)
-        and any(
-            isinstance(s, ast.ImportFrom)
-            and s.module == "torch._native"
-            and [a.name for a in s.names] == ["registry"]
-            for s in node.body
-        )
-    ]
-    found = [n for s in guard.orelse for n in ast.walk(s)]
     assert any(
-        isinstance(n, ast.Attribute) and ast.unparse(n.value) == "registry"
-        for n in found
-    ), "the registry is imported but never read"
+        isinstance(s, ast.ImportFrom)
+        and s.module == "torch._native"
+        and [a.name for a in s.names] == ["registry"]
+        for s in check.body
+    ), "the torch._native registry is not imported unconditionally"
+    reads = [
+        target.id
+        for n in ast.walk(check)
+        if isinstance(n, ast.Assign)
+        and any(
+            isinstance(a, ast.Attribute) and ast.unparse(a.value) == "registry"
+            for a in ast.walk(n.value)
+        )
+        for target in n.targets
+        if isinstance(target, ast.Name)
+    ]
+    assert reads, "the registry is imported but never read"
     assert any(
         isinstance(n, ast.If)
+        and {x.id for x in ast.walk(n.test) if isinstance(x, ast.Name)} & set(reads)
         and any(
             isinstance(c, ast.Call) and ast.unparse(c.func) == "sys.exit"
             for b in n.body
             for c in ast.walk(b)
         )
-        for n in found
+        for n in ast.walk(check)
     ), "what the registry holds never fails the build"
 
 
