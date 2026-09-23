@@ -786,3 +786,33 @@ def test_a_pipeline_id_leaves_room_for_its_warm_up_job(tmp_path, capsys, length,
     files = {f"pipelines/{pid}.yaml": pipeline, "campaigns/x.yaml": _campaign(1, pid)}
     rc, out = _validate_with(tmp_path, capsys, files)
     assert (rc == 0) == ok, out
+
+
+def test_a_split_campaign_beside_a_single_one_sharing_its_stem_is_not_append_only(
+    tmp_path, capsys
+):
+    """audit 0923 C-4: parts were found by the first 50 characters of a name.
+    With `<stem>-b` rendered as one Job, a big `<stem>-a` added beside it
+    renders `<stem>-part1` and `-part2`, and the next validate held those
+    against `<stem>-b`: "append-only", with nothing changed, and every later
+    render refused. Parts belong to the campaign their label names."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    stem = "k" * 50
+    (repo / "campaigns" / f"{stem}-b.yaml").write_text(_split_campaign(3, "b"))
+    out = repo / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+
+    (repo / "campaigns" / f"{stem}-a.yaml").write_text(_split_campaign(10_001, "a"))
+    assert main(["validate", str(repo)]) == 0, capsys.readouterr().out
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    assert (out / "campaigns" / f"{stem}-part2.yaml").is_file()
+
+    capsys.readouterr()
+    assert main(["validate", str(repo)]) == 0, capsys.readouterr().out
+    assert main(["render", str(repo), "--out", str(out)]) == 0, capsys.readouterr()
+
+    # and the rule still holds for each of them, on its own files
+    (repo / "campaigns" / f"{stem}-b.yaml").write_text(_split_campaign(4, "b"))
+    assert main(["validate", str(repo)]) == 1
+    assert f"campaign {stem}-b is append-only" in capsys.readouterr().out

@@ -45,7 +45,9 @@ _MANAGED_BY_LABEL = "htrflow.riksarkivet.se/managed-by"
 #: only definition: ``cluster.py`` lists by it, the Makefile asks this
 #: module for it, and ``test_render.py`` asserts the renderer writes it.
 CAMPAIGN_SELECTOR = f"{_MANAGED_BY_LABEL}=converter"
-_CAMPAIGN_LABEL = "htrflow.riksarkivet.se/campaign"
+#: Which campaign an object belongs to. ``cli`` reads it off an earlier
+#: render to tell whose ``-partN`` files are whose.
+CAMPAIGN_LABEL = "htrflow.riksarkivet.se/campaign"
 _PIPELINE_LABEL = "htrflow.riksarkivet.se/pipeline"
 _QUEUE_LABEL = "kueue.x-k8s.io/queue-name"
 _PRIORITY_LABEL = "kueue.x-k8s.io/priority-class"
@@ -252,7 +254,7 @@ def _campaign_configmap(
     text = "\n".join(v.source_line() for v in volumes) + "\n" if volumes else ""
     _set(cm, "metadata.name", f"campaign-{name}")
     _set(cm, "metadata.namespace", cfg.namespace)
-    cm["metadata"]["labels"][_CAMPAIGN_LABEL] = label_value(c.name)
+    cm["metadata"]["labels"][CAMPAIGN_LABEL] = label_value(c.name)
     cm["metadata"]["labels"][_PIPELINE_LABEL] = label_value(p.id)
     cm["metadata"]["annotations"][_DIGEST_ANNOTATION] = p.image
     cm["data"]["volumes.txt"] = text
@@ -278,7 +280,7 @@ def _campaign_job(
     _set(job, "metadata.name", name)
     _set(job, "metadata.namespace", cfg.namespace)
     labels = job["metadata"]["labels"]
-    labels[_CAMPAIGN_LABEL] = label_value(c.name)
+    labels[CAMPAIGN_LABEL] = label_value(c.name)
     labels[_PIPELINE_LABEL] = label_value(p.id)
     labels[_QUEUE_LABEL] = cfg.queue
     if c.priority:
@@ -451,7 +453,7 @@ def status_configmap(live: dict, cfg: ConverterConfig) -> dict | None:
     cm = _load("configmap.yaml")
     _set(cm, "metadata.name", f"campaign-{meta.get('name', '')}{STATUS_SUFFIX}")
     _set(cm, "metadata.namespace", namespace)
-    cm["metadata"]["labels"][_CAMPAIGN_LABEL] = labels.get(_CAMPAIGN_LABEL, "")
+    cm["metadata"]["labels"][CAMPAIGN_LABEL] = labels.get(CAMPAIGN_LABEL, "")
     cm["metadata"]["labels"][_PIPELINE_LABEL] = pipeline
     cm["metadata"]["labels"][_KIND_LABEL] = _STATUS_KIND
     cm["metadata"].pop("annotations")  # the digest is on the record, not here
