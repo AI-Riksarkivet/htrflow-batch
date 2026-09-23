@@ -328,7 +328,9 @@ def test_every_other_page_keeps_the_plain_header(client: TestClient):
     "name",
     ["examples/demo.html", "collection.htm", "other.xhtml", "icon.svg", "EXTRA.HTML"],
 )
-def test_a_page_with_no_policy_of_its_own_gets_the_strictest(static_dir, name):
+def test_a_page_with_no_policy_of_its_own_gets_the_strictest(
+    static_dir, name, monkeypatch
+):
     """The whole Universal Viewer build is copied into the site, and only
     uv.html has a policy: any other document it ships was served with
     nothing but `frame-ancestors 'none'` (2026-09-23 audit). A page that
@@ -336,6 +338,13 @@ def test_a_page_with_no_policy_of_its_own_gets_the_strictest(static_dir, name):
     path = static_dir / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("<html><body><script>alert(1)</script></body></html>")
+    # What a document is must not depend on the host's /etc/mime.types:
+    # python's own table has no .xhtml, and a slim image ships no such
+    # file, so the same page got the strict policy on one host and none on
+    # another (found by the dagger test container, 2026-09-23).
+    import mimetypes
+
+    monkeypatch.setattr(mimetypes, "guess_type", lambda *a, **k: (None, None))
     client = TestClient(create_app(EmptyReader(), static_dir=static_dir))
     resp = client.get(f"/{name}")
     assert resp.status_code == 200
