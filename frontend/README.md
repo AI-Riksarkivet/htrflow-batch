@@ -15,7 +15,8 @@ SvelteKit 2 + Svelte 5 static SPA over the read API (`packages/web`,
   terminal line, a finished manifest, or after `LIVE_MAX_FAILURES` misses.
 - `/alto?src=<url>` — the ALTO viewer: one page's ALTO XML as text in
   reading order, each line tinted by its `WC` confidence, with a raw-XML
-  toggle. Reached from the run viewer's alto column.
+  toggle. Reached from the run viewer's alto column; like `/log`, it reads
+  only a URL under the results base.
 
 `bun run build` emits `dist/`, which `.docker/htrflow-web.dockerfile` copies
 into the read API's `/app/static` (over the Universal Viewer build, so `/` is
@@ -88,7 +89,8 @@ good list. There is no staleness check: every response is computed live from
 the Kubernetes API, so there is nothing that can go stale.
 
 ```jsonc
-// GET /api/v1/jobs — JobSummary[]
+// GET /api/v1/jobs?reaped=20 — JobSummary[]: every live campaign, and the
+// 20 newest whose Jobs are gone (X-Reaped-Total: how many of those in all)
 {
   "namespace": "htr-test",
   "name": "kyrk",
@@ -118,7 +120,8 @@ the Kubernetes API, so there is nothing that can go stale.
       "manifestUrl": "https://…/vol3/manifest.json",
       "iiifUrl": "https://…/vol3/iiif.json",
       "altoPrefix": "https://…/vol3/alto/",
-      "sourceUrl": "https://iiif.example.org/vol3/manifest", // null for `images:`
+      "sourceUrl": "https://iiif.example.org/vol3/manifest", // null for `images:`,
+      //                                                    // or one the page cannot use
       "logUrl": "https://…/status/logs/demo-v1/vol3.txt", // absolute, always present
       "reason": { "stage": "setup", "permanent": true, "error": "…" },
       // the wrapper's own termination message, parsed; present only while a
