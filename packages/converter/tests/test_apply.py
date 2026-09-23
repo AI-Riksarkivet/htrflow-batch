@@ -2248,7 +2248,7 @@ def test_a_window_change_under_a_paused_campaign_is_applied(tmp_path, cluster):
     _live(cluster, "kyrk")["spec"]["suspend"] = True
     _edit(repo / "campaigns" / "kyrk.yaml", window=1)
     cluster.calls.clear()
-    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "two")]) != 1
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "two")]) == 0
     assert ("dry-run", "Job", "kyrk") in cluster.calls
 
 
