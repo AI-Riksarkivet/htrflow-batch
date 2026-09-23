@@ -281,3 +281,49 @@ def test_tee_forwards_buffer_to_the_original_stream():
     tee.buffer.write(b"bytes")
     tee.buffer.flush()
     assert raw.getvalue() == b"bytes"
+
+
+def test_finish_gives_up_on_an_upload_that_never_returns():
+    """Audit 0923 W-7: finish() joined the shipping thread for 30 s, then
+    waited without limit for the upload lock a periodic PUT held, then made
+    its own PUT -- about 140-210 s against a 120 s grace period, so the pod
+    was SIGKILLed and the run log lost. The whole of it now has one budget."""
+    import time
+
+    hang = threading.Event()
+    started = threading.Event()
+
+    def stuck(text: str) -> None:
+        started.set()
+        hang.wait(30)
+
+    capture = LogCapture()
+    capture.start_shipping(stuck, interval=0)
+    capture._append("a\n")
+    periodic = threading.Thread(target=capture.ship, daemon=True)
+    periodic.start()
+    assert started.wait(5)
+    capture._append("b\n")
+    t0 = time.monotonic()
+    capture.finish(budget=0.3)
+    assert time.monotonic() - t0 < 2.0
+    hang.set()
+
+
+def test_the_final_ship_fits_the_pods_grace_period():
+    """The budget is only worth having if the kubelet waits for it: the
+    campaign Job's terminationGracePeriodSeconds must cover the final ship
+    and leave room for the rest of the SIGTERM path."""
+    from pathlib import Path
+
+    import yaml
+
+    from htrflow_batch.logship import FINAL_SHIP_SECONDS
+
+    manifests = (
+        Path(__file__).resolve().parents[2]
+        / "converter/src/htrflow_converter/manifests/campaign-job.yaml"
+    )
+    job = yaml.safe_load(manifests.read_text())
+    grace = job["spec"]["template"]["spec"]["terminationGracePeriodSeconds"]
+    assert FINAL_SHIP_SECONDS + 20 <= grace
