@@ -148,8 +148,15 @@ def test_api_routes_win_over_static(client: TestClient):
     assert resp.json() == []
 
 
-def test_healthz_still_wins(client: TestClient):
-    assert client.get("/healthz").json() == {"ok": True}
+@pytest.mark.parametrize("mode", ["api-only", "with-the-site", "site-only"])
+def test_healthz_answers_in_every_mode(static_dir: Path, tmp_path: Path, mode: str):
+    """With no site built, with the site mounted at / behind the routes, and
+    with no cluster at all: the probe answers the same."""
+    reader = NoCluster() if mode == "site-only" else EmptyReader()
+    site = tmp_path / "absent" if mode == "api-only" else static_dir
+    resp = TestClient(create_app(reader, static_dir=site)).get("/healthz")
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
 
 
 def test_unknown_page_is_404_not_the_spa(client: TestClient):
@@ -487,9 +494,6 @@ class TestSiteOnly:
         resp = client.get(path)
         assert resp.status_code == 503
         assert "HTRFLOW_WEB_SITE_ONLY" in resp.json()["detail"]
-
-    def test_healthz_still_ok(self, client: TestClient):
-        assert client.get("/healthz").json() == {"ok": True}
 
     def test_version_still_answers(self, client: TestClient):
         """The header shows a version on the compose stack too: it is this
