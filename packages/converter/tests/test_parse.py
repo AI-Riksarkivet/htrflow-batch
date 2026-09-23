@@ -859,3 +859,31 @@ def test_a_merge_key_may_still_override_what_it_merges(tmp_path):
         'campaigns/kyrk.yaml: "base" is not a setting this file has — remove '
         "it, or fix the spelling"
     ]
+
+
+@pytest.mark.parametrize(
+    "steps,said",
+    [
+        (
+            "steps: []\n",
+            '"steps" is empty — a pipeline runs at least one step; write steps: '
+            'and then "- step: <Name>" entries under it',
+        ),
+        (
+            "steps:\n  - settings: {model: yolo}\n  - step: TextRecognition\n",
+            '"steps" has a step with no "step:" name (step 1) — every entry '
+            'starts "- step: <Name>", the htrflow step it runs',
+        ),
+    ],
+)
+def test_a_pipeline_with_no_step_to_run_is_refused(tmp_path, steps, said):
+    """audit 0923 C-8: both rendered, and the first a pod reached was the
+    wrapper failing every volume of every campaign on the pipeline."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "pipelines" / "demo-v1.yaml").write_text(
+        "image: ghcr.io/x/y@sha256:" + "a" * 64 + "\n" + steps
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [f"pipelines/demo-v1.yaml: {said}"]
