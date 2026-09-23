@@ -25,6 +25,7 @@ import time
 from html.parser import HTMLParser
 from importlib import metadata
 from pathlib import Path
+from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
@@ -38,10 +39,12 @@ from .progress import ProgressReader
 _LOG = logging.getLogger(__name__)
 
 #: Exactly what the retired nginx config sent (chart 0.3.0's viewer template).
-#: Script/style/connect sources are governed by the SvelteKit build's own
+#: Script/style sources are governed by the SvelteKit build's own
 #: ``<meta http-equiv>`` CSP (kit.csp); a header must not be stricter than it,
 #: since the browser enforces the intersection — so this one only forbids
-#: framing, which a meta tag cannot express.
+#: framing, which a meta tag cannot express. The SPA's pages add the one
+#: source list the build cannot know, where they may fetch from
+#: (``spa_csp``); the viewer and every other document have their own.
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "strict-origin-when-cross-origin",
@@ -78,6 +81,40 @@ UV_CSP = (
 #: Universal Viewer build is copied in beside uv.html, and any other page it
 #: ships was served with only `frame-ancestors 'none'` (2026-09-23 audit).
 STRICT_CSP = "default-src 'none'; sandbox; frame-ancestors 'none'"
+
+#: A host a CSP host-source can name: DNS labels or a dotted IPv4 address.
+#: No IPv6 literal, no `_`, nothing non-ASCII -- the grammar has no room.
+_CSP_HOST = re.compile(r"[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*")
+
+
+def spa_csp(results_base: str) -> str | None:
+    """The header the SPA's own pages get beside their meta policy: where
+    they may fetch from -- this service (the API) and the results bucket
+    (run logs, manifest.json, ALTO) -- which the build cannot say, because
+    the bucket is not known until the service starts (2026-09-23 audit).
+    The browser enforces the header and the meta tag both, and this adds a
+    directive the meta tag does not have rather than narrowing one it does.
+
+    ``None`` -- no narrowing at all -- when there is no base (site-only
+    mode, where the run log reads any http(s) URL, as it did before there
+    was one) or when the base is not a URL a CSP source can express."""
+    parts = urlsplit(results_base)
+    try:
+        port = parts.port
+    except ValueError:
+        return None
+    host = parts.hostname or ""
+    if parts.scheme not in ("http", "https") or not _CSP_HOST.fullmatch(host):
+        return None
+    # Percent-encoded where a CSP source cannot hold the character: `;` ends
+    # a directive and `,` a policy. The browser compares paths decoded.
+    path = quote(parts.path.rstrip("/"), safe="/-._~%!$&'()*+=:@")
+    netloc = f"{host}:{port}" if port is not None else host
+    return (
+        f"{SECURITY_HEADERS['Content-Security-Policy']}; "
+        f"connect-src 'self' {parts.scheme}://{netloc}{path}/"
+    )
+
 
 #: Media types a browser renders as a document that can run script.
 _DOCUMENTS = ("text/html", "application/xhtml+xml", "image/svg+xml")
@@ -219,13 +256,20 @@ class BuiltSite(StaticFiles):
     in ``create_app`` keeps a CSP a response already has.
 
     Every other document gets ``STRICT_CSP`` unless its own head states a
-    policy -- which the SPA's pages do (kit.csp), and a header stricter than
-    that would break them, since the browser enforces both.
+    policy -- which the SPA's pages do (kit.csp); those get ``page_csp``
+    (``spa_csp``), which only adds what their meta tag cannot say.
     """
 
-    def __init__(self, *args, viewer_csp: str | None = None, **kwargs):
+    def __init__(
+        self,
+        *args,
+        viewer_csp: str | None = None,
+        page_csp: str | None = None,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.viewer_csp = viewer_csp
+        self.page_csp = page_csp
         d = self.directory  # None only for a packages-served StaticFiles: no viewer
         self.viewer = d and os.path.realpath(Path(d) / UV_PATH.lstrip("/"))
         #: realpath -> whether that page states a policy of its own. The
@@ -240,8 +284,11 @@ class BuiltSite(StaticFiles):
         real = os.path.realpath(full_path)
         if self.viewer_csp and real == self.viewer:
             response.headers["Content-Security-Policy"] = self.viewer_csp
-        elif self._document(response) and not self._states_policy(real):
-            response.headers["Content-Security-Policy"] = STRICT_CSP
+        elif self._document(response):
+            if not self._states_policy(real):
+                response.headers["Content-Security-Policy"] = STRICT_CSP
+            elif self.page_csp:
+                response.headers["Content-Security-Policy"] = self.page_csp
         return response
 
     @staticmethod
@@ -600,7 +647,12 @@ def create_app(
     # is not an error: the API is then all there is.
     static = Path(static_dir or DEFAULT_STATIC_DIR)
     if static.is_dir():
-        site = BuiltSite(directory=static, html=True, viewer_csp=viewer_csp)
+        site = BuiltSite(
+            directory=static,
+            html=True,
+            viewer_csp=viewer_csp,
+            page_csp=spa_csp(getattr(reader.cfg, "public_results_base", "") or ""),
+        )
         app.mount("/", site, name="site")
 
     return app
