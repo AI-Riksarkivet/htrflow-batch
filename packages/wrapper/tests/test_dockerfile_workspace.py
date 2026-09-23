@@ -134,6 +134,11 @@ def test_the_wrapper_image_carries_no_compiler_and_compiles_nothing() -> None:
                 assert not _COMPILER_PACKAGES.search(line), line
     assert re.search(r"^ENV TORCH_DISABLE_NATIVE_JIT=1$", _stage(text, "runtime"), re.M)
     assert "TARGETARCH" not in "\n".join(_logical_lines(text))
+    # The switch lives in a private torch module: the build proves it still
+    # works (no JIT-compiled override registered), not just that it is set.
+    check = text[text.index("<<'CHECK'") :]
+    assert "registry._dsl_name_to_lib_graph" in check
+    assert '- {"native"}' in check
 
 
 def test_the_wrapper_source_stays_out_of_the_image() -> None:
