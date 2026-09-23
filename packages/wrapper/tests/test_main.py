@@ -151,16 +151,7 @@ def test_resume_skips_done(env, cfg, s3):
     _put_done(s3, cfg, "0001")
     calls = []
 
-    def factory(c):
-        inner = fake_factory(c)
-
-        def process(path):
-            calls.append(path.stem)
-            return inner(path)
-
-        return process
-
-    rc = main(env, process_page_factory=factory)
+    rc = _attempt(env, calls)
     assert rc == EXIT_OK
     assert "0001" not in calls and calls == ["0002", "0003"]
     body = json.loads(
@@ -202,16 +193,7 @@ def test_resume_reprocesses_pages_whose_source_changed(env, cfg, s3):
     )
     calls = []
 
-    def factory(c):
-        inner = fake_factory(c)
-
-        def process(path):
-            calls.append(path.stem)
-            return inner(path)
-
-        return process
-
-    assert main(env, process_page_factory=factory) == EXIT_OK
+    assert _attempt(env, calls) == EXIT_OK
     assert calls == ["0002"]
     body = json.loads(
         s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
@@ -354,16 +336,7 @@ def test_resume_keeps_done_pages_whose_stored_source_is_redacted(images_env, cfg
     )
     calls = []
 
-    def factory(c):
-        inner = fake_factory(c)
-
-        def process(path):
-            calls.append(path.stem)
-            return inner(path)
-
-        return process
-
-    assert main(dict(images_env, IMAGES=url), process_page_factory=factory) == EXIT_OK
+    assert _attempt(dict(images_env, IMAGES=url), calls) == EXIT_OK
     assert calls == []
     body = json.loads(
         s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
@@ -379,16 +352,7 @@ def test_resume_without_previous_manifest_keeps_done_pages(env, cfg, s3):
     _put_done(s3, cfg, "0001")
     calls = []
 
-    def factory(c):
-        inner = fake_factory(c)
-
-        def process(path):
-            calls.append(path.stem)
-            return inner(path)
-
-        return process
-
-    assert main(env, process_page_factory=factory) == EXIT_OK
+    assert _attempt(env, calls) == EXIT_OK
     assert calls == ["0002", "0003"]
 
 
@@ -398,16 +362,7 @@ def test_resume_reprocesses_page_with_alto_but_no_page_xml(env, cfg, s3):
     _put_done(s3, cfg, "0001", formats=("alto",))
     calls = []
 
-    def factory(c):
-        inner = fake_factory(c)
-
-        def process(path):
-            calls.append(path.stem)
-            return inner(path)
-
-        return process
-
-    assert main(env, process_page_factory=factory) == EXIT_OK
+    assert _attempt(env, calls) == EXIT_OK
     assert calls == ["0001", "0002", "0003"]
     assert "demo-v1/SE-RA-1234/page/0001.xml" in _keys(s3, cfg)
 
@@ -1059,16 +1014,7 @@ def test_store_outage_aborts_in_stream_stage(
     monkeypatch.setattr(ResultStore, "upload_page", dead)
     processed = []
 
-    def factory(c):
-        inner = fake_factory(c)
-
-        def process(path):
-            processed.append(path.stem)
-            return inner(path)
-
-        return process
-
-    rc = main(env, process_page_factory=factory)
+    rc = _attempt(env, processed)
     assert rc == EXIT_TRANSIENT
     assert len(processed) == 5  # not all 9
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
@@ -1465,17 +1411,8 @@ def test_resume_reprocesses_a_page_selected_by_its_query(images_env, cfg, s3):
     )
     calls = []
 
-    def factory(c):
-        inner = fake_factory(c)
-
-        def process(path):
-            calls.append(path.stem)
-            return inner(path)
-
-        return process
-
     env = dict(images_env, IMAGES="https://img.example/iiif?id=NEW")
-    assert main(env, process_page_factory=factory) == EXIT_OK
+    assert _attempt(env, calls) == EXIT_OK
     assert calls == ["0001"]
     body = json.loads(
         s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
@@ -1506,17 +1443,8 @@ def test_resume_keeps_a_done_page_whose_token_rotated(images_env, cfg, s3):
     )
     calls = []
 
-    def factory(c):
-        inner = fake_factory(c)
-
-        def process(path):
-            calls.append(path.stem)
-            return inner(path)
-
-        return process
-
     env = dict(images_env, IMAGES="https://img.example/1.jpg?token=NEW")
-    assert main(env, process_page_factory=factory) == EXIT_OK
+    assert _attempt(env, calls) == EXIT_OK
     assert calls == []
 
 
@@ -1861,16 +1789,7 @@ def test_a_page_whose_upload_failed_once_is_redone_by_the_retry(
     flaky["on"] = False
     calls = []
 
-    def factory(c):
-        inner = fake_factory(c)
-
-        def process(path):
-            calls.append(path.stem)
-            return inner(path)
-
-        return process
-
-    assert main(env, process_page_factory=factory) == EXIT_OK
+    assert _attempt(env, calls) == EXIT_OK
     assert calls == ["0002"]
 
 
@@ -1886,17 +1805,8 @@ def test_a_re_signed_azure_url_does_not_undo_the_last_attempt(images_env, cfg, s
     assert main(first, process_page_factory=fake_factory) == EXIT_OK
     calls = []
 
-    def factory(c):
-        inner = fake_factory(c)
-
-        def process(path):
-            calls.append(path.stem)
-            return inner(path)
-
-        return process
-
     second = dict(images_env, IMAGES=sas.format(d="2026-09-24", s="BBB"))
-    assert main(second, process_page_factory=factory) == EXIT_OK
+    assert _attempt(second, calls) == EXIT_OK
     assert calls == []
 
 
