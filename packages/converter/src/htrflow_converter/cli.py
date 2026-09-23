@@ -19,7 +19,14 @@ import yaml
 from . import render
 from .models import STATUS_SUFFIX, Campaign, parse_source_line
 from .parse import ValidationError, load
-from .record import RENDERED, CorruptRenderedFile, existing_parts, rendered, volumes_txt
+from .record import (
+    FAST_LOADER,
+    RENDERED,
+    CorruptRenderedFile,
+    existing_parts,
+    rendered,
+    volumes_txt,
+)
 
 _NEXT_STEPS = """\
 Your campaigns repo is ready at {dir}.
@@ -120,20 +127,35 @@ def _quiet_stderr():
         yield
 
 
+def _rendered_objects(out: Path) -> dict[str, list]:
+    """Every rendered file under ``out``, parsed: what the render SAYS. Its
+    bytes are not the point -- a checkout with CRLF line endings, or a
+    PyYAML release that spells the same objects differently, says the same
+    thing -- and neither is ``sync.yaml``, which is a digest of them."""
+    return {
+        p.relative_to(out).as_posix(): list(
+            yaml.load_all(p.read_text(), Loader=FAST_LOADER)
+        )
+        for sub in _OWNED[:2]
+        for p in sorted((out / sub).glob("*.yaml"))
+    }
+
+
 def _unrendered(repo: Path) -> str | None:
-    """One sentence unless ``rendered/`` is exactly this checkout's render.
-    ``sync.yaml`` carries a digest of every other rendered file, so it is
-    the one file to compare."""
-    committed = repo / RENDERED / "sync.yaml"
+    """One sentence unless ``rendered/`` holds exactly this checkout's
+    render."""
+    committed = repo / RENDERED
     with tempfile.TemporaryDirectory(prefix="htr-check-") as t:
         # Its refusals to stderr; its warnings validate has already said.
         with contextlib.redirect_stdout(sys.stderr), _quiet_stderr():
             if _render(str(repo), str(Path(t) / RENDERED)):
-                return _NOT_RENDERED.format(rendered=repo / RENDERED)
-        fresh = (Path(t) / RENDERED / "sync.yaml").read_bytes()
-    if not committed.is_file() or committed.read_bytes() != fresh:
-        return _NOT_RENDERED.format(rendered=repo / RENDERED)
-    return None
+                return _NOT_RENDERED.format(rendered=committed)
+        fresh = _rendered_objects(Path(t) / RENDERED)
+    try:
+        same = _rendered_objects(committed) == fresh
+    except (yaml.YAMLError, OSError):
+        same = False
+    return None if same else _NOT_RENDERED.format(rendered=committed)
 
 
 def _load(repo: Path):

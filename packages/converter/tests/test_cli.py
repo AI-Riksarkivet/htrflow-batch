@@ -1039,3 +1039,25 @@ def test_a_rendered_campaign_keeps_a_url_the_new_rule_refuses(tmp_path, capsys):
         f"pipeline: demo-v1\nvolumes:\n  - id: N1\n    manifest: {url}\n"
     )
     assert main(["validate", str(repo)]) == 1  # a new campaign is held to it
+
+
+def test_validate_rendered_compares_what_the_render_says_not_its_bytes(
+    tmp_path, capsys
+):
+    """audit 0923 review 5: a checkout with CRLF line endings (git's autocrlf)
+    failed the hook's check with nothing changed, and so would a PyYAML
+    release that spells the same objects differently. The check compares the
+    rendered objects."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    for path in (repo / "rendered").rglob("*.yaml"):
+        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+    path = repo / "rendered" / "campaigns" / "loc.yaml"
+    path.write_text(yaml.safe_dump_all(yaml.safe_load_all(path.read_text()), width=40))
+    assert main(["validate", "--rendered", str(repo)]) == 0, capsys.readouterr()
+
+    docs = list(yaml.safe_load_all(path.read_text()))
+    docs[1]["spec"]["parallelism"] = 1
+    path.write_text(yaml.safe_dump_all(docs))
+    assert main(["validate", "--rendered", str(repo)]) == 1

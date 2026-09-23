@@ -483,14 +483,14 @@ The Job clones the tracked branch, not the revision Argo CD synced: a hook
 Job has no reliable way to learn the Application's revision. So a second init
 container, between the clone and the apply, runs `htrflow-campaigns validate
 --rendered /repo`: it renders the checkout and refuses it unless the result
-is exactly the `rendered/` the checkout carries (`rendered/sync.yaml` holds a
-digest of every other rendered file). A commit merged after CI's last render
+says exactly what the `rendered/` the checkout carries says. The two are
+compared as parsed objects, file by file, so line endings and how a YAML
+library happens to spell them do not matter. A commit merged after CI's last render
 commit, and not rendered yet, fails the hook and applies nothing; CI's render
 commit for it changes `sync.yaml`, which starts the next sync. A commit that
 changes no rendered file passes, and applying it changes nothing. The check
-also fails when CI's `CONVERTER_REF` and the hook's image are different
-converter releases, since the two then render differently: keep them in
-step.
+also fails when CI's `CONVERTER_REF` and the hook's image are converter
+releases that render different objects: keep them in step.
 
 The ServiceAccount is what the htrflow-batch chart renders behind
 `apply.rbac.enabled=true` (default `false`): a Role — never a ClusterRole —
