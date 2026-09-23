@@ -12,13 +12,13 @@ import (
 // what `make scan-web` already does.
 func (m *HtrflowBatch) scanImage(
 	ctx context.Context,
-	source *dagger.Directory,
 	container *dagger.Container,
 	severity string,
 	format string,
 	exitCode int,
 	ignoreUnfixed bool,
 	caBundle *dagger.File,
+	source *dagger.Directory, // the checkout, for its VEX statements
 ) (string, error) {
 	output, err := m.trivy(source, caBundle).
 		WithMountedFile("/image.tar", container.AsTarball()).
@@ -129,7 +129,7 @@ func (m *HtrflowBatch) Scan(
 	if err != nil {
 		return "", fmt.Errorf("build failed before scanning: %w", err)
 	}
-	return m.scanImage(ctx, source, container, severity, format, exitCode, ignoreUnfixed, caBundle)
+	return m.scanImage(ctx, container, severity, format, exitCode, ignoreUnfixed, caBundle, source)
 }
 
 // ScanWeb runs Trivy against the web image. Unlike the wrapper this one
@@ -158,7 +158,7 @@ func (m *HtrflowBatch) ScanWeb(
 	if err != nil {
 		return "", fmt.Errorf("web build failed before scanning: %w", err)
 	}
-	return m.scanImage(ctx, source, container, severity, format, exitCode, ignoreUnfixed, caBundle)
+	return m.scanImage(ctx, container, severity, format, exitCode, ignoreUnfixed, caBundle, source)
 }
 
 // ScanCampaigns runs Trivy against the converter image the Argo CD hook runs
@@ -187,7 +187,7 @@ func (m *HtrflowBatch) ScanCampaigns(
 	if err != nil {
 		return "", fmt.Errorf("campaigns build failed before scanning: %w", err)
 	}
-	return m.scanImage(ctx, source, container, severity, format, exitCode, ignoreUnfixed, caBundle)
+	return m.scanImage(ctx, container, severity, format, exitCode, ignoreUnfixed, caBundle, source)
 }
 
 // ScanJson returns JSON scan results without failing on findings
