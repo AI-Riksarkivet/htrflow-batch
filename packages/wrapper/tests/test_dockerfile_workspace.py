@@ -20,7 +20,9 @@ runner of their own architecture and never emulated.
 
 from __future__ import annotations
 
+import json
 import re
+import shlex
 from pathlib import Path
 
 import pytest
@@ -90,16 +92,54 @@ def test_the_publish_tag_is_baked_into_both_images(name: str) -> None:
     assert 'org.opencontainers.image.version="${HTRFLOW_BATCH_VERSION}"' in text
 
 
+def _commands(text: str) -> list[list[str]]:
+    """The shell commands of every RUN, as argument lists: continuation
+    lines joined, --mount options dropped, one list per `&&` part."""
+    commands = []
+    for line in _logical_lines(text):
+        if line.startswith("RUN ") and "<<" not in line:
+            for part in line[4:].split("&&"):
+                words = [w for w in shlex.split(part) if not w.startswith("--mount=")]
+                if words:
+                    commands.append(words)
+    return commands
+
+
+def _option(words: list[str], name: str) -> str | None:
+    return words[words.index(name) + 1] if name in words else None
+
+
 def test_campaigns_image_is_distroless_nonroot_and_locked():
     text = (REPO / ".docker/htrflow-campaigns.dockerfile").read_text()
-    assert "gcr.io/distroless/python3-debian13:nonroot@sha256:" in text
-    assert (
-        "uv sync --locked --no-install-workspace --no-build"
-        " --package htrflow-converter --extra hook" in text
+    final = re.split(r"^FROM ", text, flags=re.M)[-1]
+    assert re.match(
+        r"gcr\.io/distroless/python3-debian13:nonroot@sha256:[0-9a-f]{64}\s", final
     )
-    assert "uv build --wheel --package htrflow-converter --require-hashes" in text
-    assert "USER 1000:1000" in text
-    assert 'ENTRYPOINT ["/app/.venv/bin/htrflow-campaigns"]' in text
+    commands = _commands(text)
+    installs = [
+        c
+        for c in commands
+        if c[:2] == ["uv", "sync"]
+        and {"--locked", "--no-install-workspace", "--no-build"} <= set(c)
+        and _option(c, "--package") == "htrflow-converter"
+        and _option(c, "--extra") == "hook"
+    ]
+    assert installs, "the converter's dependencies are not synced --locked"
+    builds = [
+        c
+        for c in commands
+        if c[:2] == ["uv", "build"]
+        and {"--wheel", "--require-hashes"} <= set(c)
+        and _option(c, "--package") == "htrflow-converter"
+    ]
+    assert builds, "the converter is not built with a hashed build backend"
+    instructions = dict(
+        line.split(" ", 1) for line in _logical_lines(final) if " " in line
+    )
+    assert instructions["USER"] == "1000:1000"
+    assert json.loads(instructions["ENTRYPOINT"]) == [
+        "/app/.venv/bin/htrflow-campaigns"
+    ]
 
 
 def test_one_wrapper_dockerfile_one_base_for_both_arches() -> None:
