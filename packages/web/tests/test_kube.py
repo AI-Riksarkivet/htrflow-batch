@@ -382,40 +382,21 @@ def test_a_forced_apply_says_so_and_sends_the_version_it_read(reader: Reader):
     assert call["body"]["metadata"]["resourceVersion"] == "7"
 
 
-def test_a_conflicted_apply_is_retried_once(reader: Reader):
-    """409 is what the API server says while another manager is mid-write."""
+def test_a_conflict_is_not_sent_again(reader: Reader):
+    """A 409 on a server-side apply is a field another manager owns, or a
+    precondition this request's read no longer meets -- the same request
+    sent again meets the same answer (2026-09-23 review). It stands as an
+    ``ApplyConflict``, and the next poll reads the record afresh."""
     reader.answer["PATCH"] = [_api_error(409), {}]
-    reader.apply_configmap(RECORD)
-    assert len(reader.calls) == 2
-
-
-def test_the_retry_waits_for_the_other_manager_to_finish(reader, monkeypatch):
-    """Retrying the same body in the same microsecond meets the same
-    half-finished write. A short pause is the whole point of the retry."""
-    slept: list[float] = []
-    monkeypatch.setattr(kube.time, "sleep", slept.append)
-    reader.answer["PATCH"] = [_api_error(409), {}]
-    reader.apply_configmap(RECORD)
-    assert slept == [kube.CONFLICT_PAUSE]
-
-
-def test_a_second_conflict_is_a_conflict_not_a_refusal(reader, monkeypatch):
-    """`apply` owns these fields now, and its terminal values are the
-    authoritative ones -- there is nothing wrong with this service's grant.
-    A distinct exception, so `app.py` does not put the namespace into the
-    cooldown it keeps for a denied one (2026-09-14 review)."""
-    monkeypatch.setattr(kube.time, "sleep", lambda _s: None)
-    reader.answer["PATCH"] = [_api_error(409), _api_error(409)]
     with pytest.raises(ApplyConflict):
         reader.apply_configmap(RECORD)
-    assert len(reader.calls) == 2
+    assert len(reader.calls) == 1
 
 
 def test_a_conflict_is_not_reported_as_the_cluster_being_unavailable(
     reader, monkeypatch
 ):
-    monkeypatch.setattr(kube.time, "sleep", lambda _s: None)
-    reader.answer["PATCH"] = [_api_error(409), _api_error(409)]
+    reader.answer["PATCH"] = _api_error(409)
     with pytest.raises(Exception) as caught:
         reader.apply_configmap(RECORD)
     assert not isinstance(caught.value, ClusterUnavailable)
