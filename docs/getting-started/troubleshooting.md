@@ -112,7 +112,7 @@ one click away on the same row.
 
 | The card says | What to do |
 |---|---|
-| Stopped when its time budget ran out | Nothing: the next attempt resumes. If it keeps happening, raise `max_seconds` for later campaigns |
+| Stopped when its time budget ran out | Nothing: the next attempt resumes. If it keeps happening, raise `max_seconds` (in `converter.yaml`, or on a new campaign) for the campaigns that follow |
 | Stopped by the cluster (a node drain or a pause) | Nothing: the index is retried |
 | Settings incomplete or wrong, a deployment problem | Fix `converter.yaml` or the chart values and re-render. The campaign file is fine |
 | The IIIF manifest could not be read, will not be retried | Fix the URL, then put the volume in a new campaign |
