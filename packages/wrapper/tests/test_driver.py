@@ -210,8 +210,26 @@ PIN = "7c44178d85926b4a096c55c89bf224855a201fbf"
         # a branch beside the pin is a moving target too
         f"{{model: yolo, model_settings: {{model: a/b, revision: {PIN}}}, "
         "revision: main}",
+        # another commit beside the pin is not the revision that was reviewed
+        f"{{model: yolo, model_settings: {{model: a/b, revision: {PIN}}}, "
+        f"revision: {'0' * 40}}}",
+        # audit 0923 S-3: TrOCR's processor (its tokenizer) is a second load
+        # from the Hub, pinned through processor_kwargs, and undone the same way
+        "{model: TrOCR, model_settings: {model: a/b, model_kwargs: "
+        f"{{revision: {PIN}}}, processor_kwargs: {{revision: {PIN}}}}}, "
+        "processor_kwargs: {}}",
+        "{model: TrOCR, model_settings: {model: a/b, processor: c/d, "
+        f"model_kwargs: {{revision: {PIN}}}, processor_kwargs: {{revision: {PIN}}}}}, "
+        "processor_kwargs: {revision: main}}",
     ],
-    ids=["yolo-null", "trocr-empty-kwargs", "yolo-branch"],
+    ids=[
+        "yolo-null",
+        "trocr-empty-kwargs",
+        "yolo-branch",
+        "yolo-other-commit",
+        "trocr-empty-processor-kwargs",
+        "trocr-processor-branch",
+    ],
 )
 def test_a_pin_overridden_beside_model_settings_is_refused(
     tmp_path, monkeypatch, settings
@@ -228,7 +246,7 @@ def test_a_pin_overridden_beside_model_settings_is_refused(
 
     from htrflow_batch.driver import build_pipeline
 
-    with pytest.raises(ValueError, match="not pinned to a commit"):
+    with pytest.raises(ValueError, match="does not load its pinned revision"):
         build_pipeline(str(pipeline_yaml))
     assert built == []
 
@@ -239,11 +257,19 @@ def test_a_pin_overridden_beside_model_settings_is_refused(
         f"{{model: yolo, model_settings: {{model: a/b, revision: {PIN}}}}}",
         "{model: TrOCR, model_settings: {model: a/b, model_kwargs: "
         f"{{revision: {PIN}}}}}, generation_settings: {{batch_size: 2}}}}",
+        # the processor pinned too, from a repo of its own
+        "{model: TrOCR, model_settings: {model: a/b, processor: c/d, "
+        f"model_kwargs: {{revision: {PIN}}}, processor_kwargs: {{revision: {PIN}}}}}}}",
         # Not pinned anywhere: whether that is allowed is the chart's
         # requireModelRevision, which admission enforces -- off by default.
         "{model: yolo, model_settings: {model: a/b}}",
     ],
-    ids=["yolo-pinned", "trocr-pinned", "unpinned-everywhere"],
+    ids=[
+        "yolo-pinned",
+        "trocr-pinned",
+        "trocr-processor-pinned",
+        "unpinned-everywhere",
+    ],
 )
 def test_a_pin_that_reaches_the_model_is_built(tmp_path, monkeypatch, settings):
     built = _inject_recording_fake_htrflow(monkeypatch)

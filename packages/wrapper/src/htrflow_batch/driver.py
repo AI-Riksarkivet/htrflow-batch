@@ -86,9 +86,16 @@ def _steps(config) -> list[dict]:
 _MODEL_STEP_SETTINGS = ("model", "model_settings", "generation_settings")
 
 #: Where a revision reaches a loader: YOLO and PyLaia take ``revision``, the
-#: Hugging Face models (TrOCR, DiT, Donut) ``model_kwargs.revision`` -- the two
-#: paths the chart's model-revision policy accepts a pin on.
-_PIN_PATHS = (("revision",), ("model_kwargs", "revision"))
+#: Hugging Face models (TrOCR, DiT, Donut) ``model_kwargs.revision`` -- the
+#: paths the chart's model-revision policy accepts a pin on. Those three also
+#: load a processor (its tokenizer, for TrOCR and Donut) from the Hub in a
+#: second ``from_pretrained``, from ``processor`` or else the model's repo,
+#: at ``processor_kwargs.revision`` (audit 0923 S-3).
+_PIN_PATHS = (
+    ("revision",),
+    ("model_kwargs", "revision"),
+    ("processor_kwargs", "revision"),
+)
 
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
@@ -116,8 +123,9 @@ def _check_pins(index: int, step: dict) -> None:
     """3058: a pin under ``model_settings`` -- the one the model-revision
     policy and ``validate`` read -- must be the revision the model gets. A
     key beside it wins the merge (``revision: null`` for YOLO, an empty
-    ``model_kwargs`` for TrOCR) and loads the repo's head, which can be
-    pickled code. Both of those refuse the shape already; this is the layer
+    ``model_kwargs`` or ``processor_kwargs`` for TrOCR) and loads the repo's
+    head, which can be pickled code -- or another commit, which is not the
+    one that was reviewed. Both of those refuse the shape already; this is the layer
     that holds when a pipeline reached the pod past them. A step pinned
     nowhere is not this rule's to judge: whether that is allowed is the
     chart's ``requireModelRevision``, which admission enforces."""
@@ -127,11 +135,11 @@ def _check_pins(index: int, step: dict) -> None:
     written, used = _model_kwargs(settings)
     for path in _PIN_PATHS:
         pin, effective = _at(written, path), _at(used, path)
-        if _is_commit(pin) and not _is_commit(effective):
+        if _is_commit(pin) and effective != pin:
             where = ".".join(path)
             raise ValueError(
                 f"step {index} ({step.get('step', '?')}): model "
-                f"{written.get('model', '?')} is not pinned to a commit — "
+                f"{written.get('model', '?')} does not load its pinned revision — "
                 f"model_settings.{where} is {pin}, but the {path[0]} key beside "
                 f"model_settings overrides it and htrflow would load revision "
                 f"{effective!r}; move every model setting under model_settings"
