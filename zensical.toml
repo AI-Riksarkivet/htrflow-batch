@@ -12,13 +12,17 @@ edit_uri = "edit/main/docs/"
 extra_css = ["stylesheets/diagrams.css"]
 
 nav = [
-  { "htrflow-batch" = ["index.md"] },
+  { "htrflow-batch" = [
+    {"Home" = "index.md"},
+    {"Presentations" = "presentations.md"},
+  ]},
   { "Getting Started" = [
+    {"Try it" = "getting-started/try-it.md"},
     {"Prerequisites" = "getting-started/index.md"},
     {"Deploy" = "getting-started/deploy.md"},
-    {"Try it" = "getting-started/try-it.md"},
     {"Run a Campaign" = "getting-started/campaigns.md"},
     {"View Results" = "getting-started/viewing.md"},
+    {"Troubleshooting" = "getting-started/troubleshooting.md"},
   ]},
   { "How it Works" = [
     {"Architecture" = "how-it-works/architecture.md"},
@@ -34,12 +38,13 @@ nav = [
     {"Overview" = "reference/index.md"},
     {"Configuration" = "reference/configuration.md"},
     {"Campaign & Pipeline YAML" = "reference/campaign-yaml.md"},
+    {"htrflow-campaigns CLI" = "reference/cli.md"},
+    {"Rendered objects" = "reference/rendered.md"},
     {"Wrapper" = "reference/wrapper.md"},
     {"Chart Values" = "reference/chart.md"},
     {"S3 Layout" = "reference/s3-layout.md"},
-    {"Campaign Browser" = "reference/frontend.md"},
+    {"Web front & read API" = "reference/web.md"},
   ]},
-  { "Presentations" = ["presentations.md"] },
   { "Roadmap" = [
     {"Open and Next" = "roadmap/index.md"},
     {"Cache Layer" = "roadmap/cache-layer.md"},
