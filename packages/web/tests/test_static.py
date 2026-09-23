@@ -310,9 +310,10 @@ def test_a_revalidated_viewer_keeps_its_csp(client: TestClient):
 def test_every_other_page_keeps_the_plain_header(client: TestClient):
     """The SPA must not inherit the viewer's policy: its own meta CSP is the
     stricter one, and a header cannot be looser than it anyway."""
-    for path in ("/", "/log", "/api/v1/jobs"):
-        headers = client.get(path).headers
-        assert headers["Content-Security-Policy"] == "frame-ancestors 'none'"
+    for path in ("/", "/log"):
+        assert client.get(path).headers["Content-Security-Policy"] == SPA_CSP
+    headers = client.get("/api/v1/jobs").headers
+    assert headers["Content-Security-Policy"] == "frame-ancestors 'none'"
 
 
 @pytest.mark.parametrize(
@@ -336,10 +337,44 @@ def test_a_page_with_no_policy_of_its_own_gets_the_strictest(static_dir, name):
     assert "frame-ancestors 'none'" in csp
 
 
-def test_the_spas_own_pages_keep_their_meta_policy(client: TestClient):
-    """A header stricter than the page's own meta tag would be enforced on
-    top of it and break the page (the browser enforces both)."""
+SPA_CSP = "frame-ancestors 'none'; connect-src 'self' https://results.example.org/"
+
+
+def test_the_spas_pages_may_fetch_only_the_api_and_the_results_bucket(
+    client: TestClient,
+):
+    """Their meta policy is fixed at build time and the results base is not
+    known until the service starts, so the header carries the one directive
+    the meta tag cannot: the page reads its own API and the results bucket,
+    and nothing else (2026-09-23 audit). Both policies apply, and nothing
+    else in the meta tag is narrowed."""
     for path in ("/", "/log", "/alto", "/log.html"):
+        assert client.get(path).headers["Content-Security-Policy"] == SPA_CSP
+
+
+@pytest.mark.parametrize(
+    ("base", "source"),
+    [
+        ("https://results.example.org/bucket", "https://results.example.org/bucket/"),
+        ("http://localhost:30900/htr-results", "http://localhost:30900/htr-results/"),
+        ("https://user:pw@s3.example.org/b", "https://s3.example.org/b/"),
+        # A `;` or `,` would end the directive or the policy: encoded.
+        ("https://s3.example.org/a;b,c", "https://s3.example.org/a%3Bb%2Cc/"),
+    ],
+)
+def test_the_results_base_is_one_well_formed_source(static_dir, base, source):
+    reader = EmptyReader()
+    reader.cfg = SimpleNamespace(public_results_base=base)
+    client = TestClient(create_app(reader, static_dir=static_dir))
+    csp = client.get("/log").headers["Content-Security-Policy"]
+    assert csp == f"frame-ancestors 'none'; connect-src 'self' {source}"
+
+
+def test_with_no_results_base_the_spa_is_not_narrowed(static_dir: Path):
+    """Site-only mode names no base, and the run log then reads any http(s)
+    URL, as it did before there was one -- a connect-src would break that."""
+    client = TestClient(create_app(NoCluster(), static_dir=static_dir))
+    for path in ("/", "/log"):
         assert client.get(path).headers["Content-Security-Policy"] == (
             "frame-ancestors 'none'"
         )
