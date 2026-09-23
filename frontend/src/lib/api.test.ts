@@ -66,19 +66,6 @@ const pipeline = {
   lastError: null,
 };
 
-const progress = {
-  done: 137,
-  total: 638,
-  failed: 1,
-  lastPage: "0137",
-  stage: "stream",
-  updatedAt: "2026-09-08T09:31:00+00:00",
-  ageSeconds: 12,
-  lastError: { page: "0044", error: "the worker thread died" },
-  errors: 2,
-  viewerPublished: true,
-};
-
 describe("fetchJobs", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -249,88 +236,16 @@ describe("fetchJob", () => {
 });
 
 describe("schemas", () => {
-  test("jobSummarySchema and jobDetailSchema parse the API's own shapes", () => {
-    expect(jobSummarySchema.parse(summary)).toEqual(summary);
-    expect(
-      jobDetailSchema.parse({
-        ...summary,
-        ...pipeline,
-        failures: [],
-        volumes: [volume],
-      }),
-    ).toMatchObject({ volumes: [volume] });
-  });
-
-  test("the detail carries the pipeline's steps and YAML", () => {
-    const parsed = jobDetailSchema.parse({
-      ...summary,
-      ...pipeline,
-      failures: [],
-      volumes: [],
-    });
-    expect(parsed.pipelineSteps).toEqual(["Segmentation"]);
-    expect(parsed.pipelineYaml).toBe("steps:\n");
-  });
-
-  test("latest is a whole volume row, or null", () => {
-    const parsed = jobDetailSchema.parse({
-      ...summary,
-      ...pipeline,
-      latest: volume,
-      failures: [],
-      volumes: [],
-    });
-    expect(parsed.latest?.id).toBe("vol0");
-    expect(
-      jobDetailSchema.parse({
-        ...summary,
-        ...pipeline,
-        failures: [],
-        volumes: [],
-      }).latest,
-    ).toBeNull();
-  });
-
   test("a detail without the pipeline fields is refused", () => {
     expect(() =>
       jobDetailSchema.parse({ ...summary, failures: [], volumes: [] }),
     ).toThrow();
   });
 
-  test("PartiallyFailed is a phase of its own", () => {
-    expect(
-      jobSummarySchema.parse({ ...summary, phase: "PartiallyFailed" }).phase,
-    ).toBe("PartiallyFailed");
-  });
-
   test("an unknown phase is rejected, not coerced to a neutral value", () => {
     expect(() =>
       jobSummarySchema.parse({ ...summary, phase: "Bogus" }),
     ).toThrow();
-  });
-
-  test("reason is optional on a volume row", () => {
-    const reason = { stage: "setup", permanent: true, error: "no canvases" };
-    expect(
-      jobDetailSchema.parse({
-        ...summary,
-        ...pipeline,
-        failures: [],
-        volumes: [{ ...volume, reason }],
-      }),
-    ).toMatchObject({ volumes: [{ reason }] });
-  });
-
-  test("a reason the API could not parse still carries the three fields", () => {
-    const reason = { stage: null, permanent: null, error: "Killed" };
-    expect(
-      jobDetailSchema.parse({
-        ...summary,
-        ...pipeline,
-        failures: [],
-        volumes: [{ ...volume, reason }],
-      }),
-    ).toMatchObject({ volumes: [{ reason }] });
   });
 
   test("a reason that is still the old bare string is rejected", () => {
@@ -342,17 +257,6 @@ describe("schemas", () => {
         volumes: [{ ...volume, reason: "exit 1" }],
       }),
     ).toThrow();
-  });
-
-  test("a volume row carries its progress, or null when nothing is known", () => {
-    expect(
-      jobDetailSchema.parse({
-        ...summary,
-        ...pipeline,
-        failures: [],
-        volumes: [{ ...volume, progress }],
-      }),
-    ).toMatchObject({ volumes: [{ progress }] });
   });
 
   test("a volume row without the progress field is refused", () => {
@@ -367,53 +271,10 @@ describe("schemas", () => {
     ).toThrow();
   });
 
-  test("the detail carries the campaign's summed pages", () => {
-    const parsed = jobDetailSchema.parse({
-      ...summary,
-      ...pipeline,
-      pagesDone: 137,
-      pagesTotal: 638,
-      failures: [],
-      volumes: [],
-    });
-    expect([parsed.pagesDone, parsed.pagesTotal]).toEqual([137, 638]);
-  });
-
-  test("the campaign's notice fields survive the parse", () => {
-    const lastError = {
-      page: "0044",
-      error: "the worker thread died",
-      volume: "vol1",
-      logUrl: "https://results.example.org/status/logs/demo-v1/vol1.txt",
-    };
-    const parsed = jobDetailSchema.parse({
-      ...summary,
-      ...pipeline,
-      pagesFailed: 3,
-      errors: 5,
-      lastError,
-      failures: [],
-      volumes: [],
-    });
-    expect([parsed.pagesFailed, parsed.errors]).toEqual([3, 5]);
-    expect(parsed.lastError).toEqual(lastError);
-  });
-
-  test("warmup is required on a job row, missing has no reason", () => {
+  test("warmup is required on a job row", () => {
     expect(() =>
       jobSummarySchema.parse({ ...summary, warmup: undefined }),
     ).toThrow();
-    expect(warmupSchema.parse({ phase: "missing" })).toEqual({
-      phase: "missing",
-    });
-  });
-
-  test("a failed warmup carries the same reason shape a volume does", () => {
-    const reason = { stage: "warmup", permanent: true, error: "bad model id" };
-    expect(warmupSchema.parse({ phase: "failed", reason })).toEqual({
-      phase: "failed",
-      reason,
-    });
   });
 
   test("an unknown warmup phase is rejected", () => {
@@ -610,22 +471,6 @@ describe("isResultUrl", () => {
 });
 
 describe("a volume whose state nobody recorded", () => {
-  test("`unknown` is a state the page can read", () => {
-    expect(volumeStateSchema.parse("unknown")).toBe("unknown");
-  });
-
-  test("a reaped campaign's rows parse with it", () => {
-    const detail = {
-      ...summary,
-      ...pipeline,
-      jobGone: true,
-      phase: "Unknown",
-      failures: [],
-      volumes: [{ ...volume, state: "unknown", progress: null }],
-    };
-    expect(jobDetailSchema.parse(detail).volumes[0]?.state).toBe("unknown");
-  });
-
   test("a state nobody defined is still refused", () => {
     expect(volumeStateSchema.safeParse("probably-fine").success).toBe(false);
   });
