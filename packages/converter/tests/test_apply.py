@@ -1491,3 +1491,44 @@ def test_the_web_and_the_apply_share_the_status_record_by_field(tmp_path, cluste
     with pytest.raises(ApiException) as e:
         cluster.server_side_apply(record, WEB_MANAGER)
     assert e.value.status == 409
+
+
+# --- one Workload's problem is that campaign's, not the apply's (C-9) ----
+
+
+def test_a_pause_sync_error_is_one_campaigns_problem(tmp_path, cluster, capsys):
+    """A Workload deleted between the list and the patch (404), or a patch
+    the Role does not allow (403), used to leave the apply by the outer
+    handler: every pause after it unsynced, the prune skipped, no summary.
+    It is that campaign's problem now; the rest goes on, and a paused one
+    that did not take is still the unenforced pause, exit 1."""
+    repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
+    cluster.workloads = {
+        "uid-kyrk": _workload("wl-kyrk", False),
+        "uid-loc": _workload("wl-loc", False),
+        "uid-pausy": _workload("wl-pausy", True),
+    }
+    cluster.workload_errors = {"wl-kyrk": 404, "wl-pausy": 403}
+    cluster.live = [_object("Job", "cancelled")]
+    rc = cli.main(["apply", str(repo), "--out", str(out), "--prune"])
+    assert cluster.of("patch") == [("patch", "wl-loc", True)], "the others go on"
+    assert ("delete", "Job", "cancelled") in cluster.calls, "so does the prune"
+    assert rc == 1, "a pause that did not take outranks everything"
+    err = capsys.readouterr().err
+    assert "patch Workload/wl-kyrk: 404" in err
+    assert "not allowed to patch Workload/wl-pausy" in err
+    assert "pausy: paused in git, but" in err
+    summary = err.splitlines()[-1]
+    assert "Workload of Job/kyrk" in summary and "Workload of Job/pausy" in summary
+
+
+def test_an_unpause_that_did_not_take_is_a_change_still_to_make(
+    tmp_path, cluster, capsys
+):
+    """Only an unpaused campaign's Workload failing: nothing is running that
+    git says should not be, so it is the refused-object exit, 3."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    cluster.workloads = {"uid-kyrk": _workload("wl-kyrk", False)}
+    cluster.workload_errors = {"wl-kyrk": 404}
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
+    assert "Workload of Job/kyrk" in capsys.readouterr().err.splitlines()[-1]

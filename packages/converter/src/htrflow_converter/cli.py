@@ -697,6 +697,10 @@ _REFUSED_PAUSE = (
     "is NOT enforced; fix what the refusal says and re-run the apply"
 )
 
+_UNSYNCED_PAUSE = (
+    "{name}: paused in git, but its Kueue Workload could not be deactivated, "
+    "so the pause is NOT enforced; fix what the error says and re-run the apply"
+)
 
 #: The API server stopped answering part-way through: what came before is
 #: applied, the object it stopped on may or may not be, and nothing after it
@@ -908,8 +912,22 @@ def _apply(
             # The pause first: it is the one step whose absence burns GPU
             # right now, and a prune problem used to end the apply before it
             # ran for any campaign (3090).
+            # One Workload's problem is one campaign's (C-9): a Workload
+            # deleted between the list and the patch, a patch the Role does
+            # not allow. It used to leave through the outer handler, with
+            # every later pause unsynced and the prune never run.
             for live, suspended in jobs:
-                failed |= cluster.sync_pause(live, suspended, pause_wait)
+                try:
+                    failed |= cluster.sync_pause(live, suspended, pause_wait)
+                except Unreachable:
+                    raise
+                except ClusterError as e:
+                    job = live["metadata"]["name"]
+                    print(e, file=sys.stderr)
+                    refused.append(f"Workload of Job/{job}")
+                    if suspended:
+                        print(_UNSYNCED_PAUSE.format(name=job), file=sys.stderr)
+                        failed = 1
             if prune:
                 # What makes deleting a campaign file cancel the campaign.
                 # Both directories: see Cluster.prune.
