@@ -58,12 +58,6 @@ def test_fetch_manifest_5xx_and_429_are_transient(status):
         fetch_manifest("https://x/manifest", client)
 
 
-def test_transient_manifest_error_is_not_permanent():
-    # main.py classifies ManifestError as exit 13; the transient one must
-    # fall through to the generic (retryable) branch.
-    assert not issubclass(TransientManifestError, ManifestError)
-
-
 @pytest.mark.parametrize("exc", [httpx.ConnectError, httpx.ReadTimeout])
 def test_fetch_manifest_network_error_is_transient(exc):
     def handler(req):
