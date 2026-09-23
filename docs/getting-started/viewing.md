@@ -39,6 +39,9 @@ an **alto** column:
   - A **raw** link opens the untouched file.
   - If a page's ALTO cannot be read, is not XML, or has no text at all, the
     view says so in one sentence.
+  - It reads only a file under the results base URL, like the run viewer:
+    `/alto?src=` with any other address is refused before anything is
+    fetched, so a link cannot make the page show someone else's text.
 - **download** fetches the same XML and saves it as `<page>.xml`. The results
   bucket is a different origin from the campaign browser, and browsers
   silently ignore a plain `<a download>` across origins, so the download goes
@@ -59,7 +62,9 @@ A browser needs two addresses:
 - **The results base URL** (`publicResultsBase`), for manifests, page
   images, ALTO and run logs, which the browser fetches straight from the
   bucket. The bucket's CORS rule must allow the web front's origin
-  ([Deploy](deploy.md#s3-secret-bucket-policy-and-cors)).
+  ([Deploy](deploy.md#s3-secret-bucket-policy-and-cors)). The campaign
+  browser's pages may fetch from nowhere else: the web front sends them a
+  `connect-src` limited to its own origin and this base.
 
 How the three sides use these URLs:
 
@@ -67,6 +72,15 @@ How the three sides use these URLs:
   is written into every `iiif.json` and `manifest.json` as the volume runs,
   and nothing rewrites those URLs afterwards. Choose a stable address that
   browsers can reach before running real campaigns.
+- **The chart's base and the converter's must match.** The campaign pods
+  write `converter.yaml`'s `public_results_base` into each run's files, and
+  the web front checks every run-log and ALTO address against the chart's
+  `publicResultsBase`: the run viewer and `/alto` refuse anything outside it,
+  and the campaign browser may not fetch from anywhere else. If the base
+  changes, runs published under the old one keep their old addresses, and
+  their logs and ALTO pages are refused until those files are rewritten
+  under the new base. The viewer (`/uv.html`) is not held to the base, so
+  it still opens their manifests for as long as the old address answers.
 - **Forwarded ports: the base is what the browser sees.** When you reach the
   cluster through port forwarding (`ssh -L`, `kubectl port-forward`),
   `publicResultsBase` must be the forwarded address as the browser sees it.

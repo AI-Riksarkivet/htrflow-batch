@@ -327,10 +327,11 @@ describe("CampaignCard", () => {
   });
 
   test("a sourceUrl that is not an http(s) URL never reaches the card", async () => {
-    // volumes.txt is a file humans edit in a git repo. Since the audit the
-    // schema refuses the row at the boundary ($lib/api, httpUrlSchema), so
-    // the card never sees it and says what it says about any answer it
-    // cannot read; the card's own checks stay as the last step.
+    // volumes.txt is a file humans edit in a git repo. The schema reads the
+    // field on its own ($lib/api): one the page cannot use is no link, and
+    // the rest of the card -- this volume included -- still draws. Refusing
+    // the whole detail over it left the card an error for ever (2026-09-23
+    // audit). The card's own checks stay as the last step.
     const hostile = {
       ...volumeFailed,
       sourceUrl: "javascript:alert(1)",
@@ -343,12 +344,14 @@ describe("CampaignCard", () => {
     );
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
 
     expect(screen.queryByRole("link", { name: /^manifest for/ })).toBeNull();
     expect(screen.queryByRole("link", { name: /^vol/ })).toBeNull();
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "answered in a form this page doesn't understand",
-    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(
+      screen.getByRole("link", { name: `run log for ${hostile.id}` }),
+    ).toBeInTheDocument();
   });
 
   test("the log link carries log+manifest always, and live=1 only for a volume that is not done", async () => {
@@ -2974,6 +2977,107 @@ describe("a finished campaign's card stops asking", () => {
     expect(screen.queryByText(/Can't reach the campaign service/)).toBeNull();
     await vi.advanceTimersByTimeAsync(RELOAD_MS * 10);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+// A page of finished campaigns made one detail request per card the moment
+// it opened -- each reading the campaign's volume list, its pods and up to a
+// hundred progress files -- folded or not, on screen or not (2026-09-23
+// audit). A finished card now reads its detail once it is on screen or
+// opened; a running one polls as before.
+describe("a finished card reads its detail only once someone can see it", () => {
+  /** An IntersectionObserver the test decides the visibility for. */
+  class FakeObserver {
+    static all: FakeObserver[] = [];
+    observed: Element[] = [];
+    disconnected = false;
+    constructor(private readonly callback: IntersectionObserverCallback) {
+      FakeObserver.all.push(this);
+    }
+    observe(el: Element): void {
+      this.observed.push(el);
+    }
+    disconnect(): void {
+      this.disconnected = true;
+    }
+    unobserve(): void {}
+    show(): void {
+      const entries = this.observed.map(
+        (target) =>
+          ({ isIntersecting: true, target }) as IntersectionObserverEntry,
+      );
+      this.callback(entries, this as unknown as IntersectionObserver);
+    }
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    storage = stubStorage();
+    FakeObserver.all = [];
+    vi.stubGlobal("IntersectionObserver", FakeObserver);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const done: JobSummary = { ...job, phase: "Succeeded" };
+
+  function detailFor(row: JobSummary) {
+    return vi.fn(async () =>
+      jsonResponse({ ...detail0, ...row, failures: [], volumes: [] }),
+    );
+  }
+
+  test("folded and off screen, it asks nothing", async () => {
+    const fetchMock = detailFor(done);
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job: done });
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 5);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("scrolled into view, it reads its detail once", async () => {
+    const fetchMock = detailFor(done);
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job: done });
+    await vi.advanceTimersByTimeAsync(0);
+    FakeObserver.all[0]?.show();
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 5);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(FakeObserver.all[0]?.disconnected).toBe(true);
+  });
+
+  test("opened without being scrolled to, it reads its detail", async () => {
+    const fetchMock = detailFor(done);
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job: done });
+    await vi.advanceTimersByTimeAsync(0);
+    await expand();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Folding and opening it again is not news.
+    await expand();
+    await expand();
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 3);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("a card left open last time reads its detail at once", async () => {
+    storage.set(`htrflow.card.${done.namespace}/${done.name}`, "open");
+    const fetchMock = detailFor(done);
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job: done });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("a running campaign polls whether or not it is on screen", async () => {
+    const fetchMock = detailFor(job);
+    vi.stubGlobal("fetch", fetchMock);
+    render(CampaignCard, { job });
+    await vi.advanceTimersByTimeAsync(RELOAD_MS * 2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
 
