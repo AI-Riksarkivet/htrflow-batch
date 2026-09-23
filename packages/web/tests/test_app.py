@@ -1087,16 +1087,6 @@ def _shape(fn) -> list[tuple[str, object]]:
     return [(p.name, p.kind) for p in sig.parameters.values()]
 
 
-def test_the_status_write_is_the_protocols_own_call():
-    """The write used to be missing from the protocol and asked for with
-    `hasattr`: renamed on the real adapter, every status write stopped and
-    every test still passed (2026-09-23 audit)."""
-    assert "apply_configmap" in READER_METHODS
-    assert _shape(Reader.apply_configmap) == _shape(READER_METHODS["apply_configmap"])
-    src = (Path(__file__).parent.parent / "src" / "htrflow_web" / "app.py").read_text()
-    assert "hasattr(reader" not in src
-
-
 # --- the detail route only answers for names that could exist (F8) -------
 
 

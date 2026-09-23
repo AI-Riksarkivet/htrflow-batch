@@ -18,10 +18,12 @@ from importlib import resources
 
 import pytest
 import yaml
+from fastapi.testclient import TestClient
 from kubernetes import client, config
 from urllib3.exceptions import MaxRetryError, ReadTimeoutError
 
 from htrflow_web import kube, projection
+from htrflow_web.app import create_app
 from htrflow_web.kube import (
     FIELD_MANAGER,
     PARTIAL_METADATA,
@@ -128,8 +130,9 @@ def reader(monkeypatch) -> Reader:
     """A real ``Reader`` whose every request is recorded, not sent.
 
     ``reader.answer`` maps an HTTP method to what the API server says: a
-    dict is decoded as the body, an exception is raised, and a list is a
-    queue of either (so a retry can be given a different answer)."""
+    dict is decoded as the body, an exception is raised, a list is a queue
+    of either (so a retry can be given a different answer), and a function
+    is handed the recorded request and returns one of them."""
     monkeypatch.setattr(
         config,
         "load_incluster_config",
@@ -155,6 +158,8 @@ def reader(monkeypatch) -> Reader:
             }
         )
         reply = answer.get(method, {})
+        if callable(reply):
+            reply = reply(calls[-1])
         if isinstance(reply, list):
             reply = reply.pop(0)
         if isinstance(reply, Exception):
@@ -482,3 +487,42 @@ def test_the_apply_says_which_configmap_it_left(reader: Reader):
     """The failures write is held to that uid (projection._failures_write)."""
     reader.answer["PATCH"] = {"metadata": {"uid": "uid-cm-7"}}
     assert reader.apply_configmap(RECORD) == "uid-cm-7"
+
+
+def test_the_route_writes_the_record_through_the_real_adapter(reader: Reader):
+    """The status write is the one call the routes make that no read
+    answers for: renamed on the adapter, with the route asking for it by
+    name only if present, every write stopped and every fake-driven test
+    still passed (2026-09-23 audit). Driven end to end here, the list route
+    over the real ``Reader`` puts the apply on the wire."""
+    job = {
+        "metadata": {
+            "name": "kyrk",
+            "namespace": "htr-a",
+            "uid": "uid-kyrk",
+            "creationTimestamp": "2026-01-01T00:00:00Z",
+            "labels": {
+                "app": "htrflow-batch",
+                "htrflow.riksarkivet.se/managed-by": "converter",
+                "htrflow.riksarkivet.se/campaign": "kyrk",
+                "htrflow.riksarkivet.se/pipeline": "demo-v1",
+            },
+        },
+        "spec": {"completions": 1},
+        "status": {"active": 1},
+    }
+
+    def cluster(call: dict) -> dict:
+        campaigns = call["query"].get("labelSelector") == CAMPAIGN_JOB
+        if campaigns and call["path"] == "/apis/batch/v1/namespaces/htr-a/jobs":
+            return {"items": [job]}
+        return {"items": []}
+
+    reader.answer["GET"] = cluster
+    reader.answer["PATCH"] = {"metadata": {"uid": "uid-cm"}}
+    client_ = TestClient(create_app(reader))
+    assert client_.get("/api/v1/jobs").status_code == 200
+    (patch,) = [c for c in reader.calls if c["method"] == "PATCH"]
+    assert patch["path"] == "/api/v1/namespaces/htr-a/configmaps/campaign-kyrk-status"
+    assert patch["query"]["fieldManager"] == "htrflow-web"
+    assert patch["body"]["data"]["phase"] == "Running"
