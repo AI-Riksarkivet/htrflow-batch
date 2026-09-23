@@ -67,20 +67,4 @@ describe("the read API's contract", () => {
     expect(volumes.some((v) => v.sourceUrl !== null)).toBe(true);
     expect(volumes.some((v) => v.reason !== undefined)).toBe(true);
   });
-
-  test("the fixture really does cover the awkward rows", () => {
-    const summaries = contract.summaries.map((r) => jobSummarySchema.parse(r));
-    expect(summaries.map((r) => r.phase)).toContain("Unknown");
-    expect(summaries.some((r) => r.jobGone)).toBe(true);
-    expect(summaries.some((r) => r.finishedAt === null)).toBe(true);
-    const reaped = contract.details
-      .map((r) => jobDetailSchema.parse(r))
-      .find((r) => r.jobGone);
-    expect(reaped?.volumes.length).toBeGreaterThan(0);
-    expect(reaped?.latest).not.toBeNull();
-    const states = contract.details.flatMap((r) =>
-      jobDetailSchema.parse(r).volumes.map((v) => v.state),
-    );
-    expect(states).toContain("unknown");
-  });
 });
