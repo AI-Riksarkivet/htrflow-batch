@@ -949,7 +949,9 @@ def test_the_warmup_pod_template_names_its_recipe():
 
 
 def _wrapper_env(job: dict) -> dict:
-    return {e["name"]: e for e in job["spec"]["template"]["spec"]["containers"][0]["env"]}
+    return {
+        e["name"]: e for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
 
 
 def test_the_wrapper_is_told_which_attempt_of_its_index_it_is(monkeypatch):
