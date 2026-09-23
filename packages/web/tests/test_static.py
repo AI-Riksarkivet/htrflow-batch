@@ -17,7 +17,13 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from htrflow_web.app import SECURITY_HEADERS, NoCluster, create_app, uv_csp
+from htrflow_web.app import (
+    SECURITY_HEADERS,
+    STRICT_CSP,
+    NoCluster,
+    create_app,
+    uv_csp,
+)
 
 #: The shape the built Universal Viewer really has (verified against
 #: /app/static/uv.html in the web image): one inline <style>, one inline
@@ -33,6 +39,18 @@ UV_HTML = """<html><head>
       document.addEventListener("DOMContentLoaded", function() { UV.init("uv"); });
 </script>
 </body></html>"""
+
+
+#: What the SvelteKit build's pages carry (kit.csp, frontend/svelte.config.js):
+#: the page's own policy, as a <meta http-equiv> tag in its head.
+SPA_META = (
+    '<meta http-equiv="content-security-policy" '
+    "content=\"object-src 'none'; script-src 'self'; base-uri 'self'\">"
+)
+
+
+def _spa(body: str) -> str:
+    return f"<html><head>{SPA_META}</head><body>{body}</body></html>"
 
 
 def _sha256(body: str) -> str:
@@ -54,12 +72,23 @@ class EmptyReader:
     def get_configmap(self, namespace: str, name: str) -> dict | None:
         return None  # no record either: the campaign really is a 404
 
+    def list_configmaps(self) -> list[dict]:
+        return []
+
+    def list_pods(self, namespace: str, job_name: str) -> list[dict]:
+        return []
+
+    def apply_configmap(
+        self, body: dict, force: bool = False, manager: str = ""
+    ) -> str | None:
+        raise AssertionError("nothing here is a campaign to write about")
+
 
 @pytest.fixture
 def static_dir(tmp_path: Path) -> Path:
-    (tmp_path / "index.html").write_text("<h1>campaign browser</h1>")
-    (tmp_path / "log.html").write_text("<h1>run log</h1>")
-    (tmp_path / "alto.html").write_text("<h1>alto viewer</h1>")
+    (tmp_path / "index.html").write_text(_spa("<h1>campaign browser</h1>"))
+    (tmp_path / "log.html").write_text(_spa("<h1>run log</h1>"))
+    (tmp_path / "alto.html").write_text(_spa("<h1>alto viewer</h1>"))
     (tmp_path / "uv.html").write_text(UV_HTML)
     (tmp_path / "config.js").write_text("STATIC FALLBACK\n")
     (tmp_path / "_app").mkdir()
@@ -160,6 +189,41 @@ def test_the_viewers_own_inline_script_is_allowed_by_its_hash(client: TestClient
     assert f"'sha256-{_sha256(script)}'" in csp
 
 
+def _hashes(csp: str) -> list[str]:
+    script_src = [d for d in csp.split(";") if d.strip().startswith("script-src")]
+    return [t.strip("'")[7:] for t in script_src[0].split() if "sha256-" in t]
+
+
+@pytest.mark.parametrize(
+    ("html", "bodies"),
+    [
+        # End tags a browser closes a script on, and a regex looking for
+        # exactly `</script>` did not (code scanning 117).
+        ("<script>a()</script >", ["a()"]),
+        ("<script>b()</script\n>", ["b()"]),
+        ("<SCRIPT>c()</SCRIPT foo>", ["c()"]),
+        ("<script>d()</script ><script>e()</script>", ["d()", "e()"]),
+        # Not end tags at all: they are text of the script they sit in.
+        ('<script>f("</scriptx>")</script>', ['f("</scriptx>")']),
+        ('<script>g("<b>x</b>")</script>', ['g("<b>x</b>")']),
+        # Only a `src` attribute makes a script a file -- `data-src` is not.
+        ("<script data-src=x>h()</script>", ["h()"]),
+        ('<script src="umd/UV.js"></script>', []),
+        ("<script src=umd/UV.js>ignored()</script>", []),
+    ],
+)
+def test_every_inline_script_is_hashed_as_the_browser_reads_it(
+    tmp_path: Path, html: str, bodies: list[str]
+):
+    """The hashes are taken over exactly the text a browser runs as each
+    inline script -- one it read differently is a script the policy blocks,
+    and a viewer that does not start."""
+    (tmp_path / "uv.html").write_text(f"<html><head>{html}</head></html>")
+    csp = uv_csp(tmp_path)
+    assert csp is not None
+    assert _hashes(csp) == [_sha256(b) for b in bodies]
+
+
 def test_the_viewers_styles_are_unsafe_inline_with_no_hash_beside_it(
     client: TestClient,
 ):
@@ -246,9 +310,107 @@ def test_a_revalidated_viewer_keeps_its_csp(client: TestClient):
 def test_every_other_page_keeps_the_plain_header(client: TestClient):
     """The SPA must not inherit the viewer's policy: its own meta CSP is the
     stricter one, and a header cannot be looser than it anyway."""
-    for path in ("/", "/log", "/api/v1/jobs"):
-        headers = client.get(path).headers
-        assert headers["Content-Security-Policy"] == "frame-ancestors 'none'"
+    for path in ("/", "/log"):
+        assert client.get(path).headers["Content-Security-Policy"] == SPA_CSP
+    headers = client.get("/api/v1/jobs").headers
+    assert headers["Content-Security-Policy"] == "frame-ancestors 'none'"
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["examples/demo.html", "collection.htm", "other.xhtml", "icon.svg", "EXTRA.HTML"],
+)
+def test_a_page_with_no_policy_of_its_own_gets_the_strictest(static_dir, name):
+    """The whole Universal Viewer build is copied into the site, and only
+    uv.html has a policy: any other document it ships was served with
+    nothing but `frame-ancestors 'none'` (2026-09-23 audit). A page that
+    states no policy of its own runs nothing and loads nothing here."""
+    path = static_dir / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("<html><body><script>alert(1)</script></body></html>")
+    client = TestClient(create_app(EmptyReader(), static_dir=static_dir))
+    resp = client.get(f"/{name}")
+    assert resp.status_code == 200
+    csp = resp.headers["Content-Security-Policy"]
+    assert csp == STRICT_CSP
+    assert "default-src 'none'" in csp and "sandbox" in csp
+    assert "frame-ancestors 'none'" in csp
+
+
+SPA_CSP = "frame-ancestors 'none'; connect-src 'self' https://results.example.org/"
+
+
+def test_the_spas_pages_may_fetch_only_the_api_and_the_results_bucket(
+    client: TestClient,
+):
+    """Their meta policy is fixed at build time and the results base is not
+    known until the service starts, so the header carries the one directive
+    the meta tag cannot: the page reads its own API and the results bucket,
+    and nothing else (2026-09-23 audit). Both policies apply, and nothing
+    else in the meta tag is narrowed."""
+    for path in ("/", "/log", "/alto", "/log.html"):
+        assert client.get(path).headers["Content-Security-Policy"] == SPA_CSP
+
+
+@pytest.mark.parametrize(
+    ("base", "source"),
+    [
+        ("https://results.example.org/bucket", "https://results.example.org/bucket/"),
+        ("http://localhost:30900/htr-results", "http://localhost:30900/htr-results/"),
+        ("https://user:pw@s3.example.org/b", "https://s3.example.org/b/"),
+        # A `;` or `,` would end the directive or the policy: encoded.
+        ("https://s3.example.org/a;b,c", "https://s3.example.org/a%3Bb%2Cc/"),
+    ],
+)
+def test_the_results_base_is_one_well_formed_source(static_dir, base, source):
+    reader = EmptyReader()
+    reader.cfg = SimpleNamespace(public_results_base=base)
+    client = TestClient(create_app(reader, static_dir=static_dir))
+    csp = client.get("/log").headers["Content-Security-Policy"]
+    assert csp == f"frame-ancestors 'none'; connect-src 'self' {source}"
+
+
+def test_with_no_results_base_the_spa_is_not_narrowed(static_dir: Path):
+    """Site-only mode names no base, and the run log then reads any http(s)
+    URL, as it did before there was one -- a connect-src would break that."""
+    client = TestClient(create_app(NoCluster(), static_dir=static_dir))
+    for path in ("/", "/log"):
+        assert client.get(path).headers["Content-Security-Policy"] == (
+            "frame-ancestors 'none'"
+        )
+
+
+@pytest.mark.parametrize(
+    ("path", "policy"),
+    [
+        ("/", SPA_CSP),
+        ("/log", SPA_CSP),
+        ("/examples/demo.html", STRICT_CSP),
+        ("/icon.svg", STRICT_CSP),
+        ("/uv.html", None),  # the viewer's own, compared below
+    ],
+)
+def test_a_revalidated_document_keeps_the_policy_of_the_file(static_dir, path, policy):
+    """A 304 carries none of the file's headers but a few, and a browser
+    updates what it stored from the 304 -- so a reload ran the page under
+    `frame-ancestors 'none'` alone: no connect-src, no sandbox (2026-09-23
+    review). The policy is the file's, on the 200 and the 304 alike."""
+    for name in ("examples/demo.html", "icon.svg"):
+        (static_dir / name).parent.mkdir(parents=True, exist_ok=True)
+        (static_dir / name).write_text("<html><body>x</body></html>")
+    client = TestClient(create_app(EmptyReader(), static_dir=static_dir))
+    first = client.get(path)
+    again = client.get(path, headers={"If-None-Match": first.headers["etag"]})
+    assert again.status_code == 304
+    expected = policy or uv_csp(static_dir)
+    assert first.headers["Content-Security-Policy"] == expected
+    assert again.headers["Content-Security-Policy"] == expected
+
+
+def test_scripts_and_styles_keep_the_plain_header(client: TestClient):
+    assert client.get("/_app/start.js").headers["Content-Security-Policy"] == (
+        "frame-ancestors 'none'"
+    )
 
 
 def test_a_viewer_nobody_built_gets_the_headers_anyway(tmp_path: Path):
@@ -267,17 +429,30 @@ def test_no_static_dir_still_serves_the_api(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
-    "path", ["/healthz", "/api/v1/version", "/api/v1/jobs", "/api/v1/jobs/ns/name"]
+    ("path", "status"),
+    [
+        ("/healthz", 200),
+        ("/api/v1/version", 200),
+        ("/api/v1/jobs", 200),
+        # The route's own 404 -- no such campaign -- not the mount's.
+        ("/api/v1/jobs/ns/name", 404),
+    ],
 )
 def test_head_is_answered_by_the_route_not_the_static_mount(
-    client: TestClient, path: str
+    client: TestClient, path: str, status: int
 ):
     """FastAPI does not add HEAD to a GET route; without it these fall through
-    to the mount and 404 (or, for the decoy, serve a file)."""
+    to the mount and 404 (or, for the decoy, serve a file). The mount's 404
+    is JSON with an empty HEAD body too, so the status alone is not enough:
+    HEAD must describe the very body GET sends."""
     resp = client.head(path)
-    assert resp.status_code in (200, 404)
+    get = client.get(path)
+    assert resp.status_code == status == get.status_code
     assert resp.headers["content-type"] == "application/json"
     assert resp.text == ""
+    assert resp.headers["content-length"] == get.headers["content-length"]
+    if status == 404:
+        assert get.json() == {"detail": "job not found"}
 
 
 def test_head_on_a_page(client: TestClient):

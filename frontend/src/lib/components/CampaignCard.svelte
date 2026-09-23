@@ -42,10 +42,20 @@
     }
   }
 
-  let collapsed = $state(remembered());
+  const startsFolded = remembered();
+  let collapsed = $state(startsFolded);
+
+  // Whether anyone has had a chance to see this card: it has been on screen,
+  // or open. A finished campaign reads its detail only then -- a page of
+  // them used to make one request per card the moment it opened, each
+  // reading the campaign's volume list, its pods and up to a hundred
+  // progress files, for cards nobody had scrolled to (the 2026-09-23
+  // audit). Sticky: once seen, folding the card is not a reason to forget.
+  let wanted = $state(!startsFolded);
 
   function toggle(): void {
     collapsed = !collapsed;
+    if (!collapsed) wanted = true;
     try {
       localStorage.setItem(memoryKey, collapsed ? "closed" : "open");
     } catch {
@@ -455,10 +465,12 @@
   // A campaign that has finished -- or whose Job is gone -- cannot change,
   // so its card reads the detail once rather than every minute for as long
   // as the page is open: each call lists pods, reads the campaign's
-  // ConfigMaps and up to 32 progress files, and a page of old campaigns
-  // polling for ever was load that grew with the history and bought nothing
-  // (the 2026-09-17 audit, 3079). "Once" means once it has landed: a read
-  // that failed is still retried, on $lib/poll's backoff.
+  // ConfigMaps and up to a hundred progress files (the API's
+  // PROGRESS_FETCH_CAP), and a page of old campaigns polling for ever was
+  // load that grew with the history and bought nothing (the 2026-09-17
+  // audit, 3079). "Once" means once it has landed: a read that failed is
+  // still retried, on $lib/poll's backoff. And only once the card is
+  // `wanted` -- on screen or open.
   const settled = $derived(
     job.jobGone ||
       job.phase === "Succeeded" ||
@@ -474,6 +486,8 @@
     // re-run under the same name starts polling again.
     void [job.phase, job.jobGone];
     const once = settled;
+    // Read only for a settled card, so a running one is not restarted by it.
+    if (once && !wanted) return;
     // untrack: load() reads `volumes` to size its refresh and then writes it,
     // and an effect that reads its own output re-runs forever. The list
     // keys each card by namespace/name, so a card never changes campaign
@@ -489,6 +503,29 @@
       );
     });
   });
+
+  /**
+   * Marks the card `wanted` the first time any of it is on screen (or
+   * nearly: the margin reads it just before it scrolls in). A browser with
+   * no IntersectionObserver cannot say, so the card is wanted at once --
+   * what every card did before.
+   */
+  function whenSeen(node: HTMLElement) {
+    if (typeof IntersectionObserver === "undefined") {
+      wanted = true;
+      return {};
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        wanted = true;
+        observer.disconnect();
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(node);
+    return { destroy: () => observer.disconnect() };
+  }
 
   /**
    * The fill's width, clamped to the track. `done` and `total` come from the
@@ -836,7 +873,7 @@
   {@render lostLine(cell.failed, 0)}
 {/snippet}
 
-<section class="campaign" data-health={health}>
+<section class="campaign" data-health={health} use:whenSeen>
   <div class="camp">
     <!-- aria-controls only while the table exists: it must be an IDREF that
          resolves, and a folded card renders no table (the pre-Task-7 card

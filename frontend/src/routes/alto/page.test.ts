@@ -44,6 +44,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  delete window.RESULTS_BASE;
   window.history.replaceState(null, "", "/");
 });
 
@@ -130,5 +131,29 @@ describe("/alto", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "must be an absolute http(s) URL",
     );
+  });
+
+  // Rendered under this origin, an ALTO file from anywhere is somebody
+  // else's text wearing the deployment's name -- the same reason /log only
+  // reads the results bucket (2026-09-23 audit).
+  test("an ALTO URL outside the results base is refused before any fetch", async () => {
+    window.RESULTS_BASE = "https://results.example.org/bucket";
+    setSrc("https://evil.example.org/x.xml");
+    const fetchMock = fetchOk(XML);
+    vi.stubGlobal("fetch", fetchMock);
+    render(AltoPage);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "in the results bucket",
+    );
+  });
+
+  test("an ALTO URL inside it is fetched as before", async () => {
+    const base = "https://results.example.org/bucket";
+    window.RESULTS_BASE = base;
+    setSrc(`${base}/htr-test/demo-v1/vol/alto/0001.xml`);
+    vi.stubGlobal("fetch", fetchOk(XML));
+    render(AltoPage);
+    expect(await screen.findByText("Confident")).toBeInTheDocument();
   });
 });

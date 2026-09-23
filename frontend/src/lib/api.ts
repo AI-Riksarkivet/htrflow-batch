@@ -243,8 +243,13 @@ export const volumeViewSchema = z.object({
   altoPrefix: httpUrlSchema,
   logUrl: httpUrlSchema,
   // The volume's source manifest, straight off its volumes.txt line; null
-  // for an `images:` volume, which has no manifest to open.
-  sourceUrl: httpUrlSchema.nullable(),
+  // for an `images:` volume, which has no manifest to open. The one URL
+  // field the API does not build: it is a line of a file people edit, and
+  // the API's check and this browser's URL parser need not agree on every
+  // string. So it is read on its own -- one this page cannot use is no
+  // link, where it used to make the whole campaign unreadable, re-polled
+  // for ever (2026-09-23 audit).
+  sourceUrl: httpUrlSchema.nullable().catch(null),
   reason: volumeReasonSchema.optional(),
   progress: volumeProgressSchema.nullable(),
 });
@@ -316,6 +321,13 @@ export class ApiUnreachable extends Error {
 }
 
 async function getJson(url: string, signal?: AbortSignal): Promise<unknown> {
+  return (await getResponse(url, signal)).json();
+}
+
+async function getResponse(
+  url: string,
+  signal?: AbortSignal,
+): Promise<Response> {
   let res: Response;
   try {
     // The signal is what makes abandoning a poll actually stop it: without
@@ -328,11 +340,39 @@ async function getJson(url: string, signal?: AbortSignal): Promise<unknown> {
     });
   }
   if (!res.ok) throw new ApiUnreachable(`HTTP ${res.status}`);
-  return res.json();
+  return res;
 }
 
-/** The campaign list as the page shows it: rows it could read, and how many it could not. */
-export type JobList = { jobs: JobSummary[]; unreadable: number };
+/**
+ * The campaign list as the page shows it: rows it could read, how many it
+ * could not, and how many campaigns whose Jobs are gone the API has in all
+ * -- it sends only as many of those as it was asked for.
+ */
+export type JobList = {
+  jobs: JobSummary[];
+  unreadable: number;
+  reapedTotal: number;
+};
+
+/**
+ * How many campaigns whose Jobs are gone the page asks for at a time. Their
+ * records have no TTL, so without a window every campaign ever run was a
+ * card (2026-09-23 audit); the API's own default is the same number.
+ */
+export const REAPED_PAGE = 20;
+
+/** The most the API gives out in one list (packages/web `REAPED_MAX`). */
+export const REAPED_MAX = 10_000;
+
+/** One page more than `shown`, never past what the API allows. */
+export function moreReaped(shown: number): number {
+  return Math.min(shown + REAPED_PAGE, REAPED_MAX);
+}
+
+/** How many older campaigns are left to offer when `shown` are asked for. */
+export function reapedHidden(total: number, shown: number): number {
+  return Math.max(0, Math.min(total, REAPED_MAX) - shown);
+}
 
 /**
  * GET /api/v1/version — what is deployed: `version` is the tag both images
@@ -352,11 +392,21 @@ export async function fetchVersion(): Promise<Version> {
   return versionSchema.parse(await getJson(`${resolveApiBase()}/version`));
 }
 
-/** GET /api/v1/jobs — every campaign Job, newest first (server-sorted). */
-export async function fetchJobs(signal?: AbortSignal): Promise<JobList> {
-  const rows = z
-    .array(z.unknown())
-    .parse(await getJson(`${resolveApiBase()}/jobs`, signal));
+/**
+ * GET /api/v1/jobs?reaped= — every campaign Job and the `reaped` newest
+ * campaigns whose Jobs are gone, newest first (server-sorted). The total of
+ * those is the X-Reaped-Total header; an API that sends none has no more
+ * than it sent.
+ */
+export async function fetchJobs(
+  signal?: AbortSignal,
+  reaped: number = REAPED_PAGE,
+): Promise<JobList> {
+  const res = await getResponse(
+    `${resolveApiBase()}/jobs?reaped=${reaped}`,
+    signal,
+  );
+  const rows = z.array(z.unknown()).parse(await res.json());
   const jobs: JobSummary[] = [];
   let unreadable = 0;
   for (const row of rows) {
@@ -371,7 +421,13 @@ export async function fetchJobs(signal?: AbortSignal): Promise<JobList> {
   // Every row unreadable is the whole list unreadable: fail like a wrong shape.
   if (unreadable > 0 && jobs.length === 0)
     z.array(jobSummarySchema).parse(rows);
-  return { jobs, unreadable };
+  const total = Number(res.headers.get("x-reaped-total") ?? "");
+  const sent = jobs.filter((j) => j.jobGone).length;
+  const reapedTotal =
+    res.headers.has("x-reaped-total") && Number.isInteger(total) && total >= 0
+      ? Math.max(total, sent)
+      : sent;
+  return { jobs, unreadable, reapedTotal };
 }
 
 /** GET /api/v1/jobs/{namespace}/{name}?offset&limit — volumes paged by index. */

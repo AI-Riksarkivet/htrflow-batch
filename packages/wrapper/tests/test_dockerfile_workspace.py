@@ -12,9 +12,9 @@ the gate.
 The wrapper has ONE dockerfile, and one recipe, for both architectures: it
 builds its own htrflow base from pinned sources, so the same bind-mount
 block serves both arches by construction — what needs guarding instead is
-that the base stays pinned, that the arm64 step keeps the hard-won extras
-the GB10 needs, and that nothing in the build path ever asks for a foreign
-platform: `uv` segfaults under `qemu-x86_64`, so both images are built on a
+that the base stays pinned, that the image carries no compiler and compiles
+nothing at run time, and that nothing in the build path ever asks for a
+foreign platform: `uv` segfaults under `qemu-x86_64`, so both images are built on a
 runner of their own architecture and never emulated.
 """
 
@@ -36,15 +36,13 @@ DOCKERFILES = [
 WRAPPER_DOCKERFILE = REPO / ".docker" / "htrflow-batch.dockerfile"
 _BIND = re.compile(r"--mount=type=bind,source=(packages/[^,]+/pyproject\.toml),")
 
-# The arm64 extras (see the dockerfile's own comments for why each exists):
-# triton JIT-compiles CUDA utils at runtime. sentencepiece, which TrOCR's slow
-# tokenizer needs to convert, is not here: it is locked with the transformers
-# line (see test_every_transformers_line_is_a_locked_group).
-ARM64_EXTRAS = [
-    "gcc",
-    "libc6-dev",
-    "python3.10-dev",
-]
+# What a runtime compiler looks like in an apt line. The runtime image had
+# gcc, libc6-dev and python3.10-dev for Triton's JIT, and libc6-dev drags in
+# linux-libc-dev, a steady stream of kernel CVEs (audit 0923).
+_COMPILER_PACKAGES = re.compile(
+    r"\b(gcc|g\+\+|clang|build-essential|libc6-dev|linux-libc-dev|python3[.\d]*-dev)\b"
+)
+BUILD_CONSTRAINTS = REPO / ".docker" / "build-constraints.txt"
 HTRFLOW_BASE = REPO / ".docker" / "htrflow-base"
 
 # Build paths that must never cross-build: a `--platform` flag or a
@@ -96,9 +94,10 @@ def test_campaigns_image_is_distroless_nonroot_and_locked():
     text = (REPO / ".docker/htrflow-campaigns.dockerfile").read_text()
     assert "gcr.io/distroless/python3-debian13:nonroot@sha256:" in text
     assert (
-        "uv sync --locked --package htrflow-converter --extra hook --no-editable"
-        in text
+        "uv sync --locked --no-install-workspace --no-build"
+        " --package htrflow-converter --extra hook" in text
     )
+    assert "uv build --wheel --package htrflow-converter --require-hashes" in text
     assert "USER 1000:1000" in text
     assert 'ENTRYPOINT ["/app/.venv/bin/htrflow-campaigns"]' in text
 
@@ -116,15 +115,39 @@ def test_one_wrapper_dockerfile_one_base_for_both_arches() -> None:
     assert "base-${TARGETARCH}" not in text
 
 
-def test_arm64_branch_keeps_the_extras_the_gb10_needs() -> None:
+def _stage(text: str, name: str) -> str:
+    stages = re.split(r"^FROM ", text, flags=re.M)
+    [stage] = [s for s in stages if re.match(rf"\S+ AS {name}\n", s)]
+    return stage
+
+
+def test_the_wrapper_image_carries_no_compiler_and_compiles_nothing() -> None:
+    """torch's own Triton kernels compile Triton's CUDA launcher with the
+    system C compiler on first use, which is why the arm64 image used to
+    install one. The image switches that JIT off instead, and neither
+    runtime stage installs a compiler or headers; the builder stage, which
+    does not ship, may."""
     text = WRAPPER_DOCKERFILE.read_text()
-    guarded = "\n".join(
-        line for line in text.splitlines() if not line.lstrip().startswith("#")
-    )
-    for extra in ARM64_EXTRAS:
-        assert extra in guarded, f"arm64 extra missing from the wrapper image: {extra}"
-    # the arm64-only step sits behind the TARGETARCH guard
-    assert guarded.count('if [ "$TARGETARCH" = "arm64" ]') == 1
+    for name in ("htrflow-base", "runtime"):
+        for line in _logical_lines(_stage(text, name)):
+            if "apt-get install" in line:
+                assert not _COMPILER_PACKAGES.search(line), line
+    assert re.search(r"^ENV TORCH_DISABLE_NATIVE_JIT=1$", _stage(text, "runtime"), re.M)
+    assert "TARGETARCH" not in "\n".join(_logical_lines(text))
+    # The switch lives in a private torch module: the build proves it still
+    # works (no JIT-compiled override registered), not just that it is set.
+    check = text[text.index("<<'CHECK'") :]
+    assert "registry._dsl_name_to_lib_graph" in check
+    assert '- {"native"}' in check
+
+
+def test_the_wrapper_source_stays_out_of_the_image() -> None:
+    """The runtime stage builds the wrapper's wheel from a bind mount; a
+    COPY would leave its source tree and tests in the image beside the
+    installed package."""
+    runtime = _stage(WRAPPER_DOCKERFILE.read_text(), "runtime")
+    assert not re.search(r"^COPY\s+packages/", runtime, re.M)
+    assert "--mount=type=bind,source=packages/wrapper,target=/opt/wrapper" in runtime
 
 
 def test_nothing_in_the_build_path_asks_for_a_foreign_platform() -> None:
@@ -225,20 +248,74 @@ def test_every_python_install_in_the_wrapper_image_is_locked() -> None:
     """Finding 3060: sentencepiece, transformers and protobuf went in by a
     bare version pin, so their dependencies resolved afresh at every build
     and nothing checked a hash. Every `uv pip install` now installs a
-    hashed `uv export` of uv.lock or a hashed requirements file, or this
-    repo's own wrapper with --no-deps. The amd64 torch swap from the cu128
-    index, the last exception, is gone: torch comes from the base's lock."""
-    installs = [
-        part
+    hashed `uv export` of uv.lock or a hashed requirements file, or a wheel
+    the same RUN just built with a hashed build backend, with --no-deps. The
+    amd64 torch swap from the cu128 index, the last exception, is gone: torch
+    comes from the base's lock."""
+    runs = [
+        line
         for line in _logical_lines(WRAPPER_DOCKERFILE.read_text())
-        for part in line.split("&&")
-        if "uv pip install" in part
+        if "uv pip install" in line
     ]
-    assert installs
-    for install in installs:
-        assert "--require-hashes" in install or install.rstrip().endswith(
-            "--no-deps /opt/wrapper"
-        ), install
+    assert runs
+    for run in runs:
+        for install in (p for p in run.split("&&") if "uv pip install" in p):
+            if "--require-hashes" in install:
+                continue
+            assert install.rstrip().endswith("--no-deps /tmp/dist/*.whl"), install
+            assert "uv build --wheel" in run and "--require-hashes" in run, run
+
+
+@pytest.mark.parametrize("name", DOCKERFILES)
+def test_nothing_is_built_with_an_unpinned_build_backend(name: str) -> None:
+    """Audit 0923 D-11: a lock pins what is installed, not what builds it,
+    so `uv sync` and `uv pip install <dir>` fetched hatchling unpinned and
+    unhashed. `uv sync` cannot take hashed build constraints, so it only
+    installs dependencies, and it and every `uv pip install` take wheels
+    only (--no-build); every package built from
+    source goes through `uv build` with .docker/build-constraints.txt and
+    --require-hashes, which refuses a build requirement not hashed there."""
+    lines = _logical_lines((REPO / ".docker" / name).read_text())
+    commands = [c.strip() for line in lines for c in line.split("&&")]
+    syncs = [c for c in commands if re.search(r"\buv sync\b", c)]
+    builds = [c for c in commands if re.search(r"\buv build\b", c)]
+    assert syncs and builds
+    for sync in syncs:
+        assert "--no-build" in sync, sync
+        assert re.search(r"--no-install-(project|workspace)\b", sync), sync
+    for build in builds:
+        assert "--require-hashes" in build, build
+        assert "--build-constraints /tmp/build-constraints.txt" in build, build
+    for line in lines:
+        if re.search(r"\buv build\b", line):
+            assert (
+                "--mount=type=bind,source=.docker/build-constraints.txt,"
+                "target=/tmp/build-constraints.txt" in line
+            ), line
+    for install in (c for c in commands if "uv pip install" in c):
+        # a directory would be built by pip with an unpinned backend, and an
+        # sdist in a requirements file with whatever its build-system asks
+        # for: every install takes wheels only
+        assert not re.search(r"\s/opt/\S+$|\s\.$", install), install
+        assert "--no-build" in install, install
+
+
+def test_the_build_constraints_are_hatchling_pinned_and_hashed() -> None:
+    compiled = BUILD_CONSTRAINTS.read_text()
+    pins = re.findall(r"^([a-z0-9-]+)==(\S+)", compiled, re.M)
+    assert "hatchling" in dict(pins)
+    for name, ver in pins:
+        assert re.search(
+            rf"^{re.escape(name)}=={re.escape(ver)}[^\n]*\\\n\s+--hash=sha256:",
+            compiled,
+            re.M,
+        ), name
+    for pyproject in [
+        *REPO.glob("packages/*/pyproject.toml"),
+        HTRFLOW_BASE / "pyproject.toml",
+    ]:
+        system = tomllib.loads(pyproject.read_text())["build-system"]
+        assert system["requires"] == ["hatchling"], pyproject
 
 
 def test_every_transformers_line_is_a_hashed_requirements_file() -> None:
@@ -303,8 +380,11 @@ def test_the_htrflow_base_is_built_from_pinned_inputs() -> None:
     assert ref, "htrflow must be pinned by full commit"
     assert "ADD https://github.com/AI-Riksarkivet/htrflow.git#${HTRFLOW_REF} /" in text
     syncs = re.findall(r"^RUN uv sync.*$", text, re.M)
-    assert len(syncs) == 2 and all("--locked" in s for s in syncs), syncs
+    assert syncs == ["RUN uv sync --locked --no-install-project --no-build"], syncs
     assert "cmp -s - /app/pyproject.toml" in text
+    # htrflow is an installed wheel, so nothing may be put on sys.path by
+    # hand: /app/src is gone, and an empty PYTHONPATH entry is the cwd.
+    assert "PYTHONPATH" not in "\n".join(_logical_lines(text))
 
     # The committed pyproject.toml is htrflow's plus the overlay, and the
     # overlay locks torch per architecture from the right index.
@@ -328,3 +408,16 @@ def test_the_htrflow_base_is_built_from_pinned_inputs() -> None:
     assert not (REPO / ".github" / "actions" / "build-htrflow-base-arm64").exists()
     for path in BUILD_PATHS:
         assert "HTRFLOW_ARM64_BASE" not in path.read_text(), path.name
+
+
+def test_the_web_image_ships_only_the_viewer_page_and_what_it_references() -> None:
+    """UV's build also emits its demo pages and sample collections. The web
+    image copies the site a build step derives from uv.html's own
+    references, and that step fails on a reference the build did not
+    produce."""
+    text = (REPO / ".docker" / "htrflow-web.dockerfile").read_text()
+    assert "COPY --from=uv4 /src/site/ /app/static/" in text
+    assert "COPY --from=uv4 /src/dist/" not in text
+    site = text[text.index("<<'SITE'") : text.index("\nSITE\n")]
+    assert "which UV's build did not produce" in site
+    assert "pages.join() !== page" in site

@@ -5,7 +5,7 @@
   // string is read from window.location, not a SvelteKit load function.
   import { browser } from "$app/environment";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
-  import { isHttpUrl } from "$lib/api.js";
+  import { isResultUrl } from "$lib/api.js";
   import { type AltoPage, parseAlto, prettyXml } from "$lib/alto.js";
 
   function queryParam(name: string): string | null {
@@ -14,7 +14,11 @@
   }
 
   const rawSrc = queryParam("src");
-  const src = rawSrc !== null && isHttpUrl(rawSrc) ? rawSrc : null;
+  // Only a file in this deployment's own results bucket, like /log: the
+  // page renders the text it fetches under this origin, and an ALTO from
+  // anywhere else is somebody else's text wearing the deployment's name
+  // (2026-09-23 audit).
+  const src = rawSrc !== null && isResultUrl(rawSrc) ? rawSrc : null;
 
   // The header's page name: the ALTO filename without its extension
   // (".../alto/0001.xml" -> "0001"); the full URL when that's empty.
@@ -34,7 +38,7 @@
       error =
         rawSrc === null
           ? "No ALTO URL given. Open this page from a run viewer's alto column."
-          : "The ALTO URL must be an absolute http(s) URL.";
+          : "The ALTO URL must be an absolute http(s) URL in the results bucket.";
       return;
     }
     try {

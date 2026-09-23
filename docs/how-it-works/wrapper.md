@@ -12,13 +12,22 @@ The full environment, stage and exit-code contract is in the
 
 ## The image
 
-The `htrflow-batch` image is built `FROM` the upstream htrflow image, pinned
-by digest, or from an htrflow base built for your node's architecture
-([Dev cluster](../development/dev-cluster.md)). On top of it the build adds:
+The `htrflow-batch` image builds its own htrflow base, from htrflow's source
+at a pinned commit, on the CUDA runtime image
+([Releasing](../development/releasing.md#one-dockerfile-every-architecture)).
+On top of it the build adds:
 
-- the `htrflow_batch` package (`packages/wrapper/`), installed from the
+- the `htrflow_batch` package (`packages/wrapper/`), built with a pinned,
+  hashed build backend
+- its runtime dependencies, `httpx` and `boto3`, installed from the
   workspace lock with hashes
-- its runtime dependencies, `httpx` and `boto3`
+
+The image carries no C compiler and compiles nothing at run time: torch's
+own Triton kernels are switched off (`TORCH_DISABLE_NATIVE_JIT=1`), so every
+operator runs on torch's precompiled kernels. That holds for the defaults.
+A pipeline config that opts into compilation, such as ultralytics'
+`compile` setting or a static cache in the transformers generation
+settings, is unsupported: it fails for want of a compiler.
 
 The base revision travels with the image, both as an OCI label and as the
 environment variable `HTRFLOW_BASE_REVISION`, so the wrapper can read it at
@@ -34,7 +43,7 @@ once. It then runs a producer–consumer pipeline with three concurrent roles
 
 | Role | What it does |
 |---|---|
-| **downloader pool** (`stream.PageStream`: threads, with `DOWNLOAD_CONCURRENCY` in flight and never more than `LOOKAHEAD_PAGES` submitted ahead of the consumer) | Fetches pages into tmpfs, submitted in manifest order, retrying each page with backoff. Refuses anything that is not a raster image. Hands pages over in manifest order, so the consumer waits on the head of the window |
+| **downloader pool** (`stream.PageStream`: threads, with `DOWNLOAD_CONCURRENCY` in flight and never more than `LOOKAHEAD_PAGES`, or `LOOKAHEAD_BYTES`, submitted ahead of the consumer) | Fetches pages into tmpfs, submitted in manifest order, retrying each page with backoff. Refuses anything that is not a raster image. Hands pages over in manifest order, so the consumer waits on the head of the window |
 | **consumer** (a single thread, since the GPU serializes the work anyway) | Runs `pipeline.run(document)` on each page, in order, as soon as that page is available. A page's lookahead slot frees only when the consumer has finished with it and its image is deleted, and that is what bounds tmpfs. Keeps each page's result or exception itself |
 | **uploader** | Ships each page's PAGE XML and then its ALTO to S3 as soon as htrflow writes them (deterministic keys, blind overwrite). Deletes the source image and both output files once the page is done |
 
@@ -69,8 +78,9 @@ The full table, with defaults from `config.py`, is in the
 
 | Env | Meaning | Default |
 |---|---|---|
-| `MAX_IMAGE_WIDTH` | IIIF size cap (`/full/{w},/`). **Enforced**, and part of the fetched URL, so stored results always match the config. A canvas narrower than the cap asks for `max`, and a 400 falls back to `max` ([From image to transcription](page-flow.md#the-width-capped-get)). Canvases without an image service are fetched at native size | 2500 |
+| `MAX_IMAGE_WIDTH` | IIIF size cap (`/full/{w},/`). **Enforced**, and part of the fetched URL, so stored results always match the config. A canvas narrower than the cap asks for `max`, and a 400 falls back to the largest size the image's `info.json` offers within the cap, `max` only when it offers none ([From image to transcription](page-flow.md#the-width-capped-get)). Canvases without an image service are fetched at native size | 2500 |
 | `LOOKAHEAD_PAGES` | Maximum pages downloaded ahead of the consumer (bounds tmpfs) | 64 |
+| `LOOKAHEAD_BYTES` | Maximum bytes those pages may hold: a page that has landed counts its size, one still downloading counts `FETCH_MAX_BYTES` (bounds tmpfs whatever the images weigh) | 1 GiB |
 | `DOWNLOAD_CONCURRENCY` | Concurrent image downloads | 12 |
 | `RESUME` | Skip pages whose PAGE and ALTO already exist and whose source URL is unchanged | true |
 | `MANIFEST_MAX_BYTES` / `FETCH_MAX_BYTES` | Byte caps on the manifest and on one image body, because campaign data is untrusted. Counted on the **decoded** bytes, as they are decoded | 16 MiB / 64 MiB |
@@ -99,13 +109,20 @@ Every stage name can appear in the termination message.
    from the digest of the URL the manifest gives now. A page stored without
    that metadata is compared with its `page_source_digests` entry in the
    previous `manifest.json` instead. Credentials are taken out of both sides,
-   so a re-signed URL is not a new source image. Because each page carries
+   so a re-signed URL is not a new source image: userinfo, and the query
+   parameters of the common signing schemes (S3 and GCS presigned URLs,
+   Azure SAS, CloudFront signed URLs, Akamai tokens, and plain `token`,
+   `sig`, `signature` and `key`). Every other query parameter still names
+   the image, so a changed `?id=` is a changed source. Because each page carries
    its own record, a page an interrupted attempt redid from a changed source
    stays done on the next attempt. `RESUME=false` forces everything to be
    reprocessed. Every page about to be reprocessed loses its stored PAGE and
    ALTO first, so a reprocessing that fails, or dies between the two PUTs,
-   never leaves an older file answering for the page. Skipped pages are never
-   downloaded.
+   never leaves an older file answering for the page. When there is any such
+   page, the previous run's `manifest.json` is deleted before them, and its
+   `iiif.json` next: a completion marker never describes outputs that are
+   gone, and a `manifest.json` is never there without its `iiif.json`.
+   Skipped pages are never downloaded.
 3. **load**: starts `stream.PageStream(...)` downloading, **then** calls
    `Pipeline.from_config($PIPELINE_PATH)`. The model load overlaps the first
    pages' downloads, so the GPU's idle time at startup is
@@ -131,15 +148,37 @@ Every stage name can appear in the termination message.
      fails the page, naming the step and its model, and the pipeline is
      rebuilt before the next page
      ([A dead htrflow worker thread](failure-handling.md#a-dead-htrflow-worker-thread)).
+     A page that makes no progress for `PAGE_TIMEOUT_SECONDS` (a model
+     call that never returns) is failed and the pipeline rebuilt the same
+     way. Progress is any step finishing or any batch a model finishes, so a
+     page of thousands of lines that takes many minutes is never cut off
+     while it moves. The dead pipeline runs no further step: every step it
+     has not started is refused, the Exports included, and each pipeline
+     built exports into a directory of its own under `outputs/`. Its worker
+     threads are stopped; those that cannot be, because they are stuck
+     inside htrflow, are counted, and at eight the run ends (exit 1) so the
+     retry starts on a fresh pod.
+   - **An upload the store could not take is deferred too.** A PUT that
+     still fails after the S3 client's own retries is the store's condition,
+     not the page's, so the page is deferred like a download and any half of
+     its pair already stored is deleted. A page whose own output is bad
+     (a missing format, malformed XML) is failed.
    - **Five consecutive S3 upload failures abort the run** (`UploadOutage`,
      exit 1).
 5. **verify**: checks that every page is accounted for. Each page must be
    uploaded to both `page/` and `alto/`, skipped by resume, or recorded as
    failed with a reason.
    - **A missing page means exit 1.** A page that is none of those is an
-     upload that never landed, or a download that was deferred. Kubernetes
+     upload that never landed, or a download or upload that was deferred. Kubernetes
      retries the index, resume converges, and the termination message lists
      the missing and failed pages.
+   - **On the index's last attempt a deferred page is failed.** A page the
+     source would not serve on any attempt (an image server answering 500
+     for a corrupt file, a soft-404 page served with a 200) is recorded as
+     failed, with its reason, rather than missing, so it cannot cost the
+     other pages their `manifest.json`. The wrapper knows the attempt is the
+     last from the pod's `job-index-failure-count` annotation and the Job's
+     `backoffLimitPerIndex` (`INDEX_FAILURE_COUNT`, `BACKOFF_LIMIT_PER_INDEX`).
    - **A failed page does not fail the volume.** It would fail the same way
      on every attempt, so failing the volume for it would spend every retry
      and still leave the bucket with good pages and no `manifest.json` to open
@@ -216,7 +255,9 @@ S3 sits behind a single seam, `ResultStore`:
   The pipeline YAML is also uploaded next to it.
 - **Timeouts.** The S3 client uses a 10 s connect timeout, a 60 s read
   timeout and 3 standard retries, so a dead bucket cannot pin a run for hours.
-  The run-log client is tighter: 5 s, 30 s and 2 attempts.
+  The run-log client is tighter: 5 s, 15 s and 2 attempts in all, and the
+  final upload on exit has a 90 s wall-clock budget that fits the pod's
+  120 s grace period.
 - **Other storage.** A filesystem store (NFS, say) could keep the same
   contract with write-to-temp plus an atomic rename. Only the store
   implementation would change.
@@ -517,12 +558,15 @@ The one thing publish needs from an ALTO, the page's width and height for
 `iiif.json`, is kept from the parse `store.upload_page` does before its first
 PUT (`store.page_dims`). A full volume therefore publishes without reading a
 single ALTO back. `publish.alto_dims` falls back to fetching the ALTO only for
-pages a *previous* run published.
+pages a *previous* run published. A stored ALTO that does not parse leaves
+that canvas out of `iiif.json`; a store error reading one fails the run
+(exit 1) instead, since `manifest.json` follows and nothing would write the
+canvas back. The retry redoes only the publish.
 
 | Item | Bound |
 |---|---|
 | Model weights and the torch runtime | Set by the pipeline's models, not by the volume |
-| Page images in flight | `LOOKAHEAD_PAGES` (64) times one width-capped image |
+| Page images in flight | `LOOKAHEAD_PAGES` (64) pages, and at most `LOOKAHEAD_BYTES` (1 GiB) |
 | Outputs awaiting upload | One page's PAGE and ALTO |
 | The source manifest and its `PageRef` list | At most `MANIFEST_MAX_BYTES` (16 MiB) |
 | Per-page outcomes (`StreamStats.results`) and dimensions (`store.page_dims`) | A few hundred bytes per page |

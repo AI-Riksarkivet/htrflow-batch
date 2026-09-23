@@ -192,9 +192,10 @@ so its settings are namespaced.
 | `S3_ENDPOINT` | `""` | From the S3 Secret's optional `S3_ENDPOINT` key. Empty = the boto3 provider default chain |
 | `AWS_SHARED_CREDENTIALS_FILE` | *(boto3 default)* | Read by boto3, not `Config`. Jobs set `/secrets/s3/credentials` — the mounted Secret file; credentials are never env |
 | `S3_PREFIX` | `""` | Extra prefix before `<pipeline>/<volume>/` (and before `sources/`); leading and trailing `/` are stripped. The converter always sets it to `<namespace>/`; empty only when the wrapper is run by hand |
-| `MAX_IMAGE_WIDTH` | `2500` | Downscale request sent to the IIIF Image API (`/full/{w},/`; `max` for narrower canvases; a 400 falls back to `max`). Service-less canvases are fetched at native size |
-| `RESUME` | `true` | Skip pages that already have **both** PAGE and ALTO in S3 and were made from the source they have now: the ALTO's `source-digest` object metadata, or for a page stored without it, its `page_source_digests` entry in the previous `manifest.json`. Every page not skipped loses its stored PAGE and ALTO before the run; `false` therefore clears the whole volume's page files first. The run log says `[<volume>] resume: <n> done, <m> to process` |
+| `MAX_IMAGE_WIDTH` | `2500` | Downscale request sent to the IIIF Image API (`/full/{w},/`; `max` for narrower canvases; a 400 falls back to the largest size the image's `info.json` offers within the cap — its full size, a listed `sizes` entry, or a `maxWidth` below the cap — and to `max` only when it offers none). Service-less canvases are fetched at native size |
+| `RESUME` | `true` | Skip pages that already have **both** PAGE and ALTO in S3 and were made from the source they have now: the ALTO's `source-digest` object metadata, or for a page stored without it, its `page_source_digests` entry in the previous `manifest.json`. Every page not skipped loses its stored PAGE and ALTO before the run, after the previous `manifest.json` and then `iiif.json` are deleted; `false` therefore clears the whole volume's page files first. The run log says `[<volume>] resume: <n> done, <m> to process` |
 | `LOOKAHEAD_PAGES` | `64` | Prefetch depth of the download pipeline |
+| `LOOKAHEAD_BYTES` | `1073741824` | Byte bound on the same window: a page that has landed counts its size, one still downloading counts `FETCH_MAX_BYTES`, and no page is submitted past it (a page alone in the window always is) |
 | `MAX_PAGES` | `0` | Truncate the volume (0 = all pages) — the knob for a fast end-to-end check of one or a handful of pages |
 | `WORKDIR_PATH` | `/work` | Scratch dir (Jobs mount a 2 Gi memory-backed emptyDir) |
 | `DOWNLOAD_CONCURRENCY` | `12` | Parallel page downloads |
@@ -202,8 +203,11 @@ so its settings are namespaced.
 | `FETCH_MAX_BYTES` | `67108864` | Byte cap on one image body (over it: the page fails without retry). Jobs set it from `converter.yaml`'s `fetch_max_bytes` |
 | `DOWNLOAD_DEADLINE_SECONDS` | `300` | Wall-clock limit on one download: the manifest, or one attempt at a page. Past it the connection is cut, in the headers or the body; the manifest is then exit 1, the page is retried and, at the last attempt, deferred |
 | `MAX_IMAGE_PIXELS` | `100000000` | Cap on one image's decoded size, `width × height`, read from its header after the download (over it: the page fails without retry, and the file is deleted). The byte cap above bounds the transfer, this one bounds the memory the page costs. `0` turns it off |
+| `PAGE_TIMEOUT_SECONDS` | `600` | No-progress window of one page inside htrflow: the time since a step last finished or a model last finished a batch, not the page's total. Past it the page fails, like one whose worker thread died, the dead pipeline is refused every further step, and a new one is built. Threads a released pipeline cannot stop (a worker stuck in its model, the helper of a page that stopped moving, a step not shaped as expected, which is also logged at ERROR) are counted; at 8 the run ends transient so the retry gets a fresh pod |
 | `IMAGE_DIGEST` | `unknown` | Provenance only — Jobs set the pipeline's digest-pinned image; recorded verbatim in `manifest.json` and in every ALTO's `htrflow-batch` Processing block |
 | `HTRFLOW_BASE_REVISION` | `unknown` | Provenance only — set by the image itself (ENV next to its OCI label), stamped into every ALTO |
+| `INDEX_FAILURE_COUNT` | `0` | How many times this index has failed before this pod: the Job controller's `batch.kubernetes.io/job-index-failure-count` pod annotation, through the downward API. Empty (annotation absent) reads as unset |
+| `BACKOFF_LIMIT_PER_INDEX` | `-1` | The Job's `backoffLimitPerIndex`. When `INDEX_FAILURE_COUNT` has reached it this pod is the index's last attempt, and a page still deferred at verify is recorded as failed, with its reason, instead of missing. `-1` (or empty) = not told: no attempt is taken for the last |
 | `LOG_SHIP_SECONDS` | `15` | How often the run's own stdout/stderr is uploaded to `status/logs/<pipeline>/<volume>.txt` while it runs (`0` = final upload only) |
 | `TERMINATION_LOG_PATH` | `/dev/termination-log` | Read by `main.py`, not `Config`: where the exit reason is written |
 | `HOME`, `TMPDIR`, `YOLO_CONFIG_DIR` | *(unset)* | The Job points them into the tmpfs workdir (`/work/home`, `/work/tmp`, `/work/ultralytics`) because the root filesystem is read-only, and its `sh -c` prologue creates them before exec'ing the wrapper |
@@ -224,14 +228,17 @@ the real volume with `MAX_PAGES=0`), `MAX_IMAGE_WIDTH`, `RESUME`,
 stack does exactly this without a cluster — see
 [Try it](../getting-started/try-it.md#without-a-cluster-docker-compose).
 
-**Workdir bound.** The images in flight are what sits in `WORKDIR_PATH`:
-`LOOKAHEAD_PAGES` × `FETCH_MAX_BYTES` — 64 × 64 MiB = 4 GiB worst case
-against the Job's 2 Gi memory-backed `emptyDir`, which the kubelet answers
-with eviction rather than a clean failure. Sized IIIF requests
-(`MAX_IMAGE_WIDTH`) land at ~1 MB a page, so the bound only bites volumes of
-service-less canvases fetched at native size (see `fetch.py`'s "Known limit").
-Pre-size such image lists, or lower `LOOKAHEAD_PAGES`/`FETCH_MAX_BYTES` for
-them.
+**Workdir bound.** The images in flight are what sits in `WORKDIR_PATH`, and
+`LOOKAHEAD_BYTES` bounds them: a page still downloading holds
+`FETCH_MAX_BYTES` of it, a landed page its own size, so the images never
+pass 1 GiB of the Job's 2 Gi memory-backed `emptyDir` (the rest holds the
+outputs, `HOME` and `TMPDIR`). Sized IIIF requests (`MAX_IMAGE_WIDTH`) land
+at ~1 MB a page, so the budget holds the whole `LOOKAHEAD_PAGES` window of
+them; heavier images — service-less canvases fetched at native size (see
+`fetch.py`'s "Known limit"), or `max` after a 400 from a service that
+offers no size within the cap — shorten the window instead of overflowing
+the workdir. A workdir smaller than the Job's 2 Gi wants `LOOKAHEAD_BYTES`
+lowered with it.
 
 ### Warm-up entrypoint
 
@@ -271,8 +278,8 @@ termination message is the only evidence. Details in
 | Code | Class | Raised by | Kubernetes reaction |
 |---|---|---|---|
 | `0` | success | verify passed, `manifest.json` published | index `Complete`; `manifest.json` in S3 = done |
-| `13` | permanent — `{"permanent": true}` | `ConfigError` (missing or invalid env); manifest URL not http(s); manifest HTTP 400/401/403/404/410; body over `MANIFEST_MAX_BYTES` once decoded, or a `Content-Encoding` other than `gzip`; non-JSON or non-object JSON; no canvases; a canvas without an image, with a malformed shape, or with a non-http(s) image URL; bad pipeline YAML, an unknown step or model class, a setting a step does not take, an `Export` step in the YAML, a model whose revision pinned under `model_settings` a key beside it overrides (`ValueError` from `driver.build_pipeline`, the last two before any model is built). An exception that is *also* an `OSError` never lands here — see the `1` row | `podFailurePolicy` fails the index at once (`FailIndex`) — never retried |
-| `1` | transient — `{"permanent": false}` | manifest 5xx/429/other status, a network error or the download deadline (`TransientManifestError`); the verify gate, for a page **missing** (neither uploaded nor recorded as failed, or deferred because its source could not serve it) or for a run where every page it processed failed and nothing was resumed — the message lists the missing and failed page names and, for the first 10 failed pages, the error behind each (clipped to 200 chars); every page failure is also logged as it happens, and a page that failed does not by itself fail the run; any `OSError`, including one that is also a `ValueError` — `huggingface_hub.errors.LocalEntryNotFoundError` (a model missing from the read-only `HF_HOME` cache under `HF_HUB_OFFLINE=1`) is an `OSError` on every version of the library and a `ValueError` on the older line too, and a re-warm fixes it; `UploadOutage` after 5 consecutive S3 upload failures; anything else | retried up to `backoffLimitPerIndex` (3); resume makes a retry cheap |
+| `13` | permanent — `{"permanent": true}` | `ConfigError` (missing or invalid env); manifest URL not http(s); manifest HTTP 400/401/403/404/410; body over `MANIFEST_MAX_BYTES` once decoded, or a `Content-Encoding` other than `gzip`; non-JSON or non-object JSON; no canvases; a canvas without an image, with a malformed shape, or with a non-http(s) image URL; bad pipeline YAML, an unknown step or model class, a setting a step does not take, an `Export` step in the YAML, a model or processor revision pinned under `model_settings` (`revision`, `model_kwargs.revision` or `processor_kwargs.revision`) that a key beside it overrides with anything else (`ValueError` from `driver.build_pipeline`, the last two before any model is built). An exception that is *also* an `OSError` never lands here — see the `1` row | `podFailurePolicy` fails the index at once (`FailIndex`) — never retried |
+| `1` | transient — `{"permanent": false}` | manifest 5xx/429/other status, a network error or the download deadline (`TransientManifestError`); the verify gate, for a page **missing** (neither uploaded nor recorded as failed, or deferred because its source could not serve it or the store could not take its outputs) or for a run where every page it processed failed and nothing was resumed — the message lists the missing and failed page names and, for the first 10 failed pages, the error behind each (clipped to 200 chars); every page failure is also logged as it happens, and a page that failed does not by itself fail the run; any `OSError`, including one that is also a `ValueError` — `huggingface_hub.errors.LocalEntryNotFoundError` (a model missing from the read-only `HF_HOME` cache under `HF_HUB_OFFLINE=1`) is an `OSError` on every version of the library and a `ValueError` on the older line too, and a re-warm fixes it; `UploadOutage` after 5 consecutive S3 upload failures; anything else | retried up to `backoffLimitPerIndex` (3); resume makes a retry cheap |
 | `143` | SIGTERM — `{"permanent": false, "error": "SIGTERM"}` | the handler: termination log, final run-log ship, `os._exit(143)`. Sent by a node drain, a preemption, or by the kubelet when the pod's `activeDeadlineSeconds` expires — the pod then also carries `status.reason: DeadlineExceeded`, which the read API surfaces as `"error": "DeadlineExceeded"` | a drain or preemption carries `DisruptionTarget`, so the attempt is not counted against `backoffLimitPerIndex` and the index runs again; a deadline kill is counted and retried like exit 1 — either way, pages already published are not redone |
 
 Failures write one structured reason to the termination log
@@ -302,7 +309,8 @@ The warm-up entrypoint uses the same codes and writes the same
 - **13** for `ValueError` (incl. pydantic), `yaml.YAMLError`, `KeyError`
   (unknown step), `NotImplementedError` (unknown model class), `TypeError`
   (a setting a step does not take), an `Export` step in the YAML, a pinned
-  revision a key beside `model_settings` overrides (both refused before
+  model or processor revision a key beside `model_settings` overrides (both
+  refused before
   anything is downloaded),
   `RepositoryNotFoundError` and `RevisionNotFoundError` (a bad model id or
   revision); when `HF_HUB_OFFLINE` is set; when `PIPELINE_PATH` is missing or
@@ -332,7 +340,7 @@ Source root: [`packages/wrapper/src/htrflow_batch/`](https://github.com/AI-Riksa
 | `progress.py` | `Progress` — writes `progress.json` after every page outcome and stage change, and republishes the interim `iiif.json` every 10 pages |
 | `provenance.py` | `stamp_alto` — appends the `htrflow-batch` `<Processing>` block (image digest, htrflow base revision, wrapper version) to an ALTO after Export, before upload |
 | `driver.py` | htrflow integration: build the pipeline from YAML (Export steps appended for `alto` and `page`), `process_page`, `htrflow_version` |
-| `store.py` | `ResultStore` — deterministic S3 keys, explicit content types, XML parsed before upload, `page` then `alto`, `done_pages()` (both formats), bounded boto timeouts, the run-log key, `put_json_at` (bucket-root keys, e.g. `sources/`) |
+| `store.py` | `ResultStore` — deterministic S3 keys, explicit content types, XML parsed before upload, `page` then `alto`, `done_pages()` (both formats), bounded boto timeouts, checksums only where an operation requires one and on DeleteObjects a Content-MD5 in place of the CRC32 botocore would send (what S3-compatible stores that predate flexible checksums accept), the run-log key, `put_json_at` (bucket-root keys, e.g. `sources/`) |
 | `synthetic.py` | `build_manifest` — the synthetic Presentation 3 manifest for `IMAGES` volumes |
 | `viewer.py` | `build_viewer_manifest` — IIIF Presentation 3 manifest with ALTO annotation links (`iiif.json`) |
 | `logship.py` | `LogCapture` — tees stdout/stderr, redacts every URL appended to the buffer (`_append`) and every URL in the wrapper's own log records (`RedactingFormatter`), ships the buffer to S3 on an interval ([Events and signals](../how-it-works/signals.md)) |
@@ -357,7 +365,13 @@ the run metrics (`wall_seconds`, `gpu_stall_seconds`, `pages_per_second`,
 On any failure the wrapper writes the termination log (local, instant)
 before exiting non-zero — never a completion marker. Every URL in the
 shipped run log, in termination messages and in `page_sources` is redacted
-(no userinfo, no query string); `source_manifest` in `manifest.json` is
+(no userinfo, no query string). A URL in free text ends at the first
+character a URL cannot hold unencoded (whitespace, `"`, `<`, `>`, backtick,
+`{`, `}`, `|`, `^`), or at a `'`, `]`, `)` or `,` that closes it (followed by
+whitespace, a separator, another closer or the next URL). A `)`, `]`, `'` or
+`,` inside it (`img(1).jpg`, a IIIF `/full/2500,/`) does not end it early,
+and closing punctuation at its end is kept as the text's own. httpx's per-request `HTTP Request:` lines are not logged at
+all. `source_manifest` in `manifest.json` is
 written verbatim — the manifest URL the Job fetched, or, for `IMAGES`
 volumes, the synthetic manifest id the wrapper published to `sources/`.
 
@@ -368,14 +382,15 @@ the run's own stdout/stderr, claimed at start, uploaded every
 `LOG_SHIP_SECONDS` while it changed and once more on exit (including
 SIGTERM), so the final object is the complete log rather than a tail.
 Buffer cap 4 MiB (1 MiB head + 2 MiB tail kept, the middle dropped with a
-marker). On SIGTERM that final ship is bounded but not instant — the
-shipping-thread join (30 s), then waiting out a periodic PUT that still
-holds `_upload_lock`, then one PUT of its own, each through the log client
-(5 s connect, 30 s read, 2 attempts) — so the Job template gives the pod
-`terminationGracePeriodSeconds: 120` rather than the default 30 s. That
-covers the common case with room to spare, not the ≈ 140 s worst case, which
-needs an S3 endpoint that answers nothing and where the final PUT would fail
-anyway (see [Failure handling](../how-it-works/failure-handling.md)). The
+marker). On exit, SIGTERM included, the final ship has a hard wall-clock
+budget of 90 s: it waits out a periodic PUT that still holds `_upload_lock`,
+then makes one PUT of its own, both through the log client (5 s connect,
+15 s read, 2 attempts in all, so about 42 s each at worst), and an upload
+still going when the budget runs out is abandoned. The Job template gives
+the pod `terminationGracePeriodSeconds: 120` rather than the default 30 s, so
+the budget and the rest of the SIGTERM path fit inside it and the pod exits
+143 rather than being SIGKILLed
+(see [Failure handling](../how-it-works/failure-handling.md)). The
 warm-up Job does not capture or ship its log (it mounts no S3 Secret) and
 keeps the default grace period. What is and is not captured, the read API's
 and the browser's side, and versioned buckets are in
