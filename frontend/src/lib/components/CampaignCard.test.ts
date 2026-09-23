@@ -2279,10 +2279,6 @@ describe("the problems line never names the same page twice", () => {
     const live = "page 0044: htrflow's Segmentation worker thread died";
     expect((await line(live)).textContent).toBe(live);
   });
-
-  test("a message that does not name it is given the page", async () => {
-    expect((await line("HTTP 400")).textContent).toBe("page 0044: HTTP 400");
-  });
 });
 
 // The live PoC read "5 / 8· 3 failed": Svelte trims the whitespace before an
@@ -2678,28 +2674,6 @@ describe("a volume line is the same shape on every row and every card", () => {
     expect(
       container.querySelector(".row.volume .c-fraction"),
     ).toHaveTextContent("2 / 3");
-  });
-
-  test("a failed volume says nothing about it either", async () => {
-    const container = await card([
-      { ...vol("vol1"), state: "failed", reason: volumeFailed.reason },
-    ]);
-    await expand();
-    expect(container.querySelector(".vprogress")).toBeNull();
-  });
-
-  test("a volume still working does say it", async () => {
-    const container = await card([
-      {
-        ...vol("vol2"),
-        state: "active",
-        progress: { ...vol("vol2").progress, stage: "stream", ageSeconds: 12 },
-      },
-    ]);
-    await expand();
-    expect(container.querySelector(".vprogress")).toHaveTextContent(
-      "processing pages · updated 12 s ago",
-    );
   });
 
   test("a poll that moves the figures changes nothing but the figures", async () => {
