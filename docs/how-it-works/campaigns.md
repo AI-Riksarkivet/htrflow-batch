@@ -326,10 +326,10 @@ These things follow.
   read API may write every `campaign-<name>-status` ConfigMap, so a record
   on its own is only a claim. `apply` stamps the uid of the Job it created
   on the campaign ConfigMap, which only the apply identity may write, as
-  `htrflow.riksarkivet.se/job-uid`. For a new campaign that is a second
-  write of the ConfigMap, once its Job exists. A record whose `jobUid` is
-  a different Job, or a record where no Job was ever created, is not
-  believed. `apply` says so on stderr and applies the campaign. A campaign
+  the annotation `job-uid` under the converter's label domain. For a new
+  campaign that is a second write of the ConfigMap, once its Job exists. A
+  record whose `jobUid` is a different Job, or a record where no Job was
+  ever created, is not believed. `apply` says so on stderr and applies the campaign. A campaign
   ConfigMap written before the annotation existed carries no uid, and its
   record is believed as before.
 - **A live Job outranks the stored record.** While the campaign's Job
