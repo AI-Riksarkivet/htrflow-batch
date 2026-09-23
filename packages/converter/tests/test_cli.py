@@ -417,9 +417,12 @@ def test_render_refuses_to_re_split_a_campaign_that_is_already_rendered(
     assert main(["validate", str(repo)]) == 1  # and a pull request says so
 
 
-def _split_campaign(volumes: int) -> str:
+def _split_campaign(volumes: int, prefix: str = "v") -> str:
+    """Two campaigns on one pipeline may not share a volume (C-13), so two
+    of these side by side take a ``prefix`` each."""
     return "pipeline: demo-v1\nvolumes:\n" + "".join(
-        f"  - id: v{i}\n    manifest: https://example.org/{i}\n" for i in range(volumes)
+        f"  - id: {prefix}{i}\n    manifest: https://example.org/{i}\n"
+        for i in range(volumes)
     )
 
 
@@ -439,7 +442,7 @@ def test_render_refuses_two_campaigns_whose_split_names_collide(
     shared = "k" * 50
     for tail, count in zip(("alpha", "beta"), volumes):
         (repo / "campaigns" / f"{shared}-{tail}.yaml").write_text(
-            _split_campaign(count)
+            _split_campaign(count, tail)
         )
     out = repo / "rendered"
 
@@ -457,7 +460,7 @@ def test_validate_refuses_colliding_split_names_too(tmp_path, capsys):
     shutil.copytree(GOOD, repo)
     for tail in ("alpha", "beta"):
         (repo / "campaigns" / f"{'k' * 50}-{tail}.yaml").write_text(
-            _split_campaign(10_001)
+            _split_campaign(10_001, tail)
         )
     assert main(["validate", str(repo)]) == 1
     assert "rename one" in capsys.readouterr().out
