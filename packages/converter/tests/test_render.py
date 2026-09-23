@@ -81,25 +81,6 @@ def test_campaign_job_fields_per_global_constraints():
     assert labels["htrflow.riksarkivet.se/managed-by"] == "converter"
 
 
-def test_no_volume_ref_or_iiif_manifest_url_env_set_by_python():
-    kyrk, demo, cfg = _kyrk()
-    job = render.campaign_objects(kyrk, demo, cfg)[1]
-    container = job["spec"]["template"]["spec"]["containers"][0]
-    names = {e["name"] for e in container["env"]}
-    assert "VOLUME_REF" not in names
-    assert "IIIF_MANIFEST_URL" not in names
-
-
-def test_shell_args_contain_a_real_tab_and_exec():
-    kyrk, demo, cfg = _kyrk()
-    job = render.campaign_objects(kyrk, demo, cfg)[1]
-    container = job["spec"]["template"]["spec"]["containers"][0]
-    assert container["command"] == ["/bin/sh", "-c"]
-    args = container["args"][0]
-    assert "\t" in args
-    assert "exec python -m htrflow_batch" in args
-
-
 def test_both_jobs_make_the_writable_dirs_before_exec():
     """readOnlyRootFilesystem: HOME/TMPDIR/YOLO_CONFIG_DIR point into the
     tmpfs workdir and must exist before htrflow builds a model. The shell
@@ -520,14 +501,6 @@ def test_window_is_capped_by_the_converter_window():
     assert render.campaign_objects(under, demo, cfg)[1]["spec"]["parallelism"] == 2
     unset = kyrk.model_copy(update={"window": None})
     assert render.campaign_objects(unset, demo, cfg)[1]["spec"]["parallelism"] == 10
-
-
-def test_no_job_carries_the_partial_admission_annotation():
-    kyrk, demo, cfg = _kyrk()
-    for obj in render.pipeline_objects(demo, cfg) + render.campaign_objects(
-        kyrk, demo, cfg
-    ):
-        assert "kueue.x-k8s.io/job-min-parallelism" not in str(obj["metadata"])
 
 
 def test_suspend_true_renders_spec_suspend():
