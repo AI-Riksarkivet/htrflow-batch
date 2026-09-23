@@ -19,7 +19,6 @@ import base64
 import hashlib
 import json
 import logging
-import mimetypes
 import os
 import re
 import time
@@ -118,8 +117,12 @@ def spa_csp(results_base: str) -> str | None:
     )
 
 
-#: Media types a browser renders as a document that can run script.
-_DOCUMENTS = ("text/html", "application/xhtml+xml", "image/svg+xml")
+#: File suffixes a browser renders as a document that can run script
+#: (text/html, application/xhtml+xml, image/svg+xml). Named here, not asked
+#: of ``mimetypes``: its answer comes from the host's /etc/mime.types, and
+#: python's own table has no .xhtml, so the same page was a document on one
+#: image and not on another.
+_DOCUMENT_SUFFIXES = frozenset({".html", ".htm", ".xhtml", ".xht", ".svg"})
 
 
 class _Page(HTMLParser):
@@ -297,7 +300,7 @@ class BuiltSite(StaticFiles):
         real = os.path.realpath(full_path)
         if self.viewer_csp and real == self.viewer:
             response.headers["Content-Security-Policy"] = self.viewer_csp
-        elif mimetypes.guess_type(real)[0] in _DOCUMENTS:
+        elif Path(real).suffix.lower() in _DOCUMENT_SUFFIXES:
             if not self._states_policy(real):
                 response.headers["Content-Security-Policy"] = STRICT_CSP
             elif self.page_csp:
