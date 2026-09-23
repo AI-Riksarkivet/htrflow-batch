@@ -169,6 +169,46 @@ def test_the_apply_identity_still_may_not_delete_a_foreign_object(tmp_path: Path
     assert verdict == "admitted", out
 
 
+# --- T-2: the read API writes its status ConfigMaps and nothing else ------
+
+WEB_SA = f"system:serviceaccount:{NAMESPACE}:htrflow-web"
+
+
+@pytest.mark.parametrize(
+    "name,operation",
+    [
+        ("htr-pipeline-demo-v1", "CREATE"),
+        ("htr-pipeline-demo-v1", "UPDATE"),
+        ("campaign-kyrk", "UPDATE"),
+    ],
+)
+def test_the_read_api_cannot_write_a_pipeline_or_a_campaign(
+    tmp_path: Path, name: str, operation: str
+):
+    """The web Role's create/patch covers every ConfigMap, pipeline ones
+    included, and the pod serving it has no authentication of its own.
+    Overwriting `htr-pipeline-<id>` would choose the weights the next
+    campaign loads; overwriting `campaign-<name>` its volumes."""
+    policy = render_policy(tmp_path, "rbac-scope")
+    target = configmap(name, CONVERTER, data={"x": "y"})
+    old = target if operation == "UPDATE" else None
+    verdict, out = admission(
+        tmp_path, policy, target, user=WEB_SA, operation=operation, old=old
+    )
+    assert verdict == "refused", out
+
+
+@pytest.mark.parametrize("operation", ["CREATE", "UPDATE"])
+def test_the_read_api_writes_a_campaign_status(tmp_path: Path, operation: str):
+    policy = render_policy(tmp_path, "rbac-scope")
+    status = configmap("campaign-kyrk-status", data={"state": "done"})
+    old = status if operation == "UPDATE" else None
+    verdict, out = admission(
+        tmp_path, policy, status, user=WEB_SA, operation=operation, old=old
+    )
+    assert verdict == "admitted", out
+
+
 # --- 3058: keys beside model_settings override it -------------------------
 
 REVISION = "0123456789abcdef0123456789abcdef01234567"
