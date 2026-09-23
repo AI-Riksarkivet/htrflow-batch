@@ -1,0 +1,195 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/.docker/distroless.openvex.json",
+  "author": "htrflow-batch maintainers",
+  "timestamp": "2026-09-23T00:00:00Z",
+  "version": 2,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-76642"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libuuid1@2.41.5-0%2Bdeb13u1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in util-linux's mount(8)/nsenter(1) programs. The image carries only the libuuid1 shared library from util-linux, not those programs (distroless: no mount, no nsenter, no setuid binaries)."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-78408"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libuuid1@2.41.5-0%2Bdeb13u1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in util-linux's mount(8)/nsenter(1) programs. The image carries only the libuuid1 shared library from util-linux, not those programs (distroless: no mount, no nsenter, no setuid binaries)."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-78409"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libuuid1@2.41.5-0%2Bdeb13u1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in util-linux's mount(8)/nsenter(1) programs. The image carries only the libuuid1 shared library from util-linux, not those programs (distroless: no mount, no nsenter, no setuid binaries)."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-78410"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libuuid1@2.41.5-0%2Bdeb13u1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in util-linux's mount(8)/nsenter(1) programs. The image carries only the libuuid1 shared library from util-linux, not those programs (distroless: no mount, no nsenter, no setuid binaries)."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-69720"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libtinfo6@6.5%2B20250216-2"
+        },
+        {
+          "@id": "pkg:deb/debian/libncursesw6@6.5%2B20250216-2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The overflow is in the infocmp command-line program (progs/infocmp.c). The image carries only the libtinfo6/libncursesw6 shared libraries, not infocmp."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-82049"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libpython3.13-minimal@3.13.5-2%2Bdeb13u5"
+        },
+        {
+          "@id": "pkg:deb/debian/libpython3.13-stdlib@3.13.5-2%2Bdeb13u5"
+        },
+        {
+          "@id": "pkg:deb/debian/python3.13-minimal@3.13.5-2%2Bdeb13u5"
+        },
+        {
+          "@id": "pkg:deb/debian/python3.13-venv@3.13.5-2%2Bdeb13u5"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Only tarfile's extraction filters are affected. No code in the image extracts a tar archive: the service's own packages do not import tarfile, and the dependencies that do only write archives (dulwich) or read members of their own bundled data (dateutil.zoneinfo)."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-15308"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libpython3.13-minimal@3.13.5-2%2Bdeb13u5"
+        },
+        {
+          "@id": "pkg:deb/debian/libpython3.13-stdlib@3.13.5-2%2Bdeb13u5"
+        },
+        {
+          "@id": "pkg:deb/debian/python3.13-minimal@3.13.5-2%2Bdeb13u5"
+        },
+        {
+          "@id": "pkg:deb/debian/python3.13-venv@3.13.5-2%2Bdeb13u5"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "Only html.parser.HTMLParser is affected, and the only HTML either image parses is its own build output: the web service reads the pages baked into its static directory (the viewer and the campaign browser) to hash their inline scripts for its Content-Security-Policy, one feed() per page. No request data or other outside input reaches the parser; the converter image does not use it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-7210"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libpython3.13-minimal@3.13.5-2%2Bdeb13u5"
+        },
+        {
+          "@id": "pkg:deb/debian/libpython3.13-stdlib@3.13.5-2%2Bdeb13u5"
+        },
+        {
+          "@id": "pkg:deb/debian/python3.13-minimal@3.13.5-2%2Bdeb13u5"
+        },
+        {
+          "@id": "pkg:deb/debian/python3.13-venv@3.13.5-2%2Bdeb13u5"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML: neither the service's own packages nor any installed dependency imports an XML parser (it speaks JSON to the Kubernetes API and over HTTP)."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-66046"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libexpat1@2.8.3-1~deb13u1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML: neither the service's own packages nor any installed dependency imports an XML parser (it speaks JSON to the Kubernetes API and over HTTP)."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-76956"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libexpat1@2.8.3-1~deb13u1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML: neither the service's own packages nor any installed dependency imports an XML parser (it speaks JSON to the Kubernetes API and over HTTP)."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-76957"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libexpat1@2.8.3-1~deb13u1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML: neither the service's own packages nor any installed dependency imports an XML parser (it speaks JSON to the Kubernetes API and over HTTP)."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-93990"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libexpat1@2.8.3-1~deb13u1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Expat is reached only through Python's xml.parsers.expat / xml.etree. Nothing in the image parses XML: neither the service's own packages nor any installed dependency imports an XML parser (it speaks JSON to the Kubernetes API and over HTTP)."
+    }
+  ]
+}
