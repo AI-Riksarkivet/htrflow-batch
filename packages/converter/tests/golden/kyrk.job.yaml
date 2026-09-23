@@ -113,6 +113,7 @@ spec:
         - name: data
           mountPath: /data
           readOnly: true
+          subPath: demo-v1-7935e3fbbb607c53b087d79e74333d71be5a3e9efd5facae3029b4d7b958133f
         - name: work
           mountPath: /work
         - name: s3
@@ -166,6 +167,7 @@ spec:
         - name: data
           mountPath: /data
           readOnly: true
+          subPath: demo-v1-7935e3fbbb607c53b087d79e74333d71be5a3e9efd5facae3029b4d7b958133f
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true

@@ -42,6 +42,8 @@ spec:
     metadata:
       labels:
         app: htrflow-warmup
+      annotations:
+        htrflow.riksarkivet.se/recipe-sha256: 7935e3fbbb607c53b087d79e74333d71be5a3e9efd5facae3029b4d7b958133f
     spec:
       restartPolicy: Never
       activeDeadlineSeconds: 3600
@@ -89,6 +91,7 @@ spec:
           mountPath: /config
         - name: data
           mountPath: /data
+          subPath: demo-v1-7935e3fbbb607c53b087d79e74333d71be5a3e9efd5facae3029b4d7b958133f
         - name: work
           mountPath: /work
         securityContext:
