@@ -28,7 +28,6 @@ and adjust:
 | `HTR_S3_NODEPORT` | RustFS's S3 NodePort (devstack `rustfs.nodePortS3`) | reference for your own forwards |
 | `HTR_BUCKET` | the results bucket (chart `s3.bucket`) | the compose stack |
 | `HTR_WEB_NODEPORT` | the web front's NodePort (chart `web.nodePort`) | `e2e`'s final `/api/v1/jobs` request |
-| `HTR_DATA_PVC` | the model-cache PVC name (chart `modelCache.name`) | not read by any target |
 | `HTRFLOW_DIR` | a local htrflow checkout, for a base built from source | the base target below; the base's `git describe` |
 | `HTR_DEV_S3_ACCESS_KEY`, `HTR_DEV_S3_SECRET_KEY` | throwaway RustFS root credentials | the compose stack only — never a cluster |
 
@@ -127,10 +126,10 @@ make e2e DIR=<campaigns-repo>                       # validate, apply, wait for 
 ```
 
 `campaigns-apply` runs `htrflow-campaigns apply <campaigns-repo> --out
-<campaigns-repo>/rendered`, which renders into `rendered/pipelines` and
-`rendered/campaigns`, applies them server-side, and syncs each campaign's
-pause. Repeat after every commit to that branch — nothing watches it for
-you. `make e2e` waits for the warm-up Jobs, then polls every campaign Job
+<campaigns-repo>/rendered` ([CLI](../reference/cli.md)); it is safe to
+re-run. Repeat after every commit to that branch — nothing watches it for
+you. `PRUNE=1` cancels everything the checkout does not contain, so only run
+it against the whole repo. `make e2e` waits for the warm-up Jobs, then polls every campaign Job
 until it is Complete or Failed (`CAMPAIGN_TIMEOUT` seconds, default 3600).
 It fails if any Job ends Failed, if no campaign Job exists, or if `kubectl`
 cannot read one. Otherwise it finally requests `/api/v1/jobs` from the web front's NodePort on the
@@ -141,31 +140,17 @@ place hits the append-only rule
 ## Two S3 endpoints, two results bases
 
 On a dev cluster the browser and the pods reach the same RustFS at different
-addresses. `publicResultsBase` is what a browser on your workstation reaches
-through its forward; neither pod that touches S3 can use that address:
+addresses. `publicResultsBase` is the forwarded address a browser on your
+workstation uses ([View results](../getting-started/viewing.md#exposing-the-web-front));
+the pods cannot resolve it. The wrapper writes through the S3 Secret's
+in-cluster endpoint anyway, but the read API needs the in-cluster address
+for `progress.json`, or the campaign page silently never shows a running
+volume's progress:
 
-- The **wrapper** writes through `S3_ENDPOINT`, the in-cluster RustFS Service
-  address from the S3 Secret. `PUBLIC_RESULTS_BASE` is only embedded as
-  browser-facing text (`viewer_url` in `manifest.json`, the `id` inside a
-  published `iiif.json` or synthetic manifest); nothing rewrites URLs later,
-  because nothing stores a derived copy of them.
-- The **web front**'s read API reads `progress.json` from S3 for a running
-  volume's page counts ([Signals](../how-it-works/signals.md)).
-  `HTRFLOW_PUBLIC_RESULTS_BASE` is what every browser link is built from, so
-  it has to stay the forwarded address — and the pod cannot resolve that.
-  `web.internalResultsBase` sets `HTRFLOW_INTERNAL_RESULTS_BASE` to the
-  in-cluster address instead:
-
-  ```yaml
-  web:
-    internalResultsBase: http://rustfs.<namespace>.svc.cluster.local:9000/<bucket>
-  ```
-
-  `rustfs` on port 9000 is the Service `charts/htrflow-devstack` renders.
-  Left unset, it defaults to `publicResultsBase`, which is right on a
-  cloud object store (empty `S3_ENDPOINT`, one address for everyone) and
-  wrong here. There is no error — only a campaign page that never shows a
-  running volume's progress.
+```yaml
+web:
+  internalResultsBase: http://rustfs.<namespace>.svc.cluster.local:9000/<bucket>
+```
 
 Anything you put in a campaign file — a fixture manifest on the RustFS
 bucket, say — must use the in-cluster form
@@ -201,22 +186,12 @@ front without a tunnel is covered in
 
 ## Resources that already exist on the cluster
 
-Helm refuses to take over objects it did not create. On a cluster where the
-model-cache PVC, the `nvidia` RuntimeClass or the device-plugin DaemonSet
-were applied by hand, either **adopt** each once (annotate
-`meta.helm.sh/release-name` and `meta.helm.sh/release-namespace`, label
-`app.kubernetes.io/managed-by=Helm` — the commands are under "Adopting
-hand-applied resources" in each chart's README) and let the chart render it
-(`modelCache.create=true` in `charts/htrflow-batch`,
-`nvidiaDevicePlugin.enabled=true` in `charts/htrflow-devstack`), or leave it
-outside (`modelCache.create=false` with `modelCache.name` set to the existing
-PVC; the device plugin off). Adoption is the better end state: the PVC gets
-`helm.sh/resource-policy: keep`, and the chart pins the device-plugin image
-by digest. The pods run as uid 1000, and not every volume provisioner
-honours `fsGroup`: a cache PVC (or registry data PVC) that root-running pods
-wrote to, or one on such a provisioner, needs `chown -R 1000:1000` once from
-a throwaway pod before the first warm-up
-([Security](../how-it-works/security.md)).
+A model-cache PVC, `nvidia` RuntimeClass or device-plugin DaemonSet applied
+by hand must be adopted into the release or left outside it
+(`modelCache.create`, and `nvidiaDevicePlugin.enabled` in the devstack chart;
+[Deploy → Model cache](../getting-started/deploy.md#model-cache); the
+commands are in each chart's README). A cache PVC root-running pods wrote to
+needs a one-time `chown -R 1000:1000` before the first warm-up.
 
 ## Upgrading the live release
 
@@ -226,14 +201,8 @@ helm upgrade <release> charts/htrflow-batch -n <namespace> --reset-then-reuse-va
 make psa-labels
 ```
 
-Always `--reset-then-reuse-values` (or a full values file), for
-`charts/htrflow-devstack` too: plain `--reuse-values` keeps the old chart's
-defaults, so a new default never reaches an existing release, and a missing
-new value can render whole features away — the chart fails loudly when
-`network` is absent for that reason. A release that runs with the
-Kyverno policies off needs `--set security.policies.allowDisabled=true` once:
-the chart refuses to render policies that are off without it. Upgrade notes per chart version are in
-the chart READMEs ([Releasing](releasing.md#chart-releases)).
+The same `--reset-then-reuse-values` rule holds for `charts/htrflow-devstack`
+([Deploy → Upgrading](../getting-started/deploy.md#upgrading)).
 
 ## Gotchas
 
@@ -251,20 +220,6 @@ the chart READMEs ([Releasing](releasing.md#chart-releases)).
   pod's init container waits for the marker file the warm-up writes, so a
   pipeline pinned to an image without that module never starts. Pipelines are
   immutable: new work needs a new pipeline id on a current image.
-- **`queued` with an idle GPU means Kueue is down, not busy.** With a GPU
-  quota of one (sized in `queue.*`), a second index waits suspended until the
-  first finishes; a dead Kueue controller looks the same, so check it first.
-- **`make campaigns-apply` is safe to re-run.** `render` is a pure function
-  and a server-side apply is idempotent, against running, completed and
-  failed Jobs alike. That holds because the converter caps `parallelism` at
-  the configured window itself instead of relying on Kueue partial admission,
-  which would shrink `spec.parallelism` on the live Job and make every later
-  apply of the unchanged rendered file fail.
-- **Cancelling needs `PRUNE=1`.** An apply on its own never deletes.
-  `--prune` lists every Job and ConfigMap in the namespace labelled as
-  managed by the converter and deletes the ones this render did not
-  produce. Only run it against the *whole* campaigns repo: against a partial
-  checkout it cancels everything the checkout does not contain.
 - **`make install-devstack NVIDIA_DEVICE_PLUGIN=false` refuses while GPU
   pods run.** Disabling the plugin deletes the chart-managed `nvidia`
   RuntimeClass and device-plugin DaemonSet, which takes down any GPU pod
@@ -272,12 +227,6 @@ the chart READMEs ([Releasing](releasing.md#chart-releases)).
   `kube-system` that is Running or Pending and uses `runtimeClassName:
   nvidia` or requests `nvidia.com/gpu`, and exits non-zero if it finds one,
   or if it cannot list the pods to find out; `FORCE=1` skips the check.
-- **Pausing is `suspend: true` in the campaign file plus the apply.** The
-  rendered `spec.suspend` alone does not hold — Kueue owns that field for an
-  admitted Workload and undoes a change within seconds — so the pause sync in
-  `htrflow-campaigns apply` patches the Workload's `spec.active`. Never
-  `kubectl edit` the Job
-  ([Campaign & Pipeline YAML](../reference/campaign-yaml.md)).
 - **RustFS is single-disk.** The results bucket is one PVC on the node
   (`rustfs-data`, sized by `rustfs.storage.size`, kept on uninstall). Fine
   for iteration; not an archive.
