@@ -78,7 +78,7 @@ containers, initContainers, args, imageRe.
           {{- if .initContainers }}
           (length(pod.initContainers[0].command || `[]`) != `3`
           || pod.initContainers[0].command[0:2] != ['/bin/sh', '-c']
-          || !regex_match('^n=0; until \[ -f /data/warmup/[a-z0-9][a-z0-9.-]*\.done \]; do n=\$\(\(n\+10\)\); \[ "\$n" -le [0-9]+ \] \|\| \{ echo "no warm-up marker at /data/warmup/[a-z0-9][a-z0-9.-]*\.done after [0-9]+s: the pipeline\'s warm-up Job has not finished" >&2; exit 13; \}; sleep 10; done$', to_string(pod.initContainers[0].command[2] || ''))
+          || !regex_match('^n=0; until \[ -f /data/[A-Za-z0-9._/-]+\.done \]; do n=\$\(\(n\+10\)\); \[ "\$n" -le [0-9]+ \] \|\| \{ echo "no warm-up marker at /data/[A-Za-z0-9._/-]+\.done after [0-9]+s: the pipeline\'s warm-up Job has not finished" >&2; exit 13; \}; sleep 10; done$', to_string(pod.initContainers[0].command[2] || ''))
           || pod.initContainers[0].args != null)
           && 'the init container is not the warm-up gate the converter renders',
           {{- end }}
