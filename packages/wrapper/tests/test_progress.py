@@ -12,9 +12,6 @@ import os
 import signal
 from pathlib import Path
 
-import httpx
-import pytest
-
 from htrflow_batch import main as main_mod
 from htrflow_batch import progress as progress_mod
 from htrflow_batch.logship import LogCapture
@@ -35,33 +32,6 @@ def _write_outputs(cfg, stem: str):
         out.write_text(text)
         files[fmt] = out
     return files
-
-
-@pytest.fixture
-def env(tmp_path, cfg, sample_manifest, monkeypatch):
-    def handler(req):
-        if req.url.path.endswith("manifest.json"):
-            return httpx.Response(200, json=sample_manifest)
-        return httpx.Response(200, content=b"\xff\xd8\xff\xe0JPEGDATA")
-
-    monkeypatch.setattr(
-        main_mod,
-        "_http_client",
-        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
-    )
-    pipeline = tmp_path / "pipeline.yaml"
-    pipeline.write_text("steps: []\n")
-    return {
-        "VOLUME_REF": "SE-RA-1234",
-        "IIIF_MANIFEST_URL": "https://iiif.example/mock-vol/manifest.json",
-        "PIPELINE_PATH": str(pipeline),
-        "PIPELINE_ID": "demo-v1",
-        "S3_ENDPOINT": "",
-        "S3_BUCKET": "htr-results",
-        "PUBLIC_RESULTS_BASE": "http://public/htr-results",
-        "WORKDIR_PATH": str(tmp_path / "work"),
-        "TERMINATION_LOG_PATH": str(tmp_path / "term.log"),
-    }
 
 
 PREFIX = "demo-v1/SE-RA-1234"
@@ -302,13 +272,12 @@ def test_a_failed_run_leaves_a_terminal_stage_not_stuck_at_stream(env, cfg, s3):
     assert _get(s3, cfg, "progress.json")["stage"] == "failed"
 
 
-def test_a_sigterm_run_leaves_the_stage_it_was_in(env, cfg, s3, monkeypatch):
+def test_a_sigterm_run_leaves_the_stage_it_was_in(env, cfg, s3):
     """A SIGTERMed run is the one exception to the terminal stage above (W4):
     the pod has 120 s before the SIGKILL and that time goes to the final log
     ship, not to a status PUT that may sit out its own timeouts first. The
     index is retried anyway, and the termination message -- a local file --
     still names the stage and says SIGTERM."""
-    monkeypatch.setattr(main_mod, "_hard_exit", lambda code: None)
 
     def factory(c):
         def process(path: Path):
@@ -370,7 +339,6 @@ def test_sigterm_stops_the_status_writes(env, cfg, s3, monkeypatch):
     before the final log ship, the one piece of evidence that matters. Once
     the handler has fired, nothing status-shaped is written again."""
     monkeypatch.setattr(progress_mod, "PUBLISH_EVERY_PAGES", 1)
-    monkeypatch.setattr(main_mod, "_hard_exit", lambda code: None)
     puts: list[str] = []
     original = ResultStore.put_progress
 

@@ -180,17 +180,11 @@ class _StoredAlto:
     """A store with no dims of its own: every page was published earlier."""
 
     def __init__(self):
-        self.reads, self.puts, self.page_dims = [], {}, {}
+        self.reads, self.page_dims = [], {}
 
     def get_bytes(self, key):
         self.reads.append(key)
         return ALTO.encode()
-
-    def put_json(self, key, obj):
-        self.puts[key] = obj
-
-    def put_text(self, key, text, content_type):
-        self.puts[key] = text
 
 
 def test_alto_dims_reads_every_page_back_from_the_store(tmp_path):
@@ -223,7 +217,6 @@ def test_a_store_error_reading_a_stored_alto_fails_the_publish(tmp_path):
     store.get_bytes = get_bytes
     with pytest.raises(ConnectionError, match="SlowDown"):
         publish.alto_dims(cfg, store, _pages(), {"0001", "0002"})
-    assert store.puts == {}
 
 
 def test_a_stored_alto_that_does_not_parse_is_still_left_out(tmp_path):

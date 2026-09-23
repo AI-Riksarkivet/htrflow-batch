@@ -71,8 +71,8 @@ def test_from_config_appends_exports_and_runs_one_page(
 
 
 def test_from_config_takes_a_path_and_rejects_export_steps(tmp_path):
-    """The driver's TypeError fallback is for older builds; the pinned build
-    takes a path. And a user-supplied Export must be refused, not doubled."""
+    """The pinned build takes a path, which is all the driver hands it. And a
+    user-supplied Export must be refused, not doubled."""
     from htrflow.pipeline.pipeline import Pipeline
 
     path = tmp_path / "p.yaml"
@@ -108,11 +108,15 @@ def test_unknown_step_and_model_class_raise_what_the_driver_maps_to_exit_13(tmp_
 
 
 def test_step_registry_carries_the_steps_the_pipelines_use():
+    from htrflow.pipeline import pipeline as pipeline_module
     from htrflow.pipeline.steps import STEPS, Export, auto_import
 
     assert {"segmentation", "textrecognition", "export", "binarization"} <= set(STEPS)
     assert STEPS["export"] is Export
     assert callable(auto_import)
+    # driver._tracked_steps swaps this name to reach the steps a failed
+    # construction built; without it a failure leaks their weights silently
+    assert callable(getattr(pipeline_module, "init_step", None))
 
 
 def test_htrflow_version_is_known():

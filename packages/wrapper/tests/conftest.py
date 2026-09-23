@@ -1,6 +1,9 @@
 import copy
+import sys
+from types import ModuleType
 
 import boto3
+import httpx
 import pytest
 from moto import mock_aws
 
@@ -27,6 +30,31 @@ def fresh_abandoned_threads(monkeypatch) -> None:
     """``driver._ABANDONED`` is process-wide; one test's released steps must
     not count against another's leak limit."""
     monkeypatch.setattr(driver_mod, "_ABANDONED", [])
+
+
+@pytest.fixture
+def fake_htrflow(monkeypatch):
+    """Install a fake htrflow in ``sys.modules`` for the driver's function-level
+    imports: ``fake_htrflow(pipeline={...}, steps={...})`` gives
+    ``htrflow.pipeline.pipeline`` and ``htrflow.pipeline.steps`` those
+    attributes (a module left out is not importable). Returns the pipeline
+    module, whose attributes htrflow's own code resolves at call time."""
+
+    def install(*, pipeline: dict | None = None, steps: dict | None = None):
+        modules = {"htrflow": {}, "htrflow.pipeline": {}}
+        if pipeline is not None:
+            modules["htrflow.pipeline.pipeline"] = pipeline
+        if steps is not None:
+            modules["htrflow.pipeline.steps"] = steps
+        for name, attrs in modules.items():
+            module = ModuleType(name)
+            vars(module).update(attrs)
+            monkeypatch.setitem(sys.modules, name, module)
+        return (
+            sys.modules["htrflow.pipeline.pipeline"] if pipeline is not None else None
+        )
+
+    return install
 
 
 def _canvas(i: int, service_id: str) -> dict:
@@ -126,6 +154,35 @@ def s3(cfg):
         client = boto3.client("s3", region_name="us-east-1")
         client.create_bucket(Bucket=cfg.s3_bucket)
         yield client
+
+
+@pytest.fixture
+def env(tmp_path, cfg, sample_manifest, monkeypatch):
+    """Full env + mocked HTTP (manifest + images) + moto S3 via cfg/s3 fixtures."""
+
+    def handler(req):
+        if req.url.path.endswith("manifest.json"):
+            return httpx.Response(200, json=sample_manifest)
+        return httpx.Response(200, content=b"\xff\xd8\xff\xe0JPEGDATA")
+
+    monkeypatch.setattr(
+        main_mod,
+        "_http_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    pipeline = tmp_path / "pipeline.yaml"
+    pipeline.write_text("steps: []\n")
+    return {
+        "VOLUME_REF": "SE-RA-1234",
+        "IIIF_MANIFEST_URL": "https://iiif.example/mock-vol/manifest.json",
+        "PIPELINE_PATH": str(pipeline),
+        "PIPELINE_ID": "demo-v1",
+        "S3_ENDPOINT": "",
+        "S3_BUCKET": "htr-results",
+        "PUBLIC_RESULTS_BASE": "http://public/htr-results",
+        "WORKDIR_PATH": str(tmp_path / "work"),
+        "TERMINATION_LOG_PATH": str(tmp_path / "term.log"),
+    }
 
 
 def _gzip_bomb(decoded_mib: int, head: bytes = b"") -> bytes:

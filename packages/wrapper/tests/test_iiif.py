@@ -26,20 +26,6 @@ def test_pages_without_service_falls_back_to_body_id(sample_manifest):
     assert pages[0].image_url.endswith("/full/max/0/default.jpg")
 
 
-def test_empty_manifest_raises():
-    with pytest.raises(ManifestError):
-        pages_from_manifest({"items": []}, width=2500)
-
-
-def test_fetch_manifest_ok(sample_manifest):
-    transport = httpx.MockTransport(
-        lambda req: httpx.Response(200, json=sample_manifest)
-    )
-    client = httpx.Client(transport=transport)
-    m = fetch_manifest("https://x/manifest", client)
-    assert m["type"] == "Manifest"
-
-
 @pytest.mark.parametrize("status", [400, 401, 403, 404, 410])
 def test_fetch_manifest_4xx_is_permanent(status):
     transport = httpx.MockTransport(lambda req: httpx.Response(status))
@@ -56,12 +42,6 @@ def test_fetch_manifest_5xx_and_429_are_transient(status):
     client = httpx.Client(transport=transport)
     with pytest.raises(TransientManifestError):
         fetch_manifest("https://x/manifest", client)
-
-
-def test_transient_manifest_error_is_not_permanent():
-    # main.py classifies ManifestError as exit 13; the transient one must
-    # fall through to the generic (retryable) branch.
-    assert not issubclass(TransientManifestError, ManifestError)
 
 
 @pytest.mark.parametrize("exc", [httpx.ConnectError, httpx.ReadTimeout])

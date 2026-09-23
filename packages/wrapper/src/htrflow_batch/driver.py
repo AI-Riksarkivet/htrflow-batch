@@ -22,25 +22,6 @@ log = logging.getLogger("htrflow_batch")
 EXPECTED_FORMATS = ("alto", "page")
 
 
-def _refused_the_path(Pipeline, e: BaseException) -> bool:
-    """Whether ``from_config`` refused the ARGUMENT -- an older htrflow whose
-    ``from_config`` takes a parsed dict, handed a path -- rather than a step
-    or model constructor deeper in raising a TypeError of its own (W2).
-
-    Told apart by where the TypeError was raised: in ``from_config``'s own
-    code object, or below it. The distinction matters because the pinned
-    htrflow's ``from_config`` does ``open(path)``, so retrying a constructor's
-    TypeError with the dict only raises a second one from ``open(dict)`` --
-    and a bare TypeError is not permanent, so a mistyped pipeline setting
-    exited 1 and burned every retry instead of failing at once.
-    """
-    tb = e.__traceback__
-    while tb is not None and tb.tb_next is not None:
-        tb = tb.tb_next
-    function = getattr(Pipeline.from_config, "__func__", Pipeline.from_config)
-    return tb is not None and tb.tb_frame.f_code is getattr(function, "__code__", None)
-
-
 @contextmanager
 def _tracked_steps(built: list):
     """Record every step htrflow builds, so a failed construction can be torn
@@ -190,13 +171,7 @@ def build_pipeline(pipeline_path: str):
     built: list = []
     try:
         with _tracked_steps(built):
-            try:
-                return Pipeline.from_config(str(pipeline_path))
-            except TypeError as e:
-                if not _refused_the_path(Pipeline, e):
-                    raise
-                # older htrflow builds: from_config takes a parsed config dict
-                return Pipeline.from_config(config)
+            return Pipeline.from_config(str(pipeline_path))
     except BaseException as e:
         # W1 (2026-09-14, audit): a construction that raises part-way has
         # already built every step before the failing one, and each Inference
@@ -217,19 +192,20 @@ def build_pipeline(pipeline_path: str):
 
 
 def load_pipeline(pipeline_path: str, out_dir: Path):
-    from htrflow.pipeline.pipeline import Pipeline  # ty: ignore[unresolved-import]
     from htrflow.pipeline.steps import Export  # ty: ignore[unresolved-import]
 
     pipeline = build_pipeline(pipeline_path)  # refuses Export steps (3098)
     try:
-        exports = [Export(str(out_dir / fmt), fmt) for fmt in EXPECTED_FORMATS]
-        # rebuild so Pipeline.__init__ wires the new steps the same way as the
-        # originals (older htrflow sets parent_pipeline there; append leaves the
-        # Export orphaned and its metadata None)
-        return Pipeline(list(pipeline.steps) + exports)
+        # appended the way htrflow's own CLI adds its --output Export: the
+        # pinned Pipeline.__init__ only stores the list, so there is nothing
+        # a rebuild would wire
+        pipeline.steps.extend(
+            Export(str(out_dir / fmt), fmt) for fmt in EXPECTED_FORMATS
+        )
     except BaseException:
         release_pipeline(pipeline)  # W1: the same leak, one construction later
         raise
+    return pipeline
 
 
 def release_documents() -> None:

@@ -270,6 +270,82 @@ def test_stop_event_short_circuits_pending_downloads(tmp_path):
     assert len(started) == 2  # page 1, and the one already in flight
 
 
+def _spy_fetch(monkeypatch, raise_for=()):
+    """fetch_page as the stream binds it, recording each page it is handed
+    (and raising, like a bug in it would, for the names in ``raise_for``)."""
+    handed: list[str] = []
+    real = stream_mod.fetch_page
+
+    def fetch(page, **kw):
+        handed.append(page.name)
+        if page.name in raise_for:
+            raise RuntimeError(f"bug fetching {page.name}")
+        return real(page, **kw)
+
+    monkeypatch.setattr(stream_mod, "fetch_page", fetch)
+    return handed
+
+
+def test_a_set_stop_submits_no_further_page(tmp_path, monkeypatch):
+    """W10: once the run has failed nothing more is handed to the download
+    pool. The pages behind the window are not reported as "stopped" one by
+    one -- they are never submitted, and verify reports them missing."""
+    handed = _spy_fetch(monkeypatch)
+    stop = threading.Event()
+    stream = PageStream(
+        _pages(6),
+        tmp_path,
+        _client(lambda req: httpx.Response(200, content=JPEG)),
+        lookahead=2,
+        stop=stop,
+    )
+    pages = iter(stream)
+    assert next(pages).page.name == "0001"
+    stop.set()
+    assert [r.page.name for r in pages] == ["0002"]  # already in the window
+    assert handed == ["0001", "0002"]
+
+
+def test_a_fetch_that_raises_is_that_pages_failure_not_the_streams(
+    tmp_path, monkeypatch
+):
+    """fetch_page catches its own errors; should one escape anyway, it is
+    recorded against that page and the stream goes on to the next."""
+    _spy_fetch(monkeypatch, raise_for={"0002"})
+    stream = PageStream(
+        _pages(3),
+        tmp_path,
+        _client(lambda req: httpx.Response(200, content=JPEG)),
+        lookahead=1,
+    )
+    results = list(stream)
+    assert [r.page.name for r in results] == ["0001", "0002", "0003"]
+    assert results[1].path is None and "bug fetching 0002" in results[1].error
+    assert results[0].path is not None and results[2].path is not None
+
+
+def test_a_downloader_that_fails_mid_stream_ends_it_quietly(
+    tmp_path, monkeypatch, caplog
+):
+    """A failure submitting the next window ends the stream -- the consumer
+    finishes the pages it has and the verify gate reports the rest missing --
+    instead of raising into the page loop."""
+    stream = PageStream(
+        _pages(3),
+        tmp_path,
+        _client(lambda req: httpx.Response(200, content=JPEG)),
+        lookahead=1,
+    )
+
+    def broken():
+        raise RuntimeError("cannot schedule new futures after shutdown")
+
+    monkeypatch.setattr(stream, "_fill", broken)
+    with caplog.at_level("ERROR"):
+        assert [r.page.name for r in stream] == ["0001"]
+    assert "downloader failed" in caplog.text and "after shutdown" in caplog.text
+
+
 # -- the consumer ----------------------------------------------------------
 
 

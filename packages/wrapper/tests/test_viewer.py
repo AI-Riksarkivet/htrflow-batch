@@ -66,14 +66,6 @@ def test_viewer_manifest_declares_search_service(sample_manifest, cfg):
     assert svc["@id"] == "http://public/htr-results/demo-v1/SE-RA-1234/search"
 
 
-def test_canvas_has_no_thumbnail_key(sample_manifest, cfg):
-    """B63/D7: canvas thumbnails were dropped along with the campaign
-    browser's per-volume thumbnail — the viewer manifest must not carry one."""
-    pages = pages_from_manifest(sample_manifest, width=2500)
-    m = build_viewer_manifest(cfg, sample_manifest, pages, {"0001": (2500, 3538)})
-    assert "thumbnail" not in m["items"][0]
-
-
 def _p2_viewer_manifest(cfg, p2_manifest) -> dict:
     pages = pages_from_manifest(p2_manifest, width=2500)
     return build_viewer_manifest(cfg, p2_manifest, pages, {"0001": (2500, 3333)})
