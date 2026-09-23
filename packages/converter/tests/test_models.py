@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import shutil
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from htrflow_converter import models, parse
 from htrflow_converter.models import Campaign, Pipeline, Volume
+
+GOOD = Path(__file__).parent / "fixtures" / "good"
 
 
 def test_bare_string_volume_expands_with_source_template_from_context():
@@ -28,13 +33,6 @@ def test_campaign_window_rejected_with_window_in_message(bad_window):
     )
 
 
-def test_pipeline_missing_image_key_is_a_plain_field_required_error():
-    with pytest.raises(ValidationError) as exc_info:
-        Pipeline.model_validate({"id": "p", "steps": [{"step": "Segmentation"}]})
-    errors = exc_info.value.errors()
-    assert any(e["loc"] == ("image",) and e["type"] == "missing" for e in errors)
-
-
 def test_pipeline_invalid_image_says_what_to_write_instead():
     with pytest.raises(ValidationError) as exc_info:
         Pipeline.model_validate(
@@ -43,13 +41,6 @@ def test_pipeline_invalid_image_says_what_to_write_instead():
     assert any(
         "is not pinned to a digest" in str(e["msg"]) for e in exc_info.value.errors()
     )
-
-
-def test_pipeline_missing_steps_key_is_a_plain_field_required_error():
-    with pytest.raises(ValidationError) as exc_info:
-        Pipeline.model_validate({"id": "p", "image": "ghcr.io/x/y@sha256:" + "a" * 64})
-    errors = exc_info.value.errors()
-    assert any(e["loc"] == ("steps",) and e["type"] == "missing" for e in errors)
 
 
 def test_pipeline_steps_present_but_not_a_list_says_what_a_step_looks_like():
@@ -62,11 +53,25 @@ def test_pipeline_steps_present_but_not_a_list_says_what_a_step_looks_like():
     )
 
 
-def test_campaign_missing_pipeline_key_is_a_plain_field_required_error():
-    with pytest.raises(ValidationError) as exc_info:
-        Campaign.model_validate({"name": "c"})
-    errors = exc_info.value.errors()
-    assert any(e["loc"] == ("pipeline",) and e["type"] == "missing" for e in errors)
+@pytest.mark.parametrize(
+    ("path", "key", "text"),
+    [
+        ("pipelines/demo-v1.yaml", "image", "steps:\n  - step: Segmentation\n"),
+        ("pipelines/demo-v1.yaml", "steps", f"image: ghcr.io/x/y@sha256:{'a' * 64}\n"),
+        ("campaigns/kyrk.yaml", "pipeline", "volumes:\n  - R1\n"),
+    ],
+)
+def test_a_missing_required_key_is_one_sentence_naming_it(tmp_path, path, key, text):
+    """What the author reads, through the loader that says it: the file,
+    the key, and what to add -- not pydantic's "Field required"."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    (repo / path).write_text(text)
+    with pytest.raises(parse.ValidationError) as exc_info:
+        parse.load(repo / "campaigns", repo / "pipelines", repo / "converter.yaml")
+    assert exc_info.value.problems == [
+        f'{path}: "{key}" is missing — add "{key}:" to this file'
+    ]
 
 
 def test_campaign_empty_pipeline_points_at_the_pipelines_directory():
