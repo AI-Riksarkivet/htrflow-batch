@@ -301,7 +301,7 @@ fail=0
 # Retry-After parse and the abortable wait; in stream.py and main.py the
 # deferred outcome verify counts as missing; in iiif.py one rule choosing a
 # canvas's image for both the fetch and the viewer manifest.
-# 3636 -> 3998 (audit 0923): an upload the store could not take defers the
+# 3636 -> 4027 (audit 0923): an upload the store could not take defers the
 # page rather than failing it, and a half-stored pair is deleted (W-1). The
 # source digest drops the credentials of every common signing scheme, the
 # ordinary-named ones only beside their scheme's marker (W-2). A URL in
@@ -321,7 +321,8 @@ fail=0
 # Review round: DeleteObjects withdraws botocore's CRC32 for its MD5 (M-1).
 # A URL in text ends where a quote, bracket or comma closes it (M-3). A step
 # whose worker threads cannot be found is logged and counted, not skipped (M-5).
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3998
+# The page budget is a no-progress window over htrflow's queues and steps (I-2).
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 4027
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

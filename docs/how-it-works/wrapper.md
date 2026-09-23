@@ -139,9 +139,11 @@ Every stage name can appear in the termination message.
      fails the page, naming the step and its model, and the pipeline is
      rebuilt before the next page
      ([A dead htrflow worker thread](failure-handling.md#a-dead-htrflow-worker-thread)).
-     A page that runs past `PAGE_TIMEOUT_SECONDS` (a model call that never
-     returns) is failed and the pipeline rebuilt the same way. The released
-     pipeline's worker threads are stopped; those that cannot be, because
+     A page that makes no progress for `PAGE_TIMEOUT_SECONDS` (a model
+     call that never returns) is failed and the pipeline rebuilt the same
+     way. Progress is any step finishing or any batch a model finishes, so a
+     page of thousands of lines that takes many minutes is never cut off
+     while it moves. The released pipeline's worker threads are stopped; those that cannot be, because
      they are stuck inside htrflow, are counted, and at eight the run ends
      (exit 1) so the retry starts on a fresh pod.
    - **An upload the store could not take is deferred too.** A PUT that

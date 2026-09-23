@@ -278,7 +278,7 @@ class PipelineDead(RuntimeError):
 THREAD_POLL_SECONDS = 1.0
 
 #: Threads of work this process gave up on (W-8, audit 0923): a released
-#: step's workers, and the helper of a page that ran out of time.
+#: step's workers, and the helper of a page that stopped making progress.
 #: Stopped ones end at once; what ``leaked_threads`` still finds alive is
 #: stuck -- and a step whose threads could not be found at all stays here as
 #: an ``_Unstoppable`` (review M-5).
@@ -343,6 +343,29 @@ def leaked_threads(grace: float = 1.0) -> int:
         thread.join(max(0.0, deadline - time.monotonic()))
     _ABANDONED[:] = [t for t in _ABANDONED if t.is_alive()]
     return len(_ABANDONED)
+
+
+def _progress_mark(pipeline) -> tuple:
+    """What moves while htrflow works on a page (review I-2), read without
+    touching it: the steps Pipeline.run has recorded in htrflow's progress
+    registry, and each Inference step's queue -- its worker takes the next
+    batch off ``_out`` only once the model has finished the last one."""
+    try:
+        from htrflow import progress  # ty: ignore[unresolved-import]
+
+        recorded = sum(len(v) for v in list(progress._steps.values()))
+    except Exception:
+        recorded = -1
+    queued = []
+    for step in list(getattr(pipeline, "steps", ())):
+        queue = getattr(step, "_queue", None)
+        if queue is None:
+            continue
+        try:
+            queued.append((queue._in.qsize(), queue._out.qsize()))
+        except Exception:
+            pass
+    return recorded, tuple(queued)
 
 
 def _dead_step(pipeline):
@@ -427,10 +450,13 @@ def _run_guarded(pipeline, document, stem: str, seconds: float) -> None:
     page's document. Nothing waits on it.
 
     A run whose threads are all alive can hang too -- a model call that
-    never returns. Past ``seconds`` it is treated as dead (W-8, audit 0923):
-    the page fails and the pipeline is rebuilt, instead of the GPU being
-    held until activeDeadlineSeconds and every retry hanging the same way.
-    Its helper, still inside htrflow, is counted by ``leaked_threads``.
+    never returns. One that makes no progress (``_progress_mark``) for
+    ``seconds`` is treated as dead (W-8, audit 0923): the page fails and the
+    pipeline is rebuilt, instead of the GPU being held until
+    activeDeadlineSeconds and every retry hanging the same way. It is a
+    no-progress window, not a total (review I-2): a broadsheet page of
+    thousands of lines takes many minutes and moves all the while. Its
+    helper, still inside htrflow, is counted by ``leaked_threads``.
     """
 
     failure: list[BaseException] = []
@@ -459,13 +485,16 @@ def _run_guarded(pipeline, document, stem: str, seconds: float) -> None:
 
     helper = threading.Thread(target=run, name=f"htrflow-page-{stem}", daemon=True)
     helper.start()
-    started = time.monotonic()
+    mark, quiet_since = _progress_mark(pipeline), time.monotonic()
     while not done.wait(THREAD_POLL_SECONDS):
         check()
-        if time.monotonic() - started > seconds and not done.is_set():
+        now = _progress_mark(pipeline)
+        if now != mark:
+            mark, quiet_since = now, time.monotonic()
+        elif time.monotonic() - quiet_since > seconds and not done.is_set():
             _ABANDONED.append(helper)
             raise PipelineDead(
-                f"page {stem}: htrflow ran for more than {seconds:g} s; "
+                f"page {stem}: htrflow made no progress for {seconds:g} s; "
                 "the page is marked failed and the pipeline is rebuilt"
             )
     if failure:
@@ -486,7 +515,7 @@ def _outputs(out_dir: Path, stem: str) -> dict[str, Path]:
     return found
 
 
-#: Default wall-clock budget of one page (env ``PAGE_TIMEOUT_SECONDS``).
+#: Default no-progress window of one page (env ``PAGE_TIMEOUT_SECONDS``).
 PAGE_TIMEOUT_SECONDS = 600.0
 
 
