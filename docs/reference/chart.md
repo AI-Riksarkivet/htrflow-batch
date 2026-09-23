@@ -30,7 +30,8 @@ is [Configuration](configuration.md).
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `s3.existingSecret` | `htr-batch-s3` | Secret in the release namespace; no template in this chart creates it. Pods read the key **`credentials`** (AWS ini: `[default] aws_access_key_id / aws_secret_access_key`) as a file mounted at `/secrets/s3/credentials` via `AWS_SHARED_CREDENTIALS_FILE`, plus the non-secret `S3_BUCKET` and optional `S3_ENDPOINT` as env. **Nothing is injected with `envFrom`**; only tooling (compose, the devstack's bucket-setup Job, the RustFS server) reads `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` keys directly. Must match `converter.yaml`'s `s3_secret`. See [Security](../how-it-works/security.md) |
+| `s3.existingSecret` | `htr-batch-s3` | Secret in the release namespace; no template in this chart creates it. Pods read the key **`credentials`** (AWS ini: `[default] aws_access_key_id / aws_secret_access_key`) as a file mounted at `/secrets/s3/credentials` via `AWS_SHARED_CREDENTIALS_FILE`, plus the non-secret `S3_BUCKET` and optional `S3_ENDPOINT` as env. **Nothing is injected with `envFrom`**; only tooling (compose, the devstack's bucket-setup Job, the RustFS server) reads `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` keys directly. Must match `converter.yaml`'s `s3_secret`: with `security.policies.enabled` it is the one Secret a campaign pod may read. See [Security](../how-it-works/security.md) |
+| `hfToken.existingSecret` | `""` | The Hugging Face token Secret the warm-up Job reads (key `token`), for a private or gated model; no template creates it. Must match `converter.yaml`'s `hf_token_secret`: with `security.policies.enabled` it is the one Secret a warm-up pod may read, and a warm-up naming any other is refused. Empty = the warm-up reads no Secret |
 | `s3.bucket` | `htr-results` | Results bucket name. No template in this chart reads it — pods take the bucket from the Secret's `S3_BUCKET` — so keep it equal to that key, and to the devstack chart's own `s3.bucket` when the devstack creates the bucket |
 | `publicResultsBase` | `""` | **Required** — browser-reachable URL base for published results (viewer manifests and the read API's `resultsBase` embed it). Must match `converter.yaml`'s `public_results_base` |
 
@@ -45,7 +46,7 @@ models stay until the PVC is dropped.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `modelCache.create` | `true` | `false` = a PVC named `modelCache.name` already exists (hand-made, or adopt it — see the chart README) |
-| `modelCache.name` | `htr-test-data` | PVC name; must match `converter.yaml`'s `data_pvc` |
+| `modelCache.name` | `htr-test-data` | PVC name; must match `converter.yaml`'s `data_pvc`. With `security.policies.enabled` it is the one PVC a campaign or warm-up Job may mount |
 | `modelCache.size` | `30Gi` | |
 | `modelCache.storageClass` | `""` | `""` = the cluster's default StorageClass |
 | `modelCache.accessModes` | `[ReadWriteOnce]` | RWO pins every pod to the node holding the volume — fine on one GPU node, a scheduling constraint beyond it; use an RWX class (or a per-node cache) to scale out |
@@ -102,9 +103,12 @@ exactly that. Always rendered — there is no `enabled` flag.
 The app sends `X-Content-Type-Options: nosniff`, `Referrer-Policy:
 strict-origin-when-cross-origin` and `Content-Security-Policy:
 frame-ancestors 'none'` on every response (script/style/connect sources stay
-governed by the build's own CSP meta). `/config.js`, built into the image,
+governed by the build's own CSP meta). `/config.js` is not a file in the
+image: the read API builds it from its own environment on each request. It
 sets `window.API_BASE = "/api/v1"` — same-origin, because the same process
-serves both (see [Campaign Browser](frontend.md)).
+serves both — and `window.RESULTS_BASE` from `HTRFLOW_PUBLIC_RESULTS_BASE`,
+so the page and the API cannot disagree about the results base (see
+[Campaign Browser](frontend.md)).
 
 ## Apply identity (`apply.*`)
 
@@ -119,8 +123,9 @@ serves both (see [Campaign Browser](frontend.md)).
 | Key | Default | Description |
 |-----|---------|-------------|
 | `security.allowedImageRepos` | `[]` | Repository prefixes a Job or Pod in the namespace may pin, matched on a path boundary before `@sha256:`. Enforced by the `htrflow-batch-images-allowed-<ns>` ClusterPolicy when `security.policies.enabled`; empty = the policy is not rendered. Also the default for `verifyImages.imageReferences` while the policies are enabled. The rule is namespace-wide on purpose, not scoped to this chart's own labels — any supporting workload sharing the namespace (`charts/htrflow-devstack`'s RustFS and its `rustfs-init` hook Job included) needs its image's prefix on this list too, or a label-scoped rule would be one any Job author could opt out of |
-| `security.requireModelRevision` | `false` | Every `model_settings.model` in a converter-rendered pipeline ConfigMap carries a 40-hex `revision:` (Hugging Face Hub weights can be pickles, and an unpinned repo is mutable). Enforced by the `htrflow-batch-model-revision-<ns>` ClusterPolicy when `security.policies.enabled`, which also refuses any key beside `model_settings` in a step that loads a model — htrflow merges such a key over `model_settings`, so it could unpin the model |
-| `security.policies.enabled` | `false` | Render the three `templates/policies/` ClusterPolicies (digest pin, allow-list, model revision), all `Enforce`. **Kyverno must be installed** (see [Prerequisites](../getting-started/index.md)) — without it these are objects nothing reads, and nothing enforces the allow-list or the revision rule at all. Off by default for exactly that reason |
+| `security.jobImageRepos` | `[]` | The exact repositories (the part before `@sha256:`) a campaign or warm-up Job's images may come from, enforced by the `job-shape` policy. `allowedImageRepos` admits every repository the namespace runs, the web and converter images included; this narrows the converter's Jobs to the wrapper's. Empty = no narrowing |
+| `security.requireModelRevision` | `false` | Every `model_settings.model` in a converter-rendered pipeline ConfigMap carries a 40-hex `revision:` (Hugging Face Hub weights can be pickles, and an unpinned repo is mutable) — and for TrOCR, WordLevelTrOCR, Donut and DiT, which load a processor as a second download, a 40-hex `model_settings.processor_kwargs.revision` too. Enforced by the `htrflow-batch-model-revision-<ns>` ClusterPolicy when `security.policies.enabled`, which also refuses any key beside `model_settings` in a step that loads a model — htrflow merges such a key over `model_settings`, so it could unpin the model — and a pipeline carried in `binaryData` |
+| `security.policies.enabled` | `false` | Render the `templates/policies/` ClusterPolicies, all `Enforce`: the digest pin, the allow-list and the model revision rules, `rbac-scope` (what the web and apply ServiceAccounts may write, delete and pause) and `job-shape` (a campaign or warm-up Job is the shape the converter renders: its identity, Secrets, volumes, command and pipeline source — see [Security](../how-it-works/security.md)). The chart and the converter must come from the same release, since `job-shape` compares the Jobs' scripts with the converter's. **Kyverno must be installed** (see [Prerequisites](../getting-started/index.md)) — without it these are objects nothing reads, and nothing enforces the allow-list or the revision rule at all. Off by default for exactly that reason |
 | `security.policies.allowDisabled` | `false` | The explicit opt-out. With `policies.enabled` false the chart refuses to render unless this is true, so an install that enforces nothing says so instead of doing it silently. Set it on a cluster without Kyverno; `values-prod.yaml` turns the policies on instead |
 | `security.psaEnforce` | `baseline` | Pod Security level `make psa-labels` enforces on the namespace (warn/audit are always `restricted`). Every pod in both charts is restricted-clean — `restricted` is worth trying |
 | `security.allowTagImages` | `false` | Accept a `:tag` reference for `web.image` instead of an `@sha256:` pin. Tag images get `imagePullPolicy: Always` so a re-pushed `:dev` lands on the next rollout |
@@ -161,7 +166,7 @@ Hugging Face Hub egress at all — only the warm-up pod does.
 | `network.enabled` | `true` | Render the policies |
 | `network.defaultDeny` | `true` | Namespace-wide default deny (ingress + egress) plus a DNS allow for every pod. Anything hand-applied in the namespace (including `charts/htrflow-devstack`'s pods, which that chart gives their own policies) needs its own policy |
 | `network.iiifCidrs` | `["192.121.221.27/32"]` | What campaign pods may reach besides DNS and S3, on 443/80: your IIIF origin(s). The default is one IIIF origin's address — set this for your source. Volumes declared with `images:` hosted elsewhere need that host here too; `0.0.0.0/0` allows any origin and still carves out the cluster, node and API server ranges |
-| `network.s3Cidrs` | `[]` | External S3 endpoint(s) for campaign and warm-up pods; the devstack's RustFS pod is selected automatically |
+| `network.s3Cidrs` | `[]` | External S3 endpoint(s) for campaign pods and the web front (its progress reader); the warm-up has no S3 rule. The devstack's RustFS pod is selected automatically |
 | `network.clusterCidrs` | `["10.42.0.0/16", "10.43.0.0/16"]` | Pod and service ranges that pods with *public* egress (the warm-up pod) must not reach. The default is a common pair of default pod and service ranges — set it to your cluster's |
 | `network.nodeCidrs` | `[]` | Node addresses (same purpose); auto-detected with Helm `lookup` when empty — set for `helm template` or a kubeconfig without list-nodes permission |
 | `network.apiServer.cidr` / `cidrs` / `port` | `""` / `[]` / `6443` | kube-apiserver as reached after service DNAT: `cidr` one address, `cidrs` every further API server of an HA control plane (the egress rule names them all, since DNAT may pick any). When both are empty, every address and port of the `kubernetes` Endpoints is looked up. **The web front's NetworkPolicy fails to render without one under `helm template`** |
