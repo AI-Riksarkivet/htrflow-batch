@@ -282,6 +282,30 @@ def test_redact_url():
     )
 
 
+@pytest.mark.parametrize(
+    "text, shown",
+    [
+        (
+            "GET https://h/img(1).jpg?token=SECRET failed",
+            "GET https://h/img(1).jpg failed",
+        ),
+        ("see [https://h/a]?token=SECRET]", "see [https://h/a]"),
+        ("url='https://h/it's.jpg?token=SECRET'", "url='https://h/it's.jpg'"),
+        ("(https://h/a?token=SECRET).", "(https://h/a)."),
+        ("https://h/a?token=SECRET, then", "https://h/a, then"),
+        ("<https://h/a?token=SECRET>", "<https://h/a>"),
+    ],
+)
+def test_redact_urls_takes_the_query_off_a_url_with_punctuation_in_it(text, shown):
+    """Audit 0923 W-3: the URL pattern stopped at `)`, `]` and `'`, so the
+    query after `img(1).jpg` was never reached and its token went into the
+    world-readable run log, the termination message and manifest.json."""
+    from htrflow_batch.iiif import redact_urls
+
+    assert "SECRET" not in redact_urls(text)
+    assert redact_urls(text).startswith(shown)
+
+
 def test_source_digest_keeps_the_identifying_query():
     """W5: redact_url drops the whole query, so two pages a host selects with
     ``?id=`` were indistinguishable and an edited manifest never triggered a

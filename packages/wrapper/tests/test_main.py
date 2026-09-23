@@ -952,6 +952,22 @@ def test_run_log_is_shipped_to_the_status_tree(env, cfg, s3):
     ]
 
 
+def test_the_run_log_carries_no_per_request_url(env, cfg, s3):
+    """Audit 0923 W-3: httpx logs `HTTP Request: GET <full url>` at INFO for
+    every fetch -- one line a page, and the whole URL, query included, one
+    redaction miss away from the world-readable run log."""
+    assert main(env, process_page_factory=fake_factory) == EXIT_OK
+    body = (
+        s3.get_object(Bucket=cfg.s3_bucket, Key="status/logs/demo-v1/SE-RA-1234.txt")[
+            "Body"
+        ]
+        .read()
+        .decode()
+    )
+    assert "COMPLETE 3 pages" in body
+    assert "HTTP Request" not in body
+
+
 def test_run_log_shipping_can_be_disabled(env, cfg, s3):
     rc = main(dict(env, LOG_SHIP_SECONDS="0"), process_page_factory=fake_factory)
     assert rc == EXIT_OK
