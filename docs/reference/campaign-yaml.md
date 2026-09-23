@@ -449,11 +449,15 @@ and the converter's tests hold it to the chart's policies. It is a
 the campaigns repo with dulwich (pure-Python git, so the image carries no
 git binary and no shell), and the Job's container runs
 `htrflow-campaigns apply --prune /repo` on that checkout. Argo CD deletes
-the previous run's Job before each sync and a succeeded one after it. Three
+the previous run's Job before each sync and a succeeded one after it. Four
 things to set:
 
 - **`REPO_URL` and `REPO_BRANCH`**, the clone step's two env values: the
   campaigns repo's HTTPS URL and the branch its CI renders on.
+- **`HTRFLOW_APPLIED_BY`**, the apply container's env value:
+  `argocd-hook/<application>`, naming the Argo CD Application. It is the
+  `applied-by` on every campaign record this hook writes; the hook runs as a
+  numeric user with no name, so without it the record would say `unknown`.
 - **The Secret** `htrflow-campaigns-git`, key `token`: a read-only token
   for that repo, created once in the release namespace
   (`kubectl -n <namespace> create secret generic htrflow-campaigns-git --from-literal=token=<token>`).

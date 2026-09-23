@@ -119,3 +119,12 @@ def test_the_release_procedure_names_every_pin_the_hook_and_ci_need():
     assert "CONVERTER_REF" in doc
     assert "ci/github/.github/workflows/render.yml" in doc
     assert "ci/azure/azure-pipelines.yml" in doc
+
+
+def test_the_apply_says_who_applied_it():
+    """audit 0923 C-10: the apply container set neither HTRFLOW_APPLIED_BY
+    nor USER, and uid 1000 has no passwd entry in the image, so every
+    campaign the hook applied recorded `applied-by: unknown`."""
+    apply = job()["spec"]["template"]["spec"]["containers"][0]
+    env = {e["name"]: e.get("value") for e in apply["env"]}
+    assert env.get("HTRFLOW_APPLIED_BY", "").startswith("argocd-hook/"), apply["env"]
