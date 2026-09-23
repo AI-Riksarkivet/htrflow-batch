@@ -423,8 +423,9 @@ def test_the_hook_job_init_writes_is_admitted(tmp_path: Path, template: str):
     policy = render_policy(
         tmp_path,
         template,
-        "security.policies.enabled=true",
-        "security.allowedImageRepos={docker.io/riksarkivet/}",
+        "publicResultsBase=https://x/",
+        "network.enabled=false",
+        values="values-prod.yaml",
     )
     hook = yaml.safe_load(HOOK.read_text(encoding="utf-8"))
     hook["metadata"]["namespace"] = NAMESPACE
@@ -433,3 +434,36 @@ def test_the_hook_job_init_writes_is_admitted(tmp_path: Path, template: str):
         c["image"] = re.sub(r"(:[^/@]+|@sha256:[0-9a-f]+)$", f"@{PINNED}", c["image"])
     verdict, out = admission(tmp_path, policy, hook)
     assert verdict == "admitted", out
+
+
+# --- D15: the production allow-list names repositories, not an organisation -
+
+#: What publish.yml pushes, and nothing else.
+PUBLISHED = ("htrflow-batch", "htrflow-web", "htrflow-campaigns")
+
+
+def test_the_production_allow_list_admits_the_release_and_nothing_else(
+    tmp_path: Path,
+):
+    """values-prod.yaml allowed `docker.io/riksarkivet/`, a prefix every
+    repository that organisation ever creates matches -- one made next year
+    by another team included. The profile names the three the release
+    publishes; a sibling repository in the same organisation is refused."""
+    policy = render_policy(
+        tmp_path,
+        "images-allowed",
+        "publicResultsBase=https://x/",
+        "network.enabled=false",
+        values="values-prod.yaml",
+    )
+    for repo in PUBLISHED:
+        admitted = pod(None)
+        admitted["spec"]["containers"][0]["image"] = f"docker.io/riksarkivet/{repo}@{DIGEST}"
+        verdict, out = admission(tmp_path, policy, admitted)
+        assert verdict == "admitted", out
+    for sibling in ("docker.io/riksarkivet/other", "docker.io/riksarkivet/htrflow-batch-x"):
+        refused = pod(None)
+        refused["spec"]["containers"][0]["image"] = f"{sibling}@{DIGEST}"
+        verdict, out = admission(tmp_path, policy, refused)
+        assert verdict == "refused", out
+

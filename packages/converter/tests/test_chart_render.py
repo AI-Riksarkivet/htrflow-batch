@@ -919,7 +919,11 @@ def test_the_production_profile_turns_on_what_the_defaults_leave_off(
     values = yaml.safe_load((CHART / "values-prod.yaml").read_text(encoding="utf-8"))
     assert values["security"]["psaEnforce"] == "restricted"
     assert values["security"]["requireModelRevision"] is True
-    assert values["security"]["allowedImageRepos"] == ["docker.io/riksarkivet/"]
+    assert values["security"]["allowedImageRepos"] == [
+        "docker.io/riksarkivet/htrflow-batch",
+        "docker.io/riksarkivet/htrflow-web",
+        "docker.io/riksarkivet/htrflow-campaigns",
+    ]
     assert values["security"]["verifyImages"]["subject"] == SIGNING_SUBJECT
 
 
