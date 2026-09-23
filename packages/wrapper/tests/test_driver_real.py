@@ -246,3 +246,34 @@ def test_the_watchdog_sees_a_real_inference_step_move():
         time.sleep(0.01)
     driver.release_steps([step])
     assert len(marks) > 5
+
+
+def test_a_dead_real_pipeline_exports_nothing_late(tmp_path, page):
+    """Review I-3, against htrflow's own Pipeline.run and Export: once the
+    page is given up on and the stalled model returns, the helper must not
+    go on to the Exports -- no file for a page already failed, nothing in
+    htrflow's progress registry."""
+    import threading
+    import time
+
+    from htrflow import progress
+    from htrflow.pipeline.pipeline import Pipeline
+    from htrflow.pipeline.steps import Export, TextRecognition
+
+    from htrflow_batch import driver
+
+    hold = threading.Event()
+    out = tmp_path / "outputs"
+    step = TextRecognition(_SlowModel(hold=hold))
+    pipeline = Pipeline(
+        [step, Export(str(out / "alto"), "alto"), Export(str(out / "page"), "page")]
+    )
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(driver, "THREAD_POLL_SECONDS", 0.05)
+        with pytest.raises(driver.PipelineDead, match="no progress"):
+            process_page(pipeline, page, out, seconds=0.5)
+    driver.release_pipeline(pipeline)
+    hold.set()
+    time.sleep(1.0)  # the model returns; a live helper would export now
+    assert not list(out.rglob("*.xml"))
+    assert (progress._exports, progress._steps) == ({}, {})

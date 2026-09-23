@@ -140,18 +140,23 @@ MAX_LEAKED_THREADS = 8
 def _default_factory(cfg: Config):
     from . import driver  # htrflow imports stay function-local
 
-    out_dir = Path(cfg.workdir) / "outputs"
+    # One directory per pipeline built (review I-3): a dead pipeline's helper
+    # caught inside an Export finishes that write where its own pipeline
+    # exports, never where the live one does.
+    builds = iter(range(1, 1 << 30))
+    out_dir = Path(cfg.workdir) / "outputs" / str(next(builds))
     pipeline = driver.load_pipeline(cfg.pipeline_path, out_dir)
     rebuild_failures = 0
 
     def process(image_path: Path):
-        nonlocal pipeline, rebuild_failures
+        nonlocal pipeline, rebuild_failures, out_dir
         if pipeline is None:
             # B88: the previous page killed an htrflow worker thread, so that
             # pipeline is unusable. Rebuild here rather than in the handler
             # below, so the failed page keeps its own error -- the models come
             # back from the cache PVC, not the Hub.
             log.warning("rebuilding the htrflow pipeline after a dead worker thread")
+            out_dir = out_dir.with_name(str(next(builds)))
             try:
                 pipeline = driver.load_pipeline(cfg.pipeline_path, out_dir)
             except Exception as e:
