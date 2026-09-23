@@ -234,6 +234,21 @@ describe("/ campaign page", () => {
     ).toBeNull();
   });
 
+  // One row the page cannot read hides that row, not the list, and the
+  // banner says how many are hidden (B32).
+  test("rows it cannot read are counted in a banner over the ones it can", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const bad = (name: string) => ({ ...job, name, phase: "Bogus" });
+    vi.stubGlobal("fetch", routedFetch([job, bad("x"), bad("y")]));
+    const { container } = render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "2 campaigns could not be read and are not shown.",
+    );
+    expect(container.querySelectorAll("section.campaign")).toHaveLength(1);
+    vi.restoreAllMocks();
+  });
+
   test("a malformed 200 body says the versions differ, not 'unreachable'", async () => {
     vi.stubGlobal(
       "fetch",
