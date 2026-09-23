@@ -122,6 +122,14 @@ containerSecurity:
 # an htr-pipeline-* ConfigMap -- the object the model-revision rules check,
 # not an emptyDir or a remapped key beside it (S-6).
 #
+# Privilege: both securityContexts are the converter's exactly, and host
+# namespaces and host aliases are refused. `runtimeClassName`, the node
+# selector and key-bearing tolerations are converter.yaml's to choose and
+# are not held here. Pod Security Admission is the second line: `make
+# psa-labels` labels the namespace with `security.psaEnforce` (`restricted`
+# under values-prod.yaml), but Helm cannot label a namespace it did not
+# create, so it is enforced only where that target was run.
+#
 # `background: false`: the rules match on who is asking, which a background
 # scan does not know.
 apiVersion: kyverno.io/v1
