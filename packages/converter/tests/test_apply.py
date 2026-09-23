@@ -1804,3 +1804,34 @@ def test_a_refused_uid_write_costs_a_rerun_later_never_the_apply(
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     assert "could not record which Job campaign kyrk runs" in capsys.readouterr().err
     assert _live(cluster, "campaign-kyrk")["metadata"]["annotations"][JOB_UID] == ""
+
+
+# --- the namespace the caller meant, said out loud (S-7) ------------------
+
+
+def test_a_namespace_that_is_not_the_repos_is_refused_before_the_cluster(
+    tmp_path, cluster, capsys
+):
+    """The target namespace comes from the campaigns repo's converter.yaml,
+    while every policy the chart ships matches the release namespace alone.
+    From a kubeconfig with wider rights than the chart's Role, a repo saying
+    `namespace: other` put Jobs where no policy applies. The caller says
+    which namespace it means, and a repo that disagrees is refused."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    rc = cli.main(["apply", str(repo), "--out", str(out), "--namespace", "other"])
+    assert rc == 1
+    assert cluster.calls == [] and cluster.namespace == ""
+    err = capsys.readouterr().err
+    assert "namespace: htr-test" in err and "--namespace other" in err
+
+
+def test_the_namespace_the_repo_names_is_applied(tmp_path, cluster):
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out), "--namespace", NS]) == 0
+    assert cluster.namespace == NS
+
+
+def test_a_dry_run_checks_the_namespace_too(tmp_path, cluster):
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    argv = ["apply", str(repo), "--out", str(out), "--dry-run", "--namespace", "x"]
+    assert cli.main(argv) == 1
