@@ -816,3 +816,66 @@ def test_a_split_campaign_beside_a_single_one_sharing_its_stem_is_not_append_onl
     (repo / "campaigns" / f"{stem}-b.yaml").write_text(_split_campaign(4, "b"))
     assert main(["validate", str(repo)]) == 1
     assert f"campaign {stem}-b is append-only" in capsys.readouterr().out
+
+
+def _window_repo(tmp_path, campaign: str):
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    for f in (repo / "campaigns").glob("*.yaml"):
+        f.unlink()
+    (repo / "campaigns" / "big.yaml").write_text(
+        "pipeline: demo-v1\nvolumes: [R1, R2, R3, R4, R5, R6]\n" + campaign
+    )
+    assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    return repo
+
+
+@pytest.mark.parametrize(
+    "edit,before,after",
+    [
+        (("campaigns/big.yaml", "window: 3\n", "window: 4\n"), 3, 4),
+        (("converter.yaml", "window: 10\n", "window: 2\n"), 3, 2),
+    ],
+)
+def test_a_window_change_under_a_rendered_campaign_is_refused(
+    tmp_path, capsys, edit, before, after
+):
+    """audit 0923 C-11: Kueue (v0.19, the version the Makefile installs)
+    compares a running Job's pod count, min(parallelism, completions), with
+    its admitted Workload's; when they differ it suspends the Job -- every
+    running pod stopped -- deletes the Workload and queues the campaign
+    again (jobframework `EquivalentToWorkload` / `ensureOneWorkload`: "No
+    matching Workload"). A window edit on a live campaign did exactly that."""
+    repo = _window_repo(tmp_path, "window: 3\n")
+    rel, old, new = edit
+    path = repo / rel
+    path.write_text(path.read_text().replace(old, new))
+    capsys.readouterr()
+    assert main(["validate", str(repo)]) == 1
+    said = capsys.readouterr().out
+    assert said.startswith(
+        f"campaign big runs {before} pods at a time and would now run {after}"
+    ), said
+    assert "pause the campaign first" in said
+    assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 1
+
+
+def test_a_window_change_that_moves_no_pod_count_is_allowed(tmp_path, capsys):
+    """Six volumes at a window of 10 or 8 is six pods either way: the count
+    Kueue compares does not move, so neither does anything running."""
+    repo = _window_repo(tmp_path, "window: 10\n")
+    path = repo / "campaigns" / "big.yaml"
+    path.write_text(path.read_text().replace("window: 10\n", "window: 8\n"))
+    assert main(["validate", str(repo)]) == 0, capsys.readouterr().out
+
+
+def test_a_window_change_on_a_campaign_paused_before_and_after_is_allowed(
+    tmp_path, capsys
+):
+    """A paused campaign runs no pods, and its Workload holds no quota, which
+    Kueue updates in place to the new count: pause, change the window, then
+    resume is the way to change it without a restart."""
+    repo = _window_repo(tmp_path, "window: 3\nsuspend: true\n")
+    path = repo / "campaigns" / "big.yaml"
+    path.write_text(path.read_text().replace("window: 3\n", "window: 4\n"))
+    assert main(["validate", str(repo)]) == 0, capsys.readouterr().out
