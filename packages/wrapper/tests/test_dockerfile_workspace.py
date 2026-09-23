@@ -200,11 +200,7 @@ def test_the_transformers_line_is_one_build_arg_every_build_path_can_set() -> No
     makefile = (REPO / "Makefile").read_text()
     assert "--build-arg TRANSFORMERS_VERSION=$(TRANSFORMERS_VERSION)" in makefile
 
-    dagger = (REPO / ".dagger" / "build.go").read_text()
-    assert 'Name: "TRANSFORMERS_VERSION"' in dagger
-    publish_go = (REPO / ".dagger" / "publish.go").read_text()
-    assert "transformersVersion string" in publish_go  # the function's own arg
-    assert "resolvedTag, transformersVersion)" in publish_go  # reaches the build
+    # publish-docker and build-wrapper hand it on: .dagger/publishcheck
 
     publish = (REPO / ".github" / "workflows" / "publish.yml").read_text()
     assert "transformers_version:" in publish  # the dispatch input
