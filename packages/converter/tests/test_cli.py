@@ -5,6 +5,7 @@ import pytest
 import yaml
 
 from htrflow_converter.cli import main
+from htrflow_converter.parse import ValidationError, load
 
 FIXTURES = Path(__file__).parent / "fixtures"
 GOOD = FIXTURES / "good"
@@ -41,14 +42,18 @@ def test_validate_bad_repo_exits_1_and_prints_problems(capsys):
 
 
 def test_validate_bad_repo_prints_one_problem_per_line(capsys):
-    rc = main(["validate", str(FIXTURES / "bad" / "multi-file")])
+    repo = FIXTURES / "bad" / "multi-file"
+    with pytest.raises(ValidationError) as e:
+        load(repo / "campaigns", repo / "pipelines", repo / "converter.yaml")
+    problems = e.value.problems
+    assert len(problems) == 2
+    assert "has an id with characters that are not allowed" in problems[0]
+    assert "is listed twice" in problems[1]
+    rc = main(["validate", str(repo)])
     assert rc == 1
-    out = capsys.readouterr().out
-    lines = [line for line in out.splitlines() if line]
-    assert any(
-        "has an id with characters that are not allowed" in line for line in lines
-    )
-    assert any("is listed twice" in line for line in lines)
+    *lines, summary = capsys.readouterr().out.splitlines()
+    assert lines == problems, "each problem whole, on a line of its own"
+    assert summary == "2 problems in 2 files"
 
 
 def test_render_says_nothing_was_rendered_and_writes_nothing(tmp_path, capsys):
