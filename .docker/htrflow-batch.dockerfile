@@ -106,8 +106,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=htrflow-builder /app/.venv /app/.venv
-ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH="/app:"
+# No PYTHONPATH: htrflow is an installed wheel in the venv, and /app holds
+# nothing but the venv (an empty entry would also put the working directory
+# on sys.path).
+ENV PATH="/app/.venv/bin:$PATH"
 ARG HTRFLOW_REF
 ARG HTRFLOW_BASE_REVISION=${HTRFLOW_REF}
 LABEL org.opencontainers.image.source.htrflow="https://github.com/AI-Riksarkivet/htrflow/tree/${HTRFLOW_REF}" \
