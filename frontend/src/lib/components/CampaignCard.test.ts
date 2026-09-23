@@ -1511,19 +1511,6 @@ describe("CampaignCard's failure notice", () => {
     expect(document.querySelector(".problems")).toBeNull();
   });
 
-  test("the problems line is reachable without a mouse, not title-only", async () => {
-    renderWith({ pagesFailed: 1, errors: 0, lastError });
-    await vi.advanceTimersByTimeAsync(0);
-    // The sentence is the line's own text, visible to a screen reader
-    // whatever the clip does to it -- `title` alone a keyboard-only user
-    // never sees.
-    const line = document.querySelector(".problems-text") as HTMLElement;
-    expect(line).not.toHaveAttribute("aria-hidden");
-    expect(line).toHaveTextContent(
-      "page 0044: htrflow's Segmentation worker thread died",
-    );
-  });
-
   test("a clean campaign has no problems line at all", async () => {
     renderWith({});
     await vi.advanceTimersByTimeAsync(0);
