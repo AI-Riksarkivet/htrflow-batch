@@ -79,20 +79,73 @@ def test_the_example_campaigns_repo_agrees_with_the_chart_defaults():
     assert _disagreements(_load(EXAMPLE)) == []
 
 
+#: What `helm template` of the chart needs and no cluster is here to supply:
+#: placeholders, from the documentation address ranges.
+HELM_SETS = (
+    "publicResultsBase=https://results.example.org/htr",
+    "network.apiServer.cidr=192.0.2.10/32",
+    "network.iiifCidrs={203.0.113.27/32}",
+    "network.web.allowPublicIngress=true",
+    "security.policies.allowDisabled=true",
+    "apply.rbac.enabled=true",
+)
+
+
+def _helm_objects(*sets: str) -> list[dict]:
+    import shutil
+    import subprocess
+
+    if shutil.which("helm") is None:
+        pytest.skip("helm not on PATH")
+    cmd = ["helm", "template", "htr", str(CHART), "-n", "htr-batch"]
+    for setting in (*HELM_SETS, *sets):
+        cmd += ["--set", setting]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    return [d for d in yaml.safe_load_all(result.stdout) if d]
+
+
+def _rendered(kind: str, name: str, *sets: str) -> dict:
+    return next(
+        o
+        for o in _helm_objects(*sets)
+        if o["kind"] == kind and o["metadata"]["name"] == name
+    )
+
+
 def test_the_results_base_reaches_both_of_its_consumers():
     """One value under four names: `publicResultsBase` (chart) reaches the web
     front as `HTRFLOW_PUBLIC_RESULTS_BASE` and the wrapper as
-    `PUBLIC_RESULTS_BASE`, which the converter fills from
-    `converter.yaml`'s `public_results_base`. Renaming any one of the four
-    silently strands a consumer, so the chain is asserted end to end."""
-    web = (CHART / "templates" / "web.yaml").read_text(encoding="utf-8")
-    assert "name: HTRFLOW_PUBLIC_RESULTS_BASE" in web
-    assert ".Values.publicResultsBase" in web
-    job_env = _load(JOB_SKELETON)["spec"]["template"]["spec"]["containers"][0]["env"]
-    assert "PUBLIC_RESULTS_BASE" in [e["name"] for e in job_env]
-    render_src = (CONVERTER_SRC / "render.py").read_text(encoding="utf-8")
-    pattern = r'"PUBLIC_RESULTS_BASE"\s*:\s*cfg\.public_results_base'
-    assert re.search(pattern, render_src)
+    `PUBLIC_RESULTS_BASE`, which the converter fills from `converter.yaml`'s
+    `public_results_base`. Renaming any one of the four strands a consumer,
+    so both renders are read, not their source (test audit TA-infra-3)."""
+    from htrflow_converter import render as render_objects
+    from htrflow_converter.parse import load
+
+    base = "https://results.example.org/htr"
+    fixture = ROOT / "packages" / "converter" / "tests" / "fixtures" / "good"
+    campaigns, pipelines, cfg = load(
+        fixture / "campaigns", fixture / "pipelines", fixture / "converter.yaml"
+    )
+    cfg = cfg.model_copy(update={"public_results_base": base})
+    job = next(
+        o
+        for o in render_objects.campaign_objects(
+            campaigns[0], pipelines["demo-v1"], cfg
+        )
+        if o["kind"] == "Job"
+    )
+    env = {
+        e["name"]: e.get("value")
+        for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env["PUBLIC_RESULTS_BASE"] == base
+    web = _rendered("Deployment", "htrflow-web")
+    web_env = {
+        e["name"]: e.get("value")
+        for e in web["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert web_env["HTRFLOW_PUBLIC_RESULTS_BASE"] == base
 
 
 def test_security_names_only_keys_the_generator_emits():
@@ -120,37 +173,30 @@ def test_the_configuration_page_is_what_the_generator_prints():
     )
 
 
-def test_the_read_api_may_write_the_campaign_record():
-    """The read API writes one object: the per-campaign status ConfigMap
-    (B76). `create` goes with `patch` because a server-side apply of an
-    object that is not there yet is a create; nothing grants a delete."""
-    web = (CHART / "templates" / "web.yaml").read_text(encoding="utf-8")
-    rules = web.split("rules:", 1)[1].split("---", 1)[0]
-    verbs = dict(re.findall(r'resources: \["(\w+)"\]\n    verbs: \[([^\]]*)\]', rules))
-    assert verbs["configmaps"].replace('"', "").split(", ") == [
-        "get",
-        "list",
-        "create",
-        "patch",
-    ]
-    assert verbs["jobs"] == verbs["pods"] == '"get", "list"'
-    assert not any("watch" in granted for granted in verbs.values()), (
-        "the read API computes every response from a get or a list; nothing "
-        "in packages/web opens a watch (2026-09-14 audit)"
-    )
-    assert not any("delete" in granted for granted in verbs.values())
+def _grants(role: dict) -> set[tuple[str, str, str, tuple[str, ...]]]:
+    """Every (group, resource, verb, resourceNames) a rendered Role grants --
+    a rule naming several resources or verbs counted in full."""
+    return {
+        (g, r, v, tuple(rule.get("resourceNames", ())))
+        for rule in role["rules"]
+        for g in rule["apiGroups"]
+        for r in rule["resources"]
+        for v in rule["verbs"]
+    }
 
 
-def test_the_apply_identity_may_read_what_it_decides_on():
-    """`htrflow-campaigns apply` reads each campaign's live Job by name to
-    record how it ended, and reads the record back to leave a finished
-    campaign alone (B76). `list` does not authorize a read by name."""
-    rbac = (CHART / "templates" / "apply-rbac.yaml").read_text(encoding="utf-8")
-    verbs = dict(re.findall(r'resources: \["(\w+)"\]\n    verbs: \[([^\]]*)\]', rbac))
-    for resource in ("jobs", "configmaps"):
-        granted = verbs[resource].replace('"', "").split(", ")
-        assert granted[:1] == ["get"], resource
-        assert {"create", "patch"} <= set(granted), resource
+def test_the_read_api_role_is_exactly_what_it_calls():
+    """The read API computes every answer from a get or a list on Jobs, Pods
+    and ConfigMaps, and writes one object: the per-campaign status ConfigMap
+    (B76) -- `create` beside `patch`, since a server-side apply of an object
+    that is not there yet is a create. Nothing watches, deletes or reads a
+    Secret. Read off the rendered Role, so a rule listing several resources
+    is seen whole (test audit TA-infra-2)."""
+    role = _rendered("Role", "htrflow-web")
+    read = {("batch", "jobs"), ("", "pods"), ("", "configmaps")}
+    expected = {(g, r, v, ()) for g, r in read for v in ("get", "list")}
+    expected |= {("", "configmaps", v, ()) for v in ("create", "patch")}
+    assert _grants(role) == expected
 
 
 def _names(config: dict) -> dict[str, list[str]]:
@@ -385,9 +431,8 @@ def _requests_apply_makes(monkeypatch) -> list[tuple[str, str, str, str]]:
 
 
 def _apply_role_grants() -> list[dict]:
-    text = (CHART / "templates" / "apply-rbac.yaml").read_text(encoding="utf-8")
-    role = text.split("kind: Role\n", 1)[1].split("---", 1)[0]
-    return yaml.safe_load("rules:" + role.split("\nrules:", 1)[1])["rules"]
+    """The apply Role's rules as `helm template` renders them."""
+    return _rendered("Role", "htrflow-campaigns")["rules"]
 
 
 def test_the_apply_role_grants_exactly_the_requests_apply_makes(monkeypatch):
