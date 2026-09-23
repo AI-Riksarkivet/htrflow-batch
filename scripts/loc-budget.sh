@@ -680,7 +680,21 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 4064
 # flavour from ci/ over the template -- the argparse option, the parameter
 # threaded through `_init`, and the comment saying why the template carries
 # no CI of its own.
-check converter "$(count packages/converter/src -name '*.py')" 2932
+# 2932 -> 4215 for the 2026-09-23 audit round, split between two slices.
+# Apply side (+614): the refused campaign still pauses and resumes through its
+# live Job (C-2), the suspend hand-over to a second field manager so an
+# unpause never starts a Job Kueue has not admitted, the live pipeline-recipe
+# check (C-7), per-Job pause-sync errors (C-9), the job-uid stamp and its
+# repair (S-11), --namespace (S-7), the apply Lease renewed on every request
+# against the API server's clock (C-12), the live window and shared-volume
+# refusals (C-11, C-13) and Kueue v1beta2 (T-3). Validate/render side (+669):
+# unknown keys, string volume ids and duplicate keys refused (C-1, C-5, C-6),
+# typed tolerations (S-1), parts found by campaign label (C-4), the per-recipe
+# model cache (C-3, S-2), the browser URL rule (F-7), provenance through
+# dulwich (C-10), validate --rendered (S-9), and record.py, which lets an
+# already-rendered campaign keep its old rendering under the new rules. Most
+# of it is the sentence each refusal prints and why it exists.
+check converter "$(count packages/converter/src -name '*.py')" 4215
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where
@@ -939,7 +953,14 @@ check converter "$(count packages/converter/src -name '*.py')" 2932
 # capped on network misses only, running rows first, with pagesCoverage;
 # ProgressReader.cached, answered-vs-unanswered, oldest-first eviction.
 # Most of it is the paragraphs saying who owns which field and why.
-check web       "$(count packages/web/src -name '*.py')" 2096
+# 2096 -> 2583 for the 2026-09-23 audit round: the pod list trimmed and
+# paged (F-1), request timeouts (F-2), the reaped window (F-3), campaign
+# labels checked before a record is written (F-4), failedVolumes under its
+# own field manager tied to its run and never creating the record (F-5), the
+# connect-src and strict document policies decided from the file served
+# (F-6, F-9), the browser URL rule (F-7), the cache lock (F-8), identity
+# encoding for progress reads (S-10) and html.parser for the viewer's hashes.
+check web       "$(count packages/web/src -name '*.py')" 2583
 # 2500 -> 2700 in Task 20, which put back three things Task 7 dropped when
 # the status document went away: the pipeline chip's step tooltip and YAML
 # toggle, the per-volume "source" link (with the narrow-screen column rule
@@ -1258,7 +1279,12 @@ check web       "$(count packages/web/src -name '*.py')" 2096
 # (3080). The two partial endings mix the amber with green or red on the
 # chip's outline and the card's accent, with the comments that say why an
 # outline and why a hard split.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5012
+# 5012 -> 5158 for the 2026-09-23 audit round: settled cards read their
+# detail only once seen, the older-campaigns button clamped to the API's
+# maximum (F-3), the per-field sourceUrl parse (F-7), /alto held to the
+# results base (F-6); the test round's dead-code removal and the verify-count
+# fix net to zero.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5158
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
