@@ -63,7 +63,17 @@ def test_the_token_comes_from_the_secret_never_the_command_line():
 def test_the_apply_prunes_the_checkout_the_clone_wrote():
     spec = job()["spec"]["template"]["spec"]
     apply = spec["containers"][0]
-    assert apply["args"] == ["apply", "--prune", "/repo"]
+    assert apply["args"] == [
+        "apply",
+        "--prune",
+        "--namespace",
+        "$(POD_NAMESPACE)",
+        "/repo",
+    ]
+    env = {e["name"]: e for e in apply["env"]}
+    assert env["POD_NAMESPACE"]["valueFrom"] == {
+        "fieldRef": {"fieldPath": "metadata.namespace"}
+    }
     mounts = {m["name"]: m["mountPath"] for m in apply["volumeMounts"]}
     assert mounts["repo"] == "/repo"
 

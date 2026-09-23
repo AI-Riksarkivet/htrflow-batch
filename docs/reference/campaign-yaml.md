@@ -449,7 +449,8 @@ and the converter's tests hold it to the chart's policies. It is a
 the campaigns repo with dulwich (pure-Python git, so the image carries no
 git binary and no shell), a second one checks that the checkout is one CI
 rendered (below), and the Job's container runs
-`htrflow-campaigns apply --prune /repo` on that checkout. Argo CD deletes
+`htrflow-campaigns apply --prune --namespace <the hook's namespace> /repo`
+on that checkout. Argo CD deletes
 the previous run's Job before each sync and a succeeded one after it. Four
 things to set:
 
