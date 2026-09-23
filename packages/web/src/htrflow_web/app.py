@@ -73,21 +73,40 @@ UV_CSP = (
 )
 
 
-class _InlineScripts(HTMLParser):
-    """The body of every <script> that has one of its own, exactly as a
-    browser reads it -- one that loads a file has a `src` and is covered by
-    'self' instead. Parsed, not matched: a pattern looking for `</script>`
-    missed `</script >` and `</SCRIPT foo>`, which a browser closes a script
-    on, and hashed the wrong text (code scanning 117). The stdlib parser
-    reads a script's content as raw text up to its end tag, as the HTML
-    spec does."""
+#: What a document in the built site gets when it is neither the viewer nor
+#: a page with a policy of its own: nothing runs, nothing loads. The whole
+#: Universal Viewer build is copied in beside uv.html, and any other page it
+#: ships was served with only `frame-ancestors 'none'` (2026-09-23 audit).
+STRICT_CSP = "default-src 'none'; sandbox; frame-ancestors 'none'"
+
+#: Media types a browser renders as a document that can run script.
+_DOCUMENTS = ("text/html", "application/xhtml+xml", "image/svg+xml")
+
+
+class _Page(HTMLParser):
+    """What ``app.py`` needs to know of a built page, read as a browser
+    reads it: the body of every <script> that has one of its own -- one
+    that loads a file has a `src` and is covered by 'self' instead -- and
+    whether its head states a policy (<meta http-equiv>; one in the body is
+    ignored by browsers). Parsed, not matched: a pattern looking for
+    `</script>` missed `</script >` and `</SCRIPT foo>`, which a browser
+    closes a script on, and hashed the wrong text (code scanning 117). The
+    stdlib parser reads a script's content as raw text up to its end tag,
+    as the HTML spec does."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
         self.bodies: list[str] = []
+        self.policy = False
         self._open: list[str] | None = None
+        self._in_body = False
 
     def handle_starttag(self, tag, attrs) -> None:
+        if tag == "body":
+            self._in_body = True
+        if tag == "meta" and not self._in_body:
+            equiv = dict(attrs).get("http-equiv") or ""
+            self.policy |= equiv.lower() == "content-security-policy"
         if tag == "script" and all(name != "src" for name, _ in attrs):
             self._open = []
 
@@ -101,11 +120,11 @@ class _InlineScripts(HTMLParser):
             self._open = None
 
 
-def _inline_scripts(html: str) -> list[str]:
-    parser = _InlineScripts()
+def _page(html: str) -> _Page:
+    parser = _Page()
     parser.feed(html)
     parser.close()
-    return parser.bodies
+    return parser
 
 
 UV_PATH = "/uv.html"
@@ -121,7 +140,7 @@ def uv_csp(static: Path) -> str | None:
     except OSError:
         return None
     scripts = ""
-    for body in _inline_scripts(html):
+    for body in _page(html).bodies:
         digest = base64.b64encode(hashlib.sha256(body.encode()).digest()).decode()
         scripts += f" 'sha256-{digest}'"
     return UV_CSP.format(scripts=scripts)
@@ -198,6 +217,10 @@ class BuiltSite(StaticFiles):
     ``/uv.html/`` and ``//uv.html``, and a path match left all of those with
     ``frame-ancestors 'none'`` alone (2026-09-17 audit, 3059). The middleware
     in ``create_app`` keeps a CSP a response already has.
+
+    Every other document gets ``STRICT_CSP`` unless its own head states a
+    policy -- which the SPA's pages do (kit.csp), and a header stricter than
+    that would break them, since the browser enforces both.
     """
 
     def __init__(self, *args, viewer_csp: str | None = None, **kwargs):
@@ -205,14 +228,35 @@ class BuiltSite(StaticFiles):
         self.viewer_csp = viewer_csp
         d = self.directory  # None only for a packages-served StaticFiles: no viewer
         self.viewer = d and os.path.realpath(Path(d) / UV_PATH.lstrip("/"))
+        #: realpath -> whether that page states a policy of its own. The
+        #: files cannot change under a running container.
+        self._own_policy: dict[str, bool] = {}
 
     def file_response(self, full_path, stat_result, scope, status_code=200):
         response = super().file_response(full_path, stat_result, scope, status_code)
         # lookup_path hands over a realpath, so an alias or a symlink to the
-        # viewer compares equal here. A 304 is still the viewer's response.
-        if self.viewer_csp and os.path.realpath(full_path) == self.viewer:
+        # viewer compares equal here. A 304 is still the viewer's response,
+        # and carries the content type it would have had.
+        real = os.path.realpath(full_path)
+        if self.viewer_csp and real == self.viewer:
             response.headers["Content-Security-Policy"] = self.viewer_csp
+        elif self._document(response) and not self._states_policy(real):
+            response.headers["Content-Security-Policy"] = STRICT_CSP
         return response
+
+    @staticmethod
+    def _document(response) -> bool:
+        media = response.headers.get("content-type", "").split(";")[0]
+        return media.strip().lower() in _DOCUMENTS
+
+    def _states_policy(self, real: str) -> bool:
+        if real not in self._own_policy:
+            try:
+                text = Path(real).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                text = ""
+            self._own_policy[real] = _page(text).policy
+        return self._own_policy[real]
 
     async def get_response(self, path: str, scope):
         try:

@@ -17,7 +17,13 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from htrflow_web.app import SECURITY_HEADERS, NoCluster, create_app, uv_csp
+from htrflow_web.app import (
+    SECURITY_HEADERS,
+    STRICT_CSP,
+    NoCluster,
+    create_app,
+    uv_csp,
+)
 
 #: The shape the built Universal Viewer really has (verified against
 #: /app/static/uv.html in the web image): one inline <style>, one inline
@@ -33,6 +39,18 @@ UV_HTML = """<html><head>
       document.addEventListener("DOMContentLoaded", function() { UV.init("uv"); });
 </script>
 </body></html>"""
+
+
+#: What the SvelteKit build's pages carry (kit.csp, frontend/svelte.config.js):
+#: the page's own policy, as a <meta http-equiv> tag in its head.
+SPA_META = (
+    '<meta http-equiv="content-security-policy" '
+    "content=\"object-src 'none'; script-src 'self'; base-uri 'self'\">"
+)
+
+
+def _spa(body: str) -> str:
+    return f"<html><head>{SPA_META}</head><body>{body}</body></html>"
 
 
 def _sha256(body: str) -> str:
@@ -68,9 +86,9 @@ class EmptyReader:
 
 @pytest.fixture
 def static_dir(tmp_path: Path) -> Path:
-    (tmp_path / "index.html").write_text("<h1>campaign browser</h1>")
-    (tmp_path / "log.html").write_text("<h1>run log</h1>")
-    (tmp_path / "alto.html").write_text("<h1>alto viewer</h1>")
+    (tmp_path / "index.html").write_text(_spa("<h1>campaign browser</h1>"))
+    (tmp_path / "log.html").write_text(_spa("<h1>run log</h1>"))
+    (tmp_path / "alto.html").write_text(_spa("<h1>alto viewer</h1>"))
     (tmp_path / "uv.html").write_text(UV_HTML)
     (tmp_path / "config.js").write_text("STATIC FALLBACK\n")
     (tmp_path / "_app").mkdir()
@@ -295,6 +313,42 @@ def test_every_other_page_keeps_the_plain_header(client: TestClient):
     for path in ("/", "/log", "/api/v1/jobs"):
         headers = client.get(path).headers
         assert headers["Content-Security-Policy"] == "frame-ancestors 'none'"
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["examples/demo.html", "collection.htm", "other.xhtml", "icon.svg", "EXTRA.HTML"],
+)
+def test_a_page_with_no_policy_of_its_own_gets_the_strictest(static_dir, name):
+    """The whole Universal Viewer build is copied into the site, and only
+    uv.html has a policy: any other document it ships was served with
+    nothing but `frame-ancestors 'none'` (2026-09-23 audit). A page that
+    states no policy of its own runs nothing and loads nothing here."""
+    path = static_dir / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("<html><body><script>alert(1)</script></body></html>")
+    client = TestClient(create_app(EmptyReader(), static_dir=static_dir))
+    resp = client.get(f"/{name}")
+    assert resp.status_code == 200
+    csp = resp.headers["Content-Security-Policy"]
+    assert csp == STRICT_CSP
+    assert "default-src 'none'" in csp and "sandbox" in csp
+    assert "frame-ancestors 'none'" in csp
+
+
+def test_the_spas_own_pages_keep_their_meta_policy(client: TestClient):
+    """A header stricter than the page's own meta tag would be enforced on
+    top of it and break the page (the browser enforces both)."""
+    for path in ("/", "/log", "/alto", "/log.html"):
+        assert client.get(path).headers["Content-Security-Policy"] == (
+            "frame-ancestors 'none'"
+        )
+
+
+def test_scripts_and_styles_keep_the_plain_header(client: TestClient):
+    assert client.get("/_app/start.js").headers["Content-Security-Policy"] == (
+        "frame-ancestors 'none'"
+    )
 
 
 def test_a_viewer_nobody_built_gets_the_headers_anyway(tmp_path: Path):
