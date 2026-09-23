@@ -872,10 +872,10 @@ def test_releasing_a_pipeline_ends_its_worker_threads(abandoned, capfd):
 def test_a_worker_stuck_in_its_model_is_counted_as_leaked(abandoned):
     """What cannot be stopped is counted: a model call that never returns
     keeps its thread, and whatever that holds on the GPU, for good."""
-    stuck = threading.Event()
-    step = _HtrflowStep(model=lambda images: stuck.wait(30))
+    entered, stuck = threading.Event(), threading.Event()
+    step = _HtrflowStep(model=lambda images: (entered.set(), stuck.wait(30)))
     step._queue._in.put("page")
-    time.sleep(0.1)  # the step's thread is inside the model now
+    assert entered.wait(5)  # the step's thread is inside the model now
     try:
         abandoned.release_pipeline(SimpleNamespace(steps=[step]))
         assert abandoned.leaked_threads(grace=0.3) == 1
