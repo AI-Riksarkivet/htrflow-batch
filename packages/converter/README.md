@@ -54,9 +54,9 @@ pipeline object and then every campaign object (field manager
 `htrflow-campaigns`; a resuming campaign's `spec.suspend: true` is first
 handed to a second manager, `htrflow-campaigns-suspend`, so that Kueue and
 not the API server's default decides when the Job starts); with
-`--prune`, deletes every Job and ConfigMap labelled
-`htrflow.riksarkivet.se/managed-by=converter` that this render did not
-produce; and finally puts each campaign's `suspend:` on its Kueue Workload's
+`--prune`, deletes every Job and ConfigMap carrying the converter's
+`managed-by=converter` label (`render.CAMPAIGN_SELECTOR`) that this render
+did not produce; and finally puts each campaign's `suspend:` on its Kueue Workload's
 `spec.active`, waiting up to `--pause-wait` seconds for a brand-new paused
 campaign's Workload to appear. Every action is one printed line. A second
 apply while the Lease is held is refused and exits 1; the exit codes are in
