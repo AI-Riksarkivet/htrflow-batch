@@ -1615,3 +1615,59 @@ def test_an_unpause_that_did_not_take_is_a_change_still_to_make(
     cluster.workload_errors = {"wl-kyrk": 404}
     assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
     assert "Workload of Job/kyrk" in capsys.readouterr().err.splitlines()[-1]
+
+
+# --- the live pipeline ConfigMap is a record too (C-7) --------------------
+
+
+def _edit_steps(repo: Path) -> None:
+    path = repo / "pipelines" / "demo-v1.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["steps"][1]["settings"]["model"] = "SomethingElse"
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+
+
+def test_a_steps_edit_under_a_running_campaign_is_refused_by_the_live_record(
+    tmp_path, cluster, capsys
+):
+    """No committed `rendered/` -- a laptop apply of a checkout without one,
+    a change that deleted `rendered/pipelines/<id>.yaml` -- and the render
+    has nothing to hold a steps edit against. The pipeline ConfigMap is
+    mutable, so the edit was applied, and every index not yet started ran a
+    different recipe under the same results id. The live ConfigMap is the
+    record, held against whenever a live campaign Job still mounts it."""
+    repo = _repo(tmp_path)
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "one")]) == 0
+    before = _live(cluster, "htr-pipeline-demo-v1")["data"]["pipeline.yaml"]
+    _edit_steps(repo)
+    cluster.calls.clear()
+    capsys.readouterr()
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "two")]) == 1
+    err = capsys.readouterr().err
+    assert "pipeline demo-v1 is in the cluster with different steps" in err
+    assert "kyrk, loc" in err and "nothing was applied" in err
+    assert cluster.of("apply") == [] and cluster.of("dry-run") == []
+    assert _live(cluster, "htr-pipeline-demo-v1")["data"]["pipeline.yaml"] == before
+
+
+def test_a_steps_edit_once_every_campaign_on_it_has_ended_is_applied(tmp_path, cluster):
+    """The rule is the render's own: an id is held while a campaign still
+    runs it. A Job that has ended runs nothing more, and a warm-up is not a
+    campaign."""
+    repo = _repo(tmp_path)
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "one")]) == 0
+    for name in ("kyrk", "loc"):
+        _live(cluster, name)["status"] = {
+            "conditions": [{"type": "Complete", "status": "True"}]
+        }
+    _edit_steps(repo)
+    for name in ("kyrk", "loc"):  # the finished campaigns leave git
+        (repo / "campaigns" / f"{name}.yaml").unlink()
+    (repo / "campaigns" / "fresh.yaml").write_text(
+        "pipeline: demo-v1\nvolumes:\n  - R7777777\n"
+    )
+    assert cli.main(["apply", str(repo), "--out", str(tmp_path / "two")]) == 0
+    assert (
+        "SomethingElse"
+        in _live(cluster, "htr-pipeline-demo-v1")["data"]["pipeline.yaml"]
+    )

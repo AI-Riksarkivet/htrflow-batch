@@ -401,6 +401,18 @@ class Cluster:
             raise _unreachable(e) from e
         return json.loads(body.data)
 
+    def labelled(self, kind: str) -> list[dict]:
+        """Every converter-labelled ``kind`` in the namespace."""
+        return _raw(
+            "list",
+            kind,
+            "",
+            self.namespace,
+            self._method(kind, "list"),
+            self.namespace,
+            label_selector=CAMPAIGN_SELECTOR,
+        ).get("items", [])
+
     def prune(self, rendered: set[tuple[str, str]]) -> list[tuple[str, str]]:
         """Delete every labelled Job/ConfigMap not in ``rendered``; return
         ``(what, sentence)`` for each object (or kind) it could not.
@@ -414,21 +426,13 @@ class Cluster:
         problems: list[tuple[str, str]] = []
         for kind in _KINDS:
             try:
-                listed = _raw(
-                    "list",
-                    kind,
-                    "",
-                    self.namespace,
-                    self._method(kind, "list"),
-                    self.namespace,
-                    label_selector=CAMPAIGN_SELECTOR,
-                )
+                listed = self.labelled(kind)
             except Unreachable:
                 raise
             except ClusterError as e:
                 problems.append((kind, str(e)))
                 continue
-            for item in listed.get("items", []):
+            for item in listed:
                 name = item["metadata"]["name"]
                 if (kind, name) in rendered or self._kept_status(kind, name, rendered):
                     continue

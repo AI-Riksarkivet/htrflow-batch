@@ -580,15 +580,28 @@ _LIVE_MOVED = (
     "nothing was applied"
 )
 _KEPT_PAIR = "{name}: left as it was, since Job/{job} was refused"
+#: The pipeline half of the same backstop (C-7). A pipeline ConfigMap is
+#: mutable, and a live campaign Job mounts it by name: an edited recipe
+#: applied under one runs every index not yet started on different steps,
+#: under the same results id.
+_LIVE_RECIPE = (
+    "pipeline {id} is in the cluster with different steps and campaigns "
+    "{jobs} still run it: a pipeline id is a permanent name for a recipe, so "
+    "add a new pipeline file instead — nothing was applied"
+)
 
 
-def _moved_live(cluster, campaigns: list[dict]) -> str | None:
-    """One sentence when a rendered campaign disagrees with its live record.
+def _moved_live(cluster, pipelines: list[dict], campaigns: list[dict]) -> str | None:
+    """One sentence when a rendered campaign disagrees with its live record,
+    or a rendered recipe with the live one a running campaign mounts.
 
     A key the live object does not carry (a record written before the key
     existed) is not held against. A refused READ is not caught here: a
     check that cannot be made is not a check that passed.
     """
+    moved = _moved_recipe(cluster, pipelines)
+    if moved is not None:
+        return moved
     for obj in campaigns:
         if obj["kind"] != "ConfigMap":
             continue
@@ -599,6 +612,37 @@ def _moved_live(cluster, campaigns: list[dict]) -> str | None:
         moved = [k for k, v in before.items() if v is not None and v != after[k]]
         if moved:
             return _LIVE_MOVED.format(name=_campaign_of(obj), what=", ".join(moved))
+    return None
+
+
+def _moved_recipe(cluster, pipelines: list[dict]) -> str | None:
+    """The render's own rule -- an id is held while a campaign runs it --
+    held against the cluster: which campaign Jobs still mount each pipeline
+    ConfigMap is read off the live Jobs, and a Job that has ended runs
+    nothing more. The steps are compared parsed, as ``render.recipe`` reads
+    them, so a YAML spelling change is not an edit."""
+    rendered = [o for o in pipelines if o["kind"] == "ConfigMap"]
+    if not rendered:
+        return None
+    users: dict[str, list[str]] = {}
+    for job in cluster.labelled("Job"):
+        name = job["metadata"]["name"]
+        if name.startswith(render.WARMUP_PREFIX) or _ended(job):
+            continue
+        pod = ((job.get("spec") or {}).get("template") or {}).get("spec") or {}
+        for volume in pod.get("volumes") or []:
+            mounted = (volume.get("configMap") or {}).get("name")
+            if mounted:
+                users.setdefault(mounted, []).append(name)
+    for obj in rendered:
+        cm = obj["metadata"]["name"]
+        live = cluster.get("ConfigMap", cm) if cm in users else None
+        if live is not None and (
+            render.recipe([live])["steps"] != render.recipe([obj])["steps"]
+        ):
+            return _LIVE_RECIPE.format(
+                id=cm.removeprefix("htr-pipeline-"), jobs=", ".join(sorted(users[cm]))
+            )
     return None
 
 
@@ -626,11 +670,13 @@ _RETRIED = (
 )
 
 
-def _failed(job: dict) -> bool:
+def _failed(job: dict, types: tuple[str, ...] = ("Failed",)) -> bool:
     conditions = (job.get("status") or {}).get("conditions") or []
-    return any(
-        c.get("type") == "Failed" and c.get("status") == "True" for c in conditions
-    )
+    return any(c.get("type") in types and c.get("status") == "True" for c in conditions)
+
+
+def _ended(job: dict) -> bool:
+    return _failed(job, ("Complete", "Failed"))
 
 
 def _apply_object(cluster, obj: dict, warmup: bool) -> dict:
@@ -818,7 +864,7 @@ def _apply(
             # has what git says. Warm-up Jobs are not campaigns and get no
             # pause sync.
             jobs: list[tuple[dict, bool]] = []
-            moved = _moved_live(cluster, campaigns)
+            moved = _moved_live(cluster, pipelines, campaigns)
             if moved is not None:
                 print(moved, file=sys.stderr)
                 return 1
