@@ -19,8 +19,11 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
+import socket
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from kubernetes import client, config
@@ -85,6 +88,20 @@ RETRY_BACKOFF = 1
 DELETE_WAIT = 60
 
 
+#: One apply at a time per namespace (C-12). Two at once -- the Argo CD
+#: hook and a hand-run `make campaigns-apply` -- interleave, and a prune from
+#: the older checkout deletes the Job and ConfigMap the newer one has just
+#: created. A coordination.k8s.io Lease, the object Kubernetes' own
+#: controllers elect a leader with, held for the apply's whole run.
+LEASE = "htrflow-campaigns-apply"
+#: Seconds the Lease holds without a renewal: past it, the holder is taken
+#: for dead (a SIGKILLed pod) and the next apply may take over. Longer than
+#: the longest step between two renewals -- one request's retries at their
+#: read timeout -- and renewed well inside it.
+LEASE_SECONDS = 300
+LEASE_RENEW = 30
+
+
 class ClusterError(Exception):
     """A cluster problem this module already has a one-sentence answer for."""
 
@@ -94,6 +111,35 @@ class Unreachable(ClusterError):
     connection, a read timeout. Not one object's refusal -- the request may
     well have landed, and the next object would wait out the same timeouts
     -- so ``cli._apply`` stops on it instead of carrying on (3091)."""
+
+
+class LeaseLost(Unreachable):
+    """Another apply took the Lease over while this one ran (it went
+    unrenewed past ``LEASE_SECONDS``). Two applies are running now, so this
+    one stops the way it does on a lost server."""
+
+
+_HELD = (
+    "another htrflow-campaigns apply is running in {ns} ({holder}, since "
+    "{since}; its Lease/{lease} runs to {until} unless renewed) — nothing "
+    "was applied; re-run this one once it has finished"
+)
+
+
+def _micro(t: datetime) -> str:
+    """A Lease's MicroTime: RFC 3339 with microseconds, in UTC."""
+    return t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _lease_until(lease: dict) -> datetime:
+    """When a Lease stops holding: its last renewal plus its duration. One
+    nobody holds -- released, or never renewed -- has stopped already."""
+    spec = lease.get("spec") or {}
+    stamp = spec.get("renewTime") or spec.get("acquireTime")
+    if not spec.get("holderIdentity") or not stamp:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    renewed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    return renewed + timedelta(seconds=spec.get("leaseDurationSeconds") or 0)
 
 
 #: What to do about a Job the API server will not take, by what the Job is.
@@ -276,6 +322,91 @@ class Cluster:
         self.batch = client.BatchV1Api()
         self.core = client.CoreV1Api()
         self.custom = client.CustomObjectsApi()
+        self.coordination = client.CoordinationV1Api()
+
+    @contextlib.contextmanager
+    def lease(self):
+        """Hold ``LEASE`` for the ``with`` block, or refuse to start.
+
+        A Lease held by someone else and renewed within ``LEASE_SECONDS`` is
+        a refusal. One past that is a holder that died, and is taken over.
+        Every write carries the ``resourceVersion`` it read, so two applies
+        that race for the Lease get one 409 between them, never two
+        holders. Released on the way out, however the block ended; a
+        release that fails leaves a Lease that expires on its own.
+        """
+        now = datetime.now(timezone.utc)
+        live = self._lease("read")
+        if live is not None and _lease_until(live) > now:
+            raise ClusterError(self._held(live))
+        body = {
+            "apiVersion": "coordination.k8s.io/v1",
+            "kind": "Lease",
+            "metadata": {"name": LEASE, "namespace": self.namespace},
+            "spec": {
+                "holderIdentity": f"{socket.gethostname()}/{os.getpid()}",
+                "leaseDurationSeconds": LEASE_SECONDS,
+                "acquireTime": _micro(now),
+                "renewTime": _micro(now),
+            },
+        }
+        if live is not None:
+            body["metadata"]["resourceVersion"] = live["metadata"]["resourceVersion"]
+        held = self._lease("create" if live is None else "replace", body)
+        if held is None:  # another apply wrote it between the read and here
+            raise ClusterError(self._held(self._lease("read") or body))
+        self._leased = (held, time.monotonic())
+        try:
+            yield
+        finally:
+            held = self._leased[0]
+            held["spec"] = {"holderIdentity": None}
+            with contextlib.suppress(ClusterError):
+                self._lease("replace", held)
+
+    def renew(self) -> None:
+        """Renew the Lease this apply holds, when it is due: called between
+        steps, so a long apply is never taken for a dead one."""
+        held, renewed = self._leased
+        if time.monotonic() - renewed < LEASE_RENEW:
+            return
+        held["spec"]["renewTime"] = _micro(datetime.now(timezone.utc))
+        fresh = self._lease("replace", held)
+        if fresh is None:
+            raise LeaseLost(
+                f"Lease/{LEASE} was taken over while this apply ran, so another "
+                "apply is running now"
+            )
+        self._leased = (fresh, time.monotonic())
+
+    def _held(self, lease: dict) -> str:
+        spec = lease.get("spec") or {}
+        return _HELD.format(
+            ns=self.namespace,
+            holder=spec.get("holderIdentity"),
+            since=spec.get("acquireTime") or "an unknown time",
+            lease=LEASE,
+            until=_micro(_lease_until(lease))[:19] + "Z",
+        )
+
+    def _lease(self, verb: str, body: dict | None = None) -> dict | None:
+        """Read, create or replace ``LEASE``. ``None`` for the two answers
+        that are not errors here: no Lease yet (404 on a read), and a write
+        another apply got in first (409)."""
+        fn = getattr(self.coordination, f"{verb}_namespaced_lease")
+        args = (self.namespace, body) if verb == "create" else (LEASE, self.namespace)
+        if verb == "replace":
+            args += (body,)
+        with _errors(verb, "Lease", LEASE, self.namespace):
+            try:
+                answer = _retrying(
+                    fn, *args, _preload_content=False, _request_timeout=REQUEST_TIMEOUT
+                )
+            except ApiException as e:
+                if e.status == (404 if verb == "read" else 409):
+                    return None
+                raise
+        return json.loads(answer.data)
 
     def _method(self, kind: str, verb: str, name: str = "") -> Any:
         if kind not in _KINDS:

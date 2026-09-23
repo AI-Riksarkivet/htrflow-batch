@@ -625,3 +625,32 @@ def test_a_server_that_stays_gone_is_unreachable_not_refused(
     with pytest.raises(Unreachable):
         cluster.get("Job", "kyrk")
     assert slept == [1, 2, 4]
+
+
+def test_the_lease_is_a_coordination_lease_created_then_released(cluster, monkeypatch):
+    """One apply at a time: a GET that finds no Lease, a POST that creates
+    it holding this process, and a PUT on the way out that lets it go --
+    carrying the resourceVersion the POST answered, so a Lease taken over in
+    between is a 409, not a second holder."""
+    sent: list[tuple[str, str, dict | None]] = []
+
+    def call_api(self, resource_path, method, path_params=None, *args, **kwargs):
+        path = resource_path.format(**(path_params or {}))
+        sent.append((method, path, kwargs.get("body")))
+        if method == "GET":
+            raise ApiException(status=404, reason="Not Found")
+        body = json.loads(json.dumps(kwargs["body"]))
+        body["metadata"]["resourceVersion"] = "41"
+        return _Response(body)
+
+    monkeypatch.setattr(client.ApiClient, "call_api", call_api)
+    with cluster.lease():
+        pass
+    base = "/apis/coordination.k8s.io/v1/namespaces/htr-batch/leases"
+    (get, _, _), (post, post_path, created), (put, put_path, released) = sent
+    assert (get, post, post_path) == ("GET", "POST", base)
+    assert created["spec"]["holderIdentity"]
+    assert created["spec"]["leaseDurationSeconds"] == cluster_mod.LEASE_SECONDS
+    assert (put, put_path) == ("PUT", f"{base}/{cluster_mod.LEASE}")
+    assert released["spec"] == {"holderIdentity": None}
+    assert released["metadata"]["resourceVersion"] == "41"

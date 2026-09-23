@@ -16,6 +16,7 @@ is asserted in ``test_cluster.py`` against the real client.
 """
 
 import copy
+import itertools
 import json
 import shutil
 import subprocess
@@ -150,6 +151,41 @@ class _Kueue:
                 wl.setdefault("spec", {})["active"] = body["spec"]["active"]
 
 
+class _Leases:
+    """``CoordinationV1Api``, over one ``{name: lease}`` map, holding every
+    write to the ``resourceVersion`` it carries, as the API server does."""
+
+    def __init__(self, outer: "FakeCluster") -> None:
+        self.outer = outer
+
+    def read_namespaced_lease(self, name, ns, **kw):
+        if name not in self.outer.leases:
+            raise ApiException(status=404, reason="Not Found")
+        return _Body(self.outer.leases[name])
+
+    def _store(self, name: str, body: dict) -> _Body:
+        stored = copy.deepcopy(body)
+        stored["metadata"]["resourceVersion"] = str(next(self.outer.versions))
+        self.outer.leases[name] = stored
+        self.outer.lease_log.append(stored["spec"].get("holderIdentity"))
+        return _Body(stored)
+
+    def create_namespaced_lease(self, ns, body, **kw):
+        name = body["metadata"]["name"]
+        if name in self.outer.leases:
+            raise ApiException(status=409, reason="AlreadyExists")
+        return self._store(name, body)
+
+    def replace_namespaced_lease(self, name, ns, body, **kw):
+        live = self.outer.leases.get(name)
+        if live is None or (
+            body["metadata"].get("resourceVersion")
+            != live["metadata"]["resourceVersion"]
+        ):
+            raise ApiException(status=409, reason="Conflict")
+        return self._store(name, body)
+
+
 class FakeCluster(Cluster):
     """The real ``Cluster`` with dictionaries where the API server was.
 
@@ -176,6 +212,9 @@ class FakeCluster(Cluster):
         self.owners: dict[tuple[str, str], dict[tuple[str, str], set]] = {}
         self.workloads: dict[str, dict] = {}
         self.workload_errors: dict[str, int] = {}
+        self.leases: dict[str, dict] = {}
+        self.lease_log: list[str | None] = []
+        self.versions = itertools.count(1)
         self.calls: list[tuple] = []
 
     def made(self, namespace: str) -> "FakeCluster":
@@ -312,6 +351,10 @@ class FakeCluster(Cluster):
     @property
     def custom(self):
         return _Kueue(self)
+
+    @property
+    def coordination(self):
+        return _Leases(self)
 
     def of(self, verb: str) -> list[tuple]:
         return [c for c in self.calls if c[0] == verb]
@@ -1835,3 +1878,88 @@ def test_a_dry_run_checks_the_namespace_too(tmp_path, cluster):
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     argv = ["apply", str(repo), "--out", str(out), "--dry-run", "--namespace", "x"]
     assert cli.main(argv) == 1
+
+
+# --- one apply at a time (C-12) -------------------------------------------
+
+
+def _lease(holder: str, renewed: str, seconds: int = 300) -> dict:
+    return {
+        "apiVersion": "coordination.k8s.io/v1",
+        "kind": "Lease",
+        "metadata": {"name": "htrflow-campaigns-apply", "resourceVersion": "7"},
+        "spec": {
+            "holderIdentity": holder,
+            "leaseDurationSeconds": seconds,
+            "acquireTime": renewed,
+            "renewTime": renewed,
+        },
+    }
+
+
+def _ago(seconds: int) -> str:
+    from datetime import datetime, timedelta, timezone
+
+    t = datetime.now(timezone.utc) - timedelta(seconds=seconds)
+    return t.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def test_an_apply_already_running_is_waited_for_not_raced(tmp_path, cluster, capsys):
+    """The Argo CD hook and a hand-run apply at once: the older checkout's
+    prune deleted the Job and ConfigMap the newer one had just created. The
+    second apply sees the first one's Lease and sends nothing."""
+    cluster.leases["htrflow-campaigns-apply"] = _lease("hook-pod/1", _ago(10))
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == 1
+    assert cluster.of("apply") == [] and cluster.of("delete") == []
+    err = capsys.readouterr().err
+    assert "another htrflow-campaigns apply is running in htr-test" in err
+    assert "hook-pod/1" in err and "nothing was applied" in err
+
+
+def test_the_lease_is_held_for_the_run_and_released_after_it(tmp_path, cluster):
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    held, released = cluster.lease_log
+    assert held and released is None
+    assert cluster.leases["htrflow-campaigns-apply"]["spec"]["holderIdentity"] is None
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0, "free again"
+
+
+def test_a_lease_its_holder_stopped_renewing_is_taken_over(tmp_path, cluster):
+    """A holder SIGKILLed mid-apply never releases. Past its duration the
+    Lease is a dead holder's, and the next apply goes ahead."""
+    cluster.leases["htrflow-campaigns-apply"] = _lease("dead-pod/1", _ago(600))
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert cluster.of("apply")
+
+
+def test_the_lease_is_released_when_the_apply_fails(tmp_path, cluster):
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    _refuses(cluster, "kyrk", cluster_mod.ClusterError("apply Job/kyrk: 409"))
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
+    assert cluster.leases["htrflow-campaigns-apply"]["spec"]["holderIdentity"] is None
+
+
+def test_an_apply_whose_lease_was_taken_over_stops(
+    tmp_path, cluster, monkeypatch, capsys
+):
+    """Renewed between steps; a renewal that finds the Lease rewritten by
+    someone else is two applies running at once, and this one stops."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    monkeypatch.setattr(cluster_mod, "LEASE_RENEW", -1)  # renew at every step
+    real = FakeCluster._method
+
+    def method(kind, verb, name=""):
+        if verb == "patch" and name == "campaign-kyrk":
+            cluster.leases["htrflow-campaigns-apply"]["metadata"]["resourceVersion"] = (
+                "x"
+            )
+        return real(cluster, kind, verb, name)
+
+    cluster._method = method
+    assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == 1
+    assert ("apply", "Job", "loc") not in cluster.calls
+    assert cluster.of("delete") == []
+    assert "was taken over while this apply ran" in capsys.readouterr().err

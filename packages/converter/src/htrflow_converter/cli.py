@@ -663,6 +663,7 @@ def _moved_live(cluster, pipelines: list[dict], campaigns: list[dict]) -> str | 
     for obj in campaigns:
         if obj["kind"] != "ConfigMap":
             continue
+        cluster.renew()
         live = cluster.get("ConfigMap", obj["metadata"]["name"])
         if live is None:
             continue
@@ -937,6 +938,9 @@ def _apply(
 
         try:
             cluster = _cluster(cfg.namespace)
+            # One apply at a time, for the whole run: released when this
+            # function returns, however it returns (C-12).
+            stack.enter_context(cluster.lease())
             # (live object, declared pause) per campaign Job: the live one
             # has the uid Kueue labels the Workload with, the rendered one
             # has what git says. Warm-up Jobs are not campaigns and get no
@@ -969,6 +973,7 @@ def _apply(
             for obj in campaigns:
                 if obj["kind"] != "Job":
                     continue
+                cluster.renew()
                 name = obj["metadata"]["name"]
                 # This Job's own ConfigMap is missing from the render: not a
                 # permission or a cluster problem but a broken directory, and
@@ -1004,6 +1009,7 @@ def _apply(
                 if obj["kind"] != "Job" or campaign in done or campaign in blocked:
                     continue
                 try:
+                    cluster.renew()
                     cluster.apply(obj, dry_run=True)
                 except Unreachable:
                     raise
@@ -1036,6 +1042,7 @@ def _apply(
                     # campaign behind it in the order was never applied at
                     # all -- a repo-wide outage over one changed Job.
                     try:
+                        cluster.renew()
                         if campaign in blocked:
                             raise blocked[campaign]
                         if is_campaign and obj["kind"] == "Job":
@@ -1089,6 +1096,7 @@ def _apply(
             # not allow. It used to leave through the outer handler, with
             # every later pause unsynced and the prune never run.
             for live, suspended in jobs:
+                cluster.renew()
                 try:
                     failed |= cluster.sync_pause(live, suspended, pause_wait)
                 except Unreachable:
@@ -1101,6 +1109,7 @@ def _apply(
                         print(_UNSYNCED_PAUSE.format(name=job), file=sys.stderr)
                         failed = 1
             if prune:
+                cluster.renew()
                 # What makes deleting a campaign file cancel the campaign.
                 # Both directories: see Cluster.prune.
                 for what, problem in cluster.prune(

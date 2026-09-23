@@ -37,6 +37,16 @@ Argo CD runs the command as a hook instead of applying the directory
 an applier that makes the cluster match `rendered/` would create a finished
 campaign's reaped Job again and run every volume again.
 
+It is also one apply at a time. Two at once, such as the Argo CD hook and a
+hand-run `make campaigns-apply`, would interleave, and a prune from the
+older checkout would delete the Job and ConfigMap the newer one had just
+created. So an apply holds the `coordination.k8s.io` Lease
+`htrflow-campaigns-apply` in the namespace for its whole run. It renews the
+Lease between steps and releases it at the end. A second apply that finds
+the Lease held sends nothing, names the holder and exits `1`. A Lease left
+unrenewed for five minutes belongs to an apply that died, and the next one
+takes it over. An apply whose Lease was taken over stops where it is.
+
 Everything else follows from those two rules and ordinary Kubernetes
 semantics. Nothing here runs on a timer, and nothing here has to stay alive
 for a submitted campaign to keep running.
