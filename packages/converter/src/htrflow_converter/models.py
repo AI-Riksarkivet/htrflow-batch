@@ -677,7 +677,7 @@ class Pipeline(BaseModel):
         unnamable = [
             str(i)
             for i, step in enumerate(v, 1)
-            if isinstance(step, dict) and not isinstance(step["step"], str)
+            if isinstance(step, dict) and not isinstance(step.get("step"), str)
         ]
         if unnamable:
             raise ValueError(
