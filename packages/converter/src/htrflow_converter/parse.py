@@ -118,9 +118,10 @@ def _load_config(path: Path, problems: list[str]) -> ConverterConfig:
 #: object; a campaign author has neither in front of them, only a YAML file.
 #: Anything not listed keeps pydantic's ``msg``, which is at least English.
 #: The list is the audited one: feeding every field of every model a wrong
-#: value emits exactly these eleven types plus ``value_error`` (our own
+#: value emits exactly these types plus ``value_error`` (our own
 #: validators, which raise their sentence directly). ``float_parsing`` was
-#: dropped with that audit -- no model has a float field to reach it.
+#: dropped with that audit -- no model has a float field to reach it. The
+#: typed tolerations added ``model_type`` and ``literal_error`` (audit 0923 S-1).
 _TYPE_SENTENCES = {
     "missing": 'is missing — add "{key}:" to this file',
     "extra_forbidden": "is not a setting this file has — remove it, or fix"
