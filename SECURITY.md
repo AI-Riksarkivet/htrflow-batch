@@ -62,29 +62,11 @@ itself belong ([Releasing](https://ai-riksarkivet.github.io/htrflow-batch/develo
 ## Verifying a release
 
 Every image `publish.yml` pushes is signed keylessly with cosign and carries a SLSA
-build-provenance attestation; the per-architecture images of all three (wrapper, web and
-converter) also carry an SPDX SBOM attestation (the multi-architecture index does not — an SBOM of an index
-would describe only one architecture).
+build-provenance attestation, and every per-architecture image an SPDX SBOM attestation.
+The `cosign verify` and `gh attestation verify` commands, anchored to `publish.yml` on
+`main`, are in
+[Releasing → Signing, SBOM and provenance](https://ai-riksarkivet.github.io/htrflow-batch/development/releasing/#signing-sbom-and-provenance).
 
-```bash
-# Signature. Needs cosign 3 or later: older versions report "no signatures found".
-# The identity is anchored to the branch publishing runs from: an unanchored
-# `publish\.yml@` would also accept a signature made from any other ref.
-cosign verify docker.io/riksarkivet/htrflow-batch:<tag> \
-  --certificate-identity-regexp '^https://github\.com/AI-Riksarkivet/htrflow-batch/\.github/workflows/publish\.yml@refs/heads/main$' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
-
-# Build provenance
-gh attestation verify oci://docker.io/riksarkivet/htrflow-batch:<tag> \
-  -R AI-Riksarkivet/htrflow-batch
-
-# SBOM, on a per-architecture image
-gh attestation verify oci://docker.io/riksarkivet/htrflow-batch:<tag>-<arch> \
-  -R AI-Riksarkivet/htrflow-batch --predicate-type https://spdx.dev/Document/v2.3
-```
-
-The chart can enforce the signature at admission. `security.verifyImages` is off by
-default; with `enabled: true`, `issuer: https://token.actions.githubusercontent.com`, a
-`subject` naming this repository's `publish.yml` on `refs/heads/main` and the
-`imageReferences` to check, Kyverno refuses an image whose signature does not verify.
-`charts/htrflow-batch/values-prod.yaml` sets all of it.
+The chart can enforce the signature at admission: `security.verifyImages` is off by
+default, and `charts/htrflow-batch/values-prod.yaml` turns it on for this repository's
+`publish.yml` identity, so Kyverno refuses an image whose signature does not verify.
