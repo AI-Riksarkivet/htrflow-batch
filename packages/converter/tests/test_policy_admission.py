@@ -182,6 +182,8 @@ WEB_SA = f"system:serviceaccount:{NAMESPACE}:htrflow-web"
         ("htr-pipeline-demo-v1", "CREATE"),
         ("htr-pipeline-demo-v1", "UPDATE"),
         ("campaign-kyrk", "UPDATE"),
+        ("x-status", "CREATE"),
+        ("campaign-kyrk-status-x", "CREATE"),
     ],
 )
 def test_the_read_api_cannot_write_a_pipeline_or_a_campaign(
