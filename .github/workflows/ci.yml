@@ -38,6 +38,26 @@ jobs:
       - name: LOC budget
         run: scripts/loc-budget.sh
 
+  # The chart's signature rule (verify-images, as values-prod.yaml renders
+  # it) against the three digests this commit pins, through the Kyverno CLI
+  # and the real registry. Offline tests can pin the rule's shape but not
+  # whether it matches what the release actually signs; this can, and a
+  # change to either side fails here before it lands (audit 0923 D-1).
+  verify-published:
+    name: Verify published signatures
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-dagger
+
+      - name: The chart's signature rule admits the pinned digests
+        run: dagger call --progress plain verify-published
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+
   # Trivy (digest-pinned in .dagger/main.go) over the images this repo
   # builds, blocking on CRITICAL (audit T6/X16). Each scan builds its image
   # first and both builds are expensive — the wrapper carries the ~10 GB
