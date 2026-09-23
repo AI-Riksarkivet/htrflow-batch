@@ -6,6 +6,7 @@ the drift guard)."""
 import re
 from importlib import resources
 
+import pytest
 import yaml
 
 from htrflow_converter.cli import main
@@ -182,10 +183,13 @@ def test_every_github_action_is_pinned_to_a_commit():
     """audit 0923 S-4: tags move, and this workflow's Render job holds
     `contents: write` on the campaigns repo's main branch. A pin is the full
     commit SHA, with the tag it was taken from as a comment."""
-    text = _GITHUB.read_text()
+    action = _CI / "github" / ".github" / "actions" / "install-converter"
+    text = _GITHUB.read_text() + (action / "action.yml").read_text()
     uses = re.findall(r"uses: (\S+)(.*)", text)
     assert uses
     for action, comment in uses:
+        if action.startswith("./"):  # this repo's own, shipped beside it
+            continue
         assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", action), action
         assert re.fullmatch(r" # v\d+\.\d+\.\d+", comment), (action, comment)
 
@@ -219,3 +223,35 @@ def test_the_github_flavour_checks_the_kyverno_tarball_like_the_azure_one():
     )  # fmt: skip
     assert "sha256sum --check --strict" in step["run"]
     assert "| tar" not in step["run"]
+
+
+def _steps(ci) -> list[dict]:
+    """Every step of a CI flavour, the Azure steps template included."""
+    doc = yaml.safe_load(ci.read_text())
+    if "stages" in doc:
+        steps = [s for st in doc["stages"] for j in st["jobs"] for s in j["steps"]]
+        template = _CI / "azure" / ".azure-pipelines" / "install-converter.yml"
+        return steps + yaml.safe_load(template.read_text())["steps"]
+    action = _CI / "github" / ".github" / "actions" / "install-converter"
+    composite = yaml.safe_load((action / "action.yml").read_text())["runs"]["steps"]
+    return [s for job in doc["jobs"].values() for s in job["steps"]] + composite
+
+
+def _scripts(ci) -> list[str]:
+    return [s.get("run") or s.get("bash") or "" for s in _steps(ci)]
+
+
+@pytest.mark.parametrize("ci", [_GITHUB, _AZURE], ids=["github", "azure"])
+def test_the_converter_installs_with_the_versions_its_commit_locked(ci):
+    """audit 0923 review 5: `uv tool install git+…` resolved the converter's
+    dependencies afresh on every run, while its image uses the lock. The
+    install takes the lock of the commit it installs, as constraints."""
+    scripts = "\n".join(_scripts(ci))
+    assert "git+https://" not in scripts
+    installs = [s for s in _scripts(ci) if "uv tool install" in s]
+    assert len(installs) == 1, installs  # one step, shared by every job
+    (install,) = installs
+    assert "uv export --frozen --package htrflow-converter" in install
+    assert re.search(
+        r"uv tool install --constraints \S+ \S+/packages/converter", install
+    )
