@@ -105,14 +105,63 @@ describe("describeReason", () => {
   });
 
   test("a verify message whose page lists were truncated away", () => {
+    // The count is still there to read; only a message that has neither a
+    // count nor one whole page name says "some".
     expect(
       reasonOf({
         stage: "verify",
         error: "verify failed: 900 missing, 0 f...",
       }),
     ).toBe(
+      "900 pages are missing from the results; the volume is retried " +
+        "automatically and only those pages are redone.",
+    );
+    expect(
+      reasonOf({ stage: "verify", error: "verify failed: missing=['p0..." }),
+    ).toBe(
       "Some pages are missing from the results; the volume is retried " +
         "automatically and only those pages are redone.",
+    );
+  });
+
+  // What the wrapper writes, in its own format: `_verify` builds both
+  // messages (packages/wrapper/src/htrflow_batch/main.py:550 and :561) and
+  // `terminate` clips the field at 3500 characters (main.py:115), which a
+  // few hundred page names fill on their own. The counts come first so the
+  // clip only ever takes names; the sentence must read them, not count the
+  // names that survived.
+  const pageList = (n: number) =>
+    Array.from({ length: n }, (_, i) => `'p${String(i + 1).padStart(4, "0")}'`);
+  const clipped = (message: string) =>
+    message.length > 3500 ? `${message.slice(0, 3500)}...(truncated)` : message;
+  const detail = (n: number) =>
+    " errors: " +
+    pageList(Math.min(n, 10))
+      .map((p) => `${p.slice(1, -1)}: CUDA error: out of memory`)
+      .join("; ") +
+    (n > 10 ? ` (+${n - 10} more)` : "");
+
+  test("main.py:550, clipped: the missing count is the wrapper's, not the names left", () => {
+    const error = clipped(
+      `verify failed: 600 missing, 0 failed missing=[${pageList(600).join(", ")}] failed=[]`,
+    );
+    expect(error).toMatch(/\.\.\.\(truncated\)$/);
+    expect(reasonOf({ stage: "verify", permanent: false, error })).toBe(
+      "600 pages are missing from the results (p0001, p0002, p0003 and 597 " +
+        "more); the volume is retried automatically and only those pages " +
+        "are redone.",
+    );
+  });
+
+  test("main.py:561, clipped: every page failed, however many names were cut", () => {
+    const error = clipped(
+      `verify failed: all 400 processed pages failed${detail(400)} ` +
+        `failed=[${pageList(400).join(", ")}]`,
+    );
+    expect(error).toMatch(/\.\.\.\(truncated\)$/);
+    expect(reasonOf({ stage: "verify", permanent: false, error })).toBe(
+      "None of the 400 pages processed in this attempt produced a result; " +
+        "the volume is retried automatically — check the model and the GPU.",
     );
   });
 
