@@ -127,10 +127,9 @@
   {/if}
   {#if jobs !== null && olderHidden > 0}
     <p class="older">
-      <button type="button" onclick={() => (reapedShown += REAPED_PAGE)}>
-        Show {Math.min(olderHidden, REAPED_PAGE)} of {olderHidden} older campaigns
-      </button>
-      <span class="quiet">whose Jobs have been removed</span>
+      <button type="button" onclick={() => (reapedShown += REAPED_PAGE)}
+        >show {Math.min(olderHidden, REAPED_PAGE)} of {olderHidden} older campaigns</button
+      >whose Jobs have been removed
     </p>
   {/if}
 </main>
@@ -191,31 +190,20 @@
     color: var(--muted-foreground);
   }
 
+  /* The card's own "load more" look: the same kind of control. */
   .older {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0.5rem;
-    margin: 1rem 0;
+    color: var(--muted-foreground);
+    font-size: 0.9rem;
   }
 
   .older button {
     font: inherit;
-    color: var(--primary);
-    background: none;
+    color: var(--foreground);
+    background: var(--muted);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 0.25rem 0.75rem;
+    border-radius: 999px;
+    padding: 0.15rem 0.75rem;
+    margin-right: 0.5rem;
     cursor: pointer;
-  }
-
-  .older button:focus-visible {
-    outline: 2px solid var(--primary);
-    outline-offset: 2px;
-  }
-
-  .quiet {
-    color: var(--muted-foreground);
-    font-size: 0.9rem;
   }
 </style>
