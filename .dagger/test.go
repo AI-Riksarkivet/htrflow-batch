@@ -21,10 +21,13 @@ import (
 // init` cannot test what `git rev-parse` returns. jq and make come the same
 // way, for `test_make_cluster_targets.py`: it drives the Makefile's cluster
 // targets and the scripts they call, which read kubectl's JSON with jq.
+// nodejs comes the same way, for the web dockerfile's SITE step: the tests in
+// test_dockerfile_workspace.py run that heredoc under node, and without it
+// they skip -- which the skip audit below then fails by name.
 func (m *HtrflowBatch) withTestTools(container *dagger.Container) *dagger.Container {
 	return container.
 		WithExec([]string{"sh", "-c",
-			"apt-get update -qq && apt-get install -y --no-install-recommends git jq make " +
+			"apt-get update -qq && apt-get install -y --no-install-recommends git jq make nodejs " +
 				"&& rm -rf /var/lib/apt/lists/*"}).
 		WithFile("/usr/local/bin/kubeconform", dag.Container().From(kubeconformImage).File("/kubeconform")).
 		WithFile("/usr/local/bin/helm", dag.Container().From(helmImage).File("/usr/bin/helm")).
