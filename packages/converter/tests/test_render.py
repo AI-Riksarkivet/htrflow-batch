@@ -974,3 +974,54 @@ def test_the_wrapper_is_told_which_attempt_of_its_index_it_is(monkeypatch):
     job = render.campaign_objects(kyrk, demo, cfg)[1]
     assert job["spec"]["backoffLimitPerIndex"] == 5
     assert _wrapper_env(job)["BACKOFF_LIMIT_PER_INDEX"]["value"] == "5"
+
+
+#: Env the campaign Job sets for the libraries under the wrapper, not for the
+#: wrapper's own Config: botocore, huggingface_hub, ultralytics, the shell.
+LIBRARY_ENV = {
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "HF_HOME",
+    "HF_HUB_OFFLINE",
+    "HOME",
+    "TMPDIR",
+    "YOLO_CONFIG_DIR",
+}
+
+
+def test_every_wrapper_variable_the_job_sets_is_one_the_wrapper_reads(tmp_path):
+    """The rendered Job and the wrapper's Config are two packages naming the
+    same variables: one renamed on either side is a setting the wrapper
+    silently runs without -- its default -- and for the attempt pair that
+    default is "never the last attempt", so a deferred page is never failed.
+    Read through the wrapper's own Config, the rendered values mean what
+    render says they mean."""
+    config = pytest.importorskip("htrflow_batch.config")
+    kyrk, demo, cfg = _kyrk()
+    job = render.campaign_objects(kyrk, demo, cfg)[1]
+    env = _wrapper_env(job)
+    aliases = {f.alias for f in config.Config.model_fields.values()}
+    assert set(env) - LIBRARY_ENV <= aliases, set(env) - LIBRARY_ENV - aliases
+
+    limit = int(env["BACKOFF_LIMIT_PER_INDEX"]["value"])
+    (tmp_path / "pipeline.yaml").write_text("steps: []\n")
+    plain = {k: e["value"] for k, e in env.items() if "value" in e}
+    secret = {  # the chart's S3 Secret, by the keys the Job reads from it
+        "S3_BUCKET": "htr-results",
+        "S3_ENDPOINT": "https://s3.example.org",
+    }
+    from_secret = {
+        k: secret[k] for k, e in env.items() if "secretKeyRef" in e.get("valueFrom", {})
+    }
+    shell = {  # what the Job's own script exports from volumes.txt
+        "VOLUME_REF": "vol0",
+        "IIIF_MANIFEST_URL": "https://iiif.example.org/vol0/manifest",
+        "PIPELINE_PATH": str(tmp_path / "pipeline.yaml"),
+        "WORKDIR_PATH": str(tmp_path / "work"),
+    }
+
+    def attempt(failures: str) -> bool:
+        both = {**plain, **from_secret, **shell, "INDEX_FAILURE_COUNT": failures}
+        return config.Config.from_env(both).last_attempt
+
+    assert (attempt(str(limit - 1)), attempt(str(limit))) == (False, True)
+    assert attempt("") is False  # the annotation not there yet: not the last
