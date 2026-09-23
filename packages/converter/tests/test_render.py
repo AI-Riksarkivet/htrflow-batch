@@ -8,7 +8,7 @@ import yaml
 from pydantic import ValidationError
 
 from htrflow_converter import render
-from htrflow_converter.models import Campaign, ConverterConfig, Volume
+from htrflow_converter.models import Campaign, ConverterConfig, Toleration, Volume
 from htrflow_converter.parse import load
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -238,7 +238,7 @@ def test_the_warmup_job_schedules_where_the_campaign_job_does():
             "runtime_class": "nvidia",
             "node_selector": {"gpu": "true"},
             "tolerations": [
-                {"key": "gpu", "operator": "Exists", "effect": "NoSchedule"}
+                Toleration(key="gpu", operator="Exists", effect="NoSchedule")
             ],
         }
     )
@@ -372,7 +372,7 @@ def test_node_selector_and_tolerations_appear_in_the_pod_spec():
         update={
             "node_selector": {"gpu": "true"},
             "tolerations": [
-                {"key": "gpu", "operator": "Exists", "effect": "NoSchedule"}
+                Toleration(key="gpu", operator="Exists", effect="NoSchedule")
             ],
         }
     )
@@ -876,3 +876,108 @@ def test_the_campaign_job_never_gets_the_hub_token():
     rendered = yaml.safe_dump_all(render.campaign_objects(kyrk, demo, cfg))
     assert "HF_TOKEN" not in rendered
     assert "htr-batch-hf" not in rendered
+
+
+def _cache_mounts(pod_spec: dict) -> list[dict]:
+    """Every mount of the model-cache volume, init containers included."""
+    cache = next(v["name"] for v in pod_spec["volumes"] if "persistentVolumeClaim" in v)
+    return [
+        m
+        for c in pod_spec.get("initContainers", []) + pod_spec["containers"]
+        for m in c["volumeMounts"]
+        if m["name"] == cache
+    ]
+
+
+def _warmup_pod(p, cfg) -> dict:
+    return render.pipeline_objects(p, cfg)[1]["spec"]["template"]
+
+
+def test_a_recipe_edit_replaces_the_warmup_and_moves_the_cache_it_fills():
+    """audit 0923 C-3: the warm-up and its marker were keyed by pipeline id.
+    A steps-only edit rendered a byte-identical warm-up Job, so the apply was
+    a no-op, the new model was never downloaded, and `<id>.done` was still
+    there: new campaign pods passed the gate and failed every index, offline,
+    without the model. An image edit raced the same way. Any recipe change
+    now changes the warm-up's pod template (the apply replaces it) and the
+    directory both it and the campaign pods use."""
+    kyrk, demo, cfg = _kyrk()
+    steps = [*demo.steps[:1], {"step": "TextRecognition", "settings": {"model": "x"}}]
+    for edited in (
+        demo.model_copy(update={"steps": steps}),
+        demo.model_copy(update={"image": demo.image[:-1] + "b"}),
+    ):
+        assert _warmup_pod(edited, cfg) != _warmup_pod(demo, cfg)
+        before = render.campaign_objects(kyrk, demo, cfg)[1]["spec"]["template"]
+        after = render.campaign_objects(kyrk, edited, cfg)[1]["spec"]["template"]
+        paths = {m["subPath"] for m in _cache_mounts(after["spec"])}
+        assert paths.isdisjoint(m["subPath"] for m in _cache_mounts(before["spec"]))
+        assert paths == {
+            m["subPath"] for m in _cache_mounts(_warmup_pod(edited, cfg)["spec"])
+        }
+
+
+def test_each_pipeline_warms_and_reads_a_cache_directory_of_its_own():
+    """audit 0923 S-2: every warm-up mounted the whole cache PVC read-write,
+    so one pipeline's warm-up -- which runs its author's pinned YOLO `.pt`,
+    a pickle -- could overwrite another pipeline's snapshots and markers,
+    which that pipeline's campaigns then load offline, trusting the cache.
+    A warm-up writes only its own recipe's directory; the campaign pods read
+    that directory alone, read-only."""
+    kyrk, demo, cfg = _kyrk()
+    other = demo.model_copy(update={"id": "other-v1"})
+    same_recipe = demo.model_copy(update={"id": "copy-v1"})
+    dirs = set()
+    for p in (demo, other, same_recipe):
+        warm = _cache_mounts(_warmup_pod(p, cfg)["spec"])
+        assert [m.get("readOnly", False) for m in warm] == [False]
+        (path,) = {m["subPath"] for m in warm}
+        assert path.startswith(f"{p.id}-")
+        pod = render.campaign_objects(kyrk, p, cfg)[1]["spec"]["template"]["spec"]
+        reads = _cache_mounts(pod)
+        assert len(reads) == 2  # the warmup-wait gate and the wrapper
+        assert all(m["readOnly"] is True and m["subPath"] == path for m in reads)
+        dirs.add(path)
+    # one recipe under two ids is two authors: no directory is shared
+    assert len(dirs) == 3
+
+
+def test_the_warmup_pod_template_names_its_recipe():
+    _, demo, cfg = _kyrk()
+    annotations = _warmup_pod(demo, cfg)["metadata"]["annotations"]
+    assert annotations["htrflow.riksarkivet.se/recipe-sha256"] == demo.recipe_sha256
+
+
+def _wrapper_env(job: dict) -> dict:
+    return {
+        e["name"]: e for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+
+
+def test_the_wrapper_is_told_which_attempt_of_its_index_it_is(monkeypatch):
+    """audit 0923 W-4 (the wrapper's request): the wrapper fails a page it
+    still defers on its index's LAST attempt, so it needs the attempt it is
+    on and how many there are. The Job controller annotates every pod of an
+    Indexed Job with `backoffLimitPerIndex` set with
+    `batch.kubernetes.io/job-index-failure-count` (kubernetes
+    pkg/controller/job: `addIndexFailureCountAnnotation`), which the
+    downward API reads; the limit is rendered from the very field the Job
+    carries, so the two cannot drift."""
+    kyrk, demo, cfg = _kyrk()
+    job = render.campaign_objects(kyrk, demo, cfg)[1]
+    env = _wrapper_env(job)
+    assert env["INDEX_FAILURE_COUNT"]["valueFrom"] == {
+        "fieldRef": {
+            "fieldPath": "metadata.annotations"
+            "['batch.kubernetes.io/job-index-failure-count']"
+        }
+    }
+    assert env["BACKOFF_LIMIT_PER_INDEX"]["value"] == str(
+        job["spec"]["backoffLimitPerIndex"]
+    )
+
+    skeleton = render._base("campaign-job.yaml")
+    monkeypatch.setitem(skeleton["spec"], "backoffLimitPerIndex", 5)
+    job = render.campaign_objects(kyrk, demo, cfg)[1]
+    assert job["spec"]["backoffLimitPerIndex"] == 5
+    assert _wrapper_env(job)["BACKOFF_LIMIT_PER_INDEX"]["value"] == "5"

@@ -161,7 +161,7 @@ GPU nondeterminism also rules out bit-identical reruns.
 
 Every pipeline file also renders a **warm-up Job** (`htr-warmup-<id>`).
 Re-applying an unchanged Job changes nothing, so a completed warm-up runs
-once per pipeline id. It runs on CPU, outside Kueue. Batch pods wait in
+once per recipe. It runs on CPU, outside Kueue. Batch pods wait in
 an init container for its completion marker on the cache PVC before they run
 ([The model cache](wrapper.md#the-model-cache),
 [Failure Handling](failure-handling.md#warm-ups-fail-the-same-way)).
@@ -320,8 +320,10 @@ The provenance annotations on the record, all under the converter's label
 domain: `image-digest` is rendered, since it is a pure function of the repo
 and `rendered/` has to stay byte-identical between two renders of it;
 `campaigns-commit`, `applied-by` and `applied-at` are stamped by `apply`.
-`applied-by` is `HTRFLOW_APPLIED_BY` when it is set — CI sets it from
-whoever triggered the run — and otherwise the OS user of the apply,
+`campaigns-commit` is the checkout's `HEAD`, read with git, or with dulwich
+where there is no git binary (the Argo CD hook's image has none).
+`applied-by` is `HTRFLOW_APPLIED_BY` when it is set — the Argo CD hook sets
+it to `argocd-hook/<application>` — and otherwise the OS user of the apply,
 lower-cased. It says who ran the command, which is all an apply can prove.
 `applied-at` is the LAST apply of the campaign, so while a campaign is still
 running it moves every time; it is not the campaign's start time, which is
@@ -577,6 +579,7 @@ spec:
         - name: data
           mountPath: /data
           readOnly: true
+          subPath: demo-v1-<recipe sha256>
         - name: work
           mountPath: /work
         - name: s3
@@ -636,7 +639,8 @@ What each field is for, and where its value comes from:
   `queue:`. Kueue's webhook suspends a Job with this label at creation, and
   Kueue admits it when quota frees.
 - **The `warmup-wait` init container.** Waits for
-  `/data/warmup/demo-v1.done` (`<pipeline id>.done`), polling every 10 s for
+  `/data/warmup/demo-v1.done` (`<pipeline id>.done`, inside this recipe's
+  directory of the cache, see the `data` mount below), polling every 10 s for
   at most `min(warmup_wait_seconds, activeDeadlineSeconds - 10)`. Here that is
   `min(900, 21590)` = 900 s. The clamp makes the gate always expire before
   the kubelet would kill the pod. Past that bound, the gate prints the marker
@@ -647,6 +651,11 @@ What each field is for, and where its value comes from:
     the S3 keys.
   - `IMAGE_DIGEST` is the pipeline's own `image:` pin, stamped into every
     ALTO's provenance block.
+  - `INDEX_FAILURE_COUNT` (the Job controller's
+    `batch.kubernetes.io/job-index-failure-count` annotation on the pod,
+    through the downward API) and `BACKOFF_LIMIT_PER_INDEX` (copied from
+    `spec.backoffLimitPerIndex`) tell the wrapper which attempt of its index
+    it is on, so it can fail a page it still defers on the last one.
   - `HF_HUB_OFFLINE=1` and `HF_HOME=/data/hf` let the wrapper find the
     pre-warmed cache without ever contacting Hugging Face
     ([The model cache](wrapper.md#the-model-cache)).
@@ -663,9 +672,12 @@ What each field is for, and where its value comes from:
   downloads its lookahead window of pages here, and apart from the tmpfs this
   read-only-rootfs container can write nowhere
   ([The Wrapper → Memory bounds](wrapper.md#memory-bounds)).
-- **The `data` mount, `readOnly: true`.** The model cache PVC
-  (`converter.yaml`'s `data_pvc`), mounted read-only on every batch pod. The
-  warm-up Job is the only writer.
+- **The `data` mount, `readOnly: true`, and its `subPath`.** The model
+  cache PVC (`converter.yaml`'s `data_pvc`), mounted read-only on every batch
+  pod, and only this pipeline's directory on it: `<pipeline id>-<recipe
+  sha256>`, a digest of the steps and the image together. The init container
+  mounts the same directory, so the marker it waits for is this recipe's.
+  The warm-up Job of this pipeline is that directory's only writer.
 
 ### The pipeline ConfigMap
 
@@ -727,6 +739,9 @@ spec:
         values:
         - 13
   template:
+    metadata:
+      annotations:
+        <label-domain>/recipe-sha256: <recipe sha256>
     spec:
       restartPolicy: Never
       activeDeadlineSeconds: 3600
@@ -748,6 +763,7 @@ spec:
         volumeMounts:
         - name: data
           mountPath: /data
+          subPath: demo-v1-<recipe sha256>
         resources:
           requests: {cpu: "2", memory: 4Gi}
       volumes:
@@ -766,7 +782,18 @@ it differs from the campaign Job:
   (`CUDA_VISIBLE_DEVICES: ""`, no GPU request).
 - **Not an Indexed Job.** It is a plain Job with a single completion.
 - **Its `data` mount has no `readOnly: true`.** It is the one pod allowed to
-  write into the model cache.
+  write into this recipe's directory of the model cache, and it sees no other
+  directory. A warm-up runs its author's model code (a YOLO `.pt` file is a
+  pickle), so no pipeline's warm-up can reach what another pipeline's
+  campaigns load offline.
+- **A recipe change is a new directory, and a new warm-up.** The directory
+  and the pod template's `recipe-sha256` annotation both follow the digest
+  of the steps and the image. Change either, on a pipeline no rendered
+  campaign runs, and the apply replaces the warm-up Job. Its campaigns then
+  wait for the marker in the new, empty directory, instead of finding the
+  old recipe's marker and running offline without the new model. The price
+  is disk: two pipelines, or two recipes of one, that load the same model
+  each keep a copy of it, since isolating them is the point.
 - **A smaller retry budget.** `backoffLimit: 2`, with a `podFailurePolicy`
   that fails the whole Job on exit 13.
 - **The same `runtimeClassName`, `nodeSelector` and `tolerations`** as the

@@ -128,7 +128,12 @@ is that command by hand. With Argo CD, the Application syncs only
 recursive), so each new render is a sync, and a `PostSync` hook in
 `argocd/` runs the command on a checkout of this repo — htrflow-batch's
 [`docs/reference/campaign-yaml.md#with-argo-cd`](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/docs/reference/campaign-yaml.md#with-argo-cd).
-Nothing applies to the cluster that this repo's own CI did not commit first.
+The hook applies a checkout only when its `rendered/` is exactly what that
+checkout renders: the clone takes the branch's newest commit, and a push that
+landed after CI's last render commit is refused until CI has rendered it too
+(its render commit starts the next sync). So nothing reaches the cluster that
+this repo's own CI did not render and check first — as long as CI and the
+hook run the same converter release (`CONVERTER_REF` and the hook's image).
 
 ## Results stay
 

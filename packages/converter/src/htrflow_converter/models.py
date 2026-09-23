@@ -16,9 +16,13 @@ context once from ``ConverterConfig``.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
+import json
 import re
+import unicodedata
+from datetime import date, datetime
 from string import Formatter
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import yaml
@@ -146,8 +150,99 @@ def _positive_int(v: object) -> bool:
 
 
 def _http_url(value: str) -> bool:
-    u = urlsplit(value)
+    try:
+        u = urlsplit(value)
+    except ValueError:  # a bracketed host it cannot read: `_unopenable` says so
+        return value.lower().startswith(("http://", "https://"))
     return u.scheme in ("http", "https") and bool(u.netloc)
+
+
+#: Source URLs reach a browser: the viewer and the status page build every
+#: link with WHATWG ``new URL``, which throws on what ``urlsplit`` lets by --
+#: a port past 65535, a ``%`` or ``<`` in the host (audit 0923 F-7). This is
+#: a strict subset of what a browser accepts, the one the read API holds its
+#: own links to (packages/web ``projection.browser_http_url``), so a URL
+#: that passes here opens there.
+_BROWSER_BREAKS = re.compile(r"[\x00-\x1f\x7f\\]")
+_HOST_LABEL_RE = re.compile(r"[A-Za-z0-9_-]+\Z")
+_NUMERIC_LABEL_RE = re.compile(r"(?:[0-9]+|0[xX][0-9A-Fa-f]*)\Z")
+_BAD_HOST = "its host is not a host name or an IP address"
+
+
+def _letters(label: str) -> bool:
+    """ASCII letters, digits and ``-``, and non-ASCII letters written left to
+    right: a right-to-left letter brings in IDNA's bidi rule, which a
+    browser enforces and this does not try to."""
+    return all(
+        (ch.isascii() and (ch.isalnum() or ch == "-"))
+        or (ch.isalpha() and unicodedata.bidirectional(ch) == "L")
+        for ch in label
+    )
+
+
+def _host_label(label: str) -> bool:
+    """One label of a host name a browser takes as written. An ``xn--``
+    label has to be the one encoding a browser would itself have made of
+    what it decodes to -- mapped (case-folded, NFKC) and non-ASCII -- so
+    ``xn--bung-fna`` ("Übung") is refused; a raw non-ASCII label is letters
+    and digits, which the browser encodes."""
+    if not label.isascii():
+        return not label.lower().startswith("xn--") and _letters(label)
+    if not _HOST_LABEL_RE.match(label):
+        return False
+    if not label.lower().startswith("xn--"):
+        return True
+    try:
+        decoded = label[4:].encode("ascii").decode("punycode")
+        encoded = decoded.encode("punycode").decode("ascii")
+    except (UnicodeError, ValueError):
+        return False
+    return (
+        not decoded.isascii()
+        and _letters(decoded)
+        and decoded == unicodedata.normalize("NFKC", decoded.casefold())
+        and encoded == label[4:].lower()
+    )
+
+
+def _browser_host(netloc: str) -> bool:
+    """The host in ``netloc`` is a bracketed IPv6 literal with no zone, a
+    dotted IPv4 address when its last label is a number, or host-name
+    labels; one trailing dot is the root, as a browser reads it."""
+    host = netloc.rpartition("@")[2]
+    if host.startswith("["):
+        literal, _, port = host[1:].partition("]")
+        try:
+            ipaddress.IPv6Address(literal)
+        except ValueError:
+            return False
+        return "%" not in literal and (port == "" or port.startswith(":"))
+    labels = host.partition(":")[0].removesuffix(".").split(".")
+    if "" in labels:
+        return False
+    if _NUMERIC_LABEL_RE.match(labels[-1]):
+        try:
+            return bool(ipaddress.IPv4Address(".".join(labels)))
+        except ValueError:
+            return False
+    return all(_host_label(label) for label in labels)
+
+
+def _unopenable(value: str) -> str | None:
+    """Why a browser would refuse this http(s) URL, or ``None``."""
+    if _BROWSER_BREAKS.search(value):
+        return "it has a backslash or a control character in it"
+    try:
+        u = urlsplit(value)
+    except ValueError:
+        return _BAD_HOST
+    try:
+        u.port  # the read is the check: it raises past 65535
+    except ValueError:
+        return "its port is not a number from 0 to 65535"
+    if not _browser_host(u.netloc):
+        return _BAD_HOST
+    return None
 
 
 #: A ``volumes.txt`` line separates an ``images:`` volume's URLs with a space
@@ -273,8 +368,45 @@ def parse_source_line(line: str) -> tuple[str, tuple[str, ...]]:
     return vid, (source,)
 
 
+#: A volume id is text, and only a YAML *string* is text as written: YAML
+#: 1.1 reads an unquoted ``0012345`` as octal, ``1:20`` as base 60, ``1.10``
+#: as a float and ``yes`` as true. ``str()`` of that result is an id the
+#: author never wrote (``5349``, ``80``, ``1.1``, ``True``), under which the
+#: volume would be fetched and its results published (audit 0923 C-5).
+_NOT_TEXT_ID = (
+    "has an id that YAML reads as {kind}, not as text — put it in quotes so "
+    'it stays as written: - "R0012345", or id: "R0012345"'
+)
+
+
+def _not_text(value: object) -> str | None:
+    """What YAML made of an id that is not a string, in the author's words;
+    ``None`` for a string. A list or a mapping is left to pydantic, whose
+    sentence for that already fits."""
+    if value is None:
+        return "nothing at all"
+    if isinstance(value, bool):
+        return f"true or false ({str(value).lower()})"
+    if isinstance(value, (int, float)):
+        return f"a number ({value})"
+    if isinstance(value, (date, datetime)):
+        return f"a date ({value.isoformat()})"
+    return None
+
+
+def _as_recorded(info: ValidationInfo) -> bool:
+    """Validating a campaign as an earlier render recorded it: the rules
+    added since then (an id that is text, a URL a browser opens) are waived,
+    and ``parse`` keeps the result only if it IS that record
+    (``record.unchanged``)."""
+    return bool((info.context or {}).get("as_recorded"))
+
+
 class Volume(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    #: Unknown keys rejected, as on every other model: a volume's stray
+    #: ``pages: 1-10`` read as a page range to its author and was dropped
+    #: without a word, so every page ran (audit 0923 C-1).
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str
     manifest: str | None = None
@@ -283,6 +415,12 @@ class Volume(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _expand(cls, data: Any, info: ValidationInfo) -> Any:
+        kind = _not_text(data.get("id") if isinstance(data, dict) else data)
+        if kind is not None and isinstance(data, dict) and _as_recorded(info):
+            # What v0.5.0 made of it: the id this volume was rendered under.
+            data = {**data, "id": str(data["id"])}
+        elif kind is not None and (not isinstance(data, dict) or "id" in data):
+            raise ValueError(_NOT_TEXT_ID.format(kind=kind))
         if isinstance(data, str):
             template = (info.context or {}).get("source_template", "")
             try:
@@ -296,7 +434,7 @@ class Volume(BaseModel):
                 'has no id — write the entry as "- R1", or as "- id: R1" '
                 "with manifest: or images:"
             )
-        return {**data, "id": str(data["id"])}
+        return data
 
     @field_validator("id")
     @classmethod
@@ -310,7 +448,7 @@ class Volume(BaseModel):
 
     @field_validator("manifest")
     @classmethod
-    def _check_manifest(cls, v: str | None) -> str | None:
+    def _check_manifest(cls, v: str | None, info: ValidationInfo) -> str | None:
         if v is not None and _WHITESPACE_RE.search(v):
             raise ValueError(
                 f"has a manifest with whitespace in it "
@@ -321,11 +459,15 @@ class Volume(BaseModel):
                 f'has a manifest that is not an http(s) URL ("{_shown_url(v)}") '
                 "— write the whole URL, starting with https://"
             )
+        if v is not None and not _as_recorded(info) and (why := _unopenable(v)):
+            raise ValueError(
+                f'has a manifest a browser cannot open ("{_shown_url(v)}"): {why}'
+            )
         return v
 
     @field_validator("images")
     @classmethod
-    def _check_images(cls, v: list[str]) -> list[str]:
+    def _check_images(cls, v: list[str], info: ValidationInfo) -> list[str]:
         for n, u in enumerate(v, start=1):
             if _WHITESPACE_RE.search(u):
                 raise ValueError(
@@ -336,6 +478,10 @@ class Volume(BaseModel):
                 raise ValueError(
                     f"lists an image that is not an http(s) URL "
                     f'("{_shown_url(u)}") — every entry under images: is a whole URL'
+                )
+            if not _as_recorded(info) and (why := _unopenable(u)):
+                raise ValueError(
+                    f'has an image a browser cannot open ("{_shown_url(u)}"): {why}'
                 )
         return v
 
@@ -378,7 +524,10 @@ _NOT_A_PRIORITY = (
 
 
 class Campaign(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    #: Unknown keys rejected: ``suspended: true`` or ``priorty:`` was dropped
+    #: without a word, and the campaign rendered -- and ran -- at the
+    #: defaults, unpaused (audit 0923 C-1).
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str
     pipeline: str
@@ -508,6 +657,34 @@ class Pipeline(BaseModel):
                 'must be a list of steps — write steps: and then "- step: '
                 '<Name>" entries under it'
             )
+        # audit 0923 C-8: neither of these reached anything but the wrapper,
+        # which then failed every volume of every campaign on the pipeline.
+        if not v:
+            raise ValueError(
+                "is empty — a pipeline runs at least one step; write steps: "
+                'and then "- step: <Name>" entries under it'
+            )
+        unnamed = [
+            str(i)
+            for i, step in enumerate(v, 1)
+            if isinstance(step, dict) and not step.get("step")
+        ]
+        if unnamed:
+            raise ValueError(
+                f'has a step with no "step:" name (step {", ".join(unnamed)}) — '
+                'every entry starts "- step: <Name>", the htrflow step it runs'
+            )
+        unnamable = [
+            str(i)
+            for i, step in enumerate(v, 1)
+            if isinstance(step, dict) and not isinstance(step.get("step"), str)
+        ]
+        if unnamable:
+            raise ValueError(
+                f'has a step whose "step:" is not a name (step '
+                f'{", ".join(unnamable)}) — every entry starts "- step: <Name>", '
+                "the htrflow step it runs"
+            )
         # 3098: the wrapper appends its own Export steps and refuses a file
         # that has one; htrflow resolves a step by its lower-cased name.
         exports = [
@@ -555,6 +732,102 @@ class Pipeline(BaseModel):
     def sha256(self) -> str:
         return hashlib.sha256(self.pipeline_yaml().encode()).hexdigest()
 
+    @property
+    def recipe_sha256(self) -> str:
+        """The steps AND the image, hashed over a canonical form (no PyYAML
+        spelling moves it): a new image can load other files for the same
+        steps, so it is a new recipe to warm (audit 0923 C-3)."""
+        canonical = json.dumps(
+            {"image": self.image, "steps": self.steps},
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        return hashlib.sha256(canonical.encode()).hexdigest()
+
+    @property
+    def cache_dir(self) -> str:
+        """This recipe's directory on the model-cache PVC, the only part of it
+        its warm-up writes and its campaign pods read. By recipe: a changed
+        recipe is a new, empty directory whose campaigns wait for its warm-up
+        instead of passing the gate on the old marker (audit 0923 C-3). By
+        id: a warm-up runs its author's model code (a YOLO ``.pt`` is a
+        pickle), so no two pipelines share one (audit 0923 S-2). The 64-hex
+        digest after the id keeps two ids from ever meeting."""
+        return f"{self.id}-{self.recipe_sha256}"
+
+
+#: Taints that keep workloads off the control plane. A GPU batch pod has no
+#: business on a node that carries one, so a toleration for either is
+#: refused rather than copied into every pod.
+_CONTROL_PLANE_TAINTS = frozenset(
+    {"node-role.kubernetes.io/control-plane", "node-role.kubernetes.io/master"}
+)
+
+
+class Toleration(BaseModel):
+    """One of ``converter.yaml``'s ``tolerations``: the Kubernetes
+    ``Toleration`` shape, spelt the Kubernetes way (``tolerationSeconds``),
+    known keys only.
+
+    It was ``list[dict]``, copied into every warm-up and campaign pod as
+    written (audit 0923 S-1). ``{operator: Exists}`` with no key tolerates
+    every taint there is, so with a node selector a campaign's GPU pods could
+    land on the control plane, or on any node tainted to keep them away.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    key: str | None = None
+    operator: Literal["Exists", "Equal"] | None = None
+    value: str | None = None
+    effect: Literal["NoSchedule", "PreferNoSchedule", "NoExecute"] | None = None
+    toleration_seconds: int | None = Field(default=None, alias="tolerationSeconds")
+
+    @model_validator(mode="after")
+    def _check_shape(self) -> "Toleration":
+        if not self.key:
+            raise ValueError(
+                "has no key — a toleration without one tolerates every taint "
+                "on every node, the control plane's included; name the taint "
+                "it is for"
+            )
+        if not _label_key(self.key):
+            raise ValueError(
+                "has a key that is not a Kubernetes taint key (got "
+                f"{shown(self.key)}) — a key is a name, optionally after a "
+                '"<dns-prefix>/"; letters, digits, ".", "_" and "-", at most '
+                "63 characters"
+            )
+        if self.key in _CONTROL_PLANE_TAINTS:
+            raise ValueError(
+                f"tolerates {self.key} — that taint keeps workloads off the "
+                "control plane, and a GPU batch pod has no business there; "
+                "remove it"
+            )
+        if self.operator == "Exists" and self.value:
+            raise ValueError(
+                "has a value with operator: Exists, which matches the key "
+                "alone — drop the value, or use operator: Equal"
+            )
+        if self.value and not _LABEL_VALUE_RE.match(self.value):
+            raise ValueError(
+                f"has a value that is not a Kubernetes label value (got "
+                f'{shown(self.value)}) — letters, digits, ".", "_" and "-", '
+                "at most 63 characters"
+            )
+        if self.toleration_seconds is not None and self.effect != "NoExecute":
+            raise ValueError(
+                "has tolerationSeconds without effect: NoExecute, the only "
+                "effect it applies to"
+            )
+        return self
+
+    def manifest(self) -> dict[str, object]:
+        """What the pod spec carries: the keys the author wrote, spelt as
+        Kubernetes spells them."""
+        return self.model_dump(by_alias=True, exclude_none=True)
+
 
 #: Settings that were converter policy and are now Kyverno ClusterPolicies
 #: the htrflow-batch chart ships (B63 Task 22) -> the chart value that
@@ -595,7 +868,7 @@ class ConverterConfig(BaseModel):
     data_pvc: str = "htr-test-data"
     runtime_class: str = "nvidia"
     node_selector: dict[str, str] = Field(default_factory=dict)
-    tolerations: list[dict] = Field(default_factory=list)
+    tolerations: list[Toleration] = Field(default_factory=list)
     public_results_base: str = ""
     source_template: str = "https://lbiiif.riksarkivet.se/arkis!{ref}/manifest"
     max_seconds: int = Field(default=21600, ge=1, le=_INT32_MAX)
