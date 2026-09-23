@@ -31,7 +31,8 @@ the `frontend/README.md` there is the developer-facing version of this page.
   manifest has a `viewer_url`.
 - `/alto?src=<url>` — the **ALTO viewer**: one page's ALTO XML as text, in
   reading order, each line tinted by its `WC` confidence, with a raw-XML
-  toggle. Reached from the run viewer's alto column; see
+  toggle. Reached from the run viewer's alto column; like `/log`, it reads
+  only a URL under the results base (`isResultUrl`). See
   [Viewing Results](../getting-started/viewing.md).
 
 ## Stack
@@ -105,7 +106,10 @@ too.
   leaves that row out, counts it, logs the first issue to the console for
   the operator, and the page says how many campaigns are hidden in a
   banner over the list it could read; a list whose every row is unreadable
-  throws like a wrong shape. `ApiUnreachable` covers a network error and a
+  throws like a wrong shape. One field is read on its own:
+  `VolumeView.sourceUrl`, a line of a file people edit rather than a URL the
+  API built, is `null` when it is not a URL this browser can use, so one
+  bad line costs its volume a link and not the whole card. `ApiUnreachable` covers a network error and a
   non-2xx status alike; the page shows one banner over the last good list.
   There is no age-based staleness check — every response is computed live
   from the Kubernetes API, so there is nothing that can go stale the way a
@@ -436,8 +440,16 @@ place on each one, the way they would in a table.
   can still change is polled: a `Succeeded`, `Failed`, `PartiallyFailed` or
   `Unknown` campaign, or one whose Job is removed, is read once — retried on
   the poll's backoff until that one read lands — and then left alone, since
-  every detail call lists pods and reads ConfigMaps and progress files. A
-  change of phase, or the Job being removed, reads it once more.
+  every detail call lists pods and reads ConfigMaps and progress files. That
+  one read waits until the card has been on screen (an
+  `IntersectionObserver`, with a small margin) or opened; a browser without
+  one reads it at once. A change of phase, or the Job being removed, reads
+  it once more.
+- **Older campaigns.** `fetchJobs` asks for `?reaped=20`: every live
+  campaign, and the newest 20 whose Jobs are gone. The API's
+  `X-Reaped-Total` header says how many of those there are, and the rest
+  wait behind a "show older campaigns" button that asks for 20 more at a
+  time.
 - **Accessibility** — campaign header is a disclosure button, carrying
   `aria-controls` only while the volume table is rendered (a folded card has
   no table, and a dangling IDREF is invalid ARIA — `aria-expanded` carries
