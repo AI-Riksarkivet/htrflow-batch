@@ -7,7 +7,16 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError as _PydanticValidationError
 
-from .models import Campaign, ConverterConfig, Pipeline, shown
+from .models import (
+    Campaign,
+    ConverterConfig,
+    Pipeline,
+    _not_text,
+    _shown_url,
+    _unopenable,
+    shown,
+)
+from .record import RENDERED, CorruptRenderedFile, recorded_volumes, unchanged
 
 
 class ValidationError(Exception):
@@ -221,16 +230,69 @@ def _duplicate_volume_ids(doc: dict, rel: str, problems: list[str]) -> None:
         seen.add(str(vid))
 
 
-def _parse_campaign(path: Path, context: dict, problems: list[str]) -> Campaign | None:
+def _kept(rel: str, doc: dict, c: Campaign) -> list[str]:
+    """What a campaign kept under ``record.unchanged`` would be refused for
+    if it were new: said, not enforced -- its volumes cannot change."""
+    said = []
+    raw = [e for e in doc.get("volumes") or []]
+    for n, (entry, v) in enumerate(zip(raw, c.volumes), start=1):
+        if isinstance(entry, dict) and (kind := _not_text(entry.get("id"))):
+            said.append(
+                f"{rel}: volume {n} has an id YAML reads as {kind}, and it was "
+                f'rendered as "{v.id}", which stays its id — write id: "{v.id}" '
+                "so the file says what it is"
+            )
+        for what, url in [
+            ("a manifest", v.manifest),
+            *(("an image", u) for u in v.images),
+        ]:
+            if url is not None and (why := _unopenable(url)):
+                said.append(
+                    f'{rel}: volume {n} has {what} a browser cannot open ("'
+                    f'{_shown_url(url)}"): {why} — kept, since this campaign '
+                    "was rendered with it and its volumes cannot change"
+                )
+    return said
+
+
+def _parse_campaign(
+    path: Path, context: dict, problems: list[str], warnings: list[str]
+) -> Campaign | None:
     doc = _read_yaml_mapping(path, problems, "campaign")
     if doc is None:
         return None
-    _duplicate_volume_ids(doc, _rel(path), problems)
+    rel = _rel(path)
+    _duplicate_volume_ids(doc, rel, problems)
+    # `path.stem` always wins over a `name:` the YAML happens to carry.
+    data = {**doc, "name": path.stem}
     try:
-        # `path.stem` always wins over a `name:` the YAML happens to carry.
-        return Campaign.model_validate({**doc, "name": path.stem}, context=context)
+        return Campaign.model_validate(data, context=context)
     except _PydanticValidationError as e:
-        problems.extend(_problems(_rel(path), e))
+        refused = e
+    # An authoring rule added since the campaign was rendered does not reach
+    # it while its record is unchanged: it could never be brought to pass.
+    recorded = _recorded(context.get("record"), path.stem)
+    if recorded is not None:
+        try:
+            c = Campaign.model_validate(data, context={**context, "as_recorded": True})
+        except _PydanticValidationError:
+            c = None
+        if c is not None and unchanged(c, recorded):
+            warnings.extend(_kept(rel, doc, c))
+            return c
+    problems.extend(_problems(rel, refused))
+    return None
+
+
+def _recorded(record: Path | None, name: str) -> list[tuple] | None:
+    """The volumes ``record`` (a ``rendered/`` directory) recorded for
+    ``name``; ``None`` for none, and for a record it cannot read -- the
+    append-only check reports that one."""
+    if record is None or not (record / "campaigns").is_dir():
+        return None
+    try:
+        return recorded_volumes(record / "campaigns", name)
+    except CorruptRenderedFile:
         return None
 
 
@@ -247,11 +309,21 @@ def _parse_pipeline(path: Path, context: dict, problems: list[str]) -> Pipeline 
 
 
 def load(
-    campaigns_dir: Path, pipelines_dir: Path, config_path: Path
+    campaigns_dir: Path,
+    pipelines_dir: Path,
+    config_path: Path,
+    warnings: list[str] | None = None,
 ) -> tuple[list[Campaign], dict[str, Pipeline], ConverterConfig]:
+    """The repo, validated. Its earlier render is read from ``rendered/``
+    beside ``campaigns_dir`` (``record.unchanged``); ``warnings`` collects
+    what a campaign kept that way would be refused for if it were new."""
     problems: list[str] = []
+    warnings = [] if warnings is None else warnings
     cfg = _load_config(Path(config_path), problems)
-    context = {"source_template": cfg.source_template}
+    context = {
+        "source_template": cfg.source_template,
+        "record": Path(campaigns_dir).parent / RENDERED,
+    }
 
     pipelines: dict[str, Pipeline] = {}
     broken: set[str] = set()  # a file that is there but did not load
@@ -265,7 +337,7 @@ def load(
     campaigns: list[Campaign] = []
     files: dict[str, str] = {}  # campaign name -> the file it came from
     for path in sorted(Path(campaigns_dir).glob("*.yaml")):
-        c = _parse_campaign(path, context, problems)
+        c = _parse_campaign(path, context, problems, warnings)
         if c is not None:
             campaigns.append(c)
             files[c.name] = _rel(path)

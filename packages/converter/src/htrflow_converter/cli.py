@@ -19,13 +19,7 @@ import yaml
 from . import render
 from .models import STATUS_SUFFIX, Campaign, parse_source_line
 from .parse import ValidationError, load
-from .record import CorruptRenderedFile, existing_parts, rendered, volumes_txt
-
-#: Where a campaigns repo keeps its committed render. The one source of
-#: truth for the RECORD a re-render is held against: `render --out` says
-#: where this render goes, and the repo's own `rendered/` is what the
-#: previous one left (docs: reference/campaign-yaml.md).
-RENDERED = "rendered"
+from .record import RENDERED, CorruptRenderedFile, existing_parts, rendered, volumes_txt
 
 _NEXT_STEPS = """\
 Your campaigns repo is ready at {dir}.
@@ -120,19 +114,39 @@ _NOT_RENDERED = (
 )
 
 
+@contextlib.contextmanager
+def _quiet_stderr():
+    with open(os.devnull, "w") as sink, contextlib.redirect_stderr(sink):
+        yield
+
+
 def _unrendered(repo: Path) -> str | None:
     """One sentence unless ``rendered/`` is exactly this checkout's render.
     ``sync.yaml`` carries a digest of every other rendered file, so it is
     the one file to compare."""
     committed = repo / RENDERED / "sync.yaml"
     with tempfile.TemporaryDirectory(prefix="htr-check-") as t:
-        with contextlib.redirect_stdout(sys.stderr):
+        # Its refusals to stderr; its warnings validate has already said.
+        with contextlib.redirect_stdout(sys.stderr), _quiet_stderr():
             if _render(str(repo), str(Path(t) / RENDERED)):
                 return _NOT_RENDERED.format(rendered=repo / RENDERED)
         fresh = (Path(t) / RENDERED / "sync.yaml").read_bytes()
     if not committed.is_file() or committed.read_bytes() != fresh:
         return _NOT_RENDERED.format(rendered=repo / RENDERED)
     return None
+
+
+def _load(repo: Path):
+    """``parse.load`` of the repo, saying on stderr what a campaign kept as
+    its earlier render recorded would be refused for if it were new."""
+    warnings: list[str] = []
+    try:
+        return load(
+            repo / "campaigns", repo / "pipelines", repo / "converter.yaml", warnings
+        )
+    finally:
+        for warning in warnings:
+            print(f"warning: {warning}", file=sys.stderr)
 
 
 def _validate(repo_dir: str, rendered: bool = False) -> int:
@@ -142,9 +156,7 @@ def _validate(repo_dir: str, rendered: bool = False) -> int:
         print(missing)
         return 1
     try:
-        campaigns, pipelines, cfg = load(
-            repo / "campaigns", repo / "pipelines", repo / "converter.yaml"
-        )
+        campaigns, pipelines, cfg = _load(repo)
     except ValidationError as e:
         return _report(e, "")
     # `rendered/` is committed, so a pull request has the previous render
@@ -406,9 +418,7 @@ def _render(repo_dir: str, out_dir: str) -> int:
         print(missing)
         return 1
     try:
-        campaigns, pipelines, cfg = load(
-            repo / "campaigns", repo / "pipelines", repo / "converter.yaml"
-        )
+        campaigns, pipelines, cfg = _load(repo)
     except ValidationError as e:
         return _report(e, " — nothing was rendered")
     out = Path(out_dir)

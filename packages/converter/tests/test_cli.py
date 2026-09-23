@@ -976,3 +976,66 @@ def test_validate_rendered_refuses_a_checkout_ci_has_not_rendered(
     assert said.startswith(f"{repo / 'rendered'} is not what this checkout renders")
     assert "nothing CI did not render" in said
     assert main(["validate", str(repo)]) == 0  # a pull request is not held to it
+
+
+def _recorded_repo(tmp_path, recorded: str, now: str):
+    """A repo whose `rendered/` holds `recorded`'s render -- what v0.5.0 made
+    of `now`, which the current rules refuse -- and whose campaign file now
+    says `now`."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    campaign = repo / "campaigns" / "kyrk.yaml"
+    campaign.write_text(f"pipeline: demo-v1\nvolumes:\n{recorded}")
+    assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    campaign.write_text(f"pipeline: demo-v1\nvolumes:\n{now}")
+    return repo
+
+
+def test_a_rendered_campaign_keeps_the_id_yaml_gave_it(tmp_path, capsys):
+    """audit 0923 review 3: v0.5.0 rendered `id: 0012345` as volume `5349`.
+    Its campaign is append-only, so the quoted `"0012345"` the new rule
+    asks for would be refused as a change. Unchanged, it stays valid, with a
+    warning naming the id it actually has."""
+    m = "    manifest: https://iiif.example.org/m\n"
+    repo = _recorded_repo(tmp_path, f'  - id: "5349"\n{m}', f"  - id: 0012345\n{m}")
+    capsys.readouterr()
+    assert main(["validate", str(repo)]) == 0
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    assert printed.err.startswith("warning: campaigns/kyrk.yaml: volume 1"), printed
+    assert 'id: "5349"' in printed.err
+    assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+
+
+def test_a_rendered_campaign_that_changes_meets_the_new_rules(tmp_path, capsys):
+    m = "    manifest: https://iiif.example.org/m\n"
+    repo = _recorded_repo(
+        tmp_path, f'  - id: "5349"\n{m}', f"  - id: 0012345\n{m}  - id: R2\n{m}"
+    )
+    capsys.readouterr()
+    assert main(["validate", str(repo)]) == 1
+    assert "has an id that YAML reads as a number" in capsys.readouterr().out
+
+
+def test_a_rendered_campaign_keeps_a_url_the_new_rule_refuses(tmp_path, capsys):
+    """audit 0923 review 4: the same for a source URL v0.5.0 took."""
+    url = "https://example.org:99999/m"
+    repo = _recorded_repo(
+        tmp_path, "  - id: R1\n    manifest: https://x.example/m\n", ""
+    )
+    # the record, as v0.5.0 wrote it with this URL
+    path = repo / "rendered" / "campaigns" / "kyrk.yaml"
+    path.write_text(path.read_text().replace("https://x.example/m", url))
+    (repo / "campaigns" / "kyrk.yaml").write_text(
+        f"pipeline: demo-v1\nvolumes:\n  - id: R1\n    manifest: {url}\n"
+    )
+    capsys.readouterr()
+    assert main(["validate", str(repo)]) == 0
+    err = capsys.readouterr().err
+    assert "warning: campaigns/kyrk.yaml: volume 1 has a manifest a browser" in err
+    assert "its port is not a number" in err
+
+    (repo / "campaigns" / "new.yaml").write_text(
+        f"pipeline: demo-v1\nvolumes:\n  - id: N1\n    manifest: {url}\n"
+    )
+    assert main(["validate", str(repo)]) == 1  # a new campaign is held to it

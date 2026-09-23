@@ -394,6 +394,14 @@ def _not_text(value: object) -> str | None:
     return None
 
 
+def _as_recorded(info: ValidationInfo) -> bool:
+    """Validating a campaign as an earlier render recorded it: the rules
+    added since then (an id that is text, a URL a browser opens) are waived,
+    and ``parse`` keeps the result only if it IS that record
+    (``record.unchanged``)."""
+    return bool((info.context or {}).get("as_recorded"))
+
+
 class Volume(BaseModel):
     #: Unknown keys rejected, as on every other model: a volume's stray
     #: ``pages: 1-10`` read as a page range to its author and was dropped
@@ -408,7 +416,10 @@ class Volume(BaseModel):
     @classmethod
     def _expand(cls, data: Any, info: ValidationInfo) -> Any:
         kind = _not_text(data.get("id") if isinstance(data, dict) else data)
-        if kind is not None and (not isinstance(data, dict) or "id" in data):
+        if kind is not None and isinstance(data, dict) and _as_recorded(info):
+            # What v0.5.0 made of it: the id this volume was rendered under.
+            data = {**data, "id": str(data["id"])}
+        elif kind is not None and (not isinstance(data, dict) or "id" in data):
             raise ValueError(_NOT_TEXT_ID.format(kind=kind))
         if isinstance(data, str):
             template = (info.context or {}).get("source_template", "")
@@ -437,7 +448,7 @@ class Volume(BaseModel):
 
     @field_validator("manifest")
     @classmethod
-    def _check_manifest(cls, v: str | None) -> str | None:
+    def _check_manifest(cls, v: str | None, info: ValidationInfo) -> str | None:
         if v is not None and _WHITESPACE_RE.search(v):
             raise ValueError(
                 f"has a manifest with whitespace in it "
@@ -448,7 +459,7 @@ class Volume(BaseModel):
                 f'has a manifest that is not an http(s) URL ("{_shown_url(v)}") '
                 "— write the whole URL, starting with https://"
             )
-        if v is not None and (why := _unopenable(v)):
+        if v is not None and not _as_recorded(info) and (why := _unopenable(v)):
             raise ValueError(
                 f'has a manifest a browser cannot open ("{_shown_url(v)}"): {why}'
             )
@@ -456,7 +467,7 @@ class Volume(BaseModel):
 
     @field_validator("images")
     @classmethod
-    def _check_images(cls, v: list[str]) -> list[str]:
+    def _check_images(cls, v: list[str], info: ValidationInfo) -> list[str]:
         for n, u in enumerate(v, start=1):
             if _WHITESPACE_RE.search(u):
                 raise ValueError(
@@ -468,7 +479,7 @@ class Volume(BaseModel):
                     f"lists an image that is not an http(s) URL "
                     f'("{_shown_url(u)}") — every entry under images: is a whole URL'
                 )
-            if why := _unopenable(u):
+            if not _as_recorded(info) and (why := _unopenable(u)):
                 raise ValueError(
                     f'has an image a browser cannot open ("{_shown_url(u)}"): {why}'
                 )
