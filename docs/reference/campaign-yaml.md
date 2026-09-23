@@ -607,7 +607,10 @@ token's environment variable). They get different answers:
   `replaced: Job/htr-warmup-<id> — its pod template changed …`. A warm-up
   that is **running** is left alone and reported instead: deleting it would
   take the pod that is downloading with it, while campaigns wait on its
-  marker. A warm-up that has **failed** is replaced as well, even with an
+  marker. If that change was to the recipe, the running warm-up fills the
+  old recipe's directory, and campaigns on the new recipe wait for a marker
+  only the replaced warm-up writes: re-run the apply once the old warm-up
+  has finished, before their `warmup_wait_seconds` runs out. A warm-up that has **failed** is replaced as well, even with an
   unchanged template, since a failed Job never runs again:
   `replaced: Job/htr-warmup-<id> — it had failed …`.
 - **A campaign Job never is.** Its completed indexes and its results *are*
