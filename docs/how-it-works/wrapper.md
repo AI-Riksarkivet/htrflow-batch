@@ -152,6 +152,13 @@ Every stage name can appear in the termination message.
      upload that never landed, or a download or upload that was deferred. Kubernetes
      retries the index, resume converges, and the termination message lists
      the missing and failed pages.
+   - **On the index's last attempt a deferred page is failed.** A page the
+     source would not serve on any attempt (an image server answering 500
+     for a corrupt file, a soft-404 page served with a 200) is recorded as
+     failed, with its reason, rather than missing, so it cannot cost the
+     other pages their `manifest.json`. The wrapper knows the attempt is the
+     last from the pod's `job-index-failure-count` annotation and the Job's
+     `backoffLimitPerIndex` (`INDEX_FAILURE_COUNT`, `BACKOFF_LIMIT_PER_INDEX`).
    - **A failed page does not fail the volume.** It would fail the same way
      on every attempt, so failing the volume for it would spend every retry
      and still leave the bucket with good pages and no `manifest.json` to open
