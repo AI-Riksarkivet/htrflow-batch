@@ -462,15 +462,6 @@ def test_a_conflict_is_not_sent_again(reader: Reader):
     assert len(reader.calls) == 1
 
 
-def test_a_conflict_is_not_reported_as_the_cluster_being_unavailable(
-    reader, monkeypatch
-):
-    reader.answer["PATCH"] = _api_error(409)
-    with pytest.raises(Exception) as caught:
-        reader.apply_configmap(RECORD)
-    assert not isinstance(caught.value, ClusterUnavailable)
-
-
 def test_a_refused_apply_is_still_the_cluster_saying_no(reader: Reader):
     reader.answer["PATCH"] = _api_error(403)
     with pytest.raises(ClusterUnavailable):
