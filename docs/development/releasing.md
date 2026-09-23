@@ -81,6 +81,17 @@ branch in it. The converter dockerfile is stages 3–4 of the web one on their
 own: same
 base digests, same uv workspace sync, no viewer or SPA stage in front of it.
 
+**Findings that do not apply.** The distroless runtime's Debian packages
+can carry CVEs that Debian has not fixed and that nothing in these images
+can reach: a flaw in a command-line program when the image ships only that
+package's library, or in a parser nothing in the image calls. Those are
+recorded in `.docker/distroless.openvex.json` (OpenVEX), one statement per
+CVE with its justification, each scoped to the exact package version so the
+next package update retires it; the Trivy scans read it with `--vex`. A
+statement that nothing calls a parser holds only while that is true: a
+change that makes the web or converter image parse XML, HTML or tar archives
+removes the matching statements in the same change.
+
 **Each architecture is built natively.** Nothing passes `--platform`:
 `uv` crashes in a cross-architecture build, and a GPU image built for a
 foreign architecture cannot be smoke-tested on the machine that built it.
