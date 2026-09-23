@@ -219,8 +219,7 @@ IIIF image servers derive images on demand and often send no
    the DataLoad pays for it, not the GPU.
 3. **Both fail.** Variant B falls, and Variant A remains.
 
-**Fluid objects.** One `Dataset` and one runtime serve the whole system. The
-warmer creates a `DataLoad` for each volume it warms.
+**Fluid objects.** One `Dataset` and one runtime serve the whole system:
 
 ```yaml
 apiVersion: data.fluid.io/v1alpha1
@@ -232,40 +231,17 @@ spec:
   mounts:
     - name: volumes
       mountPoint: web://iiif-shim.<namespace>.svc:8080/
-      # WebUFS options, keys pinned during the spike: connection timeout,
-      # Last-Modified date format (must match the shim), directory title
-      # markers, parent-link names
   accessModes: ["ReadOnlyMany"]
----
-apiVersion: data.fluid.io/v1alpha1
-kind: AlluxioRuntime
-metadata:
-  name: iiif-volumes
-  namespace: <namespace>
-spec:
-  replicas: <gpu-node-count>     # workers on the GPU nodes
-  tieredstore:
-    levels:
-      - mediumtype: MEM
-        path: /dev/shm
-        quota: <cache-size-per-worker>
-        high: "0.95"
-        low: "0.7"
-      # a disk tier here is what makes reuse across campaigns real
-  properties:
-    alluxio.user.file.metadata.sync.interval: "30s"   # new volumes appear without a remount
----
-apiVersion: data.fluid.io/v1alpha1
-kind: DataLoad
-metadata:
-  name: warm-<volume-slug>
-  namespace: <namespace>
-spec:
-  dataset: { name: iiif-volumes, namespace: <namespace> }
-  target:
-    - path: /volumes/<volume-ref>/w<width>/
-      replicas: 1
 ```
+
+- The **`AlluxioRuntime`** of the same name runs a worker per GPU node, with
+  a memory tier on `/dev/shm`; a disk tier is what would make reuse across
+  campaigns real. A short metadata sync interval lets new volumes appear
+  without a remount.
+- The warmer creates a **`DataLoad`** per volume it warms, targeting
+  `/volumes/<volume-ref>/w<width>/`.
+- The WebUFS mount options (timeouts, the `Last-Modified` format the shim
+  must match) are pinned during the spike.
 
 **Campaign pod changes.**
 
