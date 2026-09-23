@@ -579,6 +579,12 @@ Job htr-warmup-demo: the pod template changed and a Job's pod template is immuta
 2 of 6 objects were refused by the API server and are unchanged: ConfigMap/campaign-kyrk, Job/kyrk — the other 4 were applied (exit 3)
 ```
 
+A pause sync that did not reach a Workload has a closing line of its own,
+apart from the refused objects, since the Workload is not an object this
+apply renders: `the pause sync did not reach the Kueue Workload of Job/kyrk;
+see above (exit 1)` — exit `1` when git says that campaign is paused, the
+code of the rest of the apply when it only had to stay running.
+
 The codes are a precedence, highest first — `1` beats `3` beats `0` — so
 `1` does not mean nothing was applied when a pause is what failed:
 
