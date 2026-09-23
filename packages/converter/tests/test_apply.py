@@ -20,6 +20,8 @@ import itertools
 import json
 import shutil
 import subprocess
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from pathlib import Path
 
 import pytest
@@ -42,6 +44,7 @@ class _Body:
 
     def __init__(self, obj: dict) -> None:
         self.data = json.dumps(obj).encode()
+        self.headers: dict[str, str] = {}
 
 
 def _labelled(obj: dict, selector: str) -> bool:
@@ -158,17 +161,27 @@ class _Leases:
     def __init__(self, outer: "FakeCluster") -> None:
         self.outer = outer
 
+    def _answer(self, verb: str, obj: dict) -> _Body:
+        status = self.outer.lease_errors.get(verb)
+        if status is not None:
+            raise ApiException(status=status, reason="refused")
+        body = _Body(obj)
+        if self.outer.server_time is not None:  # the API server's own clock
+            body.headers = {"Date": format_datetime(self.outer.server_time, True)}
+        return body
+
     def read_namespaced_lease(self, name, ns, **kw):
         if name not in self.outer.leases:
             raise ApiException(status=404, reason="Not Found")
-        return _Body(self.outer.leases[name])
+        return self._answer("read", self.outer.leases[name])
 
     def _store(self, name: str, body: dict) -> _Body:
         stored = copy.deepcopy(body)
         stored["metadata"]["resourceVersion"] = str(next(self.outer.versions))
+        answer = self._answer("write", stored)
         self.outer.leases[name] = stored
         self.outer.lease_log.append(stored["spec"].get("holderIdentity"))
-        return _Body(stored)
+        return answer
 
     def create_namespaced_lease(self, ns, body, **kw):
         name = body["metadata"]["name"]
@@ -178,7 +191,9 @@ class _Leases:
 
     def replace_namespaced_lease(self, name, ns, body, **kw):
         live = self.outer.leases.get(name)
-        if live is None or (
+        if live is None:
+            raise ApiException(status=404, reason="Not Found")
+        if (
             body["metadata"].get("resourceVersion")
             != live["metadata"]["resourceVersion"]
         ):
@@ -214,6 +229,8 @@ class FakeCluster(Cluster):
         self.workload_errors: dict[str, int] = {}
         self.leases: dict[str, dict] = {}
         self.lease_log: list[str | None] = []
+        self.lease_errors: dict[str, int] = {}
+        self.server_time: datetime | None = None
         self.versions = itertools.count(1)
         self.calls: list[tuple] = []
 
@@ -309,7 +326,7 @@ class FakeCluster(Cluster):
             owners.setdefault((manager, "Update"), set()).add(path)
         self._store(kind, name, stored, owners)
 
-    def _method(self, kind: str, verb: str, name: str = ""):
+    def _api(self, kind: str, verb: str, name: str = ""):
         def patch(name, ns, obj, **kw):
             if kw.get("dry_run"):
                 # Held to the same rules as the real write: a dry run answers
@@ -530,9 +547,9 @@ def test_a_cluster_error_prints_the_sentence_and_exits_1(tmp_path, cluster, caps
     def boom(kind, verb, name=""):
         if verb == "patch":
             raise cluster_mod.ClusterError(sentence)
-        return FakeCluster._method(cluster, kind, verb, name)
+        return FakeCluster._api(cluster, kind, verb, name)
 
-    cluster._method = boom
+    cluster._api = boom
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     rc = cli.main(["apply", str(repo), "--out", str(out)])
     assert rc == 1
@@ -768,9 +785,9 @@ def _unreadable(cluster, kind: str, suffix: str = "") -> None:
             raise cluster_mod.ClusterError(
                 f"not allowed to get {k}/{name} in htr-test: Forbidden"
             )
-        return FakeCluster._method(cluster, k, verb, name)
+        return FakeCluster._api(cluster, k, verb, name)
 
-    cluster._method = forbidden
+    cluster._api = forbidden
 
 
 def test_a_campaign_whose_job_cannot_be_read_is_left_as_it_was(
@@ -834,9 +851,9 @@ def test_a_refused_record_write_does_not_stop_the_apply(tmp_path, cluster, capsy
     def forbidden(kind, verb, name=""):
         if verb == "patch" and name.endswith("-status"):
             raise cluster_mod.ClusterError(f"not allowed to patch {name}: Forbidden")
-        return FakeCluster._method(cluster, kind, verb, name)
+        return FakeCluster._api(cluster, kind, verb, name)
 
-    cluster._method = forbidden
+    cluster._api = forbidden
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     assert "kyrk" in [c[2] for c in cluster.of("apply")]
@@ -889,9 +906,9 @@ def test_a_refused_record_write_still_lets_the_live_job_decide(
     def forbidden(kind, verb, name=""):
         if verb == "patch" and name.endswith("-status"):
             raise cluster_mod.ClusterError(f"not allowed to patch {name}: Forbidden")
-        return FakeCluster._method(cluster, kind, verb, name)
+        return FakeCluster._api(cluster, kind, verb, name)
 
-    cluster._method = forbidden
+    cluster._api = forbidden
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     assert "kyrk" not in [c[2] for c in cluster.of("apply") if c[1] == "Job"]
@@ -935,7 +952,7 @@ def test_a_volume_list_that_really_moved_is_not_swallowed(tmp_path, cluster):
 def _refuses(cluster, target: str, error: Exception, times: int = 99) -> None:
     """Make the fake API server refuse one object's apply -- the first
     ``times`` of them, so a test can let a re-created object through."""
-    real = FakeCluster._method
+    real = FakeCluster._api
     left = [times]
 
     def method(kind, verb, name=""):
@@ -951,7 +968,7 @@ def _refuses(cluster, target: str, error: Exception, times: int = 99) -> None:
 
         return patch
 
-    cluster._method = method
+    cluster._api = method
 
 
 def _immutable_template(name: str) -> Exception:
@@ -1195,7 +1212,7 @@ def test_a_refused_paused_campaign_whose_job_cannot_be_read_is_unenforced(
     repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
     cluster.live = [_running_job("pausy")]
     _refuses(cluster, "pausy", cluster_mod.ClusterError("apply Job/pausy: 409"))
-    real = cluster._method
+    real = cluster._api
     reads = [0]
 
     def method(kind, verb, name=""):
@@ -1207,7 +1224,7 @@ def test_a_refused_paused_campaign_whose_job_cannot_be_read_is_unenforced(
                 raise cluster_mod.ClusterError("not allowed to get Job/pausy")
         return real(kind, verb, name)
 
-    cluster._method = method
+    cluster._api = method
     rc = cli.main(["apply", str(repo), "--out", str(out), "--pause-wait", "1"])
     assert rc == 1
     err = capsys.readouterr().err
@@ -1286,7 +1303,7 @@ def test_dry_run_previews_an_empty_prune_and_the_real_run_still_refuses(
 
 def _delete_fails(cluster, target: str, status: int) -> None:
     """Make the fake API server answer ``status`` to deleting ``target``."""
-    real = FakeCluster._method
+    real = FakeCluster._api
 
     def method(kind, verb, name=""):
         inner = real(cluster, kind, verb, name)
@@ -1300,7 +1317,7 @@ def _delete_fails(cluster, target: str, status: int) -> None:
 
         return delete
 
-    cluster._method = method
+    cluster._api = method
 
 
 def test_a_prune_error_is_followed_by_the_pause_sync(tmp_path, cluster, capsys):
@@ -1438,9 +1455,9 @@ def test_a_live_record_it_may_not_read_stops_the_apply(tmp_path, cluster, capsys
             raise cluster_mod.ClusterError(
                 f"not allowed to get {kind}/{name} in htr-test: Forbidden"
             )
-        return FakeCluster._method(cluster, kind, verb, name)
+        return FakeCluster._api(cluster, kind, verb, name)
 
-    cluster._method = forbidden
+    cluster._api = forbidden
     assert cli.main(["apply", str(_repo(tmp_path))]) == 1
     assert "not allowed to get ConfigMap/campaign-kyrk" in capsys.readouterr().err
     assert cluster.of("apply") == [] and cluster.of("dry-run") == []
@@ -1820,7 +1837,7 @@ def test_a_record_for_a_job_that_was_never_created_is_not_believed(tmp_path, clu
     """The pair came apart: the ConfigMap went out and its Job did not. No
     Job exists for any record to be about, so none is believed."""
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    real = FakeCluster._method
+    real = FakeCluster._api
 
     def method(kind, verb, name=""):
         inner = real(cluster, kind, verb, name)
@@ -1834,11 +1851,11 @@ def test_a_record_for_a_job_that_was_never_created_is_not_believed(tmp_path, clu
             return patch
         return inner
 
-    cluster._method = method
+    cluster._api = method
     assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
     assert _live(cluster, "campaign-kyrk")["metadata"]["annotations"][JOB_UID] == ""
     _web_writes(cluster, "kyrk", "Succeeded", "uid-anything")
-    cluster._method = lambda kind, verb, name="": real(cluster, kind, verb, name)
+    cluster._api = lambda kind, verb, name="": real(cluster, kind, verb, name)
     cluster.calls.clear()
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     assert ("apply", "Job", "kyrk") in cluster.calls
@@ -1852,7 +1869,7 @@ def test_a_refused_uid_write_is_repaired_by_the_next_apply(tmp_path, cluster, ca
     believed once the Job is reaped, and the whole campaign would run
     again."""
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    real = FakeCluster._method
+    real = FakeCluster._api
     sent = [0]
 
     def method(kind, verb, name=""):
@@ -1868,7 +1885,7 @@ def test_a_refused_uid_write_is_repaired_by_the_next_apply(tmp_path, cluster, ca
             return patch
         return inner
 
-    cluster._method = method
+    cluster._api = method
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     assert "could not record which Job campaign kyrk runs" in capsys.readouterr().err
     assert _live(cluster, "campaign-kyrk")["metadata"]["annotations"][JOB_UID] == ""
@@ -1983,24 +2000,118 @@ def test_the_lease_is_released_when_the_apply_fails(tmp_path, cluster):
     assert cluster.leases["htrflow-campaigns-apply"]["spec"]["holderIdentity"] is None
 
 
+def _during(cluster, name: str, act) -> None:
+    """Run ``act()`` as the apply sends object ``name``."""
+    real = FakeCluster._api
+
+    def api(kind, verb, n=""):
+        if verb == "patch" and n == name:
+            act()
+        return real(cluster, kind, verb, n)
+
+    cluster._api = api
+
+
 def test_an_apply_whose_lease_was_taken_over_stops(
     tmp_path, cluster, monkeypatch, capsys
 ):
-    """Renewed between steps; a renewal that finds the Lease rewritten by
-    someone else is two applies running at once, and this one stops."""
+    """Renewed before every request; a renewal that finds the Lease held by
+    someone else is two applies running at once, and this one stops there,
+    naming the new holder -- not as a server that stopped answering."""
     repo, out = _repo(tmp_path), tmp_path / "rendered"
-    monkeypatch.setattr(cluster_mod, "LEASE_RENEW", -1)  # renew at every step
-    real = FakeCluster._method
+    monkeypatch.setattr(cluster_mod, "LEASE_RENEW", -1)  # renew every request
+    lease = "htrflow-campaigns-apply"
 
-    def method(kind, verb, name=""):
-        if verb == "patch" and name == "campaign-kyrk":
-            cluster.leases["htrflow-campaigns-apply"]["metadata"]["resourceVersion"] = (
-                "x"
-            )
-        return real(cluster, kind, verb, name)
+    def take_over():
+        cluster.leases[lease]["metadata"]["resourceVersion"] = "x"
+        cluster.leases[lease]["spec"]["holderIdentity"] = "other-pod/9"
 
-    cluster._method = method
+    _during(cluster, "campaign-kyrk", take_over)
     assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == 1
-    assert ("apply", "Job", "loc") not in cluster.calls
+    assert ("apply", "Job", "kyrk") not in cluster.calls
     assert cluster.of("delete") == []
-    assert "was taken over while this apply ran" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "was taken over by other-pod/9" in err
+    assert "stopped answering" not in err and "cannot reach" not in err
+    assert cluster.leases[lease]["spec"]["holderIdentity"] == "other-pod/9"
+
+
+@pytest.mark.parametrize(("status", "why"), [(403, "Forbidden"), (404, "deleted")])
+def test_a_renewal_the_server_refuses_stops_the_apply(
+    tmp_path, cluster, monkeypatch, capsys, status, why
+):
+    """A renewal refused (no `update` granted) or answered 404 (the Lease
+    deleted) is a Lease no longer held. It used to be caught as one object's
+    refusal, and the apply ran on without the Lease, prune and all."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    monkeypatch.setattr(cluster_mod, "LEASE_RENEW", -1)
+    cluster.live = [_object("Job", "cancelled")]
+
+    def refuse():
+        if status == 404:
+            cluster.leases.clear()
+        else:
+            cluster.lease_errors["write"] = status
+
+    _during(cluster, "campaign-kyrk", refuse)
+    assert cli.main(["apply", str(repo), "--out", str(out), "--prune"]) == 1
+    assert ("apply", "Job", "kyrk") not in cluster.calls
+    assert cluster.of("delete") == [], "no prune without the Lease"
+    err = capsys.readouterr().err
+    assert "could not renew Lease/htrflow-campaigns-apply, so stopped" in err
+    assert "objects were refused" not in err
+
+
+def test_an_apply_that_could_not_renew_in_time_stops_on_its_own(
+    tmp_path, cluster, monkeypatch, capsys
+):
+    """One long request is a gap in the renewals. Past the local deadline the
+    Lease may already be another apply's, so this one stops rather than go
+    on deleting beside it."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    clock = [1000.0]
+    monkeypatch.setattr(cluster_mod.time, "monotonic", lambda: clock[0])
+
+    def stall():
+        clock[0] += cluster_mod.LEASE_SECONDS
+
+    _during(cluster, "campaign-kyrk", stall)
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 1
+    assert ("apply", "Job", "kyrk") not in cluster.calls
+    assert "went unrenewed" in capsys.readouterr().err
+
+
+def test_lease_expiry_is_judged_on_the_api_servers_clock(tmp_path, cluster):
+    """A laptop whose clock runs ten minutes fast saw a live hook's Lease as
+    long expired and took it over. Both sides of the comparison are the API
+    server's clock, from its Date header."""
+    server = datetime.now(timezone.utc) - timedelta(minutes=15)
+    cluster.server_time = server
+    renewed = (server - timedelta(seconds=10)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    cluster.leases["htrflow-campaigns-apply"] = _lease("hook-pod/1", renewed)
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 1
+    assert cluster.of("apply") == []
+    # And what this apply writes is the server's time too.
+    cluster.leases.clear()
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    written = cluster.leases["htrflow-campaigns-apply"]["spec"]["acquireTime"]
+    assert written.startswith(server.strftime("%Y-%m-%dT%H:%M"))
+
+
+def test_a_release_whose_last_renewal_answer_was_lost_still_releases(
+    tmp_path, cluster, monkeypatch
+):
+    """A renewal that landed but whose answer was lost leaves this apply one
+    resourceVersion behind: its release got a 409, swallowed, and the Lease
+    stayed held for its whole duration. The 409 is re-read: still this
+    apply's, so it is released on the fresh version."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    lease = "htrflow-campaigns-apply"
+
+    def lost_answer():
+        cluster.leases[lease]["metadata"]["resourceVersion"] = "moved-on"
+
+    _during(cluster, "loc", lost_answer)
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert cluster.leases[lease]["spec"]["holderIdentity"] is None

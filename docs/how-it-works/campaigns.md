@@ -41,11 +41,16 @@ It is also one apply at a time. Two at once, such as the Argo CD hook and a
 hand-run `make campaigns-apply`, would interleave, and a prune from the
 older checkout would delete the Job and ConfigMap the newer one had just
 created. So an apply holds the `coordination.k8s.io` Lease
-`htrflow-campaigns-apply` in the namespace for its whole run. It renews the
-Lease between steps and releases it at the end. A second apply that finds
-the Lease held sends nothing, names the holder and exits `1`. A Lease left
-unrenewed for five minutes belongs to an apply that died, and the next one
-takes it over. An apply whose Lease was taken over stops where it is.
+`htrflow-campaigns-apply` in the namespace for its whole run, and releases
+it at the end. A second apply that finds the Lease held
+sends nothing, names the holder and exits `1`. A Lease left unrenewed for
+ten minutes belongs to an apply that died, and the next one takes it over.
+Both the renewal times and that judgement use the API server's clock (its
+`Date` header), so a machine whose clock is off cannot take over a live
+apply's Lease. The holder renews before any request once half a minute has
+passed. It stops where it is when a renewal is refused, when the Lease was
+taken over, or when it went too long without one, because another apply
+may be running by then.
 
 Everything else follows from those two rules and ordinary Kubernetes
 semantics. Nothing here runs on a timer, and nothing here has to stay alive
