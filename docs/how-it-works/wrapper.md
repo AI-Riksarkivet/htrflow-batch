@@ -359,13 +359,28 @@ one.
 ![The model cache: a new pipeline file, the warm-up Job that fills the cache and writes a marker, the warmup-wait init container, and the campaign pod reading the cache offline](../assets/diagrams/warmup.svg)
 
 
-**What is cached.** One PVC holds two kinds of file:
+**One directory per recipe.** The PVC is split into one directory per
+recipe, `<pipeline-id>-<recipe sha256>`, where the recipe hash covers the
+pipeline's steps and its image. The converter narrows every mount of the
+PVC to that directory with a `subPath`, so inside a pod it is simply
+`/data`, and the paths below are the same whichever recipe a pod runs. Two
+things follow:
+
+- **A changed recipe is a new, empty directory.** A new image can load other
+  files for the same steps, so its campaigns wait for its own warm-up rather
+  than pass the gate on the old recipe's marker.
+- **No two pipelines share one.** A warm-up runs its pipeline author's model
+  code (a YOLO `.pt` file is a pickle), so each writes only its own
+  directory, and campaign pods read only theirs. Two pipelines that load the
+  same model keep a copy each, and the PVC must be sized for that.
+
+**What is cached.** Each recipe's directory holds two kinds of file:
 
 - **Hugging Face Hub snapshots**, in the library's default layout.
   `huggingface_hub` puts them under `$HF_HOME/hub`, and nothing here sets
   `HF_HUB_CACHE`. With `HF_HOME=/data/hf`, a model lands at
   `/data/hf/hub/models--<org>--<name>/snapshots/<revision>/…`.
-- **Warm-up completion markers**: one empty file per pipeline id, at
+- **The warm-up completion marker**: one empty file, at
   `/data/warmup/<pipeline-id>.done` (`warmup.py`). A batch pod's
   `warmup-wait` init container checks only this marker. It never looks at
   what is actually in `hub/`.
@@ -382,8 +397,8 @@ key (`manifests/warmup-job.yaml`), while the campaign Job's does
 (`readOnly: true`, `manifests/campaign-job.yaml`). The default access mode is
 `ReadWriteOnce`.
 
-**Who fills it, and when.** The warm-up Job fills it, once per pipeline id,
-at apply time. The converter renders one `htr-warmup-<id>` Job for every file
+**Who fills it, and when.** The warm-up Job fills it, once per recipe, at
+apply time. The converter renders one `htr-warmup-<id>` Job for every file
 in `pipelines/`, alongside its `htr-pipeline-<id>` ConfigMap. Re-applying an
 unchanged Job changes nothing, so a completed warm-up runs once. A pruning
 apply deletes the warm-up Job and ConfigMap of a pipeline file that is gone.
@@ -443,8 +458,8 @@ real gap from failing, with `FailIndex`, a volume that a re-warm can still
 save.
 
 **Growth and cleanup.** Nothing prunes the cache. A retired pipeline's
-snapshots and its `.done` marker stay on the PVC after its warm-up Job is
-gone. Removing the marker needs PVC access, and the apply has none.
+directory, snapshots and marker included, stays on the PVC after its
+warm-up Job is gone. Removing it needs PVC access, and the apply has none.
 
 **Several nodes.** A `ReadWriteOnce` cache pins every warm-up pod and every
 batch pod to the node the volume is attached to. That is fine for one GPU
@@ -461,11 +476,11 @@ above. Only the storage changes.
 
 ### The operator's commands
 
-There is no read API for the cache, only the filesystem. Every command below
-runs inside a pod that mounts the PVC. A campaign pod mounts `/data`
-read-only, which is enough for looking. A warm-up pod exits as soon as its
-download finishes, so for anything longer, start a debug pod that mounts the
-same PVC. It lands on the node that holds a `ReadWriteOnce` volume; pin it with
+There is no read API for the cache, only the filesystem. A campaign pod
+mounts its own recipe's directory at `/data`, read-only, which is enough to
+look at that one recipe. To see the whole cache, or to change it, start a
+debug pod that mounts the whole PVC, where each recipe is a directory
+`/data/<pipeline-id>-<recipe sha256>/`. It lands on the node that holds a `ReadWriteOnce` volume; pin it with
 `nodeName` if the scheduler would place it elsewhere.
 
 ```bash
@@ -473,12 +488,22 @@ kubectl run htr-cache-debug -n <namespace> --rm -it --restart=Never --image=busy
   --overrides='{"spec":{"containers":[{"name":"debug","image":"busybox","command":["sh"],"stdin":true,"tty":true,"volumeMounts":[{"name":"data","mountPath":"/data"}]}],"volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"<cache-pvc>"}}]}}'
 ```
 
+The recipe hash of a pipeline's current warm-up is on its Job's pod
+template:
+
+```bash
+kubectl -n <namespace> get job htr-warmup-<pipeline-id> \
+  -o jsonpath='{.spec.template.metadata.annotations.htrflow\.riksarkivet\.se/recipe-sha256}'
+```
+
+In the debug pod:
+
 | Task | Command |
 |---|---|
-| See how full the cache is | `du -sh /data/hf` |
-| List cached model snapshots | `find /data/hf/hub -maxdepth 1 -name 'models--*'` |
-| List warm-up markers (which pipeline ids are warmed) | `ls /data/warmup` |
-| Force a pipeline to re-warm | Delete its marker (`rm /data/warmup/<pipeline-id>.done`, from a pod with write access) **and** the completed Job (`kubectl delete job -n <namespace> htr-warmup-<pipeline-id>`). The next apply then recreates and runs the Job. The Job has no TTL, so while it exists the apply never recreates it |
+| See how full the cache is, per recipe | `du -sh /data/*/hf` |
+| List cached model snapshots | `find /data/*/hf/hub -maxdepth 1 -name 'models--*'` |
+| List warm-up markers (which recipes are warmed) | `ls /data/*/warmup` |
+| Force a pipeline to re-warm | Delete its marker (`rm /data/<pipeline-id>-<recipe sha256>/warmup/<pipeline-id>.done`) **and** the completed Job (`kubectl delete job -n <namespace> htr-warmup-<pipeline-id>`). The next apply then recreates and runs the Job. The Job has no TTL, so while it exists the apply never recreates it |
 
 ## Pipeline configs
 
@@ -492,9 +517,11 @@ exception is Export steps, which the wrapper appends itself for `alto` and
    ([Campaign & Pipeline YAML](../reference/campaign-yaml.md)).
 2. **Deploy.** The converter renders one ConfigMap per pipeline id,
    `htr-pipeline-<id>`. It holds only the `steps:` document, with its sha256
-   as the `pipeline-sha256` annotation. Nothing guards against drift at
-   runtime. The rule that a changed pipeline gets a new id, never an in-place
-   edit, is enforced by review on the campaigns repo
+   as the `pipeline-sha256` annotation. A changed pipeline gets a new id,
+   never an in-place edit: `validate` and `render` refuse an edit while a
+   rendered campaign still names the pipeline, `apply` refuses one while a
+   campaign in the cluster still runs it, and beyond that it is review on
+   the campaigns repo
    ([Campaigns → Immutability](campaigns.md#immutability)).
 3. **Select.** The campaign's `pipeline:` sets `PIPELINE_ID`, which places
    the S3 keys, and mounts that ConfigMap. `PIPELINE_PATH` points at the file
