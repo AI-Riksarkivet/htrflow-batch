@@ -13,7 +13,9 @@ import anyio
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from kubernetes.client import ApiException
 
+from htrflow_web import projection
 from htrflow_web.app import (
     DNS_1123,
     REAPED_SHOWN,
@@ -1193,3 +1195,145 @@ def test_the_recording_fake_refuses_a_name_the_cluster_would():
         reader.apply_configmap(
             {"metadata": {"name": "Campaign-Kyrk", "namespace": "htr-test"}}
         )
+
+
+# --- the record's field ownership, against server-side apply itself -------
+
+#: One volume done, one failed -- with a pod saying why, so a detail request
+#: has a new reason to write.
+FAILING_JOB = {**JOB, "status": {**JOB["status"], "active": 0, "failedIndexes": "1"}}
+FAILED_POD = {
+    "metadata": {
+        "name": "kyrk-1-x",
+        "creationTimestamp": "2026-01-01T00:01:00Z",
+        "labels": {"batch.kubernetes.io/job-completion-index": "1"},
+    },
+    "status": {
+        "containerStatuses": [
+            {
+                "name": "wrapper",
+                "state": {"terminated": {"exitCode": 1, "message": "boom"}},
+            }
+        ]
+    },
+}
+STATUS = "campaign-kyrk-status"
+LABELS = {
+    "htrflow.riksarkivet.se/managed-by": "converter",
+    "htrflow.riksarkivet.se/campaign": "kyrk",
+    "htrflow.riksarkivet.se/pipeline": "demo-v1",
+    "htrflow.riksarkivet.se/kind": "status",
+}
+OLD_REASONS = '[{"id":"vol0","reason":"an older sentence"}]'
+
+
+class SsaReader(FakeReader):
+    """FakeReader whose status ConfigMap lives in an SSA-faithful store
+    (conftest.py). ``stale`` stands in for a read made before another
+    request's write: what this request saw, not what is there now."""
+
+    def __init__(self, store, job: dict = FAILING_JOB) -> None:
+        self.store, self.job = store, job
+        self.stale: dict | None = None
+        self.conflicts = 0
+
+    def get_job(self, namespace: str, name: str) -> dict | None:
+        return self.job if name == "kyrk" else None
+
+    def list_jobs(self) -> list[dict]:
+        return [self.job]
+
+    def list_pods(self, namespace: str, job_name: str) -> list[dict]:
+        return [FAILED_POD]
+
+    def _status(self) -> dict | None:
+        return self.stale if self.stale is not None else self.store.get(STATUS)
+
+    def get_configmap(self, namespace: str, name: str) -> dict | None:
+        return (
+            self._status() if name == STATUS else super().get_configmap(namespace, name)
+        )
+
+    def list_configmaps(self) -> list[dict]:
+        return [cm for cm in [self._status()] if cm is not None]
+
+    def apply_configmap(
+        self, body: dict, force: bool = False, manager: str = FIELD_MANAGER
+    ) -> None:
+        try:
+            self.store.apply(body, force=force, manager=manager)
+        except ApiException as e:
+            self.conflicts += 1
+            raise ApplyConflict(body["metadata"]["name"]) from e
+
+
+def _legacy(store) -> None:
+    """A record as main left it: one manager, `htrflow-web`, owns it all --
+    failedVolumes included."""
+    store.apply(
+        {
+            "metadata": {"name": STATUS, "namespace": "htr-test", "labels": LABELS},
+            "data": {
+                "phase": "Running",
+                "jobUid": "uid-kyrk",
+                "failedVolumes": OLD_REASONS,
+            },
+        },
+        manager=FIELD_MANAGER,
+    )
+
+
+def _reasons(store) -> dict:
+    return projection._parse_failed(store.get(STATUS)["data"].get("failedVolumes", ""))
+
+
+def test_an_upgraded_record_keeps_its_failures_and_hands_them_over(ssa):
+    reader = SsaReader(ssa)
+    _legacy(ssa)
+    client_ = TestClient(create_app(reader, progress=FakeProgress()))
+    client_.get("/api/v1/jobs")
+    assert _reasons(ssa) == {"vol0": "an older sentence"}, "not released into deletion"
+    assert ssa.owner_of(STATUS, "failedVolumes") == {FIELD_MANAGER}
+    client_.get("/api/v1/jobs/htr-test/kyrk")
+    assert _reasons(ssa) == {"vol1": "boom", "vol0": "an older sentence"}
+    assert ssa.owner_of(STATUS, "failedVolumes") == {FAILURES_MANAGER}
+    client_.get("/api/v1/jobs")
+    assert set(_reasons(ssa)) == {"vol0", "vol1"}, "the list route leaves them be"
+
+
+def test_a_list_write_racing_the_take_over_conflicts_and_then_heals(ssa):
+    """It read the record before the failures manager took it over, so it
+    still sends the old value as the summary's -- a 409, not an overwrite.
+    The next poll reads the new owner and leaves the field alone."""
+    reader = SsaReader(ssa)
+    _legacy(ssa)
+    client_ = TestClient(create_app(reader, progress=FakeProgress()))
+    before = ssa.get(STATUS)
+    client_.get("/api/v1/jobs/htr-test/kyrk")
+    taken_over = _reasons(ssa)
+    assert "vol1" in taken_over
+    reader.stale = before
+    assert client_.get("/api/v1/jobs").status_code == 200
+    assert reader.conflicts == 1
+    assert _reasons(ssa) == taken_over, "the stale value did not land"
+    reader.stale = None
+    client_.get("/api/v1/jobs")
+    assert _reasons(ssa) == taken_over
+
+
+def test_the_ssa_store_behaves_like_the_api_server(ssa):
+    """The rules the tests above lean on, held to on their own."""
+    cm = {"metadata": {"name": "x", "namespace": "n"}, "data": {"a": "1", "b": "1"}}
+    uid = ssa.apply(cm, manager="one")
+    with pytest.raises(ApiException):  # another manager's field, changed
+        ssa.apply({**cm, "data": {"a": "2"}}, manager="two")
+    ssa.apply({**cm, "data": {"b": "1"}}, manager="two")  # same value: shared
+    ssa.apply({**cm, "data": {}}, manager="one")  # releases a, keeps shared b
+    assert ssa.get("x")["data"] == {"b": "1"}
+    ssa.apply({**cm, "data": {"b": "3"}}, force=True, manager="three")
+    assert ssa.owner_of("x", "b") == {"three"}
+    with pytest.raises(ApiException):  # a uid never creates
+        ssa.apply(
+            {"metadata": {"name": "y", "namespace": "n", "uid": uid}}, manager="one"
+        )
+    assert ssa.get("y") is None
