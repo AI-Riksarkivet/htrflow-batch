@@ -302,13 +302,12 @@ def test_a_failed_run_leaves_a_terminal_stage_not_stuck_at_stream(env, cfg, s3):
     assert _get(s3, cfg, "progress.json")["stage"] == "failed"
 
 
-def test_a_sigterm_run_leaves_the_stage_it_was_in(env, cfg, s3, monkeypatch):
+def test_a_sigterm_run_leaves_the_stage_it_was_in(env, cfg, s3):
     """A SIGTERMed run is the one exception to the terminal stage above (W4):
     the pod has 120 s before the SIGKILL and that time goes to the final log
     ship, not to a status PUT that may sit out its own timeouts first. The
     index is retried anyway, and the termination message -- a local file --
     still names the stage and says SIGTERM."""
-    monkeypatch.setattr(main_mod, "_hard_exit", lambda code: None)
 
     def factory(c):
         def process(path: Path):
@@ -370,7 +369,6 @@ def test_sigterm_stops_the_status_writes(env, cfg, s3, monkeypatch):
     before the final log ship, the one piece of evidence that matters. Once
     the handler has fired, nothing status-shaped is written again."""
     monkeypatch.setattr(progress_mod, "PUBLISH_EVERY_PAGES", 1)
-    monkeypatch.setattr(main_mod, "_hard_exit", lambda code: None)
     puts: list[str] = []
     original = ResultStore.put_progress
 

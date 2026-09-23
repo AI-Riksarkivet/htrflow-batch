@@ -6,7 +6,6 @@ import os
 import signal
 from pathlib import Path
 
-from htrflow_batch import warmup as warmup_mod
 from htrflow_batch.warmup import (
     EXIT_OK,
     EXIT_PERMANENT,
@@ -223,12 +222,10 @@ def test_warmup_without_pipeline_id_is_permanent(tmp_path):
 
 
 def test_warmup_sigterm_writes_a_termination_message_and_exits_143(
-    tmp_path, monkeypatch
+    tmp_path, hard_exits
 ):
     """The Job's activeDeadlineSeconds (1 h) kills a slow first download; the
     campaign card must show why, not an empty message."""
-    exits: list[int] = []
-    monkeypatch.setattr(warmup_mod, "_hard_exit", lambda code: exits.append(code))
     before = signal.getsignal(signal.SIGTERM)
     term_path = tmp_path / "termination-log"
     env = {**_env(tmp_path), "TERMINATION_LOG_PATH": str(term_path)}
@@ -238,7 +235,7 @@ def test_warmup_sigterm_writes_a_termination_message_and_exits_143(
 
     rc = main(env, load=killed)
     assert rc == EXIT_SIGTERM == 143
-    assert exits == [EXIT_SIGTERM]
+    assert hard_exits == [EXIT_SIGTERM]
     assert json.loads(term_path.read_text()) == {
         "stage": "warmup",
         "permanent": False,
