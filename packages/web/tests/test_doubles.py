@@ -19,6 +19,7 @@ from htrflow_web.app import NoCluster
 from htrflow_web.kube import Reader, ReaderLike
 
 HERE = Path(__file__).parent
+CONTRACT = HERE.parents[2] / "scripts" / "api_contract.py"
 
 READER_METHODS = {
     name: inspect.signature(fn)
@@ -29,9 +30,12 @@ READER_METHODS = {
 
 def _doubles() -> dict[str, type]:
     """The real adapter, site-only mode's, and every class in the test
-    modules that answers any call the routes make."""
+    modules and the contract script that answers any call the routes
+    make."""
     found: dict[str, type] = {"Reader": Reader, "NoCluster": NoCluster}
-    for path in sorted(HERE.glob("test_*.py")):
+    # The contract fixture's cluster is a double too: the frontend's schemas
+    # are checked against what the routes answer over it.
+    for path in [*sorted(HERE.glob("test_*.py")), CONTRACT]:
         if path == Path(__file__):
             continue
         name = f"_doubles_{path.stem}"
@@ -63,6 +67,7 @@ def test_the_search_finds_the_fakes_it_is_for():
         "test_app.SsaReader",
         "test_app._Hung",
         "test_static.EmptyReader",
+        "api_contract.ContractReader",
     } <= set(DOUBLES)
 
 
