@@ -69,6 +69,25 @@ controller's peers in ingressFrom) the addresses they would be asked to
 police belong to the controller, not the browser, so they have nothing to
 check.
 */}}
+{{- /*
+The ranges a production install cannot leave to a default (0923 D-8). An
+empty list is not a narrow one here: no S3 route fails every volume after
+its GPU time, no cluster ranges leave the pod and service networks out of
+every carve-out, and no IIIF range fetches nothing. Only while the
+NetworkPolicies are rendered -- a campaigns repo's CI renders the chart with
+network.enabled=false to get at the policy objects alone.
+*/}}
+{{- if .Values.network.enabled }}
+{{- if and (not .Values.network.s3Cidrs) (not .Values.network.s3InNamespace) }}
+{{- fail "network.s3Cidrs is empty and network.s3InNamespace is false, so campaign pods and the web front have no route to the results bucket and every volume would fail after its GPU time: list the S3 endpoint's ranges in network.s3Cidrs, or set network.s3InNamespace=true when the bucket is the in-namespace RustFS of charts/htrflow-devstack" }}
+{{- end }}
+{{- if not .Values.network.clusterCidrs }}
+{{- fail "network.clusterCidrs is empty, so no egress range the chart renders would carve the cluster's own pod and service ranges out of itself: list your cluster's pod and service CIDRs" }}
+{{- end }}
+{{- if not .Values.network.iiifCidrs }}
+{{- fail "network.iiifCidrs is empty, so campaign pods could fetch a page image from nowhere: list your IIIF origins' ranges (0.0.0.0/0 for any origin, which still reaches no internal range)" }}
+{{- end }}
+{{- end }}
 {{- if and .Values.network.enabled (not .Values.network.web.allowPublicIngress) (not (or .Values.web.ingress.enabled .Values.network.web.ingressFrom)) }}
 {{- if not .Values.network.web.ingressCidrs }}
 {{- fail "network.web.ingressCidrs is empty, and a NetworkPolicy rule with no sources admits every address, so an empty list would open the unauthenticated web front to everyone rather than close it: list the ranges that may reach it, or set network.web.allowPublicIngress=true to accept that any address may" }}
@@ -242,15 +261,18 @@ network, and egress rules are a union. Argument: (list $ <ranges>).
 
 {{/*
 S3 egress, for the two pods that reach the bucket -- the batch Job and the
-web front's progress reader -- as a JSON list of rules: the in-namespace
-`app: rustfs` pod on 9000 (a no-op match unless charts/htrflow-devstack's
-RustFS is installed; the two charts share no values), plus
+web front's progress reader -- as a JSON list of rules: with
+network.s3InNamespace, the in-namespace `app: rustfs` pod on 9000
+(charts/htrflow-devstack's RustFS; the two charts share no values), plus
 network.s3Cidrs on network.s3Ports -- named ports, not the whole range
 (2026-09-14 audit): a self-hosted endpoint's range is a slice of the
 operator's own network.
 */}}
 {{- define "htrflow-batch.s3Egress" -}}
-{{- $s3 := list (dict "to" (list (dict "podSelector" (dict "matchLabels" (dict "app" "rustfs")))) "ports" (list (dict "port" 9000))) }}
+{{- $s3 := list }}
+{{- if .Values.network.s3InNamespace }}
+{{- $s3 = append $s3 (dict "to" (list (dict "podSelector" (dict "matchLabels" (dict "app" "rustfs")))) "ports" (list (dict "port" 9000))) }}
+{{- end }}
 {{- with .Values.network.s3Cidrs }}
   {{- $ports := list }}
   {{- range $.Values.network.s3Ports }}{{ $ports = append $ports (dict "port" .) }}{{ end }}

@@ -224,10 +224,15 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   # range here, in s3Cidrs and in apply.gitCidrs loses the internal ranges
   # that lie inside it (the ones below, link-local and loopback).
   iiifCidrs: ["192.121.221.27/32"]
-  # S3 endpoint(s) for batch Jobs, besides the always-allowed in-namespace
-  # `app: rustfs` pod (a no-op unless charts/htrflow-devstack's RustFS is
-  # installed). A real endpoint goes here.
+  # S3 endpoint(s) for batch Jobs and the web front's progress reader. A
+  # real endpoint goes here.
   s3Cidrs: []
+  # The results bucket is the in-namespace RustFS of charts/htrflow-devstack:
+  # the batch Job and the web front may reach any `app: rustfs` pod here on
+  # 9000. Off, that rule is not rendered -- any pod carrying the label would
+  # otherwise be a destination -- and s3Cidrs must name the endpoint, since
+  # a campaign pod with no route to S3 fails every volume after its GPU time.
+  s3InNamespace: true
   # Ports those endpoints answer on. A real endpoint is 443; a self-hosted
   # one often is not, and the answer to that is this value rather than a
   # rule with no ports at all. The in-namespace RustFS pod is matched by
@@ -247,7 +252,9 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   # is one of them, and neither a warm-up nor a batch Job has any business
   # there. A range listed in iiifCidrs or s3Cidrs that lies inside one of
   # them stays reachable — it holds nothing to carve out.
-  privateCidrs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+  # 100.64.0.0/10 is carrier-grade NAT space, which some clouds and overlay
+  # networks hand out as their own internal addresses.
+  privateCidrs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"]
   apiServer:
     cidr: ""               # e.g. 10.16.51.56/32 — kube-apiserver as reached AFTER service DNAT; required by the read API's NetworkPolicy
     # Every further API server of an HA control plane (one /32 each): after

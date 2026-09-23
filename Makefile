@@ -190,6 +190,9 @@ CHART_DEFAULT_SETS := $(CHART_NO_POLICY_SETS) --set security.policies.allowDisab
 CHART_PROD_SETS := --set publicResultsBase=https://x/ \
                        --set network.apiServer.cidr=10.16.51.10/32 \
                        --set network.web.ingressCidrs='{10.16.0.0/16}' \
+                       --set network.s3Cidrs='{52.95.0.0/16}' \
+                       --set network.clusterCidrs='{10.244.0.0/16,10.96.0.0/12}' \
+                       --set network.iiifCidrs='{192.121.221.27/32}' \
                        --set web.image=docker.io/riksarkivet/htrflow-web@sha256:0000000000000000000000000000000000000000000000000000000000000000
 helm-lint:
 	helm lint $(CHART) $(CHART_DEFAULT_SETS)

@@ -169,6 +169,10 @@ var prodChartRenders = []chartRender{
 		"publicResultsBase=https://x/",
 		"network.apiServer.cidr=10.16.51.10/32",
 		"network.web.ingressCidrs={10.16.0.0/16}",
+		// The profile empties these and refuses to render without them.
+		"network.s3Cidrs={52.95.0.0/16}",
+		"network.clusterCidrs={10.244.0.0/16,10.96.0.0/12}",
+		"network.iiifCidrs={192.121.221.27/32}",
 		"web.image=docker.io/riksarkivet/htrflow-web@" + digestZero,
 	}},
 }
