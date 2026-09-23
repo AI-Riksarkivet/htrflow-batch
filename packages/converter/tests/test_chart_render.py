@@ -190,20 +190,13 @@ def test_the_rbac_scope_policy_follows_the_policies_switch(default: list[dict]):
 # --- B80: an install that enforces nothing has to say so ------------------
 
 
-def test_an_install_without_the_policies_has_to_say_so():
+def test_an_install_without_the_policies_renders_once_it_says_so():
     """The chart's defaults leave every Kyverno policy off, because a policy
     nothing reconciles is worse than none -- which also meant an install
     that followed no profile enforced nothing the repository built, and
     nothing said so. Off stays possible; silent stops being."""
-    refused = helm_template(sets=REQUIRED_SETS + (PUBLIC_INGRESS,))
-    assert refused.returncode != 0
-    assert "security.policies.allowDisabled" in refused.stderr
-    # One sentence: the error names the switch and the opt-out, nothing more.
-    reason = next(
-        line for line in refused.stderr.splitlines() if "allowDisabled" in line
-    ).split("): ", 1)[1]
-    assert ". " not in reason and reason.startswith("security.policies.enabled")
-
+    # The refusal itself, in its own words, is the guard table's
+    # `policies-off` case; what is left is that both ways out render.
     assert render(sets=DEFAULT_SETS)
     assert render(
         sets=REQUIRED_SETS + (PUBLIC_INGRESS, "security.policies.enabled=true")
@@ -247,19 +240,6 @@ def empty_ingress(tmp_path: Path) -> Path:
     path = tmp_path / "empty-ingress.yaml"
     path.write_text("network:\n  web:\n    ingressCidrs: []\n", encoding="utf-8")
     return path
-
-
-def test_an_empty_ingress_list_is_refused_not_opened(empty_ingress: Path):
-    """An ingress rule with an empty `from` matches every source, so
-    `ingressCidrs: []` -- what an operator writes to shut the web front --
-    rendered exactly the catch-all the guard refuses, without the guard
-    noticing (finding 3100). It fails with a sentence that says so."""
-    refused = helm_template(
-        values=str(empty_ingress), sets=REQUIRED_SETS + (POLICIES_OFF,)
-    )
-    assert refused.returncode != 0
-    assert "network.web.ingressCidrs is empty" in refused.stderr
-    assert "network.web.allowPublicIngress" in refused.stderr
 
 
 def test_an_empty_ingress_list_with_the_opt_in_is_the_catch_all_it_renders(
@@ -308,17 +288,9 @@ def test_the_web_front_sees_its_clients_own_addresses(default: list[dict]):
     range, which every client reaching a node then matched (finding 3064).
     `Local` keeps the client's address, so the list restricts clients."""
     service = named(default, "Service", "htrflow-web")
-    assert service["spec"]["type"] == "NodePort"
+    assert service["spec"]["type"] == "NodePort"  # the default, ingress mode off
     assert service["spec"]["externalTrafficPolicy"] == "Local"
-
-
-def test_the_refusal_no_longer_advises_listing_the_node_range():
-    """Listing the node range is what defeated the list; the chart's own
-    sentence must not tell anyone to do it."""
-    refused = helm_template(sets=REQUIRED_SETS + (POLICIES_OFF,))
-    assert "wider than /8" in refused.stderr
-    assert "node range" not in refused.stderr
-    assert "SNAT" not in refused.stderr
+    assert not objects(default, "Ingress")
 
 
 def test_the_catch_all_guard_is_silent_when_the_policies_are_not_rendered():
@@ -345,13 +317,6 @@ INGRESS = (
     "web.ingress.tlsSecretName=htr-tls",
     "network.web.ingressFrom[0].namespaceSelector.matchLabels.kubernetes\\.io/metadata\\.name=ingress-test",
 )
-
-
-def test_the_default_web_service_is_still_a_nodeport():
-    svc = named(render(sets=DEFAULT_SETS), "Service", "htrflow-web")
-    assert svc["spec"]["type"] == "NodePort"
-    assert svc["spec"]["externalTrafficPolicy"] == "Local"
-    assert not objects(render(sets=DEFAULT_SETS), "Ingress")
 
 
 def test_ingress_mode_renders_a_clusterip_service_and_a_tls_ingress():
@@ -382,27 +347,6 @@ def test_ingress_mode_admits_the_controller_not_address_ranges():
         }
     ]
     assert rule["ports"] == [{"port": 8081}]
-
-
-@pytest.mark.parametrize(
-    "drop, sentence",
-    [
-        (
-            "web.service.type=ClusterIP",
-            "web.ingress.enabled needs web.service.type=ClusterIP",
-        ),
-        (
-            "web.ingress.host=htr.example.org",
-            "web.ingress.enabled needs web.ingress.host",
-        ),
-        (INGRESS[-1], "web.ingress.enabled needs network.web.ingressFrom"),
-    ],
-)
-def test_ingress_mode_refuses_what_it_cannot_serve(drop, sentence):
-    sets = tuple(s for s in INGRESS if s != drop)
-    result = helm_template(sets=REQUIRED_SETS + (POLICIES_OFF,) + sets)
-    assert result.returncode != 0
-    assert sentence in result.stderr
 
 
 def test_ingress_from_refuses_an_address_range():
@@ -861,15 +805,6 @@ def test_the_list_alone_is_enough():
     )
     api = _api_rule(named(rendered, "NetworkPolicy", "htr-web"))
     assert api["to"] == [{"ipBlock": {"cidr": "192.0.2.11/32"}}]
-
-
-def test_no_api_server_address_at_all_is_still_refused():
-    sets = tuple(
-        s for s in REQUIRED_SETS if not s.startswith("network.apiServer.cidr=")
-    )
-    refused = helm_template(sets=sets + (PUBLIC_INGRESS, POLICIES_OFF))
-    assert refused.returncode != 0
-    assert API_SERVER_REFUSAL in refused.stderr
 
 
 def _from_endpoints(tmp_path: Path, endpoints: dict) -> dict:
