@@ -668,6 +668,44 @@ def _name_the_deadline(reason: dict, pod_reason: str | None) -> dict:
     return {**reason, "error": "DeadlineExceeded"}
 
 
+def _terminations(statuses: list[dict] | None) -> list[dict]:
+    return [
+        {
+            key: cs[key]
+            for key in ("name", "state", "lastState")
+            if key in cs and (key == "name" or "terminated" in (cs[key] or {}))
+        }
+        for cs in statuses or []
+    ]
+
+
+def pod_fields(pod: dict) -> dict:
+    """Everything this module reads off a pod, and nothing else: its index
+    label and creation time (``_pods_by_index``, ``newest``) and how it
+    stopped (``wrapper_reason``). ``kube.list_pods`` keeps only this of each
+    pod it reads, so a campaign with thousands of retries left behind holds
+    a few hundred bytes per pod rather than its whole spec (2026-09-23
+    audit) -- a field read here and dropped there fails the test that
+    projects both."""
+    meta = pod.get("metadata") or {}
+    status = pod.get("status") or {}
+    slim_status = {
+        key: _terminations(status.get(key))
+        for key in ("containerStatuses", "initContainerStatuses")
+        if key in status
+    }
+    if "reason" in status:
+        slim_status["reason"] = status["reason"]
+    return {
+        "metadata": {
+            key: meta[key]
+            for key in ("name", "creationTimestamp", "labels")
+            if key in meta
+        },
+        "status": slim_status,
+    }
+
+
 def _pod_completion_index(pod: dict) -> int | None:
     """The pod's index, or ``None`` when it has no readable one. The label is
     the Job controller's, but a hand-made pod can carry anything, and one
@@ -924,7 +962,11 @@ def detail(
     for idx, line in enumerate(_volume_lines(configmap)):
         state = _volume_state(idx, completed, failed, idx in pods_by_index)
         row = _volume_row(idx, line, state, results_base, pipeline, cfg)
-        if idx in pods_by_index:
+        # A done index's pods are history: no Succeeded pod is listed
+        # (kube.list_pods), so the newest one left is an attempt that failed
+        # before the one that published, and its sentence is not why the
+        # volume is anything (2026-09-23 audit).
+        if idx in pods_by_index and state != "done":
             newest_pod = newest(pods_by_index[idx])
             reason = wrapper_reason(newest_pod)
             if reason is not None:
