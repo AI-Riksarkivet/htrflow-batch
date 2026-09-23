@@ -346,7 +346,8 @@ A pause sync that did not reach a Workload (the patch was refused, or a
 refused Job's live Job could not be read) has its own closing line:
 `the pause sync did not reach the Kueue Workload of Job/kyrk; see above
 (exit 1)`. The code is `1` when git says that campaign is paused, since the
-pause is not enforced, and `3` when it only had to stay running.
+pause is not enforced, and `3` when it only had to stay running (unless
+something else in the apply already makes it `1`).
 
 A Job's pod template is fixed once the Job exists. Two different changes
 move it: a recipe edit, and a converter upgrade or `converter.yaml` setting
