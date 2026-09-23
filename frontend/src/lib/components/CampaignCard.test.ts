@@ -327,10 +327,11 @@ describe("CampaignCard", () => {
   });
 
   test("a sourceUrl that is not an http(s) URL never reaches the card", async () => {
-    // volumes.txt is a file humans edit in a git repo. Since the audit the
-    // schema refuses the row at the boundary ($lib/api, httpUrlSchema), so
-    // the card never sees it and says what it says about any answer it
-    // cannot read; the card's own checks stay as the last step.
+    // volumes.txt is a file humans edit in a git repo. The schema reads the
+    // field on its own ($lib/api): one the page cannot use is no link, and
+    // the rest of the card -- this volume included -- still draws. Refusing
+    // the whole detail over it left the card an error for ever (2026-09-23
+    // audit). The card's own checks stay as the last step.
     const hostile = {
       ...volumeFailed,
       sourceUrl: "javascript:alert(1)",
@@ -343,12 +344,14 @@ describe("CampaignCard", () => {
     );
     render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
+    await expand();
 
     expect(screen.queryByRole("link", { name: /^manifest for/ })).toBeNull();
     expect(screen.queryByRole("link", { name: /^vol/ })).toBeNull();
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "answered in a form this page doesn't understand",
-    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(
+      screen.getByRole("link", { name: `run log for ${hostile.id}` }),
+    ).toBeInTheDocument();
   });
 
   test("the log link carries log+manifest always, and live=1 only for a volume that is not done", async () => {
