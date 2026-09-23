@@ -120,18 +120,17 @@ def _pod(
     }
 
 
-class TestParseIndexRanges:
-    def test_mixed_ranges_and_singles(self):
-        assert projection.parse_index_ranges("0-2,5,7-9") == {0, 1, 2, 5, 7, 8, 9}
-
-    def test_empty_string(self):
-        assert projection.parse_index_ranges("") == set()
-
-    def test_none(self):
-        assert projection.parse_index_ranges(None) == set()
-
-    def test_single_value(self):
-        assert projection.parse_index_ranges("3") == {3}
+@pytest.mark.parametrize(
+    ("spec", "indexes"),
+    [
+        ("0-2,5,7-9", {0, 1, 2, 5, 7, 8, 9}),
+        ("3", {3}),
+        ("", set()),
+        (None, set()),
+    ],
+)
+def test_parse_index_ranges(spec: str | None, indexes: set[int]):
+    assert projection.parse_index_ranges(spec) == indexes
 
 
 class TestSummarize:
@@ -154,38 +153,26 @@ class TestSummarize:
         summary = projection.summarize(job, CFG, MISSING_WARMUP)
         assert summary["resultsBase"] == "https://results.example.org/htr-batch/demo-v1"
 
-    def test_phase_queued(self):
-        job = _job(suspend=True, completed="", failed="")
-        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Queued"
+    COMPLETE = {"type": "Complete", "status": "True"}
+    FAILED = {"type": "Failed", "status": "True"}
 
-    def test_phase_paused(self):
-        job = _job(suspend=True, completed="0", failed="")
-        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Paused"
-
-    def test_phase_succeeded(self):
-        job = _job(conditions=[{"type": "Complete", "status": "True"}])
-        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Succeeded"
-
-    def test_phase_failed(self):
-        """Nothing completed: the campaign produced nothing."""
-        job = _job(completed="", conditions=[{"type": "Failed", "status": "True"}])
-        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Failed"
-
-    def test_phase_partially_failed(self):
-        """The Job gave up, but four indexes had already published."""
-        job = _job(conditions=[{"type": "Failed", "status": "True"}])
-        assert (
-            projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "PartiallyFailed"
-        )
-
-    def test_phase_succeeded_wins_over_failed(self):
-        job = _job(
-            conditions=[
-                {"type": "Complete", "status": "True"},
-                {"type": "Failed", "status": "True"},
-            ]
-        )
-        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == "Succeeded"
+    @pytest.mark.parametrize(
+        ("status", "phase"),
+        [
+            ({"suspend": True, "completed": "", "failed": ""}, "Queued"),
+            ({"suspend": True, "completed": "0", "failed": ""}, "Paused"),
+            ({"conditions": [COMPLETE]}, "Succeeded"),
+            # Nothing completed: the campaign produced nothing.
+            ({"completed": "", "conditions": [FAILED]}, "Failed"),
+            # The Job gave up, but four indexes had already published.
+            ({"conditions": [FAILED]}, "PartiallyFailed"),
+            ({"conditions": [COMPLETE, FAILED]}, "Succeeded"),
+        ],
+        ids=["queued", "paused", "succeeded", "failed", "partial", "complete-wins"],
+    )
+    def test_phase(self, status: dict, phase: str):
+        job = _job(**status)
+        assert projection.summarize(job, CFG, MISSING_WARMUP)["phase"] == phase
 
 
 class TestDetail:
@@ -720,20 +707,17 @@ class TestMatchWarmup:
         assert projection.match_warmup(job, [no_pipeline_warmup]) is None
 
 
-class TestWarmupPhase:
-    def test_pending_before_any_pod(self):
-        assert projection.warmup_phase(_warmup_job()) == "pending"
-
-    def test_running_while_active(self):
-        assert projection.warmup_phase(_warmup_job(active=1)) == "running"
-
-    def test_succeeded_on_complete_condition(self):
-        job = _warmup_job(conditions=[{"type": "Complete", "status": "True"}])
-        assert projection.warmup_phase(job) == "succeeded"
-
-    def test_failed_on_failed_condition(self):
-        job = _warmup_job(conditions=[{"type": "Failed", "status": "True"}])
-        assert projection.warmup_phase(job) == "failed"
+@pytest.mark.parametrize(
+    ("status", "phase"),
+    [
+        ({}, "pending"),  # before any pod
+        ({"active": 1}, "running"),
+        ({"conditions": [{"type": "Complete", "status": "True"}]}, "succeeded"),
+        ({"conditions": [{"type": "Failed", "status": "True"}]}, "failed"),
+    ],
+)
+def test_warmup_phase(status: dict, phase: str):
+    assert projection.warmup_phase(_warmup_job(**status)) == phase
 
 
 class TestWrapperReasonOnAWarmupPod:
