@@ -6,7 +6,6 @@ The volume-level view is [The Wrapper](wrapper.md).
 
 ![One page: the manifest, a PageRef, the image on tmpfs, htrflow, the XML, the ALTO stamp, the upload, and the files written after the last page](../assets/diagrams/page-flow.svg)
 
-
 ## The source
 
 The `setup` stage fetches the campaign's IIIF manifest: Presentation 2 or 3,
@@ -68,9 +67,8 @@ A failure is either the page's or the source's:
 | Network error, deadline, 408, 425, 429, 5xx except 501 and 505, an HTML or empty answer | Yes: 4 attempts, 2 s then doubling, or the `Retry-After` wait if longer (at most 60 s) | The page is **deferred**. Verify finds it missing, the index is retried, and resume fetches only that page |
 | Any other status, a body over a cap, an unrequested encoding, an image over `MAX_IMAGE_PIXELS` | No | The page is **failed** and recorded in `manifest.json`. The volume still completes |
 
-A 400 on a sized request is the one exception: it is asked once more, at
-the size its `info.json` offers within the cap (above), without spending an
-attempt.
+A 400 on a sized request is the one exception: it is asked once more, as
+above, without spending an attempt.
 
 Uploads fail the same two ways. Outputs the store refuses as bad (a missing
 format, XML that does not parse) fail the page. A PUT that still fails after
@@ -139,21 +137,19 @@ revision and the wrapper package
 ([Provenance in every ALTO](wrapper.md#provenance-in-every-alto)). If the
 wrapper cannot parse an ALTO, the page fails.
 
-The models named in htrflow's own block are the ones the campaign card lists.
-Each one links to its Hugging Face repo at the revision the pipeline pinned
-([Campaign Browser](../reference/frontend.md)). The recipe on the page and the
-recipe in the file are one click apart.
+The models named in htrflow's own block are the ones the campaign card
+lists, each linked to its Hugging Face repo at the pinned revision
+([Web front & read API](../reference/web.md)).
 
 ## Upload, then delete
 
 Both files are parsed before the first PUT. They are then uploaded **PAGE
-first, ALTO second**. A crash between the two leaves a PAGE without its ALTO,
-which resume reprocesses, and never the reverse. So an ALTO's presence always
-means the page is complete. Both PUTs carry the digest of the page's source
-image as object metadata (`source-digest`), which is what a later resume
-compares. The ALTO's `Page` dimensions are kept in memory
-as the file goes by. Because of that, `iiif.json` can be written later without
-reading a single ALTO back.
+first, ALTO second**, so an ALTO's presence always means the page is
+complete; a crash between the two leaves a PAGE that resume reprocesses.
+Both PUTs carry the digest of the page's source image as object metadata
+(`source-digest`), which is what a later resume compares. The ALTO's `Page`
+dimensions are kept in memory, so `iiif.json` is written later without
+reading an ALTO back.
 
 Then comes the rolling delete. The image and both XML files are unlinked as
 soon as the page's outcome is recorded, since nothing downstream needs them.
@@ -196,24 +192,15 @@ PAGE, then ALTO, and eventually `manifest.json` last.
 
 ## Where a later run touches this page again
 
-- **Resume** lists `page/` and `alto/`. It treats the page as done only if it
-  is in **both**, and only if the source digest its ALTO carries (the
-  `source-digest` object metadata, written with each upload) still matches
-  the digest of the URL this run would fetch. A page stored without that
-  metadata is compared with its `page_source_digests` entry in the previous
-  `manifest.json`. Credentials are out of both sides of that comparison. A
-  done page is never downloaded. A page that is not done loses whatever it
-  has stored before the run starts.
+- **Resume** treats the page as done only if both files exist and its
+  source digest still matches; a done page is never downloaded
+  ([The Wrapper](wrapper.md#stages-around-the-streaming-loop)).
 - **Verify** lists S3 once more after the loop. A page missing from either
   format, and not recorded as failed, means exit 1 and a retry. So does a
   deferred page, even if an earlier run left files for it.
-- **The viewer** opens `uv.html#?manifest=…` on the volume's source manifest
-  until an `iiif.json` has actually been published. After that it opens
-  `iiif.json`. The campaign page switches on `progress.viewerPublished`,
-  never on a page count, because a count above zero does not mean the interim
-  publish has happened yet. The canvas dimensions come from the ALTO, so line
-  overlays need no coordinate rewriting, and each canvas's `seeAlso` points at
-  `alto/0001.xml`.
+- **The viewer** opens the volume's source manifest until an `iiif.json`
+  has actually been published, then `iiif.json`. The campaign page switches
+  on `progress.viewerPublished`, never on a page count.
 
 ## Known limits
 
@@ -224,7 +211,7 @@ PAGE, then ALTO, and eventually `manifest.json` last.
   change while the pipeline id stays the same, resume keeps every finished
   page. The fresh `manifest.json` then claims the new recipe produced them
   all. The immutability convention
-  ([Campaigns → Immutability](campaigns.md#immutability)) is what prevents
+  ([Campaign & Pipeline YAML → Immutability](../reference/campaign-yaml.md#immutability)) is what prevents
   this.
 - **Provenance is partial.** The wrapper's ALTO block names the image and
   the htrflow base, but not the campaign, the volume or the source image URL.

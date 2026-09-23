@@ -6,33 +6,22 @@ and one index is one volume. The wrapper does the I/O in both directions
 and the live run log. It drives htrflow in-process and owns no HTR logic.
 
 What schedules the pod is in [Queueing](queueing.md). The Job it runs in,
-field by field, is in [Campaigns → A worked example](campaigns.md#a-worked-example).
+field by field, is in [Rendered objects](../reference/rendered.md).
 The full environment, stage and exit-code contract is in the
 [Wrapper reference](../reference/wrapper.md).
 
 ## The image
 
-The `htrflow-batch` image builds its own htrflow base, from htrflow's source
-at a pinned commit, on the CUDA runtime image
-([Releasing](../development/releasing.md#one-dockerfile-every-architecture)).
-On top of it the build adds:
+The `htrflow-batch` image builds its own htrflow base from source at a pinned
+commit, on the CUDA runtime image, and adds the `htrflow_batch` package with
+its locked, hashed dependencies (`.docker/htrflow-batch.dockerfile`,
+[Releasing](../development/releasing.md#one-dockerfile-every-architecture)).
+The base revision travels with the image as `HTRFLOW_BASE_REVISION`.
 
-- the `htrflow_batch` package (`packages/wrapper/`), built with a pinned,
-  hashed build backend
-- its runtime dependencies, `httpx` and `boto3`, installed from the
-  workspace lock with hashes
-
-The image carries no C compiler and compiles nothing at run time: torch's
-own Triton kernels are switched off (`TORCH_DISABLE_NATIVE_JIT=1`), so every
-operator runs on torch's precompiled kernels. That holds for the defaults.
-A pipeline config that opts into compilation, such as ultralytics'
-`compile` setting or a static cache in the transformers generation
-settings, is unsupported: it fails for want of a compiler.
-
-The base revision travels with the image, both as an OCI label and as the
-environment variable `HTRFLOW_BASE_REVISION`, so the wrapper can read it at
-runtime. The build lives in `.docker/htrflow-batch.dockerfile`, and releases
-are covered in [Releasing](../development/releasing.md).
+The image carries no C compiler, and torch's own kernel compilation is off
+(`TORCH_DISABLE_NATIVE_JIT=1`). A pipeline config that opts into compilation,
+such as ultralytics' `compile` setting or a static cache in the transformers
+generation settings, is unsupported: it fails for want of a compiler.
 
 ## The streaming driver
 
@@ -62,14 +51,7 @@ The effect:
 
 The library API is not a stability contract the way the CLI is. That makes
 the image digest pin load-bearing: the wrapper is tested against the exact
-htrflow in the image ([Testing](../development/testing.md)). If the library
-API becomes awkward in a future htrflow, there are two fallbacks:
-
-- **Stock CLI plus a watcher-uploader.** Download everything, then run the
-  CLI while an uploader thread streams outputs as they are written. Only the
-  output side streams.
-- **Chunked CLI invocations.** Download chunk N+1 while chunk N processes.
-  Each chunk pays a model reload with the GPU idle.
+htrflow in the image ([Testing](../development/testing.md)).
 
 ### The knobs that shape the loop
 
@@ -78,61 +60,45 @@ The full table, with defaults from `config.py`, is in the
 
 | Env | Meaning | Default |
 |---|---|---|
-| `MAX_IMAGE_WIDTH` | IIIF size cap (`/full/{w},/`). **Enforced**, and part of the fetched URL, so stored results always match the config. A canvas narrower than the cap asks for `max`, and a 400 falls back to the largest size the image's `info.json` offers within the cap, `max` only when it offers none ([From image to transcription](page-flow.md#the-width-capped-get)). Canvases without an image service are fetched at native size | 2500 |
+| `MAX_IMAGE_WIDTH` | IIIF size cap, **enforced** and part of the fetched URL ([From image to transcription](page-flow.md#the-width-capped-get)). Canvases without an image service are fetched at native size | 2500 |
 | `LOOKAHEAD_PAGES` | Maximum pages downloaded ahead of the consumer (bounds tmpfs) | 64 |
-| `LOOKAHEAD_BYTES` | Maximum bytes those pages may hold: a page that has landed counts its size, one still downloading counts `FETCH_MAX_BYTES` (bounds tmpfs whatever the images weigh) | 1 GiB |
+| `LOOKAHEAD_BYTES` | Maximum bytes those pages may hold; a page still downloading counts as `FETCH_MAX_BYTES` | 1 GiB |
 | `DOWNLOAD_CONCURRENCY` | Concurrent image downloads | 12 |
 | `RESUME` | Skip pages whose PAGE and ALTO already exist and whose source URL is unchanged | true |
-| `MANIFEST_MAX_BYTES` / `FETCH_MAX_BYTES` | Byte caps on the manifest and on one image body, because campaign data is untrusted. Counted on the **decoded** bytes, as they are decoded | 16 MiB / 64 MiB |
-| `DOWNLOAD_DEADLINE_SECONDS` | Wall-clock limit on one download: the manifest, or one attempt at a page. The per-read timeouts restart with every byte, so this is what stops a host that sends one byte at a time | 300 |
+| `MANIFEST_MAX_BYTES` / `FETCH_MAX_BYTES` | Byte caps on the manifest and on one image body, counted on the **decoded** bytes | 16 MiB / 64 MiB |
+| `DOWNLOAD_DEADLINE_SECONDS` | Wall-clock limit on one download (the manifest, or one attempt at a page), which stops a host that trickles bytes | 300 |
 | `LOG_SHIP_SECONDS` | How often the run log is uploaded. `0` means final upload only ([The run log](signals.md#the-run-log)) | 15 |
 
 ### Stages around the streaming loop
 
 Every stage name can appear in the termination message.
 
-0. **config**: reads and checks the environment (`Config.from_env`). This
-   is its own stage so that a deployment fault is never reported as a
-   manifest problem. A missing variable, or `IIIF_MANIFEST_URL` and `IMAGES`
-   both set, is exit 13, and the campaign page points at `converter.yaml` and
-   the chart values.
+0. **config**: reads and checks the environment (`Config.from_env`), so a
+   deployment fault is never reported as a manifest problem. A missing
+   variable, or `IIIF_MANIFEST_URL` and `IMAGES` both set, is exit 13.
 1. **setup**: fetches the IIIF manifest (http(s) only, at most 5 redirects,
-   a 60 s read timeout inside the `DOWNLOAD_DEADLINE_SECONDS` limit, capped at
-   `MANIFEST_MAX_BYTES`) and turns its canvases into
-   an ordered page list with zero-padded file names. For an `images:` volume it
-   builds the manifest instead ([From image to transcription](page-flow.md)).
-   An empty manifest, a canvas with no image, a non-JSON body or a 4xx is exit
-   13. A 5xx, a 429, a network error or the download deadline is exit 1.
+   capped at `MANIFEST_MAX_BYTES`) and turns its canvases into an ordered page
+   list. For an `images:` volume it builds the manifest instead
+   ([From image to transcription](page-flow.md)). An empty manifest, a canvas
+   with no image, a non-JSON body or a 4xx is exit 13. A 5xx, a 429, a network
+   error or the download deadline is exit 1.
 2. **resume**: lists `page/` and `alto/` in S3. A page counts as done only
-   when **both** exist. A page is reprocessed if the source digest its ALTO
-   was stamped with at upload (the `source-digest` object metadata) differs
-   from the digest of the URL the manifest gives now. A page stored without
-   that metadata is compared with its `page_source_digests` entry in the
-   previous `manifest.json` instead. Credentials are taken out of both sides,
-   so a re-signed URL is not a new source image: userinfo, and the query
-   parameters of the common signing schemes (S3 and GCS presigned URLs,
-   Azure SAS, CloudFront signed URLs, Akamai tokens, and plain `token`,
-   `sig`, `signature` and `key`). Every other query parameter still names
-   the image, so a changed `?id=` is a changed source. Because each page carries
-   its own record, a page an interrupted attempt redid from a changed source
-   stays done on the next attempt. `RESUME=false` forces everything to be
-   reprocessed. Every page about to be reprocessed loses its stored PAGE and
-   ALTO first, so a reprocessing that fails, or dies between the two PUTs,
-   never leaves an older file answering for the page. When there is any such
-   page, the previous run's `manifest.json` is deleted before them, and its
-   `iiif.json` next: a completion marker never describes outputs that are
-   gone, and a `manifest.json` is never there without its `iiif.json`.
-   Skipped pages are never downloaded.
+   when **both** exist and its source is unchanged: the digest stamped on its
+   ALTO at upload (`source-digest` metadata, or else its entry in the
+   previous `manifest.json`) must match the digest of the URL the manifest
+   gives now. Credentials (userinfo and the common signing query
+   parameters) are taken out of both sides, so a re-signed URL is not a new
+   image; any other query change is. Every page about to be reprocessed
+   loses its stored PAGE and ALTO first, and the previous `manifest.json`
+   and `iiif.json` go before them, so no marker describes outputs that are
+   gone. Skipped pages are never downloaded. `RESUME=false` reprocesses
+   everything.
 3. **load**: starts `stream.PageStream(...)` downloading, **then** calls
-   `Pipeline.from_config($PIPELINE_PATH)`. The model load overlaps the first
-   pages' downloads, so the GPU's idle time at startup is
-   `max(model_load, first_page_download)`, not the sum. Bad YAML, an unknown
-   step or model class, or an `Export` step in the YAML is exit 13. So is a
-   model whose pinned revision under `model_settings` is overridden by a key
-   beside it. Those two are read off the YAML before any model is built,
-   here and in the warm-up alike. An
-   `OSError` while building the models is exit 1
-   ([The model cache](#the-model-cache)).
+   `Pipeline.from_config($PIPELINE_PATH)`, so the model load overlaps the
+   first downloads. Bad YAML, an unknown step or model class, an `Export`
+   step in the YAML, or a pinned revision overridden by a key beside
+   `model_settings` is exit 13. An `OSError` while building the models is
+   exit 1 ([The model cache](#the-model-cache)).
 4. **stream**: the downloader, consumer and uploader run as described above.
    - **Per-page failures are recorded, not fatal mid-loop.** That covers a
      download that failed for good, an exception from `pipeline.run`, and
@@ -143,89 +109,55 @@ Every stage name can appear in the termination message.
      still fails, the page is recorded as deferred. Verify then finds it
      missing, so the index is retried and resume fetches only that page
      ([From image to transcription](page-flow.md#the-width-capped-get)).
-   - **`pipeline.run` runs behind a liveness guard.** If a step's htrflow
-     worker thread has died, the run would otherwise block forever. The guard
-     fails the page, naming the step and its model, and the pipeline is
-     rebuilt before the next page
+   - **`pipeline.run` runs behind a liveness guard.** A dead htrflow worker
+     thread, or a page that makes no progress for `PAGE_TIMEOUT_SECONDS`,
+     fails that page, naming the step and model, and the pipeline is rebuilt
+     before the next page. Progress is any step or model batch finishing, so
+     a long page that moves is never cut off. At eight worker threads that
+     cannot be stopped the run ends (exit 1) so the retry gets a fresh pod
      ([A dead htrflow worker thread](failure-handling.md#a-dead-htrflow-worker-thread)).
-     A page that makes no progress for `PAGE_TIMEOUT_SECONDS` (a model
-     call that never returns) is failed and the pipeline rebuilt the same
-     way. Progress is any step finishing or any batch a model finishes, so a
-     page of thousands of lines that takes many minutes is never cut off
-     while it moves. The dead pipeline runs no further step: every step it
-     has not started is refused, the Exports included, and each pipeline
-     built exports into a directory of its own under `outputs/`. Its worker
-     threads are stopped; those that cannot be, because they are stuck
-     inside htrflow, are counted, and at eight the run ends (exit 1) so the
-     retry starts on a fresh pod.
-   - **An upload the store could not take is deferred too.** A PUT that
-     still fails after the S3 client's own retries is the store's condition,
-     not the page's, so the page is deferred like a download and any half of
-     its pair already stored is deleted. A page whose own output is bad
-     (a missing format, malformed XML) is failed.
+   - **An upload the store could not take is deferred too**, and any half of
+     its pair already stored is deleted. A page whose own output is bad (a
+     missing format, malformed XML) is failed.
    - **Five consecutive S3 upload failures abort the run** (`UploadOutage`,
      exit 1).
-5. **verify**: checks that every page is accounted for. Each page must be
-   uploaded to both `page/` and `alto/`, skipped by resume, or recorded as
-   failed with a reason.
-   - **A missing page means exit 1.** A page that is none of those is an
-     upload that never landed, or a download or upload that was deferred. Kubernetes
-     retries the index, resume converges, and the termination message lists
-     the missing and failed pages.
-   - **On the index's last attempt a deferred page is failed.** A page the
-     source would not serve on any attempt (an image server answering 500
-     for a corrupt file, a soft-404 page served with a 200) is recorded as
-     failed, with its reason, rather than missing, so it cannot cost the
-     other pages their `manifest.json`. The wrapper knows the attempt is the
-     last from the pod's `job-index-failure-count` annotation and the Job's
-     `backoffLimitPerIndex` (`INDEX_FAILURE_COUNT`, `BACKOFF_LIMIT_PER_INDEX`).
+5. **verify**: every page must be uploaded to both `page/` and `alto/`,
+   skipped by resume, or recorded as failed with a reason.
+   - **A missing page means exit 1**: an upload that never landed, or a
+     deferred page. Kubernetes retries the index and resume converges.
+   - **On the index's last attempt a deferred page is failed**, so a source
+     that never serves one page cannot cost the others their
+     `manifest.json`. The wrapper reads the attempt number from
+     `INDEX_FAILURE_COUNT` and `BACKOFF_LIMIT_PER_INDEX`.
    - **A failed page does not fail the volume.** It would fail the same way
-     on every attempt, so failing the volume for it would spend every retry
-     and still leave the bucket with good pages and no `manifest.json` to open
-     them.
-   - **One exception: nothing succeeded.** A run where every page it processed
-     failed and nothing was resumed points to a broken model or a dead GPU,
-     not a finished volume, so it is exit 1 again. A resumed run never counts
-     as that case: pages already in the bucket show the volume is coming out.
-6. **publish** (`publish.py`): runs after verify and writes `iiif.json`,
-   `pipeline.yaml`, and then `manifest.json` **last**, as the sole completion
-   marker. Every upload carries a real content type (`application/xml` for
-   ALTO and PAGE, `application/json` for manifests). A blind `put_object`
-   defaults to `application/octet-stream`, which breaks browsers.
+     on every attempt.
+   - **Unless nothing succeeded.** A run where every processed page failed
+     and nothing was resumed points to a broken model or a dead GPU: exit 1.
+6. **publish** (`publish.py`): writes `iiif.json`, `pipeline.yaml`, and then
+   `manifest.json` **last**, as the sole completion marker. Every upload
+   carries a real content type; a blind `application/octet-stream` breaks
+   browsers.
 
-**SIGTERM**, at any stage (the pod deadline, or a drain that reaches the
-container), triggers the handler. It writes
+**SIGTERM**, at any stage, writes
 `{"stage": …, "permanent": false, "error": "SIGTERM"}` to the termination log,
-ships the final run log, and calls `os._exit(143)`. `sys.exit` would wait for
-downloads stuck in their 120 s timeout and run into the SIGKILL.
+ships the final run log, and calls `os._exit(143)` rather than wait for stuck
+downloads.
 
 Exit codes, retries and what a person is told are in
 [Failure Handling](failure-handling.md).
 
 ### Provenance in every ALTO
 
-htrflow's own `<Processing>` block in the ALTO names htrflow, its version,
-the pipeline steps and each model's commit hash. htrflow cannot know about the
-layer above it. So after htrflow's Export writes the file, and before the
-upload, the wrapper appends a second block, `<Processing ID="htrflow-batch">`
-(`provenance.py`), with:
-
-- the processing time
-- `image=<the pipeline's digest pin>`, from `IMAGE_DIGEST`
-- `htrflow-base=<revision>`, from `HTRFLOW_BASE_REVISION`
-- `processingSoftware`, naming the wrapper package, its version and its
-  author
-
-ALTO allows any number of `Processing` blocks in that position, so the file
-stays schema-valid and htrflow's block stays as written. If the stamp cannot
-parse an ALTO, the page fails, just as a page missing a format does.
-
-PAGE XML is not stamped. The same facts are in the volume's `manifest.json`.
-
-Resume has one consequence here. If a volume is resumed on a newer image, the
-pages already done stay as they are. Their ALTOs name the image that made
-them, while `manifest.json` names the image that finished the volume. Each
-file is still right about itself.
+htrflow's own `<Processing>` block names htrflow, its version, the steps and
+each model's commit hash. Before the upload the wrapper appends a second
+block, `<Processing ID="htrflow-batch">` (`provenance.py`), with the
+processing time, `image=<digest pin>` (`IMAGE_DIGEST`),
+`htrflow-base=<revision>` (`HTRFLOW_BASE_REVISION`) and the wrapper's
+`processingSoftware`. The file stays schema-valid. An ALTO the stamp cannot
+parse fails the page. PAGE XML is not stamped; the same facts are in
+`manifest.json`. A volume resumed on a newer image keeps its earlier pages, so
+their ALTOs name the image that made them while `manifest.json` names the one
+that finished the volume.
 
 ## Output store and completion contract
 
@@ -255,37 +187,26 @@ S3 sits behind a single seam, `ResultStore`:
   The pipeline YAML is also uploaded next to it.
 - **Timeouts.** The S3 client uses a 10 s connect timeout, a 60 s read
   timeout and 3 standard retries, so a dead bucket cannot pin a run for hours.
-  The run-log client is tighter: 5 s, 15 s and 2 attempts in all, and the
-  final upload on exit has a 90 s wall-clock budget that fits the pod's
-  120 s grace period.
-- **Other storage.** A filesystem store (NFS, say) could keep the same
-  contract with write-to-temp plus an atomic rename. Only the store
-  implementation would change.
+  The run-log client is tighter ([Events and signals](signals.md#the-run-log)).
 - **Only durable state.** The results bucket is the one stateful dependency
   in the system. How durable the results are depends on the bucket's own
   replication and backups ([Campaigns → Trade-offs](campaigns.md#trade-offs)).
-- **After the Job is gone.** The Job's TTL is a week by default, set in `converter.yaml`. After that, "what has
-  been processed?" is answered by listing `manifest.json` keys in S3. The read
-  API's `completedIndexes`/`failedIndexes` view only covers a Job that still
-  exists.
+- **After the Job is gone** (its TTL, a week by default), "what has been
+  processed?" is answered by listing `manifest.json` keys in S3.
 
 ### The viewer manifest
 
 `iiif.json` is a IIIF Presentation 3 manifest with one canvas per page that
 came out:
 
-- **Image.** The canvas's image body, and its image service when there is
-  one, is copied from the source canvas. Tiles keep coming from the IIIF
-  origin, and the platform serves no images.
-- **Dimensions.** The canvas width and height are the **width-capped
-  dimensions actually processed**, read from the ALTO `<Page>`. The Universal
-  Viewer's line overlays therefore line up without any coordinate rewriting.
-- **Text.** Each canvas has a `seeAlso` entry pointing at its public ALTO
-  URL, with the ALTO v4 profile. That is the shape the viewer's text panel
-  matches on.
-- **Search service.** The manifest carries a stub `SearchService1` entry. Its
-  endpoint is not implemented, but the viewer shows the text panel only when a
-  search service is present.
+- **Image.** Copied from the source canvas, with its image service, so
+  tiles keep coming from the IIIF origin and the platform serves no images.
+- **Dimensions.** The **width-capped dimensions actually processed**, so the
+  Universal Viewer's line overlays line up without coordinate rewriting.
+- **Text.** A `seeAlso` per canvas pointing at its public ALTO URL (ALTO v4
+  profile), the shape the viewer's text panel matches on.
+- **Search service.** A stub `SearchService1` entry, because the viewer
+  shows the text panel only when one is present.
 
 Publishing `iiif.json` needs `PUBLIC_RESULTS_BASE`, the browser-reachable URL
 base, which is not the in-cluster S3 endpoint. The viewer manifest is written
@@ -295,7 +216,7 @@ The browser fetches the manifest and the ALTO straight from the bucket. The
 results prefix therefore needs anonymous read and CORS for GET from the
 viewer's origin ([Security → The bucket policy](security.md#the-bucket-policy)).
 The viewer's own patches are described in
-[Campaign Browser](../reference/frontend.md).
+[Web front & read API](../reference/web.md).
 
 ## Model handling
 
@@ -306,58 +227,34 @@ A Job pays two separate model costs. Don't mix them up.
 | **download** (Hugging Face Hub to `HF_HOME`) | **Once per pipeline**, by the warm-up Job, never by a batch Job | The pipeline's model weights, off the GPU's clock entirely |
 | **load** (`HF_HOME` to GPU) | Every Job. `Pipeline.from_config()` builds the step models eagerly, and every `pipeline.run(page)` reuses them | Seconds to a minute, which averages out to noise over a volume |
 
-The streaming driver overlaps the load with the first pages' downloads.
-`stream.PageStream(...)` starts first and submits its first window on the
-calling thread, and only then does `from_config()` run.
-
 **The cache is pre-warmed and read-only for Jobs.** Batch Jobs mount the
-cache PVC `readOnly` with `HF_HUB_OFFLINE=1`. They never download and never
-write, and the NetworkPolicy gives them no route to Hugging Face Hub.
+cache PVC `readOnly` with `HF_HUB_OFFLINE=1` and have no route to Hugging
+Face Hub. The only writer is the **warm-up Job** (`htrflow_batch.warmup`): the
+same image and pipeline ConfigMap, on CPU, outside the Kueue queue, calling
+`Pipeline.from_config()`. Building the pipeline *is* the download, so exactly
+the files a Job will load land in the cache.
 
-The only writer is the **warm-up Job** (`htrflow_batch.warmup`). It uses the
-same image and the same pipeline ConfigMap, runs on CPU, outside the Kueue
-queue, and simply calls `Pipeline.from_config()`. Building the pipeline *is*
-the download, so exactly the files a Job will load land in the cache, and
-nothing else has to parse the pipeline YAML.
+The warm-up exits 13 for a pipeline that is wrong (invalid YAML, an unknown
+step or model class, a model repo or revision that does not exist) and 1 for
+one that is merely unlucky (a network or disk error). It mounts no S3
+Secret, so its `{stage: "warmup", permanent, error}` termination message is
+the only place the failure reaches a person: the campaign card's warm-up chip
+([Web front & read API](../reference/web.md)).
 
-The warm-up exits 13 for a pipeline that is wrong: invalid YAML, a pydantic
-validation error, an unknown step or model class, or a model repo or revision
-that does not exist. It exits 1 for one that is merely unlucky, such as a
-network or disk error. Either way it writes the same
-`{stage: "warmup", permanent, error}` termination message a volume's wrapper
-does. The warm-up Job mounts no S3 secret, so that message is the only place
-the failure reaches a person. It shows on the campaign card's warm-up chip
-([Campaigns](campaigns.md#the-web-front-and-status-page)).
+**Models are never baked into the image.** Every model reaches the GPU only
+through this cache, so a model change needs no image rebuild and no Job
+downloads while holding its GPU. The wrapper only sees `HF_HOME`, so changing
+where the cache comes from is a mount-point swap.
 
-**Models are never baked into the image.** Every model a pipeline uses
-reaches the GPU only through this cache. Baking weights in would make images
-hermetic, but it would also mean multi-gigabyte images per pipeline, and every
-model change would need an image rebuild. Skipping the cache would make every
-Job download while holding its GPU, and every Job would need a Hugging Face
-token and Hub egress. The wrapper only ever sees `HF_HOME`, so changing where
-the cache comes from is a mount-point swap. One example is weights published
-as signed OCI artifacts and pulled into the cache from a registry.
-
-**Two transformers lines.** A model's files are written by the library
-version that saved it, and the two current major lines of the transformers
-library do not read each other's. A model saved by the newer line carries
-tokenizer settings the older one cannot parse — and, once that is worked
-around by hand, the older line still decodes its byte-level tokenizer
-wrongly, so the text comes out subtly wrong rather than failing. Models
-saved by the older line — which is the line upstream htrflow is tested on,
-and the one the image carries by default — fail to load under the newer one
-instead, on a buffer the newer loader leaves uninitialised. So which line an
-image carries is a build argument
-([Releasing](../development/releasing.md#publishing)), and a pipeline pins
-the image digest it runs: one campaigns repo can carry pipelines on both
-lines at once, and no campaign has to move because a model was re-saved. The
-two lines become one again when every model in use is saved by the newer
-one.
+**Two transformers lines.** The two current major lines of the transformers
+library do not read each other's saved models, and a mismatch can decode text
+subtly wrong rather than fail. So which line an image carries is a build
+argument ([Releasing](../development/releasing.md#publishing)), and each
+pipeline pins the image digest that matches its models.
 
 ## The model cache
 
 ![The model cache: a new pipeline file, the warm-up Job that fills the cache and writes a marker, the warmup-wait init container, and the campaign pod reading the cache offline](../assets/diagrams/warmup.svg)
-
 
 **One directory per recipe.** The PVC is split into one directory per
 recipe, `<pipeline-id>-<recipe sha256>`, where the recipe hash covers the
@@ -374,28 +271,18 @@ things follow:
   directory, and campaign pods read only theirs. Two pipelines that load the
   same model keep a copy each, and the PVC must be sized for that.
 
-**What is cached.** Each recipe's directory holds two kinds of file:
+**What is cached.** Each recipe's directory holds the Hugging Face Hub
+snapshots in the library's default layout (`HF_HOME=/data/hf`, so
+`/data/hf/hub/models--<org>--<name>/snapshots/<revision>/…`) and the warm-up
+marker `/data/warmup/<pipeline-id>.done` (`warmup.py`). A batch pod's
+`warmup-wait` init container checks only the marker, never `hub/`.
 
-- **Hugging Face Hub snapshots**, in the library's default layout.
-  `huggingface_hub` puts them under `$HF_HOME/hub`, and nothing here sets
-  `HF_HUB_CACHE`. With `HF_HOME=/data/hf`, a model lands at
-  `/data/hf/hub/models--<org>--<name>/snapshots/<revision>/…`.
-- **The warm-up completion marker**: one empty file, at
-  `/data/warmup/<pipeline-id>.done` (`warmup.py`). A batch pod's
-  `warmup-wait` init container checks only this marker. It never looks at
-  what is actually in `hub/`.
-
-**The PVC.** It is one PersistentVolumeClaim, named by `modelCache.name` in
-the chart and rendered by `charts/htrflow-batch/templates/modelcache.yaml`.
-`converter.yaml`'s `data_pvc` must name the same object, and
-`packages/converter/tests/test_chart_agreement.py` checks that the two
-configs agree. Its size, storage class and access modes come from
-`modelCache.*` ([Chart Values](../reference/chart.md)).
-
-Mount mode differs by role. The warm-up Job's `data` mount has no `readOnly`
-key (`manifests/warmup-job.yaml`), while the campaign Job's does
-(`readOnly: true`, `manifests/campaign-job.yaml`). The default access mode is
-`ReadWriteOnce`.
+**The PVC.** One PersistentVolumeClaim, `modelCache.name` in the chart
+(`templates/modelcache.yaml`), sized by `modelCache.*`
+([Chart Values](../reference/chart.md)). `converter.yaml`'s `data_pvc` must
+name the same object, which `test_chart_agreement.py` checks. The default
+access mode is `ReadWriteOnce`. The warm-up mounts it read-write, campaign
+pods `readOnly: true`.
 
 **Who fills it, and when.** The warm-up Job fills it, once per recipe, at
 apply time. The converter renders one `htr-warmup-<id>` Job for every file
@@ -407,10 +294,13 @@ apply deletes the warm-up Job and ConfigMap of a pipeline file that is gone.
   `runtimeClassName`, `nodeSelector` and `tolerations` (the same
   `converter.yaml` keys), so warm-up and batch pods land in the same node
   pool.
-- **No TTL.** The warm-up Job is never reaped. After replacing the cache PVC,
-  delete the `htr-warmup-*` Jobs by hand so they re-warm (see
-  [the operator's commands](#the-operators-commands)). The chart itself
-  renders no warm-up Job.
+- **No TTL.** The warm-up Job is never reaped, so an unchanged apply leaves
+  a completed one alone. A **failed** warm-up is different: the next apply
+  deletes and recreates it, so it retries on its own. A **completed**
+  warm-up whose marker is gone (a replaced or wiped cache PVC) must be
+  deleted by hand before the next apply re-warms it
+  ([Troubleshooting](../getting-started/troubleshooting.md)). The chart
+  itself renders no warm-up Job.
 - **Campaign pods never fill the cache.** `HF_HUB_OFFLINE=1` turns any
   attempted download into a local error rather than a network call. Of the
   two NetworkPolicies, only `htr-warmup` gets public egress on port 443.
@@ -418,20 +308,10 @@ apply deletes the warm-up Job and ConfigMap of a pipeline file that is gone.
   batch pod has no path to Hugging Face Hub even with `HF_HUB_OFFLINE` unset
   ([Security → NetworkPolicy](security.md#networkpolicy)).
 
-**Private models.** A model that is private or gated on Hugging Face Hub
-cannot be downloaded anonymously, so the warm-up needs a token. Set
-`hf_token_secret` in `converter.yaml` to the name of a Secret in the campaign
-namespace with one key, `token`, holding a Hub token with **read** scope. The
-converter renders it as `HF_TOKEN` on the warm-up container only
-(`secretKeyRef`, `optional: false`, so a missing Secret keeps the pod from
-starting rather than letting it fail later on a download that looks like a
-typo in the model id). Campaign pods get nothing: they run `HF_HUB_OFFLINE=1`
-against the cache the warm-up already filled, and the `htr-batch-job`
-NetworkPolicy gives them no route to the Hub, so the token would be a
-credential they could not spend. The warm-up logs one line saying a token is
-present — never the value, never its length — which is how a run is read back
-for "the Secret reached the pod" against "it did not". Unset the key and
-nothing changes: the warm-up downloads anonymously, as it always has.
+**Private models.** A private or gated model needs a Hub token on the
+warm-up only: `converter.yaml`'s `hf_token_secret` names the Secret, and
+campaign pods never get it
+([Deploy](../getting-started/deploy.md#hugging-face-token-for-a-private-model)).
 
 **How a campaign pod waits for it.** The `warmup-wait` init container polls
 for `/data/warmup/<pipeline-id>.done` every 10 s. It waits at most
@@ -444,66 +324,24 @@ marker path and exits 13, and the Job's `podFailurePolicy` turns that into
 that is not coming
 ([Failure Handling](failure-handling.md#warm-ups-fail-the-same-way)).
 
-**A cache miss during a run.** Sometimes a model the pipeline needs is
-missing from `/data/hf` when a batch pod tries to load it: the cache was
-wiped without a re-warm, a download was incomplete, or the PVC was replaced.
-Under `HF_HUB_OFFLINE=1`, `huggingface_hub` then raises
-`LocalEntryNotFoundError`. That class is an `OSError` on every version of the
-library, and a `ValueError` as well on the older line. `main.py` catches
-`OSError` before `ValueError`, so the wrapper classifies the miss as
-**transient**, exit 1, whichever line the image carries. Kubernetes retries the index up
-to `backoffLimitPerIndex`, resuming from the pages already published. A retry
-succeeds only once the cache is fixed. The transient classification keeps a
-real gap from failing, with `FailIndex`, a volume that a re-warm can still
-save.
+**A cache miss during a run.** A model missing from `/data/hf` when a batch
+pod loads it (a wiped cache, an incomplete download, a replaced PVC) raises
+`LocalEntryNotFoundError` under `HF_HUB_OFFLINE=1`. The wrapper classifies it
+as **transient**, exit 1, so the index is retried and succeeds once the cache
+is re-warmed, rather than failing for good.
 
 **Growth and cleanup.** Nothing prunes the cache. A retired pipeline's
 directory, snapshots and marker included, stays on the PVC after its
 warm-up Job is gone. Removing it needs PVC access, and the apply has none.
 
-**Several nodes.** A `ReadWriteOnce` cache pins every warm-up pod and every
-batch pod to the node the volume is attached to. That is fine for one GPU
-node. With more nodes, the warm-up can fill the volume on one node while batch
-pods wait for it on another. Two ways to scale out:
+**Several nodes.** A `ReadWriteOnce` cache pins every warm-up and batch pod
+to the node the volume is attached to, which is fine for one GPU node. To
+scale out, use a `ReadWriteMany` volume on a shared filesystem class (NFS,
+CephFS), or one cache per node. The warm-up and the read-only mount work the
+same either way.
 
-- **Shared cache.** A `ReadWriteMany` volume on a shared filesystem class
-  (NFS, CephFS). Several namespaces can each bind a PVC to the same export
-  through a statically provisioned PV.
-- **Per-node caches.** One cache on each node.
-
-Either way, the warm-up and the read-only mount work exactly as described
-above. Only the storage changes.
-
-### The operator's commands
-
-There is no read API for the cache, only the filesystem. A campaign pod
-mounts its own recipe's directory at `/data`, read-only, which is enough to
-look at that one recipe. To see the whole cache, or to change it, start a
-debug pod that mounts the whole PVC, where each recipe is a directory
-`/data/<pipeline-id>-<recipe sha256>/`. It lands on the node that holds a `ReadWriteOnce` volume; pin it with
-`nodeName` if the scheduler would place it elsewhere.
-
-```bash
-kubectl run htr-cache-debug -n <namespace> --rm -it --restart=Never --image=busybox \
-  --overrides='{"spec":{"containers":[{"name":"debug","image":"busybox","command":["sh"],"stdin":true,"tty":true,"volumeMounts":[{"name":"data","mountPath":"/data"}]}],"volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"<cache-pvc>"}}]}}'
-```
-
-The recipe hash of a pipeline's current warm-up is on its Job's pod
-template:
-
-```bash
-kubectl -n <namespace> get job htr-warmup-<pipeline-id> \
-  -o jsonpath='{.spec.template.metadata.annotations.htrflow\.riksarkivet\.se/recipe-sha256}'
-```
-
-In the debug pod:
-
-| Task | Command |
-|---|---|
-| See how full the cache is, per recipe | `du -sh /data/*/hf` |
-| List cached model snapshots | `find /data/*/hf/hub -maxdepth 1 -name 'models--*'` |
-| List warm-up markers (which recipes are warmed) | `ls /data/*/warmup` |
-| Force a pipeline to re-warm | Delete its marker (`rm /data/<pipeline-id>-<recipe sha256>/warmup/<pipeline-id>.done`) **and** the completed Job (`kubectl delete job -n <namespace> htr-warmup-<pipeline-id>`). The next apply then recreates and runs the Job. The Job has no TTL, so while it exists the apply never recreates it |
+The commands to inspect the cache, find a recipe's directory and force a
+re-warm are in [Troubleshooting](../getting-started/troubleshooting.md).
 
 ## Pipeline configs
 
@@ -522,7 +360,7 @@ exception is Export steps, which the wrapper appends itself for `alto` and
    rendered campaign still names the pipeline, `apply` refuses one while a
    campaign in the cluster still runs it, and beyond that it is review on
    the campaigns repo
-   ([Campaigns → Immutability](campaigns.md#immutability)).
+   ([Campaign & Pipeline YAML → Immutability](../reference/campaign-yaml.md#immutability)).
 3. **Select.** The campaign's `pipeline:` sets `PIPELINE_ID`, which places
    the S3 keys, and mounts that ConfigMap. `PIPELINE_PATH` points at the file
    inside it. The same volume under a different pipeline writes under a
@@ -539,14 +377,6 @@ exception is Export steps, which the wrapper appends itself for `alto` and
 dry run of `Pipeline.from_config()`. Broken YAML or unresolvable models fail
 there, on CPU, and the pipeline's campaigns stop at their gate instead of
 using up GPU time.
-
-**Why not an `HtrPipeline` CRD?** A ConfigMap per pipeline version gives the
-custom-resource properties that matter here (identity, GitOps, kubectl
-tooling) with no controller. What a real CRD would add is admission-time
-schema validation, a status subresource ("models warmed") and automatic
-warm-up on create. CI-time `htrflow-campaigns validate` and the warm-up gate
-cover those instead. A CRD earns its place only if admission-time guarantees
-or a second machine consumer need it ([Roadmap](../roadmap/index.md)).
 
 ## Memory bounds
 
@@ -566,29 +396,14 @@ the volume, and both are bounded:
   (`driver.process_page`), because `consume` can only reach the files a page
   returns.
 - **htrflow's progress registries are emptied per page.** `htrflow.progress`
-  keeps module-global `_tasks`, `_exports` and `_steps` keyed by `Document`,
-  plus a rich progress task for each, and never removes them. `Document` has
-  no `__eq__`, so every page is a distinct key. htrflow's CLI runs one process
-  per volume and never notices. The wrapper runs one long-lived `Pipeline`
-  over a whole volume, so each page's region tree would stay reachable.
+  keeps module-global registries keyed by `Document` and never removes
+  entries. The wrapper runs one long-lived `Pipeline` over a whole volume, so
+  `driver.release_documents` empties them once each page is done.
 
-  How many entries a page registers depends on its steps. `Segmentation`,
-  `TextRecognition`, `Export` and the ordering steps all return the document
-  they were given. A `ProcessImages` step such as `Binarization` returns a
-  *new* `Document` and adds another entry. So `driver.release_documents`
-  empties the registries outright once the page is done, rather than naming
-  objects it cannot enumerate. That is sound because this process has one
-  caller of htrflow and one page in flight at a time.
-
-Nothing downstream needs a file to stay local. Resume and verify list S3.
-The one thing publish needs from an ALTO, the page's width and height for
-`iiif.json`, is kept from the parse `store.upload_page` does before its first
-PUT (`store.page_dims`). A full volume therefore publishes without reading a
-single ALTO back. `publish.alto_dims` falls back to fetching the ALTO only for
-pages a *previous* run published. A stored ALTO that does not parse leaves
-that canvas out of `iiif.json`; a store error reading one fails the run
-(exit 1) instead, since `manifest.json` follows and nothing would write the
-canvas back. The retry redoes only the publish.
+Nothing downstream needs a file to stay local. Resume and verify list S3, and
+publish keeps each page's width and height from the parse before its first
+PUT (`store.page_dims`), so a volume publishes without reading its ALTOs back.
+Only pages a *previous* run published are fetched again.
 
 | Item | Bound |
 |---|---|
@@ -602,11 +417,6 @@ canvas back. The retry redoes only the publish.
 | Pod memory **request** | 8 Gi (`manifests/campaign-job.yaml`, and what Kueue's quota must cover) |
 | Pod memory **limit** | 16 Gi (what tmpfs and the OOM killer see) |
 
-The manifest and the per-page records are the only wrapper state still
-proportional to page count. Both are bounded: the manifest cannot exceed
-`MANIFEST_MAX_BYTES`, and the per-page records stay in megabytes even for very
-large volumes.
-
 - **Width capping is mandatory**, and the wrapper enforces it for canvases
   with an IIIF image service. Uncapped masters would still fit the window, but
   they waste IIIF bandwidth and slow the fetch path for detail HTR cannot use.
@@ -618,8 +428,3 @@ large volumes.
 - **A disk-backed workdir** is a Job-manifest change, with no wrapper flag:
   the wrapper only sees `WORKDIR_PATH`, so swap the tmpfs `emptyDir` for a
   disk-backed one.
-
-Tests pin the flat footprint:
-
-- `test_workdir_holds_only_the_page_in_flight` (`packages/wrapper/tests/test_stream.py`)
-- `test_progress_registries_are_empty_after_every_page` (`packages/wrapper/tests/test_driver_real.py`), which runs inside the wrapper image

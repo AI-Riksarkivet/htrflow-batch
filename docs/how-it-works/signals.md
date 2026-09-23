@@ -1,41 +1,20 @@
 # Events and signals
 
 Almost nothing in this system publishes a *campaign* status document. Nearly
-every question about a campaign is answered from a signal that something else
-already emits: Kubernetes' own bookkeeping while the Job exists, and objects
-in the bucket after it is gone.
-
-Two questions are the exception.
-
-- **How far into a volume a running pod has got** is one the cluster cannot
-  answer. The wrapper answers it itself, in `progress.json` next to the
-  volume's results.
-- **How a campaign ended** has to outlive the Job that knew it. One document
-  is written for that, and for nothing else: the ConfigMap
-  `campaign-<name>-status`, beside the campaign's own. The read API writes it
-  whenever a request observes something the stored one does not already say,
-  and `htrflow-campaigns apply` writes it from the live Job before it decides
-  what to apply, so a campaign that finishes unwatched still leaves a record
-  ([The record a campaign leaves](campaigns.md#the-record-a-campaign-leaves)).
-  It is a handful of fields, written only when they change — never a live
-  mirror of the Job.
-
+every question is answered from a signal something else already emits:
+Kubernetes' own bookkeeping while the Job exists, and objects in the bucket
+after it is gone. There are two exceptions. **How far a running pod has got**
+is answered by the wrapper itself, in `progress.json` beside the volume's
+results, which the read API fetches anonymously from inside the cluster
+([View results](../getting-started/viewing.md) covers the address it uses).
+**How a campaign ended** is kept in one small ConfigMap,
+`campaign-<name>-status`, written by the read API and by `apply`
+([The record a campaign leaves](campaigns.md#the-record-a-campaign-leaves)).
 This page lists every signal and who reads it.
-
-Answering the first of those makes the read API a bucket **reader**, not only a
-Kubernetes API client. It fetches `progress.json` itself (`ProgressReader` in
-`packages/web`), with anonymous GETs and no credentials. So the web pod must
-be able to reach the results bucket at whatever address works from *inside*
-the cluster, which is `HTRFLOW_INTERNAL_RESULTS_BASE` (chart value
-`web.internalResultsBase`, see [Chart Values](../reference/chart.md)). The
-browser-facing `resultsBase`, which every link on the campaign page is built
-from, may be a different address. If you point the internal one at an address
-the pod cannot reach, every row silently shows no progress.
 
 ## One index, in order
 
 ![One index, in order: admission, the pod, the run log, each page's files and progress, the completion files, and the exit code](../assets/diagrams/seq-signals-index.svg)
-
 
 ## The signals
 
@@ -44,17 +23,17 @@ the pod cannot reach, every row silently shows no progress.
 | Job condition `Suspended` (reason `JobResumed` when it clears) | Kueue's webhook, then the Job controller | Status page (`Queued`/`Paused`), operator | no |
 | Job conditions `SuccessCriteriaMet` then `Complete`, `FailureTarget` then `Failed` | Job controller | Status page phase, operator | no |
 | `status.completedIndexes`/`failedIndexes` (range strings, e.g. `0-2,5`) | Job controller | Status page per-volume state, operator | no |
-| Pod phase and `status.reason` (`DeadlineExceeded` after the pod's own deadline) | kubelet | Status page. It rewrites the wrapper's `SIGTERM` to `DeadlineExceeded`, but only when the pod's `status.reason` is `DeadlineExceeded` **and** the termination message's `error` is exactly `SIGTERM`. Every other pairing passes through untouched | no |
+| Pod phase and `status.reason` (`DeadlineExceeded` after the pod's own deadline) | kubelet | Status page, which shows the wrapper's `SIGTERM` as `DeadlineExceeded` when the pod's `status.reason` says so | no |
 | Container exit code: 0, 13, 1, 143 | wrapper, via the kubelet | `podFailurePolicy` (13 becomes `FailIndex`), operator | no |
 | `wrapper` termination message, `{"stage", "permanent", "error"}` (policy `File`) | wrapper | Status page `reason`, operator | no, and only while the pod itself exists |
-| `warmup-wait` termination message: one sentence naming the marker (policy `FallbackToLogsOnError`, so the container's own stderr becomes the message) | the init gate | Status page. The volume's `reason` falls through to a non-zero init container | no |
+| `warmup-wait` termination message: one sentence naming the marker (policy `FallbackToLogsOnError`) | the init gate | Status page. The volume's `reason` falls through to a non-zero init container | no |
 | Warm-up Job's `{"stage": "warmup", …}` message | `htrflow_batch.warmup` | The campaign card's warm-up chip | Warm-up Jobs have no TTL. A pruning apply removes a warm-up Job once its pipeline file is gone |
-| Workload conditions `QuotaReserved`, `Admitted`, `Finished`, `Evicted` | Kueue | operator ([Queueing](queueing.md#the-operators-reading)) | no. The Workload is owned by the Job |
+| Workload conditions `QuotaReserved`, `Admitted`, `Finished`, `Evicted` | Kueue | operator ([Troubleshooting](../getting-started/troubleshooting.md)) | no. The Workload is owned by the Job |
 | Events: `Suspended`, `Resumed`, `SuccessfulCreate`, `Killing`, `FailedIndexes` | Kueue, Job controller, kubelet | operator (`kubectl get events`) | no, and the API server drops them after its event TTL (an hour by default) |
 | Warm-up marker `/data/warmup/<pipeline-id>.done`, in the recipe's own directory of the cache (`<pipeline-id>-<recipe sha256>/` on the volume) | The warm-up Job, before it logs success | Every batch pod's init container of the same recipe | **yes**, it lives on the cache PVC |
 | Run log `status/logs/<pipeline>/<volume>.txt` | wrapper, every 15 s and once on every exit path | Run viewer, operator ([below](#the-run-log)) | **yes** |
 | `page/NNNN.xml` and `alto/NNNN.xml` | wrapper uploader, PAGE first, each with the `source-digest` of its image as object metadata | Resume (both must exist, and the ALTO's digest must match the page's source now), verify, the viewer | **yes** |
-| `progress.json` | wrapper, after every page outcome and at every stage change, and with stage `failed` on any exit that is not a success | The read API, from its own path to the bucket, and so the campaign page's page counts and its failure/error notice. The API reads every run volume's, running ones first, from its cache when it can and with at most `PROGRESS_FETCH_CAP` (100) GETs per request otherwise, and caches each: 5 s for a running volume, an hour once it is over — an absent file included, since a finished pod wrote what it ever will; a bucket that did not answer is asked again soon | **yes** |
+| `progress.json` | wrapper, after every page outcome and at every stage change, and with stage `failed` on any exit that is not a success | The read API, and so the campaign page's page counts and its failure notice. It caches each: 5 s for a running volume, an hour once it is over | **yes** |
 | `iiif.json`, `pipeline.yaml` | Publish, after verify. `iiif.json` covers the pages that came out, so a volume with a failed page is one canvas short. `iiif.json` is also written every 10 pages *during* the run, covering the pages done so far | The Universal Viewer, and a person reading the recipe back | **yes** |
 | `manifest.json` | Publish, **last** | Anyone asking "is it done?". `pages_ok`/`pages_failed` say whether the volume lost pages on the way. Resume falls back to its `page_source_digests` for a page stored without a `source-digest`, and its timings (`gpu_stall_seconds`, `wall_seconds`) are the evidence for or against a [cache layer](../roadmap/cache-layer.md) | **yes** |
 | ALTO `Processing ID="htrflow-batch"` block | `provenance.stamp_alto`, before the upload | Anyone holding the file, with no cluster at all | **yes** |
@@ -66,30 +45,11 @@ good.** The status ConfigMap is the one deliberate exception, and it carries a
 summary rather than the per-index detail. That is why `manifest.json`, not an
 exit code or a Job condition, is the only thing that means "done".
 
-## Quick lookups
+The commands that answer the everyday questions (what is running, how far a
+campaign has got, why an index failed, whether a volume is finished) are in
+[Troubleshooting](../getting-started/troubleshooting.md).
 
-| Question | Command |
-|---|---|
-| Is anything running? | `kubectl get jobs,workloads -n <namespace>` |
-| Which volume is on the GPU right now? | `kubectl get pods -n <namespace> -L batch.kubernetes.io/job-completion-index` |
-| How far has this campaign got? | `kubectl get job <campaign> -n <namespace> -o jsonpath='{.status.completedIndexes} {.status.failedIndexes}'` |
-| Why did an index fail? | `kubectl get pods -n <namespace> -l batch.kubernetes.io/job-name=<campaign> -o jsonpath='{.items[*].status.containerStatuses[*].state.terminated.message}'` |
-| …and the pod is already gone? | `curl <results-base-url>/status/logs/<pipeline>/<volume>.txt` |
-| How far is this volume, right now? | `curl <results-base-url>/<namespace>/<pipeline>/<volume>/progress.json` |
-| Is this volume actually finished? | `curl -I <results-base-url>/<namespace>/<pipeline>/<volume>/manifest.json` |
-| Why are the pods stuck in `Init:0/1`? | `kubectl logs <pod> -n <namespace> -c warmup-wait`, then the warm-up Job ([Failure Handling](failure-handling.md#why-is-the-marker-missing)) |
-| Why is nothing being admitted? | `kubectl get clusterqueue <queue>-cq -o yaml`: `pendingWorkloads`, `flavorsUsage` |
-| Which image and pipeline produced this ALTO? | Read the file. It has two `Processing` blocks, htrflow's and the wrapper's |
-
-The wrapper's block looks like this:
-
-```xml
-<Processing ID="htrflow-batch">
-    <processingDateTime>…</processingDateTime>
-    <processingStepDescription>image=<registry>/htrflow-batch@sha256:<digest></processingStepDescription>
-    <processingStepDescription>htrflow-base=<revision></processingStepDescription>
-</Processing>
-```
+## Progress staleness
 
 `progress.json` is the one signal here that a reader may find *stale*
 rather than missing:
@@ -99,11 +59,9 @@ rather than missing:
 - **It is read best-effort.** A bucket that does not answer means no progress
   on the page, never an error.
 - **Its age is shown with it.** "Updated 12 s ago" is the difference between
-  a volume that is working and one that has stopped. The API turns
-  `updated_at` into `ageSeconds` itself, from its own clock at fetch time,
-  rather than handing the browser a timestamp to compare with its own. A
-  reader's clock running fast or slow must not turn "12 s ago" into "0 s ago"
-  or a negative number.
+  a volume that is working and one that has stopped. The API computes
+  `ageSeconds` from its own clock, so a reader's skewed clock cannot distort
+  it.
 - **It never means "done".** Only `manifest.json`, written last, does.
 
 ## The run log
@@ -114,7 +72,6 @@ the log straight from S3, and asks the read API, the only component with
 cluster credentials, which volumes exist and what state they are in.
 
 ![The live run log: the wrapper claims the key, ships the buffer every 15 s and once more on exit, while the log view reads it](../assets/diagrams/seq-run-log.svg)
-
 
 ### Wrapper side (`htrflow_batch.logship`)
 
@@ -133,12 +90,13 @@ cluster credentials, which volumes exist and what state they are in.
   first poll. A daemon thread then re-uploads the buffer every interval,
   **when it has changed**. An upload error is logged once and retried at the
   next interval, and never fails the run. The upload client has its own short
-  timeouts (5 s connect, 30 s read, 2 attempts), so a dead bucket cannot pin
-  the shipping thread or the final upload.
+  timeouts (5 s connect, 15 s read, 2 attempts in all), so a dead bucket
+  cannot pin the shipping thread.
 - **The final upload.** `finish()` runs on every exit path: success, exit 13,
-  exit 1, and the SIGTERM handler. It joins the thread (with a 30 s cap), does
-  a last upload and restores the streams. The final object is the complete
-  log, not a tail.
+  exit 1, and the SIGTERM handler. It stops the thread, does a last upload
+  and restores the streams, all inside a 90 s budget
+  (`FINAL_SHIP_SECONDS`) that fits the pod's 120 s grace period. The final
+  object is the complete log, not a tail.
 - **A size cap.** The buffer is capped at **4 MiB**. Past that, the middle is
   dropped with a marker line, keeping the first 1 MiB and the last 2 MiB, cut
   on line boundaries. A pathological run cannot grow memory or upload size
@@ -172,33 +130,13 @@ or set `LOG_SHIP_SECONDS=0`.
 - **Access.** The bucket policy decides whether anyone can read
   `status/logs/*` anonymously ([Security](security.md#the-bucket-policy)).
 
-### Browser side (`/log`)
+### Browser side
 
-- **Links.** The campaign card fetches its volumes from
-  `GET /api/v1/jobs/{namespace}/{name}`, paged by `offset`/`limit`. Every
-  volume row gets a `log` link built from `logUrl`. For a volume whose `state`
-  is not `"done"`, the link adds `&live=1`.
-- **When a card asks.** A running campaign's card polls its detail every
-  minute. A finished one, or one whose Job is gone, reads it once, and only
-  once the card has been on screen or opened, so a page of old campaigns
-  does not cost a request per card. The list itself carries every live
-  campaign and the newest 20 whose Jobs are gone; the older ones wait behind
-  a button, 20 at a time.
-- **Live mode.** The view re-fetches every `VITE_LIVE_MS` (15 s,
-  ETag-revalidated) and shows a "live · updated HH:MM:SS" badge. It keeps the
-  view pinned to the bottom while the reader is at the bottom. It stops in any
-  of three cases:
-  - the wrapper's terminal line appears: `[<volume>] COMPLETE <n> pages`,
-    `permanent failure in <stage>:` or `transient failure in <stage>:`
-    (`isTerminalLog` in `runlog.ts`, which ignores the plain-language sentence
-    after the em dash). A SIGTERMed attempt ends with
-    `transient failure in <stage>: SIGTERM`, so it stops the view too
-  - a `manifest.json` covers every page
-  - `LIVE_MAX_FAILURES` (20) polls in a row fail
-- **The summary.** A summary card appears once `manifest.json` lands: counts,
-  median, p95 and max page times, the slowest pages, failed pages, and the
-  per-page grid. While live, the manifest fetch is retried on the same
-  cadence.
+The run viewer (`/log`) follows a running volume live and stops at the
+wrapper's terminal line, a complete `manifest.json`, or a run of failed polls
+([Web front & read API](../reference/web.md)). The terminal lines it keys on
+are `[<volume>] COMPLETE <n> pages`, `permanent failure in <stage>:` and
+`transient failure in <stage>:`; a SIGTERMed attempt ends with the last.
 
 ## Known limits
 
@@ -223,14 +161,14 @@ or set `LOG_SHIP_SECONDS=0`.
   succeeded pod is not read at all, since its index is already in
   `completedIndexes`. For the few seconds between a volume's pod succeeding
   and the Job counting its index done, that volume can read `pending`.
-- **An oversized `images:` volume has no signal at all.** An `images:` volume
-  whose URL list does not fit in one environment variable (Linux allows
-  128 KiB per argument) kills the pod with `Argument list too long` before the
-  wrapper starts. There is no stage and no termination message. Keep such
-  volumes small, or give them an IIIF manifest.
+- **An oversized `images:` volume has no signal at all.** An `images:`
+  volume whose URL list does not fit in one environment variable (Linux allows
+  128 KiB) kills the pod with `Argument list too long` before the wrapper
+  starts. `validate` refuses an `images:` line over 100 KiB, so only a
+  campaign rendered before that check can hit it.
 - **A warm-up that is running when its pod template changes waits for the
   next apply.** A warm-up Job whose rendered pod template moved is deleted and
   created again, but not while it is downloading: that one is reported and
   left alone, and it is the operator who has to come back and apply again once
   it has finished
-  ([refused objects](../reference/campaign-yaml.md#when-the-api-server-refuses-an-object)).
+  ([htrflow-campaigns CLI](../reference/cli.md)).
