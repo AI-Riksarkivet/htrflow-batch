@@ -208,8 +208,10 @@ class FakeCluster(Cluster):
 
     ``live`` is what the cluster already holds (each entry ``kind``, ``name``
     and its labels — an object with no converter label must survive a prune);
-    ``workloads`` maps a Job uid to its Kueue Workload. An applied Job gets
-    the uid ``uid-<name>``, which is how a test wires the two together.
+    ``workloads`` maps a Job uid to its Kueue Workload. Every create gets a
+    uid never used before, as the API server gives it: ``uid-<name>`` the
+    first time, which is how a test wires the two together, and
+    ``uid-<name>-2`` and on for the same name created again.
 
     Server-side apply is modelled as far as this code leans on it (C16):
     each ``(manager, operation)`` owns a set of fields, written back as
@@ -235,6 +237,19 @@ class FakeCluster(Cluster):
         self.server_time: datetime | None = None
         self.versions = itertools.count(1)
         self.calls: list[tuple] = []
+        self.uids: set[str] = set()
+
+    def _new_uid(self, name: str) -> str:
+        """A uid no object has had: the API server never hands one out
+        twice, and a Job created again under its old name is a new Job."""
+        self.uids |= {o["metadata"]["uid"] for o in self.live if "uid" in o["metadata"]}
+        uid = f"uid-{name}"
+        for n in itertools.count(2):
+            if uid not in self.uids:
+                break
+            uid = f"uid-{name}-{n}"
+        self.uids.add(uid)
+        return uid
 
     def made(self, namespace: str) -> "FakeCluster":
         self.namespace = namespace
@@ -249,8 +264,8 @@ class FakeCluster(Cluster):
             ),
             None,
         )
-        if found is not None:  # every stored object has one, seeded or not
-            found["metadata"].setdefault("uid", f"uid-{name}")
+        if found is not None and "uid" not in found["metadata"]:
+            found["metadata"]["uid"] = self._new_uid(name)  # seeded without one
         return found
 
     def _store(self, kind: str, name: str, obj: dict, owners: dict) -> None:
@@ -275,11 +290,12 @@ class FakeCluster(Cluster):
             e = ApiException(status=422, reason="Unprocessable Entity")
             e.body = json.dumps({"message": "spec.template: Required value"})
             raise e
+        # A dry-run create answers with a uid the write would not keep.
+        uid = f"uid-{name}-dry-run" if dry_run else None
         stored = copy.deepcopy(current) if current else {
             "apiVersion": obj.get("apiVersion"), "kind": kind,
-            "metadata": {"name": name, "uid": f"uid-{name}"},
+            "metadata": {"name": name, "uid": uid or self._new_uid(name)},
         }  # fmt: skip
-        stored["metadata"].setdefault("uid", f"uid-{name}")
         for key in ("namespace",):
             if key in obj["metadata"]:
                 stored["metadata"][key] = obj["metadata"][key]
@@ -2040,11 +2056,15 @@ def test_the_lease_is_released_when_the_apply_fails(tmp_path, cluster):
 
 
 def _during(cluster, name: str, act) -> None:
-    """Run ``act()`` as the apply sends object ``name``."""
+    """Run ``act()`` as the apply first sends object ``name`` -- once: a new
+    campaign's ConfigMap is sent again after its Job, and one event is not
+    two."""
     real = FakeCluster._api
+    left = [1]
 
     def api(kind, verb, n=""):
-        if verb == "patch" and n == name:
+        if verb == "patch" and n == name and left[0]:
+            left[0] -= 1
             act()
         return real(cluster, kind, verb, n)
 
