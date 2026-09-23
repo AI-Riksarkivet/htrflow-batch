@@ -72,26 +72,20 @@ def test_init_force_overwrites_a_nonempty_dir(tmp_path, capsys):
     assert main(["validate", str(dest)]) == 0
 
 
-def test_init_creates_missing_parent_directories(tmp_path, capsys):
-    dest = tmp_path / "nested" / "does" / "not" / "exist" / "yet"
-    rc = main(["init", str(dest)])
-    capsys.readouterr()
-    assert rc == 0
-    assert (dest / "converter.yaml").exists()
-
-
-def test_init_into_an_existing_empty_dir_needs_no_force(tmp_path, capsys):
-    dest = tmp_path / "my-campaigns"
-    dest.mkdir()
-    rc = main(["init", str(dest)])
-    capsys.readouterr()
-    assert rc == 0
-    assert (dest / "converter.yaml").exists()
-
-
-def test_init_defaults_to_github_ci(tmp_path, capsys):
-    dest = tmp_path / "c"
+@pytest.mark.parametrize(
+    "where",
+    ["missing, parents too", "an empty directory"],
+)
+def test_init_writes_the_github_flavour_where_nothing_is_yet(tmp_path, capsys, where):
+    """No directory at all, parents included, or an empty one: neither needs
+    --force, and with no --ci the CI is GitHub's."""
+    if where == "an empty directory":
+        dest = tmp_path / "c"
+        dest.mkdir()
+    else:
+        dest = tmp_path / "nested" / "does" / "not" / "exist" / "yet"
     assert main(["init", str(dest)]) == 0
+    assert (dest / "converter.yaml").exists()
     assert (dest / ".github" / "workflows" / "render.yml").exists()
     assert not (dest / "azure-pipelines.yml").exists()
     assert (dest / "argocd" / "apply.yaml").exists()
