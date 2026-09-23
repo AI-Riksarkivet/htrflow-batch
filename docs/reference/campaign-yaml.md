@@ -112,6 +112,7 @@ Rules enforced by `parse_campaign` (`validate`, and by `render`):
 | Rule | Consequence when violated |
 |------|---------------------------|
 | `pipeline:` is required and must name a file in `pipelines/` | Reported as a validation error; nothing renders |
+| No key a campaign file, or a volume in it, does not have | Validation error naming the key. A misspelt `suspended: true` or `priorty:` would otherwise be dropped, and the campaign would run unpaused at the default priority; a volume's `pages: 1-10` would run every page |
 | A campaign lists at least one volume | Validation error — no volumes renders a Job with `completions: 0`, which Kubernetes reports as Succeeded the moment it is created |
 | Every volume needs `manifest:` or a non-empty `images:` (unless it is a bare string) | Validation error |
 | `manifest:` and every `images:` entry are absolute `http://` or `https://` URLs | Validation error (`must be an http(s) URL`) |

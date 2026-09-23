@@ -136,6 +136,12 @@ def _problems(rel: str, exc: _PydanticValidationError) -> list[str]:
             # One problem is one line: a tab, CR or LF out of the author's
             # own YAML would otherwise split it in a CI log.
             msg = err["msg"].removeprefix("Value error, ").translate(_ONE_LINE)
+        elif err["type"] == "extra_forbidden" and loc[:1] == ("volumes",):
+            # `_what` names the volume, so the key is the object here.
+            msg = (
+                f'has "{loc[-1]}", which is not a setting a volume has — '
+                "remove it, or fix the spelling"
+            )
         else:
             key = loc[-1] if loc else ""
             msg = template.format(
