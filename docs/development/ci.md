@@ -122,7 +122,7 @@ a misleading npm-internal crash rather than a certificate error unless
 - **Contracts:** `api-contract` (regenerates
   `frontend/src/lib/fixtures/api-contract.json` from real read-API output; a
   test asserts the committed fixture equals it — see
-  [Testing](testing.md#the-two-generated-files-ci-checks-are-current)).
+  [Testing](testing.md#the-generated-files-ci-checks-are-current)).
 - **Frontend:** `frontend-install`, `frontend-test`, `frontend-check`,
   `frontend-build`, `frontend-dev`.
 
@@ -156,9 +156,14 @@ The cluster constants these targets use come from `.env`
   pushes, signs and attests all three images for both of the CPU architectures
   they ship for — each on a runner of its own architecture, joined into one
   manifest list per image ([Releasing](releasing.md#the-publish-workflow)).
-- **`ci.yml`** also runs, on every trigger: a `docs` job, the lint and the
-  strict site build below without the deploy, so a pull request that breaks
-  the site fails before it lands; and `verify-published`.
+- **`ci.yml`** also runs, on every trigger: a `docs` job, the lint (the
+  site's pages, the root and package READMEs and `SECURITY.md`: no project
+  ids, dates, versions, hardware or one site's hosts) and the strict site
+  build below without the deploy, so a pull request that breaks
+  the site fails before it lands; `verify-published`; and a `dagger-go` job,
+  `go vet` and `go test` over `.dagger/publishcheck`, the one Go test of the
+  dagger module (it reads the order of `publish-docker`'s gates from the
+  module's syntax tree, and needs neither an engine nor the generated SDK).
 - **`docs.yml`** ("Documentation") — on push to `main` and by hand:
   `uv sync --locked --only-group docs` (zensical pinned and hash-checked in
   `uv.lock`), `scripts/docs-site.sh build --clean --strict` with that

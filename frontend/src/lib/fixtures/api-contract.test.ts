@@ -13,10 +13,13 @@ import {
   fetchJobs,
   jobDetailSchema,
   jobSummarySchema,
+  REAPED_MAX,
+  REAPED_PAGE,
   versionSchema,
 } from "$lib/api.js";
 import { describeApiError } from "$lib/reasons.js";
 import contract from "./api-contract.json";
+import { dropped } from "./dropped.js";
 
 describe("the read API's contract", () => {
   test("every campaign row parses", () => {
@@ -39,25 +42,6 @@ describe("the read API's contract", () => {
   // the API for this page and the page is quietly dropping.
   const IGNORED = ["campaign", "startedAt"];
 
-  /** Every key of `raw` missing from `parsed`, as a path with `[]` for arrays. */
-  function dropped(raw: unknown, parsed: unknown, path = ""): string[] {
-    if (Array.isArray(raw) && Array.isArray(parsed))
-      return [
-        ...new Set(raw.flatMap((r, i) => dropped(r, parsed[i], `${path}[]`))),
-      ];
-    if (!isObject(raw) || !isObject(parsed)) return [];
-    return Object.keys(raw)
-      .flatMap((k) => {
-        const at = path === "" ? k : `${path}.${k}`;
-        return k in parsed ? dropped(raw[k], parsed[k], at) : [at];
-      })
-      .sort();
-  }
-
-  function isObject(v: unknown): v is Record<string, unknown> {
-    return typeof v === "object" && v !== null && !Array.isArray(v);
-  }
-
   test("the only fields the page drops, at any depth, are the ones it means to", () => {
     for (const row of contract.summaries)
       expect(dropped(row, jobSummarySchema.parse(row))).toEqual(IGNORED);
@@ -78,6 +62,15 @@ describe("the read API's contract", () => {
     });
     expect(volumes.some((v) => v.sourceUrl !== null)).toBe(true);
     expect(volumes.some((v) => v.reason !== undefined)).toBe(true);
+  });
+
+  // The page asks for reaped campaigns REAPED_PAGE at a time and never past
+  // REAPED_MAX; the numbers are the route's own -- how many it sends unasked,
+  // and the last `?reaped=` it answers 200 to. A page asking past the cap
+  // gets a 422 and shows the service as unreachable.
+  test("the page's reaped window and cap are the API's", () => {
+    expect(REAPED_PAGE).toBe(contract.reapedLimits.default);
+    expect(REAPED_MAX).toBe(contract.reapedLimits.max);
   });
 
   describe("what the routes add around the rows", () => {

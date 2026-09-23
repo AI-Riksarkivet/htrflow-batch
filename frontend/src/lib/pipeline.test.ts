@@ -73,6 +73,31 @@ describe("pipelineModels", () => {
     ]);
   });
 
+  // TrOCR, WordLevelTrOCR, Donut and DiT pin their processor as well, under
+  // processor_kwargs -- a second download, possibly from another repo. The
+  // line names the model, so the processor's pin is never taken for it,
+  // whichever of the two is written first.
+  test("a processor's pin is not read as the model's", () => {
+    const both = `steps:
+- step: TextRecognition
+  settings:
+    model: TrOCR
+    model_settings:
+      model: Riksarkivet/trocr-base-handwritten-hist-swe-2
+      processor_kwargs:
+        revision: 1111111111111111111111111111111111111111
+      model_kwargs:
+        revision: aaaabbbbccccddddeeeeffff0000111122223333
+`;
+    expect(pipelineModels(both).map((m) => m.revision)).toEqual([
+      "aaaabbbbccccddddeeeeffff0000111122223333",
+    ]);
+    const processorOnly = both.replace(/ {6}model_kwargs:\n.*\n/, "");
+    expect(pipelineModels(processorOnly).map((m) => m.revision)).toEqual([
+      null,
+    ]);
+  });
+
   test("no pipeline YAML is no models", () => {
     expect(pipelineModels("")).toEqual([]);
   });

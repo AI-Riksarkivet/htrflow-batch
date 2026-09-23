@@ -6,22 +6,23 @@
     without notice. This notice goes when there is a release to stand behind.
 
 Batch handwritten-text recognition for whole archive volumes on Kubernetes,
-built around the stock [htrflow](https://github.com/AI-Riksarkivet/htrflow)
-image. Results stream to an S3 bucket page by page and open in a IIIF viewer;
+built around [htrflow](https://github.com/AI-Riksarkivet/htrflow), unmodified. Results stream to an S3 bucket page by page and open in a IIIF viewer;
 what to transcribe is declared in a campaigns git repository.
 
 ## What it does
 
-- **Runs htrflow unmodified.** The wrapper image builds on the stock htrflow
-  image and drives it page by page, so a long volume costs the same memory
-  as a short one.
+- **Runs htrflow unmodified.** The wrapper image builds htrflow from its own
+  source at a pinned commit, on the CUDA runtime image, and drives it as a
+  library page by page, so a long volume costs the same memory as a short
+  one.
 - **Kueue owns queueing and GPU quota.** There is no custom scheduler.
 - **Git is the desired state; Kubernetes and S3 are the observed state.** A
   campaign is a YAML file. A pure converter renders it into one Kubernetes
   Indexed Job (one index per volume) plus a warm-up Job that caches the
   pipeline's models. Kubernetes and Kueue own scheduling and retries, and a
-  read-only status API with a campaign browser shows progress live. There is
-  no CRD, no controller and no database.
+  status API with a campaign browser shows progress live; the one thing it
+  writes is each campaign's status ConfigMap, the record that outlives the
+  Job. There is no CRD, no controller and no database.
 - **Kyverno decides what may run.** Chart-shipped policies admit only
   digest-pinned images from allowed registries and, optionally, only
   revision-pinned models.

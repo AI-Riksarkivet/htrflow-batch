@@ -51,9 +51,10 @@ rules ([Security](../how-it-works/security.md)).
 
 ## GPU nodes
 
-- **An NVIDIA GPU that the htrflow image's CUDA build supports.** The
-  wrapper runs htrflow's own torch and CUDA stack unchanged, so the htrflow
-  image decides which GPUs work.
+- **An NVIDIA GPU that the wrapper image's torch build supports.** The image
+  builds htrflow from source on the CUDA runtime image, with torch pinned per
+  architecture ([Releasing](../development/releasing.md#one-dockerfile-every-architecture)),
+  so that torch build decides which GPUs and driver versions work.
 - **The NVIDIA device plugin**, so nodes advertise `nvidia.com/gpu`.
 - **A RuntimeClass** for GPU pods. The converter sets `runtimeClassName`
   from `runtime_class` in the campaigns repo's `converter.yaml` (default

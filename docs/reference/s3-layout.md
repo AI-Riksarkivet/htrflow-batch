@@ -73,6 +73,12 @@ beside it
 ([The record a campaign leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)),
 but per-volume detail past the TTL comes from the bucket.
 
+A retry that is about to redo pages which already have files deletes the
+previous `manifest.json` first, then `iiif.json`, and only then those pages'
+stale PAGE and ALTO. So a reader never finds a completion marker describing
+pages that are gone, nor a `manifest.json` without its `iiif.json`; the run's
+own publish writes both again at the end.
+
 | Field | Meaning |
 |---|---|
 | `volume`, `pipeline_id` | the key pair |

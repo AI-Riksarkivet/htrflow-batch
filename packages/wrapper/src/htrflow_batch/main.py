@@ -195,6 +195,15 @@ def _default_factory(cfg: Config):
     return process
 
 
+def sigterm_reason(stage: str) -> dict:
+    """The termination message of a run stopped by SIGTERM -- a drain, a
+    pause, or the pod's activeDeadlineSeconds, which the read API tells apart
+    by the pod's own reason and renames ``DeadlineExceeded``. The campaign
+    page keys its sentence on the bare ``SIGTERM`` (frontend reasons.ts; the
+    contract fixture scripts/wrapper_contract.py writes carries this)."""
+    return {"stage": stage, "permanent": False, "error": "SIGTERM"}
+
+
 def main(
     env: Optional[Mapping[str, str]] = None,
     process_page_factory: Optional[Callable] = None,
@@ -230,7 +239,7 @@ def main(
         # regex (frontend runlog.ts) is the contract that stops live polling.
         advice = _advice(False, "SIGTERM")
         log.error("transient failure in %s: SIGTERM — %s", state.stage, advice)
-        terminate(env, {"stage": state.stage, "permanent": False, "error": "SIGTERM"})
+        terminate(env, sigterm_reason(state.stage))
         code = EXIT_SIGTERM
         return code  # reached only when _hard_exit is stubbed (tests)
     finally:

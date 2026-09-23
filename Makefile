@@ -1,7 +1,7 @@
 .PHONY: install format lint check test typecheck test-driver-real ci build scan publish release-notes \
         compose-up compose-test compose-smoke compose-smoke-run compose-down helm-lint helm-template \
         install-devstack install-kyverno \
-        docs-serve docs-build config-reference api-contract \
+        docs-serve docs-build config-reference api-contract wrapper-contract \
         scan-image poc-push poc-push-arm64 build-wrapper lock-htrflow-base transformers-requirements build-web build-campaigns scan-web clean install-kueue \
         campaigns-apply psa-labels e2e \
         frontend-install frontend-test frontend-check frontend-build frontend-dev
@@ -261,6 +261,13 @@ docs-build: config-reference
 # asserts it, so `make ci`'s pytest run is what catches a stale fixture.
 api-contract:
 	uv run --no-sync python scripts/api_contract.py
+
+# frontend/src/lib/fixtures/wrapper-contract.json is what the wrapper itself
+# writes -- manifest.json and its termination messages -- read by the run
+# viewer's schema and the failure sentences (2026-09-23 test audit).
+# packages/wrapper/tests/test_contract.py asserts the committed file is this.
+wrapper-contract:
+	uv run --no-sync python scripts/wrapper_contract.py
 
 # docs/reference/configuration.md is generated from the three config models
 # and the chart's values (B63 Task 27). The committed page must equal this

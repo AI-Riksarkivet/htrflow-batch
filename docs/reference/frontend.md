@@ -363,10 +363,10 @@ place on each one, the way they would in a table.
   - **the manifest icon** — `VolumeView.sourceUrl`, the URL half of the
     volume's `volumes.txt` line, straight to the source manifest. Its slot
     stays empty for an `images:` volume, which lists bare image URLs and has
-    no manifest, and for anything that is not an absolute http(s) URL:
-    `volumes.txt` is a file humans edit in a git repo, so `isHttpUrl` guards
-    it again at the last step before it becomes an href (this also gates the
-    id's fallback).
+    no manifest, and for anything that is not an absolute http(s) URL: the
+    schema that parses the API's answer turns such a `sourceUrl` into `null`
+    (`httpUrlSchema`, with `.catch(null)`), so it never reaches an href, and
+    the id's fallback falls through with it.
 - **Pipeline chip.** In the card's footer beside the models. A button once
   the detail has loaded: its `title` is
   `JobDetail.pipelineSteps` joined by ` → `, and clicking it toggles
@@ -385,7 +385,9 @@ place on each one, the way they would in a table.
   it — `model_settings.model`, and the revision from either
   `model_settings.revision` (YOLO) or `model_settings.model_kwargs.revision`
   (TrOCR, Donut, DiT), the same two placements the cluster's Kyverno
-  model-revision policy accepts. A step with no model (`Export`) contributes
+  model-revision policy accepts. The processor's own pin, which the policy
+  also requires under `model_settings.processor_kwargs` for TrOCR,
+  WordLevelTrOCR, Donut and DiT, is never read as the model's. A step with no model (`Export`) contributes
   nothing, and a pipeline with no models renders no line. These are the
   models htrflow's own `Processing` block names in every ALTO the campaign
   publishes ([From image to transcription](../how-it-works/page-flow.md)).

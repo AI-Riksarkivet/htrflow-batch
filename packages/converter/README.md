@@ -46,13 +46,21 @@ repo itself. Campaigns are append-only: changing the volume list of a campaign
 that has already been rendered is an error. Create a new campaign instead.
 
 `apply` renders into a temporary directory (or `--out`), then, against the
-namespace in `converter.yaml`: server-side applies every pipeline object and
-then every campaign object (field manager `htrflow-campaigns`); with
-`--prune`, deletes every Job and ConfigMap labelled
-`htrflow.riksarkivet.se/managed-by=converter` that this render did not
-produce; and finally puts each campaign's `suspend:` on its Kueue Workload's
+namespace in `converter.yaml` (refused, with nothing applied, when
+`--namespace <ns>` names another — the Argo CD hook passes its own), takes
+the Lease `htrflow-campaigns-apply` so that one apply runs at a time per
+namespace, and holds it for the whole run: server-side applies every
+pipeline object and then every campaign object (field manager
+`htrflow-campaigns`; a resuming campaign's `spec.suspend: true` is first
+handed to a second manager, `htrflow-campaigns-suspend`, so that Kueue and
+not the API server's default decides when the Job starts); with
+`--prune`, deletes every Job and ConfigMap carrying the converter's
+`managed-by=converter` label (`render.CAMPAIGN_SELECTOR`) that this render
+did not produce; and finally puts each campaign's `suspend:` on its Kueue Workload's
 `spec.active`, waiting up to `--pause-wait` seconds for a brand-new paused
-campaign's Workload to appear. Every action is one printed line. `--dry-run`
+campaign's Workload to appear. Every action is one printed line. A second
+apply while the Lease is held is refused and exits 1; the exit codes are in
+[Campaign & Pipeline YAML](../../docs/reference/campaign-yaml.md#when-the-api-server-refuses-an-object). `--dry-run`
 renders and prints what would be applied without opening a connection. It
 authenticates from `$KUBECONFIG` or, in a pod, from the mounted
 ServiceAccount token — the htrflow-batch chart renders a suitable
@@ -62,7 +70,7 @@ ServiceAccount behind `apply.rbac.enabled`.
 
 | File | Parsed by | Rendered as |
 |---|---|---|
-| `converter.yaml` | `ConverterConfig` (unknown keys rejected, all fields optional) | Namespace, queue, window cap, S3 Secret, model-cache PVC, runtime class, node selector and tolerations, the IIIF source template, wrapper byte caps, and the default pod deadline (`max_seconds` → `activeDeadlineSeconds`). Not the image allow-list or the model-revision rule: both are chart values enforced by Kyverno since B63 Task 22, and a `converter.yaml` still carrying either key is a validation error saying so |
+| `converter.yaml` | `ConverterConfig` (unknown keys rejected, all fields optional) | Namespace, queue, window cap, S3 Secret, model-cache PVC, runtime class, node selector and tolerations, the IIIF source template, wrapper byte caps, and the default pod deadline (`max_seconds` → `activeDeadlineSeconds`). Not the image allow-list or the model-revision rule: both are chart values enforced by Kyverno, and a `converter.yaml` still carrying either key is a validation error saying so |
 | `pipelines/<id>.yaml` | `Pipeline` (digest-pinned `image`, htrflow `steps`, optional `max_seconds`; unknown keys rejected) | ConfigMap `htr-pipeline-<id>` with the pipeline YAML and its sha256; Job `htr-warmup-<id>` |
 | `campaigns/<name>.yaml` | `Campaign` (`pipeline`, `volumes`, optional `priority`, `window`, `suspend`; unknown keys rejected, on the campaign and on each volume) | ConfigMap `campaign-<name>` with `volumes.txt`; Indexed Job `<name>` with `completions = len(volumes)` |
 
@@ -79,7 +87,7 @@ the whole list.
 | `parse.py` | YAML files to domain types via `Model.model_validate`; flattens `pydantic.ValidationError` into one-line problems; `ValidationError`; the cross-file unknown-pipeline check |
 | `models.py` | `Volume`, `Campaign`, `Pipeline`, `ConverterConfig` (frozen pydantic models) with all validation rules as field/model validators; `Pipeline.sha256` |
 | `render.py` | Patch the packaged skeletons into concrete objects; labels, Kueue queue and priority, env for the wrapper, the 10 000-volume split; `CAMPAIGN_SELECTOR`, the one definition of the label a prune deletes by |
-| `cluster.py` | The only module that talks to a cluster: server-side apply, the prune, the Kueue pause patch, and the mapping from an API error to a one-sentence `ClusterError` |
+| `cluster.py` | The only module that talks to a cluster: server-side apply, the prune, the Kueue pause patch, the apply Lease, the suspend hand-over, and the mapping from an API error to a one-sentence `ClusterError` |
 | `manifests/` | The four YAML skeletons: `configmap.yaml`, `campaign-job.yaml`, `pipeline-configmap.yaml`, `warmup-job.yaml` |
 | `template/` | The campaigns repo `init` copies out, byte-identical to [`examples/campaigns/`](../../examples/campaigns/README.md) |
 

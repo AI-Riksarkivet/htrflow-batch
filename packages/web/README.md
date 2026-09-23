@@ -21,7 +21,7 @@ The site used to be a separate nginx image proxying `/api/` here; one
 Deployment, one Service and one image do it now.
 
 - Design: [Campaigns as Indexed Jobs](../../docs/superpowers/specs/2026-09-01-indexed-jobs-design.md),
-  decision D8
+  its decision on the read API
 - Consumer: [Campaign browser](../../frontend/README.md) and the
   [frontend reference](../../docs/reference/frontend.md)
 - Deployment: the `htrflow-web` Deployment and Service (NodePort) in
@@ -49,7 +49,7 @@ names.
 | Route | Returns |
 |---|---|
 | `GET /healthz` | `{"ok": true}` |
-| `GET /api/v1/version` | `{"version": "v0.2.0", "web": "0.1.0"}` — the tag the image was published under (`HTRFLOW_BATCH_VERSION`, baked in by the dockerfile; `dev` outside an image), which is what the page's header shows, and beside it this package's own version. Answers in site-only mode too |
+| `GET /api/v1/version` | `{"version": "<release tag>", "web": "<package version>"}` — the tag the image was published under (`HTRFLOW_BATCH_VERSION`, baked in by the dockerfile; `dev` outside an image), which is what the page's header shows, and beside it this package's own version. Answers in site-only mode too |
 | `GET /`, `/log`, `/alto`, `/uv.html`, `/config.js`, … | The built site from `HTRFLOW_WEB_STATIC` (mounted last, so no file can shadow an API route). Extensionless paths resolve to adapter-static's `<route>.html`, which is how `/log` and `/alto` work on a refresh |
 | `GET /api/v1/jobs?reaped=20` | One `JobSummary` per campaign, newest first: namespace, name, pipeline, phase, counts, suspended, createdAt, finishedAt, resultsBase, warmup, jobGone. Every live campaign Job, plus the `reaped` newest campaigns whose Job is gone (default 20, at most 10000), drawn from their two ConfigMaps; the `X-Reaped-Total` header says how many of those there are in all |
 | `GET /api/v1/jobs/{namespace}/{name}?offset=0&limit=200` | `JobDetail`: the summary plus `volumes` (one row per index, paged, `limit` at most 1000), `failures` (the 50 highest failed indexes, with a reason or without), `latest` (the newest active volume, else the newest done one), the campaign's page totals from the progress files, and `pipelineSteps`/`pipelineYaml` from the `htr-pipeline-<id>` ConfigMap. All but `volumes` are computed over every volume, not just the requested page. `404` for a name that is no campaign: a Job without the campaign labels is answered as though it were absent |

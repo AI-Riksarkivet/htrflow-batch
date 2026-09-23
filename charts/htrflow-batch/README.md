@@ -1,8 +1,8 @@
 # htrflow-batch (Helm chart)
 
-Kueue-gated batch HTR platform around the htrflow image: queues, the
-model-cache PVC and the web front (campaign browser, Universal Viewer and
-the read-only status API in one Deployment).
+Kueue-gated batch HTR platform around htrflow: queues, the model-cache PVC
+and the web front (campaign browser, Universal Viewer and the status API in
+one Deployment).
 
 **Campaigns are Kubernetes Indexed Jobs, not objects this chart renders.**
 `packages/converter` (`htrflow-campaigns render <repo-dir> --out <dir>`)
@@ -110,7 +110,9 @@ first, then the hook images.
 | **`rbac-scope` holds the apply identity's Workload patches** to `spec.active`, on the Workload of a converter-labelled Job. | Nothing, unless something else uses the `htrflow-campaigns` ServiceAccount on Workloads. |
 | **The apply Role gains the coordination Lease** `htrflow-campaigns-apply` (`create` on leases, `get`/`update` on that one), which `htrflow-campaigns apply` holds for its whole run. | Nothing: without it an in-cluster apply of this release fails closed. |
 | **`security.verifyImages` reads Sigstore bundles** (`type: SigstoreBundle`), the form cosign 3 signs in. The 0.12.0 policy looked for `.sig` tags the release no longer writes and refused every published image. | Nothing: an install that had turned verification on starts admitting the signed release. |
-| **The model cache is one directory per pipeline recipe** (converter): every campaign Job's pod template mounts it by `subPath`. A campaign Job the v0.5.0 converter rendered and that is still live cannot take the new pod template (a Job's template is immutable), so `apply` leaves it as it was (exit 3) until it finishes; pausing still works through its Workload. Warm-ups download into the new directories. | Let running campaigns finish. Once no v0.5.0 Job is live, the old `/data/hf` and `/data/warmup` on the PVC are orphaned and can be deleted. Size `modelCache.size` for a copy of each recipe's models. |
+| **The model cache is one directory per pipeline recipe** (converter): every campaign Job's pod template mounts it by `subPath`. A campaign Job the v0.5.0 converter rendered and that is still live cannot take the new pod template (a Job's template is immutable), so `apply` leaves it as it was (exit 3) until it finishes; pausing still works through its Workload. Every warm-up runs again and downloads every model once more, into its recipe's new directory. | Let running campaigns finish. Size `modelCache.size` for two copies of every model during the change-over: the old `/data/hf` stays until you delete it. Once no v0.5.0 Job is live, the old `/data/hf` and `/data/warmup` on the PVC are orphaned and can be deleted. After that, size it for a copy of each recipe's models; two pipelines loading the same model keep a copy each. |
+| **Volumes whose image URLs carry signing parameters are reprocessed once** (wrapper). Resume compares each page's source by a digest of its URL with the credentials taken out, and the new wrapper also takes out Azure SAS, CloudFront, GCS V2 and S3 SigV2 signatures, `access_token` and `x-goog-*` parameters. A page stored by the old wrapper from such a URL no longer matches its own digest, so the first re-run of that volume redoes those pages. Volumes whose URLs carry no such parameters are not affected. | Nothing; expect the extra GPU time on the first retry or re-run of such volumes. A re-signed URL keeps its digest from then on. |
+| **Upgrade order: chart, then converter.** See *Chart and converter versions* above: the new converter's in-cluster apply needs this chart's Lease rules, and the Argo CD hook's image and `CONVERTER_REF` must come from the same release as this chart, since `job-shape` compares the scripts character for character. | Upgrade the chart first, then bump the hook image and `CONVERTER_REF` in every campaigns repo in the same window. |
 | **Wide egress ranges lose the internal ranges inside them**, not only a literal `0.0.0.0/0`: `s3Cidrs: [0.0.0.0/0]`, `iiifCidrs` split into halves and `apply.gitCidrs` now carve out the cluster, node, link-local, loopback and private ranges. `network.privateCidrs` adds `100.64.0.0/10`. | Name a private host you need in `iiifCidrs` / `s3Cidrs` by its own range, which stays reachable, or narrow `network.privateCidrs`. |
 
 ### From 0.11.0 to 0.12.0 — nothing stops an upgrade
@@ -182,13 +184,14 @@ adoption recipe.)
 `htrflow-web` (Deployment, Service `htrflow-web:8081` on NodePort
 `web.nodePort`) is the whole browser-facing surface: the campaign browser at
 `/`, Universal Viewer at `/uv.html`, and `GET /api/v1/jobs[/{ns}/{name}]`
-read-only over the Indexed Jobs a campaign renders to — Role/RoleBinding
+over the Indexed Jobs a campaign renders to — Role/RoleBinding
 scoped to `get`/`list` on `jobs`/`pods`/`configmaps` (plus `create`/`patch`
 on `configmaps`, for the per-campaign status record it writes) in the release
 namespace, never a ClusterRole. It is the one pod in this chart with
 `automountServiceAccountToken: true` (everything else has it off) because it
 *is* a Kubernetes API client. NetworkPolicy `htr-web` lets browsers in from
-`network.web.ingressCidrs` and lets it out to DNS, the apiserver and the
+`network.web.ingressCidrs` (behind an ingress controller, `web.ingress`, the
+controller named by `network.web.ingressFrom` instead) and lets it out to DNS, the apiserver and the
 results bucket. The pod also **serves `/config.js` itself**, written from its
 own environment: `window.API_BASE = "/api/v1"` (same-origin, no proxy) and
 `window.RESULTS_BASE` from `publicResultsBase`. There is nothing for an

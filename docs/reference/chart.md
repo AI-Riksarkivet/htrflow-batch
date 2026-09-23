@@ -2,7 +2,7 @@
 
 `charts/htrflow-batch` — one chart for the Kueue queue objects, the
 model-cache PVC, the web front (campaign browser, Universal Viewer and the
-read-only status API in one Deployment), the NetworkPolicies and the Kyverno
+status API in one Deployment), the NetworkPolicies and the Kyverno
 policies. Its version is in `Chart.yaml`. The development support stack
 (RustFS, an in-cluster registry, the NVIDIA device plugin) is the separate
 `charts/htrflow-devstack` chart. Campaigns themselves are not rendered by

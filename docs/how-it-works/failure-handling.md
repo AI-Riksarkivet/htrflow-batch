@@ -43,12 +43,21 @@ through Kueue ([Queueing](queueing.md#failure-interplay)).
   volume for it would leave the bucket with the good pages and no marker to
   open them.
 - **Two cases still fail the volume.** The first is a page **missing** from
-  the results: neither uploaded nor recorded as failed. That is an upload
-  that never landed, or a page the IIIF source could not serve during this
-  attempt (a network error, a 429 or 5xx, the download deadline). A retry
-  converges on both. The second is a run where every page it
+  the results: neither uploaded nor recorded as failed. That is a page whose
+  upload the store would not take after its retries, or a page the IIIF
+  source could not serve during this attempt (a network error, a 429 or 5xx,
+  the download deadline). Both are *deferred* to the next attempt, and a
+  retry converges on them. The second is a run where every page it
   processed failed and nothing was resumed, which points to a broken model or
   a dead GPU. Both report their page lists in the termination message.
+- **The last attempt does not defer.** A page still deferred on the index's
+  last attempt is recorded as failed instead, with the reason and
+  `(still failing on the index's last attempt)`: a file the image server
+  answers 500 for every time would otherwise fail the index and leave every
+  other page without its completion marker. The wrapper knows which attempt
+  it is on from the Job: the pod's index-failure-count annotation and the
+  Job's `backoffLimitPerIndex`, which the converter renders into its
+  environment.
 - **A campaign is append-only.** `completions` is fixed at creation from the
   volume list. Nothing can add volumes to a running campaign, and a new
   campaign file is the only way to add them
@@ -68,23 +77,26 @@ through Kueue ([Queueing](queueing.md#failure-interplay)).
 | `maxFailedIndexes` | equal to `completions` | A campaign never stops early because of failures. Every index gets its own verdict |
 | `podFailurePolicy` | `Ignore` on pod condition `DisruptionTarget`. `FailIndex` on container `wrapper` exit 13. `FailIndex` on init container `warmup-wait` exit 13 | A node drain, preemption or eviction replaces the pod without failing the index or charging a retry. Exit 13 fails the index at once. Exit 143 (SIGTERM) matches no rule, so it is retried like exit 1. Rules apply in order, so `Ignore` stays first |
 | `ttlSecondsAfterFinished` | `converter.yaml`'s `ttl_seconds_after_finished`, or the pipeline's own | The campaign Job stays inspectable that long after its last index finishes, then cleans itself up. By then the wrapper has put everything durable in S3, and the campaign's own ConfigMaps — which have no TTL — keep the record ([The record a campaign leaves](campaigns.md#the-record-a-campaign-leaves)) |
-| `terminationGracePeriodSeconds` | `120` | Covers the wrapper's SIGTERM path in the common case (see below) |
+| `terminationGracePeriodSeconds` | `120` | Covers the wrapper's SIGTERM path, whose final log upload has a budget of its own below it (see below) |
 
-**Why the grace period is 120 s.** On SIGTERM the wrapper's handler runs
-three steps:
+**Why the grace period is 120 s.** On SIGTERM the wrapper writes its
+termination message and then ships the run log one last time, inside one
+90 s budget:
 
-1. It joins the log-shipping thread, waiting up to 30 s.
-2. It takes the upload lock. A periodic PUT already in flight can hold that
-   lock for the rest of its own budget: 5 s connect plus 30 s read, over 2
-   attempts, about 70 s.
-3. It ships the run log one last time through the same bounded client.
+1. The final upload waits for the upload lock, so a periodic PUT already in
+   flight lands first.
+2. Then the final PUT goes out through the same bounded client: 5 s to
+   connect, 15 s to read, two attempts in all, about 40 s at worst.
+3. An upload still going when the 90 s are up is abandoned, and the wrapper
+   exits 143.
 
-The true worst case is therefore about 140 s, more than the 120 s granted.
-The common case is a fraction of a second. The only way to reach 140 s is an
-S3 endpoint that answers nothing, and then the final PUT fails within any
-grace period, so no larger number would save the log. Kubernetes' default of
-30 s, by contrast, would SIGKILL the pod mid-cleanup on a merely slow
-endpoint, losing both the complete run log and the clean exit 143.
+A periodic upload in flight plus the final one fit in the 90 s, and the
+90 s leave room inside the 120 s for the rest of the exit, so the kubelet's
+SIGKILL never arrives first. The common case is a fraction of a second. Only
+an S3 endpoint that answers nothing uses the whole budget, and then no
+larger grace period would save the log either. Kubernetes' default of 30 s,
+by contrast, would SIGKILL the pod mid-cleanup on a merely slow endpoint,
+losing both the complete run log and the clean exit 143.
 
 **The per-volume time limit is the pod's deadline**,
 `spec.template.spec.activeDeadlineSeconds`, not the Job's. It is rendered from
@@ -130,8 +142,11 @@ Resources, mounts and pod hardening are in
 - a page missing at verify, including a page whose download was deferred
 - a run where every processed page failed and nothing was resumed
 - a model-load `OSError`, including a model missing from the read-only cache
-- five consecutive upload failures (`UploadOutage`)
+- five consecutive upload failures (`UploadOutage`); a single failed upload
+  only defers its page
 - three consecutive pipeline rebuild failures after a dead worker thread
+- eight or more htrflow threads left running by pipelines the wrapper had
+  to give up on (see below)
 
 The full table is in the [Wrapper reference](../reference/wrapper.md).
 
@@ -157,6 +172,14 @@ WARNING page 0044 failed: PipelineDead("page 0044: htrflow's Segmentation (model
 WARNING rebuilding the htrflow pipeline after a dead worker thread
 ```
 
+A run whose threads are all alive can hang too: a model call that never
+returns. So the same guard also watches for progress. A page that makes no
+progress through htrflow for `PAGE_TIMEOUT_SECONDS` (default 600 s) is
+treated the same way as a dead thread: the page fails and the pipeline is
+rebuilt. It is a window without progress, not a total, so a broadsheet page
+of thousands of lines that takes many minutes but keeps moving is not cut
+off.
+
 A pipeline built from scratch processes the next page. Its models come back
 from the cache PVC, not the Hub. The rest of the volume runs, and the volume
 **completes** with that one page recorded as failed:
@@ -176,6 +199,12 @@ daemon that is never joined, and its frame holds the steps. Without that
 release, the new pipeline would load a second set of weights onto the same
 GPU. What stays parked for the life of the process is the thread itself and
 that one page's document, not the models.
+
+A thread stuck inside a model call cannot be stopped, though, and it may
+still hold that model's weights. The wrapper counts the threads released
+pipelines left running, and at eight (about four hung pages) it stops the
+run as a transient failure, so the retry gets a fresh pod and a clean GPU
+instead of a slow slide towards running out of GPU memory.
 
 ## What a person is told
 
@@ -315,7 +344,12 @@ To re-run a permanently failed (`FailIndex`) volume:
 1. Fix the cause: a model, a manifest URL, or a pipeline bug.
 2. Add the volume to a new campaign file.
 
-A campaign Job's indexes are not re-run in place.
+A campaign Job's indexes are not re-run in place. On the same pipeline id
+the new campaign waits for the old one to finish: `apply` holds back a
+campaign that shares a volume with a campaign still running on that
+pipeline, since both would write the same results
+([Campaign & Pipeline YAML](../reference/campaign-yaml.md#campaign-file-campaignsnameyaml)). Under a
+new pipeline id it can start at once.
 
 ## Warm-ups fail the same way
 
@@ -386,10 +420,16 @@ kubectl -n <namespace> get pods -l batch.kubernetes.io/job-name=htr-warmup-<pipe
   -o jsonpath='{.items[*].status.containerStatuses[*].state.terminated.message}'
 # {"stage": "warmup", "permanent": true, "error": "…"}  (the chip's tooltip)
 
-# 3. The marker directory, from any pod that mounts the cache PVC
-#    (campaign pods mount /data read-only, which is enough to look).
+# 3. The marker directory. Every pod mounts only its own recipe's
+#    directory of the cache PVC at /data, so look from a running pod of
+#    the SAME pipeline (campaign pods mount it read-only, which is enough).
 kubectl -n <namespace> exec <running-pod> -- ls -l /data/warmup
 ```
+
+On the volume itself the marker is `<pipeline>-<recipe sha256>/warmup/<pipeline>.done`,
+the recipe hash being that of the pipeline's steps and image. A debug pod
+that mounts the whole PVC sees one such directory per recipe ever warmed
+([The Wrapper → The model cache](wrapper.md#the-model-cache)).
 
 A `Complete` warm-up Job with no marker on the PVC means the two are not
 looking at the same volume. First check that the warm-up Job carries the same
