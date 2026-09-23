@@ -53,6 +53,45 @@ RUN --mount=type=secret,id=ca,target=/etc/ssl/certs/corp-ca.crt \
     && npm ci --no-audit --no-fund \
     && npm run build
 
+# What of UV's build ships: uv.html and what it references, nothing else.
+# The build also emits UV's demo pages and their sample collections
+# (index.html, the YouTube config), which this site has no use for. The
+# page's local references -- src/href attributes and the config it fetches --
+# are copied, and a reference the build did not produce fails the image
+# build. A referenced script's directory goes whole: UV.js loads its
+# code-split chunks, and the images they name, from beside itself at run
+# time, which no static reading of the page can list.
+RUN node <<'SITE'
+const fs = require("fs");
+const path = require("path");
+const dist = "/src/dist";
+const site = "/src/site";
+const page = "uv.html";
+const html = fs.readFileSync(path.join(dist, page), "utf8");
+const refs = new Set([page]);
+for (const [, ref] of html.matchAll(/\b(?:src|href)\s*=\s*["']([^"']+)["']/gi)) refs.add(ref);
+for (const [, ref] of html.matchAll(/["']([\w./-]+\.json)["']/g)) refs.add(ref);
+const copy = (rel) => {
+  fs.mkdirSync(path.dirname(path.join(site, rel)), { recursive: true });
+  fs.cpSync(path.join(dist, rel), path.join(site, rel), { recursive: true });
+};
+for (const ref of refs) {
+  if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(ref)) continue;  // not a file of this build
+  const rel = path.posix.normalize(ref.split(/[?#]/)[0]);
+  if (rel.startsWith("..") || path.posix.isAbsolute(rel)) {
+    throw new Error(`${page} references ${ref}, outside UV's build`);
+  }
+  if (!fs.existsSync(path.join(dist, rel))) {
+    throw new Error(`${page} references ${ref}, which UV's build did not produce`);
+  }
+  copy(rel);
+  if (rel.endsWith(".js") && path.posix.dirname(rel) !== ".") copy(path.posix.dirname(rel));
+}
+const pages = fs.readdirSync(site, { recursive: true }).filter((f) => f.endsWith(".html"));
+if (pages.join() !== page) throw new Error(`UV pages shipped: ${pages}`);
+console.log(`UV site: ${[...refs].join(", ")} (+ the chunk directory)`);
+SITE
+
 # ---- Stage 3: the service's virtualenv, for the runtime's own Python ----
 # The runtime below is distroless: no shell, no package manager. So the venv
 # is built here, on Debian 13 slim with Debian's python3.13, the same Debian
@@ -103,10 +142,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM gcr.io/distroless/python3-debian13:nonroot@sha256:8ee214843129f43e2ebf5e0ca9f2e4e6d8292143d1b8a6787f169b5898578884
 LABEL org.opencontainers.image.licenses="EUPL-1.2"
 COPY --from=venv /app/.venv /app/.venv
-# UV first, the SPA on top: the SPA's index.html deliberately replaces UV's
-# demo one, so / is the campaign browser and UV keeps /uv.html. Same layering
-# the nginx image used.
-COPY --from=uv4 /src/dist/ /app/static/
+# UV's page and what it needs, then the SPA: / is the campaign browser and
+# UV is /uv.html.
+COPY --from=uv4 /src/site/ /app/static/
 COPY --from=spa /app/dist/ /app/static/
 # SSL_CERT_FILE comes from the base image, pointing at its CA bundle.
 ENV PATH="/app/.venv/bin:$PATH" \
