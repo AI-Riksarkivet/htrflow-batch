@@ -689,7 +689,20 @@ _LIVE_RECIPE = (
 )
 
 
-def _moved_live(cluster, pipelines: list[dict], campaigns: list[dict]) -> str | None:
+def _running(cluster) -> list[dict]:
+    """The live campaign Jobs that have not ended: warm-ups are not
+    campaigns, and a Job that has ended runs nothing more."""
+    return [
+        j
+        for j in cluster.labelled("Job")
+        if not j["metadata"]["name"].startswith(render.WARMUP_PREFIX)
+        and not _condition(j, "Complete", "Failed")
+    ]
+
+
+def _moved_live(
+    cluster, pipelines: list[dict], campaigns: list[dict], running: list[dict]
+) -> str | None:
     """One sentence when a rendered campaign disagrees with its live record,
     or a rendered recipe with the live one a running campaign mounts.
 
@@ -697,12 +710,6 @@ def _moved_live(cluster, pipelines: list[dict], campaigns: list[dict]) -> str | 
     existed) is not held against. A refused READ is not caught here: a
     check that cannot be made is not a check that passed.
     """
-    running = [
-        j
-        for j in cluster.labelled("Job")
-        if not j["metadata"]["name"].startswith(render.WARMUP_PREFIX)
-        and not _condition(j, "Complete", "Failed")
-    ]
     moved = _moved_recipe(cluster, pipelines, running)
     if moved is not None:
         return moved
@@ -725,6 +732,78 @@ def _moved_live(cluster, pipelines: list[dict], campaigns: list[dict]) -> str | 
         if moved:
             return _LIVE_MOVED.format(name=_campaign_of(obj), what=", ".join(moved))
     return None
+
+
+#: Results are keyed ``<pipeline>/<volume>/``: two campaigns running one
+#: volume on one pipeline race on its progress and manifest objects (C-13).
+#: `validate` cannot see what is running, and a new campaign on the same
+#: pipeline is how a failed volume is run again -- once the old one is over.
+_SHARED = (
+    "campaign {name} shares {volumes} with {others} on pipeline {pipeline}, "
+    "still running or starting in this apply: both would write the same "
+    "results — let it finish first, or take the volumes out of one of them"
+)
+_UNCHECKED = (
+    "could not tell whether campaign {name} shares a volume with a running "
+    "campaign, so it was left as it was: {e}"
+)
+
+
+def _claim_volumes(cluster, campaigns, volumes_of, done, blocked, running) -> None:
+    """Block each campaign Job that would run a volume another campaign on
+    its pipeline runs: a live one that has not ended, or one this apply is
+    about to start (the first in the render keeps the volume)."""
+    from .cluster import ClusterError, Unreachable
+
+    claimed: dict[str, dict[str, set[str]]] = {}  # pipeline -> campaign -> ids
+
+    def ids(text: str) -> set[str]:
+        return {vid for vid, _ in _volume_list(text)}
+
+    try:
+        for job in running:
+            labels = job["metadata"].get("labels") or {}
+            cm = cluster.get("ConfigMap", f"campaign-{job['metadata']['name']}")
+            owner = claimed.setdefault(labels.get(render._PIPELINE_LABEL, ""), {})
+            owner.setdefault(labels.get(render._CAMPAIGN_LABEL, ""), set()).update(
+                ids(((cm or {}).get("data") or {}).get("volumes.txt") or "")
+            )
+    except Unreachable:
+        raise
+    except ClusterError as e:
+        for obj in campaigns:
+            if obj["kind"] == "Job" and _campaign_of(obj) not in done:
+                blocked.setdefault(
+                    _campaign_of(obj),
+                    ClusterError(_UNCHECKED.format(name=obj["metadata"]["name"], e=e)),
+                )
+        return
+    for obj in campaigns:
+        name = _campaign_of(obj)
+        if obj["kind"] != "Job" or name in done or name in blocked:
+            continue
+        labels = obj["metadata"]["labels"]
+        pipeline = labels.get(render._PIPELINE_LABEL, "")
+        campaign = labels.get(render._CAMPAIGN_LABEL, "")
+        owners = claimed.setdefault(pipeline, {})
+        mine = ids(volumes_of[name])
+        others = {c: mine & v for c, v in owners.items() if c != campaign and mine & v}
+        if not others:
+            owners.setdefault(campaign, set()).update(mine)
+            continue
+        shared = sorted(set().union(*others.values()))
+        listed = ", ".join(shared[:3]) + (
+            f" and {len(shared) - 3} more" if len(shared) > 3 else ""
+        )
+        blocked[name] = ClusterError(
+            _SHARED.format(
+                name=name,
+                volumes=("volume " if len(shared) == 1 else "volumes ") + listed,
+                others=("campaign " if len(others) == 1 else "campaigns ")
+                + ", ".join(sorted(others)),
+                pipeline=pipeline,
+            )
+        )
 
 
 def _pod_count(job: dict) -> int:
@@ -1010,7 +1089,8 @@ def _apply(
             # has what git says. Warm-up Jobs are not campaigns and get no
             # pause sync.
             jobs: list[tuple[dict, bool]] = []
-            moved = _moved_live(cluster, pipelines, campaigns)
+            running = _running(cluster)
+            moved = _moved_live(cluster, pipelines, campaigns, running)
             if moved is not None:
                 print(moved, file=sys.stderr)
                 return 1
@@ -1065,6 +1145,7 @@ def _apply(
                     done.add(name)
                     print(said)
                     _repair_stamp(cluster, name, lives[name])
+            _claim_volumes(cluster, campaigns, volumes_of, done, blocked, running)
             # Each campaign Job is tried with dryRun=All before its pair is
             # sent: a ConfigMap applied under a Job the API server then
             # refuses is a volumes.txt the Job's unstarted indexes read (3084).
