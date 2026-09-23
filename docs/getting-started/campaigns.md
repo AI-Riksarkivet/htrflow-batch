@@ -9,15 +9,16 @@ Before you start, you need:
 - the chart deployed with its S3 Secret ([Deploy](deploy.md));
 - a `publicResultsBase` that browsers can reach;
 - `kubectl` access to the cluster;
-- `uv` wherever the converter runs, which is your machine or the campaigns
-  repo's CI.
+- `uv` on your machine and in the campaigns repo's CI, wherever the
+  converter renders.
 
 ## 1. Create the campaigns repo
 
-Desired state lives in a git repository of its own. The converter is a plain
-Python package, not a container image, and it never runs as part of the
-platform. Run it as a `uvx` tool straight from this repository to create a
-campaigns repo:
+Desired state lives in a git repository of its own. The converter is a
+Python package: it renders on your machine and in the campaigns repo's CI,
+and the published `htrflow-campaigns` image runs the same CLI inside the
+cluster when the Argo CD hook applies the repo. Run it as a `uvx` tool
+straight from this repository to create a campaigns repo:
 
 ```bash
 uvx --from "git+https://github.com/AI-Riksarkivet/htrflow-batch@<ref>#subdirectory=packages/converter" \
@@ -86,7 +87,9 @@ does not check either of them.
 - With `security.requireModelRevision` on, every model needs a 40-character
   commit hash as `revision:`. It goes under `model_settings` for YOLO, or
   under `model_settings.model_kwargs` for TrOCR and other Hugging Face
-  models.
+  models. TrOCR, WordLevelTrOCR, Donut and DiT also download a processor
+  separately, so they need the same kind of pin under
+  `model_settings.processor_kwargs` as well.
 
 A pipeline id names the image and the steps together. Once results exist
 under an id, never change it in place. A new digest means a **new pipeline
@@ -124,8 +127,12 @@ pointed at the whole directory applies none of it. Nothing reaches the
 cluster except what CI committed.
 
 When `htrflow-campaigns apply` itself runs inside the cluster (a CI Job, or
-an Argo CD `PostSync` hook), it needs an identity that may write campaign
-Jobs. Set `apply.rbac.enabled` in the chart to create one.
+the Argo CD `PostSync` hook, which runs the `htrflow-campaigns` image), it
+needs an identity that may write campaign Jobs. Set `apply.rbac.enabled` in
+the chart to create one, and `apply.gitCidrs` to the git host the hook
+clones from. The hook checks that the checkout's `rendered/` is its own
+render before anything is applied, and applies only into the namespace it
+runs in.
 
 ### From a kubeconfig
 
