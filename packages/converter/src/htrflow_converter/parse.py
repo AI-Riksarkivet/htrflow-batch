@@ -221,37 +221,6 @@ def _duplicate_volume_ids(doc: dict, rel: str, problems: list[str]) -> None:
         seen.add(str(vid))
 
 
-def _shared_volumes(
-    campaigns: list[Campaign], files: dict[str, str], problems: list[str]
-) -> None:
-    """A volume two campaigns on one pipeline both list (audit 0923 C-13).
-
-    Results are keyed ``<pipeline>/<volume>/``, not by campaign, so the two
-    campaigns' pods would run the same volume at once and write over each
-    other's pages. One line per pair of campaigns -- two copies of one big
-    list would otherwise be thousands -- blamed on the later file."""
-    first: dict[tuple[str, str], str] = {}
-    for c in campaigns:
-        shared: dict[str, list[str]] = {}
-        for v in c.volumes:
-            owner = first.setdefault((c.pipeline, v.id), c.name)
-            if owner != c.name:
-                shared.setdefault(owner, []).append(v.id)
-        for owner, ids in shared.items():
-            quoted = [f'"{i}"' for i in ids]
-            if len(ids) == 1:
-                named = f"volume {quoted[0]} is"
-            elif len(ids) <= 3:
-                named = f"volumes {', '.join(quoted[:-1])} and {quoted[-1]} are"
-            else:
-                named = f"volumes {', '.join(quoted[:3])} and {len(ids) - 3} more are"
-            problems.append(
-                f"{files[c.name]}: {named} also in {files[owner]}, and both "
-                f"campaigns run pipeline {c.pipeline} — their pods would write "
-                "the same results at once; list each volume in one of them only"
-            )
-
-
 def _parse_campaign(path: Path, context: dict, problems: list[str]) -> Campaign | None:
     doc = _read_yaml_mapping(path, problems, "campaign")
     if doc is None:
@@ -301,7 +270,6 @@ def load(
             campaigns.append(c)
             files[c.name] = _rel(path)
 
-    _shared_volumes(campaigns, files, problems)
     for c in campaigns:
         # A campaign pointing at a pipeline whose own file is already on this
         # list is not also missing one: saying so twice sends its author
