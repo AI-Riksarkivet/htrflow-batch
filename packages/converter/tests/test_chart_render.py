@@ -478,6 +478,7 @@ def test_ingress_from_refuses_a_selector_that_selects_everything(
 #: the link-local block every cloud serves instance credentials from, and
 #: the three private ranges a VPC is built out of.
 CATCH_ALL_EXCEPT = {
+    "10.16.51.10/32",  # the API server REQUIRED_SETS names
     "10.42.0.0/16",
     "10.43.0.0/16",
     "169.254.0.0/16",
@@ -563,6 +564,7 @@ def test_a_catch_all_split_in_halves_is_carved_out_half_by_half():
     )
     blocks = _blocks(named(rendered, "NetworkPolicy", "htr-batch-job"))
     assert set(blocks["0.0.0.0/1"]) == {
+        "10.16.51.10/32",
         "10.42.0.0/16",
         "10.43.0.0/16",
         "10.0.0.0/8",
@@ -586,6 +588,24 @@ def test_the_apply_pods_git_range_is_carved_out_too():
     assert set(blocks["0.0.0.0/0"]) == CATCH_ALL_EXCEPT
 
 
+def test_the_api_server_is_carved_out_whatever_its_address():
+    """The API server was carved out only when it happened to be a node
+    address or inside a private block; an endpoint on a public address was
+    reachable from the warm-up and from any wide range (audit 0923 M-3)."""
+    sets = tuple(s for s in DEFAULT_SETS if not s.startswith("network.apiServer."))
+    rendered = render(
+        sets=sets
+        + (
+            "network.apiServer.cidr=203.0.113.5/32",
+            "network.apiServer.cidrs={198.51.100.7/32}",
+            "network.iiifCidrs={0.0.0.0/0}",
+        )
+    )
+    for name in ("htr-batch-job", "htr-warmup"):
+        blocks = _blocks(named(rendered, "NetworkPolicy", name))
+        assert {"203.0.113.5/32", "198.51.100.7/32"} <= set(blocks["0.0.0.0/0"]), name
+
+
 def test_a_named_range_inside_a_private_block_is_left_whole():
     """A range inside an internal one is the operator naming a host on
     their own network: it holds no internal range, so it has nothing to
@@ -596,7 +616,11 @@ def test_a_named_range_inside_a_private_block_is_left_whole():
     )
     blocks = _blocks(named(rendered, "NetworkPolicy", "htr-batch-job"))
     assert blocks["10.16.5.5/32"] == []
-    assert set(blocks["10.0.0.0/8"]) == {"10.42.0.0/16", "10.43.0.0/16"}
+    assert set(blocks["10.0.0.0/8"]) == {
+        "10.16.51.10/32",
+        "10.42.0.0/16",
+        "10.43.0.0/16",
+    }
 
 
 @pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-web"])
