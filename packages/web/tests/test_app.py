@@ -2,27 +2,37 @@
 
 from __future__ import annotations
 
+import asyncio
+import copy
 import inspect
 import re
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
+import anyio
+import httpx
 import pytest
 from fastapi.testclient import TestClient
+from kubernetes.client import ApiException
 
+from htrflow_web import projection
 from htrflow_web.app import (
     DNS_1123,
+    REAPED_SHOWN,
     RECORD_WRITES_PER_REQUEST,
     SECURITY_HEADERS,
     NoCluster,
     create_app,
 )
 from htrflow_web.kube import (
+    FIELD_MANAGER,
     ApplyConflict,
     ClusterUnavailable,
     Reader,
     ReaderLike,
 )
+from htrflow_web.projection import FAILURES_MANAGER
 
 JOB = {
     "metadata": {
@@ -106,6 +116,11 @@ class FakeReader:
     def list_pods(self, namespace: str, job_name: str) -> list[dict]:
         return []
 
+    def apply_configmap(
+        self, body: dict, force: bool = False, manager: str = FIELD_MANAGER
+    ) -> str | None:
+        pass  # RecordingReader keeps what is written; this fake drops it
+
 
 class FakeProgress:
     """Stands in for the bucket: create_app's real one would make an HTTP
@@ -132,6 +147,42 @@ def test_healthz(client: TestClient):
     resp = client.get("/healthz")
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
+
+
+class _Hung(FakeReader):
+    """A reader whose API server has stopped answering mid-request."""
+
+    def __init__(self) -> None:
+        self.release = threading.Event()
+
+    def get_job(self, namespace: str, name: str) -> dict | None:
+        self.release.wait(10)
+        return super().get_job(namespace, name)
+
+
+def test_healthz_answers_while_every_worker_is_stuck():
+    """Every sync route runs on one shared thread pool. With /healthz on it
+    too, requests stuck on a hung API server queued the probe behind them,
+    readiness failed, and the only replica left the Service (2026-09-23
+    audit). Here the pool has one thread and a request is holding it."""
+    reader = _Hung()
+    app = create_app(reader, progress=FakeProgress())
+
+    async def scenario() -> int:
+        anyio.to_thread.current_default_thread_limiter().total_tokens = 1
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            stuck = asyncio.ensure_future(c.get("/api/v1/jobs/htr-test/kyrk"))
+            await asyncio.sleep(0.1)
+            try:
+                with anyio.fail_after(2):
+                    status = (await c.get("/healthz")).status_code
+            finally:
+                reader.release.set()
+                await stuck
+        return status
+
+    assert asyncio.run(scenario()) == 200
 
 
 def test_version(client: TestClient):
@@ -417,6 +468,7 @@ class RecordingReader(FakeReader):
         self.live = live or []
         self.written: list[dict] = []
         self.forced: list[bool] = []
+        self.managers: list[str] = []
 
     def list_configmaps(self) -> list[dict]:
         return self.live
@@ -427,7 +479,9 @@ class RecordingReader(FakeReader):
                 return cm
         return super().get_configmap(namespace, name)
 
-    def apply_configmap(self, body: dict, force: bool = False) -> None:
+    def apply_configmap(
+        self, body: dict, force: bool = False, manager: str = "htrflow-web"
+    ) -> str | None:
         # The API server refuses a name no object could carry, and a fake
         # that accepts one proves nothing about what the cluster would do
         # with the names this package builds (2026-09-14 audit).
@@ -438,11 +492,19 @@ class RecordingReader(FakeReader):
             assert DNS_1123.fullmatch(value), f"{field} is not DNS-1123: {value!r}"
         self.written.append(body)
         self.forced.append(force)
+        self.managers.append(manager)
+        return "uid-recorded"
 
 
 def _status_of(reader: RecordingReader) -> dict:
     assert len(reader.written) == 1
     return reader.written[0]
+
+
+def _written_by(reader: RecordingReader, manager: str) -> dict:
+    """The one write this request made as ``manager``."""
+    (body,) = [b for b, m in zip(reader.written, reader.managers) if m == manager]
+    return body
 
 
 def test_listing_campaigns_writes_what_it_observed(capsys):
@@ -469,27 +531,59 @@ def test_a_record_that_already_says_this_is_not_written_again():
 
 
 def test_the_detail_endpoint_records_the_failed_volumes():
+    """Under a field manager of their own, after the summary: the summary
+    creates the record with its labels, and the failures land on it."""
     reader = RecordingReader()
     client = TestClient(create_app(reader, progress=FakeProgress()))
     assert client.get("/api/v1/jobs/htr-test/kyrk").status_code == 200
-    assert _status_of(reader)["data"]["failedVolumes"] == "[]"
+    assert reader.managers == [FIELD_MANAGER, FAILURES_MANAGER]
+    summary, failures = reader.written
+    assert "failedVolumes" not in summary["data"]
+    assert summary["metadata"]["labels"]
+    assert failures["data"] == {
+        "failedVolumes": "[]",
+        "failedVolumesJobUid": "uid-kyrk",
+    }
+    assert reader.forced[1] is True, "no other manager has a say in the field"
 
 
-def test_the_list_record_never_wipes_the_failed_volumes_the_detail_wrote():
-    reader = RecordingReader(
-        [
-            {
-                "metadata": {
-                    "name": "campaign-kyrk-status",
-                    "namespace": "htr-test",
-                },
-                "data": {"failedVolumes": '[{"id":"vol1","reason":"boom"}]'},
-            }
-        ]
-    )
+def test_the_list_route_never_sends_the_failed_volumes():
+    """It re-sent the value it had read, under the manager the detail route
+    wrote with, so a list request could apply it over reasons a detail
+    request had just added (2026-09-23 audit). The field is left to the
+    failures manager, which keeps it when this one says nothing of it."""
+    stored = {
+        "metadata": {
+            "name": "campaign-kyrk-status",
+            "namespace": "htr-test",
+            "managedFields": [_owns(FAILURES_MANAGER, "failedVolumes")],
+        },
+        "data": {"failedVolumes": '[{"id":"vol1","reason":"boom"}]'},
+    }
+    reader = RecordingReader([stored])
     client = TestClient(create_app(reader, progress=FakeProgress()))
     client.get("/api/v1/jobs")
+    assert "failedVolumes" not in _status_of(reader)["data"]
+    assert reader.managers == [FIELD_MANAGER]
+
+
+def test_a_record_from_before_the_split_keeps_its_failures_until_handed_over():
+    """A record whose failedVolumes the summary manager still owns: leaving
+    the field out would release it, and a field nobody owns is deleted. The
+    stored value is sent back as it is until the failures manager takes the
+    field over."""
     kept = '[{"id":"vol1","reason":"boom"}]'
+    stored = {
+        "metadata": {
+            "name": "campaign-kyrk-status",
+            "namespace": "htr-test",
+            "managedFields": [_owns(FIELD_MANAGER, "phase", "failedVolumes")],
+        },
+        "data": {"phase": "Queued", "failedVolumes": kept},
+    }
+    reader = RecordingReader([stored])
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    client.get("/api/v1/jobs")
     assert _status_of(reader)["data"]["failedVolumes"] == kept
 
 
@@ -510,13 +604,12 @@ def test_site_only_mode_answers_honestly_instead_of_writing():
     assert "HTRFLOW_WEB_SITE_ONLY" in resp.json()["detail"]
 
 
-def test_a_reader_that_cannot_write_still_answers_the_list():
-    """The other half of the same branch: a reader with no
-    `apply_configmap` (every fake in this file) lists campaigns normally."""
-    reader = FakeReader()
-    assert not hasattr(reader, "apply_configmap")
-    client = TestClient(create_app(reader, progress=FakeProgress()))
-    assert len(client.get("/api/v1/jobs").json()) == 1
+def _owns(manager: str, *keys: str) -> dict:
+    return {
+        "manager": manager,
+        "operation": "Apply",
+        "fieldsV1": {"f:data": {f"f:{k}": {} for k in keys}},
+    }
 
 
 REAPED_RECORD = {
@@ -571,6 +664,79 @@ def test_a_campaign_whose_job_is_gone_still_has_a_row():
     assert gone["counts"] == {"total": 4, "active": 0, "done": 4, "failed": 0}
     assert gone["finishedAt"] == "2025-12-01T05:00:00Z"
     assert body[0]["name"] == "kyrk", "newest first, reaped rows included"
+
+
+def _many_reaped(n: int) -> RecordingReader:
+    """``n`` campaigns whose Jobs are gone, one a day, newest last."""
+    cms: list[dict] = []
+    for i in range(n):
+        name = f"gamla{i}"
+        cms.append(
+            {
+                "metadata": {
+                    **REAPED_RECORD["metadata"],
+                    "name": f"campaign-{name}",
+                    "creationTimestamp": f"2025-11-{i + 1:02d}T00:00:00Z",
+                },
+            }
+        )
+        cms.append(
+            {
+                "metadata": {
+                    "name": f"campaign-{name}-status",
+                    "namespace": "htr-test",
+                },
+                "data": REAPED_STATUS["data"],
+            }
+        )
+    return RecordingReader(cms)
+
+
+def test_the_list_carries_only_the_newest_reaped_campaigns():
+    """Records have no TTL, so every campaign ever run was a row, and the
+    page a card with its own requests for each (2026-09-23 audit). Every
+    live Job is still listed; of the reaped, the newest few, and a header
+    saying how many there are in all."""
+    client = TestClient(create_app(_many_reaped(25), progress=FakeProgress()))
+    resp = client.get("/api/v1/jobs")
+    gone = [row["name"] for row in resp.json() if row["jobGone"]]
+    assert len(gone) == REAPED_SHOWN
+    assert gone[0] == "gamla24" and gone[-1] == f"gamla{25 - REAPED_SHOWN}"
+    assert resp.headers["X-Reaped-Total"] == "25"
+    assert any(row["name"] == "kyrk" for row in resp.json()), "live Jobs: all"
+
+
+def test_older_reaped_campaigns_are_asked_for_by_count():
+    client = TestClient(create_app(_many_reaped(25), progress=FakeProgress()))
+    resp = client.get("/api/v1/jobs?reaped=24")
+    assert sum(row["jobGone"] for row in resp.json()) == 24
+    none = client.get("/api/v1/jobs?reaped=0")
+    assert [row["name"] for row in none.json()] == ["kyrk"]
+    assert none.headers["X-Reaped-Total"] == "25"
+
+
+def test_the_reaped_window_ranks_by_when_a_campaign_ended():
+    """A long campaign created weeks ago and reaped today is news; ranked by
+    its record's creation date it hid behind "show older" (2026-09-23
+    review). When it finished decides, and creation only when that was
+    never written."""
+    reader = _many_reaped(25)
+    for cm in reader.live:
+        if cm["metadata"]["name"] == "campaign-gamla0-status":
+            cm["data"] = {**cm["data"], "finishedAt": "2026-09-23T10:00:00+02:00"}
+        elif cm["metadata"]["name"].endswith("-status"):
+            cm["data"] = {**cm["data"], "finishedAt": ""}
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    gone = [
+        r["name"] for r in client.get("/api/v1/jobs?reaped=2").json() if r["jobGone"]
+    ]
+    assert set(gone) == {"gamla0", "gamla24"}
+
+
+@pytest.mark.parametrize("bad", ["-1", "100001", "x"])
+def test_a_reaped_count_out_of_range_is_refused(bad: str):
+    client = TestClient(create_app(_many_reaped(1), progress=FakeProgress()))
+    assert client.get(f"/api/v1/jobs?reaped={bad}").status_code == 422
 
 
 def test_the_list_route_draws_a_reaped_row_from_metadata_alone():
@@ -639,7 +805,7 @@ def test_a_later_detail_request_does_not_erase_the_failed_volumes():
     )
     client = TestClient(create_app(reader, progress=FakeProgress()))
     assert client.get("/api/v1/jobs/htr-test/kyrk").status_code == 200
-    assert _status_of(reader)["data"]["failedVolumes"] == kept
+    assert _written_by(reader, FAILURES_MANAGER)["data"]["failedVolumes"] == kept
 
 
 def test_failed_volumes_land_when_apply_owns_every_other_field():
@@ -651,6 +817,7 @@ def test_failed_volumes_land_when_apply_owns_every_other_field():
         "metadata": {
             "name": "campaign-kyrk-status",
             "namespace": "htr-test",
+            "uid": "uid-cm",
             "labels": {"htrflow.riksarkivet.se/campaign": ""},
             "managedFields": [
                 {
@@ -679,9 +846,9 @@ def test_failed_volumes_land_when_apply_owns_every_other_field():
     client = TestClient(create_app(reader, progress=FakeProgress()))
     assert client.get("/api/v1/jobs/htr-test/kyrk").status_code == 200
     written = _status_of(reader)
-    assert written["data"] == {"failedVolumes": "[]"}
+    assert written["data"] == {"failedVolumes": "[]", "failedVolumesJobUid": "uid-kyrk"}
     assert "labels" not in written["metadata"]
-    assert reader.forced == [False]
+    assert reader.managers == [FAILURES_MANAGER]
 
 
 def test_a_recreated_job_does_not_inherit_the_last_runs_record():
@@ -703,7 +870,10 @@ def test_a_recreated_job_does_not_inherit_the_last_runs_record():
     assert written["jobUid"] == "uid-kyrk"
     assert written["phase"] == "Running"
     assert written["finishedAt"] == ""
+    # Left out: the old run's list is tied to the old run and read as
+    # nobody's (test_a_recreated_jobs_record_never_counts_...).
     assert "failedVolumes" not in written
+    assert reader.forced == [False]
 
 
 class _Refusing(RecordingReader):
@@ -713,7 +883,9 @@ class _Refusing(RecordingReader):
         super().__init__(live)
         self.attempts = 0
 
-    def apply_configmap(self, body: dict, force: bool = False) -> None:
+    def apply_configmap(
+        self, body: dict, force: bool = False, manager: str = "htrflow-web"
+    ) -> str | None:
         self.attempts += 1
         raise RuntimeError("configmaps is forbidden")
 
@@ -726,7 +898,9 @@ class _Contested(RecordingReader):
         super().__init__(live)
         self.attempts = 0
 
-    def apply_configmap(self, body: dict, force: bool = False) -> None:
+    def apply_configmap(
+        self, body: dict, force: bool = False, manager: str = "htrflow-web"
+    ) -> str | None:
         self.attempts += 1
         raise ApplyConflict(body["metadata"]["name"])
 
@@ -836,6 +1010,30 @@ def test_a_cluster_that_does_not_answer_is_a_502_with_the_headers(path: str):
         assert resp.headers[name] == value
 
 
+class _Broken(FakeReader):
+    """A bug: something no handler knows about escapes a route."""
+
+    def list_jobs(self) -> list[dict]:
+        raise KeyError("a bug, not the cluster")
+
+
+def test_an_unexpected_error_is_a_500_that_still_carries_the_headers(caplog):
+    """Any exception escaping a route was answered by Starlette outside the
+    header middleware -- a plain-text 500 with no nosniff and no
+    frame-ancestors (2026-09-23 audit). Logged in full, never quoted."""
+    client = TestClient(
+        create_app(_Broken(), progress=FakeProgress()),
+        raise_server_exceptions=False,
+    )
+    resp = client.get("/api/v1/jobs")
+    assert resp.status_code == 500
+    assert resp.headers["content-type"].startswith("application/json")
+    assert "a bug" not in resp.text
+    assert "a bug, not the cluster" in caplog.text
+    for name, value in SECURITY_HEADERS.items():
+        assert resp.headers[name] == value
+
+
 def test_the_502_never_quotes_the_client_error():
     """The API server's own message names namespaces, verbs and identities;
     the page says what the reader can do instead."""
@@ -877,6 +1075,26 @@ def test_every_reader_double_answers_the_calls_the_routes_make(double):
         assert impl is not None, f"{double.__name__} has no {name}()"
         args = [f"<{p}>" for p in list(declared.parameters)[1:]]
         inspect.signature(impl).bind(double, *args)
+        if impl is NoCluster._no_cluster:
+            continue  # the catch-all takes anything, and refuses it
+        # By name and kind too: `app.py` passes `force=` and `manager=` by
+        # keyword, and a renamed parameter still binds positionally.
+        assert _shape(impl) == _shape(declared), f"{double.__name__}.{name}"
+
+
+def _shape(fn) -> list[tuple[str, object]]:
+    sig = fn if isinstance(fn, inspect.Signature) else inspect.signature(fn)
+    return [(p.name, p.kind) for p in sig.parameters.values()]
+
+
+def test_the_status_write_is_the_protocols_own_call():
+    """The write used to be missing from the protocol and asked for with
+    `hasattr`: renamed on the real adapter, every status write stopped and
+    every test still passed (2026-09-23 audit)."""
+    assert "apply_configmap" in READER_METHODS
+    assert _shape(Reader.apply_configmap) == _shape(READER_METHODS["apply_configmap"])
+    src = (Path(__file__).parent.parent / "src" / "htrflow_web" / "app.py").read_text()
+    assert "hasattr(reader" not in src
 
 
 # --- the detail route only answers for names that could exist (F8) -------
@@ -925,6 +1143,49 @@ def test_a_campaign_this_api_could_not_have_is_a_404_before_any_read(
     assert reader.asked == []
 
 
+WARMUP_JOB = {
+    "metadata": {
+        "name": "warmup-demo-v1",
+        "namespace": "htr-test",
+        "uid": "uid-warmup",
+        "labels": {
+            "app": "htrflow-warmup",
+            "htrflow.riksarkivet.se/managed-by": "converter",
+            "htrflow.riksarkivet.se/pipeline": "demo-v1",
+        },
+    },
+    "spec": {"completions": 1},
+    "status": {},
+}
+
+
+class _AnyJob(RecordingReader):
+    """A namespace that also holds Jobs that are not campaigns."""
+
+    def get_job(self, namespace: str, name: str) -> dict | None:
+        if name == "warmup-demo-v1":
+            return WARMUP_JOB
+        if name == "someone-elses":
+            return {**JOB, "metadata": {**JOB["metadata"], "labels": {}}}
+        return super().get_job(namespace, name)
+
+
+@pytest.mark.parametrize("name", ["warmup-demo-v1", "someone-elses"])
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+def test_a_job_that_is_not_a_campaign_is_a_404_and_writes_nothing(
+    name: str, method: str
+):
+    """Any Job name in a served namespace was answered as a campaign, and a
+    status record written for it: `HEAD .../warmup-demo-v1` created
+    `campaign-warmup-demo-v1-status` (2026-09-23 audit). Only a Job carrying
+    the campaign labels the list selects by is one."""
+    reader = _AnyJob()
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    resp = client.request(method, f"/api/v1/jobs/htr-test/{name}")
+    assert resp.status_code == 404
+    assert reader.written == []
+
+
 def test_a_campaign_the_cluster_could_carry_still_answers():
     reader = Counting()
     client = TestClient(create_app(reader, progress=FakeProgress()))
@@ -940,3 +1201,232 @@ def test_the_recording_fake_refuses_a_name_the_cluster_would():
         reader.apply_configmap(
             {"metadata": {"name": "Campaign-Kyrk", "namespace": "htr-test"}}
         )
+
+
+# --- the record's field ownership, against server-side apply itself -------
+
+#: One volume done, one failed -- with a pod saying why, so a detail request
+#: has a new reason to write.
+FAILING_JOB = {**JOB, "status": {**JOB["status"], "active": 0, "failedIndexes": "1"}}
+FAILED_POD = {
+    "metadata": {
+        "name": "kyrk-1-x",
+        "creationTimestamp": "2026-01-01T00:01:00Z",
+        "labels": {"batch.kubernetes.io/job-completion-index": "1"},
+    },
+    "status": {
+        "containerStatuses": [
+            {
+                "name": "wrapper",
+                "state": {"terminated": {"exitCode": 1, "message": "boom"}},
+            }
+        ]
+    },
+}
+STATUS = "campaign-kyrk-status"
+LABELS = {
+    "htrflow.riksarkivet.se/managed-by": "converter",
+    "htrflow.riksarkivet.se/campaign": "kyrk",
+    "htrflow.riksarkivet.se/pipeline": "demo-v1",
+    "htrflow.riksarkivet.se/kind": "status",
+}
+OLD_REASONS = '[{"id":"vol0","reason":"an older sentence"}]'
+
+
+class SsaReader(FakeReader):
+    """FakeReader whose status ConfigMap lives in an SSA-faithful store
+    (conftest.py). ``stale`` stands in for a read made before another
+    request's write: what this request saw, not what is there now."""
+
+    def __init__(self, store, job: dict = FAILING_JOB) -> None:
+        self.store, self.job = store, job
+        self.pods = [FAILED_POD]
+        self.stale: dict | None = None
+        self.conflicts = 0
+
+    def get_job(self, namespace: str, name: str) -> dict | None:
+        return self.job if name == "kyrk" else None
+
+    def list_jobs(self) -> list[dict]:
+        return [self.job]
+
+    def list_pods(self, namespace: str, job_name: str) -> list[dict]:
+        return self.pods
+
+    def _status(self) -> dict | None:
+        return self.stale if self.stale is not None else self.store.get(STATUS)
+
+    def get_configmap(self, namespace: str, name: str) -> dict | None:
+        return (
+            self._status() if name == STATUS else super().get_configmap(namespace, name)
+        )
+
+    def list_configmaps(self) -> list[dict]:
+        return [cm for cm in [self._status()] if cm is not None]
+
+    def apply_configmap(
+        self, body: dict, force: bool = False, manager: str = FIELD_MANAGER
+    ) -> str | None:
+        try:
+            return self.store.apply(body, force=force, manager=manager)
+        except ApiException as e:
+            self.conflicts += 1
+            raise ApplyConflict(body["metadata"]["name"]) from e
+
+
+def _legacy(store) -> None:
+    """A record as main left it: one manager, `htrflow-web`, owns it all --
+    failedVolumes included."""
+    store.apply(
+        {
+            "metadata": {"name": STATUS, "namespace": "htr-test", "labels": LABELS},
+            "data": {
+                "phase": "Running",
+                "jobUid": "uid-kyrk",
+                "failedVolumes": OLD_REASONS,
+            },
+        },
+        manager=FIELD_MANAGER,
+    )
+
+
+def _reasons(store) -> dict:
+    return projection._parse_failed(store.get(STATUS)["data"].get("failedVolumes", ""))
+
+
+def test_an_upgraded_record_keeps_its_failures_and_hands_them_over(ssa):
+    reader = SsaReader(ssa)
+    _legacy(ssa)
+    client_ = TestClient(create_app(reader, progress=FakeProgress()))
+    client_.get("/api/v1/jobs")
+    assert _reasons(ssa) == {"vol0": "an older sentence"}, "not released into deletion"
+    assert ssa.owner_of(STATUS, "failedVolumes") == {FIELD_MANAGER}
+    client_.get("/api/v1/jobs/htr-test/kyrk")
+    assert _reasons(ssa) == {"vol1": "boom", "vol0": "an older sentence"}
+    assert ssa.owner_of(STATUS, "failedVolumes") == {FAILURES_MANAGER}
+    client_.get("/api/v1/jobs")
+    assert set(_reasons(ssa)) == {"vol0", "vol1"}, "the list route leaves them be"
+
+
+def test_a_list_write_racing_the_take_over_conflicts_and_then_heals(ssa):
+    """It read the record before the failures manager took it over, so it
+    still sends the old value as the summary's -- a 409, not an overwrite.
+    The next poll reads the new owner and leaves the field alone."""
+    reader = SsaReader(ssa)
+    _legacy(ssa)
+    client_ = TestClient(create_app(reader, progress=FakeProgress()))
+    before = ssa.get(STATUS)
+    client_.get("/api/v1/jobs/htr-test/kyrk")
+    taken_over = _reasons(ssa)
+    assert "vol1" in taken_over
+    reader.stale = before
+    assert client_.get("/api/v1/jobs").status_code == 200
+    assert reader.conflicts == 1
+    assert _reasons(ssa) == taken_over, "the stale value did not land"
+    reader.stale = None
+    client_.get("/api/v1/jobs")
+    assert _reasons(ssa) == taken_over
+
+
+def test_the_ssa_store_behaves_like_the_api_server(ssa):
+    """The rules the tests above lean on, held to on their own."""
+    cm = {"metadata": {"name": "x", "namespace": "n"}, "data": {"a": "1", "b": "1"}}
+    uid = ssa.apply(cm, manager="one")
+    with pytest.raises(ApiException):  # another manager's field, changed
+        ssa.apply({**cm, "data": {"a": "2"}}, manager="two")
+    ssa.apply({**cm, "data": {"b": "1"}}, manager="two")  # same value: shared
+    ssa.apply({**cm, "data": {}}, manager="one")  # releases a, keeps shared b
+    assert ssa.get("x")["data"] == {"b": "1"}
+    ssa.apply({**cm, "data": {"b": "3"}}, force=True, manager="three")
+    assert ssa.owner_of("x", "b") == {"three"}
+    with pytest.raises(ApiException):  # a uid never creates
+        ssa.apply(
+            {"metadata": {"name": "y", "namespace": "n", "uid": uid}}, manager="one"
+        )
+    assert ssa.get("y") is None
+
+
+def _old_run(store) -> None:
+    """A record of the Job this name had before, as this API writes it: the
+    summary under its manager, the failures, tied to that run, under theirs."""
+    meta = {"name": STATUS, "namespace": "htr-test"}
+    store.apply(
+        {
+            "metadata": {**meta, "labels": LABELS},
+            "data": {"phase": "Failed", "jobUid": "uid-old"},
+        },
+        manager=FIELD_MANAGER,
+    )
+    store.apply(
+        {
+            "metadata": meta,
+            "data": {"failedVolumes": OLD_REASONS, "failedVolumesJobUid": "uid-old"},
+        },
+        force=True,
+        manager=FAILURES_MANAGER,
+    )
+
+
+def _reaped_reasons(store) -> dict:
+    return projection._recorded_reasons(store.get(STATUS))
+
+
+@pytest.mark.parametrize("writer", ["this API", "an older pod of it"])
+def test_a_recreated_jobs_record_never_counts_the_last_runs_failures(ssa, writer):
+    """The Job was recreated under the same name, and the summary moved to
+    it -- written by this API, or, mid rolling update, by an older pod that
+    knows nothing of the failures manager and leaves its field standing.
+    The old run's failures are tied to the old run: never read as this
+    run's, and never merged into them (2026-09-23 review)."""
+    _old_run(ssa)
+    reader = SsaReader(ssa)
+    client_ = TestClient(create_app(reader, progress=FakeProgress()))
+    if writer == "this API":
+        client_.get("/api/v1/jobs")
+    else:
+        ssa.apply(
+            {
+                "metadata": {"name": STATUS, "namespace": "htr-test", "labels": LABELS},
+                "data": {"phase": "Running", "jobUid": "uid-kyrk"},
+            },
+            manager=FIELD_MANAGER,
+        )
+    assert ssa.get(STATUS)["data"]["jobUid"] == "uid-kyrk"
+    assert _reaped_reasons(ssa) == {}, "the old run's list is not this run's"
+    client_.get("/api/v1/jobs/htr-test/kyrk")
+    assert _reasons(ssa) == {"vol1": "boom"}
+    assert ssa.get(STATUS)["data"]["failedVolumesJobUid"] == "uid-kyrk"
+    assert _reaped_reasons(ssa) == {"vol1": "boom"}
+
+
+def test_the_failures_write_never_creates_the_record(ssa):
+    """`apply --prune` deleted the record between this request's read and
+    its failures write. Sent as it was, that write created it again with no
+    labels -- invisible to the list and to the next prune, for ever, and
+    with no jobUid, so read as the next Job's (2026-09-23 review). It is
+    held to the record it read, and a record that is gone stays gone."""
+    reader = SsaReader(ssa)
+    client_ = TestClient(create_app(reader, progress=FakeProgress()))
+    client_.get("/api/v1/jobs/htr-test/kyrk")
+    assert _reasons(ssa) == {"vol1": "boom"}
+    reader.stale = ssa.get(STATUS)
+    ssa.delete(STATUS)
+    pod = copy.deepcopy(FAILED_POD)
+    pod["status"]["containerStatuses"][0]["state"]["terminated"]["message"] = (
+        "boom again"
+    )
+    reader.pods = [pod]
+    assert client_.get("/api/v1/jobs/htr-test/kyrk").status_code == 200
+    assert ssa.get(STATUS) is None
+    assert reader.conflicts == 1
+
+
+def test_a_first_record_gets_its_failures_in_the_same_request(ssa):
+    """No record yet: the summary creates it, and the failures are held to
+    the one it created."""
+    reader = SsaReader(ssa)
+    TestClient(create_app(reader, progress=FakeProgress())).get(
+        "/api/v1/jobs/htr-test/kyrk"
+    )
+    assert _reasons(ssa) == {"vol1": "boom"}
+    assert ssa.get(STATUS)["metadata"]["labels"] == LABELS

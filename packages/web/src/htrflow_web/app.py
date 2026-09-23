@@ -19,11 +19,15 @@ import base64
 import hashlib
 import json
 import logging
+import mimetypes
 import os
 import re
 import time
+from datetime import datetime, timezone
+from html.parser import HTMLParser
 from importlib import metadata
 from pathlib import Path
+from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
@@ -31,16 +35,18 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import projection
-from .kube import ApplyConflict, ClusterUnavailable
+from .kube import ApplyConflict, ClusterUnavailable, is_campaign
 from .progress import ProgressReader
 
 _LOG = logging.getLogger(__name__)
 
 #: Exactly what the retired nginx config sent (chart 0.3.0's viewer template).
-#: Script/style/connect sources are governed by the SvelteKit build's own
+#: Script/style sources are governed by the SvelteKit build's own
 #: ``<meta http-equiv>`` CSP (kit.csp); a header must not be stricter than it,
 #: since the browser enforces the intersection — so this one only forbids
-#: framing, which a meta tag cannot express.
+#: framing, which a meta tag cannot express. The SPA's pages add the one
+#: source list the build cannot know, where they may fetch from
+#: (``spa_csp``); the viewer and every other document have their own.
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "strict-origin-when-cross-origin",
@@ -71,9 +77,94 @@ UV_CSP = (
     "worker-src 'self' blob:; frame-ancestors 'none'"
 )
 
-#: A <script> with a body of its own -- one that loads a file has a `src`
-#: and is covered by 'self' instead.
-_INLINE = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.S | re.I)
+
+#: What a document in the built site gets when it is neither the viewer nor
+#: a page with a policy of its own: nothing runs, nothing loads. The whole
+#: Universal Viewer build is copied in beside uv.html, and any other page it
+#: ships was served with only `frame-ancestors 'none'` (2026-09-23 audit).
+STRICT_CSP = "default-src 'none'; sandbox; frame-ancestors 'none'"
+
+#: A host a CSP host-source can name: DNS labels or a dotted IPv4 address.
+#: No IPv6 literal, no `_`, nothing non-ASCII -- the grammar has no room.
+_CSP_HOST = re.compile(r"[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*")
+
+
+def spa_csp(results_base: str) -> str | None:
+    """The header the SPA's own pages get beside their meta policy: where
+    they may fetch from -- this service (the API) and the results bucket
+    (run logs, manifest.json, ALTO) -- which the build cannot say, because
+    the bucket is not known until the service starts (2026-09-23 audit).
+    The browser enforces the header and the meta tag both, and this adds a
+    directive the meta tag does not have rather than narrowing one it does.
+
+    ``None`` -- no narrowing at all -- when there is no base (site-only
+    mode, where the run log reads any http(s) URL, as it did before there
+    was one) or when the base is not a URL a CSP source can express."""
+    parts = urlsplit(results_base)
+    try:
+        port = parts.port
+    except ValueError:
+        return None
+    host = parts.hostname or ""
+    if parts.scheme not in ("http", "https") or not _CSP_HOST.fullmatch(host):
+        return None
+    # Percent-encoded where a CSP source cannot hold the character: `;` ends
+    # a directive and `,` a policy. The browser compares paths decoded.
+    path = quote(parts.path.rstrip("/"), safe="/-._~%!$&'()*+=:@")
+    netloc = f"{host}:{port}" if port is not None else host
+    return (
+        f"{SECURITY_HEADERS['Content-Security-Policy']}; "
+        f"connect-src 'self' {parts.scheme}://{netloc}{path}/"
+    )
+
+
+#: Media types a browser renders as a document that can run script.
+_DOCUMENTS = ("text/html", "application/xhtml+xml", "image/svg+xml")
+
+
+class _Page(HTMLParser):
+    """What ``app.py`` needs to know of a built page, read as a browser
+    reads it: the body of every <script> that has one of its own -- one
+    that loads a file has a `src` and is covered by 'self' instead -- and
+    whether its head states a policy (<meta http-equiv>; one in the body is
+    ignored by browsers). Parsed, not matched: a pattern looking for
+    `</script>` missed `</script >` and `</SCRIPT foo>`, which a browser
+    closes a script on, and hashed the wrong text (code scanning 117). The
+    stdlib parser reads a script's content as raw text up to its end tag,
+    as the HTML spec does."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.bodies: list[str] = []
+        self.policy = False
+        self._open: list[str] | None = None
+        self._in_body = False
+
+    def handle_starttag(self, tag, attrs) -> None:
+        if tag == "body":
+            self._in_body = True
+        if tag == "meta" and not self._in_body:
+            equiv = dict(attrs).get("http-equiv") or ""
+            self.policy |= equiv.lower() == "content-security-policy"
+        if tag == "script" and all(name != "src" for name, _ in attrs):
+            self._open = []
+
+    def handle_data(self, data) -> None:
+        if self._open is not None:
+            self._open.append(data)
+
+    def handle_endtag(self, tag) -> None:
+        if tag == "script" and self._open is not None:
+            self.bodies.append("".join(self._open))
+            self._open = None
+
+
+def _page(html: str) -> _Page:
+    parser = _Page()
+    parser.feed(html)
+    parser.close()
+    return parser
+
 
 UV_PATH = "/uv.html"
 
@@ -88,7 +179,7 @@ def uv_csp(static: Path) -> str | None:
     except OSError:
         return None
     scripts = ""
-    for body in _INLINE.findall(html):
+    for body in _page(html).bodies:
         digest = base64.b64encode(hashlib.sha256(body.encode()).digest()).decode()
         scripts += f" 'sha256-{digest}'"
     return UV_CSP.format(scripts=scripts)
@@ -115,6 +206,14 @@ DEV_VERSION = "dev"
 #: (packages/converter ``render.status_configmap``), which is what actually
 #: guarantees a terminal record exists.
 RECORD_WRITES_PER_REQUEST = 20
+
+#: How many campaigns whose Jobs are gone the list carries unless asked for
+#: more (``?reaped=``). Their records have no TTL, so without a window every
+#: campaign ever run was a row -- and on the page a card, each with requests
+#: of its own (2026-09-23 audit). Every live Job is always listed.
+REAPED_SHOWN = 20
+#: The most one request may ask for.
+REAPED_MAX = 10_000
 
 #: How long a namespace whose write was refused is left alone. Long enough
 #: that a denied grant costs one round trip per ten minutes rather than
@@ -165,21 +264,54 @@ class BuiltSite(StaticFiles):
     ``/uv.html/`` and ``//uv.html``, and a path match left all of those with
     ``frame-ancestors 'none'`` alone (2026-09-17 audit, 3059). The middleware
     in ``create_app`` keeps a CSP a response already has.
+
+    Every other document gets ``STRICT_CSP`` unless its own head states a
+    policy -- which the SPA's pages do (kit.csp); those get ``page_csp``
+    (``spa_csp``), which only adds what their meta tag cannot say.
     """
 
-    def __init__(self, *args, viewer_csp: str | None = None, **kwargs):
+    def __init__(
+        self,
+        *args,
+        viewer_csp: str | None = None,
+        page_csp: str | None = None,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.viewer_csp = viewer_csp
+        self.page_csp = page_csp
         d = self.directory  # None only for a packages-served StaticFiles: no viewer
         self.viewer = d and os.path.realpath(Path(d) / UV_PATH.lstrip("/"))
+        #: realpath -> whether that page states a policy of its own. The
+        #: files cannot change under a running container.
+        self._own_policy: dict[str, bool] = {}
 
     def file_response(self, full_path, stat_result, scope, status_code=200):
         response = super().file_response(full_path, stat_result, scope, status_code)
         # lookup_path hands over a realpath, so an alias or a symlink to the
-        # viewer compares equal here. A 304 is still the viewer's response.
-        if self.viewer_csp and os.path.realpath(full_path) == self.viewer:
+        # viewer compares equal here. Every decision is made from the file
+        # served, never from the response: a 304 keeps none of the file's
+        # headers but a few (not its content type), and a browser updates
+        # what it stored from it -- so a policy decided off the response was
+        # gone after a reload (2026-09-23 review).
+        real = os.path.realpath(full_path)
+        if self.viewer_csp and real == self.viewer:
             response.headers["Content-Security-Policy"] = self.viewer_csp
+        elif mimetypes.guess_type(real)[0] in _DOCUMENTS:
+            if not self._states_policy(real):
+                response.headers["Content-Security-Policy"] = STRICT_CSP
+            elif self.page_csp:
+                response.headers["Content-Security-Policy"] = self.page_csp
         return response
+
+    def _states_policy(self, real: str) -> bool:
+        if real not in self._own_policy:
+            try:
+                text = Path(real).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                text = ""
+            self._own_policy[real] = _page(text).policy
+        return self._own_policy[real]
 
     async def get_response(self, path: str, scope):
         try:
@@ -212,10 +344,7 @@ class NoCluster:
         )
 
     list_jobs = list_warmups = get_job = get_configmap = list_pods = _no_cluster
-    list_configmaps = _no_cluster
-    # Deliberately no `apply_configmap`: site-only mode has no cluster to
-    # write the campaign record to, and `_record` below asks for the
-    # attribute rather than calling into a 503 on every request (B76).
+    list_configmaps = apply_configmap = _no_cluster
 
 
 def create_app(
@@ -245,7 +374,16 @@ def create_app(
 
     @app.middleware("http")
     async def security_headers(request, call_next):
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception:
+            # Anything no handler claimed is otherwise answered by Starlette
+            # OUTSIDE this middleware, as a plain-text 500 with none of the
+            # headers below (2026-09-23 audit). Logged in full, never quoted.
+            _LOG.exception("unhandled error on %s", request.url.path)
+            response = JSONResponse(
+                status_code=500, content={"detail": "internal error"}
+            )
         for name, value in SECURITY_HEADERS.items():
             response.headers.setdefault(name, value)
         return response
@@ -281,7 +419,12 @@ def create_app(
         )
 
     @app.api_route("/healthz", methods=GET_HEAD)
-    def healthz() -> dict:
+    async def healthz() -> dict:
+        """Answered on the event loop, never the thread pool every sync
+        route shares: with requests stuck on a hung API server holding every
+        worker, a pooled probe queued behind them, readiness failed, and the
+        only replica left the Service (2026-09-23 audit). Liveness of the
+        process is the question; the cluster's is each route's own 502."""
         return {"ok": True}
 
     @app.api_route("/api/v1/version", methods=GET_HEAD)
@@ -312,33 +455,36 @@ def create_app(
         ``projection.record_write``'s. Never fatal: a record the API could
         not write is a record a few minutes old, while a 500 is a status
         page nobody can read."""
-        if not hasattr(reader, "apply_configmap"):
-            return False  # site-only: no cluster
         refused_at = refused.get(row["namespace"])
         if refused_at is not None and time.monotonic() - refused_at < REFUSAL_COOLDOWN:
             return False
         uid = (job.get("metadata") or {}).get("uid", "")
         fresh = projection.status_record(row, failures, job_uid=uid)
-        write = projection.record_write(live, row, fresh)
-        if write is None:
-            return False
-        cm, force = write
+        writes = projection.record_write(live, row, fresh)
         namespace = row["namespace"]
-        try:
-            reader.apply_configmap(cm, force=force)
-        except ApplyConflict:
-            # `htrflow-campaigns apply` wrote the record since this request
-            # read it, and its ending is the authoritative one. Nothing is
-            # wrong with this service's grant, so the namespace does not go
-            # into the cooldown below (2026-09-14 review).
-            return True
-        except Exception as e:  # noqa: BLE001 - any client error, same answer
-            if namespace not in refused:
-                _LOG.warning("could not write %s: %s", cm["metadata"]["name"], e)
-            refused[namespace] = time.monotonic()
-            return True
-        refused.pop(namespace, None)
-        return True
+        uid = None  # of the record the last write left
+        for cm, force, manager in writes:  # in order: each builds on the last
+            if cm["metadata"].get("uid", "") is None:
+                if uid is None:
+                    break  # held to a record nobody saw created: next poll
+                cm["metadata"]["uid"] = uid
+            try:
+                uid = reader.apply_configmap(cm, force=force, manager=manager)
+            except ApplyConflict:
+                # `htrflow-campaigns apply` wrote the record since this
+                # request read it, and its ending is the authoritative one.
+                # Nothing is wrong with this service's grant, so the
+                # namespace does not go into the cooldown below (2026-09-14
+                # review). The next poll reads what it wrote.
+                return True
+            except Exception as e:  # noqa: BLE001 - any client error, same answer
+                if namespace not in refused:
+                    _LOG.warning("could not write %s: %s", cm["metadata"]["name"], e)
+                refused[namespace] = time.monotonic()
+                return True
+        if writes:
+            refused.pop(namespace, None)
+        return bool(writes)
 
     def _campaign_configmaps() -> tuple[dict, dict]:
         """A campaign's two ConfigMaps, each by (namespace, campaign name):
@@ -347,8 +493,6 @@ def create_app(
         rather than a get per campaign."""
         records: dict[tuple[str, str], dict] = {}
         statuses: dict[tuple[str, str], dict] = {}
-        if not hasattr(reader, "list_configmaps"):
-            return records, statuses
         for cm in reader.list_configmaps():
             meta = cm.get("metadata") or {}
             name, ns = meta.get("name", ""), meta.get("namespace", "")
@@ -362,7 +506,13 @@ def create_app(
         return records, statuses
 
     @app.api_route("/api/v1/jobs", methods=GET_HEAD)
-    def list_jobs() -> list[dict]:
+    def list_jobs(
+        response: Response,
+        reaped: int = Query(REAPED_SHOWN, ge=0, le=REAPED_MAX),
+    ) -> list[dict]:
+        """Every live campaign Job, and the ``reaped`` newest campaigns
+        whose Jobs are gone; ``X-Reaped-Total`` says how many of those there
+        are in all, so the page can offer the rest."""
         jobs = sorted(
             reader.list_jobs(),
             key=lambda j: (j.get("metadata") or {}).get("creationTimestamp", ""),
@@ -387,20 +537,37 @@ def create_app(
         # ConfigMaps have no TTL, and this list is where an operator looks
         # for it (B76). Additive -- a live Job always wins over its record.
         live = {(row["namespace"], row["name"]) for row in rows}
+        gone_rows = []
         for key, record in records.items():
             status = statuses.get(key)
             if key in live or status is None:
                 continue
-            gone = projection.record_summary(
-                record,
-                status,
-                reader.cfg,
-                _warmup_status(record, warmup_jobs, reasons),
-            )
+            gone = projection.record_summary(record, status, reader.cfg, {})
             if gone is not None:
-                rows.append(gone)
+                gone_rows.append((gone, record))
+        # Newest ending first: a long campaign created weeks ago and reaped
+        # today is the news, not the one created last (2026-09-23 review).
+        gone_rows.sort(
+            key=lambda pair: (_ended(pair[0]), pair[0]["createdAt"] or ""),
+            reverse=True,
+        )
+        response.headers["X-Reaped-Total"] = str(len(gone_rows))
+        for gone, record in gone_rows[:reaped]:
+            # Matched only for the rows sent: a failed warm-up costs a pod
+            # list, and the rows past the window are not anybody's to read.
+            gone["warmup"] = _warmup_status(record, warmup_jobs, reasons)
+            rows.append(gone)
         rows.sort(key=lambda row: row["createdAt"] or "", reverse=True)
         return rows
+
+    def _ended(row: dict) -> datetime:
+        """When a campaign ended, as a moment -- its record's finishedAt, or
+        its creation when no ending was written."""
+        for stamp in (row["finishedAt"], row["createdAt"]):
+            moment = projection.instant(stamp or "")
+            if moment is not None:
+                return moment
+        return datetime.min.replace(tzinfo=timezone.utc)
 
     def _serves(namespace: str, name: str) -> bool:
         """Whether this API could have a campaign by this name at all.
@@ -427,7 +594,9 @@ def create_app(
         if not _serves(namespace, name):
             raise HTTPException(status_code=404, detail="job not found")
         job = reader.get_job(namespace, name)
-        if job is None:
+        # A Job that is not a campaign is no campaign's Job: the name is
+        # answered as though it were absent, from a record or not at all.
+        if job is None or not is_campaign(job):
             return _reaped_detail(namespace, name, offset, limit)
         cm_name = projection.configmap_ref(job)
         configmap = reader.get_configmap(namespace, cm_name) if cm_name else None
@@ -514,7 +683,12 @@ def create_app(
     # is not an error: the API is then all there is.
     static = Path(static_dir or DEFAULT_STATIC_DIR)
     if static.is_dir():
-        site = BuiltSite(directory=static, html=True, viewer_csp=viewer_csp)
+        site = BuiltSite(
+            directory=static,
+            html=True,
+            viewer_csp=viewer_csp,
+            page_csp=spa_csp(getattr(reader.cfg, "public_results_base", "") or ""),
+        )
         app.mount("/", site, name="site")
 
     return app

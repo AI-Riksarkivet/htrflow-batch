@@ -20,6 +20,7 @@ not.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Callable
@@ -172,6 +173,11 @@ def _aged(value: dict | None, now: float) -> dict | None:
     return {**value, "ageSeconds": _age_seconds(value["updatedAt"], now)}
 
 
+def _encoded(response: httpx.Response) -> bool:
+    coding = response.headers.get("content-encoding", "").strip().lower()
+    return coding not in ("", "identity")
+
+
 class _NoAnswer(Exception):
     """The bucket did not answer: unreachable, timed out, busy, or a 5xx."""
 
@@ -183,6 +189,11 @@ class ProgressReader:
         self._client = client or httpx.Client(timeout=TIMEOUT)
         #: url -> (expiry, progress, whether the bucket answered at all)
         self._cache: dict[str, tuple[float, dict | None, bool]] = {}
+        #: Held around every touch of the cache, never across a GET. The
+        #: reader is shared by every thread of the pool, and once the cache
+        #: is full -- the normal state at scale -- two requests evicting
+        #: the same oldest key raised a KeyError (2026-09-23 audit).
+        self._lock = threading.Lock()
 
     def fetch(self, results_base: str, volume_id: str, state: str) -> dict | None:
         """This volume's progress, or ``None``. ``results_base`` is the row's
@@ -230,7 +241,8 @@ class ProgressReader:
         network: bool,
     ) -> tuple[bool, dict | None]:
         monotonic_now = time.monotonic()
-        hit = self._cache.get(url)
+        with self._lock:
+            hit = self._cache.get(url)
         if hit is not None and hit[0] > monotonic_now:
             return hit[2], _aged(hit[1], now)
         if not network:
@@ -240,10 +252,11 @@ class ProgressReader:
         # an absent file included, since its pod wrote what it ever will. A
         # bucket that did not answer is asked again soon.
         ttl = DONE_TTL if state in _OVER and answered else RUNNING_TTL
-        self._cache.pop(url, None)
-        if len(self._cache) >= MAX_ENTRIES:
-            del self._cache[next(iter(self._cache))]  # the oldest answer
-        self._cache[url] = (monotonic_now + ttl, value, answered)
+        with self._lock:
+            self._cache.pop(url, None)
+            if len(self._cache) >= MAX_ENTRIES:
+                del self._cache[next(iter(self._cache))]  # the oldest answer
+            self._cache[url] = (monotonic_now + ttl, value, answered)
         return answered, value
 
     def _get(
@@ -263,14 +276,27 @@ class ProgressReader:
         """The document at ``url``, read in chunks and abandoned past
         ``MAX_BODY``. Redirects are not followed: the URL is built from an
         operator's results base, and a bucket answering it with a Location
-        is not somewhere this pod should go next."""
+        is not somewhere this pod should go next.
+
+        Asked for, and read, exactly as stored. Anything that can write to
+        the bucket can store the file with `Content-Encoding: gzip`, and the
+        cap counted what the client had already inflated -- 64 KiB off the
+        wire could be 64 MiB in this pod before it looked (2026-09-23
+        audit). The wrapper never compresses it, so an encoded answer is not
+        our file, and it is dropped unread like any other."""
         try:
-            with self._client.stream("GET", url, follow_redirects=False) as response:
+            with self._client.stream(
+                "GET",
+                url,
+                headers={"Accept-Encoding": "identity"},
+                follow_redirects=False,
+            ) as response:
                 if response.status_code >= 500 or response.status_code in (408, 429):
                     raise _NoAnswer(response.status_code)
-                if response.status_code != 200:
+                if response.status_code != 200 or _encoded(response):
                     return None
                 body = bytearray()
+                # No encoding (checked above), so nothing here inflates.
                 for chunk in response.iter_bytes():
                     body += chunk
                     if len(body) > MAX_BODY:

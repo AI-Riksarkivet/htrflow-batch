@@ -178,6 +178,12 @@ or set `LOG_SHIP_SECONDS=0`.
   `GET /api/v1/jobs/{namespace}/{name}`, paged by `offset`/`limit`. Every
   volume row gets a `log` link built from `logUrl`. For a volume whose `state`
   is not `"done"`, the link adds `&live=1`.
+- **When a card asks.** A running campaign's card polls its detail every
+  minute. A finished one, or one whose Job is gone, reads it once, and only
+  once the card has been on screen or opened, so a page of old campaigns
+  does not cost a request per card. The list itself carries every live
+  campaign and the newest 20 whose Jobs are gone; the older ones wait behind
+  a button, 20 at a time.
 - **Live mode.** The view re-fetches every `VITE_LIVE_MS` (15 s,
   ETag-revalidated) and shows a "live · updated HH:MM:SS" badge. It keeps the
   view pinned to the bottom while the reader is at the bottom. It stops in any
@@ -212,9 +218,11 @@ or set `LOG_SHIP_SECONDS=0`.
   is per-volume detail beyond those 50, so "which volumes failed?" then costs
   one request per volume, against `manifest.json` and `progress.json`. No
   campaign-level record is written to the *bucket* at all.
-- **Read API edges.** One unparseable index label on a pod makes the whole
-  response a bare 500. Every poll lists every Pod the campaign has made, not
-  only the ones needed.
+- **Read API edges.** A detail request lists the campaign's running and
+  failed pods, a page at a time and trimmed to the fields it reads; a
+  succeeded pod is not read at all, since its index is already in
+  `completedIndexes`. For the few seconds between a volume's pod succeeding
+  and the Job counting its index done, that volume can read `pending`.
 - **An oversized `images:` volume has no signal at all.** An `images:` volume
   whose URL list does not fit in one environment variable (Linux allows
   128 KiB per argument) kills the pod with `Argument list too long` before the
