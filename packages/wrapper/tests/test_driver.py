@@ -75,73 +75,6 @@ def test_load_pipeline_path_api(tmp_path, monkeypatch):
     assert str(out_dir / "page") in pipeline.steps[1].dest
 
 
-def test_load_pipeline_dict_fallback(tmp_path, monkeypatch):
-    """Test load_pipeline with older htrflow API: from_config(config_dict).
-
-    Simulates fallback when path-based API raises TypeError."""
-    mock_export_class = type("Export", (), {})
-
-    def mock_export_init(self, dest, fmt):
-        self.dest = dest
-        self.fmt = fmt
-
-    mock_export_class.__init__ = mock_export_init
-
-    called_with = []
-
-    class MockPipeline:
-        def __init__(self, steps=None):
-            self.steps = steps if steps is not None else []
-
-        @staticmethod
-        def from_config(config):
-            called_with.append(config)
-            # Older API: raise TypeError when given a string
-            if isinstance(config, str):
-                raise TypeError("string indices must be integers")
-            return MockPipeline(steps=[])
-
-    # Inject fake modules
-    fake_htrflow = ModuleType("htrflow")
-    fake_pipeline_mod = ModuleType("htrflow.pipeline")
-    fake_pipeline_pipeline = ModuleType("htrflow.pipeline.pipeline")
-    fake_steps = ModuleType("htrflow.pipeline.steps")
-
-    fake_pipeline_pipeline.Pipeline = MockPipeline
-    fake_steps.Export = mock_export_class
-
-    monkeypatch.setitem(sys.modules, "htrflow", fake_htrflow)
-    monkeypatch.setitem(sys.modules, "htrflow.pipeline", fake_pipeline_mod)
-    monkeypatch.setitem(
-        sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline
-    )
-    monkeypatch.setitem(sys.modules, "htrflow.pipeline.steps", fake_steps)
-
-    # Create a real YAML file with a steps key
-    out_dir = tmp_path / "output"
-    out_dir.mkdir()
-    pipeline_yaml = tmp_path / "pipeline.yaml"
-    pipeline_yaml.write_text("steps: []")
-
-    # Import and run
-    from htrflow_batch.driver import load_pipeline
-
-    pipeline = load_pipeline(str(pipeline_yaml), out_dir)
-
-    # Verify: from_config was called twice (first with path str, then with dict)
-    assert len(called_with) == 2
-    assert called_with[0] == str(pipeline_yaml)  # First call (path)
-    assert isinstance(called_with[1], dict)  # Second call (dict)
-    assert "steps" in called_with[1]  # Dict has "steps" key
-    # Verify: returned pipeline has 2 steps (original empty list + 2 Exports)
-    assert len(pipeline.steps) == 2
-    assert pipeline.steps[0].fmt == "alto"
-    assert pipeline.steps[1].fmt == "page"
-    # Verify: Export destinations are correct
-    assert str(out_dir / "alto") in pipeline.steps[0].dest
-    assert str(out_dir / "page") in pipeline.steps[1].dest
-
-
 def _inject_recording_fake_htrflow(monkeypatch) -> list:
     """A fake htrflow whose ``from_config`` records every call: the list it
     returns is empty exactly when nothing was built -- no model loaded."""
@@ -285,42 +218,11 @@ def test_a_pin_that_reaches_the_model_is_built(tmp_path, monkeypatch, settings):
     assert built == [str(pipeline_yaml)]
 
 
-def _inject_old_api_fake_htrflow(monkeypatch):
-    """Old-API fake: from_config(path_str) raises TypeError, forcing the
-    dict-fallback branch (which is what actually opens/parses the YAML)."""
-    mock_export_class = type("Export", (), {})
-
-    class MockPipeline:
-        def __init__(self, steps=None):
-            self.steps = steps if steps is not None else []
-
-        @staticmethod
-        def from_config(config):
-            if isinstance(config, str):
-                raise TypeError("string indices must be integers")
-            return MockPipeline(steps=[])
-
-    fake_htrflow = ModuleType("htrflow")
-    fake_pipeline_mod = ModuleType("htrflow.pipeline")
-    fake_pipeline_pipeline = ModuleType("htrflow.pipeline.pipeline")
-    fake_steps = ModuleType("htrflow.pipeline.steps")
-
-    fake_pipeline_pipeline.Pipeline = MockPipeline
-    fake_steps.Export = mock_export_class
-
-    monkeypatch.setitem(sys.modules, "htrflow", fake_htrflow)
-    monkeypatch.setitem(sys.modules, "htrflow.pipeline", fake_pipeline_mod)
-    monkeypatch.setitem(
-        sys.modules, "htrflow.pipeline.pipeline", fake_pipeline_pipeline
-    )
-    monkeypatch.setitem(sys.modules, "htrflow.pipeline.steps", fake_steps)
-
-
 def test_load_pipeline_malformed_yaml_is_permanent(tmp_path, monkeypatch):
     """Malformed pipeline YAML must surface as ValueError (main.py's
     permanent/exit-13 bucket), not yaml.YAMLError (which main.py's bare
     `except Exception` would misclassify as transient/exit-1)."""
-    _inject_old_api_fake_htrflow(monkeypatch)
+    _inject_recording_fake_htrflow(monkeypatch)
 
     out_dir = tmp_path / "output"
     out_dir.mkdir()
@@ -336,7 +238,7 @@ def test_load_pipeline_malformed_yaml_is_permanent(tmp_path, monkeypatch):
 def test_load_pipeline_missing_file_is_permanent(tmp_path, monkeypatch):
     """A nonexistent pipeline path must also surface as ValueError, not
     FileNotFoundError."""
-    _inject_old_api_fake_htrflow(monkeypatch)
+    _inject_recording_fake_htrflow(monkeypatch)
 
     out_dir = tmp_path / "output"
     out_dir.mkdir()
@@ -931,14 +833,9 @@ def test_build_pipeline_keeps_the_steps_of_a_pipeline_that_built(tmp_path, monke
 
 def test_load_pipeline_mistyped_setting_is_permanent(tmp_path, monkeypatch):
     """W2: htrflow hands a step's ``settings:`` to its constructor as keyword
-    arguments, so a misspelt one raises TypeError from inside the step -- not
-    from ``from_config`` refusing its argument. The dict fallback must not be
-    tried (the pinned ``from_config`` does ``open(path)``, so the dict only
-    raises a second TypeError, which is not permanent): it is a config
-    mistake, exit 13 at once instead of 1 and three retries."""
+    arguments, so a misspelt one raises TypeError from inside the step: a
+    config mistake, exit 13 at once instead of 1 and three retries."""
     from htrflow_batch import driver
-
-    called_with = []
 
     def init_step(_name):
         raise TypeError("__init__() got an unexpected keyword argument 'batch_sz'")
@@ -949,7 +846,6 @@ def test_load_pipeline_mistyped_setting_is_permanent(tmp_path, monkeypatch):
 
         @staticmethod
         def from_config(config):
-            called_with.append(config)
             return MockPipeline([init_step("segmentation")])
 
     fake_pipeline_pipeline = ModuleType("htrflow.pipeline.pipeline")
@@ -967,8 +863,6 @@ def test_load_pipeline_mistyped_setting_is_permanent(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="bad pipeline config"):
         driver.load_pipeline(str(pipeline_yaml), tmp_path / "out")
-
-    assert called_with == [str(pipeline_yaml)]  # the dict branch is not taken
 
 
 def test_a_page_that_finished_is_not_failed_by_a_late_thread_death(

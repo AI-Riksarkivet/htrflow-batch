@@ -71,8 +71,8 @@ def test_from_config_appends_exports_and_runs_one_page(
 
 
 def test_from_config_takes_a_path_and_rejects_export_steps(tmp_path):
-    """The driver's TypeError fallback is for older builds; the pinned build
-    takes a path. And a user-supplied Export must be refused, not doubled."""
+    """The pinned build takes a path, which is all the driver hands it. And a
+    user-supplied Export must be refused, not doubled."""
     from htrflow.pipeline.pipeline import Pipeline
 
     path = tmp_path / "p.yaml"
