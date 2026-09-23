@@ -3,7 +3,9 @@
 # rendered/sync.yaml and this file; a changed render changes sync.yaml, the
 # sync runs, and this Job re-renders from a fresh clone and applies.
 #
-# Edit REPO_URL and REPO_BRANCH below. The token is a read-only token for
+# Edit REPO_URL and REPO_BRANCH below, and HTRFLOW_APPLIED_BY to name the
+# Argo CD Application: it is the "applied-by" every campaign's record carries,
+# the hook's own account being no one's. The token is a read-only token for
 # this repo, in a Secret the cluster's operator creates once:
 #   kubectl -n <namespace> create secret generic htrflow-campaigns-git --from-literal=token=<token>
 # The chart must run with apply.rbac.enabled=true (the ServiceAccount and
@@ -68,6 +70,7 @@ spec:
           args: ["apply", "--prune", "/repo"]
           env:
             - {name: HOME, value: /tmp}
+            - {name: HTRFLOW_APPLIED_BY, value: argocd-hook/htrflow-campaigns}
           volumeMounts:
             - {name: repo, mountPath: /repo}
             - {name: tmp, mountPath: /tmp}

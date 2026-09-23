@@ -510,7 +510,8 @@ _APPLIED_AT_ANNOTATION = "htrflow.riksarkivet.se/applied-at"
 
 def _git_head(repo: Path) -> str:
     """The campaigns repo's commit, or ``unknown`` outside a checkout (a
-    tarball, a test's tmp_path) -- the record says so rather than guessing."""
+    tarball, a test's tmp_path) -- the record says so rather than guessing.
+    Where there is no git binary, dulwich reads it (``_dulwich_head``)."""
     try:
         done = subprocess.run(
             ["git", "-C", str(repo), "rev-parse", "HEAD"],
@@ -518,9 +519,28 @@ def _git_head(repo: Path) -> str:
             text=True,
             timeout=10,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError:
+        return _dulwich_head(repo)
+    except subprocess.SubprocessError:
         return "unknown"
     return done.stdout.strip() if done.returncode == 0 else "unknown"
+
+
+def _dulwich_head(repo: Path) -> str:
+    """HEAD by dulwich, the pure-Python git the Argo CD hook's clone already
+    uses (the ``hook`` extra). Its image is distroless, with no git binary,
+    so without this every campaign the hook applied -- the production path
+    -- recorded its commit as ``unknown`` (audit 0923 C-10)."""
+    try:
+        from dulwich.errors import NotGitRepository  # ty: ignore[unresolved-import]
+        from dulwich.repo import Repo  # ty: ignore[unresolved-import]
+    except ImportError:
+        return "unknown"
+    try:
+        with Repo.discover(str(repo)) as found:
+            return found.head().decode()
+    except (NotGitRepository, KeyError, OSError):  # KeyError: no commit yet
+        return "unknown"
 
 
 def _applied_by() -> str:

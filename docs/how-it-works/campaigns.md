@@ -283,8 +283,10 @@ The provenance annotations on the record, all under the converter's label
 domain: `image-digest` is rendered, since it is a pure function of the repo
 and `rendered/` has to stay byte-identical between two renders of it;
 `campaigns-commit`, `applied-by` and `applied-at` are stamped by `apply`.
-`applied-by` is `HTRFLOW_APPLIED_BY` when it is set — CI sets it from
-whoever triggered the run — and otherwise the OS user of the apply,
+`campaigns-commit` is the checkout's `HEAD`, read with git, or with dulwich
+where there is no git binary (the Argo CD hook's image has none).
+`applied-by` is `HTRFLOW_APPLIED_BY` when it is set — the Argo CD hook sets
+it to `argocd-hook/<application>` — and otherwise the OS user of the apply,
 lower-cased. It says who ran the command, which is all an apply can prove.
 `applied-at` is the LAST apply of the campaign, so while a campaign is still
 running it moves every time; it is not the campaign's start time, which is
