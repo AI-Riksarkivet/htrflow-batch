@@ -56,8 +56,9 @@ spec:
         - /bin/sh
         - -c
         # Same prologue as the campaign Job (see campaign-job.yaml), plus
-        # HF_HOME: this is the one pod that mounts the cache PVC read-write,
-        # and a fresh volume has no /data/hf yet.
+        # HF_HOME: this is the one pod that mounts its recipe's directory of
+        # the cache PVC read-write (render.py's `_mount_cache_dir` sets the
+        # subPath), and a fresh directory has no /data/hf yet.
         args:
         - |
           set -eu

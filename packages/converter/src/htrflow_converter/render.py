@@ -113,8 +113,9 @@ def _set(obj: dict, path: str, value: object) -> None:
 def _scheduling(job: dict, cfg: ConverterConfig) -> None:
     """Where this Job's pod may run: the GPU RuntimeClass, the node labels
     and the taints it tolerates. The warm-up Job needs all three as much as
-    the campaign Job does -- it is the one pod that mounts the model cache
-    read-write, so a warm-up scheduled past a taint onto some other node
+    the campaign Job does -- it is the one pod that mounts its recipe's
+    directory of the model cache read-write, so a warm-up scheduled past a
+    taint onto some other node
     fills a *different* ReadWriteOnce volume and the marker never appears
     where the batch pods are waiting for it."""
     if cfg.runtime_class:
