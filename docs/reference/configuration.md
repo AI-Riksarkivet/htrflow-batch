@@ -189,7 +189,11 @@ skeleton, never as a campaign setting.
 | `modelCache.accessModes` | `values.yaml` | `[ReadWriteOnce]` | — | no secret — nobody |
 | `queue.name` | `values.yaml` | `htr-batch` | converter `queue` | no secret — nobody |
 | `queue.flavor` | `values.yaml` | `default-flavor` | — | no secret — nobody |
+| `queue.createFlavor` | `values.yaml` | `true` | — | no secret — nobody |
+| `queue.clusterQueueName` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `queue.createClusterQueue` | `values.yaml` | `true` | — | no secret — nobody |
 | `queue.resources` | `values.yaml` | `[{name: cpu, quota: 4}, {name: memory, quota: 8Gi}, {name: …` | — | no secret — nobody |
+| `queue.createPriorityClasses` | `values.yaml` | `true` | — | no secret — nobody |
 | `queue.priorityClasses` | `values.yaml` | `[{description: a handful of volumes someone is waiting for,…` | converter `priority_classes` | no secret — nobody |
 | `web.image` | `values.yaml` | `docker.io/riksarkivet/htrflow-web@sha256:1fbabef550593f6d77…` | — | digest-pinned unless `security.allowTagImages` — render |
 | `web.nodePort` | `values.yaml` | `30800` | — | no secret — nobody |
