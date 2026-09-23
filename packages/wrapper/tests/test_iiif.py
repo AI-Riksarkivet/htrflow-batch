@@ -306,6 +306,33 @@ def test_redact_urls_takes_the_query_off_a_url_with_punctuation_in_it(text, show
     assert redact_urls(text).startswith(shown)
 
 
+@pytest.mark.parametrize(
+    "text, shown",
+    [
+        (
+            "['https://a/x?t=1','https://b/y?token=2']",
+            "['https://a/x','https://b/y']",
+        ),
+        ("('https://a/x?t=1', 'https://b/y?t=2')", "('https://a/x', 'https://b/y')"),
+        ("url=https://a/x?t=1&a=b|other", "url=https://a/x|other"),
+        ("https://a/x?t=1,https://b/y?t=2", "https://a/x,https://b/y"),
+        (
+            "GET https://h/full/2500,/0/default.jpg?t=1",
+            "GET https://h/full/2500,/0/default.jpg",
+        ),
+        ("{https://a/x?t=1}", "{https://a/x}"),
+    ],
+)
+def test_redact_urls_keeps_the_text_around_each_url(text, shown):
+    """Review M-3: a URL that ran to the next whitespace swallowed whatever
+    followed it -- the second URL of a list, `|other` after a query. It ends
+    at a character no URL holds unencoded, or at a quote, bracket or comma
+    that closes it; the IIIF size comma inside one stays."""
+    from htrflow_batch.iiif import redact_urls
+
+    assert redact_urls(text) == shown
+
+
 def test_source_digest_keeps_the_identifying_query():
     """W5: redact_url drops the whole query, so two pages a host selects with
     ``?id=`` were indistinguishable and an edited manifest never triggered a
