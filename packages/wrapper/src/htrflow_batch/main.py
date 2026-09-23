@@ -131,7 +131,7 @@ def terminate(env: Mapping[str, str], reason: dict) -> None:
 MAX_REBUILD_FAILURES = 3
 
 #: Threads a released pipeline could not stop -- workers stuck in a model
-#: call, the helpers of pages that ran out of time -- past which the pod is
+#: call, the helpers of pages that stopped moving -- past which the pod is
 #: replaced (W-8, audit 0923): each may hold a model's weights on the GPU
 #: the rebuild is loading another set onto. About four hung pages.
 MAX_LEAKED_THREADS = 8
