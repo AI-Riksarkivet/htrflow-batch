@@ -6,6 +6,8 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from htrflow_converter import render
+from htrflow_converter.models import ConverterConfig
 
 from htrflow_web import projection
 
@@ -1157,17 +1159,31 @@ def test_a_failed_job_finishes_at_its_condition_transition():
 
 def test_status_record_field_names_are_the_ones_apply_reads():
     """`htrflow-campaigns apply` parses these back to decide whether to leave
-    a finished campaign alone, so the names are a contract, not a detail."""
-    job = _finished_job(completionTime="2026-09-08T10:00:00Z")
+    a finished campaign alone, so the names are a contract, not a detail --
+    and it writes the same record itself once the Job has ended. Held to
+    the converter's own writer: for one finished Job the two records are
+    the same, name for name and value for value; a slash apart on one field
+    was a 409 on every poll (3081)."""
+    job = _finished_job(completionTime="2026-09-08T10:00:00Z", succeeded=2)
+    job["metadata"]["uid"] = "uid-kyrk"
     row = projection.summarize(job, CFG, {"phase": "succeeded"})
-    data = projection.status_record(row)
+    data = projection.status_record(row, job_uid="uid-kyrk")
+    theirs = render.status_configmap(
+        job, ConverterConfig(public_results_base=CFG.public_results_base)
+    )
+    assert theirs is not None
+    assert data == theirs["data"]
     assert set(data) == STATUS_FIELDS
-    assert data["phase"] == "PartiallyFailed"
-    assert (data["volumesTotal"], data["volumesDone"]) == ("3", "2")
-    assert data["volumesFailed"] == "1"
-    assert data["finishedAt"] == "2026-09-08T10:00:00Z"
-    assert data["resultsBase"].endswith("/htr-test/demo-v1")
-    assert all(isinstance(v, str) for v in data.values())
+    assert data == {
+        "phase": "PartiallyFailed",
+        "volumesTotal": "3",
+        "volumesDone": "2",
+        "volumesFailed": "1",
+        "startedAt": "2026-09-08T08:00:00Z",
+        "finishedAt": "2026-09-08T10:00:00Z",
+        "resultsBase": "https://results.example.org/htr-test/demo-v1",
+        "jobUid": "uid-kyrk",
+    }
 
 
 def test_the_list_endpoints_record_leaves_the_failed_volumes_alone():
@@ -1441,12 +1457,10 @@ def test_a_reaped_campaign_that_was_paused_is_unknown_too():
     assert row["phase"] == "Unknown"
 
 
-def test_a_terminal_record_keeps_its_own_phase():
-    for phase in projection.FINISHED_PHASES:
-        row = projection.record_summary(
-            RECORD, _stored(phase=phase), CFG, MISSING_WARMUP
-        )
-        assert row["phase"] == phase
+@pytest.mark.parametrize("phase", ["Succeeded", "Failed", "PartiallyFailed"])
+def test_a_terminal_record_keeps_its_own_phase(phase: str):
+    row = projection.record_summary(RECORD, _stored(phase=phase), CFG, MISSING_WARMUP)
+    assert row["phase"] == phase
 
 
 # --- the record only ever gains (B76 review) ----------------------------
@@ -1720,7 +1734,16 @@ class TestRecordWrite:
         row = _running_row()
         fresh = projection.status_record(row, job_uid="uid-1")
         ((body, force, manager),) = projection.record_write(None, row, fresh)
-        assert body["data"] == projection.merge_record({}, fresh)
+        # No finishedAt: a campaign still running has none to say.
+        assert body["data"] == {
+            "phase": "Running",
+            "volumesTotal": "7",
+            "volumesDone": "2",
+            "volumesFailed": "0",
+            "startedAt": "",
+            "resultsBase": "https://results.example.org/htr-test/demo-v1",
+            "jobUid": "uid-1",
+        }
         assert body["metadata"]["labels"]["htrflow.riksarkivet.se/kind"] == "status"
         assert force is False
         assert manager == projection.WEB_MANAGER
