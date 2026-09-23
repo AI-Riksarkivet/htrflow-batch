@@ -54,11 +54,21 @@ A browser needs two addresses:
 
 - **The web front**, for the campaign browser, the viewer, the run viewer
   and `/api/v1/…`. The chart exposes it as Service `htrflow-web` (port 8081)
-  of type NodePort on `web.nodePort`, default 30800. An ingress or load
-  balancer in front of that Service works the same way.
-  `network.web.ingressCidrs` limits who may connect. The web front has no
-  authentication of its own, so put an authenticating proxy in front of it
-  if the campaign list should not be public.
+  in one of two ways:
+  - **NodePort** (the default), on `web.nodePort`, default 30800. The
+    Service keeps the client's own address, and `network.web.ingressCidrs`
+    limits which clients may connect.
+  - **Behind an ingress controller**: `web.service.type: ClusterIP` and
+    `web.ingress.enabled`, with the host and TLS Secret there. The pod then
+    sees the controller's address, never the browser's, so
+    `network.web.ingressCidrs` cannot tell browsers apart:
+    `network.web.ingressFrom` names the controller's namespace or pods
+    instead (the chart refuses ingress mode without it), and who may reach
+    the site is the controller's own allow-list.
+
+  Either way the web front has no authentication of its own, so put an
+  authenticating proxy in front of it if the campaign list should not be
+  public.
 - **The results base URL** (`publicResultsBase`), for manifests, page
   images, ALTO and run logs, which the browser fetches straight from the
   bucket. The bucket's CORS rule must allow the web front's origin
