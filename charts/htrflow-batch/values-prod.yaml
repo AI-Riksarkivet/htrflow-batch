@@ -23,9 +23,14 @@
 # restricted-clean, so `restricted` is a level they actually meet.
 
 security:
-  # Only what the release publishes. Add your own prefix if you build the
-  # web image or a pipeline image yourself.
-  allowedImageRepos: ["docker.io/riksarkivet/"]
+  # Only what the release publishes: the three repositories by name, not
+  # the organisation, whose every future repository an org-wide prefix
+  # would admit too. Add your own repository if you build the web image or
+  # a pipeline image yourself.
+  allowedImageRepos:
+    - docker.io/riksarkivet/htrflow-batch
+    - docker.io/riksarkivet/htrflow-web
+    - docker.io/riksarkivet/htrflow-campaigns
   # Hugging Face weights are pickles and a repo id alone is mutable.
   requireModelRevision: true
   policies:
