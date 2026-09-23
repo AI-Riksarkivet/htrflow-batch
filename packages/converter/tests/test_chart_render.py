@@ -511,6 +511,75 @@ def test_a_private_range_the_operator_listed_is_still_reachable():
     assert {"ipBlock": {"cidr": "10.1.2.3/32"}} in targets
 
 
+# --- 0923 D-3: every egress block wide enough to hold an internal range ----
+
+
+def _blocks(policy: dict) -> dict[str, list[str]]:
+    """Every egress ipBlock of a policy: cidr -> its `except` list."""
+    return {
+        to["ipBlock"]["cidr"]: to["ipBlock"].get("except", [])
+        for rule in policy["spec"]["egress"]
+        for to in rule.get("to", [])
+        if "ipBlock" in to
+    }
+
+
+@pytest.mark.parametrize("policy_name", ["htr-batch-job", "htr-web"])
+def test_a_catch_all_s3_range_is_carved_out_like_any_other(policy_name: str):
+    """The carve-out applied to a literal `0.0.0.0/0` in iiifCidrs only, so
+    `s3Cidrs: [0.0.0.0/0]` -- realistic for S3 on AWS, whose ranges move --
+    let both pods that reach S3 open 169.254.169.254 and the cluster's own
+    network on 443."""
+    rendered = render(sets=DEFAULT_SETS + ("network.s3Cidrs={0.0.0.0/0}",))
+    blocks = _blocks(named(rendered, "NetworkPolicy", policy_name))
+    assert set(blocks["0.0.0.0/0"]) == CATCH_ALL_EXCEPT
+
+
+def test_a_catch_all_split_in_halves_is_carved_out_half_by_half():
+    """`0.0.0.0/1` + `128.0.0.0/1` is every address in two entries, and no
+    entry was the literal catch-all, so neither was carved: the metadata
+    address was open again. Each half now loses every internal range it
+    holds -- and only those, since `except` must lie inside its block."""
+    rendered = render(
+        sets=DEFAULT_SETS + ("network.iiifCidrs={0.0.0.0/1,128.0.0.0/1}",)
+    )
+    blocks = _blocks(named(rendered, "NetworkPolicy", "htr-batch-job"))
+    assert set(blocks["0.0.0.0/1"]) == {
+        "10.42.0.0/16",
+        "10.43.0.0/16",
+        "10.0.0.0/8",
+        "127.0.0.0/8",
+    }
+    assert set(blocks["128.0.0.0/1"]) == {
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+    }
+
+
+def test_the_apply_pods_git_range_is_carved_out_too():
+    """The apply pod holds a token that may write Jobs; a catch-all git
+    range must not hand it the metadata address either."""
+    rendered = render(
+        sets=DEFAULT_SETS + ("apply.rbac.enabled=true", "apply.gitCidrs={0.0.0.0/0}")
+    )
+    blocks = _blocks(named(rendered, "NetworkPolicy", "htr-campaigns-apply"))
+    assert set(blocks["0.0.0.0/0"]) == CATCH_ALL_EXCEPT
+
+
+def test_a_named_range_inside_a_private_block_is_left_whole():
+    """A range inside an internal one is the operator naming a host on
+    their own network: it holds no internal range, so it has nothing to
+    carve out and stays reachable. A private block named whole still loses
+    the pod and service ranges inside it."""
+    rendered = render(
+        sets=DEFAULT_SETS + ("network.s3Cidrs={10.16.5.5/32,10.0.0.0/8}",)
+    )
+    blocks = _blocks(named(rendered, "NetworkPolicy", "htr-batch-job"))
+    assert blocks["10.16.5.5/32"] == []
+    assert set(blocks["10.0.0.0/8"]) == {"10.42.0.0/16", "10.43.0.0/16"}
+
+
 # --- D4: all-port egress to the S3 range ----------------------------------
 
 

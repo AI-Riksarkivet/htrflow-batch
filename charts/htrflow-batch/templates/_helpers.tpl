@@ -170,3 +170,91 @@ fsGroup: {{ . }}
 seccompProfile: { type: RuntimeDefault }
 {{- end }}
 
+
+{{/*
+What an egress rule to an address range must NOT reach (2026-09-14 audit,
+then 0923 D-3): the pod and service ranges, every node address,
+link-local 169.254.0.0/16 -- where a cloud serves instance credentials to
+whoever asks -- loopback, and `network.privateCidrs`, the ranges the
+cluster's own network is carved out of. Node addresses are
+`network.nodeCidrs`, or every node's InternalIP when that is empty (Helm
+`lookup`; nothing under `helm template`). As JSON, a list.
+*/}}
+{{- define "htrflow-batch.internalCidrs" -}}
+{{- $nodes := list }}
+{{- range .Values.network.nodeCidrs }}{{ $nodes = append $nodes . }}{{ end }}
+{{- if not $nodes }}
+  {{- range (lookup "v1" "Node" "" "").items }}
+    {{- range .status.addresses }}
+      {{- if and (eq .type "InternalIP") (not (contains ":" .address)) }}{{ $nodes = append $nodes (printf "%s/32" .address) }}{{ end }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- toJson (concat .Values.network.clusterCidrs $nodes (list "169.254.0.0/16" "127.0.0.0/8") .Values.network.privateCidrs | uniq) }}
+{{- end }}
+
+{{/*
+An IPv4 range as JSON {"net": <first address as an integer>, "bits": <prefix>}.
+The schema holds every range a value names to a.b.c.d/n.
+*/}}
+{{- define "htrflow-batch.ipv4Range" -}}
+{{- $parts := splitList "/" . }}
+{{- $net := 0 }}
+{{- range splitList "." (first $parts) }}{{ $net = add (mul $net 256) (atoi .) }}{{ end }}
+{{- toJson (dict "net" $net "bits" (atoi (last $parts))) }}
+{{- end }}
+
+{{/*
+The `to:` entries of an egress rule to address ranges, as JSON: one ipBlock
+per range, each with an `except` of every internal range (internalCidrs
+above) that lies strictly inside it (0923 D-3). The carve-out used to
+apply to a literal `0.0.0.0/0` alone, so `s3Cidrs: [0.0.0.0/0]` or the two
+halves `0.0.0.0/1` + `128.0.0.0/1` reopened the metadata address -- the
+same split the web-ingress guard already refuses (finding 3064). Ranges
+nest or are disjoint, so "inside" is: a longer prefix, and the same first
+`bits` bits. A range named inside an internal one, or equal to it, holds
+none and stays whole: that is the operator naming a host on their own
+network, and egress rules are a union. Argument: (list $ <ranges>).
+*/}}
+{{- define "htrflow-batch.egressTo" -}}
+{{- $root := index . 0 }}
+{{- $internal := include "htrflow-batch.internalCidrs" $root | fromJsonArray }}
+{{- $to := list }}
+{{- range index . 1 }}
+  {{- $outer := include "htrflow-batch.ipv4Range" . | fromJson }}
+  {{- $block := 1 }}
+  {{- range until (sub 32 (int $outer.bits) | int) }}{{ $block = mul $block 2 }}{{ end }}
+  {{- $except := list }}
+  {{- range $internal }}
+    {{- if not (contains ":" .) }}
+      {{- $inner := include "htrflow-batch.ipv4Range" . | fromJson }}
+      {{- if and (gt (int $inner.bits) (int $outer.bits)) (eq (div (int64 $inner.net) $block) (div (int64 $outer.net) $block)) }}
+        {{- $except = append $except . }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+  {{- $ipBlock := dict "cidr" . }}
+  {{- if $except }}{{ $_ := set $ipBlock "except" $except }}{{ end }}
+  {{- $to = append $to (dict "ipBlock" $ipBlock) }}
+{{- end }}
+{{- toJson $to }}
+{{- end }}
+
+{{/*
+S3 egress, for the two pods that reach the bucket -- the batch Job and the
+web front's progress reader -- as a JSON list of rules: the in-namespace
+`app: rustfs` pod on 9000 (a no-op match unless charts/htrflow-devstack's
+RustFS is installed; the two charts share no values), plus
+network.s3Cidrs on network.s3Ports -- named ports, not the whole range
+(2026-09-14 audit): a self-hosted endpoint's range is a slice of the
+operator's own network.
+*/}}
+{{- define "htrflow-batch.s3Egress" -}}
+{{- $s3 := list (dict "to" (list (dict "podSelector" (dict "matchLabels" (dict "app" "rustfs")))) "ports" (list (dict "port" 9000))) }}
+{{- with .Values.network.s3Cidrs }}
+  {{- $ports := list }}
+  {{- range $.Values.network.s3Ports }}{{ $ports = append $ports (dict "port" .) }}{{ end }}
+  {{- $s3 = append $s3 (dict "to" (include "htrflow-batch.egressTo" (list $ .) | fromJsonArray) "ports" $ports) }}
+{{- end }}
+{{- toJson $s3 }}
+{{- end }}
