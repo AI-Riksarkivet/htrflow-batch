@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import time
+from html.parser import HTMLParser
 from importlib import metadata
 from pathlib import Path
 
@@ -71,9 +72,41 @@ UV_CSP = (
     "worker-src 'self' blob:; frame-ancestors 'none'"
 )
 
-#: A <script> with a body of its own -- one that loads a file has a `src`
-#: and is covered by 'self' instead.
-_INLINE = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.S | re.I)
+
+class _InlineScripts(HTMLParser):
+    """The body of every <script> that has one of its own, exactly as a
+    browser reads it -- one that loads a file has a `src` and is covered by
+    'self' instead. Parsed, not matched: a pattern looking for `</script>`
+    missed `</script >` and `</SCRIPT foo>`, which a browser closes a script
+    on, and hashed the wrong text (code scanning 117). The stdlib parser
+    reads a script's content as raw text up to its end tag, as the HTML
+    spec does."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.bodies: list[str] = []
+        self._open: list[str] | None = None
+
+    def handle_starttag(self, tag, attrs) -> None:
+        if tag == "script" and all(name != "src" for name, _ in attrs):
+            self._open = []
+
+    def handle_data(self, data) -> None:
+        if self._open is not None:
+            self._open.append(data)
+
+    def handle_endtag(self, tag) -> None:
+        if tag == "script" and self._open is not None:
+            self.bodies.append("".join(self._open))
+            self._open = None
+
+
+def _inline_scripts(html: str) -> list[str]:
+    parser = _InlineScripts()
+    parser.feed(html)
+    parser.close()
+    return parser.bodies
+
 
 UV_PATH = "/uv.html"
 
@@ -88,7 +121,7 @@ def uv_csp(static: Path) -> str | None:
     except OSError:
         return None
     scripts = ""
-    for body in _INLINE.findall(html):
+    for body in _inline_scripts(html):
         digest = base64.b64encode(hashlib.sha256(body.encode()).digest()).decode()
         scripts += f" 'sha256-{digest}'"
     return UV_CSP.format(scripts=scripts)
