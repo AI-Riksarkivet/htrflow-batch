@@ -6,7 +6,9 @@
   import {
     fetchJobs,
     fetchVersion,
+    moreReaped,
     REAPED_PAGE,
+    reapedHidden,
     type JobSummary,
   } from "$lib/api.js";
   import { RELOAD_MS, REPO_URL } from "$lib/config.js";
@@ -27,7 +29,7 @@
   // 2026-09-23 audit); the rest are a button away, a page at a time.
   let reapedShown = $state(REAPED_PAGE);
   let reapedTotal = $state(0);
-  const olderHidden = $derived(Math.max(0, reapedTotal - reapedShown));
+  const olderHidden = $derived(reapedHidden(reapedTotal, reapedShown));
 
   // What is deployed, read once — nothing can change it while the page is
   // open, and a version nobody could fetch is simply not shown: it is a
@@ -127,7 +129,9 @@
   {/if}
   {#if jobs !== null && olderHidden > 0}
     <p class="older">
-      <button type="button" onclick={() => (reapedShown += REAPED_PAGE)}
+      <button
+        type="button"
+        onclick={() => (reapedShown = moreReaped(reapedShown))}
         >show {Math.min(olderHidden, REAPED_PAGE)} of {olderHidden} older campaigns</button
       >whose Jobs have been removed
     </p>

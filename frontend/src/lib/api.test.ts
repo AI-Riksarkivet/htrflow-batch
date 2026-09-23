@@ -8,7 +8,10 @@ import {
   isResultUrl,
   jobDetailSchema,
   jobSummarySchema,
+  moreReaped,
+  REAPED_MAX,
   REAPED_PAGE,
+  reapedHidden,
   sameDay,
   shortDate,
   volumeStateSchema,
@@ -645,5 +648,22 @@ describe("the compact date range on a card", () => {
       false,
     );
     expect(sameDay("nope", "2026-09-14T10:00:00Z", "UTC")).toBe(false);
+  });
+});
+
+// Asked for past the API's own maximum, the list 422'd, the page read that
+// as the API being unreachable and stopped updating (2026-09-23 review).
+describe("asking for older campaigns stops at what the API allows", () => {
+  test("each ask is one page more, never past the maximum", () => {
+    expect(moreReaped(REAPED_PAGE)).toBe(REAPED_PAGE * 2);
+    expect(moreReaped(REAPED_MAX - 5)).toBe(REAPED_MAX);
+    expect(moreReaped(REAPED_MAX)).toBe(REAPED_MAX);
+  });
+
+  test("nothing is left to offer once the maximum is shown", () => {
+    expect(reapedHidden(25, REAPED_PAGE)).toBe(5);
+    expect(reapedHidden(25, 40)).toBe(0);
+    expect(reapedHidden(REAPED_MAX + 500, REAPED_MAX)).toBe(0);
+    expect(reapedHidden(REAPED_MAX + 500, REAPED_MAX - 20)).toBe(20);
   });
 });
