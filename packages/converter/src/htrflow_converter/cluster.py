@@ -113,6 +113,11 @@ class Unreachable(ClusterError):
     -- so ``cli._apply`` stops on it instead of carrying on (3091)."""
 
 
+class Conflict(ClusterError):
+    """A 409: another field manager owns what the request would change, or
+    another writer got to the object first."""
+
+
 class LeaseLost(Unreachable):
     """Another apply took the Lease over while this one ran (it went
     unrenewed past ``LEASE_SECONDS``). Two applies are running now, so this
@@ -229,7 +234,8 @@ def _api_error(
             message = " " + " ".join(json.loads(e.body)["message"].split())
         if len(message) > MAX_MESSAGE:
             message = message[:MAX_MESSAGE].rstrip() + " …"
-    return ClusterError(f"{verb} {target}: {e.status} {e.reason}{message}")
+    kind_of = Conflict if e.status == 409 else ClusterError
+    return kind_of(f"{verb} {target}: {e.status} {e.reason}{message}")
 
 
 def _unreachable(e: HTTPError) -> Unreachable:
@@ -417,14 +423,17 @@ class Cluster:
         api, noun = _KINDS[kind]
         return getattr(getattr(self, api), f"{verb}_namespaced_{noun}")
 
-    def apply(self, obj: dict, dry_run: bool = False) -> dict:
+    def apply(
+        self, obj: dict, dry_run: bool = False, manager: str = FIELD_MANAGER
+    ) -> dict:
         """Server-side apply ``obj``; returns what the server stored.
 
         ``force=True`` takes the fields back from whatever manager owns them
         -- a Job applied by `kubectl` before this change, a hand edit --
         which is the "git is the truth" rule the campaigns repo runs on.
         ``dry_run`` asks the API server (admission webhooks included) whether
-        it would take ``obj``, and stores nothing.
+        it would take ``obj``, and stores nothing. Any other ``manager`` is
+        never forced: it only ever takes a field over from nobody.
         """
         kind, name = obj["kind"], obj["metadata"]["name"]
         extra = {"dry_run": "All"} if dry_run else {}
@@ -437,8 +446,8 @@ class Cluster:
             name,
             self.namespace,
             obj,
-            field_manager=FIELD_MANAGER,
-            force=True,
+            field_manager=manager,
+            force=manager == FIELD_MANAGER,
             _content_type=APPLY_PATCH,
             **extra,
         )
@@ -458,28 +467,11 @@ class Cluster:
             return
         if _suspend_owners(meta) != {FIELD_MANAGER}:
             return
-        name = meta["name"]
-        body = {
-            "apiVersion": "batch/v1",
-            "kind": "Job",
-            "metadata": {"name": name, "namespace": self.namespace},
-            "spec": {"suspend": True},
-        }
-        with _errors("apply", "Job", name, self.namespace):
-            try:
-                _retrying(
-                    self._method("Job", "patch", name),
-                    name,
-                    self.namespace,
-                    body,
-                    field_manager=SUSPEND_HOLDER,
-                    _content_type=APPLY_PATCH,
-                    _preload_content=False,
-                    _request_timeout=REQUEST_TIMEOUT,
-                )
-            except ApiException as e:
-                if e.status != 409:
-                    raise
+        name = {"name": meta["name"], "namespace": self.namespace}
+        body = {"apiVersion": "batch/v1", "kind": "Job", "metadata": name,
+                "spec": {"suspend": True}}  # fmt: skip
+        with contextlib.suppress(Conflict):
+            self.apply(body, manager=SUSPEND_HOLDER)
 
     def replace_job(self, obj: dict) -> dict:
         """Delete Job ``obj`` and apply it again -- the only way to give a
