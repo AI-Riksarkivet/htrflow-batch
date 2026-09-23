@@ -131,6 +131,13 @@ class ApplyConflict(Exception):
     (2026-09-14 review)."""
 
 
+#: (connect, read) seconds for every call to the API server. Without one a
+#: connection that hung held its worker thread for ever, and a detail
+#: request makes several calls in a row (2026-09-23 audit). The read half is
+#: per socket read, so it bounds a body that stops arriving too. A list of a
+#: few thousand objects answers in well under it.
+REQUEST_TIMEOUT = (3.0, 10.0)
+
 #: How long the retry waits for the other manager to finish writing.
 #: Retrying in the same microsecond meets the same half-finished write.
 CONFLICT_PAUSE = 0.2
@@ -142,14 +149,21 @@ def _read(api: object, method: str, *args: object, **kwargs: object) -> dict | N
     sends — no typed-model round trip. 404 -> ``None``."""
     fn = getattr(api, method)
     try:
-        resp = fn(*args, _preload_content=False, **kwargs)
+        resp = fn(
+            *args,
+            _preload_content=False,
+            _request_timeout=REQUEST_TIMEOUT,
+            **kwargs,
+        )
+        # Read inside the try: the body arrives after the headers, and a
+        # read that times out there is the same silence as one before them.
+        return json.loads(resp.data)
     except client.ApiException as e:
         if e.status == 404:
             return None
         raise ClusterUnavailable(f"{method}: {e.status}") from e
     except HTTPError as e:  # urllib3: refused, timed out, TLS
         raise ClusterUnavailable(f"{method}: {type(e).__name__}") from e
-    return json.loads(resp.data)
 
 
 class ReaderLike(Protocol):
@@ -247,12 +261,13 @@ class Reader:
                 {"Accept": PARTIAL_METADATA},
                 auth_settings=["BearerToken"],
                 _preload_content=False,
+                _request_timeout=REQUEST_TIMEOUT,
             )
+            return json.loads(resp.data).get("items", [])
         except client.ApiException as e:
             raise ClusterUnavailable(f"list records: {e.status}") from e
         except HTTPError as e:
             raise ClusterUnavailable(f"list records: {type(e).__name__}") from e
-        return json.loads(resp.data).get("items", [])
 
     def apply_configmap(self, body: dict, force: bool = False) -> None:
         """The one write this service makes. Raises like any other client
@@ -282,6 +297,7 @@ class Reader:
                     field_manager=FIELD_MANAGER,
                     _content_type=_APPLY_PATCH,
                     _preload_content=False,
+                    _request_timeout=REQUEST_TIMEOUT,
                     **extra,
                 )
                 return
@@ -291,6 +307,10 @@ class Reader:
                 if attempt == 2:
                     raise ApplyConflict(meta["name"]) from e
                 time.sleep(CONFLICT_PAUSE)
+            except HTTPError as e:
+                raise ClusterUnavailable(
+                    f"apply {meta['name']}: {type(e).__name__}"
+                ) from e
 
     def list_pods(self, namespace: str, job_name: str) -> list[dict]:
         body = _read(
