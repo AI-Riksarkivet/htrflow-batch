@@ -1403,5 +1403,13 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5012
 # rule as one helper instead of a copy per template, and the three
 # production range guards. kueue.yaml +17 (D-9), apply-rbac.yaml +13 (the
 # run Lease), verify-images +9 (D-1).
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1729
+# 1729 -> 1882 (2026-09-23, audit 0923 review round): job-shape holds the
+# rest of the converter's shape -- every env var by name with the fixed
+# values pinned (a PATH, LD_PRELOAD or PYTHONPATH of anyone's choosing is a
+# way to run a ConfigMap), the index-failure-count fieldRef the converter now
+# renders, mounts, file modes, both securityContexts and host namespaces
+# (C-1, I-1, M-4) -- as one spec block the agreement test reads, plus the
+# two ConfigMap-key rules that keep a mounted ConfigMap to the key the
+# converter writes (I-1); the API server joins the egress carve-out (M-3).
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1882
 exit $fail
