@@ -20,6 +20,7 @@ not.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Callable
@@ -183,6 +184,11 @@ class ProgressReader:
         self._client = client or httpx.Client(timeout=TIMEOUT)
         #: url -> (expiry, progress, whether the bucket answered at all)
         self._cache: dict[str, tuple[float, dict | None, bool]] = {}
+        #: Held around every touch of the cache, never across a GET. The
+        #: reader is shared by every thread of the pool, and once the cache
+        #: is full -- the normal state at scale -- two requests evicting
+        #: the same oldest key raised a KeyError (2026-09-23 audit).
+        self._lock = threading.Lock()
 
     def fetch(self, results_base: str, volume_id: str, state: str) -> dict | None:
         """This volume's progress, or ``None``. ``results_base`` is the row's
@@ -230,7 +236,8 @@ class ProgressReader:
         network: bool,
     ) -> tuple[bool, dict | None]:
         monotonic_now = time.monotonic()
-        hit = self._cache.get(url)
+        with self._lock:
+            hit = self._cache.get(url)
         if hit is not None and hit[0] > monotonic_now:
             return hit[2], _aged(hit[1], now)
         if not network:
@@ -240,10 +247,11 @@ class ProgressReader:
         # an absent file included, since its pod wrote what it ever will. A
         # bucket that did not answer is asked again soon.
         ttl = DONE_TTL if state in _OVER and answered else RUNNING_TTL
-        self._cache.pop(url, None)
-        if len(self._cache) >= MAX_ENTRIES:
-            del self._cache[next(iter(self._cache))]  # the oldest answer
-        self._cache[url] = (monotonic_now + ttl, value, answered)
+        with self._lock:
+            self._cache.pop(url, None)
+            if len(self._cache) >= MAX_ENTRIES:
+                del self._cache[next(iter(self._cache))]  # the oldest answer
+            self._cache[url] = (monotonic_now + ttl, value, answered)
         return answered, value
 
     def _get(

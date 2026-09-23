@@ -6,6 +6,8 @@ an httpx MockTransport — no bucket, no network.
 
 from __future__ import annotations
 
+import threading
+
 import httpx
 import pytest
 
@@ -376,3 +378,45 @@ def test_a_full_cache_drops_its_oldest_entry_not_everything(monkeypatch):
         r.fetch(BASE, f"vol{i}", "active")
     assert r.cached(BASE, "vol0", "active")[0] is False
     assert all(r.cached(BASE, f"vol{i}", "active")[0] for i in (1, 2, 3))
+
+
+class _Interleaved(dict):
+    """A cache that lets another request run in the middle of an eviction,
+    at the one point where two threads of the pool can meet: after this
+    request picked the oldest key and before it deleted it."""
+
+    def __init__(self, other) -> None:
+        super().__init__()
+        self.other = other
+        self.thread: threading.Thread | None = None
+
+    def __delitem__(self, key) -> None:
+        if self.thread is None:
+            self.thread = threading.Thread(target=self.other)
+            self.thread.start()
+            self.thread.join(timeout=0.2)  # blocked on the lock, or finished
+        super().__delitem__(key)
+
+
+def test_two_requests_evicting_at_once_do_not_trip_over_each_other(monkeypatch):
+    """The reader is shared by every thread of the pool, and a full cache is
+    the normal state at scale: two requests evicting the same oldest key
+    raised a KeyError -- a 500 for a page whose progress is decoration."""
+    monkeypatch.setattr(progress_mod, "MAX_ENTRIES", 2)
+    r, _ = reader({})
+    errors: list[BaseException] = []
+
+    def other() -> None:
+        try:
+            r.fetch(BASE, "vol-other", "active")
+        except BaseException as e:  # noqa: BLE001 - reported below
+            errors.append(e)
+
+    r._cache = _Interleaved(other)
+    r.fetch(BASE, "vol0", "active")
+    r.fetch(BASE, "vol1", "active")
+    r.fetch(BASE, "vol2", "active")  # full: evicts, and lets `other` in
+    assert r._cache.thread is not None
+    r._cache.thread.join()
+    assert errors == []
+    assert len(r._cache) == 2
