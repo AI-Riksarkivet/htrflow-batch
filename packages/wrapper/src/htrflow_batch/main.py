@@ -130,22 +130,33 @@ def terminate(env: Mapping[str, str], reason: dict) -> None:
 #: would publish a manifest of 600 failures and leave the index green.
 MAX_REBUILD_FAILURES = 3
 
+#: Threads a released pipeline could not stop -- workers stuck in a model
+#: call, the helpers of pages that stopped moving -- past which the pod is
+#: replaced (W-8, audit 0923): each may hold a model's weights on the GPU
+#: the rebuild is loading another set onto. About four hung pages.
+MAX_LEAKED_THREADS = 8
+
 
 def _default_factory(cfg: Config):
     from . import driver  # htrflow imports stay function-local
 
-    out_dir = Path(cfg.workdir) / "outputs"
+    # One directory per pipeline built (review I-3): a dead pipeline's helper
+    # caught inside an Export finishes that write where its own pipeline
+    # exports, never where the live one does.
+    builds = iter(range(1, 1 << 30))
+    out_dir = Path(cfg.workdir) / "outputs" / str(next(builds))
     pipeline = driver.load_pipeline(cfg.pipeline_path, out_dir)
     rebuild_failures = 0
 
     def process(image_path: Path):
-        nonlocal pipeline, rebuild_failures
+        nonlocal pipeline, rebuild_failures, out_dir
         if pipeline is None:
             # B88: the previous page killed an htrflow worker thread, so that
             # pipeline is unusable. Rebuild here rather than in the handler
             # below, so the failed page keeps its own error -- the models come
             # back from the cache PVC, not the Hub.
             log.warning("rebuilding the htrflow pipeline after a dead worker thread")
+            out_dir = out_dir.with_name(str(next(builds)))
             try:
                 pipeline = driver.load_pipeline(cfg.pipeline_path, out_dir)
             except Exception as e:
@@ -158,13 +169,21 @@ def _default_factory(cfg: Config):
                 raise
             rebuild_failures = 0
         try:
-            files = driver.process_page(pipeline, image_path, out_dir)
-        except driver.PipelineDead:
+            files = driver.process_page(
+                pipeline, image_path, out_dir, seconds=cfg.page_timeout_seconds
+            )
+        except driver.PipelineDead as e:
             # Every later page would wait on the dead queue, so this pipeline
             # goes -- weights first: the thread parked in its run() keeps the
             # steps alive, and the rebuild loads a second set onto the same GPU.
             dead, pipeline = pipeline, None
             driver.release_pipeline(dead)
+            leaked = driver.leaked_threads()
+            if leaked >= MAX_LEAKED_THREADS:
+                raise Unrecoverable(
+                    f"{leaked} htrflow threads left running by released "
+                    f"pipelines, last: {e}"
+                ) from e
             raise
         provenance.stamp_alto(
             files["alto"],
@@ -255,6 +274,9 @@ def _main(
     is the pod's activeDeadlineSeconds (the converter renders it): at the
     deadline the kubelet SIGTERMs us and main()'s handler does the rest."""
     capture.attach_logging()  # not basicConfig: see LogCapture.attach_logging
+    # httpx logs every request, whole URL and all, at INFO: a line a page in
+    # the world-readable run log, one redaction miss from a token (W-3).
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     t_start = time.monotonic()
     # W10: set on every failure path so queued downloads stop short instead
     # of holding the interpreter (executor workers are joined at exit).
@@ -294,7 +316,7 @@ def _main(
                 stop,
                 tracker,
             )
-        uploaded = _verify(store, pages, stats, state)
+        uploaded = _verify(store, pages, stats, state, cfg.last_attempt)
         state.stage = "publish"
         wrote_iiif = publish.run(
             cfg, store, source, source_url, pages, stats, uploaded, t_start, nbytes
@@ -405,6 +427,12 @@ def _resume(
     # "done" to the next attempt.
     stale = set().union(*stored.values()) & {p.name for p in todo}
     if stale:
+        # W-5 (audit 0923): the previous run's completion marker describes
+        # the pages about to go, so it goes first -- then the viewer manifest
+        # that points at their ALTO, so a reader never meets a manifest.json
+        # without its iiif.json. Publish writes both again at the end.
+        store.delete(["manifest.json"])
+        store.delete(["iiif.json"])
         store.delete_pages(stale)
     log.info(
         "[%s] resume: %d done, %d to process", cfg.volume_ref, len(done), len(todo)
@@ -436,6 +464,7 @@ def _stream(
         Path(cfg.workdir) / "input",
         client,
         lookahead=cfg.lookahead_pages,
+        lookahead_bytes=cfg.lookahead_bytes,
         concurrency=cfg.download_concurrency,
         max_bytes=cfg.fetch_max_bytes,
         max_pixels=cfg.max_image_pixels,
@@ -465,7 +494,11 @@ def _stream(
 
 
 def _verify(
-    store: ResultStore, pages: list[PageRef], stats: StreamStats, state: RunState
+    store: ResultStore,
+    pages: list[PageRef],
+    stats: StreamStats,
+    state: RunState,
+    last_attempt: bool = False,
 ) -> set[str]:
     """D8: every page is accounted for — in S3 with its PAGE and ALTO, skipped
     by resume, or recorded as failed with a reason (the product owner,
@@ -480,8 +513,19 @@ def _verify(
     off there is no `changed` set for `_resume` to delete from, so a page
     reprocessed and failed still has the previous run's objects -- and publish
     would read that ALTO back into iiif.json for a page manifest.json records
-    as failed."""
+    as failed.
+
+    On the index's last attempt a deferred page is failed instead (audit
+    0923 W-4): "not now" that lasted every attempt is, for this volume, a
+    page that did not come out -- a corrupt file an image server answers 500
+    for, a soft-404 served with a 200 -- and missing it would fail the index
+    and leave every other page without its completion marker."""
     state.stage = "verify"
+    if last_attempt:
+        for name, r in list(stats.results.items()):
+            if r.status == "deferred":
+                why = f"{r.error} (still failing on the index's last attempt)"
+                stats.results[name] = PageOutcome(status="failed", error=why)
     uploaded = store.uploaded_pages()
     failed = sorted(n for n, r in stats.results.items() if r.status == "failed")
     # 3095: a page the source could not serve today is missing, whatever a

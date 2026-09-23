@@ -282,6 +282,57 @@ def test_redact_url():
     )
 
 
+@pytest.mark.parametrize(
+    "text, shown",
+    [
+        (
+            "GET https://h/img(1).jpg?token=SECRET failed",
+            "GET https://h/img(1).jpg failed",
+        ),
+        ("see [https://h/a]?token=SECRET]", "see [https://h/a]"),
+        ("url='https://h/it's.jpg?token=SECRET'", "url='https://h/it's.jpg'"),
+        ("(https://h/a?token=SECRET).", "(https://h/a)."),
+        ("https://h/a?token=SECRET, then", "https://h/a, then"),
+        ("<https://h/a?token=SECRET>", "<https://h/a>"),
+    ],
+)
+def test_redact_urls_takes_the_query_off_a_url_with_punctuation_in_it(text, shown):
+    """Audit 0923 W-3: the URL pattern stopped at `)`, `]` and `'`, so the
+    query after `img(1).jpg` was never reached and its token went into the
+    world-readable run log, the termination message and manifest.json."""
+    from htrflow_batch.iiif import redact_urls
+
+    assert "SECRET" not in redact_urls(text)
+    assert redact_urls(text).startswith(shown)
+
+
+@pytest.mark.parametrize(
+    "text, shown",
+    [
+        (
+            "['https://a/x?t=1','https://b/y?token=2']",
+            "['https://a/x','https://b/y']",
+        ),
+        ("('https://a/x?t=1', 'https://b/y?t=2')", "('https://a/x', 'https://b/y')"),
+        ("url=https://a/x?t=1&a=b|other", "url=https://a/x|other"),
+        ("https://a/x?t=1,https://b/y?t=2", "https://a/x,https://b/y"),
+        (
+            "GET https://h/full/2500,/0/default.jpg?t=1",
+            "GET https://h/full/2500,/0/default.jpg",
+        ),
+        ("{https://a/x?t=1}", "{https://a/x}"),
+    ],
+)
+def test_redact_urls_keeps_the_text_around_each_url(text, shown):
+    """Review M-3: a URL that ran to the next whitespace swallowed whatever
+    followed it -- the second URL of a list, `|other` after a query. It ends
+    at a character no URL holds unencoded, or at a quote, bracket or comma
+    that closes it; the IIIF size comma inside one stays."""
+    from htrflow_batch.iiif import redact_urls
+
+    assert redact_urls(text) == shown
+
+
 def test_source_digest_keeps_the_identifying_query():
     """W5: redact_url drops the whole query, so two pages a host selects with
     ``?id=`` were indistinguishable and an edited manifest never triggered a
@@ -311,6 +362,89 @@ def test_source_digest_ignores_rotating_credentials(credential):
     bare = source_digest("https://img.example/iiif?id=1")
     assert source_digest(f"https://img.example/iiif?id=1&{credential}") == bare
     assert source_digest("https://u:pw@img.example/iiif?id=1") == bare
+
+
+#: One image, signed twice: every signing scheme puts a new expiry and a new
+#: signature on the URL at each manifest fetch (audit 0923 W-2).
+SIGNED_TWICE = {
+    "azure-sas": (
+        "https://acct.blob.core.windows.net/c/0001.jpg?sv=2022-11-02&ss=b&srt=o"
+        "&sp=r&se=2026-09-23T10:00:00Z&st=2026-09-23T09:00:00Z&spr=https&sig=AAA",
+        "https://acct.blob.core.windows.net/c/0001.jpg?sv=2022-11-02&ss=b&srt=o"
+        "&sp=r&se=2026-09-24T10:00:00Z&st=2026-09-24T09:00:00Z&spr=https&sig=BBB",
+    ),
+    "azure-service-sas": (
+        "https://acct.blob.core.windows.net/c/0001.jpg?sp=r&st=1&se=2&sr=b&sig=AAA",
+        "https://acct.blob.core.windows.net/c/0001.jpg?sp=r&st=3&se=4&sr=b&sig=BBB",
+    ),
+    "gcs-v4": (
+        "https://storage.googleapis.com/b/0001.jpg?X-Goog-Algorithm=GOOG4-RSA-SHA256"
+        "&X-Goog-Credential=sa%2F20260923&X-Goog-Date=20260923T090000Z"
+        "&X-Goog-Expires=900&X-Goog-SignedHeaders=host&X-Goog-Signature=aaa",
+        "https://storage.googleapis.com/b/0001.jpg?X-Goog-Algorithm=GOOG4-RSA-SHA256"
+        "&X-Goog-Credential=sa%2F20260924&X-Goog-Date=20260924T090000Z"
+        "&X-Goog-Expires=900&X-Goog-SignedHeaders=host&X-Goog-Signature=bbb",
+    ),
+    "gcs-v2": (
+        "https://storage.googleapis.com/b/0001.jpg?GoogleAccessId=sa&Expires=1&Signature=a",
+        "https://storage.googleapis.com/b/0001.jpg?GoogleAccessId=sa&Expires=2&Signature=b",
+    ),
+    "cloudfront-canned": (
+        "https://d1.cloudfront.net/0001.jpg?Expires=1&Signature=a&Key-Pair-Id=K1",
+        "https://d1.cloudfront.net/0001.jpg?Expires=2&Signature=b&Key-Pair-Id=K2",
+    ),
+    "cloudfront-custom": (
+        "https://d1.cloudfront.net/0001.jpg?Policy=p1&Signature=a&Key-Pair-Id=K1",
+        "https://d1.cloudfront.net/0001.jpg?Policy=p2&Signature=b&Key-Pair-Id=K1",
+    ),
+    "s3-v2": (
+        "https://b.s3.amazonaws.com/0001.jpg?AWSAccessKeyId=A&Expires=1&Signature=a",
+        "https://b.s3.amazonaws.com/0001.jpg?AWSAccessKeyId=A&Expires=2&Signature=b",
+    ),
+    "s3-v4": (
+        "https://b.s3.amazonaws.com/0001.jpg?X-Amz-Date=1&X-Amz-Expires=9"
+        "&X-Amz-Security-Token=t1&X-Amz-Signature=a",
+        "https://b.s3.amazonaws.com/0001.jpg?X-Amz-Date=2&X-Amz-Expires=9"
+        "&X-Amz-Security-Token=t2&X-Amz-Signature=b",
+    ),
+    "akamai": (
+        "https://cdn.example/0001.jpg?hdnts=exp=1~hmac=a",
+        "https://cdn.example/0001.jpg?hdnts=exp=2~hmac=b",
+    ),
+}
+
+
+@pytest.mark.parametrize("scheme", sorted(SIGNED_TWICE))
+def test_source_digest_is_the_same_for_a_re_signed_url(scheme):
+    """Audit 0923 W-2: only token/sig/signature/key and X-Amz-* came out, so
+    an Azure SAS, GCS or CloudFront URL digested differently on every
+    manifest fetch, resume deleted every done page as changed, and a volume
+    needing more than one attempt never completed."""
+    from htrflow_batch.iiif import source_digest
+
+    first, second = SIGNED_TWICE[scheme]
+    assert source_digest(first) == source_digest(second)
+
+
+@pytest.mark.parametrize("scheme", sorted(SIGNED_TWICE))
+def test_source_digest_still_sees_another_image_behind_a_signature(scheme):
+    """What names the image is still a real change, signed or not."""
+    from htrflow_batch.iiif import source_digest
+
+    first, _ = SIGNED_TWICE[scheme]
+    assert source_digest(first) != source_digest(first.replace("0001", "0002"))
+
+
+def test_source_digest_keeps_ordinary_names_outside_their_signing_scheme():
+    """`st`, `se`, `sp`, `Expires` and `Policy` are only a signing scheme's
+    when its signature is there too; without it they may name the image."""
+    from htrflow_batch.iiif import source_digest
+
+    for query in ("st=1", "se=1", "sp=1", "sr=1", "Expires=1", "Policy=1"):
+        base = "https://img.example/iiif?id=1&"
+        assert source_digest(base + query) != source_digest(
+            base + query.replace("1", "2")
+        )
 
 
 def test_source_digest_publishes_nothing_of_the_url():

@@ -32,16 +32,15 @@ def alto_dims(
     (store.upload_page parsed it there, so this costs no round-trip), or read
     back from S3 for a page a previous run published, so a resumed volume's
     viewer manifest stays complete. A page whose ALTO will not parse is left
-    out rather than failing the publish."""
+    out rather than failing the publish. A store error is NOT (audit 0923
+    W-6): skipped, it dropped that canvas from the final iiif.json for good,
+    since manifest.json follows and nothing writes it again -- raised, the
+    run exits 1 and the retry redoes only the publish."""
     dims = known_dims(store, pages)
     for p in pages:
         if p.name in dims or p.name not in uploaded:
             continue
-        try:
-            data = store.get_bytes(f"alto/{p.name}.xml")
-        except Exception:
-            log.warning("could not read stored ALTO for %s", p.name)
-            continue
+        data = store.get_bytes(f"alto/{p.name}.xml")
         try:
             dims[p.name] = parse_alto_dims_bytes(data)
         except (ValueError, ET.ParseError):

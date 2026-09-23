@@ -64,9 +64,11 @@ Exit codes: `0` success, `13` permanent (do not retry), `1` transient,
 
 Optional, with defaults: `S3_ENDPOINT` (provider chain), `S3_PREFIX` (`""`),
 `MAX_IMAGE_WIDTH` (2500), `RESUME` (true), `LOOKAHEAD_PAGES` (64),
-`MAX_PAGES` (0 = all), `WORKDIR_PATH` (`/work`), `DOWNLOAD_CONCURRENCY` (12),
-`LOG_SHIP_SECONDS` (15), `MANIFEST_MAX_BYTES` (16 MiB), `FETCH_MAX_BYTES`
-(64 MiB), `IMAGE_DIGEST` and `HTRFLOW_BASE_REVISION` (provenance only). The
+`LOOKAHEAD_BYTES` (1 GiB), `MAX_PAGES` (0 = all), `WORKDIR_PATH` (`/work`),
+`DOWNLOAD_CONCURRENCY` (12), `LOG_SHIP_SECONDS` (15), `MANIFEST_MAX_BYTES`
+(16 MiB), `FETCH_MAX_BYTES` (64 MiB), `PAGE_TIMEOUT_SECONDS` (600),
+`INDEX_FAILURE_COUNT` and `BACKOFF_LIMIT_PER_INDEX` (which attempt this is),
+`IMAGE_DIGEST` and `HTRFLOW_BASE_REVISION` (provenance only). The
 per-volume time budget is the pod's `activeDeadlineSeconds`, not a wrapper
 setting.
 Results land under `{S3_PREFIX}/{PIPELINE_ID}/{VOLUME_REF}/`. The reference

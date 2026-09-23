@@ -301,7 +301,30 @@ fail=0
 # Retry-After parse and the abortable wait; in stream.py and main.py the
 # deferred outcome verify counts as missing; in iiif.py one rule choosing a
 # canvas's image for both the fetch and the viewer manifest.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3636
+# 3636 -> 4064 (audit 0923): an upload the store could not take defers the
+# page rather than failing it, and a half-stored pair is deleted (W-1). The
+# source digest drops the credentials of every common signing scheme, the
+# ordinary-named ones only beside their scheme's marker (W-2). A URL in
+# free text runs to a character no URL may hold, trailing punctuation kept,
+# and httpx's per-request lines stay out of the run log (W-3). A run that
+# deletes stored pages deletes the completion marker and iiif.json first (W-5).
+# Both S3 clients come from one factory that sends checksums only where S3
+# requires them, and DeleteObjects its Content-MD5 (W-10). The final run-log
+# ship has one wall-clock budget, on a thread of its own, that fits the grace
+# period, and the log client makes two attempts in all (W-7). The pin check
+# covers the processor's revision too (S-3). On the index's last attempt,
+# known from two new env vars, verify fails a still-deferred page (W-4).
+# After a 400 the fetcher reads the image's info.json for a size within the
+# cap before `max`, and the lookahead is bounded by bytes as well (W-9).
+# A page has a wall-clock budget; a released pipeline's worker threads are
+# stopped, and those stuck inside htrflow counted up to a limit (W-8).
+# Review round: DeleteObjects withdraws botocore's CRC32 for its MD5 (M-1).
+# A URL in text ends where a quote, bracket or comma closes it (M-3). A step
+# whose worker threads cannot be found is logged and counted, not skipped (M-5).
+# The page budget is a no-progress window over htrflow's queues and steps (I-2).
+# A dead pipeline's steps are swapped for ones that refuse to run, and each
+# pipeline built exports into a directory of its own (I-3).
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 4064
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
