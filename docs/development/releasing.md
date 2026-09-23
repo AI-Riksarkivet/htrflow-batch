@@ -16,14 +16,11 @@ dagger call build-web              # the web image: bun-built SPA + patched view
 dagger call build-campaigns        # the converter image
 ```
 
-`build-wrapper` is heavy the first time — the CUDA base is several gigabytes —
-and the dagger engine cache makes later builds fast. The web dockerfile's
-viewer stage clones the Universal Viewer fork at a pinned commit
-(`UV4_REF`), applies `.docker/uv4-uv-html.patch` and builds it with npm, its
-own toolchain; the final stage puts the viewer and the bun-built campaign
-browser into the read API's `/app/static` — the viewer first, the SPA on
-top, so `/` is the SPA and `/uv.html` is the viewer. [CI](ci.md) has the
-full function table.
+The web dockerfile clones the Universal Viewer fork at a pinned commit
+(`UV4_REF`), applies `.docker/uv4-uv-html.patch` and builds it with npm; the
+final stage puts the viewer and the bun-built SPA into the read API's
+`/app/static`, so `/` is the SPA and `/uv.html` is the viewer. [CI](ci.md)
+has the full function table.
 
 The **converter package is also installable without an image** — a plain
 Python package that runs in the campaigns repo's own CI or on a workstation,
@@ -56,12 +53,9 @@ architecture, in three stages:
   wrapper is installed on top of it.
 
 There is no separate base image to build, pull or pass in, so every build
-path — `make build-wrapper`, the dagger functions, CI and the publish
-workflow — runs this one recipe, and no step in it is architecture-specific.
-The transformers line is not either: both architectures install it from the
-`TRANSFORMERS_VERSION` build argument, whose default is the line upstream
-htrflow is tested on ([Two transformers
-lines](../how-it-works/wrapper.md#model-handling)).
+path runs this one recipe, and no step in it is architecture-specific. Both
+architectures install the transformers line from the `TRANSFORMERS_VERSION`
+build argument, whose default is the line upstream htrflow is tested on.
 
 **No compiler in the image.** The torch builds the image carries route a
 few operators through Triton kernels of their own, and the first such call
@@ -74,14 +68,10 @@ build checks that the switch still holds: it fails if torch registers any
 JIT-compiled operator. Nothing else JIT-compiles by default: htrflow does
 not call `torch.compile`, and ultralytics leaves it off.
 
-The web and converter dockerfiles need none of this. Every image they build
-on — the two Node toolchains for the web image, the Debian build stage and
-the distroless runtime shared by both — is published for both architectures
-under the digest it is pinned to, and nothing in either recipe names an
-architecture, so each dockerfile produces either architecture's image with no
-branch in it. The converter dockerfile is stages 3–4 of the web one on their
-own: same
-base digests, same uv workspace sync, no viewer or SPA stage in front of it.
+The web and converter dockerfiles need none of this: every image they build
+on is published for both architectures under its pinned digest, and neither
+recipe names an architecture. The converter dockerfile is the web one's
+last two stages on their own.
 
 **Findings that do not apply.** Distroless Debian CVEs that Debian has not
 fixed and nothing in the images can reach are recorded in
