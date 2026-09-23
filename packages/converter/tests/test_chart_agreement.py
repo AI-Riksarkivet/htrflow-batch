@@ -16,6 +16,7 @@ docs/reference/configuration.md lists what is one-sided.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -252,13 +253,12 @@ def test_the_job_shape_policy_holds_the_scripts_the_converter_renders():
         ), var
 
 
-#: The Kubernetes client classes cluster.py builds, by the API group their
-#: methods reach. A class not listed fails the test by name: add its group.
+#: The API group each typed client class reaches. A client cluster.py
+#: builds that is not listed fails the recording test by name.
 _CLIENT_GROUPS = {
     "CoreV1Api": "",
     "BatchV1Api": "batch",
     "CoordinationV1Api": "coordination.k8s.io",
-    "CustomObjectsApi": None,  # the group is an argument of each call
 }
 #: A client method's verb -> the RBAC verb the API server checks.
 _RBAC_VERB = {
@@ -272,82 +272,116 @@ _RBAC_VERB = {
 _CLIENT_METHOD = re.compile(r"(read|list|create|patch|replace|delete)_namespaced_(\w+)")
 
 
-def _calls_cluster_py_makes() -> set[tuple[str, str, str]]:
-    """(API group, resource, RBAC verb) for every call cluster.py makes,
-    read off its syntax tree: `self._method(kind, verb)` through `_KINDS`,
-    and every `self.<client>.<verb>_namespaced_<noun>` it calls or hands to
-    a retry helper. A server-side apply (`_content_type=APPLY_PATCH`) of an
-    object that does not exist yet is authorized as a create as well."""
-    import ast
+class _Answer:
+    """What `_preload_content=False` hands back: a body and headers."""
 
+    def __init__(self, body: object) -> None:
+        self.data = json.dumps(body).encode()
+        self.headers: dict = {}
+
+
+class _Recording:
+    """A Kubernetes client that records every request as the API server
+    authorizes it -- (group, resource, verb, name) -- and answers from a
+    small in-memory namespace."""
+
+    def __init__(self, cls: str, log: list, absent: set) -> None:
+        self.cls, self.log, self.absent = cls, log, absent
+
+    def __getattr__(self, method: str):
+        from kubernetes.client.exceptions import ApiException
+
+        m = _CLIENT_METHOD.fullmatch(method)
+        assert m, f"{self.cls}.{method} is not a namespaced call this test knows"
+        verb, noun = m.groups()
+
+        def call(*args, **kwargs):
+            if noun == "custom_object":
+                group, _version, _ns, resource, *rest = args
+            else:
+                assert self.cls in _CLIENT_GROUPS, f"add {self.cls}'s API group"
+                group, resource = _CLIENT_GROUPS[self.cls], noun.replace("_", "") + "s"
+                rest = [] if verb in ("list", "create") else [args[0]]
+            name = rest[0] if rest else ""
+            if verb == "create":
+                name = args[1]["metadata"]["name"]
+            self.log.append((group, resource, _RBAC_VERB[verb], name))
+            if kwargs.get("_content_type") == "application/apply-patch+yaml":
+                # A server-side apply of an object that is not there yet is
+                # authorized as a create as well.
+                self.log.append((group, resource, "create", name))
+            if verb == "read" and name in self.absent:
+                raise ApiException(status=404)
+            if noun == "custom_object":
+                wl = {"metadata": {"name": "job-kyrk-1"}, "spec": {"active": True}}
+                return {"items": [wl]} if verb == "list" else wl
+            if noun == "lease":
+                body = args[-1] if verb in ("create", "replace") else {}
+                return _Answer(
+                    {
+                        "metadata": {"name": name, "resourceVersion": "1"},
+                        "spec": (body or {}).get("spec", {}),
+                    }
+                )
+            if verb == "list":
+                return _Answer({"items": [{"metadata": {"name": "stale"}}]})
+            return _Answer({"metadata": {"name": name}})
+
+        return call
+
+
+def _requests_apply_makes(monkeypatch) -> list[tuple[str, str, str, str]]:
+    """Drive the real Cluster through every path `htrflow-campaigns apply`
+    takes -- take the Lease, list, dry-run and apply, read, replace a
+    warm-up, hold a suspend, pause, prune, renew the Lease on the way and
+    release it -- against the recording client."""
     from htrflow_converter import cluster
 
-    tree = ast.parse((CONVERTER_SRC / "cluster.py").read_text(encoding="utf-8"))
-    parent = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
-    clients: dict[str, str] = {}
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Assign)
-            and isinstance(node.value, ast.Call)
-            and isinstance(node.value.func, ast.Attribute)
-            and isinstance(node.targets[0], ast.Attribute)
-        ):
-            clients[node.targets[0].attr] = node.value.func.attr
-
-    def group_of(client_attr: str) -> str | None:
-        cls = clients[client_attr]
-        assert cls in _CLIENT_GROUPS, f"cluster.py uses {cls}: add its API group"
-        return _CLIENT_GROUPS[cls]
-
-    def module_value(node: ast.AST) -> object:
-        return getattr(cluster, node.id, None) if isinstance(node, ast.Name) else None
-
-    def applies(node: ast.AST) -> bool:
-        call = parent.get(node)
-        return isinstance(call, ast.Call) and any(
-            k.arg == "_content_type"
-            and isinstance(k.value, ast.Name)
-            and k.value.id == "APPLY_PATCH"
-            for k in call.keywords
-        )
-
-    found: set[tuple[str, str, str]] = set()
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "_method"
-        ):
-            kind, verb = node.args[0], node.args[1].value
-            kinds = (
-                [kind.value] if isinstance(kind, ast.Constant) else list(cluster._KINDS)
-            )
-            for k in kinds:
-                api, noun = cluster._KINDS[k]
-                resource = noun.replace("_", "") + "s"
-                found.add((group_of(api), resource, _RBAC_VERB[verb]))
-                if verb == "patch" and applies(node):
-                    found.add((group_of(api), resource, "create"))
-        elif (
-            isinstance(node, ast.Attribute)
-            and isinstance(node.value, ast.Attribute)
-            and isinstance(node.value.value, ast.Name)
-            and node.value.value.id == "self"
-            and (m := _CLIENT_METHOD.fullmatch(node.attr))
-        ):
-            verb, noun = m.groups()
-            group = group_of(node.value.attr)
-            resource = noun.replace("_", "") + "s"
-            if noun == "custom_object":
-                call = parent[node]
-                args = [
-                    module_value(a.value if isinstance(a, ast.Starred) else a)
-                    for a in call.args
-                ]
-                group = next(a[0] for a in args if isinstance(a, tuple))
-                resource = next(a for a in args if isinstance(a, str))
-            found.add((group, resource, _RBAC_VERB[verb]))
-    return found
+    log: list = []
+    absent = {cluster.LEASE, "htr-warmup-demo-v1"}
+    clock = [1000.0]
+    monkeypatch.setattr(cluster.time, "monotonic", lambda: clock[0])
+    c = object.__new__(cluster.Cluster)
+    c.namespace = "htr-batch"
+    for attr, cls in (
+        ("batch", "BatchV1Api"),
+        ("core", "CoreV1Api"),
+        ("coordination", "CoordinationV1Api"),
+        ("custom", "CustomObjectsApi"),
+    ):
+        setattr(c, attr, _Recording(cls, log, absent))
+    job = {"apiVersion": "batch/v1", "kind": "Job", "metadata": {"name": "kyrk"}}
+    cm = {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": "campaign-kyrk"},
+    }
+    warm = {**job, "metadata": {"name": "htr-warmup-demo-v1"}}
+    suspended = {
+        "metadata": {
+            "name": "kyrk",
+            "managedFields": [
+                {
+                    "manager": cluster.FIELD_MANAGER,
+                    "fieldsV1": {"f:spec": {"f:suspend": {}}},
+                }
+            ],
+        },
+        "spec": {"suspend": True},
+    }
+    with c.lease():
+        for kind in ("Job", "ConfigMap"):
+            c.labelled(kind)
+        for obj in (job, cm):
+            c.apply(obj, dry_run=True)
+            c.apply(obj)
+            c.get(obj["kind"], obj["metadata"]["name"])
+        c.replace_job(warm)
+        c.hold_suspend(suspended)
+        clock[0] += cluster.LEASE_RENEW + 1  # the next request renews
+        c.sync_pause({"metadata": {"name": "kyrk", "uid": "u-1"}}, True, 0)
+        c.prune({("Job", "kyrk"), ("ConfigMap", "campaign-kyrk")})
+    return log
 
 
 def _apply_role_grants() -> list[dict]:
@@ -356,15 +390,27 @@ def _apply_role_grants() -> list[dict]:
     return yaml.safe_load("rules:" + role.split("\nrules:", 1)[1])["rules"]
 
 
-def test_the_apply_role_grants_every_call_cluster_py_makes():
+def test_the_apply_role_grants_exactly_the_requests_apply_makes(monkeypatch):
     """`htrflow-campaigns apply` run in the cluster has only this Role: a
-    call it makes that the Role does not grant is a 403 halfway through an
-    apply -- a Lease it cannot take fails every run closed. The calls are
-    read off cluster.py itself, so a new one fails here before a cluster
-    sees it. A create is never scoped by name in RBAC, so it must come from
-    a rule without `resourceNames`."""
-    calls = _calls_cluster_py_makes()
+    request it makes that the Role does not grant is a 403 halfway through
+    an apply -- a Lease it cannot take fails every run closed -- and a grant
+    no request needs is standing access for whoever holds the token. The
+    requests are recorded from the real Cluster methods, not guessed from
+    their text, and a rule that names `resourceNames` grants those names
+    only (audit 0923 I-2)."""
+    from htrflow_converter import cluster
+
+    log = _requests_apply_makes(monkeypatch)
     rules = _apply_role_grants()
+    for group, resource, verb, name in log:
+        assert any(
+            group in r["apiGroups"]
+            and resource in r["resources"]
+            and verb in r["verbs"]
+            and (name in r.get("resourceNames", [name]))
+            for r in rules
+        ), (group, resource, verb, name)
+    used = {(g, r, v) for g, r, v, _ in log}
     granted = {
         (g, r, v)
         for rule in rules
@@ -372,20 +418,9 @@ def test_the_apply_role_grants_every_call_cluster_py_makes():
         for r in rule["resources"]
         for v in rule["verbs"]
     }
-    assert {
-        ("batch", "jobs", "delete"),
-        ("kueue.x-k8s.io", "workloads", "patch"),
-    } <= calls
-    assert calls - granted == set()
-    for group, resource, verb in calls:
-        if verb == "create":
-            assert any(
-                group in r["apiGroups"]
-                and resource in r["resources"]
-                and "create" in r["verbs"]
-                and "resourceNames" not in r
-                for r in rules
-            ), (group, resource)
+    assert used == granted
+    named = [r["resourceNames"] for r in rules if "resourceNames" in r]
+    assert named == [[cluster.LEASE]]
 
 
 def _job_shape_spec() -> dict:
