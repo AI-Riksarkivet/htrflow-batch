@@ -54,7 +54,8 @@ SECURITY = {
     "only `s3.existingSecret` — cluster",
     "hf_token_secret": "names the Secret the warm-up reads `HF_TOKEN` from; job-shape "
     "admits only `hfToken.existingSecret` — cluster",
-    "data_pvc": "the model-cache PVC; job-shape admits only `modelCache.name` — cluster",
+    "data_pvc": "the model-cache PVC; job-shape admits only `modelCache.name` "
+    "— cluster",
     "s3.existingSecret": "names that Secret; no template creates it — nobody",
     "hfToken.existingSecret": "the one Secret a warm-up may read (job-shape) — cluster",
     "security.jobImageRepos": "what a campaign or warm-up Job may run — cluster",
