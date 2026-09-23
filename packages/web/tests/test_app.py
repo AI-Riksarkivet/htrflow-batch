@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from htrflow_web.app import (
     DNS_1123,
+    REAPED_SHOWN,
     RECORD_WRITES_PER_REQUEST,
     SECURITY_HEADERS,
     NoCluster,
@@ -656,6 +657,61 @@ def test_a_campaign_whose_job_is_gone_still_has_a_row():
     assert gone["counts"] == {"total": 4, "active": 0, "done": 4, "failed": 0}
     assert gone["finishedAt"] == "2025-12-01T05:00:00Z"
     assert body[0]["name"] == "kyrk", "newest first, reaped rows included"
+
+
+def _many_reaped(n: int) -> RecordingReader:
+    """``n`` campaigns whose Jobs are gone, one a day, newest last."""
+    cms: list[dict] = []
+    for i in range(n):
+        name = f"gamla{i}"
+        cms.append(
+            {
+                "metadata": {
+                    **REAPED_RECORD["metadata"],
+                    "name": f"campaign-{name}",
+                    "creationTimestamp": f"2025-11-{i + 1:02d}T00:00:00Z",
+                },
+            }
+        )
+        cms.append(
+            {
+                "metadata": {
+                    "name": f"campaign-{name}-status",
+                    "namespace": "htr-test",
+                },
+                "data": REAPED_STATUS["data"],
+            }
+        )
+    return RecordingReader(cms)
+
+
+def test_the_list_carries_only_the_newest_reaped_campaigns():
+    """Records have no TTL, so every campaign ever run was a row, and the
+    page a card with its own requests for each (2026-09-23 audit). Every
+    live Job is still listed; of the reaped, the newest few, and a header
+    saying how many there are in all."""
+    client = TestClient(create_app(_many_reaped(25), progress=FakeProgress()))
+    resp = client.get("/api/v1/jobs")
+    gone = [row["name"] for row in resp.json() if row["jobGone"]]
+    assert len(gone) == REAPED_SHOWN
+    assert gone[0] == "gamla24" and gone[-1] == f"gamla{25 - REAPED_SHOWN}"
+    assert resp.headers["X-Reaped-Total"] == "25"
+    assert any(row["name"] == "kyrk" for row in resp.json()), "live Jobs: all"
+
+
+def test_older_reaped_campaigns_are_asked_for_by_count():
+    client = TestClient(create_app(_many_reaped(25), progress=FakeProgress()))
+    resp = client.get("/api/v1/jobs?reaped=24")
+    assert sum(row["jobGone"] for row in resp.json()) == 24
+    none = client.get("/api/v1/jobs?reaped=0")
+    assert [row["name"] for row in none.json()] == ["kyrk"]
+    assert none.headers["X-Reaped-Total"] == "25"
+
+
+@pytest.mark.parametrize("bad", ["-1", "100001", "x"])
+def test_a_reaped_count_out_of_range_is_refused(bad: str):
+    client = TestClient(create_app(_many_reaped(1), progress=FakeProgress()))
+    assert client.get(f"/api/v1/jobs?reaped={bad}").status_code == 422
 
 
 def test_the_list_route_draws_a_reaped_row_from_metadata_alone():
