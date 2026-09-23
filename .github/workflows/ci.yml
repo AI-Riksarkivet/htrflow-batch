@@ -38,6 +38,24 @@ jobs:
       - name: LOC budget
         run: scripts/loc-budget.sh
 
+  # The documentation site, the way docs.yml publishes it -- docs_lint (no
+  # ids, dates, versions or hosts in the site) and the strict zensical
+  # build -- but on every pull request, and without deploying. docs.yml ran
+  # both on main only, so a broken link or a lint hit was found after the
+  # merge, by the deploy (audit 0923 T-7).
+  docs:
+    name: Documentation (lint and strict build)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # zensical from uv.lock's `docs` group, as in docs.yml.
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      - run: uv sync --locked --only-group docs
+      - run: ZENSICAL="$PWD/.venv/bin/zensical" scripts/docs-site.sh build --clean --strict
+
   # The chart's signature rule (verify-images, as values-prod.yaml renders
   # it) against the three digests this commit pins, through the Kyverno CLI
   # and the real registry. Offline tests can pin the rule's shape but not
