@@ -145,8 +145,8 @@ compose-down:
 # is the point.
 campaigns-apply:
 	@test -n "$(DIR)" || (echo "usage: make campaigns-apply DIR=<campaigns-repo-dir>"; exit 2)
-	uv run htrflow-campaigns apply $(DIR) --out $(DIR)/rendered $(if $(PRUNE),--prune) \
-	  $(if $(ALLOW_EMPTY),--allow-empty)
+	uv run htrflow-campaigns apply $(DIR) --out $(DIR)/rendered --namespace $(HTR_NAMESPACE) \
+	  $(if $(PRUNE),--prune) $(if $(ALLOW_EMPTY),--allow-empty)
 
 # The reproducible core of the Indexed Jobs E2E (docs/development/e2e-indexed-jobs.md):
 # validate the campaigns repo, render + apply it, then block until every
