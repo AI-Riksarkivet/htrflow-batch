@@ -77,13 +77,23 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=packages/wrapper/pyproject.toml,target=packages/wrapper/pyproject.toml \
     --mount=type=bind,source=packages/converter/pyproject.toml,target=packages/converter/pyproject.toml \
     --mount=type=bind,source=packages/web/pyproject.toml,target=packages/web/pyproject.toml \
-    uv sync --frozen --no-install-workspace --package htrflow-web --no-editable
+    uv sync --frozen --no-install-workspace --no-build --package htrflow-web
 COPY pyproject.toml uv.lock ./
 COPY packages/wrapper/pyproject.toml packages/wrapper/pyproject.toml
 COPY packages/converter/pyproject.toml packages/converter/pyproject.toml
 COPY packages/web packages/web
+# The member itself: --locked proves the lock still matches the pyprojects
+# and --no-build that every dependency came from it as a wheel; then the
+# package is built with its build backend pinned and hashed
+# (.docker/build-constraints.txt; --require-hashes refuses anything else,
+# audit 0923 D-11) and installed as a wheel.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --package htrflow-web --no-editable
+    --mount=type=bind,source=.docker/build-constraints.txt,target=/tmp/build-constraints.txt \
+    uv sync --locked --no-install-workspace --no-build --package htrflow-web \
+    && uv build --wheel --package htrflow-web --require-hashes \
+         --build-constraints /tmp/build-constraints.txt -o /tmp/dist \
+    && uv pip install --python /app/.venv/bin/python --no-deps /tmp/dist/*.whl \
+    && rm -rf /tmp/dist
 
 # ---- Stage 4: the service (read API + the two builds above as its site) ----
 # Distroless Debian 13 carries the Python runtime, glibc, OpenSSL and the CA

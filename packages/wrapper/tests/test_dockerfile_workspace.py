@@ -42,6 +42,7 @@ _BIND = re.compile(r"--mount=type=bind,source=(packages/[^,]+/pyproject\.toml),"
 _COMPILER_PACKAGES = re.compile(
     r"\b(gcc|g\+\+|clang|build-essential|libc6-dev|linux-libc-dev|python3[.\d]*-dev)\b"
 )
+BUILD_CONSTRAINTS = REPO / ".docker" / "build-constraints.txt"
 HTRFLOW_BASE = REPO / ".docker" / "htrflow-base"
 
 # Build paths that must never cross-build: a `--platform` flag or a
@@ -93,9 +94,10 @@ def test_campaigns_image_is_distroless_nonroot_and_locked():
     text = (REPO / ".docker/htrflow-campaigns.dockerfile").read_text()
     assert "gcr.io/distroless/python3-debian13:nonroot@sha256:" in text
     assert (
-        "uv sync --locked --package htrflow-converter --extra hook --no-editable"
-        in text
+        "uv sync --locked --no-install-workspace --no-build"
+        " --package htrflow-converter --extra hook" in text
     )
+    assert "uv build --wheel --package htrflow-converter --require-hashes" in text
     assert "USER 1000:1000" in text
     assert 'ENTRYPOINT ["/app/.venv/bin/htrflow-campaigns"]' in text
 
@@ -232,20 +234,70 @@ def test_every_python_install_in_the_wrapper_image_is_locked() -> None:
     """Finding 3060: sentencepiece, transformers and protobuf went in by a
     bare version pin, so their dependencies resolved afresh at every build
     and nothing checked a hash. Every `uv pip install` now installs a
-    hashed `uv export` of uv.lock or a hashed requirements file, or this
-    repo's own wrapper with --no-deps. The amd64 torch swap from the cu128
-    index, the last exception, is gone: torch comes from the base's lock."""
-    installs = [
-        part
+    hashed `uv export` of uv.lock or a hashed requirements file, or a wheel
+    the same RUN just built with a hashed build backend, with --no-deps. The
+    amd64 torch swap from the cu128 index, the last exception, is gone: torch
+    comes from the base's lock."""
+    runs = [
+        line
         for line in _logical_lines(WRAPPER_DOCKERFILE.read_text())
-        for part in line.split("&&")
-        if "uv pip install" in part
+        if "uv pip install" in line
     ]
-    assert installs
-    for install in installs:
-        assert "--require-hashes" in install or install.rstrip().endswith(
-            "--no-deps /opt/wrapper"
-        ), install
+    assert runs
+    for run in runs:
+        for install in (p for p in run.split("&&") if "uv pip install" in p):
+            if "--require-hashes" in install:
+                continue
+            assert install.rstrip().endswith("--no-deps /tmp/dist/*.whl"), install
+            assert "uv build --wheel" in run and "--require-hashes" in run, run
+
+
+@pytest.mark.parametrize("name", DOCKERFILES)
+def test_nothing_is_built_with_an_unpinned_build_backend(name: str) -> None:
+    """Audit 0923 D-11: a lock pins what is installed, not what builds it,
+    so `uv sync` and `uv pip install <dir>` fetched hatchling unpinned and
+    unhashed. `uv sync` cannot take hashed build constraints, so it only
+    installs dependencies, as wheels (--no-build); every package built from
+    source goes through `uv build` with .docker/build-constraints.txt and
+    --require-hashes, which refuses a build requirement not hashed there."""
+    lines = _logical_lines((REPO / ".docker" / name).read_text())
+    commands = [c.strip() for line in lines for c in line.split("&&")]
+    syncs = [c for c in commands if re.search(r"\buv sync\b", c)]
+    builds = [c for c in commands if re.search(r"\buv build\b", c)]
+    assert syncs and builds
+    for sync in syncs:
+        assert "--no-build" in sync, sync
+        assert re.search(r"--no-install-(project|workspace)\b", sync), sync
+    for build in builds:
+        assert "--require-hashes" in build, build
+        assert "--build-constraints /tmp/build-constraints.txt" in build, build
+    for line in lines:
+        if re.search(r"\buv build\b", line):
+            assert (
+                "--mount=type=bind,source=.docker/build-constraints.txt,"
+                "target=/tmp/build-constraints.txt" in line
+            ), line
+    for install in (c for c in commands if "uv pip install" in c):
+        # a directory would be built by pip with an unpinned backend
+        assert not re.search(r"\s/opt/\S+$|\s\.$", install), install
+
+
+def test_the_build_constraints_are_hatchling_pinned_and_hashed() -> None:
+    compiled = BUILD_CONSTRAINTS.read_text()
+    pins = re.findall(r"^([a-z0-9-]+)==(\S+)", compiled, re.M)
+    assert "hatchling" in dict(pins)
+    for name, ver in pins:
+        assert re.search(
+            rf"^{re.escape(name)}=={re.escape(ver)}[^\n]*\\\n\s+--hash=sha256:",
+            compiled,
+            re.M,
+        ), name
+    for pyproject in [
+        *REPO.glob("packages/*/pyproject.toml"),
+        HTRFLOW_BASE / "pyproject.toml",
+    ]:
+        system = tomllib.loads(pyproject.read_text())["build-system"]
+        assert system["requires"] == ["hatchling"], pyproject
 
 
 def test_every_transformers_line_is_a_hashed_requirements_file() -> None:
@@ -310,7 +362,7 @@ def test_the_htrflow_base_is_built_from_pinned_inputs() -> None:
     assert ref, "htrflow must be pinned by full commit"
     assert "ADD https://github.com/AI-Riksarkivet/htrflow.git#${HTRFLOW_REF} /" in text
     syncs = re.findall(r"^RUN uv sync.*$", text, re.M)
-    assert len(syncs) == 2 and all("--locked" in s for s in syncs), syncs
+    assert syncs == ["RUN uv sync --locked --no-install-project --no-build"], syncs
     assert "cmp -s - /app/pyproject.toml" in text
 
     # The committed pyproject.toml is htrflow's plus the overlay, and the

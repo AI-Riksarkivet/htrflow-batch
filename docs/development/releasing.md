@@ -42,8 +42,10 @@ architecture, in three stages:
 - **`htrflow-src`** — htrflow's source at the commit the dockerfile pins
   (`HTRFLOW_REF`), fetched by BuildKit. A local checkout can stand in for
   it ([Dev cluster](dev-cluster.md#the-gpu-wrapper-image)).
-- **`htrflow-builder`** — htrflow's virtual environment, installed with
-  `uv sync --locked` against `.docker/htrflow-base/`: htrflow's own
+- **`htrflow-builder`** — htrflow's virtual environment, its dependencies
+  installed with `uv sync --locked --no-build` against
+  `.docker/htrflow-base/` and htrflow itself built into a wheel with a
+  pinned build backend (see below): htrflow's own
   `pyproject.toml` with this repository's `overlay.toml` appended, and the
   lock both resolve to. The overlay pins torch and torchvision per
   architecture — builds from PyTorch's CUDA 12.8 wheel index where those
@@ -101,8 +103,17 @@ own requirements are met. A `TRANSFORMERS_VERSION` those files do not pin
 fails the build. The htrflow base installs htrflow, torch and the rest of
 its dependencies with `uv sync --locked` from the lock committed in
 `.docker/htrflow-base/`: htrflow does not commit its own, and locking
-afresh on every build meant two builds of one commit could differ. Nothing
-is resolved at build time. Refresh that lock with `make lock-htrflow-base`
+afresh on every build meant two builds of one commit could differ.
+
+The packages the images build from source — htrflow and the three workspace
+members — need a build backend, and a lock pins what gets installed, not
+what builds it. That backend and its dependencies are the hashed
+`.docker/build-constraints.txt`, compiled from the `.in` file beside it with
+`make build-constraints`. Every image builds its packages with `uv build
+--build-constraints … --require-hashes`, which refuses a build requirement
+that file does not pin and hash, and installs the dependencies with
+`--no-build`, which refuses to build any of them from source. Nothing is
+resolved at build time. Refresh that lock with `make lock-htrflow-base`
 after moving `HTRFLOW_REF` or editing the overlay, and review the diff.
 
 The build argument `HTRFLOW_BASE_REVISION` records which htrflow the image
