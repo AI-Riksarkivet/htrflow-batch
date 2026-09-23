@@ -286,6 +286,10 @@ class FakeCluster(Cluster):
                 _drop(stored, path)
         for path, value in sent.items():
             _put(stored, path, copy.deepcopy(value))
+        if current is None:  # what the API server defaults on create
+            for (k, path), default in _DEFAULTS.items():
+                if k == kind and _at(stored, path) is _MISSING:
+                    _put(stored, path, default)
         owners[mine] = set(sent)
         if not dry_run:
             self._store(kind, name, stored, owners)
@@ -308,8 +312,14 @@ class FakeCluster(Cluster):
     def _method(self, kind: str, verb: str, name: str = ""):
         def patch(name, ns, obj, **kw):
             if kw.get("dry_run"):
+                # Held to the same rules as the real write: a dry run answers
+                # what the write would.
                 self.calls.append(("dry-run", kind, name))
-                return _Body(obj)
+                return _Body(
+                    self.server_side_apply(
+                        obj, kw["field_manager"], bool(kw.get("force")), True
+                    )
+                )
             self.calls.append(("apply", kind, name))
             self.applied[name] = obj
             self.managers[name] = kw.get("field_manager")
@@ -1544,6 +1554,14 @@ def test_a_field_manager_owns_what_it_applies_and_conflicts_are_409s(cluster):
     assert e.value.status == 409 and KUEUE_MANAGER in e.value.body
     cluster.server_side_apply(job, "a", force=True)
     assert cluster.find("Job", "j")["spec"]["suspend"] is True
+    # Created without it, a Job has the default, owned by nobody.
+    cluster.server_side_apply({**job, "metadata": {"name": "k"}, "spec": {}}, "a")
+    assert cluster.find("Job", "k")["spec"] == {"suspend": False}
+    # A dry run answers what the write would: the same conflict.
+    cluster.update("Job", "j", KUEUE_MANAGER, {"spec": {"suspend": False}})
+    with pytest.raises(ApiException):
+        cluster.server_side_apply(job, "a", dry_run=True)
+    cluster.server_side_apply(job, "a", force=True)
     # Released by its last owner: a Job's suspend goes back to its default.
     cluster.server_side_apply({**job, "spec": {"x": 1}}, "a")
     assert cluster.find("Job", "j")["spec"] == {"x": 1, "suspend": False}
