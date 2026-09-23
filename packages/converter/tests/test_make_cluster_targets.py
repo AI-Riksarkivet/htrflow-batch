@@ -186,10 +186,24 @@ def test_e2e_fails_when_the_warm_up_does_not_complete(stubs: Stubs):
     stubs.stub("kubectl", _kubectl_jobs({"a": "1|0|Complete"}, warmup_rc=1))
     result = _e2e_wait(stubs)
     assert result.returncode != 0
-    assert stubs.calls("kubectl") == [
-        f"kubectl -n {NAMESPACE} wait --for=condition=complete --timeout=600s"
-        f" job -l {SELECTOR},app=htrflow-warmup"
-    ]
+    # One call -- the wait -- and it was for the warm-up; nothing after it.
+    [call] = stubs.calls("kubectl")
+    assert " wait " in call and f"{SELECTOR},app=htrflow-warmup" in call
+
+
+@pytest.mark.parametrize(
+    "conditions",
+    ["SuccessCriteriaMet", "FailureTarget"],
+    ids=["success-criteria", "failure-target"],
+)
+def test_an_interim_condition_is_not_the_end(stubs: Stubs, conditions: str):
+    """Kubernetes sets SuccessCriteriaMet or FailureTarget before Complete or
+    Failed, while pods still run: counted as done, the wait would stop early
+    (test audit TA-infra-17). Only the deadline ends it."""
+    stubs.stub("kubectl", _kubectl_jobs({"a": f"3|0-2|{conditions}"}))
+    result = _e2e_wait(stubs, timeout="0")
+    assert result.returncode != 0
+    assert "still running: job.batch/a" in result.stdout + result.stderr
 
 
 def test_e2e_gives_up_at_the_deadline(stubs: Stubs):
