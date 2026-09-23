@@ -106,7 +106,7 @@ def _load_config(path: Path, problems: list[str]) -> ConverterConfig:
         problems.append(_not_a_mapping(path.name, "converter"))
         return ConverterConfig()
     try:
-        return ConverterConfig(**doc)
+        return ConverterConfig.model_validate(doc)
     except _PydanticValidationError as e:
         problems.extend(_problems(path.name, e))
         return ConverterConfig()
