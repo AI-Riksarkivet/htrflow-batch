@@ -357,7 +357,11 @@ the run metrics (`wall_seconds`, `gpu_stall_seconds`, `pages_per_second`,
 On any failure the wrapper writes the termination log (local, instant)
 before exiting non-zero — never a completion marker. Every URL in the
 shipped run log, in termination messages and in `page_sources` is redacted
-(no userinfo, no query string); `source_manifest` in `manifest.json` is
+(no userinfo, no query string). A URL in free text runs to the first
+whitespace, `"`, `<`, `>` or backtick, so a `)`, `]` or `'` inside it does
+not end it early; the same characters at its end are kept as the text's own
+punctuation. httpx's per-request `HTTP Request:` lines are not logged at
+all. `source_manifest` in `manifest.json` is
 written verbatim — the manifest URL the Job fetched, or, for `IMAGES`
 volumes, the synthetic manifest id the wrapper published to `sources/`.
 

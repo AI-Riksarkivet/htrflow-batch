@@ -255,6 +255,9 @@ def _main(
     is the pod's activeDeadlineSeconds (the converter renders it): at the
     deadline the kubelet SIGTERMs us and main()'s handler does the rest."""
     capture.attach_logging()  # not basicConfig: see LogCapture.attach_logging
+    # httpx logs every request, whole URL and all, at INFO: a line a page in
+    # the world-readable run log, one redaction miss from a token (W-3).
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     t_start = time.monotonic()
     # W10: set on every failure path so queued downloads stop short instead
     # of holding the interpreter (executor workers are joined at exit).

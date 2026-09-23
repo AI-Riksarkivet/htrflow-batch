@@ -127,13 +127,25 @@ def source_digest(url: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-_URL_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s\"'<>)\]]+")
+#: A URL in free text runs to the first character no URL may contain
+#: unencoded (RFC 3986): whitespace, `"`, `<`, `>`, a backtick. `)`, `]` and
+#: `'` are legal inside one -- stopping at them left the query after
+#: `img(1).jpg` unredacted (audit 0923 W-3) -- so they are only trimmed off
+#: the END, as the text's punctuation, below.
+_URL_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s\"<>`]+")
+_TRAILING = ")]}'.,;:!?"
+
+
+def _redact_match(match: re.Match) -> str:
+    url = match.group(0)
+    core = url.rstrip(_TRAILING)
+    return redact_url(core) + url[len(core) :]
 
 
 def redact_urls(text: str) -> str:
     """Apply redact_url to every URL inside free text (log lines, error
     messages, tracebacks)."""
-    return _URL_RE.sub(lambda m: redact_url(m.group(0)), text)
+    return _URL_RE.sub(_redact_match, text)
 
 
 def check_http_url(url: str, what: str) -> None:
