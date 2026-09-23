@@ -947,3 +947,33 @@ def test_outside_a_checkout_the_commit_is_still_unknown(tmp_path, monkeypatch):
 
     _without_git(monkeypatch, {})
     assert cli._git_head(tmp_path) == "unknown"
+
+
+def test_validate_rendered_passes_a_checkout_whose_render_is_committed(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    assert main(["validate", "--rendered", str(repo)]) == 0, capsys.readouterr()
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("committed", [True, False])
+def test_validate_rendered_refuses_a_checkout_ci_has_not_rendered(
+    tmp_path, capsys, committed
+):
+    """audit 0923 S-9: the Argo CD hook clones the branch's HEAD, not the
+    commit CI rendered, so a push landing after CI's render commit was
+    applied unrendered and unchecked by the Policy job. The hook runs this
+    before the apply: HEAD's own render has to be the rendered/ HEAD
+    carries."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    if committed:
+        assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    (repo / "campaigns" / "new.yaml").write_text("pipeline: demo-v1\nvolumes: [N1]\n")
+    capsys.readouterr()
+    assert main(["validate", "--rendered", str(repo)]) == 1
+    said = capsys.readouterr().out
+    assert said.startswith(f"{repo / 'rendered'} is not what this checkout renders")
+    assert "nothing CI did not render" in said
+    assert main(["validate", str(repo)]) == 0  # a pull request is not held to it

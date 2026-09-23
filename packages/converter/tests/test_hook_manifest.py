@@ -128,3 +128,17 @@ def test_the_apply_says_who_applied_it():
     apply = job()["spec"]["template"]["spec"]["containers"][0]
     env = {e["name"]: e.get("value") for e in apply["env"]}
     assert env.get("HTRFLOW_APPLIED_BY", "").startswith("argocd-hook/"), apply["env"]
+
+
+def test_the_apply_runs_only_on_a_checkout_ci_rendered():
+    """audit 0923 S-9: the clone takes the branch's HEAD, which can be a push
+    that landed after CI's render commit. An init container between the
+    clone and the apply refuses a checkout whose rendered/ is not its own
+    render, so the apply never runs on what CI did not render and check."""
+    spec = job()["spec"]["template"]["spec"]
+    names = [c["name"] for c in spec["initContainers"]]
+    assert names == ["clone", "check"]
+    check = spec["initContainers"][1]
+    assert check["args"] == ["validate", "--rendered", "/repo"]
+    mounts = {m["name"]: m["mountPath"] for m in check["volumeMounts"]}
+    assert mounts == {"repo": "/repo", "tmp": "/tmp"}
