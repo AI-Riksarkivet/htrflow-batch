@@ -251,9 +251,86 @@ def test_the_unscaled_fallback_does_not_spend_an_attempt(tmp_path):
     )
     r = fetch_page(page, tmp_path, _client(handler), 1, 0.0)
     assert r.error is None
-    assert [u.rsplit("/full/", 1)[1] for u in seen] == [
+    assert [u.rsplit("/full/", 1)[1] for u in seen if "/full/" in u] == [
         "2500,/0/default.jpg",
         "max/0/default.jpg",
+    ]
+
+
+def _after_a_400(tmp_path, info, url="https://img/iiif/full/2500,/0/default.jpg"):
+    """The image request that follows a 400 on the sized one, when the
+    service's info.json answers ``info`` (a dict, or a status code)."""
+    seen = []
+
+    def handler(req):
+        seen.append(str(req.url))
+        if req.url.path.endswith("/info.json"):
+            if isinstance(info, int):
+                return httpx.Response(info)
+            return httpx.Response(200, json=info)
+        if "/full/2500,/" in req.url.path:
+            return httpx.Response(400)
+        return httpx.Response(200, content=JPEG)
+
+    page = PageRef(index=1, name="0001", image_url=url, canvas={})
+    r = fetch_page(page, tmp_path, _client(handler), 1, 0.0)
+    assert r.error is None
+    return seen
+
+
+@pytest.mark.parametrize(
+    "info, size",
+    [
+        # narrower than the cap: its full size is not an upscale
+        ({"width": 1281, "height": 1800}, "max"),
+        # a Level 0 service offers listed sizes only: the largest within the cap
+        (
+            {
+                "width": 9000,
+                "height": 12000,
+                "sizes": [
+                    {"width": 750, "height": 1000},
+                    {"width": 2250, "height": 3000},
+                    {"width": 4500, "height": 6000},
+                ],
+            },
+            "2250,3000",
+        ),
+        # a server limit below the cap (v3 maxWidth, v2 profile maxWidth)
+        ({"width": 9000, "height": 12000, "maxWidth": 2000}, "2000,"),
+        (
+            {"width": 9000, "profile": ["level1.json", {"maxWidth": 1600}]},
+            "1600,",
+        ),
+        # nothing advertised, or no info.json at all: max is all there is
+        ({"width": 9000, "height": 12000}, "max"),
+        (404, "max"),
+    ],
+    ids=["narrow", "level0-sizes", "v3-maxwidth", "v2-maxwidth", "none", "no-info"],
+)
+def test_the_400_fallback_asks_for_the_largest_size_within_the_cap(
+    tmp_path, info, size
+):
+    """Audit 0923 W-9: the fallback went straight to `/full/max/`, the
+    full-resolution master, even for a canvas whose service would have
+    served a size within MAX_IMAGE_WIDTH -- and 64 masters in the lookahead
+    outgrow the memory-backed workdir. The service's own info.json says what
+    it has; `max` is the last resort, not the first."""
+    seen = _after_a_400(tmp_path, info)
+    assert seen[1] == "https://img/iiif/info.json"
+    assert seen[-1] == f"https://img/iiif/full/{size}/0/default.jpg"
+
+
+def test_the_400_fallback_keeps_the_query_the_image_was_asked_with(tmp_path):
+    """A token that authorises the image authorises its info.json too."""
+    seen = _after_a_400(
+        tmp_path,
+        {"width": 1000},
+        url="https://img/iiif/full/2500,/0/default.jpg?token=T",
+    )
+    assert seen[1:] == [
+        "https://img/iiif/info.json?token=T",
+        "https://img/iiif/full/max/0/default.jpg?token=T",
     ]
 
 
@@ -289,7 +366,11 @@ def test_a_400_after_the_fallback_does_not_loop(tmp_path):
     )
     r = fetch_page(page, tmp_path, _client(handler), 2, 0.0)
     assert r.error == "HTTP 400"
-    assert len(calls) == 2  # the sized one, then the unscaled one
+    # the sized one, then the unscaled one (and the info.json between them)
+    assert [u for u in calls if "/full/" in u] == [
+        "https://img/iiif/full/2500,/0/default.jpg",
+        "https://img/iiif/full/max/0/default.jpg",
+    ]
 
 
 def _real_jpeg(width: int, height: int) -> bytes:

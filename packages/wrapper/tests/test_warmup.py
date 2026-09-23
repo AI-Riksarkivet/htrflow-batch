@@ -365,8 +365,8 @@ def test_warmup_refuses_a_pin_a_key_beside_model_settings_overrides(
     assert built == []
     error = json.loads(term_path.read_text())["error"]
     assert error == (
-        "step 1 (Segmentation): model Riksarkivet/yolov9-regions-1 is not pinned "
-        f"to a commit — model_settings.revision is {pin}, but the revision key "
+        "step 1 (Segmentation): model Riksarkivet/yolov9-regions-1 does not load "
+        f"its pinned revision — model_settings.revision is {pin}, but the revision key "
         "beside model_settings overrides it and htrflow would load revision "
         "None; move every model setting under model_settings"
     )

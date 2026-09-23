@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
@@ -32,6 +34,37 @@ HEAD_CONCURRENCY = 16
 DELETE_BATCH = 1000
 
 
+def _content_md5(params, **_) -> None:
+    """DeleteObjects as the S3 API first defined it: a Content-MD5 and no
+    other checksum (audit 0923 W-10, review M-1). botocore resolves a CRC32
+    for it -- ``x-amz-checksum-crc32`` and ``x-amz-sdk-checksum-algorithm``
+    -- which stores that predate flexible checksums refuse. ``before-call``
+    comes between that resolution and applying it, so the resolved CRC32 is
+    withdrawn here and the MD5 set in its place."""
+    checksum = params["context"].get("checksum", {})
+    checksum.pop("request_algorithm", None)
+    checksum.pop("request_algorithm_header", None)
+    digest = hashlib.md5(params["body"], usedforsecurity=False).digest()
+    params["headers"]["Content-MD5"] = base64.b64encode(digest).decode()
+
+
+def _s3_client(cfg: Config, **settings):
+    """An S3 client that sends a checksum only where an operation requires
+    one (W-10): botocore's default streams every PutObject `aws-chunked` with
+    a CRC32 trailer, which HCP and older MinIO or Ceph refuse."""
+    client = boto3.client(
+        "s3",
+        endpoint_url=cfg.s3_endpoint or None,
+        config=BotoConfig(
+            request_checksum_calculation="when_required",
+            response_checksum_validation="when_required",
+            **settings,
+        ),
+    )
+    client.meta.events.register("before-call.s3.DeleteObjects", _content_md5)
+    return client
+
+
 def _json_bytes(obj: dict) -> bytes:
     return json.dumps(obj, ensure_ascii=False).encode()
 
@@ -56,24 +89,23 @@ class ResultStore:
         # W6: default boto timeouts (60 s connect/read, legacy retries) let an
         # S3 outage pin every PUT for minutes and the run for hours. Bounded
         # here; stream.consume aborts after N consecutive upload failures.
-        self.client = boto3.client(
-            "s3",
-            endpoint_url=cfg.s3_endpoint or None,
-            config=BotoConfig(
-                connect_timeout=10,
-                read_timeout=60,
-                retries={"max_attempts": 3, "mode": "standard"},
-            ),
+        self.client = _s3_client(
+            cfg,
+            connect_timeout=10,
+            read_timeout=60,
+            retries={"max_attempts": 3, "mode": "standard"},
         )
         # Run-log uploads are best-effort and periodic: a dead S3 must not
         # pin a shipping thread (or the final upload at exit) for the default
-        # minutes of connect/read timeouts times legacy retries.
-        self._log_client = boto3.client(
-            "s3",
-            endpoint_url=cfg.s3_endpoint or None,
-            config=BotoConfig(
-                connect_timeout=5, read_timeout=30, retries={"max_attempts": 2}
-            ),
+        # minutes of connect/read timeouts times legacy retries. Two attempts
+        # in all -- `max_attempts` would count retries, and 2 was three (W-7)
+        # -- so one upload is ~42 s at worst, and logship.FINAL_SHIP_SECONDS
+        # holds a periodic one in flight plus the final one.
+        self._log_client = _s3_client(
+            cfg,
+            connect_timeout=5,
+            read_timeout=15,
+            retries={"total_max_attempts": 2, "mode": "standard"},
         )
 
     def _key(self, rel: str) -> str:
@@ -143,13 +175,19 @@ class ResultStore:
                 ) from e
             bodies[fmt] = data
         metadata = {SOURCE_META: source} if source else None
-        for fmt in PAGE_FORMATS:
-            self._put(
-                self._key(f"{fmt}/{name}.xml"),
-                bodies[fmt],
-                "application/xml",
-                metadata=metadata,
-            )
+        try:
+            for fmt in PAGE_FORMATS:
+                key = self._key(f"{fmt}/{name}.xml")
+                self._put(key, bodies[fmt], "application/xml", metadata=metadata)
+        except Exception:
+            # W-1 (audit 0923): a PAGE without its ALTO is a page not done;
+            # best-effort, since the store has just failed, and the next
+            # attempt's resume clears whatever this leaves.
+            try:
+                self.delete_pages([name])
+            except Exception:
+                pass
+            raise
         try:
             self.page_dims[name] = parse_alto_dims(roots["alto"])
         except ValueError:
@@ -178,11 +216,15 @@ class ResultStore:
         accounted for by the previous run's objects -- and publish would read
         that stale ALTO into iiif.json while manifest.json records the page
         as failed. A key that is not there is not an error."""
-        keys = [
-            {"Key": self._key(f"{fmt}/{name}.xml")}
-            for name in sorted(names)
-            for fmt in PAGE_FORMATS
-        ]
+        self.delete(
+            [f"{fmt}/{name}.xml" for name in sorted(names) for fmt in PAGE_FORMATS]
+        )
+
+    def delete(self, rel_keys: list[str]) -> None:
+        """Objects under the volume prefix, through DeleteObjects: it reports
+        per key and treats a missing one as deleted, where a single-object
+        DELETE of a missing key may answer 404 on some stores (review M-2)."""
+        keys = [{"Key": self._key(rel)} for rel in rel_keys]
         for i in range(0, len(keys), DELETE_BATCH):
             response = self.client.delete_objects(
                 Bucket=self.bucket,
@@ -192,7 +234,7 @@ class ResultStore:
             if errors:
                 # a stale object left standing is the very thing this prevents
                 raise RuntimeError(
-                    f"could not delete {len(errors)} stale page output(s), "
+                    f"could not delete {len(errors)} stale object(s), "
                     f"first: {errors[0].get('Key')}: {errors[0].get('Message')}"
                 )
 

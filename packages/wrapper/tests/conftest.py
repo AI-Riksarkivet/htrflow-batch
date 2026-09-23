@@ -4,6 +4,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
+from htrflow_batch import driver as driver_mod
 from htrflow_batch import main as main_mod
 from htrflow_batch import warmup as warmup_mod
 from htrflow_batch.config import Config
@@ -19,6 +20,13 @@ def hard_exits(monkeypatch) -> list:
     for module in (main_mod, warmup_mod):
         monkeypatch.setattr(module, "_hard_exit", codes.append)
     return codes
+
+
+@pytest.fixture(autouse=True)
+def fresh_abandoned_threads(monkeypatch) -> None:
+    """``driver._ABANDONED`` is process-wide; one test's released steps must
+    not count against another's leak limit."""
+    monkeypatch.setattr(driver_mod, "_ABANDONED", [])
 
 
 def _canvas(i: int, service_id: str) -> dict:

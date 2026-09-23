@@ -1,3 +1,5 @@
+import base64
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -68,6 +70,28 @@ def test_upload_page_puts_page_before_alto(cfg, s3, tmp_path, monkeypatch):
     assert order == ["page", "alto"]
 
 
+def test_an_alto_put_that_fails_takes_the_page_put_with_it(
+    cfg, s3, tmp_path, monkeypatch
+):
+    """Audit 0923 W-1: the PAGE PUT landed, the ALTO PUT did not, and the
+    orphan page/NNNN.xml stayed behind for a page the run then records as not
+    done. The half pair goes, and the store's error is what the caller sees."""
+    store = ResultStore(cfg)
+    real = store.client.put_object
+
+    def put(**kw):
+        if kw["Key"].endswith("alto/0001.xml"):
+            raise ConnectionError("SlowDown")
+        return real(**kw)
+
+    monkeypatch.setattr(store.client, "put_object", put)
+    alto = _mk(tmp_path, "alto/0001.xml", "<alto/>")
+    page = _mk(tmp_path, "page/0001.xml", "<PcGts/>")
+    with pytest.raises(ConnectionError, match="SlowDown"):
+        store.upload_page("0001", {"alto": alto, "page": page})
+    assert store.stored_pages() == {"page": set(), "alto": set()}
+
+
 def test_done_pages_requires_both_formats(cfg, s3):
     store = ResultStore(cfg)
     s3.put_object(
@@ -121,6 +145,84 @@ def test_main_client_has_bounded_timeouts_and_retries(cfg, s3):
     assert c.read_timeout == 60
     # botocore normalises max_attempts=3 (retries) to 4 total attempts
     assert c.retries == {"mode": "standard", "total_max_attempts": 4}
+
+
+def test_the_clients_send_what_an_s3_compatible_store_accepts(cfg, s3, tmp_path):
+    """Audit 0923 W-10: botocore's default flexible checksums send PutObject
+    as `aws-chunked` with a CRC32 trailer and DeleteObjects with a CRC32 in
+    place of the Content-MD5 the S3 API first required -- which several
+    S3-compatible stores (HCP, older MinIO and Ceph) refuse. Checksums only
+    where an operation requires one, and DeleteObjects carries Content-MD5."""
+    store = ResultStore(cfg)
+    for client in (store.client, store._log_client):
+        c = client.meta.config
+        assert c.request_checksum_calculation == "when_required"
+        assert c.response_checksum_validation == "when_required"
+    sent = {}
+
+    def record(request, **_):
+        op = "delete" if "delete" in request.url else "put"
+        sent.setdefault(op, (dict(request.headers), request.body))
+
+    store.client.meta.events.register("before-send", record)
+    store._log_client.meta.events.register("before-send", record)
+    store.upload_page(
+        "0001",
+        {
+            "alto": _mk(tmp_path, "alto/0001.xml", "<alto/>"),
+            "page": _mk(tmp_path, "page/0001.xml", "<PcGts/>"),
+        },
+    )
+    store.delete_pages(["0001"])
+    put, _ = sent["put"]
+    assert "aws-chunked" not in str(put.get("Content-Encoding", b""))
+    assert not any(k.lower().startswith("x-amz-trailer") for k in put)
+    # Review M-1: Content-MD5 and nothing in its place or beside it -- a
+    # store that refuses the CRC32 headers must not meet them either.
+    delete, body = sent["delete"]
+    body = body if isinstance(body, bytes) else body.read()
+    md5 = base64.b64encode(hashlib.md5(body).digest())
+    assert delete["Content-MD5"] in (md5, md5.decode())
+    checksums = [
+        k
+        for k in delete
+        if k.lower().startswith(("x-amz-checksum", "x-amz-sdk-checksum"))
+    ]
+    assert checksums == []
+    assert store.done_pages() == set()
+
+
+def test_the_log_client_makes_two_attempts_not_three(cfg, s3):
+    """Audit 0923 W-7: `max_attempts` counts RETRIES, so the log client's
+    `max_attempts: 2` was three attempts -- the SIGTERM budget assumed two."""
+    c = ResultStore(cfg)._log_client.meta.config
+    assert c.retries == {"mode": "standard", "total_max_attempts": 2}
+    assert (c.connect_timeout, c.read_timeout) == (5, 15)
+
+
+def test_deleting_a_missing_key_is_no_error_on_any_store(cfg, s3, monkeypatch):
+    """Review M-2: a single-object DELETE of a key that is not there answers
+    204 on AWS, MinIO and Ceph, but a store that answers 404 made resume
+    raise on every attempt after a SIGTERM before publish. DeleteObjects
+    reports per key and treats a missing one as deleted, so every delete
+    goes through it."""
+    store = ResultStore(cfg)
+
+    def refuse(**kw):
+        raise AssertionError("single-object DELETE used")
+
+    monkeypatch.setattr(store.client, "delete_object", refuse)
+    store.delete(["manifest.json"])
+    store.delete(["iiif.json"])
+
+
+def test_delete_removes_the_keys_it_is_given(cfg, s3):
+    store = ResultStore(cfg)
+    store.put_json("manifest.json", {})
+    store.put_json("progress.json", {})
+    store.delete(["manifest.json"])
+    keys = [o["Key"] for o in s3.list_objects_v2(Bucket=cfg.s3_bucket)["Contents"]]
+    assert keys == ["demo-v1/SE-RA-1234/progress.json"]
 
 
 def test_get_json_or_none(cfg, s3):
