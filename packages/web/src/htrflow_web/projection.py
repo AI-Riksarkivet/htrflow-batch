@@ -684,13 +684,14 @@ def browser_http_url(value: str) -> bool:
     host = parts.netloc.rpartition("@")[2]
     if host.startswith("["):
         literal, _, port = host[1:].partition("]")
-        return (port == "" or port.startswith(":")) and _ipv6(literal)
+        ok = port == "" or port.startswith(":")
+        return ok and _address(ipaddress.IPv6Address, literal)
     host = host.partition(":")[0].removesuffix(".")
     labels = host.split(".")
     if "" in labels:  # no host at all, or an empty label
         return False
     if _NUMERIC.fullmatch(labels[-1]):
-        return _ipv4(host)
+        return _address(ipaddress.IPv4Address, host)
     return all(_label(label) for label in labels)
 
 
@@ -727,22 +728,14 @@ def _letters(label: str) -> bool:
     )
 
 
-def _ipv4(host: str) -> bool:
+def _address(kind: type, text: str) -> bool:
+    """Whether ``text`` is an ``ipaddress.IPv4Address``/``IPv6Address``. A
+    zone id (`%eth0`) is refused: Python takes one and WHATWG does not."""
     try:
-        ipaddress.IPv4Address(host)
+        kind(text)
     except ValueError:
         return False
-    return True
-
-
-def _ipv6(literal: str) -> bool:
-    if "%" in literal:  # a zone id, which Python takes and WHATWG does not
-        return False
-    try:
-        ipaddress.IPv6Address(literal)
-    except ValueError:
-        return False
-    return True
+    return "%" not in text
 
 
 def _terminated_message(statuses: list[dict], name: str | None) -> str | None:
