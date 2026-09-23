@@ -1006,6 +1006,29 @@ def test_a_job_that_is_not_the_converters_shape_is_refused(
     assert SAID[case] in out
 
 
+def test_a_job_the_previous_converter_rendered_is_still_admitted(
+    tmp_path: Path, job_shape: Path
+):
+    """The chart goes first in an upgrade, so its job-shape must admit what
+    the previous converter release renders until each campaigns repo moves
+    its hook image: no INDEX_FAILURE_COUNT or BACKOFF_LIMIT_PER_INDEX, and
+    the model cache mounted whole rather than by subPath. The scripts are
+    the same in both releases."""
+    batch, warmup = converter_jobs()
+    env = _main(batch)["env"]
+    env[:] = [
+        e
+        for e in env
+        if e["name"] not in ("INDEX_FAILURE_COUNT", "BACKOFF_LIMIT_PER_INDEX")
+    ]
+    for j in (batch, warmup):
+        for c in [*_pod(j)["containers"], *_pod(j).get("initContainers", [])]:
+            for m in c["volumeMounts"]:
+                m.pop("subPath", None)
+        verdict, out = admission(tmp_path, job_shape, j, user=APPLY_SA)
+        assert verdict == "admitted", out
+
+
 def test_the_model_cache_may_be_mounted_by_sub_path(tmp_path: Path, job_shape: Path):
     """The cache is one directory per pipeline recipe on the one PVC: a
     pod mounts its own directory with `subPath`, and that is still the

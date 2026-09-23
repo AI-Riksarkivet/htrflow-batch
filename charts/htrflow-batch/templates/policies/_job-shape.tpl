@@ -62,7 +62,8 @@ containers, initContainers, args, imageRe.
 {{- end }}
 {{- $fieldChecks := list }}
 {{- range $k, $v := $shape.fieldEnv }}
-{{- $fieldChecks = append $fieldChecks (printf "pod.containers[0].env[?name == '%s'].valueFrom.fieldRef.fieldPath != `%s` && '%s'" $k (toJson (list $v)) $k) }}
+{{- /* Absent is allowed: the previous converter release rendered no such env. */}}
+{{- $fieldChecks = append $fieldChecks (printf "length(pod.containers[0].env[?name == '%s']) > `0` && pod.containers[0].env[?name == '%s'].valueFrom.fieldRef.fieldPath != `%s` && '%s'" $k $k (toJson (list $v)) $k) }}
 {{- end }}
 {{- $allowedKeys := "['name', 'image', 'command', 'args', 'env', 'volumeMounts', 'securityContext', 'resources', 'imagePullPolicy', 'terminationMessagePath', 'terminationMessagePolicy']" }}
 - name: {{ trimPrefix "htrflow-" .role }}-job-shape
