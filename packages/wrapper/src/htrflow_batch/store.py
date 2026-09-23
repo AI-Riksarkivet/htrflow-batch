@@ -35,9 +35,15 @@ DELETE_BATCH = 1000
 
 
 def _content_md5(params, **_) -> None:
-    """DeleteObjects as the S3 API first defined it, with a Content-MD5:
-    botocore sends a CRC32 in its place, which S3-compatible stores that
-    predate flexible checksums refuse (audit 0923 W-10)."""
+    """DeleteObjects as the S3 API first defined it: a Content-MD5 and no
+    other checksum (audit 0923 W-10, review M-1). botocore resolves a CRC32
+    for it -- ``x-amz-checksum-crc32`` and ``x-amz-sdk-checksum-algorithm``
+    -- which stores that predate flexible checksums refuse. ``before-call``
+    comes between that resolution and applying it, so the resolved CRC32 is
+    withdrawn here and the MD5 set in its place."""
+    checksum = params["context"].get("checksum", {})
+    checksum.pop("request_algorithm", None)
+    checksum.pop("request_algorithm_header", None)
     digest = hashlib.md5(params["body"], usedforsecurity=False).digest()
     params["headers"]["Content-MD5"] = base64.b64encode(digest).decode()
 

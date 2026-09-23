@@ -1,3 +1,5 @@
+import base64
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -160,7 +162,7 @@ def test_the_clients_send_what_an_s3_compatible_store_accepts(cfg, s3, tmp_path)
 
     def record(request, **_):
         op = "delete" if "delete" in request.url else "put"
-        sent.setdefault(op, dict(request.headers))
+        sent.setdefault(op, (dict(request.headers), request.body))
 
     store.client.meta.events.register("before-send", record)
     store._log_client.meta.events.register("before-send", record)
@@ -172,9 +174,21 @@ def test_the_clients_send_what_an_s3_compatible_store_accepts(cfg, s3, tmp_path)
         },
     )
     store.delete_pages(["0001"])
-    assert "aws-chunked" not in str(sent["put"].get("Content-Encoding", b""))
-    assert not any(k.lower().startswith("x-amz-trailer") for k in sent["put"])
-    assert "Content-MD5" in sent["delete"]
+    put, _ = sent["put"]
+    assert "aws-chunked" not in str(put.get("Content-Encoding", b""))
+    assert not any(k.lower().startswith("x-amz-trailer") for k in put)
+    # Review M-1: Content-MD5 and nothing in its place or beside it -- a
+    # store that refuses the CRC32 headers must not meet them either.
+    delete, body = sent["delete"]
+    body = body if isinstance(body, bytes) else body.read()
+    md5 = base64.b64encode(hashlib.md5(body).digest())
+    assert delete["Content-MD5"] in (md5, md5.decode())
+    checksums = [
+        k
+        for k in delete
+        if k.lower().startswith(("x-amz-checksum", "x-amz-sdk-checksum"))
+    ]
+    assert checksums == []
     assert store.done_pages() == set()
 
 
