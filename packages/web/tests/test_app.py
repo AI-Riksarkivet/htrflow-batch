@@ -989,6 +989,49 @@ def test_a_campaign_this_api_could_not_have_is_a_404_before_any_read(
     assert reader.asked == []
 
 
+WARMUP_JOB = {
+    "metadata": {
+        "name": "warmup-demo-v1",
+        "namespace": "htr-test",
+        "uid": "uid-warmup",
+        "labels": {
+            "app": "htrflow-warmup",
+            "htrflow.riksarkivet.se/managed-by": "converter",
+            "htrflow.riksarkivet.se/pipeline": "demo-v1",
+        },
+    },
+    "spec": {"completions": 1},
+    "status": {},
+}
+
+
+class _AnyJob(RecordingReader):
+    """A namespace that also holds Jobs that are not campaigns."""
+
+    def get_job(self, namespace: str, name: str) -> dict | None:
+        if name == "warmup-demo-v1":
+            return WARMUP_JOB
+        if name == "someone-elses":
+            return {**JOB, "metadata": {**JOB["metadata"], "labels": {}}}
+        return super().get_job(namespace, name)
+
+
+@pytest.mark.parametrize("name", ["warmup-demo-v1", "someone-elses"])
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+def test_a_job_that_is_not_a_campaign_is_a_404_and_writes_nothing(
+    name: str, method: str
+):
+    """Any Job name in a served namespace was answered as a campaign, and a
+    status record written for it: `HEAD .../warmup-demo-v1` created
+    `campaign-warmup-demo-v1-status` (2026-09-23 audit). Only a Job carrying
+    the campaign labels the list selects by is one."""
+    reader = _AnyJob()
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    resp = client.request(method, f"/api/v1/jobs/htr-test/{name}")
+    assert resp.status_code == 404
+    assert reader.written == []
+
+
 def test_a_campaign_the_cluster_could_carry_still_answers():
     reader = Counting()
     client = TestClient(create_app(reader, progress=FakeProgress()))

@@ -30,7 +30,21 @@ from .projection import KIND_LABEL, STATUS_KIND, pod_fields
 #: Selects campaign progress Jobs only — excludes the per-pipeline warm-up
 #: Jobs, which carry ``managed-by=converter`` too but not ``app`` or
 #: ``campaign`` (packages/converter/src/htrflow_converter/render.py).
-LABEL_SELECTOR = "app=htrflow-batch,htrflow.riksarkivet.se/managed-by=converter"
+CAMPAIGN_LABELS = {
+    "app": "htrflow-batch",
+    "htrflow.riksarkivet.se/managed-by": "converter",
+}
+LABEL_SELECTOR = ",".join(f"{k}={v}" for k, v in CAMPAIGN_LABELS.items())
+
+
+def is_campaign(job: dict) -> bool:
+    """Whether a Job read by name is one ``LABEL_SELECTOR`` would list. The
+    detail route reads any name it is given, and answered -- and wrote a
+    status record for -- a warm-up Job or anything else in the namespace
+    as though it were a campaign (2026-09-23 audit)."""
+    labels = (job.get("metadata") or {}).get("labels") or {}
+    return all(labels.get(k) == v for k, v in CAMPAIGN_LABELS.items())
+
 
 _WARMUP_SELECTOR = "app=htrflow-warmup,htrflow.riksarkivet.se/managed-by=converter"
 
