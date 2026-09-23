@@ -64,6 +64,21 @@ spec:
           resources: &small
             requests: {cpu: 50m, memory: 128Mi}
             limits: {cpu: 500m, memory: 512Mi}
+        # The clone is the branch's HEAD, not the commit CI rendered: a push
+        # that landed after CI's render commit would be applied unrendered
+        # and unchecked by CI's Policy job. This refuses a checkout whose
+        # rendered/ is not its own render, and the apply never starts; CI's
+        # render commit for that push starts the next sync.
+        - name: check
+          image: docker.io/riksarkivet/htrflow-campaigns@sha256:8c060603a369abb219073b3a01883c70865a4223e46d5372a897bfd0686ee0d3   # v0.5.0
+          args: ["validate", "--rendered", "/repo"]
+          env:
+            - {name: HOME, value: /tmp}
+          volumeMounts:
+            - {name: repo, mountPath: /repo}
+            - {name: tmp, mountPath: /tmp}
+          securityContext: *restricted
+          resources: *small
       containers:
         - name: apply
           image: docker.io/riksarkivet/htrflow-campaigns@sha256:8c060603a369abb219073b3a01883c70865a4223e46d5372a897bfd0686ee0d3   # v0.5.0

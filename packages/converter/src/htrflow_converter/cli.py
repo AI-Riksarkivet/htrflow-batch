@@ -108,7 +108,36 @@ def _missing_config(repo: Path) -> str | None:
     )
 
 
-def _validate(repo_dir: str) -> int:
+#: What the Argo CD hook checks before it applies (audit 0923 S-9). It
+#: clones the branch's HEAD, not the commit CI rendered -- a hook cannot
+#: learn the Application's revision -- so a push that landed after CI's
+#: render commit would otherwise be applied unrendered, and unchecked by
+#: the campaigns repo's Policy job.
+_NOT_RENDERED = (
+    "{rendered} is not what this checkout renders: CI has not rendered this "
+    "commit yet (its render commit starts another sync), or CI renders with "
+    "a different converter release from this one (CONVERTER_REF against "
+    "this image) — refusing, so that nothing CI did not render and check is "
+    "applied"
+)
+
+
+def _unrendered(repo: Path) -> str | None:
+    """One sentence unless ``rendered/`` is exactly this checkout's render.
+    ``sync.yaml`` carries a digest of every other rendered file, so it is
+    the one file to compare."""
+    committed = repo / RENDERED / "sync.yaml"
+    with tempfile.TemporaryDirectory(prefix="htr-check-") as t:
+        with contextlib.redirect_stdout(sys.stderr):
+            if _render(str(repo), str(Path(t) / RENDERED)):
+                return _NOT_RENDERED.format(rendered=repo / RENDERED)
+        fresh = (Path(t) / RENDERED / "sync.yaml").read_bytes()
+    if not committed.is_file() or committed.read_bytes() != fresh:
+        return _NOT_RENDERED.format(rendered=repo / RENDERED)
+    return None
+
+
+def _validate(repo_dir: str, rendered: bool = False) -> int:
     repo = Path(repo_dir)
     missing = _missing_config(repo)
     if missing is not None:
@@ -125,6 +154,10 @@ def _validate(repo_dir: str) -> int:
     refused = _refused(campaigns, pipelines, cfg, repo / RENDERED)
     if refused is not None:
         print(refused)
+        return 1
+    unrendered = _unrendered(repo) if rendered else None
+    if unrendered is not None:
+        print(unrendered)
         return 1
     return 0
 
@@ -1070,6 +1103,12 @@ def main(argv: list[str] | None = None) -> int:
         "The Kyverno CLI runs them over rendered/ in this repo's CI.",
     )
     validate_p.add_argument("repo_dir")
+    validate_p.add_argument(
+        "--rendered",
+        action="store_true",
+        help="also refuse unless rendered/ is exactly what this checkout "
+        "renders: what the Argo CD hook checks before it applies",
+    )
     render_p = sub.add_parser("render", help="render ConfigMaps and Jobs")
     render_p.add_argument("repo_dir")
     render_p.add_argument("--out", required=True)
@@ -1113,7 +1152,7 @@ def main(argv: list[str] | None = None) -> int:
             args.dry_run,
             args.allow_empty,
         )
-    return _validate(args.repo_dir)
+    return _validate(args.repo_dir, args.rendered)
 
 
 if __name__ == "__main__":

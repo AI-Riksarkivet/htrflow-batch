@@ -447,7 +447,8 @@ With Argo CD, the same command is the `PostSync` hook that applies
 and the converter's tests hold it to the chart's policies. It is a
 `PostSync` Job on the `htrflow-campaigns` image: an init container clones
 the campaigns repo with dulwich (pure-Python git, so the image carries no
-git binary and no shell), and the Job's container runs
+git binary and no shell), a second one checks that the checkout is one CI
+rendered (below), and the Job's container runs
 `htrflow-campaigns apply --prune /repo` on that checkout. Argo CD deletes
 the previous run's Job before each sync and a succeeded one after it. Four
 things to set:
@@ -468,10 +469,17 @@ things to set:
   the git host ([With Argo CD](#with-argo-cd)).
 
 The Job clones the tracked branch, not the revision Argo CD synced: a hook
-Job has no reliable way to learn the Application's revision. A commit merged
-between the sync and the hook is applied now and synced again on the next
-sync, and `apply` is idempotent, so applying it early changes nothing the
-next run would not.
+Job has no reliable way to learn the Application's revision. So a second init
+container, between the clone and the apply, runs `htrflow-campaigns validate
+--rendered /repo`: it renders the checkout and refuses it unless the result
+is exactly the `rendered/` the checkout carries (`rendered/sync.yaml` holds a
+digest of every other rendered file). A commit merged after CI's last render
+commit, and not rendered yet, fails the hook and applies nothing; CI's render
+commit for it changes `sync.yaml`, which starts the next sync. A commit that
+changes no rendered file passes, and applying it changes nothing. The check
+also fails when CI's `CONVERTER_REF` and the hook's image are different
+converter releases, since the two then render differently: keep them in
+step.
 
 The ServiceAccount is what the htrflow-batch chart renders behind
 `apply.rbac.enabled=true` (default `false`): a Role — never a ClusterRole —
