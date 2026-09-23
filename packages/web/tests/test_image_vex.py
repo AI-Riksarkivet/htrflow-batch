@@ -82,10 +82,18 @@ def _statements() -> list[dict]:
     return json.loads(VEX.read_text())["statements"]
 
 
+#: A module imported by name at run time: `importlib.import_module("x")`,
+#: `import_module("x")` or `__import__("x")`, the name a string literal.
+_DYNAMIC_IMPORT = re.compile(r"""\b(?:import_module|__import__)\(\s*["']([\w.]+)["']""")
+
+
 def _modules(text: str) -> set[str]:
     """Every module a Python file imports, dotted, including the submodules
-    named in `from x import y` (which may be modules)."""
+    named in `from x import y` (which may be modules) and the ones imported
+    by a literal name at run time."""
     found: set[str] = set()
+    if "import_module" in text or "__import__" in text:  # rare: skip the scan
+        found.update(_DYNAMIC_IMPORT.findall(text))
     for frm, names, plain in _IMPORT.findall(text):
         if frm:
             found.add(frm)
@@ -207,6 +215,21 @@ def test_no_code_in_the_images_imports_what_a_statement_says_is_unused(
             assert not re.search(r"\bunpack_archive\(", _dependency_files()[rel]), (
                 f"dependency {rel} breaks {cves}"
             )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'importlib.import_module("xml.etree.ElementTree")',
+        "import_module('xml.dom.minidom')",
+        '__import__("pyexpat")',
+        'mod = __import__( "xml" )',
+    ],
+)
+def test_a_module_imported_by_name_counts_as_imported(source: str) -> None:
+    """An import statement is not the only way in: a module loaded by name
+    reaches libexpat just the same."""
+    assert _hits(_modules(source), EXPAT)
 
 
 def test_the_tarfile_exceptions_still_exist() -> None:
