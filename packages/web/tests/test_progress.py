@@ -6,7 +6,10 @@ an httpx MockTransport — no bucket, no network.
 
 from __future__ import annotations
 
+import gzip
+import json
 import threading
+import tracemalloc
 
 import httpx
 import pytest
@@ -260,6 +263,47 @@ def test_a_body_inside_the_cap_still_reads():
     ok = {**PROGRESS, "pad": "x" * 1000}
     r, _ = reader({f"{BASE}/vol0/progress.json": httpx.Response(200, json=ok)})
     assert r.fetch(BASE, "vol0", "active")["total"] == 638
+
+
+def _gzipped(doc: bytes) -> httpx.Response:
+    return httpx.Response(
+        200, content=gzip.compress(doc), headers={"content-encoding": "gzip"}
+    )
+
+
+def test_a_compressed_body_is_never_inflated(monkeypatch):
+    """Anything that can write to the bucket can store progress.json with
+    `Content-Encoding: gzip`, and the cap counted bytes after the client
+    had inflated them: 32 KiB on the wire became 32 MiB in the pod before
+    the cap looked (2026-09-23 audit). The file is asked for unencoded, and
+    one that comes back encoded anyway is not read at all."""
+    bomb = json.dumps({"pages_total": 1}).encode() + b" " * (32 * 1024 * 1024)
+    r, _ = reader({f"{BASE}/vol0/progress.json": _gzipped(bomb)})
+    tracemalloc.start()
+    try:
+        assert r.fetch(BASE, "vol0", "active") is None
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert peak < 4 * 1024 * 1024, f"inflated to {peak} bytes"
+
+
+def test_the_file_is_asked_for_unencoded():
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("accept-encoding"))
+        return httpx.Response(200, json=PROGRESS)
+
+    r = ProgressReader(httpx.Client(transport=httpx.MockTransport(handler)))
+    assert r.fetch(BASE, "vol0", "active")["total"] == 638
+    assert seen == ["identity"]
+
+
+def test_an_encoded_answer_is_unreadable_even_when_small():
+    small = json.dumps(PROGRESS).encode()
+    r, _ = reader({f"{BASE}/vol0/progress.json": _gzipped(small)})
+    assert r.fetch(BASE, "vol0", "active") is None
 
 
 def test_a_redirect_is_not_followed():

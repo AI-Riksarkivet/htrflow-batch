@@ -173,6 +173,11 @@ def _aged(value: dict | None, now: float) -> dict | None:
     return {**value, "ageSeconds": _age_seconds(value["updatedAt"], now)}
 
 
+def _encoded(response: httpx.Response) -> bool:
+    coding = response.headers.get("content-encoding", "").strip().lower()
+    return coding not in ("", "identity")
+
+
 class _NoAnswer(Exception):
     """The bucket did not answer: unreachable, timed out, busy, or a 5xx."""
 
@@ -271,14 +276,27 @@ class ProgressReader:
         """The document at ``url``, read in chunks and abandoned past
         ``MAX_BODY``. Redirects are not followed: the URL is built from an
         operator's results base, and a bucket answering it with a Location
-        is not somewhere this pod should go next."""
+        is not somewhere this pod should go next.
+
+        Asked for, and read, exactly as stored. Anything that can write to
+        the bucket can store the file with `Content-Encoding: gzip`, and the
+        cap counted what the client had already inflated -- 64 KiB off the
+        wire could be 64 MiB in this pod before it looked (2026-09-23
+        audit). The wrapper never compresses it, so an encoded answer is not
+        our file, and it is dropped unread like any other."""
         try:
-            with self._client.stream("GET", url, follow_redirects=False) as response:
+            with self._client.stream(
+                "GET",
+                url,
+                headers={"Accept-Encoding": "identity"},
+                follow_redirects=False,
+            ) as response:
                 if response.status_code >= 500 or response.status_code in (408, 429):
                     raise _NoAnswer(response.status_code)
-                if response.status_code != 200:
+                if response.status_code != 200 or _encoded(response):
                     return None
                 body = bytearray()
+                # No encoding (checked above), so nothing here inflates.
                 for chunk in response.iter_bytes():
                     body += chunk
                     if len(body) > MAX_BODY:
