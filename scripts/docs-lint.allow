@@ -29,3 +29,6 @@ SECURITY.md	--predicate-type https://spdx\.dev/Document/v2\.3
 # A package README may say "a localhost forward" as the example of an
 # address only the browser's machine can reach.
 packages/web/README.md	\(a `localhost` forward, say\)
+
+# The volume-id rule shows what YAML reads as a date by an example of one.
+reference/campaign-yaml.md	`2024-01-31` a date
