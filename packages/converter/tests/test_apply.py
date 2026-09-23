@@ -183,7 +183,7 @@ class FakeCluster(Cluster):
         return self
 
     def find(self, kind: str, name: str) -> dict | None:
-        return next(
+        found = next(
             (
                 o
                 for o in self.live
@@ -191,6 +191,9 @@ class FakeCluster(Cluster):
             ),
             None,
         )
+        if found is not None:  # every stored object has one, seeded or not
+            found["metadata"].setdefault("uid", f"uid-{name}")
+        return found
 
     def _store(self, kind: str, name: str, obj: dict, owners: dict) -> None:
         obj["metadata"]["managedFields"] = [
@@ -1080,19 +1083,77 @@ def test_a_repo_without_a_converter_yaml_is_refused_before_the_cluster(
     assert "converter.yaml" in capsys.readouterr().out
 
 
-def test_a_refused_paused_campaign_job_is_an_unenforced_pause(
+def test_a_campaign_whose_job_is_refused_can_still_be_paused(tmp_path, cluster, capsys):
+    """After a converter release or a converter.yaml change every live
+    campaign Job's pod template differs, and the API server refuses each
+    one. Pausing needs none of that: only the live Job's uid and its
+    Workload. It used to need the apply to go through, so ``suspend: true``
+    got exit 1, "NOT enforced" and zero Workload patches, with kubectl as
+    the only way to stop the campaign (C-2)."""
+    repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
+    cluster.live = [_running_job("pausy")]
+    cluster.workloads = {"uid-pausy": _workload("wl-pausy", True)}
+    _refuses(cluster, "pausy", _immutable_template("pausy"))
+    rc = cli.main(["apply", str(repo), "--out", str(out), "--pause-wait", "1"])
+    assert cluster.of("patch") == [("patch", "wl-pausy", False)], "paused"
+    assert rc == cli.REFUSED, "the pause holds; the refused Job is a change to make"
+    err = capsys.readouterr().err
+    assert "Job pausy: the pod template changed" in err
+    assert "NOT enforced" not in err
+    assert "Job/pausy" in err.splitlines()[-1]
+
+
+def test_a_campaign_whose_job_is_refused_can_still_be_unpaused(tmp_path, cluster):
+    """The same way out, the other way: a campaign paused before the release
+    that refuses its Job could otherwise never be resumed -- and so never
+    finish, which is what the refusal asks for."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    cluster.live = [_running_job("kyrk")]
+    cluster.workloads = {"uid-kyrk": _workload("wl-kyrk", False)}
+    _refuses(cluster, "kyrk", _immutable_template("kyrk"))
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
+    assert cluster.of("patch") == [("patch", "wl-kyrk", True)]
+
+
+def test_a_refused_paused_campaign_with_no_job_has_nothing_to_stop(
     tmp_path, cluster, capsys
 ):
-    """A refused Job never reaches the Kueue sync, so a campaign git says is
-    paused went on running with the apply reporting only "some objects were
-    refused" (exit 3). The pause is what is not enforced here, and that is
-    exit 1 -- the same answer as a Workload that never appeared."""
+    """A brand-new paused campaign whose Job was refused has no Job at all:
+    nothing is running, so the pause holds. The refusal is reported, and it
+    is the refused-object exit, not the unenforced-pause one."""
     repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
     _refuses(cluster, "pausy", cluster_mod.ClusterError("apply Job/pausy: 409"))
     rc = cli.main(["apply", str(repo), "--out", str(out), "--pause-wait", "1"])
+    assert rc == cli.REFUSED
+    err = capsys.readouterr().err
+    assert "apply Job/pausy: 409" in err and "NOT enforced" not in err
+
+
+def test_a_refused_paused_campaign_whose_job_cannot_be_read_is_unenforced(
+    tmp_path, cluster, capsys
+):
+    """Without the live Job there is no uid, so no Workload to deactivate:
+    that one is the pause not enforced, exit 1."""
+    repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
+    cluster.live = [_running_job("pausy")]
+    _refuses(cluster, "pausy", cluster_mod.ClusterError("apply Job/pausy: 409"))
+    real = cluster._method
+    reads = [0]
+
+    def method(kind, verb, name=""):
+        # The first read (whether it has finished) goes through; the second,
+        # for the pause, is refused.
+        if verb == "read" and kind == "Job" and name == "pausy":
+            reads[0] += 1
+            if reads[0] > 1:
+                raise cluster_mod.ClusterError("not allowed to get Job/pausy")
+        return real(kind, verb, name)
+
+    cluster._method = method
+    rc = cli.main(["apply", str(repo), "--out", str(out), "--pause-wait", "1"])
     assert rc == 1
     err = capsys.readouterr().err
-    assert "pausy: paused in git, but the API server refused its Job" in err
+    assert "pausy: paused in git, but" in err and "NOT enforced" in err
     assert "Job/pausy" in err, "the refusal itself is still reported"
 
 
