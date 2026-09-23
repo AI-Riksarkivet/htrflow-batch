@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Pins are tracked, not floated (audit T9): every image is tag+digest, every action a SHA, both lockfiles refreshed. One grouped PR a week per area; security updates any time.",
+  "description": "Pins, not floats (audit T9): every image is tag+digest, every action a SHA, both lockfiles refreshed. This is the policy the Renovate app applies once it is installed on the repository: one grouped PR a week per area, security updates any time. Until then nothing reads this file and the pins move by hand.",
   "extends": [
     "config:recommended",
     ":pinDigests",

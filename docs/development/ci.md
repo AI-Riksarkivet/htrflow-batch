@@ -195,9 +195,13 @@ must equal `engineVersion` in `dagger.json` (a test asserts it).
 
 ## Dependency pins
 
-Every input is pinned, and [Renovate](https://docs.renovatebot.com/) keeps
-the pins current. `renovate.json` holds the whole policy; this is where
-each kind of pin lives and how it moves.
+Every input is pinned. `renovate.json` holds the policy for moving the
+pins, which [Renovate](https://docs.renovatebot.com/) applies once its app
+is installed on the repository; until it is, nothing reads that file, and
+every pin in the table below moves by hand. GitHub's Dependabot security
+updates are on, and raise pull requests for vulnerable Python and frontend
+dependencies in the meantime. This is where each kind of pin lives and how
+it moves.
 
 | Pin | Lives in | Updated by |
 |---|---|---|
@@ -216,5 +220,5 @@ each kind of pin lives and how it moves.
 Inside the builds, dagger containers sync with `uv sync --frozen
 --all-packages`, and the wrapper image installs its dependencies from
 `uv export --locked … --require-hashes`, so a stale `uv.lock` fails the
-build instead of resolving freshly. Renovate raises security updates at any
-time, outside the weekly schedule.
+build instead of resolving freshly. With the app installed, Renovate raises
+security updates at any time, outside the weekly schedule.
