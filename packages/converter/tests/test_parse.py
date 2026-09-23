@@ -842,6 +842,22 @@ def test_a_key_written_twice_is_refused_not_last_wins(tmp_path, rel, text, key, 
     ]
 
 
+def test_two_merge_keys_in_one_mapping_are_a_key_written_twice(tmp_path):
+    """`<<:` twice is two keys to YAML, and the second merge would decide
+    alone what the first one said."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "campaigns" / "kyrk.yaml").write_text(
+        "a: &a {pipeline: demo-v1}\nb: &b {volumes: [R1]}\nc:\n  <<: *a\n  <<: *b\n"
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [
+        'campaigns/kyrk.yaml: "<<" is written twice, on lines 4 and 5 — YAML '
+        "would keep only the last one, so remove one or merge them"
+    ]
+
+
 def test_a_merge_key_may_still_override_what_it_merges(tmp_path):
     """`<<:` is how a YAML file says "these, except"; the key it overrides
     is not written twice."""
