@@ -17,7 +17,7 @@ import json
 
 import pytest
 from kubernetes import client, config
-from urllib3.exceptions import MaxRetryError
+from urllib3.exceptions import MaxRetryError, ReadTimeoutError
 
 from htrflow_web import kube
 from htrflow_web.kube import (
@@ -151,6 +151,7 @@ def reader(monkeypatch) -> Reader:
                 "content_type": (header_params or {}).get("Content-Type"),
                 "accept": (header_params or {}).get("Accept"),
                 "body": kwargs.get("body"),
+                "timeout": kwargs.get("_request_timeout"),
             }
         )
         reply = answer.get(method, {})
@@ -252,6 +253,54 @@ def test_a_connection_that_never_answers_is_the_same_exception(reader: Reader):
     reader.answer["GET"] = MaxRetryError(None, "http://apiserver")
     with pytest.raises(ClusterUnavailable):
         reader.list_jobs()
+
+
+class _HungBody:
+    """A response whose headers arrived and whose body never does."""
+
+    @property
+    def data(self) -> bytes:
+        raise ReadTimeoutError(None, "http://apiserver", "read timed out")
+
+
+def test_a_body_that_never_arrives_is_the_same_exception(reader, monkeypatch):
+    """The body is read after the call returns, so a timeout there escaped
+    as a bare 500 rather than the 502 every other silence gets."""
+    monkeypatch.setattr(client.ApiClient, "call_api", lambda *a, **k: _HungBody())
+    with pytest.raises(ClusterUnavailable):
+        reader.get_job("htr-a", "kyrk")
+    with pytest.raises(ClusterUnavailable):
+        reader.list_configmaps()
+
+
+def _every_call(reader: Reader) -> None:
+    reader.list_jobs()
+    reader.list_warmups()
+    reader.get_job("htr-a", "kyrk")
+    reader.get_configmap("htr-a", "campaign-kyrk")
+    reader.list_configmaps()
+    reader.list_pods("htr-a", "kyrk")
+    reader.apply_configmap(RECORD)
+
+
+def test_no_call_can_wait_on_the_api_server_for_ever(reader: Reader):
+    """Without a timeout a connection that hangs holds its worker thread
+    until the process dies, and a detail request makes several calls in a
+    row: a few of those fill the pool (2026-09-23 audit)."""
+    reader.answer["GET"] = {"items": []}
+    _every_call(reader)
+    assert {c["method"] for c in reader.calls} == {"GET", "PATCH"}
+    assert all(c["timeout"] == kube.REQUEST_TIMEOUT for c in reader.calls)
+    connect, read = kube.REQUEST_TIMEOUT
+    assert 0 < connect <= read <= 30
+
+
+def test_an_apply_that_never_answers_is_the_cluster_being_unavailable(
+    reader: Reader,
+):
+    reader.answer["PATCH"] = MaxRetryError(None, "http://apiserver")
+    with pytest.raises(ClusterUnavailable):
+        reader.apply_configmap(RECORD)
 
 
 RECORD = {
