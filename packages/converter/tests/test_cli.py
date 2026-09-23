@@ -875,71 +875,56 @@ def test_a_window_change_on_a_campaign_paused_before_and_after_is_allowed(
     assert capsys.readouterr().err == ""  # nothing to warn about
 
 
-class _FakeDulwichRepo:
-    """dulwich's `Repo`, as much of it as `_git_head` uses (the real one is
-    in the converter image through the `hook` extra, not in the dev env)."""
-
-    heads: dict[str, bytes] = {}
-
-    def __init__(self, root: str) -> None:
-        self.root = root
-
-    @classmethod
-    def discover(cls, start: str):
-        import dulwich.errors
-
-        for root, head in cls.heads.items():
-            if Path(start).resolve().is_relative_to(root):
-                return cls(root)
-        raise dulwich.errors.NotGitRepository(start)
-
-    def head(self) -> bytes:
-        return self.heads[self.root]
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc) -> None:
-        pass
-
-
-def _without_git(monkeypatch, heads: dict[str, bytes]) -> None:
+def _without_git(monkeypatch) -> None:
+    """No git binary: what the hook's distroless image has."""
     import subprocess
-    import sys
-    import types
 
     def no_git(*args, **kwargs):
         raise FileNotFoundError("git")
 
     monkeypatch.setattr(subprocess, "run", no_git)
-    errors = types.ModuleType("dulwich.errors")
-    errors.NotGitRepository = type("NotGitRepository", (Exception,), {})
-    repo = types.ModuleType("dulwich.repo")
-    repo.Repo = _FakeDulwichRepo
-    package = types.ModuleType("dulwich")
-    package.errors, package.repo = errors, repo
-    monkeypatch.setitem(sys.modules, "dulwich", package)
-    monkeypatch.setitem(sys.modules, "dulwich.errors", errors)
-    monkeypatch.setitem(sys.modules, "dulwich.repo", repo)
-    monkeypatch.setattr(_FakeDulwichRepo, "heads", heads)
 
 
-def test_the_commit_is_read_without_a_git_binary(tmp_path, monkeypatch):
+def test_the_commit_is_read_without_a_git_binary(tmp_path, monkeypatch, commit_all):
     """audit 0923 C-10: the Argo CD hook's image is distroless, with no git,
     so every campaign it applied recorded commit "unknown". The clone in the
-    same image is dulwich's; so is the read of what it cloned."""
+    same image is dulwich's; so is the read of what it cloned -- from the
+    campaigns directory, below the checkout's root."""
     from htrflow_converter import cli
 
-    sha = "0123456789abcdef0123456789abcdef01234567"
-    _without_git(monkeypatch, {str(tmp_path.resolve()): sha.encode()})
     (tmp_path / "campaigns").mkdir()
+    (tmp_path / "campaigns" / "a.yaml").write_text("pipeline: p\n")
+    sha = commit_all(tmp_path)
+    _without_git(monkeypatch)
     assert cli._git_head(tmp_path / "campaigns") == sha
 
 
 def test_outside_a_checkout_the_commit_is_still_unknown(tmp_path, monkeypatch):
     from htrflow_converter import cli
 
-    _without_git(monkeypatch, {})
+    _without_git(monkeypatch)
+    assert cli._git_head(tmp_path) == "unknown"
+
+
+def test_a_checkout_with_no_commit_yet_is_unknown(tmp_path, monkeypatch):
+    from dulwich import porcelain
+
+    from htrflow_converter import cli
+
+    porcelain.init(str(tmp_path))
+    _without_git(monkeypatch)
+    assert cli._git_head(tmp_path) == "unknown"
+
+
+def test_without_git_or_dulwich_the_commit_is_unknown(tmp_path, monkeypatch):
+    """The one case a real dulwich cannot show: an install without the
+    `hook` extra, on a machine without git."""
+    import sys
+
+    from htrflow_converter import cli
+
+    _without_git(monkeypatch)
+    monkeypatch.setitem(sys.modules, "dulwich.repo", None)  # import fails
     assert cli._git_head(tmp_path) == "unknown"
 
 
