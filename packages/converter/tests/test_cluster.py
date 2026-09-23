@@ -627,6 +627,32 @@ def test_a_server_that_stays_gone_is_unreachable_not_refused(
     assert slept == [1, 2, 4]
 
 
+@pytest.mark.parametrize("status", [401, 403, 409, 422])
+def test_a_read_the_server_refused_is_an_error_never_no_object(
+    cluster, monkeypatch, status
+):
+    """``get`` is how the apply tells a campaign nobody ran from a finished
+    one whose Job was reaped, and whether a live check has anything to hold
+    against. Only a 404 is "there is none"; a refused read taken for one
+    re-runs a finished campaign and skips the check (3093)."""
+
+    def call_api(self, *a, **kw):
+        raise ApiException(status=status, reason="refused")
+
+    monkeypatch.setattr(client.ApiClient, "call_api", call_api)
+    with pytest.raises(ClusterError) as exc:
+        cluster.get("Job", "kyrk")
+    assert "Job/kyrk" in str(exc.value)
+
+
+def test_a_read_answered_404_is_no_object(cluster, monkeypatch):
+    def call_api(self, *a, **kw):
+        raise ApiException(status=404, reason="Not Found")
+
+    monkeypatch.setattr(client.ApiClient, "call_api", call_api)
+    assert cluster.get("Job", "kyrk") is None
+
+
 def test_the_lease_is_a_coordination_lease_created_then_released(cluster, monkeypatch):
     """One apply at a time: a GET that finds no Lease, a POST that creates
     it holding this process, and a PUT on the way out that lets it go --

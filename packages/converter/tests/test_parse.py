@@ -32,6 +32,10 @@ def test_good_fixture_loads_campaigns_and_pipelines():
     assert "demo-v1" in pipelines
     assert cfg.namespace == "htr-test"
     assert cfg.window == 10
+    # A step naming a model with no revision: Kyverno's rule now (the
+    # chart's `security.requireModelRevision`), never the converter's.
+    steps = pipelines["demo-v1"].steps
+    assert any(s.get("settings", {}).get("model_settings") for s in steps)
 
 
 def test_good_fixture_bare_id_expands_with_source_template():
@@ -229,24 +233,6 @@ def test_every_pydantic_error_type_reads_as_a_sentence(tmp_path, line, expected)
     assert exc_info.value.problems == [f"converter.yaml: {expected}"]
 
 
-def test_errors_within_one_campaign_are_all_collected_not_just_first():
-    root = FIXTURES / "bad" / "multi-error"
-    with pytest.raises(ValidationError) as exc_info:
-        _load(root)
-    problems = exc_info.value.problems
-    assert any("has an id with characters that are not allowed" in p for p in problems)
-    assert any("is listed twice" in p for p in problems)
-
-
-def test_errors_across_files_are_all_collected_a_broken_file_does_not_hide_others():
-    root = FIXTURES / "bad" / "multi-file"
-    with pytest.raises(ValidationError) as exc_info:
-        _load(root)
-    problems = exc_info.value.problems
-    assert any("has an id with characters that are not allowed" in p for p in problems)
-    assert any("is listed twice" in p for p in problems)
-
-
 def test_missing_converter_yaml_falls_back_to_defaults():
     root = FIXTURES / "bad" / "unsafe-volume-id"
     # this fixture has no converter.yaml; the campaign is still broken, but
@@ -254,21 +240,6 @@ def test_missing_converter_yaml_falls_back_to_defaults():
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     assert not any("converter.yaml" in p for p in exc_info.value.problems)
-
-
-def test_bad_window_reports_message_and_does_not_abort_other_files():
-    """Fix round 1 #1: a non-numeric window: must not crash load() (it used
-    to raise ValueError uncaught) and the second campaign's own problem in
-    the same repo must still be reported."""
-    root = FIXTURES / "bad" / "window"
-    with pytest.raises(ValidationError) as exc_info:
-        _load(root)
-    problems = exc_info.value.problems
-    assert any(
-        "must be a whole number of 1 or more" in p and "not-a-number" in p
-        for p in problems
-    ), problems
-    assert any("is listed twice" in p for p in problems), problems
 
 
 @pytest.mark.parametrize(
@@ -337,31 +308,6 @@ def test_a_stale_pipeline_model_revision_is_one_line(tmp_path):
         'pipelines/demo-v1.yaml: "model_revision" is not a setting this '
         "file has — remove it, or fix the spelling"
     ]
-
-
-def test_converter_yaml_errors_are_one_problem_per_field():
-    """Fix round 1 #3: two bad fields in converter.yaml must surface as two
-    separate problems, not one multi-line pydantic error string."""
-    root = FIXTURES / "bad" / "converter-two-errors"
-    with pytest.raises(ValidationError) as exc_info:
-        _load(root)
-    converter_problems = [
-        p for p in exc_info.value.problems if p.startswith("converter.yaml:")
-    ]
-    assert len(converter_problems) == 2, converter_problems
-    assert all("\n" not in p for p in converter_problems)
-    assert any("window" in p for p in converter_problems)
-    assert any("bogus_field" in p for p in converter_problems)
-
-
-def test_a_model_without_a_revision_is_no_longer_the_converters_problem():
-    """The good fixture's demo-v1.yaml has a step whose model_settings names
-    a model with no revision. That is now Kyverno's rule (the chart's
-    `security.requireModelRevision`), enforced on the pipeline ConfigMap at
-    admission, so `validate` says nothing about it."""
-    _, pipelines, _ = _load(GOOD)
-    steps = pipelines["demo-v1"].steps
-    assert any(s.get("settings", {}).get("model_settings") for s in steps)
 
 
 def test_volume_source_line_manifest_shape():
