@@ -20,6 +20,7 @@ runner of their own architecture and never emulated.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import shlex
@@ -176,9 +177,34 @@ def test_the_wrapper_image_carries_no_compiler_and_compiles_nothing() -> None:
     assert "TARGETARCH" not in "\n".join(_logical_lines(text))
     # The switch lives in a private torch module: the build proves it still
     # works (no JIT-compiled override registered), not just that it is set.
-    check = text[text.index("<<'CHECK'") :]
-    assert "registry._dsl_name_to_lib_graph" in check
-    assert '- {"native"}' in check
+    # The CHECK heredoc is Python, so it is read as Python: it imports
+    # torch._native's registry, reads it, and a finding exits the build.
+    check = ast.parse(_heredoc(text, "CHECK"))
+    [guard] = [
+        node
+        for node in ast.walk(check)
+        if isinstance(node, ast.Try)
+        and any(
+            isinstance(s, ast.ImportFrom)
+            and s.module == "torch._native"
+            and [a.name for a in s.names] == ["registry"]
+            for s in node.body
+        )
+    ]
+    found = [n for s in guard.orelse for n in ast.walk(s)]
+    assert any(
+        isinstance(n, ast.Attribute) and ast.unparse(n.value) == "registry"
+        for n in found
+    ), "the registry is imported but never read"
+    assert any(
+        isinstance(n, ast.If)
+        and any(
+            isinstance(c, ast.Call) and ast.unparse(c.func) == "sys.exit"
+            for b in n.body
+            for c in ast.walk(b)
+        )
+        for n in found
+    ), "what the registry holds never fails the build"
 
 
 def test_the_wrapper_source_stays_out_of_the_image() -> None:
@@ -270,6 +296,14 @@ def test_the_library_api_pin_runs_against_the_image_ci_builds() -> None:
     # Against the image this job built, not one it would have to pull.
     assert f"WRAPPER_IMAGE={tag}" in driver[0]["run"]
     assert job["steps"].index(driver[0]) > job["steps"].index(built[0])
+
+
+def _heredoc(text: str, name: str) -> str:
+    """The body of the dockerfile heredoc ``<<'name'`` ... ``name``."""
+    lines = text.splitlines()
+    start = next(i for i, line in enumerate(lines) if f"<<'{name}'" in line)
+    end = lines.index(name, start)
+    return "\n".join(lines[start + 1 : end])
 
 
 def _logical_lines(text: str) -> list[str]:
