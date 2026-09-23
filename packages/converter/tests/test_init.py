@@ -255,3 +255,26 @@ def test_the_converter_installs_with_the_versions_its_commit_locked(ci):
     assert re.search(
         r"uv tool install --constraints \S+ \S+/packages/converter", install
     )
+
+
+@pytest.mark.parametrize("ci", [_GITHUB, _AZURE], ids=["github", "azure"])
+def test_the_policy_check_renders_the_chart_with_this_repos_names(ci):
+    """The chart's job-shape policy pins a Job's Secret and PVC names to its
+    values, so the chart CI renders its policies from has to carry the names
+    this repo's converter.yaml renders -- read with the converter's own
+    loader -- and the image allow-list is the three published repositories."""
+    doc = yaml.safe_load(ci.read_text())
+    env = doc.get("env") or doc.get("variables")
+    assert env["POLICY_ALLOWED_IMAGE_REPOS"] == (
+        "{docker.io/riksarkivet/htrflow-batch,docker.io/riksarkivet/htrflow-web,"
+        "docker.io/riksarkivet/htrflow-campaigns}"
+    )
+    (helm,) = [s for s in _scripts(ci) if "helm template" in s]
+    assert "from htrflow_converter.parse import load" in helm
+    for value, field in (
+        ("s3.existingSecret", "s3_secret"),
+        ("modelCache.name", "data_pvc"),
+        ("hfToken.existingSecret", "hf_token_secret"),
+    ):
+        assert f"{value}={{cfg.{field}}}" in helm, value
+    assert '"${sets[@]}"' in helm
