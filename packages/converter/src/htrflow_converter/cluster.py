@@ -525,7 +525,7 @@ class Cluster:
         new one applies the same value, which is shared ownership and no
         conflict, and the old one may then stop sending it. Never forced: a
         409 means Kueue changed the field in between, so it is Kueue's, and
-        there is nothing left to hold.
+        there is nothing left to hold; nor is there on a Job since deleted.
         """
         meta = live.get("metadata") or {}
         if (live.get("spec") or {}).get("suspend") is not True:
@@ -535,8 +535,17 @@ class Cluster:
         name = {"name": meta["name"], "namespace": self.namespace}
         body = {"apiVersion": "batch/v1", "kind": "Job", "metadata": name,
                 "spec": {"suspend": True}}  # fmt: skip
-        with contextlib.suppress(Conflict):
+        try:
             self.apply(body, manager=SUSPEND_HOLDER)
+        except Conflict:
+            pass
+        except Unreachable:
+            raise
+        except ClusterError:
+            # Deleted since it was read, the partial body is a create the
+            # API server refuses (422): nothing left to hold on.
+            if self.get("Job", meta["name"]) is not None:
+                raise
 
     def replace_job(self, obj: dict) -> dict:
         """Delete Job ``obj`` and apply it again -- the only way to give a

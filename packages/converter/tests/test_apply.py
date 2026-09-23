@@ -72,6 +72,8 @@ _SERVER_KEPT = {("status",), ("metadata", "uid"), ("metadata", "managedFields")}
 #: this code relies on: a Job's ``spec.suspend`` defaults to false, which is
 #: a Job the Job controller starts at once.
 _DEFAULTS = {("Job", ("spec", "suspend")): False}
+#: What a Job cannot be created without: a partial apply creates nothing.
+_TEMPLATE = ("spec", "template")
 
 
 def _fields(obj: dict, prefix: tuple = ()) -> dict[tuple, object]:
@@ -269,6 +271,10 @@ class FakeCluster(Cluster):
     ) -> dict:
         kind, name = obj["kind"], obj["metadata"]["name"]
         current = self.find(kind, name)
+        if current is None and kind == "Job" and _at(obj, _TEMPLATE) is _MISSING:
+            e = ApiException(status=422, reason="Unprocessable Entity")
+            e.body = json.dumps({"message": "spec.template: Required value"})
+            raise e
         stored = copy.deepcopy(current) if current else {
             "apiVersion": obj.get("apiVersion"), "kind": kind,
             "metadata": {"name": name, "uid": f"uid-{name}"},
@@ -1564,6 +1570,10 @@ def test_a_field_manager_owns_what_it_applies_and_conflicts_are_409s(cluster):
     per-manager ownership, so it is held to the rules it claims."""
     job = {"apiVersion": "batch/v1", "kind": "Job",
            "metadata": {"name": "j"}, "spec": {"suspend": True, "x": 1}}  # fmt: skip
+    with pytest.raises(ApiException) as e:  # a Job is not created without one
+        cluster.server_side_apply(job, "a")
+    assert e.value.status == 422
+    cluster.server_side_apply({**job, "spec": {"template": 1}}, "b")
     cluster.server_side_apply(job, "a")
     cluster.update("Job", "j", KUEUE_MANAGER, {"spec": {"suspend": False}})
     with pytest.raises(ApiException) as e:
@@ -1572,8 +1582,10 @@ def test_a_field_manager_owns_what_it_applies_and_conflicts_are_409s(cluster):
     cluster.server_side_apply(job, "a", force=True)
     assert cluster.find("Job", "j")["spec"]["suspend"] is True
     # Created without it, a Job has the default, owned by nobody.
-    cluster.server_side_apply({**job, "metadata": {"name": "k"}, "spec": {}}, "a")
-    assert cluster.find("Job", "k")["spec"] == {"suspend": False}
+    cluster.server_side_apply(
+        {**job, "metadata": {"name": "k"}, "spec": {"template": 1}}, "a"
+    )
+    assert cluster.find("Job", "k")["spec"] == {"template": 1, "suspend": False}
     # A dry run answers what the write would: the same conflict.
     cluster.update("Job", "j", KUEUE_MANAGER, {"spec": {"suspend": False}})
     with pytest.raises(ApiException):
@@ -1581,7 +1593,7 @@ def test_a_field_manager_owns_what_it_applies_and_conflicts_are_409s(cluster):
     cluster.server_side_apply(job, "a", force=True)
     # Released by its last owner: a Job's suspend goes back to its default.
     cluster.server_side_apply({**job, "spec": {"x": 1}}, "a")
-    assert cluster.find("Job", "j")["spec"] == {"x": 1, "suspend": False}
+    assert cluster.find("Job", "j")["spec"] == {"template": 1, "x": 1, "suspend": False}
     # Set to the same value by two managers, it is theirs jointly.
     cluster.server_side_apply(job, "a")
     cluster.server_side_apply({**job, "spec": {"suspend": True}}, "b")
@@ -1627,6 +1639,23 @@ def test_unpausing_a_campaign_kueue_never_admitted_does_not_start_it_unadmitted(
     cluster.update("Job", "pausy", KUEUE_MANAGER, {"spec": {"suspend": False}})
     assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
     assert cluster.find("Job", "pausy")["spec"]["suspend"] is False
+
+
+def test_a_job_gone_before_its_suspend_is_held_is_created_not_refused(
+    tmp_path, cluster, capsys
+):
+    """Deleted between the read and the hand-over, the Job is not there to
+    hold anything on: the partial apply would try a create and get a 422,
+    which read as the campaign's Job refused. It is created as usual."""
+    repo, out = _repo(tmp_path, paused="pausy"), tmp_path / "rendered"
+    cluster.workloads = {"uid-pausy": _workload("wl-pausy", True)}
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    _unpause(repo)
+    _during(cluster, "campaign-pausy", lambda: _drop_job(cluster, "pausy"))
+    capsys.readouterr()
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert cluster.find("Job", "pausy") is not None
+    assert "422" not in capsys.readouterr().err
 
 
 def test_the_web_and_the_apply_share_the_status_record_by_field(tmp_path, cluster):
