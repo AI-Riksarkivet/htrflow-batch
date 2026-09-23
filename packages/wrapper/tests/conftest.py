@@ -1,4 +1,6 @@
 import copy
+import sys
+from types import ModuleType
 
 import boto3
 import pytest
@@ -27,6 +29,31 @@ def fresh_abandoned_threads(monkeypatch) -> None:
     """``driver._ABANDONED`` is process-wide; one test's released steps must
     not count against another's leak limit."""
     monkeypatch.setattr(driver_mod, "_ABANDONED", [])
+
+
+@pytest.fixture
+def fake_htrflow(monkeypatch):
+    """Install a fake htrflow in ``sys.modules`` for the driver's function-level
+    imports: ``fake_htrflow(pipeline={...}, steps={...})`` gives
+    ``htrflow.pipeline.pipeline`` and ``htrflow.pipeline.steps`` those
+    attributes (a module left out is not importable). Returns the pipeline
+    module, whose attributes htrflow's own code resolves at call time."""
+
+    def install(*, pipeline: dict | None = None, steps: dict | None = None):
+        modules = {"htrflow": {}, "htrflow.pipeline": {}}
+        if pipeline is not None:
+            modules["htrflow.pipeline.pipeline"] = pipeline
+        if steps is not None:
+            modules["htrflow.pipeline.steps"] = steps
+        for name, attrs in modules.items():
+            module = ModuleType(name)
+            vars(module).update(attrs)
+            monkeypatch.setitem(sys.modules, name, module)
+        return (
+            sys.modules["htrflow.pipeline.pipeline"] if pipeline is not None else None
+        )
+
+    return install
 
 
 def _canvas(i: int, service_id: str) -> dict:
