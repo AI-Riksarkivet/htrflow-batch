@@ -1985,25 +1985,6 @@ describe("done, but with pages missing", () => {
     vi.unstubAllGlobals();
   });
 
-  function progress(failed: number) {
-    return {
-      done: 2,
-      total: 3,
-      failed,
-      lastPage: "0003",
-      stage: "done",
-      updatedAt: "2026-09-14T07:00:00Z",
-      ageSeconds: 97_200,
-      lastError: null,
-      errors: 0,
-      viewerPublished: true,
-    };
-  }
-
-  function lostVolume(failed: number) {
-    return { ...volumeDone, progress: progress(failed) };
-  }
-
   async function card(body: Record<string, unknown>, row: JobSummary = job) {
     vi.stubGlobal(
       "fetch",
@@ -2011,43 +1992,6 @@ describe("done, but with pages missing", () => {
     );
     return render(CampaignCard, { job: row });
   }
-
-  describe("the volume row", () => {
-    async function statusChip(failed: number): Promise<HTMLElement> {
-      const { container } = await card({
-        failures: [],
-        volumes: [lostVolume(failed)],
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      await expand();
-      return container.querySelector(".status") as HTMLElement;
-    }
-
-    test("takes the warning colour when pages were lost", async () => {
-      const chip = await statusChip(1);
-      expect(chip).toHaveClass("status", "done", "lost");
-    });
-
-    test("says so in words, so the colour is not carrying it alone", async () => {
-      const chip = await statusChip(1);
-      expect(chip).toHaveAttribute("title", "done with 1 failed page");
-      expect(chip).toHaveTextContent("done with 1 failed page");
-    });
-
-    test("counts more than one page in the plural", async () => {
-      expect(await statusChip(4)).toHaveAttribute(
-        "title",
-        "done with 4 failed pages",
-      );
-    });
-
-    test("a clean volume is green and says nothing extra", async () => {
-      const chip = await statusChip(0);
-      expect(chip).not.toHaveClass("lost");
-      expect(chip).not.toHaveAttribute("title");
-      expect(chip).toHaveTextContent("done");
-    });
-  });
 
   describe("the campaign header", () => {
     async function header(pagesFailed: number) {
@@ -2087,32 +2031,6 @@ describe("done, but with pages missing", () => {
       expect(section).toHaveAttribute("data-health", "done");
       expect(chip).not.toHaveAttribute("title");
       expect(chip).toHaveTextContent("Succeeded");
-    });
-  });
-
-  describe("the folded card's one-line strip", () => {
-    async function strip(failed: number): Promise<HTMLElement> {
-      const latest = lostVolume(failed);
-      const { container } = await card({
-        failures: [],
-        volumes: [latest],
-        latest,
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      return container.querySelector(".latest .status") as HTMLElement;
-    }
-
-    test("follows the row: amber, and it says why", async () => {
-      const state = await strip(1);
-      expect(state).toHaveClass("lost");
-      expect(state).toHaveAttribute("title", "done with 1 failed page");
-      expect(state).toHaveTextContent("done with 1 failed page");
-    });
-
-    test("a clean volume's strip is unchanged", async () => {
-      const state = await strip(0);
-      expect(state).not.toHaveClass("lost");
-      expect(state).toHaveTextContent("done");
     });
   });
 });
@@ -2454,26 +2372,40 @@ describe("the volume status column", () => {
     }
   });
 
-  test("a done volume: green word and its pages", async () => {
-    for (const el of [await strip(done), await cell(done)]) {
+  // A volume that finished but lost pages is not a failure -- it published
+  // -- and not a clean run either: amber, and the words say it too, so the
+  // colour is not carrying it alone (WCAG 1.4.1).
+  test.each([
+    ["the strip", 0, null],
+    ["the strip", 1, "done with 1 failed page"],
+    ["a volume row", 0, null],
+    ["a volume row", 1, "done with 1 failed page"],
+    ["a volume row", 4, "done with 4 failed pages"],
+  ] as const)(
+    "%s of a done volume that lost %i pages",
+    async (where, failed, said) => {
+      const v = { ...volumeDone, progress: progress({ failed }) };
+      const el = where === "the strip" ? await strip(v) : await cell(v);
       const word = el.querySelector(".status") as HTMLElement;
       expect(word).toHaveClass("done");
-      expect(word).not.toHaveClass("lost");
-      expect(el.querySelector(".c-fraction")).toHaveTextContent("2 / 3");
-    }
-  });
-
-  test("a done volume that lost a page: amber word and the count beside it", async () => {
-    for (const el of [await strip(lost), await cell(lost)]) {
-      const word = el.querySelector(".status") as HTMLElement;
-      expect(word).toHaveClass("done", "lost");
-      expect(word).toHaveAttribute("title", "done with 1 failed page");
       expect(el.querySelector(".c-fraction")?.textContent?.trim()).toBe(
         "2 / 3",
       );
-      expect(el.querySelector(".c-lost")?.textContent?.trim()).toBe("1 failed");
-    }
-  });
+      if (said === null) {
+        expect(word).not.toHaveClass("lost");
+        expect(word).not.toHaveAttribute("title");
+        expect(word.textContent?.trim()).toBe("done");
+        expect(el.querySelector(".c-lost")).toBeNull();
+      } else {
+        expect(word).toHaveClass("lost");
+        expect(word).toHaveAttribute("title", said);
+        expect(word.querySelector(".sr-only")).toHaveTextContent(said);
+        expect(el.querySelector(".c-lost")?.textContent?.trim()).toBe(
+          `${failed} failed`,
+        );
+      }
+    },
+  );
 
   test("an active volume: its fraction, its bar and what it is doing", async () => {
     for (const el of [await strip(active), await cell(active)]) {
