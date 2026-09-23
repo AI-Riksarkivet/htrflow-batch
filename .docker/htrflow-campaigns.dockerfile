@@ -32,7 +32,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-workspace --no-build --package htrflow-converter --extra hook \
     && uv build --wheel --package htrflow-converter --require-hashes \
          --build-constraints /tmp/build-constraints.txt -o /tmp/dist \
-    && uv pip install --python /app/.venv/bin/python --no-deps /tmp/dist/*.whl \
+    && uv pip install --python /app/.venv/bin/python --no-build --no-deps /tmp/dist/*.whl \
     && rm -rf /tmp/dist
 
 FROM gcr.io/distroless/python3-debian13:nonroot@sha256:8ee214843129f43e2ebf5e0ca9f2e4e6d8292143d1b8a6787f169b5898578884

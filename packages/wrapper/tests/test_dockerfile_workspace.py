@@ -266,7 +266,8 @@ def test_nothing_is_built_with_an_unpinned_build_backend(name: str) -> None:
     """Audit 0923 D-11: a lock pins what is installed, not what builds it,
     so `uv sync` and `uv pip install <dir>` fetched hatchling unpinned and
     unhashed. `uv sync` cannot take hashed build constraints, so it only
-    installs dependencies, as wheels (--no-build); every package built from
+    installs dependencies, and it and every `uv pip install` take wheels
+    only (--no-build); every package built from
     source goes through `uv build` with .docker/build-constraints.txt and
     --require-hashes, which refuses a build requirement not hashed there."""
     lines = _logical_lines((REPO / ".docker" / name).read_text())
@@ -287,8 +288,11 @@ def test_nothing_is_built_with_an_unpinned_build_backend(name: str) -> None:
                 "target=/tmp/build-constraints.txt" in line
             ), line
     for install in (c for c in commands if "uv pip install" in c):
-        # a directory would be built by pip with an unpinned backend
+        # a directory would be built by pip with an unpinned backend, and an
+        # sdist in a requirements file with whatever its build-system asks
+        # for: every install takes wheels only
         assert not re.search(r"\s/opt/\S+$|\s\.$", install), install
+        assert "--no-build" in install, install
 
 
 def test_the_build_constraints_are_hatchling_pinned_and_hashed() -> None:

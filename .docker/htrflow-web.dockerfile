@@ -92,7 +92,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-workspace --no-build --package htrflow-web \
     && uv build --wheel --package htrflow-web --require-hashes \
          --build-constraints /tmp/build-constraints.txt -o /tmp/dist \
-    && uv pip install --python /app/.venv/bin/python --no-deps /tmp/dist/*.whl \
+    && uv pip install --python /app/.venv/bin/python --no-build --no-deps /tmp/dist/*.whl \
     && rm -rf /tmp/dist
 
 # ---- Stage 4: the service (read API + the two builds above as its site) ----

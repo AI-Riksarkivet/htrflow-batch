@@ -95,7 +95,7 @@ COPY --from=htrflow-src LICENSE README.md /app/
 RUN --mount=type=bind,source=.docker/build-constraints.txt,target=/tmp/build-constraints.txt \
     uv build --wheel --python /app/.venv/bin/python --require-hashes \
          --build-constraints /tmp/build-constraints.txt -o /tmp/dist . \
-    && uv pip install --python /app/.venv/bin/python --no-deps /tmp/dist/*.whl \
+    && uv pip install --python /app/.venv/bin/python --no-build --no-deps /tmp/dist/*.whl \
     && rm -rf /tmp/dist
 
 FROM nvidia/cuda:12.1.0-base-ubuntu22.04@sha256:40042016a816cbbe0504dd0a396e7cfc036a8aa43f5694af60dd6f8f87d24e52 AS htrflow-base
@@ -152,7 +152,7 @@ RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
     cd /opt/workspace \
     && uv export --locked --package htrflow-batch-wrapper --no-dev --no-emit-project \
          -o /tmp/wrapper-requirements.txt \
-    && uv pip install --python /app/.venv/bin/python --no-cache --require-hashes \
+    && uv pip install --python /app/.venv/bin/python --no-build --no-cache --require-hashes \
          -r /tmp/wrapper-requirements.txt \
     && rm /tmp/wrapper-requirements.txt
 # The package itself is built with its build backend pinned and hashed, the
@@ -162,7 +162,7 @@ RUN --mount=type=bind,source=.docker/build-constraints.txt,target=/tmp/build-con
     --mount=type=bind,source=packages/wrapper,target=/opt/wrapper \
     uv build --wheel --python /app/.venv/bin/python --no-cache --require-hashes \
          --build-constraints /tmp/build-constraints.txt -o /tmp/dist /opt/wrapper \
-    && uv pip install --python /app/.venv/bin/python --no-cache --no-deps /tmp/dist/*.whl \
+    && uv pip install --python /app/.venv/bin/python --no-build --no-cache --no-deps /tmp/dist/*.whl \
     && rm -rf /tmp/dist
 
 # No compiler in this image, and no code generated at run time. torch 2.13
@@ -196,8 +196,9 @@ ENV TORCH_DISABLE_NATIVE_JIT=1
 # it to convert, and 5.x dropped that conversion) and protobuf (transformers
 # only imports it on the error path of loading a slow tokenizer, and without
 # it that path reports "requires the protobuf library" INSTEAD of the real
-# error). They go in with --no-deps --require-hashes, so nothing here is
-# resolved at build time and nothing else in the base moves; the check at
+# error). They go in with --no-deps --require-hashes --no-build, so nothing
+# here is resolved or built from source at build time and nothing else in the
+# base moves; the check at
 # the end of this file proves their own requirements are met. A
 # TRANSFORMERS_VERSION the file does not pin fails the build.
 ARG TRANSFORMERS_VERSION=4.57.6
@@ -206,7 +207,7 @@ RUN --mount=type=bind,source=.docker/transformers,target=/opt/transformers \
     && { grep -q "^transformers==${TRANSFORMERS_VERSION} " "$req" \
          || { echo "TRANSFORMERS_VERSION=${TRANSFORMERS_VERSION} is not the version" \
                    ".docker/transformers/ pins for its line"; exit 1; }; } \
-    && uv pip install --python /app/.venv/bin/python --no-cache --no-deps --require-hashes \
+    && uv pip install --python /app/.venv/bin/python --no-build --no-cache --no-deps --require-hashes \
          -r "$req"
 
 # Packages of the base's venv with published fixes that htrflow's own lock
@@ -223,7 +224,7 @@ RUN --mount=type=bind,source=uv.lock,target=/opt/workspace/uv.lock \
     cd /opt/workspace \
     && uv export --locked --only-group wrapper-image --no-emit-project \
          -o /tmp/image-requirements.txt \
-    && uv pip install --python /app/.venv/bin/python --no-cache --no-deps --require-hashes \
+    && uv pip install --python /app/.venv/bin/python --no-build --no-cache --no-deps --require-hashes \
          -r /tmp/image-requirements.txt \
     && rm /tmp/image-requirements.txt
 
