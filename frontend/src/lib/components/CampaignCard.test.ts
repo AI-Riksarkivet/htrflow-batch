@@ -2669,15 +2669,16 @@ describe("a volume line is the same shape on every row and every card", () => {
 
   test("a long id and a short one put their icons in the same place", async () => {
     // The icons are a track of their own, not a thing that follows the text:
-    // two rows whose ids differ in length line up all the same.
+    // two rows whose ids differ in length line up all the same. jsdom lays
+    // nothing out, so what is asserted is where they live -- in the links
+    // cell, the grid's fixed `--icons` track, and never inside the id's.
     const container = await card([vol("a"), vol("R0001203-part-4")]);
     await expand();
-    const lines = [...container.querySelectorAll(".vid-line")];
-    expect(lines).toHaveLength(2);
-    for (const line of lines) {
-      expect(getComputedStyle(line).gridTemplateColumns).toBe(
-        getComputedStyle(lines[0] as HTMLElement).gridTemplateColumns,
-      );
+    const rows = [...container.querySelectorAll(".row.volume")];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.querySelectorAll(".c-links .vicon")).toHaveLength(2);
+      expect(row.querySelector(".c-label .vicon")).toBeNull();
     }
   });
 
