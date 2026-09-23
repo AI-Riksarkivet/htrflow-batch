@@ -8,7 +8,7 @@ import yaml
 from pydantic import ValidationError
 
 from htrflow_converter import render
-from htrflow_converter.models import Campaign, ConverterConfig, Volume
+from htrflow_converter.models import Campaign, ConverterConfig, Toleration, Volume
 from htrflow_converter.parse import load
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -238,7 +238,7 @@ def test_the_warmup_job_schedules_where_the_campaign_job_does():
             "runtime_class": "nvidia",
             "node_selector": {"gpu": "true"},
             "tolerations": [
-                {"key": "gpu", "operator": "Exists", "effect": "NoSchedule"}
+                Toleration(key="gpu", operator="Exists", effect="NoSchedule")
             ],
         }
     )
@@ -372,7 +372,7 @@ def test_node_selector_and_tolerations_appear_in_the_pod_spec():
         update={
             "node_selector": {"gpu": "true"},
             "tolerations": [
-                {"key": "gpu", "operator": "Exists", "effect": "NoSchedule"}
+                Toleration(key="gpu", operator="Exists", effect="NoSchedule")
             ],
         }
     )

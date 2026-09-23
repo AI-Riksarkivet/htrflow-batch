@@ -32,7 +32,7 @@ hf_token_secret: ""               # optional: Secret with a `token` key, read by
 data_pvc: htr-test-data           # PVC mounted as the model cache
 runtime_class: nvidia             # RuntimeClass for GPU pods — on the warm-up Job too
 node_selector: {}
-tolerations: []
+tolerations: []                   # Kubernetes tolerations, each naming its taint's key (see below)
 public_results_base: ""           # public URL prefix results are served from (required for the read API)
 source_template: "https://<iiif-host>/<path>/{ref}/manifest"   # manifest URL for a bare volume id; {ref} is the id
 max_seconds: 21600                # each pod's activeDeadlineSeconds; a pipeline's own `max_seconds:` overrides it
@@ -54,6 +54,22 @@ here rather than by the cluster because Kueue does not refuse a Job naming a
 class that does not exist: no Workload is created, no event is raised, and
 the campaign reads "Queued" for ever. An empty list means the cluster offers
 no priority and every `priority:` is refused.
+
+`tolerations` are Kubernetes tolerations, spelt the Kubernetes way (`key`,
+`operator`, `value`, `effect`, `tolerationSeconds`, nothing else) and copied
+into every warm-up and campaign pod. Each one names the taint it is for: a
+toleration with no key tolerates every taint there is, so with a node
+selector the GPU pods could land on the control plane or on any node tainted
+to keep them away, and that is a validation error. So is a toleration for the
+control plane's own taint (`node-role.kubernetes.io/control-plane`, or the
+older `node-role.kubernetes.io/master`).
+
+`s3_secret`, `data_pvc` and `hf_token_secret` are checked here for their
+shape only: each has to be a Kubernetes object name. Which Secrets and PVCs a
+rendered pod may mount is the cluster's rule, not the converter's: the
+htrflow-batch chart's admission policies hold these names to an allow-list
+in its values, so a name the chart does not allow is refused at admission,
+and by the Kyverno CLI in the campaigns repo's CI.
 
 `hf_token_secret` names an object no chart creates — you make it yourself,
 like the S3 Secret. Leave it unset unless a pipeline pulls a **private or

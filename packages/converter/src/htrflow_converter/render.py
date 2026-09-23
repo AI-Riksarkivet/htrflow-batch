@@ -117,7 +117,11 @@ def _scheduling(job: dict, cfg: ConverterConfig) -> None:
     if cfg.node_selector:
         _set(job, "spec.template.spec.nodeSelector", dict(cfg.node_selector))
     if cfg.tolerations:
-        _set(job, "spec.template.spec.tolerations", [dict(t) for t in cfg.tolerations])
+        _set(
+            job,
+            "spec.template.spec.tolerations",
+            [t.manifest() for t in cfg.tolerations],
+        )
 
 
 def _pipeline_configmap(p: Pipeline, cfg: ConverterConfig) -> dict:

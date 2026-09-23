@@ -133,6 +133,10 @@ _TYPE_SENTENCES = {
     "bool_parsing": "must be true or false (got {got})",
     "list_type": "must be a list of entries (got {got})",
     "dict_type": 'must be settings written as "key: value" lines (got {got})',
+    # A settings block with a model of its own (a toleration) is refused as
+    # this, not as `dict_type`; to its author the two are one mistake.
+    "model_type": 'must be settings written as "key: value" lines (got {got})',
+    "literal_error": "must be one of {expected} (got {got})",
     "greater_than_equal": "must be {ctx[ge]} or more (got {got})",
     "less_than_equal": "must be {ctx[le]} or less (got {got})",
 }
@@ -184,8 +188,13 @@ def _problems(rel: str, exc: _PydanticValidationError) -> list[str]:
             )
         else:
             key = loc[-1] if loc else ""
+            ctx = err.get("ctx") or {}
             msg = template.format(
-                key=key, got=shown(err.get("input")), ctx=err.get("ctx") or {}
+                key=key,
+                got=shown(err.get("input")),
+                ctx=ctx,
+                # pydantic quotes each choice as a repr: 'Exists' or 'Equal'
+                expected=str(ctx.get("expected", "")).replace("'", ""),
             )
         what = _what(loc, err.get("input"))
         out.append(f"{rel}: {what} {msg}" if what else f"{rel}: {msg}")

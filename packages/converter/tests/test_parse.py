@@ -941,3 +941,88 @@ def test_one_volume_on_two_pipelines_is_two_results_and_allowed(tmp_path):
     )
     campaigns, _, _ = _load(root)
     assert {c.name for c in campaigns} == {"kyrk", "loc"}
+
+
+_KEYLESS = (
+    'converter.yaml: "tolerations" entry 1 has no key — a toleration without '
+    "one tolerates every taint on every node, the control plane's included; "
+    "name the taint it is for"
+)
+
+
+@pytest.mark.parametrize(
+    "line,said",
+    [
+        ("tolerations: [{operator: Exists}]", _KEYLESS),
+        ('tolerations: [{key: "", operator: Exists}]', _KEYLESS),
+        ("tolerations: [{effect: NoSchedule, operator: Exists}]", _KEYLESS),
+        (
+            "tolerations: [{key: node-role.kubernetes.io/control-plane, "
+            "operator: Exists}]",
+            'converter.yaml: "tolerations" entry 1 tolerates '
+            "node-role.kubernetes.io/control-plane — that taint keeps "
+            "workloads off the control plane, and a GPU batch pod has no "
+            "business there; remove it",
+        ),
+        (
+            "tolerations: [{key: gpu, operator: Exists, value: x}]",
+            'converter.yaml: "tolerations" entry 1 has a value with operator: '
+            "Exists, which matches the key alone — drop the value, or use "
+            "operator: Equal",
+        ),
+        (
+            "tolerations: [{key: gpu, tolerationSeconds: 60}]",
+            'converter.yaml: "tolerations" entry 1 has tolerationSeconds '
+            "without effect: NoExecute, the only effect it applies to",
+        ),
+        (
+            "tolerations: [{key: gpu, opertor: Exists}]",
+            'converter.yaml: "tolerations.opertor" entry 1 is not a setting '
+            "this file has — remove it, or fix the spelling",
+        ),
+        (
+            "tolerations: [{key: gpu, operator: exists}]",
+            'converter.yaml: "tolerations.operator" entry 1 must be one of '
+            'Exists or Equal (got "exists")',
+        ),
+        (
+            "tolerations: [{key: gpu, effect: NoRun}]",
+            'converter.yaml: "tolerations.effect" entry 1 must be one of '
+            'NoSchedule, PreferNoSchedule or NoExecute (got "NoRun")',
+        ),
+        (
+            'tolerations: [{key: "bad key"}]',
+            'converter.yaml: "tolerations" entry 1 has a key that is not a '
+            'Kubernetes taint key (got "bad key") — a key is a name, '
+            'optionally after a "<dns-prefix>/"; letters, digits, ".", "_" '
+            'and "-", at most 63 characters',
+        ),
+    ],
+)
+def test_a_toleration_is_held_to_the_kubernetes_shape(tmp_path, line, said):
+    """audit 0923 S-1: `tolerations` was `list[dict]`, copied into every pod
+    as written: `{operator: Exists}` tolerates every taint, so a campaign's
+    GPU pods could land on the control plane or any node tainted to keep
+    them off."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    _setting(root / "converter.yaml", line)
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [said]
+
+
+def test_a_well_formed_toleration_is_kept_as_written(tmp_path):
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    _setting(
+        root / "converter.yaml",
+        "tolerations: [{key: nvidia.com/gpu, operator: Exists, effect: NoSchedule},"
+        " {key: dedicated, value: htr, effect: NoExecute, tolerationSeconds: 30}]",
+    )
+    _, _, cfg = _load(root)
+    assert [t.manifest() for t in cfg.tolerations] == [
+        {"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"},
+        {"key": "dedicated", "value": "htr", "effect": "NoExecute",
+         "tolerationSeconds": 30},
+    ]  # fmt: skip
