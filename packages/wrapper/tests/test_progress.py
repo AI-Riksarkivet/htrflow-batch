@@ -12,9 +12,6 @@ import os
 import signal
 from pathlib import Path
 
-import httpx
-import pytest
-
 from htrflow_batch import main as main_mod
 from htrflow_batch import progress as progress_mod
 from htrflow_batch.logship import LogCapture
@@ -35,33 +32,6 @@ def _write_outputs(cfg, stem: str):
         out.write_text(text)
         files[fmt] = out
     return files
-
-
-@pytest.fixture
-def env(tmp_path, cfg, sample_manifest, monkeypatch):
-    def handler(req):
-        if req.url.path.endswith("manifest.json"):
-            return httpx.Response(200, json=sample_manifest)
-        return httpx.Response(200, content=b"\xff\xd8\xff\xe0JPEGDATA")
-
-    monkeypatch.setattr(
-        main_mod,
-        "_http_client",
-        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
-    )
-    pipeline = tmp_path / "pipeline.yaml"
-    pipeline.write_text("steps: []\n")
-    return {
-        "VOLUME_REF": "SE-RA-1234",
-        "IIIF_MANIFEST_URL": "https://iiif.example/mock-vol/manifest.json",
-        "PIPELINE_PATH": str(pipeline),
-        "PIPELINE_ID": "demo-v1",
-        "S3_ENDPOINT": "",
-        "S3_BUCKET": "htr-results",
-        "PUBLIC_RESULTS_BASE": "http://public/htr-results",
-        "WORKDIR_PATH": str(tmp_path / "work"),
-        "TERMINATION_LOG_PATH": str(tmp_path / "term.log"),
-    }
 
 
 PREFIX = "demo-v1/SE-RA-1234"
