@@ -583,7 +583,7 @@ def _restamp(cluster, record: dict | None, live: dict) -> None:
     re-run once the Job is reaped, never a record believed wrongly."""
     from .cluster import ClusterError, Unreachable
 
-    if record is None or record["metadata"]["annotations"][_JOB_UID] == _uid(live):
+    if record is None or record["metadata"]["annotations"].get(_JOB_UID) == _uid(live):
         return
     record["metadata"]["annotations"][_JOB_UID] = _uid(live)
     try:
@@ -592,6 +592,33 @@ def _restamp(cluster, record: dict | None, live: dict) -> None:
         raise
     except ClusterError as e:
         print(f"{_NO_UID.format(name=_campaign_of(record))}{e}", file=sys.stderr)
+
+
+def _repair_stamp(cluster, name: str, job: dict | None) -> None:
+    """A finished campaign is left alone, so its ConfigMap is not re-applied
+    -- and a uid ``_restamp`` failed to write (a refused write, a killed
+    apply) would stay missing, and the record would not be believed once
+    the Job is reaped: the whole campaign run again. While the Job is still
+    there, the live ConfigMap is sent back as it is, with the uid added."""
+    from .cluster import ClusterError, Unreachable
+
+    if job is None:
+        return
+    try:
+        live = cluster.get("ConfigMap", f"campaign-{name}")
+    except Unreachable:
+        raise
+    except ClusterError as e:
+        print(f"{_NO_UID.format(name=name)}{e}", file=sys.stderr)
+        return
+    if live is None:
+        return
+    meta = live["metadata"]
+    keep = {k: meta.get(k) or {} for k in ("labels", "annotations")}
+    body = {"apiVersion": "v1", "kind": "ConfigMap", "data": live.get("data") or {},
+            "metadata": {"name": meta["name"], "namespace": meta.get("namespace"),
+                         **keep}}  # fmt: skip
+    _restamp(cluster, body, job)
 
 
 def _record_and_decide(
@@ -1001,6 +1028,7 @@ def _apply(
                 if said is not None:
                     done.add(name)
                     print(said)
+                    _repair_stamp(cluster, name, lives[name])
             # Each campaign Job is tried with dryRun=All before its pair is
             # sent: a ConfigMap applied under a Job the API server then
             # refuses is a volumes.txt the Job's unstarted indexes read (3084).
