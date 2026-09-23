@@ -20,6 +20,15 @@
 # the record back to leave a finished campaign alone instead of re-running
 # every volume. `list` does not cover a read by name.
 #
+# Two more writes the command makes. It holds the coordination Lease
+# `htrflow-campaigns-apply` for its whole run, so two applies never
+# interleave, and it fails closed without one: `create` on leases (RBAC
+# cannot scope a create by name) and `get`/`update` on that one Lease. And
+# on an unpause it patches the Job under a second field manager,
+# `htrflow-campaigns-suspend`, handing `spec.suspend` over to Kueue -- the
+# same `patch` on jobs, and the same admission rules (rbac-scope,
+# job-shape) as every other write it makes.
+#
 # This grants delete on Jobs in the release namespace, which is what --prune
 # is. Bind it to the campaigns pipeline and nothing else.
 apiVersion: v1
@@ -46,6 +55,13 @@ rules:
   - apiGroups: ["kueue.x-k8s.io"]
     resources: ["workloads"]
     verbs: ["list", "patch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["htrflow-campaigns-apply"]
+    verbs: ["get", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
