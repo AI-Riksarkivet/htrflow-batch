@@ -327,10 +327,12 @@ def test_a_page_half_uploaded_with_resume_off_is_not_done_on_the_retry(
 
     with monkeypatch.context() as m:
         m.setattr(ResultStore, "_put", put)
+        # deferred, not failed (audit 0923 W-1): the page is missing
         assert main({**env, "RESUME": "false"}, process_page_factory=fake_factory) == (
-            EXIT_OK
+            EXIT_TRANSIENT
         )
     assert "demo-v1/SE-RA-1234/alto/0002.xml" not in _keys(s3, cfg)
+    assert "demo-v1/SE-RA-1234/page/0002.xml" not in _keys(s3, cfg)
 
     calls: list = []
     assert _attempt(env, calls) == EXIT_OK
@@ -1767,3 +1769,43 @@ def test_a_deferred_page_is_missing_even_with_stale_outputs(
     assert main(env, process_page_factory=fake_factory) == EXIT_TRANSIENT
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
     assert "missing=['0002']" in term["error"]
+
+
+def test_a_page_whose_upload_failed_once_is_redone_by_the_retry(
+    env, cfg, s3, monkeypatch
+):
+    """Audit 0923 W-1: one ALTO PUT that fails after boto's retries left the
+    page `failed`, verify counted it as accounted for, manifest.json went out
+    and the page was never retried -- with the page's PAGE XML orphaned in
+    the bucket. The page is missing now: exit 1, no completion marker, no
+    half pair, and the retry redoes that page alone."""
+    real = ResultStore._put
+    flaky = {"on": True}
+
+    def put(self, key, body, content_type, client=None, metadata=None):
+        if flaky["on"] and key.endswith("alto/0002.xml"):
+            raise ConnectionError("SlowDown")
+        return real(self, key, body, content_type, client, metadata)
+
+    monkeypatch.setattr(ResultStore, "_put", put)
+    assert main(env, process_page_factory=fake_factory) == EXIT_TRANSIENT
+    keys = _keys(s3, cfg)
+    assert "demo-v1/SE-RA-1234/manifest.json" not in keys
+    assert "demo-v1/SE-RA-1234/page/0002.xml" not in keys
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert "missing=['0002']" in term["error"]
+
+    flaky["on"] = False
+    calls = []
+
+    def factory(c):
+        inner = fake_factory(c)
+
+        def process(path):
+            calls.append(path.stem)
+            return inner(path)
+
+        return process
+
+    assert main(env, process_page_factory=factory) == EXIT_OK
+    assert calls == ["0002"]

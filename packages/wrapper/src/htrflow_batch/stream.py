@@ -59,7 +59,8 @@ def _failed(stats: "StreamStats", name: str, error: str | None) -> None:
 
 
 def _deferred(stats: "StreamStats", name: str, error: str | None) -> None:
-    """A page the source could not serve TODAY (3095): kept out of `failed`,
+    """A page the source could not serve TODAY (3095), or the store could not
+    take (W-1): kept out of `failed`,
     which verify counts as accounted for, so the page is missing, the run
     exits 1 and the index's retry redoes it."""
     log.warning("page %s deferred to the next attempt: %s", name, error)
@@ -234,7 +235,10 @@ def consume(
                 _failed(stats, name, describe(e))
                 continue
             except Exception as e:
-                _failed(stats, name, describe(e))
+                # The store's condition, not the page's (audit 0923 W-1): a
+                # PUT that outlasted boto's retries is deferred, so verify
+                # reports it missing and the retry redoes only this page.
+                _deferred(stats, name, describe(e))
                 upload_failures += 1
                 if upload_failures >= max_upload_failures:
                     raise UploadOutage(

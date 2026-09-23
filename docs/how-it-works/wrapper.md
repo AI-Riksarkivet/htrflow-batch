@@ -131,13 +131,18 @@ Every stage name can appear in the termination message.
      fails the page, naming the step and its model, and the pipeline is
      rebuilt before the next page
      ([A dead htrflow worker thread](failure-handling.md#a-dead-htrflow-worker-thread)).
+   - **An upload the store could not take is deferred too.** A PUT that
+     still fails after the S3 client's own retries is the store's condition,
+     not the page's, so the page is deferred like a download and any half of
+     its pair already stored is deleted. A page whose own output is bad
+     (a missing format, malformed XML) is failed.
    - **Five consecutive S3 upload failures abort the run** (`UploadOutage`,
      exit 1).
 5. **verify**: checks that every page is accounted for. Each page must be
    uploaded to both `page/` and `alto/`, skipped by resume, or recorded as
    failed with a reason.
    - **A missing page means exit 1.** A page that is none of those is an
-     upload that never landed, or a download that was deferred. Kubernetes
+     upload that never landed, or a download or upload that was deferred. Kubernetes
      retries the index, resume converges, and the termination message lists
      the missing and failed pages.
    - **A failed page does not fail the volume.** It would fail the same way

@@ -404,7 +404,36 @@ def test_upload_failure_counter_resets_on_success(tmp_path):
         max_upload_failures=5,
     )
     assert stats.results["0005"].status == "ok"
-    assert stats.results["0009"].status == "failed"
+    assert stats.results["0009"].status == "deferred"
+
+
+def test_a_transient_upload_failure_defers_the_page(tmp_path, caplog):
+    """Audit 0923 W-1: one PUT that fails after boto's own retries (a network
+    blip, a 503 SlowDown) is the store's condition, not the page's. Recorded
+    as `failed`, verify counted the page as accounted for, manifest.json was
+    written and the page was never retried. Deferred, it is missing: the run
+    exits 1 and the index's retry redoes only that page."""
+    calls = []
+
+    def upload(name, files):
+        calls.append(name)
+        if name == "0002":
+            raise ConnectionError("SlowDown")
+
+    with caplog.at_level("WARNING"):
+        stats = consume(
+            _items([_fr(tmp_path, i) for i in range(1, 4)]),
+            _ok_process(tmp_path),
+            upload,
+        )
+    assert calls == ["0001", "0002", "0003"]
+    assert {n: r.status for n, r in stats.results.items()} == {
+        "0001": "ok",
+        "0002": "deferred",
+        "0003": "ok",
+    }
+    assert "SlowDown" in (stats.results["0002"].error or "")
+    assert "0002 deferred" in caplog.text
 
 
 def test_page_validation_errors_do_not_count_as_outage(tmp_path):

@@ -68,6 +68,28 @@ def test_upload_page_puts_page_before_alto(cfg, s3, tmp_path, monkeypatch):
     assert order == ["page", "alto"]
 
 
+def test_an_alto_put_that_fails_takes_the_page_put_with_it(
+    cfg, s3, tmp_path, monkeypatch
+):
+    """Audit 0923 W-1: the PAGE PUT landed, the ALTO PUT did not, and the
+    orphan page/NNNN.xml stayed behind for a page the run then records as not
+    done. The half pair goes, and the store's error is what the caller sees."""
+    store = ResultStore(cfg)
+    real = store.client.put_object
+
+    def put(**kw):
+        if kw["Key"].endswith("alto/0001.xml"):
+            raise ConnectionError("SlowDown")
+        return real(**kw)
+
+    monkeypatch.setattr(store.client, "put_object", put)
+    alto = _mk(tmp_path, "alto/0001.xml", "<alto/>")
+    page = _mk(tmp_path, "page/0001.xml", "<PcGts/>")
+    with pytest.raises(ConnectionError, match="SlowDown"):
+        store.upload_page("0001", {"alto": alto, "page": page})
+    assert store.stored_pages() == {"page": set(), "alto": set()}
+
+
 def test_done_pages_requires_both_formats(cfg, s3):
     store = ResultStore(cfg)
     s3.put_object(
