@@ -3,10 +3,19 @@
 // The API is packages/web and the page is this one, and nothing tied the two
 // together: a field renamed on one side was found by whoever next opened a
 // campaign page (2026-09-14 audit). The fixture is printed by
-// `scripts/api_contract.py` from real projection output and committed; a
+// `scripts/api_contract.py` through the app's own routes and committed; a
 // pytest fails when it goes stale, and this fails when the shapes disagree.
-import { describe, expect, test } from "vitest";
-import { jobDetailSchema, jobSummarySchema } from "$lib/api.js";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { z } from "zod";
+import {
+  ApiUnreachable,
+  fetchJob,
+  fetchJobs,
+  jobDetailSchema,
+  jobSummarySchema,
+  versionSchema,
+} from "$lib/api.js";
+import { describeApiError } from "$lib/reasons.js";
 import contract from "./api-contract.json";
 
 describe("the read API's contract", () => {
@@ -54,6 +63,9 @@ describe("the read API's contract", () => {
       expect(dropped(row, jobSummarySchema.parse(row))).toEqual(IGNORED);
     for (const row of contract.details)
       expect(dropped(row, jobDetailSchema.parse(row))).toEqual(IGNORED);
+    expect(
+      dropped(contract.version, versionSchema.parse(contract.version)),
+    ).toEqual([]);
   });
 
   // A lenient field hides a rename from the walk above only if the fixture
@@ -66,5 +78,58 @@ describe("the read API's contract", () => {
     });
     expect(volumes.some((v) => v.sourceUrl !== null)).toBe(true);
     expect(volumes.some((v) => v.reason !== undefined)).toBe(true);
+  });
+
+  describe("what the routes add around the rows", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    const answer = (body: unknown, status = 200, headers = {}) =>
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify(body), {
+            status,
+            headers: { "content-type": "application/json", ...headers },
+          }),
+      );
+
+    // The list's total of reaped campaigns is a header, and a header is a
+    // string: read the way fetchJobs reads it, it is a whole count -- the
+    // same whether the reaped rows came with it or were not asked for.
+    test("the reaped total reads as a whole count through fetchJobs", async () => {
+      const total = Number(contract.reapedTotal);
+      expect(Number.isInteger(total) && total >= 0).toBe(true);
+      const live = contract.summaries.filter((r) => !r.jobGone);
+      for (const rows of [contract.summaries, live]) {
+        vi.stubGlobal(
+          "fetch",
+          answer(rows, 200, { "x-reaped-total": contract.reapedTotal }),
+        );
+        const list = await fetchJobs();
+        expect(list.unreadable).toBe(0);
+        expect(list.jobs).toHaveLength(rows.length);
+        expect(list.reapedTotal).toBe(total);
+      }
+    });
+
+    // The page reads an error by its status alone -- a 404 is a campaign
+    // file that was removed, anything else the service being unreachable --
+    // and never shows the body; `detail` is the shape it could rely on.
+    test("every error the API answers is a status and a detail sentence", async () => {
+      const shape = z.object({
+        status: z.number().int().min(400),
+        body: z.object({ detail: z.string().min(1) }),
+      });
+      expect(contract.errors.length).toBeGreaterThan(0);
+      for (const error of contract.errors) {
+        const { status, body } = shape.parse(error);
+        vi.stubGlobal("fetch", answer(body, status));
+        const thrown = await fetchJob("ns", "name").catch((e: unknown) => e);
+        expect(thrown).toBeInstanceOf(ApiUnreachable);
+        expect(describeApiError(thrown, false)).toContain(
+          status === 404 ? "This campaign is gone" : `(HTTP ${status})`,
+        );
+      }
+      expect(contract.errors.map((e) => e.status)).toContain(404);
+    });
   });
 });
