@@ -1160,6 +1160,47 @@ def test_an_empty_class_list_renders_none():
     named(rendered, "ClusterQueue", "htr-batch-cq")
 
 
+# --- 0923 D-9: cluster-scoped Kueue objects are created or referenced ------
+
+
+def test_an_existing_flavor_is_referenced_not_recreated():
+    """A cluster whose Kueue already has `default-flavor` refused the first
+    install: Helm will not adopt an object another owner made."""
+    rendered = render(sets=DEFAULT_SETS + ("queue.createFlavor=false",))
+    assert objects(rendered, "ResourceFlavor") == []
+    queue = named(rendered, "ClusterQueue", "htr-batch-cq")
+    flavors = queue["spec"]["resourceGroups"][0]["flavors"]
+    assert [f["name"] for f in flavors] == ["default-flavor"]
+
+
+def test_an_existing_cluster_queue_is_referenced_by_name():
+    rendered = render(
+        sets=DEFAULT_SETS
+        + ("queue.createClusterQueue=false", "queue.clusterQueueName=shared-cq")
+    )
+    assert objects(rendered, "ClusterQueue") == []
+    local = named(rendered, "LocalQueue", "htr-batch")
+    assert local["spec"]["clusterQueue"] == "shared-cq"
+
+
+def test_a_second_release_can_name_its_own_cluster_objects():
+    rendered = render(
+        sets=DEFAULT_SETS
+        + (
+            "queue.clusterQueueName=team-b-cq",
+            "queue.flavor=team-b-flavor",
+            "queue.createPriorityClasses=false",
+        )
+    )
+    named(rendered, "ResourceFlavor", "team-b-flavor")
+    named(rendered, "ClusterQueue", "team-b-cq")
+    assert (
+        named(rendered, "LocalQueue", "htr-batch")["spec"]["clusterQueue"]
+        == "team-b-cq"
+    )
+    assert objects(rendered, "WorkloadPriorityClass") == []
+
+
 # --- 3103: every guard, alone, refuses in its own words -------------------
 
 #: One case per `fail`/`required` in the two charts: a render that satisfies

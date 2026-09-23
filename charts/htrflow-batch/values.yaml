@@ -55,8 +55,17 @@ modelCache:
   accessModes: [ReadWriteOnce]
 
 queue:
-  name: htr-batch
-  flavor: default-flavor
+  name: htr-batch          # the LocalQueue, in the release namespace
+  # The three cluster-scoped kinds below are created by this release, or --
+  # when another release or the cluster's own Kueue setup already has them
+  # -- only referenced by name. A second release in another namespace needs
+  # names of its own, or create* false and the names of the first's.
+  flavor: default-flavor   # ResourceFlavor the ClusterQueue's quota is in
+  createFlavor: true
+  clusterQueueName: ""     # "" = <name>-cq
+  # Created here, the ClusterQueue admits only this release's namespace
+  # (namespaceSelector). One referenced from elsewhere must admit it itself.
+  createClusterQueue: true
   # Covered resources and quotas for the ClusterQueue. EVERY resource a Job
   # requests must be covered or Kueue marks it inadmissible. The converter's
   # default Job config admits one volume at cpu 4 / 8Gi / 1 GPU — raise the
@@ -82,7 +91,10 @@ queue:
   # Workload, raises no event, and the Job stays suspended and reads
   # "Queued" for ever. So converter.yaml's `priority_classes` mirrors this
   # list and `htrflow-campaigns validate` refuses a name outside it. An
-  # empty list renders no class at all.
+  # empty list renders no class at all. With createPriorityClasses false the
+  # classes are the cluster's, not this release's, and the list is only the
+  # names converter.yaml must repeat -- they must still exist.
+  createPriorityClasses: true
   priorityClasses:
     - name: htr-interactive
       value: 1000

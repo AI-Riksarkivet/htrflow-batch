@@ -55,8 +55,12 @@ models stay until the PVC is dropped.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `queue.name` | `htr-batch` | LocalQueue name; ClusterQueue is `<name>-cq`, admitting LocalQueues from the release namespace only. Must match `converter.yaml`'s `queue` |
-| `queue.flavor` | `default-flavor` | ResourceFlavor |
+| `queue.name` | `htr-batch` | LocalQueue name, in the release namespace. Must match `converter.yaml`'s `queue` |
+| `queue.clusterQueueName` | `""` | The ClusterQueue the LocalQueue points at; `""` = `<name>-cq` |
+| `queue.createClusterQueue` | `true` | Create that ClusterQueue, admitting LocalQueues from the release namespace only. `false` = it exists already (another release's, or the cluster's own) and must admit this namespace itself |
+| `queue.flavor` | `default-flavor` | The ResourceFlavor the created ClusterQueue's quota is in |
+| `queue.createFlavor` | `true` | Create that ResourceFlavor. `false` = reference one the cluster's Kueue already has — a flavor, the ClusterQueue and the priority classes are cluster-scoped, so a second release, or a cluster that already has one of these names, needs other names or `create…: false` |
+| `queue.createPriorityClasses` | `true` | Create one `WorkloadPriorityClass` per `queue.priorityClasses` entry. `false` = the classes are the cluster's; the list then only names them, and `converter.yaml`'s `priority_classes` must still repeat it |
 | `queue.priorityClasses` | `htr-interactive` 1000, `htr-bulk` 0, `htr-idle` -10 | One cluster-scoped `WorkloadPriorityClass` per entry (`name`, integer `value`, `description`); these are the names a campaign's `priority:` may use, and an empty list renders none. Kueue orders the queue by value first (higher first), then by creation time; preemption stays off, so a higher class goes ahead of waiting campaigns but never evicts a running one. A Job with no label ranks at 0, which is why `htr-bulk` is 0: leaving `priority:` out is `htr-bulk`. Kueue does not refuse a Job naming a class that does not exist (no Workload, no event, "Queued" for ever), so `converter.yaml`'s `priority_classes` mirrors these names and `validate` refuses a `priority:` outside them |
 | `queue.resources` | cpu 4 / memory 8Gi / nvidia.com/gpu 1 | Covered quotas — every resource an index's pod requests must be listed, or Kueue marks it inadmissible. The default admits exactly one campaign index as the converter renders it (requests cpu 4 / 8 Gi / 1 GPU); raise it to run more volumes in parallel. Indexes stuck `queued` with an idle GPU usually mean a dead Kueue controller, not a busy GPU |
 
