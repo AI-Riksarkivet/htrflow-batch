@@ -38,14 +38,13 @@ function stop(sentence: string): string {
  * lists (Python repr — `main._verify` builds it). With a `key` only that
  * list's names; without one, every name in the message. Deduplicated and in
  * the order they appear; an empty or unparseable message yields none, and
- * the sentence then just says how it went without naming pages.
+ * the sentence then just says how it went without naming pages. A list the
+ * wrapper's 3500-character clip cut open still gives the names it kept.
  */
 function pageNames(error: string, key?: "missing" | "failed"): string[] {
   const names: string[] = [];
   const lists =
-    key === undefined
-      ? /=\[([^\]]*)\]/g
-      : new RegExp(`${key}=\\[([^\\]]*)\\]`, "g");
+    key === undefined ? /=\[([^\]]*)/g : new RegExp(`${key}=\\[([^\\]]*)`, "g");
   for (const list of error.matchAll(lists)) {
     for (const quoted of (list[1] ?? "").matchAll(/'([^']*)'/g)) {
       const name = quoted[1];
@@ -57,9 +56,9 @@ function pageNames(error: string, key?: "missing" | "failed"): string[] {
   return names;
 }
 
-/** "(p012, p045 and 2 more)", or nothing when the message named no page. */
-function naming(names: string[]): string {
-  const rest = names.length - PAGES_SHOWN;
+/** "(p012, p045 and 2 more)" of `total`, or nothing when none is named. */
+function naming(names: string[], total: number): string {
+  const rest = total - PAGES_SHOWN;
   if (names.length === 0) return "";
   return ` (${names.slice(0, PAGES_SHOWN).join(", ")}${
     rest > 0 ? ` and ${rest} more` : ""
@@ -75,8 +74,16 @@ function naming(names: string[]): string {
  * completes and names it in manifest.json, so no sentence here covers it.
  */
 function describeVerify(error: string, final: boolean): string {
+  // The counts lead the message and the name lists end it, so the clip at
+  // 3500 characters only ever takes names: the count is read, and the names
+  // are counted only from an older wrapper that wrote none.
+  const said = (pattern: RegExp) => {
+    const n = pattern.exec(error)?.[1];
+    return n === undefined ? null : Number(n);
+  };
   if (error.startsWith("verify failed: all ")) {
-    const n = pageNames(error, "failed").length;
+    const n =
+      said(/^verify failed: all (\d+) /) ?? pageNames(error, "failed").length;
     const count = n === 0 ? "No page" : `None of the ${n} pages`;
     return final
       ? `${count} processed in the last attempt produced a result, and the ` +
@@ -90,9 +97,10 @@ function describeVerify(error: string, final: boolean): string {
   // are coming back when only the missing ones are.
   const named = pageNames(error, "missing");
   const names = named.length === 0 ? pageNames(error) : named;
-  const count = names.length === 0 ? "Some" : String(names.length);
-  const plural = names.length === 1 ? "page is" : "pages are";
-  const missing = `${count} ${plural} missing from the results${naming(names)}`;
+  const total = said(/^verify failed: (\d+) missing/) ?? names.length;
+  const count = total === 0 ? "Some" : String(total);
+  const plural = total === 1 ? "page is" : "pages are";
+  const missing = `${count} ${plural} missing from the results${naming(names, total)}`;
   return final
     ? `${missing}, and the volume has used all its retries — put it in a ` +
         "new campaign to redo them."
