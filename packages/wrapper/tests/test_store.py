@@ -186,6 +186,31 @@ def test_the_log_client_makes_two_attempts_not_three(cfg, s3):
     assert (c.connect_timeout, c.read_timeout) == (5, 15)
 
 
+def test_deleting_a_missing_key_is_no_error_on_any_store(cfg, s3, monkeypatch):
+    """Review M-2: a single-object DELETE of a key that is not there answers
+    204 on AWS, MinIO and Ceph, but a store that answers 404 made resume
+    raise on every attempt after a SIGTERM before publish. DeleteObjects
+    reports per key and treats a missing one as deleted, so every delete
+    goes through it."""
+    store = ResultStore(cfg)
+
+    def refuse(**kw):
+        raise AssertionError("single-object DELETE used")
+
+    monkeypatch.setattr(store.client, "delete_object", refuse)
+    store.delete(["manifest.json"])
+    store.delete(["iiif.json"])
+
+
+def test_delete_removes_the_keys_it_is_given(cfg, s3):
+    store = ResultStore(cfg)
+    store.put_json("manifest.json", {})
+    store.put_json("progress.json", {})
+    store.delete(["manifest.json"])
+    keys = [o["Key"] for o in s3.list_objects_v2(Bucket=cfg.s3_bucket)["Contents"]]
+    assert keys == ["demo-v1/SE-RA-1234/progress.json"]
+
+
 def test_get_json_or_none(cfg, s3):
     store = ResultStore(cfg)
     assert store.get_json_or_none("manifest.json") is None

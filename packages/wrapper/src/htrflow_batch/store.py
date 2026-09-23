@@ -210,11 +210,15 @@ class ResultStore:
         accounted for by the previous run's objects -- and publish would read
         that stale ALTO into iiif.json while manifest.json records the page
         as failed. A key that is not there is not an error."""
-        keys = [
-            {"Key": self._key(f"{fmt}/{name}.xml")}
-            for name in sorted(names)
-            for fmt in PAGE_FORMATS
-        ]
+        self.delete(
+            [f"{fmt}/{name}.xml" for name in sorted(names) for fmt in PAGE_FORMATS]
+        )
+
+    def delete(self, rel_keys: list[str]) -> None:
+        """Objects under the volume prefix, through DeleteObjects: it reports
+        per key and treats a missing one as deleted, where a single-object
+        DELETE of a missing key may answer 404 on some stores (review M-2)."""
+        keys = [{"Key": self._key(rel)} for rel in rel_keys]
         for i in range(0, len(keys), DELETE_BATCH):
             response = self.client.delete_objects(
                 Bucket=self.bucket,
@@ -224,13 +228,9 @@ class ResultStore:
             if errors:
                 # a stale object left standing is the very thing this prevents
                 raise RuntimeError(
-                    f"could not delete {len(errors)} stale page output(s), "
+                    f"could not delete {len(errors)} stale object(s), "
                     f"first: {errors[0].get('Key')}: {errors[0].get('Message')}"
                 )
-
-    def delete(self, rel_key: str) -> None:
-        """One object under the volume prefix; a missing key is no error."""
-        self.client.delete_object(Bucket=self.bucket, Key=self._key(rel_key))
 
     def put_json(self, rel_key: str, obj: dict) -> None:
         self._put(self._key(rel_key), _json_bytes(obj), "application/json")

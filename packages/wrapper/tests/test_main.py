@@ -1907,7 +1907,7 @@ def test_a_run_that_deletes_stored_pages_takes_the_completion_marker_first(
     monkeypatch.setattr(
         ResultStore,
         "delete",
-        lambda self, rel: order.append(rel) or real_one(self, rel),
+        lambda self, rels: order.extend(rels) or real_one(self, rels),
     )
     monkeypatch.setattr(
         ResultStore,
@@ -1920,7 +1920,7 @@ def test_a_run_that_deletes_stored_pages_takes_the_completion_marker_first(
 
     env = dict(env, RESUME="false")
     assert main(env, process_page_factory=factory) == EXIT_TRANSIENT
-    assert order == ["manifest.json", "iiif.json", "pages"]
+    assert order[:3] == ["manifest.json", "iiif.json", "pages"]
     keys = _keys(s3, cfg)
     assert "demo-v1/SE-RA-1234/manifest.json" not in keys
     assert "demo-v1/SE-RA-1234/iiif.json" not in keys
@@ -1934,7 +1934,7 @@ def test_a_resume_that_deletes_nothing_keeps_the_completion_marker(
     for name in ("0001", "0002", "0003"):
         _put_done(s3, cfg, name)
     deleted = []
-    monkeypatch.setattr(ResultStore, "delete", lambda self, rel: deleted.append(rel))
+    monkeypatch.setattr(ResultStore, "delete", lambda self, rels: deleted.extend(rels))
 
     assert main(env, process_page_factory=fake_factory) == EXIT_OK
     assert deleted == []
