@@ -468,17 +468,46 @@ describe("a URL field has to be a URL", () => {
     },
   );
 
-  test("sourceUrl may be null but may not be something else", () => {
-    const withSource = (sourceUrl: unknown) => ({
+  // sourceUrl alone is not built by the API: it is a line of a campaign's
+  // volumes.txt, which people edit, and the API's check and the browser's
+  // URL parser need not agree on every string. One the page cannot use is
+  // no link -- never a card that fails to parse, and so re-polls for ever
+  // (2026-09-23 audit).
+  test.each([
+    "images:x",
+    "javascript:alert(1)",
+    "https://example.org:99999/m",
+    "https://exa%mple.org/m",
+    "https://ex<ample.org/m",
+    42,
+  ])(
+    "a sourceUrl the page cannot use (%s) is no link, not a lost card",
+    (bad) => {
+      const detail = {
+        ...summary,
+        ...pipeline,
+        failures: [{ ...volume, sourceUrl: bad }],
+        latest: { ...volume, sourceUrl: bad },
+        volumes: [volume, { ...volume, index: 1, id: "vol1", sourceUrl: bad }],
+      };
+      const parsed = jobDetailSchema.parse(detail);
+      expect(parsed.volumes.map((v) => v.sourceUrl)).toEqual([
+        volume.sourceUrl,
+        null,
+      ]);
+      expect(parsed.failures[0]?.sourceUrl).toBeNull();
+      expect(parsed.latest?.sourceUrl).toBeNull();
+    },
+  );
+
+  test("sourceUrl may be null", () => {
+    const detail = {
       ...summary,
       ...pipeline,
       failures: [],
-      volumes: [{ ...volume, sourceUrl }],
-    });
-    expect(jobDetailSchema.safeParse(withSource(null)).success).toBe(true);
-    expect(jobDetailSchema.safeParse(withSource("images:x")).success).toBe(
-      false,
-    );
+      volumes: [{ ...volume, sourceUrl: null }],
+    };
+    expect(jobDetailSchema.parse(detail).volumes[0]?.sourceUrl).toBeNull();
   });
 
   test("the campaign notice's log link is a URL too", () => {

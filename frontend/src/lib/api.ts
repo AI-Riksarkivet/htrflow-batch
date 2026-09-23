@@ -243,8 +243,13 @@ export const volumeViewSchema = z.object({
   altoPrefix: httpUrlSchema,
   logUrl: httpUrlSchema,
   // The volume's source manifest, straight off its volumes.txt line; null
-  // for an `images:` volume, which has no manifest to open.
-  sourceUrl: httpUrlSchema.nullable(),
+  // for an `images:` volume, which has no manifest to open. The one URL
+  // field the API does not build: it is a line of a file people edit, and
+  // the API's check and this browser's URL parser need not agree on every
+  // string. So it is read on its own -- one this page cannot use is no
+  // link, where it used to make the whole campaign unreadable, re-polled
+  // for ever (2026-09-23 audit).
+  sourceUrl: httpUrlSchema.nullable().catch(null),
   reason: volumeReasonSchema.optional(),
   progress: volumeProgressSchema.nullable(),
 });
