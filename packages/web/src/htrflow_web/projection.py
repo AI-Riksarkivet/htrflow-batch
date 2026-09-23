@@ -8,11 +8,14 @@ cluster (docs: task-4-brief).
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import re
 import time
+import unicodedata
 from datetime import datetime, timezone
 from typing import NamedTuple
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import yaml
 
@@ -647,7 +650,99 @@ def _source_url(line: str) -> str | None:
     An ``images:`` line lists bare image URLs instead of a manifest, so it has
     no source to open (converter ``models.Volume.source_line``)."""
     source = line.partition("\t")[2]
-    return source if source.startswith(("http://", "https://")) else None
+    return source if browser_http_url(source) else None
+
+
+#: A host label this API is sure every browser's URL parser takes as it is:
+#: letters, digits, `-` and `_`.
+_LABEL = re.compile(r"[A-Za-z0-9_-]+")
+#: WHATWG reads a host whose last label is a number as an IPv4 address, and
+#: rejects it if that address is not one (`example.123`, `1.2.3.999`).
+_NUMERIC = re.compile(r"(0[xX][0-9A-Fa-f]*|[0-9]+)")
+
+
+def browser_http_url(value: str) -> bool:
+    """Whether ``value`` is an absolute http(s) URL the WHATWG URL parser --
+    `new URL()` in the browser -- takes. A subset, on purpose: anything this
+    cannot be sure of is refused, which costs a volume its source link, and
+    a URL the browser refuses cost the card itself (2026-09-23 audit: the
+    page parses a detail all or nothing). Checked here: the scheme, no
+    whitespace, control or backslash anywhere, a port in range, and a host
+    that is a valid IPv6 literal, a valid dotted IPv4 address, or labels of
+    letters, digits, `-` and `_` -- where a punycode label must decode to
+    the non-ASCII letters it stands for, and a non-ASCII one must be letters
+    and digits."""
+    if not value.lower().startswith(("http://", "https://")):
+        return False
+    if any(ord(c) <= 0x20 or ord(c) == 0x7F or c == "\\" for c in value):
+        return False
+    try:
+        parts = urlsplit(value)
+        parts.port  # noqa: B018 - raises for a port out of range or not a number
+    except ValueError:  # a bracketed host that is no address, a bad port
+        return False
+    host = parts.netloc.rpartition("@")[2]
+    if host.startswith("["):
+        literal, _, port = host[1:].partition("]")
+        return (port == "" or port.startswith(":")) and _ipv6(literal)
+    host = host.partition(":")[0].removesuffix(".")
+    labels = host.split(".")
+    if "" in labels:  # no host at all, or an empty label
+        return False
+    if _NUMERIC.fullmatch(labels[-1]):
+        return _ipv4(host)
+    return all(_label(label) for label in labels)
+
+
+def _label(label: str) -> bool:
+    if label.isascii():
+        if not _LABEL.fullmatch(label):
+            return False
+        if not label.lower().startswith("xn--"):
+            return True
+        try:
+            decoded = label[4:].encode("ascii").decode("punycode")
+        except UnicodeError:
+            return False
+        # What it decodes to must be what a browser would have encoded:
+        # non-ASCII, already in its mapped form, and spelled the one way.
+        return (
+            not decoded.isascii()
+            and _letters(decoded)
+            and decoded == unicodedata.normalize("NFKC", decoded.casefold())
+            and decoded.encode("punycode").decode("ascii") == label[4:].lower()
+        )
+    # A label that says it is punycode has to be ASCII.
+    return not label.lower().startswith("xn--") and _letters(label)
+
+
+def _letters(label: str) -> bool:
+    """ASCII letters, digits and `-`, and non-ASCII letters written left to
+    right. A right-to-left letter or a non-ASCII digit brings in the IDNA
+    bidi rule, which a browser enforces and this does not try to."""
+    return all(
+        (c.isascii() and (c.isalnum() or c == "-"))
+        or (c.isalpha() and unicodedata.bidirectional(c) == "L")
+        for c in label
+    )
+
+
+def _ipv4(host: str) -> bool:
+    try:
+        ipaddress.IPv4Address(host)
+    except ValueError:
+        return False
+    return True
+
+
+def _ipv6(literal: str) -> bool:
+    if "%" in literal:  # a zone id, which Python takes and WHATWG does not
+        return False
+    try:
+        ipaddress.IPv6Address(literal)
+    except ValueError:
+        return False
+    return True
 
 
 def _terminated_message(statuses: list[dict], name: str | None) -> str | None:
