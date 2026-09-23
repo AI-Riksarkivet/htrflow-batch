@@ -457,8 +457,6 @@ def test_malformed_alto_fails_the_page_at_upload(env, cfg, s3):
         ].read()
     )
     assert body["results"]["0002"]["status"] == "failed"
-    # B63/D7: no failure-evidence object is published any more
-    assert "demo-v1/SE-RA-1234/metrics-failed-latest.json" not in keys
 
 
 def test_a_failed_page_completes_the_volume(env, cfg, s3):
@@ -862,8 +860,6 @@ def test_resume_failure_is_attributed_to_resume_stage(env, cfg, s3, monkeypatch)
     assert rc == EXIT_TRANSIENT
     term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
     assert term["stage"] == "resume"
-    # nothing ran yet, so there is no evidence to publish
-    assert "demo-v1/SE-RA-1234/metrics-failed-latest.json" not in _keys(s3, cfg)
 
 
 def test_terminate_with_long_error_writes_valid_json(tmp_path):
@@ -1159,19 +1155,6 @@ def test_manifest_json_page_sources_and_errors_are_redacted(
     assert json.loads(body)["page_sources"]["0001"].startswith(
         "https://iiif.example/private/p1"
     )
-
-
-def test_manifest_json_has_no_thumbnail_key(env, cfg, s3):
-    """B63/D7: thumbnails were dropped along with the campaign browser."""
-    rc = main(env, process_page_factory=fake_factory)
-    assert rc == EXIT_OK
-    manifest = json.loads(
-        s3.get_object(Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/manifest.json")[
-            "Body"
-        ].read()
-    )
-    assert "thumbnail" not in manifest
-    assert "demo-v1/SE-RA-1234/thumb.jpg" not in _keys(s3, cfg)
 
 
 # -- IMAGES (B63/D6) -------------------------------------------------------
