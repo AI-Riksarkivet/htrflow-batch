@@ -30,7 +30,7 @@ class CorruptRenderedFile(Exception):
 def rendered(path: Path, kind: str) -> dict:
     """The object of ``kind`` in one rendered campaign file."""
     try:
-        docs = yaml.load_all(path.read_text(), Loader=_FAST_LOADER)
+        docs = yaml.load_all(path.read_text(), Loader=FAST_LOADER)
         return next(d for d in docs if isinstance(d, dict) and d.get("kind") == kind)
     except (yaml.YAMLError, StopIteration) as e:
         raise CorruptRenderedFile(path, e) from e
@@ -50,7 +50,7 @@ def _part_number(path: Path) -> int:
 
 #: libyaml where the platform has it: a part's ConfigMap is up to 900 KiB
 #: of ``volumes.txt``, read here once more than the append-only check does.
-_FAST_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+FAST_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 
 
 def _rendered_campaign(path: Path) -> str | None:
@@ -60,7 +60,7 @@ def _rendered_campaign(path: Path) -> str | None:
     against every campaign it could be, so the check that reads it next
     reports it rather than passing it by."""
     try:
-        for doc in yaml.load_all(path.read_text(), Loader=_FAST_LOADER):
+        for doc in yaml.load_all(path.read_text(), Loader=FAST_LOADER):
             labels = ((doc or {}).get("metadata") or {}).get("labels") or {}
             if render.CAMPAIGN_LABEL in labels:
                 return labels[render.CAMPAIGN_LABEL]
