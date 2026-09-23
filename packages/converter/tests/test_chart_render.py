@@ -835,6 +835,21 @@ def test_the_signing_identity_example_is_one_a_release_can_produce(
     assert "github.com/Riksarkivet/" not in values
 
 
+def test_verification_reads_the_sigstore_bundles_the_release_writes(
+    prod: list[dict],
+):
+    """The release signs with cosign 3, which stores each signature as a
+    Sigstore bundle attached to the image as an OCI referrer and writes no
+    `sha256-<digest>.sig` tag. Kyverno's default attestor type looks only
+    for that tag, so under the production profile it found no signature on
+    any published image and refused every pod in the namespace (audit 0923
+    D-1). `dagger call verify-published` checks the same rule against the
+    real published digests; this pins the field it depends on."""
+    policy = named(prod, "ClusterPolicy", f"htrflow-batch-verify-images-{NAMESPACE}")
+    for entry in policy["spec"]["rules"][0]["verifyImages"]:
+        assert entry["type"] == "SigstoreBundle"
+
+
 # --- D10: the container list the image rules walk -------------------------
 
 
