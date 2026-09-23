@@ -1,3 +1,4 @@
+import json
 import shutil
 from pathlib import Path
 
@@ -1026,3 +1027,72 @@ def test_a_well_formed_toleration_is_kept_as_written(tmp_path):
         {"key": "dedicated", "value": "htr", "effect": "NoExecute",
          "tolerationSeconds": 30},
     ]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "url,why",
+    [
+        ("https://example.org:99999/m", "its port is not a number from 0 to 65535"),
+        ("https://exa%mple.org/m", "its host is not a host name or an IP address"),
+        ("https://ex<ample.org/m", "its host is not a host name or an IP address"),
+        ("https://example.org\\m", "it has a backslash or a control character in it"),
+        (
+            "https://example.org/\x01m",
+            "it has a backslash or a control character in it",
+        ),
+        ("https://[fe80::1%25eth0]/m", "its host is not a host name or an IP address"),
+        ("https://1.2.3.999/m", "its host is not a host name or an IP address"),
+        ("https://a..b/m", "its host is not a host name or an IP address"),
+        ("https://xn--abc/m", "its host is not a host name or an IP address"),
+        (
+            "https://xn--mgbh0fb.example/m",
+            "its host is not a host name or an IP address",
+        ),
+        ("https://example.org:x/m", "its port is not a number from 0 to 65535"),
+    ],
+)
+def test_a_url_a_browser_cannot_open_is_refused(tmp_path, url, why):
+    """audit 0923 F-7 (the web fixer's request): these passed the converter
+    and then threw in the browser's WHATWG `new URL`, which the viewer and
+    the status page build every link with. The rule is a strict subset of
+    WHATWG's: what passes here, a browser opens."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    for form, what in (
+        (f"- id: R1\n    manifest: {json.dumps(url)}\n", "a manifest"),
+        (f"- id: R1\n    images: [{json.dumps(url)}]\n", "an image"),
+    ):
+        (root / "campaigns" / "kyrk.yaml").write_text(
+            f"pipeline: demo-v1\nvolumes:\n  {form}"
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            _load(root)
+        (problem,) = exc_info.value.problems
+        assert problem.startswith(
+            f"campaigns/kyrk.yaml: volume 1 has {what} a browser cannot open ("
+        ), problem
+        assert problem.endswith(f"): {why}"), problem
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.org/m",
+        "http://example.org:8080/iiif/manifest.json",
+        "https://user@example.org/m?x=1#y",
+        "https://[2001:db8::1]:443/m",
+        "https://192.0.2.10/m",
+        "https://iiif_host-1.example.org/m",
+        "https://xn--rksarkivet-z5a.se/m",
+        "https://lbiiif.riksarkivet.se/arkis!R0001203/manifest",
+        "https://example.org/full/2500,/0/default.jpg",
+    ],
+)
+def test_a_url_a_browser_opens_is_kept(tmp_path, url):
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "campaigns" / "kyrk.yaml").write_text(
+        f"pipeline: demo-v1\nvolumes:\n  - id: R1\n    manifest: {json.dumps(url)}\n"
+    )
+    campaigns, _, _ = _load(root)
+    assert next(c for c in campaigns if c.name == "kyrk").volumes[0].manifest == url

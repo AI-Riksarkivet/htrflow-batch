@@ -16,8 +16,10 @@ context once from ``ConverterConfig``.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import re
+import unicodedata
 from datetime import date, datetime
 from string import Formatter
 from typing import Any, Literal
@@ -148,8 +150,82 @@ def _positive_int(v: object) -> bool:
 
 
 def _http_url(value: str) -> bool:
-    u = urlsplit(value)
+    try:
+        u = urlsplit(value)
+    except ValueError:  # a bracketed host it cannot read: `_unopenable` says so
+        return value.lower().startswith(("http://", "https://"))
     return u.scheme in ("http", "https") and bool(u.netloc)
+
+
+#: Source URLs reach a browser: the viewer and the status page build every
+#: link with WHATWG ``new URL``, which throws on what ``urlsplit`` lets by --
+#: a port past 65535, a ``%`` or ``<`` in the host (audit 0923 F-7). This is
+#: a strict subset of what a browser accepts, the one the read API holds its
+#: own links to (packages/web ``projection.browser_http_url``), so a URL
+#: that passes here opens there.
+_BROWSER_BREAKS = re.compile(r"[\x00-\x1f\x7f\\]")
+_HOST_LABEL_RE = re.compile(r"[A-Za-z0-9_-]+\Z")
+_NUMERIC_LABEL_RE = re.compile(r"(?:[0-9]+|0[xX][0-9A-Fa-f]*)\Z")
+_BAD_HOST = "its host is not a host name or an IP address"
+
+
+def _idn_label(label: str) -> bool:
+    """An ``xn--`` label a browser takes as written: it decodes to letters,
+    some of them not ASCII, all written left to right, and it is the one
+    encoding of them (NFC, lower case)."""
+    try:
+        decoded = label[4:].encode("ascii").decode("punycode")
+        encoded = decoded.encode("punycode").decode("ascii")
+    except (UnicodeError, ValueError):
+        return False
+    return (
+        not decoded.isascii()
+        and all(
+            unicodedata.category(ch).startswith("L")
+            and unicodedata.bidirectional(ch) == "L"
+            for ch in decoded
+        )
+        and unicodedata.normalize("NFC", decoded) == decoded
+        and encoded == label[4:].lower()
+    )
+
+
+def _browser_host(host: str, bracketed: bool) -> bool:
+    if bracketed:  # an IPv6 literal, and no zone id: browsers have none
+        try:
+            return "%" not in host and bool(ipaddress.IPv6Address(host))
+        except ValueError:
+            return False
+    labels = host.split(".")
+    if _NUMERIC_LABEL_RE.match(labels[-1]):
+        try:
+            return bool(ipaddress.IPv4Address(host))
+        except ValueError:
+            return False
+    return all(
+        _HOST_LABEL_RE.match(label)
+        and (not label.lower().startswith("xn--") or _idn_label(label))
+        for label in labels
+    )
+
+
+def _unopenable(value: str) -> str | None:
+    """Why a browser would refuse this http(s) URL, or ``None``."""
+    if _BROWSER_BREAKS.search(value):
+        return "it has a backslash or a control character in it"
+    try:
+        u = urlsplit(value)
+    except ValueError:
+        return _BAD_HOST
+    try:
+        u.port  # the read is the check: it raises past 65535
+    except ValueError:
+        return "its port is not a number from 0 to 65535"
+    host = u.netloc.rpartition("@")[2]
+    bracketed = host.startswith("[")
+    if not _browser_host(u.hostname or "", bracketed):
+        return _BAD_HOST
+    return None
 
 
 #: A ``volumes.txt`` line separates an ``images:`` volume's URLs with a space
@@ -355,6 +431,10 @@ class Volume(BaseModel):
                 f'has a manifest that is not an http(s) URL ("{_shown_url(v)}") '
                 "— write the whole URL, starting with https://"
             )
+        if v is not None and (why := _unopenable(v)):
+            raise ValueError(
+                f'has a manifest a browser cannot open ("{_shown_url(v)}"): {why}'
+            )
         return v
 
     @field_validator("images")
@@ -370,6 +450,10 @@ class Volume(BaseModel):
                 raise ValueError(
                     f"lists an image that is not an http(s) URL "
                     f'("{_shown_url(u)}") — every entry under images: is a whole URL'
+                )
+            if why := _unopenable(u):
+                raise ValueError(
+                    f'has an image a browser cannot open ("{_shown_url(u)}"): {why}'
                 )
         return v
 
