@@ -35,7 +35,8 @@ enforces.
   (`.github/workflows/ci.yml`), before every image is pushed at release, on each
   architecture (`.github/workflows/publish.yml`), and every week, both rebuilt from `main`,
   with the report in the Security tab, and as the published digests the repository pins,
-  pulled from the registry on both architectures (`.github/workflows/security.yml`).
+  pulled from the registry on both architectures (`.github/workflows/security.yml` and
+  `.github/workflows/published.yml`).
 - **Signatures** of those published digests are checked through the chart's own
   verify-images policy and the Kyverno CLI on every change and every week.
 - **CodeQL** analyses the Python packages, the TypeScript campaign browser, the Go dagger

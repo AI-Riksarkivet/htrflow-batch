@@ -11,12 +11,9 @@ name: Security
 # gate is skipped — ci.yml has just run it — and the report is refreshed so
 # alerts a dependency bump fixed are closed.
 #
-# Those jobs rebuild from main's source, which says what the NEXT release
-# will carry. The published jobs below scan what clusters run: the digests
-# this commit pins (the chart's web image, the demo pipeline's wrapper, the
-# Argo CD hook's converter), pulled from the registry by reference, on both
-# architectures, and re-check their signatures against the chart's own
-# verify-images rule (audit 0923 D-5).
+# These jobs rebuild from main's source, which says what the NEXT release
+# will carry. published.yml scans what clusters run: the digests the
+# repository pins.
 on:
   push:
     branches: [main]
@@ -26,10 +23,6 @@ on:
       - "packages/*/pyproject.toml"
       - "frontend/bun.lock"
       - ".github/workflows/security.yml"
-      # The release pins (.dagger/published.go, publishedPins).
-      - "charts/htrflow-batch/values.yaml"
-      - "packages/converter/src/htrflow_converter/template/pipelines/demo-v1.yaml"
-      - "packages/converter/src/htrflow_converter/template/argocd/apply.yaml"
   schedule:
     - cron: "0 5 * * 1" # Mondays 05:00 UTC, before the working week
   workflow_dispatch:
@@ -129,49 +122,3 @@ jobs:
       - name: Trivy gate (CRITICAL blocks)
         if: github.event_name != 'push'
         run: make scan-image
-
-  # The published digests, by reference. A gate on every event, push
-  # included: on a push it is the release commit's new pins being checked,
-  # and ci.yml scans nothing published.
-  scan-published:
-    name: Scan published image (${{ matrix.image }}, ${{ matrix.arch }})
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        image: [web, wrapper, campaigns]
-        arch: [amd64, arm64]
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-dagger
-
-      - name: Trivy gate on the pinned digest (CRITICAL blocks)
-        run: >-
-          dagger call --progress plain scan-published --image "$IMAGE"
-          --arch "$ARCH" --severity CRITICAL --ignore-unfixed
-        env:
-          IMAGE: ${{ matrix.image }}
-          ARCH: ${{ matrix.arch }}
-          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-
-  # The signatures on the same digests, through the chart's verify-images
-  # rule as values-prod.yaml renders it. ci.yml runs it on every change; the
-  # schedule catches what moves outside this repository -- a registry that
-  # drops the referrers, a signing root that rotates.
-  verify-published:
-    name: Verify published signatures
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-dagger
-
-      - name: The chart's signature rule admits the pinned digests
-        run: dagger call --progress plain verify-published
-        env:
-          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
