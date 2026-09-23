@@ -783,3 +783,290 @@ def test_a_pipeline_id_leaves_room_for_its_warm_up_job(tmp_path, capsys, length,
     files = {f"pipelines/{pid}.yaml": pipeline, "campaigns/x.yaml": _campaign(1, pid)}
     rc, out = _validate_with(tmp_path, capsys, files)
     assert (rc == 0) == ok, out
+
+
+def test_a_split_campaign_beside_a_single_one_sharing_its_stem_is_not_append_only(
+    tmp_path, capsys
+):
+    """audit 0923 C-4: parts were found by the first 50 characters of a name.
+    With `<stem>-b` rendered as one Job, a big `<stem>-a` added beside it
+    renders `<stem>-part1` and `-part2`, and the next validate held those
+    against `<stem>-b`: "append-only", with nothing changed, and every later
+    render refused. Parts belong to the campaign their label names."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    stem = "k" * 50
+    (repo / "campaigns" / f"{stem}-b.yaml").write_text(_split_campaign(3))
+    out = repo / "rendered"
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+
+    (repo / "campaigns" / f"{stem}-a.yaml").write_text(_split_campaign(10_001))
+    assert main(["validate", str(repo)]) == 0, capsys.readouterr().out
+    assert main(["render", str(repo), "--out", str(out)]) == 0
+    assert (out / "campaigns" / f"{stem}-part2.yaml").is_file()
+
+    capsys.readouterr()
+    assert main(["validate", str(repo)]) == 0, capsys.readouterr().out
+    assert main(["render", str(repo), "--out", str(out)]) == 0, capsys.readouterr()
+
+    # and the rule still holds for each of them, on its own files
+    (repo / "campaigns" / f"{stem}-b.yaml").write_text(_split_campaign(4))
+    assert main(["validate", str(repo)]) == 1
+    assert f"campaign {stem}-b is append-only" in capsys.readouterr().out
+
+
+def _window_repo(tmp_path, campaign: str):
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    for f in (repo / "campaigns").glob("*.yaml"):
+        f.unlink()
+    (repo / "campaigns" / "big.yaml").write_text(
+        "pipeline: demo-v1\nvolumes: [R1, R2, R3, R4, R5, R6]\n" + campaign
+    )
+    assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    return repo
+
+
+@pytest.mark.parametrize(
+    "edit,before,after",
+    [
+        (("campaigns/big.yaml", "window: 3\n", "window: 4\n"), 3, 4),
+        (("converter.yaml", "window: 10\n", "window: 2\n"), 3, 2),
+    ],
+)
+def test_a_window_change_under_a_rendered_campaign_is_warned_about(
+    tmp_path, capsys, edit, before, after
+):
+    """audit 0923 C-11: Kueue (v0.19, the version the Makefile installs)
+    compares a running Job's pod count, min(parallelism, completions), with
+    its admitted Workload's; when they differ it suspends the Job -- every
+    running pod stopped -- deletes the Workload and queues the campaign
+    again (jobframework `EquivalentToWorkload` / `ensureOneWorkload`: "No
+    matching Workload"). Whether the campaign is running is the cluster's to
+    say, not the repo's -- a finished or never-admitted one changes nothing
+    -- so offline this is a warning with the safe way, and the apply, which
+    sees the cluster, holds a running one (review 6)."""
+    repo = _window_repo(tmp_path, "window: 3\n")
+    rel, old, new = edit
+    path = repo / rel
+    path.write_text(path.read_text().replace(old, new))
+    capsys.readouterr()
+    assert main(["validate", str(repo)]) == 0
+    said = capsys.readouterr()
+    assert said.out == ""
+    assert said.err.startswith(
+        f"warning: campaign big runs {before} pods at a time and would now run {after}"
+    ), said.err
+    assert "pause it first" in said.err
+    assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    assert "warning: campaign big runs" in capsys.readouterr().err
+
+
+def test_a_window_change_that_moves_no_pod_count_is_allowed(tmp_path, capsys):
+    """Six volumes at a window of 10 or 8 is six pods either way: the count
+    Kueue compares does not move, so neither does anything running."""
+    repo = _window_repo(tmp_path, "window: 10\n")
+    path = repo / "campaigns" / "big.yaml"
+    path.write_text(path.read_text().replace("window: 10\n", "window: 8\n"))
+    capsys.readouterr()
+    assert main(["validate", str(repo)]) == 0
+    assert capsys.readouterr().err == ""
+
+
+def test_a_window_change_on_a_campaign_paused_before_and_after_is_allowed(
+    tmp_path, capsys
+):
+    """A paused campaign runs no pods, and its Workload holds no quota, which
+    Kueue updates in place to the new count: pause, change the window, then
+    resume is the way to change it without a restart."""
+    repo = _window_repo(tmp_path, "window: 3\nsuspend: true\n")
+    path = repo / "campaigns" / "big.yaml"
+    path.write_text(path.read_text().replace("window: 3\n", "window: 4\n"))
+    capsys.readouterr()
+    assert main(["validate", str(repo)]) == 0
+    assert capsys.readouterr().err == ""  # nothing to warn about
+
+
+class _FakeDulwichRepo:
+    """dulwich's `Repo`, as much of it as `_git_head` uses (the real one is
+    in the converter image through the `hook` extra, not in the dev env)."""
+
+    heads: dict[str, bytes] = {}
+
+    def __init__(self, root: str) -> None:
+        self.root = root
+
+    @classmethod
+    def discover(cls, start: str):
+        import dulwich.errors
+
+        for root, head in cls.heads.items():
+            if Path(start).resolve().is_relative_to(root):
+                return cls(root)
+        raise dulwich.errors.NotGitRepository(start)
+
+    def head(self) -> bytes:
+        return self.heads[self.root]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        pass
+
+
+def _without_git(monkeypatch, heads: dict[str, bytes]) -> None:
+    import subprocess
+    import sys
+    import types
+
+    def no_git(*args, **kwargs):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(subprocess, "run", no_git)
+    errors = types.ModuleType("dulwich.errors")
+    errors.NotGitRepository = type("NotGitRepository", (Exception,), {})
+    repo = types.ModuleType("dulwich.repo")
+    repo.Repo = _FakeDulwichRepo
+    package = types.ModuleType("dulwich")
+    package.errors, package.repo = errors, repo
+    monkeypatch.setitem(sys.modules, "dulwich", package)
+    monkeypatch.setitem(sys.modules, "dulwich.errors", errors)
+    monkeypatch.setitem(sys.modules, "dulwich.repo", repo)
+    monkeypatch.setattr(_FakeDulwichRepo, "heads", heads)
+
+
+def test_the_commit_is_read_without_a_git_binary(tmp_path, monkeypatch):
+    """audit 0923 C-10: the Argo CD hook's image is distroless, with no git,
+    so every campaign it applied recorded commit "unknown". The clone in the
+    same image is dulwich's; so is the read of what it cloned."""
+    from htrflow_converter import cli
+
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    _without_git(monkeypatch, {str(tmp_path.resolve()): sha.encode()})
+    (tmp_path / "campaigns").mkdir()
+    assert cli._git_head(tmp_path / "campaigns") == sha
+
+
+def test_outside_a_checkout_the_commit_is_still_unknown(tmp_path, monkeypatch):
+    from htrflow_converter import cli
+
+    _without_git(monkeypatch, {})
+    assert cli._git_head(tmp_path) == "unknown"
+
+
+def test_validate_rendered_passes_a_checkout_whose_render_is_committed(
+    tmp_path, capsys
+):
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    assert main(["validate", "--rendered", str(repo)]) == 0, capsys.readouterr()
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("committed", [True, False])
+def test_validate_rendered_refuses_a_checkout_ci_has_not_rendered(
+    tmp_path, capsys, committed
+):
+    """audit 0923 S-9: the Argo CD hook clones the branch's HEAD, not the
+    commit CI rendered, so a push landing after CI's render commit was
+    applied unrendered and unchecked by the Policy job. The hook runs this
+    before the apply: HEAD's own render has to be the rendered/ HEAD
+    carries."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    if committed:
+        assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    (repo / "campaigns" / "new.yaml").write_text("pipeline: demo-v1\nvolumes: [N1]\n")
+    capsys.readouterr()
+    assert main(["validate", "--rendered", str(repo)]) == 1
+    said = capsys.readouterr().out
+    assert said.startswith(f"{repo / 'rendered'} is not what this checkout renders")
+    assert "nothing CI did not render" in said
+    assert main(["validate", str(repo)]) == 0  # a pull request is not held to it
+
+
+def _recorded_repo(tmp_path, recorded: str, now: str):
+    """A repo whose `rendered/` holds `recorded`'s render -- what v0.5.0 made
+    of `now`, which the current rules refuse -- and whose campaign file now
+    says `now`."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    campaign = repo / "campaigns" / "kyrk.yaml"
+    campaign.write_text(f"pipeline: demo-v1\nvolumes:\n{recorded}")
+    assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    campaign.write_text(f"pipeline: demo-v1\nvolumes:\n{now}")
+    return repo
+
+
+def test_a_rendered_campaign_keeps_the_id_yaml_gave_it(tmp_path, capsys):
+    """audit 0923 review 3: v0.5.0 rendered `id: 0012345` as volume `5349`.
+    Its campaign is append-only, so the quoted `"0012345"` the new rule
+    asks for would be refused as a change. Unchanged, it stays valid, with a
+    warning naming the id it actually has."""
+    m = "    manifest: https://iiif.example.org/m\n"
+    repo = _recorded_repo(tmp_path, f'  - id: "5349"\n{m}', f"  - id: 0012345\n{m}")
+    capsys.readouterr()
+    assert main(["validate", str(repo)]) == 0
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    assert printed.err.startswith("warning: campaigns/kyrk.yaml: volume 1"), printed
+    assert 'id: "5349"' in printed.err
+    assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+
+
+def test_a_rendered_campaign_that_changes_meets_the_new_rules(tmp_path, capsys):
+    m = "    manifest: https://iiif.example.org/m\n"
+    repo = _recorded_repo(
+        tmp_path, f'  - id: "5349"\n{m}', f"  - id: 0012345\n{m}  - id: R2\n{m}"
+    )
+    capsys.readouterr()
+    assert main(["validate", str(repo)]) == 1
+    assert "has an id that YAML reads as a number" in capsys.readouterr().out
+
+
+def test_a_rendered_campaign_keeps_a_url_the_new_rule_refuses(tmp_path, capsys):
+    """audit 0923 review 4: the same for a source URL v0.5.0 took."""
+    url = "https://example.org:99999/m"
+    repo = _recorded_repo(
+        tmp_path, "  - id: R1\n    manifest: https://x.example/m\n", ""
+    )
+    # the record, as v0.5.0 wrote it with this URL
+    path = repo / "rendered" / "campaigns" / "kyrk.yaml"
+    path.write_text(path.read_text().replace("https://x.example/m", url))
+    (repo / "campaigns" / "kyrk.yaml").write_text(
+        f"pipeline: demo-v1\nvolumes:\n  - id: R1\n    manifest: {url}\n"
+    )
+    capsys.readouterr()
+    assert main(["validate", str(repo)]) == 0
+    err = capsys.readouterr().err
+    assert "warning: campaigns/kyrk.yaml: volume 1 has a manifest a browser" in err
+    assert "its port is not a number" in err
+
+    (repo / "campaigns" / "new.yaml").write_text(
+        f"pipeline: demo-v1\nvolumes:\n  - id: N1\n    manifest: {url}\n"
+    )
+    assert main(["validate", str(repo)]) == 1  # a new campaign is held to it
+
+
+def test_validate_rendered_compares_what_the_render_says_not_its_bytes(
+    tmp_path, capsys
+):
+    """audit 0923 review 5: a checkout with CRLF line endings (git's autocrlf)
+    failed the hook's check with nothing changed, and so would a PyYAML
+    release that spells the same objects differently. The check compares the
+    rendered objects."""
+    repo = tmp_path / "repo"
+    shutil.copytree(GOOD, repo)
+    assert main(["render", str(repo), "--out", str(repo / "rendered")]) == 0
+    for path in (repo / "rendered").rglob("*.yaml"):
+        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+    path = repo / "rendered" / "campaigns" / "loc.yaml"
+    path.write_text(yaml.safe_dump_all(yaml.safe_load_all(path.read_text()), width=40))
+    assert main(["validate", "--rendered", str(repo)]) == 0, capsys.readouterr()
+
+    docs = list(yaml.safe_load_all(path.read_text()))
+    docs[1]["spec"]["parallelism"] = 1
+    path.write_text(yaml.safe_dump_all(docs))
+    assert main(["validate", "--rendered", str(repo)]) == 1

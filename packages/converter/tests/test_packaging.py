@@ -106,6 +106,10 @@ def test_template_dotfile_is_readable_from_an_installed_wheel(tmp_path):
             "for p in (r / 'ci' / 'github' / '.github' / 'workflows' / 'render.yml',\n"
             "          r / 'ci' / 'azure' / 'azure-pipelines.yml',\n"
             "          r / 'ci' / 'azure' / '.azure-pipelines' / 'install-uv.yml',\n"
+            "          r / 'ci' / 'azure' / '.azure-pipelines'"
+            " / 'install-converter.yml',\n"
+            "          r / 'ci' / 'github' / '.github' / 'actions'"
+            " / 'install-converter' / 'action.yml',\n"
             "          r / 'template' / 'argocd' / 'apply.yaml'):\n"
             "    print(len(p.read_text()))",
         ],
@@ -115,7 +119,7 @@ def test_template_dotfile_is_readable_from_an_installed_wheel(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     sizes = [int(n) for n in result.stdout.split()]
-    assert len(sizes) == 4 and all(sizes), result.stdout
+    assert len(sizes) == 6 and all(sizes), result.stdout
 
 
 def test_examples_match_template():
