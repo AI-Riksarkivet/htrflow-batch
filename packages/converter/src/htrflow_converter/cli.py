@@ -155,16 +155,49 @@ def _part_number(path: Path) -> int:
     return int(m.group(1)) if m else 0
 
 
+#: libyaml where the platform has it: a part's ConfigMap is up to 900 KiB
+#: of ``volumes.txt``, read here once more than the append-only check does.
+_FAST_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+def _rendered_campaign(path: Path) -> str | None:
+    """The campaign a rendered file says it belongs to: the converter's
+    campaign label on its objects. ``None`` when the file does not say --
+    unreadable, or written without the label -- which the caller counts
+    against every campaign it could be, so the check that reads it next
+    reports it rather than passing it by."""
+    try:
+        for doc in yaml.load_all(path.read_text(), Loader=_FAST_LOADER):
+            labels = ((doc or {}).get("metadata") or {}).get("labels") or {}
+            if render.CAMPAIGN_LABEL in labels:
+                return labels[render.CAMPAIGN_LABEL]
+    except (yaml.YAMLError, OSError, AttributeError):
+        pass
+    return None
+
+
 def _existing_parts(campaigns_out: Path, c: Campaign) -> list[Path]:
     """Every file an earlier render of this campaign left in ``out``, in the
     order it wrote them. A campaign that splits renders under a name cut
     short of its own (see ``render.split_stem``), so the ``-partN`` files are
     looked up under that stem, not under the campaign's own name. Matched
     whole, never globbed: ``loc-part*`` also finds the campaign ``loc-partner``
-    (3088)."""
+    (3088).
+
+    A stem is not an owner, though: two long names that agree on their first
+    50 characters share one, and ``<stem>-b`` rendered as a single Job used to
+    be handed ``<stem>-a``'s parts as its own -- "append-only", with nothing
+    changed (audit 0923 C-4). A part is this campaign's when its label says
+    so. ``<name>.yaml`` needs no such check: no other campaign renders there,
+    since a campaign name may not end in ``-part<number>``."""
     part = re.compile(re.escape(render.split_stem(c.name)) + r"-part\d+\.yaml\Z")
     paths = sorted(campaigns_out.glob(f"{c.name}.yaml"))
-    parts = [p for p in campaigns_out.glob("*.yaml") if part.match(p.name)]
+    mine = render.label_value(c.name)
+    parts = [
+        p
+        for p in campaigns_out.glob("*.yaml")
+        if part.match(p.name) and _rendered_campaign(p) in (mine, None)
+    ]
     return paths + sorted(parts, key=_part_number)
 
 
