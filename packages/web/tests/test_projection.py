@@ -1733,15 +1733,16 @@ class TestRecordWrite:
     def test_a_first_record_is_the_whole_observation_unforced(self):
         row = _running_row()
         fresh = projection.status_record(row, job_uid="uid-1")
-        body, force = projection.record_write(None, row, fresh)
+        ((body, force, manager),) = projection.record_write(None, row, fresh)
         assert body["data"] == projection.merge_record({}, fresh)
         assert body["metadata"]["labels"]["htrflow.riksarkivet.se/kind"] == "status"
         assert force is False
+        assert manager == projection.WEB_MANAGER
 
     def test_an_unchanged_record_is_not_written(self):
         row = _running_row()
         fresh = projection.status_record(row, job_uid="uid-1")
-        assert projection.record_write(_stored_cm(dict(fresh)), row, fresh) is None
+        assert projection.record_write(_stored_cm(dict(fresh)), row, fresh) == []
 
     def test_once_apply_recorded_the_ending_only_failed_volumes_are_sent(self):
         """`htrflow-campaigns apply` force-owns the ending it read off the
@@ -1758,12 +1759,12 @@ class TestRecordWrite:
         stored = _stored_cm(theirs, _managed(*APPLY_KEYS))
         failures = [{"id": "vol2", "reason": {"error": "manifest 404"}}]
         fresh = projection.status_record(row, failures, job_uid="uid-1")
-        body, force = projection.record_write(stored, row, fresh)
+        ((body, force, manager),) = projection.record_write(stored, row, fresh)
         assert body["data"] == {
             "failedVolumes": '[{"id":"vol2","reason":"manifest 404"}]'
         }
         assert "labels" not in body["metadata"]
-        assert force is False
+        assert manager == projection.FAILURES_MANAGER
 
     def test_a_record_of_another_job_is_replaced_not_merged(self):
         """The record carried no Job uid, so a Job recreated under the same
@@ -1780,10 +1781,24 @@ class TestRecordWrite:
         }
         row = _running_row()
         fresh = projection.status_record(row, job_uid="uid-new")
-        body, _ = projection.record_write(_stored_cm(old), row, fresh)
-        assert body["data"] == fresh
-        assert "failedVolumes" not in body["data"]
+        ((body, force, _),) = projection.record_write(_stored_cm(old), row, fresh)
+        # The old run's failures cleared, forced: under a manager of their
+        # own, a summary that left them out would leave them standing.
+        assert body["data"] == {**fresh, "failedVolumes": "[]"}
         assert body["data"]["finishedAt"] == ""
+        assert force is True and body["metadata"]["resourceVersion"] == "41"
+
+    def test_a_detail_of_another_jobs_record_writes_only_this_runs_failures(self):
+        old = {"jobUid": "uid-old", "failedVolumes": '[{"id":"vol2","reason":"x"}]'}
+        row = _running_row()
+        failures = [{"id": "vol1", "reason": {"error": "OOM"}}]
+        fresh = projection.status_record(row, failures, job_uid="uid-new")
+        summary, failed = projection.record_write(_stored_cm(old), row, fresh)
+        assert "failedVolumes" not in summary.body["data"]
+        assert failed.body["data"] == {
+            "failedVolumes": '[{"id":"vol1","reason":"OOM"}]'
+        }
+        assert failed.manager == projection.FAILURES_MANAGER
 
     def test_taking_another_jobs_record_over_from_apply_is_forced_on_a_version(
         self,
@@ -1796,7 +1811,7 @@ class TestRecordWrite:
         stored = _stored_cm(old, _managed("phase", "jobUid"), rv="99")
         row = _running_row()
         fresh = projection.status_record(row, job_uid="uid-new")
-        body, force = projection.record_write(stored, row, fresh)
+        ((body, force, _),) = projection.record_write(stored, row, fresh)
         assert force is True
         assert body["metadata"]["resourceVersion"] == "99"
         assert body["data"]["phase"] == "Running"
@@ -1809,7 +1824,48 @@ class TestRecordWrite:
         row = _running_row()
         fresh = projection.status_record(row, [], job_uid="uid-1")
         stored = _stored_cm({"phase": "Running", "failedVolumes": kept})
-        body, force = projection.record_write(stored, row, fresh)
-        assert body["data"]["failedVolumes"] == kept
-        assert body["data"]["jobUid"] == "uid-1"
-        assert force is False
+        summary, failed = projection.record_write(stored, row, fresh)
+        assert failed.body["data"]["failedVolumes"] == kept
+        assert summary.body["data"]["jobUid"] == "uid-1"
+        assert summary.force is False
+
+    def test_the_summary_never_carries_the_failures_it_does_not_own(self):
+        """The list route's write re-sent the failedVolumes it had read, and
+        could apply them over reasons a detail request had just written
+        (2026-09-23 audit)."""
+        row = _running_row()
+        stored = _stored_cm(
+            {"phase": "Queued", "failedVolumes": '[{"id":"v","reason":"x"}]'},
+            _managed("failedVolumes", manager=projection.FAILURES_MANAGER),
+        )
+        fresh = projection.status_record(row, job_uid="uid-1")
+        ((body, _, manager),) = projection.record_write(stored, row, fresh)
+        assert manager == projection.WEB_MANAGER
+        assert "failedVolumes" not in body["data"]
+
+    def test_unchanged_failures_the_failures_manager_owns_are_not_sent(self):
+        row = _running_row()
+        kept = '[{"id":"v","reason":"x"}]'
+        fresh = projection.status_record(row, [], job_uid="uid-1")
+        data = {k: v for k, v in fresh.items() if k != "failedVolumes"}
+        stored = _stored_cm(
+            {**data, "failedVolumes": kept},
+            _managed("failedVolumes", manager=projection.FAILURES_MANAGER),
+        )
+        assert projection.record_write(stored, row, fresh) == []
+
+    def test_failures_the_summary_manager_still_owns_are_taken_over(self):
+        """From before the split: the failures write is sent, forced, even
+        with nothing new in it, and the summary keeps the field until then
+        so that releasing it cannot delete it."""
+        row = _running_row()
+        kept = '[{"id":"v","reason":"x"}]'
+        fresh = projection.status_record(row, [], job_uid="uid-1")
+        stored = _stored_cm(
+            {"phase": "Queued", "failedVolumes": kept},
+            _managed("phase", "failedVolumes", manager=projection.WEB_MANAGER),
+        )
+        summary, failed = projection.record_write(stored, row, fresh)
+        assert summary.body["data"]["failedVolumes"] == kept
+        assert failed.body["data"] == {"failedVolumes": kept}
+        assert failed.force is True

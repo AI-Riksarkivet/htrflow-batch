@@ -22,11 +22,13 @@ from htrflow_web.app import (
     create_app,
 )
 from htrflow_web.kube import (
+    FIELD_MANAGER,
     ApplyConflict,
     ClusterUnavailable,
     Reader,
     ReaderLike,
 )
+from htrflow_web.projection import FAILURES_MANAGER
 
 JOB = {
     "metadata": {
@@ -457,6 +459,7 @@ class RecordingReader(FakeReader):
         self.live = live or []
         self.written: list[dict] = []
         self.forced: list[bool] = []
+        self.managers: list[str] = []
 
     def list_configmaps(self) -> list[dict]:
         return self.live
@@ -467,7 +470,9 @@ class RecordingReader(FakeReader):
                 return cm
         return super().get_configmap(namespace, name)
 
-    def apply_configmap(self, body: dict, force: bool = False) -> None:
+    def apply_configmap(
+        self, body: dict, force: bool = False, manager: str = "htrflow-web"
+    ) -> None:
         # The API server refuses a name no object could carry, and a fake
         # that accepts one proves nothing about what the cluster would do
         # with the names this package builds (2026-09-14 audit).
@@ -478,11 +483,18 @@ class RecordingReader(FakeReader):
             assert DNS_1123.fullmatch(value), f"{field} is not DNS-1123: {value!r}"
         self.written.append(body)
         self.forced.append(force)
+        self.managers.append(manager)
 
 
 def _status_of(reader: RecordingReader) -> dict:
     assert len(reader.written) == 1
     return reader.written[0]
+
+
+def _written_by(reader: RecordingReader, manager: str) -> dict:
+    """The one write this request made as ``manager``."""
+    (body,) = [b for b, m in zip(reader.written, reader.managers) if m == manager]
+    return body
 
 
 def test_listing_campaigns_writes_what_it_observed(capsys):
@@ -509,27 +521,56 @@ def test_a_record_that_already_says_this_is_not_written_again():
 
 
 def test_the_detail_endpoint_records_the_failed_volumes():
+    """Under a field manager of their own, after the summary: the summary
+    creates the record with its labels, and the failures land on it."""
     reader = RecordingReader()
     client = TestClient(create_app(reader, progress=FakeProgress()))
     assert client.get("/api/v1/jobs/htr-test/kyrk").status_code == 200
-    assert _status_of(reader)["data"]["failedVolumes"] == "[]"
+    assert reader.managers == [FIELD_MANAGER, FAILURES_MANAGER]
+    summary, failures = reader.written
+    assert "failedVolumes" not in summary["data"]
+    assert summary["metadata"]["labels"]
+    assert failures["data"] == {"failedVolumes": "[]"}
+    assert reader.forced[1] is True, "no other manager has a say in the field"
 
 
-def test_the_list_record_never_wipes_the_failed_volumes_the_detail_wrote():
-    reader = RecordingReader(
-        [
-            {
-                "metadata": {
-                    "name": "campaign-kyrk-status",
-                    "namespace": "htr-test",
-                },
-                "data": {"failedVolumes": '[{"id":"vol1","reason":"boom"}]'},
-            }
-        ]
-    )
+def test_the_list_route_never_sends_the_failed_volumes():
+    """It re-sent the value it had read, under the manager the detail route
+    wrote with, so a list request could apply it over reasons a detail
+    request had just added (2026-09-23 audit). The field is left to the
+    failures manager, which keeps it when this one says nothing of it."""
+    stored = {
+        "metadata": {
+            "name": "campaign-kyrk-status",
+            "namespace": "htr-test",
+            "managedFields": [_owns(FAILURES_MANAGER, "failedVolumes")],
+        },
+        "data": {"failedVolumes": '[{"id":"vol1","reason":"boom"}]'},
+    }
+    reader = RecordingReader([stored])
     client = TestClient(create_app(reader, progress=FakeProgress()))
     client.get("/api/v1/jobs")
+    assert "failedVolumes" not in _status_of(reader)["data"]
+    assert reader.managers == [FIELD_MANAGER]
+
+
+def test_a_record_from_before_the_split_keeps_its_failures_until_handed_over():
+    """A record whose failedVolumes the summary manager still owns: leaving
+    the field out would release it, and a field nobody owns is deleted. The
+    stored value is sent back as it is until the failures manager takes the
+    field over."""
     kept = '[{"id":"vol1","reason":"boom"}]'
+    stored = {
+        "metadata": {
+            "name": "campaign-kyrk-status",
+            "namespace": "htr-test",
+            "managedFields": [_owns(FIELD_MANAGER, "phase", "failedVolumes")],
+        },
+        "data": {"phase": "Queued", "failedVolumes": kept},
+    }
+    reader = RecordingReader([stored])
+    client = TestClient(create_app(reader, progress=FakeProgress()))
+    client.get("/api/v1/jobs")
     assert _status_of(reader)["data"]["failedVolumes"] == kept
 
 
@@ -557,6 +598,14 @@ def test_a_reader_that_cannot_write_still_answers_the_list():
     assert not hasattr(reader, "apply_configmap")
     client = TestClient(create_app(reader, progress=FakeProgress()))
     assert len(client.get("/api/v1/jobs").json()) == 1
+
+
+def _owns(manager: str, *keys: str) -> dict:
+    return {
+        "manager": manager,
+        "operation": "Apply",
+        "fieldsV1": {"f:data": {f"f:{k}": {} for k in keys}},
+    }
 
 
 REAPED_RECORD = {
@@ -679,7 +728,7 @@ def test_a_later_detail_request_does_not_erase_the_failed_volumes():
     )
     client = TestClient(create_app(reader, progress=FakeProgress()))
     assert client.get("/api/v1/jobs/htr-test/kyrk").status_code == 200
-    assert _status_of(reader)["data"]["failedVolumes"] == kept
+    assert _written_by(reader, FAILURES_MANAGER)["data"]["failedVolumes"] == kept
 
 
 def test_failed_volumes_land_when_apply_owns_every_other_field():
@@ -721,7 +770,7 @@ def test_failed_volumes_land_when_apply_owns_every_other_field():
     written = _status_of(reader)
     assert written["data"] == {"failedVolumes": "[]"}
     assert "labels" not in written["metadata"]
-    assert reader.forced == [False]
+    assert reader.managers == [FAILURES_MANAGER]
 
 
 def test_a_recreated_job_does_not_inherit_the_last_runs_record():
@@ -743,7 +792,10 @@ def test_a_recreated_job_does_not_inherit_the_last_runs_record():
     assert written["jobUid"] == "uid-kyrk"
     assert written["phase"] == "Running"
     assert written["finishedAt"] == ""
-    assert "failedVolumes" not in written
+    # Cleared, forced: the failures manager owns the old run's list, and
+    # left out it would stay.
+    assert written["failedVolumes"] == "[]"
+    assert reader.forced == [True]
 
 
 class _Refusing(RecordingReader):
@@ -753,7 +805,9 @@ class _Refusing(RecordingReader):
         super().__init__(live)
         self.attempts = 0
 
-    def apply_configmap(self, body: dict, force: bool = False) -> None:
+    def apply_configmap(
+        self, body: dict, force: bool = False, manager: str = "htrflow-web"
+    ) -> None:
         self.attempts += 1
         raise RuntimeError("configmaps is forbidden")
 
@@ -766,7 +820,9 @@ class _Contested(RecordingReader):
         super().__init__(live)
         self.attempts = 0
 
-    def apply_configmap(self, body: dict, force: bool = False) -> None:
+    def apply_configmap(
+        self, body: dict, force: bool = False, manager: str = "htrflow-web"
+    ) -> None:
         self.attempts += 1
         raise ApplyConflict(body["metadata"]["name"])
 

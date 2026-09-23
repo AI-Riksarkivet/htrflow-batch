@@ -25,7 +25,7 @@ from kubernetes import client, config
 from pydantic import BaseModel, ConfigDict, Field
 from urllib3.exceptions import HTTPError
 
-from .projection import KIND_LABEL, STATUS_KIND, pod_fields
+from .projection import KIND_LABEL, STATUS_KIND, WEB_MANAGER, pod_fields
 
 #: Selects campaign progress Jobs only — excludes the per-pipeline warm-up
 #: Jobs, which carry ``managed-by=converter`` too but not ``app`` or
@@ -71,7 +71,7 @@ _APPLY_PATCH = "application/apply-patch+yaml"
 PARTIAL_METADATA = (
     "application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1,application/json"
 )
-FIELD_MANAGER = "htrflow-web"
+FIELD_MANAGER = WEB_MANAGER
 
 _NAMESPACE_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 _DEFAULT_NAMESPACE = "htr-batch"
@@ -287,7 +287,9 @@ class Reader:
         except HTTPError as e:
             raise ClusterUnavailable(f"list records: {type(e).__name__}") from e
 
-    def apply_configmap(self, body: dict, force: bool = False) -> None:
+    def apply_configmap(
+        self, body: dict, force: bool = False, manager: str = FIELD_MANAGER
+    ) -> None:
         """The one write this service makes. Raises like any other client
         call — ``app.py`` logs it and answers the request anyway, because a
         status page that 500s when it cannot write a record is worse than
@@ -302,7 +304,9 @@ class Reader:
         ``ApplyConflict`` -- contention, not a refusal. ``force`` is only
         ever asked for a record of another Job (``projection.record_write``),
         and then with the ``resourceVersion`` it read in ``body``: the API
-        server holds the apply to that version.
+        server holds the apply to that version. ``manager`` is the field
+        manager sent: ``failedVolumes`` has one of its own
+        (``projection.FAILURES_MANAGER``).
         """
         meta = body["metadata"]
         extra = {"force": True} if force else {}
@@ -312,7 +316,7 @@ class Reader:
                     meta["name"],
                     meta["namespace"],
                     body,
-                    field_manager=FIELD_MANAGER,
+                    field_manager=manager,
                     _content_type=_APPLY_PATCH,
                     _preload_content=False,
                     _request_timeout=REQUEST_TIMEOUT,
