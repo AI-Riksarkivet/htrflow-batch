@@ -1129,3 +1129,23 @@ def test_a_page_that_runs_past_its_budget_is_a_dead_pipeline(
         assert abandoned.leaked_threads(grace=0.1) == 1
     finally:
         hang.set()
+
+
+def test_a_step_missing_the_threads_it_should_have_is_loud(abandoned, caplog):
+    """Review M-5: an htrflow that renamed ``_queue``/``_in``/``_out``/
+    ``_thread`` made the stop a silent no-op, and its threads were never
+    counted. A step that holds a model is htrflow's Inference, and one not
+    shaped like it is logged at ERROR and counted as leaked."""
+    step = SimpleNamespace(model=object(), _worker=threading.Thread(target=print))
+    with caplog.at_level("ERROR"):
+        abandoned.release_steps([step])
+    assert "cannot stop" in caplog.text
+    assert abandoned.leaked_threads(grace=0.0) == 1
+
+
+def test_a_step_without_a_model_has_no_threads_to_stop(abandoned, caplog):
+    """An Export, a reading-order step: nothing to stop, nothing to say."""
+    with caplog.at_level("ERROR"):
+        abandoned.release_steps([SimpleNamespace(dest="out")])
+    assert caplog.text == ""
+    assert abandoned.leaked_threads(grace=0.0) == 0
