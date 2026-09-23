@@ -1055,7 +1055,9 @@ def test_a_warmup_whose_pod_template_changed_is_replaced(tmp_path, cluster, caps
     ]
     printed = capsys.readouterr().out
     assert "replaced: Job/htr-warmup-demo-v1" in printed
-    assert "the marker on the cache PVC" in printed
+    # Not "a file check" for every replacement: a changed recipe warms a
+    # cache directory of its own, which is a real download.
+    assert "a changed recipe downloads into a cache directory of its own" in printed
 
 
 def test_a_running_warmup_is_reported_and_left_alone(tmp_path, cluster, capsys):

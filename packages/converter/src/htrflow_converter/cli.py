@@ -771,8 +771,9 @@ def _campaign_of(obj: dict) -> str:
 
 _REPLACED = (
     "replaced: Job/{name} — its pod template changed, and a Job's template is "
-    "fixed once it exists, so the Job was deleted and created again; the "
-    "marker on the cache PVC survives, so the re-run is a file check"
+    "fixed once it exists, so the Job was deleted and created again; a recipe "
+    "already warmed keeps its marker on the cache PVC and the re-run is a file "
+    "check, while a changed recipe downloads into a cache directory of its own"
 )
 
 
