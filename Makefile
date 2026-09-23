@@ -362,7 +362,7 @@ DOCKER_SECRET_CA := $(shell test -f $(CA_BUNDLE) && echo --secret id=ca,src=$(CA
 build-web:
 	docker build -f .docker/htrflow-web.dockerfile $(DOCKER_SECRET_CA) $(VERSION_BUILD_ARG) -t $(WEB_IMAGE) .
 
-# The converter as the Argo CD hook runs it (docs/reference/campaign-yaml.md,
+# The converter as the Argo CD hook runs it (docs/reference/cli.md,
 # "With Argo CD"): distroless, uv-locked, no CA secret needed -- the recipe
 # clones nothing (same as htrflow-web's own venv stage).
 build-campaigns:
