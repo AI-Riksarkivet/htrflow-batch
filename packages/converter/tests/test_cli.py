@@ -1,15 +1,30 @@
+import functools
 import shutil
 from pathlib import Path
 
 import pytest
 import yaml
 
+from htrflow_converter import render
 from htrflow_converter.cli import main
 from htrflow_converter.parse import ValidationError, load
 
 FIXTURES = Path(__file__).parent / "fixtures"
 GOOD = FIXTURES / "good"
 REPO_ROOT = Path(__file__).parents[3]
+#: A part's volumes under the `small_parts` fixture.
+PART = 3
+
+
+@pytest.fixture
+def small_parts(monkeypatch):
+    """Parts of ``PART`` volumes instead of 10 000: the same cut, the same
+    part names, at a size a test renders in milliseconds rather than
+    seconds. The real limits are kept by the tests that are about them
+    (the byte budget's re-split, a 63-character name's highest index)."""
+    monkeypatch.setattr(render, "split", functools.partial(render.split, size=PART))
+
+
 EXAMPLES_CAMPAIGNS = REPO_ROOT / "examples" / "campaigns"
 
 
@@ -294,7 +309,7 @@ def test_render_leaves_what_else_is_in_out_alone(tmp_path):
 
 
 def test_append_only_still_finds_the_parts_of_a_cut_down_campaign_name(
-    tmp_path, capsys
+    tmp_path, capsys, small_parts
 ):
     """A campaign that splits renders under a shortened name, so `rendered/`
     holds `<shortened>-partN.yaml`. The append-only check has to look for
@@ -303,15 +318,8 @@ def test_append_only_still_finds_the_parts_of_a_cut_down_campaign_name(
     repo = tmp_path / "repo"
     shutil.copytree(GOOD, repo)
     name = "a" * 58
-    url = (
-        "https://lbiiif.riksarkivet.se/arkis!R00012345/jp2/00000000000000000{:03d}.jpg"
-    )
-    volumes = [
-        {"id": f"vol{v:04d}", "images": [url.format(p) for p in range(300)]}
-        for v in range(45)
-    ]
     path = repo / "campaigns" / f"{name}.yaml"
-    path.write_text(yaml.safe_dump({"pipeline": "demo-v1", "volumes": volumes}))
+    path.write_text(_split_campaign(PART + 1))
     out = repo / "rendered"
     assert main(["render", str(repo), "--out", str(out)]) == 0
 
@@ -322,8 +330,7 @@ def test_append_only_still_finds_the_parts_of_a_cut_down_campaign_name(
         assert len(part.stem) <= 63
         assert name.startswith(part.stem.removesuffix(f"-part{i}"))
 
-    volumes.append({"id": "vol9999", "images": [url.format(0)]})
-    path.write_text(yaml.safe_dump({"pipeline": "demo-v1", "volumes": volumes}))
+    path.write_text(_split_campaign(PART + 2))
     capsys.readouterr()
     assert main(["render", str(repo), "--out", str(out)]) == 1
     assert f"campaign {name} is append-only" in capsys.readouterr().out
@@ -411,9 +418,9 @@ def _split_campaign(volumes: int) -> str:
     )
 
 
-@pytest.mark.parametrize("volumes", [(10_001, 10_001), (10_001, 10_002)])
+@pytest.mark.parametrize("volumes", [(PART + 1, PART + 1), (PART + 1, PART + 2)])
 def test_render_refuses_two_campaigns_whose_split_names_collide(
-    tmp_path, capsys, volumes
+    tmp_path, capsys, small_parts, volumes
 ):
     """Cutting a long name to a stem can make two campaigns share it. Both
     would render into the same files, the second one silently overwriting the
@@ -440,12 +447,12 @@ def test_render_refuses_two_campaigns_whose_split_names_collide(
     assert "append-only" not in printed
 
 
-def test_validate_refuses_colliding_split_names_too(tmp_path, capsys):
+def test_validate_refuses_colliding_split_names_too(tmp_path, capsys, small_parts):
     repo = tmp_path / "repo"
     shutil.copytree(GOOD, repo)
     for tail in ("alpha", "beta"):
         (repo / "campaigns" / f"{'k' * 50}-{tail}.yaml").write_text(
-            _split_campaign(10_001)
+            _split_campaign(PART + 1)
         )
     assert main(["validate", str(repo)]) == 1
     assert "rename one" in capsys.readouterr().out
@@ -774,7 +781,7 @@ def test_a_pipeline_id_leaves_room_for_its_warm_up_job(tmp_path, capsys, length,
 
 
 def test_a_split_campaign_beside_a_single_one_sharing_its_stem_is_not_append_only(
-    tmp_path, capsys
+    tmp_path, capsys, small_parts
 ):
     """audit 0923 C-4: parts were found by the first 50 characters of a name.
     With `<stem>-b` rendered as one Job, a big `<stem>-a` added beside it
@@ -784,11 +791,11 @@ def test_a_split_campaign_beside_a_single_one_sharing_its_stem_is_not_append_onl
     repo = tmp_path / "repo"
     shutil.copytree(GOOD, repo)
     stem = "k" * 50
-    (repo / "campaigns" / f"{stem}-b.yaml").write_text(_split_campaign(3))
+    (repo / "campaigns" / f"{stem}-b.yaml").write_text(_split_campaign(PART))
     out = repo / "rendered"
     assert main(["render", str(repo), "--out", str(out)]) == 0
 
-    (repo / "campaigns" / f"{stem}-a.yaml").write_text(_split_campaign(10_001))
+    (repo / "campaigns" / f"{stem}-a.yaml").write_text(_split_campaign(PART + 1))
     assert main(["validate", str(repo)]) == 0, capsys.readouterr().out
     assert main(["render", str(repo), "--out", str(out)]) == 0
     assert (out / "campaigns" / f"{stem}-part2.yaml").is_file()
@@ -798,7 +805,7 @@ def test_a_split_campaign_beside_a_single_one_sharing_its_stem_is_not_append_onl
     assert main(["render", str(repo), "--out", str(out)]) == 0, capsys.readouterr()
 
     # and the rule still holds for each of them, on its own files
-    (repo / "campaigns" / f"{stem}-b.yaml").write_text(_split_campaign(4))
+    (repo / "campaigns" / f"{stem}-b.yaml").write_text(_split_campaign(PART - 1))
     assert main(["validate", str(repo)]) == 1
     assert f"campaign {stem}-b is append-only" in capsys.readouterr().out
 
