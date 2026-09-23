@@ -5,11 +5,97 @@ import {
   screen,
   within,
 } from "@testing-library/svelte";
+import { parse, type AST } from "svelte/compiler";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { JobSummary } from "$lib/api.js";
 import { RELOAD_MS } from "$lib/config.js";
 import { describeReason } from "$lib/reasons.js";
 import CampaignCard from "./CampaignCard.svelte";
+import cardSource from "./CampaignCard.svelte?raw";
+
+// jsdom applies none of a component's scoped styles, so the layout promises
+// below are read from the card's own <style> as the Svelte compiler parses
+// it -- every rule, media queries included, in source order -- rather than
+// by regexes that only ever saw the first rule of a name at one indentation.
+type CssRule = {
+  selectors: string[];
+  media: string | null;
+  decls: [string, string][];
+};
+
+const squash = (text: string) => text.replace(/\s+/g, " ").trim();
+
+const cardRules: CssRule[] = (() => {
+  const rules: CssRule[] = [];
+  const walk = (
+    nodes: (AST.CSS.Rule | AST.CSS.Atrule | AST.CSS.Declaration)[],
+    media: string | null,
+  ) => {
+    for (const node of nodes) {
+      if (node.type === "Atrule" && node.name === "media" && node.block)
+        walk(node.block.children, squash(node.prelude));
+      if (node.type !== "Rule") continue;
+      rules.push({
+        selectors: node.prelude.children.map((c) =>
+          squash(cardSource.slice(c.start, c.end)),
+        ),
+        media,
+        decls: node.block.children.flatMap((d) =>
+          d.type === "Declaration"
+            ? [[d.property, squash(d.value)] as [string, string]]
+            : [],
+        ),
+      });
+    }
+  };
+  walk(parse(cardSource, { modern: true }).css?.children ?? [], null);
+  return rules;
+})();
+
+const PHONE = "(max-width: 520px)";
+
+/**
+ * What `selector` (exactly that selector) ends up with, at full width or at
+ * `media`: the top-level rules and that media query's, the later one of two
+ * winning as in the cascade.
+ */
+function cssOf(selector: string, media: string | null = null) {
+  const out = new Map<string, string>();
+  for (const rule of cardRules)
+    if (
+      (rule.media === null || rule.media === media) &&
+      rule.selectors.includes(selector)
+    )
+      for (const [property, value] of rule.decls) out.set(property, value);
+  return out;
+}
+
+/** Every declaration of every rule whose subject is `cls`, anywhere. */
+function declsOn(cls: string): [string, string][] {
+  const subject = new RegExp(`\\.${cls}(?![\\w-])[^\\s>+~]*$`);
+  return cardRules
+    .filter((r) => r.selectors.some((sel) => subject.test(sel)))
+    .flatMap((r) => r.decls);
+}
+
+/** A grid-template-columns value as its tracks, brackets kept whole. */
+function tracks(value: string | undefined): string[] {
+  const out = [""];
+  let depth = 0;
+  for (const ch of value ?? "") {
+    depth += ch === "(" ? 1 : ch === ")" ? -1 : 0;
+    if (ch === " " && depth === 0) out.push("");
+    else out[out.length - 1] += ch;
+  }
+  return out;
+}
+
+/** A grid-template-areas value as its rows of names. */
+function areas(value: string | undefined): string[][] {
+  return [...(value ?? "").matchAll(/"([^"]*)"/g)].map((m) =>
+    squash(m[1] ?? "").split(" "),
+  );
+}
 
 const job: JobSummary = {
   namespace: "htr-test",
@@ -768,16 +854,20 @@ describe("CampaignCard", () => {
     expect(screen.queryByRole("button", { name: /more$/ })).toBeNull();
   });
 
-  test("no sentence on the card is clipped to one line (3080)", async () => {
-    // jsdom lays nothing out, so this reads the rules themselves: a line
-    // of sentences, or one that holds links, must wrap rather than cut.
-    const css: string = (await import("./CampaignCard.svelte?raw")).default;
-    for (const selector of [".problems-text", ".row-note-text", ".vreason"]) {
-      const rule = new RegExp(`\\n  \\${selector} \\{([^}]*)\\}`).exec(
-        css,
-      )?.[1];
-      expect(rule, selector).toBeDefined();
-      expect(rule, selector).not.toMatch(/nowrap|overflow:\s*hidden|ellipsis/);
+  test("no sentence on the card is clipped to one line (3080)", () => {
+    // A line of sentences, or one that holds links, must wrap rather than
+    // cut -- in every rule that styles it, at any width.
+    for (const cls of ["problems-text", "row-note-text", "vreason"]) {
+      const decls = declsOn(cls);
+      expect(decls, cls).toContainEqual(["overflow-wrap", "anywhere"]);
+      for (const [property, value] of decls) {
+        const clips =
+          (property === "white-space" && /nowrap|pre\b/.test(value)) ||
+          (/^overflow(-[xy])?$/.test(property) && /hidden|clip/.test(value)) ||
+          property === "text-overflow" ||
+          /line-clamp$/.test(property);
+        expect(clips, `${cls} { ${property}: ${value} }`).toBe(false);
+      }
     }
   });
 
@@ -2768,23 +2858,18 @@ describe("the volume line at a phone's width, and what it says it cannot do", ()
 
   // The card body is one grid, so a phone gets the same tracks folded to
   // two columns rather than a table scrolling sideways on a 390px screen.
-  test("a phone folds the same tracks to two lines", async () => {
-    // jsdom does not apply a Svelte component's scoped styles, so the rules
-    // themselves are what is asserted: the id and its figures on line 1,
-    // then the icons, the short bar and the pill packed right on line 2.
-    const source: string = (await import("./CampaignCard.svelte?raw")).default;
-    const phone = source.split("@media (max-width: 520px)")[1] ?? "";
-    expect(phone).toMatch(/\.row \{[\s\S]*?grid-template-areas:/);
-    expect(phone).toMatch(/"label label label\s+label\s+label"/);
-    expect(phone).toMatch(/"\.\s+links bar\s+fraction status"/);
-    // The words must not clip there: there is a whole line for them.
-    expect(phone).toMatch(
-      /\.vid-line \{[\s\S]*?white-space: normal;[\s\S]*?overflow: visible;/,
+  test("a phone folds the same tracks to two lines", () => {
+    // The id and its figures on line 1, then the icons, the short bar, the
+    // fraction and the pill on line 2.
+    const [line1, line2] = areas(
+      cssOf(".row", PHONE).get("grid-template-areas"),
     );
-    // ...and the bar's cell may shrink rather than run on under them.
-    expect(phone).toMatch(/\.c-bar \{[\s\S]*?min-width: 0;/);
-    const container = await rowFor(volumeDone);
-    expect(container.querySelector(".row.volume")).not.toBeNull();
+    expect(line1).toEqual(["label", "label", "label", "label", "label"]);
+    expect(line2).toEqual([".", "links", "bar", "fraction", "status"]);
+    // The words must not clip there: there is a whole line for them.
+    const id = cssOf(".vid-line", PHONE);
+    expect(id.get("white-space")).toBe("normal");
+    expect(id.get("overflow")).toBe("visible");
   });
 
   test.each([
@@ -3153,35 +3238,26 @@ describe("the two partial states are told apart by colour", () => {
     expect(accent).toHaveAttribute("data-health", health);
   });
 
-  test("each mix is drawn with its own tokens: a hard split on the chip, a gradient on the accent", async () => {
-    const css: string = (await import("./CampaignCard.svelte?raw")).default;
-    const rule = (selector: string): string => {
-      const at = css.indexOf(`${selector} {`);
-      expect(at, selector).toBeGreaterThan(-1);
-      return css.slice(at, css.indexOf("}", at));
-    };
-    for (const [mix, token] of [
-      ["success", "--success"],
-      ["destructive", "--destructive"],
+  test("each mix is drawn with its own tokens: a hard split on the chip, a gradient on the accent", () => {
+    for (const [mix, health, token] of [
+      ["success", "partly-succeeded", "var(--success)"],
+      ["destructive", "partly-failed", "var(--destructive)"],
     ]) {
-      expect(rule(`.chip.phase[data-mix="${mix}"]`)).toContain(
-        `--mix-to: var(${token})`,
+      expect(cssOf(`.chip.phase[data-mix="${mix}"]`).get("--mix-to")).toBe(
+        token,
+      );
+      expect(cssOf(`.campaign[data-health="${health}"]`).get("--mix-to")).toBe(
+        token,
       );
     }
-    expect(rule('.campaign[data-health="partly-succeeded"]')).toContain(
-      "--mix-to: var(--success)",
-    );
-    expect(rule('.campaign[data-health="partly-failed"]')).toContain(
-      "--mix-to: var(--destructive)",
-    );
     // The chip: amber and the mix meet at one point, never a blend under
     // the word. The accent has no text on it, so it may blend.
-    expect(rule(".chip.phase[data-mix]")).toMatch(
-      /var\(--warning\) 50%,\s*var\(--mix-to\) 50%/,
+    expect(cssOf(".chip.phase[data-mix]").get("background")).toContain(
+      "linear-gradient(90deg, var(--warning) 50%, var(--mix-to) 50%)",
     );
-    expect(rule('.campaign[data-health^="partly-"]')).toMatch(
-      /to bottom,\s*var\(--warning\),\s*var\(--mix-to\)/,
-    );
+    expect(
+      cssOf('.campaign[data-health^="partly-"]').get("background"),
+    ).toContain("linear-gradient(to bottom, var(--warning), var(--mix-to))");
   });
 });
 
@@ -3315,20 +3391,14 @@ describe("the bar is the track that stretches, and every volume has one", () => 
     return container;
   }
 
-  test("the label takes the free width; the bar, fraction and pill are fixed", async () => {
-    const source: string = (await import("./CampaignCard.svelte?raw")).default;
-    const tracks = (
-      (source.split(".row {")[1] ?? "").split("}")[0] ?? ""
-    ).replace(/\s+/g, " ");
+  test("the label takes the free width; the bar, fraction and pill are fixed", () => {
     // The words take the left and the three fixed things pack against the
     // right in the order a reader wants them: the bar, the fraction it
     // draws, and the state it ended in.
-    expect(tracks).toMatch(
-      /minmax\(6rem, 1fr\) var\(--icons\) var\(--bar\) var\(--fraction\) var\(--pill\)/,
+    expect(cssOf(".row").get("grid-template-columns")).toBe(
+      "minmax(6rem, 1fr) var(--icons) var(--bar) var(--fraction) var(--pill)",
     );
-    expect(source).toMatch(/--bar: 6rem;/);
-    const container = await card([]);
-    expect(container.querySelector(".row.totals")).not.toBeNull();
+    expect(cssOf(".campaign").get("--bar")).toBe("6rem");
   });
 
   test("a long volume id clips rather than widening its track", async () => {
@@ -3340,8 +3410,10 @@ describe("the bar is the track that stretches, and every volume has one", () => 
     const container = await card([long], long);
     const name = container.querySelector(".vid-name") as HTMLElement;
     expect(name).toHaveAttribute("title", expect.stringContaining(long.id));
-    const source: string = (await import("./CampaignCard.svelte?raw")).default;
-    expect(source).toMatch(/\.vid-name \{[\s\S]*?text-overflow: ellipsis;/);
+    const clip = cssOf(".vid-name");
+    expect(clip.get("white-space")).toBe("nowrap");
+    expect(clip.get("overflow")).toBe("hidden");
+    expect(clip.get("text-overflow")).toBe("ellipsis");
   });
 
   test.each([
@@ -3551,17 +3623,21 @@ describe("the bar survives a phone's width", () => {
     vi.unstubAllGlobals();
   });
 
-  test("the phone template has a bar area, with a floor under it", async () => {
-    const source: string = (await import("./CampaignCard.svelte?raw")).default;
-    const phone = source.split("@media (max-width: 520px)")[1] ?? "";
-    // Every row of the fold gives the bar a place...
-    expect(phone).toMatch(/"\.\s+links bar\s+fraction status"/);
-    // ...a track that may shrink but never to nothing...
-    expect(phone).toMatch(/minmax\(2\.5rem, var\(--bar\)\)/);
-    // ...and a cell that cannot be squeezed away either.
-    expect(phone).toMatch(/\.c-bar \{[\s\S]*?min-width: 2\.5rem;/);
-    // The lost line still follows it.
-    expect(phone).toMatch(/"\.\s+\.\s+lost\s+lost\s+lost"/);
+  test("the phone template has a bar area, with a floor under it", () => {
+    const row = cssOf(".row", PHONE);
+    const grid = areas(row.get("grid-template-areas"));
+    // The bar's area is a track that may shrink but never to nothing...
+    const track = grid[1]?.indexOf("bar") ?? -1;
+    expect(track).toBeGreaterThan(-1);
+    expect(tracks(row.get("grid-template-columns"))[track]).toBe(
+      "minmax(2.5rem, var(--bar))",
+    );
+    // ...its cell cannot be squeezed away either...
+    const cell = cssOf(".c-bar", PHONE);
+    expect(cell.get("grid-area")).toBe("bar");
+    expect(cell.get("min-width")).toBe("2.5rem");
+    // ...and the lost line still follows it, under the bar.
+    expect(grid[2]?.slice(track)).toEqual(["lost", "lost", "lost"]);
   });
 
   test("a volume row and a totals row ask for the same bar", async () => {
