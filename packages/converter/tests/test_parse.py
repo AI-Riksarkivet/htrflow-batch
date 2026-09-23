@@ -887,3 +887,57 @@ def test_a_pipeline_with_no_step_to_run_is_refused(tmp_path, steps, said):
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     assert exc_info.value.problems == [f"pipelines/demo-v1.yaml: {said}"]
+
+
+def test_a_volume_two_campaigns_on_one_pipeline_list_is_refused(tmp_path):
+    """audit 0923 C-13: the two campaigns' pods would run concurrently on
+    the one `<pipeline>/<volume>/` results prefix."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "campaigns" / "loc.yaml").write_text(
+        "pipeline: demo-v1\nvolumes: [R0001203, R7, dodsbok-1698, a, b, c]\n"
+    )
+    (root / "campaigns" / "zed.yaml").write_text("pipeline: demo-v1\nvolumes: [R7]\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [
+        'campaigns/loc.yaml: volumes "R0001203" and "dodsbok-1698" are also in '
+        "campaigns/kyrk.yaml, and both campaigns run pipeline demo-v1 — their "
+        "pods would write the same results at once; list each volume in one "
+        "of them only",
+        'campaigns/zed.yaml: volume "R7" is also in campaigns/loc.yaml, and '
+        "both campaigns run pipeline demo-v1 — their pods would write the same "
+        "results at once; list each volume in one of them only",
+    ]
+
+
+def test_many_shared_volumes_are_counted_not_listed(tmp_path):
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    ids = ", ".join(f"V{i}" for i in range(50))
+    (root / "campaigns" / "kyrk.yaml").write_text(
+        f"pipeline: demo-v1\nvolumes: [{ids}]\n"
+    )
+    (root / "campaigns" / "loc.yaml").write_text(
+        f"pipeline: demo-v1\nvolumes: [{ids}]\n"
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    (problem,) = exc_info.value.problems
+    assert problem.startswith(
+        'campaigns/loc.yaml: volumes "V0", "V1", "V2" and 47 more are also in '
+        "campaigns/kyrk.yaml"
+    )
+
+
+def test_one_volume_on_two_pipelines_is_two_results_and_allowed(tmp_path):
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    shutil.copy(
+        root / "pipelines" / "demo-v1.yaml", root / "pipelines" / "demo-v2.yaml"
+    )
+    (root / "campaigns" / "loc.yaml").write_text(
+        "pipeline: demo-v2\nvolumes: [R0001203]\n"
+    )
+    campaigns, _, _ = _load(root)
+    assert {c.name for c in campaigns} == {"kyrk", "loc"}
