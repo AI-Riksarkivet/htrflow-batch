@@ -72,6 +72,14 @@ How the three sides use these URLs:
   is written into every `iiif.json` and `manifest.json` as the volume runs,
   and nothing rewrites those URLs afterwards. Choose a stable address that
   browsers can reach before running real campaigns.
+- **The chart's base and the converter's must match.** The campaign pods
+  write `converter.yaml`'s `public_results_base` into each run's files, and
+  the web front checks every run-log and ALTO address against the chart's
+  `publicResultsBase`: the run viewer and `/alto` refuse anything outside it,
+  and the campaign browser may not fetch from anywhere else. If the base
+  changes, runs published under the old one keep their old addresses, and
+  their logs and ALTO pages are refused until those files are rewritten
+  under the new base; the viewer (`/uv.html`) still opens their manifests.
 - **Forwarded ports: the base is what the browser sees.** When you reach the
   cluster through port forwarding (`ssh -L`, `kubectl port-forward`),
   `publicResultsBase` must be the forwarded address as the browser sees it.
