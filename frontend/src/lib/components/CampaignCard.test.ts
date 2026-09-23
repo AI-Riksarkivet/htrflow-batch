@@ -636,9 +636,10 @@ describe("CampaignCard", () => {
         }),
       ),
     );
-    render(CampaignCard, { job });
+    const { container } = render(CampaignCard, { job });
     await vi.advanceTimersByTimeAsync(0);
-    expect(screen.queryByRole("link", { name: "log" })).toBeNull();
+    expect(container.querySelector(".row.latest")).toBeNull();
+    expect(screen.queryByRole("link", { name: /^run log for/ })).toBeNull();
   });
 
   test("zone 3 names every failed volume and why", async () => {
