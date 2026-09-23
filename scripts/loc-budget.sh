@@ -301,7 +301,7 @@ fail=0
 # Retry-After parse and the abortable wait; in stream.py and main.py the
 # deferred outcome verify counts as missing; in iiif.py one rule choosing a
 # canvas's image for both the fetch and the viewer manifest.
-# 3636 -> 3791 (audit 0923): an upload the store could not take defers the
+# 3636 -> 3878 (audit 0923): an upload the store could not take defers the
 # page rather than failing it, and a half-stored pair is deleted (W-1). The
 # source digest drops the credentials of every common signing scheme, the
 # ordinary-named ones only beside their scheme's marker (W-2). A URL in
@@ -314,7 +314,9 @@ fail=0
 # period, and the log client makes two attempts in all (W-7). The pin check
 # covers the processor's revision too (S-3). On the index's last attempt,
 # known from two new env vars, verify fails a still-deferred page (W-4).
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3791
+# After a 400 the fetcher reads the image's info.json for a size within the
+# cap before `max`, and the lookahead is bounded by bytes as well (W-9).
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3878
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
