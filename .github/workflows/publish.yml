@@ -183,7 +183,8 @@ jobs:
           name: digest-${{ matrix.component }}${{ matrix.tag_suffix }}
           path: digest-${{ matrix.component }}${{ matrix.tag_suffix }}
           if-no-files-found: error
-          retention-days: 1
+          # A release approved days after the builds must still find them.
+          retention-days: 7
 
   # The tags everything else references: one manifest list per image over its
   # two per-arch images, so `docker pull riksarkivet/htrflow-batch:<tag>` (or
