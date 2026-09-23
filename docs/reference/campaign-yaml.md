@@ -62,7 +62,14 @@ toleration with no key tolerates every taint there is, so with a node
 selector the GPU pods could land on the control plane or on any node tainted
 to keep them away, and that is a validation error. So is a toleration for the
 control plane's own taint (`node-role.kubernetes.io/control-plane`, or the
-older `node-role.kubernetes.io/master`).
+older `node-role.kubernetes.io/master`): that taint is what keeps workloads
+off the node that runs the cluster, and a campaign's pods run code a
+pipeline author chose. A single-node cluster whose one node is the control
+plane (a kubeadm install, say) therefore cannot run campaigns while the node
+carries it. The supported way to run there is to take the taint off the
+node, which makes the node an ordinary worker for every workload, not just
+this one:
+`kubectl taint nodes <node> node-role.kubernetes.io/control-plane:NoSchedule-`.
 
 `s3_secret`, `data_pvc` and `hf_token_secret` are checked here for their
 shape only: each has to be a Kubernetes object name. Which Secrets and PVCs a
