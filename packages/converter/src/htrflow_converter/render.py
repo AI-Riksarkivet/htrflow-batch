@@ -52,6 +52,9 @@ _PIPELINE_LABEL = "htrflow.riksarkivet.se/pipeline"
 _QUEUE_LABEL = "kueue.x-k8s.io/queue-name"
 _PRIORITY_LABEL = "kueue.x-k8s.io/priority-class"
 _SHA_ANNOTATION = "htrflow.riksarkivet.se/pipeline-sha256"
+#: On the warm-up's POD template, so any recipe change -- the steps or the
+#: image -- changes the template and the apply replaces the warm-up Job.
+_RECIPE_ANNOTATION = "htrflow.riksarkivet.se/recipe-sha256"
 _DIGEST_ANNOTATION = "htrflow.riksarkivet.se/image-digest"
 
 
@@ -126,6 +129,20 @@ def _scheduling(job: dict, cfg: ConverterConfig) -> None:
         )
 
 
+def _mount_cache_dir(job: dict, p: Pipeline) -> None:
+    """Every container's mount of the model-cache PVC (``data``) narrowed to
+    ``p``'s own directory on it (``Pipeline.cache_dir``). Inside the pod
+    nothing moves -- ``HF_HOME`` is still ``/data/hf`` and the marker still
+    ``/data/warmup/<id>.done`` -- so the wrapper needs no change; what moves
+    is which directory of the volume ``/data`` is. The kubelet creates it on
+    first mount, and it cannot be escaped from inside the pod."""
+    pod = job["spec"]["template"]["spec"]
+    for container in pod.get("initContainers", []) + pod["containers"]:
+        for mount in container["volumeMounts"]:
+            if mount["name"] == "data":
+                mount["subPath"] = p.cache_dir
+
+
 def _pipeline_configmap(p: Pipeline, cfg: ConverterConfig) -> dict:
     cm = _load("pipeline-configmap.yaml")
     _set(cm, "metadata.name", f"htr-pipeline-{p.id}")
@@ -141,7 +158,11 @@ def _warmup_job(p: Pipeline, cfg: ConverterConfig) -> dict:
     _set(job, "metadata.name", f"{WARMUP_PREFIX}{p.id}")
     _set(job, "metadata.namespace", cfg.namespace)
     job["metadata"]["labels"][_PIPELINE_LABEL] = label_value(p.id)
+    job["spec"]["template"]["metadata"]["annotations"] = {
+        _RECIPE_ANNOTATION: p.recipe_sha256
+    }
     _set(job, "spec.template.spec.containers[0].image", p.image)
+    _mount_cache_dir(job, p)
     for e in job["spec"]["template"]["spec"]["containers"][0]["env"]:
         if e["name"] == "PIPELINE_ID":
             e["value"] = p.id
@@ -331,6 +352,9 @@ def _campaign_job(
     _set(job, "spec.template.spec.volumes[4].secret.secretName", cfg.s3_secret)
 
     _set(job, "spec.template.spec.initContainers[0].image", p.image)
+    _mount_cache_dir(job, p)
+    # Inside this recipe's own directory (`_mount_cache_dir`): the marker a
+    # warm-up of an earlier recipe left is in another directory altogether.
     marker = f"/data/warmup/{p.id}.done"
     _set(
         job,
