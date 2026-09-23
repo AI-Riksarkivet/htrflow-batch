@@ -163,10 +163,13 @@ cluster.
 
 ## Where things stand
 
-- **Images.** `docker.io/riksarkivet/htrflow-batch` (the wrapper) and
-  `docker.io/riksarkivet/htrflow-web` (the web front) are signed with cosign
-  and carry SLSA provenance and an SBOM. Pipeline files pin the wrapper by
-  digest, and the chart's `web.image` pins the web front the same way.
+- **Images.** `docker.io/riksarkivet/htrflow-batch` (the wrapper),
+  `docker.io/riksarkivet/htrflow-web` (the web front) and
+  `docker.io/riksarkivet/htrflow-campaigns` (the converter, for the Argo CD
+  apply hook) are signed with cosign and carry SLSA provenance and an SBOM.
+  Each is pinned by digest: pipeline files pin the wrapper, the chart's
+  `web.image` the web front, and the hook in the campaigns repo the
+  converter.
 - **Versions.** Each lives next to what it versions: the charts' `Chart.yaml`
   files, the packages' `pyproject.toml` files, and `KUEUE_VERSION` in the
   `Makefile`.
