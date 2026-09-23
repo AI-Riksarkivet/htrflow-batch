@@ -111,8 +111,8 @@ Every stage name can appear in the termination message.
    never leaves an older file answering for the page. When there is any such
    page, the previous run's `manifest.json` is deleted before them, and its
    `iiif.json` next: a completion marker never describes outputs that are
-   gone, and a `manifest.json` is never there without its `iiif.json`. Skipped pages are never
-   downloaded.
+   gone, and a `manifest.json` is never there without its `iiif.json`.
+   Skipped pages are never downloaded.
 3. **load**: starts `stream.PageStream(...)` downloading, **then** calls
    `Pipeline.from_config($PIPELINE_PATH)`. The model load overlaps the first
    pages' downloads, so the GPU's idle time at startup is
@@ -529,7 +529,10 @@ The one thing publish needs from an ALTO, the page's width and height for
 `iiif.json`, is kept from the parse `store.upload_page` does before its first
 PUT (`store.page_dims`). A full volume therefore publishes without reading a
 single ALTO back. `publish.alto_dims` falls back to fetching the ALTO only for
-pages a *previous* run published.
+pages a *previous* run published. A stored ALTO that does not parse leaves
+that canvas out of `iiif.json`; a store error reading one fails the run
+(exit 1) instead, since `manifest.json` follows and nothing would write the
+canvas back. The retry redoes only the publish.
 
 | Item | Bound |
 |---|---|
