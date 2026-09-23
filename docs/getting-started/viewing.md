@@ -79,7 +79,8 @@ How the three sides use these URLs:
   and the campaign browser may not fetch from anywhere else. If the base
   changes, runs published under the old one keep their old addresses, and
   their logs and ALTO pages are refused until those files are rewritten
-  under the new base; the viewer (`/uv.html`) still opens their manifests.
+  under the new base. The viewer (`/uv.html`) is not held to the base, so
+  it still opens their manifests for as long as the old address answers.
 - **Forwarded ports: the base is what the browser sees.** When you reach the
   cluster through port forwarding (`ssh -L`, `kubectl port-forward`),
   `publicResultsBase` must be the forwarded address as the browser sees it.
