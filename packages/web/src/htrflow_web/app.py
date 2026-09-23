@@ -245,7 +245,16 @@ def create_app(
 
     @app.middleware("http")
     async def security_headers(request, call_next):
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception:
+            # Anything no handler claimed is otherwise answered by Starlette
+            # OUTSIDE this middleware, as a plain-text 500 with none of the
+            # headers below (2026-09-23 audit). Logged in full, never quoted.
+            _LOG.exception("unhandled error on %s", request.url.path)
+            response = JSONResponse(
+                status_code=500, content={"detail": "internal error"}
+            )
         for name, value in SECURITY_HEADERS.items():
             response.headers.setdefault(name, value)
         return response

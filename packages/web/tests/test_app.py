@@ -836,6 +836,30 @@ def test_a_cluster_that_does_not_answer_is_a_502_with_the_headers(path: str):
         assert resp.headers[name] == value
 
 
+class _Broken(FakeReader):
+    """A bug: something no handler knows about escapes a route."""
+
+    def list_jobs(self) -> list[dict]:
+        raise KeyError("a bug, not the cluster")
+
+
+def test_an_unexpected_error_is_a_500_that_still_carries_the_headers(caplog):
+    """Any exception escaping a route was answered by Starlette outside the
+    header middleware -- a plain-text 500 with no nosniff and no
+    frame-ancestors (2026-09-23 audit). Logged in full, never quoted."""
+    client = TestClient(
+        create_app(_Broken(), progress=FakeProgress()),
+        raise_server_exceptions=False,
+    )
+    resp = client.get("/api/v1/jobs")
+    assert resp.status_code == 500
+    assert resp.headers["content-type"].startswith("application/json")
+    assert "a bug" not in resp.text
+    assert "a bug, not the cluster" in caplog.text
+    for name, value in SECURITY_HEADERS.items():
+        assert resp.headers[name] == value
+
+
 def test_the_502_never_quotes_the_client_error():
     """The API server's own message names namespaces, verbs and identities;
     the page says what the reader can do instead."""
