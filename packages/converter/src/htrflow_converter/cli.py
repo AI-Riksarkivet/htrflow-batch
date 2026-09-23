@@ -541,8 +541,8 @@ def _dulwich_head(repo: Path) -> str:
 
 
 def _applied_by() -> str:
-    """``HTRFLOW_APPLIED_BY`` (what CI sets from the actor that triggered
-    it), else the OS user. Lower-cased: one person, one spelling."""
+    """``HTRFLOW_APPLIED_BY`` (what the Argo CD hook's Job sets, naming its
+    Application), else the OS user. Lower-cased: one person, one spelling."""
     name = os.environ.get("HTRFLOW_APPLIED_BY", "").strip()
     if not name:
         with contextlib.suppress(Exception):
