@@ -611,12 +611,9 @@ class Pipeline(BaseModel):
 
     @property
     def recipe_sha256(self) -> str:
-        """The whole recipe -- the steps AND the image that runs them --
-        hashed over a canonical form, so that neither a PyYAML release that
-        spells a mapping differently nor ``settings:`` written above
-        ``step:`` moves it. What the model cache is keyed by
-        (``cache_dir``): a new image can load different files for the same
-        steps, so it gets a warm-up of its own too (audit 0923 C-3)."""
+        """The steps AND the image, hashed over a canonical form (no PyYAML
+        spelling moves it): a new image can load other files for the same
+        steps, so it is a new recipe to warm (audit 0923 C-3)."""
         canonical = json.dumps(
             {"image": self.image, "steps": self.steps},
             sort_keys=True,
@@ -627,19 +624,13 @@ class Pipeline(BaseModel):
 
     @property
     def cache_dir(self) -> str:
-        """This recipe's directory on the model-cache PVC: the only part of it
-        the pipeline's warm-up may write and its campaign pods may read.
-
-        Keyed by recipe, so a changed recipe is a new directory with no marker
-        in it -- its campaigns wait for the warm-up that fills it, instead of
-        passing the gate on the old recipe's marker and failing offline
-        without the new model (audit 0923 C-3). And by id, so no two
-        pipelines share one even when their recipes are the same: a warm-up
-        runs its author's model code (a YOLO ``.pt`` is a pickle), and one
-        pipeline's warm-up must not be able to rewrite what another
-        pipeline's campaigns load offline (audit 0923 S-2). The id cannot be
-        confused with another's: the digest after it is always 64 hex
-        characters."""
+        """This recipe's directory on the model-cache PVC, the only part of it
+        its warm-up writes and its campaign pods read. By recipe: a changed
+        recipe is a new, empty directory whose campaigns wait for its warm-up
+        instead of passing the gate on the old marker (audit 0923 C-3). By
+        id: a warm-up runs its author's model code (a YOLO ``.pt`` is a
+        pickle), so no two pipelines share one (audit 0923 S-2). The 64-hex
+        digest after the id keeps two ids from ever meeting."""
         return f"{self.id}-{self.recipe_sha256}"
 
 

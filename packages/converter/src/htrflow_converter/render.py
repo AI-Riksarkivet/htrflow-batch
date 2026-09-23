@@ -131,12 +131,10 @@ def _scheduling(job: dict, cfg: ConverterConfig) -> None:
 
 
 def _mount_cache_dir(job: dict, p: Pipeline) -> None:
-    """Every container's mount of the model-cache PVC (``data``) narrowed to
-    ``p``'s own directory on it (``Pipeline.cache_dir``). Inside the pod
-    nothing moves -- ``HF_HOME`` is still ``/data/hf`` and the marker still
-    ``/data/warmup/<id>.done`` -- so the wrapper needs no change; what moves
-    is which directory of the volume ``/data`` is. The kubelet creates it on
-    first mount, and it cannot be escaped from inside the pod."""
+    """Every mount of the model-cache PVC narrowed to ``p``'s own directory
+    (``Pipeline.cache_dir``). Inside the pod nothing moves -- ``HF_HOME`` is
+    ``/data/hf``, the marker ``/data/warmup/<id>.done`` -- so the wrapper is
+    unchanged; which directory of the volume ``/data`` is, is what moves."""
     pod = job["spec"]["template"]["spec"]
     for container in pod.get("initContainers", []) + pod["containers"]:
         for mount in container["volumeMounts"]:
