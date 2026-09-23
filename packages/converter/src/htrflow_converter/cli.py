@@ -201,17 +201,6 @@ def _write(path: Path, docs: list[dict]) -> None:
     path.write_text(yaml.safe_dump_all(docs, sort_keys=False))
 
 
-def _pods_at_once(job: dict) -> tuple[int, bool]:
-    """How many pods a campaign Job runs at once, as Kueue counts them for
-    its Workload -- ``min(parallelism, completions)`` -- and whether the
-    campaign was paused."""
-    spec = job.get("spec") or {}
-    parallelism = spec.get("parallelism", 1)
-    return min(parallelism, spec.get("completions", parallelism)), bool(
-        spec.get("suspend")
-    )
-
-
 def _colliding_names(campaigns: list[Campaign]) -> str | None:
     """Two campaigns that are the same up to the stem a split cuts them to
     render into the same files. Looked for across every campaign BEFORE any
@@ -328,9 +317,11 @@ def _moved_window(c: Campaign, record: Path, cfg) -> str | None:
     existing = existing_parts(record / "campaigns", c.name)
     for path, volumes in zip(existing, render.split(c.volumes)):
         try:
-            before, paused = _pods_at_once(rendered(path, "Job"))
+            job = rendered(path, "Job")
         except CorruptRenderedFile:
             return None  # the append-only check has said so
+        before = _pod_count(job)
+        paused = bool((job.get("spec") or {}).get("suspend"))
         after = min(render.parallelism(c, cfg), len(volumes))
         if before != after and not paused:
             return _WINDOW_MOVED.format(name=c.name, before=before, after=after)
@@ -536,8 +527,8 @@ def _dulwich_head(repo: Path) -> str:
     so without this every campaign the hook applied -- the production path
     -- recorded its commit as ``unknown`` (audit 0923 C-10)."""
     try:
-        from dulwich.errors import NotGitRepository  # ty: ignore[unresolved-import]
-        from dulwich.repo import Repo  # ty: ignore[unresolved-import]
+        from dulwich.errors import NotGitRepository
+        from dulwich.repo import Repo
     except ImportError:
         return "unknown"
     try:
@@ -911,7 +902,7 @@ def _claim_volumes(cluster, campaigns, volumes_of, done, blocked, running) -> No
 
 def _pod_count(job: dict) -> int:
     """How many pods a campaign Job runs at once, as Kueue counts them for
-    its Workload."""
+    its Workload: ``min(parallelism, completions)``."""
     spec = job.get("spec") or {}
     parallelism = spec.get("parallelism", 1)
     return min(parallelism, spec.get("completions", parallelism))
