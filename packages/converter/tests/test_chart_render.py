@@ -34,13 +34,11 @@ DEVSTACK_CHART = REPO / "charts" / "htrflow-devstack"
 NAMESPACE = "htr-batch"
 
 #: Values the chart `fail`s without and that no cluster is present to look
-#: up. Mirrors the Makefile's CHART_DEFAULT_SETS -- never an install.
-REQUIRED_SETS = (
-    "publicResultsBase=https://x/",
-    "network.apiServer.cidr=192.0.2.10/32",
-    "network.iiifCidrs={203.0.113.27/32}",
-    "web.image=docker.io/riksarkivet/htrflow-web@sha256:" + "0" * 64,
-)
+#: up: ci/default-values.yaml, the one copy the Makefile and `dagger call
+#: check-chart` render with too. Every render of this chart starts from it
+#: (helm_template), so a test adds only what it is about.
+REQUIRED_VALUES = "ci/default-values.yaml"
+REQUIRED_SETS: tuple[str, ...] = ()
 #: The default ingress list is a catch-all, and the chart makes that an
 #: explicit choice rather than a silent default.
 PUBLIC_INGRESS = "network.web.allowPublicIngress=true"
@@ -84,21 +82,33 @@ pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm not o
 
 def helm_template(
     *,
-    values: str | None = None,
+    values: str | tuple[str, ...] | None = None,
     sets: tuple[str, ...] = (),
     chart: Path = CHART,
+    required: str = REQUIRED_VALUES,
 ) -> subprocess.CompletedProcess[str]:
     """Run `helm template` and hand back the result, failure included: the
-    chart's guards are as much a part of it as its objects."""
+    chart's guards are as much a part of it as its objects. This chart's
+    renders start from `required` (REQUIRED_VALUES); `values` files come after it (later
+    ones win), then `--set`, and a `json:` setting is a `--set-json` -- the
+    one way to say an empty list on the command line."""
     cmd = ["helm", "template", "htr", str(chart), "-n", NAMESPACE]
-    if values:
-        cmd += ["-f", str(chart / values)]
+    files = (values,) if isinstance(values, str) else values or ()
+    if chart == CHART:
+        files = (required, *files)
+    for f in files:
+        cmd += ["-f", str(chart / f)]
     for setting in sets:
-        cmd += ["--set", setting]
+        if setting.startswith("json:"):
+            cmd += ["--set-json", setting.removeprefix("json:")]
+        else:
+            cmd += ["--set", setting]
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
-def render(*, values: str | None = None, sets: tuple[str, ...] = ()) -> list[dict]:
+def render(
+    *, values: str | tuple[str, ...] | None = None, sets: tuple[str, ...] = ()
+) -> list[dict]:
     result = helm_template(values=values, sets=sets)
     assert result.returncode == 0, result.stderr
     return [doc for doc in yaml.safe_load_all(result.stdout) if doc]
@@ -518,7 +528,7 @@ def test_the_api_server_is_carved_out_whatever_its_address():
     """The API server was carved out only when it happened to be a node
     address or inside a private block; an endpoint on a public address was
     reachable from the warm-up and from any wide range (audit 0923 M-3)."""
-    sets = tuple(s for s in DEFAULT_SETS if not s.startswith("network.apiServer."))
+    sets = DEFAULT_SETS
     rendered = render(
         sets=sets
         + (
@@ -796,9 +806,7 @@ def test_every_api_server_address_is_let_out(policy_name: str):
 
 
 def test_the_list_alone_is_enough():
-    sets = tuple(
-        s for s in REQUIRED_SETS if not s.startswith("network.apiServer.cidr=")
-    )
+    sets = ("network.apiServer.cidr=",)
     rendered = render(
         sets=sets
         + (PUBLIC_INGRESS, POLICIES_OFF, "network.apiServer.cidrs={192.0.2.11/32}")
@@ -924,22 +932,43 @@ def test_verification_reads_the_sigstore_bundles_the_release_writes(
         assert entry["type"] == "SigstoreBundle"
 
 
+# --- the renders every input produces (moved from dagger's text checks) ----
+
+
+@pytest.mark.parametrize(
+    "fixture", ["default", "full", "prod"], ids=["default", "full", "prod"]
+)
+def test_every_render_is_the_platform_and_nothing_else(fixture: str, request):
+    """The campaign controller CronJob is gone (B63), the web front always
+    renders with its health probe, and nothing of the dev stack leaks into
+    this chart. Asserted on the parsed objects: a text match on
+    `livenessProbe` was satisfied by a comment (test audit TA-infra-14)."""
+    rendered = request.getfixturevalue(fixture)
+    assert objects(rendered, "CronJob") == []
+    assert not [
+        o
+        for o in rendered
+        if (o["metadata"].get("labels") or {}).get("app.kubernetes.io/component")
+        == "devstack"
+    ]
+    web = named(rendered, "Deployment", "htrflow-web")
+    probe = web["spec"]["template"]["spec"]["containers"][0]["livenessProbe"]
+    assert probe["httpGet"]["path"] == "/healthz"
+
+
 # --- D14: defaults called production-shaped that enforce nothing ----------
 
-#: What `values-prod.yaml` cannot know: the bucket's public base, the API
-#: server as pods reach it, the image digest, and who may reach the web
-#: front. A profile that guessed any of them would be wrong on every
-#: cluster, so they stay the operator's to pass.
-PROD_SETS = REQUIRED_SETS + (
-    "network.web.ingressCidrs={198.51.100.0/24}",
-    "network.s3Cidrs={192.0.2.128/25}",
-    "network.clusterCidrs={10.244.0.0/16,10.96.0.0/12}",
-)
+#: What `values-prod.yaml` cannot know -- the bucket's public base, the API
+#: server, the S3, cluster and IIIF ranges, who may reach the web front --
+#: completed the way an operator's `--set` lines complete it: from
+#: REQUIRED_VALUES and ci/prod-values.yaml, the copies `make helm-template`
+#: and `dagger call check-chart` render with too.
+PROD_VALUES = ("values-prod.yaml", "ci/prod-values.yaml")
 
 
 @pytest.fixture(scope="module")
 def prod() -> list[dict]:
-    return render(values="values-prod.yaml", sets=PROD_SETS)
+    return render(values=PROD_VALUES)
 
 
 def test_the_production_profile_turns_on_what_the_defaults_leave_off(
@@ -997,30 +1026,50 @@ def test_every_pod_the_profile_renders_passes_pod_security_restricted(
             assert security["capabilities"] == {"drop": ["ALL"]}
 
 
+def _without(tmp_path: Path, name: str, dotted: str) -> str:
+    """A copy of the chart's ci/<name> with one key left out."""
+    values = yaml.safe_load((CHART / "ci" / name).read_text(encoding="utf-8"))
+    *parents, leaf = dotted.split(".")
+    holder = values
+    for key in parents:
+        holder = holder[key]
+    del holder[leaf]
+    path = tmp_path / name
+    path.write_text(yaml.safe_dump(values), encoding="utf-8")
+    return str(path)
+
+
 @pytest.mark.parametrize(
-    "left_out,reason",
+    "file,left_out,reason",
     [
-        ("publicResultsBase=", RESULTS_BASE_REFUSAL),
-        ("network.apiServer.cidr=", API_SERVER_REFUSAL),
-        ("network.web.ingressCidrs=", "network.web.ingressCidrs has 0.0.0.0/0"),
+        ("default-values.yaml", "publicResultsBase", RESULTS_BASE_REFUSAL),
+        ("default-values.yaml", "network.apiServer.cidr", API_SERVER_REFUSAL),
+        (
+            "prod-values.yaml",
+            "network.web.ingressCidrs",
+            "network.web.ingressCidrs has 0.0.0.0/0",
+        ),
         # 0923 D-8: the profile's comment said these three were asked for,
         # and the render went through without them -- a production batch
         # Job with no route to S3 fails every volume after its GPU time.
-        ("network.s3Cidrs=", S3_NOWHERE_REFUSAL),
-        ("network.clusterCidrs=", CLUSTER_CIDRS_REFUSAL),
-        ("network.iiifCidrs=", IIIF_NOWHERE_REFUSAL),
+        ("prod-values.yaml", "network.s3Cidrs", S3_NOWHERE_REFUSAL),
+        ("prod-values.yaml", "network.clusterCidrs", CLUSTER_CIDRS_REFUSAL),
+        ("prod-values.yaml", "network.iiifCidrs", IIIF_NOWHERE_REFUSAL),
     ],
 )
 def test_the_profile_leaves_the_site_specific_values_to_the_site(
-    left_out: str, reason: str
+    tmp_path: Path, file: str, left_out: str, reason: str
 ):
-    """A profile that guessed the results base, the API server address or
-    the ingress ranges would be wrong on every cluster. It must fail asking
-    for each of them, not render something plausible -- one at a time, so
-    the profile guessing any one of them is caught, not just all three."""
-    sets = tuple(s for s in PROD_SETS if not s.startswith(left_out))
-    assert len(sets) == len(PROD_SETS) - 1
-    refused = helm_template(values="values-prod.yaml", sets=sets)
+    """A profile that guessed the results base, the API server address, the
+    network ranges or who may reach the web front would be wrong on every
+    cluster. It must fail asking for each of them, not render something
+    plausible -- one at a time, so the profile guessing any one of them is
+    caught, not just all of them."""
+    stripped = _without(tmp_path, file, left_out)
+    if file == "default-values.yaml":
+        refused = helm_template(required=stripped, values=PROD_VALUES)
+    else:
+        refused = helm_template(values=(PROD_VALUES[0], stripped))
     assert refused.returncode != 0
     assert reason in refused.stderr
 
@@ -1212,7 +1261,7 @@ BATCH_GUARDS = {
     ),
     "api-server": (
         None,
-        tuple(s for s in DEFAULT_SETS if not s.startswith("network.apiServer.")),
+        DEFAULT_SETS + ("network.apiServer.cidr=",),
         API_SERVER_REFUSAL,
     ),
     "web-image-tag": (
@@ -1238,8 +1287,8 @@ BATCH_GUARDS = {
         CLUSTER_CIDRS_REFUSAL,
     ),
     "iiif-empty": (
-        None,
-        tuple(s for s in DEFAULT_SETS if not s.startswith("network.iiifCidrs=")),
+        "network:\n  iiifCidrs: []\n",
+        DEFAULT_SETS,
         IIIF_NOWHERE_REFUSAL,
     ),
 }
