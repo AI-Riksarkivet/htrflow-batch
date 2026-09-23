@@ -16,14 +16,11 @@ dagger call build-web              # the web image: bun-built SPA + patched view
 dagger call build-campaigns        # the converter image
 ```
 
-`build-wrapper` is heavy the first time — the CUDA base is several gigabytes —
-and the dagger engine cache makes later builds fast. The web dockerfile's
-viewer stage clones the Universal Viewer fork at a pinned commit
-(`UV4_REF`), applies `.docker/uv4-uv-html.patch` and builds it with npm, its
-own toolchain; the final stage puts the viewer and the bun-built campaign
-browser into the read API's `/app/static` — the viewer first, the SPA on
-top, so `/` is the SPA and `/uv.html` is the viewer. [CI](ci.md) has the
-full function table.
+The web dockerfile clones the Universal Viewer fork at a pinned commit
+(`UV4_REF`), applies `.docker/uv4-uv-html.patch` and builds it with npm; the
+final stage puts the viewer and the bun-built SPA into the read API's
+`/app/static`, so `/` is the SPA and `/uv.html` is the viewer. [CI](ci.md)
+has the full function table.
 
 The **converter package is also installable without an image** — a plain
 Python package that runs in the campaigns repo's own CI or on a workstation,
@@ -56,12 +53,9 @@ architecture, in three stages:
   wrapper is installed on top of it.
 
 There is no separate base image to build, pull or pass in, so every build
-path — `make build-wrapper`, the dagger functions, CI and the publish
-workflow — runs this one recipe, and no step in it is architecture-specific.
-The transformers line is not either: both architectures install it from the
-`TRANSFORMERS_VERSION` build argument, whose default is the line upstream
-htrflow is tested on ([Two transformers
-lines](../how-it-works/wrapper.md#model-handling)).
+path runs this one recipe, and no step in it is architecture-specific. Both
+architectures install the transformers line from the `TRANSFORMERS_VERSION`
+build argument, whose default is the line upstream htrflow is tested on.
 
 **No compiler in the image.** The torch builds the image carries route a
 few operators through Triton kernels of their own, and the first such call
@@ -74,34 +68,17 @@ build checks that the switch still holds: it fails if torch registers any
 JIT-compiled operator. Nothing else JIT-compiles by default: htrflow does
 not call `torch.compile`, and ultralytics leaves it off.
 
-The web and converter dockerfiles need none of this. Every image they build
-on — the two Node toolchains for the web image, the Debian build stage and
-the distroless runtime shared by both — is published for both architectures
-under the digest it is pinned to, and nothing in either recipe names an
-architecture, so each dockerfile produces either architecture's image with no
-branch in it. The converter dockerfile is stages 3–4 of the web one on their
-own: same
-base digests, same uv workspace sync, no viewer or SPA stage in front of it.
+The web and converter dockerfiles need none of this: every image they build
+on is published for both architectures under its pinned digest, and neither
+recipe names an architecture. The converter dockerfile is the web one's
+last two stages on their own.
 
-**Findings that do not apply.** The distroless runtime's Debian packages
-can carry CVEs that Debian has not fixed and that nothing in these images
-can reach: a flaw in a command-line program when the image ships only that
-package's library, in a parser nothing in the image calls, or in one that
-only ever reads the image's own build output. Those are recorded in
-`.docker/distroless.openvex.json` (OpenVEX), one statement per CVE with its
-justification, each scoped to the exact package version so the next package
-update retires it; the Trivy scans read it with `--vex`. A test ties every
-statement to the code: the web and converter packages and their locked
-dependencies may not import a module a statement calls unused, and the web
-service may parse HTML only from files in its static directory. A change
-that breaks a statement fails that test until the statement goes.
-
-The statements name the Debian packages, not the images: Trivy matches an
-image-scoped product (`pkg:oci/…` with the packages as subcomponents) only
-when the scanned image carries a registry digest, and the scans run on
-freshly built images that have none. So the file is meant for these images'
-scans only; passing it to a scan of another Debian 13 image would hide the
-same CVEs there.
+**Findings that do not apply.** Distroless Debian CVEs that Debian has not
+fixed and nothing in the images can reach are recorded in
+`.docker/distroless.openvex.json`, one statement per CVE, each scoped to the
+exact package version so the next package update retires it; every Trivy
+scan reads it with `--vex`. A test fails when the code starts to reach what a
+statement calls unused. The file is for these images' scans only.
 
 **Each architecture is built natively.** Nothing passes `--platform`:
 `uv` crashes in a cross-architecture build, and a GPU image built for a
@@ -138,13 +115,10 @@ that file does not pin and hash, and installs the dependencies with
 resolved at build time. Refresh that lock with `make lock-htrflow-base`
 after moving `HTRFLOW_REF` or editing the overlay, and review the diff.
 
-The build argument `HTRFLOW_BASE_REVISION` records which htrflow the image
-runs; unset, it is `HTRFLOW_REF`. It is stamped as the OCI label
-`se.riksarkivet.htrflow.base.revision` and as an environment variable the
-wrapper writes into every ALTO file. `manifest.json` carries only htrflow's
-package version; the revision says which htrflow commit the base really
-runs. A build from a local checkout passes that checkout's `git describe
---tags --always --dirty` instead.
+The build argument `HTRFLOW_BASE_REVISION` records which htrflow commit the
+image runs (unset, `HTRFLOW_REF`; a local checkout passes its `git describe
+--tags --always --dirty`). It is stamped as the OCI label
+`se.riksarkivet.htrflow.base.revision` and into every ALTO file.
 
 ### Local builds
 
@@ -210,13 +184,10 @@ per-architecture tags such as `<version>-<arch>`.
 
 Override with `--image-repository` and `--registry`. `--base-revision` sets
 `HTRFLOW_BASE_REVISION` for the wrapper, and `--transformers-version` sets
-`TRANSFORMERS_VERSION`: empty, the default, keeps the dockerfile's pin.
-Both architectures install the pinned line. Naming the other transformers
-line publishes that tag on it instead — for models the default
-line cannot read ([Two transformers
-lines](../how-it-works/wrapper.md#model-handling)) — and, since one run
-publishes one image, that is a tag of its own, not a second variant of an
-existing one.
+`TRANSFORMERS_VERSION` (empty keeps the dockerfile's pin). Naming the other
+transformers line publishes a tag of its own on that line, for models the
+default line cannot read ([Model
+handling](../how-it-works/wrapper.md#model-handling)).
 
 ### The publish workflow
 
@@ -246,31 +217,17 @@ Environments; a repository administrator sets it up once):
 - The token itself scoped on Docker Hub to the three repositories, with read
   and write only.
 
-A new component's Docker Hub repository (`htrflow-campaigns`, the first time
-this repository gains one) needs two things **before its first publish**,
-both done once on Docker Hub:
-
-- **It exists and is public.** Docker Hub creates a new repository private
-  by default, which the publish workflow's own credential can then pull but
-  nobody else can. Create it, or make it public afterwards:
-
-  ```
-  POST /v2/repositories/riksarkivet/htrflow-campaigns/privacy/
-  {"is_private": false}
-  ```
-
-  (Docker Hub's UI does the same thing under the repository's Settings →
-  Visibility.)
-- **The release token covers it.** A token scoped to named repositories
-  sees nothing outside them, and the tag check below counts only "no such
-  manifest" or "no such repository" as free: a token that cannot see the
-  repository gets neither answer, so every publish job refuses to run.
-
-Every later publish of that component pushes to the same, already-public
-repository the token already covers.
-
 Until that is done the environment exists (the first run creates it) but
 protects nothing, and the repository secrets keep the workflow running.
+
+**Before a new component's first publish**, once on Docker Hub:
+
+- create its repository **public** (Docker Hub makes new ones private);
+- add it to the release token's scope — a token that cannot see the
+  repository makes every publish job refuse, since the tag check gets no
+  "no such repository" answer.
+
+The workflow itself runs in three steps:
 
 1. **Tags are immutable.** Every job first checks that neither its own
    per-architecture tag nor the final tag exists on the registry, and
@@ -302,13 +259,9 @@ protects nothing, and the repository secrets keep the workflow running.
    `verify-published`) read the digest from there, so a pin that moves to
    another file moves there too.
 
-   The hook digest has to move with every release, not only when the
-   converter changes: the hook runs flags of the converter that wrote it
-   (`validate --rendered`, `apply --namespace`), and an older image does not
-   have them. A test fails CI when the hook's digest is not beside a comment
-   naming the converter's own version, or the image is not that version's
-   tag, so a release that bumped the version and forgot the pin cannot ship
-   a hook one release behind.
+   The hook digest moves with every release, since the hook runs flags of
+   the converter that wrote it; a test fails CI when the hook's comment does
+   not name the converter's own version.
 
    The same commit sets `CONVERTER_REF` in both CI templates `init --ci`
    writes,
@@ -316,12 +269,9 @@ protects nothing, and the repository secrets keep the workflow running.
    and `packages/converter/src/htrflow_converter/ci/azure/azure-pipelines.yml`,
    to a **full commit SHA**, with the tag as a comment beside it: the SHA of
    the release's version-bump commit (step 1 of
-   [The GitHub release](#the-github-release)). By then the converter's code
-   and the chart's policies are final for the release, and a SHA, unlike a
-   tag, cannot be moved later. A campaigns repository created from this
-   release then installs exactly this release's converter and renders the
-   chart's policies from the same commit. Then `htrflow-campaigns init
-   --force examples/campaigns` regenerates the example repository from both.
+   [The GitHub release](#the-github-release)), which a tag, unlike a SHA,
+   could later move off. Then `htrflow-campaigns init --force
+   examples/campaigns` regenerates the example repository from both.
 
 ### Signing, SBOM and provenance
 
@@ -334,15 +284,14 @@ drift:
   ([Chart values](../reference/chart.md));
 - a **SLSA build-provenance** attestation, pushed to the registry;
 - an **SPDX SBOM** generated by Trivy and attested, for every
-  per-architecture image. A manifest list gets no SBOM of its own; its member
-  images carry the package lists, and an SBOM of the list would only describe
-  whichever architecture the runner that made it happened to be.
+  per-architecture image (a manifest list gets none of its own).
 
 Verify a published image against the workflow identity:
 
 ```bash
 # signature (cosign 3 or later; older versions report "no signatures found").
-# Anchored to main, the only ref publishing runs from.
+# Anchored to main, the only ref publishing runs from: an unanchored
+# `publish\.yml@` would also accept a signature made from any other ref.
 cosign verify docker.io/riksarkivet/htrflow-batch:<version> \
   --certificate-identity-regexp '^https://github\.com/AI-Riksarkivet/htrflow-batch/\.github/workflows/publish\.yml@refs/heads/main$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
@@ -406,5 +355,4 @@ in
 and
 [`charts/htrflow-devstack/README.md`](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/charts/htrflow-devstack/README.md).
 A version that stays put while templates change hides drift between what is
-installed and what is in git. `Chart.yaml` has no `icon` (`helm lint` calls
-it recommended); fill it in before publishing a chart.
+installed and what is in git.

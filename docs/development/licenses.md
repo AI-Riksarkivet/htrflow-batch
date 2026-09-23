@@ -32,13 +32,14 @@ against the table:
 uvx --from pip-licenses pip-licenses --python .venv/bin/python --format=markdown
 ```
 
-The wrapper image is built **on** the htrflow image, which is EUPL-1.2 like
-this repository. htrflow's own dependencies (PyTorch, transformers,
-ultralytics and the rest) belong to that repository's inventory, not this
-one. One of them is worth naming because it is strong copyleft:
-`ultralytics` is AGPL-3.0. AGPL-3.0 is on the EUPL-1.2 compatibility list
-(the licence's appendix), and the combination is made in htrflow, which is
-where it has to be answered.
+The wrapper image builds its own htrflow base from htrflow's source at the
+commit the dockerfile pins (`HTRFLOW_REF`); htrflow is EUPL-1.2 like this
+repository. The base's dependencies (PyTorch, transformers, ultralytics and
+the rest) are locked in `.docker/htrflow-base/uv.lock`, not the workspace
+lock, so the command above does not list them; the image's SBOM does. One of
+them is strong copyleft: `ultralytics` is AGPL-3.0. AGPL-3.0 is on the
+EUPL-1.2 compatibility list (the licence's appendix), and the combination is
+made in htrflow, which is where it has to be answered.
 
 ## The campaign browser (frontend)
 

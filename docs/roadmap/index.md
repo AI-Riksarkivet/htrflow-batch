@@ -49,13 +49,6 @@ enough, to settle the questions a single node cannot:
   run log is all that is left once the Job's TTL reaps it, and the next
   attempt overwrites it. A per-volume failure record, or a database, is only
   worth it if failure analytics demand one.
-- **Finished campaigns after the TTL.** The Workload goes with the reaped
-  Job, so the queue remembers nothing. The campaign's status ConfigMap does,
-  and `apply` leaves a finished, unchanged campaign alone rather than
-  creating the Job again. What is not covered: a campaign whose volume list
-  is appended to after the TTL is a changed campaign, so it is applied as a
-  new Job over the whole list, and resume — not the queue — is what keeps the
-  volumes that already finished cheap.
 - **Small-volume batching.** A model load costs about the same for every
   volume. That cost disappears in a volume of hundreds of pages, but it
   can dominate a volume of ten. If tiny volumes become common, the converter
@@ -82,16 +75,17 @@ The current queue, and the reasoning behind each setting, is in
   survivable, but it is still a product decision, not a switch.
 - **Cohorts and borrowing.** Once the GPU pool is shared with another tenant,
   a cohort lets either side borrow the other's idle quota.
-- **A pause Kueue owns.** Pausing is the converter patching the Workload's
-  `spec.active`, through an older, still-served version of the Workload API
-  than the chart renders. A pause expressed in Kueue itself would remove
-  that dependency.
+- **A pause Kueue owns.** Pausing is the converter patching each campaign
+  Workload's `spec.active` on every apply, so a pause takes effect only when
+  an apply runs and finds the Workload. A pause expressed in Kueue itself
+  would remove that dependency.
 - **The window against the quota.** Without partial admission a campaign's
   whole `parallelism` must fit the quota, or it never starts. `apply` does
   not yet warn when the window cannot fit.
-- **A declarative skip.** A volume that fails for good can only be removed
-  from its campaign file. It runs again only when it is added to a new
-  campaign file, because a capped index gets no fresh retry budget.
+- **A declarative skip.** A volume that fails for good stays failed in its
+  campaign: the volume list is append-only, so removing it is refused. It
+  runs again only in a new campaign, because a capped index gets no fresh
+  retry budget.
 - **Metrics.** Kueue exports Prometheus metrics, and kube-state-metrics
   exposes a Job's `completedIndexes` and `failedIndexes`. The platform itself
   publishes none.
@@ -108,13 +102,14 @@ The trust model and the controls that exist are in
 - **A sandboxed GPU runtime.** The GPU arrives through the NVIDIA container
   runtime, which is not a sandbox. A kernel-isolating runtime with GPU
   support is the next hardening step, and it is unproven on this workload.
-- **A narrower S3 credential.** Campaign and warm-up pods share one bucket
-  credential, and only convention scopes it to their own
-  `<namespace>/<pipeline>/<volume>/` prefix. A credential per prefix (plus
+- **A narrower S3 credential.** Every campaign pod shares one bucket
+  credential (warm-up pods mount none), and only convention scopes it to
+  its own `<namespace>/<pipeline>/<volume>/` prefix. A credential per prefix (plus
   the run-log key) needs IAM users and policies created with the bucket, and
   a second Secret named in `converter.yaml`.
 - **Authentication in front of the web front.** The web front and its
-  read API are unauthenticated, and the process holds a read-only API token.
+  read API are unauthenticated, and the process holds an API token that reads
+  Jobs and Pods and writes the campaign status ConfigMaps.
   Before exposing it beyond a trusted network, put it behind an
   authenticating proxy (OIDC at the ingress). Then the run logs can stop
   being anonymously readable too
@@ -128,7 +123,7 @@ The trust model and the controls that exist are in
 
 Today a commit to the campaigns repo is the submission, and the web front
 is read-only ([Campaigns](../how-it-works/campaigns.md),
-[Frontend](../reference/frontend.md)).
+[Web front & read API](../reference/web.md)).
 
 - **Submit dry-run.** `htrflow-campaigns validate` checks shape, and
   `apply --dry-run` prints the objects, but neither reads a IIIF manifest. A
