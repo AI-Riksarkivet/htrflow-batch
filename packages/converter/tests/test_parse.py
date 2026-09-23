@@ -14,6 +14,16 @@ def _load(root: Path):
     return load(root / "campaigns", root / "pipelines", root / "converter.yaml")
 
 
+def _setting(path: Path, line: str) -> None:
+    """Append ``line`` to a YAML file, dropping the top-level line that sets
+    the same key first: a key written twice is its own problem (C-6)."""
+    key = line.partition(":")[0].strip()
+    kept = [
+        kept for kept in path.read_text().splitlines() if kept.partition(":")[0] != key
+    ]
+    path.write_text("\n".join(kept) + f"\n{line}\n")
+
+
 def test_good_fixture_loads_campaigns_and_pipelines():
     campaigns, pipelines, cfg = _load(GOOD)
     assert len(campaigns) == 2
@@ -212,7 +222,7 @@ def test_every_pydantic_error_type_reads_as_a_sentence(tmp_path, line, expected)
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f"\n{line}\n")
+    _setting(cfg, line)
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     assert exc_info.value.problems == [f"converter.yaml: {expected}"]
@@ -277,7 +287,7 @@ def test_a_policy_key_left_in_converter_yaml_points_at_the_chart(
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f"\n{key}\n")
+    _setting(cfg, key)
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     assert exc_info.value.problems == [
@@ -444,7 +454,7 @@ def test_converter_config_rejects_a_non_positive_window_or_max_seconds(tmp_path,
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f"\n{key}: 0\n")
+    _setting(cfg, f"{key}: 0")
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     assert any(f'converter.yaml: "{key}"' in p for p in exc_info.value.problems), (
@@ -459,7 +469,7 @@ def test_hf_token_secret_defaults_to_unset_and_takes_a_secret_name(tmp_path):
     shutil.copytree(GOOD, root)
     assert _load(root)[2].hf_token_secret == ""
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + "\nhf_token_secret: htr-batch-hf\n")
+    _setting(cfg, "hf_token_secret: htr-batch-hf")
     assert _load(root)[2].hf_token_secret == "htr-batch-hf"
 
 
@@ -467,7 +477,7 @@ def test_hf_token_secret_must_be_a_secret_name(tmp_path):
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + "\nhf_token_secret: Not_A_Secret\n")
+    _setting(cfg, "hf_token_secret: Not_A_Secret")
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     assert any(
@@ -492,7 +502,7 @@ def test_a_source_template_that_cannot_be_filled_is_one_sentence(tmp_path, templ
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f'\nsource_template: "{template}"\n')
+    _setting(cfg, f'source_template: "{template}"')
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     (problem,) = exc_info.value.problems
@@ -548,7 +558,7 @@ def test_an_empty_class_list_refuses_every_priority(tmp_path):
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + "\npriority_classes: []\n")
+    _setting(cfg, "priority_classes: []")
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     (problem,) = exc_info.value.problems
@@ -570,7 +580,7 @@ def test_the_class_list_itself_is_held_to_the_chart_schema(tmp_path, line, said)
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f"\n{line}\n")
+    _setting(cfg, line)
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     (problem,) = exc_info.value.problems
@@ -594,7 +604,7 @@ def test_a_converter_yaml_object_name_must_be_a_kubernetes_name(tmp_path, key, b
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f'\n{key}: "{bad}"\n')
+    _setting(cfg, f'{key}: "{bad}"')
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     (problem,) = exc_info.value.problems
@@ -617,7 +627,7 @@ def test_a_node_selector_that_is_not_a_label_is_refused(tmp_path, line):
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f"\n{line}\n")
+    _setting(cfg, line)
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     (problem,) = exc_info.value.problems
@@ -633,7 +643,7 @@ def test_a_byte_cap_of_zero_or_less_is_refused(tmp_path, key):
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f"\n{key}: 0\n")
+    _setting(cfg, f"{key}: 0")
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     assert exc_info.value.problems == [
@@ -649,7 +659,7 @@ def test_seconds_beyond_a_32_bit_field_are_refused(tmp_path, key):
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f"\n{key}: 4294967296\n")
+    _setting(cfg, f"{key}: 4294967296")
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     (problem,) = exc_info.value.problems
@@ -694,7 +704,7 @@ def test_a_namespace_is_a_label_not_a_subdomain(tmp_path, bad):
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f'\nnamespace: "{bad}"\n')
+    _setting(cfg, f'namespace: "{bad}"')
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     (problem,) = exc_info.value.problems
@@ -787,3 +797,65 @@ def test_a_quoted_numeric_volume_id_stays_as_written(tmp_path):
     campaigns, _, _ = _load(root)
     kyrk = next(c for c in campaigns if c.name == "kyrk")
     assert [v.id for v in kyrk.volumes] == ["0012345", "1.10"]
+
+
+@pytest.mark.parametrize(
+    "rel,text,key,lines",
+    [
+        (
+            "campaigns/kyrk.yaml",
+            "pipeline: demo-v1\nvolumes: [R1]\nvolumes: [R2]\n",
+            "volumes",
+            (2, 3),
+        ),
+        (
+            "pipelines/demo-v1.yaml",
+            "image: ghcr.io/x/y@sha256:" + "a" * 64 + "\n"
+            "steps:\n"
+            "  - step: Segmentation\n"
+            "    settings:\n"
+            "      model: yolo\n"
+            "      model: TrOCR\n",
+            "model",
+            (5, 6),
+        ),
+        (
+            "converter.yaml",
+            "namespace: htr-test\nwindow: 10\nqueue: a\nwindow: 2\n",
+            "window",
+            (2, 4),
+        ),
+    ],
+)
+def test_a_key_written_twice_is_refused_not_last_wins(tmp_path, rel, text, key, lines):
+    """audit 0923 C-6: YAML's own loader keeps the last of two equal keys, so
+    `volumes: [R1]` and then `volumes: [R2]` rendered R2 alone."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / rel).write_text(text)
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [
+        f'{rel}: "{key}" is written twice, on lines {lines[0]} and {lines[1]} — '
+        "YAML would keep only the last one, so remove one or merge them"
+    ]
+
+
+def test_a_merge_key_may_still_override_what_it_merges(tmp_path):
+    """`<<:` is how a YAML file says "these, except"; the key it overrides
+    is not written twice."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "campaigns" / "kyrk.yaml").write_text(
+        "base: &b {manifest: https://x.example/m}\n"
+        "pipeline: demo-v1\n"
+        "volumes:\n"
+        "  - {<<: *b, id: R1, manifest: https://x.example/n}\n"
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    # Only the unknown `base:` key, which is the anchor's carrier.
+    assert exc_info.value.problems == [
+        'campaigns/kyrk.yaml: "base" is not a setting this file has — remove '
+        "it, or fix the spelling"
+    ]

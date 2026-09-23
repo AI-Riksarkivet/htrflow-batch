@@ -29,10 +29,48 @@ def _rel(path: Path) -> str:
     return f"{path.parent.name}/{path.name}"
 
 
+class _KeyWrittenTwice(yaml.YAMLError):
+    def __init__(self, key: object, first: yaml.Mark, again: yaml.Mark) -> None:
+        super().__init__(
+            f'"{key}" is written twice, on lines {first.line + 1} and '
+            f"{again.line + 1} — YAML would keep only the last one, so remove "
+            "one or merge them"
+        )
+
+
+class _StrictLoader(yaml.SafeLoader):
+    """``yaml.safe_load``, except that a mapping may not name a key twice.
+
+    PyYAML keeps the last of two equal keys without a word, so ``volumes:
+    [R1]`` followed by ``volumes: [R2]`` rendered R2 alone (audit 0923 C-6).
+    Only the keys the mapping itself writes are compared: a ``<<:`` merge
+    supplies defaults that an explicit key is meant to override."""
+
+    def construct_mapping(self, node, deep=False):
+        if isinstance(node, yaml.MappingNode):
+            seen: dict[object, yaml.Node] = {}
+            for key_node, _ in node.value:
+                if key_node.tag == "tag:yaml.org,2002:merge":
+                    continue
+                key = self.construct_object(key_node, deep=True)
+                try:
+                    first = seen.setdefault(key, key_node)
+                except TypeError:  # an unhashable key: SafeLoader refuses it
+                    continue
+                if first is not key_node:
+                    raise _KeyWrittenTwice(key, first.start_mark, key_node.start_mark)
+        return super().construct_mapping(node, deep=deep)
+
+
+def _safe_load(path: Path) -> object:
+    """Every YAML file the converter reads from a campaigns repo."""
+    return yaml.load(path.read_text(), Loader=_StrictLoader)  # a SafeLoader
+
+
 def _read_yaml_mapping(path: Path, problems: list[str], what: str) -> dict | None:
     rel = _rel(path)
     try:
-        doc = yaml.safe_load(path.read_text())
+        doc = _safe_load(path)
     except yaml.YAMLError as e:
         problems.append(_not_yaml(rel, e))
         return None
@@ -43,6 +81,8 @@ def _read_yaml_mapping(path: Path, problems: list[str], what: str) -> dict | Non
 
 
 def _not_yaml(rel: str, e: yaml.YAMLError) -> str:
+    if isinstance(e, _KeyWrittenTwice):
+        return f"{rel}: {e}"
     # PyYAML names the line and column, which is the "where"; reflow it.
     return f"{rel}: this file is not valid YAML — {' '.join(str(e).split())}"
 
@@ -58,7 +98,7 @@ def _load_config(path: Path, problems: list[str]) -> ConverterConfig:
     if not path.exists():
         return ConverterConfig()
     try:
-        doc = yaml.safe_load(path.read_text()) or {}
+        doc = _safe_load(path) or {}
     except yaml.YAMLError as e:
         problems.append(_not_yaml(path.name, e))
         return ConverterConfig()
