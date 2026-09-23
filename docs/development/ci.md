@@ -19,11 +19,13 @@ lists what the module exposes on your checkout.
 | `build-wrapper` | the wrapper image from `.docker/htrflow-batch.dockerfile`, for the engine's own platform. The optional `--platform` exists for a caller with an engine per platform; nothing here passes it ([Releasing](releasing.md#one-dockerfile-every-architecture)). `--transformers-version` builds the image on the other transformers line; empty keeps the dockerfile's default ([Two transformers lines](../how-it-works/wrapper.md#model-handling)) |
 | `build-web` | the web image from `.docker/htrflow-web.dockerfile` (CPU-only, no torch): the campaign browser SPA, the Universal Viewer fork at the pinned `UV4_REF` with `.docker/uv4-uv-html.patch` applied, and the read API that serves both. A CA bundle goes in as the optional `ca` build secret |
 | `build-campaigns` | the converter image from `.docker/htrflow-campaigns.dockerfile` (distroless, CPU-only, no git binary or shell): the `htrflow-campaigns` CLI and dulwich, what the Argo CD hook in a campaigns repository runs ([Campaign YAML](../reference/campaign-yaml.md)) |
-| `scan` | Trivy over the built wrapper image; table output, fails on findings (default `CRITICAL,HIGH`, unfixed findings ignored) |
+| `scan` | Trivy over the built wrapper image; table output, fails on findings (default `CRITICAL,HIGH`, unfixed findings ignored). Every Trivy run here, and `make scan-web` and `make scan-image`, reads the VEX statements in `.docker/distroless.openvex.json`: findings in the distroless runtime that Debian has no fix for, each statement pinned to one exact package version, so it stops applying by itself when that package changes |
 | `scan-web` | the same over the built web image — a distroless Debian runtime with no shell or package manager, so a clean gate is realistic; `make scan-web` is the local twin |
 | `scan-campaigns` | the same over the built converter image, which `ci.yml` gates on pull requests too |
 | `scan-json` | `scan` with JSON output that never fails the call; what `make scan` runs |
 | `scan-sarif` | Trivy over one built image (`--image wrapper\|web\|campaigns`) as a SARIF report: `CRITICAL,HIGH`, unfixed findings included, never fails on findings; what `security.yml` uploads to the Security tab, while `scan`, `scan-web` and `scan-campaigns` stay the gates |
+| `scan-published` | Trivy over a published image by reference (`--image wrapper\|web\|campaigns`, `--platform linux/amd64\|linux/arm64`): the digest this commit pins — the chart's `web.image`, the demo pipeline's wrapper, the Argo CD hook's converter image — pulled from the registry, not rebuilt. The scans above say what the next release will carry; this one says what clusters run now |
+| `verify-published` | the chart's verify-images `ClusterPolicy`, rendered with `values-prod.yaml`, run by the Kyverno CLI against those three pinned digests: their Sigstore signatures and transparency-log entries, checked the way the admission webhook checks them |
 | `publish-docker` | refuses a tag already on the registry, then tests, builds, runs the driver test (wrapper) and the Trivy CRITICAL gate on the image it will push, pushes it (`--component wrapper\|web\|campaigns`) and returns its reference with the digest; passes `--base-revision` and `--transformers-version` on to the wrapper build ([Releasing](releasing.md#publishing)) |
 | `check-tag-free` | `publish-docker`'s "never overwrite a tag" check on its own: fails when the tag (or, with `--tag-suffix`, the suffixed or the bare tag) is on the registry or the registry gives no answer |
 | `compose-up` | starts the `web` service of the `.docker/docker-compose.yml` project as a dagger Service |
@@ -154,6 +156,9 @@ The cluster constants these targets use come from `.env`
   pushes, signs and attests all three images for both of the CPU architectures
   they ship for — each on a runner of its own architecture, joined into one
   manifest list per image ([Releasing](releasing.md#the-publish-workflow)).
+- **`ci.yml`** also runs, on every trigger: a `docs` job, the lint and the
+  strict site build below without the deploy, so a pull request that breaks
+  the site fails before it lands; and `verify-published`.
 - **`docs.yml`** ("Documentation") — on push to `main` and by hand:
   `uv sync --locked --only-group docs` (zensical pinned and hash-checked in
   `uv.lock`), `scripts/docs-site.sh build --clean --strict` with that
@@ -165,7 +170,11 @@ The cluster constants these targets use come from `.env`
   runs, so an advisory published between changes fails a scheduled run. A
   further job does the same for the wrapper on the second architecture, on a
   native runner of it, through `make scan-image`. On a
-  push the gate is skipped, since `ci.yml` has just run it.
+  push the gate is skipped, since `ci.yml` has just run it. The published
+  digests get jobs of their own: `scan-published` for each image on both
+  architectures, a gate on every trigger (a push that changes the pins is
+  the release commit), and `verify-published`, so a signature that stops
+  verifying fails a scheduled run too.
 - **`codeql.yml`** ("CodeQL") — on push and pull request to `main` and weekly:
   static analysis of the Python packages, the campaign browser, the dagger
   module and the workflows themselves, with findings in the Security tab.

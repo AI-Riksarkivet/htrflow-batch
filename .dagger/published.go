@@ -90,18 +90,9 @@ func (m *HtrflowBatch) ScanPublished(
 	if err != nil {
 		return "", err
 	}
-	args := []string{
-		"trivy", "image", "--image-src", "remote", "--platform", platform,
-		"--severity", severity, "--format", format,
-		"--exit-code", fmt.Sprintf("%d", exitCode),
-		"--skip-version-check",
-	}
-	if ignoreUnfixed {
-		args = append(args, "--ignore-unfixed")
-	}
-	output, err := m.withCaBundle(dag.Container().From(trivyImage), caBundle).
-		WithExec(append(args, ref)).
-		Stdout(ctx)
+	args := append(trivyArgs(severity, format, exitCode, ignoreUnfixed),
+		"--image-src", "remote", "--platform", platform, ref)
+	output, err := m.trivy(source, caBundle).WithExec(args).Stdout(ctx)
 	if err != nil {
 		if output == "" {
 			return "", fmt.Errorf("trivy scan of %s failed: %w", ref, err)
