@@ -106,10 +106,7 @@ spec:
         - { port: 53, protocol: TCP }
     - {{ include "htrflow-batch.apiServerEgress" . }}
     {{- with .Values.apply.gitCidrs }}
-    - to:
-        {{- range . }}
-        - ipBlock: { cidr: {{ . | quote }} }
-        {{- end }}
+    - to: {{ include "htrflow-batch.egressTo" (list $ .) }}
       ports:
         {{- range $.Values.apply.gitPorts }}
         - { port: {{ . }} }

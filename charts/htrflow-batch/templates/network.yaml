@@ -11,50 +11,19 @@ kube-router (k3s) evaluates egress AFTER service DNAT, so ClusterIP targets
 are matched by their backing pod (podSelector) or, for the apiserver, by the
 node address it resolves to — hence the `lookup` auto-detection in web.yaml.
 */}}
-{{- $nodes := list }}
-{{- range .Values.network.nodeCidrs }}{{ $nodes = append $nodes . }}{{ end }}
-{{- if not $nodes }}
-  {{- range (lookup "v1" "Node" "" "").items }}
-    {{- range .status.addresses }}
-      {{- if eq .type "InternalIP" }}{{ $nodes = append $nodes (printf "%s/32" .address) }}{{ end }}
-    {{- end }}
-  {{- end }}
-{{- end }}
 {{- /*
-What a catch-all egress must NOT reach (2026-09-14, audit). The cluster and
-node ranges were the whole list, which left two holes open to any pod with
-the documented `iiifCidrs: 0.0.0.0/0` and to every warm-up pod: 169.254/16,
-where a cloud serves instance credentials to whoever asks, and the private
-ranges the cluster's own VPC is carved out of. Loopback is in for the same
-reason it costs nothing. `network.privateCidrs` is the operator's list, so a
-cluster with a different private plan can say so. This carves out the
-CATCH-ALL, not the address: a range the operator names in iiifCidrs or
-s3Cidrs is its own ipBlock in the same rule, and egress rules are a union,
-so an on-premises origin keeps working by being named.
+What an egress rule must not reach, and how a range carves it out, is
+_helpers.tpl's (internalCidrs, egressTo): every rule here and in web.yaml
+and apply-rbac.yaml goes through the same carve-out, whatever range the
+operator names. A range named in iiifCidrs or s3Cidrs that lies inside a
+private one stays reachable -- it is its own ipBlock.
 */}}
-{{- $internal := concat .Values.network.clusterCidrs $nodes (list "169.254.0.0/16" "127.0.0.0/8") .Values.network.privateCidrs | uniq }}
 {{- $dns := dict "to" (list (dict
       "namespaceSelector" (dict "matchLabels" (dict "kubernetes.io/metadata.name" "kube-system"))
       "podSelector" (dict "matchLabels" (dict "k8s-app" "kube-dns"))))
     "ports" (list (dict "port" 53 "protocol" "UDP") (dict "port" 53 "protocol" "TCP")) }}
-{{- /*
-S3 egress for batch Jobs: an in-namespace `app: rustfs` pod is always
-allowed (a no-op podSelector match when charts/htrflow-devstack's RustFS
-isn't installed — the two charts share no values) plus any CIDR-based real
-endpoint from network.s3Cidrs.
-*/}}
-{{- $s3 := list (dict "to" (list (dict "podSelector" (dict "matchLabels" (dict "app" "rustfs")))) "ports" (list (dict "port" 9000))) }}
-{{- if .Values.network.s3Cidrs }}
-  {{- $blocks := list }}
-  {{- range .Values.network.s3Cidrs }}{{ $blocks = append $blocks (dict "ipBlock" (dict "cidr" .)) }}{{ end }}
-  {{- /* Named ports, not the whole range (2026-09-14, audit): a
-       self-hosted endpoint's CIDR is a slice of the operator's own
-       network, and this rule used to open every port of it. */}}
-  {{- $s3Ports := list }}
-  {{- range .Values.network.s3Ports }}{{ $s3Ports = append $s3Ports (dict "port" .) }}{{ end }}
-  {{- $s3 = append $s3 (dict "to" $blocks "ports" $s3Ports) }}
-{{- end }}
-{{- $anyPublic := list (dict "ipBlock" (dict "cidr" "0.0.0.0/0" "except" $internal)) }}
+{{- $s3 := include "htrflow-batch.s3Egress" . | fromJsonArray }}
+{{- $anyPublic := include "htrflow-batch.egressTo" (list . (list "0.0.0.0/0")) | fromJsonArray }}
 {{- $labels := include "htrflow-batch.labels" . }}
 {{- if .Values.network.defaultDeny }}
 ---
@@ -102,18 +71,10 @@ spec:
     {{- range $s3 }}
     - {{ toJson . }}
     {{- end }}
-    {{- if .Values.network.iiifCidrs }}
-    - to:
-        {{- range .Values.network.iiifCidrs }}
-        {{- if eq . "0.0.0.0/0" }}
-        {{- /* PoC catch-all for images hosted outside the IIIF origin (e.g.
-             Hugging Face example pages): still no cluster, node or apiserver
-             reach. `except` must be a subset of `cidr`, so only here. */}}
-        - ipBlock: {{ dict "cidr" . "except" $internal | toJson }}
-        {{- else }}
-        - ipBlock: { cidr: {{ . | quote }} }
-        {{- end }}
-        {{- end }}
+    {{- with .Values.network.iiifCidrs }}
+    {{- /* A catch-all (the PoC's 0.0.0.0/0, for images hosted off the
+         IIIF origin) still reaches no cluster, node or metadata address. */}}
+    - to: {{ include "htrflow-batch.egressTo" (list $ .) }}
       ports:
         - { port: 443 }
         - { port: 80 }

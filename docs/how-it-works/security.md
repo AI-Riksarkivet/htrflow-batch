@@ -280,15 +280,18 @@ Helm `lookup`, and you can override it with `network.apiServer` and
 `network.nodeCidrs`. `network.clusterCidrs` must hold your cluster's pod and
 service ranges, because the warm-up pod's public egress excludes them.
 
-A catch-all egress is never the whole internet. Every rule that allows
-`0.0.0.0/0` carves out the pod, service and node ranges, link-local
+A wide egress range is never the whole internet. Every egress range the
+chart renders — the warm-up's `0.0.0.0/0`, and whatever `network.iiifCidrs`,
+`network.s3Cidrs` and `apply.gitCidrs` name — carves out each of these that
+lies inside it: the pod, service and node ranges, link-local
 (`169.254.0.0/16`, where a cloud serves instance credentials to any process
 that asks), loopback, and `network.privateCidrs` — the three private blocks
 by default, which is where the cluster's own network lives. Set that value
-if your private plan is a different one. The carve-out is of the catch-all,
-not of the address: a range you name in `network.iiifCidrs` or
-`network.s3Cidrs` is its own rule, and egress rules are a union, so an
-on-premises IIIF origin or S3 endpoint keeps working by being named.
+if your private plan is a different one. So `0.0.0.0/0`, or the same space
+split into halves, reaches none of them. A range that lies inside one of
+them, or is one of them, carves nothing out of itself: a range you name is
+its own rule, and egress rules are a union, so an on-premises IIIF origin or
+S3 endpoint keeps working by being named.
 
 | Pod | Ingress | Egress (besides kube-dns) | Cannot reach |
 |---|---|---|---|
@@ -318,8 +321,8 @@ it was given an identity for and, with `apply.gitCidrs`, the git host. Any
 other pod that runs `htrflow-campaigns apply` in-cluster gets the same by
 the same label. `images:` volumes hosted
 somewhere other than the IIIF origin need their host added to
-`network.iiifCidrs`. A catch-all range there still excludes everything in
-the carve-out above.
+`network.iiifCidrs`. A wide range there still excludes everything in the
+carve-out above that lies inside it.
 
 **Known limitation: the policy sync window.** Some CNIs apply a new pod's
 policies asynchronously, after the pod already has its IP, and until they do

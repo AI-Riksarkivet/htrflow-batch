@@ -220,8 +220,9 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   # Default: lbiiif.riksarkivet.se (a single stable address).
   # Where Jobs may fetch page images from (80/443): the IIIF origin. Volumes
   # declared with images: hosted elsewhere (the htr_demo examples on Hugging
-  # Face) need their host here too; "0.0.0.0/0" is the PoC catch-all and still
-  # carves out the cluster, node and apiserver ranges.
+  # Face) need their host here too; "0.0.0.0/0" is the PoC catch-all. Every
+  # range here, in s3Cidrs and in apply.gitCidrs loses the internal ranges
+  # that lie inside it (the ones below, link-local and loopback).
   iiifCidrs: ["192.121.221.27/32"]
   # S3 endpoint(s) for batch Jobs, besides the always-allowed in-namespace
   # `app: rustfs` pod (a no-op unless charts/htrflow-devstack's RustFS is
@@ -239,12 +240,13 @@ network:                   # NetworkPolicies (docs: development/security, D14)
   # kubeconfig without list-nodes permission.
   clusterCidrs: ["10.42.0.0/16", "10.43.0.0/16"]
   nodeCidrs: []
-  # Also carved out of every catch-all egress, on top of the ranges above
-  # and link-local (169.254.0.0/16, where a cloud serves instance
-  # credentials) and loopback, which are always excluded. The default is the
-  # three private blocks: whatever your cluster sits inside is one of them,
-  # and neither a warm-up nor a batch Job has any business there. A range
-  # listed in iiifCidrs or s3Cidrs stays reachable — it is its own rule.
+  # Also carved out of every egress range that holds one, on top of the
+  # ranges above and link-local (169.254.0.0/16, where a cloud serves
+  # instance credentials) and loopback, which are always excluded. The
+  # default is the three private blocks: whatever your cluster sits inside
+  # is one of them, and neither a warm-up nor a batch Job has any business
+  # there. A range listed in iiifCidrs or s3Cidrs that lies inside one of
+  # them stays reachable — it holds nothing to carve out.
   privateCidrs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
   apiServer:
     cidr: ""               # e.g. 10.16.51.56/32 — kube-apiserver as reached AFTER service DNAT; required by the read API's NetworkPolicy
