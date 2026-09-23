@@ -591,7 +591,6 @@ def test_a_missing_cached_model_is_transient(env, cfg, s3, shape):
     is simply not warm yet, and a re-warm plus a retry fixes it — exit 1, not
     a failed index. The classification must not depend on the MRO, which the
     two hub lines disagree about."""
-    assert issubclass(shape, OSError)
 
     def factory(c):
         raise shape("model 'x' not found in /data/hf")
