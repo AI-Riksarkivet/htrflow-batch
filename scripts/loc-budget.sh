@@ -301,7 +301,9 @@ fail=0
 # Retry-After parse and the abortable wait; in stream.py and main.py the
 # deferred outcome verify counts as missing; in iiif.py one rule choosing a
 # canvas's image for both the fetch and the viewer manifest.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 3636
+# 3636 -> 3646 (audit 0923): an upload the store could not take defers the
+# page rather than failing it, and a half-stored pair is deleted (W-1).
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 3646
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a

@@ -143,13 +143,19 @@ class ResultStore:
                 ) from e
             bodies[fmt] = data
         metadata = {SOURCE_META: source} if source else None
-        for fmt in PAGE_FORMATS:
-            self._put(
-                self._key(f"{fmt}/{name}.xml"),
-                bodies[fmt],
-                "application/xml",
-                metadata=metadata,
-            )
+        try:
+            for fmt in PAGE_FORMATS:
+                key = self._key(f"{fmt}/{name}.xml")
+                self._put(key, bodies[fmt], "application/xml", metadata=metadata)
+        except Exception:
+            # W-1 (audit 0923): a PAGE without its ALTO is a page not done;
+            # best-effort, since the store has just failed, and the next
+            # attempt's resume clears whatever this leaves.
+            try:
+                self.delete_pages([name])
+            except Exception:
+                pass
+            raise
         try:
             self.page_dims[name] = parse_alto_dims(roots["alto"])
         except ValueError:
