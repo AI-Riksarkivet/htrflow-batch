@@ -212,12 +212,15 @@ const server = createServer(async (req, res) => {
       return res.writeHead(503).end();
     }
     // The second answer: a queued campaign has started and a new one was
-    // declared -- a re-sort and a new card, one poll into the page.
+    // declared -- a drifted order and a new card, one poll into the page.
     if (listAnswers === 2) {
+      // ...and one that was queued has failed, which moves it up at once.
       list = list.map((j) =>
         j.name === NAMES[2]
           ? { ...j, phase: "Running", warmup: { phase: "succeeded" } }
-          : j,
+          : j.name === NAMES[7]
+            ? { ...j, phase: "Failed", counts: { ...j.counts, failed: 1 } }
+            : j,
       );
       list = [campaign(14, ["Queued", "succeeded", false]), ...list];
     }
