@@ -172,9 +172,11 @@ order, so ten cards scan like ten rows of one table. Folded, a card is zone
    (the phase chip comes last of the three: it is the one whose word can
    change when the detail lands, and last it pushes nothing along), then on
    a folded card the pages done — `411 / 1914 pages · 3 failed`, "failed"
-   only when there are some, `— pages` when none are known, its title
-   saying when the sums do not yet cover every volume and, for a campaign
-   still going, when they were read — and at the right end
+   only when there are some, `— pages` when none are known; every figure
+   marked `≥` while the API's sums do not yet cover every volume (it sums
+   at most a hundred volumes' progress per read), with the coverage for a
+   screen reader and in the title; `· as of HH:MM` once reads have failed
+   since — and at the right end
    `created → finished` as two `<time>` elements
    (`datetime` and `title` carry the exact timestamp; "created"/"finished"
    are there for screen readers, since the arrow is decoration). A run that
@@ -183,8 +185,8 @@ order, so ten cards scan like ten rows of one table. Folded, a card is zone
    (the words, the page count, the times); the count's and the times' are
    held at a fixed minimum width from the first paint, filled from the
    right, so nothing on the line moves when the count arrives. At ≤520px
-   the chips take a line of their own under the name, and the times and
-   the count a line under that.
+   the chips take a line of their own under the name, then the times, then
+   the count on a line held a line high.
    **partially succeeded** (every volume finished, some pages lost) and
    **partially failed** share the amber chip; the outline is split amber on
    the left and green (`--success`) or red (`--destructive`) on the right,
@@ -210,10 +212,11 @@ order, so ten cards scan like ten rows of one table. Folded, a card is zone
    - A campaign of one volume drops both totals rows, unless its detail
      came back with no volume row to carry them.
    - Before the first read lands, the card draws the rows its list row
-     promises: one empty row per volume up to the first page (`aria-hidden`,
-     only the hairline drawn), a second line on as many as are active or
-     failed and a note line on the failed ones, the models line's place, and
-     "load more" (disabled) when there are more volumes than a page. The
+     promises: one placeholder row per volume up to a screenful (20;
+     `aria-hidden`, the first saying "loading volumes…", the table
+     `aria-busy`), a second line on as many as are active or failed and a
+     note line on the failed ones, the models line's place, and "load more"
+     (disabled, no count yet) when there are more volumes than a page. The
      detail then fills rows in rather than adding them. None after a failed
      read.
    - Every row with a known total has a bar in the colour of what it
@@ -269,28 +272,44 @@ so only while the phase is not `Succeeded`. A failed warm-up's
 poll re-fetches every open page (capped at the API's 1000). A folded card
 reads its detail for the one thing its header needs that `JobSummary`
 lacks: the page sums (and `pagesFailed`, which makes a `Succeeded` campaign
-"partially succeeded"). A finished, `Unknown` or reaped campaign is read
-once, when its card first intersects the viewport (`IntersectionObserver`)
-or is opened, and again on a phase change. One that can still change is
-polled: open, every `RELOAD_MS`, on screen or not; folded, every
-`FOLDED_MS` (twice that) and only while on screen. A read of the same state
-younger than the period is not repeated when a card comes back on screen or
-is opened — the folded read is the table's first page, so a card opens to
-it at once. Every card's reads go through one gate (`$lib/poll`'s `gate`):
-four in flight, the rest in turn, and a card that goes away gives up its
-place. `fetchJobs` asks for
+"partially succeeded"). A folded card reads only while on screen
+(`$lib/onscreen`: one `IntersectionObserver` for every card, a 200px
+margin); an open one whether or not. Open, it reads every `RELOAD_MS`;
+folded, every `FOLDED_MS` (twice that). A finished, `Unknown` or reaped
+campaign stops once a read has landed with whole page sums, and reads again
+on a phase change. The next read is a period after the last one of the same
+state, however the card got there (`startPolling`'s `first`), so a card
+coming back on screen or opened a moment after a read does not read again —
+the folded read is the table's first page, so a card opens to it at once. A
+folded card that leaves the screen lets a read in flight land
+(`stop(true)`). Every card's reads go through one gate (`$lib/poll`'s
+`gate`): four in flight, the rest in turn, what a reader asked for (opening
+a card, "load more") ahead of the background reads, and a card that goes
+away gives up its place. A failed read says when the next try is, from the
+poller's own backoff (`onWait`). `fetchJobs` asks for
 `?reaped=20`; "show older campaigns" asks for 20 more.
 
 **Order.** The first answer is sorted by `byAttention` (`src/lib/order.ts`):
 running, then in trouble, then finished newest first, then not started. A
 poll keeps that order (`keepOrder`): every card stays where it is with its
 new row, and a new campaign goes in front of the first card already shown
-that the sort would put after it. The next answer after the tab was hidden
-is sorted afresh, since nobody was reading it. "Loading…" shows only once
-the first answer is 400 ms late, and there is no empty state or banner
-before an answer. A banner that arrives over a list floats at the foot of
-the window (the page gains room under its last card) rather than pushing
-the cards down; with no list yet it sits where the list would be.
+that the sort would put after it. A campaign that falls into trouble is
+placed afresh the same way at once: that is the news the order is for. Any
+other drift (a queued campaign starting, a running one finishing) leaves
+the card where it is and puts "The campaigns' order has changed · re-sort"
+in the dock; the reader re-sorts when they choose. A card that moves glides
+there (`animate:flip`, none under reduced motion). The answer after the
+reader comes back to the tab is sorted afresh — the flag is set on the
+return, so an answer landing while the tab is hidden cannot use it up.
+"Loading…" shows only once the first answer is 400 ms late, and there is no
+empty state or banner before an answer.
+
+**The dock.** Over a list, the failed-poll banner ("Next try at HH:MM"),
+the unreadable-rows banner (put away with its × until the count changes)
+and the re-sort offer sit in a dock fixed to the foot of the window, so
+nothing arriving there pushes a card; the page keeps as much room under its
+last card as the dock is tall (`bind:clientHeight` into `--dock`). With no
+list yet, a banner sits where the list would be.
 
 **Motion and accessibility.** Only what runs moves: the pulsing dot, the
 bar sheen, and a one-second fade behind a progress line whose `done`
@@ -302,8 +321,10 @@ card is open (it names the element holding zones 2 to 4). AA contrast in both th
 
 **Header.** Logo and title left; the deployed release from
 `GET /api/v1/version` (`htrflow-batch <version>`, `web` in the tooltip,
-read once, empty if it fails — its slot is held from the first paint, so the
-answer landing moves nothing), the GitHub mark and the theme toggle right.
+read once, empty if it fails — its slot is held from the first paint, wide
+enough for a pre-release tag, so the answer landing moves nothing; on the
+narrowest phone it is cut short with the whole name in its title), the
+GitHub mark and the theme toggle right.
 
 ## Layout
 
