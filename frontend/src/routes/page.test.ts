@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { RELOAD_MS } from "$lib/config.js";
 import { cssOf, cssRules } from "$lib/fixtures/css.js";
@@ -488,5 +488,35 @@ describe("/ nothing moves as the page loads", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(names(container)).toEqual(["started", "finishing"]);
     });
+  });
+
+  // A banner that appeared over a list already on screen pushed every card
+  // down by its own height. Over a list, it floats at the foot of the
+  // window; with no list yet, there is nothing to push, and it stays in the
+  // page where the list would be.
+  test("a banner over a list moves no card; with no list it sits in the page", async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.toString().endsWith("/version"))
+          return jsonResponse({ version: "v", web: "w" });
+        if (url.toString().includes("/jobs/")) return jsonResponse(detail);
+        return ++calls === 1 ? jsonResponse([job]) : jsonResponse("gone", 503);
+      }) as unknown as typeof fetch,
+    );
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(RELOAD_MS);
+    expect(screen.getByRole("alert")).toHaveClass("floating");
+    expect(cssOf(pageRules, ".banner.floating").get("position")).toBe("fixed");
+    cleanup();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse("gone", 503)) as unknown as typeof fetch,
+    );
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByRole("alert")).not.toHaveClass("floating");
   });
 });
