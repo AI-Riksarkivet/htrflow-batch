@@ -1350,7 +1350,23 @@ check web       "$(count packages/web/src -name '*.py')" 2583
 # four card reads in flight, handing a place on in order and giving it up
 # on abort. order.ts +30: `keepOrder`. config.ts +6: FOLDED_MS. Most of it
 # is the comments saying which measured shift each part removes.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5474
+# 5474 -> 5724: the loading change's review round. CampaignCard +57: a
+# partial page count marked on the line and read on until whole, a stale
+# count saying when it is from, the read rules rewritten around the shared
+# observer (reads only on screen, the next a period after the last, a read
+# in flight let land, the reader's own read first), and the placeholders
+# capped to a screenful with a visible loading line. The page +98: the
+# dock at the foot of the window (the failed-poll and unreadable banners
+# and the offer to re-sort a drifted order), its measured height reserved,
+# the unreadable banner put away until its count changes, the banner naming
+# the real next try, the gliding move, the re-sort flag set on return and
+# the version slot sized for pre-release tags. poll.ts +25: `first`,
+# stop-and-let-finish, `onWait` and the gate's lane for what a reader asked
+# for. onscreen.ts +37: one IntersectionObserver for every card. order.ts
+# +12: a card falling into trouble placed afresh, `outOfOrder`. reasons.ts
+# +12: the retry sentence from the next try's time. test-setup.ts +9: the
+# ResizeObserver stand-in jsdom lacks (test support, counted by path).
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5724
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies
