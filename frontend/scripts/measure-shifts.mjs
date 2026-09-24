@@ -14,7 +14,7 @@
 // re-sort under its reader.
 //
 //   node scripts/measure-shifts.mjs [--out DIR] [--open N] [--width PX]
-//        [--seed N] [--dist DIR] [--budget CLS]
+//        [--scroll PX] [--seed N] [--dist DIR] [--budget CLS]
 //
 // Needs `playwright-core` and a Chromium it can drive, neither of which the
 // project installs (see README.md). The build must use a short poll so the
@@ -37,6 +37,7 @@ const args = Object.fromEntries(
 const DIST = resolve(args.dist ?? join(here, "..", "dist"));
 const OUT = resolve(args.out ?? "shifts");
 const OPEN = Number(args.open ?? 0);
+const SCROLL = Number(args.scroll ?? 0);
 const WIDTH = Number(args.width ?? 1280);
 const BUDGET = Number(args.budget ?? 0.02);
 let seed = Number(args.seed ?? 7);
@@ -96,7 +97,14 @@ function campaign(i, [phase, warmup, gone]) {
             },
           }
         : { phase: warmup },
-    counts: { ...base.counts, total: 1 + (i % 4) },
+    // A failed volume only where the phase says one failed, so each
+    // campaign sorts into the band its phase names.
+    counts: {
+      total: 1 + (i % 4),
+      active: phase === "Running" ? 1 : 0,
+      done: phase === "Queued" ? 0 : 1,
+      failed: ["Failed", "PartiallyFailed"].includes(phase) ? 1 : 0,
+    },
     createdAt: `2026-09-${day}T07:00:00Z`,
     finishedAt: finished ? `2026-09-${day}T0${i % 10}:30:00Z` : null,
   };
@@ -268,6 +276,8 @@ for (let i = 0; i < 20; i++) {
   if (ok) frames.push({ t: Date.now() - started, name });
   await delay(150);
 }
+// A reader who has scrolled down the list by the time the poll lands.
+if (SCROLL > 0) await page.mouse.wheel(0, SCROLL);
 // Past the first poll (VITE_RELOAD_MS=4000) and every detail it sets off.
 await delay(Math.max(0, 8000 - (Date.now() - started)));
 await page.screenshot({ path: join(OUT, "after-poll.png"), fullPage: true });
