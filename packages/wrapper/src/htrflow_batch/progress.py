@@ -180,7 +180,13 @@ class Progress:
         try:
             self.store.put_json(
                 "iiif.json",
-                build_viewer_manifest(self.cfg, self.source, self.pages, dims),
+                build_viewer_manifest(
+                    self.cfg,
+                    self.source,
+                    self.pages,
+                    dims,
+                    quality=self.store.page_quality,
+                ),
             )
             self.viewer_published = True
         except Exception as e:

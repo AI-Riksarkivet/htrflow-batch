@@ -105,12 +105,15 @@ def run_manifest(
     bytes_fetched: int,
     quality: Mapping[str, float] | None = None,
     canvases: Sequence[str] = (),
+    summary: dict | None = None,
 ) -> dict:
     """The manifest.json body: what the volume is, what produced it, what came
     out, and what a resume or the Phase 2 gate reads back (docs: s3-layout).
     ``quality`` is a page's predicted score off its ALTO (quality.py); with
     none at all, the top-level ``quality`` key is absent, same as before this
-    step existed."""
+    step existed. ``summary`` lets a caller that already computed the block
+    (``run``, ahead of ``iiif.json``) pass it in rather than have it built
+    twice; a caller with none (the contract script) gets it computed here."""
     ok_pages = [n for n, r in stats.results.items() if r.status == "ok"]
     failed_pages = [n for n, r in stats.results.items() if r.status == "failed"]
     scores = quality or {}
@@ -150,7 +153,10 @@ def run_manifest(
         "viewer_url": f"{cfg.public_results_base.rstrip('/')}"
         f"/{cfg.volume_prefix}/iiif.json",
     }
-    if (block := qp.summary(scores, pipeline_text, canvases)) is not None:
+    block = (
+        summary if summary is not None else qp.summary(scores, pipeline_text, canvases)
+    )
+    if block is not None:
         body["quality"] = block
     return body
 
@@ -183,17 +189,26 @@ def run(
     manifest.json."""
     dims = alto_dims(cfg, store, pages, uploaded)
     wrote_iiif = bool(dims)
+    pipeline_text = Path(cfg.pipeline_path).read_text()
+    canvases = [p.name for p in pages if p.name in dims]
+    block = qp.summary(store.page_quality, pipeline_text, canvases)
     if dims:
         store.put_json(
-            "iiif.json", build_viewer_manifest(cfg, source_manifest, pages, dims)
+            "iiif.json",
+            build_viewer_manifest(
+                cfg,
+                source_manifest,
+                pages,
+                dims,
+                quality=store.page_quality,
+                summary=block,
+            ),
         )
-    pipeline_text = Path(cfg.pipeline_path).read_text()
     store.put_text("pipeline.yaml", pipeline_text, "text/yaml")
     # Snapshotted here, not before the stage: reading stored ALTO back and
     # writing iiif.json/pipeline.yaml is time this run spent (wall_seconds
     # and pages_per_second have always covered it).
     wall = time.monotonic() - t_start
-    canvases = [p.name for p in pages if p.name in dims]
     body = run_manifest(
         cfg,
         pages,
@@ -204,6 +219,7 @@ def run(
         bytes_fetched,
         quality=store.page_quality,
         canvases=canvases,
+        summary=block,
     )
     store.put_json("manifest.json", body)
     log.info(
