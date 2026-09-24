@@ -18,9 +18,11 @@ func (m *HtrflowBatch) scanImage(
 	exitCode int,
 	ignoreUnfixed bool,
 	caBundle *dagger.File,
+	source *dagger.Directory, // the checkout, for its VEX statements
 ) (string, error) {
-	output, err := m.trivy(container, caBundle).
-		WithExec(trivyArgs(severity, format, exitCode, ignoreUnfixed)).
+	output, err := m.trivy(source, caBundle).
+		WithMountedFile("/image.tar", container.AsTarball()).
+		WithExec(append(trivyArgs(severity, format, exitCode, ignoreUnfixed), "--input", "/image.tar")).
 		Stdout(ctx)
 	if err != nil {
 		if output == "" {
@@ -31,17 +33,22 @@ func (m *HtrflowBatch) scanImage(
 	return output, nil
 }
 
-// trivy is the digest-pinned Trivy container with the image under scan
-// mounted as a tarball at /image.tar.
-func (m *HtrflowBatch) trivy(container *dagger.Container, caBundle *dagger.File) *dagger.Container {
+// trivy is the digest-pinned Trivy container with the repository's VEX
+// statements mounted at /vex.openvex.json: the findings in the distroless
+// runtime that Debian has no fix for, each pinned to one package version,
+// so a statement stops applying by itself when the package changes. The
+// image under scan is the caller's to add -- a tarball of a built image, or
+// a registry reference.
+func (m *HtrflowBatch) trivy(source *dagger.Directory, caBundle *dagger.File) *dagger.Container {
 	return m.withCaBundle(dag.Container().From(trivyImage), caBundle).
-		WithMountedFile("/image.tar", container.AsTarball())
+		WithMountedFile("/vex.openvex.json", source.File(".docker/distroless.openvex.json"))
 }
 
-// trivyArgs is the one Trivy command line the gates and the report share.
+// trivyArgs is the one Trivy command line the gates and the reports share,
+// every one of them reading the VEX statements; the caller names the image.
 func trivyArgs(severity string, format string, exitCode int, ignoreUnfixed bool) []string {
 	args := []string{
-		"trivy", "image", "--input", "/image.tar",
+		"trivy", "image", "--vex", "/vex.openvex.json",
 		"--severity", severity, "--format", format,
 		"--exit-code", fmt.Sprintf("%d", exitCode),
 		"--skip-version-check",
@@ -85,8 +92,11 @@ func (m *HtrflowBatch) ScanSarif(
 	if err != nil {
 		return nil, fmt.Errorf("%s build failed before scanning: %w", image, err)
 	}
-	args := append(trivyArgs(severity, "sarif", 0, false), "--output", "/trivy.sarif")
-	scanned, err := m.trivy(container, caBundle).WithExec(args).Sync(ctx)
+	args := append(trivyArgs(severity, "sarif", 0, false), "--output", "/trivy.sarif", "--input", "/image.tar")
+	scanned, err := m.trivy(source, caBundle).
+		WithMountedFile("/image.tar", container.AsTarball()).
+		WithExec(args).
+		Sync(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("trivy scan failed: %w", err)
 	}
@@ -119,7 +129,7 @@ func (m *HtrflowBatch) Scan(
 	if err != nil {
 		return "", fmt.Errorf("build failed before scanning: %w", err)
 	}
-	return m.scanImage(ctx, container, severity, format, exitCode, ignoreUnfixed, caBundle)
+	return m.scanImage(ctx, container, severity, format, exitCode, ignoreUnfixed, caBundle, source)
 }
 
 // ScanWeb runs Trivy against the web image. Unlike the wrapper this one
@@ -148,7 +158,7 @@ func (m *HtrflowBatch) ScanWeb(
 	if err != nil {
 		return "", fmt.Errorf("web build failed before scanning: %w", err)
 	}
-	return m.scanImage(ctx, container, severity, format, exitCode, ignoreUnfixed, caBundle)
+	return m.scanImage(ctx, container, severity, format, exitCode, ignoreUnfixed, caBundle, source)
 }
 
 // ScanCampaigns runs Trivy against the converter image the Argo CD hook runs
@@ -177,7 +187,7 @@ func (m *HtrflowBatch) ScanCampaigns(
 	if err != nil {
 		return "", fmt.Errorf("campaigns build failed before scanning: %w", err)
 	}
-	return m.scanImage(ctx, container, severity, format, exitCode, ignoreUnfixed, caBundle)
+	return m.scanImage(ctx, container, severity, format, exitCode, ignoreUnfixed, caBundle, source)
 }
 
 // ScanJson returns JSON scan results without failing on findings

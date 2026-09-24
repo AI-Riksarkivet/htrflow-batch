@@ -1,8 +1,8 @@
 # htrflow-batch (Helm chart)
 
-Kueue-gated batch HTR platform around the htrflow image: queues, the
-model-cache PVC and the web front (campaign browser, Universal Viewer and
-the read-only status API in one Deployment).
+Kueue-gated batch HTR platform around htrflow: queues, the model-cache PVC
+and the web front (campaign browser, Universal Viewer and the status API in
+one Deployment).
 
 **Campaigns are Kubernetes Indexed Jobs, not objects this chart renders.**
 `packages/converter` (`htrflow-campaigns render <repo-dir> --out <dir>`)
@@ -77,6 +77,45 @@ ConfigMap the nginx viewer mounted, is describing the version it names — `api.
 here would make the upgrade notes wrong for anyone actually on that
 version.
 
+### From 0.12.0 to 0.13.0 — what can stop an upgrade
+
+**Chart and converter versions.** The `job-shape` policy compares a
+campaign or warm-up Job's scripts, env vars and mounts with the ones the
+converter renders. Each campaigns repo pins its own converter (the Argo CD
+hook's image, and `CONVERTER_REF` in its CI), and upgrading this chart does
+not move that pin. So whenever a release changes what the converter renders:
+
+1. Upgrade the chart first.
+2. In the same change window, bump the hook image (and `CONVERTER_REF`) in
+   every campaigns repo that applies to this namespace.
+
+In between, an apply whose renders the chart does not recognise exits
+non-zero, naming the refused Job in the policy's message. Nothing already
+running is touched: live Jobs keep running, since only the apply identity's
+creates and updates (and any new Job) are checked again.
+
+For this release, 0.13.0 admits what the v0.5.0 converter renders: the
+scripts are the same, and it takes a campaign Job without the new
+`INDEX_FAILURE_COUNT` / `BACKOFF_LIMIT_PER_INDEX` env vars and a cache mount
+without `subPath`. The reverse does not hold: the new converter's apply
+holds a coordination Lease that only 0.13.0's apply Role grants, so an
+in-cluster apply (the hook) with the new image fails closed on 0.12.0. Chart
+first, then the hook images.
+
+| Change | What to do |
+|---|---|
+| **`network.iiifCidrs` has no default any more** (it named one institution's IIIF server), and an empty list is refused. | Pass your IIIF origins' ranges: `--set network.iiifCidrs='{<cidr>}'`. |
+| **`values-prod.yaml` empties `network.s3Cidrs`, `network.clusterCidrs` and `network.iiifCidrs` and refuses to render without them**, as its header always said it did; it also sets **`network.s3InNamespace: false`**, so no pod labelled `app: rustfs` is a route. An empty `network.clusterCidrs` or `network.iiifCidrs` is refused on any values file, and so is an empty `network.s3Cidrs` with `s3InNamespace: false`. | Pass your S3 endpoint's, your cluster's pod and service, and your IIIF origins' ranges with `--set`, as the deploy page's install command does. |
+| **`job-shape`, a new policy with `security.policies.enabled`.** A campaign Job may read only `s3.existingSecret`, a warm-up Job only `hfToken.existingSecret` (new, default empty), both only the `modelCache.name` PVC, with no ServiceAccount token and the converter's commands. | If `converter.yaml` sets `hf_token_secret`, set `hfToken.existingSecret` to the same name, or the warm-up is refused. Keep `s3_secret` and `data_pvc` equal to `s3.existingSecret` and `modelCache.name`, as before. |
+| **`rbac-scope` holds the apply identity's Workload patches** to `spec.active`, on the Workload of a converter-labelled Job. | Nothing, unless something else uses the `htrflow-campaigns` ServiceAccount on Workloads. |
+| **The apply Role gains the coordination Lease** `htrflow-campaigns-apply` (`create` on leases, `get`/`update` on that one), which `htrflow-campaigns apply` holds for its whole run. | Nothing: without it an in-cluster apply of this release fails closed. |
+| **`security.verifyImages` reads Sigstore bundles** (`type: SigstoreBundle`), the form cosign 3 signs in. The 0.12.0 policy looked for `.sig` tags the release no longer writes and refused every published image. | Nothing: an install that had turned verification on starts admitting the signed release. |
+| **The model cache is one directory per pipeline recipe** (converter): every campaign Job's pod template mounts it by `subPath`. A campaign Job the v0.5.0 converter rendered and that is still live cannot take the new pod template (a Job's template is immutable), so `apply` leaves it as it was (exit 3) until it finishes; pausing still works through its Workload. Every warm-up runs again and downloads every model once more, into its recipe's new directory. | Let running campaigns finish. Size `modelCache.size` for two copies of every model during the change-over: the old `/data/hf` stays until you delete it. Once no v0.5.0 Job is live, the old `/data/hf` and `/data/warmup` on the PVC are orphaned and can be deleted. After that, size it for a copy of each recipe's models; two pipelines loading the same model keep a copy each. |
+| **Volumes whose image URLs carry signing parameters are reprocessed once** (wrapper). Resume compares each page's source by a digest of its URL with the credentials taken out, and the new wrapper also takes out Azure SAS, CloudFront, GCS V2 and S3 SigV2 signatures, `access_token` and `x-goog-*` parameters. A page stored by the old wrapper from such a URL no longer matches its own digest, so the first re-run of that volume redoes those pages. Volumes whose URLs carry no such parameters are not affected. | Nothing; expect the extra GPU time on the first retry or re-run of such volumes. A re-signed URL keeps its digest from then on. |
+| **Upgrade order: chart, then converter.** See *Chart and converter versions* above: the new converter's in-cluster apply needs this chart's Lease rules, and the Argo CD hook's image and `CONVERTER_REF` must come from the same release as this chart, since `job-shape` compares the scripts character for character. | Upgrade the chart first, then bump the hook image and `CONVERTER_REF` in every campaigns repo in the same window. |
+| **`source_template` has no default any more** (converter; it named one institution's IIIF server). A campaign that writes a volume as a bare reference code (`- R0001203`) is refused by `validate` and `render` unless `converter.yaml` sets it. A campaign already rendered and unchanged keeps the manifest URLs its record holds, with a warning. | In every campaigns repo that writes bare reference codes, set `source_template` in `converter.yaml` to the template they were rendered with, in the change that bumps `CONVERTER_REF`. |
+| **Wide egress ranges lose the internal ranges inside them**, not only a literal `0.0.0.0/0`: `s3Cidrs: [0.0.0.0/0]`, `iiifCidrs` split into halves and `apply.gitCidrs` now carve out the cluster, node, link-local, loopback and private ranges. `network.privateCidrs` adds `100.64.0.0/10`. | Name a private host you need in `iiifCidrs` / `s3Cidrs` by its own range, which stays reachable, or narrow `network.privateCidrs`. |
+
 ### From 0.11.0 to 0.12.0 — nothing stops an upgrade
 
 Every new key is optional and off by default: an install that sets none of
@@ -146,13 +185,14 @@ adoption recipe.)
 `htrflow-web` (Deployment, Service `htrflow-web:8081` on NodePort
 `web.nodePort`) is the whole browser-facing surface: the campaign browser at
 `/`, Universal Viewer at `/uv.html`, and `GET /api/v1/jobs[/{ns}/{name}]`
-read-only over the Indexed Jobs a campaign renders to — Role/RoleBinding
+over the Indexed Jobs a campaign renders to — Role/RoleBinding
 scoped to `get`/`list` on `jobs`/`pods`/`configmaps` (plus `create`/`patch`
 on `configmaps`, for the per-campaign status record it writes) in the release
 namespace, never a ClusterRole. It is the one pod in this chart with
 `automountServiceAccountToken: true` (everything else has it off) because it
 *is* a Kubernetes API client. NetworkPolicy `htr-web` lets browsers in from
-`network.web.ingressCidrs` and lets it out to DNS, the apiserver and the
+`network.web.ingressCidrs` (behind an ingress controller, `web.ingress`, the
+controller named by `network.web.ingressFrom` instead) and lets it out to DNS, the apiserver and the
 results bucket. The pod also **serves `/config.js` itself**, written from its
 own environment: `window.API_BASE = "/api/v1"` (same-origin, no proxy) and
 `window.RESULTS_BASE` from `publicResultsBase`. There is nothing for an
@@ -167,6 +207,47 @@ value keys **as they were at that version** — `api.*`, `viewer.*`,
 `htrflow-web` / `templates/web.yaml` they became in 0.4.0. Renaming them
 here would make the upgrade notes wrong for anyone actually on that
 version.
+
+### 0.13.0 — unreleased (deployment audit fixes)
+
+**Breaking at render time for the production profile, on purpose** — see
+*From 0.12.0 to 0.13.0* above.
+
+Added:
+- **`job-shape`** ClusterPolicy (with `security.policies.enabled`): a
+  campaign or warm-up Job is the shape the converter renders — its
+  ServiceAccount and token, Secrets, volumes, containers, scripts, env vars,
+  mounts, file modes, securityContexts, pod labels and pipeline source; a
+  `campaign-*` or `htr-pipeline-*` ConfigMap holds only the key the
+  converter writes. It admits what the v0.5.0 converter renders.
+- **`hfToken.existingSecret`**: the one Secret a warm-up may read; must equal
+  `converter.yaml`'s `hf_token_secret`.
+- **`security.jobImageRepos`**: narrows campaign and warm-up Jobs to the
+  wrapper's repositories.
+- **`network.s3InNamespace`** (default `true`): the in-namespace RustFS
+  route; `false` drops it and needs `network.s3Cidrs`.
+- **`queue.createFlavor`**, **`queue.createClusterQueue`**,
+  **`queue.clusterQueueName`**, **`queue.createPriorityClasses`**: each
+  cluster-scoped Kueue object is created or only referenced by name, so a
+  second release or an existing Kueue setup installs.
+- The apply Role's coordination Lease rules.
+
+Changed:
+- **`verify-images`** reads Sigstore bundles (`type: SigstoreBundle`).
+- **`model-revision`**: TrOCR, WordLevelTrOCR, Donut and DiT also need
+  `model_settings.processor_kwargs.revision`; a pipeline in `binaryData` is
+  refused.
+- **`rbac-scope`**: the apply identity may change only `spec.active` on the
+  Workload of a converter-labelled Job.
+- Every egress range carves out the internal ranges inside it, the API
+  server included whatever its address; `network.privateCidrs` adds
+  `100.64.0.0/10`.
+- **`network.iiifCidrs`** has no default (it was one institution's IIIF
+  server) and must be set.
+- The schema takes only real IPv4 ranges: octets to 255, prefixes to /32.
+- **`values-prod.yaml`**: `allowedImageRepos` names the three published
+  repositories instead of the organisation; the network lists are emptied
+  and required; `network.s3InNamespace: false`.
 
 ### 0.12.0 — 2026-09-22 (v0.5.0)
 

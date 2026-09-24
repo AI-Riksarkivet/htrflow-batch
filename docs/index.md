@@ -6,22 +6,23 @@
     without notice. This notice goes when there is a release to stand behind.
 
 Batch handwritten-text recognition for whole archive volumes on Kubernetes,
-built around the stock [htrflow](https://github.com/AI-Riksarkivet/htrflow)
-image. Results stream to an S3 bucket page by page and open in a IIIF viewer;
+built around [htrflow](https://github.com/AI-Riksarkivet/htrflow), unmodified. Results stream to an S3 bucket page by page and open in a IIIF viewer;
 what to transcribe is declared in a campaigns git repository.
 
 ## What it does
 
-- **Runs htrflow unmodified.** The wrapper image builds on the stock htrflow
-  image and drives it page by page, so a long volume costs the same memory
-  as a short one.
+- **Runs htrflow unmodified.** The wrapper image builds htrflow from its own
+  source at a pinned commit, on the CUDA runtime image, and drives it as a
+  library page by page, so a long volume costs the same memory as a short
+  one.
 - **Kueue owns queueing and GPU quota.** There is no custom scheduler.
 - **Git is the desired state; Kubernetes and S3 are the observed state.** A
   campaign is a YAML file. A pure converter renders it into one Kubernetes
   Indexed Job (one index per volume) plus a warm-up Job that caches the
   pipeline's models. Kubernetes and Kueue own scheduling and retries, and a
-  read-only status API with a campaign browser shows progress live. There is
-  no CRD, no controller and no database.
+  status API with a campaign browser shows progress live; the one thing it
+  writes is each campaign's status ConfigMap, the record that outlives the
+  Job. There is no CRD, no controller and no database.
 - **Kyverno decides what may run.** Chart-shipped policies admit only
   digest-pinned images from allowed registries and, optionally, only
   revision-pinned models.
@@ -37,24 +38,18 @@ what to transcribe is declared in a campaigns git repository.
 
 ![One campaign, from a file in git to results in the viewer: git, delivery, the cluster, storage and the outside world](assets/diagrams/overview.svg)
 
-
 ## Where to start
 
-- [Try it](getting-started/try-it.md) — the wrapper and viewer on your own
-  machine with Docker Compose, then a dev cluster.
-- [Getting Started](getting-started/index.md) — prerequisites, deploying the
-  chart, running a campaign and viewing results.
-- [How it Works](how-it-works/architecture.md) — the architecture, campaigns,
-  queueing, the streaming wrapper, failure handling and security.
-- [Reference](reference/index.md) — configuration, campaign and pipeline
-  YAML, the wrapper contract, chart values and the S3 layout.
-- [Development](development/index.md) — workspace setup, tests, CI,
-  releasing and a dev cluster.
-- [Roadmap](roadmap/index.md) — what is open and what could come next.
+| You are | Read in this order |
+|---|---|
+| **An operator** running the platform | [Try it](getting-started/try-it.md) → [Prerequisites](getting-started/index.md) → [Deploy](getting-started/deploy.md) → [Troubleshooting](getting-started/troubleshooting.md) |
+| **An author** of campaigns | [Run a campaign](getting-started/campaigns.md) → [Campaign & Pipeline YAML](reference/campaign-yaml.md) → [View results](getting-started/viewing.md) |
+| **A developer** changing the code | [Development](development/index.md) → [How it Works](how-it-works/architecture.md) |
 
-## License
+The [Reference](reference/index.md) holds the exact contracts, and the
+[Roadmap](roadmap/index.md) what is open and what could come next.
 
-htrflow-batch is licensed under the European Union Public Licence (EUPL-1.2),
-the same licence as htrflow — the `LICENSE` file at the root of the
-repository. The third-party components the images ship, with their licences,
-are in [Third-party licences](development/licenses.md).
+## Licence
+
+EUPL-1.2, the same as htrflow (`LICENSE` at the repository root); what the
+images ship is listed in [Third-party licences](development/licenses.md).

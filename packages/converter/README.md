@@ -8,14 +8,18 @@ its Indexed Job: each volume is one completion index, the Job carries the
 Kueue queue label, and pausing or deleting a campaign is a change to its YAML
 file. Only one command here talks to a cluster — `apply`, which renders and
 then server-side applies through the official Kubernetes client (no
-`kubectl` binary, no subprocess); Argo CD applies the same rendered files on
-a real deployment.
+`kubectl` binary, no subprocess). Argo CD does not apply the rendered files:
+every rendered object carries `argocd.argoproj.io/hook: Skip`, so an
+Application syncs only `rendered/sync.yaml` (a digest of the render), and the
+change to it runs the repo's `PostSync` hook, which runs `apply --prune` on a
+checkout once it has checked that CI rendered that checkout.
 
 - Design: [Campaigns as Indexed Jobs](../../docs/superpowers/specs/2026-09-01-indexed-jobs-design.md),
   §3 for the objects rendered here
 - Narrative: [How it works → Campaigns](../../docs/how-it-works/campaigns.md)
 - Reference: [Campaign & Pipeline YAML](../../docs/reference/campaign-yaml.md)
-  (every field with its default)
+  (every field with its default), [htrflow-campaigns CLI](../../docs/reference/cli.md)
+  and [Rendered objects](../../docs/reference/rendered.md)
 - A repo in shape: [`examples/campaigns/`](../../examples/campaigns/README.md)
   — `htrflow-campaigns init <dir>` writes exactly this, generated from
   `src/htrflow_converter/template/` plus the CI flavour from
@@ -42,14 +46,31 @@ manifest with it. It refuses an `--out` that is, or contains, the campaigns
 repo itself. Campaigns are append-only: changing the volume list of a campaign
 that has already been rendered is an error. Create a new campaign instead.
 
-`apply` renders into a temporary directory (or `--out`), then, against the
-namespace in `converter.yaml`: server-side applies every pipeline object and
-then every campaign object (field manager `htrflow-campaigns`); with
-`--prune`, deletes every Job and ConfigMap labelled
-`htrflow.riksarkivet.se/managed-by=converter` that this render did not
-produce; and finally puts each campaign's `suspend:` on its Kueue Workload's
-`spec.active`, waiting up to `--pause-wait` seconds for a brand-new paused
-campaign's Workload to appear. Every action is one printed line. `--dry-run`
+`apply` renders into a temporary directory (or `--out`), then works against
+the namespace in `converter.yaml` (refused, with nothing applied, when
+`--namespace <ns>` names another). In order, holding the Lease
+`htrflow-campaigns-apply` throughout so that one apply runs at a time:
+
+1. checks the render against the live cluster (a campaign's live
+   ConfigMap, a running campaign's pipeline steps and window);
+2. reads each campaign's live Job and status record, records the ending it
+   sees, and leaves a finished, unchanged campaign alone;
+3. holds back a campaign sharing a volume with a running one, and dry-runs
+   each campaign Job;
+4. server-side applies every pipeline object, then every campaign object
+   (field manager `htrflow-campaigns`; a resuming campaign's
+   `spec.suspend: true` is first handed to `htrflow-campaigns-suspend`, so
+   Kueue and not the API server's default decides when the Job starts);
+5. puts each campaign's `suspend:` on its Kueue Workload's `spec.active`,
+   waiting up to `--pause-wait` seconds for a new paused campaign's
+   Workload;
+6. with `--prune`, deletes every Job and ConfigMap carrying the
+   converter's `managed-by=converter` label (`render.CAMPAIGN_SELECTOR`)
+   that this render did not produce.
+
+The pause sync runs before the prune, so a prune problem never leaves a
+pause unenforced. Every action is one printed line; the exit codes are in
+[htrflow-campaigns CLI](../../docs/reference/cli.md#exit-codes). `--dry-run`
 renders and prints what would be applied without opening a connection. It
 authenticates from `$KUBECONFIG` or, in a pod, from the mounted
 ServiceAccount token — the htrflow-batch chart renders a suitable
@@ -59,12 +80,13 @@ ServiceAccount behind `apply.rbac.enabled`.
 
 | File | Parsed by | Rendered as |
 |---|---|---|
-| `converter.yaml` | `ConverterConfig` (unknown keys rejected, all fields optional) | Namespace, queue, window cap, S3 Secret, model-cache PVC, runtime class, node selector and tolerations, the IIIF source template, wrapper byte caps, and the default pod deadline (`max_seconds` → `activeDeadlineSeconds`). Not the image allow-list or the model-revision rule: both are chart values enforced by Kyverno since B63 Task 22, and a `converter.yaml` still carrying either key is a validation error saying so |
+| `converter.yaml` | `ConverterConfig` (unknown keys rejected, all fields optional) | Namespace, queue, window cap, S3 Secret, model-cache PVC, runtime class, node selector and tolerations, the IIIF source template, wrapper byte caps, and the default pod deadline (`max_seconds` → `activeDeadlineSeconds`). Not the image allow-list or the model-revision rule: both are chart values enforced by Kyverno, and a `converter.yaml` still carrying either key is a validation error saying so |
 | `pipelines/<id>.yaml` | `Pipeline` (digest-pinned `image`, htrflow `steps`, optional `max_seconds`; unknown keys rejected) | ConfigMap `htr-pipeline-<id>` with the pipeline YAML and its sha256; Job `htr-warmup-<id>` |
-| `campaigns/<name>.yaml` | `Campaign` (`pipeline`, `volumes`, optional `priority`, `window`, `suspend`) | ConfigMap `campaign-<name>` with `volumes.txt`; Indexed Job `<name>` with `completions = len(volumes)` |
+| `campaigns/<name>.yaml` | `Campaign` (`pipeline`, `volumes`, optional `priority`, `window`, `suspend`; unknown keys rejected, on the campaign and on each volume) | ConfigMap `campaign-<name>` with `volumes.txt`; Indexed Job `<name>` with `completions = len(volumes)` |
 
 A volume is either a bare id (the manifest URL comes from
-`source_template`) or a mapping with `id` and exactly one of `manifest` or
+`source_template`, which has no default: a bare id with none set is refused,
+one line per campaign) or a mapping with `id` and exactly one of `manifest` or
 `images`. Validation collects every problem before failing, so one run shows
 the whole list.
 
@@ -76,7 +98,7 @@ the whole list.
 | `parse.py` | YAML files to domain types via `Model.model_validate`; flattens `pydantic.ValidationError` into one-line problems; `ValidationError`; the cross-file unknown-pipeline check |
 | `models.py` | `Volume`, `Campaign`, `Pipeline`, `ConverterConfig` (frozen pydantic models) with all validation rules as field/model validators; `Pipeline.sha256` |
 | `render.py` | Patch the packaged skeletons into concrete objects; labels, Kueue queue and priority, env for the wrapper, the 10 000-volume split; `CAMPAIGN_SELECTOR`, the one definition of the label a prune deletes by |
-| `cluster.py` | The only module that talks to a cluster: server-side apply, the prune, the Kueue pause patch, and the mapping from an API error to a one-sentence `ClusterError` |
+| `cluster.py` | The only module that talks to a cluster: server-side apply, the prune, the Kueue pause patch, the apply Lease, the suspend hand-over, and the mapping from an API error to a one-sentence `ClusterError` |
 | `manifests/` | The four YAML skeletons: `configmap.yaml`, `campaign-job.yaml`, `pipeline-configmap.yaml`, `warmup-job.yaml` |
 | `template/` | The campaigns repo `init` copies out, byte-identical to [`examples/campaigns/`](../../examples/campaigns/README.md) |
 

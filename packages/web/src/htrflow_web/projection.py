@@ -8,10 +8,14 @@ cluster (docs: task-4-brief).
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import re
 import time
+import unicodedata
 from datetime import datetime, timezone
-from urllib.parse import quote
+from typing import NamedTuple
+from urllib.parse import quote, urlsplit
 
 import yaml
 
@@ -288,8 +292,12 @@ def _recorded_reasons(status: dict) -> dict[str, str]:
     """``{volume id: reason}`` from the status record's ``failedVolumes``.
     Those sentences are the detail endpoint's, observed while the pods still
     existed; anything finer is in the volume's own ``manifest.json`` in the
-    bucket (docs: reference/s3-layout)."""
-    return _parse_failed((status.get("data") or {}).get("failedVolumes") or "")
+    bucket (docs: reference/s3-layout). None when they are another run's
+    than the record's (``_FAILED_RUN``)."""
+    data = status.get("data") or {}
+    if data.get(_FAILED_RUN, "") not in ("", data.get("jobUid", "")):
+        return {}
+    return _parse_failed(data.get(_FAILED) or "")
 
 
 def _parse_failed(text: str) -> dict[str, str]:
@@ -436,7 +444,7 @@ def merge_record(stored: dict[str, str], fresh: dict[str, str]) -> dict[str, str
     return merged
 
 
-def _instant(text: str) -> datetime | None:
+def instant(text: str) -> datetime | None:
     """An RFC 3339 timestamp as a moment in time. A value without an offset
     is read as UTC -- which is what every writer of this field means."""
     try:
@@ -452,7 +460,7 @@ def _is_later(value: str, old: str) -> bool:
     need not write the same offset, and `09:00Z` sorts before `10:00+02:00`
     as a string while being an hour after it (2026-09-14 audit). A fresh
     value that is not a timestamp at all never replaces one that is."""
-    fresh, stored = _instant(value), _instant(old)
+    fresh, stored = instant(value), instant(old)
     if fresh is None:
         return False
     return stored is None or fresh >= stored
@@ -477,14 +485,38 @@ def status_configmap(row: dict, data: dict[str, str], labels: bool = True) -> di
 
 #: `htrflow-campaigns apply`'s field manager (converter ``cluster.FIELD_MANAGER``).
 APPLY_MANAGER = "htrflow-campaigns"
+#: This API's own two. ``failedVolumes`` has a manager of its own, written
+#: by the detail route alone -- the only one that reads pods and so the only
+#: one with anything new to say about it. Sent by both routes under one
+#: manager, a list request re-sent the value it had read and could apply it
+#: over reasons a detail request had written a moment before (2026-09-23
+#: audit).
+WEB_MANAGER = "htrflow-web"
+FAILURES_MANAGER = "htrflow-web-failures"
+_FAILED = "failedVolumes"
+#: The Job ``failedVolumes`` is about, written beside it by the same manager.
+#: A summary can move to a recreated Job without the failures moving with it
+#: -- an older pod mid rolling update does exactly that -- and failures of
+#: another run are neither read as this one's nor merged into them
+#: (2026-09-23 review).
+_FAILED_RUN = "failedVolumesJobUid"
 
 
-def _applys_keys(meta: dict) -> set[str]:
-    """The ``data`` keys `htrflow-campaigns apply` owns in the stored record,
-    as the API server wrote them down in its ``managedFields``."""
+class RecordWrite(NamedTuple):
+    """One server-side apply of the status ConfigMap: the object, whether it
+    is forced, and the field manager it is sent as."""
+
+    body: dict
+    force: bool
+    manager: str
+
+
+def _owned_keys(meta: dict, manager: str) -> set[str]:
+    """The ``data`` keys ``manager`` owns in the stored record, as the API
+    server wrote them down in its ``managedFields``."""
     keys: set[str] = set()
     for entry in meta.get("managedFields") or []:
-        if entry.get("manager") == APPLY_MANAGER and entry.get("operation") == "Apply":
+        if entry.get("manager") == manager and entry.get("operation") == "Apply":
             data = (entry.get("fieldsV1") or {}).get("f:data") or {}
             keys |= {k.removeprefix("f:") for k in data}
     return keys
@@ -492,41 +524,106 @@ def _applys_keys(meta: dict) -> set[str]:
 
 def record_write(
     stored: dict | None, row: dict, fresh: dict[str, str]
-) -> tuple[dict, bool] | None:
-    """What to apply over the ``stored`` status ConfigMap, and whether to
-    force it -- or ``None`` when it already says all of it.
+) -> list[RecordWrite]:
+    """What to apply over the ``stored`` status ConfigMap, in order -- none
+    when it already says all of it. The summary first, then (detail route
+    only: ``fresh`` carries ``failedVolumes``) the failures.
 
     Who owns what (3075, 3081). ``jobUid`` names the Job the record is
     about. `htrflow-campaigns apply` writes the ending it reads off that
     Job -- the summary fields, ``jobUid`` and the labels -- forced, once the
     Job is over; that is authoritative, and once apply owns ``phase`` for
-    this Job this API sends only the keys apply does not own, which is
-    ``failedVolumes``: server-side apply keeps a field another manager still
-    owns when this one leaves it out, so nothing is lost by omission and
-    nothing is left to conflict over. Until then this API writes the whole
-    record, merged over what is stored (``merge_record``). A record of
-    ANOTHER Job -- one reaped, then recreated under the same name -- says
-    nothing about this run: it is replaced whole, and forced when apply
-    still owns some of the old run's fields, on the ``resourceVersion``
-    this request read, so an ending apply writes in between wins (a 409).
-    A record without a ``jobUid`` predates it and counts as this Job's.
+    this Job the summary sends only the keys apply does not own: server-side
+    apply keeps a field another manager still owns when this one leaves it
+    out, so nothing is lost by omission and nothing is left to conflict
+    over. Until then the summary is the whole observation, merged over what
+    is stored (``merge_record``). A record of ANOTHER Job -- one reaped, then
+    recreated under the same name -- says nothing about this run: it is
+    replaced whole, and forced when another manager still owns some of the
+    old run's fields, on the ``resourceVersion`` this request read, so an
+    ending apply writes in between wins (a 409). A record without a
+    ``jobUid`` predates it and counts as this Job's.
+
+    ``failedVolumes`` is ``FAILURES_MANAGER``'s alone (``_failures_write``),
+    with the Job it is about beside it (``_FAILED_RUN``), so a record that
+    moved to another Job leaves the old run's failures standing and unread.
+    The summary leaves it out -- except while ``WEB_MANAGER`` still owns it
+    from before it had a manager of its own: a manager that stops sending a
+    field releases it, and a field nobody owns is deleted, so the summary
+    keeps sending the stored value until the failures manager has taken the
+    field over (forced). A list request that read the value before that
+    take-over then conflicts rather than overwrites.
     """
     data = (stored or {}).get("data") or {}
     meta = (stored or {}).get("metadata") or {}
+    fresh = dict(fresh)
+    failed = fresh.pop(_FAILED, None)
     other_job = data.get("jobUid", "") not in ("", fresh["jobUid"])
-    body = fresh if other_job else merge_record(data, fresh)
-    theirs = _applys_keys(meta)
+    writes = []
+    summary = _summary_write(data, meta, row, fresh, other_job)
+    if summary is not None:
+        writes.append(summary)
+    if failed is not None:
+        failures = _failures_write(data, meta, row, failed, fresh["jobUid"])
+        if failures is not None:
+            writes.append(failures)
+    return writes
+
+
+def _summary_write(
+    data: dict[str, str],
+    meta: dict,
+    row: dict,
+    fresh: dict[str, str],
+    other_job: bool,
+) -> RecordWrite | None:
+    """``WEB_MANAGER``'s apply: every field but the failures."""
+    kept = {k: v for k, v in data.items() if k not in (_FAILED, _FAILED_RUN)}
+    body = fresh if other_job else merge_record(kept, fresh)
+    if not other_job and _FAILED in _owned_keys(meta, WEB_MANAGER) & data.keys():
+        body = {**body, _FAILED: data[_FAILED]}
+    theirs = _owned_keys(meta, APPLY_MANAGER)
     if not other_job and "phase" in theirs:
         body = {k: v for k, v in body.items() if k not in theirs}
         if all(data.get(k) == v for k, v in body.items()):
             return None
-        return status_configmap(row, body, labels=False), False
-    if not other_job and body == data:
+        return RecordWrite(
+            status_configmap(row, body, labels=False), False, WEB_MANAGER
+        )
+    if not other_job and all(data.get(k) == v for k, v in body.items()):
         return None
+    force = bool(theirs)
     cm = status_configmap(row, body)
-    if theirs:
+    if force:
         cm["metadata"]["resourceVersion"] = meta.get("resourceVersion", "")
-    return cm, bool(theirs)
+    return RecordWrite(cm, force, WEB_MANAGER)
+
+
+def _failures_write(
+    data: dict[str, str], meta: dict, row: dict, failed: str, job_uid: str
+) -> RecordWrite | None:
+    """``FAILURES_MANAGER``'s apply: ``failedVolumes`` and the Job it is
+    about, merged per volume with what is stored (``merge_record``) -- or,
+    when what is stored is another run's, this run's alone. Forced: no
+    other manager has anything to say about the field, and one that owns it
+    still -- this API's summary manager, from before the split -- has to
+    give it up.
+
+    Held to the ConfigMap this request read, by its uid: an apply with a
+    uid never creates an object, so a record `apply --prune` deleted in
+    between stays deleted -- sent bare, this write re-created it with no
+    labels, out of reach of the list and the prune (2026-09-23 review).
+    ``None`` when there was no record to read: the summary write before it
+    creates one, and ``app.py`` holds this write to that one's uid."""
+    ours = data.get(_FAILED_RUN) or data.get("jobUid") or job_uid
+    old = {_FAILED: data[_FAILED]} if ours == job_uid and _FAILED in data else {}
+    value = merge_record(old, {_FAILED: failed})[_FAILED]
+    owned = _FAILED in _owned_keys(meta, FAILURES_MANAGER)
+    if owned and (data.get(_FAILED), data.get(_FAILED_RUN)) == (value, job_uid):
+        return None
+    body = status_configmap(row, {_FAILED: value, _FAILED_RUN: job_uid}, labels=False)
+    body["metadata"]["uid"] = meta.get("uid")
+    return RecordWrite(body, True, FAILURES_MANAGER)
 
 
 def match_warmup(job: dict, warmup_jobs: list[dict]) -> dict | None:
@@ -568,7 +665,92 @@ def _source_url(line: str) -> str | None:
     An ``images:`` line lists bare image URLs instead of a manifest, so it has
     no source to open (converter ``models.Volume.source_line``)."""
     source = line.partition("\t")[2]
-    return source if source.startswith(("http://", "https://")) else None
+    return source if browser_http_url(source) else None
+
+
+#: A host label this API is sure every browser's URL parser takes as it is:
+#: letters, digits, `-` and `_`.
+_LABEL = re.compile(r"[A-Za-z0-9_-]+")
+#: WHATWG reads a host whose last label is a number as an IPv4 address, and
+#: rejects it if that address is not one (`example.123`, `1.2.3.999`).
+_NUMERIC = re.compile(r"(0[xX][0-9A-Fa-f]*|[0-9]+)")
+
+
+def browser_http_url(value: str) -> bool:
+    """Whether ``value`` is an absolute http(s) URL the WHATWG URL parser --
+    `new URL()` in the browser -- takes. A subset, on purpose: anything this
+    cannot be sure of is refused, which costs a volume its source link, and
+    a URL the browser refuses cost the card itself (2026-09-23 audit: the
+    page parses a detail all or nothing). Checked here: the scheme, no
+    whitespace, control or backslash anywhere, a port in range, and a host
+    that is a valid IPv6 literal, a valid dotted IPv4 address, or labels of
+    letters, digits, `-` and `_` -- where a punycode label must decode to
+    the non-ASCII letters it stands for, and a non-ASCII one must be letters
+    and digits."""
+    if not value.lower().startswith(("http://", "https://")):
+        return False
+    if any(ord(c) <= 0x20 or ord(c) == 0x7F or c == "\\" for c in value):
+        return False
+    try:
+        parts = urlsplit(value)
+        parts.port  # noqa: B018 - raises for a port out of range or not a number
+    except ValueError:  # a bracketed host that is no address, a bad port
+        return False
+    host = parts.netloc.rpartition("@")[2]
+    if host.startswith("["):
+        literal, _, port = host[1:].partition("]")
+        ok = port == "" or port.startswith(":")
+        return ok and _address(ipaddress.IPv6Address, literal)
+    host = host.partition(":")[0].removesuffix(".")
+    labels = host.split(".")
+    if "" in labels:  # no host at all, or an empty label
+        return False
+    if _NUMERIC.fullmatch(labels[-1]):
+        return _address(ipaddress.IPv4Address, host)
+    return all(_label(label) for label in labels)
+
+
+def _label(label: str) -> bool:
+    if label.isascii():
+        if not _LABEL.fullmatch(label):
+            return False
+        if not label.lower().startswith("xn--"):
+            return True
+        try:
+            decoded = label[4:].encode("ascii").decode("punycode")
+        except UnicodeError:
+            return False
+        # What it decodes to must be what a browser would have encoded:
+        # non-ASCII, already in its mapped form, and spelled the one way.
+        return (
+            not decoded.isascii()
+            and _letters(decoded)
+            and decoded == unicodedata.normalize("NFKC", decoded.casefold())
+            and decoded.encode("punycode").decode("ascii") == label[4:].lower()
+        )
+    # A label that says it is punycode has to be ASCII.
+    return not label.lower().startswith("xn--") and _letters(label)
+
+
+def _letters(label: str) -> bool:
+    """ASCII letters, digits and `-`, and non-ASCII letters written left to
+    right. A right-to-left letter or a non-ASCII digit brings in the IDNA
+    bidi rule, which a browser enforces and this does not try to."""
+    return all(
+        (c.isascii() and (c.isalnum() or c == "-"))
+        or (c.isalpha() and unicodedata.bidirectional(c) == "L")
+        for c in label
+    )
+
+
+def _address(kind: type, text: str) -> bool:
+    """Whether ``text`` is an ``ipaddress.IPv4Address``/``IPv6Address``. A
+    zone id (`%eth0`) is refused: Python takes one and WHATWG does not."""
+    try:
+        kind(text)
+    except ValueError:
+        return False
+    return "%" not in text
 
 
 def _terminated_message(statuses: list[dict], name: str | None) -> str | None:
@@ -666,6 +848,44 @@ def _name_the_deadline(reason: dict, pod_reason: str | None) -> dict:
     if pod_reason != "DeadlineExceeded" or reason.get("error") != "SIGTERM":
         return reason
     return {**reason, "error": "DeadlineExceeded"}
+
+
+def _terminations(statuses: list[dict] | None) -> list[dict]:
+    return [
+        {
+            key: cs[key]
+            for key in ("name", "state", "lastState")
+            if key in cs and (key == "name" or "terminated" in (cs[key] or {}))
+        }
+        for cs in statuses or []
+    ]
+
+
+def pod_fields(pod: dict) -> dict:
+    """Everything this module reads off a pod, and nothing else: its index
+    label and creation time (``_pods_by_index``, ``newest``) and how it
+    stopped (``wrapper_reason``). ``kube.list_pods`` keeps only this of each
+    pod it reads, so a campaign with thousands of retries left behind holds
+    a few hundred bytes per pod rather than its whole spec (2026-09-23
+    audit) -- a field read here and dropped there fails the test that
+    projects both."""
+    meta = pod.get("metadata") or {}
+    status = pod.get("status") or {}
+    slim_status = {
+        key: _terminations(status.get(key))
+        for key in ("containerStatuses", "initContainerStatuses")
+        if key in status
+    }
+    if "reason" in status:
+        slim_status["reason"] = status["reason"]
+    return {
+        "metadata": {
+            key: meta[key]
+            for key in ("name", "creationTimestamp", "labels")
+            if key in meta
+        },
+        "status": slim_status,
+    }
 
 
 def _pod_completion_index(pod: dict) -> int | None:
@@ -924,7 +1144,11 @@ def detail(
     for idx, line in enumerate(_volume_lines(configmap)):
         state = _volume_state(idx, completed, failed, idx in pods_by_index)
         row = _volume_row(idx, line, state, results_base, pipeline, cfg)
-        if idx in pods_by_index:
+        # A done index's pods are history: no Succeeded pod is listed
+        # (kube.list_pods), so the newest one left is an attempt that failed
+        # before the one that published, and its sentence is not why the
+        # volume is anything (2026-09-23 audit).
+        if idx in pods_by_index and state != "done":
             newest_pod = newest(pods_by_index[idx])
             reason = wrapper_reason(newest_pod)
             if reason is not None:

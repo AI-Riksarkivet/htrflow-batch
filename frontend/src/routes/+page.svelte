@@ -3,17 +3,33 @@
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   // fetchJobs reads GET /api/v1/jobs (the read API); RELOAD_MS is the poll
   // cadence, both documented in $lib/config / $lib/api.
-  import { fetchJobs, fetchVersion, type JobSummary } from "$lib/api.js";
+  import {
+    fetchJobs,
+    fetchVersion,
+    moreReaped,
+    REAPED_PAGE,
+    reapedHidden,
+    type JobSummary,
+  } from "$lib/api.js";
   import { RELOAD_MS, REPO_URL } from "$lib/config.js";
   import { byAttention } from "$lib/order.js";
   import { startPolling } from "$lib/poll.js";
   import { describeApiError, describeUnreadable } from "$lib/reasons.js";
+  import { untrack } from "svelte";
 
   // The last good list stays on screen through a failed poll; `error` is a
   // banner on top of it, never a replacement for it.
   let jobs = $state<JobSummary[] | null>(null);
   let unreadable = $state(0);
   let error = $state<string | null>(null);
+
+  // Campaigns whose Jobs are gone: the API sends the newest `reapedShown`
+  // of them and says how many there are. Their records have no TTL, so
+  // without a window every campaign ever run was a card here (the
+  // 2026-09-23 audit); the rest are a button away, a page at a time.
+  let reapedShown = $state(REAPED_PAGE);
+  let reapedTotal = $state(0);
+  const olderHidden = $derived(reapedHidden(reapedTotal, reapedShown));
 
   // What is deployed, read once — nothing can change it while the page is
   // open, and a version nobody could fetch is simply not shown: it is a
@@ -36,8 +52,9 @@
   // $lib/poll, so the list, each card and the run log cannot disagree.
   async function load(signal: AbortSignal): Promise<boolean> {
     try {
-      const result = await fetchJobs(signal);
+      const result = await fetchJobs(signal, reapedShown);
       if (signal.aborted) return true;
+      reapedTotal = result.reapedTotal;
       // The API sorts by creation date; the page sorts by what wants a
       // person (see $lib/order).
       jobs = byAttention(result.jobs);
@@ -57,7 +74,13 @@
 
   $effect(() => {
     void loadVersion();
-    return startPolling(load, RELOAD_MS);
+  });
+
+  // Tracked: asking for more older campaigns restarts the poll, whose first
+  // tick is immediate.
+  $effect(() => {
+    void reapedShown;
+    return untrack(() => startPolling(load, RELOAD_MS));
   });
 </script>
 
@@ -103,6 +126,15 @@
     {#each jobs as job (job.namespace + "/" + job.name)}
       <CampaignCard {job} />
     {/each}
+  {/if}
+  {#if jobs !== null && olderHidden > 0}
+    <p class="older">
+      <button
+        type="button"
+        onclick={() => (reapedShown = moreReaped(reapedShown))}
+        >show {Math.min(olderHidden, REAPED_PAGE)} of {olderHidden} older campaigns</button
+      >whose Jobs have been removed
+    </p>
   {/if}
 </main>
 
@@ -160,5 +192,22 @@
 
   .empty {
     color: var(--muted-foreground);
+  }
+
+  /* The card's own "load more" look: the same kind of control. */
+  .older {
+    color: var(--muted-foreground);
+    font-size: 0.9rem;
+  }
+
+  .older button {
+    font: inherit;
+    color: var(--foreground);
+    background: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.15rem 0.75rem;
+    margin-right: 0.5rem;
+    cursor: pointer;
   }
 </style>

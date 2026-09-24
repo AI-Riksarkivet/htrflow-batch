@@ -5,12 +5,6 @@
 # The compose smoke stack runs on the reader's own machine.
 getting-started/try-it.md	localhost
 
-# Code defaults that still name one institution's IIIF source and address
-# (converter source_template, chart network.iiifCidrs). Remove these two
-# entries when the defaults are made neutral in code.
-reference/configuration.md	arkis!\{ref\}|192\.121\.221\.27/32
-reference/chart.md	192\.121\.221\.27/32
-
 # The S3 bucket-policy language version is a fixed string, not a date.
 .md	"Version": "2012-10-17"
 
@@ -18,3 +12,18 @@ reference/chart.md	192\.121\.221\.27/32
 # The slides that introduce ResourceFlavor and pod sizes use real GPU models
 # as the example of telling hardware apart; they describe no one site's cluster.
 distributed-htrflow.md	A100 or L4|takes an A100 if one is free, an L4 if not|flavor: (l4|a100), +gpu: 1
+
+# A package README links its design spec, whose file name starts with the
+# date it was written: a path, not a date in the text.
+README.md	\(\.\./\.\./docs/superpowers/specs/20[0-9-]+[a-z-]+\.md\)
+
+# The SPDX predicate type the SBOM attestation is verified against is a
+# fixed URI, not a release of this project.
+SECURITY.md	--predicate-type https://spdx\.dev/Document/v2\.3
+
+# A package README may say "a localhost forward" as the example of an
+# address only the browser's machine can reach.
+packages/web/README.md	\(a `localhost` forward, say\)
+
+# The volume-id rule shows what YAML reads as a date by an example of one.
+reference/campaign-yaml.md	`2024-01-31` a date

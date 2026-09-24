@@ -21,10 +21,13 @@ import (
 // init` cannot test what `git rev-parse` returns. jq and make come the same
 // way, for `test_make_cluster_targets.py`: it drives the Makefile's cluster
 // targets and the scripts they call, which read kubectl's JSON with jq.
+// nodejs comes the same way, for the web dockerfile's SITE step: the tests in
+// test_dockerfile_workspace.py run that heredoc under node, and without it
+// they skip -- which the skip audit below then fails by name.
 func (m *HtrflowBatch) withTestTools(container *dagger.Container) *dagger.Container {
 	return container.
 		WithExec([]string{"sh", "-c",
-			"apt-get update -qq && apt-get install -y --no-install-recommends git jq make " +
+			"apt-get update -qq && apt-get install -y --no-install-recommends git jq make nodejs " +
 				"&& rm -rf /var/lib/apt/lists/*"}).
 		WithFile("/usr/local/bin/kubeconform", dag.Container().From(kubeconformImage).File("/kubeconform")).
 		WithFile("/usr/local/bin/helm", dag.Container().From(helmImage).File("/usr/bin/helm")).
@@ -48,9 +51,26 @@ func (m *HtrflowBatch) Test(
 		return "", err
 	}
 	return m.withTestTools(container).
-		WithExec([]string{"uv", "run", "--no-sync", "pytest", "--tb=short", "-q"}).
+		WithExec([]string{"sh", "-c", testAndAuditSkips}).
 		Stdout(ctx)
 }
+
+// testAndAuditSkips runs the suite and then fails the run on any skip but
+// the expected file (audit 0923 T-1). A `skipif` on a missing binary turns
+// into a green run that tested nothing: the tool guard in test_render.py
+// checks withTestTools for the tools it knows, and this catches the one it
+// does not know yet. The real-driver test is the one expected skip -- it
+// needs the htrflow runtime and runs in the wrapper image instead
+// (TestDriver). `-rs` puts every skip and its reason at the end of the log;
+// the log is printed first either way, so a failure keeps its traceback.
+const testAndAuditSkips = `uv run --no-sync pytest --tb=short -q -rs > /tmp/pytest.log 2>&1
+rc=$?
+cat /tmp/pytest.log
+[ "$rc" -eq 0 ] || exit "$rc"
+if grep '^SKIPPED' /tmp/pytest.log | grep -v '^SKIPPED \[[0-9]*\] packages/wrapper/tests/test_driver_real\.py:'; then
+  echo "unexpectedSkips: the skips above mean a tool the suite shells out to is missing from withTestTools, or a test skipped for another reason" >&2
+  exit 1
+fi`
 
 // TestDriver runs the Level 0 htrflow API pin (audit T4) — the real
 // Pipeline.from_config / Export / auto_import / run on a one-page CPU

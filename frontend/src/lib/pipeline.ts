@@ -8,6 +8,8 @@
 // `model_settings.model_kwargs.revision` (TrOCR, Donut, DiT, forwarded to
 // `from_pretrained`) — the same two the cluster's Kyverno model-revision
 // policy accepts (charts/htrflow-batch/templates/policies/model-revision.yaml).
+// The policy's third pin, `model_settings.processor_kwargs.revision`, is the
+// processor's, not the model's, and is not shown.
 import { isHttpUrl } from "./api.js";
 
 /** Where a Hugging Face repo id resolves. */
@@ -42,6 +44,16 @@ function entries(yaml: string): Entry[] {
   return out;
 }
 
+/** The key of the nearest line above `rows[i]` that is indented less. */
+function parentKey(rows: Entry[], i: number): string | undefined {
+  const indent = (rows[i] as Entry).indent;
+  for (let j = i - 1; j >= 0; j--) {
+    const row = rows[j] as Entry;
+    if (row.indent < indent) return row.key;
+  }
+  return undefined;
+}
+
 /** One entry per `model_settings` block that names a model, in step order. */
 export function pipelineModels(yaml: string): PipelineModel[] {
   const rows = entries(yaml);
@@ -53,9 +65,15 @@ export function pipelineModels(yaml: string): PipelineModel[] {
     const ends = rest.findIndex((e) => e.indent <= row.indent);
     const block = ends === -1 ? rest : rest.slice(0, ends);
     const id = block.find((e) => e.key === "model" && e.value !== "");
-    // Either placement: nothing else inside a model_settings block carries a
-    // `revision`, so the first one found is the model's, wherever it sits.
-    const revision = block.find((e) => e.key === "revision" && e.value !== "");
+    // Either placement is the model's. A `revision` under processor_kwargs
+    // is the processor's, a download of its own (TrOCR, WordLevelTrOCR,
+    // Donut, DiT), and is never taken for the model's.
+    const revision = block.find(
+      (e, j) =>
+        e.key === "revision" &&
+        e.value !== "" &&
+        parentKey(block, j) !== "processor_kwargs",
+    );
     if (id !== undefined)
       models.push({ id: id.value, revision: revision?.value ?? null });
   });

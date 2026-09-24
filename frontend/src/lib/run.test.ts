@@ -24,18 +24,14 @@ const base: RunManifest = {
 };
 
 describe("runManifestSchema", () => {
-  test("accepts the wrapper's manifest with extra fields", () => {
-    const parsed = runManifestSchema.safeParse({
+  test("keeps the wrapper's extra fields and refuses a manifest without results", () => {
+    const parsed = runManifestSchema.parse({
       ...base,
       pipeline_sha256: "x",
       wall_seconds: 12.3,
       viewer_url: "http://x",
     });
-    expect(parsed.success).toBe(true);
-    if (parsed.success) expect(parsed.data.wall_seconds).toBe(12.3);
-  });
-
-  test("rejects a manifest without results", () => {
+    expect(parsed.wall_seconds).toBe(12.3);
     const { results: _results, ...noResults } = base;
     expect(runManifestSchema.safeParse(noResults).success).toBe(false);
   });
@@ -117,7 +113,6 @@ describe("page_sources", () => {
     const parsed = runManifestSchema.parse({
       ...base,
       page_sources: { "0001": "https://iiif/0001.jpg", "0002": "javascript:x" },
-      canvas_ids: { "0001": "https://iiif/canvas/1", "0002": null },
     });
     const stats = pageStats(parsed.results, parsed.page_sources);
     expect(stats[0]?.source).toBe("https://iiif/0001.jpg");

@@ -45,11 +45,16 @@ _MANAGED_BY_LABEL = "htrflow.riksarkivet.se/managed-by"
 #: only definition: ``cluster.py`` lists by it, the Makefile asks this
 #: module for it, and ``test_render.py`` asserts the renderer writes it.
 CAMPAIGN_SELECTOR = f"{_MANAGED_BY_LABEL}=converter"
-_CAMPAIGN_LABEL = "htrflow.riksarkivet.se/campaign"
+#: Which campaign an object belongs to. ``cli`` reads it off an earlier
+#: render to tell whose ``-partN`` files are whose.
+CAMPAIGN_LABEL = "htrflow.riksarkivet.se/campaign"
 _PIPELINE_LABEL = "htrflow.riksarkivet.se/pipeline"
 _QUEUE_LABEL = "kueue.x-k8s.io/queue-name"
 _PRIORITY_LABEL = "kueue.x-k8s.io/priority-class"
 _SHA_ANNOTATION = "htrflow.riksarkivet.se/pipeline-sha256"
+#: On the warm-up's POD template, so any recipe change -- the steps or the
+#: image -- changes the template and the apply replaces the warm-up Job.
+_RECIPE_ANNOTATION = "htrflow.riksarkivet.se/recipe-sha256"
 _DIGEST_ANNOTATION = "htrflow.riksarkivet.se/image-digest"
 
 
@@ -108,8 +113,9 @@ def _set(obj: dict, path: str, value: object) -> None:
 def _scheduling(job: dict, cfg: ConverterConfig) -> None:
     """Where this Job's pod may run: the GPU RuntimeClass, the node labels
     and the taints it tolerates. The warm-up Job needs all three as much as
-    the campaign Job does -- it is the one pod that mounts the model cache
-    read-write, so a warm-up scheduled past a taint onto some other node
+    the campaign Job does -- it is the one pod that mounts its recipe's
+    directory of the model cache read-write, so a warm-up scheduled past a
+    taint onto some other node
     fills a *different* ReadWriteOnce volume and the marker never appears
     where the batch pods are waiting for it."""
     if cfg.runtime_class:
@@ -117,7 +123,23 @@ def _scheduling(job: dict, cfg: ConverterConfig) -> None:
     if cfg.node_selector:
         _set(job, "spec.template.spec.nodeSelector", dict(cfg.node_selector))
     if cfg.tolerations:
-        _set(job, "spec.template.spec.tolerations", [dict(t) for t in cfg.tolerations])
+        _set(
+            job,
+            "spec.template.spec.tolerations",
+            [t.manifest() for t in cfg.tolerations],
+        )
+
+
+def _mount_cache_dir(job: dict, p: Pipeline) -> None:
+    """Every mount of the model-cache PVC narrowed to ``p``'s own directory
+    (``Pipeline.cache_dir``). Inside the pod nothing moves -- ``HF_HOME`` is
+    ``/data/hf``, the marker ``/data/warmup/<id>.done`` -- so the wrapper is
+    unchanged; which directory of the volume ``/data`` is, is what moves."""
+    pod = job["spec"]["template"]["spec"]
+    for container in pod.get("initContainers", []) + pod["containers"]:
+        for mount in container["volumeMounts"]:
+            if mount["name"] == "data":
+                mount["subPath"] = p.cache_dir
 
 
 def _pipeline_configmap(p: Pipeline, cfg: ConverterConfig) -> dict:
@@ -135,7 +157,11 @@ def _warmup_job(p: Pipeline, cfg: ConverterConfig) -> dict:
     _set(job, "metadata.name", f"{WARMUP_PREFIX}{p.id}")
     _set(job, "metadata.namespace", cfg.namespace)
     job["metadata"]["labels"][_PIPELINE_LABEL] = label_value(p.id)
+    job["spec"]["template"]["metadata"]["annotations"] = {
+        _RECIPE_ANNOTATION: p.recipe_sha256
+    }
     _set(job, "spec.template.spec.containers[0].image", p.image)
+    _mount_cache_dir(job, p)
     for e in job["spec"]["template"]["spec"]["containers"][0]["env"]:
         if e["name"] == "PIPELINE_ID":
             e["value"] = p.id
@@ -248,11 +274,21 @@ def _campaign_configmap(
     text = "\n".join(v.source_line() for v in volumes) + "\n" if volumes else ""
     _set(cm, "metadata.name", f"campaign-{name}")
     _set(cm, "metadata.namespace", cfg.namespace)
-    cm["metadata"]["labels"][_CAMPAIGN_LABEL] = label_value(c.name)
+    cm["metadata"]["labels"][CAMPAIGN_LABEL] = label_value(c.name)
     cm["metadata"]["labels"][_PIPELINE_LABEL] = label_value(p.id)
     cm["metadata"]["annotations"][_DIGEST_ANNOTATION] = p.image
     cm["data"]["volumes.txt"] = text
     return cm
+
+
+def parallelism(c: Campaign, cfg: ConverterConfig) -> int:
+    """A campaign Job's ``spec.parallelism``. ``cfg.window`` is the
+    per-cluster CAP: a campaign may ask for less, never more. Kueue partial
+    admission would shrink an oversized parallelism on the live Job instead
+    -- and then reject every later apply of the unchanged rendered file
+    (docs: development/e2e-indexed-jobs.md). ``cli`` holds a live
+    campaign's to what it was (audit 0923 C-11)."""
+    return min(c.window or cfg.window, cfg.window)
 
 
 def _campaign_job(
@@ -260,11 +296,6 @@ def _campaign_job(
 ) -> dict:
     job = _load("campaign-job.yaml")
     completions = len(volumes)
-    # cfg.window is the per-cluster CAP: a campaign may ask for less, never
-    # more. Kueue partial admission would shrink an oversized parallelism on
-    # the live Job instead -- and then reject every later apply of the
-    # unchanged rendered file (docs: development/e2e-indexed-jobs.md).
-    parallelism = min(c.window or cfg.window, cfg.window)
 
     # ``name`` is the Job's own metadata.name (and the campaign ConfigMap's
     # name suffix). An object name is a DNS-1123 *subdomain* (<=253 chars),
@@ -274,14 +305,14 @@ def _campaign_job(
     _set(job, "metadata.name", name)
     _set(job, "metadata.namespace", cfg.namespace)
     labels = job["metadata"]["labels"]
-    labels[_CAMPAIGN_LABEL] = label_value(c.name)
+    labels[CAMPAIGN_LABEL] = label_value(c.name)
     labels[_PIPELINE_LABEL] = label_value(p.id)
     labels[_QUEUE_LABEL] = cfg.queue
     if c.priority:
         labels[_PRIORITY_LABEL] = c.priority
 
     _set(job, "spec.completions", completions)
-    _set(job, "spec.parallelism", parallelism)
+    _set(job, "spec.parallelism", parallelism(c, cfg))
     _set(job, "spec.maxFailedIndexes", completions)
     # The skeleton carries `spec.suspend: false` as spec's first key so a
     # paused campaign's rendered Job keeps `suspend` in the same place a
@@ -301,6 +332,8 @@ def _campaign_job(
         "IMAGE_DIGEST": p.image,
         "MANIFEST_MAX_BYTES": str(cfg.manifest_max_bytes),
         "FETCH_MAX_BYTES": str(cfg.fetch_max_bytes),
+        # The same field the Job controller counts attempts against.
+        "BACKOFF_LIMIT_PER_INDEX": str(job["spec"]["backoffLimitPerIndex"]),
     }
     for e in job["spec"]["template"]["spec"]["containers"][0]["env"]:
         if e["name"] in dynamic_env:
@@ -325,6 +358,9 @@ def _campaign_job(
     _set(job, "spec.template.spec.volumes[4].secret.secretName", cfg.s3_secret)
 
     _set(job, "spec.template.spec.initContainers[0].image", p.image)
+    _mount_cache_dir(job, p)
+    # Inside this recipe's own directory (`_mount_cache_dir`): the marker a
+    # warm-up of an earlier recipe left is in another directory altogether.
     marker = f"/data/warmup/{p.id}.done"
     _set(
         job,
@@ -447,7 +483,7 @@ def status_configmap(live: dict, cfg: ConverterConfig) -> dict | None:
     cm = _load("configmap.yaml")
     _set(cm, "metadata.name", f"campaign-{meta.get('name', '')}{STATUS_SUFFIX}")
     _set(cm, "metadata.namespace", namespace)
-    cm["metadata"]["labels"][_CAMPAIGN_LABEL] = labels.get(_CAMPAIGN_LABEL, "")
+    cm["metadata"]["labels"][CAMPAIGN_LABEL] = labels.get(CAMPAIGN_LABEL, "")
     cm["metadata"]["labels"][_PIPELINE_LABEL] = pipeline
     cm["metadata"]["labels"][_KIND_LABEL] = _STATUS_KIND
     cm["metadata"].pop("annotations")  # the digest is on the record, not here

@@ -1,3 +1,4 @@
-# The defaults are fine: this fixture is about the problem in campaigns/ or
-# pipelines/. The file has to be here because the command refuses a repo
-# without one.
+# The defaults are fine, apart from the source_template the bare volume ids
+# need: this fixture is about the problem in campaigns/ or pipelines/. The
+# file has to be here because the command refuses a repo without one.
+source_template: "https://iiif.example.org/{ref}/manifest"

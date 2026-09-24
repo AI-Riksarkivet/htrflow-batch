@@ -262,7 +262,7 @@ func (m *HtrflowBatch) PublishDocker(
 	// (finding 3060): the arm64 wrapper job in publish.yml runs the same one
 	// through `make scan-image`, so no architecture ships a critical finding
 	// that has a fix.
-	if _, err := m.scanImage(ctx, container, "CRITICAL", "table", 1, true, caBundle); err != nil {
+	if _, err := m.scanImage(ctx, container, "CRITICAL", "table", 1, true, caBundle, source); err != nil {
 		return "", fmt.Errorf("vulnerability gate failed, aborting publish: %w", err)
 	}
 

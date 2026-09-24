@@ -11,60 +11,25 @@ stack (RustFS, an in-cluster registry, `devStack.insecureDefaults`,
 `rustfs.accessKey`/`secretKey`) — is a separate surface, documented in its own
 [README](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/charts/htrflow-devstack/README.md).
 
-**One idiom.** Each package's settings are one frozen pydantic model with
-`extra="forbid"` whose fields carry their own source name — `Field(alias=…)`
-for an env var, the field name for a `converter.yaml` key — and one
-`from_env`/`from_yaml` classmethod. The class-level default is the only
-default pydantic parses an unset field into; where `from_env` (or, for
-`HTRFLOW_WEB_STATIC`, `app.py`) then falls back to something computed
-rather than that parsed value — the web front's `HTRFLOW_PUBLIC_RESULTS_BASE`,
-`HTRFLOW_INTERNAL_RESULTS_BASE`, `HTRFLOW_NAMESPACES` and
-`HTRFLOW_WEB_STATIC` — `WEB_DEFAULT_DOC` in the generator says so, and the
-Default column below shows that instead. The wrapper's `Config` is not the
-whole of what its package reads from the environment: `main.py` reads the
-termination-log path, and `warmup.py` — a separate entrypoint, with its own
-contract — reads four more names. They are listed, not folded into `Config`,
-in "Also read from the environment" under the wrapper table below, and
-described in [Wrapper](wrapper.md).
+The wrapper's `Config` is not all it reads from the environment: the few
+names read directly are listed under "Also read from the environment", and
+described in [Wrapper](wrapper.md). Where the web front falls back to a
+computed value rather than the model's own default, the Default column says
+so.
 
-**Read outside these models.** `htrflow-campaigns apply` reads one
-environment variable of its own, `HTRFLOW_APPLIED_BY`. It is lower-cased and
-stamped as the `applied-by` annotation on every campaign ConfigMap the
-command applies ([The record a campaign
-leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)), and CI
-sets it from whoever triggered the run; unset, the apply uses its own OS
-user. It is not a `converter.yaml` key — it says who is running this apply,
-not how the cluster is configured — so it is not in the converter table
-below. It is deliberately not the `submitter` annotation either: that key is
-reserved for the authenticated forge login CI stamps as a label at render
-time, which is evidence, where this is only the account the command ran
-under.
+**Read outside these models.** `htrflow-campaigns apply` reads
+`HTRFLOW_APPLIED_BY`, stamped as `applied-by` on each campaign it applies;
+unset, it uses the OS user ([htrflow-campaigns CLI](cli.md#the-hook-manifest)).
 
-**What the browser is told.** The campaign browser has no environment of its
-own: it reads `window.API_BASE` and `window.RESULTS_BASE` out of `/config.js`,
-and the web front *serves that file itself*, written from
-`HTRFLOW_PUBLIC_RESULTS_BASE`. So there is no second copy of the results base
-for an operator to keep in step — set `publicResultsBase` and the page
-follows — and the run-log route, which will only open a URL under that base,
-cannot be pointed somewhere the API does not serve.
-[Frontend](frontend.md) has the table of what the page reads.
+**What the browser is told** comes from `/config.js`, which the web front
+writes from `HTRFLOW_PUBLIC_RESULTS_BASE`; there is no second copy to keep in
+step ([Web front & read API](web.md#configuration)).
 
-**Prefixes.** The web front's env is `HTRFLOW_`-prefixed: an operator's
-settings for a long-lived service. The wrapper's are bare — the in-pod
-contract written by the Job the converter renders
-(`packages/converter/src/htrflow_converter/manifests/campaign-job.yaml`),
-in a pod environment nothing else writes.
+**Two caps.** `FETCH_MAX_BYTES` bounds an image on the wire and
+`MAX_IMAGE_PIXELS` bounds what decoding it costs; a page over either fails
+without a retry.
 
-**Two caps, two different costs.** `FETCH_MAX_BYTES` bounds what a page's
-image may weigh on the wire; `MAX_IMAGE_PIXELS` bounds what decoding it
-costs. They are not the same number — a few megabytes of JPEG can carry a
-gigapixel image, and the wrapper hands every page to a pipeline that decodes
-it into memory — so a file well inside the byte cap could still take the pod
-out. The pixel count is read from the image's header, which costs nothing per
-page; a page over either cap fails without a retry, and `MAX_IMAGE_PIXELS: 0`
-turns the second check off.
-
-## Three security sentences
+## Security in four points
 
 - **Credentials are mounted files, with one scoped exception**: S3
   credentials reach a pod as a mounted Secret file
@@ -80,15 +45,19 @@ turns the second check off.
   entrypoint still fails. The devstack's own S3 store refuses to render on
   credentials nobody chose (`devStack.insecureDefaults`).
 - **The read API is unauthenticated**: `GET /api/v1/jobs[/…]` and the
-  campaign browser are open to anyone who can reach the port —
-  `network.web.ingressCidrs` is the only gate.
-- **The read API's RBAC is get/list/watch, plus one write**: `create` and
+  campaign browser are open to anyone who can reach the port. The network
+  is the only gate: on a NodePort, `network.web.ingressCidrs` (the clients'
+  own addresses); behind an ingress controller (`web.ingress`),
+  `network.web.ingressFrom` names the controller and the controller's own
+  allow-list is what keeps browsers out.
+- **The read API's RBAC is get and list, plus one write**: `create` and
   `patch` on ConfigMaps in its own namespace, for the per-campaign status
   ConfigMap it writes from what it observes
   ([The record a campaign leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)).
-  It is a namespaced `Role`, it grants no `delete`, and it may not write a
-  Job or a Pod — `packages/web/tests/test_app.py` greps the package's source
-  to keep the one write the only one.
+  It is a namespaced `Role`; it grants no `watch` or `delete` and no write to
+  a Job or a Pod, and `test_chart_agreement.py` holds the rendered Role to
+  exactly that. With `security.policies.enabled`, a Kyverno rule also holds
+  its ConfigMap writes to names of the form `campaign-<name>-status`.
 - **The results bucket is public-read**: everything under
   `publicResultsBase` — with the devstack's store, except `status/logs/*`
   when `rustfs.publicLogs` is off. The run log is the only key anything
@@ -115,6 +84,7 @@ template` refuses it, **nobody** = convention only.
 | `MAX_IMAGE_WIDTH` | env | `2500` | — | no secret — nobody |
 | `RESUME` | env | `true` | — | no secret — nobody |
 | `LOOKAHEAD_PAGES` | env | `64` | — | no secret — nobody |
+| `LOOKAHEAD_BYTES` | env | `1073741824` | — | no secret — nobody |
 | `MAX_PAGES` | env | `0` | — | no secret — nobody |
 | `WORKDIR_PATH` | env | `/work` | — | no secret — nobody |
 | `DOWNLOAD_CONCURRENCY` | env | `12` | — | no secret — nobody |
@@ -123,8 +93,11 @@ template` refuses it, **nobody** = convention only.
 | `FETCH_MAX_BYTES` | env | `67108864` | — | no secret — nobody |
 | `DOWNLOAD_DEADLINE_SECONDS` | env | `300.0` | — | no secret — nobody |
 | `MAX_IMAGE_PIXELS` | env | `100000000` | — | no secret — nobody |
+| `PAGE_TIMEOUT_SECONDS` | env | `600.0` | — | no secret — nobody |
 | `IMAGE_DIGEST` | env | `unknown` | — | no secret — nobody |
 | `HTRFLOW_BASE_REVISION` | env | `unknown` | — | no secret — nobody |
+| `INDEX_FAILURE_COUNT` | env | `0` | — | no secret — nobody |
+| `BACKOFF_LIMIT_PER_INDEX` | env | `-1` | — | no secret — nobody |
 
 `Config` is not the whole wrapper env: these 6
 names are read directly, by the warm-up entrypoint or by the Job
@@ -159,17 +132,17 @@ skeleton, never as a campaign setting.
 | `namespace` | `converter.yaml` | `htr-batch` | — | no secret — nobody |
 | `queue` | `converter.yaml` | `htr-batch` | chart `queue.name` | no secret — nobody |
 | `window` | `converter.yaml` | `20` | — | no secret — nobody |
-| `s3_secret` | `converter.yaml` | `htr-batch-s3` | chart `s3.existingSecret` | names the Secret mounted at `/secrets/s3` — cluster |
-| `data_pvc` | `converter.yaml` | `htr-test-data` | chart `modelCache.name` | no secret — nobody |
+| `s3_secret` | `converter.yaml` | `htr-batch-s3` | chart `s3.existingSecret` | names the Secret mounted at `/secrets/s3`; job-shape admits only `s3.existingSecret` — cluster |
+| `data_pvc` | `converter.yaml` | `htr-test-data` | chart `modelCache.name` | the model-cache PVC; job-shape admits only `modelCache.name` — cluster |
 | `runtime_class` | `converter.yaml` | `nvidia` | — | no secret — nobody |
 | `node_selector` | `converter.yaml` | *(empty)* | — | no secret — nobody |
 | `tolerations` | `converter.yaml` | *(empty)* | — | no secret — nobody |
 | `public_results_base` | `converter.yaml` | *(empty)* | chart `publicResultsBase`, web `HTRFLOW_PUBLIC_RESULTS_BASE`, wrapper `PUBLIC_RESULTS_BASE` | the public-read results base — nobody |
-| `source_template` | `converter.yaml` | `https://lbiiif.riksarkivet.se/arkis!{ref}/manifest` | — | no secret — nobody |
+| `source_template` | `converter.yaml` | *(empty)* | — | no secret — nobody |
 | `max_seconds` | `converter.yaml` | `21600` | — | no secret — nobody |
 | `warmup_wait_seconds` | `converter.yaml` | `900` | — | no secret — nobody |
 | `ttl_seconds_after_finished` | `converter.yaml` | `604800` | — | no secret — nobody |
-| `hf_token_secret` | `converter.yaml` | *(empty)* | — | names the Secret the warm-up reads `HF_TOKEN` from — cluster |
+| `hf_token_secret` | `converter.yaml` | *(empty)* | chart `hfToken.existingSecret` | names the Secret the warm-up reads `HF_TOKEN` from; job-shape admits only `hfToken.existingSecret` — cluster |
 | `manifest_max_bytes` | `converter.yaml` | `16777216` | — | no secret — nobody |
 | `fetch_max_bytes` | `converter.yaml` | `67108864` | — | no secret — nobody |
 | `priority_classes` | `converter.yaml` | `[htr-interactive, htr-bulk, htr-idle]` | chart `queue.priorityClasses[].name` | no secret — nobody |
@@ -180,6 +153,7 @@ skeleton, never as a campaign setting.
 |---|---|---|---|---|
 | `s3.bucket` | `values.yaml` | `htr-results` | — | no secret — nobody |
 | `s3.existingSecret` | `values.yaml` | `htr-batch-s3` | converter `s3_secret` | names that Secret; no template creates it — nobody |
+| `hfToken.existingSecret` | `values.yaml` | *(empty)* | converter `hf_token_secret` | the one Secret a warm-up may read (job-shape) — cluster |
 | `publicResultsBase` | `values.yaml` | *(empty)* | converter `public_results_base`, web `HTRFLOW_PUBLIC_RESULTS_BASE`, wrapper `PUBLIC_RESULTS_BASE` | the public-read results base; `required` — render |
 | `modelCache.create` | `values.yaml` | `true` | — | no secret — nobody |
 | `modelCache.name` | `values.yaml` | `htr-test-data` | converter `data_pvc` | no secret — nobody |
@@ -188,7 +162,11 @@ skeleton, never as a campaign setting.
 | `modelCache.accessModes` | `values.yaml` | `[ReadWriteOnce]` | — | no secret — nobody |
 | `queue.name` | `values.yaml` | `htr-batch` | converter `queue` | no secret — nobody |
 | `queue.flavor` | `values.yaml` | `default-flavor` | — | no secret — nobody |
+| `queue.createFlavor` | `values.yaml` | `true` | — | no secret — nobody |
+| `queue.clusterQueueName` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `queue.createClusterQueue` | `values.yaml` | `true` | — | no secret — nobody |
 | `queue.resources` | `values.yaml` | `[{name: cpu, quota: 4}, {name: memory, quota: 8Gi}, {name: …` | — | no secret — nobody |
+| `queue.createPriorityClasses` | `values.yaml` | `true` | — | no secret — nobody |
 | `queue.priorityClasses` | `values.yaml` | `[{description: a handful of volumes someone is waiting for,…` | converter `priority_classes` | no secret — nobody |
 | `web.image` | `values.yaml` | `docker.io/riksarkivet/htrflow-web@sha256:1fbabef550593f6d77…` | — | digest-pinned unless `security.allowTagImages` — render |
 | `web.nodePort` | `values.yaml` | `30800` | — | no secret — nobody |
@@ -207,6 +185,7 @@ skeleton, never as a campaign setting.
 | `apply.gitCidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `apply.gitPorts` | `values.yaml` | `[443]` | — | no secret — nobody |
 | `security.allowedImageRepos` | `values.yaml` | *(empty)* | — | enforced by a Kyverno ClusterPolicy — cluster |
+| `security.jobImageRepos` | `values.yaml` | *(empty)* | — | what a campaign or warm-up Job may run — cluster |
 | `security.requireModelRevision` | `values.yaml` | `false` | — | enforced by a Kyverno ClusterPolicy — cluster |
 | `security.policies.enabled` | `values.yaml` | `false` | — | enforced by a Kyverno ClusterPolicy — cluster |
 | `security.policies.allowDisabled` | `values.yaml` | `false` | — | no admission policy at all — render |
@@ -219,25 +198,26 @@ skeleton, never as a campaign setting.
 | `security.verifyImages.rekorUrl` | `values.yaml` | `https://rekor.sigstore.dev` | — | enforced by a Kyverno ClusterPolicy — cluster |
 | `network.enabled` | `values.yaml` | `true` | — | no secret — nobody |
 | `network.defaultDeny` | `values.yaml` | `true` | — | no secret — nobody |
-| `network.iiifCidrs` | `values.yaml` | `[192.121.221.27/32]` | — | no secret — nobody |
+| `network.iiifCidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `network.s3Cidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `network.s3InNamespace` | `values.yaml` | `true` | — | no secret — nobody |
 | `network.s3Ports` | `values.yaml` | `[443]` | — | no secret — nobody |
 | `network.clusterCidrs` | `values.yaml` | `[10.42.0.0/16, 10.43.0.0/16]` | — | no secret — nobody |
 | `network.nodeCidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
-| `network.privateCidrs` | `values.yaml` | `[10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]` | — | no secret — nobody |
+| `network.privateCidrs` | `values.yaml` | `[10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10]` | — | no secret — nobody |
 | `network.apiServer.cidr` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `network.apiServer.cidrs` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `network.apiServer.port` | `values.yaml` | `6443` | — | no secret — nobody |
-| `network.web.ingressCidrs` | `values.yaml` | `[0.0.0.0/0]` | — | the only gate on the read API — cluster |
+| `network.web.ingressCidrs` | `values.yaml` | `[0.0.0.0/0]` | — | the read API's only gate on a NodePort — cluster |
 | `network.web.allowPublicIngress` | `values.yaml` | `false` | — | no secret — nobody |
-| `network.web.ingressFrom` | `values.yaml` | *(empty)* | — | no secret — nobody |
+| `network.web.ingressFrom` | `values.yaml` | *(empty)* | — | who may reach the read API behind an ingress; the controller's allow-list keeps browsers out — cluster |
 
 ## One-sided keys
 
 `namespace` is the release namespace (a `helm -n` argument, not a chart
-value), and `runtime_class` and `hf_token_secret` have no chart key at all,
-so none of them can be checked mechanically — the Hub-token Secret is the
-operator's own object, like the S3 one, and no chart template names it. The
+value), and `runtime_class` has no chart key at all, so neither can be
+checked mechanically. The Hub-token Secret, like the S3 one, is the
+operator's own object: the chart names it only to allow it. The
 chart's queue quotas, NetworkPolicy CIDRs and image settings have no
 converter counterpart. Prose lives in
 [Chart Values](chart.md), [Campaign & Pipeline YAML](campaign-yaml.md) and

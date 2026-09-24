@@ -3,12 +3,15 @@
 
 The API is `packages/web` and the page that parses it is `frontend/`, and
 nothing tied the two together: a field renamed on one side was found by
-whoever next opened a campaign page (2026-09-14 audit). This writes one
-document of real projection output -- the same functions the routes call --
-to `frontend/src/lib/fixtures/api-contract.json`, where a vitest parses every
-row with `jobSummarySchema`/`jobDetailSchema`. A pytest re-runs this and
-fails if the committed file is not what it prints, so the fixture cannot go
-stale either.
+whoever next opened a campaign page (2026-09-14 audit). This writes what the
+routes themselves answer -- the app is built with `create_app` over a fake
+cluster and asked over HTTP, so headers, the version route, error bodies and
+everything the routes add to the projection (warm-up matching, the reaped
+window) are in it, not only what the projection functions return
+(2026-09-23 test audit) -- to `frontend/src/lib/fixtures/api-contract.json`,
+where a vitest parses every row with `jobSummarySchema`/`jobDetailSchema`.
+A pytest re-runs this and fails if the committed file is not what it
+prints, so the fixture cannot go stale either.
 
 Regenerate with `make api-contract`.
 """
@@ -17,20 +20,37 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
+
+import httpx
+from starlette.exceptions import StarletteDeprecationWarning
+
+with warnings.catch_warnings():  # the test client's httpx; nothing to act on
+    warnings.simplefilter("ignore", StarletteDeprecationWarning)
+    from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "packages" / "web" / "src"))
 
-from htrflow_web import projection  # noqa: E402
+from htrflow_web import app, progress  # noqa: E402
+from htrflow_web.kube import FIELD_MANAGER, ClusterUnavailable  # noqa: E402
 
 FIXTURE = ROOT / "frontend" / "src" / "lib" / "fixtures" / "api-contract.json"
 
 CFG = SimpleNamespace(
     public_results_base="https://results.example.org",
     internal_results_base="http://rustfs.htr-batch.svc:9000/htr-results",
+    namespaces=("htr-test",),
 )
+
+#: What the version route reports: the tag is the app's argument, and the
+#: package version is pinned here so a release does not change the fixture.
+BATCH_VERSION = "v0.0.0-contract"
+WEB_VERSION = "0.0.0"
 
 _LABELS = {
     "app": "htrflow-batch",
@@ -43,10 +63,25 @@ LIVE_JOB = {
     "metadata": {
         "name": "kyrk",
         "namespace": "htr-test",
+        "uid": "uid-kyrk",
         "creationTimestamp": "2026-09-14T07:00:00Z",
         "labels": _LABELS,
     },
-    "spec": {"completions": 3, "suspend": False},
+    "spec": {
+        "completions": 3,
+        "suspend": False,
+        "template": {
+            "spec": {
+                "volumes": [
+                    {"name": "campaign", "configMap": {"name": "campaign-kyrk"}},
+                    {
+                        "name": "pipeline",
+                        "configMap": {"name": "htr-pipeline-demo-v1"},
+                    },
+                ]
+            }
+        },
+    },
     "status": {
         "active": 1,
         "startTime": "2026-09-14T07:01:00Z",
@@ -108,40 +143,48 @@ RUNNING_POD = {
     "status": {},
 }
 
-#: Every field the wrapper's progress.json contributes, so the schema sees
-#: a populated one rather than only nulls.
-PROGRESS = {
-    "done": 137,
-    "total": 638,
-    "failed": 1,
-    "lastPage": "0137",
+#: A volume's progress.json as the wrapper writes it (its
+#: ``ProgressTracker.body``), with every field set so the schema sees a
+#: populated row rather than only nulls.
+WRAPPER_PROGRESS = {
     "stage": "stream",
-    "updatedAt": "2026-09-14T07:31:00Z",
-    "ageSeconds": 12,
-    "lastError": {"page": "0044", "error": "the worker thread died"},
+    "pages_total": 638,
+    "pages_done": 137,
+    "pages_failed": 1,
+    "last_page": "0137",
+    "last_error": {"page": "0044", "error": "the worker thread died"},
     "errors": 3,
-    "viewerPublished": True,
+    "viewer_published": True,
+    "started_at": "2026-09-14T07:02:00+00:00",
+    "updated_at": "2026-09-14T07:31:00+00:00",
 }
 
+#: The API's clock when it read that file: 12 s after it was written.
+#: Frozen, so the fixture's ageSeconds is the same on every run.
+NOW = 1789371072.0  # 2026-09-14T07:31:12+00:00
 
-def _progress(_base: str, _volume_id: str, state: str) -> dict | None:
-    """Progress for the rows that can have it; `None` reads as "not known"."""
-    return None if state == "pending" else PROGRESS
+
+def _bucket(_request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, json=WRAPPER_PROGRESS)
 
 
-def _record(name: str) -> dict:
+def _record(name: str, pipeline: str) -> dict:
     return {
         "metadata": {
             "name": f"campaign-{name}",
             "namespace": "htr-test",
             "creationTimestamp": "2026-09-01T07:00:00Z",
-            "labels": {**_LABELS, "htrflow.riksarkivet.se/campaign": name},
+            "labels": {
+                **_LABELS,
+                "htrflow.riksarkivet.se/campaign": name,
+                "htrflow.riksarkivet.se/pipeline": pipeline,
+            },
         },
         "data": CAMPAIGN_CM["data"],
     }
 
 
-def _status(name: str, **data) -> dict:
+def _status(name: str, pipeline: str, **data) -> dict:
     return {
         "metadata": {"name": f"campaign-{name}-status", "namespace": "htr-test"},
         "data": {
@@ -151,65 +194,222 @@ def _status(name: str, **data) -> dict:
             "volumesFailed": "1",
             "startedAt": "2026-09-01T08:00:00Z",
             "finishedAt": "2026-09-01T10:00:00Z",
-            "resultsBase": "https://results.example.org/htr-test/demo-v1",
+            "resultsBase": f"https://results.example.org/htr-test/{pipeline}",
             "failedVolumes": '[{"id":"vol2","reason":"manifest 404"}]',
             **data,
         },
     }
 
 
-def build() -> dict:
-    """Summaries and details covering every branch the page has to draw."""
-    warmup_running = {"phase": "running"}
-    warmup_failed = {
-        "phase": "failed",
-        "reason": {"stage": "warmup", "permanent": True, "error": "bad model id"},
+def _warmup(pipeline: str, **status) -> dict:
+    return {
+        "metadata": {
+            "name": f"htr-warmup-{pipeline}",
+            "namespace": "htr-test",
+            "labels": {
+                "app": "htrflow-warmup",
+                "htrflow.riksarkivet.se/managed-by": "converter",
+                "htrflow.riksarkivet.se/pipeline": pipeline,
+            },
+        },
+        "status": status,
     }
 
-    live = projection.summarize(LIVE_JOB, CFG, warmup_running)
-    gone = projection.record_summary(
-        _record("gamla"), _status("gamla"), CFG, {"phase": "succeeded"}
-    )
-    # Nobody wrote down how this campaign ended: the Job was deleted while it
-    # was still running, so the row says `Unknown` and the chip says so.
-    unknown = projection.record_summary(
-        _record("okand"),
-        _status("okand", phase="Running", finishedAt=""),
-        CFG,
-        warmup_failed,
-    )
-    live_detail = projection.detail(
-        LIVE_JOB,
+
+WARMUP_POD = {
+    "metadata": {"name": "htr-warmup-demo-v2-0", "namespace": "htr-test"},
+    "status": {
+        "containerStatuses": [
+            {
+                "name": "warmup",
+                "state": {
+                    "terminated": {
+                        "exitCode": 13,
+                        "message": json.dumps(
+                            {
+                                "stage": "warmup",
+                                "permanent": True,
+                                "error": "bad model id",
+                            }
+                        ),
+                    }
+                },
+            }
+        ]
+    },
+}
+
+#: Every ConfigMap in the namespace, by name. `gamla` finished and was
+#: reaped; nobody wrote down how `okand` ended -- its Job was deleted while
+#: it was still running, so its row says `Unknown` and so do its volumes.
+CONFIGMAPS = {
+    cm["metadata"]["name"]: cm
+    for cm in (
         CAMPAIGN_CM,
-        [FAILED_POD, RUNNING_POD],
-        CFG,
-        0,
-        200,
-        PIPELINE_CM,
-        warmup=warmup_running,
-        fetch_progress=_progress,
+        _record("gamla", "demo-v0"),
+        _status("gamla", "demo-v0"),
+        _record("okand", "demo-v2"),
+        _status("okand", "demo-v2", phase="Running", finishedAt=""),
     )
-    gone_detail = projection.record_detail(
-        gone,
-        _record("gamla"),
-        _status("gamla"),
-        CFG,
-        PIPELINE_CM,
-        fetch_progress=_progress,
+}
+
+
+class ContractReader:
+    """The cluster the fixture is read from: one live campaign whose warm-up
+    is running, one reaped campaign whose warm-up succeeded, one reaped
+    campaign nobody recorded the ending of, whose warm-up failed and says
+    why. Answers the way ``kube.Reader`` does -- the record ConfigMaps are
+    listed as metadata only, as the real list asks for them."""
+
+    cfg = CFG
+
+    def list_jobs(self) -> list[dict]:
+        return [LIVE_JOB]
+
+    def list_warmups(self) -> list[dict]:
+        return [
+            _warmup("demo-v1", active=1),
+            _warmup("demo-v0", conditions=[{"type": "Complete", "status": "True"}]),
+            _warmup("demo-v2", conditions=[{"type": "Failed", "status": "True"}]),
+        ]
+
+    def get_job(self, namespace: str, name: str) -> dict | None:
+        return LIVE_JOB if name == "kyrk" else None
+
+    def get_configmap(self, namespace: str, name: str) -> dict | None:
+        if name.startswith("htr-pipeline-"):
+            return PIPELINE_CM
+        return CONFIGMAPS.get(name)
+
+    def list_configmaps(self) -> list[dict]:
+        return [
+            cm if name.endswith("-status") else {"metadata": cm["metadata"]}
+            for name, cm in CONFIGMAPS.items()
+            if name.startswith("campaign-") and name != "campaign-kyrk"
+        ]
+
+    def list_pods(self, namespace: str, job_name: str) -> list[dict]:
+        return {
+            "kyrk": [FAILED_POD, RUNNING_POD],
+            "htr-warmup-demo-v2": [WARMUP_POD],
+        }.get(job_name, [])
+
+    def apply_configmap(
+        self, body: dict, force: bool = False, manager: str = FIELD_MANAGER
+    ) -> str | None:
+        return "uid-contract"  # the status write is not the contract
+
+
+class UnavailableReader(ContractReader):
+    """An API server that stopped answering: every route's 502."""
+
+    def list_jobs(self) -> list[dict]:
+        raise ClusterUnavailable("jobs: 403 Forbidden")
+
+
+class ManyReapedReader(ContractReader):
+    """A namespace holding more reaped campaigns than a list shows unless
+    asked: how many rows come back without ``?reaped=`` is the route's
+    default window, read off its answer rather than off the constant."""
+
+    RECORDS = 100
+
+    def list_jobs(self) -> list[dict]:
+        return []
+
+    def list_configmaps(self) -> list[dict]:
+        rows = []
+        for i in range(self.RECORDS):
+            name = f"old{i:03d}"
+            rows.append({"metadata": _record(name, "demo-v0")["metadata"]})
+            rows.append(_status(name, "demo-v0"))
+        return rows
+
+
+def _reaped_limits() -> dict:
+    """What ``/api/v1/jobs?reaped=`` does at its edges: how many reaped rows
+    come back when the parameter is left out, and the largest value it
+    answers 200 to (one more is a 422). The page's own window and cap
+    (REAPED_PAGE, REAPED_MAX) are asserted equal to these by the vitest, so
+    a limit moved on either side fails there."""
+    with tempfile.TemporaryDirectory() as site:
+        client = TestClient(create(ManyReapedReader(), site))
+        rows = _answer(client, "/api/v1/jobs").json()
+        if len(rows) >= ManyReapedReader.RECORDS:
+            raise SystemExit("the default reaped window is not below the probe's size")
+
+        def admitted(n: int) -> bool:
+            status = client.get(f"/api/v1/jobs?reaped={n}").status_code
+            if status not in (200, 422):
+                raise SystemExit(f"?reaped={n}: {status}, neither 200 nor 422")
+            return status == 200
+
+        low, high = 0, 2**31  # admitted, refused
+        if not admitted(low) or admitted(high):
+            raise SystemExit("?reaped= has no 200/422 boundary to find")
+        while high - low > 1:
+            middle = (low + high) // 2
+            low, high = (middle, high) if admitted(middle) else (low, middle)
+        if admitted(-1):
+            raise SystemExit("?reaped=-1 was answered: no lower bound")
+    return {"default": len(rows), "max": low}
+
+
+def _answer(client: TestClient, path: str, status: int = 200) -> httpx.Response:
+    resp = client.get(path)
+    if resp.status_code != status:
+        raise SystemExit(f"GET {path}: {resp.status_code}, not {status}")
+    return resp
+
+
+def _error(reader, path: str, status: int) -> dict:
+    with tempfile.TemporaryDirectory() as site:
+        client = TestClient(create(reader, site), raise_server_exceptions=False)
+        return {"status": status, "body": _answer(client, path, status).json()}
+
+
+def create(reader, site: str):
+    """The app over ``reader``, with an empty site and the read API's own
+    ProgressReader over a bucket that holds WRAPPER_PROGRESS for every
+    volume: the progress rows are what `htrflow_web.progress` makes of it,
+    never a copy of its output that a renamed field would leave green
+    (2026-09-23 audit). A new one per app, so no answer is cached across
+    builds."""
+    bucket = httpx.Client(transport=httpx.MockTransport(_bucket))
+    return app.create_app(
+        reader,
+        static_dir=site,
+        batch_version=BATCH_VERSION,
+        progress=progress.ProgressReader(bucket),
     )
-    # The rows of a campaign nobody recorded the ending of: `unknown` is a
-    # volume state like any other, and the page has to draw it.
-    unknown_detail = projection.record_detail(
-        unknown,
-        _record("okand"),
-        _status("okand", phase="Running", finishedAt=""),
-        CFG,
-        PIPELINE_CM,
-        fetch_progress=_progress,
-    )
+
+
+def build() -> dict:
+    """What the routes answer, covering every branch the page has to draw."""
+    with (
+        mock.patch.object(progress.time, "time", return_value=NOW),
+        mock.patch.object(app, "WEB_VERSION", WEB_VERSION),
+        tempfile.TemporaryDirectory() as site,
+    ):
+        client = TestClient(create(ContractReader(), site))
+        jobs = _answer(client, "/api/v1/jobs")
+        details = [
+            _answer(client, f"/api/v1/jobs/htr-test/{name}").json()
+            for name in ("kyrk", "gamla", "okand")
+        ]
+        version = _answer(client, "/api/v1/version").json()
+        errors = [
+            _error(ContractReader(), "/api/v1/jobs/htr-test/nonesuch", 404),
+            _error(UnavailableReader(), "/api/v1/jobs", 502),
+            _error(app.NoCluster(), "/api/v1/jobs", 503),
+        ]
     return {
-        "summaries": [live, gone, unknown],
-        "details": [live_detail, gone_detail, unknown_detail],
+        "summaries": jobs.json(),
+        "reapedTotal": jobs.headers["X-Reaped-Total"],
+        "details": details,
+        "version": version,
+        "errors": errors,
+        "reapedLimits": _reaped_limits(),
     }
 
 

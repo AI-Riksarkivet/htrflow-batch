@@ -81,29 +81,6 @@ def test_non_httpx_exception_caught(tmp_path):
     assert results["0002"].error == "OSError: Disk full"
 
 
-def test_upscale_400_falls_back_to_max(tmp_path):
-    """lbiiif (IIIF level1) returns 400 for sized requests wider than the
-    original image (no upscaling). On 400 the fetcher retries with full/max
-    instead of failing the page (R0001203 page 0002, 1281px wide)."""
-
-    def handler(req):
-        if "/full/2500,/" in req.url.path:
-            return httpx.Response(400)
-        if "/full/max/" in req.url.path:
-            return httpx.Response(200, content=JPEG + b"narrow-image")
-        return httpx.Response(404)
-
-    page = PageRef(
-        index=1,
-        name="0001",
-        image_url="https://img/iiif/full/2500,/0/default.jpg",
-        canvas={},
-    )
-    r = fetch_page(page, tmp_path, _client(handler), 3, 0.0)
-    assert r.error is None
-    assert r.path is not None and r.path.read_bytes() == JPEG + b"narrow-image"
-
-
 def _one(tmp_path, handler, retries=3, max_bytes=None, stop=None):
     kw = {} if max_bytes is None else {"max_bytes": max_bytes}
     return fetch_page(
@@ -125,7 +102,9 @@ def test_html_200_is_retried_then_failed(tmp_path):
     r = _one(tmp_path, handler, retries=2)
     assert r.path is None
     assert "text/html" in r.error
-    assert len(calls) == 2  # retryable
+    # a challenge or login page more often than not: retried, then left for
+    # the next attempt rather than recorded as lost
+    assert len(calls) == 2 and r.transient
     assert list(tmp_path.iterdir()) == []
 
 
@@ -171,7 +150,7 @@ def test_body_over_cap_fails_without_retry_and_leaves_no_file(tmp_path):
 
     r = _one(tmp_path, handler, retries=3, max_bytes=100)
     assert r.path is None and "too large" in r.error
-    assert len(calls) == 1  # a bigger image tomorrow is not a thing
+    assert len(calls) == 1 and not r.transient  # a bigger image tomorrow is not a thing
     assert list(tmp_path.iterdir()) == []
 
 
@@ -251,9 +230,89 @@ def test_the_unscaled_fallback_does_not_spend_an_attempt(tmp_path):
     )
     r = fetch_page(page, tmp_path, _client(handler), 1, 0.0)
     assert r.error is None
-    assert [u.rsplit("/full/", 1)[1] for u in seen] == [
+    assert [u.rsplit("/full/", 1)[1] for u in seen if "/full/" in u] == [
         "2500,/0/default.jpg",
         "max/0/default.jpg",
+    ]
+
+
+def _after_a_400(tmp_path, info, url="https://img/iiif/full/2500,/0/default.jpg"):
+    """The image request that follows a 400 on the sized one, when the
+    service's info.json answers ``info`` (a dict, or a status code). Level 1
+    servers 400 a sized request wider than the original (no upscaling); the
+    page is what the fallback answered, not a failure."""
+    seen = []
+
+    def handler(req):
+        seen.append(str(req.url))
+        if req.url.path.endswith("/info.json"):
+            if isinstance(info, int):
+                return httpx.Response(info)
+            return httpx.Response(200, json=info)
+        if "/full/2500,/" in req.url.path:
+            return httpx.Response(400)
+        return httpx.Response(200, content=JPEG + b"fallback")
+
+    page = PageRef(index=1, name="0001", image_url=url, canvas={})
+    r = fetch_page(page, tmp_path, _client(handler), 1, 0.0)
+    assert r.error is None
+    assert r.path is not None and r.path.read_bytes() == JPEG + b"fallback"
+    return seen
+
+
+@pytest.mark.parametrize(
+    "info, size",
+    [
+        # narrower than the cap: its full size is not an upscale
+        ({"width": 1281, "height": 1800}, "max"),
+        # a Level 0 service offers listed sizes only: the largest within the cap
+        (
+            {
+                "width": 9000,
+                "height": 12000,
+                "sizes": [
+                    {"width": 750, "height": 1000},
+                    {"width": 2250, "height": 3000},
+                    {"width": 4500, "height": 6000},
+                ],
+            },
+            "2250,3000",
+        ),
+        # a server limit below the cap (v3 maxWidth, v2 profile maxWidth)
+        ({"width": 9000, "height": 12000, "maxWidth": 2000}, "2000,"),
+        (
+            {"width": 9000, "profile": ["level1.json", {"maxWidth": 1600}]},
+            "1600,",
+        ),
+        # nothing advertised, or no info.json at all: max is all there is
+        ({"width": 9000, "height": 12000}, "max"),
+        (404, "max"),
+    ],
+    ids=["narrow", "level0-sizes", "v3-maxwidth", "v2-maxwidth", "none", "no-info"],
+)
+def test_the_400_fallback_asks_for_the_largest_size_within_the_cap(
+    tmp_path, info, size
+):
+    """Audit 0923 W-9: the fallback went straight to `/full/max/`, the
+    full-resolution master, even for a canvas whose service would have
+    served a size within MAX_IMAGE_WIDTH -- and 64 masters in the lookahead
+    outgrow the memory-backed workdir. The service's own info.json says what
+    it has; `max` is the last resort, not the first."""
+    seen = _after_a_400(tmp_path, info)
+    assert seen[1] == "https://img/iiif/info.json"
+    assert seen[-1] == f"https://img/iiif/full/{size}/0/default.jpg"
+
+
+def test_the_400_fallback_keeps_the_query_the_image_was_asked_with(tmp_path):
+    """A token that authorises the image authorises its info.json too."""
+    seen = _after_a_400(
+        tmp_path,
+        {"width": 1000},
+        url="https://img/iiif/full/2500,/0/default.jpg?token=T",
+    )
+    assert seen[1:] == [
+        "https://img/iiif/info.json?token=T",
+        "https://img/iiif/full/max/0/default.jpg?token=T",
     ]
 
 
@@ -289,7 +348,11 @@ def test_a_400_after_the_fallback_does_not_loop(tmp_path):
     )
     r = fetch_page(page, tmp_path, _client(handler), 2, 0.0)
     assert r.error == "HTTP 400"
-    assert len(calls) == 2  # the sized one, then the unscaled one
+    # the sized one, then the unscaled one (and the info.json between them)
+    assert [u for u in calls if "/full/" in u] == [
+        "https://img/iiif/full/2500,/0/default.jpg",
+        "https://img/iiif/full/max/0/default.jpg",
+    ]
 
 
 def _real_jpeg(width: int, height: int) -> bytes:
@@ -557,25 +620,6 @@ def test_a_network_error_is_transient(tmp_path, pauses, exc):
 
     r = fetch_page(_pages(1)[0], tmp_path, _client(handler))
     assert r.path is None and r.transient and len(pauses) == 3
-
-
-def test_a_waf_page_is_transient(tmp_path, pauses):
-    """A 200 HTML answer is a challenge or login page more often than not:
-    retried, then left for the next attempt rather than recorded as lost."""
-
-    def handler(req):
-        return httpx.Response(200, headers={"Content-Type": "text/html"}, content=b"x")
-
-    r = fetch_page(_pages(1)[0], tmp_path, _client(handler))
-    assert r.transient and "text/html" in r.error
-
-
-def test_a_body_over_the_cap_is_not_transient(tmp_path, pauses):
-    def handler(req):
-        return httpx.Response(200, content=JPEG + b"x" * 1000)
-
-    r = _one(tmp_path, handler, max_bytes=100)
-    assert "too large" in r.error and not r.transient and pauses == []
 
 
 def test_the_wait_between_attempts_ends_when_the_run_aborts(tmp_path):

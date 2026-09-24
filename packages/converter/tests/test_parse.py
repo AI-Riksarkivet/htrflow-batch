@@ -1,9 +1,10 @@
+import json
 import shutil
 from pathlib import Path
 
 import pytest
 
-from htrflow_converter.models import Volume
+from htrflow_converter.models import ConverterConfig, Volume
 from htrflow_converter.parse import ValidationError, load
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -14,6 +15,16 @@ def _load(root: Path):
     return load(root / "campaigns", root / "pipelines", root / "converter.yaml")
 
 
+def _setting(path: Path, line: str) -> None:
+    """Append ``line`` to a YAML file, dropping the top-level line that sets
+    the same key first: a key written twice is its own problem (C-6)."""
+    key = line.partition(":")[0].strip()
+    kept = [
+        kept for kept in path.read_text().splitlines() if kept.partition(":")[0] != key
+    ]
+    path.write_text("\n".join(kept) + f"\n{line}\n")
+
+
 def test_good_fixture_loads_campaigns_and_pipelines():
     campaigns, pipelines, cfg = _load(GOOD)
     assert len(campaigns) == 2
@@ -21,6 +32,10 @@ def test_good_fixture_loads_campaigns_and_pipelines():
     assert "demo-v1" in pipelines
     assert cfg.namespace == "htr-test"
     assert cfg.window == 10
+    # A step naming a model with no revision: Kyverno's rule now (the
+    # chart's `security.requireModelRevision`), never the converter's.
+    steps = pipelines["demo-v1"].steps
+    assert any(s.get("settings", {}).get("model_settings") for s in steps)
 
 
 def test_good_fixture_bare_id_expands_with_source_template():
@@ -29,6 +44,12 @@ def test_good_fixture_bare_id_expands_with_source_template():
     v = {v.id: v for v in kyrk.volumes}
     assert v["R0001203"].manifest == cfg.source_template.format(ref="R0001203")
     assert v["R0001203"].images == []
+
+
+def test_source_template_has_no_default():
+    """No archive's IIIF host is built in: a repo that writes bare reference
+    codes names its own (audit 0923 ruling 1)."""
+    assert ConverterConfig().source_template == ""
 
 
 def test_good_fixture_images_volume_kept():
@@ -56,6 +77,20 @@ def test_good_fixture_second_campaign_priority_and_window():
 #: something a refactor can do quietly. Each is
 #: `path/to/file.yaml: <what is wrong> — <what to do about it>`.
 EXPECTED = {
+    # One sentence per campaign, never one per volume: a campaign of ten
+    # thousand bare codes is one fix, in converter.yaml (audit 0923 ruling 1).
+    "bare-ref-no-template": [
+        'campaigns/broken.yaml: volumes "R1", "R2", "R3" and 1 more are bare '
+        "reference codes, and converter.yaml has no source_template to turn "
+        "them into manifest URLs — set source_template in converter.yaml (e.g. "
+        '"https://iiif.example.org/{ref}/manifest"), or write each volume as '
+        '"id:" with "manifest: <url>"',
+        'campaigns/second.yaml: volume "R9" is a bare reference code, and '
+        "converter.yaml has no source_template to turn it into a manifest URL "
+        "— set source_template in converter.yaml (e.g. "
+        '"https://iiif.example.org/{ref}/manifest"), or write the volume as '
+        '"id:" with "manifest: <url>"',
+    ],
     "unsafe-volume-id": [
         'campaigns/broken.yaml: volume 1 ("a/b") has an id with characters '
         'that are not allowed — use only letters, digits, ".", "_" and "-", '
@@ -212,28 +247,10 @@ def test_every_pydantic_error_type_reads_as_a_sentence(tmp_path, line, expected)
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f"\n{line}\n")
+    _setting(cfg, line)
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     assert exc_info.value.problems == [f"converter.yaml: {expected}"]
-
-
-def test_errors_within_one_campaign_are_all_collected_not_just_first():
-    root = FIXTURES / "bad" / "multi-error"
-    with pytest.raises(ValidationError) as exc_info:
-        _load(root)
-    problems = exc_info.value.problems
-    assert any("has an id with characters that are not allowed" in p for p in problems)
-    assert any("is listed twice" in p for p in problems)
-
-
-def test_errors_across_files_are_all_collected_a_broken_file_does_not_hide_others():
-    root = FIXTURES / "bad" / "multi-file"
-    with pytest.raises(ValidationError) as exc_info:
-        _load(root)
-    problems = exc_info.value.problems
-    assert any("has an id with characters that are not allowed" in p for p in problems)
-    assert any("is listed twice" in p for p in problems)
 
 
 def test_missing_converter_yaml_falls_back_to_defaults():
@@ -243,21 +260,6 @@ def test_missing_converter_yaml_falls_back_to_defaults():
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     assert not any("converter.yaml" in p for p in exc_info.value.problems)
-
-
-def test_bad_window_reports_message_and_does_not_abort_other_files():
-    """Fix round 1 #1: a non-numeric window: must not crash load() (it used
-    to raise ValueError uncaught) and the second campaign's own problem in
-    the same repo must still be reported."""
-    root = FIXTURES / "bad" / "window"
-    with pytest.raises(ValidationError) as exc_info:
-        _load(root)
-    problems = exc_info.value.problems
-    assert any(
-        "must be a whole number of 1 or more" in p and "not-a-number" in p
-        for p in problems
-    ), problems
-    assert any("is listed twice" in p for p in problems), problems
 
 
 @pytest.mark.parametrize(
@@ -277,7 +279,7 @@ def test_a_policy_key_left_in_converter_yaml_points_at_the_chart(
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f"\n{key}\n")
+    _setting(cfg, key)
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     assert exc_info.value.problems == [
@@ -326,31 +328,6 @@ def test_a_stale_pipeline_model_revision_is_one_line(tmp_path):
         'pipelines/demo-v1.yaml: "model_revision" is not a setting this '
         "file has — remove it, or fix the spelling"
     ]
-
-
-def test_converter_yaml_errors_are_one_problem_per_field():
-    """Fix round 1 #3: two bad fields in converter.yaml must surface as two
-    separate problems, not one multi-line pydantic error string."""
-    root = FIXTURES / "bad" / "converter-two-errors"
-    with pytest.raises(ValidationError) as exc_info:
-        _load(root)
-    converter_problems = [
-        p for p in exc_info.value.problems if p.startswith("converter.yaml:")
-    ]
-    assert len(converter_problems) == 2, converter_problems
-    assert all("\n" not in p for p in converter_problems)
-    assert any("window" in p for p in converter_problems)
-    assert any("bogus_field" in p for p in converter_problems)
-
-
-def test_a_model_without_a_revision_is_no_longer_the_converters_problem():
-    """The good fixture's demo-v1.yaml has a step whose model_settings names
-    a model with no revision. That is now Kyverno's rule (the chart's
-    `security.requireModelRevision`), enforced on the pipeline ConfigMap at
-    admission, so `validate` says nothing about it."""
-    _, pipelines, _ = _load(GOOD)
-    steps = pipelines["demo-v1"].steps
-    assert any(s.get("settings", {}).get("model_settings") for s in steps)
 
 
 def test_volume_source_line_manifest_shape():
@@ -444,7 +421,7 @@ def test_converter_config_rejects_a_non_positive_window_or_max_seconds(tmp_path,
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f"\n{key}: 0\n")
+    _setting(cfg, f"{key}: 0")
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     assert any(f'converter.yaml: "{key}"' in p for p in exc_info.value.problems), (
@@ -459,7 +436,7 @@ def test_hf_token_secret_defaults_to_unset_and_takes_a_secret_name(tmp_path):
     shutil.copytree(GOOD, root)
     assert _load(root)[2].hf_token_secret == ""
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + "\nhf_token_secret: htr-batch-hf\n")
+    _setting(cfg, "hf_token_secret: htr-batch-hf")
     assert _load(root)[2].hf_token_secret == "htr-batch-hf"
 
 
@@ -467,7 +444,7 @@ def test_hf_token_secret_must_be_a_secret_name(tmp_path):
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + "\nhf_token_secret: Not_A_Secret\n")
+    _setting(cfg, "hf_token_secret: Not_A_Secret")
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     assert any(
@@ -492,7 +469,7 @@ def test_a_source_template_that_cannot_be_filled_is_one_sentence(tmp_path, templ
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f'\nsource_template: "{template}"\n')
+    _setting(cfg, f'source_template: "{template}"')
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     (problem,) = exc_info.value.problems
@@ -548,7 +525,7 @@ def test_an_empty_class_list_refuses_every_priority(tmp_path):
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + "\npriority_classes: []\n")
+    _setting(cfg, "priority_classes: []")
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     (problem,) = exc_info.value.problems
@@ -570,7 +547,7 @@ def test_the_class_list_itself_is_held_to_the_chart_schema(tmp_path, line, said)
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f"\n{line}\n")
+    _setting(cfg, line)
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     (problem,) = exc_info.value.problems
@@ -594,7 +571,7 @@ def test_a_converter_yaml_object_name_must_be_a_kubernetes_name(tmp_path, key, b
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f'\n{key}: "{bad}"\n')
+    _setting(cfg, f'{key}: "{bad}"')
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     (problem,) = exc_info.value.problems
@@ -617,7 +594,7 @@ def test_a_node_selector_that_is_not_a_label_is_refused(tmp_path, line):
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f"\n{line}\n")
+    _setting(cfg, line)
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     (problem,) = exc_info.value.problems
@@ -633,7 +610,7 @@ def test_a_byte_cap_of_zero_or_less_is_refused(tmp_path, key):
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f"\n{key}: 0\n")
+    _setting(cfg, f"{key}: 0")
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     assert exc_info.value.problems == [
@@ -649,7 +626,7 @@ def test_seconds_beyond_a_32_bit_field_are_refused(tmp_path, key):
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f"\n{key}: 4294967296\n")
+    _setting(cfg, f"{key}: 4294967296")
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     (problem,) = exc_info.value.problems
@@ -694,7 +671,7 @@ def test_a_namespace_is_a_label_not_a_subdomain(tmp_path, bad):
     root = tmp_path / "repo"
     shutil.copytree(GOOD, root)
     cfg = root / "converter.yaml"
-    cfg.write_text(cfg.read_text() + f'\nnamespace: "{bad}"\n')
+    _setting(cfg, f'namespace: "{bad}"')
     with pytest.raises(ValidationError) as exc_info:
         _load(root)
     (problem,) = exc_info.value.problems
@@ -702,3 +679,532 @@ def test_a_namespace_is_a_label_not_a_subdomain(tmp_path, bad):
         'converter.yaml: "namespace" is not a Kubernetes namespace'
     )
     assert "63" in problem
+
+
+@pytest.mark.parametrize(
+    "line,key",
+    [("suspended: true", "suspended"), ("priorty: htr-idle", "priorty")],
+)
+def test_a_misspelt_campaign_setting_is_refused_not_dropped(tmp_path, line, key):
+    """audit 0923 C-1: a pause or a priority under a misspelt key was dropped
+    without a word, and the campaign rendered -- and ran -- at the defaults."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    campaign = root / "campaigns" / "kyrk.yaml"
+    campaign.write_text(campaign.read_text() + f"\n{line}\n")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [
+        f'campaigns/kyrk.yaml: "{key}" is not a setting this file has — '
+        "remove it, or fix the spelling"
+    ]
+
+
+def test_a_stray_volume_setting_is_refused_not_dropped(tmp_path):
+    """audit 0923 C-1: `pages: 1-10` on a volume read as a page range to its
+    author and as nothing to the converter, which ran every page."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "campaigns" / "kyrk.yaml").write_text(
+        "pipeline: demo-v1\n"
+        "volumes:\n"
+        "  - id: R1\n"
+        "    manifest: https://iiif.example.org/r1/manifest\n"
+        "    pages: 1-10\n"
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [
+        'campaigns/kyrk.yaml: volume 1 has "pages", which is not a setting a '
+        "volume has — remove it, or fix the spelling"
+    ]
+
+
+@pytest.mark.parametrize(
+    "entry,kind",
+    [
+        ("- id: 0012345\n    manifest: https://x.example/m", "a number (5349)"),
+        ("- id: 1:20\n    manifest: https://x.example/m", "a number (80)"),
+        ("- id: 1.10\n    manifest: https://x.example/m", "a number (1.1)"),
+        ("- id: 12_000\n    manifest: https://x.example/m", "a number (12000)"),
+        ("- id: 0x1F\n    manifest: https://x.example/m", "a number (31)"),
+        ("- id: yes\n    manifest: https://x.example/m", "true or false (true)"),
+        ("- id: 2024-01-31\n    manifest: https://x.example/m", "a date (2024-01-31)"),
+        ("- id:\n    manifest: https://x.example/m", "nothing at all"),
+        ("- 0012345", "a number (5349)"),
+        ("- 1.10", "a number (1.1)"),
+        ("- yes", "true or false (true)"),
+    ],
+)
+def test_a_volume_id_yaml_reads_as_something_else_is_refused(tmp_path, entry, kind):
+    """audit 0923 C-5: a mapping id went through YAML 1.1's number rules and
+    then str() -- `0012345` became volume `5349`, `1:20` became `80` -- and
+    the bare form said the entry "has no id". Both forms need a string."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "campaigns" / "kyrk.yaml").write_text(
+        f"pipeline: demo-v1\nvolumes:\n  {entry}\n"
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [
+        f"campaigns/kyrk.yaml: volume 1 has an id that YAML reads as {kind}, "
+        'not as text — put it in quotes so it stays as written: - "R0012345", '
+        'or id: "R0012345"'
+    ]
+
+
+def test_a_quoted_numeric_volume_id_stays_as_written(tmp_path):
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "campaigns" / "kyrk.yaml").write_text(
+        'pipeline: demo-v1\nvolumes:\n  - "0012345"\n'
+        '  - id: "1.10"\n    manifest: https://x.example/m\n'
+    )
+    campaigns, _, _ = _load(root)
+    kyrk = next(c for c in campaigns if c.name == "kyrk")
+    assert [v.id for v in kyrk.volumes] == ["0012345", "1.10"]
+
+
+@pytest.mark.parametrize(
+    "rel,text,key,lines",
+    [
+        (
+            "campaigns/kyrk.yaml",
+            "pipeline: demo-v1\nvolumes: [R1]\nvolumes: [R2]\n",
+            "volumes",
+            (2, 3),
+        ),
+        (
+            "pipelines/demo-v1.yaml",
+            "image: ghcr.io/x/y@sha256:" + "a" * 64 + "\n"
+            "steps:\n"
+            "  - step: Segmentation\n"
+            "    settings:\n"
+            "      model: yolo\n"
+            "      model: TrOCR\n",
+            "model",
+            (5, 6),
+        ),
+        (
+            "converter.yaml",
+            "namespace: htr-test\nwindow: 10\nqueue: a\nwindow: 2\n",
+            "window",
+            (2, 4),
+        ),
+    ],
+)
+def test_a_key_written_twice_is_refused_not_last_wins(tmp_path, rel, text, key, lines):
+    """audit 0923 C-6: YAML's own loader keeps the last of two equal keys, so
+    `volumes: [R1]` and then `volumes: [R2]` rendered R2 alone."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / rel).write_text(text)
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [
+        f'{rel}: "{key}" is written twice, on lines {lines[0]} and {lines[1]} — '
+        "YAML would keep only the last one, so remove one or merge them"
+    ]
+
+
+def test_two_merge_keys_in_one_mapping_are_a_key_written_twice(tmp_path):
+    """`<<:` twice is two keys to YAML, and the second merge would decide
+    alone what the first one said."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "campaigns" / "kyrk.yaml").write_text(
+        "a: &a {pipeline: demo-v1}\nb: &b {volumes: [R1]}\nc:\n  <<: *a\n  <<: *b\n"
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [
+        'campaigns/kyrk.yaml: "<<" is written twice, on lines 4 and 5 — YAML '
+        "would keep only the last one, so remove one or merge them"
+    ]
+
+
+def test_a_merge_key_may_still_override_what_it_merges(tmp_path):
+    """`<<:` is how a YAML file says "these, except"; the key it overrides
+    is not written twice."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "campaigns" / "kyrk.yaml").write_text(
+        "base: &b {manifest: https://x.example/m}\n"
+        "pipeline: demo-v1\n"
+        "volumes:\n"
+        "  - {<<: *b, id: R1, manifest: https://x.example/n}\n"
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    # Only the unknown `base:` key, which is the anchor's carrier.
+    assert exc_info.value.problems == [
+        'campaigns/kyrk.yaml: "base" is not a setting this file has — remove '
+        "it, or fix the spelling"
+    ]
+
+
+@pytest.mark.parametrize(
+    "steps,said",
+    [
+        (
+            "steps: []\n",
+            '"steps" is empty — a pipeline runs at least one step; write steps: '
+            'and then "- step: <Name>" entries under it',
+        ),
+        (
+            "steps:\n  - step: [x]\n",
+            '"steps" has a step whose "step:" is not a name (step 1) — every '
+            'entry starts "- step: <Name>", the htrflow step it runs',
+        ),
+        (
+            "steps:\n  - settings: {model: yolo}\n  - step: TextRecognition\n",
+            '"steps" has a step with no "step:" name (step 1) — every entry '
+            'starts "- step: <Name>", the htrflow step it runs',
+        ),
+    ],
+)
+def test_a_pipeline_with_no_step_to_run_is_refused(tmp_path, steps, said):
+    """audit 0923 C-8: both rendered, and the first a pod reached was the
+    wrapper failing every volume of every campaign on the pipeline."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "pipelines" / "demo-v1.yaml").write_text(
+        "image: ghcr.io/x/y@sha256:" + "a" * 64 + "\n" + steps
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [f"pipelines/demo-v1.yaml: {said}"]
+
+
+_KEYLESS = (
+    'converter.yaml: "tolerations" entry 1 has no key — a toleration without '
+    "one tolerates every taint on every node, the control plane's included; "
+    "name the taint it is for"
+)
+
+
+@pytest.mark.parametrize(
+    "line,said",
+    [
+        ("tolerations: [{operator: Exists}]", _KEYLESS),
+        ('tolerations: [{key: "", operator: Exists}]', _KEYLESS),
+        ("tolerations: [{effect: NoSchedule, operator: Exists}]", _KEYLESS),
+        (
+            "tolerations: [{key: node-role.kubernetes.io/control-plane, "
+            "operator: Exists}]",
+            'converter.yaml: "tolerations" entry 1 tolerates '
+            "node-role.kubernetes.io/control-plane — that taint keeps "
+            "workloads off the control plane, and a GPU batch pod has no "
+            "business there; remove it",
+        ),
+        (
+            "tolerations: [{key: gpu, operator: Exists, value: x}]",
+            'converter.yaml: "tolerations" entry 1 has a value with operator: '
+            "Exists, which matches the key alone — drop the value, or use "
+            "operator: Equal",
+        ),
+        (
+            "tolerations: [{key: gpu, tolerationSeconds: 60}]",
+            'converter.yaml: "tolerations" entry 1 has tolerationSeconds '
+            "without effect: NoExecute, the only effect it applies to",
+        ),
+        (
+            "tolerations: [{key: gpu, opertor: Exists}]",
+            'converter.yaml: "tolerations.opertor" entry 1 is not a setting '
+            "this file has — remove it, or fix the spelling",
+        ),
+        (
+            "tolerations: [{key: gpu, operator: exists}]",
+            'converter.yaml: "tolerations.operator" entry 1 must be one of '
+            'Exists or Equal (got "exists")',
+        ),
+        (
+            "tolerations: [{key: gpu, effect: NoRun}]",
+            'converter.yaml: "tolerations.effect" entry 1 must be one of '
+            'NoSchedule, PreferNoSchedule or NoExecute (got "NoRun")',
+        ),
+        (
+            'tolerations: [{key: "bad key"}]',
+            'converter.yaml: "tolerations" entry 1 has a key that is not a '
+            'Kubernetes taint key (got "bad key") — a key is a name, '
+            'optionally after a "<dns-prefix>/"; letters, digits, ".", "_" '
+            'and "-", at most 63 characters',
+        ),
+    ],
+)
+def test_a_toleration_is_held_to_the_kubernetes_shape(tmp_path, line, said):
+    """audit 0923 S-1: `tolerations` was `list[dict]`, copied into every pod
+    as written: `{operator: Exists}` tolerates every taint, so a campaign's
+    GPU pods could land on the control plane or any node tainted to keep
+    them off."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    _setting(root / "converter.yaml", line)
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert exc_info.value.problems == [said]
+
+
+def test_a_well_formed_toleration_is_kept_as_written(tmp_path):
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    _setting(
+        root / "converter.yaml",
+        "tolerations: [{key: nvidia.com/gpu, operator: Exists, effect: NoSchedule},"
+        " {key: dedicated, value: htr, effect: NoExecute, tolerationSeconds: 30}]",
+    )
+    _, _, cfg = _load(root)
+    assert [t.manifest() for t in cfg.tolerations] == [
+        {"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"},
+        {"key": "dedicated", "value": "htr", "effect": "NoExecute",
+         "tolerationSeconds": 30},
+    ]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "url,why",
+    [
+        ("https://example.org:99999/m", "its port is not a number from 0 to 65535"),
+        ("https://exa%mple.org/m", "its host is not a host name or an IP address"),
+        ("https://ex<ample.org/m", "its host is not a host name or an IP address"),
+        ("https://example.org\\m", "it has a backslash or a control character in it"),
+        (
+            "https://example.org/\x01m",
+            "it has a backslash or a control character in it",
+        ),
+        ("https://[fe80::1%25eth0]/m", "its host is not a host name or an IP address"),
+        ("https://1.2.3.999/m", "its host is not a host name or an IP address"),
+        ("https://a..b/m", "its host is not a host name or an IP address"),
+        ("https://xn--abc/m", "its host is not a host name or an IP address"),
+        (
+            "https://xn--mgbh0fb.example/m",
+            "its host is not a host name or an IP address",
+        ),
+        ("https://example.org:x/m", "its port is not a number from 0 to 65535"),
+        # decodes to "Übung": a browser would have encoded "übung" instead
+        (
+            "https://xn--bung-fna.example/m",
+            "its host is not a host name or an IP address",
+        ),
+        ("https://.example.org/m", "its host is not a host name or an IP address"),
+        ("https://example.org../m", "its host is not a host name or an IP address"),
+    ],
+)
+def test_a_url_a_browser_cannot_open_is_refused(tmp_path, url, why):
+    """audit 0923 F-7 (the web fixer's request): these passed the converter
+    and then threw in the browser's WHATWG `new URL`, which the viewer and
+    the status page build every link with. The rule is a strict subset of
+    WHATWG's: what passes here, a browser opens."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    for form, what in (
+        (f"- id: R1\n    manifest: {json.dumps(url)}\n", "a manifest"),
+        (f"- id: R1\n    images: [{json.dumps(url)}]\n", "an image"),
+    ):
+        (root / "campaigns" / "kyrk.yaml").write_text(
+            f"pipeline: demo-v1\nvolumes:\n  {form}"
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            _load(root)
+        (problem,) = exc_info.value.problems
+        assert problem.startswith(
+            f"campaigns/kyrk.yaml: volume 1 has {what} a browser cannot open ("
+        ), problem
+        assert problem.endswith(f"): {why}"), problem
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.org/m",
+        "http://example.org:8080/iiif/manifest.json",
+        "https://user@example.org/m?x=1#y",
+        "https://[2001:db8::1]:443/m",
+        "https://192.0.2.10/m",
+        "https://iiif_host-1.example.org/m",
+        "https://xn--rksarkivet-z5a.se/m",
+        "https://images.example.org/archives!R0001203/manifest",
+        "https://example.org/full/2500,/0/default.jpg",
+        # what browsers take and the read API's browser_http_url does too
+        "https://example.org./m",
+        "https://bücher.example/m",
+        "https://xn--bcher-kva.example/m",
+    ],
+)
+def test_a_url_a_browser_opens_is_kept(tmp_path, url):
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "campaigns" / "kyrk.yaml").write_text(
+        f"pipeline: demo-v1\nvolumes:\n  - id: R1\n    manifest: {json.dumps(url)}\n"
+    )
+    campaigns, _, _ = _load(root)
+    assert next(c for c in campaigns if c.name == "kyrk").volumes[0].manifest == url
+
+
+# The Hugging Face demo Space's pipeline templates, as it ships them: its
+# "simple" ones read lines a single Segmentation step put straight on the
+# page; its nested one segments regions, then the lines within them.
+SPACE_SIMPLE = """\
+steps:
+- step: Segmentation
+  settings:
+    model: yolo
+    model_settings:
+      model: Riksarkivet/yolov9-lines-within-regions-1
+- step: TextRecognition
+  settings:
+    model: TrOCR
+    model_settings:
+      model: Riksarkivet/trocr-base-handwritten-hist-swe-2
+    generation_settings:
+       batch_size: 16
+- step: OrderLines
+"""
+
+SPACE_NESTED = """\
+steps:
+- step: Segmentation
+  settings:
+    model: yolo
+    model_settings:
+       model: Riksarkivet/yolov9-regions-1
+    generation_settings:
+       batch_size: 4
+- step: Segmentation
+  settings:
+    model: yolo
+    model_settings:
+      model: Riksarkivet/yolov9-lines-within-regions-1
+    generation_settings:
+       batch_size: 8
+- step: TextRecognition
+  settings:
+    model: TrOCR
+    model_settings:
+      model: Riksarkivet/trocr-base-handwritten-hist-swe-2
+    generation_settings:
+       batch_size: 16
+- step: ReadingOrderMarginalia
+  settings:
+    two_page: True
+"""
+
+IMAGE = "image: ghcr.io/riksarkivet/htrflow-batch@sha256:" + "a" * 64 + "\n"
+
+
+def _with_pipeline(tmp_path: Path, steps: str) -> Path:
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "pipelines" / "demo-v1.yaml").write_text(IMAGE + steps)
+    return root
+
+
+FLAT_TEXT = (
+    'pipelines/demo-v1.yaml: "steps" put the lines that TrOCR (step 2) reads '
+    "directly on the page, with 1 Segmentation step before it — htrflow's "
+    "ALTO and PAGE export writes only the text of lines inside a region, so "
+    "every page would publish without its text; put a region Segmentation "
+    "step before the line step"
+)
+
+
+def test_the_space_simple_template_is_refused_with_the_fix(tmp_path):
+    with pytest.raises(ValidationError) as caught:
+        _load(_with_pipeline(tmp_path, SPACE_SIMPLE))
+    [problem] = caught.value.problems
+    assert problem.startswith(FLAT_TEXT), problem
+
+
+def test_the_space_nested_template_passes(tmp_path):
+    _, pipelines, _ = _load(_with_pipeline(tmp_path, SPACE_NESTED))
+    assert len(pipelines["demo-v1"].steps) == 4
+
+
+@pytest.mark.parametrize(
+    ("steps", "readers"),
+    [
+        # recognition straight on the page: no segmentation at all
+        ("- step: TextRecognition\n  settings: {model: PyLaia}\n", 0),
+        # regions only, then recognition on the regions (the old demo)
+        (
+            "- step: Segmentation\n  settings: {model: yolo}\n"
+            "- step: TextRecognition\n  settings: {model: trocr}\n",
+            1,
+        ),
+        # any step name runs the model it names: Inference with TrOCR reads
+        (
+            "- step: Inference\n  settings: {model: PPDocLayoutV3}\n"
+            "- step: Inference\n  settings: {model: TrOCR}\n",
+            1,
+        ),
+    ],
+)
+def test_every_reader_with_fewer_than_two_segmentations_is_refused(
+    tmp_path, steps, readers
+):
+    with pytest.raises(ValidationError) as caught:
+        _load(_with_pipeline(tmp_path, "steps:\n" + steps))
+    [problem] = caught.value.problems
+    assert "directly on the page" in problem
+    assert f"with {readers or 'no'} Segmentation step" in problem
+
+
+@pytest.mark.parametrize(
+    "steps",
+    [
+        # no text recognition: nothing to lose
+        "- step: Segmentation\n  settings: {model: yolo}\n",
+        # word-level recognition writes its words as the export's lines
+        "- step: Segmentation\n  settings: {model: yolo}\n"
+        "- step: TextRecognition\n  settings: {model: WordLevelTrOCR}\n",
+        # a second reading after a second segmentation reaches depth two
+        "- step: Segmentation\n  settings: {model: yolo}\n"
+        "- step: TextRecognition\n  settings: {model: TrOCR}\n"
+        "- step: Segmentation\n  settings: {model: yolo}\n"
+        "- step: TextRecognition\n  settings: {model: TrOCR}\n",
+        # classification models add no level and no text
+        "- step: Inference\n  settings: {model: DiT}\n",
+    ],
+)
+def test_shapes_whose_text_can_reach_the_export_pass(tmp_path, steps):
+    _load(_with_pipeline(tmp_path, "steps:\n" + steps))
+
+
+def _render_record(root: Path, steps: str) -> None:
+    """``rendered/pipelines/demo-v1.yaml`` as an earlier render wrote it,
+    before the rule existed."""
+    import yaml
+
+    from htrflow_converter import render
+    from htrflow_converter.models import Pipeline
+    from htrflow_converter.parse import _load_config
+
+    doc = yaml.safe_load(IMAGE + steps)
+    p = Pipeline.model_construct(id="demo-v1", **doc)
+    cfg, _ = _load_config(root / "converter.yaml", [])
+    out = root / "rendered" / "pipelines" / "demo-v1.yaml"
+    out.parent.mkdir(parents=True)
+    out.write_text(yaml.safe_dump_all(render.pipeline_objects(p, cfg)))
+
+
+def test_a_rendered_pipeline_of_the_old_shape_warns_and_is_kept(tmp_path):
+    """An already-rendered, unchanged pipeline must not lock the repo: its
+    id names that recipe for good, so it could never be brought to pass."""
+    root = _with_pipeline(tmp_path, SPACE_SIMPLE)
+    _render_record(root, SPACE_SIMPLE)
+    warnings: list[str] = []
+    _, pipelines, _ = load(
+        root / "campaigns", root / "pipelines", root / "converter.yaml", warnings
+    )
+    assert "demo-v1" in pipelines
+    [warning] = warnings
+    assert warning.startswith(FLAT_TEXT), warning
+    assert "kept, since this pipeline was rendered with these steps" in warning
+
+
+def test_a_rendered_pipeline_whose_steps_change_meets_the_rule(tmp_path):
+    root = _with_pipeline(tmp_path, SPACE_SIMPLE.replace("16", "8"))
+    _render_record(root, SPACE_SIMPLE)
+    with pytest.raises(ValidationError):
+        _load(root)

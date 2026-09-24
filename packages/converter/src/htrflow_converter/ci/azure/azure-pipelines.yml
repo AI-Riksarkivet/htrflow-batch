@@ -23,11 +23,12 @@
 # `kubectl` binary. With Argo CD it is a PostSync hook — this repo's
 # argocd/apply.yaml; by hand it is `make campaigns-apply DIR=<repo> PRUNE=1`.
 #
-# CI installs the converter as a plain Python package, with uv straight
-# from the htrflow-batch repo at CONVERTER_REF (see "Install the converter"
-# below). An htrflow-batch release pins CONVERTER_REF to its own tag in the
-# copy of this file it ships; the converter image exists only for the Argo
-# CD hook (argocd/apply.yaml), which runs in the cluster.
+# CI installs the converter as a plain Python package, with uv, from the
+# htrflow-batch repo at CONVERTER_REF and with the dependency versions that
+# commit's uv.lock pins (.azure-pipelines/install-converter.yml). An htrflow-batch release
+# pins CONVERTER_REF to a commit of its own in the copy of this file it
+# ships; the converter image exists only for the Argo CD hook
+# (argocd/apply.yaml), which runs in the cluster.
 #
 # Setting it up on Azure DevOps:
 # - Pull requests. In Azure Repos the `pr:` block below is ignored: a pull
@@ -72,18 +73,21 @@ pool:
   vmImage: ubuntu-latest
 
 variables:
-  # A released htrflow-batch tag (a release pins it here); a commit SHA also
-  # works and is the most reproducible option. The Policy stage checks the
-  # chart out at this same ref, so the policies CI runs are the ones that
-  # shipped with the converter that rendered.
-  CONVERTER_REF: v0.5.0
+  # The full commit SHA of a released htrflow-batch tag (a release pins it
+  # here, the tag in the comment). A commit, never the tag itself: a tag can
+  # be moved to other code, and the Render stage pushes to main. The Policy
+  # stage checks the chart out at this same commit, so the policies CI runs
+  # are the ones that shipped with the converter that rendered.
+  CONVERTER_REF: bbf1a21a702b47786e754e7de98a30685f8aa00d   # v0.5.0
   KYVERNO_VERSION: v1.19.0
   # The cluster's own htrflow-batch values, repeated here because CI has no
   # cluster to read them from (`helm get values <release> -n <namespace>`).
   # Keep them in step: CI can only run the policies it is told about, and
-  # the cluster is the gate that actually holds.
+  # the cluster is the gate that actually holds. The allow-list names the
+  # three repositories htrflow-batch publishes. The Secret and PVC names the
+  # chart pins a Job to are not repeated: they are read from converter.yaml.
   POLICY_NAMESPACE: htr-batch
-  POLICY_ALLOWED_IMAGE_REPOS: "{docker.io/riksarkivet/}"
+  POLICY_ALLOWED_IMAGE_REPOS: "{docker.io/riksarkivet/htrflow-batch,docker.io/riksarkivet/htrflow-web,docker.io/riksarkivet/htrflow-campaigns}"
   POLICY_REQUIRE_MODEL_REVISION: "false"
   # Every tool is a release asset checked against the SHA-256 committed
   # here, never `curl … | sh`. A bump changes the version and both of its
@@ -113,9 +117,7 @@ stages:
         steps:
           - checkout: self
           - template: .azure-pipelines/install-uv.yml
-          - bash: |
-              uv tool install "git+https://github.com/AI-Riksarkivet/htrflow-batch@${CONVERTER_REF}#subdirectory=packages/converter"
-            displayName: Install the converter
+          - template: .azure-pipelines/install-converter.yml
           - bash: htrflow-campaigns validate .
             displayName: Validate
 
@@ -139,13 +141,6 @@ stages:
         displayName: Policy
         steps:
           - checkout: self
-          - bash: |
-              set -euo pipefail
-              git init -q "$AGENT_TEMPDIRECTORY/htrflow-batch"
-              cd "$AGENT_TEMPDIRECTORY/htrflow-batch"
-              git fetch -q --depth 1 https://github.com/AI-Riksarkivet/htrflow-batch "$CONVERTER_REF"
-              git checkout -q FETCH_HEAD
-            displayName: Check out htrflow-batch at CONVERTER_REF
           - template: .azure-pipelines/install-uv.yml
           - bash: |
               set -euo pipefail
@@ -164,9 +159,7 @@ stages:
               "$dir/helm" version
               echo "##vso[task.prependpath]$dir"
             displayName: Install helm (checksum-verified)
-          - bash: |
-              uv tool install "git+https://github.com/AI-Riksarkivet/htrflow-batch@${CONVERTER_REF}#subdirectory=packages/converter"
-            displayName: Install the converter
+          - template: .azure-pipelines/install-converter.yml
           - bash: |
               set -euo pipefail
               case "$AGENT_OS/$AGENT_OSARCHITECTURE" in
@@ -189,6 +182,20 @@ stages:
             displayName: Render
           - bash: |
               set -euo pipefail
+              # The Secret and PVC names this repo renders into its Jobs, which
+              # the chart's job-shape policy holds to its values: read with the
+              # converter's own loader, so CI checks what the cluster will.
+              names=$("$(uv tool dir)/htrflow-converter/bin/python" - <<'EOF'
+              from pathlib import Path
+              from htrflow_converter.parse import load
+              cfg = load(Path("campaigns"), Path("pipelines"), Path("converter.yaml"))[2]
+              print(f"s3.existingSecret={cfg.s3_secret}")
+              print(f"modelCache.name={cfg.data_pvc}")
+              print(f"hfToken.existingSecret={cfg.hf_token_secret}")
+              EOF
+              )
+              sets=()
+              while read -r name; do sets+=(--set "$name"); done <<< "$names"
               helm template htrflow-batch "$AGENT_TEMPDIRECTORY/htrflow-batch/charts/htrflow-batch" \
                 -n "$POLICY_NAMESPACE" \
                 --set publicResultsBase=http://ci.invalid/ \
@@ -196,6 +203,7 @@ stages:
                 --set security.policies.enabled=true \
                 --set "security.allowedImageRepos=$POLICY_ALLOWED_IMAGE_REPOS" \
                 --set "security.requireModelRevision=$POLICY_REQUIRE_MODEL_REVISION" \
+                "${sets[@]}" \
                 --show-only 'templates/policies/*.yaml' > "$AGENT_TEMPDIRECTORY/policies.yaml"
             displayName: Render the chart's policies
           # One file, not one --resource per directory: `kyverno apply` v1.19
@@ -242,9 +250,7 @@ stages:
           - checkout: self
             fetchDepth: 0
           - template: .azure-pipelines/install-uv.yml
-          - bash: |
-              uv tool install "git+https://github.com/AI-Riksarkivet/htrflow-batch@${CONVERTER_REF}#subdirectory=packages/converter"
-            displayName: Install the converter
+          - template: .azure-pipelines/install-converter.yml
           - bash: htrflow-campaigns render . --out rendered
             displayName: Render
           # The agent checks out a detached HEAD, hence HEAD:main. [skip ci]

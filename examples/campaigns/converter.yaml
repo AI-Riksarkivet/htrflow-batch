@@ -31,6 +31,11 @@ runtime_class: nvidia
 # real one before applying anywhere but the PoC.
 public_results_base: "http://localhost:30900/htr-results"
 
+# How a campaign's bare reference code (`- R0001203`) becomes a IIIF
+# manifest URL: {ref} is the code. Unset, only `manifest:` and `images:`
+# volumes are allowed.
+# source_template: "https://iiif.example.org/{ref}/manifest"
+
 # Which registries a pipeline may pin, and whether every model needs a
 # 40-hex revision, are NOT settings of this file: they are Kyverno
 # ClusterPolicies the htrflow-batch chart ships

@@ -27,6 +27,7 @@ AGREEMENTS = [
     ("queue", "queue.name"),
     ("s3_secret", "s3.existingSecret"),
     ("data_pvc", "modelCache.name"),
+    ("hf_token_secret", "hfToken.existingSecret"),
 ]
 #: (ConverterConfig list field, chart list path, the key of each entry):
 #: the names on both sides must be the same list, in order.
@@ -49,15 +50,23 @@ NONE, PUBLIC = "no secret — nobody", "the public-read results base — nobody"
 SECURITY = {
     "S3_BUCKET": "from the S3 Secret (`secretKeyRef`) — cluster",
     "S3_ENDPOINT": "from the S3 Secret (`secretKeyRef`) — cluster",
-    "s3_secret": "names the Secret mounted at `/secrets/s3` — cluster",
-    "hf_token_secret": "names the Secret the warm-up reads `HF_TOKEN` from — cluster",
+    "s3_secret": "names the Secret mounted at `/secrets/s3`; job-shape admits "
+    "only `s3.existingSecret` — cluster",
+    "hf_token_secret": "names the Secret the warm-up reads `HF_TOKEN` from; job-shape "
+    "admits only `hfToken.existingSecret` — cluster",
+    "data_pvc": "the model-cache PVC; job-shape admits only `modelCache.name` "
+    "— cluster",
     "s3.existingSecret": "names that Secret; no template creates it — nobody",
+    "hfToken.existingSecret": "the one Secret a warm-up may read (job-shape) — cluster",
+    "security.jobImageRepos": "what a campaign or warm-up Job may run — cluster",
     "publicResultsBase": "the public-read results base; `required` — render",
     "web.image": "digest-pinned unless `security.allowTagImages` — render",
     "security.allowTagImages": "opens that digest gate — render",
     "security.psaEnforce": "Pod Security Admission label — cluster",
     "security.policies.allowDisabled": "no admission policy at all — render",
-    "network.web.ingressCidrs": "the only gate on the read API — cluster",
+    "network.web.ingressCidrs": "the read API's only gate on a NodePort — cluster",
+    "network.web.ingressFrom": "who may reach the read API behind an ingress; the "
+    "controller's allow-list keeps browsers out — cluster",
 }
 
 #: What `WebConfig.from_env` (or `app.py`) actually falls back to, for a

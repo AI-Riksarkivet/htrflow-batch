@@ -9,15 +9,16 @@ Before you start, you need:
 - the chart deployed with its S3 Secret ([Deploy](deploy.md));
 - a `publicResultsBase` that browsers can reach;
 - `kubectl` access to the cluster;
-- `uv` wherever the converter runs, which is your machine or the campaigns
-  repo's CI.
+- `uv` on your machine and in the campaigns repo's CI, wherever the
+  converter renders.
 
 ## 1. Create the campaigns repo
 
-Desired state lives in a git repository of its own. The converter is a plain
-Python package, not a container image, and it never runs as part of the
-platform. Run it as a `uvx` tool straight from this repository to create a
-campaigns repo:
+Desired state lives in a git repository of its own. The converter is a
+Python package: it renders on your machine and in the campaigns repo's CI,
+and the published `htrflow-campaigns` image runs the same CLI inside the
+cluster when the Argo CD hook applies the repo. Run it as a `uvx` tool
+straight from this repository to create a campaigns repo:
 
 ```bash
 uvx --from "git+https://github.com/AI-Riksarkivet/htrflow-batch@<ref>#subdirectory=packages/converter" \
@@ -77,16 +78,13 @@ steps:
     ...
 ```
 
-Two Kyverno rules check pipelines. Both run at admission, and again in the
-campaigns repo's CI through the Kyverno CLI. `htrflow-campaigns validate`
-does not check either of them.
-
-- `<registry>/` must be one of the prefixes in the release's
-  `security.allowedImageRepos`.
-- With `security.requireModelRevision` on, every model needs a 40-character
-  commit hash as `revision:`. It goes under `model_settings` for YOLO, or
-  under `model_settings.model_kwargs` for TrOCR and other Hugging Face
-  models.
+Two Kyverno rules check pipelines, at admission and again in the campaigns
+repo's CI (`htrflow-campaigns validate` checks neither): `<registry>/` must
+be in the release's `security.allowedImageRepos`, and with
+`security.requireModelRevision` on every model needs a 40-character commit
+hash as `revision:`. Where that key goes for each model type is in
+[Campaign & Pipeline YAML](../reference/campaign-yaml.md), under the
+pipeline file.
 
 A pipeline id names the image and the steps together. Once results exist
 under an id, never change it in place. A new digest means a **new pipeline
@@ -112,76 +110,37 @@ Set the workflow's `CONVERTER_REF`, `POLICY_NAMESPACE`,
 `POLICY_ALLOWED_IMAGE_REPOS` and `POLICY_REQUIRE_MODEL_REVISION` to match
 your release.
 
-To apply what CI committed, run `htrflow-campaigns apply --prune` on it. Do
-not point a GitOps tool at `rendered/` to apply it: once a finished
+To apply what CI committed, run `htrflow-campaigns apply --prune` on it.
+Never point a GitOps tool at `rendered/` to apply it: once a finished
 campaign's Job is reaped, a tool that makes the cluster match the directory
-creates it again and runs every volume again. With Argo CD, the Application
-syncs only `rendered/sync.yaml`, a digest of the render, and a `PostSync`
-hook runs the command
-([`rendered/` with Argo CD](../reference/campaign-yaml.md#with-argo-cd)).
-Every rendered campaign object is a Skip hook to Argo CD, so an Application
-pointed at the whole directory applies none of it. Nothing reaches the
-cluster except what CI committed.
+would create it again and rerun every volume. With Argo CD, the Application
+syncs only `rendered/sync.yaml` and a `PostSync` hook runs the apply
+([htrflow-campaigns CLI](../reference/cli.md)).
 
-When `htrflow-campaigns apply` itself runs inside the cluster (a CI Job, or
-an Argo CD `PostSync` hook), it needs an identity that may write campaign
-Jobs. Set `apply.rbac.enabled` in the chart to create one.
+When the apply runs inside the cluster (a CI Job or the Argo CD hook), it
+needs an identity that may write campaign Jobs: set `apply.rbac.enabled` in
+the chart, and `apply.gitCidrs` to the git host the hook clones from.
 
 ### From a kubeconfig
 
-To render and apply directly:
-
 ```bash
 make campaigns-apply DIR=<campaigns-repo-dir>
+# exactly: uv run htrflow-campaigns apply <dir> --out <dir>/rendered
 ```
 
-This is exactly:
-
-```bash
-uv run htrflow-campaigns apply <campaigns-repo-dir> --out <campaigns-repo-dir>/rendered
-```
-
-This one command does five things, in order:
-
-1. Renders the repo.
-2. **Records how each campaign stands, before anything is sent.** For every
-   campaign it is about to apply it reads the live Job. A running Job means
-   the campaign is not finished, whatever is stored; a finished one is
-   written into the campaign's status ConfigMap; with no Job left, the
-   stored record decides. A campaign that is finished and whose volume list
-   has not moved is left alone and skipped for the rest of the run — it
-   prints one line saying so instead of an `applied:` line. That is what
-   keeps a finished campaign from being run again once its Job is past its
-   TTL
-   ([The record a campaign leaves](../how-it-works/campaigns.md#the-record-a-campaign-leaves)).
-   A campaign whose Job or record cannot be read is left exactly as it is
-   and named on stderr, and the apply exits non-zero: an unmade check is
-   never treated as a campaign still to run.
-3. Applies `rendered/pipelines`. Pipelines go first because a campaign's Job
-   references its pipeline's ConfigMap.
-4. Applies `rendered/campaigns`.
-5. Sets each campaign's `suspend:` on its Kueue Workload.
-
-It talks to the API server through the official Kubernetes client, with no
-`kubectl` in the loop, and prints one `applied: <Kind>/<name>` line per
-object. `--dry-run` prints the same list as `would apply: …` and opens no
-connection at all.
-
-One object the API server will not take does not stop the others: it is
-named on stderr, the rest are applied, and the command exits **3** with a
-summary line naming what was left unchanged. The codes are a precedence,
-highest first: `1` is a pause that is not enforced — whatever else was
-applied — or nothing applied at all, `3` is some objects refused with every
-pause holding, and `0` is everything applied. See
-[refused objects](../reference/campaign-yaml.md#when-the-api-server-refuses-an-object)
-for what `apply` does about a Job whose pod template changed.
+It renders, skips campaigns that are already finished, applies pipelines
+then campaigns, and prints one `applied: <Kind>/<name>` line per object;
+`--dry-run` shows the list without connecting. Exit `0` is everything
+applied, `3` some objects refused, `1` a pause not enforced or nothing
+applied. The full order and what to do about a refusal are in
+[htrflow-campaigns CLI](../reference/cli.md).
 
 ## 4. Add work: it is a commit
 
 ```yaml title="campaigns/<campaign>.yaml"
 pipeline: <id>
 volumes:
-  - <reference>                    # expanded through converter.yaml's source_template
+  - <reference>                    # expanded through converter.yaml's source_template (set it first)
   - id: <volume-id>
     manifest: <iiif-manifest-url>
 ```
@@ -220,10 +179,6 @@ The campaign browser is the platform's front door, at the web front's root:
   link.
 - **log** opens the run viewer at `/log`. It follows a running volume's log
   live, and shows the per-page summary once the volume finishes.
-
-The browser gets progress from the read API (`GET /api/v1/jobs`). It holds no
-cluster credentials of its own. A campaign's phase, counts and per-volume
-state are read straight off the live Job every time the page asks.
 
 The browser must reach both the web front and the results base URL. See
 [Exposing the web front](viewing.md#exposing-the-web-front).

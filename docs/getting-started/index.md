@@ -27,11 +27,10 @@ CRDs:
 make install-kueue
 ```
 
-This installs or upgrades Kueue's official Helm chart, so it is safe to
-re-run. The version it installs is `KUEUE_VERSION` in the `Makefile`. A
-cluster where Kueue came from the upstream release manifests instead has
-to be moved to the chart once: Helm will not adopt objects it did not
-create.
+This installs or upgrades Kueue's official Helm chart (version
+`KUEUE_VERSION` in the `Makefile`), so it is safe to re-run. A Kueue
+installed from the upstream manifests must be moved to the chart once, since
+Helm will not adopt objects it did not create.
 [Queueing](../how-it-works/queueing.md) explains how a campaign is admitted.
 
 ## Kyverno
@@ -51,9 +50,8 @@ rules ([Security](../how-it-works/security.md)).
 
 ## GPU nodes
 
-- **An NVIDIA GPU that the htrflow image's CUDA build supports.** The
-  wrapper runs htrflow's own torch and CUDA stack unchanged, so the htrflow
-  image decides which GPUs work.
+- **An NVIDIA GPU that the wrapper image's torch build supports** (torch is
+  pinned per architecture, see [Releasing](../development/releasing.md#one-dockerfile-every-architecture)).
 - **The NVIDIA device plugin**, so nodes advertise `nvidia.com/gpu`.
 - **A RuntimeClass** for GPU pods. The converter sets `runtimeClassName`
   from `runtime_class` in the campaigns repo's `converter.yaml` (default
@@ -75,11 +73,13 @@ the key prefixes and the CORS rule.
 
 ## Container registry
 
-Campaign pipelines and the web front run images pinned by digest. The
-published images are `docker.io/riksarkivet/htrflow-batch` (the wrapper) and
-`docker.io/riksarkivet/htrflow-web` (the web front). To build and push your
-own, see [Releasing](../development/releasing.md). Whichever registry you use
-goes into `security.allowedImageRepos`.
+Everything the namespace runs is pinned by digest. The published images are
+`docker.io/riksarkivet/htrflow-batch` (the wrapper),
+`docker.io/riksarkivet/htrflow-web` (the web front) and
+`docker.io/riksarkivet/htrflow-campaigns` (the converter, for the Argo CD
+apply hook). To build and push your own, see
+[Releasing](../development/releasing.md). Whichever registry you use goes
+into `security.allowedImageRepos`.
 
 ## IIIF source
 

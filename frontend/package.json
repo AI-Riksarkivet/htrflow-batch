@@ -39,6 +39,7 @@
   "license": "EUPL-1.2",
   "overrides": {
     "cookie": "^0.7.0",
+    "devalue": "^5.9.2",
     "postcss": "^8.5.28"
   }
 }

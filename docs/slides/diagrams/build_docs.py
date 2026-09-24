@@ -130,7 +130,7 @@ ib = ia + 56 + H1 + 24 + 24               # the container panel
 ra, rb = ib + 56, ib + 56 + H1 + ROWGAP
 d = Diagram(W, rb + H1 + 24 + 24 + 16)
 d.tall(C[0], 16, COLW, "IIIF server", "the page images", L("images"), outside=True)
-d.tall(C[1], 16, COLW, "Model cache", "read-only, shared", L("database"))
+d.tall(C[1], 16, COLW, "Model cache", "read-only, per recipe", L("database"))
 d.tall(C[2], 16, COLW, "S3 bucket", "PAGE and ALTO", L("database"))
 d.group(24, ga, 952, rb + H1 + 24 + 24 - ga, "Pod, one volume", "k8s-pod")
 group_around(d, [1], ia, 56 + H1 + 24, "Init container", inner=True)
@@ -198,7 +198,7 @@ d = Diagram(W, 2 * H2 + ROWGAP + 48)
 ys = [24, 24 + H2 + ROWGAP]
 tall_row(d, ys[0], [(0, "Pipeline file", "a new pipelines/\nfile in git", L("file-code")),
                     (1, "Warm-up Job", "fills the cache,\nthen writes a marker", L("hard-drive-download")),
-                    (2, "Model cache", "one shared disk,\na marker per pipeline", L("database"))])
+                    (2, "Model cache", "a directory per recipe,\nits marker inside", L("database"))])
 d.tall(C[1], ys[1], COLW, "Campaign pod", "offline, the cache\nmounted read-only", "k8s-pod", logo=True, strong=True)
 d.tall(C[2], ys[1], COLW, "warmup-wait", "init container:\nwaits for the marker", L("clock"))
 d.arrow([(MID[2] + 50, ys[0] + H2), (MID[2] + 50, ys[1] - GAP)])

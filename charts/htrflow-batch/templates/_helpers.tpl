@@ -69,6 +69,25 @@ controller's peers in ingressFrom) the addresses they would be asked to
 police belong to the controller, not the browser, so they have nothing to
 check.
 */}}
+{{- /*
+The ranges a production install cannot leave to a default (0923 D-8). An
+empty list is not a narrow one here: no S3 route fails every volume after
+its GPU time, no cluster ranges leave the pod and service networks out of
+every carve-out, and no IIIF range fetches nothing. Only while the
+NetworkPolicies are rendered -- a campaigns repo's CI renders the chart with
+network.enabled=false to get at the policy objects alone.
+*/}}
+{{- if .Values.network.enabled }}
+{{- if and (not .Values.network.s3Cidrs) (not .Values.network.s3InNamespace) }}
+{{- fail "network.s3Cidrs is empty and network.s3InNamespace is false, so campaign pods and the web front have no route to the results bucket and every volume would fail after its GPU time: list the S3 endpoint's ranges in network.s3Cidrs, or set network.s3InNamespace=true when the bucket is the in-namespace RustFS of charts/htrflow-devstack" }}
+{{- end }}
+{{- if not .Values.network.clusterCidrs }}
+{{- fail "network.clusterCidrs is empty, so no egress range the chart renders would carve the cluster's own pod and service ranges out of itself: list your cluster's pod and service CIDRs" }}
+{{- end }}
+{{- if not .Values.network.iiifCidrs }}
+{{- fail "network.iiifCidrs is empty and has no default: name the address ranges of the IIIF servers your campaigns fetch page images from, e.g. --set network.iiifCidrs='{<cidr>}' (0.0.0.0/0 admits any origin and still reaches no cluster or private address)" }}
+{{- end }}
+{{- end }}
 {{- if and .Values.network.enabled (not .Values.network.web.allowPublicIngress) (not (or .Values.web.ingress.enabled .Values.network.web.ingressFrom)) }}
 {{- if not .Values.network.web.ingressCidrs }}
 {{- fail "network.web.ingressCidrs is empty, and a NetworkPolicy rule with no sources admits every address, so an empty list would open the unauthenticated web front to everyone rather than close it: list the ranges that may reach it, or set network.web.allowPublicIngress=true to accept that any address may" }}
@@ -170,3 +189,101 @@ fsGroup: {{ . }}
 seccompProfile: { type: RuntimeDefault }
 {{- end }}
 
+
+{{/*
+What an egress rule to an address range must NOT reach (2026-09-14 audit,
+then 0923 D-3): the pod and service ranges, every node address, the API
+server,
+link-local 169.254.0.0/16 -- where a cloud serves instance credentials to
+whoever asks -- loopback, and `network.privateCidrs`, the ranges the
+cluster's own network is carved out of. Node addresses are
+`network.nodeCidrs`, or every node's InternalIP when that is empty (Helm
+`lookup`; nothing under `helm template`). As JSON, a list.
+*/}}
+{{- define "htrflow-batch.internalCidrs" -}}
+{{- $nodes := list }}
+{{- range .Values.network.nodeCidrs }}{{ $nodes = append $nodes . }}{{ end }}
+{{- if not $nodes }}
+  {{- range (lookup "v1" "Node" "" "").items }}
+    {{- range .status.addresses }}
+      {{- if and (eq .type "InternalIP") (not (contains ":" .address)) }}{{ $nodes = append $nodes (printf "%s/32" .address) }}{{ end }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- /* The API server by its own values, or its looked-up endpoints (0923 M-3):
+     carved out even on a public address, not only as a node or a private one. */}}
+{{- $api := concat (compact (list .Values.network.apiServer.cidr)) (.Values.network.apiServer.cidrs | default list) }}
+{{- if not $api }}
+  {{- $api = (include "htrflow-batch.apiServerFromEndpoints" (lookup "v1" "Endpoints" "default" "kubernetes") | fromJson).cidrs }}
+{{- end }}
+{{- toJson (concat .Values.network.clusterCidrs $nodes $api (list "169.254.0.0/16" "127.0.0.0/8") .Values.network.privateCidrs | uniq) }}
+{{- end }}
+
+{{/*
+An IPv4 range as JSON {"net": <first address as an integer>, "bits": <prefix>}.
+The schema holds every range a value names to a.b.c.d/n.
+*/}}
+{{- define "htrflow-batch.ipv4Range" -}}
+{{- $parts := splitList "/" . }}
+{{- $net := 0 }}
+{{- range splitList "." (first $parts) }}{{ $net = add (mul $net 256) (atoi .) }}{{ end }}
+{{- toJson (dict "net" $net "bits" (atoi (last $parts))) }}
+{{- end }}
+
+{{/*
+The `to:` entries of an egress rule to address ranges, as JSON: one ipBlock
+per range, each with an `except` of every internal range (internalCidrs
+above) that lies strictly inside it (0923 D-3). The carve-out used to
+apply to a literal `0.0.0.0/0` alone, so `s3Cidrs: [0.0.0.0/0]` or the two
+halves `0.0.0.0/1` + `128.0.0.0/1` reopened the metadata address -- the
+same split the web-ingress guard already refuses (finding 3064). Ranges
+nest or are disjoint, so "inside" is: a longer prefix, and the same first
+`bits` bits. A range named inside an internal one, or equal to it, holds
+none and stays whole: that is the operator naming a host on their own
+network, and egress rules are a union. Argument: (list $ <ranges>).
+*/}}
+{{- define "htrflow-batch.egressTo" -}}
+{{- $root := index . 0 }}
+{{- $internal := include "htrflow-batch.internalCidrs" $root | fromJsonArray }}
+{{- $to := list }}
+{{- range index . 1 }}
+  {{- $outer := include "htrflow-batch.ipv4Range" . | fromJson }}
+  {{- $block := 1 }}
+  {{- range until (sub 32 (int $outer.bits) | int) }}{{ $block = mul $block 2 }}{{ end }}
+  {{- $except := list }}
+  {{- range $internal }}
+    {{- if not (contains ":" .) }}
+      {{- $inner := include "htrflow-batch.ipv4Range" . | fromJson }}
+      {{- if and (gt (int $inner.bits) (int $outer.bits)) (eq (div (int64 $inner.net) $block) (div (int64 $outer.net) $block)) }}
+        {{- $except = append $except . }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+  {{- $ipBlock := dict "cidr" . }}
+  {{- if $except }}{{ $_ := set $ipBlock "except" $except }}{{ end }}
+  {{- $to = append $to (dict "ipBlock" $ipBlock) }}
+{{- end }}
+{{- toJson $to }}
+{{- end }}
+
+{{/*
+S3 egress, for the two pods that reach the bucket -- the batch Job and the
+web front's progress reader -- as a JSON list of rules: with
+network.s3InNamespace, the in-namespace `app: rustfs` pod on 9000
+(charts/htrflow-devstack's RustFS; the two charts share no values), plus
+network.s3Cidrs on network.s3Ports -- named ports, not the whole range
+(2026-09-14 audit): a self-hosted endpoint's range is a slice of the
+operator's own network.
+*/}}
+{{- define "htrflow-batch.s3Egress" -}}
+{{- $s3 := list }}
+{{- if .Values.network.s3InNamespace }}
+{{- $s3 = append $s3 (dict "to" (list (dict "podSelector" (dict "matchLabels" (dict "app" "rustfs")))) "ports" (list (dict "port" 9000))) }}
+{{- end }}
+{{- with .Values.network.s3Cidrs }}
+  {{- $ports := list }}
+  {{- range $.Values.network.s3Ports }}{{ $ports = append $ports (dict "port" .) }}{{ end }}
+  {{- $s3 = append $s3 (dict "to" (include "htrflow-batch.egressTo" (list $ .) | fromJsonArray) "ports" $ports) }}
+{{- end }}
+{{- toJson $s3 }}
+{{- end }}

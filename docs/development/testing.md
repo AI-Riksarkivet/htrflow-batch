@@ -3,39 +3,20 @@
 ## Acceptance levels in detail
 
 0. **Library-API pin test** — the real `Pipeline.from_config`, `Export`,
-   `auto_import` and `Pipeline.run` on a one-page CPU fixture, against the
-   htrflow inside the built wrapper image; the canary for an htrflow bump
-   that breaks the [driver](../how-it-works/wrapper.md). No model is
-   loaded — a binarization step exercises the step, document and serializer
-   path — so it runs offline in seconds. It needs the wrapper image, so it
-   runs where one has already been built, on both architectures: in CI's
-   second-architecture job straight after its build (`make test-driver-real`
-   against the image it just made) and in the wrapper scan job (`dagger call
-   test-driver`, sharing the scan's build); and at release on the very image
-   about to be pushed, inside `publish-docker`. All of them run
-   `packages/wrapper/tests/test_driver_real.py` inside the image. `driver.py` keeps every htrflow import function-local, so the
-   ordinary suite (level 1, `test_driver.py`) runs without torch against
-   fakes.
-1. **Unit tests** — wrapper: manifest walking (IIIF Presentation 2 and 3,
-   sized requests, the 400 → `max` fallback), fetch acceptance (raster
-   magic, textual content types, byte caps, partial-file unlink), resume-list
-   diffing including `page_sources`, the **streaming loop** (consumer
-   starvation accounting, per-page failure propagation, rolling delete,
-   `UploadOutage`), the **verification gate** (missing output ⇒ no
-   `manifest.json`, transient exit), exit-code mapping including SIGTERM,
-   log shipping, warm-up classification, the synthetic-manifest builder.
-   Converter: parse (ids, http(s) only, append-only, the refusal of a
-   chart-owned key in `converter.yaml`), render (golden fixture → expected
-   ConfigMap/Job YAML), the 10 000-volume split, and the chart-agreement test
-   that asserts `docs/reference/configuration.md` equals what
-   `make config-reference` generates. Read API and page: the contract
-   fixture `make api-contract` prints, parsed by the frontend's own schemas
-   (below). Web front: `projection.py`'s pure
-   functions against hand-built Job/Pod/ConfigMap dicts (phase derivation,
-   index-range parsing, per-volume state, termination messages, warm-up
-   matching) plus the route and static-mount tests — no fixture cluster
-   needed. Frontend: schemas, derivation, the ALTO parser, run-log grouping,
-   and component and route tests on jsdom.
+   `auto_import` and `Pipeline.run` on a one-page CPU fixture, inside the
+   built wrapper image: the canary for an htrflow bump that breaks the
+   [driver](../how-it-works/wrapper.md). No model is loaded, so it runs
+   offline in seconds, wherever a wrapper image was just built (CI's
+   second-architecture job, the wrapper scan job, and `publish-docker` before
+   the push). Locally: `make test-driver-real` or `dagger call test-driver`.
+1. **Unit tests**, everything mocked. Wrapper: manifest walking (IIIF
+   Presentation 2 and 3, sized requests, the 400 fallback to the largest size
+   the image's `info.json` offers within the cap), fetch acceptance, resume,
+   the streaming loop, the verification gate, exit-code mapping, log
+   shipping, warm-up classification. Converter: parse, append-only, render
+   against golden fixtures, the 10 000-volume split, the chart-agreement
+   test. Read API: `projection.py`'s pure functions and the routes. Frontend:
+   schemas, derivation, the ALTO parser and components on jsdom.
 2. **Container smoke** — the batch image against a real two-page manifest
    with a RustFS target; assert PAGE and ALTO files and `manifest.json` land.
 3. **Cluster acceptance** —
@@ -63,12 +44,17 @@ make test                       # uv run --all-packages pytest -q
 cd frontend && bun run test     # vitest
 # or, reproducibly, the way CI runs it:
 dagger call test                # add --ca-bundle <file> behind a TLS-inspecting proxy
+cd .dagger && go vet ./publishcheck/ && go test ./publishcheck/   # the dagger module's Go test
 ```
 
-## The two generated files CI checks are current
+The Go test reads the order of `publish-docker`'s gates from the dagger
+module's syntax tree, so a gate commented out or moved after the push fails
+it. It needs no engine; `ci.yml` runs it in a job of its own.
 
-Two files in this repository are printed by a script and committed, and in
-both cases a test in the normal suite fails when the committed copy is not
+## The generated files CI checks are current
+
+Three files in this repository are printed by a script and committed, and in
+each case a test in the normal suite fails when the committed copy is not
 what the script prints — so `dagger call test` (and therefore `make ci`)
 catches a stale one without a job of its own.
 
@@ -76,20 +62,15 @@ catches a stale one without a job of its own.
 | --- | --- | --- |
 | `docs/reference/configuration.md` | `make config-reference` | `packages/converter/tests/test_chart_agreement.py` |
 | `frontend/src/lib/fixtures/api-contract.json` | `make api-contract` | `packages/web/tests/test_contract.py` |
+| `frontend/src/lib/fixtures/wrapper-contract.json` | `make wrapper-contract` | `packages/wrapper/tests/test_contract.py` |
 
-The contract fixture is the one thing tying the read API to the page that
-parses it. `scripts/api_contract.py` calls `projection.py` itself — the same
-functions the routes call — and writes a document covering the rows the two
-sides have historically disagreed about: a live campaign, one whose Job the
-TTL reaped, one whose ending nobody recorded (`Unknown` phase, `unknown`
-volume rows), a `finishedAt` of `null`, a failed volume with its reason, and
-a volume with progress read out of the bucket.
-`frontend/src/lib/fixtures/api-contract.test.ts` parses every row of it with
-`jobSummarySchema`/`jobDetailSchema` and also asserts that the only fields
-the page drops are the two it means to drop — so a field added to the API
-for this page, and then not read by it, shows up here rather than in a
-campaign nobody can open.
-
+The two contract fixtures tie the Python side to the page with no copy in
+between. `scripts/api_contract.py` asks the read API's routes over a fake
+cluster (live, reaped and unknown campaigns, a failed volume, bucket
+progress); `api-contract.test.ts` parses every row with the page's schemas
+and fails when the page drops a field it does not mean to drop. `scripts/wrapper_contract.py`
+calls the wrapper's own functions for a `manifest.json` and the termination
+messages; the run viewer's schema and the failure-sentence tests read them.
 Change a projection and the pytest fails; run `make api-contract` and the
 vitest tells you whether the schemas can still read what you changed.
 
@@ -118,11 +99,9 @@ images from `HTR_WRAPPER_IMAGE` and `HTR_WEB_IMAGE`, which is how the smoke
 runs what it built rather than the release the file pins. `make
 compose-smoke-run WRAPPER_IMAGE=<ref> WEB_IMAGE=<ref>` runs the same smoke
 on any two images, a published release by digest included. The stack is
-torn down, volumes included, however the run ends. The compose `web`
-service is deliberately image-only: `dagger call compose-test` drives the
-same stack but mounts only `.docker/` as the compose project, where a
-`build:` context of `..` cannot resolve, so it checks the published web
-image the compose file pins by digest. The stack itself is described in
+torn down, volumes included, however the run ends. `dagger call compose-test`
+drives the same stack with the published web image the compose file pins
+by digest. The stack itself is described in
 [Try it](../getting-started/try-it.md).
 
 The web service runs site-only in both (`HTRFLOW_WEB_SITE_ONLY=1`): a compose

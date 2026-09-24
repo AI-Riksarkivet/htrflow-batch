@@ -71,8 +71,8 @@ def test_from_config_appends_exports_and_runs_one_page(
 
 
 def test_from_config_takes_a_path_and_rejects_export_steps(tmp_path):
-    """The driver's TypeError fallback is for older builds; the pinned build
-    takes a path. And a user-supplied Export must be refused, not doubled."""
+    """The pinned build takes a path, which is all the driver hands it. And a
+    user-supplied Export must be refused, not doubled."""
     from htrflow.pipeline.pipeline import Pipeline
 
     path = tmp_path / "p.yaml"
@@ -108,11 +108,15 @@ def test_unknown_step_and_model_class_raise_what_the_driver_maps_to_exit_13(tmp_
 
 
 def test_step_registry_carries_the_steps_the_pipelines_use():
+    from htrflow.pipeline import pipeline as pipeline_module
     from htrflow.pipeline.steps import STEPS, Export, auto_import
 
     assert {"segmentation", "textrecognition", "export", "binarization"} <= set(STEPS)
     assert STEPS["export"] is Export
     assert callable(auto_import)
+    # driver._tracked_steps swaps this name to reach the steps a failed
+    # construction built; without it a failure leaks their weights silently
+    assert callable(getattr(pipeline_module, "init_step", None))
 
 
 def test_htrflow_version_is_known():
@@ -181,3 +185,177 @@ def test_a_step_whose_worker_thread_dies_fails_the_page_instead_of_hanging(
         f"page {page.stem}: htrflow's Segmentation (model broken-test-model) "
         "worker thread died; the page is marked failed and the pipeline is rebuilt"
     )
+
+
+@pytest.fixture(autouse=True)
+def interpreter_thread_hook(monkeypatch):
+    """The interpreter's own thread excepthook, as in the pod: pytest's
+    reports even the SystemExit a stopped htrflow worker ends on."""
+    import threading
+
+    monkeypatch.setattr(threading, "excepthook", threading.__excepthook__)
+
+
+class _SlowModel:
+    """A model that answers each line after ``gap`` seconds, or waits on
+    ``hold`` first when one is given: a model on a big page, or a hung one."""
+
+    metadata = {"model": "slow-test-model"}
+
+    def __init__(self, gap: float = 0.0, hold=None):
+        self.gap, self.hold = gap, hold
+
+    def __call__(self, images, **kwargs):
+        import time
+
+        if self.hold is not None:
+            self.hold.wait(60)
+        time.sleep(self.gap)
+        return [[] for _ in images]
+
+
+def test_releasing_real_inference_steps_ends_their_threads(caplog):
+    """Review M-5: ``_stop_threads`` relies on htrflow's own names
+    (``_thread``, ``_queue._thread``, ``_queue._in``, ``_queue._out``); this
+    pins them against the real Inference and BatchedQueue, and that the stop
+    ends both threads without a word at ERROR."""
+    from htrflow.pipeline.steps import TextRecognition
+
+    from htrflow_batch import driver
+
+    steps = [TextRecognition(_SlowModel()), TextRecognition(_SlowModel())]
+    threads = [t for s in steps for t in (s._thread, s._queue._thread)]
+    with caplog.at_level("ERROR"):
+        driver.release_steps(steps)
+    assert caplog.text == ""
+    assert driver.leaked_threads(grace=5.0) == 0
+    assert not any(t.is_alive() for t in threads)
+
+
+def test_the_watchdog_sees_a_real_inference_step_move():
+    """Review I-2: every batch the model finishes changes what
+    ``_progress_mark`` reads off the real BatchedQueue."""
+    import time
+
+    from htrflow.pipeline.steps import TextRecognition
+
+    from htrflow_batch import driver
+
+    step = TextRecognition(_SlowModel(gap=0.05))
+    pipeline = type("P", (), {"steps": [step]})()
+    futures = [step._queue.put(i) for i in range(20)]
+    marks = set()
+    while not all(f.done() for f in futures):
+        marks.add(driver._progress_mark(pipeline))
+        time.sleep(0.01)
+    driver.release_steps([step])
+    assert len(marks) > 5
+
+
+def test_a_dead_real_pipeline_exports_nothing_late(tmp_path, page):
+    """Review I-3, against htrflow's own Pipeline.run and Export: once the
+    page is given up on and the stalled model returns, the helper must not
+    go on to the Exports -- no file for a page already failed, nothing in
+    htrflow's progress registry."""
+    import threading
+    import time
+
+    from htrflow import progress
+    from htrflow.pipeline.pipeline import Pipeline
+    from htrflow.pipeline.steps import Export, TextRecognition
+
+    from htrflow_batch import driver
+
+    hold = threading.Event()
+    out = tmp_path / "outputs"
+    step = TextRecognition(_SlowModel(hold=hold))
+    pipeline = Pipeline(
+        [step, Export(str(out / "alto"), "alto"), Export(str(out / "page"), "page")]
+    )
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(driver, "THREAD_POLL_SECONDS", 0.05)
+        with pytest.raises(driver.PipelineDead, match="no progress"):
+            process_page(pipeline, page, out, seconds=0.5)
+    driver.release_pipeline(pipeline)
+    hold.set()
+    time.sleep(1.0)  # the model returns; a live helper would export now
+    assert not list(out.rglob("*.xml"))
+    assert (progress._exports, progress._steps) == ({}, {})
+
+
+class _Boxes:
+    """A segmentation model as htrflow drives one: per image, the Regions
+    it found -- two boxes, each attached as a child of the node it ran on."""
+
+    metadata = {"model": "boxes-test-model"}
+
+    def __call__(self, images, **kwargs):
+        from htrflow.document import Region
+        from htrflow.utils.geometry import Bbox
+
+        return [
+            [
+                Region(Bbox(10, 10, 200, 60).polygon()),
+                Region(Bbox(10, 70, 200, 120).polygon()),
+            ]
+            for _ in images
+        ]
+
+
+class _Reader:
+    """A text recognition model: one Text per image it is handed."""
+
+    metadata = {"model": "reader-test-model"}
+
+    def __init__(self):
+        self.read = 0
+
+    def __call__(self, images, **kwargs):
+        from htrflow.document import Text
+
+        out = []
+        for _ in images:
+            self.read += 1
+            out.append([Text(f"line {self.read}", 0.9)])
+        return out
+
+
+@pytest.mark.parametrize("levels", [1, 2])
+def test_the_export_check_against_htrflows_own_steps_and_serializers(
+    tmp_path, page, levels
+):
+    """Pins the upstream behaviour the export check exists for: through
+    htrflow's real Segmentation/TextRecognition steps, Export and ALTO/PAGE
+    templates, one segmentation level puts the lines on the page and the
+    files come out without their text -- the page fails, with the cause --
+    while region then line exports it. When htrflow writes flat lines, the
+    one-level case stops failing: this test says so, and the check (and the
+    converter's refusal of the shape) can be retired."""
+    from htrflow.pipeline.pipeline import Pipeline
+    from htrflow.pipeline.steps import Export, Segmentation, TextRecognition
+
+    from htrflow_batch import driver
+    from htrflow_batch.exportcheck import TextNotExported
+
+    out = tmp_path / "outputs"
+    steps = [Segmentation(_Boxes()) for _ in range(levels)] + [
+        TextRecognition(_Reader())
+    ]
+    pipeline = Pipeline(
+        steps + [Export(str(out / "alto"), "alto"), Export(str(out / "page"), "page")]
+    )
+    try:
+        if levels == 1:
+            with pytest.raises(TextNotExported, match="recognized 2 lines") as caught:
+                process_page(pipeline, page, out)
+            assert "directly on the page" in str(caught.value)
+            assert not list(out.rglob("*.xml"))
+        else:
+            files = process_page(pipeline, page, out)
+            alto = ET.fromstring(files["alto"].read_bytes())
+            contents = [
+                e.get("CONTENT") for e in alto.iter() if e.tag.endswith("String")
+            ]
+            assert len(contents) == 4 and all(contents)
+    finally:
+        driver.release_steps(steps)

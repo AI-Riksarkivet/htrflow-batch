@@ -24,7 +24,7 @@ uvx --from "git+https://github.com/AI-Riksarkivet/htrflow-batch@@TAG@#subdirecto
 
 ```bash
 cosign verify docker.io/riksarkivet/htrflow-batch:@TAG@ \
-  --certificate-identity-regexp '^https://github\.com/AI-Riksarkivet/htrflow-batch/\.github/workflows/publish\.yml@' \
+  --certificate-identity-regexp '^https://github\.com/AI-Riksarkivet/htrflow-batch/\.github/workflows/publish\.yml@refs/heads/main$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 gh attestation verify oci://docker.io/riksarkivet/htrflow-batch:@TAG@ -R AI-Riksarkivet/htrflow-batch
 ```

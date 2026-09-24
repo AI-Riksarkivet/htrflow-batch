@@ -24,16 +24,21 @@ Not in scope here:
 
 Some properties are by design and documented rather than bugs — above all that write access
 to a campaigns repository is equivalent to cluster operator. The
-[Security page](https://ai-riksarkivet.github.io/htrflow-batch/development/security/)
+[Security page](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/security/)
 describes the trust boundary, the pod security posture and the NetworkPolicy the chart
 enforces.
 
 ## What the automated checks already cover
 
-- **Trivy** gates CRITICAL findings in both images, on both architectures, on every push
-  to `main` (`.github/workflows/ci.yml`) and before every image is pushed at release
-  (`.github/workflows/publish.yml`), and scans them again every week, with the report in the
-  Security tab (`.github/workflows/security.yml`).
+- **Trivy** gates CRITICAL findings in all three images (the wrapper, the web image and
+  the converter image the Argo CD hook runs): on every push to `main`, and for the
+  converter image on every pull request too (`.github/workflows/ci.yml`), before every image is pushed at release, on each
+  architecture (`.github/workflows/publish.yml`), and every week, both rebuilt from `main`,
+  with the report in the Security tab, and as the published digests the repository pins,
+  pulled from the registry on both architectures (`.github/workflows/security.yml` and
+  `.github/workflows/published.yml`).
+- **Signatures** of those published digests are checked through the chart's own
+  verify-images policy and the Kyverno CLI on every change and every week.
 - **CodeQL** analyses the Python packages, the TypeScript campaign browser, the Go dagger
   module and the workflows (`.github/workflows/codeql.yml`).
 - **TruffleHog** scans the full git history for leaked credentials on every push and pull
@@ -57,26 +62,11 @@ itself belong ([Releasing](https://ai-riksarkivet.github.io/htrflow-batch/develo
 ## Verifying a release
 
 Every image `publish.yml` pushes is signed keylessly with cosign and carries a SLSA
-build-provenance attestation; the per-architecture wrapper images and the web image also
-carry an SPDX SBOM attestation (the multi-architecture index does not — an SBOM of an index
-would describe only one architecture).
+build-provenance attestation, and every per-architecture image an SPDX SBOM attestation.
+The `cosign verify` and `gh attestation verify` commands, anchored to `publish.yml` on
+`main`, are in
+[Releasing → Signing, SBOM and provenance](https://ai-riksarkivet.github.io/htrflow-batch/development/releasing/#signing-sbom-and-provenance).
 
-```bash
-# Signature. Needs cosign 3 or later: older versions report "no signatures found".
-cosign verify docker.io/riksarkivet/htrflow-batch:<tag> \
-  --certificate-identity-regexp '^https://github\.com/AI-Riksarkivet/htrflow-batch/\.github/workflows/publish\.yml@' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
-
-# Build provenance
-gh attestation verify oci://docker.io/riksarkivet/htrflow-batch:<tag> \
-  -R AI-Riksarkivet/htrflow-batch
-
-# SBOM, on a per-architecture image
-gh attestation verify oci://docker.io/riksarkivet/htrflow-batch:<tag>-<arch> \
-  -R AI-Riksarkivet/htrflow-batch --predicate-type https://spdx.dev/Document/v2.3
-```
-
-The chart can enforce the signature at admission. `security.verifyImages` is off by
-default; with `enabled: true`, `issuer: https://token.actions.githubusercontent.com`, a
-`subject` naming this repository's `publish.yml` and the `imageReferences` to check, Kyverno
-refuses an image whose signature does not verify.
+The chart can enforce the signature at admission: `security.verifyImages` is off by
+default, and `charts/htrflow-batch/values-prod.yaml` turns it on for this repository's
+`publish.yml` identity, so Kyverno refuses an image whose signature does not verify.

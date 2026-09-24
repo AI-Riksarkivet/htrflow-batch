@@ -124,26 +124,27 @@ lines-after-imports = 2
 # build refuses a pyproject.toml whose first part is not the pinned
 # checkout's, so the lock cannot drift from the source it installs.
 #
-# torch per architecture, both locked with hashes (finding 3060). x86_64:
-# the cu128 builds from PyTorch's index, which carry Blackwell (sm_120)
-# kernels and run on the drivers the CUDA 12 line supports; 2.9.1/0.24.1
-# is what the wrapper image has shipped since it swapped torch. aarch64:
-# PyPI's wheels, which bundle CUDA 13; 2.13.0/0.28.0 is what the GB10 base
-# was locked to.
+# torch per architecture, both locked with hashes (finding 3060), one
+# release on both. x86_64: the cu129 builds from PyTorch's index, which
+# carry Blackwell (sm_120) kernels and run on the drivers the CUDA 12 line
+# supports (PyPI's x86_64 wheels bundle CUDA 13, which needs a newer
+# driver); cu128, the index before, stops at 2.11, which still carries
+# GHSA-rrmf-rvhw-rf47. aarch64: PyPI's wheels, which bundle CUDA 13.
+# 2.13.0/0.28.0 is the release with no open advisory.
 [tool.uv]
 environments = ["sys_platform == 'linux'"]
 constraint-dependencies = [
-    "torch==2.9.1; platform_machine == 'x86_64'",
-    "torchvision==0.24.1; platform_machine == 'x86_64'",
+    "torch==2.13.0; platform_machine == 'x86_64'",
+    "torchvision==0.28.0; platform_machine == 'x86_64'",
     "torch==2.13.0; platform_machine == 'aarch64'",
     "torchvision==0.28.0; platform_machine == 'aarch64'",
 ]
 
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cu129"
+url = "https://download.pytorch.org/whl/cu129"
 explicit = true
 
 [tool.uv.sources]
-torch = [{ index = "pytorch-cu128", marker = "platform_machine == 'x86_64'" }]
-torchvision = [{ index = "pytorch-cu128", marker = "platform_machine == 'x86_64'" }]
+torch = [{ index = "pytorch-cu129", marker = "platform_machine == 'x86_64'" }]
+torchvision = [{ index = "pytorch-cu129", marker = "platform_machine == 'x86_64'" }]

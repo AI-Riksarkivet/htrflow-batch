@@ -1,10 +1,8 @@
 # View results
 
-The web front serves the Universal Viewer at `/uv.html`. It is the
-`universalviewer4` fork of Universal Viewer, cloned and patched into the web
-image when the image is built (`UV4_REPO` in `.docker/htrflow-web.dockerfile`).
-It renders IIIF Presentation 3 manifests with ALTO text overlays (canvas
-`seeAlso`), including clickable per-line outlines on the page image.
+The web front serves the Universal Viewer at `/uv.html`. It renders IIIF
+Presentation 3 manifests with ALTO text overlays, including clickable
+per-line outlines on the page image.
 
 ## URL scheme
 
@@ -39,49 +37,41 @@ an **alto** column:
   - A **raw** link opens the untouched file.
   - If a page's ALTO cannot be read, is not XML, or has no text at all, the
     view says so in one sentence.
-- **download** fetches the same XML and saves it as `<page>.xml`. The results
-  bucket is a different origin from the campaign browser, and browsers
-  silently ignore a plain `<a download>` across origins, so the download goes
-  through `fetch`, a `Blob` and a same-origin object URL instead. A failed
-  download says so in one sentence rather than doing nothing.
+  - It reads only a file under the results base URL, like the run viewer:
+    `/alto?src=` with any other address is refused before anything is
+    fetched, so a link cannot make the page show someone else's text.
+- **download** saves the same XML as `<page>.xml`.
 
 ## Exposing the web front
 
 A browser needs two addresses:
 
-- **The web front**, for the campaign browser, the viewer, the run viewer
-  and `/api/v1/…`. The chart exposes it as Service `htrflow-web` (port 8081)
-  of type NodePort on `web.nodePort`, default 30800. An ingress or load
-  balancer in front of that Service works the same way.
-  `network.web.ingressCidrs` limits who may connect. The web front has no
-  authentication of its own, so put an authenticating proxy in front of it
-  if the campaign list should not be public.
+- **The web front**, for the campaign browser, the viewers and
+  `/api/v1/…`: Service `htrflow-web`, on NodePort `web.nodePort` (default
+  30800) or behind an ingress controller. It has no authentication of its
+  own; who may reach it is set in
+  [Deploy → Web front ingress](deploy.md#web-front-ingress). Put an
+  authenticating proxy in front if the campaign list should not be public.
 - **The results base URL** (`publicResultsBase`), for manifests, page
-  images, ALTO and run logs, which the browser fetches straight from the
-  bucket. The bucket's CORS rule must allow the web front's origin
-  ([Deploy](deploy.md#s3-secret-bucket-policy-and-cors)).
+  images, ALTO and run logs, fetched straight from the bucket. The bucket's
+  CORS rule must allow the web front's origin
+  ([Deploy](deploy.md#s3-secret-bucket-policy-and-cors)), and the web front's
+  pages may fetch from nowhere else.
 
-How the three sides use these URLs:
+How the pieces use these URLs:
 
-- **Published files keep the URL they were written with.** `publicResultsBase`
-  is written into every `iiif.json` and `manifest.json` as the volume runs,
-  and nothing rewrites those URLs afterwards. Choose a stable address that
-  browsers can reach before running real campaigns.
-- **Forwarded ports: the base is what the browser sees.** When you reach the
-  cluster through port forwarding (`ssh -L`, `kubectl port-forward`),
-  `publicResultsBase` must be the forwarded address as the browser sees it.
-  Forward the web front's port and the bucket's port together.
-- **Pods never resolve `publicResultsBase` themselves.** The wrapper writes
-  through `S3_ENDPOINT` from the S3 Secret. The read API, however, reads each
-  running volume's `progress.json` from the bucket itself. Set
-  **`web.internalResultsBase`** to an address that reaches the bucket from
-  inside the cluster whenever `publicResultsBase` does not. For example,
-  `publicResultsBase` might only resolve on the browser's machine, or sit
-  behind an ingress the pod cannot reach. Unset, it defaults to
-  `publicResultsBase`, which is correct when the two are the same address.
-  When they are not, the only symptom is a campaign browser that never shows
-  a running volume's progress.
-- **Campaign files are fetched from inside the cluster.** Any URL you put in
-  a campaign file, such as a manifest, is fetched by the campaign pod, not by
-  your browser. It must resolve from inside the cluster, and its address
-  must be in `network.iiifCidrs`.
+- **Choose a stable base before real campaigns.** It is written into every
+  `iiif.json` and `manifest.json` and never rewritten. The chart's
+  `publicResultsBase` must equal `converter.yaml`'s `public_results_base`:
+  the run viewer and `/alto` refuse addresses outside the chart's base, so
+  runs published under an old base lose their logs and ALTO views (the
+  viewer still opens them while the old address answers).
+- **Behind port forwarding, the base is what the browser sees.** Forward the
+  web front's port and the bucket's port together.
+- **The read API reads progress from inside the cluster.** Set
+  **`web.internalResultsBase`** to an in-cluster address of the bucket
+  whenever `publicResultsBase` does not resolve from a pod. Unset, it
+  defaults to `publicResultsBase`; wrong, the only symptom is a campaign
+  browser that never shows a running volume's progress.
+- **Campaign-file URLs are fetched by the campaign pod**, not your browser:
+  they must resolve in-cluster and be inside `network.iiifCidrs`.
