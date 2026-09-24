@@ -483,6 +483,21 @@ def test_an_unknown_feature_group_is_refused_and_named():
     assert "vibes" in message and "segmentation" in message
 
 
+@pytest.mark.parametrize(
+    "groups",
+    [[], "layout", [{"a": 1}], [["layout"]], [1]],
+    ids=["empty", "not-a-list", "mapping", "nested-list", "int"],
+)
+def test_feature_groups_that_are_not_a_list_of_names_are_refused(groups):
+    """A mapping or a list inside the list is unhashable: the set lookup
+    raised TypeError, which the CLI does not catch, and printed a
+    traceback instead of a sentence."""
+    qp = _qp()
+    qp["settings"]["feature_groups"] = groups
+    message = _refusal(_SEG, _LINES, _HTR, qp)
+    assert "QualityPrediction" in message and "feature_groups" in message
+
+
 def test_a_feature_group_the_image_cannot_run_is_refused_as_such():
     qp = _qp()
     qp["settings"]["feature_groups"] = ["dit"]

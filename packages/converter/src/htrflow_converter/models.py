@@ -749,7 +749,11 @@ def _quality_step_problem(steps: list) -> str | None:
             )
     groups = settings.get("feature_groups") if isinstance(settings, dict) else None
     if groups is not None:
-        if not isinstance(groups, list) or not groups:
+        if (
+            not isinstance(groups, list)
+            or not groups
+            or not all(isinstance(g, str) for g in groups)
+        ):
             return f"{where}: feature_groups must be a non-empty list of group names"
         not_run = [g for g in groups if g in _QP_GROUPS_NOT_RUN]
         unknown = [
