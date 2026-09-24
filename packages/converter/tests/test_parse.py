@@ -1040,3 +1040,171 @@ def test_a_url_a_browser_opens_is_kept(tmp_path, url):
     )
     campaigns, _, _ = _load(root)
     assert next(c for c in campaigns if c.name == "kyrk").volumes[0].manifest == url
+
+
+# The Hugging Face demo Space's pipeline templates, as it ships them: its
+# "simple" ones read lines a single Segmentation step put straight on the
+# page; its nested one segments regions, then the lines within them.
+SPACE_SIMPLE = """\
+steps:
+- step: Segmentation
+  settings:
+    model: yolo
+    model_settings:
+      model: Riksarkivet/yolov9-lines-within-regions-1
+- step: TextRecognition
+  settings:
+    model: TrOCR
+    model_settings:
+      model: Riksarkivet/trocr-base-handwritten-hist-swe-2
+    generation_settings:
+       batch_size: 16
+- step: OrderLines
+"""
+
+SPACE_NESTED = """\
+steps:
+- step: Segmentation
+  settings:
+    model: yolo
+    model_settings:
+       model: Riksarkivet/yolov9-regions-1
+    generation_settings:
+       batch_size: 4
+- step: Segmentation
+  settings:
+    model: yolo
+    model_settings:
+      model: Riksarkivet/yolov9-lines-within-regions-1
+    generation_settings:
+       batch_size: 8
+- step: TextRecognition
+  settings:
+    model: TrOCR
+    model_settings:
+      model: Riksarkivet/trocr-base-handwritten-hist-swe-2
+    generation_settings:
+       batch_size: 16
+- step: ReadingOrderMarginalia
+  settings:
+    two_page: True
+"""
+
+IMAGE = "image: ghcr.io/riksarkivet/htrflow-batch@sha256:" + "a" * 64 + "\n"
+
+
+def _with_pipeline(tmp_path: Path, steps: str) -> Path:
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    (root / "pipelines" / "demo-v1.yaml").write_text(IMAGE + steps)
+    return root
+
+
+FLAT_TEXT = (
+    'pipelines/demo-v1.yaml: "steps" put the lines that TrOCR (step 2) reads '
+    "directly on the page, with 1 Segmentation step before it — htrflow's "
+    "ALTO and PAGE export writes only the text of lines inside a region, so "
+    "every page would publish without its text; put a region Segmentation "
+    "step before the line step"
+)
+
+
+def test_the_space_simple_template_is_refused_with_the_fix(tmp_path):
+    with pytest.raises(ValidationError) as caught:
+        _load(_with_pipeline(tmp_path, SPACE_SIMPLE))
+    [problem] = caught.value.problems
+    assert problem.startswith(FLAT_TEXT), problem
+
+
+def test_the_space_nested_template_passes(tmp_path):
+    _, pipelines, _ = _load(_with_pipeline(tmp_path, SPACE_NESTED))
+    assert len(pipelines["demo-v1"].steps) == 4
+
+
+@pytest.mark.parametrize(
+    ("steps", "readers"),
+    [
+        # recognition straight on the page: no segmentation at all
+        ("- step: TextRecognition\n  settings: {model: PyLaia}\n", 0),
+        # regions only, then recognition on the regions (the old demo)
+        (
+            "- step: Segmentation\n  settings: {model: yolo}\n"
+            "- step: TextRecognition\n  settings: {model: trocr}\n",
+            1,
+        ),
+        # any step name runs the model it names: Inference with TrOCR reads
+        (
+            "- step: Inference\n  settings: {model: PPDocLayoutV3}\n"
+            "- step: Inference\n  settings: {model: TrOCR}\n",
+            1,
+        ),
+    ],
+)
+def test_every_reader_with_fewer_than_two_segmentations_is_refused(
+    tmp_path, steps, readers
+):
+    with pytest.raises(ValidationError) as caught:
+        _load(_with_pipeline(tmp_path, "steps:\n" + steps))
+    [problem] = caught.value.problems
+    assert "directly on the page" in problem
+    assert f"with {readers or 'no'} Segmentation step" in problem
+
+
+@pytest.mark.parametrize(
+    "steps",
+    [
+        # no text recognition: nothing to lose
+        "- step: Segmentation\n  settings: {model: yolo}\n",
+        # word-level recognition writes its words as the export's lines
+        "- step: Segmentation\n  settings: {model: yolo}\n"
+        "- step: TextRecognition\n  settings: {model: WordLevelTrOCR}\n",
+        # a second reading after a second segmentation reaches depth two
+        "- step: Segmentation\n  settings: {model: yolo}\n"
+        "- step: TextRecognition\n  settings: {model: TrOCR}\n"
+        "- step: Segmentation\n  settings: {model: yolo}\n"
+        "- step: TextRecognition\n  settings: {model: TrOCR}\n",
+        # classification models add no level and no text
+        "- step: Inference\n  settings: {model: DiT}\n",
+    ],
+)
+def test_shapes_whose_text_can_reach_the_export_pass(tmp_path, steps):
+    _load(_with_pipeline(tmp_path, "steps:\n" + steps))
+
+
+def _render_record(root: Path, steps: str) -> None:
+    """``rendered/pipelines/demo-v1.yaml`` as an earlier render wrote it,
+    before the rule existed."""
+    import yaml
+
+    from htrflow_converter import render
+    from htrflow_converter.models import Pipeline
+    from htrflow_converter.parse import _load_config
+
+    doc = yaml.safe_load(IMAGE + steps)
+    p = Pipeline.model_construct(id="demo-v1", **doc)
+    cfg, _ = _load_config(root / "converter.yaml", [])
+    out = root / "rendered" / "pipelines" / "demo-v1.yaml"
+    out.parent.mkdir(parents=True)
+    out.write_text(yaml.safe_dump_all(render.pipeline_objects(p, cfg)))
+
+
+def test_a_rendered_pipeline_of_the_old_shape_warns_and_is_kept(tmp_path):
+    """An already-rendered, unchanged pipeline must not lock the repo: its
+    id names that recipe for good, so it could never be brought to pass."""
+    root = _with_pipeline(tmp_path, SPACE_SIMPLE)
+    _render_record(root, SPACE_SIMPLE)
+    warnings: list[str] = []
+    _, pipelines, _ = load(
+        root / "campaigns", root / "pipelines", root / "converter.yaml", warnings
+    )
+    assert "demo-v1" in pipelines
+    [warning] = warnings
+    assert warning.startswith(FLAT_TEXT), warning
+    assert "kept, since this pipeline was rendered with these steps" in warning
+
+
+def test_a_rendered_pipeline_whose_steps_change_meets_the_rule(tmp_path):
+    root = _with_pipeline(tmp_path, SPACE_SIMPLE.replace("16", "8"))
+    _render_record(root, SPACE_SIMPLE)
+    with pytest.raises(ValidationError):
+        _load(root)
