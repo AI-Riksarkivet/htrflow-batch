@@ -116,6 +116,16 @@ Every stage name can appear in the termination message.
      a long page that moves is never cut off. At eight worker threads that
      cannot be stopped the run ends (exit 1) so the retry gets a fresh pod
      ([A dead htrflow worker thread](failure-handling.md#a-dead-htrflow-worker-thread)).
+   - **A page exported without its text is failed.** After htrflow writes
+     a page, the wrapper looks for the text htrflow recognized for it in
+     the ALTO and the PAGE XML. If a format holds none of it, the page
+     fails before upload, with the cause and the fix: htrflow writes a
+     line's text only inside a region, so lines straight on the page export
+     empty ([Regions, then lines](../reference/campaign-yaml.md#regions-then-lines)).
+     A blank page, with nothing recognized, still publishes its empty ALTO.
+     A page that keeps only part of its text is published, and the run log
+     says how many lines the export is missing. That happens when a region
+     had no line found in it and was read whole.
    - **An upload the store could not take is deferred too**, and any half of
      its pair already stored is deleted. A page whose own output is bad (a
      missing format, malformed XML) is failed.
@@ -133,6 +143,9 @@ Every stage name can appear in the termination message.
      on every attempt.
    - **Unless nothing succeeded.** A run where every processed page failed
      and nothing was resumed points to a broken model or a dead GPU: exit 1.
+     When every one of those pages failed because its export held none of
+     its text, the cause is the pipeline instead. That is exit 13, with the
+     cause said once in the termination message.
 6. **publish** (`publish.py`): writes `iiif.json`, `pipeline.yaml`, and then
    `manifest.json` **last**, as the sole completion marker. Every upload
    carries a real content type; a blind `application/octet-stream` breaks

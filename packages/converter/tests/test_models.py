@@ -353,6 +353,7 @@ def test_steps_that_load_no_model_keep_their_own_settings():
             "id": "p",
             "image": "ghcr.io/x/y@sha256:" + "a" * 64,
             "steps": [
+                *[{"step": "Segmentation", "settings": {"model": "yolo"}}] * 2,
                 {
                     "step": "TextRecognition",
                     "settings": {
@@ -365,7 +366,7 @@ def test_steps_that_load_no_model_keep_their_own_settings():
             ],
         }
     )
-    assert len(pipeline.steps) == 2
+    assert len(pipeline.steps) == 4
 
 
 @pytest.mark.parametrize("name", ["Export", "export"])

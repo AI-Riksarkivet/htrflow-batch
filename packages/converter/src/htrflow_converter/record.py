@@ -5,6 +5,7 @@ held to at all (``parse``: see ``unchanged``)."""
 
 from __future__ import annotations
 
+import contextlib
 import re
 from pathlib import Path
 
@@ -126,3 +127,17 @@ def unchanged(c: Campaign, recorded: list[tuple] | None) -> bool:
     return recorded is not None and recorded == [
         parse_source_line(v.source_line()) for v in c.volumes
     ]
+
+
+def recorded_recipe(path: Path) -> dict[str, object]:
+    """The recipe the previous render left in ``path``. ``rendered/`` is
+    committed, so the previous render IS the record. Nothing when there is
+    none to hold this render against -- a file too broken to parse included,
+    since this render is about to overwrite it anyway."""
+    if not path.is_file():
+        return {}
+    with contextlib.suppress(yaml.YAMLError):
+        return render.recipe(
+            [d for d in yaml.safe_load_all(path.read_text()) if isinstance(d, dict)]
+        )
+    return {}

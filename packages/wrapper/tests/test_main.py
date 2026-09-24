@@ -457,6 +457,55 @@ def test_every_processed_page_failing_is_still_a_volume_failure(env, cfg, s3):
     assert term["error"].startswith("verify failed: all 3 processed pages failed")
 
 
+def _not_exported(n: int) -> str:
+    from htrflow_batch.exportcheck import NOT_EXPORTED
+
+    return (
+        f"{NOT_EXPORTED}: htrflow recognized {n} lines of text on this page, but "
+        "the ALTO and PAGE XML hold none of them — add a region Segmentation "
+        "step before the line step"
+    )
+
+
+def test_every_page_exported_without_its_text_is_a_permanent_failure(env, cfg, s3):
+    """The pipeline's shape, not the model or the GPU: every retry would
+    process the whole volume again and lose the same text. The run ends
+    permanent, the cause said once rather than once per page."""
+    from htrflow_batch.exportcheck import TextNotExported
+
+    def factory(c):
+        def process(path):
+            raise TextNotExported(_not_exported(int(path.stem)))
+
+        return process
+
+    assert main(env, process_page_factory=factory) == EXIT_PERMANENT
+    assert "demo-v1/SE-RA-1234/manifest.json" not in _keys(s3, cfg)
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert (term["stage"], term["permanent"]) == ("verify", True)
+    assert term["error"].startswith("all 3 processed pages failed the same way")
+    assert term["error"].count("region Segmentation step") == 1
+    assert "0001: recognized text not exported" in term["error"]
+
+
+def test_an_export_loss_among_other_failures_stays_transient(env, cfg, s3):
+    """Only a volume that failed wholly for that one reason is the pipeline's
+    fault for certain; a dead GPU among it keeps the retry."""
+    from htrflow_batch.exportcheck import TextNotExported
+
+    def factory(c):
+        def process(path):
+            if path.stem == "0002":
+                raise RuntimeError("CUDA error: no kernel image is available")
+            raise TextNotExported(_not_exported(3))
+
+        return process
+
+    assert main(env, process_page_factory=factory) == EXIT_TRANSIENT
+    term = json.loads(Path(env["TERMINATION_LOG_PATH"]).read_text())
+    assert term["error"].startswith("verify failed: all 3 processed pages failed")
+
+
 def test_the_all_failed_guard_does_not_fire_on_a_resumed_run(env, cfg, s3):
     """The guard is for a broken model or a dead GPU, and a resume is neither:
     a volume SIGTERMed at page 637 of 638 whose one remaining page is the dead
