@@ -421,7 +421,7 @@ Only pages a *previous* run published are fetched again.
 | Item | Bound |
 |---|---|
 | Model weights and the torch runtime | Set by the pipeline's models, not by the volume |
-| Page images in flight | `LOOKAHEAD_PAGES` (64) pages, and at most `LOOKAHEAD_BYTES` (1 GiB) |
+| Page images in flight | `LOOKAHEAD_PAGES` (64) pages, and at most `LOOKAHEAD_BYTES` (1 GiB, half the tmpfs) |
 | Outputs awaiting upload | One page's PAGE and ALTO |
 | The source manifest and its `PageRef` list | At most `MANIFEST_MAX_BYTES` (16 MiB) |
 | Per-page outcomes (`StreamStats.results`) and dimensions (`store.page_dims`) | A few hundred bytes per page |
@@ -429,6 +429,11 @@ Only pages a *previous* run published are fetched again.
 | tmpfs `sizeLimit` | 2 Gi |
 | Pod memory **request** | 8 Gi (`manifests/campaign-job.yaml`, and what Kueue's quota must cover) |
 | Pod memory **limit** | 16 Gi (what tmpfs and the OOM killer see) |
+
+The last three rows are the Job's defaults. A pipeline that names a
+[pod size](../reference/campaign-yaml.md#pod-sizes) takes its size's
+`workdir` as the tmpfs `sizeLimit`, half of it as `LOOKAHEAD_BYTES`, and its
+`memory` as request and limit alike.
 
 - **Width capping is mandatory**, and the wrapper enforces it for canvases
   with an IIIF image service. Uncapped masters would still fit the window, but

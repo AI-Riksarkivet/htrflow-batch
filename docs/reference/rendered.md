@@ -317,6 +317,14 @@ What each field is for, and where its value comes from:
   downloads its lookahead window of pages here, and apart from the tmpfs this
   read-only-rootfs container can write nowhere
   ([The Wrapper → Memory bounds](../how-it-works/wrapper.md#memory-bounds)).
+- **`resources`: 4 CPU, 8 Gi requested with a 16 Gi limit, 1 GPU.** The
+  numbers Kueue counts against the quota. This pipeline names no `size:`;
+  one that does gets its size's numbers instead
+  ([Pod sizes](campaign-yaml.md#pod-sizes)): request and limit alike, the
+  size's `workdir` as the `work` emptyDir's `sizeLimit`, one more env var,
+  `LOOKAHEAD_BYTES`, at half of it, and, when the size names a flavor, that
+  flavor's node labels merged into `nodeSelector`. Kueue adds the admitted
+  flavor's node labels and tolerations to the pod when it starts the Job.
 - **The `data` mount, `readOnly: true`, and its `subPath`.** The model
   cache PVC (`converter.yaml`'s `data_pvc`), mounted read-only on every batch
   pod, and only this pipeline's directory on it: `<pipeline id>-<recipe
@@ -362,7 +370,9 @@ Only the `steps:` document goes in, not `image:`. `steps:` is what htrflow
 parses (`Pipeline.from_config`), and the image lives in the Job specs. The
 sha256 annotation is computed from exactly this YAML dump. It changes only
 when `steps:` changes, which should never happen under the id `demo-v1` once
-anything has run.
+anything has run. A pipeline with a `size:` carries one more annotation,
+`<label-domain>/size: <name>`: the size is part of the recipe the id names,
+and this is where the record of it is.
 
 ## The warm-up Job
 
