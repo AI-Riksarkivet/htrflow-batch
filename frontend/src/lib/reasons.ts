@@ -59,11 +59,10 @@ function pageNames(error: string, key?: "missing" | "failed"): string[] {
 
 /** "(p012, p045 and 2 more)" of `total`, or nothing when none is named. */
 function naming(names: string[], total: number): string {
-  const rest = total - PAGES_SHOWN;
   if (names.length === 0) return "";
-  return ` (${names.slice(0, PAGES_SHOWN).join(", ")}${
-    rest > 0 ? ` and ${rest} more` : ""
-  })`;
+  const shown = names.slice(0, PAGES_SHOWN); // a clip may have left fewer
+  const rest = total - shown.length;
+  return ` (${shown.join(", ")}${rest > 0 ? ` and ${rest} more` : ""})`;
 }
 
 /**
