@@ -97,8 +97,8 @@ sizes:
 | `flavor` | none | A `flavors` entry. Its `nodeLabels` become the pod's `nodeSelector`, which keeps Kueue off every other flavor. None: any flavor with the quota |
 | `gpu` | `1` | `nvidia.com/gpu`, 1 or more |
 | `cpu` | required | Whole cores (`8`) or millicores (`500m`) |
-| `memory` | required | `Mi`, `Gi` or `Ti` (or `M`, `G`, `T`). Must be more than `workdir`: the in-memory `/work` counts against it, and the process gets the rest |
-| `workdir` | `2Gi` | The size of the memory-backed `/work`. The wrapper's page lookahead (`LOOKAHEAD_BYTES`) is half of it |
+| `memory` | required | Whole bytes, or with `Ki`, `Mi`, `Gi`, `Ti` (or `k`, `M`, `G`, `T`). Must leave at least 1Gi beside `workdir`: the in-memory `/work` counts against it, and the process gets the rest. The 1Gi is a floor against slips, not a sizing: a model wants several |
+| `workdir` | `2Gi` | The size of the memory-backed `/work`, at least `512Mi`: it holds `HOME`, `TMPDIR` and the wrapper's page lookahead (`LOOKAHEAD_BYTES`), which is half of it |
 
 Request and limit are the same number. A pod using more memory than it
 requested is the first the kubelet evicts under pressure, and the pages
