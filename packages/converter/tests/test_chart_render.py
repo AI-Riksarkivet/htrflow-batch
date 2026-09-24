@@ -1164,6 +1164,45 @@ def test_a_second_release_can_name_its_own_cluster_objects():
     assert objects(rendered, "WorkloadPriorityClass") == []
 
 
+# --- B104: one flavor or several -------------------------------------------
+
+#: The queue objects an install that does not set `queue.flavors` renders,
+#: recorded before the list existed: the single-flavor case has to stay
+#: exactly what it was, or an upgrade would change a live ClusterQueue.
+#: One case per D-9 toggle, since each takes its own branch of kueue.yaml.
+QUEUE_GOLDEN = Path(__file__).parent / "golden" / "chart-queue.yaml"
+QUEUE_CASES = {
+    "default": (),
+    "flavor-referenced": ("queue.createFlavor=false",),
+    "queue-referenced": (
+        "queue.createClusterQueue=false",
+        "queue.clusterQueueName=shared-cq",
+    ),
+    "renamed": (
+        "queue.flavor=team-b-flavor",
+        "queue.clusterQueueName=team-b-cq",
+        'json:queue.resources=[{"name":"cpu","quota":8},{"name":"memory","quota":"16Gi"},'
+        '{"name":"nvidia.com/gpu","quota":2}]',
+        "queue.createPriorityClasses=false",
+    ),
+}
+
+
+def _queue_objects(sets: tuple[str, ...]) -> list[dict]:
+    """The Kueue objects of a render, without the chart-version label (a
+    release moves it, and it is not what an install's queue is)."""
+    found = [o for o in render(sets=DEFAULT_SETS + sets) if "kueue" in o["apiVersion"]]
+    for o in found:
+        o["metadata"]["labels"].pop("helm.sh/chart")
+    return found
+
+
+@pytest.mark.parametrize("case", QUEUE_CASES)
+def test_an_install_without_flavors_renders_the_queue_it_always_did(case: str):
+    golden = yaml.safe_load(QUEUE_GOLDEN.read_text(encoding="utf-8"))
+    assert _queue_objects(QUEUE_CASES[case]) == golden[case]
+
+
 # --- 3103: every guard, alone, refuses in its own words -------------------
 
 #: One case per `fail`/`required` in the two charts: a render that satisfies
