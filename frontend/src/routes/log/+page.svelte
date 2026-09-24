@@ -303,25 +303,6 @@
     overflow-wrap: anywhere;
   }
 
-  .title-block {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    min-width: 0;
-  }
-
-  .back {
-    color: var(--muted-foreground);
-    font-size: 0.8rem;
-    text-decoration: none;
-    width: fit-content;
-  }
-
-  .back:hover {
-    color: var(--primary);
-    text-decoration: underline;
-  }
-
   .title-row {
     display: flex;
     align-items: center;
