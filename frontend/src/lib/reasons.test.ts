@@ -98,6 +98,28 @@ describe("describeReason", () => {
     ).toContain("1 page is missing from the results (p7);");
   });
 
+  test("a clip that leaves fewer names than it shows still adds up", () => {
+    // "(0001 and 2 more)" of five would be three pages: the rest is what
+    // the sentence did not name, however many it did.
+    expect(
+      reasonOf({
+        stage: "verify",
+        error:
+          "verify failed: 5 missing, 0 failed missing=['0001', '00...(truncated)",
+      }),
+    ).toBe(
+      "5 pages are missing from the results (0001 and 4 more); the volume is " +
+        "retried automatically and only those pages are redone.",
+    );
+    expect(
+      reasonOf({
+        stage: "verify",
+        error:
+          "verify failed: 2 missing, 0 failed missing=['0001', '00...(truncated)",
+      }),
+    ).toContain("2 pages are missing from the results (0001 and 1 more);");
+  });
+
   test("a verify message whose page lists were truncated away", () => {
     // The count is still there to read; only a message that has neither a
     // count nor one whole page name says "some".
