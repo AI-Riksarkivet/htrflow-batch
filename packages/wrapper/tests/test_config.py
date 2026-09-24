@@ -225,8 +225,8 @@ def _images(value: str) -> list[str]:
 def test_images_splits_on_whitespace_and_keeps_a_iiif_size_comma_whole():
     """`/full/2500,/0/default.jpg` is a legal IIIF Image API size request; a
     comma split tore it in half and failed setup on "/0/default.jpg"."""
-    a = "https://lbiiif.riksarkivet.se/arkis!R0001203_00044/full/2500,/0/default.jpg"
-    b = "https://lbiiif.riksarkivet.se/arkis!R0001203_00045/full/2500,/0/default.jpg"
+    a = "https://images.example.org/archives!R0001203_00044/full/2500,/0/default.jpg"
+    b = "https://images.example.org/archives!R0001203_00045/full/2500,/0/default.jpg"
     assert _images(f"{a} {b}") == [a, b]
     assert _images(a) == [a]
 

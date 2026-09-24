@@ -117,14 +117,14 @@ def test_images_source_line_joins_on_a_space_so_a_iiif_size_comma_survives():
     v = Volume(
         id="R0001203",
         images=[
-            "https://lbiiif.riksarkivet.se/arkis!R0001203_00044/full/2500,/0/default.jpg",
-            "https://lbiiif.riksarkivet.se/arkis!R0001203_00045/full/2500,/0/default.jpg",
+            "https://images.example.org/archives!R0001203_00044/full/2500,/0/default.jpg",
+            "https://images.example.org/archives!R0001203_00045/full/2500,/0/default.jpg",
         ],
     )
     assert v.source_line() == (
         "R0001203\timages:"
-        "https://lbiiif.riksarkivet.se/arkis!R0001203_00044/full/2500,/0/default.jpg "
-        "https://lbiiif.riksarkivet.se/arkis!R0001203_00045/full/2500,/0/default.jpg"
+        "https://images.example.org/archives!R0001203_00044/full/2500,/0/default.jpg "
+        "https://images.example.org/archives!R0001203_00045/full/2500,/0/default.jpg"
     )
 
 

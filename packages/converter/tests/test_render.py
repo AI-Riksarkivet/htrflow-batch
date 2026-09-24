@@ -579,7 +579,7 @@ def _images_campaign(volumes: int, pages: int) -> Campaign:
     line of space-joined URLs, so 300 pages of a 90-character URL is 23 kB on
     that line (`Volume.source_line`)."""
     url = (
-        "https://lbiiif.riksarkivet.se/arkis!R00012345/jp2/00000000000000000{:03d}.jpg"
+        "https://images.example.org/archives!R00012345/jp2/00000000000000000{:03d}.jpg"
     )
     return Campaign(
         name="kyrk",
@@ -778,7 +778,7 @@ def test_the_apply_and_the_read_api_write_the_same_field_names():
 
 
 IIIF_SIZE = (
-    "https://lbiiif.riksarkivet.se/arkis!R0001203_{:05d}/full/2500,/0/default.jpg"
+    "https://images.example.org/archives!R0001203_{:05d}/full/2500,/0/default.jpg"
 )
 
 

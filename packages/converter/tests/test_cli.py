@@ -354,7 +354,7 @@ def test_a_campaign_named_like_a_part_of_another_is_not_taken_for_one(tmp_path, 
 
 def _images_volumes(count: int, pages: int = 300) -> list[dict]:
     url = (
-        "https://lbiiif.riksarkivet.se/arkis!R00012345/jp2/00000000000000000{:03d}.jpg"
+        "https://images.example.org/archives!R00012345/jp2/00000000000000000{:03d}.jpg"
     )
     return [
         {"id": f"vol{v:04d}", "images": [url.format(p) for p in range(pages)]}
