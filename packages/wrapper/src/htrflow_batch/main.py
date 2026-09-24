@@ -17,6 +17,7 @@ import httpx
 
 from . import bounded, provenance, publish
 from .config import Config, ConfigError
+from .exportcheck import NOT_EXPORTED, TextNotExported
 from .iiif import (
     ManifestError,
     PageRef,
@@ -517,7 +518,8 @@ def _verify(
     fails deterministically would fail identically on all four retries and
     leave the bucket without manifest.json — except when every page this run
     processed failed and nothing was resumed, which is a broken model or a
-    dead GPU, not a volume.
+    dead GPU, not a volume -- or, when every one of them lost its text in
+    export (exportcheck), the pipeline's shape: that one is permanent.
     Returns what is stored MINUS this run's failed pages (W3): with RESUME
     off there is no `changed` set for `_resume` to delete from, so a page
     reprocessed and failed still has the previous run's objects -- and publish
@@ -566,6 +568,15 @@ def _verify(
     # would otherwise exit 1, retry, and end FailIndex -- the outcome this
     # whole rule exists to remove.
     if failed and "ok" not in statuses and "skipped" not in statuses:
+        errors = [stats.results[n].error or "" for n in failed]
+        if all(e.startswith(NOT_EXPORTED) for e in errors):
+            # The pipeline's shape (exportcheck), not a model or a GPU: every
+            # retry would redo the volume and lose the same text. Permanent,
+            # and the cause said once -- manifest-less, this is its record.
+            raise TextNotExported(
+                f"all {len(statuses)} processed pages failed the same way "
+                f"(first, {failed[0]}: {errors[0]})"
+            )
         raise RuntimeError(
             f"verify failed: all {len(statuses)} processed pages failed"
             f"{_failure_detail(stats, failed)} failed={failed}"
