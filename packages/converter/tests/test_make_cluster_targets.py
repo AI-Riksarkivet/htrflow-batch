@@ -408,3 +408,22 @@ def test_the_override_wins_and_is_checked(stubs: Stubs):
     refused = stubs.make("psa-labels", "PSA_ENFORCE=privileged")
     assert refused.returncode != 0
     assert len(stubs.calls("kubectl")) == 1
+
+
+def test_every_env_example_key_is_one_the_makefile_exports():
+    """`.env.example` is the list of cluster-local constants the Makefile
+    loads and exports to `docker compose`; a key it does not export is read by
+    nothing, and a person editing their `.env` believes it changes something.
+    `HTR_DATA_PVC` outlived `make warmup` that way."""
+    import re
+
+    keys = re.findall(
+        r"^([A-Z][A-Z0-9_]*)=",
+        (REPO / ".env.example").read_text(encoding="utf-8"),
+        re.M,
+    )
+    makefile = (REPO / "Makefile").read_text(encoding="utf-8")
+    export = re.search(r"^export ((?:[^\n]*\\\n)*[^\n]*)", makefile, re.M)
+    assert export, "the Makefile no longer exports .env.example's keys"
+    exported = set(export.group(1).replace("\\\n", " ").split())
+    assert [k for k in keys if k not in exported] == []

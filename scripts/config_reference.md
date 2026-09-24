@@ -4,9 +4,9 @@
 
 # Configuration
 
-Every setting of the wrapper, the web front, the converter and the
-`htrflow-batch` chart, generated from the three config models and the
-chart's `values.yaml`. The `htrflow-devstack` chart — the development support
+Every setting of the wrapper, the web front, the converter, the
+`htrflow-batch` chart and the frontend build, generated from the three
+config models, the chart's `values.yaml` and the frontend's `config.ts`. The `htrflow-devstack` chart — the development support
 stack (RustFS, an in-cluster registry, `devStack.insecureDefaults`,
 `rustfs.accessKey`/`secretKey`) — is a separate surface, documented in its own
 [README](https://github.com/AI-Riksarkivet/htrflow-batch/blob/main/charts/htrflow-devstack/README.md).
@@ -63,6 +63,16 @@ without a retry.
   when `rustfs.publicLogs` is off. The run log is the only key anything
   writes under `status/`, so there is nothing else to exclude. See
   [the bucket policy](../how-it-works/security.md#the-bucket-policy).
+
+The *Set by* column says who can set each key in a deployment, read off
+what really sets it: the converter's Job skeleton and the job-shape
+policy's list of the env a Job may carry, the chart's web Deployment, the
+images' own `ENV` and the compose stack. **A local run only** means exactly
+that: nothing in a deployment can set it — no converter key renders it,
+and with `security.policies` on, job-shape refuses a Job that sets it — so
+it is for a hand run of the image, or the compose stack. The chart sets
+`HTRFLOW_NAMESPACES` to its own release namespace and offers no value for
+it: the read API parses a list, but one release reads one namespace.
 
 The *Security* column below reads *what the key exposes — who enforces it*:
 **cluster** = the API server or an admission policy, **render** = `helm

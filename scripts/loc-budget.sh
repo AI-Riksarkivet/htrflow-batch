@@ -332,7 +332,11 @@ fail=0
 # it the tree the run returned, and verify makes a volume whose every page
 # failed that way permanent, with the cause said once. Most of it is the
 # sentence the page records and why the rule is what it is.
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 4203
+# 4203 -> 4212 (hard-coded audit D): the reason next to each safety cap
+# that had only its number -- the info.json cap, five upload and three
+# rebuild failures in a row, the S3 client's timeouts and retries. Comments
+# that state WHY, which this budget is not meant to squeeze.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 4212
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
@@ -713,7 +717,24 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 4203
 # itself did not load -- and an unchanged campaign rendered under the old
 # default keeps the manifest URLs its record holds, with a warning. Most of
 # it is the two sentences and the recorded-manifest lookup.
-check converter "$(count packages/converter/src -name '*.py')" 4379
+# 4379 -> 4495 (demo findings, apply takes over what it did not make): a
+# forced apply from an admin kubeconfig adopted a hand-made ConfigMap of the
+# same name, label and data alike. cluster.py +53: NotOurs and its sentence,
+# made_here, and Cluster.claim with the memo of what each read and write
+# already said -- so the guard costs a read only for an object the apply
+# never read (pipeline ConfigMaps, warm-ups, status records) -- called by
+# apply itself, dry runs included. cli.py +63: a campaign whose Job or
+# ConfigMap is not the converter's is held back as a pair, the live-record
+# checks skip an object that is no campaign's record, and the warm-up and
+# campaigns that mount a foreign pipeline ConfigMap are held back with it
+# (they would run its recipe under this pipeline's id), with the sentence.
+# 4495 -> 4514 (hard-coded audit B10): converter.yaml's public_results_base
+# is required and must be a URL a browser can open -- empty, it failed every
+# volume of every campaign after admission. The validator and its sentence,
+# and the unvalidated stand-in config `load` checks campaigns against when
+# converter.yaml itself did not load (no default can stand in any more).
+# 4514 -> 4516 (hard-coded audit D): why a Job runs at most 10 000 volumes.
+check converter "$(count packages/converter/src -name '*.py')" 4516
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

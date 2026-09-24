@@ -40,7 +40,8 @@ shape it:
   wrapper reads the image's `info.json` and asks once more, for the full
   size if that is within the cap, else the largest size the service lists
   within it (all a level 0 service offers), else its `maxWidth` when that is
-  below the cap, and `/full/max/` only when none of these is known.
+  below the cap, and `/full/max/` only when none of these is known. An
+  `info.json` over 1 MiB counts as none known.
 
 A canvas with **no** image service cannot be resized on the server. It is
 fetched at native size, bounded only by `FETCH_MAX_BYTES`.

@@ -296,6 +296,32 @@ def test_the_status_record_is_listed_with_its_data(reader: Reader):
     assert all(c["accept"] != PARTIAL_METADATA for c in statuses)
 
 
+@pytest.mark.parametrize(
+    "read",
+    [
+        lambda r: r.list_jobs(),
+        lambda r: r.list_warmups(),
+        lambda r: r.list_configmaps(),
+        lambda r: r.list_pods("htr-a", "kyrk"),
+    ],
+    ids=["jobs", "warmups", "configmaps", "pods"],
+)
+def test_a_list_with_null_items_is_empty(reader: Reader, read):
+    """The API server answers an empty list with ``"items": null`` -- the
+    PartialObjectMetadataList of a namespace with no campaign records does,
+    seen against a live one -- and that is no objects, not a TypeError that
+    turns the list route into a 500."""
+    reader.answer["GET"] = {"metadata": {}, "items": None}
+    assert read(reader) == []
+
+
+def test_the_list_route_answers_a_namespace_with_no_records(reader: Reader):
+    reader.answer["GET"] = {"metadata": {}, "items": None}
+    resp = TestClient(create_app(reader)).get("/api/v1/jobs")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
 def test_list_pods_asks_for_one_jobs_pods(reader: Reader):
     reader.answer["GET"] = {"items": []}
     reader.list_pods("htr-a", "kyrk")

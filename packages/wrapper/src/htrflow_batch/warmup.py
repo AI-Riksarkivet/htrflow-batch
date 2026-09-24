@@ -117,9 +117,9 @@ def main(
     try:
         return _warmup(env, load)
     except Terminated:
-        # A drain, a preemption, or a pod-level activeDeadlineSeconds (the
-        # warm-up Job's 1 h deadline is Job-level until B74 moves it, and that
-        # one deletes the pod). Else the kill leaves an empty message.
+        # A drain, a preemption, or the pod's own activeDeadlineSeconds (its
+        # 1 h download budget, which the kubelet enforces and keeps the pod:
+        # warmup-job.yaml). Else the kill leaves an empty message.
         log.error("warm-up killed by SIGTERM (deadline or drain)")
         terminate(env, {"stage": "warmup", "permanent": False, "error": "SIGTERM"})
         _hard_exit(EXIT_SIGTERM)

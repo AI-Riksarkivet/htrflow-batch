@@ -11,6 +11,23 @@ function fetch404(): typeof fetch {
   ) as typeof fetch;
 }
 
+describe("/log header", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    window.history.replaceState(null, "", "/");
+  });
+
+  test("links back to the campaign list", () => {
+    window.history.replaceState(null, "", "/log?log=http://bucket/logs/v1.txt");
+    vi.stubGlobal("fetch", fetch404());
+    render(LogPage);
+    expect(screen.getByRole("link", { name: "← campaigns" })).toHaveAttribute(
+      "href",
+      "/",
+    );
+  });
+});
+
 describe("/log live mode", () => {
   beforeEach(() => {
     vi.useFakeTimers();

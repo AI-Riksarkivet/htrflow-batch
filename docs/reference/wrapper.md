@@ -162,6 +162,14 @@ the wrapper, which takes the `143` path below.
 
 Results land at `{S3_PREFIX}/{PIPELINE_ID}/{VOLUME_REF}/…` (`Config.volume_prefix`).
 
+**In a deployment**, a Job carries only the env its skeleton and
+`converter.yaml` give it, and with `security.policies` on, job-shape refuses
+one that carries more. Every setting above that neither sets —
+`MAX_IMAGE_WIDTH`, `RESUME`, the lookahead bounds, `MAX_PAGES`, the download
+settings, `MAX_IMAGE_PIXELS`, `PAGE_TIMEOUT_SECONDS`, `LOG_SHIP_SECONDS` —
+runs at its default there. The *Set by* column of
+[Configuration](configuration.md) says who can set each one.
+
 **Hand runs.** Run by hand, outside a rendered Job, the wrapper needs the six
 required vars and a credentials source; the knobs worth touching are
 `MAX_PAGES` (cap it to 1 or a handful of pages, check the output, then run
