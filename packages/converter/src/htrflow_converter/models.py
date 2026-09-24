@@ -916,6 +916,14 @@ _MEMORY_RE = re.compile(r"([1-9][0-9]*)(Ki|Mi|Gi|Ti|k|M|G|T)?\Z")
 _CPU_RE = re.compile(r"[1-9][0-9]*m?\Z")
 _UNITS = {"": 1, "k": 10**3, "M": 10**6, "G": 10**9, "T": 10**12}
 _UNITS |= {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40}
+#: The least a size's ``/work`` may be: HOME, TMPDIR and the ultralytics
+#: settings live there beside the page lookahead (half of it), which has to
+#: hold at least a few pages. Below it the lookahead rounds towards 0, which
+#: job-shape refuses at apply time (review of PR #35).
+_WORKDIR_FLOOR = 512 * 2**20
+#: The least a size's memory leaves beside its ``/work``: a floor that
+#: catches a slip (2049Mi against 2Gi), not a sizing -- models want GiBs.
+_PROCESS_FLOOR = 2**30
 
 
 def memory_bytes(quantity: str) -> int:
@@ -1005,13 +1013,19 @@ class Size(BaseModel):
             )
         return v
 
-    @field_validator("memory", "workdir")
+    @field_validator("memory", "workdir", mode="before")
     @classmethod
-    def _check_memory(cls, v: str) -> str:
-        if not _MEMORY_RE.match(v):
+    def _check_memory(cls, v: object, info: ValidationInfo) -> object:
+        v = str(v) if _positive_int(v) else v  # bytes, as YAML reads them
+        if not isinstance(v, str) or not _MEMORY_RE.match(v):
             raise ValueError(
                 f"is not a memory quantity (got {shown(v)}) — a whole number "
-                "followed by Ki, Mi, Gi or Ti (or k, M, G, T)"
+                "of bytes, or followed by Ki, Mi, Gi or Ti (or k, M, G, T)"
+            )
+        if info.field_name == "workdir" and memory_bytes(v) < _WORKDIR_FLOOR:
+            raise ValueError(
+                f"is under 512Mi (got {shown(v)}) — /work holds HOME, TMPDIR "
+                "and the page lookahead, which is half of it"
             )
         return v
 
@@ -1168,12 +1182,12 @@ class ConverterConfig(BaseModel):
                 raise ValueError(f'"flavors" lists flavor "{name}" twice')
         labels = {f.name: f.node_labels for f in self.flavors}
         for name, size in self.sizes.items():
-            if memory_bytes(size.memory) <= memory_bytes(size.workdir):
+            if memory_bytes(size.memory) - memory_bytes(size.workdir) < _PROCESS_FLOOR:
                 raise ValueError(
-                    f'size "{name}" has memory {size.memory}, which is not more '
-                    f"than its workdir ({size.workdir}) — the in-memory /work "
-                    "counts against the same limit, and the process gets what "
-                    "is left"
+                    f'size "{name}" has memory {size.memory}, which leaves less '
+                    f"than 1Gi beside its workdir ({size.workdir}) — the "
+                    "in-memory /work counts against the same limit, and the "
+                    "process gets what is left"
                 )
             if size.flavor is not None and size.flavor not in labels:
                 raise ValueError(

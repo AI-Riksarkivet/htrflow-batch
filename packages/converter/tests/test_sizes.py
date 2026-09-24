@@ -181,48 +181,49 @@ def _config(text: str) -> ConverterConfig:
     return ConverterConfig.model_validate({**base, **yaml.safe_load(text)})
 
 
-@pytest.mark.parametrize(
-    "text,said",
-    [
-        (
-            "sizes: {large: {flavor: a100, cpu: 8, memory: 32Gi}}",
-            'size "large" names flavor "a100", which converter.yaml\'s '
-            "flavors does not list (none)",
-        ),
-        (
-            "sizes: {large: {cpu: 8, memory: 2Gi}}",
-            'size "large" has memory 2Gi, which is not more than its workdir (2Gi)',
-        ),
-        ("sizes: {large: {cpu: eight, memory: 32Gi}}", "is not a CPU quantity"),
-        ("sizes: {large: {cpu: 8, memory: 32GB}}", "is not a memory quantity"),
-        ("sizes: {large: {cpu: 8, memory: 32Gi, gpu: 0}}", "1 or more"),
-        ("sizes: {Large: {cpu: 8, memory: 32Gi}}", "is not a size name"),
-        (
-            "flavors: [{name: a, nodeLabels: {x: '1'}}, {name: a, nodeLabels: "
-            "{x: '2'}}]",
-            'lists flavor "a" twice',
-        ),
-        ("flavors: [{name: a, nodeLabels: {}}]", "has no nodeLabels"),
-        (
-            "node_selector: {nvidia.com/gpu.product: NVIDIA-L4}\n"
-            "flavors: [{name: a100, nodeLabels: {nvidia.com/gpu.product: A100}}]\n"
-            "sizes: {large: {flavor: a100, cpu: 8, memory: 32Gi}}",
-            "node_selector says nvidia.com/gpu.product=NVIDIA-L4",
-        ),
-    ],
-    ids=[
-        "unknown-flavor",
-        "memory-under-workdir",
-        "cpu",
-        "memory",
-        "no-gpu",
-        "name",
-        "flavor-twice",
-        "no-labels",
-        "selector-conflict",
-    ],
-)
-def test_converter_yaml_refuses_a_size_no_pod_could_run_as(text: str, said: str):
+#: case -> (converter.yaml text, what the refusal says)
+REFUSED = {
+    "unknown-flavor": (
+        "sizes: {large: {flavor: a100, cpu: 8, memory: 32Gi}}",
+        'size "large" names flavor "a100", which converter.yaml\'s '
+        "flavors does not list (none)",
+    ),
+    "memory-under-workdir": (
+        "sizes: {large: {cpu: 8, memory: 2Gi}}",
+        'size "large" has memory 2Gi, which leaves less than 1Gi beside its '
+        "workdir (2Gi)",
+    ),
+    # review item 6: 1Mi for the process is no margin at all
+    "memory-margin": (
+        "sizes: {large: {cpu: 8, memory: 2049Mi}}",
+        'size "large" has memory 2049Mi, which leaves less than 1Gi',
+    ),
+    # review item 4: a workdir of bytes rendered LOOKAHEAD_BYTES 0
+    "workdir-floor": (
+        "sizes: {large: {cpu: 8, memory: 32Gi, workdir: '1'}}",
+        "is under 512Mi",
+    ),
+    "cpu": ("sizes: {large: {cpu: eight, memory: 32Gi}}", "is not a CPU quantity"),
+    "memory": ("sizes: {large: {cpu: 8, memory: 32GB}}", "is not a memory quantity"),
+    "no-gpu": ("sizes: {large: {cpu: 8, memory: 32Gi, gpu: 0}}", "1 or more"),
+    "name": ("sizes: {Large: {cpu: 8, memory: 32Gi}}", "is not a size name"),
+    "flavor-twice": (
+        "flavors: [{name: a, nodeLabels: {x: '1'}}, {name: a, nodeLabels: {x: '2'}}]",
+        'lists flavor "a" twice',
+    ),
+    "no-labels": ("flavors: [{name: a, nodeLabels: {}}]", "has no nodeLabels"),
+    "selector-conflict": (
+        "node_selector: {nvidia.com/gpu.product: NVIDIA-L4}\n"
+        "flavors: [{name: a100, nodeLabels: {nvidia.com/gpu.product: A100}}]\n"
+        "sizes: {large: {flavor: a100, cpu: 8, memory: 32Gi}}",
+        "node_selector says nvidia.com/gpu.product=NVIDIA-L4",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", REFUSED)
+def test_converter_yaml_refuses_a_size_no_pod_could_run_as(case: str):
+    text, said = REFUSED[case]
     with pytest.raises(PydanticError) as refused:
         _config(text)
     assert said in str(refused.value)
@@ -234,3 +235,10 @@ def test_the_example_sizes_parse():
     assert cfg.sizes["small"].memory == "16Gi"
     assert cfg.sizes["small"].workdir == "2Gi"
     assert [f.name for f in cfg.flavors] == ["l4", "a100"]
+
+
+def test_memory_in_bytes_is_a_number_as_cpu_is():
+    """YAML reads `memory: 17179869184` as a number; cpu took one, memory
+    refused it as "must be text" (review item 5)."""
+    size = _config("sizes: {big: {cpu: 8, memory: 17179869184}}").sizes["big"]
+    assert size.resources()["memory"] == "17179869184"
