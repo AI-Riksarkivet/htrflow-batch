@@ -9,8 +9,7 @@ import fc from "fast-check";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { fetchJob, isHttpUrl, isResultUrl } from "./api.js";
 import { HF_BASE, modelUrl } from "./pipeline.js";
-
-const RUNS = { numRuns: 300 };
+import { RUNS } from "./fixtures/property.js";
 
 /** Bases the read API could be configured with (publicResultsBase). */
 const base = fc.constantFrom(
