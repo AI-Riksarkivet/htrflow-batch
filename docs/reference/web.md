@@ -56,6 +56,7 @@ Each row is a `JobSummary`:
 | `resultsBase` | `<public results base>/<namespace>/<pipeline>`. |
 | `warmup` | `{phase, reason?}` from the pipeline's warm-up Job: `missing`, `pending`, `running`, `succeeded` or `failed` (with a `reason`). |
 | `jobGone` | `true` for a campaign whose Job is past its TTL. The row comes from the campaign's two ConfigMaps. |
+| `qualityPrediction` | `true` when the campaign's `htr-pipeline-<id>` ConfigMap has a `QualityPrediction` step. `false` when it has none, or when that ConfigMap is gone or unreadable. |
 
 ## One campaign: `GET /api/v1/jobs/{namespace}/{name}`
 
