@@ -186,6 +186,38 @@ export const jobSummarySchema = z.object({
   jobGone: z.boolean().default(false),
 });
 
+// The wrapper's predicted page quality (docs: reference/web): null without
+// a QualityPrediction step, or before the volume has published.
+export const volumeQualitySchema = z.object({
+  mean: z.number(),
+  min: z.number(),
+  scored: z.number(),
+  model: z.string().nullable(),
+  revision: z.string().nullable(),
+  lowest: z.array(
+    z.object({
+      page: z.string(),
+      quality: z.number(),
+      canvas: z.number().nullable(),
+    }),
+  ),
+});
+export const campaignQualitySchema = z.object({
+  mean: z.number(),
+  min: z.number(),
+  scored: z.number(),
+  volumes: z.number(),
+  lowest: z.array(
+    z.object({
+      volume: z.string(),
+      page: z.string(),
+      quality: z.number(),
+      canvas: z.number().nullable(),
+      iiifUrl: httpUrlSchema,
+    }),
+  ),
+});
+
 /**
  * How far a volume has got, read by the API out of the wrapper's
  * progress.json in the results bucket (it is not in the Kubernetes API at
@@ -221,6 +253,9 @@ export const volumeProgressSchema = z.object({
   // never a page count (a volume under PUBLISH_EVERY_PAGES pages would
   // otherwise link to a manifest that is not there yet).
   viewerPublished: z.boolean(),
+  // A block this page cannot read is no number; it does not refuse the
+  // whole campaign (the `sourceUrl` precedent).
+  quality: volumeQualitySchema.nullable().catch(null),
 });
 
 export const volumeStateSchema = z.enum([
@@ -293,6 +328,9 @@ export const jobDetailSchema = jobSummarySchema.extend({
       logUrl: httpUrlSchema,
     })
     .nullable(),
+  // The campaign's predicted quality, summed over the same volumes as
+  // pagesDone/pagesTotal above: null when none of them scored a page.
+  quality: campaignQualitySchema.nullable().catch(null),
 });
 
 export type JobPhase = z.infer<typeof jobPhaseSchema>;
@@ -309,6 +347,7 @@ export type CampaignNotice = Pick<
 >;
 export type VolumeView = z.infer<typeof volumeViewSchema>;
 export type JobDetail = z.infer<typeof jobDetailSchema>;
+export type CampaignQuality = z.infer<typeof campaignQualitySchema>;
 
 /**
  * The two ways the read API can be "not there": a network error (DNS,
