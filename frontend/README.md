@@ -219,9 +219,10 @@ order, so ten cards scan like ten rows of one table. Folded, a card is zone
    It drops failures already visible as rows.
    `describeLastError` names the failing page once, even when the wrapper's
    message already names it.
-4. **Provenance**, the footer: the pipeline chip (a button once the detail
-   has loaded: `title` is `pipelineSteps` joined by `→`, click toggles
-   `pipelineYaml` in a `<pre>`), and the models line. `src/lib/pipeline.ts`
+4. **Provenance**, the footer, two rows: the pipeline chip (a button once
+   the detail has loaded: `title` is `pipelineSteps` joined by `→`, click
+   toggles `pipelineYaml` in a `<pre>`), and under it the models line, which
+   clips to one line with the full list in its `title`. `src/lib/pipeline.ts`
    reads the YAML line by line for `model_settings.model` and its revision
    (`model_settings.revision` or `model_settings.model_kwargs.revision`,
    never the processor's), rendering `<repo> @<short rev>` or

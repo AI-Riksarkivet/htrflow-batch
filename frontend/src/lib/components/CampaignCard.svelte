@@ -1331,17 +1331,19 @@
     white-space: pre-wrap;
   }
 
-  /* Zone 4, and the quietest line on the card: provenance is what a reader
+  /* Zone 4, and the quietest lines on the card: provenance is what a reader
      checks once, not what they came for. A step lighter than the numbers
-     above it, in the same muted colour. The models clip rather than wrap,
-     with their title carrying the list the clip cut -- `clip` with a margin
+     above it, in the same muted colour. Two rows, the pipeline and then the
+     models under it -- on one row the models line pushed the chip about as
+     it wrapped (the repo owner). The models clip rather than wrap, with
+     their title carrying the list the clip cut -- `clip` with a margin
      rather than `hidden`, so a focus ring on the last link is not shaved
      off. */
   .card-meta {
     display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    gap: 0.15rem 0.75rem;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.15rem;
     margin: 0.35rem 0 0;
     font-size: 11.5px;
     font-weight: 400;
@@ -1360,6 +1362,7 @@
 
   .models {
     min-width: 0;
+    max-width: 100%;
     overflow: clip;
     overflow-clip-margin: 4px;
     white-space: nowrap;
