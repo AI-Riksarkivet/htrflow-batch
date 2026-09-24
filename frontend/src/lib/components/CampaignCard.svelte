@@ -312,12 +312,25 @@
     job.phase === "Running" ? "running" : campaignLost ? "lost" : "",
   );
 
+  // Before the first read lands, the rows the list row already promises --
+  // one per volume, up to the first page -- are drawn empty, so the detail
+  // fills rows in rather than adding them under the reader (the shift
+  // script: an open card grew by every row when its detail landed). None
+  // once a read has failed: there is nothing on its way to hold room for.
+  const waiting = $derived(
+    readAt === null && detailError === null
+      ? Math.min(Math.max(job.counts.total, 0), PAGE)
+      : 0,
+  );
+
   // A campaign of one volume has nothing to sum: its own row carries the
   // same two fractions, and stacking a total over an identical row said
   // everything twice (the product owner, 2026-09-16). Only dropped once
   // there IS a row to carry them -- a detail that has not loaded yet would
   // otherwise leave the card with no numbers at all.
-  const showTotals = $derived(job.counts.total !== 1 || volumes.length === 0);
+  const showTotals = $derived(
+    job.counts.total !== 1 || (volumes.length === 0 && waiting === 0),
+  );
 
   // The two "partially" words shared one amber, on the chip and on the
   // accent, so a campaign that lost a few pages and one that lost whole
@@ -375,7 +388,20 @@
   // in one line, matching the model block every ALTO it publishes carries.
   const models = $derived(pipelineModels(pipelineYaml));
 
-  const hasMore = $derived(volumes.length < job.counts.total);
+  // How many of those rows will carry a second line: a volume still
+  // working says its stage and age, and one that failed says where it
+  // stopped, and why on a line under the row; a done or pending one says
+  // nothing (describeProgress). The list row counts both.
+  const storied = $derived(
+    Math.min(job.counts.active + job.counts.failed, waiting),
+  );
+
+  // "load more" is there as soon as the list row says there will be more
+  // than a page -- held, disabled, until the first page has landed -- so it
+  // does not come and go with the detail.
+  const hasMore = $derived(
+    job.counts.total > (waiting > 0 ? PAGE : volumes.length),
+  );
 
   // The one place the chip's word is decided. A campaign whose Job succeeded
   // but whose volumes lost pages used to wear "Succeeded" painted amber --
@@ -1072,17 +1098,38 @@
               {@render volumeNote(v, "cell")}
             </div>
           {/each}
+          <!-- A row's height, nothing in it but the hairline: the empty
+               cells take the height the real ones do (the pill and the
+               icons' hit areas), hidden rather than absent. -->
+          {#each { length: waiting } as _, i (i)}
+            <div class="row volume placeholder" aria-hidden="true">
+              <span class="c-label"
+                >&nbsp;{#if i < storied}<span class="vprogress">&nbsp;</span
+                  >{/if}</span
+              >
+              <span class="c-links"><span class="slot vicon"></span></span>
+              <span class="c-bar"></span>
+              <span class="c-fraction">&nbsp;</span>
+              <span class="c-status"
+                ><span class="status"
+                  ><span class="status-word">&nbsp;</span></span
+                ></span
+              >
+              <span class="c-log"><span class="slot vicon"></span></span>
+              {#if i < job.counts.failed}<p class="row-note">&nbsp;</p>{/if}
+            </div>
+          {/each}
         </div>
         {#if hasMore}
           <button
             type="button"
             class="load-more"
-            disabled={loadingMore}
+            disabled={loadingMore || waiting > 0}
             onclick={loadMore}
           >
             {loadingMore
               ? "loading…"
-              : `load more (${volumes.length}/${job.counts.total})`}
+              : `load more (${waiting > 0 ? PAGE : volumes.length}/${job.counts.total})`}
           </button>
         {/if}
       </div>
@@ -1116,7 +1163,10 @@
             <span class="chip pipeline static">{job.pipeline}</span>
           {/if}
         </span>
-        {#if models.length > 0}
+        {#if waiting > 0}
+          <!-- The models line's place, until the pipeline is read. -->
+          <span class="models-pending" aria-hidden="true">&nbsp;</span>
+        {:else if models.length > 0}
           <span
             class="models"
             title="Models: {models.map(modelLabel).join(' · ')}"
@@ -1462,6 +1512,11 @@
     align-items: baseline;
     gap: 0.35rem;
     flex-shrink: 0;
+  }
+
+  /* Nothing in the placeholders is drawn; they are there for their size. */
+  .placeholder > * {
+    visibility: hidden;
   }
 
   .models {
