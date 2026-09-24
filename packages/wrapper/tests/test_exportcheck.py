@@ -1,6 +1,6 @@
 """The export check: a page whose ALTO or PAGE XML holds none of the text
 htrflow recognized for it fails instead of publishing empty (docs: wrapper,
-"Verify").
+stages).
 
 The trees are shaped like htrflow's own (``Document``/``Region``: a node's
 children in ``regions``, its text in ``transcription[0].text``) and the XML

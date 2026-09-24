@@ -646,7 +646,7 @@ def _flat_text(steps: list) -> str | None:
         f"with {count} before it — htrflow's ALTO and PAGE export writes only "
         "the text of lines inside a region, so every page would publish "
         "without its text; put a region Segmentation step before the line "
-        "step (docs: reference/campaign-yaml.md, Pipeline files)"
+        "step (docs: reference/campaign-yaml.md, Pipeline file)"
     )
 
 

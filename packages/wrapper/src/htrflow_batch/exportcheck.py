@@ -1,4 +1,4 @@
-"""Does the export hold the text htrflow recognized? (docs: wrapper, "Verify")
+"""Does the export hold the text htrflow recognized? (docs: wrapper, stages)
 
 htrflow's ALTO and PAGE templates write a line's text only for a line inside
 a region -- page, region, line, and the words of such a line (htrflow
@@ -33,7 +33,7 @@ NOT_EXPORTED = "recognized text not exported"
 #: The formats, as a sentence names them.
 _NAMES = {"alto": "ALTO", "page": "PAGE XML"}
 
-_FIX = "(docs: reference/campaign-yaml.md, Pipeline files)"
+_FIX = "(docs: reference/campaign-yaml.md, Pipeline file)"
 _FLAT = (
     "the pipeline's lines sit directly on the page, with no region above "
     "them, and htrflow's ALTO and PAGE export writes only the text of lines "
