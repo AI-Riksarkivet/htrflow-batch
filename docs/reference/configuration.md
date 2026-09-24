@@ -164,6 +164,7 @@ Each key is a key of `converter.yaml`.
 | `priority_classes` | `converter.yaml` | `[htr-interactive, htr-bulk, htr-idle]` | chart `queue.priorityClasses[].name` | no secret — nobody |
 | `flavors` | `converter.yaml` | *(empty)* | chart `queue.flavors[].name`, `.nodeLabels` | no secret — nobody |
 | `sizes` | `converter.yaml` | *(empty)* | — | no secret — nobody |
+| `default_size` | `converter.yaml` | *(empty)* | — | no secret — nobody |
 
 ## chart — `charts/htrflow-batch`
 

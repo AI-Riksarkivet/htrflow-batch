@@ -31,6 +31,11 @@
 #
 # This grants delete on Jobs in the release namespace, which is what --prune
 # is. Bind it to the campaigns pipeline and nothing else.
+#
+# One read beyond the namespace (B105): a campaign at a size with a flavor
+# goes out only while converter.yaml's `flavors` are the ClusterQueue's, so
+# the command gets this release's LocalQueue, its ClusterQueue and each of
+# its ResourceFlavors -- by name, read-only, nothing else cluster-scoped.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -62,6 +67,10 @@ rules:
     resources: ["leases"]
     resourceNames: ["htrflow-campaigns-apply"]
     verbs: ["get", "update"]
+  - apiGroups: ["kueue.x-k8s.io"]
+    resources: ["localqueues"]
+    resourceNames: [{{ .Values.queue.name | quote }}]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -73,6 +82,37 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: htrflow-campaigns
+subjects:
+  - kind: ServiceAccount
+    name: htrflow-campaigns
+    namespace: {{ .Release.Namespace }}
+{{- $flavors := list .Values.queue.flavor }}
+{{- with .Values.queue.flavors }}{{ $flavors = list }}{{ range . }}{{ $flavors = append $flavors .name }}{{ end }}{{ end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: htrflow-campaigns-queue-{{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["kueue.x-k8s.io"]
+    resources: ["clusterqueues"]
+    resourceNames: [{{ .Values.queue.clusterQueueName | default (printf "%s-cq" .Values.queue.name) | quote }}]
+    verbs: ["get"]
+  - apiGroups: ["kueue.x-k8s.io"]
+    resources: ["resourceflavors"]
+    resourceNames: {{ toJson $flavors }}
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: htrflow-campaigns-queue-{{ .Release.Namespace }}
+  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: htrflow-campaigns-queue-{{ .Release.Namespace }}
 subjects:
   - kind: ServiceAccount
     name: htrflow-campaigns
