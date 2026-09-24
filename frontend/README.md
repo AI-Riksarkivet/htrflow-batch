@@ -43,14 +43,15 @@ bunx vite preview  # serve dist/ on :4173
 
 All of it lives in [`src/lib/config.ts`](src/lib/config.ts).
 
-| Setting                | Runtime (deploy)                              | Build time          | Default                                    |
-| ---------------------- | --------------------------------------------- | ------------------- | ------------------------------------------ |
-| read API base          | `window.API_BASE`, served in `/config.js`     | `VITE_API_BASE`     | `/api/v1`                                  |
-| results base           | `window.RESULTS_BASE`, served in `/config.js` | `VITE_RESULTS_BASE` | _(empty — see below)_                      |
-| campaign list re-fetch | —                                             | `VITE_RELOAD_MS`    | `60000`                                    |
-| live-log re-fetch      | —                                             | `VITE_LIVE_MS`      | `15000` (the wrapper's `LOG_SHIP_SECONDS`) |
-| live-log give-up       | —                                             | —                   | `LIVE_MAX_FAILURES = 20` attempts          |
-| poll backoff ceiling   | —                                             | —                   | `MAX_POLL_MS = 300000`                     |
+| Setting                | Runtime (deploy)                              | Build time          | Default                                     |
+| ---------------------- | --------------------------------------------- | ------------------- | ------------------------------------------- |
+| read API base          | `window.API_BASE`, served in `/config.js`     | `VITE_API_BASE`     | `/api/v1`                                   |
+| results base           | `window.RESULTS_BASE`, served in `/config.js` | `VITE_RESULTS_BASE` | _(empty — see below)_                       |
+| campaign list re-fetch | —                                             | `VITE_RELOAD_MS`    | `60000`                                     |
+| folded card re-fetch   | —                                             | —                   | `FOLDED_MS = 2 × RELOAD_MS`, on screen only |
+| live-log re-fetch      | —                                             | `VITE_LIVE_MS`      | `15000` (the wrapper's `LOG_SHIP_SECONDS`)  |
+| live-log give-up       | —                                             | —                   | `LIVE_MAX_FAILURES = 20` attempts           |
+| poll backoff ceiling   | —                                             | —                   | `MAX_POLL_MS = 300000`                      |
 
 `/config.js` is **served by the read API**, not read out of a file: the same
 process that answers `/api/v1` writes it from its own environment
@@ -167,12 +168,23 @@ order, so ten cards scan like ten rows of one table. Folded, a card is zone
    fold toggle (`namespace/name` only when the list spans namespaces: the
    page decides it once and passes `showNamespace` to every card; keys,
    storage and API paths are always `namespace/name`), the phase chip (a pulsing dot while running), the
-   warm-up chip while the warm-up has not succeeded, the "job removed" chip,
-   and at the right end `created → finished` as two `<time>` elements
+   warm-up chip while the warm-up has not succeeded, the "job removed" chip
+   (the phase chip comes last of the three: it is the one whose word can
+   change when the detail lands, and last it pushes nothing along), then on
+   a folded card the pages done — `411 / 1914 pages · 3 failed`, "failed"
+   only when there are some, `— pages` when none are known, its title
+   saying when the sums do not yet cover every volume and, for a campaign
+   still going, when they were read — and at the right end
+   `created → finished` as two `<time>` elements
    (`datetime` and `title` carry the exact timestamp; "created"/"finished"
    are there for screen readers, since the arrow is decoration). A run that
    finished the same day shows only the clock for its end. Only a `Running`
-   campaign gets the open-ended `→ …`.
+   campaign gets the open-ended `→ …`. The line is a grid of three tracks
+   (the words, the page count, the times); the count's and the times' are
+   held at a fixed minimum width from the first paint, filled from the
+   right, so nothing on the line moves when the count arrives. At ≤520px
+   the chips take a line of their own under the name, and the times and
+   the count a line under that.
    **partially succeeded** (every volume finished, some pages lost) and
    **partially failed** share the amber chip; the outline is split amber on
    the left and green (`--success`) or red (`--destructive`) on the right,
@@ -248,12 +260,18 @@ so only while the phase is not `Succeeded`. A failed warm-up's
 `localStorage` (`htrflow.card.<namespace>/<name>`, every access wrapped).
 `fetchJob` pages by `offset`/`limit` (200); "load more" adds a page, and a
 poll re-fetches every open page (capped at the API's 1000). A folded card
-reads nothing, except a `Succeeded` one, which reads its detail once for the
-one thing its header needs that `JobSummary` lacks: `pagesFailed`, which
-makes it "partially succeeded". An open card that can still change is
-polled; a finished, `Unknown` or reaped one is read once, when its card
-first intersects the viewport (`IntersectionObserver`) or is opened, and
-again on a phase change. `fetchJobs` asks for
+reads its detail for the one thing its header needs that `JobSummary`
+lacks: the page sums (and `pagesFailed`, which makes a `Succeeded` campaign
+"partially succeeded"). A finished, `Unknown` or reaped campaign is read
+once, when its card first intersects the viewport (`IntersectionObserver`)
+or is opened, and again on a phase change. One that can still change is
+polled: open, every `RELOAD_MS`, on screen or not; folded, every
+`FOLDED_MS` (twice that) and only while on screen. A read of the same state
+younger than the period is not repeated when a card comes back on screen or
+is opened — the folded read is the table's first page, so a card opens to
+it at once. Every card's reads go through one gate (`$lib/poll`'s `gate`):
+four in flight, the rest in turn, and a card that goes away gives up its
+place. `fetchJobs` asks for
 `?reaped=20`; "show older campaigns" asks for 20 more.
 
 **Order.** The first answer is sorted by `byAttention` (`src/lib/order.ts`):

@@ -148,8 +148,10 @@ it is opened:
 1. **Identity and state.** The campaign's name (click to fold or unfold;
    `namespace/name` only when the list spans more than one namespace),
    its phase, the warm-up chip while the warm-up has not succeeded, a
-   "job removed" chip for a reaped campaign, and when it was created and
-   finished.
+   "job removed" chip for a reaped campaign, when it was created and
+   finished, and on a folded card the pages done so far
+   (`411 / 1914 pages · 3 failed`). Every part of the line has its place
+   from the first paint, so nothing on it moves as the rest arrives.
 2. **The body.** The totals (`volumes`, `pages`) with progress bars, then
    the loaded page of the campaign's volumes, with "load more" for the rest.
 3. **Problems**, only when there is one: why the warm-up failed, each
@@ -175,9 +177,10 @@ since no pod can start without it; its reason is in the chip's title.
 
 **Paging and polling.** The list re-fetches every 60 s. An open card fetches
 its own detail, re-fetching every open page on each poll. A folded card
-fetches nothing, except a succeeded campaign's, which is read once for
-whether it lost pages. A finished, unknown or reaped campaign is read once,
-when its card is first on screen or opened, and not polled again. A failed poll puts a banner at the foot of the window, over the last list, and
+reads the same detail for its page count, and only while it is on screen:
+every two minutes for a campaign still going. A finished, unknown or reaped
+campaign is read once, when its card is first on screen or opened, and not
+polled again. At most four cards read at a time; the rest wait their turn. A failed poll puts a banner at the foot of the window, over the last list, and
 backs off. Older reaped campaigns wait behind "show older campaigns", 20 at
 a time.
 
