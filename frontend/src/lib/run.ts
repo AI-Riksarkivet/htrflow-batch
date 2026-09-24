@@ -11,6 +11,8 @@ export const pageResultSchema = z.object({
   status: z.string(),
   seconds: z.number(),
   error: z.string().optional(),
+  // Present only on a page the QualityPrediction step scored (quality.py).
+  quality: z.number().optional(),
 });
 
 export const runManifestSchema = z
@@ -30,6 +32,13 @@ export const runManifestSchema = z
     // viewer derives each page's ALTO URL from it (altoUrl). Absent on a
     // volume whose ALTO would not parse (build_viewer_manifest skipped).
     viewer_url: z.string().optional(),
+    // publish.py's `quality` block, present only when at least one page was
+    // scored; the rest of its shape (target, model, revision, lowest) rides
+    // through the `.loose()` below, unread here.
+    quality: z
+      .object({ mean: z.number(), min: z.number(), scored: z.number() })
+      .loose()
+      .optional(),
   })
   // Everything else the wrapper writes (bytes_fetched, canvas_ids, the
   // digests resume compares...) is kept as it came and read by nothing here;

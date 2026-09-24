@@ -82,3 +82,31 @@ describe("PagesTable alto column", () => {
     );
   });
 });
+
+describe("PagesTable quality column", () => {
+  test("no scored page: no quality column", () => {
+    render(PagesTable, { pages: [page()] });
+    expect(screen.queryByRole("columnheader", { name: /quality/ })).toBeNull();
+  });
+
+  test("scored pages show two decimals and sort worst first on request", async () => {
+    render(PagesTable, {
+      pages: [
+        page({ id: "0001", quality: 0.9 }),
+        page({ id: "0002", quality: 0.31 }),
+        page({ id: "0003" }),
+      ],
+    });
+    const cells = () =>
+      screen
+        .getAllByRole("row")
+        .slice(1)
+        .map((r) => r.querySelector("td")?.textContent?.trim());
+    expect(cells()).toEqual(["0001", "0002", "0003"]);
+    await fireEvent.click(screen.getByRole("button", { name: /quality/ }));
+    expect(cells()).toEqual(["0002", "0001", "0003"]);
+    expect(screen.getByText("0.31")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: /quality/ }));
+    expect(cells()).toEqual(["0001", "0002", "0003"]);
+  });
+});
