@@ -228,6 +228,50 @@ describe("startPolling's onWait", () => {
   });
 });
 
+// A card back on screen a moment after its last read waited a whole period
+// from then, not from the read (review of this change): the poll can start
+// with the rest of the period that is still to run.
+describe("startPolling's first wait", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  test("the first tick waits `first`, and the rest the period", async () => {
+    const run = vi.fn(async () => true);
+    const stop = startPolling(run, PERIOD, { first: 300 });
+    await vi.advanceTimersByTimeAsync(299);
+    expect(run).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(run).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(PERIOD);
+    expect(run).toHaveBeenCalledTimes(2);
+    stop();
+  });
+});
+
+// Scrolled past at the margin, a folded card's read was aborted after the
+// server had done the work (review of this change): stopped that way, the
+// tick in flight finishes and only the next is not asked for.
+describe("stopping and letting the tick finish", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  test("the tick in flight is not aborted, and nothing more runs", async () => {
+    const held = deferred();
+    let signal: AbortSignal | undefined;
+    const run = vi.fn(async (s: AbortSignal) => {
+      signal = s;
+      return held.promise;
+    });
+    const stop = startPolling(run, PERIOD);
+    await vi.advanceTimersByTimeAsync(0);
+    stop(true);
+    expect(signal?.aborted).toBe(false);
+    held.done(true);
+    await vi.advanceTimersByTimeAsync(PERIOD * 3);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("gate", () => {
   test("no more than `max` at once, the rest in the order they asked", async () => {
     const through = gate(2);
@@ -288,5 +332,30 @@ describe("gate", () => {
     controller.abort();
     await expect(waiting).resolves.toBe(true);
     expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  // What a reader asked for -- a card opened, "load more" -- waited behind
+  // every folded card's background read (review of this change: 30-40 s
+  // behind 25 of them). It goes to the front of the queue, behind only
+  // other asks.
+  test("an urgent task goes ahead of every waiting one that is not", async () => {
+    const through = gate(1);
+    const first = deferred();
+    const order: string[] = [];
+    const runs = [
+      through(async () => first.promise),
+      through(async () => void order.push("background 1")),
+      through(async () => void order.push("background 2")),
+      through(async () => void order.push("asked 1"), undefined, true),
+      through(async () => void order.push("asked 2"), undefined, true),
+    ];
+    first.done(true);
+    await Promise.all(runs);
+    expect(order).toEqual([
+      "asked 1",
+      "asked 2",
+      "background 1",
+      "background 2",
+    ]);
   });
 });
