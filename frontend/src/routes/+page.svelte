@@ -91,7 +91,8 @@
   });
 </script>
 
-<main>
+<!-- Busy until the first answer, which is when there is a list to read. -->
+<main aria-busy={jobs === null && error === null}>
   <header class="page">
     <div class="title-row">
       <img class="logo" src="/ra.svg" alt="Riksarkivet" />
@@ -132,7 +133,7 @@
     <p class="banner error" role="alert">{describeUnreadable(unreadable)}</p>
   {/if}
   {#if jobs === null}
-    {#if error === null}<p>Loading…</p>{/if}
+    {#if error === null}<p class="loading">Loading…</p>{/if}
   {:else if jobs.length === 0}
     <p class="empty">No campaigns.</p>
   {:else}
@@ -211,6 +212,19 @@
   .error {
     border: 1px solid var(--destructive);
     background: var(--destructive-soft);
+  }
+
+  /* Shown only once the answer is late: a list that arrives quickly then
+     replaces nothing a reader saw. */
+  .loading {
+    color: var(--muted-foreground);
+    animation: late 0s 400ms both;
+  }
+
+  @keyframes late {
+    from {
+      visibility: hidden;
+    }
   }
 
   .empty {
