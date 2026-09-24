@@ -33,7 +33,10 @@ Source: [`packages/web`](https://github.com/AI-Riksarkivet/htrflow-batch/tree/ma
 | `GET /api/v1/jobs/{namespace}/{name}?offset=0&limit=200` | One campaign's detail (below). `404` for a name that is not a campaign. |
 
 `/log` and `/alto` open only URLs under the results base, so a mailed link
-cannot point them at another host. How to reach these from a browser is in
+cannot point them at another host, nor outside the base on the same one:
+one with an escaped `/` or `\` in its path below the base is refused too,
+since a server that decodes before it resolves `..` would read it as a
+way out. How to reach these from a browser is in
 [View Results](../getting-started/viewing.md).
 
 ## The campaign list: `GET /api/v1/jobs`

@@ -125,6 +125,18 @@ describe("splitLogLine", () => {
     });
   });
 
+  test("a message holding a Unicode line separator still splits", () => {
+    // `.` stops at U+2028/U+2029 as it does at \n, but the log's lines are
+    // already split on \n: one of those inside a message (transcribed text
+    // quoted in an error, say) is part of the message.
+    const line = "2026-08-25 13:28:44,002 ERROR page 0003: a\u2028b\u2029c";
+    expect(splitLogLine(line)).toEqual({
+      time: "13:28:44.002",
+      level: "ERROR",
+      msg: "page 0003: a\u2028b\u2029c",
+    });
+  });
+
   test("a non-matching line (e.g. ultralytics print output) is left whole", () => {
     const line = "Ultralytics YOLOv8.0.196 🚀 Python-3.11.4 torch-2.0.1 CPU";
     expect(splitLogLine(line)).toEqual({ time: null, level: null, msg: line });

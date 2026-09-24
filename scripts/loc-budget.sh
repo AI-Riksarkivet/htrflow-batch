@@ -1342,7 +1342,12 @@ check web       "$(count packages/web/src -name '*.py')" 2583
 # model's revision. Test fixtures (src/lib/fixtures: the generated contract
 # JSON and the dropped-key helper the contract tests share) are test support,
 # like *.test.ts, and are not counted.
-check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5176
+# 5176 -> 5180: three defects the property tests (fast-check) found, each
+# fixed with the line that says why -- isResultUrl refuses an escaped
+# separator below the base, the stage words are a Map so `constructor` is
+# not a stage, and a run-log line keeps a U+2028 in its message; the verify
+# count fix nets a line back.
+check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5180
 # 700 -> 730 in Task 22, which moved three cluster rules out of the
 # converter and into `templates/policies/`: digest pinning, the image
 # allow-list and the model-revision requirement, as Kyverno ClusterPolicies

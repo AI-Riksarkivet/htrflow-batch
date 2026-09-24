@@ -446,6 +446,19 @@ describe("isResultUrl", () => {
     expect(isResultUrl(`${base}/x/../y.txt`, base)).toBe(true);
   });
 
+  test("an escaped separator below the base is refused", () => {
+    // The URL parser resolves `..` and `%2e%2e`, but not a `..` that is
+    // only a dot segment once `%2F` or `%5C` is decoded — which a proxy
+    // that decodes before it resolves would walk out of the base with. No
+    // result URL carries one: volume ids admit neither separator.
+    expect(isResultUrl(`${base}/..%2Fother/run.log`, base)).toBe(false);
+    expect(isResultUrl(`${base}/x/..%2f..%2fother.txt`, base)).toBe(false);
+    expect(isResultUrl(`${base}/..%5Cother/run.log`, base)).toBe(false);
+    expect(isResultUrl(`${base}/%2e%2e%2fother/run.log`, base)).toBe(false);
+    // Only the path: a query may carry one (a signed URL's credential does).
+    expect(isResultUrl(`${base}/x/run.log?cred=a%2Fb`, base)).toBe(true);
+  });
+
   test("the same URL written differently is still the same URL", () => {
     expect(isResultUrl(`${base}/a%2Db.txt`, base)).toBe(true);
     expect(

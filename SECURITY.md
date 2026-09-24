@@ -43,7 +43,9 @@ enforces.
   module and the workflows (`.github/workflows/codeql.yml`).
 - **TruffleHog** scans the full git history for leaked credentials on every push and pull
   request (`.github/workflows/trufflehog.yml`), alongside GitHub's own secret scanning.
-- **Dependabot** security updates are enabled.
+- **Dependabot** raises weekly version updates for the actions, the Python and frontend
+  lockfiles, the base images and the dagger module (`.github/dependabot.yml`), and security
+  updates as advisories are published.
 - **OpenSSF Scorecard** grades the repository's supply-chain posture weekly
   (`.github/workflows/scorecard.yml`).
 
@@ -66,6 +68,11 @@ build-provenance attestation, and every per-architecture image an SPDX SBOM atte
 The `cosign verify` and `gh attestation verify` commands, anchored to `publish.yml` on
 `main`, are in
 [Releasing → Signing, SBOM and provenance](https://ai-riksarkivet.github.io/htrflow-batch/development/releasing/#signing-sbom-and-provenance).
+
+Each GitHub release also carries both charts as packages, signed the same way by
+`release.yml` at the release's tag, with a `SHA256SUMS` and their SLSA build provenance;
+the `cosign verify-blob` recipe is in
+[Releasing → What a release carries](https://ai-riksarkivet.github.io/htrflow-batch/development/releasing/#what-a-release-carries).
 
 The chart can enforce the signature at admission: `security.verifyImages` is off by
 default, and `charts/htrflow-batch/values-prod.yaml` turns it on for this repository's

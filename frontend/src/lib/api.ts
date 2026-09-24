@@ -40,15 +40,18 @@ export function isResultUrl(
   // Compared as URLs, not as text: `<base>/../evil.txt` starts with the
   // base and is not under it at all, and a host written in another case is
   // the same host (2026-09-14 review).
-  let here: string;
+  let here: URL;
   let root: string;
   try {
-    here = new URL(value).href;
-    root = new URL(base).href;
+    here = new URL(value);
+    root = new URL(base).href.replace(/\/?$/, "/");
   } catch {
     return false;
   }
-  return here.startsWith(root.endsWith("/") ? root : `${root}/`);
+  // `..%2F` is a dot segment to a server that decodes before it resolves;
+  // no result URL has one below the base (volume ids admit no separator).
+  const below = (here.origin + here.pathname).slice(root.length);
+  return here.href.startsWith(root) && !/%(2f|5c)/i.test(below);
 }
 
 /** "25 Aug, 14:32" — viewer-local unless a timeZone is forced (tests use UTC). */

@@ -17,8 +17,9 @@ export interface ParsedLog {
 const MODEL_RE =
   /Initialized (YOLO|TrOCR)|Model '.*' on device|Running inference/;
 
+// `s`: a U+2028 or U+2029 inside a line is part of its message.
 const LOG_LINE_RE =
-  /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}),(\d{3}) (INFO|WARNING|ERROR|DEBUG|CRITICAL) (.*)$/;
+  /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}),(\d{3}) (INFO|WARNING|ERROR|DEBUG|CRITICAL) (.*)$/s;
 
 export interface SplitLogLine {
   time: string | null;
