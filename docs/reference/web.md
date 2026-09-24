@@ -144,7 +144,8 @@ Their links and progress still come from the bucket.
 Every card has the same four zones, in the same order, so ten campaigns
 scan like a table:
 
-1. **Identity and state.** The campaign's name (click to fold or unfold),
+1. **Identity and state.** The campaign's name (click to fold or unfold;
+   `namespace/name` only when the list spans more than one namespace),
    its phase, the warm-up chip while the warm-up has not succeeded, a
    "job removed" chip for a reaped campaign, and when it was created and
    finished.
