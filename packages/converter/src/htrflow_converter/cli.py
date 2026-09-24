@@ -14,6 +14,7 @@ import tempfile
 from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 
@@ -29,6 +30,9 @@ from .record import (
     rendered,
     volumes_txt,
 )
+
+if TYPE_CHECKING:  # imported lazily at run time: see `_cluster`
+    from .cluster import ClusterError
 
 _NEXT_STEPS = """\
 Your campaigns repo is ready at {dir}.
@@ -724,6 +728,9 @@ def _record_and_decide(
     from .cluster import ClusterError, Unreachable
 
     live = cluster.get("Job", name)
+    # A Job the converter did not make is not this campaign's: nothing is
+    # read off it, and the pair is held back (``NotOurs``).
+    cluster.claim("Job", name)
     if live is None:
         return _finished(cluster, name, volumes, None), None
     record = render.status_configmap(live, cfg)
@@ -789,9 +796,13 @@ def _moved_live(
     or a rendered recipe with the live one a running campaign mounts.
 
     A key the live object does not carry (a record written before the key
-    existed) is not held against. A refused READ is not caught here: a
-    check that cannot be made is not a check that passed.
+    existed) is not held against, nor is an object the converter did not
+    make, which is no campaign's record: the apply refuses to write it. A
+    refused READ is not caught here: a check that cannot be made is not a
+    check that passed.
     """
+    from .cluster import made_here
+
     moved = _moved_recipe(cluster, pipelines, running)
     if moved is not None:
         return moved
@@ -807,7 +818,7 @@ def _moved_live(
         if obj["kind"] != "ConfigMap":
             continue
         live = cluster.get("ConfigMap", obj["metadata"]["name"])
-        if live is None:
+        if not made_here(live):
             continue
         before, after = render.campaign_record(live), render.campaign_record(obj)
         moved = [k for k, v in before.items() if v is not None and v != after[k]]
@@ -902,6 +913,8 @@ def _moved_recipe(cluster, pipelines: list[dict], running: list[dict]) -> str | 
     mount each pipeline ConfigMap is read off ``running``. The steps are
     compared parsed, as ``render.recipe`` reads them, so a YAML spelling
     change is not an edit."""
+    from .cluster import made_here
+
     rendered = [o for o in pipelines if o["kind"] == "ConfigMap"]
     users: dict[str, list[str]] = {}
     for job in running if rendered else []:
@@ -914,13 +927,51 @@ def _moved_recipe(cluster, pipelines: list[dict], running: list[dict]) -> str | 
     for obj in rendered:
         cm = obj["metadata"]["name"]
         live = cluster.get("ConfigMap", cm) if cm in users else None
-        if live is not None and (
+        if made_here(live) and (
             render.recipe([live])["steps"] != render.recipe([obj])["steps"]
         ):
             return _LIVE_RECIPE.format(
                 id=cm.removeprefix("htr-pipeline-"), jobs=", ".join(sorted(users[cm]))
             )
     return None
+
+
+#: A warm-up and a campaign Job mount their pipeline's ConfigMap by name.
+_MOUNTS_FOREIGN = (
+    "{name}: left as it was, since it mounts ConfigMap/{cm}, which "
+    "htrflow-campaigns did not make — its recipe would run under this "
+    "pipeline's id"
+)
+
+
+def _mounts_foreign(cluster, objects: list[dict]) -> dict[str, ClusterError]:
+    """Job name -> why it is held back, for each rendered Job whose
+    pipeline's live ConfigMap the converter did not make. A read that fails
+    is not decided here: the ConfigMap's own apply meets it and is refused."""
+    from .cluster import ClusterError, NotOurs, Unreachable
+
+    foreign: dict[str, str] = {}
+    for obj in objects:
+        if obj["kind"] == "ConfigMap" and obj["metadata"]["name"].startswith(
+            "htr-pipeline-"
+        ):
+            try:
+                cluster.claim("ConfigMap", obj["metadata"]["name"])
+            except NotOurs:
+                labels = obj["metadata"]["labels"]
+                foreign[labels[render._PIPELINE_LABEL]] = obj["metadata"]["name"]
+            except Unreachable:
+                raise
+            except ClusterError:
+                continue
+    return {
+        o["metadata"]["name"]: ClusterError(
+            _MOUNTS_FOREIGN.format(name=f"Job/{o['metadata']['name']}", cm=cm)
+        )
+        for o in objects
+        if o["kind"] == "Job"
+        and (cm := foreign.get(o["metadata"]["labels"].get(render._PIPELINE_LABEL)))
+    }
 
 
 def _campaign_of(obj: dict) -> str:
@@ -1152,7 +1203,7 @@ def _apply(
         # Imported here, not at module level, for the same reason `_cluster`
         # imports `.cluster` lazily: `validate`/`render` must never pay for
         # importing `kubernetes`.
-        from .cluster import ClusterError, LeaseLost, Unreachable
+        from .cluster import ClusterError, LeaseLost, NotOurs, Unreachable
 
         try:
             # SIGTERM -- how Argo CD stops a hook -- would end the process
@@ -1220,6 +1271,9 @@ def _apply(
                     )
                 except Unreachable:
                     raise
+                except NotOurs as e:
+                    blocked[name] = e
+                    continue
                 except ClusterError as e:
                     blocked[name] = ClusterError(_UNREAD.format(name=name, e=e))
                     continue
@@ -1228,14 +1282,21 @@ def _apply(
                     print(said)
                     _repair_stamp(cluster, name, lives[name])
             _claim_volumes(cluster, campaigns, volumes_of, done, blocked, running)
+            mounting = _mounts_foreign(cluster, pipelines + campaigns)
+            for name, why in mounting.items():
+                if name in volumes_of and name not in done:  # a campaign's Job
+                    blocked.setdefault(name, why)
             # Each campaign Job is tried with dryRun=All before its pair is
             # sent: a ConfigMap applied under a Job the API server then
             # refuses is a volumes.txt the Job's unstarted indexes read (3084).
+            # A ConfigMap the converter did not make holds its Job back the
+            # same way: that Job would read someone else's volumes.txt.
             for obj in campaigns:
                 campaign = _campaign_of(obj)
                 if obj["kind"] != "Job" or campaign in done or campaign in blocked:
                     continue
                 try:
+                    cluster.claim("ConfigMap", f"campaign-{campaign}")
                     cluster.apply(obj, dry_run=True)
                 except Unreachable:
                     raise
@@ -1271,6 +1332,8 @@ def _apply(
                     try:
                         if campaign in blocked:
                             raise blocked[campaign]
+                        if obj["metadata"]["name"] in mounting:
+                            raise mounting[obj["metadata"]["name"]]
                         if is_campaign and obj["kind"] == "Job":
                             _before_resume(cluster, obj, lives.get(campaign))
                         live = _apply_object(

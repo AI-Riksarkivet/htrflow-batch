@@ -868,8 +868,13 @@ def test_a_campaign_whose_job_cannot_be_read_is_left_as_it_was(
     run again, so a check that cannot be made is not a check that passed:
     applying it anyway re-ran a finished campaign's every volume over a
     transient 5xx or a missing `get` (3093). Each such campaign is skipped,
-    named, and the apply exits non-zero; the pipelines still go out."""
-    _unreadable(cluster, "Job")
+    named, and the apply exits non-zero; the pipelines still go out. (Its
+    warm-up Job stays readable: one that is not is held back as well, since
+    whose it is cannot be told either.)"""
+    _read_fails(
+        cluster,
+        lambda kind, name: kind == "Job" and not name.startswith(render.WARMUP_PREFIX),
+    )
     repo, out = _repo(tmp_path), tmp_path / "rendered"
     assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
     applied = [c[2] for c in cluster.of("apply")]
@@ -1101,6 +1106,109 @@ def test_a_campaign_job_is_never_deleted_to_change_its_template(tmp_path, cluste
     assert cluster.of("delete") == []
     template = _live(cluster, "kyrk")["spec"]["template"]
     assert template == _stale(_object("Job", "kyrk"))["spec"]["template"]
+
+
+def _foreign(kind: str, name: str) -> dict:
+    """A same-named object nobody rendered: made by hand, or left from
+    before the converter, with data of its own and no converter label."""
+    obj = _object(kind, name, labelled=False)
+    obj["metadata"]["labels"] = {"made-by": "hand"}
+    if kind == "ConfigMap":
+        obj["data"] = {"pipeline.yaml": "steps: []\n", "volumes.txt": "R1\n"}
+    else:
+        obj["spec"] = {"template": {"spec": {"containers": [{"name": "x"}]}}}
+    return obj
+
+
+_NOT_OURS = f"exists in {NS} and was not made by htrflow-campaigns"
+
+
+def test_an_unlabelled_pipeline_configmap_is_refused_not_taken_over(
+    tmp_path, cluster, capsys
+):
+    """A forced server-side apply takes every field it sends from whoever
+    owned it, label included: an admin's apply adopted a hand-made ConfigMap
+    of the same name and replaced its data. The label is the boundary the
+    prune already keeps, and the apply keeps it too. The warm-up and the
+    campaigns on that pipeline mount the ConfigMap by name, so they would
+    run its recipe under this pipeline's id: they are held back with it,
+    and another pipeline's objects still go out."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    v1 = repo / "pipelines" / "demo-v1.yaml"
+    (repo / "pipelines" / "demo-v2.yaml").write_text(v1.read_text())
+    (repo / "campaigns" / "other.yaml").write_text(
+        "pipeline: demo-v2\nvolumes:\n  - R7777777\n"
+    )
+    foreign = _foreign("ConfigMap", "htr-pipeline-demo-v1")
+    cluster.live = [copy.deepcopy(foreign)]
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
+    live = cluster.find("ConfigMap", "htr-pipeline-demo-v1")
+    assert live["data"] == foreign["data"]
+    assert live["metadata"]["labels"] == foreign["metadata"]["labels"]
+    touched = {c[2] for c in cluster.calls if c[0] in ("apply", "dry-run")}
+    assert not touched & {
+        "htr-pipeline-demo-v1", "htr-warmup-demo-v1",
+        "campaign-kyrk", "kyrk", "campaign-loc", "loc",
+    }  # fmt: skip
+    assert [c[2] for c in cluster.of("apply")] == [
+        "htr-pipeline-demo-v2",
+        "htr-warmup-demo-v2",
+        "campaign-other",
+        "other",
+        "campaign-other",
+    ]
+    err = capsys.readouterr().err
+    assert f"ConfigMap htr-pipeline-demo-v1 {_NOT_OURS}" in err
+    assert "Job/htr-warmup-demo-v1: left as it was" in err
+    assert "ConfigMap/htr-pipeline-demo-v1" in err.splitlines()[-1]
+
+
+def test_a_labelled_pipeline_configmap_is_applied_as_before(tmp_path, cluster):
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    cluster.live = [_object("ConfigMap", "htr-pipeline-demo-v1")]
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == 0
+    assert ("apply", "ConfigMap", "htr-pipeline-demo-v1") in cluster.calls
+
+
+def test_an_unlabelled_warmup_job_is_refused_never_replaced(tmp_path, cluster, capsys):
+    """A warm-up is the one Job the apply deletes to change; one it did not
+    make is neither changed nor deleted."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    cluster.live = [_foreign("Job", "htr-warmup-demo-v1")]
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
+    assert cluster.of("delete") == []
+    assert ("apply", "Job", "htr-warmup-demo-v1") not in cluster.calls
+    assert f"Job htr-warmup-demo-v1 {_NOT_OURS}" in capsys.readouterr().err
+
+
+def test_an_unlabelled_campaign_configmap_holds_back_its_job(tmp_path, cluster, capsys):
+    """A campaign is a pair: its Job applied beside a ConfigMap it may not
+    write would read someone else's volumes.txt."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    foreign = _foreign("ConfigMap", "campaign-kyrk")
+    cluster.live = [copy.deepcopy(foreign)]
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
+    assert cluster.find("ConfigMap", "campaign-kyrk")["data"] == foreign["data"]
+    touched = {c[2] for c in cluster.calls if c[0] in ("apply", "dry-run")}
+    assert not touched & {"campaign-kyrk", "kyrk"}
+    assert {"campaign-loc", "loc"} <= touched
+    err = capsys.readouterr().err
+    assert f"ConfigMap campaign-kyrk {_NOT_OURS}" in err
+    assert "ConfigMap/campaign-kyrk, Job/kyrk" in err.splitlines()[-1]
+
+
+def test_an_unlabelled_job_under_a_campaigns_name_is_left_alone(
+    tmp_path, cluster, capsys
+):
+    """Nor is a Job it did not make read as the campaign's: no status record
+    is written from it, and the pair is not sent, dry run included."""
+    repo, out = _repo(tmp_path), tmp_path / "rendered"
+    cluster.live = [_foreign("Job", "kyrk")]
+    assert cli.main(["apply", str(repo), "--out", str(out)]) == cli.REFUSED
+    touched = {c[2] for c in cluster.calls if c[0] in ("apply", "dry-run")}
+    assert not touched & {"campaign-kyrk", "campaign-kyrk-status", "kyrk"}
+    assert "loc" in touched
+    assert f"Job kyrk {_NOT_OURS}" in capsys.readouterr().err
 
 
 def test_apply_without_out_holds_pipelines_against_the_committed_render(

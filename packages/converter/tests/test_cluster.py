@@ -32,8 +32,10 @@ from htrflow_converter.cluster import (
     SUSPEND_HOLDER,
     Cluster,
     ClusterError,
+    NotOurs,
     Unreachable,
 )
+from htrflow_converter.render import CAMPAIGN_SELECTOR
 
 
 class _Response:
@@ -43,9 +45,15 @@ class _Response:
         self.data = json.dumps(body).encode()
 
 
+#: What a read answers unless a test says otherwise: an object the converter
+#: made, which a forced apply may write (``Cluster.claim``).
+OURS = {"metadata": {"labels": dict([CAMPAIGN_SELECTOR.split("=")])}}
+
+
 @pytest.fixture
 def cluster(monkeypatch):
-    """A real ``Cluster`` whose every request is recorded, not sent."""
+    """A real ``Cluster`` whose every request is recorded, not sent. A read
+    nobody set an answer for finds an object the converter made."""
     monkeypatch.setattr(
         config,
         "load_incluster_config",
@@ -69,7 +77,7 @@ def cluster(monkeypatch):
                 "timeout": kwargs.get("_request_timeout"),
             }
         )
-        body = answer.get(method, {})
+        body = answer.get(method, OURS if method == "GET" else {})
         return _Response(body) if kwargs.get("_preload_content") is False else body
 
     monkeypatch.setattr(client.ApiClient, "call_api", call_api)
@@ -101,12 +109,63 @@ CM = {
 )
 def test_apply_is_a_server_side_apply_patch(cluster, obj, path):
     cluster.apply(obj)
-    (call,) = cluster.calls
+    (call,) = _patches(cluster)
     assert (call["method"], call["path"]) == ("PATCH", path)
     assert call["content_type"] == APPLY_PATCH
     assert call["query"]["fieldManager"] == FIELD_MANAGER
     assert call["query"]["force"] is True
     assert call["body"] is obj, "the manifest itself is the patch"
+
+
+def _patches(cluster) -> list[dict]:
+    return [c for c in cluster.calls if c["method"] == "PATCH"]
+
+
+def _read_first(cluster) -> None:
+    """Read ``JOB`` the way an apply reads a campaign Job before it writes
+    one, so that the write is the next request (``Cluster.claim``)."""
+    cluster.get("Job", "kyrk")
+    cluster.calls.clear()
+
+
+def test_a_forced_apply_reads_an_object_it_has_not_seen_first(cluster):
+    """Once: what a read or its own write already said is not asked again."""
+    cluster.answer["PATCH"] = OURS
+    cluster.apply(JOB)
+    cluster.apply(JOB)
+    assert [c["method"] for c in cluster.calls] == ["GET", "PATCH", "PATCH"]
+    assert cluster.calls[0]["path"] == "/apis/batch/v1/namespaces/htr-batch/jobs/kyrk"
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_a_forced_apply_never_reaches_an_object_the_converter_did_not_make(
+    cluster, dry_run
+):
+    """A forced server-side apply takes every field it sends from whoever
+    owned it: a hand-made object of the same name would be taken over,
+    label and data alike. A dry run says the same, so the pair it vets is
+    held back."""
+    cluster.answer["GET"] = {"metadata": {"name": "kyrk", "labels": {"x": "y"}}}
+    with pytest.raises(NotOurs) as exc:
+        cluster.apply(JOB, dry_run=dry_run)
+    assert _patches(cluster) == []
+    assert str(exc.value).startswith(
+        "Job kyrk exists in htr-batch and was not made by htrflow-campaigns"
+    )
+
+
+def test_an_object_that_is_not_there_is_the_applys_to_create(cluster, monkeypatch):
+    real = client.ApiClient.call_api
+
+    def call_api(self, resource_path, method, *a, **kw):
+        if method == "GET":
+            raise ApiException(status=404, reason="Not Found")
+        return real(self, resource_path, method, *a, **kw)
+
+    monkeypatch.setattr(client.ApiClient, "call_api", call_api)
+    cluster.answer["PATCH"] = OURS
+    cluster.apply(JOB)
+    cluster.claim("Job", "kyrk")  # what it wrote is its own
 
 
 def _suspended(*managers: str) -> dict:
@@ -153,7 +212,7 @@ def test_a_dry_run_apply_is_the_same_patch_with_dry_run_all(cluster):
     would for the real apply and stores nothing."""
     cluster.apply(JOB, dry_run=True)
     cluster.apply(JOB)
-    dry, real = cluster.calls
+    dry, real = _patches(cluster)
     assert dry["query"]["dryRun"] == "All"
     assert "dryRun" not in real["query"]
     assert dry["content_type"] == real["content_type"] == APPLY_PATCH
@@ -286,6 +345,7 @@ def test_forbidden_is_one_sentence(cluster, monkeypatch):
     def call_api(self, *a, **kw):
         raise ApiException(status=403, reason="Forbidden")
 
+    _read_first(cluster)
     monkeypatch.setattr(client.ApiClient, "call_api", call_api)
     with pytest.raises(ClusterError) as exc:
         cluster.apply(JOB)
@@ -484,8 +544,8 @@ def test_every_request_carries_a_connect_and_read_timeout(cluster):
     """Without one, a half-open connection to the API server hangs the apply
     for ever: nothing above this has a deadline of its own, and an apply that
     never returns is a campaigns repo whose CI job never returns either."""
-    cluster.answer["GET"] = {"items": [{"metadata": {"name": "gone"}}]}
     cluster.apply(JOB)
+    cluster.answer["GET"] = {"items": [{"metadata": {"name": "gone"}}]}
     cluster.get("Job", "kyrk")
     cluster.prune(set())
     cluster.sync_pause({"metadata": {"name": "k", "uid": "u9"}}, True, 0)
@@ -540,6 +600,7 @@ def test_a_busy_or_restarting_api_server_is_retried(
     is upgraded, rate-limited and load-balanced. One 503 from a restarting
     apiserver used to leave a campaign unapplied and the operator re-running
     the whole command."""
+    _read_first(cluster)
     attempts = _flaky(monkeypatch, status, 2)
     cluster.apply(JOB)
     assert attempts == ["PATCH"] * 3
@@ -549,6 +610,7 @@ def test_a_busy_or_restarting_api_server_is_retried(
 def test_a_retry_is_bounded_and_then_says_so(cluster, monkeypatch, slept):
     """A server that keeps refusing is not waited on for ever: the sentence
     the last refusal carries is the one the apply reports."""
+    _read_first(cluster)
     attempts = _flaky(monkeypatch, 503, 99)
     with pytest.raises(ClusterError) as exc:
         cluster.apply(JOB)
@@ -560,6 +622,7 @@ def test_a_retry_is_bounded_and_then_says_so(cluster, monkeypatch, slept):
 def test_a_refusal_the_server_meant_is_not_retried(cluster, monkeypatch, slept):
     """409, 403, 422: answers about this request, not about the server's
     moment. Retrying them wastes a minute and changes nothing."""
+    _read_first(cluster)
     attempts = _flaky(monkeypatch, 409, 99)
     with pytest.raises(ClusterError):
         cluster.apply(JOB)
@@ -605,6 +668,7 @@ def test_a_lost_connection_is_retried_like_a_busy_server(cluster, monkeypatch, s
             raise ReadTimeoutError(pool=None, url="/", message="Read timed out.")
         return real(self, resource_path, method, *a, **kw)
 
+    _read_first(cluster)
     monkeypatch.setattr(client.ApiClient, "call_api", call_api)
     cluster.apply(JOB)
     assert attempts == ["PATCH"] * 3
