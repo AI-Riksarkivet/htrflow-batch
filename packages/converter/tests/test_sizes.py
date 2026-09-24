@@ -177,7 +177,8 @@ def test_the_lookahead_is_half_the_sizes_workdir(tmp_path):
 
 
 def _config(text: str) -> ConverterConfig:
-    return ConverterConfig.model_validate(yaml.safe_load(text))
+    base = {"public_results_base": "https://results.example.org"}
+    return ConverterConfig.model_validate({**base, **yaml.safe_load(text)})
 
 
 @pytest.mark.parametrize(

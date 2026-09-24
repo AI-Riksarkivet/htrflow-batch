@@ -96,16 +96,9 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "bucket",
         "existingSecret"
       ],
       "properties": {
-        "bucket": {
-          "type": "string",
-          "minLength": 3,
-          "maxLength": 63,
-          "pattern": "^[a-z0-9][a-z0-9.-]*[a-z0-9]$"
-        },
         "existingSecret": {
           "type": "string",
           "minLength": 1

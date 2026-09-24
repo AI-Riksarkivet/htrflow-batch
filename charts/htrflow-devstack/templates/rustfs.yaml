@@ -2,11 +2,11 @@
 {{- $creds := include "htrflow-devstack.rustfsCreds" . | fromJson }}
 # PoC-only in-cluster S3. Credentials come from rustfs.{accessKey,secretKey}
 # or are generated once and re-read from this Secret on upgrade (audit S2);
-# never enable this next to real data. The Secret name/bucket MUST match
-# charts/htrflow-batch's `s3.existingSecret` / `s3.bucket` (both default to
-# the same names as this chart's `s3.secretName` / `s3.bucket`) — the two
-# charts are installed side by side into the same namespace, not linked by
-# shared values.
+# never enable this next to real data. The Secret name MUST match
+# charts/htrflow-batch's `s3.existingSecret` (both default to the same name
+# as this chart's `s3.secretName`) — the two charts are installed side by
+# side into the same namespace, not linked by shared values. The bucket's
+# name travels in the Secret itself (`S3_BUCKET` below).
 apiVersion: v1
 kind: Secret
 metadata:

@@ -75,6 +75,15 @@ The current queue, and the reasoning behind each setting, is in
   survivable, but it is still a product decision, not a switch.
 - **Cohorts and borrowing.** Once the GPU pool is shared with another tenant,
   a cohort lets either side borrow the other's idle quota.
+- **Several teams on one cluster.** One campaigns repo, namespace,
+  LocalQueue and ClusterQueue per team, in a shared cohort. Before two
+  namespaces share one bucket, the run-log key has to move under the
+  namespace. It is `status/logs/<pipeline>/<volume>.txt`, with no namespace
+  in it, so two namespaces that both run pipeline `demo-v1` on volume
+  `R0001203` write the same key: each run overwrites the other's log, and
+  both status pages show whichever shipped last. Moving the key changes the
+  link the read API builds and the bucket policy's `status/logs/*` rule
+  ([S3 Layout](../reference/s3-layout.md)).
 - **A pause Kueue owns.** Pausing is the converter patching each campaign
   Workload's `spec.active` on every apply, so a pause takes effect only when
   an apply runs and finds the Workload. A pause expressed in Kueue itself

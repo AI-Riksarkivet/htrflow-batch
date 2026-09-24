@@ -56,10 +56,11 @@ Install into the **same namespace** as the htrflow-batch release — the two
 charts are not linked by shared Helm values (each has its own `Chart.yaml`),
 only by naming convention:
 
-- This chart's `s3.bucket` / `s3.secretName` must match htrflow-batch's
-  `s3.bucket` / `s3.existingSecret` (both default to `htr-results` /
-  `htr-batch-s3`) so the Secret and bucket RustFS creates are the ones the
-  platform's pods already expect.
+- This chart's `s3.secretName` must match htrflow-batch's
+  `s3.existingSecret` (both default to `htr-batch-s3`) so the Secret RustFS
+  creates is the one the platform's pods already expect. The bucket is
+  whatever this chart's `s3.bucket` names: it is written into that Secret as
+  `S3_BUCKET`, and every pod reads it from there.
 - htrflow-batch's NetworkPolicies (`network.defaultDeny`) apply
   namespace-wide; this chart renders its own ingress/egress allows for each
   pod it creates in that namespace (RustFS, RustFS-init) so they still work
