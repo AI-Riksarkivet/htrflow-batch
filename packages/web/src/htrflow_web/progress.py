@@ -137,6 +137,7 @@ def _quality(value: object) -> dict | None:
     ):
         return None
     lowest = []
+    seen: set[str] = set()
     raw_lowest = value.get("lowest")
     for entry in raw_lowest if isinstance(raw_lowest, list) else []:
         if len(lowest) == MAX_LOWEST:
@@ -146,8 +147,11 @@ def _quality(value: object) -> dict | None:
         q = _score(entry.get("quality"))
         page = _str_or_none(entry.get("page"))
         canvas = entry.get("canvas")
-        if q is None or page is None:
+        # A page named twice is kept once, the first time (the wrapper ranks
+        # lowest first): the frontend keys its list by page.
+        if q is None or page is None or page in seen:
             continue
+        seen.add(page)
         ok_canvas = (
             isinstance(canvas, int) and not isinstance(canvas, bool) and canvas >= 0
         )

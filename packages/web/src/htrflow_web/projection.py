@@ -1145,14 +1145,25 @@ def _campaign_quality(rows: list[dict]) -> dict | None:
     if not scored:
         return None
     pages = sum(q["scored"] for _, q in scored)
-    lowest = sorted(
+    # Sorted lowest first, so the first of a (volume, page) named twice (a
+    # volume listed twice in the campaign) is its lowest; the card keys its
+    # list by volume and page, and a duplicate would throw there.
+    ranked = sorted(
         (
             {"volume": row["id"], **entry, "iiifUrl": row["iiifUrl"]}
             for row, q in scored
             for entry in q["lowest"]
         ),
         key=lambda e: (e["quality"], e["volume"], e["page"]),
-    )[:CAMPAIGN_LOWEST]
+    )
+    lowest: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in ranked:
+        if len(lowest) == CAMPAIGN_LOWEST:
+            break
+        if (key := (entry["volume"], entry["page"])) not in seen:
+            seen.add(key)
+            lowest.append(entry)
     return {
         "mean": round(sum(q["mean"] * q["scored"] for _, q in scored) / pages, 4),
         "min": min(q["min"] for _, q in scored),
