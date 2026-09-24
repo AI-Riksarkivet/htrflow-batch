@@ -22,6 +22,9 @@
   // banner on top of it, never a replacement for it.
   let jobs = $state<JobSummary[] | null>(null);
   let unreadable = $state(0);
+  // The count the reader put its banner away at: it stays away until the
+  // count changes, since the rows can stay unreadable for good.
+  let putAway = $state(0);
   // What the last poll failed with, and when the next one is: the banner's
   // sentence is made of both, so it names the real next try.
   let failure = $state<unknown>(null);
@@ -209,9 +212,17 @@
        a poll -- a banner, the offer to re-sort -- pushes no card. In the
        page, a banner pushed every card down by its own height. -->
   <div class="dock" bind:clientHeight={dockHeight}>
-    {#if jobs !== null && (error !== null || unreadable > 0)}
+    {#if jobs !== null && error !== null}
+      <p class="banner error" role="alert">{error}</p>
+    {:else if jobs !== null && unreadable > 0 && unreadable !== putAway}
       <p class="banner error" role="alert">
-        {error ?? describeUnreadable(unreadable)}
+        {describeUnreadable(unreadable)}
+        <button
+          type="button"
+          class="put-away"
+          aria-label="put away until the count changes"
+          onclick={() => (putAway = unreadable)}>×</button
+        >
       </p>
     {/if}
     {#if drifted}
@@ -297,6 +308,16 @@
   .dock > p {
     margin: 0;
     box-shadow: 0 4px 16px oklch(0 0 0 / 0.18);
+  }
+
+  .put-away {
+    float: right;
+    margin-left: 0.5rem;
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: none;
+    cursor: pointer;
   }
 
   .drift {

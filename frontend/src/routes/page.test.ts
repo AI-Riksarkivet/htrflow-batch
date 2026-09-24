@@ -634,4 +634,32 @@ describe("/ nothing moves as the page loads", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(screen.getByRole("alert").closest(".dock")).toBeNull();
   });
+
+  // The unreadable-rows banner stays as long as the rows do, which can be
+  // for good; over the list it covered the foot of the window. It can be
+  // put away until the count changes (review of this change).
+  test("the unreadable-rows banner can be put away until the count changes", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const bad = (name: string) => ({ ...job, name, phase: "Bogus" });
+    let rows: unknown[] = [job, bad("x"), bad("y")];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.toString().endsWith("/version"))
+          return jsonResponse({ version: "v", web: "w" });
+        if (url.toString().includes("/jobs/")) return jsonResponse(detail);
+        return jsonResponse(rows);
+      }) as unknown as typeof fetch,
+    );
+    render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    await fireEvent.click(screen.getByRole("button", { name: /put away/ }));
+    expect(screen.queryByRole("alert")).toBeNull();
+    await vi.advanceTimersByTimeAsync(RELOAD_MS);
+    expect(screen.queryByRole("alert")).toBeNull();
+    rows = [...rows, bad("z")];
+    await vi.advanceTimersByTimeAsync(RELOAD_MS);
+    expect(screen.getByRole("alert")).toHaveTextContent("3 campaigns");
+    vi.restoreAllMocks();
+  });
 });
