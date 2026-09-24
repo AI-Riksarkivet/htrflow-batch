@@ -119,10 +119,12 @@ def _score(value: object) -> float | None:
     return float(value) if ok else None
 
 
-def _quality(value: object) -> dict | None:
+def _quality(value: object, pages: int = MAX_SCORED) -> dict | None:
     """The wrapper's quality block (docs: reference/s3-layout), or nothing.
     A mean outside [0, 1], a negative count or a string is not one of ours:
-    dropped whole rather than drawn."""
+    dropped whole rather than drawn. ``pages`` is the volume's page total:
+    more pages scored than the volume has is not ours either, and would
+    outweigh every other volume in the campaign's mean."""
     if not isinstance(value, dict):
         return None
     mean, low = _score(value.get("mean")), _score(value.get("min"))
@@ -133,7 +135,7 @@ def _quality(value: object) -> dict | None:
         or not isinstance(scored, int)
         or isinstance(scored, bool)
         or scored < 1
-        or scored > MAX_SCORED
+        or scored > min(pages, MAX_SCORED)
     ):
         return None
     lowest = []
@@ -190,7 +192,7 @@ def _from_progress(doc: dict, now: float) -> dict | None:
         # PUBLISH_EVERY_PAGES pages would otherwise link to a manifest that
         # is not there yet).
         "viewerPublished": bool(doc.get("viewer_published")),
-        "quality": _quality(doc.get("quality")),
+        "quality": _quality(doc.get("quality"), doc["pages_total"]),
     }
 
 
@@ -227,7 +229,7 @@ def _from_manifest(doc: dict, now: float) -> dict | None:
         # (publish.py writes iiif.json before it, when any page's dims
         # resolved) -- true is the honest answer for a finished volume.
         "viewerPublished": True,
-        "quality": _quality(doc.get("quality")),
+        "quality": _quality(doc.get("quality"), doc["pages"]),
     }
 
 

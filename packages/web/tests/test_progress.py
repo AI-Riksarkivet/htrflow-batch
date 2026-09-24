@@ -523,6 +523,18 @@ def test_lowest_is_clipped_and_bad_entries_dropped():
     assert block["lowest"][0]["page"] == "0000"
 
 
+def test_more_pages_scored_than_the_volume_has_is_no_quality():
+    """``scored`` counts pages of this volume: more than it has is not a
+    block of ours, and would outweigh every other volume in the campaign's
+    mean. Exactly as many is fine."""
+    doc = {"pages_total": 2, "pages_done": 2, "quality": GOOD}
+    assert _from_progress(doc, 0.0)["quality"] is None
+    assert _from_progress({**doc, "pages_total": 3}, 0.0)["quality"] is not None
+    manifest = {"pages": 2, "results": {"0001": {"status": "ok"}}, "quality": GOOD}
+    assert _from_manifest(manifest, 0.0)["quality"] is None
+    assert _from_manifest({**manifest, "pages": 3}, 0.0)["quality"] is not None
+
+
 def test_a_page_named_twice_in_lowest_is_kept_once():
     """The frontend keys its list by page: a duplicate would throw there.
     The first entry, the lowest the wrapper ranked, is the one kept, and
@@ -547,5 +559,5 @@ def test_progress_and_manifest_both_carry_it():
     doc = {"pages_total": 3, "pages_done": 3, "quality": GOOD}
     assert _from_progress(doc, 0.0)["quality"]["mean"] == 0.8
     assert _from_progress({"pages_total": 3}, 0.0)["quality"] is None
-    manifest = {"pages": 1, "results": {"0001": {"status": "ok"}}, "quality": GOOD}
+    manifest = {"pages": 3, "results": {"0001": {"status": "ok"}}, "quality": GOOD}
     assert _from_manifest(manifest, 0.0)["quality"]["scored"] == 3
