@@ -16,7 +16,13 @@ from .models import (
     _unopenable,
     shown,
 )
-from .record import RENDERED, CorruptRenderedFile, recorded_volumes, unchanged
+from .record import (
+    RENDERED,
+    CorruptRenderedFile,
+    recorded_recipe,
+    recorded_volumes,
+    unchanged,
+)
 
 
 class ValidationError(Exception):
@@ -300,16 +306,40 @@ def _recorded(record: Path | None, name: str) -> list[tuple] | None:
         return None
 
 
-def _parse_pipeline(path: Path, context: dict, problems: list[str]) -> Pipeline | None:
+def _parse_pipeline(
+    path: Path, context: dict, problems: list[str], warnings: list[str]
+) -> Pipeline | None:
     doc = _read_yaml_mapping(path, problems, "pipeline")
     if doc is None:
         return None
+    # `path.stem` always wins over an `id:` the YAML happens to carry.
+    data = {**doc, "id": path.stem}
     try:
-        # `path.stem` always wins over an `id:` the YAML happens to carry.
-        return Pipeline.model_validate({**doc, "id": path.stem}, context=context)
+        return Pipeline.model_validate(data, context=context)
     except _PydanticValidationError as e:
-        problems.extend(_problems(_rel(path), e))
-        return None
+        refused = e
+    # A rule added since the pipeline was rendered does not reach it while
+    # its recipe is the recorded one: the id names that recipe for good, so
+    # it could never be brought to pass (as a campaign's volume list).
+    record = context.get("record")
+    recorded = (
+        recorded_recipe(record / "pipelines" / f"{path.stem}.yaml") if record else {}
+    )
+    if recorded and recorded == {"image": doc.get("image"), "steps": doc.get("steps")}:
+        try:
+            p = Pipeline.model_validate(data, context={**context, "as_recorded": True})
+        except _PydanticValidationError:
+            p = None
+        if p is not None:
+            warnings.extend(
+                f"{said} — kept, since this pipeline was rendered with these "
+                "steps and its id names them for good; a new pipeline file "
+                "with the region step is what new campaigns should use"
+                for said in _problems(_rel(path), refused)
+            )
+            return p
+    problems.extend(_problems(_rel(path), refused))
+    return None
 
 
 def load(
@@ -332,7 +362,7 @@ def load(
     pipelines: dict[str, Pipeline] = {}
     broken: set[str] = set()  # a file that is there but did not load
     for path in sorted(Path(pipelines_dir).glob("*.yaml")):
-        p = _parse_pipeline(path, context, problems)
+        p = _parse_pipeline(path, context, problems, warnings)
         if p is not None:
             pipelines[p.id] = p
         else:
