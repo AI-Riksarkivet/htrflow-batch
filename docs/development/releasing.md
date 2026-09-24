@@ -325,7 +325,8 @@ The workflow then writes the notes in two parts:
 
 - **`.github/release-notes.md`**, the same for every release: the not-for-use
   warning, the three image digests (read from Docker Hub for the tag), how to
-  install from the tag and how to verify the images. A tag whose images are
+  install from the tag and how to verify the images and the chart packages
+  attached below ([What a release carries](#what-a-release-carries)). A tag whose images are
   not on Docker Hub fails the workflow instead of publishing notes that point
   at nothing.
 - **The changes**, written by [git-cliff](https://git-cliff.org) from the
@@ -338,11 +339,50 @@ Below 1.0 every release is marked a pre-release. `make release-notes` shows
 what the next release will list. git-cliff comes from `uv.lock`'s `release`
 group, pinned and hash-checked like the docs tools.
 
+### What a release carries
+
+The release job waits for a job of its own that packages both charts at
+the tag with `helm package` (the helm image the dagger module lints with)
+and attaches:
+
+| Asset | What it is |
+|---|---|
+| `htrflow-batch-<chart version>.tgz`, `htrflow-devstack-<chart version>.tgz` | the charts as they are at the tag, named by their own `Chart.yaml` `version`, which is not the tag's; the job refuses a tag whose `htrflow-batch` `appVersion` is not the tag's version |
+| `SHA256SUMS` | the SHA-256 of both packages |
+| `<file>.sigstore.json` | a keyless cosign signature bundle for each package and for `SHA256SUMS` |
+| `provenance.intoto.jsonl` | the SLSA build provenance of both packages, the Sigstore bundle `actions/attest-build-provenance` wrote (also stored with the repository's attestations) |
+
+The signing identity is `release.yml` at the release's tag, so verify a
+package against exactly that:
+
+```bash
+TAG=v<version> CHART=htrflow-batch-<chart version>.tgz
+cosign verify-blob "$CHART" --bundle "$CHART.sigstore.json" \
+  --certificate-identity "https://github.com/AI-Riksarkivet/htrflow-batch/.github/workflows/release.yml@refs/tags/$TAG" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify "$CHART" -R AI-Riksarkivet/htrflow-batch \
+  --signer-workflow AI-Riksarkivet/htrflow-batch/.github/workflows/release.yml \
+  --source-ref "refs/tags/$TAG"      # add --bundle provenance.intoto.jsonl to verify offline
+sha256sum --check SHA256SUMS
+```
+
+**Backfilling a release made before its assets.** Run the workflow by hand
+from `main` with the release's tag as input (`gh workflow run release.yml
+--ref main -f tag=v<version>`). It checks out the tag, packages, checksums
+and signs as above and uploads the files to the existing release; an asset
+already there stops the upload instead of being replaced. It attaches no
+provenance: run from `main`, the provenance would record `main`'s commit as
+the source of packages built from the tag. Its signatures are
+`release.yml` on `main`, so verify a backfilled package with
+`--certificate-identity https://github.com/AI-Riksarkivet/htrflow-batch/.github/workflows/release.yml@refs/heads/main`.
+A dispatch from any other branch signs nothing.
+
 ## Chart releases
 
 The charts (`charts/htrflow-batch`, `charts/htrflow-devstack`) are not
 published to a chart repository; install them from a checkout
-([Deploy](../getting-started/deploy.md)).
+([Deploy](../getting-started/deploy.md)), or from the signed package
+attached to each release ([What a release carries](#what-a-release-carries)).
 
 `dagger call checks` includes `check-chart` — lint and render of both charts
 on their defaults and `ci/full-values.yaml`, then kubeconform — so a chart

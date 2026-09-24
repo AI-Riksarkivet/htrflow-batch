@@ -16,14 +16,15 @@ import { RELOAD_MS } from "./config.js";
 /** A stage name from the wrapper, as the thing it was doing. */
 // `config` is deliberately absent: it never reaches this map, because a
 // config failure gets its own sentence below rather than a stage word.
-const STAGE_WORDS: Record<string, string> = {
-  setup: "reading the manifest",
-  resume: "checking earlier results",
-  load: "loading the model",
-  stream: "processing pages",
-  verify: "checking results",
-  publish: "publishing results",
-};
+// A Map: `stage` is free text, and an object answers `constructor` too.
+const STAGE_WORDS = new Map<string, string>([
+  ["setup", "reading the manifest"],
+  ["resume", "checking earlier results"],
+  ["load", "loading the model"],
+  ["stream", "processing pages"],
+  ["verify", "checking results"],
+  ["publish", "publishing results"],
+]);
 
 /** How many failed page names a verify sentence spells out before "and N more". */
 const PAGES_SHOWN = 3;
@@ -58,11 +59,10 @@ function pageNames(error: string, key?: "missing" | "failed"): string[] {
 
 /** "(p012, p045 and 2 more)" of `total`, or nothing when none is named. */
 function naming(names: string[], total: number): string {
-  const rest = total - PAGES_SHOWN;
   if (names.length === 0) return "";
-  return ` (${names.slice(0, PAGES_SHOWN).join(", ")}${
-    rest > 0 ? ` and ${rest} more` : ""
-  })`;
+  const shown = names.slice(0, PAGES_SHOWN); // a clip may have left fewer
+  const rest = total - shown.length;
+  return ` (${shown.join(", ")}${rest > 0 ? ` and ${rest} more` : ""})`;
 }
 
 /**
@@ -180,7 +180,7 @@ export function describeReason(reason: VolumeReason, final: boolean): string {
       : `The warm-up failed: ${stop(error)} Re-apply the pipeline to try ` +
           "again.";
   }
-  const doing = stage === null ? undefined : STAGE_WORDS[stage];
+  const doing = stage === null ? undefined : STAGE_WORDS.get(stage);
   const head =
     doing === undefined
       ? `Failed: ${stop(error)}`
@@ -226,7 +226,7 @@ export function describeProgress(
   // says it, and a volume now finishes WITH failed pages recorded, so the
   // cell must not read as the word twice over.
   if (stage !== null && stage !== "done")
-    parts.push(STAGE_WORDS[stage] ?? stage);
+    parts.push(STAGE_WORDS.get(stage) ?? stage);
   // How long ago is news only while something might still change: a done or
   // failed volume put "updated 47 h ago" after every row of a finished
   // campaign, which is a clock nobody is waiting on (the product owner,
