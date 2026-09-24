@@ -53,8 +53,15 @@ går inte att köra; en liten modell reserverar lika mycket som en stor.
 
 Hur det blev: Kueue har inget sätt för ett Job att be om en flavor vid namn.
 En flavor väljs genom poddens node selector, så `converter.yaml` får
-`flavors` (chartets `queue.flavors`, namn och `nodeLabels`, hållna lika av
-`test_chart_agreement.py`) och en storleks `flavor` renderas som de labels.
+`flavors` (chartets `queue.flavors`, namn och `nodeLabels`) och en storleks
+`flavor` renderas som de labels. Kueue jämför bara de nycklar en flavor själv
+har, så varje par av flavors måste ha en gemensam nyckel med olika värden;
+chartet och `validate` avvisar annat. `apply` läser LocalQueue, ClusterQueue
+och ResourceFlavors vid namn (en läs-ClusterRole för apply-identiteten) och
+håller tillbaka en kampanj vars storlek har en flavor när `converter.yaml`
+och klustret skiljer sig; utan läsrätt varnar den. `default_size` sätter
+storleken för pipelines utan `size`, och exemplen listar det billigaste
+kortet först, eftersom en podd utan flavor tar den första med plats.
 `workdir` är en del av storleken, och `LOOKAHEAD_BYTES` renderas som hälften
 av den. Storleken står som annotation på pipelinens ConfigMap; proveniensen i
 `manifest.json` och ALTO namnger pipelinen, och pipelinens id står för en
