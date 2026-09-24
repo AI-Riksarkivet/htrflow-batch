@@ -1,6 +1,7 @@
 # S3 Layout
 
-Everything the system writes lands in one bucket (default `htr-results`).
+Everything the system writes lands in one bucket, the S3 Secret's
+`S3_BUCKET` (the devstack's is `htr-results`).
 Results are namespaced `<namespace>/<pipeline>/<volume>/` — the namespace
 comes from `S3_PREFIX`, which the converter always sets to the campaign's
 namespace, and the pipeline id is part of the key, so re-running a volume
