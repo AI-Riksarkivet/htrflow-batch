@@ -230,6 +230,91 @@
             }
           }
         },
+        "flavors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "nodeLabels",
+              "quota"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$",
+                "maxLength": 253
+              },
+              "nodeLabels": {
+                "type": "object",
+                "minProperties": 1,
+                "maxProperties": 8,
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "nodeTaints": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "key",
+                    "effect"
+                  ],
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "effect": {
+                      "enum": [
+                        "NoSchedule",
+                        "PreferNoSchedule",
+                        "NoExecute"
+                      ]
+                    }
+                  }
+                }
+              },
+              "quota": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "cpu",
+                  "memory",
+                  "nvidia.com/gpu"
+                ],
+                "properties": {
+                  "cpu": {
+                    "oneOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      {
+                        "$ref": "#/definitions/quantity"
+                      }
+                    ]
+                  },
+                  "memory": {
+                    "$ref": "#/definitions/quantity"
+                  },
+                  "nvidia.com/gpu": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        },
         "createPriorityClasses": {
           "type": "boolean"
         },

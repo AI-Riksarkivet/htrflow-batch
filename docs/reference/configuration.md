@@ -166,6 +166,7 @@ skeleton, never as a campaign setting.
 | `queue.clusterQueueName` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `queue.createClusterQueue` | `values.yaml` | `true` | — | no secret — nobody |
 | `queue.resources` | `values.yaml` | `[{name: cpu, quota: 4}, {name: memory, quota: 8Gi}, {name: …` | — | no secret — nobody |
+| `queue.flavors` | `values.yaml` | *(empty)* | — | no secret — nobody |
 | `queue.createPriorityClasses` | `values.yaml` | `true` | — | no secret — nobody |
 | `queue.priorityClasses` | `values.yaml` | `[{description: a handful of volumes someone is waiting for,…` | converter `priority_classes` | no secret — nobody |
 | `web.image` | `values.yaml` | `docker.io/riksarkivet/htrflow-web@sha256:1fbabef550593f6d77…` | — | digest-pinned unless `security.allowTagImages` — render |
