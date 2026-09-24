@@ -1,7 +1,11 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { RELOAD_MS } from "$lib/config.js";
+import { cssOf, cssRules } from "$lib/fixtures/css.js";
 import CampaignsPage from "./+page.svelte";
+import pageSource from "./+page.svelte?raw";
+
+const pageRules = cssRules(pageSource);
 
 const job = {
   namespace: "htr-test",
@@ -354,5 +358,40 @@ describe("/ campaign list order", () => {
       "older",
       "queued",
     ]);
+  });
+});
+
+// The list arrives in stages -- the list, the version, each card's detail,
+// a poll a minute later -- and nothing a reader is looking at may move when
+// a later stage lands (the repo owner: "things pop all over"). Measured in a
+// browser by scripts/measure-shifts.mjs; these pin each cause it found.
+describe("/ nothing moves as the page loads", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  // Unanswered, the version took no room; answered, it widened the header's
+  // right half, which on a phone wrapped under the title and pushed the
+  // whole list down a line (CLS 0.28 at 390px).
+  test("the version holds its place in the header before it is read", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        url.toString().endsWith("/version")
+          ? new Promise<Response>(() => {})
+          : Promise.resolve(jsonResponse([job])),
+      ) as unknown as typeof fetch,
+    );
+    const { container } = render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+    const slot = container.querySelector(".header-right .version");
+    expect(slot).not.toBeNull();
+    expect(slot).toHaveTextContent("");
+    expect(cssOf(pageRules, ".version").get("min-width")).toMatch(/rem$/);
+    // Grows away from the icons beside it, never into them.
+    expect(cssOf(pageRules, ".version").get("text-align")).toBe("right");
+    expect(cssOf(pageRules, ".header-right").get("margin-left")).toBe("auto");
   });
 });
