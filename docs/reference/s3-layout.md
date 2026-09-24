@@ -20,7 +20,11 @@ beside its results as `progress.json`.
                              # the source image they were made from (resume reads it)
   iiif.json                  # IIIF v3 viewer manifest with ALTO links (wrapper);
                              # rewritten every 10 pages WHILE the run goes, so the
-                             # volume opens in the viewer before it is finished
+                             # volume opens in the viewer before it is finished;
+                             # with scores, each scored canvas carries a "Predicted
+                             # quality" metadata entry (two decimals) and the
+                             # manifest carries the volume summary the same way —
+                             # without scores, neither is added
   progress.json              # how far this volume has got — rewritten after every
                              # page and at every stage change (wrapper)
   pipeline.yaml              # the exact steps document the run used (wrapper)
@@ -99,7 +103,7 @@ own publish writes both again at the end.
 | `model`, `revision` | the pipeline's `QualityPrediction` step's Hub repo and pinned revision, or `null` when the pipeline names none |
 | `mean`, `min` | across every scored page |
 | `scored` | how many pages carry a score — at most `pages`, since not every page need have one |
-| `lowest` | the volume's worst-scoring pages, each `{"page", "quality", "canvas"}` — `canvas` is that page's index into `iiif.json`'s items, so the lowest page links straight to its place in the viewer |
+| `lowest` | the volume's worst-scoring pages, each `{"page", "quality", "canvas"}` — `canvas` is that page's index into `iiif.json`'s items, so the lowest page links straight to its place in the viewer, or `null` when the page is not in `iiif.json` (a page whose ALTO has no WIDTH/HEIGHT) |
 
 ## `progress.json` (live, and never a completion marker)
 
@@ -125,7 +129,7 @@ termination message and the pod's log instead.
 | `errors` | ERROR-and-worse log records so far, counted as they are emitted. Not WARNING: the wrapper logs its own benign warnings (a pipeline rebuild after a dead worker thread, "viewer manifest covers n/m pages") that must not light a "something went wrong" chip on a healthy run |
 | `viewer_published` | `true` once an `iiif.json` PUT has actually succeeded — interim or final. What the frontend's "open in the viewer" link switches on, never a page count |
 | `started_at`, `updated_at` | ISO 8601 UTC |
-| `quality` | present only on the final write, once publish has built it — the same block as `manifest.json`'s |
+| `quality` | present only on the final write, once publish has built it, and only when the manifest has one — the same block as `manifest.json`'s |
 
 The **interim `iiif.json`**: every 10 pages the wrapper republishes the
 viewer manifest with the pages finished so far, so a long volume opens in
