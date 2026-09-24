@@ -42,13 +42,24 @@ går inte att köra; en liten modell reserverar lika mycket som en stor.
 
 ## Klart när
 
-- [ ] En pipeline med `size: large` renderar en Job vars wrapper begär 8 CPU,
+- [x] En pipeline med `size: large` renderar en Job vars wrapper begär 8 CPU,
       32 GiB och 1 GPU, med a100-flavorns node selector.
-- [ ] `size: huge` som inte finns i converter.yaml avvisas av `validate` med
+- [x] `size: huge` som inte finns i converter.yaml avvisas av `validate` med
       en mening som räknar upp storlekarna.
-- [ ] En pipeline utan `size` renderar exakt som i dag.
-- [ ] Att ändra `size` på en pipeline som en kampanj redan refererar avvisas
-      som vilken annan ändring av pipelinen.
+- [x] En pipeline utan `size` renderar exakt som i dag.
+- [x] Att ändra `size` på en pipeline som en kampanj redan refererar avvisas
+      som vilken annan ändring av pipelinen (`render`/`validate` mot
+      `rendered/`, och `apply` mot den levande ConfigMapen).
+
+Hur det blev: Kueue har inget sätt för ett Job att be om en flavor vid namn.
+En flavor väljs genom poddens node selector, så `converter.yaml` får
+`flavors` (chartets `queue.flavors`, namn och `nodeLabels`, hållna lika av
+`test_chart_agreement.py`) och en storleks `flavor` renderas som de labels.
+`workdir` är en del av storleken, och `LOOKAHEAD_BYTES` renderas som hälften
+av den. Storleken står som annotation på pipelinens ConfigMap; proveniensen i
+`manifest.json` och ALTO namnger pipelinen, och pipelinens id står för en
+storlek för gott. Att en storlek ryms i en flavors kvot kan `validate` inte
+se (B84).
 
 Relaterat: B104 (flavors med egen kvot), B84 (apply varnar när `window` inte
 ryms i kvoten — räkningen blir per storlek).
