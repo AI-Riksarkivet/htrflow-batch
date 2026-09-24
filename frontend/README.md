@@ -266,7 +266,8 @@ card is open (it names the element holding zones 2 to 4). AA contrast in both th
 
 **Header.** Logo and title left; the deployed release from
 `GET /api/v1/version` (`htrflow-batch <version>`, `web` in the tooltip,
-read once, absent if it fails), the GitHub mark and the theme toggle right.
+read once, empty if it fails — its slot is held from the first paint, so the
+answer landing moves nothing), the GitHub mark and the theme toggle right.
 
 ## Layout
 
