@@ -1281,6 +1281,16 @@ def test_the_list_replaces_the_single_flavor(full: list[dict]):
     assert "default-flavor" not in names
 
 
+@pytest.mark.parametrize("name", ["a..b", "a.-b", "-a", "A"])
+@pytest.mark.parametrize("key", ["queue.flavor", "queue.clusterQueueName"])
+def test_a_queue_object_name_kueue_would_refuse_is_refused_here(key: str, name: str):
+    """Cluster-scoped Kueue objects are named as DNS subdomains; `a..b` passed
+    a looser pattern and failed only when Kueue's CRD refused it."""
+    refused = helm_template(sets=DEFAULT_SETS + (f"{key}={name}",))
+    assert refused.returncode != 0
+    assert key.replace(".", "/") in refused.stderr, refused.stderr
+
+
 @pytest.mark.parametrize(
     "flavor",
     [
@@ -1302,8 +1312,20 @@ def test_the_list_replaces_the_single_flavor(full: list[dict]):
             "nodeTaints": [{"key": "k", "effect": "Sometimes"}],
             "quota": {"cpu": 1, "memory": "1Gi", "nvidia.com/gpu": 1},
         },
+        {
+            "name": "a..b",
+            "nodeLabels": {"a": "b"},
+            "quota": {"cpu": 1, "memory": "1Gi", "nvidia.com/gpu": 1},
+        },
     ],
-    ids=["no-gpu-quota", "no-node-labels", "unknown-resource", "zero-gpus", "effect"],
+    ids=[
+        "no-gpu-quota",
+        "no-node-labels",
+        "unknown-resource",
+        "zero-gpus",
+        "effect",
+        "name-dots",
+    ],
 )
 def test_the_schema_refuses_a_flavor_kueue_could_not_admit_a_pod_on(
     flavor: dict, tmp_path: Path
