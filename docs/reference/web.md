@@ -165,7 +165,8 @@ it is opened:
   is done or has published an interim one, its source manifest before that,
   and plain text when there is neither
 - **a manifest icon** to the source manifest (empty for an `images:` volume)
-- **a log icon** to the run viewer, live while the volume is not done
+- **a log icon**, last on the row after its state, to the run viewer, live
+  while the volume is not done
 
 **The warm-up chip** reads "warm-up pending", "running", "failed" or "no
 warm-up" (`missing`). A `failed` warm-up also colours the card as failed,
