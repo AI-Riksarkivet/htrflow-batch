@@ -160,8 +160,10 @@ row) is what feeds `/log`'s `RunSummaryCard`.
 `CampaignCard.svelte`. Every card has the same four zones in the same
 order, so ten cards scan like ten rows of one table.
 
-1. **Identity and state**, one line: the left accent bar, `namespace/name`
-   as the fold toggle, the phase chip (a pulsing dot while running), the
+1. **Identity and state**, one line: the left accent bar, the name as the
+   fold toggle (`namespace/name` only when the list spans namespaces: the
+   page decides it once and passes `showNamespace` to every card; keys,
+   storage and API paths are always `namespace/name`), the phase chip (a pulsing dot while running), the
    warm-up chip while the warm-up has not succeeded, the "job removed" chip,
    and at the right end `created → finished` as two `<time>` elements
    (`datetime` and `title` carry the exact timestamp; "created"/"finished"

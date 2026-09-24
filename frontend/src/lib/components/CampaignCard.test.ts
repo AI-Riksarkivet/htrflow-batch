@@ -1409,6 +1409,20 @@ describe("CampaignCard", () => {
     });
   });
 
+  test("the name carries its namespace only when the list asks for it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(detail0)),
+    );
+    const { container } = render(CampaignCard, { job, showNamespace: true });
+    await vi.advanceTimersByTimeAsync(0);
+    const name = container.querySelector(".camp-name") as HTMLElement;
+    expect(name).toHaveTextContent("htr-test/kyrk");
+    // What identifies the card is unchanged either way.
+    await expand();
+    expect(storage.get("htrflow.card.htr-test/kyrk")).toBe("open");
+  });
+
   test("zone 1 identifies the campaign; zone 2 counts it", async () => {
     vi.stubGlobal(
       "fetch",
@@ -1421,7 +1435,7 @@ describe("CampaignCard", () => {
 
     const ident = container.querySelector(".camp") as HTMLElement;
     expect(within(ident).getByText("Running")).toBeInTheDocument();
-    expect(within(ident).getByText("htr-test/kyrk")).toBeInTheDocument();
+    expect(within(ident).getByText("kyrk")).toBeInTheDocument();
     // The pipeline is provenance, and sits in the card's footer instead of
     // competing with the campaign's state for the header row (the product
     // owner, 2026-09-16).

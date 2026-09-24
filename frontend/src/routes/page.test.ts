@@ -67,8 +67,24 @@ describe("/ campaign page", () => {
       "/api/v1/jobs?reaped=20",
       expect.objectContaining({ cache: "no-store" }),
     );
-    expect(screen.getByText("htr-test/kyrk")).toBeInTheDocument();
+    expect(screen.getByText("kyrk")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  // The read API serves its own namespace unless told otherwise, and a
+  // prefix every card carries says nothing. It is said only when the list
+  // spans namespaces, which is when it tells two campaigns apart.
+  test("one namespace: bare names; two: namespace/name, and one card each", async () => {
+    const elsewhere = { ...job, namespace: "htr-other" };
+    vi.stubGlobal("fetch", routedFetch([job, elsewhere]));
+    const { container } = render(CampaignsPage);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const names = [...container.querySelectorAll(".camp-name")].map(
+      (el) => el.textContent,
+    );
+    // Same name, two namespaces: two cards, since the key is namespace/name.
+    expect(names).toEqual(["htr-test/kyrk", "htr-other/kyrk"]);
   });
 
   test("the header links to the source repository", async () => {
@@ -146,7 +162,7 @@ describe("/ campaign page", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(CampaignsPage);
     await vi.advanceTimersByTimeAsync(0);
-    expect(screen.getByText("htr-test/kyrk")).toBeInTheDocument();
+    expect(screen.getByText("kyrk")).toBeInTheDocument();
 
     await vi.advanceTimersByTimeAsync(RELOAD_MS);
     expect(listCalls).toBe(2);
@@ -154,7 +170,7 @@ describe("/ campaign page", () => {
       "Can't reach the campaign service right now (HTTP 503). Showing the " +
         "list we last received. Retrying every 60 seconds.",
     );
-    expect(screen.getByText("htr-test/kyrk")).toBeInTheDocument();
+    expect(screen.getByText("kyrk")).toBeInTheDocument();
   });
 
   // What only this page can be wrong about: the rows it was sent, in the
@@ -180,7 +196,7 @@ describe("/ campaign page", () => {
     const names = [...container.querySelectorAll(".camp-name")].map(
       (el) => el.textContent,
     );
-    expect(names).toEqual(["htr-test/kyrk", "htr-test/gamla"]);
+    expect(names).toEqual(["kyrk", "gamla"]);
     expect(container.querySelectorAll("section.campaign")).toHaveLength(2);
     expect(screen.queryByRole("alert")).toBeNull();
   });
@@ -332,11 +348,11 @@ describe("/ campaign list order", () => {
 
   test("running, then broken, then finished newest-first, then waiting", async () => {
     expect(await names([queued, older, newer, broken, job])).toEqual([
-      "htr-test/kyrk",
-      "htr-test/broken",
-      "htr-test/newer",
-      "htr-test/older",
-      "htr-test/queued",
+      "kyrk",
+      "broken",
+      "newer",
+      "older",
+      "queued",
     ]);
   });
 });

@@ -25,7 +25,12 @@
   } from "$lib/reasons.js";
   import { untrack } from "svelte";
 
-  let { job }: { job: JobSummary } = $props();
+  // `showNamespace`: the list spans namespaces, so the name alone may not
+  // tell two campaigns apart. The list decides it, once, for every card.
+  let {
+    job,
+    showNamespace = false,
+  }: { job: JobSummary; showNamespace?: boolean } = $props();
 
   // Cards start folded: the page is a list of campaigns to scan, not a wall
   // of volume tables. The choice is remembered per campaign; every storage
@@ -882,7 +887,9 @@
       onclick={toggle}
     >
       <span class="disclosure" aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
-      <span class="camp-name">{job.namespace}/{job.name}</span>
+      <span class="camp-name"
+        >{showNamespace ? `${job.namespace}/${job.name}` : job.name}</span
+      >
     </button>
     {#if warmupChip !== null}
       <span class="chip warmup {job.warmup.phase}" title={warmupReason}
