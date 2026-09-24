@@ -59,10 +59,16 @@ def _at(values: dict, path: str) -> object:
     return values
 
 
+def _default(field: str) -> object:
+    """converter.yaml's default for ``field``: what a file that leaves it
+    out gets."""
+    return ConverterConfig.model_fields[field].get_default(call_default_factory=True)
+
+
 def _disagreements(config: dict) -> list[str]:
     values = _load(CHART / "values.yaml")
     # A key a converter.yaml leaves out is the converter's default.
-    config = {f: config.get(f, getattr(ConverterConfig(), f)) for f, _ in AGREEMENTS}
+    config = {f: config.get(f, _default(f)) for f, _ in AGREEMENTS}
     return [
         f"`{field}` is {config[field]!r} but the chart's `{path}` is "
         f"{_at(values, path)!r} — they name one cluster object"
@@ -72,7 +78,7 @@ def _disagreements(config: dict) -> list[str]:
 
 
 def test_converter_defaults_agree_with_the_chart_defaults():
-    defaults = {f: getattr(ConverterConfig(), f) for f, _ in AGREEMENTS}
+    defaults = {f: _default(f) for f, _ in AGREEMENTS}
     assert _disagreements(defaults) == []
 
 
@@ -213,7 +219,7 @@ def test_the_priority_classes_the_converter_accepts_are_the_ones_the_chart_ships
     because Kueue never refuses an unknown class -- the Job just stays
     suspended, with no event, and reads "Queued" for ever. So the list has
     to be the chart's, and in the same order."""
-    defaults = {f: getattr(ConverterConfig(), f) for f, _, _ in LIST_AGREEMENTS}
+    defaults = {f: _default(f) for f, _, _ in LIST_AGREEMENTS}
     for pair, (ours, theirs) in _names(defaults).items():
         assert ours == theirs, pair
     for pair, (ours, theirs) in _names(_load(EXAMPLE)).items():

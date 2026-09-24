@@ -724,7 +724,12 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 4203
 # checks skip an object that is no campaign's record, and the warm-up and
 # campaigns that mount a foreign pipeline ConfigMap are held back with it
 # (they would run its recipe under this pipeline's id), with the sentence.
-check converter "$(count packages/converter/src -name '*.py')" 4495
+# 4495 -> 4514 (hard-coded audit B10): converter.yaml's public_results_base
+# is required and must be a URL a browser can open -- empty, it failed every
+# volume of every campaign after admission. The validator and its sentence,
+# and the unvalidated stand-in config `load` checks campaigns against when
+# converter.yaml itself did not load (no default can stand in any more).
+check converter "$(count packages/converter/src -name '*.py')" 4514
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

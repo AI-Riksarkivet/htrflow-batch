@@ -1512,8 +1512,7 @@ def test_every_chart_value_is_read_by_a_template():
         if not any(
             re.search(rf"\.Values\.{re.escape(prefix)}(?![\w.])", text)
             for prefix in (
-                ".".join(path.split(".")[:n])
-                for n in range(1, path.count(".") + 2)
+                ".".join(path.split(".")[:n]) for n in range(1, path.count(".") + 2)
             )
         )
     ]
