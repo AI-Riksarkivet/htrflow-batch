@@ -10,6 +10,7 @@ from htrflow_converter import render
 from htrflow_converter.models import ConverterConfig
 
 from htrflow_web import projection
+from htrflow_web.progress import MAX_SCORED
 from htrflow_web.projection import _campaign_quality
 
 CFG = SimpleNamespace(public_results_base="https://results.example.org")
@@ -1982,3 +1983,11 @@ def test_the_campaign_mean_is_weighted_by_scored_pages():
 def test_no_scored_volume_is_no_campaign_quality():
     assert _campaign_quality([_row("a", None)]) is None
     assert _campaign_quality([]) is None
+
+
+def test_a_scored_count_at_the_cap_does_not_overflow_the_mean():
+    """``_quality`` accepts ``scored`` up to ``MAX_SCORED``; the weighted mean
+    below multiplies by it, and a block that large must not raise."""
+    rows = [_row("a", {"mean": 0.5, "min": 0.5, "scored": MAX_SCORED, "lowest": []})]
+    q = _campaign_quality(rows)
+    assert q["scored"] == MAX_SCORED and q["mean"] == 0.5
