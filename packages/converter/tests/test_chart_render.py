@@ -1479,3 +1479,41 @@ def test_a_policy_that_matches_a_subresource_is_not_a_background_policy(
         ]
         if any("/" in k for k in kinds):
             assert policy["spec"].get("background") is False, policy["metadata"]["name"]
+
+
+def _value_paths(node: dict, prefix: str = "") -> list[str]:
+    """Every leaf of a values tree, dotted (an empty map is a leaf)."""
+    paths: list[str] = []
+    for key, value in node.items():
+        path = f"{prefix}{key}"
+        if isinstance(value, dict) and value:
+            paths += _value_paths(value, path + ".")
+        else:
+            paths.append(path)
+    return paths
+
+
+def test_every_chart_value_is_read_by_a_template():
+    """A value no template reads is a knob that does nothing, and a page that
+    lists it tells an operator it does something. `s3.bucket` was one: the
+    pods take the bucket from the S3 Secret's `S3_BUCKET`, so setting it
+    changed nothing at all. A value counts as read when a template names it,
+    or names one of its parents whole (`toYaml .Values.web.resources`,
+    `with .Values.network`), not merely as the start of a longer path."""
+    values = yaml.safe_load((CHART / "values.yaml").read_text(encoding="utf-8"))
+    text = "\n".join(
+        p.read_text(encoding="utf-8")
+        for p in sorted((CHART / "templates").rglob("*"))
+        if p.is_file()
+    )
+    unread = [
+        path
+        for path in _value_paths(values)
+        if not any(
+            re.search(rf"\.Values\.{re.escape(prefix)}(?![\w.])", text)
+            for prefix in (
+                ".".join(path.split(".")[:n]) for n in range(1, path.count(".") + 2)
+            )
+        )
+    ]
+    assert unread == []

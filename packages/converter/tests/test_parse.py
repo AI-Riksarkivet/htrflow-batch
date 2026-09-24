@@ -49,7 +49,7 @@ def test_good_fixture_bare_id_expands_with_source_template():
 def test_source_template_has_no_default():
     """No archive's IIIF host is built in: a repo that writes bare reference
     codes names its own (audit 0923 ruling 1)."""
-    assert ConverterConfig().source_template == ""
+    assert ConverterConfig.model_fields["source_template"].default == ""
 
 
 def test_good_fixture_images_volume_kept():
@@ -451,6 +451,51 @@ def test_hf_token_secret_must_be_a_secret_name(tmp_path):
         'converter.yaml: "hf_token_secret"' in p and "Secret" in p
         for p in exc_info.value.problems
     ), exc_info.value.problems
+
+
+def test_public_results_base_is_required(tmp_path):
+    """Every campaign pod gets it as PUBLIC_RESULTS_BASE and exits 13 on
+    every volume without it, after its GPU wait (hard-coded audit B10) --
+    so a converter.yaml that leaves it out is refused before any render."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    cfg = root / "converter.yaml"
+    cfg.write_text(
+        "".join(
+            line
+            for line in cfg.read_text().splitlines(keepends=True)
+            if not line.startswith("public_results_base:")
+        )
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert 'converter.yaml: "public_results_base" is missing' in "\n".join(
+        exc_info.value.problems
+    )
+
+
+@pytest.mark.parametrize(
+    "base", ['""', "results.example.org/htr-results", "s3://htr-results", "https://"]
+)
+def test_public_results_base_must_be_an_http_url(tmp_path, base):
+    """A browser follows it: anything but an http(s) URL with a host gives
+    every result link and viewer a dead address (hard-coded audit B10)."""
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    _setting(root / "converter.yaml", f"public_results_base: {base}")
+    with pytest.raises(ValidationError) as exc_info:
+        _load(root)
+    assert any(
+        'converter.yaml: "public_results_base"' in p and "http" in p
+        for p in exc_info.value.problems
+    ), exc_info.value.problems
+
+
+def test_public_results_base_takes_an_http_url(tmp_path):
+    root = tmp_path / "repo"
+    shutil.copytree(GOOD, root)
+    _setting(root / "converter.yaml", "public_results_base: http://localhost:30900/r")
+    assert _load(root)[2].public_results_base == "http://localhost:30900/r"
 
 
 @pytest.mark.parametrize(

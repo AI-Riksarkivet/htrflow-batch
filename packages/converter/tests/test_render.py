@@ -308,7 +308,11 @@ def test_s3_prefix_is_always_the_namespace():
     assert next(e["value"] for e in env if e["name"] == "S3_PREFIX") == "htr-test/"
 
     with pytest.raises(ValidationError):
-        ConverterConfig(namespace="htr-test", retired_flag=True)
+        ConverterConfig(
+            namespace="htr-test",
+            public_results_base="https://results.example.org",
+            retired_flag=True,
+        )
 
 
 def test_priority_adds_the_kueue_priority_class_label():
@@ -636,7 +640,8 @@ def test_ttl_defaults_to_a_week_and_is_a_converter_yaml_value():
     (B76): a day was short enough that a finished campaign was reaped between
     two applies and re-run from the top."""
     kyrk, demo, cfg = _kyrk()
-    assert ConverterConfig().ttl_seconds_after_finished == 7 * 24 * 3600
+    default = ConverterConfig.model_fields["ttl_seconds_after_finished"].default
+    assert default == 7 * 24 * 3600
     cfg = cfg.model_copy(update={"ttl_seconds_after_finished": 600})
     job = render.campaign_objects(kyrk, demo, cfg)[1]
     assert job["spec"]["ttlSecondsAfterFinished"] == 600

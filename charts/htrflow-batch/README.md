@@ -39,9 +39,10 @@ device plugin) is a separate chart:
   `credentials` key in AWS ini format plus `S3_BUCKET` (and `S3_ENDPOINT`
   unless real AWS) — this chart documents the convention but never creates
   it. The batch/warm-up Jobs the converter renders read it; for the PoC,
-  `charts/htrflow-devstack`'s RustFS renders it instead (keep `s3.bucket` /
-  `s3.existingSecret` here in step with that chart's `s3.bucket` /
-  `s3.secretName`).
+  `charts/htrflow-devstack`'s RustFS renders it instead (keep
+  `s3.existingSecret` here in step with that chart's `s3.secretName`; the
+  bucket's name is the Secret's `S3_BUCKET` key, which that chart writes
+  from its own `s3.bucket`).
 - `web.image` must be **digest-pinned** (`…@sha256:…`). A tag is refused
   unless `security.allowTagImages=true` (PoC iteration only; tags are then
   pulled on every rollout).
@@ -115,6 +116,8 @@ first, then the hook images.
 | **Upgrade order: chart, then converter.** See *Chart and converter versions* above: the new converter's in-cluster apply needs this chart's Lease rules, and the Argo CD hook's image and `CONVERTER_REF` must come from the same release as this chart, since `job-shape` compares the scripts character for character. | Upgrade the chart first, then bump the hook image and `CONVERTER_REF` in every campaigns repo in the same window. |
 | **`source_template` has no default any more** (converter; it named one institution's IIIF server). A campaign that writes a volume as a bare reference code (`- R0001203`) is refused by `validate` and `render` unless `converter.yaml` sets it. A campaign already rendered and unchanged keeps the manifest URLs its record holds, with a warning. | In every campaigns repo that writes bare reference codes, set `source_template` in `converter.yaml` to the template they were rendered with, in the change that bumps `CONVERTER_REF`. |
 | **Wide egress ranges lose the internal ranges inside them**, not only a literal `0.0.0.0/0`: `s3Cidrs: [0.0.0.0/0]`, `iiifCidrs` split into halves and `apply.gitCidrs` now carve out the cluster, node, link-local, loopback and private ranges. `network.privateCidrs` adds `100.64.0.0/10`. | Name a private host you need in `iiifCidrs` / `s3Cidrs` by its own range, which stays reachable, or narrow `network.privateCidrs`. |
+| **`s3.bucket` is gone.** No template read it: the bucket a Job writes to is the S3 Secret's `S3_BUCKET` key. The values schema refuses unknown keys, so a values file that still sets `s3.bucket` is refused. | Remove `s3.bucket` from your values; put the bucket name in the Secret's `S3_BUCKET` key (the devstack chart's own `s3.bucket` still writes it there). |
+| **`public_results_base` is required** (converter): `validate` refuses a `converter.yaml` without it, or with a value a browser cannot open. An empty base never produced a working campaign. | Set it to the chart's `publicResultsBase` in every campaigns repo. |
 
 ### From 0.11.0 to 0.12.0 — nothing stops an upgrade
 
