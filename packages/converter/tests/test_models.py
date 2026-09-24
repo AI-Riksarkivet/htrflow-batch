@@ -391,3 +391,121 @@ def test_a_pipeline_may_not_carry_its_own_export_step(name):
     message = " ".join(str(e["msg"]) for e in exc_info.value.errors())
     assert "Export" in message
     assert "the wrapper appends" in message
+
+
+_SHA = "0123456789abcdef0123456789abcdef01234567"
+_IMAGE = "ghcr.io/x/y@sha256:" + "a" * 64
+_SEG = {
+    "step": "Segmentation",
+    "settings": {"model": "yolo", "model_settings": {"model": "o/r"}},
+}
+_LINES = {
+    "step": "Segmentation",
+    "settings": {"model": "yolo", "model_settings": {"model": "o/l"}},
+}
+_HTR = {
+    "step": "TextRecognition",
+    "settings": {"model": "TrOCR", "model_settings": {"model": "o/t"}},
+}
+
+
+def _qp(**model_settings) -> dict:
+    ms = {
+        "model": "org/qp-model",
+        "revision": _SHA,
+        "model_file": "model.joblib",
+        "bin_config_file": "bins.json",
+        **model_settings,
+    }
+    return {"step": "QualityPrediction", "settings": {"model_settings": ms}}
+
+
+def _pipeline(*steps) -> Pipeline:
+    return Pipeline.model_validate({"id": "p", "image": _IMAGE, "steps": list(steps)})
+
+
+def _refusal(*steps) -> str:
+    with pytest.raises(ValidationError) as exc_info:
+        _pipeline(*steps)
+    return " ".join(str(e["msg"]) for e in exc_info.value.errors())
+
+
+def test_a_quality_prediction_step_after_recognition_is_accepted():
+    p = _pipeline(_SEG, _LINES, _HTR, _qp())
+    assert p.steps[-1]["step"] == "QualityPrediction"
+
+
+def test_the_json_feature_groups_are_accepted():
+    qp = _qp()
+    qp["settings"]["feature_groups"] = [
+        "segmentation",
+        "layout",
+        "htr_confidence",
+        "text",
+    ]
+    _pipeline(_SEG, _LINES, _HTR, qp)
+
+
+@pytest.mark.parametrize(
+    "change,words",
+    [
+        ({"model": "/models/qp.joblib"}, "Hugging Face Hub repo id"),
+        ({"model": "./qp"}, "Hugging Face Hub repo id"),
+        ({"model": "qp-model"}, "Hugging Face Hub repo id"),
+        ({"revision": "main"}, "40-hex"),
+        ({"revision": None}, "40-hex"),
+        ({"model_file": "sub/model.joblib"}, "plain file name"),
+        ({"model_file": "/abs/model.joblib"}, "plain file name"),
+        ({"bin_config_file": ".."}, "plain file name"),
+        ({"model_file": ""}, "plain file name"),
+    ],
+    ids=[
+        "abs-path",
+        "rel-path",
+        "no-org",
+        "branch",
+        "no-rev",
+        "subdir",
+        "abs-file",
+        "dotdot",
+        "empty",
+    ],
+)
+def test_a_quality_model_not_pinned_on_the_hub_is_refused(change, words):
+    message = _refusal(_SEG, _LINES, _HTR, _qp(**change))
+    assert "QualityPrediction" in message and words in message
+
+
+def test_an_unknown_feature_group_is_refused_and_named():
+    qp = _qp()
+    qp["settings"]["feature_groups"] = ["layout", "vibes"]
+    message = _refusal(_SEG, _LINES, _HTR, qp)
+    assert "vibes" in message and "segmentation" in message
+
+
+def test_a_feature_group_the_image_cannot_run_is_refused_as_such():
+    qp = _qp()
+    qp["settings"]["feature_groups"] = ["dit"]
+    message = _refusal(_SEG, _LINES, _HTR, qp)
+    assert "dit" in message and "cannot run" in message
+
+
+def test_quality_prediction_before_recognition_is_refused():
+    message = _refusal(_SEG, _LINES, _qp(), _HTR)
+    assert "after the TextRecognition step" in message
+
+
+def test_quality_prediction_with_no_recognition_is_refused():
+    message = _refusal(_SEG, _LINES, _qp())
+    assert "after the TextRecognition step" in message
+
+
+def test_two_quality_prediction_steps_are_refused():
+    message = _refusal(_SEG, _LINES, _HTR, _qp(), _qp())
+    assert "one QualityPrediction step" in message
+
+
+def test_quality_prediction_settings_move_the_recipe():
+    a = _pipeline(_SEG, _LINES, _HTR, _qp())
+    b = _pipeline(_SEG, _LINES, _HTR, _qp(revision="f" * 40))
+    assert a.recipe_sha256 != b.recipe_sha256
