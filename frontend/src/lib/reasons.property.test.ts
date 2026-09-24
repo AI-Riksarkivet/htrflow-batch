@@ -13,8 +13,7 @@ import {
   describeProgress,
   describeReason,
 } from "./reasons.js";
-
-const RUNS = { numRuns: 300 };
+import { RUNS } from "./fixtures/property.js";
 
 /** Words that only reach a sentence when code interpolates the wrong thing. */
 const LEAKS = /undefined|null|NaN|\[object |function |=>/;

@@ -6,8 +6,7 @@
 import fc from "fast-check";
 import { describe, expect, test } from "vitest";
 import { isTerminalLog, parseRunLog, splitLogLine, tailOf } from "./runlog.js";
-
-const RUNS = { numRuns: 300 };
+import { RUNS } from "./fixtures/property.js";
 
 /** Lines shaped like a wrapper log, with the odd one that is not. */
 const line = fc.oneof(
