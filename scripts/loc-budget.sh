@@ -1461,5 +1461,8 @@ check frontend  "$(count frontend/src -name '*.ts' -o -name '*.svelte')" 5176
 # (C-1, I-1, M-4) -- as one spec block the agreement test reads, plus the
 # two ConfigMap-key rules that keep a mounted ConfigMap to the key the
 # converter writes (I-1); the API server joins the egress carve-out (M-3).
-check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1882
+# 1882 -> 1885: the three Pod image rules name Pod/ephemeralcontainers, with
+# one line each saying why -- a rule on kind Pod alone let a `kubectl debug`
+# container past them on the dev cluster.
+check chart     "$(count charts/htrflow-batch/templates -name '*.yaml' -o -name '*.tpl')" 1885
 exit $fail
