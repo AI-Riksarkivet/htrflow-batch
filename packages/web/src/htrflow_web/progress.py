@@ -105,6 +105,9 @@ def _age_seconds(updated_at: str | None, now: float) -> int | None:
 #: wrapper writes five (quality.LOWEST), anything longer is not ours.
 MAX_LOWEST = 5
 
+#: No volume has this many pages; anything larger is not ours.
+MAX_SCORED = 10_000_000
+
 
 def _score(value: object) -> float | None:
     ok = (
@@ -130,6 +133,7 @@ def _quality(value: object) -> dict | None:
         or not isinstance(scored, int)
         or isinstance(scored, bool)
         or scored < 1
+        or scored > MAX_SCORED
     ):
         return None
     lowest = []

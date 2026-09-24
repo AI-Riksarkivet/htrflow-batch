@@ -508,6 +508,8 @@ def test_a_quality_block_passes_through():
         {**GOOD, "mean": True},
         {**GOOD, "scored": -1},
         {**GOOD, "min": float("nan")},
+        {**GOOD, "scored": 10**400},
+        {**GOOD, "scored": progress_mod.MAX_SCORED + 1},
     ],
 )
 def test_a_malformed_quality_block_is_none(bad):
