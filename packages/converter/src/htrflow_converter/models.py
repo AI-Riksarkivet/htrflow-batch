@@ -683,6 +683,9 @@ class Pipeline(BaseModel):
     #: How long this pipeline's finished campaign Jobs stay before the Job
     #: controller deletes them; overrides converter.yaml's value.
     ttl_seconds_after_finished: int | None = None
+    #: One of converter.yaml's ``sizes`` (B105): what each campaign pod on
+    #: this pipeline asks for. Part of the recipe its id names for good.
+    size: str | None = Field(default=None, min_length=1)
 
     @field_validator("id")
     @classmethod
@@ -898,6 +901,147 @@ class Toleration(BaseModel):
         return self.model_dump(by_alias=True, exclude_none=True)
 
 
+#: A size's quantities (B105), in the spellings a pod's resources take and
+#: this package can compare: whole numbers, with a binary or decimal suffix.
+_MEMORY_RE = re.compile(r"([1-9][0-9]*)(Ki|Mi|Gi|Ti|k|M|G|T)?\Z")
+_CPU_RE = re.compile(r"[1-9][0-9]*m?\Z")
+_UNITS = {"": 1, "k": 10**3, "M": 10**6, "G": 10**9, "T": 10**12}
+_UNITS |= {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40}
+#: The least a size's ``/work`` may be: HOME, TMPDIR and the ultralytics
+#: settings live there beside the page lookahead (half of it), which has to
+#: hold at least a few pages. Below it the lookahead rounds towards 0, which
+#: job-shape refuses at apply time (review of PR #35).
+_WORKDIR_FLOOR = 512 * 2**20
+#: The least a size's memory leaves beside its ``/work``: a floor that
+#: catches a slip (2049Mi against 2Gi), not a sizing -- models want GiBs.
+_PROCESS_FLOOR = 2**30
+
+
+def memory_bytes(quantity: str) -> int:
+    """A memory quantity ``Size`` has already held to ``_MEMORY_RE``."""
+    m = _MEMORY_RE.match(quantity)
+    assert m is not None, quantity
+    return int(m[1]) * _UNITS[m[2] or ""]
+
+
+def _label_problem(labels: dict[str, str]) -> str | None:
+    """Why ``labels`` could not be a pod's node selector, or ``None``."""
+    for key, value in labels.items():
+        if not _label_key(key):
+            return _NOT_A_NODE_LABEL.format(what="key", shown=shown(key))
+        if value and not _LABEL_VALUE_RE.match(value):
+            what = f'value for "{key}"'
+            return _NOT_A_NODE_LABEL.format(what=what, shown=shown(value))
+    return None
+
+
+def _told_apart(a: dict[str, str], b: dict[str, str]) -> bool:
+    """Whether a pod carrying ``a`` as its node selector is refused by a
+    flavor labelled ``b``, and the other way round. Kueue matches a pod's
+    selector against a flavor only on the keys that flavor names (v0.19
+    ``flavorassigner.flavorSelector``), so two flavors are told apart only by
+    a key both name, with different values."""
+    return any(key in b and b[key] != value for key, value in a.items())
+
+
+_INDISTINCT = (
+    'flavors "{a}" and "{b}" name no label key with different values — Kueue '
+    "compares a pod's node selector only on the keys of the flavor it tries, "
+    "so a pod meant for one can be admitted on the other and never "
+    "scheduled; give every flavor the same label key (nvidia.com/gpu.product, "
+    "say) with a value of its own"
+)
+
+
+class Flavor(BaseModel):
+    """One of converter.yaml's ``flavors``: a chart ``queue.flavors`` entry's
+    name and node labels, repeated (B105). Kueue offers no way for a Job to
+    ask for a flavor by name. It tries the ClusterQueue's flavors in order,
+    skips one whose node labels the pod's node selector contradicts, and
+    writes the chosen flavor's labels into the pod at admission (v0.19
+    ``flavorassigner.checkFlavorForPodSets``, ``podset.FromAssignment``). So
+    a size's flavor is rendered as these labels on the pod, and they must
+    be the chart's."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    name: str
+    node_labels: dict[str, str] = Field(alias="nodeLabels")
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, v: str) -> str:
+        if not _object_name(v):
+            raise ValueError(_NOT_AN_OBJECT_NAME.format(shown=shown(v)))
+        return v
+
+    @field_validator("node_labels")
+    @classmethod
+    def _check_labels(cls, v: dict[str, str]) -> dict[str, str]:
+        if not v:
+            raise ValueError(
+                "has no nodeLabels — a flavor is told apart by its node labels "
+                "alone; copy them from the chart's queue.flavors"
+            )
+        if why := _label_problem(v):
+            raise ValueError(why)
+        return v
+
+
+class Size(BaseModel):
+    """One of converter.yaml's ``sizes``: what a campaign pod on a pipeline
+    that names it asks for (B105). Request and limit are one number: the
+    in-memory ``/work`` counts against the memory limit, and a pod using
+    more than its request is the first the kubelet evicts under pressure."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    flavor: str | None = None
+    gpu: int = 1
+    cpu: str
+    memory: str
+    #: The memory-backed ``/work`` (``emptyDir.sizeLimit``); the wrapper's
+    #: page lookahead is half of it.
+    workdir: str = "2Gi"
+
+    @field_validator("gpu", mode="before")
+    @classmethod
+    def _check_gpu(cls, v: object) -> object:
+        if not _positive_int(v):
+            raise ValueError(f"must be a whole number of 1 or more (got {shown(v)})")
+        return v
+
+    @field_validator("cpu", mode="before")
+    @classmethod
+    def _check_cpu(cls, v: object) -> object:
+        v = str(v) if _positive_int(v) else v
+        if not isinstance(v, str) or not _CPU_RE.match(v):
+            raise ValueError(
+                f"is not a CPU quantity (got {shown(v)}) — a whole number of "
+                "cores, or of millicores as 500m"
+            )
+        return v
+
+    @field_validator("memory", "workdir", mode="before")
+    @classmethod
+    def _check_memory(cls, v: object, info: ValidationInfo) -> object:
+        v = str(v) if _positive_int(v) else v  # bytes, as YAML reads them
+        if not isinstance(v, str) or not _MEMORY_RE.match(v):
+            raise ValueError(
+                f"is not a memory quantity (got {shown(v)}) — a whole number "
+                "of bytes, or followed by Ki, Mi, Gi or Ti (or k, M, G, T)"
+            )
+        if info.field_name == "workdir" and memory_bytes(v) < _WORKDIR_FLOOR:
+            raise ValueError(
+                f"is under 512Mi (got {shown(v)}) — /work holds HOME, TMPDIR "
+                "and the page lookahead, which is half of it"
+            )
+        return v
+
+    def resources(self) -> dict[str, str]:
+        return {"cpu": self.cpu, "memory": self.memory, "nvidia.com/gpu": str(self.gpu)}
+
+
 #: Settings that were converter policy and are now Kyverno ClusterPolicies
 #: the htrflow-batch chart ships (B63 Task 22) -> the chart value that
 #: replaces each. ``extra="forbid"`` would reject them as a misspelt
@@ -980,6 +1124,19 @@ class ConverterConfig(BaseModel):
     priority_classes: list[str] = Field(
         default_factory=lambda: ["htr-interactive", "htr-bulk", "htr-idle"]
     )
+    #: The chart's ``queue.flavors`` by name and node labels, in its order
+    #: (``Flavor``). Empty: the chart's one flavor, which no size names.
+    flavors: list[Flavor] = Field(default_factory=list)
+    #: Named pod sizes a pipeline's ``size:`` picks (``Size``).
+    sizes: dict[str, Size] = Field(default_factory=dict)
+    #: The size a pipeline that names none runs at. Unset, it keeps the Job
+    #: skeleton's own -- 4 CPU, 8Gi requested and 16Gi at most, 1 GPU, a 2Gi
+    #: ``/work`` -- on whichever flavor Kueue tries first with the quota.
+    default_size: str | None = None
+
+    def size_of(self, p: Pipeline) -> str | None:
+        """The size ``p``'s campaign pods run at: its own, or the default."""
+        return p.size or self.default_size
 
     @field_validator("namespace")
     @classmethod
@@ -1017,16 +1174,61 @@ class ConverterConfig(BaseModel):
     @field_validator("node_selector")
     @classmethod
     def _check_node_selector(cls, v: dict[str, str]) -> dict[str, str]:
-        for key, value in v.items():
-            if not _label_key(key):
-                raise ValueError(_NOT_A_NODE_LABEL.format(what="key", shown=shown(key)))
-            if value and not _LABEL_VALUE_RE.match(value):
+        if why := _label_problem(v):
+            raise ValueError(why)
+        return v
+
+    @field_validator("sizes")
+    @classmethod
+    def _check_size_names(cls, v: dict[str, Size]) -> dict[str, Size]:
+        for name in v:
+            if not _DNS_LABEL_RE.match(name):
                 raise ValueError(
-                    _NOT_A_NODE_LABEL.format(
-                        what=f'value for "{key}"', shown=shown(value)
-                    )
+                    f"has {shown(name)}, which is not a size name — use "
+                    'lower-case letters, digits and "-", at most 63 characters'
                 )
         return v
+
+    @model_validator(mode="after")
+    def _check_sizes(self) -> "ConverterConfig":
+        names = [f.name for f in self.flavors]
+        for name in names:
+            if names.count(name) > 1:
+                raise ValueError(f'"flavors" lists flavor "{name}" twice')
+        if self.default_size is not None and self.default_size not in self.sizes:
+            raise ValueError(
+                f'default_size "{self.default_size}" is not one of the sizes '
+                f"({', '.join(self.sizes) or 'none'}) — name one of them, or "
+                "leave default_size out"
+            )
+        labels = {f.name: f.node_labels for f in self.flavors}
+        for i, a in enumerate(names):
+            for b in names[i + 1 :]:
+                if not _told_apart(labels[a], labels[b]):
+                    raise ValueError(_INDISTINCT.format(a=a, b=b))
+        for name, size in self.sizes.items():
+            if memory_bytes(size.memory) - memory_bytes(size.workdir) < _PROCESS_FLOOR:
+                raise ValueError(
+                    f'size "{name}" has memory {size.memory}, which leaves less '
+                    f"than 1Gi beside its workdir ({size.workdir}) — the "
+                    "in-memory /work counts against the same limit, and the "
+                    "process gets what is left"
+                )
+            if size.flavor is not None and size.flavor not in labels:
+                raise ValueError(
+                    f'size "{name}" names flavor "{size.flavor}", which '
+                    "converter.yaml's flavors does not list "
+                    f"({', '.join(names) or 'none'}) — copy its name and "
+                    "nodeLabels from the chart's queue.flavors"
+                )
+            for key, value in labels.get(size.flavor or "", {}).items():
+                if self.node_selector.get(key, value) != value:
+                    raise ValueError(
+                        f'size "{name}" runs on flavor "{size.flavor}", whose '
+                        f"nodeLabels say {key}={value}, but node_selector says "
+                        f"{key}={self.node_selector[key]} — no node is both"
+                    )
+        return self
 
     @field_validator("public_results_base")
     @classmethod

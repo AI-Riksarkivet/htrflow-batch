@@ -84,6 +84,8 @@ tables below.
 | [B77](stories/B77-pipeline-edit-caught-in-validate.md) | Ändrad pipeline stoppas i validate, inte som "field is immutable" |
 | [B85](stories/B85-spec-plan-decision-log-current.md) | Spec, plan, story B63 och decision-loggen beskriver det som byggdes |
 | [B88](stories/B88-dead-inference-thread.md) | En död inferens-tråd i htrflow stoppar inte volymen — sidan misslyckas, pipelinen byggs om, körningen fortsätter |
+| [B104](stories/B104-gpu-flavors-per-flavor-quota.md) | Chartet beskriver flera GPU-sorter, var och en med egen kvot för GPU, CPU och minne |
+| [B105](stories/B105-pipeline-named-pod-size.md) | En pipeline väljer en namngiven poddstorlek som operatören definierar i converter.yaml |
 
 ### Partly implemented — named items still open (see the PBI's commit note)
 
@@ -159,8 +161,6 @@ tables below.
 | [B87](stories/B87-prune-retired-warmup-jobs.md) | apply städar bort warm-up-Jobbet och ConfigMappen för en pipeline som inte längre finns |
 | [B102](stories/B102-base-models-resaved-transformers-5.md) | Basmodellerna sparas om under transformers 5 så att en enda image räcker |
 | [B103](stories/B103-warmup-log-on-status-page.md) | Warm-up-loggen går att läsa från status-sidan |
-| [B104](stories/B104-gpu-flavors-per-flavor-quota.md) | Chartet beskriver flera GPU-sorter, var och en med egen kvot för GPU, CPU och minne |
-| [B105](stories/B105-pipeline-named-pod-size.md) | En pipeline väljer en namngiven poddstorlek som operatören definierar i converter.yaml |
 | [B106](stories/B106-teams-repo-namespace-queue.md) | Flera team delar klustret — ett repo, en namespace, en LocalQueue och en egen ClusterQueue per team i en gemensam cohort |
 
 ### Not started — after production

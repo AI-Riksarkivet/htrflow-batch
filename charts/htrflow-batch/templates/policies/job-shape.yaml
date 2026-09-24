@@ -24,8 +24,10 @@ exec python -m htrflow_batch.warmup
 {{- /*
 The rest of the two skeletons, as the converter renders them: every env var
 by name -- `pinned` at the skeleton's own value, `free` set by render.py per
-campaign (a plain value), `secretEnv` from a Secret key, `fieldEnv` from
-that one field -- the mounts of each container, the Secret volume's file
+campaign (a plain value; `bytes` among them a whole number of bytes --
+the converter renders LOOKAHEAD_BYTES only at a named size, but a Job
+without one is admitted too), `secretEnv` from a Secret key,
+`fieldEnv` from that one field -- the mounts of each container, the Secret volume's file
 mode and the two securityContexts. An env var, a file mode or a mount point
 is enough to run code out of a ConfigMap the apply identity may write
 (PATH, LD_PRELOAD, PYTHONPATH, an executable key), so none is left open
@@ -43,7 +45,8 @@ batch:
     TMPDIR: /work/tmp
     YOLO_CONFIG_DIR: /work/ultralytics
     AWS_SHARED_CREDENTIALS_FILE: /secrets/s3/credentials
-  free: [PIPELINE_ID, S3_PREFIX, PUBLIC_RESULTS_BASE, IMAGE_DIGEST, BACKOFF_LIMIT_PER_INDEX, MANIFEST_MAX_BYTES, FETCH_MAX_BYTES]
+  free: [PIPELINE_ID, S3_PREFIX, PUBLIC_RESULTS_BASE, IMAGE_DIGEST, BACKOFF_LIMIT_PER_INDEX, MANIFEST_MAX_BYTES, FETCH_MAX_BYTES, LOOKAHEAD_BYTES]
+  bytes: [MANIFEST_MAX_BYTES, FETCH_MAX_BYTES, LOOKAHEAD_BYTES]
   secretEnv: [S3_ENDPOINT, S3_BUCKET]
   fieldEnv:
     INDEX_FAILURE_COUNT: metadata.annotations['batch.kubernetes.io/job-index-failure-count']
@@ -59,6 +62,7 @@ warmup:
     TMPDIR: /work/tmp
     YOLO_CONFIG_DIR: /work/ultralytics
   free: [PIPELINE_ID]
+  bytes: []
   secretEnv: [HF_TOKEN]
   fieldEnv: {}
   mounts: [[pipeline, /config], [data, /data], [work, /work]]

@@ -40,3 +40,17 @@ network:
   apiServer:
     cidr: 192.0.2.56/32
   s3Cidrs: ["10.0.0.5/32"]
+
+# Two sorts of GPU, each its own ResourceFlavor and quota (B104), so the
+# flavor list is rendered and checked against Kueue's CRD schemas. The
+# cheaper card first: Kueue tries flavors in order, and a pod that names no
+# flavor takes the first with room.
+queue:
+  flavors:
+    - name: small-gpu
+      nodeLabels: { nvidia.com/gpu.product: NVIDIA-L4 }
+      quota: { cpu: 8, memory: 32Gi, nvidia.com/gpu: 4 }
+    - name: large-gpu
+      nodeLabels: { nvidia.com/gpu.product: NVIDIA-A100-SXM4-80GB }
+      nodeTaints: [{ key: gpu-pool, value: large, effect: NoSchedule }]
+      quota: { cpu: 16, memory: 128Gi, nvidia.com/gpu: 2 }

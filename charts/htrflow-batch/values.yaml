@@ -83,6 +83,31 @@ queue:
       quota: 8Gi
     - name: nvidia.com/gpu
       quota: 1
+  # More than one sort of GPU: one ResourceFlavor per entry, each with the
+  # node labels that pick its nodes and a quota of its own, and one resource
+  # group in the ClusterQueue whose flavors come in this order -- the order
+  # Kueue tries them in. Set, it replaces `flavor` and `resources` above,
+  # which are the one-flavor case this list leaves exactly as it was. With
+  # createFlavor false the flavors are the cluster's, referenced by name.
+  # `nodeTaints` are taints those nodes carry; the flavor also tolerates
+  # them, and Kueue adds that toleration to every pod it admits on the
+  # flavor, together with the node labels as the pod's node selector. A
+  # size in converter.yaml picks a flavor by these node labels
+  # (converter.yaml `flavors` repeats them, and apply checks it does). Kueue
+  # compares a pod's selector with a flavor only on that flavor's keys, so
+  # every two flavors must name a key in common with different values: give
+  # them all the same key. List the cheapest card first -- a pod that names
+  # no flavor takes the first with room. Every flavor quotes cpu, memory and
+  # nvidia.com/gpu: what a campaign pod requests.
+  #   flavors:
+  #     - name: small-gpu
+  #       nodeLabels: { nvidia.com/gpu.product: <product label of the card> }
+  #       quota: { cpu: 8, memory: 32Gi, nvidia.com/gpu: 4 }
+  #     - name: large-gpu
+  #       nodeLabels: { nvidia.com/gpu.product: <product label of the card> }
+  #       nodeTaints: [{ key: gpu-pool, value: large, effect: NoSchedule }]
+  #       quota: { cpu: 16, memory: 128Gi, nvidia.com/gpu: 2 }
+  flavors: []
   # The classes a campaign file may name with `priority:`, one cluster-scoped
   # WorkloadPriorityClass each. Kueue orders the queue by value first (higher
   # first) and by creation time within a value. Preemption stays off in this

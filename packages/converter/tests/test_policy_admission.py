@@ -674,9 +674,10 @@ HF_SECRET = "htr-hf-token"
 GIT_SECRET = "htrflow-campaigns-git"
 
 
-def converter_jobs(**config) -> tuple[dict, dict]:
+def converter_jobs(size: str | None = None, **config) -> tuple[dict, dict]:
     """The campaign Job and the warm-up Job the converter renders for the
-    good fixture, in this namespace, with converter.yaml settings changed."""
+    good fixture, in this namespace, with converter.yaml settings changed
+    and the pipeline at ``size``."""
     from htrflow_converter import render
     from htrflow_converter.parse import load
 
@@ -689,7 +690,7 @@ def converter_jobs(**config) -> tuple[dict, dict]:
         {**cfg.model_dump(by_alias=True), "namespace": NAMESPACE, **config}
     )
     kyrk = next(c for c in campaigns if c.name == "kyrk")
-    demo = pipelines["demo-v1"]
+    demo = pipelines["demo-v1"].model_copy(update={"size": size})
     batch = next(
         o for o in render.campaign_objects(kyrk, demo, cfg) if o["kind"] == "Job"
     )
@@ -734,6 +735,24 @@ def test_what_the_converter_renders_is_admitted(
     assert verdict == "admitted", out
     verdict, out = admission(tmp_path, job_shape, job, user="kubernetes-admin")
     assert verdict == "admitted", out
+
+
+#: B105: a size sets the wrapper's resources, its /work and the lookahead
+#: that lives there, and the flavor's node labels; all of it is admitted.
+SIZED = {
+    "flavors": [{"name": "large-gpu", "nodeLabels": {"nvidia.com/gpu.product": "X"}}],
+    "sizes": {
+        "large": {"flavor": "large-gpu", "cpu": 8, "memory": "32Gi", "workdir": "4Gi"}
+    },
+}
+
+
+def test_a_campaign_job_at_a_named_size_is_admitted(tmp_path: Path, job_shape: Path):
+    batch, _ = converter_jobs(size="large", **SIZED)
+    assert any(e["name"] == "LOOKAHEAD_BYTES" for e in _main(batch)["env"])
+    for user in (APPLY_SA, "kubernetes-admin"):
+        verdict, out = admission(tmp_path, job_shape, batch, user=user)
+        assert verdict == "admitted", out
 
 
 @pytest.mark.parametrize(
@@ -945,6 +964,8 @@ MUTATIONS = {
     "ld-preload": ("batch", _set_env("LD_PRELOAD", {"value": "/campaign/x.so"})),
     "pythonpath": ("warmup", _set_env("PYTHONPATH", {"value": "/config"})),
     "pinned-value": ("batch", _set_env("HOME", {"value": "/campaign"})),
+    # B105: the lookahead is a byte count the converter derives, nothing else
+    "lookahead-not-bytes": ("batch", _env("LOOKAHEAD_BYTES", "$(S3_BUCKET)")),
     "free-from-field": (
         "batch",
         _set_env(
@@ -1046,6 +1067,7 @@ SAID = {
     "capabilities": "securityContext is not the converter's",
     "host-network": "host namespaces or aliases",
     "tolerate-all": "a toleration with operator Exists and no key",
+    "lookahead-not-bytes": "LOOKAHEAD_BYTES is not a number of bytes",
 }
 
 

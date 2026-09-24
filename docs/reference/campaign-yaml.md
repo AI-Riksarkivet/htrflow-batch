@@ -40,6 +40,9 @@ warmup_wait_seconds: 900          # how long a pod waits for its pipeline's warm
 ttl_seconds_after_finished: 604800  # a week: how long a finished campaign's Job stays before Kubernetes deletes it; a pipeline's own `ttl_seconds_after_finished:` overrides it
 manifest_max_bytes: 16777216      # 16 MiB
 fetch_max_bytes: 67108864         # 64 MiB
+flavors: []                       # the chart's queue.flavors, by name and nodeLabels (see Pod sizes)
+sizes: {}                         # named pod sizes a pipeline's `size:` picks (see Pod sizes)
+default_size: null                # the size a pipeline with no `size:` runs at (see Pod sizes)
 ```
 
 The file itself is required: every command refuses a repo without one,
@@ -72,6 +75,71 @@ Which Secrets and PVCs a pod may mount is the chart's admission policy.
 model. It names a Secret you create, with a `token` key holding a
 read-scope Hub token; only the warm-up Job gets it, as `HF_TOKEN`
 ([Deploy](../getting-started/deploy.md)).
+
+### Pod sizes
+
+A pipeline asks for a pod size by name, and `converter.yaml` says what each
+name means. A pipeline with no `size:` runs at `default_size`. With that
+unset too, its campaign pods ask for 4 CPU, 8 GiB of memory with a 16 GiB
+limit, 1 GPU and a 2 GiB `/work`, on the first flavor with room.
+
+```yaml title="converter.yaml"
+flavors:                          # the chart's queue.flavors, names and nodeLabels as there
+  - name: small-gpu
+    nodeLabels: { nvidia.com/gpu.product: <product label of the small card> }
+  - name: large-gpu
+    nodeLabels: { nvidia.com/gpu.product: <product label of the large card> }
+sizes:
+  small: { flavor: small-gpu, gpu: 1, cpu: 4, memory: 16Gi }
+  large: { flavor: large-gpu, gpu: 1, cpu: 8, memory: 32Gi, workdir: 4Gi }
+default_size: small               # pipelines without a size: the small card, not the first with room
+```
+
+| Key | Default | What it does |
+|---|---|---|
+| `flavor` | none | A `flavors` entry. Its `nodeLabels` become the pod's `nodeSelector`, which keeps Kueue off the other flavors (see the rule below). None: the first flavor with room |
+| `gpu` | `1` | `nvidia.com/gpu`, 1 or more |
+| `cpu` | required | Whole cores (`8`) or millicores (`500m`) |
+| `memory` | required | Whole bytes, or with `Ki`, `Mi`, `Gi`, `Ti` (or `k`, `M`, `G`, `T`). Must leave at least 1Gi beside `workdir`: the in-memory `/work` counts against it, and the process gets the rest. The 1Gi is a floor against slips, not a sizing: a model wants several |
+| `workdir` | `2Gi` | The size of the memory-backed `/work`, at least `512Mi`: it holds `HOME`, `TMPDIR` and the wrapper's page lookahead (`LOOKAHEAD_BYTES`), which is half of it |
+
+Request and limit are the same number. A pod using more memory than it
+requested is the first the kubelet evicts under pressure, and the pages
+in `/work` would go with it.
+
+Kueue has no way for a Job to ask for a flavor by name. It tries the
+ClusterQueue's flavors in order and skips any whose node labels contradict
+the pod's node selector, comparing only the keys that flavor names. So a
+size's flavor is rendered as that flavor's labels, and **every two flavors
+must name a label key in common, with different values**: give each the
+same key (`nvidia.com/gpu.product`, say) with a value of its own
+([Several sorts of GPU](../how-it-works/queueing.md#several-sorts-of-gpu)).
+That is why `flavors` repeats the chart's `queue.flavors`, names and labels
+alike, as `priority_classes` repeats its classes. Order does not matter
+here; in the chart it does.
+
+`validate` refuses flavors that break the rule, a size that names a flavor
+not in `flavors`, a flavor whose labels contradict `node_selector`, a
+`default_size` that is not a size, and a pipeline naming a size not in
+`sizes`:
+
+```
+pipelines/demo-v1.yaml: size "huge" is not one of converter.yaml's sizes (small, large) — name one of them, or leave size out for the default
+```
+
+`validate` cannot see the cluster. `apply` can: before it sends a campaign
+whose size names a flavor, it reads the ClusterQueue's flavors and holds the
+campaign back when they are not `converter.yaml`'s
+([Several sorts of GPU](../how-it-works/queueing.md#several-sorts-of-gpu)).
+
+Setting or changing `default_size` changes the size of every pipeline
+without one, and a running campaign's size cannot change: `validate` refuses
+it like any other change to those pipelines.
+
+What neither can see is the chart's quota. A size that asks for more
+than every flavor it may land on has quota for is never admitted, and reads
+"Queued" for ever: give each flavor a quota of at least one pod of the
+largest size that can land on it.
 
 !!! note "The image allow-list and the model-revision rule are cluster policy"
 
@@ -181,6 +249,9 @@ ttl_seconds_after_finished: 1209600   # optional: how long THIS pipeline's
                                       # finished campaign Jobs stay,
                                       # overriding converter.yaml's
 
+size: large                # optional: one of converter.yaml's sizes; none is
+                           # 4 CPU, 8Gi (16Gi limit), 1 GPU, 2Gi /work
+
 steps:                     # htrflow pipeline steps, passed through verbatim
   - step: Segmentation
     settings:
@@ -221,6 +292,7 @@ validation error and blocks rendering for every campaign that uses it:
 | `image:` matches `<repository>@sha256:<64 hex>` | The digest is the provenance recorded in every `manifest.json` and ALTO |
 | `max_seconds:`, when set, is a positive integer | It becomes each pod's `activeDeadlineSeconds` for this pipeline's campaigns. A budget a volume cannot meet costs retries before the index fails |
 | `ttl_seconds_after_finished:`, when set, is a positive integer | It becomes the campaign Job's `ttlSecondsAfterFinished`: how long `completedIndexes` stays readable with `kubectl`. The campaign's record has no TTL |
+| `size:`, when set, is one of `converter.yaml`'s `sizes` | It becomes the wrapper's requests and limits, its `/work` and its flavor's node selector. Kueue would queue a pod it cannot place for ever |
 | `steps:` is a non-empty list, each entry `- step: <Name>`, with no `Export` step | Otherwise every volume fails in the wrapper. The wrapper appends the Export steps itself |
 | A step that loads a model has only `model`, `model_settings` and `generation_settings` under `settings` | htrflow merges any other key over `model_settings`, so `revision: null` beside it would unpin the model |
 | A line reader (`model: TrOCR` or `PyLaia`) has at least two segmentation steps (`model: yolo` or `PPDocLayoutV3`) before it: regions, then the lines within them | ALTO and PAGE XML hold the text of a line only inside a region. Lines straight on the page are exported without their text (see below) |
@@ -326,15 +398,15 @@ pipeline is missing. The wording is pinned in
 
 ## Immutability
 
-A pipeline id is a **permanent name for a recipe**: changing the steps or the
-image under an existing id is drift once results exist under it. To change a
+A pipeline id is a **permanent name for a recipe**: changing the steps, the
+image or the size under an existing id is drift once results exist under it. To change a
 recipe, mint a new id (`demo-v2`); old results under `demo-v1` stay untouched
 and comparable side by side.
 
 `validate` and `render` enforce this while a campaign still runs the
 pipeline. They compare each `pipelines/<id>.yaml` with the committed
-`rendered/pipelines/<id>.yaml`, and refuse an edit to the image or steps
-when a campaign still in `campaigns/` was rendered against it:
+`rendered/pipelines/<id>.yaml`, and refuse an edit to the image, steps or
+size when a campaign still in `campaigns/` was rendered against it:
 
 ```
 pipeline demo-v1 changed (image) but campaigns kyrk, loc still run it — a pipeline is immutable while campaigns reference it; add a new pipeline file (demo-v1-2) and point new campaigns at it
@@ -353,7 +425,15 @@ convention enforced by review.
 Only the recipe is held immutable, not the rendered manifest. A converter
 upgrade or a `converter.yaml` change that alters every warm-up Job's pod
 template makes `apply`
-[replace the warm-up Job](cli.md#when-the-api-server-refuses-an-object).
+[replace the warm-up Job](cli.md#when-the-api-server-refuses-an-object). What a size means in `converter.yaml` is not the recipe
+either: changing it changes the pod template of every campaign Job at that
+size, and the API server refuses that for a Job that exists, so `apply`
+reports it and leaves the Job as it was
+([CLI](cli.md#when-the-api-server-refuses-an-object)). New numbers belong
+under a new size name. The record names the size, not its numbers: the
+pipeline's ConfigMap carries the size's name, and the numbers that ran are
+the ones in `converter.yaml` at the commit that rendered it, which the
+campaign's Job in `rendered/` shows.
 
 A campaign is append-only: `render` holds its volume list against
 `rendered/`, and `apply` against the campaign's live ConfigMap, because a

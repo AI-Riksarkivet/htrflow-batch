@@ -60,7 +60,7 @@ ADD https://github.com/AI-Riksarkivet/htrflow.git#${HTRFLOW_REF} /
 
 # nvidia/cuda:12.1.0-base-ubuntu22.04 (multi-arch index digest), the base the
 # upstream htrflow image uses.
-FROM nvidia/cuda:12.1.0-base-ubuntu22.04@sha256:40042016a816cbbe0504dd0a396e7cfc036a8aa43f5694af60dd6f8f87d24e52 AS htrflow-builder
+FROM nvidia/cuda:12.1.1-base-ubuntu22.04@sha256:457a4076c56025f51217bff647ca631c7880ad3dbf546b03728ba98297ebbc22 AS htrflow-builder
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.10 python3-pip python3-dev build-essential \
@@ -98,7 +98,7 @@ RUN --mount=type=bind,source=.docker/build-constraints.txt,target=/tmp/build-con
     && uv pip install --python /app/.venv/bin/python --no-build --no-deps /tmp/dist/*.whl \
     && rm -rf /tmp/dist
 
-FROM nvidia/cuda:12.1.0-base-ubuntu22.04@sha256:40042016a816cbbe0504dd0a396e7cfc036a8aa43f5694af60dd6f8f87d24e52 AS htrflow-base
+FROM nvidia/cuda:12.1.1-base-ubuntu22.04@sha256:457a4076c56025f51217bff647ca631c7880ad3dbf546b03728ba98297ebbc22 AS htrflow-base
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.10 libgl1 libglib2.0-0 \

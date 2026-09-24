@@ -7,13 +7,42 @@ referenced by name: `queue.createFlavor`, `queue.createClusterQueue`,
 `queue.createPriorityClasses`, with the names as values.
 */}}
 {{- $cq := .Values.queue.clusterQueueName | default (printf "%s-cq" .Values.queue.name) }}
+{{- /*
+`queue.flavors` (B104): one flavor per sort of GPU, picked by its node labels,
+with a quota of its own. Unset, `queue.flavor` and `queue.resources` are the
+one flavor, with no spec, exactly as before. A flavor's taints are its
+tolerations too: Kueue adds those to every pod it admits there, beside the
+node labels as the pod's node selector.
+*/}}
+{{- $flavors := list (dict "name" .Values.queue.flavor "resources" .Values.queue.resources) }}
+{{- with .Values.queue.flavors }}
+{{- $flavors = list }}
+{{- range . }}
+{{- $quota := .quota }}
+{{- $resources := list }}
+{{- range list "cpu" "memory" "nvidia.com/gpu" }}{{ $resources = append $resources (dict "name" . "quota" (index $quota .)) }}{{ end }}
+{{- $tolerations := list }}
+{{- range .nodeTaints }}{{ $tolerations = append $tolerations (merge (dict "operator" (ternary "Equal" "Exists" (not (empty .value)))) .) }}{{ end }}
+{{- $flavors = append $flavors (dict "name" .name "nodeLabels" .nodeLabels "nodeTaints" .nodeTaints "tolerations" $tolerations "resources" $resources) }}
+{{- end }}
+{{- end }}
 {{- if .Values.queue.createFlavor }}
+{{- range $flavors }}
 apiVersion: kueue.x-k8s.io/v1beta2
 kind: ResourceFlavor
 metadata:
-  name: {{ .Values.queue.flavor }}
-  labels: {{- include "htrflow-batch.labels" . | nindent 4 }}
+  name: {{ .name }}
+  labels: {{- include "htrflow-batch.labels" $ | nindent 4 }}
+{{- if .nodeLabels }}
+spec:
+  nodeLabels: {{- toYaml .nodeLabels | nindent 4 }}
+  {{- if .nodeTaints }}
+  nodeTaints: {{- toYaml .nodeTaints | nindent 4 }}
+  tolerations: {{- toYaml .tolerations | nindent 4 }}
+  {{- end }}
+{{- end }}
 ---
+{{- end }}
 {{- end }}
 {{- if .Values.queue.createClusterQueue }}
 apiVersion: kueue.x-k8s.io/v1beta2
@@ -29,14 +58,17 @@ spec:
     matchLabels:
       kubernetes.io/metadata.name: {{ .Release.Namespace }}
   resourceGroups:
-    - coveredResources: [{{ range $i, $r := .Values.queue.resources }}{{ if $i }}, {{ end }}{{ $r.name | quote }}{{ end }}]
+    # One group; Kueue tries its flavors in this order.
+    - coveredResources: [{{ range $i, $r := (first $flavors).resources }}{{ if $i }}, {{ end }}{{ $r.name | quote }}{{ end }}]
       flavors:
-        - name: {{ .Values.queue.flavor }}
+        {{- range $flavors }}
+        - name: {{ .name }}
           resources:
-            {{- range .Values.queue.resources }}
+            {{- range .resources }}
             - name: {{ .name | quote }}
               nominalQuota: {{ .quota }}
             {{- end }}
+        {{- end }}
 ---
 {{- end }}
 apiVersion: kueue.x-k8s.io/v1beta2
