@@ -419,4 +419,74 @@ describe("/ nothing moves as the page loads", () => {
       /\b\d+ms\b.*\bboth\b|\bboth\b.*\b\d+ms\b/,
     );
   });
+
+  // The order is the first answer's; a poll updates each card where it is.
+  // Re-sorting every answer moved a campaign that had just started from the
+  // bottom of the list to the top, and every card in between down one.
+  describe("the order a reader has", () => {
+    const started = { ...job, name: "started", phase: "Queued" };
+    const finishing = { ...job, name: "finishing" };
+
+    function answers(...lists: unknown[][]): typeof fetch {
+      let n = 0;
+      return vi.fn(async (url: string) => {
+        if (url.toString().endsWith("/version"))
+          return jsonResponse({ version: "v", web: "w" });
+        if (url.toString().includes("/jobs/")) return jsonResponse(detail);
+        return jsonResponse(lists[Math.min(n++, lists.length - 1)]);
+      }) as unknown as typeof fetch;
+    }
+
+    const names = (container: HTMLElement) =>
+      [...container.querySelectorAll(".camp-name")].map((el) => el.textContent);
+
+    function setHidden(hidden: boolean): void {
+      Object.defineProperty(document, "hidden", {
+        configurable: true,
+        get: () => hidden,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    }
+
+    afterEach(() => setHidden(false));
+
+    test("a poll moves no card, whatever changed in it", async () => {
+      const later = [
+        { ...started, phase: "Running" },
+        {
+          ...finishing,
+          phase: "Succeeded",
+          finishedAt: "2026-09-08T10:00:00Z",
+        },
+      ];
+      vi.stubGlobal("fetch", answers([started, finishing], later));
+      const { container } = render(CampaignsPage);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(names(container)).toEqual(["finishing", "started"]);
+      await vi.advanceTimersByTimeAsync(RELOAD_MS);
+      expect(names(container)).toEqual(["finishing", "started"]);
+      // The card itself says what changed.
+      const cards = container.querySelectorAll("section.campaign");
+      expect(cards[1]).toHaveTextContent("Running");
+    });
+
+    test("back from the background, the list is sorted afresh", async () => {
+      const later = [
+        { ...started, phase: "Running" },
+        {
+          ...finishing,
+          phase: "Succeeded",
+          finishedAt: "2026-09-08T10:00:00Z",
+        },
+      ];
+      vi.stubGlobal("fetch", answers([started, finishing], later));
+      const { container } = render(CampaignsPage);
+      await vi.advanceTimersByTimeAsync(0);
+      setHidden(true);
+      await vi.advanceTimersByTimeAsync(RELOAD_MS);
+      setHidden(false);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(names(container)).toEqual(["started", "finishing"]);
+    });
+  });
 });

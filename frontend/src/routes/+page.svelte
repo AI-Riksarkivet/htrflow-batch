@@ -12,7 +12,7 @@
     type JobSummary,
   } from "$lib/api.js";
   import { RELOAD_MS, REPO_URL } from "$lib/config.js";
-  import { byAttention } from "$lib/order.js";
+  import { byAttention, keepOrder } from "$lib/order.js";
   import { startPolling } from "$lib/poll.js";
   import { describeApiError, describeUnreadable } from "$lib/reasons.js";
   import { untrack } from "svelte";
@@ -54,6 +54,18 @@
     }
   }
 
+  // Set while the tab is in the background: the next answer is sorted
+  // afresh rather than kept in the order the reader left it in.
+  let resort = false;
+
+  $effect(() => {
+    const away = () => {
+      if (document.hidden) resort = true;
+    };
+    document.addEventListener("visibilitychange", away);
+    return () => document.removeEventListener("visibilitychange", away);
+  });
+
   // One request in flight at a time, nothing polled while the tab is in the
   // background, and a run of failures backing off — all of it in
   // $lib/poll, so the list, each card and the run log cannot disagree.
@@ -63,8 +75,15 @@
       if (signal.aborted) return true;
       reapedTotal = result.reapedTotal;
       // The API sorts by creation date; the page sorts by what wants a
-      // person (see $lib/order).
-      jobs = byAttention(result.jobs);
+      // person (see $lib/order) -- once. A poll keeps the order the reader
+      // has and only adds to it, so no card moves under them; the list is
+      // sorted afresh when they come back to it from another tab, when
+      // there is nobody reading it to move anything under.
+      jobs =
+        jobs === null || resort
+          ? byAttention(result.jobs)
+          : keepOrder(jobs, result.jobs);
+      resort = false;
       unreadable = result.unreadable;
       error = null;
       return true;
