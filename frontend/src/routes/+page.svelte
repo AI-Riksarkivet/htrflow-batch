@@ -158,8 +158,9 @@
            down. -->
       <span
         class="version"
-        title={version === null ? undefined : `read API ${webVersion}`}
-        >{version ?? ""}</span
+        title={version === null
+          ? undefined
+          : `${version}, read API ${webVersion}`}>{version ?? ""}</span
       >
       <!-- The GitHub mark, inline: the page loads nothing from a third
            origin (its CSP would not allow it anyway). -->
@@ -263,9 +264,14 @@
   /* Both sit in the muted colour and take the link colour on hover: the
      header is chrome, not content, in either theme. The version has room
      held for it before there is one, filled from the right so a longer one
-     grows away from the icons beside it. */
+     grows away from the icons beside it; on the narrowest phone it gives
+     way, cut short, with the whole name in its title. */
   .version {
-    min-width: 29ch;
+    min-width: min(29ch, 100vw - 7rem);
+    max-width: calc(100vw - 7rem);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
     text-align: right;
     color: var(--muted-foreground);
     font-size: 0.8rem;

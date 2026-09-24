@@ -395,11 +395,17 @@ describe("/ nothing moves as the page loads", () => {
     // Wide enough for a pre-release tag: "htrflow-batch v0.12.0-rc.1", and
     // the contract fixture's "htrflow-batch v0.0.0-contract" (review of
     // this change: 10rem was not).
-    const width = cssOf(pageRules, ".version").get("min-width") ?? "";
-    expect(width).toMatch(/^\d+ch$/);
-    expect(parseInt(width)).toBeGreaterThanOrEqual(
+    // On the narrowest phone it gives way rather than push the toggle onto
+    // a line of its own, cut short with the whole name in its title.
+    const version = cssOf(pageRules, ".version");
+    const width = /^min\((\d+)ch, 100vw - [\d.]+rem\)$/.exec(
+      version.get("min-width") ?? "",
+    );
+    expect(Number(width?.[1])).toBeGreaterThanOrEqual(
       "htrflow-batch v0.0.0-contract".length,
     );
+    expect(version.get("max-width")).toMatch(/^calc\(100vw - [\d.]+rem\)$/);
+    expect(version.get("text-overflow")).toBe("ellipsis");
     // Grows away from the icons beside it, never into them.
     expect(cssOf(pageRules, ".version").get("text-align")).toBe("right");
     expect(cssOf(pageRules, ".header-right").get("margin-left")).toBe("auto");
