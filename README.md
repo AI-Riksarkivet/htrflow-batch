@@ -26,36 +26,40 @@
 > pre-releases for trying it out, not for production.
 
 Run an [htrflow](https://github.com/AI-Riksarkivet/htrflow) pipeline on whole
-archival volumes, across a Kubernetes cluster of GPU nodes. Your pipeline stays
-exactly as it is; htrflow-batch decides where each volume runs, streams its
-pages in, and publishes ALTO and PAGE XML page by page.
+archival volumes, across a Kubernetes cluster of GPU nodes. Your pipeline
+stays exactly as it is; htrflow-batch decides where each volume runs, streams
+its pages in, and publishes ALTO and PAGE XML page by page. What to
+transcribe is a file in git.
 
-**New here?** The [Distributed htrflow](https://ai-riksarkivet.github.io/htrflow-batch/presentations/)
-slides walk through all of it in pictures.
+![One campaign, from a file in git to results in the viewer](docs/assets/diagrams/overview.svg)
 
-## From one machine to many
+## Quickstart
 
-| | one machine | many nodes |
-|---|---|---|
-| **where it runs** | your machine, its GPU | whichever node has a GPU free — chosen for you |
-| **the pages** | a folder on its disk | fetched from a IIIF manifest or plain image URLs |
-| **the models** | downloaded to that disk | a shared cache every node mounts |
-| **the results** | a folder next to the pages | a bucket every node writes to and every browser reads |
-| **when a machine fails** | you start again | the volume resumes on another node from the bucket |
-| **how you start it** | a command | a file in git |
+One page of a sample volume, transcribed on your own machine and opened in
+the viewer. You need `git`, `make` and Docker with Compose; no cluster, no
+GPU.
 
-A *volume* here is an archival volume — a bound unit of pages with a reference
-code such as `R0001203` — never a Kubernetes volume.
+```bash
+git clone https://github.com/AI-Riksarkivet/htrflow-batch && cd htrflow-batch
+make compose-up
+docker compose -f .docker/docker-compose.yml logs -f wrapper    # wait for "COMPLETE 1 pages"
+```
 
-## A campaign is a file in git
+Then open
+<http://localhost:8080/uv.html#?manifest=http://localhost:19000/htr-results/demo-v1/mock-vol/iiif.json>,
+and `make compose-down` when you are done. Ports taken, or anything else
+unexpected: [Quickstart](https://ai-riksarkivet.github.io/htrflow-batch/getting-started/try-it/).
+
+## On a cluster
+
+A campaign lists volumes and names a pipeline. You open a pull request, and
+once it is merged an apply sends it to the cluster as one Kubernetes Indexed
+Job, one pod per volume, queued by Kueue until its GPUs are free.
 
 ```yaml
 # campaigns/kyrkobocker-1.yaml
-pipeline: demo-v1            # a pipeline file in the same repository
-window: 4                    # optional: how many volumes run at once
-priority: htr-bulk           # optional: where it goes in the line
+pipeline: demo-v1
 volumes:
-  - R0001203                 # a reference code, once converter.yaml's source_template is set
   - id: loc-mal2459400
     manifest: https://…/manifest.json
   - id: loose-scans
@@ -63,133 +67,31 @@ volumes:
       - https://…/scan-0001.jpg
 ```
 
-You validate it locally, open a pull request, and once it is merged an apply
-sends it to the cluster. Stopping, removing and restarting a campaign are git
-changes too. There is no CRD, no controller and no database.
-
-## How it fits together
-
-![Rough architecture: git, delivery, the cluster, storage and the outside world](docs/slides/assets/part-1-architecture.svg)
-
-- **A pure converter** (`htrflow-campaigns`) checks the campaign and renders it
-  into one Kubernetes **Indexed Job**, one index per volume, plus a warm-up Job
-  that fills the model cache. It renders in the campaigns repo's CI; the
-  apply runs by hand or in the cluster, as an Argo CD hook on the converter
-  image.
-- **Kyverno** decides which images and model revisions may run. **Kueue** holds
-  a campaign until its GPUs are free, and lets higher priority go first.
-- **A web front** shows every campaign and volume live, with each volume's run
-  log and the transcription in the viewer.
-
-- [Architecture](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/architecture/): the map, and the components and their boundaries
-- [Campaigns](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/campaigns/): the campaigns repo, the converter and what it renders
-- [Queueing](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/queueing/): how a campaign is admitted, paused and shared
-- [Events and signals](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/signals/): what the system emits and who reads it
-- [Failure handling](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/failure-handling/): retries, exit codes, what a person is told
-
-## htrflow in a pod
-
 ![One pod per archival volume: wait for the models, then fetch, transcribe and upload page by page, then verify, publish and exit](docs/slides/assets/p1-pod.svg)
 
-Every pod runs htrflow — your pipeline, unchanged — on one archival volume.
-Each page is uploaded the moment it is done, with provenance in every ALTO:
-which models, which image, which htrflow-batch. A restarted pod skips the pages
-already in the bucket, so a crash costs one page, not a volume.
-
-- [From image to transcription](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/page-flow/): this path in detail
-- [The wrapper](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/wrapper/): stages, provenance, model cache, and why a long volume costs the same memory as a short one
-
-## What you see
+A web front shows every campaign and volume live, with each volume's run
+log and the transcription in the viewer:
 
 ![The status page: one card per campaign, with its volumes, pages and problems](docs/slides/assets/part-1-status-page.png)
 
-One card per campaign: how it stands, a bar per volume, and one sentence for
-each volume that failed, saying why. A volume's name opens it in the viewer; its
-page icon opens the run log.
-
-## What is in the repository
-
-| Path | What it is |
-|---|---|
-| `packages/wrapper` | The in-pod wrapper: IIIF fetch, streaming, resume, verify, publish, live run log, warm-up entrypoint, ALTO provenance |
-| `packages/converter` | `htrflow-campaigns`: validate, render and apply a campaigns repo (Indexed Jobs, warm-up Jobs, ConfigMaps; pause via Kueue) |
-| `packages/web` + `frontend` | The read API (`/api/v1/jobs`) and the SvelteKit status page, one image |
-| `charts/htrflow-batch` | The Helm chart: Kueue queues, RBAC, NetworkPolicies, Kyverno policies, the status page |
-| `charts/htrflow-devstack` | S3 (RustFS), an image registry and the NVIDIA device plugin for a disposable dev cluster |
-| `examples/campaigns` | The shape of a campaigns repository, with the CI that renders, policy-checks and commits `rendered/` |
-| `docs/` | The documentation site (getting started, how it works, reference, development, roadmap). `docs/features/` holds the product view: one story per deliverable, mirrored to Azure DevOps and kept out of the site |
-| `scripts/` | The exact LOC budgets, the generated configuration reference, the docs lint, the stories ↔ Azure DevOps sync |
-
-## From nothing to a first transcription
-
-Two paths, both written out step by step in
-[Try it](https://ai-riksarkivet.github.io/htrflow-batch/getting-started/try-it/):
-
-- **Without a cluster.** `make compose-smoke` runs the wrapper on one page
-  of a fixture volume against a local S3 server and checks the viewer. It
-  needs only Docker.
-- **On a cluster with one NVIDIA GPU node.** Install the prerequisites the
-  chart does not carry, then install the chart itself. Then describe your
-  volumes in a campaigns repo and apply it. The published, signed images are
-  used, so nothing has to be built.
-
-  ```bash
-  make install && make install-kueue && make install-devstack
-  helm upgrade --install htr charts/htrflow-batch -n <namespace> --set …   # values: see Try it
-  uv run htrflow-campaigns init my-campaigns                              # add your volumes
-  make campaigns-apply DIR=my-campaigns
-  ```
-
-The dev-cluster path runs with the security policies off, which is the right
-default for a first look.
-[Deploy](https://ai-riksarkivet.github.io/htrflow-batch/getting-started/deploy/)
-is the production-shaped install, with your own S3 and the policies on.
+- [Deploy](https://ai-riksarkivet.github.io/htrflow-batch/getting-started/deploy/): the production install.
+- [Run a campaign](https://ai-riksarkivet.github.io/htrflow-batch/getting-started/campaigns/): your first campaigns repo.
+- [How it works](https://ai-riksarkivet.github.io/htrflow-batch/how-it-works/architecture/), and the [slides](https://ai-riksarkivet.github.io/htrflow-batch/presentations/) that walk through it in pictures.
 
 ## Developing
 
 ```bash
-make install && make test              # uv workspace sync + wrapper, converter and web tests
-make frontend-install && make frontend-test
-make ci                                # the dagger gates CI runs: format, lint, typecheck, frontend, chart, tests
-scripts/loc-budget.sh                  # the non-test line budgets, a CI step of its own
+make install && make test     # uv workspace sync + the Python tests
+make ci                       # every gate CI runs, through dagger
 ```
 
 [Development](https://ai-riksarkivet.github.io/htrflow-batch/development/)
-covers workspace setup, testing, CI and
-[releasing](https://ai-riksarkivet.github.io/htrflow-batch/development/releasing/).
-[Dev cluster](https://ai-riksarkivet.github.io/htrflow-batch/development/dev-cluster/)
-is the loop of building images and applying campaigns on a single-node GPU
-cluster.
-
-## Where things stand
-
-- **Images.** `docker.io/riksarkivet/htrflow-batch` (the wrapper),
-  `docker.io/riksarkivet/htrflow-web` (the web front) and
-  `docker.io/riksarkivet/htrflow-campaigns` (the converter, for the Argo CD
-  apply hook) are signed with cosign and carry SLSA provenance and an SBOM.
-  Each is pinned by digest: pipeline files pin the wrapper, the chart's
-  `web.image` the web front, and the hook in the campaigns repo the
-  converter.
-- **Versions.** Each lives next to what it versions: the charts' `Chart.yaml`
-  files, the packages' `pyproject.toml` files, and `KUEUE_VERSION` in the
-  `Makefile`.
-- **Plans.** What is open and what could come next is on the
-  [Roadmap](https://ai-riksarkivet.github.io/htrflow-batch/roadmap/).
-
-## Documentation
-
-The site is at <https://ai-riksarkivet.github.io/htrflow-batch/>, built from
-`docs/` on every merge to main, with the
-[slides](https://ai-riksarkivet.github.io/htrflow-batch/presentations/) beside
-it. Locally:
-
-```bash
-make docs-serve
-```
+covers the repository layout, testing, CI, releasing and a dev cluster. The
+documentation site is built from `docs/` (`make docs-serve` locally).
 
 ## License
 
 htrflow-batch is licensed under the European Union Public Licence (EUPL-1.2),
 the same licence as htrflow. See [`LICENSE`](LICENSE). The third-party
-components the images ship are listed with their licences in
+components the images ship are listed in
 [Third-party licences](https://ai-riksarkivet.github.io/htrflow-batch/development/licenses/).
