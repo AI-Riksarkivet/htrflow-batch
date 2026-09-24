@@ -68,6 +68,12 @@ export const REPO_URL = "https://github.com/AI-Riksarkivet/htrflow-batch";
 /** Campaign list re-fetch period (default 60 s). */
 export const RELOAD_MS = envInt(env.VITE_RELOAD_MS, 60_000);
 
+/**
+ * A folded card's re-fetch period while it is on screen: the page count in
+ * its header is all it reads for, so half the open card's pace.
+ */
+export const FOLDED_MS = RELOAD_MS * 2;
+
 /** Live log re-fetch period (default 15 s = the wrapper's LOG_SHIP_SECONDS). */
 export const LIVE_MS = envInt(env.VITE_LIVE_MS, 15_000);
 

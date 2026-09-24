@@ -1,3 +1,13 @@
+<script lang="ts" module>
+  import { gate } from "$lib/poll.js";
+
+  // Every card on screen reads its own detail, folded ones included (for
+  // the page count in the header), and a page of fifty campaigns asked for
+  // fifty in the same instant. They share this: four in flight, the rest in
+  // turn, and a card that goes away gives up its place.
+  const detailReads = gate(4);
+</script>
+
 <script lang="ts">
   // One campaign = one Indexed Job. The header is the JobSummary the parent
   // already has (from GET /api/v1/jobs); the volume table is fetched
@@ -13,7 +23,7 @@
     type JobSummary,
     type VolumeView,
   } from "$lib/api.js";
-  import { RELOAD_MS } from "$lib/config.js";
+  import { FOLDED_MS, RELOAD_MS } from "$lib/config.js";
   import { inTrouble } from "$lib/order.js";
   import { startPolling } from "$lib/poll.js";
   import { modelLabel, modelUrl, pipelineModels } from "$lib/pipeline.js";
@@ -56,6 +66,9 @@
   // progress files, for cards nobody had scrolled to (the 2026-09-23
   // audit). Sticky: once seen, folding the card is not a reason to forget.
   let wanted = $state(!startsFolded);
+  // Whether it is on screen now: a folded campaign that is still going reads
+  // its page count only then.
+  let onScreen = $state(false);
 
   function toggle(): void {
     collapsed = !collapsed;
@@ -403,11 +416,8 @@
             Math.max(PAGE, Math.ceil(volumes.length / PAGE) * PAGE),
           )
         : PAGE;
-      const detail = await fetchJob(
-        job.namespace,
-        job.name,
-        offset,
-        limit,
+      const detail = await detailReads(
+        () => fetchJob(job.namespace, job.name, offset, limit, signal),
         signal,
       );
       if (signal?.aborted) return true;
@@ -497,6 +507,8 @@
   // not read again for the same state, however often it is folded and
   // opened. Not reactive: it is the effect's memory, not its input.
   let landedFor = "";
+  // When it did, for the folded pace (ms since the epoch).
+  let lastRead = 0;
 
   $effect(() => {
     // Tracked on purpose: a change of phase, or the Job being reaped, is
@@ -504,13 +516,13 @@
     // state, a reaped one from the record that replaced its Job, and one
     // re-run under the same name starts polling again.
     const state = `${job.phase}/${job.jobGone}`;
-    // Folded, the card is its header, and the list row carries all of that
-    // but one thing: whether a Succeeded campaign lost pages on the way
-    // ("partially succeeded"). Nothing else is read for a folded card.
-    if (collapsed && job.phase !== "Succeeded") return;
-    const once = settled || collapsed;
-    // Read only for a settled card, so a running one is not restarted by it.
-    if (once && (!wanted || landedFor === state)) return;
+    // Folded, the card is its header, and the header's page count is the
+    // one thing on it the list row does not carry. A campaign still going
+    // reads it while the card is on screen, at the folded pace; a settled
+    // one reads it once, once seen, as it reads everything.
+    if (collapsed && !settled && !onScreen) return;
+    if (settled && (!wanted || landedFor === state)) return;
+    const period = collapsed ? FOLDED_MS : RELOAD_MS;
     // untrack: load() reads `volumes` to size its refresh and then writes it,
     // and an effect that reads its own output re-runs forever. The list
     // keys each card by namespace/name, so a card never changes campaign
@@ -520,32 +532,41 @@
     return untrack(() =>
       startPolling(
         async (signal) => {
+          // Back on screen, folded or opened a moment after the last read of
+          // this same state: that read still stands until the period is up.
+          // A folded card's read is the whole first page, so the table it
+          // opens to is already there.
+          if (landedFor === state && Date.now() - lastRead < period)
+            return true;
           const landed = await load(true, signal);
-          if (landed && !signal.aborted) landedFor = state;
+          if (landed && !signal.aborted) {
+            landedFor = state;
+            lastRead = Date.now();
+          }
           return landed;
         },
-        RELOAD_MS,
-        { until: () => once && landedFor === state },
+        period,
+        { until: () => settled && landedFor === state },
       ),
     );
   });
 
   /**
-   * Marks the card `wanted` the first time any of it is on screen (or
-   * nearly: the margin reads it just before it scrolls in). A browser with
-   * no IntersectionObserver cannot say, so the card is wanted at once --
-   * what every card did before.
+   * Keeps `onScreen` -- any of the card on screen, or nearly: the margin
+   * reads it just before it scrolls in -- and marks the card `wanted` the
+   * first time it is. A browser with no IntersectionObserver cannot say, so
+   * the card counts as on screen at once, which is what every card did
+   * before.
    */
   function whenSeen(node: HTMLElement) {
     if (typeof IntersectionObserver === "undefined") {
-      wanted = true;
+      onScreen = wanted = true;
       return {};
     }
     const observer = new IntersectionObserver(
       (entries) => {
-        if (!entries.some((e) => e.isIntersecting)) return;
-        wanted = true;
-        observer.disconnect();
+        onScreen = entries.at(-1)?.isIntersecting ?? onScreen;
+        if (onScreen) wanted = true;
       },
       { rootMargin: "200px" },
     );
