@@ -269,6 +269,49 @@ def test_the_list_says_which_campaigns_score_page_quality():
     assert detail["qualityPrediction"] is True
 
 
+class OneBrokenPipelineReader(QualityReader):
+    """The scoring pipeline, and beside it one that will not parse -- nested
+    past the parser's recursion limit -- for another campaign."""
+
+    def list_jobs(self) -> list[dict]:
+        broken = {
+            **JOB,
+            "metadata": {
+                **JOB["metadata"],
+                "name": "trasig",
+                "labels": {
+                    **JOB["metadata"]["labels"],
+                    "htrflow.riksarkivet.se/pipeline": "broken",
+                },
+            },
+        }
+        return [JOB, broken]
+
+    def list_pipelines(self) -> list[dict]:
+        bad = {
+            "metadata": {
+                **QP_PIPELINE["metadata"],
+                "name": "htr-pipeline-broken",
+                "labels": {
+                    **QP_PIPELINE["metadata"]["labels"],
+                    "htrflow.riksarkivet.se/pipeline": "broken",
+                },
+            },
+            "data": {"pipeline.yaml": "[" * 20000 + "]" * 20000},
+        }
+        return [bad, QP_PIPELINE]
+
+
+def test_one_pipeline_that_will_not_parse_does_not_fail_the_list():
+    """Every pipeline is parsed on every list request: one malformed
+    ConfigMap is no quality step for its own campaigns, and nothing else."""
+    client = TestClient(create_app(OneBrokenPipelineReader(), progress=FakeProgress()))
+    resp = client.get("/api/v1/jobs")
+    assert resp.status_code == 200
+    by_name = {row["name"]: row["qualityPrediction"] for row in resp.json()}
+    assert by_name == {"kyrk": True, "trasig": False}
+
+
 class NoPipelinesReader(FakeReader):
     def list_pipelines(self) -> list[dict]:
         return []  # pruned, or never applied

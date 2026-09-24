@@ -982,7 +982,16 @@ def _log_url(pipeline: str, volume_id: str, cfg) -> str:
 
 
 def _pipeline_yaml(configmap: dict | None) -> str:
-    return ((configmap or {}).get("data") or {}).get("pipeline.yaml", "")
+    text = ((configmap or {}).get("data") or {}).get("pipeline.yaml", "")
+    # The API server sends strings; a hand-built object may not, and a
+    # non-string reaches the parser as a stream it cannot read.
+    return text if isinstance(text, str) else ""
+
+
+#: A real pipeline is a few KB. Past this the text is not parsed at all:
+#: the list route parses every pipeline ConfigMap on every request, so one
+#: object near the 1 MiB ConfigMap limit is cost the whole list would pay.
+MAX_PIPELINE_YAML = 64 * 1024
 
 
 def _pipeline_steps(text: str) -> list[str]:
@@ -990,9 +999,16 @@ def _pipeline_steps(text: str) -> list[str]:
     card's pipeline chip lists in its tooltip. A ConfigMap that is missing,
     empty or shaped differently is no steps rather than an error: the chip
     then just names the pipeline, and the campaign is unaffected either way."""
+    if len(text) > MAX_PIPELINE_YAML:
+        return []
+    # Every way this text can fail to be a document is no steps, never an
+    # error: the list route parses each pipeline on every request, so one
+    # bad ConfigMap raising here failed the whole list. RecursionError is a
+    # deeply nested flow collection (`[[[...]]]`); ValueError is a scalar
+    # its resolver cannot build (a `2026-99-99` date, `!!int zz`).
     try:
         doc = yaml.safe_load(text)
-    except yaml.YAMLError:
+    except (yaml.YAMLError, RecursionError, ValueError):
         return []
     steps = doc.get("steps") if isinstance(doc, dict) else None
     if not isinstance(steps, list):

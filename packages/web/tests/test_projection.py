@@ -2008,8 +2008,42 @@ def _pipeline(text: str) -> dict:
         (_pipeline(""), False),
         ({"metadata": {}}, False),
         (None, False),
+        (_pipeline("[" * 20000 + "]" * 20000), False),
+        (_pipeline("steps: " + "{a: " * 5000), False),
+        (_pipeline("steps:\n- step: QualityPrediction\n  at: 2026-99-99\n"), False),
+        (_pipeline("steps:\n- step: QualityPrediction\n  n: !!int zz\n"), False),
+        (
+            _pipeline(
+                "steps:\n- step: QualityPrediction\n"
+                + "# padding\n" * (projection.MAX_PIPELINE_YAML // 10)
+            ),
+            False,
+        ),
+        ({"data": {"pipeline.yaml": 123}}, False),
     ],
-    ids=["qp", "lower-case", "no-qp", "bad-yaml", "empty", "no-data", "missing"],
+    ids=[
+        "qp",
+        "lower-case",
+        "no-qp",
+        "bad-yaml",
+        "empty",
+        "no-data",
+        "missing",
+        "deeply-nested",
+        "deeply-nested-map",
+        "bad-date",
+        "bad-int",
+        "over-the-cap",
+        "not-a-string",
+    ],
 )
 def test_a_pipeline_scores_quality_when_it_has_the_step(configmap, expected):
     assert projection.quality_prediction(configmap) is expected
+
+
+def test_a_pipeline_just_under_the_cap_is_still_read():
+    """The cap is on size, not on a real pipeline: one padded to just under
+    it still says what its steps are."""
+    head = "steps:\n- step: QualityPrediction\n"
+    pad = "#" * (projection.MAX_PIPELINE_YAML - len(head) - 1) + "\n"
+    assert projection.quality_prediction(_pipeline(head + pad)) is True
