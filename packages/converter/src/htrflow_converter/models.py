@@ -944,6 +944,24 @@ def _label_problem(labels: dict[str, str]) -> str | None:
     return None
 
 
+def _told_apart(a: dict[str, str], b: dict[str, str]) -> bool:
+    """Whether a pod carrying ``a`` as its node selector is refused by a
+    flavor labelled ``b``, and the other way round. Kueue matches a pod's
+    selector against a flavor only on the keys that flavor names (v0.19
+    ``flavorassigner.flavorSelector``), so two flavors are told apart only by
+    a key both name, with different values."""
+    return any(key in b and b[key] != value for key, value in a.items())
+
+
+_INDISTINCT = (
+    'flavors "{a}" and "{b}" name no label key with different values — Kueue '
+    "compares a pod's node selector only on the keys of the flavor it tries, "
+    "so a pod meant for one can be admitted on the other and never "
+    "scheduled; give every flavor the same label key (nvidia.com/gpu.product, "
+    "say) with a value of its own"
+)
+
+
 class Flavor(BaseModel):
     """One of converter.yaml's ``flavors``: a chart ``queue.flavors`` entry's
     name and node labels, repeated (B105). Kueue offers no way for a Job to
@@ -1181,6 +1199,10 @@ class ConverterConfig(BaseModel):
             if names.count(name) > 1:
                 raise ValueError(f'"flavors" lists flavor "{name}" twice')
         labels = {f.name: f.node_labels for f in self.flavors}
+        for i, a in enumerate(names):
+            for b in names[i + 1 :]:
+                if not _told_apart(labels[a], labels[b]):
+                    raise ValueError(_INDISTINCT.format(a=a, b=b))
         for name, size in self.sizes.items():
             if memory_bytes(size.memory) - memory_bytes(size.workdir) < _PROCESS_FLOOR:
                 raise ValueError(

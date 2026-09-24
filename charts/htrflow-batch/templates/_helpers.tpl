@@ -127,6 +127,26 @@ list is what converter.yaml's `flavors` repeats either way.
 {{- end }}
 {{- end }}
 {{- end }}
+{{- /*
+Two flavors are told apart only by a label key both name, with different
+values: Kueue matches a pod's node selector against a flavor on that
+flavor's own keys alone (v0.19 flavorassigner.flavorSelector), so a size's
+pod could otherwise be admitted on the wrong flavor, take its quota and
+never be scheduled (review of PR #35).
+*/}}
+{{- range $i, $a := .Values.queue.flavors }}
+{{- range $j, $b := $.Values.queue.flavors }}
+{{- if lt $i $j }}
+{{- $apart := false }}
+{{- range $key, $value := $a.nodeLabels }}
+{{- if and (hasKey $b.nodeLabels $key) (ne (toString $value) (toString (index $b.nodeLabels $key))) }}{{ $apart = true }}{{ end }}
+{{- end }}
+{{- if not $apart }}
+{{- fail (printf "queue.flavors %s and %s name no label key with different values: Kueue compares a pod's node selector only on the keys of the flavor it tries, so a pod meant for one can be admitted on the other and never scheduled; give every flavor the same label key (nvidia.com/gpu.product, say) with a value of its own" $a.name $b.name) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- end }}
 
 {{/*
