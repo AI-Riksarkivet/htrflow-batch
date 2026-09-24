@@ -392,7 +392,14 @@ describe("/ nothing moves as the page loads", () => {
     const slot = container.querySelector(".header-right .version");
     expect(slot).not.toBeNull();
     expect(slot).toHaveTextContent("");
-    expect(cssOf(pageRules, ".version").get("min-width")).toMatch(/rem$/);
+    // Wide enough for a pre-release tag: "htrflow-batch v0.12.0-rc.1", and
+    // the contract fixture's "htrflow-batch v0.0.0-contract" (review of
+    // this change: 10rem was not).
+    const width = cssOf(pageRules, ".version").get("min-width") ?? "";
+    expect(width).toMatch(/^\d+ch$/);
+    expect(parseInt(width)).toBeGreaterThanOrEqual(
+      "htrflow-batch v0.0.0-contract".length,
+    );
     // Grows away from the icons beside it, never into them.
     expect(cssOf(pageRules, ".version").get("text-align")).toBe("right");
     expect(cssOf(pageRules, ".header-right").get("margin-left")).toBe("auto");
