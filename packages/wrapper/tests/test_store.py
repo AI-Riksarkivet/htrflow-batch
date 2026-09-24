@@ -316,3 +316,28 @@ def test_page_sources_reads_back_the_digest_each_alto_was_stamped_with(
         Bucket=cfg.s3_bucket, Key="demo-v1/SE-RA-1234/alto/0002.xml", Body=b"<a/>"
     )
     assert store.page_sources({"0001", "0002"}) == {"0001": "abc123", "0002": None}
+
+
+def test_upload_records_the_page_score_beside_its_size(cfg, s3, tmp_path):
+    store = ResultStore(cfg)
+    alto = tmp_path / "0001.alto.xml"
+    alto.write_text(
+        '<alto><Layout><Page WIDTH="10" HEIGHT="20" PC="0.5"/></Layout></alto>'
+    )
+    page = tmp_path / "0001.page.xml"
+    page.write_text("<PcGts/>")
+    store.upload_page("0001", {"alto": alto, "page": page})
+    assert store.page_quality == {"0001": 0.5}
+    assert store.page_dims == {"0001": (10, 20)}
+
+
+def test_upload_of_an_unscored_page_records_no_score(cfg, s3, tmp_path):
+    store = ResultStore(cfg)
+    alto = tmp_path / "a.xml"
+    alto.write_text(
+        '<alto><Layout><Page WIDTH="10" HEIGHT="20" PC="x"/></Layout></alto>'
+    )
+    page = tmp_path / "p.xml"
+    page.write_text("<PcGts/>")
+    store.upload_page("0001", {"alto": alto, "page": page})
+    assert store.page_quality == {}

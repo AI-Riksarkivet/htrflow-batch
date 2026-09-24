@@ -13,6 +13,7 @@ import boto3
 from botocore.config import Config as BotoConfig
 
 from .config import Config
+from .quality import parse_alto_quality
 from .viewer import parse_alto_dims
 
 #: Per-page outputs, in upload order. ALTO is what the viewer manifest and
@@ -86,6 +87,9 @@ class ResultStore:
         #: bucket and not here. One page that simply has none looked the same
         #: and switched the live viewer off for the rest of the volume.
         self.dimless_pages: set[str] = set()
+        #: Each page's predicted quality, off the same parse (quality.py);
+        #: a page with no score is simply absent.
+        self.page_quality: dict[str, float] = {}
         # W6: default boto timeouts (60 s connect/read, legacy retries) let an
         # S3 outage pin every PUT for minutes and the run for hours. Bounded
         # here; stream.consume aborts after N consecutive upload failures.
@@ -196,6 +200,8 @@ class ResultStore:
         except ValueError:
             # publish leaves a page with no dims out, it does not fail
             self.dimless_pages.add(name)
+        if (score := parse_alto_quality(roots["alto"])) is not None:
+            self.page_quality[name] = score
 
     def page_sources(self, names) -> dict[str, str | None]:
         """The source digest each page's ALTO -- the output that makes a page
