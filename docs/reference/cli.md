@@ -337,7 +337,7 @@ summary line lists what was left unchanged. A campaign's ConfigMap and Job
 are one change: if the Job's dry run is refused, the ConfigMap is kept as
 it was too.
 
-An object that already exists without the `htrflow.riksarkivet.se/managed-by: converter`
+An object that already exists without the converter's `managed-by: converter`
 label (made by hand, or by something else) is never overwritten, whoever runs
 the apply: it is refused as `… exists … and was not made by htrflow-campaigns`,
 and so are the campaign pair and the Jobs that would mount it. Rename the
