@@ -211,15 +211,28 @@ export const campaignQualitySchema = z.object({
   min: z.number(),
   scored: z.number(),
   volumes: z.number(),
-  lowest: z.array(
-    z.object({
-      volume: z.string(),
-      page: z.string(),
-      quality: z.number(),
-      canvas: z.number().nullable(),
-      iiifUrl: httpUrlSchema,
+  // Each (volume, page) once, the first (lowest) time: the API names each
+  // once, but the card keys its list by them, and a duplicate from an older
+  // or broken API would throw there (each_key_duplicate) and take the card.
+  lowest: z
+    .array(
+      z.object({
+        volume: z.string(),
+        page: z.string(),
+        quality: z.number(),
+        canvas: z.number().nullable(),
+        iiifUrl: httpUrlSchema,
+      }),
+    )
+    .transform((lowest) => {
+      const seen = new Set<string>();
+      return lowest.filter((l) => {
+        const key = l.volume + "/" + l.page;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
     }),
-  ),
 });
 
 /**
