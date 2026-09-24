@@ -523,6 +523,26 @@ def test_lowest_is_clipped_and_bad_entries_dropped():
     assert block["lowest"][0]["page"] == "0000"
 
 
+def test_a_page_named_twice_in_lowest_is_kept_once():
+    """The frontend keys its list by page: a duplicate would throw there.
+    The first entry, the lowest the wrapper ranked, is the one kept, and
+    the duplicate does not take one of the five places."""
+    dup = [
+        {"page": "0002", "quality": 0.4, "canvas": 1},
+        {"page": "0002", "quality": 0.5, "canvas": 1},
+        *({"page": f"{i:04d}", "quality": 0.6, "canvas": i} for i in range(3, 8)),
+    ]
+    block = _quality({**GOOD, "lowest": dup})
+    assert [e["page"] for e in block["lowest"]] == [
+        "0002",
+        "0003",
+        "0004",
+        "0005",
+        "0006",
+    ]
+    assert block["lowest"][0]["quality"] == 0.4
+
+
 def test_progress_and_manifest_both_carry_it():
     doc = {"pages_total": 3, "pages_done": 3, "quality": GOOD}
     assert _from_progress(doc, 0.0)["quality"]["mean"] == 0.8

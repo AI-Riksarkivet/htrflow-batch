@@ -1980,6 +1980,23 @@ def test_the_campaign_mean_is_weighted_by_scored_pages():
     }
 
 
+def test_a_volume_read_twice_names_its_lowest_page_once():
+    """Two rows for one volume (listed twice in the campaign) would name
+    each of its lowest pages twice; the card keys its list by volume and
+    page, so each is named once."""
+    q = {
+        "mean": 0.5,
+        "min": 0.2,
+        "scored": 3,
+        "lowest": [
+            {"page": "7", "quality": 0.2, "canvas": 6},
+            {"page": "8", "quality": 0.3, "canvas": 7},
+        ],
+    }
+    lowest = _campaign_quality([_row("a", q), _row("a", q)])["lowest"]
+    assert [(e["volume"], e["page"]) for e in lowest] == [("a", "7"), ("a", "8")]
+
+
 def test_no_scored_volume_is_no_campaign_quality():
     assert _campaign_quality([_row("a", None)]) is None
     assert _campaign_quality([]) is None
