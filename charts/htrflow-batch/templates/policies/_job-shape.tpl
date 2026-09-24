@@ -119,6 +119,8 @@ containers, initContainers, args, imageRe.
           pod.containers[0].env[?valueFrom && !(contains(`{{ toJson $shape.secretEnv }}`, name) && keys(valueFrom) == ['secretKeyRef'])
           && !(contains(`{{ toJson (keys $shape.fieldEnv) }}`, name) && keys(valueFrom) == ['fieldRef'])].name,
           [{{ join ", " (default (list "`false`") $fieldChecks) }}][?@]][])]),
+          length(pod.containers[0].env[?contains(`{{ toJson $shape.bytes }}`, name) && !regex_match('^[1-9][0-9]*$', value || '')]) > `0`
+          && join('', [join(', ', pod.containers[0].env[?contains(`{{ toJson $shape.bytes }}`, name) && !regex_match('^[1-9][0-9]*$', value || '')].name), ' is not a number of bytes']),
           length((pod.initContainers || `[]`)[].env[]) > `0` && 'the init container carries env',
           (pod.containers[0].volumeMounts[].[name, mountPath] != `{{ toJson $shape.mounts }}`
           || (pod.initContainers || `[]`)[].volumeMounts[].[name, mountPath] != `{{ toJson $shape.initMounts }}`

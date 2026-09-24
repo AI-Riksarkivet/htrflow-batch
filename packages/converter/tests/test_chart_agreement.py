@@ -501,7 +501,8 @@ def _job_shape_spec() -> dict:
 @pytest.mark.parametrize(
     "role,skeleton,added",
     [
-        ("batch", "campaign-job.yaml", set()),
+        # A named size adds the lookahead its /work bounds (B105).
+        ("batch", "campaign-job.yaml", {"LOOKAHEAD_BYTES"}),
         ("warmup", "warmup-job.yaml", {"HF_TOKEN"}),
     ],
 )
@@ -525,8 +526,9 @@ def test_the_job_shape_policy_holds_the_skeletons_env_mounts_and_security(
     assert named == set(env) | added
     for name, value in shape["pinned"].items():
         assert env[name] == {"name": name, "value": value}, name
-    for name in shape["free"]:
+    for name in set(shape["free"]) - added:
         assert "valueFrom" not in env[name], name
+    assert set(shape["bytes"]) <= set(shape["free"])
     for name in set(shape["secretEnv"]) - added:
         assert list(env[name]["valueFrom"]) == ["secretKeyRef"], name
     for name, path in shape["fieldEnv"].items():
