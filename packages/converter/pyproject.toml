@@ -9,7 +9,7 @@ dependencies = [
     # selector prune, the Kueue pause patch) -- one client library and one
     # auth path across the repo (packages/web pins the same range).
     "kubernetes>=29",
-    "pydantic>=2.7",
+    "pydantic>=2.13.5",
     "pyyaml>=6",
 ]
 
