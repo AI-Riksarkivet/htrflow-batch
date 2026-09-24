@@ -82,13 +82,24 @@ own publish writes both again at the end.
 | `htrflow_version` | `importlib.metadata.version("htrflow")` in the image |
 | `pages` | canvas count |
 | `pages_ok`, `pages_failed` | how the volume came out: `pages_ok` + `pages_failed` + the pages resume skipped = `pages`. `pages_failed > 0` on a volume that is nonetheless done — every one of those pages is in `results` with its `error` |
-| `results` | `{"0001": {"status": "ok" \| "failed" \| "skipped", "seconds", "error"?}, …}` |
+| `results` | `{"0001": {"status": "ok" \| "failed" \| "skipped", "seconds", "error"?, "quality"?}, …}` — `quality` is that page's predicted score (0-1), present only for a pipeline with a `QualityPrediction` step and only on a page that got one |
 | `page_sources` | `{"0001": <source image URL, userinfo/query stripped>, …}` — for a reader, not for the comparison |
 | `page_source_digests` | `{"0001": <sha256 hex>, …}` — what resume compares: the full source URL with its credentials removed (userinfo, the `X-Amz-*` presign parameters, `token`, `sig`, `signature`, `key`), hashed. The redacted URL above has lost its query, so on a host that selects the image with `?id=` every page of a volume looks the same; a digest keeps the query without publishing it |
 | `canvas_ids` | `{"0001": <source canvas id or null>, …}` |
 | `source_manifest` | the manifest URL the pod fetched (verbatim), or, for `IMAGES` volumes, the synthetic manifest id the wrapper published to `sources/` |
 | `max_image_width`, `bytes_fetched`, `wall_seconds`, `gpu_stall_seconds`, `pages_per_second` | run metrics |
 | `viewer_url` | the public `iiif.json` URL |
+| `quality` | the volume's predicted-quality summary, present only with at least one scored page |
+
+`quality`'s fields:
+
+| Field | Meaning |
+|---|---|
+| `target` | what the model predicts (bag-of-words F1 against a ground truth) |
+| `model`, `revision` | the pipeline's `QualityPrediction` step's Hub repo and pinned revision, or `null` when the pipeline names none |
+| `mean`, `min` | across every scored page |
+| `scored` | how many pages carry a score — at most `pages`, since not every page need have one |
+| `lowest` | the volume's worst-scoring pages, each `{"page", "quality", "canvas"}` — `canvas` is that page's index into `iiif.json`'s items, so the lowest page links straight to its place in the viewer |
 
 ## `progress.json` (live, and never a completion marker)
 
@@ -114,6 +125,7 @@ termination message and the pod's log instead.
 | `errors` | ERROR-and-worse log records so far, counted as they are emitted. Not WARNING: the wrapper logs its own benign warnings (a pipeline rebuild after a dead worker thread, "viewer manifest covers n/m pages") that must not light a "something went wrong" chip on a healthy run |
 | `viewer_published` | `true` once an `iiif.json` PUT has actually succeeded — interim or final. What the frontend's "open in the viewer" link switches on, never a page count |
 | `started_at`, `updated_at` | ISO 8601 UTC |
+| `quality` | present only on the final write, once publish has built it — the same block as `manifest.json`'s |
 
 The **interim `iiif.json`**: every 10 pages the wrapper republishes the
 viewer manifest with the pages finished so far, so a long volume opens in
