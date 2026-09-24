@@ -395,10 +395,11 @@ def _not_text(value: object) -> str | None:
 
 
 def _as_recorded(info: ValidationInfo) -> bool:
-    """Validating a campaign as an earlier render recorded it: the rules
-    added since then (an id that is text, a URL a browser opens) are waived,
-    and ``parse`` keeps the result only if it IS that record
-    (``record.unchanged``)."""
+    """Validating a campaign or pipeline as an earlier render recorded it:
+    the rules added since then (an id that is text, a URL a browser opens, a
+    reader whose text reaches the export) are waived, and ``parse`` keeps the
+    result only if it IS that record (``record.unchanged``, a pipeline's
+    recorded recipe)."""
     return bool((info.context or {}).get("as_recorded"))
 
 
@@ -607,6 +608,47 @@ class Campaign(BaseModel):
 #: The chart's model-revision policy refuses the same shape at admission.
 _MODEL_STEP_SETTINGS = frozenset({"model", "model_settings", "generation_settings"})
 
+#: What each htrflow model does to the page tree, by the lower-cased class
+#: name htrflow resolves ``model:`` by (models/__init__.py). Every model step
+#: runs on the tree's LEAVES and attaches its results to them (steps.py,
+#: ``Inference.run``), whatever the step is called: a segmentation model adds
+#: one level of child regions, a line reader puts a transcription on the node
+#: it read. htrflow's ALTO and PAGE templates write the text of a line only
+#: inside a region, page -> region -> line (serialization/templates), so a
+#: reader with fewer than two segmentation steps before it writes all its
+#: text where no export ever shows it -- whatever the models detect.
+#: WordLevelTrOCR is not a line reader here: its word regions are one level
+#: below the line, where the templates write them.
+_SEGMENTATION_MODELS = frozenset({"yolo", "ppdoclayoutv3"})
+_LINE_READERS = frozenset({"trocr", "pylaia"})
+
+
+def _flat_text(steps: list) -> str | None:
+    """The sentence refusing a pipeline whose every line reader runs on lines
+    no export writes (see above); ``None`` when some text can get there."""
+    segmentations, readers = 0, []
+    for i, step in enumerate(steps, 1):
+        settings = step.get("settings") if isinstance(step, dict) else None
+        model = settings.get("model") if isinstance(settings, dict) else None
+        name = str(model).lower() if model is not None else ""
+        if name in _SEGMENTATION_MODELS:
+            segmentations += 1
+        elif name in _LINE_READERS:
+            readers.append((i, model, segmentations))
+        elif name == "wordleveltrocr":
+            return None
+    if not readers or any(before >= 2 for _, _, before in readers):
+        return None
+    i, model, before = readers[0]
+    count = {0: "no Segmentation step", 1: "1 Segmentation step"}[before]
+    return (
+        f"put the lines that {model} (step {i}) reads directly on the page, "
+        f"with {count} before it — htrflow's ALTO and PAGE export writes only "
+        "the text of lines inside a region, so every page would publish "
+        "without its text; put a region Segmentation step before the line "
+        "step (docs: reference/campaign-yaml.md, Pipeline file)"
+    )
+
 
 class Pipeline(BaseModel):
     #: Unknown keys rejected: a stale `model_revision:` (removed B63 Task 22
@@ -712,6 +754,14 @@ class Pipeline(BaseModel):
                 "model_settings, so one there overrides a pinned revision; "
                 "move them under model_settings"
             )
+        return v
+
+    @field_validator("steps")
+    @classmethod
+    def _check_text_reaches_export(cls, v: list[dict], info: ValidationInfo) -> list:
+        # audit 0923: a flat pipeline published every page empty and Succeeded.
+        if not _as_recorded(info) and (why := _flat_text(v)):
+            raise ValueError(why)
         return v
 
     @field_validator("max_seconds", "ttl_seconds_after_finished", mode="before")

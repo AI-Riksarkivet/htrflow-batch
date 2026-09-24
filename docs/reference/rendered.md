@@ -38,6 +38,11 @@ steps:
       model: yolo
       model_settings:
         model: Riksarkivet/yolov9-regions-1
+  - step: Segmentation
+    settings:
+      model: yolo
+      model_settings:
+        model: Riksarkivet/yolov9-lines-within-regions-1
   - step: TextRecognition
     settings:
       model: TrOCR
@@ -341,6 +346,11 @@ data:
         model: yolo
         model_settings:
           model: Riksarkivet/yolov9-regions-1
+    - step: Segmentation
+      settings:
+        model: yolo
+        model_settings:
+          model: Riksarkivet/yolov9-lines-within-regions-1
     - step: TextRecognition
       settings:
         model: TrOCR

@@ -324,7 +324,15 @@ fail=0
 # The page budget is a no-progress window over htrflow's queues and steps (I-2).
 # A dead pipeline's steps are swapped for ones that refuse to run, and each
 # pipeline built exports into a directory of its own (I-3).
-check wrapper   "$(count packages/wrapper/src -name '*.py')" 4064
+# 4064 -> 4203 (audit 0923, empty export): htrflow's ALTO and PAGE templates
+# write a line's text only inside a region, so a flat pipeline published
+# every page empty and the campaign Succeeded. exportcheck.py compares what
+# htrflow recognized for a page (its tree) with what each exported file
+# holds and fails the page when a format holds none of it; the driver hands
+# it the tree the run returned, and verify makes a volume whose every page
+# failed that way permanent, with the cause said once. Most of it is the
+# sentence the page records and why the rule is what it is.
+check wrapper   "$(count packages/wrapper/src -name '*.py')" 4203
 # 1000 -> 1150 in Task 20G, which made every problem the converter reports a
 # sentence a campaign author can act on ("path/to/file.yaml: <what is wrong>
 # -- <what to write instead>") instead of pydantic's own phrasing over a
@@ -694,7 +702,12 @@ check wrapper   "$(count packages/wrapper/src -name '*.py')" 4064
 # dulwich (C-10), validate --rendered (S-9), and record.py, which lets an
 # already-rendered campaign keep its old rendering under the new rules. Most
 # of it is the sentence each refusal prints and why it exists.
-check converter "$(count packages/converter/src -name '*.py')" 4215
+# 4215 -> 4289 (audit 0923, empty export): validate refuses a pipeline whose
+# line reader has fewer than two segmentation steps before it -- its text is
+# exported nowhere -- with the table of what each htrflow model does to the
+# page tree and why; a pipeline already rendered with those steps is kept
+# with a warning (parse, via record.recorded_recipe, moved out of cli.py).
+check converter "$(count packages/converter/src -name '*.py')" 4289
 # 400 -> 420: Task 25 moved the per-volume budget to the pod's
 # activeDeadlineSeconds, and only the pod's status.reason can then tell a
 # deadline kill from a node drain -- projection._name_the_deadline is where

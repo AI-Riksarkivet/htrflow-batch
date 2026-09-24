@@ -1073,3 +1073,67 @@ def test_a_step_without_a_model_has_no_threads_to_stop(abandoned, caplog):
         abandoned.release_steps([SimpleNamespace(dest="out")])
     assert caplog.text == ""
     assert abandoned.leaked_threads(grace=0.0) == 0
+
+
+class _TreePipeline:
+    """A pipeline whose run returns a NEW tree, as htrflow's does after an
+    image step (``ProcessImages`` returns a fresh Document), and whose
+    Exports write what htrflow's templates write for that tree's shape."""
+
+    def __init__(self, out_dir, nested: bool):
+        self.out_dir, self.nested = out_dir, nested
+
+    def run(self, document):
+        lines = [
+            SimpleNamespace(regions=[], transcription=[SimpleNamespace(text=t)])
+            for t in ("Anno 1723", "den 4 Maji")
+        ]
+        if self.nested:
+            tree = SimpleNamespace(
+                regions=[SimpleNamespace(regions=lines, transcription=[])],
+                transcription=[],
+            )
+            alto = "".join(
+                f'<String CONTENT="{t}"/>' for t in ("Anno 1723", "den 4 Maji")
+            )
+            page = "".join(
+                f"<Unicode>{t}</Unicode>" for t in ("Anno 1723", "den 4 Maji")
+            )
+        else:
+            tree = SimpleNamespace(regions=lines, transcription=[])
+            alto, page = "", "<TextRegion/><TextRegion/>"
+        for fmt, body in (
+            ("alto", f"<alto>{alto}</alto>"),
+            ("page", f"<PcGts>{page}</PcGts>"),
+        ):
+            (self.out_dir / fmt).mkdir(parents=True, exist_ok=True)
+            (self.out_dir / fmt / "0044.xml").write_text(body)
+        return tree
+
+
+def test_a_page_whose_export_holds_none_of_its_text_fails(tmp_path, fake_htrflow):
+    """The Space's "simple" pipelines: lines straight on the page, text
+    recognized, ALTO and PAGE written without it. The page fails with the
+    cause -- judged on the tree the run RETURNED -- and takes its files
+    with it, like any failed page (X2)."""
+    _inject_process_fakes(fake_htrflow)
+    from htrflow_batch import driver
+    from htrflow_batch.exportcheck import TextNotExported
+
+    out_dir = tmp_path / "outputs"
+    with pytest.raises(TextNotExported, match="htrflow recognized 2 lines"):
+        driver.process_page(
+            _TreePipeline(out_dir, nested=False), _image(tmp_path), out_dir
+        )
+    assert [p for p in out_dir.rglob("*") if p.is_file()] == []
+
+
+def test_a_page_whose_export_holds_its_text_is_returned(tmp_path, fake_htrflow):
+    _inject_process_fakes(fake_htrflow)
+    from htrflow_batch import driver
+
+    out_dir = tmp_path / "outputs"
+    files = driver.process_page(
+        _TreePipeline(out_dir, nested=True), _image(tmp_path), out_dir
+    )
+    assert set(files) == {"alto", "page"}

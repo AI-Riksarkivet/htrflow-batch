@@ -13,6 +13,7 @@ from pathlib import Path
 
 import yaml
 
+from .exportcheck import check_export
 from .stream import discard
 
 log = logging.getLogger("htrflow_batch")
@@ -435,8 +436,10 @@ def release_steps(steps) -> None:
         pass  # no torch, or a CPU-only run: nothing cached to give back
 
 
-def _run_guarded(pipeline, document, stem: str, seconds: float) -> None:
-    """``pipeline.run`` with a watch on the steps' worker threads.
+def _run_guarded(pipeline, document, stem: str, seconds: float):
+    """``pipeline.run`` with a watch on the steps' worker threads; returns
+    the tree the run ended with -- the one its Exports wrote, which after an
+    image step (htrflow's ``ProcessImages``) is not the one handed in.
 
     An Inference step hands its batch to a daemon thread and waits on a
     Future (htrflow steps.py). An exception in that thread -- 2026-09-08: a
@@ -466,6 +469,7 @@ def _run_guarded(pipeline, document, stem: str, seconds: float) -> None:
     """
 
     failure: list[BaseException] = []
+    result: list = []
     done = threading.Event()
 
     def check() -> None:
@@ -484,7 +488,7 @@ def _run_guarded(pipeline, document, stem: str, seconds: float) -> None:
 
     def run() -> None:
         try:
-            pipeline.run(document)
+            result.append(pipeline.run(document))
         except BaseException as e:  # re-raised below, in the page's own thread
             failure.append(e)
         finally:
@@ -507,6 +511,7 @@ def _run_guarded(pipeline, document, stem: str, seconds: float) -> None:
             )
     if failure:
         raise failure[0]
+    return result[0] if result and result[0] is not None else document
 
 
 def _outputs(out_dir: Path, stem: str) -> dict[str, Path]:
@@ -534,14 +539,18 @@ def process_page(
 
     stem = image_path.stem
     try:
+        tree = None
         for document in auto_import([str(image_path)]):
-            _run_guarded(pipeline, document, stem, seconds)
+            tree = _run_guarded(pipeline, document, stem, seconds)
         files = _outputs(out_dir, stem)
         missing = [fmt for fmt in EXPECTED_FORMATS if fmt not in files]
         if missing:
             # W2: a half-written page must fail here, not be uploaded with one
             # format and later counted as done.
             raise RuntimeError(f"page {stem}: no {', '.join(missing)} output written")
+        # Before the upload, while the tree is still here: a page exported
+        # without the text htrflow recognized must not publish as done.
+        check_export(tree, files, stem)
         return files
     except BaseException:
         # X2: consume's rolling delete reaches only the files we RETURN, so a
