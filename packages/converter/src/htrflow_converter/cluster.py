@@ -26,7 +26,7 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import Any, TypeGuard
 
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
@@ -122,6 +122,28 @@ class Unreachable(ClusterError):
 class Conflict(ClusterError):
     """A 409: another field manager owns what the request would change, or
     another writer got to the object first."""
+
+
+class NotOurs(ClusterError):
+    """An object this apply would write that exists already without the
+    converter's label: made by hand, or by something before the converter.
+    A forced apply would take it over -- label, data and all -- so it is
+    refused, and left exactly as it is."""
+
+    def __init__(self, kind: str, name: str, namespace: str) -> None:
+        super().__init__(
+            f"{kind} {name} exists in {namespace} and was not made by "
+            f"htrflow-campaigns (no {CAMPAIGN_SELECTOR} label), so it was left "
+            "as it was — rename the pipeline or campaign it was rendered for, "
+            "or remove that object"
+        )
+
+
+def made_here(obj: dict | None) -> TypeGuard[dict]:
+    """Whether a live object carries the label every rendered object does."""
+    key, value = CAMPAIGN_SELECTOR.split("=")
+    labels = ((obj or {}).get("metadata") or {}).get("labels") or {}
+    return labels.get(key) == value
 
 
 class LeaseLost(Unreachable):
@@ -468,6 +490,25 @@ class Cluster:
             self._clock = (parsedate_to_datetime(date), time.monotonic())
         return json.loads(answer.data)
 
+    def _seen(self) -> dict[tuple[str, str], bool | None]:
+        """(kind, name) -> ``made_here`` of the live object as this apply
+        last read or wrote it, ``None`` for none there. Kept on the instance
+        rather than built in ``__init__``: the test doubles skip that."""
+        return vars(self).setdefault("_seen_objects", {})
+
+    def _note(self, kind: str, name: str, live: dict | None) -> None:
+        self._seen()[(kind, name)] = None if live is None else made_here(live)
+
+    def claim(self, kind: str, name: str) -> None:
+        """Raise ``NotOurs`` when ``kind/name`` exists without the
+        converter's label. Answered from what this apply already read of it
+        -- the campaign Jobs and ConfigMaps it checks before sending
+        anything -- and read only when nothing was."""
+        if (kind, name) not in self._seen():
+            self.get(kind, name)
+        if self._seen()[(kind, name)] is False:
+            raise NotOurs(kind, name, self.namespace)
+
     def _method(self, kind: str, verb: str, name: str = "") -> Any:
         """The typed call for ``verb`` on ``kind`` -- after renewing the
         Lease when it is due, so every request this apply sends is one it
@@ -499,10 +540,16 @@ class Cluster:
         ``dry_run`` asks the API server (admission webhooks included) whether
         it would take ``obj``, and stores nothing. Any other ``manager`` is
         never forced: it only ever takes a field over from nobody.
+
+        A forced apply -- dry run or not -- is never sent to an object that
+        exists without the converter's label (``claim``): the force would
+        take it over, label and data alike.
         """
         kind, name = obj["kind"], obj["metadata"]["name"]
+        if manager == FIELD_MANAGER:
+            self.claim(kind, name)
         extra = {"dry_run": "All"} if dry_run else {}
-        return _raw(
+        stored = _raw(
             "apply",
             kind,
             name,
@@ -516,6 +563,9 @@ class Cluster:
             _content_type=APPLY_PATCH,
             **extra,
         )
+        if not dry_run:
+            self._note(kind, name, stored)
+        return stored
 
     def hold_suspend(self, live: dict) -> None:
         """Hand a Job's ``spec.suspend: true`` to ``SUSPEND_HOLDER`` when
@@ -591,12 +641,15 @@ class Cluster:
                 _request_timeout=REQUEST_TIMEOUT,
             )
         except ApiException as e:
-            if e.status == 404:
-                return None
-            raise _api_error("get", kind, name, self.namespace, e) from e
+            if e.status != 404:
+                raise _api_error("get", kind, name, self.namespace, e) from e
+            live = None
         except HTTPError as e:
             raise _unreachable(e) from e
-        return json.loads(body.data)
+        else:
+            live = json.loads(body.data)
+        self._note(kind, name, live)
+        return live
 
     def labelled(self, kind: str) -> list[dict]:
         """Every converter-labelled ``kind`` in the namespace."""
